@@ -68,7 +68,7 @@ Automatic upgrades keep this trust on the release the Central Hub runs.
 """
 
 
-def service_unit(agent: Path, kit_file: Path, checkout: Path) -> str:
+def service_unit(uv: Path, agent: Path, kit_file: Path, checkout: Path) -> str:
     """The oneshot the timer starts. ``uv run --no-config`` matches how the other scripts here are run."""
     return f"""[Unit]
 Description=FLIP trust automatic upgrade check
@@ -78,9 +78,11 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 Environment=HOME=/root
-ExecStart=/usr/bin/env uv run --no-config {agent} tick --kit-file {kit_file} --checkout {checkout}
-# An upgrade can pull gigabytes and recreate every container; the hub's lease self-expires at 2h.
-TimeoutStartSec=2h
+ExecStart={uv} run --no-config {agent} tick --kit-file {kit_file} --checkout {checkout}
+# An upgrade can pull gigabytes and recreate every container. Kept below the hub's lease
+# (2h) minus the verify budget (10m) so a timeout kill still leaves the agent time to
+# report FAILED: a kill the hub never hears about holds the lease until it self-expires.
+TimeoutStartSec=1h50m
 """
 
 
@@ -136,7 +138,7 @@ def ask(question: str) -> bool:
 
 def migrate_kit(kit_file: Path, dry_run: bool) -> Path:
     """Move the kit under /etc/flip/trust and symlink the old path. Idempotent; returns the new path."""
-    if kit_file.is_symlink() and kit_file.resolve().parent == ETC_KIT_DIR:
+    if kit_file.is_symlink() and kit_file.resolve().parent == ETC_KIT_DIR.resolve():
         return kit_file.resolve()
     target = ETC_KIT_DIR / kit_file.name
     if target.exists():
@@ -152,22 +154,62 @@ def migrate_kit(kit_file: Path, dry_run: bool) -> Path:
 
 
 def ensure_checkout(repo_url: str, dry_run: bool) -> None:
+    """Clone the agent's own checkout and leave a release tag checked out in it.
+
+    ``--no-checkout`` on its own leaves an empty working tree: the agent script itself would be
+    missing, so the timer fails every hour, and `git status --porcelain` reports every tracked
+    file as deleted, so every tick reports BLOCKED / LOCAL_MODIFICATIONS. The agent only moves
+    the checkout once it has a release to install, so the install has to put it on a real
+    commit first.
+    """
     if (CHECKOUT / ".git").is_dir():
         print(f"agent checkout {CHECKOUT} exists")
         return
     print(f"creating the agent's own checkout at {CHECKOUT}")
     if not dry_run:
         CHECKOUT.parent.mkdir(parents=True, exist_ok=True)
-    run(["git", "clone", "--no-checkout", repo_url, str(CHECKOUT)], dry_run)
+    run(["git", "clone", repo_url, str(CHECKOUT)], dry_run)
+    tag = current_release_tag(dry_run)
+    if tag:
+        print(f"checking out {tag} (the newest release tag) in the agent checkout")
+        run(["git", "-C", str(CHECKOUT), "checkout", "--detach", f"refs/tags/{tag}"], dry_run)
+
+
+def current_release_tag(dry_run: bool) -> str | None:
+    """The newest release tag in the fresh clone, or None when the repo carries none yet."""
+    if dry_run:
+        return None
+    out = subprocess.run(  # noqa: S603
+        ["git", "-C", str(CHECKOUT), "tag", "--list", "--sort=-v:refname"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    tags = [t for t in out.stdout.split() if t]
+    return tags[0] if tags else None
+
+
+def uv_path() -> Path:
+    """Absolute ``uv`` for the unit's ExecStart.
+
+    systemd runs with its own PATH (`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`),
+    which does not include the `~/.local/bin` the astral installer uses, so `/usr/bin/env uv` exits
+    127 on a host where the operator's own `make` runs fine.
+    """
+    found = shutil.which("uv")
+    if found is None:
+        raise SystemExit("uv was not found on PATH; install it system-wide before enabling automatic upgrades")
+    return Path(found).resolve()
 
 
 def install(kit_file: Path, repo_url: str, dry_run: bool) -> None:
     kit = read_kit(kit_file)
+    uv = uv_path()
     ensure_checkout(repo_url, dry_run)
     shared_kit = migrate_kit(kit_file, dry_run)
     agent = CHECKOUT / "scripts" / "trust_upgrade_agent.py"
     for name, text in (
-        (f"{UNIT_NAME}.service", service_unit(agent, shared_kit, CHECKOUT)),
+        (f"{UNIT_NAME}.service", service_unit(uv, agent, shared_kit, CHECKOUT)),
         (f"{UNIT_NAME}.timer", timer_unit()),
     ):
         print(f"writing {UNIT_DIR / name}")

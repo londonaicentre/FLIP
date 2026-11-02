@@ -56,7 +56,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-# The agent's OWN checkout (plan decision 4): the operator's working tree is never moved under them.
+# The agent's OWN checkout: the operator's working tree is never moved under them.
 DEFAULT_CHECKOUT = Path("/opt/flip/releases/FLIP")
 # Kit file name token -> deploy/env_mode.mk HUB value (FLIP#1479 renamed the selector and the
 # kit tokens; the pre-rename names are still accepted for one release, as the Makefiles do).
@@ -67,6 +67,10 @@ HTTP_TIMEOUT_S = 15
 # attempt is called FAILED. Generous because XNAT's in-place schema upgrade dominates it and a slow
 # one must not park the site: FAILED stops this release being retried until an operator clears it.
 VERIFY_TIMEOUT_S = 600
+# A terminal report is retried: the hub only learns the outcome here, and a lost report
+# holds the lease for its full TTL and then re-runs the same release.
+REPORT_ATTEMPTS = 4
+REPORT_RETRY_WAIT_S = 5
 VERIFY_POLL_S = 10
 # Same shape the hub and flip-ui accept as a comparable release identity.
 RELEASE_TAG = re.compile(r"^v\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$")
@@ -114,7 +118,7 @@ class Local:
     current_release: str | None
     checkout_clean: bool | None  # None: git could not say
     unsupported: bool  # a remotely driven (EC2 / DOCKER_HOST) site
-    health: Health | None = None  # None: not read (callers that only need the release)
+    health: Health  # always read: a skippable pre-flight is a representable "health check never ran"
 
 
 @dataclass(frozen=True)
@@ -162,7 +166,7 @@ def decide(policy: dict, local: Local, now_utc: datetime) -> Decision:
     # Pre-flight: never touch a site that is already broken. An upgrade recreates every container,
     # so a site that cannot be verified healthy first cannot be told apart afterwards from one this
     # agent broke — and a mismatched AES key would survive the recreate as a dead trust.
-    unfit = local.health.fit_to_upgrade if local.health else None
+    unfit = local.health.fit_to_upgrade
     if unfit:
         return Decision("BLOCKED", SITE_UNHEALTHY, target, unfit)
     if not in_window(now_utc, policy.get("maintenance_window"), policy.get("timezone")):
@@ -306,11 +310,28 @@ def verify(
     return False, f"the upgrade applied but the site did not come up on {tag} within {timeout_s}s: {last}"
 
 
+def report_status(kit: dict[str, str], body: dict, attempts: int = REPORT_ATTEMPTS) -> bool:
+    """POST a terminal report, retrying: losing it holds the lease and loses the outcome."""
+    for attempt in range(1, attempts + 1):
+        try:
+            hub_call(kit, "POST", "/trust/upgrade-status", body)
+        except (OSError, urllib.error.URLError) as exc:
+            print(f"reporting {body['state']} failed (attempt {attempt}/{attempts}): {exc}", file=sys.stderr)
+            if attempt < attempts:
+                time.sleep(REPORT_RETRY_WAIT_S * attempt)
+        else:
+            return True
+    return False
+
+
 def tick(kit_file: Path, repo: Path, dry_run: bool) -> int:
     try:
         kit = read_kit(kit_file)
+        # Before anything is claimed: a kit this agent cannot name would otherwise fail inside
+        # `upgrade()` with the lease already held, and repeat on every lease expiry.
+        kit_identity(kit_file)
         _, policy = hub_call(kit, "GET", "/trust/upgrade-policy")
-    except (OSError, KeyError, urllib.error.URLError) as exc:
+    except (OSError, KeyError, ValueError, urllib.error.URLError) as exc:
         print(f"cannot read the policy: {exc}", file=sys.stderr)
         return 2
     assert policy is not None
@@ -320,10 +341,8 @@ def tick(kit_file: Path, repo: Path, dry_run: bool) -> int:
         return 0
     assert decision.release is not None
     if decision.action == "BLOCKED":
-        hub_call(
+        report_status(
             kit,
-            "POST",
-            "/trust/upgrade-status",
             {
                 "state": "BLOCKED",
                 "release": decision.release,
@@ -336,18 +355,28 @@ def tick(kit_file: Path, repo: Path, dry_run: bool) -> int:
     if status == 409:
         print("the hub refused the claim (a job landed, or the policy changed); nothing done")
         return 0
-    ok, tail = upgrade(repo, kit_file, decision.release)
-    detail = tail
-    if ok:
-        # The verb exiting 0 only says the deployment was applied. Confirm the site actually came
-        # back up ON the target before telling the hub it SUCCEEDED.
-        ok, detail = verify(kit, decision.release)
-        print(detail)
-    report = {"state": "SUCCEEDED" if ok else "FAILED", "release": decision.release}
-    if not ok:
-        report["detail"] = detail
-    hub_call(kit, "POST", "/trust/upgrade-status", report)
-    print("SUCCEEDED" if ok else "FAILED")
+    # From here the lease is held: every exit must tell the hub, or the release is silently
+    # re-attempted after the lease expires.
+    ok = False
+    detail = "the agent stopped before it could report an outcome"
+    try:
+        ok, tail = upgrade(repo, kit_file, decision.release)
+        detail = tail
+        if ok:
+            # The verb exiting 0 only says the deployment was applied. Confirm the site actually came
+            # back up ON the target before telling the hub it SUCCEEDED.
+            ok, detail = verify(kit, decision.release)
+            print(detail)
+    except BaseException as exc:  # noqa: BLE001 - including SystemExit/KeyboardInterrupt: the report matters more
+        ok, detail = False, f"the upgrade raised {type(exc).__name__}: {exc}"
+        print(detail, file=sys.stderr)
+        raise
+    finally:
+        report = {"state": "SUCCEEDED" if ok else "FAILED", "release": decision.release}
+        if not ok:
+            report["detail"] = detail
+        report_status(kit, report)
+        print("SUCCEEDED" if ok else "FAILED")
     return 0 if ok else 1
 
 

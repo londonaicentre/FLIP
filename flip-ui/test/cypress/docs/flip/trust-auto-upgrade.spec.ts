@@ -48,6 +48,7 @@ describe("docs: automatic upgrades on My Trust", () => {
             timezone: "Europe/London",
             state: "PENDING",
             blockers: ["JOBS_RUNNING"],
+            blockerDetail: null,
             pendingSince: "2026-10-20T09:00:00.000Z",
             lastAttempt: null
         };
@@ -100,19 +101,22 @@ describe("docs: automatic upgrades on My Trust", () => {
 
         show({
             enabled: true,
-            blockers: ["OUTSIDE_WINDOW"]
+            blockers: ["OUTSIDE_WINDOW"],
+            blockerDetail: null
         });
         shot("outside-window");
 
         show({
             state: "IN_PROGRESS",
-            blockers: []
+            blockers: [],
+            blockerDetail: null
         });
         shot("upgrading");
 
         show({
             state: "FAILED",
             blockers: [],
+            blockerDetail: null,
             lastAttempt: {
                 state: "FAILED",
                 release: "v1.3.0",

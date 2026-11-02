@@ -99,9 +99,9 @@ class Decide(unittest.TestCase):
     def test_host_blockers_are_reported_not_forced(self):
         dirty = agent.Local("v1.2.0", checkout_clean=False, unsupported=False, health=HEALTHY)
         self.assertEqual(agent.decide(policy(), dirty, NOW).reason, agent.LOCAL_MODIFICATIONS)
-        unknown = agent.Local("v1.2.0", checkout_clean=None, unsupported=False)
+        unknown = agent.Local("v1.2.0", checkout_clean=None, unsupported=False, health=HEALTHY)
         self.assertEqual(agent.decide(policy(), unknown, NOW).reason, agent.UNKNOWN_CHECKOUT)
-        remote = agent.Local("v1.2.0", checkout_clean=True, unsupported=True)
+        remote = agent.Local("v1.2.0", checkout_clean=True, unsupported=True, health=HEALTHY)
         self.assertEqual(agent.decide(policy(), remote, NOW).reason, agent.UNSUPPORTED_MODE)
 
     def test_a_blocker_is_reported_even_outside_the_window(self):
@@ -194,6 +194,55 @@ class Tick(unittest.TestCase):
     def test_unreadable_hub_is_exit_2(self):
         with mock.patch.object(agent, "hub_call", side_effect=agent.urllib.error.URLError("down")):
             self.assertEqual(agent.tick(self.kit, Path("/nonexistent"), False), 2)
+
+    def test_an_unnameable_kit_is_refused_before_anything_is_claimed(self):
+        # kit_identity() would otherwise raise inside upgrade(), with the lease already taken,
+        # and do it again on every expiry.
+        bad = self.kit.parent / "settings.conf"
+        bad.write_text(self.kit.read_text())
+        calls = []
+        with mock.patch.object(agent, "hub_call", lambda *a, **k: (calls.append(a), (200, policy()))[1]):
+            code = agent.tick(bad, Path("/nonexistent"), False)
+        self.assertEqual(code, 2)
+        self.assertEqual(calls, [])
+
+    def test_a_crash_mid_upgrade_still_reports_failed(self):
+        # The lease is held from STARTING; an exit the hub never hears about parks the release
+        # until the TTL expires and then retries it blind.
+        calls = []
+
+        def hub(kit, method, route, body=None):
+            calls.append((method, route, body))
+            return 200, (policy() if route == "/trust/upgrade-policy" else None)
+
+        with (
+            mock.patch.object(agent, "hub_call", hub),
+            mock.patch.object(agent, "local_state", return_value=CLEAN),
+            mock.patch.object(agent, "upgrade", side_effect=RuntimeError("docker died")),
+            self.assertRaises(RuntimeError),
+        ):
+            agent.tick(self.kit, Path("/nonexistent"), False)
+        self.assertEqual([c[2]["state"] for c in calls[1:]], ["STARTING", "FAILED"])
+        self.assertIn("docker died", calls[-1][2]["detail"])
+
+    def test_a_report_that_does_not_land_is_retried(self):
+        attempts = []
+
+        def hub(kit, method, route, body=None):
+            if body and body["state"] == "FAILED":
+                attempts.append(body)
+                if len(attempts) < 3:
+                    raise agent.urllib.error.URLError("hub down")
+            return 200, (policy() if route == "/trust/upgrade-policy" else None)
+
+        with (
+            mock.patch.object(agent, "hub_call", hub),
+            mock.patch.object(agent, "local_state", return_value=CLEAN),
+            mock.patch.object(agent, "upgrade", return_value=(False, "boom")),
+            mock.patch.object(agent.time, "sleep", lambda s: None),
+        ):
+            self.assertEqual(agent.tick(self.kit, Path("/nonexistent"), False), 1)
+        self.assertEqual(len(attempts), 3)
 
 
 class Verify(unittest.TestCase):

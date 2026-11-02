@@ -47,7 +47,9 @@ class Sandbox(unittest.TestCase):
             mock.patch.object(setup, "run", lambda cmd, dry, **kw: self.calls.append(cmd)),
             mock.patch.object(setup, "set_hub_toggle", lambda kit, on: self.toggles.append(on)),
             mock.patch.object(setup.os, "geteuid", lambda: 0),
-            mock.patch.object(setup.shutil, "which", lambda name: "/bin/systemctl"),
+            mock.patch.object(setup.shutil, "which", lambda name: f"/bin/{name}"),
+            # The only real subprocess left in install(): the tag read in the fresh clone.
+            mock.patch.object(setup, "current_release_tag", lambda dry: "v2.4.0"),
         ]
         for p in patches:
             p.start()
@@ -68,7 +70,15 @@ class Install(Sandbox):
         self.assertEqual(self.kit.resolve(), shared.resolve())
         self.assertEqual(self.toggles, [True])
         self.assertIn(["systemctl", "enable", "--now", "flip-trust-upgrade.timer"], self.calls)
-        self.assertTrue(any(c[:3] == ["git", "clone", "--no-checkout"] for c in self.calls))
+        # A clone that leaves the working tree empty would lose the agent script itself and make
+        # every tick report LOCAL_MODIFICATIONS, so the install must land on a real commit.
+        self.assertTrue(any(c[:2] == ["git", "clone"] for c in self.calls))
+        self.assertFalse(any("--no-checkout" in c for c in self.calls))
+        checkout = next(c for c in self.calls if c[:2] == ["git", "clone"])[-1]
+        self.assertIn(
+            ["git", "-C", checkout, "checkout", "--detach", "refs/tags/v2.4.0"],
+            self.calls,
+        )
 
     def test_the_service_points_at_the_agents_checkout_and_the_shared_kit(self):
         self.main("--answer", "yes")
@@ -77,6 +87,21 @@ class Install(Sandbox):
         self.assertIn(f"--kit-file {self.etc / '.env.GSTT.prod'}", service)
         self.assertIn(f"--checkout {self.checkout}", service)
         self.assertIn("Type=oneshot", service)
+
+    def test_the_service_runs_uv_by_absolute_path(self):
+        # systemd's PATH has no ~/.local/bin, where the astral installer puts uv, so
+        # `/usr/bin/env uv` exits 127 on a host whose operator can run make by hand.
+        self.main("--answer", "yes")
+        service = (self.units / "flip-trust-upgrade.service").read_text()
+        exec_start = next(ln for ln in service.splitlines() if ln.startswith("ExecStart="))
+        self.assertTrue(exec_start.startswith("ExecStart=/"), exec_start)
+        self.assertNotIn("/usr/bin/env", exec_start)
+
+    def test_the_service_times_out_inside_the_hubs_lease(self):
+        # A kill after the lease expired cannot report FAILED, so the release is retried blind.
+        self.main("--answer", "yes")
+        service = (self.units / "flip-trust-upgrade.service").read_text()
+        self.assertIn("TimeoutStartSec=1h50m", service)
 
     def test_the_timer_is_hourly(self):
         self.main("--answer", "yes")
@@ -127,6 +152,11 @@ class Refusals(Sandbox):
         self.kit.write_text(KIT_TEXT + "DOCKER_HOST=ssh://ubuntu@ec2\n")
         self.assertEqual(self.main("--answer", "yes"), 2)
         self.assertEqual(self.toggles, [])
+
+    def test_needs_uv_on_path(self):
+        with mock.patch.object(setup.shutil, "which", lambda name: None if name == "uv" else "/bin/systemctl"):
+            with self.assertRaises(SystemExit):
+                self.main("--answer", "yes")
 
     def test_missing_kit(self):
         self.kit.unlink()

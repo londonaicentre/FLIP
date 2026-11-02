@@ -88,6 +88,9 @@ class AutoUpgradeView(BaseModel):
     timezone: str | None = None
     state: str
     blockers: list[str] = Field(default_factory=list)
+    # The agent's prose for the current blocker, when it sent any: a code like SITE_UNHEALTHY
+    # tells an admin a check failed but not which one.
+    blocker_detail: str | None = Field(default=None, alias="blockerDetail")
     pending_since: str | None = Field(default=None, alias="pendingSince")
     last_attempt: AutoUpgradeLastAttempt | None = Field(default=None, alias="lastAttempt")
 

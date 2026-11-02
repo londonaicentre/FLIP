@@ -331,6 +331,10 @@ class Trust(SQLModel, table=True):
     # checkout). Both are advisory and age out: the hub only shows them while fresh.
     upgrade_agent_seen_at: datetime | None = Field(default=None)
     upgrade_blocker: str | None = Field(default=None)
+    # Why, in the agent's words (which AES key, which dead task): the code alone cannot say.
+    upgrade_blocker_detail: str | None = Field(
+        default=None, sa_column=Column("upgrade_blocker_detail", Text, nullable=True)
+    )
     upgrade_blocker_at: datetime | None = Field(default=None)
     # When the agent first saw this trust behind the hub's release; cleared once it has caught up.
     upgrade_pending_since: datetime | None = Field(default=None)

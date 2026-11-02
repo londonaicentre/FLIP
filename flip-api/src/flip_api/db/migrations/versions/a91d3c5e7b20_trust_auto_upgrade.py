@@ -28,7 +28,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "a91d3c5e7b20"  # pragma: allowlist secret
-down_revision: str | None = "161d07d3d134"  # pragma: allowlist secret
+down_revision: str | None = "9d4b7a1c5e20"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -45,6 +45,7 @@ _COLUMNS: list[sa.Column] = [
     sa.Column("last_upgrade_detail", sa.Text(), nullable=True),
     sa.Column("upgrade_agent_seen_at", sa.DateTime(), nullable=True),
     sa.Column("upgrade_blocker", sa.String(), nullable=True),
+    sa.Column("upgrade_blocker_detail", sa.Text(), nullable=True),
     sa.Column("upgrade_blocker_at", sa.DateTime(), nullable=True),
     sa.Column("upgrade_pending_since", sa.DateTime(), nullable=True),
 ]

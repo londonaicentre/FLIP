@@ -614,9 +614,16 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         # Take the trusts' row locks, the ones an upgrade claim takes, and look again: a claim that committed
         # after the query above is seen here, and one that has not yet committed makes this wait for it. Either
         # way a job is never assigned to a trust that has just been claimed (the claim re-checks for a running
-        # job under the same lock).
+        # job under the same lock). populate_existing is what makes the re-read actually re-read: `job.trusts`
+        # above put these rows in the session, and a FOR UPDATE select returns those cached attributes unless
+        # it is told to refresh them, which would let a lease committed in between go unseen.
         if job_trust_ids:
-            locked = session.exec(select(Trust).where(col(Trust.id).in_(job_trust_ids)).with_for_update()).all()
+            locked = session.exec(
+                select(Trust)
+                .where(col(Trust.id).in_(job_trust_ids))
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            ).all()
             now = datetime.utcnow()
             if any(t.upgrade_lease_expires_at and t.upgrade_lease_expires_at > now for t in locked):
                 logger.info("A trust of the next queued job is being upgraded, leaving it queued")

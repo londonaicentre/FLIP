@@ -135,7 +135,14 @@ export type AutoUpgradeState =
     | "FAILED";
 
 /** Why a pending upgrade has not started yet; empty when nothing holds it back. */
-export type AutoUpgradeBlocker = "JOBS_RUNNING" | "OUTSIDE_WINDOW" | "LOCAL_MODIFICATIONS" | "SITE_UNHEALTHY" | "AGENT_OFFLINE";
+export type AutoUpgradeBlocker =
+    | "JOBS_RUNNING"
+    | "OUTSIDE_WINDOW"
+    | "LOCAL_MODIFICATIONS"
+    | "UNSUPPORTED_MODE"
+    | "UNKNOWN_CHECKOUT"
+    | "SITE_UNHEALTHY"
+    | "AGENT_OFFLINE";
 
 /** The auto-upgrade policy and status of one trust, as its Trust Admin sees it. */
 export interface IAutoUpgrade {
@@ -150,6 +157,9 @@ export interface IAutoUpgrade {
     timezone: string | null;
     state: AutoUpgradeState;
     blockers: AutoUpgradeBlocker[];
+    // The agent's own words for the current blocker, when it sent any: the code says a check
+    // failed, this says which one. Null when there is no blocker or the agent sent no detail.
+    blockerDetail: string | null;
     // Set from the moment a newer release is waiting.
     pendingSince: string | null;
     lastAttempt: {

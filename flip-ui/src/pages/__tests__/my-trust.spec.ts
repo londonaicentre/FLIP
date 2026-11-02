@@ -451,6 +451,7 @@ describe("My Trust", () => {
             timezone: null,
             state: "PENDING",
             blockers: ["JOBS_RUNNING"],
+            blockerDetail: null,
             pendingSince: "2026-10-20T09:00:00.000Z",
             lastAttempt: null,
             ...overrides
@@ -472,6 +473,29 @@ describe("My Trust", () => {
             expect(wrapper.find("[data-test='auto-upgrade-target']").text()).toBe("v1.3.0");
             expect(wrapper.find("[data-test='auto-upgrade-status']").attributes("data-state")).toBe("pending");
             expect(wrapper.find("[data-test='auto-upgrade-blockers']").text()).toContain("training job");
+        });
+
+        it("names the failing check beside the blocker the agent sent it for", async () => {
+            // "not healthy" alone sends the admin to the host operator to ask which check failed.
+            autoUpgradeRef.value = autoUpgrade({
+                blockers: ["SITE_UNHEALTHY"],
+                blockerDetail: "trust-api reported dead_tasks=3"
+            });
+            const wrapper = mountPage();
+            await nextTick();
+
+            expect(wrapper.find("[data-test='auto-upgrade-blockers']").text()).toContain("dead_tasks=3");
+        });
+
+        it("does not staple the detail onto an unrelated blocker", async () => {
+            autoUpgradeRef.value = autoUpgrade({
+                blockers: ["JOBS_RUNNING"],
+                blockerDetail: "trust-api reported dead_tasks=3"
+            });
+            const wrapper = mountPage();
+            await nextTick();
+
+            expect(wrapper.find("[data-test='auto-upgrade-blockers']").text()).not.toContain("dead_tasks=3");
         });
 
         it("tells a Trust with the switch off that it is behind", async () => {

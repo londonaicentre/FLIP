@@ -169,6 +169,7 @@ def view_for_admin(trust: Trust, db: Session) -> AutoUpgradeView:
     failed = failed_release(trust)
 
     blockers: list[str] = []
+    blocker_detail: str | None = None
     if lease_active(trust, now):
         state = "IN_PROGRESS"
     elif failed is not None:
@@ -182,8 +183,11 @@ def view_for_admin(trust: Trust, db: Session) -> AutoUpgradeView:
                 now, trust.auto_upgrade_window_start, trust.auto_upgrade_window_end, trust.auto_upgrade_timezone
             ):
                 blockers.append(OUTSIDE_WINDOW)
-            if trust.upgrade_blocker == LOCAL_MODIFICATIONS and not _is_stale(trust.upgrade_blocker_at, now):
-                blockers.append(LOCAL_MODIFICATIONS)
+            # Every reportable blocker, not just LOCAL_MODIFICATIONS: the other three are
+            # recorded by record_status and were previously stored and never shown.
+            if trust.upgrade_blocker and not _is_stale(trust.upgrade_blocker_at, now):
+                blockers.append(trust.upgrade_blocker)
+                blocker_detail = trust.upgrade_blocker_detail
             if _is_stale(trust.upgrade_agent_seen_at, now):
                 blockers.append(AGENT_OFFLINE)
     elif trust.last_upgrade_state == "SUCCEEDED" and trust.last_upgrade_release == current:
@@ -210,6 +214,7 @@ def view_for_admin(trust: Trust, db: Session) -> AutoUpgradeView:
         timezone=trust.auto_upgrade_timezone,
         state=state,
         blockers=blockers,
+        blocker_detail=blocker_detail,
         pending_since=_iso(trust.upgrade_pending_since) if behind else None,
         last_attempt=last,
     )  # type: ignore[call-arg]
@@ -250,9 +255,13 @@ def record_status(trust_id: UUID, report: UpgradeStatusInput, db: Session) -> Up
 
     Raises:
         HTTPException: 409 if a claim is refused (switch off, a job running, the release failed before and was not
-            cleared, or another claim is live).
+            cleared, or a different release holds the lease).
     """
-    trust = db.exec(select(Trust).where(Trust.id == trust_id).with_for_update()).one()
+    # populate_existing: authenticate_trust has already put this Trust in the session, so without
+    # it the locked SELECT returns the cached attributes and a concurrent switch-off is not seen.
+    trust = db.exec(
+        select(Trust).where(Trust.id == trust_id).with_for_update().execution_options(populate_existing=True)
+    ).one()
     now = _now()
 
     if report.state == "STARTING":
@@ -276,11 +285,14 @@ def record_status(trust_id: UUID, report: UpgradeStatusInput, db: Session) -> Up
         return UpgradeLease(release=report.release, expires_at=_iso(trust.upgrade_lease_expires_at) or "")
 
     if report.state == "BLOCKED":
-        # Keyed off `blocker` (the code), never `detail` (prose): a code the UI does not know
-        # is dropped rather than shown raw. Falls back to `detail` for an agent old enough to
-        # still send the code there.
-        code = report.blocker or report.detail
-        trust.upgrade_blocker = code[:64] if code in REPORTABLE_BLOCKERS else None
+        # Keyed off `blocker` (the code), never `detail` (prose): a code the UI does not know is
+        # dropped rather than shown raw, and logged so that is distinguishable from "no blocker".
+        if report.blocker in REPORTABLE_BLOCKERS:
+            trust.upgrade_blocker = report.blocker
+        else:
+            logger.info(f"Trust {trust.name}: unknown blocker code {report.blocker!r} dropped")
+            trust.upgrade_blocker = None
+        trust.upgrade_blocker_detail = report.detail
         trust.upgrade_blocker_at = now
         db.add(trust)
         db.commit()

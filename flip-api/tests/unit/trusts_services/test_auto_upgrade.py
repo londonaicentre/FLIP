@@ -113,6 +113,34 @@ class TestView:
         v = self._view(_trust(auto_upgrade_enabled=True, upgrade_agent_seen_at=datetime.utcnow() - timedelta(hours=9)))
         assert "AGENT_OFFLINE" in v.blockers
 
+    @pytest.mark.parametrize(
+        "code", ["LOCAL_MODIFICATIONS", "UNSUPPORTED_MODE", "UNKNOWN_CHECKOUT", "SITE_UNHEALTHY"]
+    )
+    def test_every_reportable_blocker_reaches_the_admin(self, code: str):
+        """Storing a blocker the view never reads would leave the admin with a silent PENDING."""
+        v = self._view(
+            _trust(
+                auto_upgrade_enabled=True,
+                upgrade_blocker=code,
+                upgrade_blocker_detail="trust-api reported dead_tasks=3",
+                upgrade_blocker_at=datetime.utcnow(),
+            )
+        )
+        assert code in v.blockers
+        assert v.blocker_detail == "trust-api reported dead_tasks=3"
+
+    def test_a_stale_blocker_is_dropped_with_its_detail(self):
+        v = self._view(
+            _trust(
+                auto_upgrade_enabled=True,
+                upgrade_blocker="SITE_UNHEALTHY",
+                upgrade_blocker_detail="trust-api reported dead_tasks=3",
+                upgrade_blocker_at=datetime.utcnow() - timedelta(hours=9),
+            )
+        )
+        assert "SITE_UNHEALTHY" not in v.blockers
+        assert v.blocker_detail is None
+
     def test_lease_means_in_progress(self):
         v = self._view(
             _trust(auto_upgrade_enabled=True, upgrade_lease_expires_at=datetime.utcnow() + timedelta(hours=1))
@@ -245,14 +273,16 @@ class TestClaim:
             db,
         )
         assert t.upgrade_blocker == "SITE_UNHEALTHY"
+        assert t.upgrade_blocker_detail == "trust-api reported dead_tasks=3"
 
-    def test_an_older_agent_sending_the_code_as_detail_still_works(self):
-        """Agents upgrade on their own schedule, so the pre-`blocker` payload must still land."""
+    def test_prose_in_detail_is_never_read_as_a_code(self):
+        """`detail` is free text an admin reads; only `blocker` may set the machine-readable code."""
         t = _trust()
         db = MagicMock()
         db.exec.return_value.one.return_value = t
         svc.record_status(t.id, UpgradeStatusInput(state="BLOCKED", release="v1.3.0", detail="UNSUPPORTED_MODE"), db)
-        assert t.upgrade_blocker == "UNSUPPORTED_MODE"
+        assert t.upgrade_blocker is None
+        assert t.upgrade_blocker_detail == "UNSUPPORTED_MODE"
 
 
 class TestRoutes:
