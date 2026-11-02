@@ -502,10 +502,10 @@ flClient:
     # node pool that scales from zero, a GPU is billed only while a job runs. Leave flClient.gpu off:
     # the parent holds no GPU (the chart refuses both).
     #
-    # Job pods mount the shared images volume, so they follow flClient.affinity. On a multi-node
-    # cluster with a separate GPU pool, sharedImagesPvc needs a ReadWriteMany class and
-    # flClient.affinity: {} (an RWO disk attaches to one node only). They inherit the fl-client's
-    # NetworkPolicy reach: every rule in network-policy.yaml is namespace-wide.
+    # Job pods mount no images volume: each streams its studies from imaging-api into its own run
+    # directory (FLIP#1049), so it holds only its project's data and can run on any node, a separate
+    # GPU pool included. They inherit the fl-client's NetworkPolicy reach: every rule in
+    # network-policy.yaml is namespace-wide.
     jobPods:
       enabled: false
       # GPUs the site lends to jobs at once. NVFLARE queues a job asking for more, and the hub shows

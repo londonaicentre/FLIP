@@ -11,13 +11,16 @@
 #
 
 import os
+import tarfile
 import zipfile
+from collections.abc import Iterator
 from pathlib import PurePosixPath
 
 import requests
 
 from imaging_api.config import get_settings
 from imaging_api.services.image_cache import (
+    SENTINEL_PREFIX,
     CachedDownload,
     clear_resource,
     read_sentinel,
@@ -413,6 +416,34 @@ def download_file(url: str, destination_path: str, headers: dict[str, str]) -> s
         raise LocalStorageError(f"Failed to write downloaded file to {destination_path!r}: {e}") from e
 
     return destination_path
+
+
+def tar_study(accession_dir_abs: str) -> Iterator[bytes]:
+    """
+    Yields a cached study as an uncompressed tar rooted at ``<accession_id>/``, without the cache's sentinels.
+
+    Written entry by entry so nothing is buffered on disk or in memory; NIfTI and DICOM are already compressed.
+
+    Args:
+        accession_dir_abs (str): The cached accession directory ``download_and_unzip_images`` returned.
+    """
+    root = os.path.dirname(accession_dir_abs)
+    for dirpath, dirnames, filenames in os.walk(accession_dir_abs):
+        dirnames.sort()
+        for name in sorted(filenames):
+            path = os.path.join(dirpath, name)
+            if name.startswith(SENTINEL_PREFIX) or os.path.islink(path):
+                continue
+            info = tarfile.TarInfo(os.path.relpath(path, root))
+            stat = os.stat(path)
+            info.size, info.mtime = stat.st_size, int(stat.st_mtime)
+            yield info.tobuf()
+            with open(path, "rb") as file:
+                while chunk := file.read(1 << 20):
+                    yield chunk
+            if info.size % tarfile.BLOCKSIZE:
+                yield b"\0" * (tarfile.BLOCKSIZE - info.size % tarfile.BLOCKSIZE)
+    yield b"\0" * (2 * tarfile.BLOCKSIZE)
 
 
 def unzip_file(zip_path: str, extract_dir: str, expected_root: str) -> str:

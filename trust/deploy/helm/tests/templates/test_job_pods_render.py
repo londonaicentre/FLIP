@@ -155,13 +155,15 @@ def test_a_job_pod_gets_what_the_client_container_has():
     env = _env(job)
     for name in ("TRUST_INTERNAL_SERVICE_KEY_HEADER", "TRUST_INTERNAL_SERVICE_KEY"):
         assert env[name] == _env(client)[name]
-    images = next(m for m in client["volumeMounts"] if m["name"] == "images")
-    assert images in job["volumeMounts"], "only this net's slice, at the path imaging-api returns"
-    assert {"name": "dshm", "mountPath": "/dev/shm"} in job["volumeMounts"]
+    # No images volume: a job pod streams its studies into its own run directory (FLIP#1049).
+    assert env["IMAGES_TRANSPORT"]["value"] == "stream"
+    assert job["volumeMounts"] == [{"name": "dshm", "mountPath": "/dev/shm"}]
     client_spec = _client(docs)["spec"]["template"]["spec"]
     volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
-    assert volumes["images"] == next(v for v in client_spec["volumes"] if v["name"] == "images")
+    assert "images" not in volumes
     assert volumes["dshm"]["emptyDir"]["medium"] == "Memory"
+    assert "affinity" not in pod["spec"]
+    assert pod["spec"]["automountServiceAccountToken"] is False
     # A job pod talks to the FL server directly, by the same name the client does.
     assert pod["spec"]["hostAliases"] == client_spec["hostAliases"]
     assert pod["spec"]["enableServiceLinks"] is False
