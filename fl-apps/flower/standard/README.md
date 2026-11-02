@@ -59,7 +59,7 @@ The mod clips the local update to `dp-clipping-norm` and adds Gaussian noise cal
 `[tool.flwr.app.config]`. See [`flip.flower.privacy`](../../../flip-utils/flip/flower/privacy.py)
 for the mechanism and the shipped tutorials for worked examples:
 [`xray_classification`](../../../fl-tutorials/flower/image_classification/xray_classification/README.md) and
-[`3d_spleen_segmentation`](../../../fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/README.md).
+[`3d_spleen_segmentation`](../../../fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/README.md). The template's `1.0` is a placeholder: the mod logs each round's pre-clip update norm and warns when clipping shrinks the update more than tenfold, so set `dp-clipping-norm` near the norm it reports for your model (FLIP#1754).
 
 > ⚠️ **This is a convention enforced by code review before upload, not by the platform.** An
 > uploaded `client_app.py` that omits the mod will train and aggregate perfectly happily while

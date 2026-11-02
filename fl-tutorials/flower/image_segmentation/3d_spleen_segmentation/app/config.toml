@@ -27,3 +27,8 @@ local-epochs = 5
 learning-rate = 5e-5
 best-model-metric = "test_dice"
 best-model-metric-minimize = false
+
+# The platform builds the job from FLIP's generic template, whose dp-clipping-norm is a 1.0
+# placeholder; this model's pre-clip update norm measured 21-22 (FLIP#1754), and 1.0 shrank every
+# update until the model stopped learning. Kept equal to pyproject.toml's simulator value.
+dp-clipping-norm = 20.0

@@ -18,3 +18,8 @@ num-server-rounds = 4
 # Ships best_FL_global_model.pt alongside FL_global_model.pt in the results.
 best-model-metric = "test_f1-score"
 best-model-metric-minimize = false
+
+# The platform builds the job from FLIP's generic template, whose dp-clipping-norm is a 1.0
+# placeholder; this model's pre-clip update norm measured 166-219 (FLIP#1754), and 1.0 shrank every
+# update until the model stopped learning. Kept equal to pyproject.toml's simulator value.
+dp-clipping-norm = 200.0

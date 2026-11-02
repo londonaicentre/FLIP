@@ -70,7 +70,9 @@ num-server-rounds = 5
 # Client-side differential privacy (flip.flower.privacy). On by default; set dp-enabled = false
 # to run the same app with the mechanism off. See the README's "Differential privacy" section.
 dp-enabled = true
-dp-clipping-norm = 1.0
+# Sized to this model's update: the pre-clip L2 norm measured 2.9-3.6 at the platform settings
+# (FLIP#1754). 1.0 shrank every update and the model stopped learning.
+dp-clipping-norm = 3.0
 dp-sensitivity = 1e-4
 dp-epsilon = 10.0
 dp-delta = 1e-5

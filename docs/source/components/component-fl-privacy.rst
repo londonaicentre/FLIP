@@ -120,6 +120,10 @@ The parameters live in ``[tool.flwr.app.config]`` and can be overridden per run 
 
 Also worth knowing:
 
+- **Size the clipping norm to your model.** The norm is absolute and bounds the whole update, so a value far
+  below your model's typical update shrinks every update: the run trains and learns nothing. The mod logs each
+  round's pre-clip norm and the factor it scaled the update by, and warns when that factor is below a tenth; set
+  ``dp-clipping-norm`` near the norms it reports. The tutorials do (FLIP#1754).
 - **It applies to training rounds only**, not evaluation, matching the FLARE filter's scope.
 - **Integer buffers pass through unprivatised.** Counters such as BatchNorm's ``num_batches_tracked`` are step
   counts, not learned parameters.
