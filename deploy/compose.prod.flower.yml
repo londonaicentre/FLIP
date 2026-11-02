@@ -44,6 +44,7 @@ services:
       # Use the internal hostnames and ports for the server since the API is within the same Docker network
       - SUPERLINK_ADDRESS=fl-server-net-1:8000
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097
+      - FL_API_KEY=${FL_API_KEY}
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
       - FLOWER_SRC_ROOT=/app/src
     ports:
@@ -142,6 +143,7 @@ services:
       # 0, leaving SuperNode keys unlabelled and FL metrics attributed to unknown_client
       # (FLIP#957).
       - FL_API_ADDRESS=http://fl-api-net-1:8000
+      - FL_API_KEY=${FL_API_KEY}
       # The script reads ${TRUST_NAMES} as a label list, but the underlying identity it's
       # labelling is the per-slot SuperNode key. Feed FL_KIT_SLOT_NAMES through so trusts
       # admin-created later (and bound to a slot via FLKitSlot.assigned_to_trust_id) still

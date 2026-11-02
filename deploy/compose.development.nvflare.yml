@@ -25,6 +25,7 @@ services:
     environment:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
       - DEBUG=${DEBUG}
+      - FL_API_KEY=${FL_API_KEY}
       # Origin allow-list for the server-side bundle fetch (FLIP#905, #1291): the only origin the
       # FL API may download an app bundle from — the dev object store flip-api presigns bundle
       # URLs against (AWS_ENDPOINT_URL_S3 in its service block; path-style URLs, host exactly
@@ -69,6 +70,7 @@ services:
     environment:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
       - DEBUG=${DEBUG}
+      - FL_API_KEY=${FL_API_KEY}
       # Bundle-fetch origin allow-list: the dev object store, like fl-api-net-1 (FLIP#905, #1291).
       - BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000
       # Shared volume where the FL API stages a de-bundled eval checkpoint (mirrors Flower's /app/src).
