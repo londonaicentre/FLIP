@@ -42,7 +42,7 @@ def stream_constants():
         constants.IMAGES_TRANSPORT = "stream"
         constants.IMAGING_API_URL = "https://imaging.example.com"
         constants.NET_ID = "net-1"
-        constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
+        constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"  # pragma: allowlist secret
         constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"  # pragma: allowlist secret
         yield constants
 
