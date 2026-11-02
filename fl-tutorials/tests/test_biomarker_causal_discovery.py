@@ -640,3 +640,87 @@ def test_get_model_buffers_match_the_wire_format():
 
 def test_the_flower_copy_is_the_same_module():
     assert (FLOWER_APP / "federated_fci.py").read_bytes() == (APP_FILES / "federated_fci.py").read_bytes()
+
+
+# --- summarise_results.py --reference: SHD and precision / recall / F1 of the final graph ----------------
+
+
+@pytest.fixture(scope="module")
+def summarise(ff):
+    return load_module("biomarker_summarise_results", APP_FILES.parent / "summarise_results.py")
+
+
+def edge(source, symbol, target, probability=1.0):
+    return {"source": source, "edge": symbol, "target": target, "probability": probability}
+
+
+REFERENCE_ROWS = [edge("a", "-->", "b"), edge("b", "<->", "c"), edge("c", "o->", "d", 0.8)]
+
+
+def test_identical_graphs_score_perfectly(summarise):
+    graph = summarise.stable_graph(REFERENCE_ROWS, 0.5)
+    metrics = summarise.graph_metrics(graph, graph)
+    assert metrics["shd"] == 0
+    assert metrics["skeleton_f1"] == metrics["oriented_f1"] == 1.0
+
+
+def test_the_pair_is_keyed_alphabetically_with_marks_following_it(summarise):
+    """``b --> a`` keys as (a, b) with the arrowhead at a; ``<->`` reads the same from either end."""
+    assert summarise.stable_graph([edge("a", "-->", "b")], 0.5) == {("a", "b"): (-1, 1)}
+    assert summarise.stable_graph([edge("b", "-->", "a")], 0.5) == {("a", "b"): (1, -1)}
+    assert summarise.stable_graph([edge("c", "<->", "b")], 0.5) == summarise.stable_graph([edge("b", "<->", "c")], 0.5)
+
+
+def test_a_reversed_edge_keeps_the_skeleton_and_costs_one_orientation(summarise):
+    reference = summarise.stable_graph(REFERENCE_ROWS, 0.5)
+    estimate = summarise.stable_graph([edge("b", "-->", "a"), *REFERENCE_ROWS[1:]], 0.5)
+    metrics = summarise.graph_metrics(estimate, reference)
+    assert metrics["shd"] == 1
+    assert metrics["skeleton_f1"] == 1.0
+    assert metrics["oriented_precision"] == metrics["oriented_recall"] == pytest.approx(2 / 3)
+
+
+def test_a_missing_and_an_extra_edge(summarise):
+    reference = summarise.stable_graph(REFERENCE_ROWS, 0.5)
+    estimate = summarise.stable_graph([*REFERENCE_ROWS[:2], edge("a", "-->", "d")], 0.5)
+    metrics = summarise.graph_metrics(estimate, reference)
+    assert metrics["shd"] == 2
+    for kind in ("skeleton", "oriented"):
+        assert metrics[f"{kind}_precision"] == metrics[f"{kind}_recall"] == pytest.approx(2 / 3)
+        assert metrics[f"{kind}_f1"] == pytest.approx(2 / 3)
+
+
+def test_the_threshold_selects_by_edge_type_not_adjacency(summarise):
+    """Two types at 0.4 each make a pair adjacent 80% of the time, but neither is a final edge."""
+    split = [edge("a", "-->", "b", 0.4), edge("a", "o->", "b", 0.4)]
+    assert summarise.stable_graph(split, 0.5) == {}
+    tie = [edge("a", "o->", "b", 0.5), edge("a", "-->", "b", 0.5)]
+    assert summarise.stable_graph(tie, 0.5) == {("a", "b"): (2, 1)}  # the first listed wins
+
+
+def test_an_empty_graph_has_undefined_precision(summarise):
+    metrics = summarise.graph_metrics({}, summarise.stable_graph(REFERENCE_ROWS, 0.5))
+    assert metrics["shd"] == 3
+    assert metrics["skeleton_recall"] == 0.0
+    assert np.isnan(metrics["skeleton_precision"])
+
+
+def test_a_reference_naming_other_variables_is_refused(summarise, tmp_path):
+    path = tmp_path / "reference.csv"
+    path.write_text("source,edge,target,count,probability,p_adjacent\nAGE,-->,TOTAL13,200,1.0,1.0\n")
+    with pytest.raises(SystemExit, match="AGE"):
+        summarise.read_edge_csv(path, VARIABLES)
+    with pytest.raises(ValueError, match="unknown edge type"):
+        summarise.stable_graph([edge("a", "<--", "b")], 0.5)
+
+
+def test_reference_scoring_matches_on_a_real_run(ff, config, two_sites, summarise):
+    """A run scored against its own edge table is perfect; against the generating graph, SHD stays small."""
+    final = fedavg(ff, {**config, "N_BOOTSTRAPS": 4}, two_sites, total_rounds=2)
+    rows = ff.edge_frequencies(ff.as_pags(final["pag"]), VARIABLES)
+    graph = summarise.stable_graph(rows, 0.5)
+    assert summarise.graph_metrics(graph, summarise.stable_graph(rows, 0.5))["shd"] == 0
+    truth = [edge(a, "-->", b) for a, b in TRUE_EDGES] + [edge(LATENT_PAIR[0], "<->", LATENT_PAIR[1])]
+    metrics = summarise.graph_metrics(graph, summarise.stable_graph(truth, 0.5))
+    assert metrics["skeleton_recall"] == 1.0
+    assert metrics["shd"] <= 1

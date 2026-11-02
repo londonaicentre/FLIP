@@ -144,6 +144,10 @@ test suite pins the pooled result to centralised FCI — so the edge table from
 `summarise_results.py` matches the NVFLARE one up to the bootstrap streams, which are keyed on
 the site index both backends resolve the same way.
 
+The NVFLARE README's "Graph metrics" scores the final graph against two centralised references
+(SHD and skeleton / oriented precision, recall and F1); `summarise_results.py --reference <edges.csv>`
+computes the same block for a Flower run.
+
 Failure signatures are the NVFLARE README's; one is Flower-specific: `stable_edges` of 0 at the
 end of a run whose `num-server-rounds` is right means the sites' `num-examples` was not forwarded
 (the template's weighted mean then degenerates) — check that the reply's `MetricRecord` carries it.
@@ -167,6 +171,7 @@ The ServerApp writes `FL_global_model.pt` under `$WORKING_DIR/<model-id>/trainin
 cd fl-tutorials/flower/tabular_causal_discovery/biomarker_causal_discovery
 uv run --project ../../../../flip-utils --extra full --group dev python summarise_results.py \
     ../../../../fl-services/flower/runs/<model-id>/training_outputs/FL_global_model.pt --figure docs/recovered_pag.png
+    # add --reference <edges.csv> to score the final graph against another run's edge table
 ```
 
 ### On the platform (or `make e2e_smoke`)

@@ -18,6 +18,10 @@ what the researcher actually wants — how often each edge appeared across boots
 optionally writes the table as CSV and draws the stable graph.
 
     python summarise_results.py <FL_global_model.pt> [--min-prob 0.5] [--csv out.csv] [--figure out.png]
+                                [--reference centralised_edges.csv]
+
+``--reference`` scores this run's final graph (the edge types at the threshold) against another
+run's edge-frequency CSV: SHD and skeleton / oriented precision, recall and F1.
 
 Runs in the flip-utils environment (``make summarise``); the figure needs matplotlib, which
 the ``dev`` group provides, and is skipped with a note when it is not importable. Kept
@@ -44,6 +48,7 @@ sys.path.insert(0, str(APP_DIR))
 
 from federated_fci import (  # noqa: E402
     EDGE_MEANINGS,
+    EDGE_SYMBOLS,
     STATE_KEYS,
     as_pags,
     decode,
@@ -69,6 +74,86 @@ def load_state(path: Path) -> dict[str, np.ndarray]:
             raise KeyError(f"{path} has no array {key!r}; keys are {sorted(raw)}")
         arrays[key] = raw[key].detach().cpu().numpy() if hasattr(raw[key], "detach") else np.asarray(raw[key])
     return decode(arrays)
+
+
+_SYMBOL_MARKS = {symbol: marks for marks, symbol in EDGE_SYMBOLS.items()}
+
+
+def stable_graph(rows: list[dict], min_prob: float) -> dict[tuple[str, str], tuple[int, int]]:
+    """The final graph: each pair whose edge type reaches ``min_prob``, as ``{(a, b): (mark at a, mark at b)}``.
+
+    ``a < b`` alphabetically; marks are PAG endpoint codes (-1 tail, 1 arrowhead, 2 circle). A pair
+    keeps the first qualifying row in descending-probability order, so a tie at exactly ``min_prob``
+    resolves to the type listed first.
+    """
+    graph: dict[tuple[str, str], tuple[int, int]] = {}
+    for row in sorted(rows, key=lambda r: -float(r["probability"])):
+        if float(row["probability"]) < min_prob:
+            continue
+        if row["edge"] not in _SYMBOL_MARKS:
+            raise ValueError(f"unknown edge type {row['edge']!r} (known: {sorted(_SYMBOL_MARKS)})")
+        source, target = row["source"], row["target"]
+        mark_source, mark_target = _SYMBOL_MARKS[row["edge"]]
+        pair, marks = (
+            ((source, target), (mark_source, mark_target))
+            if source < target
+            else ((target, source), (mark_target, mark_source))
+        )
+        graph.setdefault(pair, marks)
+    return graph
+
+
+def read_edge_csv(path: Path, variables: list[str]) -> list[dict]:
+    """Rows of an edge-frequency CSV (this script's ``--csv`` format; ``adni_fci`` writes the same columns)."""
+    with open(path, newline="") as fh:
+        rows = [{**r, "probability": float(r["probability"])} for r in csv.DictReader(fh)]
+    unknown = sorted({r[k] for r in rows for k in ("source", "target")} - set(variables))
+    if unknown:
+        raise SystemExit(f"{path} names variables not in the config's VARIABLES: {unknown}; rename them first")
+    return rows
+
+
+def _ratio(numerator: int, denominator: int) -> float:
+    return numerator / denominator if denominator else float("nan")
+
+
+def _scores(tp: int, n_estimate: int, n_reference: int) -> dict[str, float]:
+    precision, recall = _ratio(tp, n_estimate), _ratio(tp, n_reference)
+    f1 = _ratio(2 * tp, n_estimate + n_reference)
+    return {"precision": precision, "recall": recall, "f1": f1}
+
+
+def graph_metrics(estimate: dict, reference: dict) -> dict[str, float]:
+    """Agreement of a final graph with a reference: SHD and skeleton / oriented precision, recall, F1.
+
+    Skeleton counts a pair as a hit when both graphs are adjacent there; oriented needs the same
+    marks at both ends. SHD counts the pairs where the graphs differ (missing, extra, or another
+    edge type), each once. Precision or recall over an empty graph is nan, not 0.
+    """
+    shared = estimate.keys() & reference.keys()
+    oriented = sum(estimate[p] == reference[p] for p in shared)
+    metrics: dict[str, float] = {
+        "shd": len(estimate.keys() ^ reference.keys()) + len(shared) - oriented,
+        "edges_estimate": len(estimate),
+        "edges_reference": len(reference),
+    }
+    for name, tp in (("skeleton", len(shared)), ("oriented", oriented)):
+        for key, value in _scores(tp, len(estimate), len(reference)).items():
+            metrics[f"{name}_{key}"] = value
+    return metrics
+
+
+def format_metrics(metrics: dict[str, float]) -> str:
+    lines = [
+        f"SHD {int(metrics['shd'])} ({int(metrics['edges_estimate'])} edges here, "
+        f"{int(metrics['edges_reference'])} in the reference)"
+    ]
+    for name in ("skeleton", "oriented"):
+        lines.append(
+            f"{name:>9}: precision {metrics[f'{name}_precision']:.2f}  recall {metrics[f'{name}_recall']:.2f}  "
+            f"F1 {metrics[f'{name}_f1']:.2f}"
+        )
+    return "\n".join(lines)
 
 
 def variable_roles(config: dict) -> dict[str, str]:
@@ -196,6 +281,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--csv", type=Path, help="write the full edge-frequency table here")
     parser.add_argument("--figure", type=Path, help="draw the stable PAG here (PNG)")
+    parser.add_argument(
+        "--reference",
+        type=Path,
+        help="an edge-frequency CSV (e.g. a centralised run) to score this run's final graph against",
+    )
     args = parser.parse_args(argv)
 
     config = json.loads(args.config.read_text())
@@ -223,6 +313,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"\nEdges with frequency >= {min_prob:g}:")
     print(format_edges(rows, min_prob))
     print("\nEdge marks: " + "; ".join(f"{k}: {v}" for k, v in EDGE_MEANINGS.items()))
+    if args.reference:
+        reference = stable_graph(read_edge_csv(args.reference, variables), min_prob)
+        print(f"\nAgainst {args.reference} (both graphs: edge types at frequency >= {min_prob:g}):")
+        print(format_metrics(graph_metrics(stable_graph(rows, min_prob), reference)))
 
     if args.csv:
         args.csv.parent.mkdir(parents=True, exist_ok=True)

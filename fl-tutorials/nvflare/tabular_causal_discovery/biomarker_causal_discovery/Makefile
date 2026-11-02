@@ -67,7 +67,7 @@ sim:
 # --- Read a finished run's model back: edge-frequency table (beside the model) + PAG figure (docs/) ---
 # RESULTS defaults to the simulator's final model; point it at a downloaded FL_global_model.pt.
 summarise:
-	$(UV_RUN) python summarise_results.py "$(RESULTS)" --csv "$(dir $(RESULTS))edge_frequencies.csv" --figure docs/recovered_pag.png
+	$(UV_RUN) python summarise_results.py "$(RESULTS)" --csv "$(dir $(RESULTS))edge_frequencies.csv" --figure docs/recovered_pag.png $(if $(REFERENCE),--reference "$(REFERENCE)")
 
 clean:
 	rm -rf ./fl_job

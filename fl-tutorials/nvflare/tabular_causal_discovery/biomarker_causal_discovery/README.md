@@ -282,6 +282,32 @@ decided in only 0.42 of them, and pTau217 → hippocampus is lost outright. That
 pooled statistics is the default; voting exists for the kernel test, which has no sufficient
 statistics.
 
+**Graph metrics.** ADNI has no known true graph, so the metrics below measure agreement with a
+centralised reference, not accuracy. Each run's final graph is the set of edges whose edge type
+reaches 0.5 (the "stable" edges above). It is scored against two references. The first is the table's
+centralised analysis. Its `APOE4_0` dummy is renamed `apoe4_copies`, which loses nothing here, because
+none of the `APOE4_1` dummy's edges reaches 0.5. The second is a centralised run of this tutorial's own
+module on the same 560 rows (same transform, knowledge and test, 200 row resamples), which leaves the
+federation and the parametric bootstrap as the only differences. **SHD** counts the pairs where two
+graphs differ: a missing edge, an extra edge or a different edge type each count once. *Skeleton*
+precision, recall and F1 ignore the marks; *oriented* ones need the same edge type with the same
+direction. On this cohort, every pair the graphs share has the same marks, so the two coincide:
+
+| Run | vs centralised `adni_fci`: SHD | precision | recall | F1 | vs same-preprocessing centralised: SHD | precision | recall | F1 |
+|-----|----|----|----|----|----|----|----|----|
+| Pooled (FedC²SL) | 2 | 0.88 | 1.00 | 0.93 | 0 | 1.00 | 1.00 | 1.00 |
+| Voting (FedPC) | 6 | 1.00 | 0.57 | 0.73 | 8 | 1.00 | 0.50 | 0.67 |
+| Same-preprocessing centralised | 2 | 0.88 | 1.00 | 0.93 | – | – | – | – |
+
+Pooled finds every edge of both references. Against `adni_fci` it adds the two pTau217 orientations
+the table shows near 0.5. A centralised run with the tutorial's preprocessing scores exactly the same,
+so those two edges come from the preprocessing, not from federating. Voting is precise but recovers
+half the graph. The bootstrap seed alone moves these numbers: across four seeds the centralised
+same-preprocessing run scores SHD 1–3 against `adni_fci` and 0–1 against its own seed-42 graph (0–3 at
+50 bootstraps), so a difference of one edge is noise. To score your own run, pass any edge-frequency
+CSV in the `--csv` format: `make summarise REFERENCE=<edges.csv>` (or `summarise_results.py
+--reference`). The centralised runs themselves are not shipped as a tool.
+
 **What a wrong run looks like.** `stable_edges` of 0 after the final round means the orientation
 round never happened: `GLOBAL_ROUNDS` (or `--num_rounds`) is too small for the mode (2 for pooled;
 largest conditioning set + 2 for voting). A graph missing every edge of one variable, with the rest
@@ -393,7 +419,8 @@ make -C fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery
 ```
 
 `WORKSPACE=<dir>` moves the simulator workspace (default `/tmp/nvflare/causal`), and `make
-summarise RESULTS=<FL_global_model.pt>` reads a model downloaded from the hub. The job runs in the
+summarise RESULTS=<FL_global_model.pt>` reads a model downloaded from the hub (add `REFERENCE=<edges.csv>`
+to score its final graph against another run's, see "Graph metrics"). The job runs in the
 flip-utils environment with its `full` extra, which includes causal-learn, the same set the FL image
 installs.
 
