@@ -527,6 +527,30 @@ spec:
 {{- if .Values.flClient.probes.readiness.failureThreshold }}
             failureThreshold: {{ .Values.flClient.probes.readiness.failureThreshold }}
 {{- end }}
+        {{- if $jobPods }}
+        # NVFLARE leaves a job pod behind when its job ends (FLIP#1428): this deletes this net's finished job
+        # pods once they are older than keepFinishedHours, with the parent's service account and Role.
+        - name: job-pod-pruner
+          image: {{ include "flip-trust.flClientImage" . }}
+          imagePullPolicy: {{ .Values.flClient.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          command: ["/app/.venv/bin/python", "-m", "flip.nvflare.prune_job_pods"]
+          env:
+            - name: FL_K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: FL_JOB_POD_SELECTOR
+              value: "app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=fl-job,flip/network={{ .Values.flClient.netId }}"
+            - name: FL_JOB_POD_KEEP_HOURS
+              value: {{ .Values.flClient.nvflare.jobPods.keepFinishedHours | quote }}
+          resources:
+            requests: {cpu: 10m, memory: 64Mi}
+            limits: {memory: 256Mi}
+        {{- end }}
       volumes:
         - name: images
 {{- if .Values.sharedImagesPvc.enabled }}

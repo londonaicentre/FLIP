@@ -694,8 +694,12 @@ Prerequisites and trade-offs:
   minute later (67 s in a test) the run ends as `FINISHED:EXECUTION_EXCEPTION`. Never set NVFLARE's
   `strict_start_job_reply_check` on a server with job-pod sites: with FLIP's `min_clients` (every selected
   Trust), it fails each job whose pod starts late.
-- **Finished job pods are not deleted** by NVFLARE; clear them with
-  `kubectl delete pod -l app.kubernetes.io/component=fl-job --field-selector=status.phase!=Running`.
+- **Finished job pods** are not deleted by NVFLARE. A `job-pod-pruner` container beside the parent deletes this
+  net's finished job pods once they are `keepFinishedHours` old (default 24), so a day of their logs stays.
+- **Each job pod reserves `jobPods.requests`** (default 250m CPU, 512Mi). NVFLARE 2.9 replaces the job container's
+  resources with the job's own `launcher_spec`, which FLIP refuses, so the request sits on a no-op `reserve` init
+  container; Kubernetes reserves the larger of a pod's init containers and containers. It also keeps job pods out of
+  BestEffort, where the XNAT conversion quota would count them and could refuse a job while conversions run.
 - **NVFLARE only.** Flower has no equivalent wired into this chart.
 - **EKS:** the VPC CNI enforces NetworkPolicy only with `enableNetworkPolicy` set, and GPU scale-from-zero
   needs Karpenter or the cluster autoscaler's node-template tags.
