@@ -45,7 +45,7 @@ local Keycloak realm registers as a browser origin works — take one from 44350
 ### Staging and production (AWS)
 
 The UI is served as **static assets from S3 behind CloudFront** at the canonical subdomain
-(`stag.flip.aicentre.co.uk` / `app.flip.aicentre.co.uk`). CloudFront forwards `/api/*` to the ALB, so users and
+(`stag.flip.aicentre.co.uk` / `app.flip.aicentre.co.uk`). CloudFront relays `/api/*` to the internal NLB's web listener, so users and
 trusts keep hitting the same URLs. There is no flip-ui Docker container on stag/prod EC2 — only flip-api and the
 FL services. See [deploy/providers/AWS/README.md](../deploy/providers/AWS/README.md#flip-ui-on-s3--cloudfront)
 for the full rollout.
@@ -57,8 +57,10 @@ cd deploy/providers/AWS
 make deploy-ui HUB=stag     # or HUB=prod for prod
 ```
 
-This runs `npm ci && npm run build:deploy`, regenerates `public/js/window.js` with the target environment's values,
-syncs the build to S3, and invalidates CloudFront.
+This runs `npm ci && npm run build:deploy` (whose `postbuild:deploy` writes `dist/js/window.js` from the target
+environment's values) and publishes `dist/` to the UI bucket with `scripts/publish-ui.sh`. Nothing is invalidated:
+`index.html` and `window.js` are served `no-cache`. CI runs the same script after every successful apply
+(`publish_ui.yml`, FLIP#1186); `make deploy-ui` is the manual fallback and rollback.
 
 ### Public Ark+ demo build (`/ark_demo`)
 

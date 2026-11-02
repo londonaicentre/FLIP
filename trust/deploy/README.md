@@ -30,11 +30,11 @@ make -C trust up-trust KIT=<CODE> HUB=prod   # against a remote hub
 
 ## File matrix
 
-`trust/Makefile` composes the final `docker compose` invocation from up to **four** of these — base +
-backend overlay + GPU + `Trust_1` override, via `up-trust` (and identically `up-fl-clients-kit`). The debug
-path is a separate three-file command that never picks up the GPU or `Trust_1` overlays, and
-`compose.test.yml` is never combined with any of them. `<env>` is `development` or `production`, selected
-by `HUB` (`stag`/`prod` → `production`).
+`trust/Makefile` composes the final `docker compose` invocation from up to **five** of these — base +
+backend overlay + GPU + MONAI Label + `Trust_1` override, via `up-trust` (`up-fl-clients-kit` uses the same
+set without MONAI Label). The debug path is a separate command (base + backend + MONAI Label when on + the
+debug override) that never picks up the GPU or `Trust_1` overlays, and `compose.test.yml` is never combined
+with any of them. `<env>` is `development` or `prod`, selected by `HUB` (`stag`/`prod` → `prod`).
 
 | File | Role | When applied |
 | ---- | ---- | ------------ |
@@ -42,8 +42,9 @@ by `HUB` (`stag`/`prod` → `production`).
 | `compose_trust.<env>.nvflare.yml` | FL client overlay for the FLARE backend | Always, backend-selected (`FL_BACKEND_COMPOSE_FILE`) |
 | `compose_trust.<env>.flower.yml` | FL client overlay for the Flower backend | Always, backend-selected |
 | `compose_trust.<env>.gpu.yml` | NVIDIA device reservation for the fl-client | Only when the kit sets `NUM_AVAILABLE_GPUS > 0` (`GPU_OVERRIDE`). Never applied by `up-trust-ec2` — the EC2 test host is GPU-less |
+| `compose_trust.<env>.monailabel.yml` | Optional MONAI Label server for AI-assisted annotation in the XNAT OHIF viewer | Only when the kit or the command line sets `MONAI_LABEL=true` (`MONAILABEL_OVERRIDE`) |
 | `compose_trust-1_override.yml` | Publishes the trust APIs on host ports | Dev only, and only for the trust holding FL slot `Trust_1` (`TRUST_OVERRIDE`) — the override binds one fixed port set, so exactly one trust can claim it |
-| `compose_trust.development.debug.override.yml` | debugpy ports + `DEBUG` env on the three APIs | `make debug-trust-api` / `debug-imaging-api` / `debug-data-access-api`. **Dev only** — there is no `production` variant, and the filename is hardcoded rather than `<env>`-interpolated, so these targets do not work under `HUB` |
+| `compose_trust.development.debug.override.yml` | debugpy ports + `DEBUG` env on the three APIs | `make debug-trust-api` / `debug-imaging-api` / `debug-data-access-api`. **Dev only** — there is no `prod` variant, and the filename is hardcoded rather than `<env>`-interpolated, so these targets do not work under `HUB` |
 | `compose.test.yml` | Integration-test stack (`omop-db-test` + `data-access-api-test`) | Testcontainers from pytest, and CI (`test_trust_{trust_api,data_access_api}.yml`). Not part of any `make up` path |
 
 Dev pulls repo-built images from GHCR by default (`pull_policy: always`); `BUILD=true` rebuilds from the
@@ -53,8 +54,8 @@ Dev pulls repo-built images from GHCR by default (`pull_policy: always`); `BUILD
 
 A compose file belongs next to the source tree whose images it builds — the same rule that puts
 `fl-services/<backend>/compose.dev.yml` and `trust/xnat/docker-compose-stack.yml` where they are. These files
-were deliberately relocated here from `trust/` — one level down, into `trust/deploy/` — in commit
-`72c6354b`. They have never lived under the repo-root `deploy/`.
+were deliberately relocated from `trust/` — one level down, into `trust/deploy/` — in commit
+`72c6354b`, and into `trust/deploy/compose/` by FLIP#1438. They have never lived under the repo-root `deploy/`.
 
 **The relative paths inside them (`./trust-api`, `./observability/`, `./omop-db/volumes/`, …) resolve from
 `trust/`, not from this directory.** That works because every caller passes `--project-directory`:

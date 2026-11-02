@@ -78,8 +78,7 @@ def state():
                     "name": "this",
                     "instances": [{"attributes": {"tags": {"Name": "flip-vpc"}}}],
                 },
-                # The SSM bastion. Present in every environment, trust host or not —
-                # which is why it is not a usable proxy for "a cloud trust exists".
+                # The SSM bastion.
                 {
                     "mode": "managed",
                     "type": "aws_instance",
@@ -134,92 +133,6 @@ class TestStateLookup:
         )
         assert st.module_attrs("module.flip_fl_results_bucket", "aws_s3_bucket", "this") == {}
 
-    def test_module_resource_is_not_visible_to_the_root_lookup(self, state):
-        # attrs() only walks the root module, so it cannot answer questions about
-        # module.trust_ec2 — hence has_module_resource.
-        st = rce.State(
-            {
-                "resources": [
-                    {
-                        "mode": "managed",
-                        "module": "module.trust_ec2[0]",
-                        "type": "aws_instance",
-                        "name": "trust_host",
-                        "instances": [{"attributes": {}}],
-                    }
-                ]
-            }
-        )
-        assert st.attrs("aws_instance", "trust_host") == {}
-        assert st.has_module_resource("module.trust_ec2", "aws_instance", "trust_host")
-
-    def test_the_root_bastion_does_not_imply_a_cloud_trust(self, state):
-        # The regression. DEPLOY_TRUST_EC2 was derived from the root
-        # aws_instance.ec2_instance, which exists everywhere, so it read "true"
-        # on stag — an environment with no cloud trust at all. The recovered
-        # value then planned a brand-new t3.xlarge trust host.
-        assert state.attrs("aws_instance", "ec2_instance") != {}
-        assert not state.has_module_resource("module.trust_ec2", "aws_instance", "trust_host")
-
-    def test_module_lookup_ignores_data_sources(self):
-        st = rce.State(
-            {
-                "resources": [
-                    {
-                        "mode": "data",
-                        "module": "module.trust_ec2[0]",
-                        "type": "aws_instance",
-                        "name": "trust_host",
-                        "instances": [{"attributes": {}}],
-                    }
-                ]
-            }
-        )
-        assert not st.has_module_resource("module.trust_ec2", "aws_instance", "trust_host")
-
-    def test_module_lookup_rejects_a_resource_in_a_different_module(self):
-        # The prefix must match on a module boundary. `module.trust_ec2_role` is
-        # present even in a hub-only deployment, so a bare startswith() answers
-        # "yes, a cloud trust exists" for an environment that has none — the same
-        # false "true" the root-bastion lookup used to give.
-        #
-        # The type and name here deliberately MATCH what is being asked for, so
-        # the module check is the only thing that can reject it. A fixture that
-        # differed in type or name would pass whatever the prefix logic did.
-        st = rce.State(
-            {
-                "resources": [
-                    {
-                        "mode": "managed",
-                        "module": "module.trust_ec2_role",
-                        "type": "aws_instance",
-                        "name": "trust_host",
-                        "instances": [{"attributes": {"instance_type": "t3.xlarge"}}],
-                    }
-                ]
-            }
-        )
-        assert not st.has_module_resource("module.trust_ec2", "aws_instance", "trust_host")
-
-    @pytest.mark.parametrize("module", ["module.trust_ec2", "module.trust_ec2[0]", "module.trust_ec2.module.inner"])
-    def test_module_lookup_accepts_every_real_address_shape(self, module):
-        # count/for_each add `[0]`, nesting adds `.module.<name>`; all three are
-        # the module being asked about.
-        st = rce.State(
-            {
-                "resources": [
-                    {
-                        "mode": "managed",
-                        "module": module,
-                        "type": "aws_instance",
-                        "name": "trust_host",
-                        "instances": [{"attributes": {}}],
-                    }
-                ]
-            }
-        )
-        assert st.has_module_resource("module.trust_ec2", "aws_instance", "trust_host")
-
 
 class TestSplitImage:
     def test_splits_registry_prefix_and_tag(self):
@@ -256,9 +169,9 @@ class TestSplitImage:
 class TestLiveImageTag:
     """The env-file value, which is NOT the task definition's reference.
 
-    `DOCKER_TAG` in an operator env file is reused by the Makefile for the three
-    TRUST_IMAGES (trust-api, imaging-api, data-access-api) and for `-e
-    omop_db_tag` (omop-db + orthanc). A digest belongs to one repository, so
+    `DOCKER_TAG` in an operator env file is copied into every trust kit by
+    sync-trust-kit, where it tags the trust images (trust-api, imaging-api,
+    data-access-api, omop-db, orthanc). A digest belongs to one repository, so
     writing flip-api's `v1.2.3@sha256:…` there makes every one of those images
     unpullable. CI re-resolves the digest pin from live ECS on every run, so the
     tag alone is the right record here.
@@ -375,7 +288,7 @@ LZA_STATE = [
 ]
 
 
-def _minimal_state(*, with_trust_host: bool, demo_bucket: str | None, lza: bool = False) -> dict:
+def _minimal_state(*, demo_bucket: str | None, lza: bool = False) -> dict:
     """Just enough state for build() to run end to end; the demo bucket, when given, is the
     managed ``aws_s3_bucket.this`` inside ``module.flip_demo_assets_bucket`` (FLIP#1199)."""
     resources: list[dict] = [
@@ -408,7 +321,7 @@ def _minimal_state(*, with_trust_host: bool, demo_bucket: str | None, lza: bool 
             "name": "this",
             "instances": [{"attributes": {"tags": {"Name": "flip-vpc"}}}],
         },
-        # The SSM bastion, present whether or not a cloud trust is deployed.
+        # The SSM bastion.
         {
             "mode": "managed",
             "type": "aws_instance",
@@ -416,28 +329,6 @@ def _minimal_state(*, with_trust_host: bool, demo_bucket: str | None, lza: bool 
             "instances": [{"attributes": {}}],
         },
     ]
-    if with_trust_host:
-        resources.append(
-            {
-                "mode": "managed",
-                "module": "module.trust_ec2[0]",
-                "type": "aws_instance",
-                "name": "trust_host",
-                "instances": [{"attributes": {}}],
-            }
-        )
-    else:
-        # Present in a hub-only deployment, and the near-miss the module-boundary
-        # check has to reject.
-        resources.append(
-            {
-                "mode": "managed",
-                "module": "module.trust_ec2_role",
-                "type": "aws_iam_role",
-                "name": "this",
-                "instances": [{"attributes": {}}],
-            }
-        )
     if demo_bucket is not None:
         resources.append(
             {
@@ -505,36 +396,23 @@ def stub_aws(monkeypatch):
 
 
 class TestBuild:
-    def test_hub_only_deployment_recovers_deploy_trust_ec2_false(self, stub_aws):
-        stub_aws.update(_minimal_state(with_trust_host=False, demo_bucket=None))
-        values, _ = rce.build("stag", "stag", "eu-west-2", "flip-terraform-state-stag", "flip-cluster")
-        # The regression, at the level the tool actually runs: staging has a
-        # bastion and a trust_ec2_role but no trust host, and must not be told to
-        # create a t3.xlarge one.
-        assert values["DEPLOY_TRUST_EC2"] == "false"
-
-    def test_a_deployed_trust_host_recovers_true(self, stub_aws):
-        stub_aws.update(_minimal_state(with_trust_host=True, demo_bucket=None))
-        values, _ = rce.build("prod", "prod", "eu-west-2", "flip-terraform-state-prod", "flip-cluster")
-        assert values["DEPLOY_TRUST_EC2"] == "true"
-
     def test_live_image_tag_beats_the_tag_recorded_in_state(self, stub_aws):
         # State records `:prod` (the bootstrap default); the service is running a
         # sha pin registered outside Terraform by deploy-centralhub. Reading state
         # here would hand CI the mutable tag and undo the FLIP#751 pin.
-        stub_aws.update(_minimal_state(with_trust_host=False, demo_bucket=None))
+        stub_aws.update(_minimal_state(demo_bucket=None))
         values, sources = rce.build("prod", "prod", "eu-west-2", "flip-terraform-state-prod", "flip-cluster")
         assert values["DOCKER_TAG"] == "sha-abc1234"
         assert sources["DOCKER_TAG"] == "live ECS service"
 
     def test_demo_bucket_comes_from_the_module(self, stub_aws):
         # FLIP#1199: the bucket is Terraform-managed, inside module.flip_demo_assets_bucket.
-        stub_aws.update(_minimal_state(with_trust_host=False, demo_bucket="flip-lza-demo-assets"))
+        stub_aws.update(_minimal_state(demo_bucket="flip-lza-demo-assets"))
         values, _ = rce.build("prod", "lza-prod", "eu-west-2", "flip-terraform-state-lza", "flip-cluster")
         assert values["DEMO_ASSETS_BUCKET_NAME"] == "flip-lza-demo-assets"
 
     def test_the_keys_every_estate_requires_come_from_state(self, stub_aws):
-        stub_aws.update(_minimal_state(with_trust_host=False, demo_bucket=None, lza=True))
+        stub_aws.update(_minimal_state(demo_bucket=None, lza=True))
         values, _ = rce.build("stag", "lza-stag", "eu-west-2", "flip-terraform-state-lza-stag", "flip-cluster")
         assert {key: values[key] for key in LZA_KEYS} == {
             "ACCESS_LOGS_BUCKET_NAME": "flip-lza-access-logs",
@@ -547,7 +425,7 @@ class TestBuild:
         }
 
     def test_a_certificate_in_state_means_dns_is_managed(self, stub_aws):
-        stub_aws.update(_minimal_state(with_trust_host=False, demo_bucket=None, lza=True))
+        stub_aws.update(_minimal_state(demo_bucket=None, lza=True))
         stub_aws["resources"].append(
             {
                 "mode": "managed",
@@ -561,7 +439,7 @@ class TestBuild:
 
     def test_keys_state_cannot_answer_are_left_empty_to_be_flagged(self, stub_aws):
         """Empty is what main() reports as "Not recovered — set these by hand"."""
-        stub_aws.update(_minimal_state(with_trust_host=False, demo_bucket=None))
+        stub_aws.update(_minimal_state(demo_bucket=None))
         values, _ = rce.build("prod", "lza-prod", "eu-west-2", "flip-terraform-state-lza", "flip-cluster")
         for key in LZA_KEYS:
             if key != "MANAGE_DNS":

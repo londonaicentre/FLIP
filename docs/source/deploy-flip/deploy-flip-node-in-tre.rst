@@ -135,11 +135,12 @@ back. The FL server never initiates inbound connections to client sites:
 - In NVIDIA FLARE, the FL client sends ``GET_TASK`` requests to the FL server and receives
   tasks in the response, then returns results via ``SUBMIT_RESULT``.
 
-- In Flower, each SuperNode acts as a gRPC client connecting outbound to the SuperLink.
-  SuperNodes initiate all requests and do not accept incoming connections.
+- In Flower (flwr 1.40 and later), each SuperNode is an HTTPS client (HTTP/1.1 over TLS)
+  that calls the Fleet API outbound, through the Central Hub's fleet proxy. SuperNodes
+  initiate all requests and do not accept incoming connections.
 
-The TRE need only whitelist outbound gRPC (or HTTP, if using an HTTP/REST transport
-fallback) to the FL server endpoint.
+The TRE need only allow outbound TLS to the FL server endpoint: gRPC for NVIDIA FLARE,
+HTTPS (HTTP/1.1) for Flower.
 
 **Central Hub FLIP API <-> Trust API**
 
@@ -247,9 +248,9 @@ Networking
 ----------
 
 The outbound connections in :ref:`deploy-trust-node-network`, and no inbound ones. If the
-TRE's network inspection appliances block HTTP/2 (required for gRPC), most FL frameworks
-offer HTTP/REST transport fallbacks that work over standard HTTP/1.1 (e.g. NVIDIA FLARE's
-HTTP driver, Flower's REST transport).
+TRE's network inspection appliances block HTTP/2 (required for gRPC), NVIDIA FLARE offers
+an HTTP driver that works over standard HTTP/1.1; Flower already uses plain HTTPS
+(HTTP/1.1).
 
 Data
 ----

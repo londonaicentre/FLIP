@@ -17,58 +17,21 @@
 The seed play starts a throwaway omop-db on ``/opt/flip/omop/db_data``. If the trust stack is
 still up, its omop-db has that directory open — and Postgres does not refuse the second
 postmaster, because the first one's PID is invisible from the new container's PID namespace
-and is taken as stale, so crash recovery runs over a live database. ``deploy-trust`` used to
-reach the play that way on every re-deploy (``seed-trust-data`` was a prerequisite, the stack
-came down only in the recipe).
+and is taken as stale, so crash recovery runs over a live database.
 
-Two things now hold it, and both are asserted over the source since nothing in CI runs the
-Makefile or the play against a host:
-
-* ``deploy-trust`` seeds in its recipe, after ``down-trust-ec2`` and before ``up-trust-ec2``,
-  and no longer lists ``seed-trust-data`` as a prerequisite.
-* The seed role refuses, before its first ``docker run``, while any container on the host has
-  the data directory open.
+Two things hold it. The EC2 root's ``deploy`` seeds with the stack stopped (pinned in
+trust/deploy/terraform/aws/ec2/tests/test_makefile.py), and the seed role refuses, before its first
+``docker run``, while any container on the host has the data directory open. The second is asserted
+here over the source, since nothing in CI runs the play against a host.
 """
 
 import re
 from pathlib import Path
 
-AWS_PROVIDER_DIR = Path(__file__).resolve().parent.parent
-MAKEFILE = AWS_PROVIDER_DIR / "Makefile"
-SEED_TASKS = AWS_PROVIDER_DIR.parents[2] / "trust/deploy/ansible/roles/flip_trust_seed/tasks/main.yml"
+SEED_TASKS = Path(__file__).resolve().parent.parent / "roles/flip_trust_seed/tasks/main.yml"
 
 HOLDERS_TASK = "- name: check nothing on this host has the OMOP data directory open\n"
 REFUSAL_TASK = "- name: refuse to seed while the trust's own cluster has the data directory open\n"
-
-
-def _deploy_trust_rule() -> tuple[str, list[str]]:
-    """Return ``deploy-trust``'s prerequisite line and its recipe lines (comments dropped)."""
-    text = MAKEFILE.read_text()
-    match = re.search(r"^deploy-trust:(?P<prereqs>[^\n]*)\n(?P<recipe>(?:\t[^\n]*\n)+)", text, re.MULTILINE)
-    assert match, "no deploy-trust rule in the AWS Makefile — this guard has drifted"
-    recipe = [line for line in match.group("recipe").splitlines() if not line.lstrip("\t").startswith("@#")]
-    return match.group("prereqs"), recipe
-
-
-def _first_index(lines: list[str], needle: str) -> int:
-    for index, line in enumerate(lines):
-        if needle in line:
-            return index
-    raise AssertionError(f"{needle!r} is not in deploy-trust's recipe")
-
-
-def test_seed_is_not_a_prerequisite_of_deploy_trust():
-    """As a prerequisite it ran before the recipe, i.e. before the stack was stopped."""
-    prereqs, _ = _deploy_trust_rule()
-    assert "seed-trust-data" not in prereqs.split("##")[0].split()
-
-
-def test_deploy_trust_seeds_between_stopping_and_starting_the_stack():
-    _, recipe = _deploy_trust_rule()
-    down = _first_index(recipe, "down-trust-ec2")
-    seed = _first_index(recipe, "$(MAKE) seed-trust-data")
-    up = _first_index(recipe, "up-trust-ec2")
-    assert down < seed < up, f"deploy-trust order is down={down}, seed={seed}, up={up}"
 
 
 def _seed_play() -> str:

@@ -875,12 +875,18 @@ kubectl rollout restart deployment/<release>-flip-trust-xnat-web
 during a rotation still leaves those two on the old password — restart
 `xnat-db` and `xnat-web` yourself, in that order, around it.
 
-The hook connects as `postgres` over the local socket rather than as `xnat`
-itself — PG12 does not redact `ALTER ROLE ... PASSWORD` on a server-side
-error, so authenticating as `xnat` would let a holder of the *current*
-credential force an error (no `CREATEROLE` needed) that logs the *new*
-password on the next rotation; connecting as the superuser instead, with
-statement logging suppressed for the `ALTER`, closes that. It reports its
+The hook connects over the local socket as `postgres` when that role exists,
+and otherwise as the app role — a volume first initialised with
+`POSTGRES_USER=xnat` has its superuser under that name and no `postgres` role.
+If neither connects, the hook fails. PG12 does not redact
+`ALTER ROLE ... PASSWORD` on a server-side error, so before the `ALTER` the
+hook pins `log_statement=none`, `log_min_error_statement=panic`,
+`log_min_duration_statement=-1` and `log_transaction_sample_rate=0` for its
+session, which closes every route by which the new password could reach the
+log (FLIP#1658). All four are superuser-only, so if the hook ever falls back
+to an app role that is not a superuser, it fails at the first `SET` and the
+`ALTER` never runs. On a current layout it connects as `postgres` and the
+rotation succeeds. It reports its
 outcome through the Postgres server log — the container's own log stream —
 because `postStart` stdout is not surfaced anywhere on success:
 
