@@ -28,7 +28,10 @@ services:
     image: ghcr.io/londonaicentre/omop-db:${OMOP_DB_TAG:-${DOCKER_TAG}}
     restart: always
     ports:
-      - "${OMOP_DB_PORT}:5432"
+      # Every published port binds to loopback unless the kit sets TRUST_BIND_ADDRESS: these
+      # services carry trust-local passwords and (Loki) no authentication at all, and a trust
+      # host promises no inbound. Operators reach them over an SSH tunnel.
+      - "${TRUST_BIND_ADDRESS:-127.0.0.1}:${OMOP_DB_PORT}:5432"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -57,7 +60,7 @@ services:
     image: ghcr.io/londonaicentre/orthanc:${ORTHANC_TAG:-${DOCKER_TAG}}
     restart: always
     ports:
-      - "${PACS_UI_PORT}:8042"
+      - "${TRUST_BIND_ADDRESS:-127.0.0.1}:${PACS_UI_PORT}:8042"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -88,7 +91,7 @@ services:
     # override once the next image build is pushed.
     command: ["uv", "run", "python", "-m", "uvicorn", "imaging_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
-      - "${IMAGING_API_PORT}:8000"
+      - "${TRUST_BIND_ADDRESS:-127.0.0.1}:${IMAGING_API_PORT}:8000"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -132,7 +135,7 @@ services:
     # unless-stopped rather than always so an explicit `docker stop` is still honoured.
     restart: unless-stopped
     ports:
-      - "${DATA_ACCESS_API_PORT}:8000"
+      - "${TRUST_BIND_ADDRESS:-127.0.0.1}:${DATA_ACCESS_API_PORT}:8000"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -185,7 +188,7 @@ services:
     # Port exposed on host for SSM port forwarding (swagger docs debugging).
     # Security group blocks all inbound — only reachable via SSM tunnel.
     ports:
-      - "${TRUST_API_PORT}:8000"
+      - "${TRUST_BIND_ADDRESS:-127.0.0.1}:${TRUST_API_PORT}:8000"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -217,7 +220,7 @@ services:
     restart: always
     command: -config.file=/etc/loki/loki-config.yml
     ports:
-      - "${LOKI_PORT}:3100"
+      - "${TRUST_BIND_ADDRESS:-127.0.0.1}:${LOKI_PORT}:3100"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -251,7 +254,7 @@ services:
     image: ghcr.io/londonaicentre/mirror/grafana/grafana:11.5.0@sha256:0a2874cf39c6487093c682215f7c7903ed8646d78ae5f911af945d2dfcc0a447
     restart: always
     ports:
-      - "${GRAFANA_PORT}:3000"
+      - "${TRUST_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_PORT}:3000"
     security_opt:
       - no-new-privileges:true
     cap_drop:

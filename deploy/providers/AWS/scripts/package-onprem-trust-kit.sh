@@ -131,9 +131,8 @@ fi
 
 # AICENTRE_BUCKET_NAME is the hub-side bucket that holds the provisioned FL
 # participant kits (`fl-{flare,flower}-participant-kits/<date>/net-1/...`) —
-# Terraform creates it (`aws_s3_bucket.aicentre_bucket`), Ansible's trust EC2
-# provisioner reads it (`deploy/providers/AWS/site.yml`), and the EC2
-# `deploy-trust` target pulls from it (`deploy/providers/AWS/Makefile`). It's
+# Terraform creates it (`aws_s3_bucket.aicentre_bucket`), and an AWS EC2 node's
+# kit staging reads it (`trust/deploy/terraform/aws/ec2`, KIT_BUCKET=). It's
 # a hub-side value, not per-trust, so it lives in $(MAIN_ENV_FILE) — the AWS
 # Makefile `include`s + `export`s the env file, so it's in os.environ for
 # any recipe running from deploy/providers/AWS with HUB=prod (or stag).

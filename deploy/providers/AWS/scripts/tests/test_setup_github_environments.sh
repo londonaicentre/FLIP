@@ -29,7 +29,7 @@
 # reclassifies real required keys as optional, and the operator is told a key the
 # workflow will dereference is "fine to omit". So the fixture omits one key from
 # the middle of REQUIRED_KEYS (AWS_REGION) and one from its end
-# (DEPLOY_TRUST_EC2), and asserts both.
+# (FL_KIT_SLOT_NAMES), and asserts both.
 #
 # Usage:
 #     bash deploy/providers/AWS/scripts/tests/test_setup_github_environments.sh
@@ -227,12 +227,12 @@ echo "==== setup-github-environments.sh ===="
 # 1. THE REGRESSION. Both ends of REQUIRED_KEYS must be classified as required: a
 #    membership glob that only matches the final element reports every other
 #    required key as an optional absence, which is the opposite of this script's
-#    job. AWS_REGION is first in the list, DEPLOY_TRUST_EC2 last.
+#    job. AWS_REGION is first in the list, FL_KIT_SLOT_NAMES last.
 run_case "a partial env file is read in dry-run" -- \
     --hub stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
 expect_rc 0 "dry run succeeds"
 expect_mentions "- AWS_REGION" "a required key in the middle of the list is reported"
-expect_mentions "- DEPLOY_TRUST_EC2" "and so is the one at the end"
+expect_mentions "- FL_KIT_SLOT_NAMES" "and so is the one at the end"
 expect_mentions "REQUIRED but absent" "under the required heading"
 expect_mentions "reconcile_ci_env.py --env stag" "with the recovery command for this hub"
 

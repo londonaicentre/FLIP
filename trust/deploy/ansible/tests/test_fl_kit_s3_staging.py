@@ -39,30 +39,17 @@ The properties, all of them regressions that would otherwise leave CI green:
   prefix also holds every other slot's private key and the SuperLink's server key.
 * The FLARE stage proves the staged kit belongs to *this* slot, not merely that some
   kit arrived.
-* ``trust_ec2_s3`` reads objects under named prefixes rather than the whole bucket, and
-  its KMS grant is decrypt-only and confined to decrypts S3 performs for this host.
 
 Shell comment lines are stripped before matching, so no assertion here can be satisfied
 by a comment that merely mentions the thing.
 """
 
 import re
-import subprocess
 from pathlib import Path
 
-from tf_source import hcl_block
-
-AWS_PROVIDER_DIR = Path(__file__).resolve().parent.parent
-# Asked of git rather than counted in parents[N], so a move of either side cannot leave this
-# guard reading a file that no longer exists.
-REPO_ROOT = Path(
-    subprocess.check_output(["git", "rev-parse", "--show-toplevel"], cwd=AWS_PROVIDER_DIR, text=True).strip()
-)
-SITE_YML = AWS_PROVIDER_DIR / "site.yml"
-# The two S3 stages live in the shared flip_fl_kit role (FLIP#1213); site.yml composes it
+# The two S3 stages live in the shared flip_fl_kit role (FLIP#1213); aws-ec2-host.yml composes it
 # with fl_kit_source=s3. The role's task list sits at the top level of its file.
-KIT_STAGE_TASKS = REPO_ROOT / "trust" / "deploy" / "ansible" / "roles" / "flip_fl_kit" / "tasks" / "s3.yml"  # noqa: E501
-MAIN_TF = AWS_PROVIDER_DIR / "main.tf"
+KIT_STAGE_TASKS = Path(__file__).resolve().parent.parent / "roles" / "flip_fl_kit" / "tasks" / "s3.yml"
 
 NVFLARE_SYNC_TASK = "sync FLARE participant kit from S3"
 FLOWER_SYNC_TASK = "sync Flower net-1 certificates and keys from S3"
@@ -98,29 +85,6 @@ def _task_shell(task_name: str) -> str:
     script = "\n".join(line for line in lines if not line.lstrip().startswith("#"))
     assert "aws s3 sync" in script, f"extracted no sync from {task_name!r} — the extractor is broken, not the play"
     return script
-
-
-def _trust_ec2_policy_statements() -> list[str]:
-    """Return the statements of the ``trust_ec2_s3`` inline role policy, comments stripped.
-
-    Split on the statement braces rather than brace-matched: the resource lists interpolate
-    ``${aws_s3_bucket...}``, whose braces a naive matcher counts as nesting.
-
-    Returns:
-        list[str]: One string per statement in the policy document.
-    """
-    policy = hcl_block(MAIN_TF.read_text(), 'resource "aws_iam_role_policy" "trust_ec2_s3"')
-    policy = "\n".join(line for line in policy.splitlines() if not line.lstrip().startswith("#"))
-    statements = re.findall(r"^      \{$(.*?)^      \},?$", policy, re.MULTILINE | re.DOTALL)
-    assert statements, "found no statements in the trust_ec2_s3 policy — this guard has drifted from main.tf"
-    return statements
-
-
-def _statement_granting(action: str) -> str:
-    """Return the single policy statement whose ``Action`` list contains ``action``."""
-    matches = [s for s in _trust_ec2_policy_statements() if f'"{action}"' in s]
-    assert len(matches) == 1, f"expected exactly one statement granting {action}, found {len(matches)}"
-    return matches[0]
 
 
 def _both_shells() -> dict[str, str]:
@@ -196,26 +160,3 @@ def test_flower_sync_fetches_only_this_hosts_credential():
     )
     assert '--exclude "*"' in script, "the --include patterns only narrow if everything is excluded first"
     assert script.index('--exclude "*"') < script.index("--include"), "--exclude must precede the --include list"
-
-
-def test_trust_ec2_reads_named_prefixes_not_the_whole_bucket():
-    """Kit and vocab prefixes only: the bucket also holds every other trust's material."""
-    get_object = _statement_granting("s3:GetObject")
-    assert "aicentre_bucket.arn}/fl-flare-participant-kits/*" in get_object
-    assert "aicentre_bucket.arn}/fl-flower-participant-kits/*" in get_object
-    assert not re.search(r"\"\$\{aws_s3_bucket\.aicentre_bucket\.arn\}/\*?\"", get_object), (
-        "GetObject is granted on the whole bucket, not on named prefixes"
-    )
-    assert not re.search(r"^\s*aws_s3_bucket\.aicentre_bucket\.arn,?\s*$", get_object, re.MULTILINE), (
-        "GetObject names the bare bucket ARN as a resource"
-    )
-
-
-def test_trust_ec2_kms_grant_is_decrypt_only_and_scoped_to_s3():
-    """The CMK also fronts Secrets Manager, and this host runs researcher-submitted code."""
-    kms_statement = _statement_granting("kms:Decrypt")
-    assert "kms:ViaService" in kms_statement, (
-        "the KMS grant is not constrained with kms:ViaService — it would authorize decrypts beyond the ones "
-        "S3 performs on this host's behalf"
-    )
-    assert "GenerateDataKey" not in kms_statement, "the trust host must not be able to encrypt with the CMK"

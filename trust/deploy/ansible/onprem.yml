@@ -17,8 +17,8 @@
 # Provisions an on-premises Ubuntu host to run the FLIP Trust-API stack.
 # Trusts poll the Central Hub for tasks — all communication is outbound.
 #
-# Composed from the roles in ./roles, which deploy/providers/AWS/site.yml (the
-# EC2 trust) shares; what differs per host type is stated in `vars:` below.
+# Composed from the roles in ./roles, which aws-ec2-host.yml (an EC2 node) and
+# azure.yml share; what differs per host type is stated in `vars:` below.
 #
 # Usage:
 #   ansible-playbook -i <trust-host-ip>, \

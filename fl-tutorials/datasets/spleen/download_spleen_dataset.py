@@ -20,7 +20,7 @@ from natsort import natsorted
 MAX_CASES = 41
 
 
-def download_spleen_dataset(filepath, output_dir):
+def download_spleen_dataset(filepath: str, output_dir: str) -> None:
     """
     Downloads the spleen dataset from the specified URL and extracts it to the given output directory.
 
@@ -32,7 +32,7 @@ def download_spleen_dataset(filepath, output_dir):
     download_and_extract(url=url, filepath=filepath, output_dir=output_dir)
 
 
-def reorganise_spleen_dataset(output_dir, num_cases):
+def reorganise_spleen_dataset(output_dir: str, num_cases: int) -> None:
     """
     Reorganizes the downloaded spleen dataset into a structure where each subject has its own folder containing both the
     image and label files.
