@@ -46,6 +46,8 @@ data:
   # release pins for it, so the hub's Connection Status names the FL build (FLIP#1204).
   # Must stay in step with the tag flip-trust.flClientImage renders.
   FL_CLIENT_IMAGE_TAG: {{ include "flip-trust.imageTag" (dict "pin" .Values.flClient.image.pin "global" .Values.global.image.tag "own" .Values.flClient.image.tag) | quote }}
+  # Reported beside the tag: whether each FL job runs in a pod of its own (FLIP#1739).
+  FL_CLIENT_JOB_MODE: {{ if and (eq .Values.flBackend "nvflare") .Values.flClient.nvflare.jobPods.enabled }}"pods"{{ else }}"process"{{ end }}
 ---
 apiVersion: apps/v1
 kind: Deployment

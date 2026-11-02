@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     # global.image.tag, else flClient.image.tag). The fl-client has no health endpoint, so this is how its
     # build reaches the hub's Connection Status (FLIP#1204). Empty = not reported.
     FL_CLIENT_IMAGE_TAG: str = ""
+    # How this trust runs an FL job, reported beside the fl-client's tag: "process" inside the fl-client's
+    # container (compose, and the chart by default), or "pods", one pod per job (the chart with NVFLARE job
+    # pods). The hub needs it before it lets two jobs share a net (FLIP#1739).
+    FL_CLIENT_JOB_MODE: Literal["process", "pods"] = "process"
 
 
 # Eager load once (for app use)

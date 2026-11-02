@@ -136,10 +136,10 @@ def test_get_trusts_serialises_services_health():
 
 def test_services_contract_is_published_in_the_openapi_schema():
     """`services` is typed rather than `dict[str, Any]` so a generated client sees
-    the {status, version, response_ms} contract instead of arbitrary JSON."""
+    the {status, version, response_ms, job_mode} contract instead of arbitrary JSON."""
     entry = app.openapi()["components"]["schemas"]["ServiceHealthEntry"]["properties"]
 
-    assert set(entry) == {"status", "version", "response_ms"}
+    assert set(entry) == {"status", "version", "response_ms", "job_mode"}
     services = app.openapi()["components"]["schemas"]["ITrustStatus"]["properties"]["services"]
     assert "ServiceHealthEntry" in json.dumps(services)
 
