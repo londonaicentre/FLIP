@@ -56,10 +56,6 @@ variable "lza_web_edge_distribution_arn" {
   default     = ""
 }
 
-variable "vpc_cidr" {
-  type = string
-}
-
 # POSTGRES_USER / POSTGRES_DB are configuration, not credentials, and are treated
 # as such consistently (FLIP#962): NOT `sensitive` here, and stored as GitHub
 # environment *variables* rather than environment secrets.
@@ -120,18 +116,8 @@ variable "flip_keypair" {
   type = string
 }
 
-variable "ec2_public_key_path" {
-  type = string
-}
-
 variable "AES_KEY_BASE64" {
   type = string
-}
-
-variable "deploy_trust_ec2" {
-  description = "Whether to provision the cloud Trust EC2 host. Set false (make full-deploy-hub-only / DEPLOY_TRUST_EC2=false) for a hub-only deployment where every trust runs on-prem — e.g. when the workloads need a GPU that the t3 trust instance doesn't have. On-prem trusts join via register-trusts as usual."
-  type        = bool
-  default     = true
 }
 
 variable "INTERNAL_SERVICE_KEY_HASH" {

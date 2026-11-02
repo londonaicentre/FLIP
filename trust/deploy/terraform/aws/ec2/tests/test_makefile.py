@@ -162,6 +162,17 @@ def test_deploy_seeds_between_stopping_and_starting_the_stack(kit):
     assert all("DOCKER_CONTEXT=flip-stag-test" in lines[i] for i in (down, up))
 
 
+def test_upgrade_keeps_the_data_and_the_fl_client_on_cpu(kit):
+    """The release verb (FLIP#1204): no re-seed or stack restart, and NUM_AVAILABLE_GPUS=0 beats a
+    template kit's 1, or the GPU overlay makes the recreated fl-client fail on this GPU-less node."""
+    out = make("upgrade", kit).stdout.replace("\\\n", " ")
+    call = next(line for line in out.splitlines() if "upgrade-trust " in line)
+    assert "NUM_AVAILABLE_GPUS=0" in call, call
+    assert not re.search(r"\bseed\b", out), "upgrade must not run seed"
+    for forbidden in ("down-trust-ec2", "up-trust-ec2"):
+        assert forbidden not in out, f"upgrade must not run {forbidden}"
+
+
 def test_no_target_reads_a_hub_env_file():
     text = (ROOT / "Makefile").read_text()
     assert not re.search(r"^-?include .*MAIN_ENV_FILE", text, re.M)

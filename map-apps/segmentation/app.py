@@ -62,7 +62,7 @@ class AISpleenSegApp(Application):
       25 seconds with saving both DICOM Seg and surface mesh STL file, and 15 seconds with DICOM Seg only.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         """Creates an application instance."""
         self._logger = logging.getLogger("{}.{}".format(__name__, type(self).__name__))
         super().__init__(*args, **kwargs)

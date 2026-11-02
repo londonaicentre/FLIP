@@ -48,7 +48,7 @@ Terraform. The security controls are on :ref:`security`.
    :alt: Users and Trust nodes outside AWS; in the networking account an edge CloudFront with WAF, a web
          relay NLB, an internet-facing edge NLB, and a Network Firewall in front of a Transit Gateway; in
          the workload account the accelerator-provisioned VPC with app subnets holding one internal NLB,
-         three Fargate services, Cloud Map, an SSM bastion and an optional mock Trust, a private hosted
+         three Fargate services, Cloud Map and an SSM bastion, a private hosted
          zone, the UI bucket, the SSM handoff parameters and an ECR pull-through cache reaching GHCR.
 
    Request and FL paths on an LZA estate.
@@ -381,11 +381,11 @@ The Makefile refuses to run when ``AWS_PROFILE`` does not match ``HUB``, and nee
       mkdir -p /tmp/lzakey
       aws ssm get-parameter --name /flip/ci/host_aws_public_key --profile <profile> \
         --query Parameter.Value --output text > /tmp/lzakey/host-aws.pub
-      LOCK=false make plan TF_VAR_flip_keypair=/tmp/lzakey/host-aws TF_VAR_ec2_public_key_path=/tmp/lzakey/host-aws.pub
+      LOCK=false make plan TF_VAR_flip_keypair=/tmp/lzakey/host-aws
 
 .. note::
 
-   - ``full-deploy`` and ``full-deploy-hub-only``, along with ``make status`` and ``make destroy``, are not yet
+   - ``full-deploy``, along with ``make status`` and ``make destroy``, are not yet
      exercised on an LZA estate.
    - CI publishes the UI after each successful apply, so ``deploy-ui`` is only needed when that publish fails or
      the UI must be rolled back. It does not invalidate a CloudFront cache, because the edge distribution is in
