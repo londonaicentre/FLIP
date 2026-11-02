@@ -19,7 +19,5 @@ num-server-rounds = 5
 best-model-metric = "test_auroc"
 best-model-metric-minimize = false
 
-# The platform builds the job from FLIP's generic template, whose dp-clipping-norm is a 1.0
-# placeholder; this model's pre-clip update norm measured 2.9-3.6 (FLIP#1754), and 1.0 shrank every
-# update until the model stopped learning. Kept equal to pyproject.toml's simulator value.
+# Pre-clip update norm measured 2.9-3.6; the template's 1.0 placeholder stopped training (FLIP#1754).
 dp-clipping-norm = 3.0

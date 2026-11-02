@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import ast
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -153,3 +154,26 @@ def test_platform_owned_files_are_identical_in_the_tutorial(app_dir: Path):
             f"runs — the tutorial's copy is discarded at bundle time, so the tutorial deploys as "
             f"something other than what it shows. Resync by copying the fl-apps file over it."
         )
+
+
+def _run_config(pyproject: Path) -> dict:
+    return tomllib.loads(pyproject.read_text(encoding="utf-8"))["tool"]["flwr"]["app"]["config"]
+
+
+@pytest.mark.parametrize("app_dir", TUTORIAL_APPS, ids=_tutorial_id)
+def test_the_platform_run_config_keeps_every_tutorial_value(app_dir: Path):
+    """The platform runs the template's pyproject.toml with only app/config.toml on top (#1432).
+
+    So a value the tutorial sets in its own pyproject.toml alone runs on the simulator and is
+    silently dropped on a trust: dp-clipping-norm stayed at the template's 1.0 that way and spleen
+    stopped learning (#1754). The two values may differ (the simulator runs short), so only the
+    key's presence is checked. A config.toml key the template does not declare is rejected by flwr.
+    """
+    template = _run_config(TEMPLATES_DIR / _job_type(app_dir) / "pyproject.toml")
+    tutorial = _run_config(app_dir.parent / "pyproject.toml")
+    overrides = tomllib.loads((app_dir / "config.toml").read_text(encoding="utf-8"))
+
+    dropped = sorted(k for k, v in tutorial.items() if template.get(k) != v and k not in overrides)
+    assert not dropped, f"{_tutorial_id(app_dir)}: set {dropped} in app/config.toml, or the platform drops them"
+    undeclared = sorted(set(overrides) - set(template))
+    assert not undeclared, f"{_tutorial_id(app_dir)}: app/config.toml sets {undeclared}, which the template lacks"

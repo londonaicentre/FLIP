@@ -19,8 +19,8 @@ Gaussian noise **on the SuperNode**, so the fl-server only ever receives a priva
 Unlike the FLARE filter — percentile sparsification with no noise — this is a real
 (epsilon, delta) mechanism.
 
-The maths is Flower's own (``compute_clip_model_update`` and ``add_gaussian_noise_inplace`` from
-``flwr.supercore.differential_privacy``), and the noise scale is the formula used by
+The maths is Flower's own (``get_norm``, ``clip_inputs_inplace`` and ``add_gaussian_noise_inplace``
+from ``flwr.supercore.differential_privacy``), and the noise scale is the formula used by
 ``flwr.clientapp.mod.LocalDpMod``. Two things are added on top of instantiating ``LocalDpMod``
 directly:
 
@@ -64,20 +64,21 @@ from flwr.common import MessageType
 from flwr.common.logger import log
 from flwr.supercore.differential_privacy import (
     add_gaussian_noise_inplace,
-    compute_clip_model_update,
+    clip_inputs_inplace,
+    get_norm,
 )
 
 __all__ = ["LocalDpConfig", "flip_local_dp_mod"]
 
 # ``run_config`` keys, as declared under ``[tool.flwr.app.config]`` in the app's pyproject.toml.
-# Clipping that scales an update below this fraction is reported as a WARNING (#1754).
-OVER_CLIPPING_SCALE = 0.1
-
 CONFIG_ENABLED = "dp-enabled"
 CONFIG_CLIPPING_NORM = "dp-clipping-norm"
 CONFIG_SENSITIVITY = "dp-sensitivity"
 CONFIG_EPSILON = "dp-epsilon"
 CONFIG_DELTA = "dp-delta"
+
+# Clipping that scales an update below this fraction is reported as a WARNING (#1754).
+OVER_CLIPPING_SCALE = 0.1
 
 
 @dataclass(frozen=True)
@@ -260,15 +261,15 @@ def flip_local_dp_mod(msg: Message, context: Context, call_next: ClientAppCallab
 
     updates = [reply_arrays[i] for i in float_indices]
     baselines = [global_arrays[i] for i in float_indices]
-    pre_clip_norm = _update_norm(updates, baselines)
-    scale = 1.0 if pre_clip_norm <= config.clipping_norm else config.clipping_norm / pre_clip_norm
-
-    # compute_clip_model_update rebinds list entries rather than mutating the arrays, so the
-    # clipped values have to be read back off `updates` — which is also what the noise lands on.
-    compute_clip_model_update(updates, baselines, config.clipping_norm)
-    add_gaussian_noise_inplace(updates, config.noise_stddev)
-    for position, index in enumerate(float_indices):
-        reply_arrays[index] = updates[position]
+    # Flower's compute_clip_model_update, unrolled so the norm its clip decides on can be reported.
+    deltas = [np.subtract(u, b) for u, b in zip(updates, baselines, strict=True)]
+    pre_clip_norm = get_norm(deltas)
+    scale = min(1.0, config.clipping_norm / pre_clip_norm)
+    clip_inputs_inplace(deltas, config.clipping_norm)
+    clipped = [b + d for b, d in zip(baselines, deltas, strict=True)]
+    add_gaussian_noise_inplace(clipped, config.noise_stddev)
+    for index, array in zip(float_indices, clipped, strict=True):
+        reply_arrays[index] = array
 
     reply.content[reply_key] = ArrayRecord(
         dict(zip(reply_keys, (Array(np.asarray(v)) for v in reply_arrays), strict=True))
@@ -285,26 +286,14 @@ def flip_local_dp_mod(msg: Message, context: Context, call_next: ClientAppCallab
         len(reply_arrays) - len(float_indices),
     )
     if scale < OVER_CLIPPING_SCALE:
-        # Scaling every update down is a smaller learning rate in disguise: a run can look healthy
-        # and learn nothing (#1754). Say so where the operator and the model developer both look.
+        # A smaller learning rate in disguise: the run looks healthy and learns nothing (#1754).
         log(
             WARNING,
-            "FLIP local DP: clipping scaled this update by %.4f (pre-clip L2 norm %.4f, %s %.4f), so "
-            "training is throttled. Raise %s towards the typical update norm.",
+            "FLIP local DP: clipping scaled this update by %.4f; raise %s towards the pre-clip norm above.",
             scale,
-            pre_clip_norm,
-            CONFIG_CLIPPING_NORM,
-            config.clipping_norm,
             CONFIG_CLIPPING_NORM,
         )
     return reply
-
-
-def _update_norm(updates: list[np.ndarray], baselines: list[np.ndarray]) -> float:
-    """L2 norm of the whole update (trained minus global), across every array — what clipping bounds."""
-    return math.sqrt(
-        sum(float(np.sum(np.square(u.astype(np.float64) - b.astype(np.float64)))) for u, b in zip(updates, baselines))
-    )
 
 
 def _single_array_record(message: Message, description: str) -> tuple[str, ArrayRecord]:

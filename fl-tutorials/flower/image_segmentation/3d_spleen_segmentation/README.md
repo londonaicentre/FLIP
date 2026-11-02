@@ -181,7 +181,7 @@ percentile and adds no noise, while this is a real (epsilon, delta) mechanism bu
 | Key                | Default | Meaning |
 |--------------------|---------|---------|
 | `dp-enabled`       | `true`  | Master switch. `false` makes the mod a pass-through, so DP-on / DP-off runs use an identical app |
-| `dp-clipping-norm` | `20.0`   | L2 norm the update is clipped to before noise; sized to this model's measured update norm (21-22) |
+| `dp-clipping-norm` | `20.0`  | L2 norm the update is clipped to before noise; sized to this model's measured update norm (21-22) |
 | `dp-sensitivity`   | `1e-4`  | How much one training example can move the update |
 | `dp-epsilon`       | `10.0`  | Privacy budget — smaller means more privacy and more noise |
 | `dp-delta`         | `1e-5`  | Probability the guarantee fails outright |

@@ -77,8 +77,7 @@ batch-size = 2
 # Client-side differential privacy (flip.flower.privacy). On by default; set dp-enabled = false
 # to run the same app with the mechanism off. See the README's "Differential privacy" section.
 dp-enabled = true
-# Sized to this model's update: the pre-clip L2 norm measured 21-22 at the platform settings
-# (FLIP#1754). 1.0 shrank every update and the model stopped learning.
+# Pre-clip update norm measured 21-22; the template's 1.0 placeholder stopped training (FLIP#1754).
 dp-clipping-norm = 20.0
 dp-sensitivity = 1e-4
 dp-epsilon = 10.0

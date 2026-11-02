@@ -273,7 +273,7 @@ class Gates(unittest.TestCase):
         m = gates.tutorial_metrics(lines)
         assert m["total"] == 2
         assert m["passed"] == 1
-        assert m["tutorials"][0] == {"name": "xray_classification", "passed": True, "dp_over_clipped": 0, "seconds": 60}
+        assert m["tutorials"][0] == {"name": "xray_classification", "passed": True, "seconds": 60}
         assert m["tutorials"][1]["passed"] is False
         assert m["tutorials"][1]["seconds"] == 40
         flower = gates.tutorial_metrics(
@@ -281,25 +281,22 @@ class Gates(unittest.TestCase):
         )
         assert flower["tutorials"][0]["name"] == "xray_classification"
 
-    def test_tutorial_metrics_count_heavy_dp_clipping_and_keep_the_best_metric(self):
-        warn = (
-            "WARNING :   FLIP local DP: clipping scaled this update by 0.0200 "
-            "(pre-clip L2 norm 50.0000, dp-clipping-norm 1.0000)"
-        )
+    def test_tutorial_metrics_count_heavy_dp_clipping(self):
+        warn = "WARNING :   FLIP local DP: clipping scaled this update by 0.0200; raise dp-clipping-norm ..."
         lines = [
             (0.0, "🚀 Running Flower tutorial 3d_spleen_segmentation"),
             (1.0, warn),
-            (2.0, "INFO :      New best global model at round 1: test_dice=0.0143"),
-            (3.0, warn),
-            (4.0, "INFO :      New best global model at round 2: test_dice=0.0201"),
-            (5.0, "🚀 Running Flower tutorial ehr_risk_prediction"),
-            (6.0, "INFO :      New best global model at round 1: val_auroc=0.71"),
+            (2.0, warn),
+            (3.0, "🚀 Running Flower tutorial ehr_risk_prediction"),
         ]
         spleen, ehr = gates.tutorial_metrics(lines)["tutorials"]
         assert spleen["dp_over_clipped"] == 2
-        assert spleen["best"] == {"metric": "test_dice", "value": 0.0201, "round": 2}
-        assert ehr["dp_over_clipped"] == 0
-        assert ehr["best"] == {"metric": "val_auroc", "value": 0.71, "round": 1}
+        assert "dp_over_clipped" not in ehr
+
+    def test_the_clipping_marker_is_the_mods_own_warning(self):
+        # Reworded in flip-utils alone, the gate would silently stop catching over-clipping.
+        privacy = (ROOT / "flip-utils" / "flip" / "flower" / "privacy.py").read_text()
+        assert gates.DP_OVER_CLIPPED in privacy
 
     def test_flower_tutorial_verdict_fails_on_heavy_dp_clipping(self):
         clean = {"tutorials": [{"name": "ehr_risk_prediction", "dp_over_clipped": 0}]}
@@ -308,6 +305,8 @@ class Gates(unittest.TestCase):
         reason = gates.dp_clipping_verdict(clipped)
         assert "3d_spleen_segmentation" in reason
         assert "dp-clipping-norm" in reason
+        flower = gates.build_gates("v0.0.1", "rel0001", lambda: "")["tutorials-flower"]
+        assert flower.verdict is gates.dp_clipping_verdict
 
     def test_a_verdict_fails_a_gate_whose_steps_passed(self):
         tmp = Path(tempfile.mkdtemp())
@@ -323,10 +322,6 @@ class Gates(unittest.TestCase):
         assert result["status"] == "failed"
         assert result["exit_code"] == 1
         assert "❌ tutorial a learned nothing" in (tmp / "x.log").read_text()
-
-    def test_the_flower_tutorials_gate_carries_the_clipping_verdict(self):
-        gate = gates.build_gates("v0.0.1", "rel0001", lambda: "")["tutorials-flower"]
-        assert gate.verdict is gates.dp_clipping_verdict
 
     def test_smoke_metrics(self):
         lines = [

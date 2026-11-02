@@ -131,28 +131,26 @@ def stop_own_simulators() -> list[str]:
     return stopped
 
 
-DP_OVER_CLIPPED = re.compile(r"FLIP local DP: clipping scaled this update by")
-BEST_MODEL = re.compile(r"New best global model at round (\d+): (\w+)=([0-9.eE+-]+)")
+# The start of flip.flower.privacy's over-clipping WARNING (stdlib only here, so it cannot be imported).
+DP_OVER_CLIPPED = "FLIP local DP: clipping scaled this update by"
 
 
 def tutorial_metrics(lines: list[tuple[float, str]]) -> dict:
-    """Per tutorial from ``run-all-tutorials`` output (one ``🚀 Running`` line each): pass/fail, seconds, the best
-    global model's metric, and how many updates DP clipping shrank more than tenfold (#1754)."""
+    """Per tutorial from ``run-all-tutorials`` output (one ``🚀 Running`` line each): pass/fail, seconds, and how
+    many updates DP clipping shrank more than tenfold (#1754)."""
     runs: list[dict] = []
     for t, line in lines:
         start = re.search(r"🚀 Running (?:FLARE|Flower) tutorial (\S+)", line)
         if start:
             if runs:
                 runs[-1].setdefault("seconds", round(t - runs[-1].pop("_t")))
-            runs.append({"name": Path(start[1]).name, "passed": True, "dp_over_clipped": 0, "_t": t})
+            runs.append({"name": Path(start[1]).name, "passed": True, "_t": t})
         elif not runs:
             continue
         elif re.search(r"❌ tutorial \S+ failed", line):
             runs[-1]["passed"] = False
-        elif DP_OVER_CLIPPED.search(line):
-            runs[-1]["dp_over_clipped"] += 1
-        elif best := BEST_MODEL.search(line):
-            runs[-1]["best"] = {"metric": best[2], "value": float(best[3]), "round": int(best[1])}
+        elif DP_OVER_CLIPPED in line:
+            runs[-1]["dp_over_clipped"] = runs[-1].get("dp_over_clipped", 0) + 1
     if runs and "_t" in runs[-1]:
         runs[-1]["seconds"] = round(lines[-1][0] - runs[-1].pop("_t"))
     return {"tutorials": runs, "passed": sum(r["passed"] for r in runs), "total": len(runs)}
