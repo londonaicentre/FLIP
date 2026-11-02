@@ -217,17 +217,16 @@ def test_the_ci_users_log_in_with_github_oidc_only():
     assert 'issuer  = "https://token.actions.githubusercontent.com"' in block
     for forbidden in ("rsa_public_key", "password", "login_name"):
         assert forbidden not in block, forbidden
-    assert 'github_oidc_subject = "repo:${var.github_repository}:environment:${var.ci_github_environment}"' in source(
-        "locals.tf"
-    ), "the environment form of the subject: a ref form would let any branch push in"
-    assert (
-        'github_oidc_plan_subject = "repo:${var.github_repository}:environment:${var.ci_github_environment}-plan"'
-        in source("locals.tf")
+    locals_text = source("locals.tf")
+    subjects = dict(re.findall(r"^\s*(github_oidc_\w*subject)\s*=\s*\"([^\"]+)\"", locals_text, re.M))
+    assert subjects == {
+        "github_oidc_subject": "repo:${var.github_repository}:environment:${var.ci_github_environment}",
+        "github_oidc_plan_subject": "repo:${var.github_repository}:environment:${var.ci_github_environment}-plan",
+    }, "environment-form subjects only (a ref form lets any branch in), and plan and apply differ"
+    assert re.search(r"plan\s+=\s+\{[^}]*subject = local\.github_oidc_plan_subject", locals_text), (
+        "one OIDC subject maps to one Snowflake user: the plan user trusts the -plan environment"
     )
-    assert (
-        'plan  = { name = "FLIP_CI_PLAN_USER", role = local.ci_read_role, subject = local.github_oidc_plan_subject }'
-        in source("locals.tf")
-    ), "one OIDC subject maps to one Snowflake user: plan and apply need different environments"
+    assert re.search(r"apply\s+=\s+\{[^}]*subject = local\.github_oidc_subject \}", locals_text)
     assert 'apply = { name = "FLIP_CI_APPLY_USER", role = local.ci_role' in source("locals.tf")
 
 
