@@ -612,13 +612,16 @@ def test_31_unrotated_passwords_compare_against_the_kit_template() -> None:
     repo_root = SCRIPTS_DIR.parents[2]
     defaults = mod.read_kit_vars(repo_root / "trust" / ".env.example")
     rotated = {key: "rotated-secret" for key in mod.TRUST_LOCAL_PASSWORD_KEYS}  # pragma: allowlist secret
-    for kit_vars, root, status in (
-        ({"ORTHANC_PASSWORD": defaults["ORTHANC_PASSWORD"]}, repo_root, mod.Status.WARN),
-        (rotated, repo_root, mod.Status.PASS),
-        (rotated, Path(tempfile.mkdtemp()), mod.Status.WARN),  # no template: say so, never PASS
+    unrotated = {"ORTHANC_PASSWORD": defaults["ORTHANC_PASSWORD"]}
+    for kit_vars, root, kit_path, status in (
+        (unrotated, repo_root, "trust/.env.SITE.development", mod.Status.WARN),
+        (unrotated, repo_root, "trust/.env.SITE.stag", mod.Status.FAIL),  # a deployed kit: refuse
+        (unrotated, repo_root, "trust/.env.SITE.prod", mod.Status.FAIL),
+        (rotated, repo_root, "trust/.env.SITE.prod", mod.Status.PASS),
+        (rotated, Path(tempfile.mkdtemp()), "trust/.env.SITE.prod", mod.Status.WARN),  # no template: say so, never PASS
     ):
-        check = mod.check_unrotated_passwords(kit_vars, True, root, "SITE")
-        _assert(check.status == status, f"{status.name}: {check.detail}", str(check))
+        check = mod.check_unrotated_passwords(kit_vars, True, root, "SITE", kit_path)
+        _assert(check.status == status, f"{kit_path} -> {status.name}: {check.detail}", str(check))
 
 
 def test_32_hub_reachable_reports_the_release_or_the_failure() -> None:

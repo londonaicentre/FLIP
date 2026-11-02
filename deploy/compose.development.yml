@@ -36,7 +36,9 @@ services:
       context: ../flip-ui
       dockerfile: Dockerfile
     ports:
-      - "${UI_PORT}:443"
+      # Every hub port binds to loopback unless HUB_BIND_ADDRESS says otherwise: a shared dev
+      # box must not offer its Keycloak admin console, databases or FL API to the LAN.
+      - "${HUB_BIND_ADDRESS:-127.0.0.1}:${UI_PORT}:443"
     volumes:
       - ../flip-ui:/app
       - /app/node_modules
@@ -85,7 +87,7 @@ services:
     image: quay.io/keycloak/keycloak:26.7.4
     command: ["start-dev", "--import-realm"]
     ports:
-      - "${KEYCLOAK_PORT:-8180}:8080"
+      - "${HUB_BIND_ADDRESS:-127.0.0.1}:${KEYCLOAK_PORT:-8180}:8080"
     environment:
       # Admin console login (http://localhost:${KEYCLOAK_PORT}/admin): dev-only.
       - KC_BOOTSTRAP_ADMIN_USERNAME=${KEYCLOAK_ADMIN_USERNAME:-admin}
@@ -225,7 +227,7 @@ services:
       dockerfile: Dockerfile
       target: development
     ports:
-      - "${API_PORT}:8000"
+      - "${HUB_BIND_ADDRESS:-127.0.0.1}:${API_PORT}:8000"
       # Bound to loopback: an open debugpy port is arbitrary code execution for
       # anyone who can reach it, and docker's iptables rules sit ahead of most host
       # firewalls. This was the intent behind the network driver_opts added with the
@@ -390,7 +392,7 @@ services:
       # pointed flip-api at a port nothing was listening on, and leaving it pinned
       # failed outright with "Bind for 0.0.0.0:5432 failed: port is already allocated"
       # (FLIP#957).
-      - ${DB_PORT}:5432
+      - "${HUB_BIND_ADDRESS:-127.0.0.1}:${DB_PORT}:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -414,7 +416,7 @@ services:
     image: dpage/pgadmin4:9
     restart: always
     ports:
-      - "${PGADMIN_PORT}:80"
+      - "${HUB_BIND_ADDRESS:-127.0.0.1}:${PGADMIN_PORT}:80"
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
