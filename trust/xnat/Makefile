@@ -182,8 +182,9 @@ export XNAT_CS_CONTAINER_USER := $(if $(FLIP_UID),$(FLIP_UID):$(FLIP_GID))
 # if someone pinned a `user:` on xnat-db. It keeps starting as root under FLIP_UID too: its
 # pinned postgres:12.2-alpine predates nss_wrapper in the Alpine variants (docker-library/postgres#1018),
 # so an unknown uid fails initdb. Its dir is included on stag/prod only, so the whole tree carries
-# one owner at reset time; after Postgres's first boot it is uid 70's, which is why
-# xnat-prepare-dirs and upgrade-xnat leave it alone.
+# one owner when root or the operator wipes it; prepare-host-dirs leaves it root-created and
+# Postgres's first boot makes it uid 70's, which is why xnat-prepare-dirs never re-owns it and the
+# check-only reset branch, like upgrade-xnat, judges XNAT_WEB_DATA_DIRS alone.
 #
 # trust/deploy/ansible/aws-ec2-host.yml and onprem.yml
 # provision XNAT's bind mounts with this same id: the uid is the invariant all three
@@ -668,7 +669,7 @@ xnat-reset:
 						exit 1; \
 					fi; \
 				fi; \
-				$(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_DATA_DIRS)); \
+				$(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_WEB_DATA_DIRS),,$(words $(XNAT_WEB_DATA_DIRS))); \
 				;; \
 		esac; \
 	else \
