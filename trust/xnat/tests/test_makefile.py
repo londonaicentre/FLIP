@@ -38,7 +38,7 @@ class UpgradeXnat(unittest.TestCase):
     def test_upgrade_xnat_checks_ownership_where_the_directories_are(self):
         """With a remote (ssh://) docker context the XNAT dirs live on the trust host (FLIP#1204).
 
-        upgrade-trust-ec2 drives upgrade-xnat from the admin workstation, so a bare `stat -c` reads
+        An EC2 node's upgrade drives upgrade-xnat from the admin workstation, so a bare `stat -c` reads
         this machine's filesystem (and fails outright on BSD stat) instead of the trust host's —
         the same split xnat-reset already makes.
         """

@@ -142,7 +142,6 @@ jobs:
           FL_KIT_SLOT_NAMES: ${{ vars.FL_KIT_SLOT_NAMES }}
           FLARE_KIT_DATE: ${{ vars.FLARE_KIT_DATE }}
           FLOWER_KIT_DATE: ${{ vars.FLOWER_KIT_DATE }}
-          DEPLOY_TRUST_EC2: ${{ vars.DEPLOY_TRUST_EC2 }}
           JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
           # The LZA keys (FLIP#749), required — see compose-ci-env.sh. The last three have no
           # `export TF_VAR_…` line in the Makefile, so the script writes them into
@@ -164,9 +163,9 @@ jobs:
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}
         run: deploy/providers/AWS/scripts/compose-ci-env.sh
 
-      # aws_key_pair.public_key is ForceNew and neither keypair is behind a
+      # aws_key_pair.public_key is ForceNew and the keypair is not behind a
       # `count`, so a runner without this file plans a replacement of
-      # flip-keypair and host-aws — which ripples into aws_instance.ec2_instance.
+      # flip-keypair — which ripples into aws_instance.ec2_instance.
       # The bytes come from SSM rather than a checked-in file so they cannot drift
       # from what is actually in state; Terraform itself declares the parameter
       # (aws_ssm_parameter.ci_host_aws_public_key in parameter_store.tf).

@@ -31,7 +31,7 @@ Two rules apply throughout:
 .. warning::
 
    **Never use the first-install commands to move a live site.** ``make up-onprem-trust``, ``make -C trust
-   up-trust``, ``restart-trust`` and ``make -C deploy/providers/AWS deploy-trust`` re-seed the mock data and **wipe
+   up-trust``, ``restart-trust`` and an EC2 node's ``make -C trust/deploy/terraform/aws/ec2 deploy`` re-seed the mock data and **wipe
    the XNAT archive**. Use only the upgrade commands below.
 
 .. list-table:: Upgrade command per deployment shape
@@ -47,9 +47,9 @@ Two rules apply throughout:
    * - Kubernetes (Helm)
      - Site operator
      - ``make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env>``
-   * - Cloud (EC2) trust
-     - FLIP admin
-     - ``make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> HUB=<env>``
+   * - AWS EC2 node
+     - Whoever deployed it
+     - ``make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env>``
    * - Central Hub
      - FLIP admin
      - ``make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=vX.Y.Z`` (see :ref:`upgrade-hub`)
@@ -328,17 +328,17 @@ three.
    Older xnat-web images (v0.12.0, for example) carry a Docker-only script, and the Job refuses them by name. Hold
    XNAT back only to an xnat-web image from the release that ships your chart, or later.
 
-Cloud (EC2) trust
-=================
+AWS EC2 node
+============
 
-*Who: FLIP admin*, from the admin workstation at the release tag. It uses the same SSH Docker context as
-``make deploy-trust``.
+*Who: whoever deployed the node*, from their workstation at the release tag. It uses the same SSH Docker context as
+the root's ``make deploy``.
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> HUB=<env> [TAG=vX.Y.Z]
+   make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env> [TAG=vX.Y.Z]
 
-It takes the same options as the on-premises upgrade and never re-seeds data. ``deploy-trust`` remains the
+It takes the same options as the on-premises upgrade and never re-seeds data. ``make deploy`` remains the
 first-install command: it re-seeds OMOP and Orthanc and resets the XNAT archive.
 
 .. _upgrade-rolling-back:

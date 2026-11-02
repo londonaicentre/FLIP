@@ -137,11 +137,11 @@ older ``rootCA.pem``).
    .. code-block:: shell
 
       make -C deploy/providers/AWS apply HUB=<env>                     # hub: FL server and FL API storage
-      make -C deploy/providers/AWS stage-fl-kit KIT=<CODE> HUB=<env>   # the AWS-hosted trust
+      make -C trust/deploy/terraform/aws/ec2 stage-kit KIT=<CODE> KIT_BUCKET=<bucket>   # an AWS EC2 node
 
 .. warning::
 
-   Do not use ``deploy-trust`` or ``full-deploy`` to recopy a kit on a live trust. They are first-install commands
+   Do not use a node's ``make deploy`` or ``full-deploy`` to recopy a kit on a live trust. They are first-install commands
    that re-seed the trust's data and wipe its XNAT archive (see :ref:`admin-upgrading-sites`).
 
 .. _ts-hub-fl-clients-lost:
