@@ -289,7 +289,7 @@ concept is present, and that concept is committed before the bulk load, so a run
 between leaves a database that reports itself loaded and is skipped for good.
 `make -C trust/omop-db load-dicom-vocab FORCE_DICOM_VOCAB=1` reloads over it. The same
 variable reaches the Kubernetes hook (`trustData.seed.forceDicomVocab`) and the EC2 play
-(`make -C deploy/providers/AWS seed-trust-data KIT=<CODE> HUB=<hub> FORCE_DICOM_VOCAB=1`).
+(`make -C trust/deploy/terraform/aws/ec2 seed KIT=<CODE> HUB=<hub> FORCE_DICOM_VOCAB=1`).
 
 ### Which partition a trust is seeded with
 

@@ -36,7 +36,7 @@ mounted read-only the same way. In production the same three configs are read fr
 persist in `${LOKI_DATA_VOLUME:-trust-local-loki-data}` / `${GRAFANA_DATA_VOLUME:-trust-local-grafana-data}`
 — named volumes by default (compose-prefixed on disk, e.g. `trust<N>_trust-local-loki-data`), which
 an Ansible-provisioned EC2/on-prem kit overrides to bind paths under `/opt/flip/volumes/{loki,grafana}`,
-directories `deploy/providers/AWS/site.yml` creates with the right ownership.
+directories the trust Ansible plays (`trust/deploy/ansible/`) create with the right ownership.
 
 ## What is collected
 
@@ -63,17 +63,13 @@ dev `loki-data` volume) becomes a concern.
 ## Reaching Grafana
 
 Grafana listens on `GRAFANA_PORT` (default `3000`); like every trust-internal service it has no
-inbound port opened to the internet — reach it the same way as the other Trust UIs, over SSM.
-[`deploy/providers/AWS/scripts/forward-trust-all.sh`](../../deploy/providers/AWS/scripts/forward-trust-all.sh)
-opens an `aws ssm start-session --document-name AWS-StartPortForwardingSession` tunnel for Grafana
-(port `3000`) alongside XNAT, Orthanc, and the three API Swagger UIs, in one command:
+inbound port opened to the internet — reach it the same way as the other Trust UIs. On an AWS node,
+tunnel it over SSM:
 
 ```bash
-make -C deploy/providers/AWS forward-trust HUB=<hub>   # then open http://localhost:3000
+aws ssm start-session --target <instance-id> --document-name AWS-StartPortForwardingSession \
+  --parameters portNumber=3000,localPortNumber=3000   # then open http://localhost:3000
 ```
-
-(The make target, not the script directly: its first line is `terraform output -raw
-TrustEc2InstanceId`, which only resolves from `deploy/providers/AWS/`.)
 
 On a local dev stack, `GRAFANA_PORT` (and `LOKI_PORT`) are published straight to the host by
 `trust/deploy/compose/compose_trust.development.yml`, so `http://localhost:3000` works directly with no

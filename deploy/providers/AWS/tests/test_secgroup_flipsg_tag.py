@@ -40,7 +40,6 @@ EC2_TAG_HEADER = re.compile(r'resource\s+"aws_ec2_tag"\s+"([A-Za-z0-9_-]+)"')
 # the scan fails here rather than passing vacuously.
 EXPECTED = {
     ("main.tf", "ec2_security_group"),
-    ("main.tf", "trust_security_group"),
     ("main.tf", "rds_security_group"),
     ("main.tf", "alb_security_group"),
     ("fl_ingress_lza.tf", "fl_internal_nlb_security_group"),
