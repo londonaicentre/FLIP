@@ -19,7 +19,10 @@ A **trust node** is FLIP's footprint inside a participating trust: trust-api, im
 client, an OMOP database, XNAT, a PACS (mocked by Orthanc until you connect your own) and a logging stack. It polls
 the Central Hub for work over HTTPS. **All traffic to the hub is outbound**; no inbound port is opened for it.
 
-Read this page first. It covers what every trust node needs, whatever it runs on. Then follow
+A trust deciding whether it can join, and the people who must prepare its data, PACS, network and host, start
+with :doc:`trust-readiness-checklist`: the prerequisites in plain language, by owner, in order.
+
+Read this page next. It covers what every trust node needs, whatever it runs on. Then follow
 :doc:`onboarding-a-trust`, which sends you to your platform's page for the install.
 
 .. contents:: On this page
@@ -236,6 +239,7 @@ first boot and AKS (:doc:`deploy-flip-node-azure`), and the AWS services an EC2 
 .. toctree::
    :maxdepth: 1
 
+   trust-readiness-checklist
    onboarding-a-trust
    deploy-flip-node-on-prem
    deploy-flip-node-azure
