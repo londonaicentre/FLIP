@@ -82,6 +82,7 @@ case "$1" in
     while [ $# -gt 0 ]; do
       case "$1" in
         --rm|-i) shift ;;
+        --user) [ -n "$RUN_USERS" ] && echo "$2" >> "$RUN_USERS"; shift 2 ;;
         -v) mounts+=("$2"); shift 2 ;;
         alpine:*) shift; break ;;
         *) shift ;;
@@ -105,7 +106,7 @@ exit 0
 class XnatBackup(unittest.TestCase):
     """xnat-backup, run for real against a stub docker: only a complete dump counts as a backup."""
 
-    def _backup(self, **env: str) -> tuple[int, str, list[str]]:
+    def _backup(self, *, locked_backups: bool = False, extra_kit: str = "", **env: str):
         with tempfile.TemporaryDirectory() as tmp:
             bin_dir = Path(tmp) / "bin"
             bin_dir.mkdir()
@@ -114,13 +115,22 @@ class XnatBackup(unittest.TestCase):
             docker.chmod(0o755)
             data = Path(tmp) / "xnat"
             data.mkdir()
-            result = run_target(
-                "xnat-backup",
-                subdir="trust/xnat",
-                kit=kit_with("XNAT_DATA_DIR=/nonexistent/xnat", f"XNAT_DATA_DIR={data}"),
-                env={"PATH": f"{bin_dir}:{os.environ['PATH']}", **env},
-            )
-            kept = sorted(b.name for b in (data / "backups").glob("*.sql.gz")) if (data / "backups").exists() else []
+            if locked_backups:  # a backups/ an earlier upgrade made as root: this uid cannot write it
+                (data / "backups").mkdir(mode=0o555)
+            users = Path(tmp) / "run-users"
+            try:
+                result = run_target(
+                    "xnat-backup",
+                    subdir="trust/xnat",
+                    kit=kit_with("XNAT_DATA_DIR=/nonexistent/xnat", f"XNAT_DATA_DIR={data}") + extra_kit,
+                    env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "RUN_USERS": str(users), **env},
+                )
+                backups = data / "backups"
+                kept = sorted(b.name for b in backups.glob("*.sql.gz")) if backups.exists() else []
+            finally:
+                if locked_backups:
+                    (data / "backups").chmod(0o755)
+            self.run_users = users.read_text().split() if users.exists() else []
             return result.returncode, result.stdout + result.stderr, kept
 
     def test_a_complete_dump_is_kept(self):
@@ -138,6 +148,26 @@ class XnatBackup(unittest.TestCase):
     def test_a_dump_without_its_completion_trailer_is_not_a_backup(self):
         code, out, kept = self._backup(DUMP="truncated")
         assert code != 0, out
+        assert kept == [], kept
+
+    def test_every_container_writes_as_the_xnat_uid(self):
+        """Not root: the backups stay the operator's under FLIP_UID, and xnat-reset still owns the tree (FLIP#1731)."""
+        code, out, _ = self._backup(DUMP="ok")
+        assert code == 0, out
+        assert self.run_users, "no container was run with --user"
+        assert set(self.run_users) == {"1001:1001"}, self.run_users
+        code, out, _ = self._backup(DUMP="ok", extra_kit="FLIP_UID=4242\nFLIP_GID=4243\n")
+        assert code == 0, out
+        assert set(self.run_users) == {"4242:4243"}, self.run_users
+
+    def test_a_backups_dir_the_uid_cannot_write_is_refused_before_dumping(self):
+        """Upgrades before FLIP#1731 made backups/ as root: refuse, naming the chown, and dump nothing."""
+        if os.getuid() == 0:
+            self.skipTest("root writes a 0555 directory anyway")
+        code, out, kept = self._backup(DUMP="ok", locked_backups=True)
+        assert code != 0, out
+        assert "chown -R 1001:1001" in out, out
+        assert "Backing up" not in out, "refused before dumping"
         assert kept == [], kept
 
     def test_no_running_db_is_a_refusal(self):

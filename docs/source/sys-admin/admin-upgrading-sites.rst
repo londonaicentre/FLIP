@@ -184,8 +184,9 @@ playbook; see :ref:`onprem-operator-access`):
    their bind mounts.
 #. **Upgrade XNAT in place**:
 
-   - dump ``xnat-db`` with ``pg_dumpall`` into ``$XNAT_DATA_DIR/backups/``. Without a complete dump the upgrade stops
-     before touching XNAT;
+   - dump ``xnat-db`` with ``pg_dumpall`` into ``$XNAT_DATA_DIR/backups/``, written as xnat-web's uid. Without a complete
+     dump the upgrade stops before touching XNAT. An upgrade before this release made ``backups/`` as root; the first
+     upgrade after it stops there and prints the one-time ``chown`` to run as root;
    - redeploy the XNAT stack on the new image (XNAT migrates its own schema on boot);
    - re-apply XNAT's configuration: DICOM receiver, DQR lockdown, PACS registration, PACS availability schedule (from
      the kit, see step 2), Container Service backend and the dcm2niix command.

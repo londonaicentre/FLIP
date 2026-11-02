@@ -514,9 +514,12 @@ upgrade-xnat: create-xnat-network
 # XNAT upgrade, whose schema migrations are forward-only, so no running xnat-db is a refusal, not
 # a skip. The dump is compressed inside the db container under pipefail, and the host pipeline
 # runs under bash + pipefail too, so pg_dumpall's own failure fails the recipe instead of leaving
-# gzip a valid stream. One throwaway container writes it into the (root- or 1001-owned) data dir
-# without sudo and keeps it only when it decompresses to pg_dumpall's completion trailer. The db
-# is found by the swarm labels, like xnat-web (FLIP#1210).
+# gzip a valid stream. One throwaway container writes it into the data dir without sudo and keeps
+# it only when it decompresses to pg_dumpall's completion trailer. The db is found by the swarm
+# labels, like xnat-web (FLIP#1210). The container runs as xnat-web's uid, the owner of the rest of
+# the tree, so the backups stay deletable by the operator under FLIP_UID and a later xnat-reset
+# still finds a tree it owns (FLIP#1731). Upgrades before that wrote backups/ as root, so a backups/
+# that uid cannot write is a refusal naming the one-time chown, checked before anything is dumped.
 xnat-backup: SHELL := /bin/bash
 xnat-backup:
 	$(require_kit)
@@ -527,16 +530,23 @@ xnat-backup:
 	  echo "   Check the stack: docker stack ps $(XNAT_STACK)"; \
 	  exit 1; \
 	fi; \
+	if ! docker run --rm --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" alpine:3.20 \
+	     sh -c 'if [ -e /x/backups ]; then [ -w /x/backups ]; else [ -w /x/. ]; fi'; then \
+	  echo "❌ $(XNAT_DATA_DIR)/backups is not writable by uid $(XNAT_DIR_OWNER), which writes the backup (an upgrade"; \
+	  echo "   before FLIP#1731 made it as root). Nothing was dumped or upgraded. As root on the host, once:"; \
+	  echo "   chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)/backups"; \
+	  exit 1; \
+	fi; \
 	dump="backups/xnat-db-$$(date +%Y%m%d-%H%M%S).sql.gz"; \
 	echo "💾 Backing up the XNAT database to $(XNAT_DATA_DIR)/$$dump ..."; \
 	if docker exec "$$db" sh -c 'set -o pipefail; pg_dumpall -U postgres | gzip -c' \
-	     | docker run --rm -i -v "$(XNAT_DATA_DIR):/x" alpine:3.20 sh -c "set -o pipefail; \
+	     | docker run --rm -i --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" alpine:3.20 sh -c "set -o pipefail; \
 	         mkdir -p /x/backups && cat > /x/$$dump \
 	         && gzip -dc /x/$$dump | tail -n 5 | grep -q 'PostgreSQL database cluster dump complete' \
 	         && ls -l /x/$$dump"; then \
 	  exit 0; \
 	fi; \
-	docker run --rm -v "$(XNAT_DATA_DIR):/x" alpine:3.20 rm -f "/x/$$dump"; \
+	docker run --rm --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" alpine:3.20 rm -f "/x/$$dump"; \
 	echo "❌ The XNAT database dump failed or is incomplete — no backup was kept, and nothing was upgraded."; \
 	exit 1
 
