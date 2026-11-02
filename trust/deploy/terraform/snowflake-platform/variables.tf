@@ -24,10 +24,9 @@ variable "account_name" {
 
 variable "platform_role" {
   description = <<-EOT
-    The role the break-glass operator assumes. ACCOUNTADMIN is required for the account parameter,
-    the resource monitor and the account policy attachments; SECURITYADMIN is enough for the roles,
-    the deploy user and the role hierarchy, so a site that splits the apply may run the security
-    half under the lesser role. Supplied at apply time so no privileged role name is defaulted here.
+    The role this root is applied as. CI uses FLIP_PLATFORM_CI (created and contained by
+    snowflake-bootstrap); plans use FLIP_PLATFORM_CI_READ. A break-glass operator may still apply
+    with a role that inherits FLIP_PLATFORM_CI (SYSADMIN does).
   EOT
   type        = string
 }
@@ -52,8 +51,8 @@ variable "authenticator" {
   default     = "SNOWFLAKE_JWT"
 
   validation {
-    condition     = contains(["SNOWFLAKE_JWT", "USERNAMEPASSWORDMFA", "EXTERNALBROWSER"], var.authenticator)
-    error_message = "authenticator must be SNOWFLAKE_JWT (just-in-time operator), USERNAMEPASSWORDMFA or EXTERNALBROWSER."
+    condition     = contains(["WORKLOAD_IDENTITY", "SNOWFLAKE_JWT", "USERNAMEPASSWORDMFA", "EXTERNALBROWSER"], var.authenticator)
+    error_message = "authenticator must be WORKLOAD_IDENTITY (CI), SNOWFLAKE_JWT, USERNAMEPASSWORDMFA or EXTERNALBROWSER."
   }
 }
 
@@ -81,58 +80,6 @@ variable "deploy_statement_timeout_secs" {
   description = "STATEMENT_TIMEOUT_IN_SECONDS on the deploy SERVICE user: a deploy session cannot sit on a warehouse indefinitely."
   type        = number
   default     = 300
-}
-
-variable "enable_hub_egress" {
-  description = "Create the external access integration that lets services reach the hub. Off by default: trial accounts exclude external network access, so the trial runs hubless."
-  type        = bool
-  default     = false
-}
-
-variable "hub_api_host" {
-  description = "Hostname of the Central Hub API, no scheme. Reached on 443 only. Empty unless enable_hub_egress is true."
-  type        = string
-  default     = ""
-}
-
-variable "fl_server_endpoints" {
-  description = "FL server endpoints as host:port (the FLARE or Flower edge from the kit). Each becomes one HOST_PORT value in the egress rule."
-  type        = list(string)
-  default     = []
-
-  validation {
-    condition     = alltrue([for e in var.fl_server_endpoints : can(regex("^[A-Za-z0-9.-]+:[0-9]{1,5}$", e))])
-    error_message = "every fl_server_endpoints entry must be host:port."
-  }
-}
-
-variable "admin_allowed_cidrs" {
-  description = "CIDRs allowed to sign in to the account. Applied as an account network policy, so an empty list means no policy is attached."
-  type        = list(string)
-  default     = []
-
-  validation {
-    condition     = alltrue([for c in var.admin_allowed_cidrs : can(cidrnetmask(c))])
-    error_message = "every admin_allowed_cidrs entry must be an IPv4 CIDR."
-  }
-}
-
-variable "credit_quota" {
-  description = "Monthly credit quota of the resource monitor. It covers warehouses only; compute pools are capped by auto-suspend and the workload root's nightly task."
-  type        = number
-  default     = 50
-}
-
-variable "credit_notify_triggers" {
-  description = "Percentages of the credit quota that notify the account's notification users."
-  type        = list(number)
-  default     = [50, 75, 90]
-}
-
-variable "resource_monitor_start_timestamp" {
-  description = "Start of the resource monitor's first billing window, as Snowflake accepts it (YYYY-MM-DD HH:MM) or IMMEDIATELY."
-  type        = string
-  default     = "IMMEDIATELY"
 }
 
 variable "platform_database_retention_days" {
@@ -191,14 +138,3 @@ variable "cost_window_days" {
   }
 }
 
-variable "warehouse_statement_timeout_secs" {
-  description = "STATEMENT_TIMEOUT_IN_SECONDS on the trust warehouse: a runaway OMOP query is cancelled rather than billed."
-  type        = number
-  default     = 300
-}
-
-variable "warehouse_auto_suspend_secs" {
-  description = "Seconds of inactivity before the trust warehouse suspends."
-  type        = number
-  default     = 60
-}

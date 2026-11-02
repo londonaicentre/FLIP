@@ -19,8 +19,8 @@
 # that the break-glass person users, and any human user the account later grows, inherit it rather
 # than the Snowflake default.
 resource "snowflake_password_policy" "account" {
-  database = snowflake_database.platform.name
-  schema   = snowflake_schema.platform["policies"].name
+  database = snowflake_database.admin.name
+  schema   = snowflake_schema.admin_policies.name
   name     = local.password_policy
 
   min_length           = 14
@@ -42,8 +42,8 @@ resource "snowflake_account_password_policy_attachment" "account" {
 }
 
 resource "snowflake_session_policy" "account" {
-  database = snowflake_database.platform.name
-  schema   = snowflake_schema.platform["policies"].name
+  database = snowflake_database.admin.name
+  schema   = snowflake_schema.admin_policies.name
   name     = local.session_policy
 
   session_idle_timeout_mins    = 60

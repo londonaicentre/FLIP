@@ -43,21 +43,6 @@ resource "snowflake_execute" "event_table_time_travel" {
   depends_on = [snowflake_execute.event_table]
 }
 
-# Account-wide: everything logs into the platform event table. Setting an account parameter needs
-# ACCOUNTADMIN, which is exactly why it lives in this tier and not in the routine apply.
-#
-# Note what is deliberately NOT here: no account, database or schema log-level parameter. Turning
-# logging on account-wide would collect every Snowflake-internal procedure's output and bill the
-# storage for it. Verbosity is set per service, in each spec's
-# logExporters.eventTableConfig.logLevel, and the workload root's static guards refuse DEBUG and
-# TRACE there (trust/deploy/terraform/snowflake/variables.tf, service_log_level).
-resource "snowflake_account_parameter" "event_table" {
-  key   = "EVENT_TABLE"
-  value = local.event_table_fqn
-
-  depends_on = [snowflake_execute.event_table]
-}
-
 # The retention policy (#1584). An event table grows forever on its own: rows are only removed by
 # a DELETE. This task is that DELETE, daily, owned by the platform tier so the deploy key cannot
 # lengthen the window or switch it off.
@@ -65,7 +50,7 @@ resource "snowflake_task" "prune_events" {
   database  = snowflake_database.platform.name
   schema    = local.platform_schemas.obs
   name      = local.prune_task
-  warehouse = snowflake_warehouse.trust.name
+  warehouse = local.warehouse
   started   = true
   comment   = "FLIP platform: event-table retention (#1584). Snowflake never expires event rows by itself."
 
