@@ -96,6 +96,8 @@ class Gate:
     steps: list[Step]
     metrics: Callable[[list[tuple[float, str]]], dict] = field(default=lambda _lines: {})
     cleanup: Callable[[], list[str]] | None = None  # runs even when a step failed; returns what it did
+    # Fails a gate whose steps passed, from what its metrics say: returns the reason, or None.
+    verdict: Callable[[dict], str | None] | None = None
 
 
 SIMULATOR = re.compile(r"flower-superlink|flwr-simulation|flwr-serverapp")
@@ -129,20 +131,43 @@ def stop_own_simulators() -> list[str]:
     return stopped
 
 
+DP_OVER_CLIPPED = re.compile(r"FLIP local DP: clipping scaled this update by")
+BEST_MODEL = re.compile(r"New best global model at round (\d+): (\w+)=([0-9.eE+-]+)")
+
+
 def tutorial_metrics(lines: list[tuple[float, str]]) -> dict:
-    """Per-tutorial pass/fail and seconds from ``run-all-tutorials`` output (one ``🚀 Running`` line each)."""
+    """Per tutorial from ``run-all-tutorials`` output (one ``🚀 Running`` line each): pass/fail, seconds, the best
+    global model's metric, and how many updates DP clipping shrank more than tenfold (#1754)."""
     runs: list[dict] = []
     for t, line in lines:
         start = re.search(r"🚀 Running (?:FLARE|Flower) tutorial (\S+)", line)
         if start:
             if runs:
                 runs[-1].setdefault("seconds", round(t - runs[-1].pop("_t")))
-            runs.append({"name": Path(start[1]).name, "passed": True, "_t": t})
-        elif re.search(r"❌ tutorial \S+ failed", line) and runs:
+            runs.append({"name": Path(start[1]).name, "passed": True, "dp_over_clipped": 0, "_t": t})
+        elif not runs:
+            continue
+        elif re.search(r"❌ tutorial \S+ failed", line):
             runs[-1]["passed"] = False
+        elif DP_OVER_CLIPPED.search(line):
+            runs[-1]["dp_over_clipped"] += 1
+        elif best := BEST_MODEL.search(line):
+            runs[-1]["best"] = {"metric": best[2], "value": float(best[3]), "round": int(best[1])}
     if runs and "_t" in runs[-1]:
         runs[-1]["seconds"] = round(lines[-1][0] - runs[-1].pop("_t"))
     return {"tutorials": runs, "passed": sum(r["passed"] for r in runs), "total": len(runs)}
+
+
+def dp_clipping_verdict(metrics: dict) -> str | None:
+    """Fail a tutorial run in which DP clipping shrank updates more than tenfold: it trains, and learns nothing."""
+    runs = metrics.get("tutorials", [])
+    clipped = [f"{r['name']} ({r['dp_over_clipped']}x)" for r in runs if r.get("dp_over_clipped")]
+    if not clipped:
+        return None
+    return (
+        f"DP clipping shrank updates more than tenfold in {', '.join(clipped)}: raise that tutorial's "
+        "dp-clipping-norm towards its typical update norm (FLIP#1754)"
+    )
 
 
 def smoke_metrics(lines: list[tuple[float, str]]) -> dict:
@@ -212,6 +237,11 @@ def run_gate(gate: Gate, out_dir: Path, base: dict, env: dict[str, str]) -> dict
                 code = 1
             if code:
                 break
+        metrics = gate.metrics(lines) if lines else {}
+        reason = gate.verdict(metrics) if gate.verdict and code == 0 else None
+        if reason:
+            log.write(f"❌ {reason}\n")
+            code = 1
         if gate.cleanup:
             for done in gate.cleanup():
                 log.write(f"🧹 {done}\n")
@@ -224,7 +254,7 @@ def run_gate(gate: Gate, out_dir: Path, base: dict, env: dict[str, str]) -> dict
         "end": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "seconds": round(time.monotonic() - t0),
         "log": str(log_path),
-        "metrics": gate.metrics(lines) if lines else {},
+        "metrics": metrics,
     }
     (out_dir / f"{gate.name}.json").write_text(json.dumps(result, indent=2) + "\n")
     print(f"{'✅' if code == 0 else '❌'} {gate.name} ({result['seconds']} s) → {log_path}", flush=True)
@@ -271,6 +301,7 @@ def build_gates(tag: str, instance: str, project_id: Callable[[], str], port_off
             [["make", "-C", "fl-tutorials", "run-all-tutorials", "FL_BACKEND=flower"]],
             tutorial_metrics,
             cleanup=stop_own_simulators,
+            verdict=dp_clipping_verdict,
         ),
         # flip-ui's tests run in a container on the instance's hub network; create-networks is idempotent.
         Gate("unit", [["make", "create-networks", *args], ["make", "unit_test", *args]]),
