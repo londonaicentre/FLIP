@@ -645,8 +645,9 @@ xnat-reset:
 				else \
 					echo "  👤 not root — deleting nothing, checking the tree prepare-host-dirs made (FLIP#1723)"; \
 					if [ -d $(XNAT_DATA_DIR) ] && [ -n "$$(find $(XNAT_DATA_DIR) -mindepth 1 ! -type d -print 2>&1 | head -n 1)" ]; then \
-						echo "❌  $(XNAT_DATA_DIR) holds files from an earlier install. This first install starts"; \
-						echo "    XNAT fresh, and deleting files owned by uid $(XNAT_CONTAINER_UID) needs root. As root on this host:"; \
+						others=$$(find $(XNAT_DATA_DIR) ! -user $$(id -u) -print0 2>/dev/null | xargs -0 $(call stat_fmt,%u) 2>/dev/null | sort -un | paste -sd, -); \
+						echo "❌  $(XNAT_DATA_DIR) holds files from an earlier install. This first install starts XNAT fresh, and"; \
+						echo "    uid $$(id -u) cannot wipe and re-create the tree for uid $(XNAT_CONTAINER_UID)$${others:+ (files owned by uid $$others are in the way)}. As root on this host:"; \
 						echo "    rm -rf $(XNAT_DATA_DIR) && make -C trust prepare-host-dirs KIT=$(KIT)$(if $(HUB), HUB=$(HUB))"; \
 						exit 1; \
 					fi; \

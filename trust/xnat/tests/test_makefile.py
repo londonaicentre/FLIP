@@ -295,6 +295,9 @@ class XnatDirsWithoutRoot(unittest.TestCase):
             reset = self._run("xnat-reset", data, tmp, uid=self.other_uid)
             assert reset.returncode != 0, reset.stdout
             assert "holds files from an earlier install" in reset.stdout, reset.stdout
+            assert f"uid {os.getuid()} cannot wipe and re-create the tree for uid {self.other_uid}." in reset.stdout, (
+                reset.stdout
+            )
             assert f"rm -rf {data} && make -C trust prepare-host-dirs KIT=SCR HUB=prod" in reset.stdout, reset.stdout
             assert left.exists(), "a non-root reset must delete nothing"
             assert "STUB:" not in reset.stderr, reset.stderr
