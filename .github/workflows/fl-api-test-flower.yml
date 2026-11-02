@@ -20,18 +20,22 @@ on:
   push:
     branches: [main, develop]
     paths:
-      # The whole service (its pyproject/uv.lock pin the flwr the tests import) and the
-      # fleet proxy, whose allowlist tests/test_fleet_proxy_allowlist.py pins (FLIP#1517).
+      # The whole service (its pyproject/uv.lock pin the flwr the tests import), the
+      # fleet proxy, whose allowlist tests/test_fleet_proxy_allowlist.py pins (FLIP#1517),
+      # and the key-registration one-shot tests/test_register_supernode_keys.py runs (FLIP#1738).
       - "fl-services/flower/fl-api-flower/**"
       - "fl-services/flower/fleet-proxy/**"
+      - "fl-services/flower/register-supernode-keys.sh"
       - ".github/workflows/fl-api-test-flower.yml"
   pull_request:
     branches: [main, develop]
     paths:
-      # The whole service (its pyproject/uv.lock pin the flwr the tests import) and the
-      # fleet proxy, whose allowlist tests/test_fleet_proxy_allowlist.py pins (FLIP#1517).
+      # The whole service (its pyproject/uv.lock pin the flwr the tests import), the
+      # fleet proxy, whose allowlist tests/test_fleet_proxy_allowlist.py pins (FLIP#1517),
+      # and the key-registration one-shot tests/test_register_supernode_keys.py runs (FLIP#1738).
       - "fl-services/flower/fl-api-flower/**"
       - "fl-services/flower/fleet-proxy/**"
+      - "fl-services/flower/register-supernode-keys.sh"
       - ".github/workflows/fl-api-test-flower.yml"
 jobs:
   flip-fl-api:

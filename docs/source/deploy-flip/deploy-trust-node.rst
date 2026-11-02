@@ -108,8 +108,8 @@ Choose your platform
        subset. The node itself installs as a Docker Compose host.
      - :doc:`deploy-flip-node-in-tre`
 
-The mock trust on an AWS EC2 instance, which the Central Hub deployment can create for testing, is covered in
-:gh:`deploy/providers/AWS/README.md`.
+A trust on AWS, in any account, is :doc:`deploy-flip-node-aws-ec2` or :doc:`deploy-flip-node-aws-eks`. The Central
+Hub deployment creates no trust of its own.
 
 ****************
 Before you start
@@ -161,6 +161,13 @@ network (see :doc:`../components/component-pacs`).
 
 The node must reach two **separate** hub endpoints, the API and the FL server. They have different hostnames behind
 different load balancers, so allow both. This is everything a node connects out to:
+
+.. tip::
+
+   On a Docker Compose host, ``make onboard-onprem-trust KIT=<CODE>`` probes the first four rows from the host
+   itself once the kit file is in place, and prints the host:port and the failure (DNS, refused, timed out, HTTP
+   status) for each one it cannot reach. That output is the evidence to hand your network team. It says only
+   "reachable from this host": a firewall that filters one direction answers the probe while blocking nothing.
 
 .. list-table::
    :header-rows: 1

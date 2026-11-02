@@ -25,7 +25,9 @@ Usage:
 
 from __future__ import annotations
 
+import importlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -91,8 +93,12 @@ def test_scaffolds_kit_with_identity_and_defaults() -> None:
         _assert("TRUST_REGION=London" in content, "TRUST_REGION injected")
         _assert("TRUST_HOST=" not in content, "TRUST_HOST not written to kit (delivery is command-driven)")
         _assert("OMOP_DB_PORT=5436" in content, "host-local default from template carried over")
-        # pragma: allowlist nextline secret
-        _assert("ORTHANC_PASSWORD=mock-orthanc-pw" in content, "mock-stack cred from template carried over")
+        minted = re.search(r"^ORTHANC_PASSWORD=(.+)$", content, re.M)
+        _assert(
+            bool(minted) and minted.group(1) != "mock-orthanc-pw" and len(minted.group(1)) >= 24,
+            "mock-stack password from template replaced by a minted value",
+            content,
+        )
         _assert("TRUST_API_KEY=<run-make-register-trust>" in content, "managed placeholder preserved")
         _assert((target.stat().st_mode & 0o777) == 0o600, "kit file chmod 600")
     finally:
@@ -139,6 +145,42 @@ def test_deployed_envs_name_the_kit_and_hint_the_hub() -> None:
             shutil.rmtree(root)
 
 
+def test_mints_every_trust_local_password() -> None:
+    print("▶ mints a distinct random value for every Trust-local password, leaves the rest alone")
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    new_trust = importlib.import_module("new_trust")
+    onboard = importlib.import_module("onboard_onprem_trust")
+    _assert(
+        new_trust.TRUST_LOCAL_PASSWORD_KEYS == onboard.TRUST_LOCAL_PASSWORD_KEYS,
+        "key list matches the onboarding checklist's TRUST_LOCAL_PASSWORD_KEYS",
+    )
+    root = _temp_repo()
+    try:
+        # The real template, so the test sees exactly the lines a kit is scaffolded from.
+        example = SCRIPTS_DIR.parents[1] / ".env.example"
+        shutil.copy2(example, root / "trust" / ".env.example")
+        res = _run(root, "--code", "MINT", "--name", "Mint", "--env", "prod")
+        _assert(res.returncode == 0, "exit 0", res.stderr)
+        before = _assignments(example.read_text())
+        after = _assignments((root / "trust" / ".env.MINT.prod").read_text())
+        minted = [after[key] for key in new_trust.TRUST_LOCAL_PASSWORD_KEYS]
+        _assert(
+            all(after[key] != before[key] and len(after[key]) >= 24 for key in new_trust.TRUST_LOCAL_PASSWORD_KEYS),
+            "every template password replaced by a long random value",
+        )
+        _assert(len(set(minted)) == len(minted), "each value is distinct")
+        untouched = [key for key in before if key not in new_trust.TRUST_LOCAL_PASSWORD_KEYS]
+        _assert(all(after[key] == before[key] for key in untouched), "every other assignment carried over unchanged")
+        _assert("XNAT_ADMIN_INITIAL_PASSWORD" in untouched, "XNAT's factory password is left for xnat-init to rotate")
+    finally:
+        shutil.rmtree(root)
+
+
+def _assignments(text: str) -> dict[str, str]:
+    """KEY -> value for every uncommented assignment line."""
+    return dict(line.split("=", 1) for line in text.splitlines() if "=" in line and not line.startswith("#"))
+
+
 def main() -> None:
     if not NEW_TRUST.is_file():
         sys.exit(f"❌ {NEW_TRUST} not found")
@@ -146,6 +188,7 @@ def main() -> None:
     test_refuses_to_overwrite()
     test_region_optional()
     test_deployed_envs_name_the_kit_and_hint_the_hub()
+    test_mints_every_trust_local_password()
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
     sys.exit(0 if FAIL == 0 else 1)

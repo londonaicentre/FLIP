@@ -14,12 +14,12 @@ services:
 
   imaging-api:
     ports:
-      - "${IMAGING_API_PORT}:8000"
+      - "${TRUST_BIND_ADDRESS:-127.0.0.1}:${IMAGING_API_PORT}:8000"
 
   data-access-api:
     ports:
-      - "${DATA_ACCESS_API_PORT}:8000"
+      - "${TRUST_BIND_ADDRESS:-127.0.0.1}:${DATA_ACCESS_API_PORT}:8000"
 
   trust-api:
     ports:
-      - "${TRUST_API_PORT}:8000"
+      - "${TRUST_BIND_ADDRESS:-127.0.0.1}:${TRUST_API_PORT}:8000"

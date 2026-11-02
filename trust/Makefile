@@ -596,9 +596,9 @@ endif
 # A governance document cannot reach a trust driven over a remote Docker endpoint (FLIP#1259).
 # Compose resolves ACCESS_POLICY_FILE on the machine running it — the operator's workstation —
 # and the daemon on the trust host then bind-mounts that path from its OWN filesystem, where it
-# does not exist, so data-access-api and the fl-client would fail closed on every start. The EC2
-# trusts (deploy-trust-ec2 / upgrade-trust-ec2, DOCKER_CONTEXT=flip-trust over ssh) are FLIP's
-# own mock trusts and do not support one; a real site runs compose on its own host. The endpoint
+# does not exist, so data-access-api and the fl-client would fail closed on every start. An EC2 node
+# driven from the admin workstation (trust/deploy/terraform/aws/ec2 deploy / upgrade, a
+# DOCKER_CONTEXT over ssh) does not support one; a real site runs compose on its own host. The endpoint
 # is DOCKER_HOST, else the context DOCKER_CONTEXT names, else the current one (`docker context
 # use`); a tcp:// daemon on this machine's loopback is local.
 define refuse_remote_governance
@@ -761,7 +761,7 @@ _upgrade-trust-apply:
 	@echo "✅ $(KIT) is on $(DOCKER_TAG). Verify: trust-api /health reports the new version and hub_key_match=true."
 
 # EC2 variant — no host-port override, --pull always. Networks and the trust's
-# data are provisioned on the instance by deploy/providers/AWS/site.yml, so the
+# data are provisioned on the instance by trust/deploy/ansible/aws-ec2.yml, so the
 # create-networks prerequisite and the ensure-seeded step are intentionally omitted.
 # The EC2 t3.xlarge is GPU-less, so the fl-client is pinned to CPU regardless of
 # the kit's NUM_AVAILABLE_GPUS. Two mechanisms must BOTH be neutralised:
@@ -778,7 +778,7 @@ _upgrade-trust-apply:
 # Deliberately no $(ensure_net_dirs) here: this recipe runs on the operator's
 # workstation against a remote docker context, so a local mkdir cannot touch the
 # EC2 host — the per-net images dirs there are pre-created (ubuntu-owned) by the
-# AWS provisioning playbook (deploy/providers/AWS/site.yml).
+# AWS provisioning playbook (trust/deploy/ansible/aws-ec2.yml).
 up-trust-ec2: require-xnat-aetitle
 	$(require_kit_file)
 	$(check_slot_not_taken)
