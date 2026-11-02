@@ -41,11 +41,12 @@ locals {
   # Exactly what the CI role holds on the account. Never MANAGE GRANTS, CREATE INTEGRATION, CREATE
   # NETWORK POLICY, or any privilege that reaches account policy: tests/test_bootstrap_guards.py pins
   # this list.
+  # EXECUTE TASK and CREATE DATABASE are also held below WITH GRANT OPTION; Snowflake keeps one grant
+  # per privilege, so EXECUTE TASK is listed there only (listing it twice is a perpetual plan diff).
   ci_account_privileges = [
     "CREATE ROLE",
     "CREATE USER",
     "CREATE DATABASE",
-    "EXECUTE TASK",
   ]
 
   # The trust deploy role's account privileges, which CI holds WITH GRANT OPTION so it can pass on

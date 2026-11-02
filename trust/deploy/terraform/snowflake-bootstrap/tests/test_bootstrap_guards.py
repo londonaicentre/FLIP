@@ -43,7 +43,7 @@ ROOT_FILES = (
 )
 
 # Exactly the account privileges the CI role holds outright, and the ones it may pass on.
-CI_ACCOUNT_PRIVILEGES = {"CREATE ROLE", "CREATE USER", "CREATE DATABASE", "EXECUTE TASK"}
+CI_ACCOUNT_PRIVILEGES = {"CREATE ROLE", "CREATE USER", "CREATE DATABASE"}
 CI_GRANTABLE_ACCOUNT_PRIVILEGES = {"CREATE DATABASE", "CREATE COMPUTE POOL", "BIND SERVICE ENDPOINT", "EXECUTE TASK"}
 
 # What would let CI out of its box.
@@ -247,3 +247,9 @@ def test_the_platform_root_declares_only_what_ci_may_manage():
     assert declared <= PLATFORM_ALLOWED_TYPES, declared - PLATFORM_ALLOWED_TYPES
     assert "with_grant_option" not in platform
     assert "FLIP_ADMIN" not in platform
+
+
+def test_no_privilege_is_held_both_plain_and_with_the_grant_option_except_create_database():
+    """Snowflake keeps one grant per privilege: the same one in both lists is a perpetual diff."""
+    both = _list(source("locals.tf"), "ci_account_privileges") & _list(source("locals.tf"), "deploy_account_privileges")
+    assert both <= {"CREATE DATABASE"}, both
