@@ -14,8 +14,14 @@
 
 import asyncio
 import os
+import shutil
 from pathlib import Path
+from unittest.mock import MagicMock
 
+import pytest
+
+from imaging_api import config
+from imaging_api.services import cache_retention
 from imaging_api.services.cache_retention import sweep as _sweep
 from imaging_api.services.image_cache import SENTINEL_PREFIX
 
@@ -84,3 +90,57 @@ def test_never_touches_the_upload_dir_or_net_dirs(tmp_path):
 
 def test_a_missing_base_dir_is_nothing_to_sweep(tmp_path):
     assert sweep(str(tmp_path / "absent"), TTL, now=NOW) == 0
+
+
+def test_a_study_that_cannot_be_removed_is_logged_and_the_sweep_goes_on(tmp_path, monkeypatch):
+    stuck = _study(tmp_path, "STUCK", age=10 * TTL, sentinels=(2 * TTL,))
+    old = _study(tmp_path, "OLD", age=10 * TTL, sentinels=(2 * TTL,))
+    real_rmtree = shutil.rmtree
+
+    def rmtree(path):
+        if path == str(stuck):
+            raise PermissionError("denied")
+        real_rmtree(path)
+
+    monkeypatch.setattr(cache_retention.shutil, "rmtree", rmtree)
+    logger = MagicMock()
+    monkeypatch.setattr(cache_retention, "logger", logger)
+
+    assert sweep(str(tmp_path), TTL, now=NOW) == 1
+    assert stuck.exists()
+    assert not old.exists()
+    logger.warning.assert_called_once()
+    assert str(stuck) in logger.warning.call_args.args[0]
+
+
+def test_the_sweeper_sweeps_the_cache_dir_hourly_and_survives_a_failed_sweep(monkeypatch):
+    """One pass removes a study, the next raises; the loop logs both and keeps going until cancelled."""
+    monkeypatch.setattr(config.get_settings(), "IMAGE_CACHE_RETENTION_HOURS", 2)
+    monkeypatch.setattr(cache_retention, "BASE_IMAGES_DOWNLOAD_DIR", "/cache")
+    outcomes = iter([1, RuntimeError("disk gone"), asyncio.CancelledError()])
+    calls = []
+
+    async def fake_sweep(base_dir, ttl_seconds):
+        calls.append((base_dir, ttl_seconds))
+        outcome = next(outcomes)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    sleeps = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(cache_retention, "sweep", fake_sweep)
+    monkeypatch.setattr(cache_retention.asyncio, "sleep", fake_sleep)
+    logger = MagicMock()
+    monkeypatch.setattr(cache_retention, "logger", logger)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(cache_retention.run_sweeper())
+
+    assert calls == [("/cache", 2 * 3600)] * 3
+    assert sleeps == [cache_retention.SWEEP_INTERVAL_SECONDS] * 2
+    logger.info.assert_called_once_with("Image-cache sweep removed 1 unused cached study")
+    logger.exception.assert_called_once_with("Image-cache sweep failed")
