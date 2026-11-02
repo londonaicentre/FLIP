@@ -122,10 +122,13 @@ resource "aws_s3_bucket_lifecycle_configuration" "state" {
 # applies used to test a branch keep working; a break-glass role anywhere). The
 # plan role already denies itself state writes in IAM. The platform's own
 # Terraform role needs no entry — it manages this bucket's configuration, which
-# a Deny on object writes does not touch.
+# a Deny on object writes does not touch. The Snowflake state apply role
+# (iam_snowflake_state.tf) is a writer when it exists; its own IAM policy keeps it
+# to the Snowflake prefix.
 locals {
   state_writer_arn_patterns = concat(
     [local.apply_role_arn],
+    local.snowflake_state ? [local.snowflake_state_apply_role_arn] : [],
     var.state_writer_principal_arns,
   )
 }

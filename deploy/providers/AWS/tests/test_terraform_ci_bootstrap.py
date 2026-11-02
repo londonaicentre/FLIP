@@ -58,6 +58,10 @@ IAM_ADDRESSES = {
     ("aws_iam_policy", "apply_boundary"),
     ("aws_iam_role", "ui_publish"),
     ("aws_iam_role_policy", "ui_publish"),
+    ("aws_iam_role", "snowflake_state_plan"),
+    ("aws_iam_role", "snowflake_state_apply"),
+    ("aws_iam_role_policy", "snowflake_state_plan"),
+    ("aws_iam_role_policy", "snowflake_state_apply"),
 }
 
 # What the old ci/ root declared directly, which the wrapper's moved blocks re-address. Its
@@ -437,8 +441,10 @@ def test_the_state_write_restriction_renders_only_when_switched_on() -> None:
     assert _conditions(content) == [
         {"test": '"ArnNotLike"', "variable": '"aws:PrincipalArn"', "values": "local.state_writer_arn_patterns"}
     ]
-    assert _module_locals()["state_writer_arn_patterns"] == (
-        "concat([local.apply_role_arn],var.state_writer_principal_arns)"
+    # The Snowflake state apply role writes only when it exists (iam_snowflake_state.tf).
+    assert _module_locals()["state_writer_arn_patterns"] == _normalise(
+        "concat([local.apply_role_arn], local.snowflake_state ? [local.snowflake_state_apply_role_arn] : [],"
+        " var.state_writer_principal_arns)"
     )
 
     restrict = _module_block('variable "restrict_state_writes"')
@@ -867,6 +873,104 @@ def test_the_ui_publish_role_reaches_the_ui_bucket_and_nothing_else() -> None:
         "s3:GetObject",
         "s3:PutObject",
     }
+
+
+_SNOWFLAKE_HEADERS = (
+    'data "aws_iam_policy_document" "snowflake_state_plan_assume_role"',
+    'data "aws_iam_policy_document" "snowflake_state_apply_assume_role"',
+    'resource "aws_iam_role" "snowflake_state_plan"',
+    'resource "aws_iam_role" "snowflake_state_apply"',
+    'data "aws_iam_policy_document" "snowflake_state_plan"',
+    'data "aws_iam_policy_document" "snowflake_state_apply"',
+    'resource "aws_iam_role_policy" "snowflake_state_plan"',
+    'resource "aws_iam_role_policy" "snowflake_state_apply"',
+)
+
+
+def test_the_snowflake_state_roles_exist_only_when_their_environment_is_named() -> None:
+    """Off by default (epic #1589), so a re-pin by a caller that predates them changes nothing."""
+    assert _module_locals()["snowflake_state"] == _normalise('var.snowflake_github_environment != ""')
+    assert _arguments(_module_block('variable "snowflake_github_environment"'))["default"] == '""'
+    for header in _SNOWFLAKE_HEADERS:
+        assert _arguments(_module_block(header))["count"] == _normalise("local.snowflake_state ? 1 : 0"), header
+
+
+def test_the_snowflake_state_roles_trust_their_own_environment_and_workflows() -> None:
+    """Their own `sub` (sf-*, never the hub's aws-* environment) and their own workflow files.
+
+    Apply: StringEquals at the apply branch, so a pull request cannot assume it. Plan: the PR
+    merge ref on staging only, plus the drift workflow at the drift branch.
+    """
+    locals_ = _module_locals()
+    assert locals_["snowflake_oidc_sub"] == _normalise(
+        '"repo:${local.repo}:environment:${var.snowflake_github_environment}"'
+    )
+    assert locals_["snowflake_apply_workflow_refs"] == _normalise(
+        '["${local.workflow_ref_prefix}/${var.snowflake_apply_workflow_file}@refs/heads/${var.apply_branch}"]'
+    )
+    assert locals_["snowflake_plan_workflow_refs"] == _normalise(
+        'concat(var.environment == "stag" ? '
+        '["${local.workflow_ref_prefix}/${var.snowflake_plan_workflow_file}@refs/pull/*/merge"] : [],'
+        ' ["${local.workflow_ref_prefix}/${var.snowflake_drift_workflow_file}@refs/heads/${var.drift_branch}"],)'
+    )
+    for role, test, refs in (
+        ("plan", '"StringLike"', "local.snowflake_plan_workflow_refs"),
+        ("apply", '"StringEquals"', "local.snowflake_apply_workflow_refs"),
+    ):
+        trust = _block(
+            _module_block(f'data "aws_iam_policy_document" "snowflake_state_{role}_assume_role"'), "statement"
+        )
+        assert _arguments(_block(trust, "principals")) == {
+            "type": '"Federated"',
+            "identifiers": "[var.oidc_provider_arn]",
+        }, role
+        assert _conditions(trust) == [
+            {
+                "test": '"StringEquals"',
+                "variable": '"token.actions.githubusercontent.com:aud"',
+                "values": '["sts.amazonaws.com"]',
+            },
+            {
+                "test": '"StringEquals"',
+                "variable": '"token.actions.githubusercontent.com:sub"',
+                "values": "[local.snowflake_oidc_sub]",
+            },
+            {"test": test, "variable": '"token.actions.githubusercontent.com:job_workflow_ref"', "values": refs},
+        ], role
+
+
+def test_the_snowflake_state_roles_reach_their_prefix_and_nothing_else() -> None:
+    """S3 on the Snowflake prefix only; plan reads, apply reads and writes. No other service."""
+    assert _module_locals()["snowflake_state_objects_arn"] == _normalise(
+        '"${local.state_arn}/${var.snowflake_state_prefix}/*"'
+    )
+    for role, writes in (("plan", False), ("apply", True)):
+        document = f'data "aws_iam_policy_document" "snowflake_state_{role}"'
+        listing = _statement(document, "ListOnlyTheSnowflakePrefix")
+        assert _arguments(listing)["actions"] == '["s3:ListBucket"]', role
+        assert _arguments(listing)["resources"] == "[local.state_arn]", role
+        assert _conditions(listing) == [
+            {"test": '"StringLike"', "variable": '"s3:prefix"', "values": '["${var.snowflake_state_prefix}/*"]'}
+        ], role
+        sid = "ReadWriteTheSnowflakeState" if writes else "ReadTheSnowflakeState"
+        objects = _arguments(_statement(document, sid))
+        assert objects["effect"] == '"Allow"', role
+        assert objects["resources"] == "[local.snowflake_state_objects_arn]", role
+        expected = {'"s3:DeleteObject"', '"s3:GetObject"', '"s3:PutObject"'} if writes else {'"s3:GetObject"'}
+        assert set(_list(objects["actions"])) == expected, role
+
+        body = _normalise(_module_block(document))
+        actions = set(re.findall(r'"((?:[a-z0-9-]+):[A-Za-z*]+)"', body)) - {"s3:prefix"}
+        allowed = {"s3:ListBucket", "s3:GetObject"} | ({"s3:DeleteObject", "s3:PutObject"} if writes else set())
+        assert actions == allowed, role
+
+
+def test_the_snowflake_state_roles_hold_no_managed_policy_or_boundary_escape() -> None:
+    """Inline policy only: no attachment anywhere names a Snowflake role."""
+    module = "\n".join(body for _, body in _module_blocks())
+    for name in ("snowflake_state_plan", "snowflake_state_apply"):
+        assert f"aws_iam_role.{name}[0].id" in module
+        assert not re.search(rf"aws_iam_role_policy_attachment[^\n]*{name}", module), name
 
 
 def _ci(name: str) -> str:
