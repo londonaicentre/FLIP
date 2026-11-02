@@ -62,6 +62,9 @@ on:
       - ".github/workflows/docker_build_*.yml"
       - ".github/workflows/fl-docker-build-*.yml"
       - ".github/workflows/release.yml"
+      # test_snowflake_trust_ci.py runs the Snowflake trust CI wrapper and reads its workflows (#1589).
+      - ".github/workflows/snowflake_trust_*.yml"
+      - "trust/deploy/terraform/scripts/**"
       - ".github/actions/**"
       - ".github/tests/**"
       - "tests/**"

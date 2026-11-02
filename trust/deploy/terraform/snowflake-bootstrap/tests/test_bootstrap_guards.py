@@ -228,6 +228,26 @@ def test_the_ci_users_log_in_with_github_oidc_only():
     )
     assert re.search(r"apply\s+=\s+\{[^}]*subject = local\.github_oidc_subject \}", locals_text)
     assert 'apply = { name = "FLIP_CI_APPLY_USER", role = local.ci_role' in source("locals.tf")
+    assert 'default_secondary_roles_option = "NONE"' in block, "only the role CI asks for may be active"
+
+
+def test_the_plan_role_holds_warehouse_usage_and_nothing_else():
+    """PR plans run -refresh=false as FLIP_PLATFORM_CI_READ: it connects, reads nothing, changes nothing."""
+    code = re.sub(r"#.*", "", all_terraform())
+    grants = [
+        b
+        for b in resource_blocks(code, "snowflake_grant_privileges_to_account_role")
+        if "snowflake_account_role.platform_ci_read" in b
+    ]
+    assert len(grants) == 1, grants
+    assert 'privileges        = ["USAGE"]' in grants[0]
+    assert 'object_type = "WAREHOUSE"' in grants[0]
+    roles = [
+        b
+        for b in resource_blocks(code, "snowflake_grant_account_role")
+        if "snowflake_account_role.platform_ci_read.name" in b
+    ]
+    assert all('parent_role_name = "SYSADMIN"' in b or "user_name" in b for b in roles), roles
 
 
 def test_the_ci_environment_is_one_of_the_two():

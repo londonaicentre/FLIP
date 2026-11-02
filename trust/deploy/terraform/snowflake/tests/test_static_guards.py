@@ -143,7 +143,9 @@ def test_the_admin_role_is_retired():
 
 def test_the_root_is_applied_as_the_deploy_role():
     block = hcl_block(source("variables.tf"), 'variable "terraform_role"')
-    assert "FLIP_[A-Z0-9]+_DEPLOY" in block, "the role is validated, so a privileged role cannot be passed by mistake"
+    assert '"^(FLIP_[A-Z0-9]+_DEPLOY|FLIP_PLATFORM_CI_READ)$"' in block, (
+        "the role is validated, so a privileged role cannot be passed by mistake"
+    )
     assert "default" not in block, "the role is supplied at apply time"
 
 

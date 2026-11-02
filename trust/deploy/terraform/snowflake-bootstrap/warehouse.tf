@@ -66,3 +66,16 @@ resource "snowflake_grant_privileges_to_account_role" "ci_warehouse" {
     object_name = snowflake_warehouse.trust.name
   }
 }
+
+# The plan role runs `plan -refresh=false`: it needs a warehouse to connect with and reads nothing.
+# A refreshed plan cannot be read-only (reading the prune task needs MANAGE GRANTS, MONITOR on a user
+# hides its properties, stages and procedures need data access), so drift runs as the apply identity.
+resource "snowflake_grant_privileges_to_account_role" "ci_read_warehouse" {
+  account_role_name = snowflake_account_role.platform_ci_read.name
+  privileges        = ["USAGE"]
+
+  on_account_object {
+    object_type = "WAREHOUSE"
+    object_name = snowflake_warehouse.trust.name
+  }
+}

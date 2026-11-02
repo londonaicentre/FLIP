@@ -23,12 +23,16 @@ variable "account_name" {
 }
 
 variable "terraform_role" {
-  description = "The role the provider assumes. Always the workload role, FLIP_<CODE>_DEPLOY: this root needs nothing more."
+  description = <<-EOT
+    The role the provider assumes. Applies always use the workload role, FLIP_<CODE>_DEPLOY: this
+    root needs nothing more. CI's pull-request plans connect as FLIP_PLATFORM_CI_READ, which holds
+    only warehouse USAGE, and plan with -refresh=false, so they read and change nothing.
+  EOT
   type        = string
 
   validation {
-    condition     = can(regex("^FLIP_[A-Z0-9]+_DEPLOY$", var.terraform_role))
-    error_message = "the workload root is applied as FLIP_<CODE>_DEPLOY. ACCOUNTADMIN, SECURITYADMIN and SYSADMIN belong to the platform root."
+    condition     = can(regex("^(FLIP_[A-Z0-9]+_DEPLOY|FLIP_PLATFORM_CI_READ)$", var.terraform_role))
+    error_message = "the workload root is applied as FLIP_<CODE>_DEPLOY (or planned as FLIP_PLATFORM_CI_READ). ACCOUNTADMIN, SECURITYADMIN and SYSADMIN belong to the platform root."
   }
 }
 

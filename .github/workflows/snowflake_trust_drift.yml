@@ -1,0 +1,89 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Snowflake trust: nightly drift (epic #1589).
+#
+# A refreshed plan needs the apply identity, so this workflow holds no Snowflake or AWS credential
+# of its own. It dispatches snowflake_trust_apply.yml on develop with mode=drift (the one file and
+# ref the apply identity trusts), waits for it, and keeps one open issue per environment. The same
+# shape as terraform_drift.yml reaching production by dispatching onto main.
+name: Snowflake Trust Drift
+
+on:
+  schedule:
+    - cron: "30 3 * * *" # 03:30 UTC daily, after the hub's drift run
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sf-drift
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    name: Drift (sf-stag)
+    if: github.repository == 'londonaicentre/FLIP' && vars.SF_CI_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write # dispatch and read the drift run
+      contents: read
+      issues: write # raise or update the drift issue
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: "Snowflake trust drift: sf-stag"
+    steps:
+      - name: Dispatch the drift plan and wait for it
+        id: run
+        run: |
+          before=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run snowflake_trust_apply.yml --ref develop -f mode=drift
+          run_id=""
+          for _ in $(seq 1 30); do
+            sleep 10
+            run_id=$(gh run list --workflow snowflake_trust_apply.yml --branch develop \
+              --event workflow_dispatch --created ">=$before" --limit 1 --json databaseId \
+              --jq '.[0].databaseId // empty')
+            [ -z "$run_id" ] || break
+          done
+          if [ -z "$run_id" ]; then
+            echo "::error::The drift run never started."
+            exit 1
+          fi
+          echo "url=https://github.com/$GH_REPO/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
+          gh run watch "$run_id" --interval 30 > /dev/null || true
+          conclusion=$(gh run view "$run_id" --json conclusion --jq .conclusion)
+          echo "conclusion=$conclusion" >> "$GITHUB_OUTPUT"
+          echo "Drift run $run_id: $conclusion"
+      # The apply workflow exits 2 on drift and 1 on an error; both conclude as failure, and the
+      # run's summary says which. Either way someone has to look, so either opens the issue.
+      - name: Raise, update or close the drift issue
+        env:
+          CONCLUSION: ${{ steps.run.outputs.conclusion }}
+          URL: ${{ steps.run.outputs.url }}
+        run: |
+          existing=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number // empty')
+          if [ "$CONCLUSION" = success ]; then
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --comment "In sync again: $URL"
+            fi
+            exit 0
+          fi
+          body="The nightly refreshed plan of the Snowflake trust roots did not come back clean ($CONCLUSION). The run's summary has both plans: $URL"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$TITLE" --body "$body" --label terraform-drift \
+              || gh issue create --title "$TITLE" --body "$body"
+          fi
+          exit 1

@@ -37,3 +37,12 @@ resource "snowflake_grant_account_role" "deploy_to_user" {
   role_name = snowflake_account_role.deploy.name
   user_name = snowflake_service_user.deploy.name
 }
+
+# CI's apply identity (snowflake-bootstrap's FLIP_CI_APPLY_USER) applies the workload root as this
+# trust's deploy role, so it holds that role too. Empty, as on a laptop-only trust, grants nothing.
+resource "snowflake_grant_account_role" "deploy_to_ci_apply_user" {
+  count = var.ci_apply_user_name == "" ? 0 : 1
+
+  role_name = snowflake_account_role.deploy.name
+  user_name = var.ci_apply_user_name
+}
