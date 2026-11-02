@@ -32,7 +32,9 @@ blocked alerts), #1555 (an alert cleared by removing an unused dependency).
 ## 1. Set up
 
 - `git fetch origin`, then a new worktree off `origin/develop` on branch `chore/dependabot-fixes-<YYYY-MM-DD>` (or
-  the release branch). Leave the main checkout and its untracked files alone.
+  the release branch). Leave the main checkout and its untracked files alone. In the new worktree, run
+  `cp .env.development.example .env.development`: the service configs read it, and without it the unit tests fail
+  on pydantic `missing` errors.
 - Use **uv 0.11.16** for every lock, the version CI's cooldown check pins (`secret-scanning.yml`): check `uv --version`
   and `./scripts/check-uv-version.sh`, else run `uvx uv@0.11.16 lock …`. An older uv silently drops the cooldown and
   rewrites the whole lockfile.
@@ -54,7 +56,8 @@ Group the alerts by package, then put each group in one bucket:
 | **Fixable** | a patched release that is more than 72 h old | fix it (step 3) |
 | **In cooldown** | the patched release is under 72 h old (PyPI: `curl -s https://pypi.org/pypi/<pkg>/<ver>/json \| jq -r '.urls[0].upload_time_iso_8601'`; npm: `npm view <pkg>@<ver> time --json`) | leave it out and give the time it becomes installable. Never widen `exclude-newer` or `min-release-age` |
 | **Ghost** | `manifest_path` is no longer tracked on `develop` (`git ls-files`) | no code change. List it to dismiss as `not_used` after the user agrees |
-| **Blocked** | the fix conflicts with a pin (for example, torch capping setuptools); `uv lock` prints the conflict | add a comment at the omission in that `pyproject.toml`, with the alert, the reason and the issue that unblocks it (#1038 style) |
+| **Major only** | the only patched release is a new major version that the packages depending on it don't accept yet (minimatch 11 in #1747; check each one with `npm view <parent>@latest dependencies.<pkg>`) | try forcing it (an npm override or a uv constraint) and keep it only if that project's lint, tests and build all pass. If any of them fails, treat it as Blocked and name the API that broke |
+| **Blocked** | the fix conflicts with a pin (for example, torch capping setuptools); `uv lock` prints the conflict | Python: add a comment at the omission in that `pyproject.toml`, with the alert, the reason and the issue that unblocks it (#1038 style). npm: `package.json` can't hold comments, so give the reason in the PR body |
 | **No patch** | `first_patched_version` is null | remove the dependency if nothing uses it (#1555). Otherwise treat it as Blocked |
 
 Show the table (alert numbers, package, manifest, severity, current → target version, bucket). Stop there on
