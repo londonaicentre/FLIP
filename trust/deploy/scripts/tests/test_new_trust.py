@@ -156,21 +156,29 @@ def test_mints_every_trust_local_password() -> None:
     )
     root = _temp_repo()
     try:
-        template = "".join(f"{key}=default\n" for key in new_trust.TRUST_LOCAL_PASSWORD_KEYS)
-        template += "XNAT_ADMIN_INITIAL_PASSWORD=admin\nORTHANC_USERNAME=admin\n# ORTHANC_PASSWORD=note\n"
-        (root / "trust" / ".env.example").write_text(template)
+        # The real template, so the test sees exactly the lines a kit is scaffolded from.
+        example = SCRIPTS_DIR.parents[1] / ".env.example"
+        shutil.copy2(example, root / "trust" / ".env.example")
         res = _run(root, "--code", "MINT", "--name", "Mint", "--env", "prod")
         _assert(res.returncode == 0, "exit 0", res.stderr)
-        content = (root / "trust" / ".env.MINT.prod").read_text()
-        values = dict(line.split("=", 1) for line in content.splitlines() if "=" in line and not line.startswith("#"))
-        minted = [values[key] for key in new_trust.TRUST_LOCAL_PASSWORD_KEYS]
-        _assert(all(v != "default" and len(v) >= 24 for v in minted), "every password replaced by a long random value")
-        _assert(len(set(minted)) == len(minted), "each password is distinct")
-        _assert(values["XNAT_ADMIN_INITIAL_PASSWORD"] == "admin", "XNAT factory password left for xnat-init to rotate")
-        _assert(values["ORTHANC_USERNAME"] == "admin", "usernames untouched")
-        _assert("# ORTHANC_PASSWORD=note" in content, "commented lines untouched")
+        before = _assignments(example.read_text())
+        after = _assignments((root / "trust" / ".env.MINT.prod").read_text())
+        minted = [after[key] for key in new_trust.TRUST_LOCAL_PASSWORD_KEYS]
+        _assert(
+            all(after[key] != before[key] and len(after[key]) >= 24 for key in new_trust.TRUST_LOCAL_PASSWORD_KEYS),
+            "every template password replaced by a long random value",
+        )
+        _assert(len(set(minted)) == len(minted), "each value is distinct")
+        untouched = [key for key in before if key not in new_trust.TRUST_LOCAL_PASSWORD_KEYS]
+        _assert(all(after[key] == before[key] for key in untouched), "every other assignment carried over unchanged")
+        _assert("XNAT_ADMIN_INITIAL_PASSWORD" in untouched, "XNAT's factory password is left for xnat-init to rotate")
     finally:
         shutil.rmtree(root)
+
+
+def _assignments(text: str) -> dict[str, str]:
+    """KEY -> value for every uncommented assignment line."""
+    return dict(line.split("=", 1) for line in text.splitlines() if "=" in line and not line.startswith("#"))
 
 
 def main() -> None:
