@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Emits the runtime window.* config for the public Ark+ demo build.
+# Emits the runtime window.* config for the public demo build (FLIP#1746).
 #
 # Unlike scripts/generate-window-js.sh, this reads NO environment and points at
 # NO real backend. AWS_BASE_URL is "/api" — the prefix the in-browser demo
@@ -19,13 +19,12 @@
 # <script src="…/js/window.js"> in index.html a no-op that only exists so the
 # bundle carries valid config before its ES modules evaluate.
 #
-# RELEASE_VERSION stamps the register's vintage so a mutable /ark_demo/ URL
-# still tells a visitor (or a script probing the header) which snapshot it is
-# serving. The capture date is grepped out of mocks/demo/ark-plus-register.ts
-# rather than duplicated here, so it cannot drift from that file's
-# DEMO_CAPTURE_DATE — the same constant src/demo/DemoBanner.vue renders. Run
-# from flip-ui/ (the npm postbuild:demo hook's cwd), so both paths below are
-# relative to that.
+# RELEASE_VERSION stamps the registry's vintage so a mutable /demo/ URL still
+# tells a visitor (or a script probing the header) which snapshot it is serving.
+# The newest capture date is grepped out of mocks/demo/capture-window.ts rather
+# than duplicated here — the same constant src/demo/DemoBanner.vue renders, and
+# one the registry spec pins to the registers. Run from flip-ui/
+# (the npm postbuild:demo hook's cwd), so the paths below are relative to that.
 
 set -eu
 
@@ -37,9 +36,9 @@ set -eu
 # snapshot is being served matters most (FLIP#794 review). Fail the build
 # instead; every legitimate caller (npm prebuild:demo / postbuild:demo, run from
 # flip-ui/ in a checkout) satisfies both.
-CAPTURE_DATE=$(sed -n 's/^export const DEMO_CAPTURE_DATE = "\(.*\)";$/\1/p' mocks/demo/ark-plus-register.ts)
+CAPTURE_DATE=$(sed -En 's/^export const LATEST_CAPTURE_DATE(: string)? = "(.*)";$/\2/p' mocks/demo/capture-window.ts)
 if [ -z "$CAPTURE_DATE" ]; then
-    echo "generate-demo-window-js: ERROR — DEMO_CAPTURE_DATE not found in mocks/demo/ark-plus-register.ts." >&2
+    echo "generate-demo-window-js: ERROR — LATEST_CAPTURE_DATE not found in mocks/demo/capture-window.ts." >&2
     echo "  The constant was renamed or reshaped; update this script's sed expression to match." >&2
     exit 1
 fi
@@ -61,5 +60,5 @@ window.KEYCLOAK_URL = "";
 window.KEYCLOAK_REALM = "";
 window.KEYCLOAK_CLIENT_ID = "";
 window.BLACKLISTED_MODEL_FILES = "";
-window.RELEASE_VERSION = "ark-demo/${CAPTURE_DATE}+${SHORT_SHA}";
+window.RELEASE_VERSION = "demo/${CAPTURE_DATE}+${SHORT_SHA}";
 EOF
