@@ -43,15 +43,19 @@ def _subdirs(path: str) -> list[str]:
 def _last_used(accession_dir: str) -> float:
     """The newest sentinel's mtime (refreshed on every cache hit), or the directory's own when it has none.
 
-    The directory's mtime also counts: it moves whenever files land in it, so a download in progress is never expired.
+    The directory's mtime also counts: it moves whenever files land in it, so a half-extracted study is never expired.
     """
     with os.scandir(accession_dir) as entries:
         times = [e.stat().st_mtime for e in entries if e.name.startswith(SENTINEL_PREFIX) and e.is_file()]
     return max([os.stat(accession_dir).st_mtime, *times])
 
 
-def sweep(base_dir: str, ttl_seconds: float, now: float | None = None) -> int:
-    """Remove every ``<net>/<project>/<accession>`` directory unused for ``ttl_seconds``; returns how many."""
+async def sweep(base_dir: str, ttl_seconds: float, now: float | None = None) -> int:
+    """Remove every ``<net>/<project>/<accession>`` directory unused for ``ttl_seconds``; returns how many.
+
+    Runs on the event loop and yields only between studies: a download or a cache hit, which run on the same loop
+    without awaiting, can never land between a study's check and its removal.
+    """
     cutoff = (time.time() if now is None else now) - ttl_seconds
     removed = 0
     for net_dir in _subdirs(base_dir):
@@ -65,6 +69,7 @@ def sweep(base_dir: str, ttl_seconds: float, now: float | None = None) -> int:
                         removed += 1
                 except OSError as e:
                     logger.warning(f"Image-cache sweep could not remove {accession_dir}: {e}")
+                await asyncio.sleep(0)
     return removed
 
 
@@ -73,7 +78,7 @@ async def run_sweeper() -> None:
     ttl_seconds = get_settings().IMAGE_CACHE_RETENTION_HOURS * 3600
     while True:
         try:
-            removed = await asyncio.to_thread(sweep, BASE_IMAGES_DOWNLOAD_DIR, ttl_seconds)
+            removed = await sweep(BASE_IMAGES_DOWNLOAD_DIR, ttl_seconds)
             if removed:
                 logger.info(f"Image-cache sweep removed {removed} unused cached stud{'y' if removed == 1 else 'ies'}")
         except Exception:

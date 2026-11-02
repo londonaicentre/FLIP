@@ -99,8 +99,9 @@ whole net directory at job start and end.
 
 **Retention (FLIP#1050).** Every cache hit refreshes the sentinel's mtime, the entry's last-used time, and an hourly
 sweep (`services/cache_retention.py`) removes accession folders whose newest sentinel is older than
-`IMAGE_CACHE_RETENTION_HOURS` (default `168`; `0` turns the sweep off). A folder's own mtime counts too, so a download
-in progress is never expired. Net folders and `upload/` are never touched. This is what bounds the cache on Flower,
+`IMAGE_CACHE_RETENTION_HOURS` (default `168`; `0` turns the sweep off). A folder's own mtime counts too, so a
+half-extracted study is never expired, and the sweep runs on the single-worker event loop, yielding only between
+studies, so a check and removal never interleave with a download or a hit. Net folders and `upload/` are never touched. This is what bounds the cache on Flower,
 whose clients read a study every round, and on NVFLARE job pods; an NVFLARE client reads a study once per job, so the
 TTL must be far longer than any job. An expired study is downloaded again from XNAT on its next request.
 

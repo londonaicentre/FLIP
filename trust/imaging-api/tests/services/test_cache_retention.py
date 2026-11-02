@@ -12,14 +12,19 @@
 
 """The image-cache sweep (FLIP#1050): an accession dir goes once its newest sentinel is older than the TTL."""
 
+import asyncio
 import os
 from pathlib import Path
 
-from imaging_api.services.cache_retention import sweep
+from imaging_api.services.cache_retention import sweep as _sweep
 from imaging_api.services.image_cache import SENTINEL_PREFIX
 
 TTL = 3600.0
 NOW = 1_000_000.0
+
+
+def sweep(base_dir: str, ttl_seconds: float, now: float) -> int:
+    return asyncio.run(_sweep(base_dir, ttl_seconds, now=now))
 
 
 def _study(base: Path, accession: str, age: float, sentinels: tuple[float, ...] = ()) -> Path:
@@ -52,7 +57,7 @@ def test_the_newest_sentinel_governs(tmp_path):
 
 
 def test_a_directory_being_written_is_not_expired(tmp_path):
-    """A download in progress has an old sentinel for another resource but a fresh directory mtime."""
+    """A half-extracted study has an old sentinel for another resource but a fresh directory mtime."""
     study = _study(tmp_path, "BUSY", age=0, sentinels=(5 * TTL,))
 
     assert sweep(str(tmp_path), TTL, now=NOW) == 0
