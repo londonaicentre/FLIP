@@ -101,7 +101,7 @@ provisioned kit directories to the new container uid is needed before the first 
 
 ### Container capability hardening
 
-The trust-deployment `fl-client-net-*` services (`trust/deploy/compose_trust.{production,development}.nvflare.yml`)
+The trust-deployment `fl-client-net-*` services (`trust/deploy/compose/compose_trust.{production,development}.nvflare.yml`)
 also set `security_opt: [no-new-privileges:true]` and `cap_drop: [ALL]`, matching every other trust-side
 service. Development adds nothing back: the image is non-root, and Docker makes a `cap_add` effective only
 for root, so a grant there would sit unused in the bounding set (`CapEff` stays `0`). A `provision/workspace-dev/`

@@ -48,7 +48,7 @@ Privacy filters on shared model updates
 FLARE: percentile sparsification
 ==================================
 
-The FLARE training job types (``standard``, ``fed_opt``, ``diffusion_model``) pass each client's training
+The FLARE training job types (``standard``, ``fed_opt``) pass each client's training
 result through a percentile privacy filter before it leaves the site (``PercentilePrivacy``, after Shokri &
 Shmatikov, "Privacy-preserving deep learning", CCS '15). The filter:
 
@@ -57,8 +57,7 @@ Shmatikov, "Privacy-preserving deep learning", CCS '15). The filter:
 - truncates the remaining components to ``±gamma``.
 
 The templates use the FLARE defaults, ``percentile=10`` and ``gamma=0.01`` (share the top 90 %, clip at 0.01).
-The ``diffusion_model`` job type computes the cutoff separately for each training stage. The ``evaluation``
-templates have no filter: they send metrics, not weights.
+The ``evaluation`` templates have no filter: they send metrics, not weights.
 
 The filter is set in the template's ``config_fed_client.json``, which an upload cannot replace, so every FLIP run
 uses these values. In your own FLARE runs (the simulator, or a job exported with

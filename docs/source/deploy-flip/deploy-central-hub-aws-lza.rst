@@ -387,8 +387,9 @@ The Makefile refuses to run when ``AWS_PROFILE`` does not match ``HUB``, and nee
 
    - ``full-deploy`` and ``full-deploy-hub-only``, along with ``make status`` and ``make destroy``, are not yet
      exercised on an LZA estate.
-   - ``deploy-ui`` does not invalidate a CloudFront cache, because the edge distribution is in another account.
-     Instead ``index.html`` is served uncached and the hashed assets as immutable.
+   - CI publishes the UI after each successful apply, so ``deploy-ui`` is only needed when that publish fails or
+     the UI must be rolled back. It does not invalidate a CloudFront cache, because the edge distribution is in
+     another account. Instead ``index.html`` is served uncached and the hashed assets as immutable.
 
 ***************
 Further reading

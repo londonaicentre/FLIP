@@ -146,7 +146,7 @@ A waiter timeout warns and proceeds. Then, per kit, it:
    `--out-ssm-parameter /flip/trust-kits/ephemeral/<uuid>` so the kit body is PUT as a SecureString and never
    reaches CloudWatch — only the parameter *name* transits stdout. The script then GETs the parameter with
    decryption, deletes it, and deletes the task's log stream.
-3. Writes the kit through `scripts/distribute_trust_kits.py` (repo root), the same in-place upsert writer the dev
+3. Writes the kit through `trust/deploy/scripts/distribute_trust_kits.py` (repo root), the same in-place upsert writer the dev
    path and `sync-trust-kit` use: credentials on first registration only, operator host-local edits preserved, and
    the hub-shared block upserted with whatever the task's environment carried — on ECS only `TRUST_API_KEY_HEADER`
    and `FL_BACKEND` (`AES_KEY_BASE64` is a Secrets Manager value, never in the task env, and the other hub-shared
@@ -189,7 +189,12 @@ KIT=<CODE>` tarballs `trust/.env.<CODE>.<hub>` (or the kit named by `KIT_FILE=<p
 
 The UI is served from S3 by the networking account's edge CloudFront at the canonical user-facing subdomain (`stag.flip.aicentre.co.uk` / `app.flip.aicentre.co.uk`), which reads the bucket through cross-account OAC and relays `/api/*` to the internal NLB's web listener (see [Deploying onto an LZA estate](#deploying-onto-an-lza-estate)). There is no EC2 UI container to fall back to.
 
-**Subsequent UI deploys**: just `make deploy-ui HUB=stag|prod` — builds the UI from the working tree, regenerates `window.js` and syncs to S3. There is no invalidation, since the distribution is in another account: `index.html` is served `no-cache` and the hashed assets as immutable. No Terraform involved. `deploy-ui` syncs `dist/` to the bucket **root** with `--delete`, so it always excludes the `ark_demo/*` prefix — the real build's `dist/` has no `ark_demo/` output, and without the exclude a routine UI (or `deploy-centralhub`, which calls `deploy-ui` as its last step) deploy would delete the demo SPA on every run. Publishing the demo bundle itself is a separate target — see below.
+**The UI ships with the apply (FLIP#1186).** Once `terraform_apply.yml` has applied a push to `develop` or `main`, its `ui` job runs [`publish_ui.yml`](../../../.github/workflows/publish_ui.yml), which publishes flip-ui from the same commit to that environment's bucket. A held or failed apply publishes nothing, so the UI never reaches users ahead of the API it calls; the `fl_quiesced: true` re-dispatch that releases a held apply publishes it. The workflow has two jobs:
+
+- **`build`** runs `npm ci && npm run build:deploy` with no AWS credentials and no secrets, because `npm ci` runs third-party install scripts. `window.js` is generated from the environment's variables `AWS_COGNITO_USER_POOL_ID`, `AWS_COGNITO_APP_CLIENT_ID`, `CENTRAL_HUB_API_URL`, `AWS_REGION` and `BLACKLISTED_MODEL_FILES`. These values are public: every browser receives them. `RELEASE_VERSION` is the release tag, or `sha-<short7>`. The apply job warns when the two Cognito variables no longer match `terraform output`.
+- **`publish`** assumes `TF_UI_PUBLISH_ROLE_ARN` and runs `scripts/publish-ui.sh` against `FLIP_UI_BUCKET_NAME`. That role is the bootstrap module's `AICentre-FLIPUiPublishRole` (set `ui_bucket_name` on the module): it can list the bucket and write its objects, never `ark_demo/*`, and nothing else. Afterwards the job reads `js/window.js` back through the site to confirm the new build is being served. While `TF_UI_PUBLISH_ROLE_ARN` is unset the job only warns.
+
+If the `ui` job fails, re-run it from the apply run once the cause is fixed, or publish from a laptop with `make deploy-ui HUB=stag|prod`, which is also the rollback: run it from the previous release's checkout. There is no invalidation, since the distribution is in another account: `index.html` is served `no-cache` and the hashed assets as immutable. Both paths run `scripts/publish-ui.sh`, which syncs `dist/` to the bucket **root** with `--delete` and always excludes the `ark_demo/*` prefix. The real build's `dist/` has no `ark_demo/` output, so without the exclude every routine UI deploy (including `deploy-centralhub`, which calls `deploy-ui` as its last step) would delete the demo SPA. Publishing the demo bundle itself is a separate target, described below.
 
 ### Ark+ demo SPA bundle (`/ark_demo/*`)
 
@@ -1104,7 +1109,7 @@ GitHub:
 | Workflow | Trigger | Role | What it does |
 | --- | --- | --- | --- |
 | `terraform_plan.yml` | PR touching `deploy/providers/AWS/**` | plan (read-only) | Posts the staging plan as a PR comment, and runs the FL/LZA-ingress advisory (advisory-only — exits 0 on every readable plan, and `continue-on-error` keeps an unreadable one from failing the check) |
-| `terraform_apply.yml` | Push to `develop` / `main` | apply | Applies to staging / production |
+| `terraform_apply.yml` | Every push to `develop` / `main` | apply, then UI-publish | Applies to staging / production, then publishes flip-ui from the same commit ([flip-ui on S3 + CloudFront](#flip-ui-on-s3--cloudfront)) |
 | `terraform_drift.yml` | Nightly 03:00 UTC | plan (read-only) | Raises one issue per environment when reality has drifted |
 
 The drift workflow runs **twice**, and which environment a run checks is decided
@@ -1121,8 +1126,9 @@ change; it catches HCL errors without credentials and is the fast gate.
 
 ### Where the CI identity comes from
 
-The plan and apply roles, the `AICentre-FLIPTerraformBoundary` permissions
-boundary and the Terraform state bucket are declared by
+The plan and apply roles, the optional UI-publish role, the
+`AICentre-FLIPTerraformBoundary` permissions boundary and the Terraform state
+bucket are declared by
 [`modules/terraform_ci_bootstrap`](modules/terraform_ci_bootstrap/README.md). This
 root never manages them — the pipeline must not set its own ceiling, and an apply
 that broke its own roles would lock CI out of the apply that fixes them.
@@ -1708,8 +1714,9 @@ Three constraints are easy to break and worth keeping in mind:
   the queued one was cancelled before it started, and fails the release if it
   happens twice.
 
-It also bypasses the `deploy/providers/AWS/**` path filter, which is the point: a
-release that touches no infrastructure would otherwise never re-pin the hub.
+The push apply runs on every push, so this dispatch is not needed to reach the
+apply; it is what pins the release digests over the push apply's `sha-` images.
+The `ui` job follows it, so the release's UI ships from the tagged commit.
 
 A release apply that changes the FL task-definition tag trips the FL gate above
 and holds for an operator's `fl_quiesced: true` re-dispatch, exactly as any other
@@ -1749,6 +1756,76 @@ Two more pipeline-level escapes:
   take it. An apply does; `make force-unlock LOCK_ID=<id>` releases it.
 - **An apply must not run.** Disable `terraform_apply.yml` in the Actions tab, or
   revert the merge — the workflow only acts on `deploy/providers/AWS/**` changes.
+
+### Staging is stopped between deploys ([FLIP#1596](https://github.com/londonaicentre/FLIP/issues/1596))
+
+Staging is not a permanently running estate. It is up while it is being deployed to, while the end to end check runs,
+and for a hold window afterwards. Outside that its ECS services are at desired count 0, the hub host is stopped and
+RDS `flip-database` is stopped. Nothing is destroyed: the state, the data, the KMS key and the LZA network handoff all
+survive, which is why this is a stop and not a `terraform destroy`.
+
+**What runs, and when.**
+
+| Step | Who does it |
+| --- | --- |
+| Start RDS and the hub host, wait for RDS | `terraform_apply.yml` job `start-staging`, before the plan |
+| Plan, FL gate, apply | `terraform_apply.yml` job `apply` |
+| Restore the ECS desired counts | job `restore-staging-services`, after the gate |
+| End to end check against the deployed hub | job `staging-end-to-end` |
+| Hold, then stop | job `hold-then-stop-staging`, which calls `staging_lifecycle.yml` |
+| Re-stop whatever is left up | `staging_lifecycle.yml` schedule, 03:30 UTC |
+
+The ECS counts are restored *after* the FL gate on purpose. The gate holds any apply that would recreate
+`fl-server-net-1` or `fl-api-net-1`, because that kills an in-flight training run. On a stopped estate there is no run
+to kill, so the gate reads the live desired counts and passes itself. Restore the counts before the gate and every
+develop apply is back to needing an `fl_quiesced=true` dispatch, docs only merges included.
+
+**The hold window.** 120 minutes by default. Set the repository variable `STAGING_HOLD_MINUTES` to change the default
+for merges, or pass `hold_minutes` when dispatching `terraform_apply.yml` or `Staging Lifecycle`. To extend a window
+that is already running, dispatch `Staging Lifecycle` again with `hold-then-stop`: the second hold replaces the first
+rather than queueing a second stop behind it.
+
+**Bringing staging back by hand.** Dispatch `Staging Lifecycle` with `start-stag`. It starts RDS, starts the hub host,
+waits for RDS to answer and restores the desired counts. A merge to `develop` does the same thing with no dispatch at
+all.
+
+**The nightly guard.** A hold lives in a runner, and runners die: a cancelled run, the six hour job limit, a
+re-dispatch over the top of itself. The 03:30 UTC guard stops anything still up, and stands down for the night if an
+apply or another lifecycle run is in flight. It also matters on its own account: AWS restarts a stopped RDS instance
+by itself after seven days, so without a recurring stop the database would come back every week forever.
+
+**Drift.** `terraform_drift.yml` asks whether staging is stopped before planning it, and stands down with a note on the
+summary when it is. A stopped estate cannot be planned at all, because Terraform refreshes RDS on every plan, and the three
+services at 0 would otherwise be reported as drift every night. `ecs_services.tf` carries
+`lifecycle { ignore_changes = [desired_count] }` for the same reason, so the live count belongs to the estate rather
+than to Terraform.
+
+That `ignore_changes` is **unconditional, so it applies to production too**. A production service scaled by hand (or
+by an autoscaler) is no longer put back by an apply, and no longer shows up as drift. Production is never stopped by
+anything here, so nothing scales it down on purpose, but the consequence is that a production desired count is now
+operational state rather than code: change it with `aws ecs update-service`, and expect an apply to leave it alone.
+Setting the count back under Terraform's control means removing the `ignore_changes` and giving the staging stop a
+different mechanism.
+
+**The production refusal.** `flip-cluster`, `flip-database` and `Ec2Instance` are named identically in both estates, so
+a misrouted stop would take production down. `staging_lifecycle.yml` has no `main` trigger, its jobs refuse to run on
+`main`, its environment is the literal `aws-stag`, and `scripts/staging-power.sh` independently checks
+`FLIP_ENVIRONMENT`, `TF_HUB` and the ref before making a single call, with no override flag. Those checks are pinned
+by `scripts/tests/test_staging_power.sh` and `tests/test_staging_lifecycle_workflow.py`.
+
+**The OIDC trust.** The power job runs from `staging_lifecycle.yml`, and `job_workflow_ref` names the reusable
+workflow rather than its caller, so the staging apply role's trust policy lists that file alongside
+`terraform_apply.yml` (`modules/terraform_ci_bootstrap`, `local.apply_workflow_refs`). Staging only: there is no
+production power workflow, and the production apply role still trusts exactly one file. Without that entry the power
+job is refused, and because the apply waits on `start-staging`, every develop apply would be skipped rather than just
+the stop. The platform repository that owns the CI bootstrap therefore has to bump its pinned SHA and apply before
+this lands.
+
+**Checking the state by hand** (read-only, no guard, safe against either estate):
+
+```bash
+AWS_PROFILE=stag AWS_REGION=eu-west-2 scripts/staging-power.sh status
+```
 
 ## Troubleshooting
 
@@ -1930,9 +2007,9 @@ parallelism and never converges on re-runs.
 
 | Rule (protocol/port → destination) | Scope | What it carries, and why |
 |---|---|---|
-| TCP 443 → `0.0.0.0/0` | any host | Central Hub API (CloudFront) for trust-api polling; GHCR image pulls (fl-client / trust-api / imaging-api / data-access-api / orthanc); Docker Hub (grafana / loki / alloy); Hugging Face mock OMOP/Orthanc seeding (`make seed-trust-data`, part of the standard `deploy-trust` chain); `download.docker.com` (Docker Engine install/upgrade, `geerlingguy.docker`); `awscli.amazonaws.com` (one-time AWS CLI v2 install); Ubuntu apt + `esm.ubuntu.com` over HTTPS; **PyPI** (the seeding step's `uv run` in `trust/seed_trust.sh`; Flower runs install nothing at run time, FLIP#1418); the **CloudWatch agent `.deb`** from `s3.amazonaws.com/amazoncloudwatch-agent/…` — us-east-1 S3, *outside* the regional prefix list, so it survives only on this floor; and the AWS APIs with no VPC endpoint provisioned (`ssmmessages`, `ec2messages`, `monitoring`). |
+| TCP 443 → `0.0.0.0/0` | any host | Central Hub API (CloudFront) for trust-api polling; GHCR image pulls (fl-client / trust-api / imaging-api / data-access-api / orthanc); Docker Hub (grafana / loki / alloy); Hugging Face mock OMOP/Orthanc seeding (`make seed-trust-data`, part of the standard `deploy-trust` chain); `download.docker.com` (Docker Engine install/upgrade, `geerlingguy.docker`); `awscli.amazonaws.com` (one-time AWS CLI v2 install); `esm.ubuntu.com`, which Ubuntu's Pro client calls but provisioning does not need; **PyPI** (the seeding step's `uv run` in `trust/seed_trust.sh`; Flower runs install nothing at run time, FLIP#1418); and the AWS APIs with no VPC endpoint provisioned (`ssmmessages`, `ec2messages`, `monitoring`). |
 | TCP 80 → `0.0.0.0/0` | any host | Ubuntu apt mirrors over HTTP (package install/upgrade). |
-| TCP 443 → S3 managed prefix list | `com.amazonaws.<region>.s3` | S3, for the AI Centre FL kit sync. A prefix list rather than a raw CIDR because S3's edge IPs rotate. Shadowed by the 443 floor — intent, not enforcement. |
+| TCP 443 → S3 managed prefix list | `com.amazonaws.<region>.s3` | S3, for the AI Centre FL kit sync and the CloudWatch agent `.deb` (AWS's copy in the region's own bucket). A prefix list rather than a raw CIDR because S3's edge IPs rotate. Shadowed by the 443 floor — intent, not enforcement. |
 | TCP `FL_SERVER_PORT` → `0.0.0.0/0` | any host | FL training traffic to the FL-server NLB. **The one destination the 443 floor does not cover**, and therefore the one that cannot be scoped to a peer SG: the NLB is internet-facing (public subnets, no `internal = true`), so its DNS resolves to public IPs even from inside the VPC, and the trust EC2 (private subnet, no public IP) reaches it out through the NAT gateway — which is precisely what the NLB's own ingress rule allowlisting the NAT public IP attests. A peer-SG destination matches only the private IPs of ENIs carrying that SG, so it would match none of this traffic and silently drop every FL connection while image pulls, hub polling and SSM all stayed healthy. Narrowable only once the NLB itself becomes `internal`, or by giving it static per-AZ EIPs via `subnet_mapping` and allowlisting those `/32`s. |
 | TCP + UDP 53 → `cidrhost(var.vpc_cidr, 2)/32` | VPC resolver | Name resolution. **Inert as a control**: AWS documents that security groups cannot filter traffic to the Route 53 Resolver (the VPC+2 address / AmazonProvidedDNS), so these two rules neither permit nor restrict resolution — do not debug a DNS fault against them, and do not "fix" one by widening them. The control that actually satisfies #876's DNS criterion is the **absence** of a `0.0.0.0/0:53` rule, which *does* block third-party resolvers such as `8.8.8.8`. |
 

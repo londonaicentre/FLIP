@@ -25,6 +25,11 @@ output "apply_role_arn" {
   value       = module.terraform_ci.apply_role_arn
 }
 
+output "ui_publish_role_arn" {
+  description = "Role ARN for the flip-ui publish, or null. Set as TF_UI_PUBLISH_ROLE_ARN on the GitHub environment."
+  value       = module.terraform_ci.ui_publish_role_arn
+}
+
 output "account_id" {
   description = "Account these roles were created in."
   value       = module.terraform_ci.account_id

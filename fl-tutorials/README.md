@@ -20,12 +20,12 @@ the model-file contract, run an application locally, or provide the inputs to th
 
 | Backend | Examples |
 | --- | --- |
-| [`nvflare/`](nvflare/) | Chest X-ray classification, spleen segmentation and evaluation, diffusion, EHR risk prediction (tabular/OMOP-only), and template tests |
+| [`nvflare/`](nvflare/) | Chest X-ray classification, spleen segmentation and evaluation, [image generation](nvflare/image_generation/README.md) (brain MRI latent diffusion in two jobs, chest X-ray diffusion), EHR risk prediction (tabular/OMOP-only), and template tests |
 | [`flower/`](flower/) | Chest X-ray classification, spleen segmentation and evaluation, prostate zonal segmentation (PI-CAI, nnU-Net-planned), EHR risk prediction (tabular/OMOP-only) |
 
 Both trees are laid out `fl-tutorials/<backend>/<category>/<name>/` (#1500): a tutorial's two copies sit at the
 same relative path, the category names the task family (`image_classification`, `image_segmentation`,
-`image_evaluation`, `image_synthesis`, `tabular_classification`, …), and every `make` target addresses a tutorial by
+`image_evaluation`, `image_generation`, `tabular_classification`, …), and every `make` target addresses a tutorial by
 `<name>` alone. The root Makefile forwards tutorial commands to `FL_BACKEND=nvflare` by default. Select Flower
 explicitly with `FL_BACKEND=flower`.
 

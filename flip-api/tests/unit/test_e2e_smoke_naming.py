@@ -37,6 +37,11 @@ from tests.e2e_smoke import (
         ("../fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files", "EHR risk prediction"),
         ("../fl-tutorials/nvflare/image_classification/xray_classification/app_files", "Chest X-ray classification"),
         (
+            "../fl-tutorials/nvflare/image_generation/brain_mri_ldm_stage2_diffusion/app_files",
+            "Brain MRI latent diffusion, stage 2 (diffusion)",
+        ),
+        ("../fl-tutorials/nvflare/image_generation/xray_diffusion/app_files", "Chest X-ray diffusion"),
+        (
             "../fl-tutorials/flower/image_evaluation/3d_spleen_segmentation_evaluation/app",
             "3D spleen segmentation evaluation",
         ),

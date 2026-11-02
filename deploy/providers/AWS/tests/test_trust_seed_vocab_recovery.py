@@ -29,7 +29,7 @@ from pathlib import Path
 
 AWS_PROVIDER_DIR = Path(__file__).resolve().parent.parent
 MAKEFILE = AWS_PROVIDER_DIR / "Makefile"
-SITE_YML = AWS_PROVIDER_DIR / "site.yml"
+SEED_ROLE = AWS_PROVIDER_DIR.parents[2] / "trust/deploy/ansible/roles/flip_trust_seed"
 SEED_SCRIPT = AWS_PROVIDER_DIR.parents[2] / "trust" / "seed_trust.sh"
 
 
@@ -43,14 +43,14 @@ def test_the_seed_procedure_honours_the_variable():
 
 
 def test_the_play_passes_the_variable_into_the_seed_container():
-    text = SITE_YML.read_text()
+    text = (SEED_ROLE / "tasks/main.yml").read_text()
     assert re.search(r"-e FORCE_DICOM_VOCAB=\{\{ '1' if seed_force_dicom_vocab \| bool else '' \}\}", text)
 
 
 def test_the_play_var_does_not_shadow_its_own_extra_var():
     """`x: "{{ x | default(...) }}"` recurses unless an extra-var of that name is always passed;
     this one is passed only when the operator asks for it, so the two names must differ."""
-    text = SITE_YML.read_text()
+    text = (SEED_ROLE / "defaults/main.yml").read_text()
     assert 'seed_force_dicom_vocab: "{{ force_dicom_vocab | default(false) }}"' in text
 
 

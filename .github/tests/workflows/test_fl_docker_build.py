@@ -34,7 +34,11 @@ from image_workflows import (  # noqa: E402
     step_block,
 )
 
-IMAGES = ("BASE", "SERVER", "CLIENT", "API")
+# Per workflow: Flower also publishes its fleet proxy, the SuperLink's trust-facing listener (FLIP#1517).
+IMAGES = {
+    "fl-docker-build-nvflare.yml": ("BASE", "SERVER", "CLIENT", "API"),
+    "fl-docker-build-flower.yml": ("BASE", "SERVER", "CLIENT", "API", "PROXY"),
+}
 
 
 class FlDockerBuildReleaseTags(ReleaseTagContract, unittest.TestCase):
@@ -45,6 +49,7 @@ class FlDockerBuildReleaseTags(ReleaseTagContract, unittest.TestCase):
 
     def test_roster_is_not_empty(self) -> None:
         assert len(self.workflows) == 2, [p.name for p in self.workflows]
+        assert sorted(IMAGES) == sorted(p.name for p in self.workflows)
 
     def test_a_release_run_lists_only_the_release_tag(self) -> None:
         for wf in self.workflows:
@@ -56,7 +61,7 @@ class FlDockerBuildReleaseTags(ReleaseTagContract, unittest.TestCase):
                 assert branch, f"{wf.name}: no refs/tags/v* branch in the tag step"
                 assigned = [line.strip() for line in branch[1].splitlines()]
                 expected = ['RELEASE="${GITHUB_REF_NAME}"'] + [
-                    f'{i}_TAGS="${{REGISTRY}}/${{ORG}}/${{{i}_IMAGE}}:${{GITHUB_REF_NAME}}"' for i in IMAGES
+                    f'{i}_TAGS="${{REGISTRY}}/${{ORG}}/${{{i}_IMAGE}}:${{GITHUB_REF_NAME}}"' for i in IMAGES[wf.name]
                 ]
                 assert assigned == expected, f"{wf.name}: {assigned}"
 
@@ -64,8 +69,9 @@ class FlDockerBuildReleaseTags(ReleaseTagContract, unittest.TestCase):
         for wf in self.workflows:
             text = code_text(wf)
             with self.subTest(workflow=wf.name):
-                assert re.findall(r"^\s+docker push (.*)$", text, re.M) == ['"$tag"'] * 4, f"{wf.name}: stray pushes"
-            for image in IMAGES:
+                pushes = re.findall(r"^\s+docker push (.*)$", text, re.M)
+                assert pushes == ['"$tag"'] * len(IMAGES[wf.name]), f"{wf.name}: stray pushes"
+            for image in IMAGES[wf.name]:
                 with self.subTest(workflow=wf.name, image=image):
                     assert f"TAGS: ${{{{ steps.tags.outputs.{image.lower()}_tags }}}}" in text, image
                     assert f'docker tag "$REGISTRY/$ORG/${image}_IMAGE:${{{{ github.sha }}}}" "$tag"' in text, image

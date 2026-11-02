@@ -18,6 +18,11 @@
 # provisioned TLS certificate (`DNS:fl-server-net-1`), so a SuperNode's certificate check fails
 # outright if that name stops resolving, and `fl-api-net-<N>` is what NET_ENDPOINTS and
 # FL_API_ADDRESS below dial.
+#
+# The trusts' SuperNodes reach `fl-server-net-<N>` on `fl-net-<N>`, and there that name is the
+# fleet proxy's (`fl-fleet-proxy-net-<N>`, FLIP#1517), not the SuperLink's: flwr>=1.40 serves
+# Control, Fleet and Runtime on one port, so the SuperLink stays off `fl-net-<N>` and the proxy
+# forwards the Fleet API alone. Hub-side, on `default`, the name is still the SuperLink.
 services:
   #################### CENTRAL HUB FL ####################
 
@@ -164,10 +169,8 @@ services:
       - --ssl-keyfile
       - /certs/server.key
       - --enable-supernode-auth
-      # flwr>=1.37: the Control API is HTTP on port 8000, loopback-only unless --host says
-      # otherwise; fl-api and the key registration reach it over the compose network. The
-      # same app serves the ServerApp's /v1/runtime/* routes, so the host port below is
-      # published on loopback only.
+      # Every SuperLink API is on 8000 (see the header); loopback-only unless --host says
+      # otherwise. Reached over `default`; the host port below is on loopback only.
       - --host
       - 0.0.0.0
       - --health-server-address
@@ -187,11 +190,37 @@ services:
     # `default` is the hub-internal network. fl-server is the one FL service that calls back
     # into flip-api (FLIP_API_INTERNAL_URL + INTERNAL_SERVICE_KEY above), and flip-api is
     # deliberately not on the FL net — see the networks block in compose.development.yml.
+    # Not on `fl-net-1` either (FLIP#1517): its port 8000 is the Control and Runtime API too.
     networks:
-      - default
-      - fl-net-1
+      default:
+        # The fleet proxy's upstream: on `fl-net-1` the proxy itself answers to fl-server-net-1.
+        aliases:
+          - fl-superlink-net-1
     restart: unless-stopped
     init: true
+
+  # The trusts' only route to the net-1 SuperLink (see the header and fleet-proxy/), on the
+  # address and port the kits already dial. No capabilities: the host group reads the key.
+  fl-fleet-proxy-net-1:
+    image: ${DOCKER_FL_REGISTRY}flower-fleet-proxy:${DOCKER_FL_TAG}
+    group_add: ["${DOCKER_GID:-1000}"]
+    volumes:
+      - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
+    environment:
+      - FLEET_PROXY_UPSTREAM=fl-superlink-net-1:8000
+      - FLEET_PROXY_UPSTREAM_TLS_NAME=fl-server-net-1
+    depends_on:
+      - fl-server-net-1
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      default: {}
+      fl-net-1:
+        aliases:
+          - fl-server-net-1
+    restart: unless-stopped
 
   # One-shot service to register SuperNode public keys with the SuperLink
   register-supernode-keys-net-1:
@@ -275,10 +304,8 @@ services:
       - --ssl-keyfile
       - /certs/server.key
       - --enable-supernode-auth
-      # flwr>=1.37: the Control API is HTTP on port 8000, loopback-only unless --host says
-      # otherwise; fl-api and the key registration reach it over the compose network. The
-      # same app serves the ServerApp's /v1/runtime/* routes, so the host port below is
-      # published on loopback only.
+      # Every SuperLink API is on 8000 (see the header); loopback-only unless --host says
+      # otherwise. Reached over `default`; the host port below is on loopback only.
       - --host
       - 0.0.0.0
       - --health-server-address
@@ -290,12 +317,35 @@ services:
     cap_drop:
       - ALL
     # No cap_add, for the reasons spelled out on fl-server-net-1 above (FLIP#1320).
-    # `default` is the hub-internal network — see fl-server-net-1 above.
+    # `default` is the hub-internal network — see fl-server-net-1 above, and for why not `fl-net-2`.
     networks:
-      - default
-      - fl-net-2
+      default:
+        aliases:
+          - fl-superlink-net-2
     restart: unless-stopped
     init: true
+
+  # The trusts' only route to the net-2 SuperLink — see fl-fleet-proxy-net-1 above.
+  fl-fleet-proxy-net-2:
+    image: ${DOCKER_FL_REGISTRY}flower-fleet-proxy:${DOCKER_FL_TAG}
+    group_add: ["${DOCKER_GID:-1000}"]
+    volumes:
+      - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
+    environment:
+      - FLEET_PROXY_UPSTREAM=fl-superlink-net-2:8000
+      - FLEET_PROXY_UPSTREAM_TLS_NAME=fl-server-net-2
+    depends_on:
+      - fl-server-net-2
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      default: {}
+      fl-net-2:
+        aliases:
+          - fl-server-net-2
+    restart: unless-stopped
 
   # One-shot service to register SuperNode public keys with the SuperLink
   register-supernode-keys-net-2:

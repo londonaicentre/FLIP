@@ -34,7 +34,7 @@ created or on infrastructure the site already has. Keep the two axes apart when 
 
 | Node shape | Defined in | Installed by | Infrastructure it runs on |
 | ---------- | ---------- | ------------ | ------------------------- |
-| **Compose on a host** | [`trust/deploy/compose_trust.*.yml`](../../trust/deploy/README.md) | [`trust/deploy/ansible/onprem.yml`](../../trust/deploy/ansible/README.md) (site-owned host) or [`AWS/site.yml`](AWS/site.yml) (EC2), then `make up-onprem-trust` / `make -C trust up-trust-ec2` | an on-prem Ubuntu box, or the EC2 trust this provider creates |
+| **Compose on a host** | [`trust/deploy/compose/compose_trust.*.yml`](../../trust/deploy/README.md) | [`trust/deploy/ansible/onprem.yml`](../../trust/deploy/ansible/README.md) (site-owned host) or [`AWS/site.yml`](AWS/site.yml) (EC2), then `make up-onprem-trust` / `make -C trust up-trust-ec2` | an on-prem Ubuntu box, or the EC2 trust this provider creates |
 | **Helm on Kubernetes** | [`trust/deploy/helm/`](../../trust/deploy/helm/README.md) (chart `flip-trust`) | `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<stag\|prod>` | a site-managed cluster (k3s, on-prem) or a managed one (AKS, EKS) |
 
 **Spell `HUB` out** on either row: `deploy/providers/AWS/Makefile` refuses to run without it, while

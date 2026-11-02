@@ -49,8 +49,6 @@ Decision table
      - Pick
    * - To train on a FLIP deployment whose nets already run one framework
      - **That framework**
-   * - Two-stage diffusion model training (``diffusion_model`` job type)
-     - **NVIDIA FLARE**
    * - Federated optimisation with a server-side optimiser (``fed_opt`` job type)
      - **NVIDIA FLARE**
    * - A privacy filter each Trust enforces on its own side, which your app's configuration cannot switch off
@@ -81,7 +79,7 @@ How the two compare
      - NVIDIA FLARE
      - Flower
    * - Job types
-     - ``standard``, ``evaluation``, ``diffusion_model``, ``fed_opt``
+     - ``standard``, ``evaluation``, ``fed_opt``
      - ``standard``, ``evaluation``
    * - What you upload
      - ``trainer.py``, ``models.py``, ``config.json`` (+ helper modules)

@@ -31,11 +31,11 @@ def FLIP(job_type: JobType | JobTypeStr = JobType.STANDARD, **kwargs: Any) -> FL
     This is the main entry point for users to create FLIP instances.
     The factory automatically selects the correct implementation based on:
 
-        1. The job type (standard, evaluation, fed_opt, diffusion_model)
+        1. The job type (standard, evaluation, fed_opt)
         2. The environment (LOCAL_DEV or production)
 
     Args:
-        job_type: One of "standard", "evaluation", "fed_opt", "diffusion_model"
+        job_type: One of "standard", "evaluation", "fed_opt"
                   or a JobType enum value. Defaults to "standard".
         **kwargs: Additional arguments passed to the constructor
 
@@ -61,7 +61,7 @@ def FLIP(job_type: JobType | JobTypeStr = JobType.STANDARD, **kwargs: Any) -> FL
         .. code-block:: python
 
             from flip.constants import JobType
-            flip = FLIP(job_type=JobType.DIFFUSION)
+            flip = FLIP(job_type=JobType.EVALUATION)
     """
     is_dev = FlipConstants.LOCAL_DEV
 
@@ -76,8 +76,6 @@ def FLIP(job_type: JobType | JobTypeStr = JobType.STANDARD, **kwargs: Any) -> FL
     # Map job types to their implementations
     if job_type in (JobType.STANDARD, JobType.EVALUATION, JobType.FED_OPT):
         return _create_standard_flip(is_dev, **kwargs)
-    elif job_type == JobType.DIFFUSION:
-        return _create_diffusion_flip(is_dev, **kwargs)
     else:
         valid_types = [t.value for t in JobType]
         raise ValueError(f"Unknown job_type: {job_type}. Must be one of {valid_types}")
@@ -85,16 +83,6 @@ def FLIP(job_type: JobType | JobTypeStr = JobType.STANDARD, **kwargs: Any) -> FL
 
 def _create_standard_flip(is_dev: bool, **kwargs: Any) -> FLIPBase:
     """Create a standard FLIP instance based on environment."""
-    from flip.core.standard import FLIPStandardDev, FLIPStandardProd
-
-    return FLIPStandardDev(**kwargs) if is_dev else FLIPStandardProd(**kwargs)
-
-
-def _create_diffusion_flip(is_dev: bool, **kwargs: Any) -> FLIPBase:
-    """Create a diffusion model FLIP instance based on environment."""
-    # For now, use the standard implementation. The diffusion tutorials only ever send metrics at the
-    # default plot coordinate (no x_value/x_label), which the standard classes already cover.
-    # If needed, a dedicated FLIPDiffusion class can be created later.
     from flip.core.standard import FLIPStandardDev, FLIPStandardProd
 
     return FLIPStandardDev(**kwargs) if is_dev else FLIPStandardProd(**kwargs)

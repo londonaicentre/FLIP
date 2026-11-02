@@ -53,8 +53,9 @@ export WORKING_DIR := $(REPO_ROOT)/fl-services/flower/runs
 build:
 	@echo "🛠️  Building flower-fl-base:$(FL_BUILD_TAG) (LOCAL_DEV=$(LOCAL_DEV))..."
 	LOCAL_DEV=$(LOCAL_DEV) $(DEV_COMPOSE) --profile build-only build flwr-base
-	@echo "🛠️  Building flower-{fl-api,superlink,supernode}:$(FL_BUILD_TAG)..."
+	@echo "🛠️  Building flower-{fl-api,superlink,supernode,fleet-proxy}:$(FL_BUILD_TAG)..."
 	$(DEV_COMPOSE) build fl-api superlink supernode-1
+	$(SECURE_COMPOSE) build fleet-proxy
 
 # How many SuperNode credentials a provisioning run mints. Defaults to the size of
 # this environment's FL kit slot pool, so the kit covers every slot the hub can hand

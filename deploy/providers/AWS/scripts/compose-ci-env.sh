@@ -220,8 +220,10 @@ OPTIONAL_KEYS=(
     # CI's resolve-image-tags.sh emits it into $GITHUB_ENV, and the Makefile
     # exports TF_VAR_fl_api_image_tag only when it is set (FLIP#1283). Listed as
     # optional so the Makefile/manifest drift guard is satisfied and so an
-    # operator CAN pin it by hand if they ever need to.
+    # operator CAN pin it by hand if they ever need to. DOCKER_FL_PROXY_TAG is the
+    # same for Flower's fleet proxy (TF_VAR_fl_fleet_proxy_image_tag, FLIP#1517).
     DOCKER_FL_API_TAG
+    DOCKER_FL_PROXY_TAG
 
     # Empty is meaningful and NOT symmetric with the rest of this list: it is the
     # correct value on stag, which hosts no public Ark+ demo, and a destructive

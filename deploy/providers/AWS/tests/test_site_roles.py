@@ -11,10 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Static guard: how deploy/providers/AWS/site.yml composes the shared trust-host roles (FLIP#1213 review).
+"""Static guard: how the EC2 trust-host plays compose the shared roles (FLIP#1213 review, FLIP#1528).
 
-The roles default to the on-prem shape; site.yml's play vars are what make an EC2 trust
-different. Dropping one of them changes a real host silently, so each is pinned here.
+The plays live in trust/deploy/ansible/aws-ec2-host.yml, which site.yml (the hub's own trust EC2)
+and aws-ec2.yml (a node from the standalone aws-ec2 root) both import. The roles default to the
+on-prem shape; the play vars are what make an EC2 trust different. Dropping one of them changes a
+real host silently, so each is pinned here.
 """
 
 from __future__ import annotations
@@ -26,12 +28,20 @@ import yaml
 AWS_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = AWS_DIR.parent.parent.parent
 SITE = AWS_DIR / "site.yml"
+HOST_PLAYS = REPO_ROOT / "trust/deploy/ansible/aws-ec2-host.yml"
 
 
 def _play_with_role(role: str) -> dict:
-    plays = [p for p in yaml.safe_load(SITE.read_text()) if role in (p.get("roles") or [])]
-    assert len(plays) == 1, f"exactly one site.yml play composes {role}"
+    plays = [p for p in yaml.safe_load(HOST_PLAYS.read_text()) if role in (p.get("roles") or [])]
+    assert len(plays) == 1, f"exactly one aws-ec2-host.yml play composes {role}"
     return plays[0]
+
+
+def test_site_yml_imports_the_trust_host_plays_and_has_none_of_its_own() -> None:
+    plays = yaml.safe_load(SITE.read_text())
+    assert {"import_playbook": "../../../trust/deploy/ansible/aws-ec2-host.yml"} in plays
+    own = [p["name"] for p in plays if p.get("hosts") in ("trust_ec2", "ec2")]
+    assert not own, f"site.yml provisions the trust host itself again: {own}"
 
 
 def test_ec2_login_user_gets_the_docker_group() -> None:
@@ -54,13 +64,21 @@ def test_ec2_dirs_cover_every_slot_and_the_observability_volumes() -> None:
 
 
 def test_base_packages_precede_the_unzip_consumers() -> None:
-    # The AWS CLI play no longer installs its own unzip: it relies on flip_base_packages having
-    # run in an earlier trust_ec2 play, or its `unarchive` of the installer zip fails mid-play.
-    plays = yaml.safe_load(SITE.read_text())
+    # flip_aws_cli installs no unzip of its own: it relies on flip_base_packages having run in an
+    # earlier trust_ec2 play, or its `unarchive` of the installer zip fails mid-play.
+    plays = yaml.safe_load(HOST_PLAYS.read_text())
+    roles_dir = REPO_ROOT / "trust/deploy/ansible/roles"
+
+    def unarchives(play: dict) -> bool:
+        tasks = list(play.get("tasks") or [])
+        for role in play.get("roles") or []:
+            tasks += yaml.safe_load((roles_dir / role / "tasks/main.yml").read_text()) or []
+        return any("unarchive" in task for task in tasks)
+
     [base] = [i for i, p in enumerate(plays) if "flip_base_packages" in (p.get("roles") or [])]
     assert plays[base]["hosts"] == "trust_ec2"
-    consumers = [i for i, p in enumerate(plays) if any("unarchive" in task for task in p.get("tasks") or [])]
-    assert consumers, "no site.yml play unarchives anything — this guard has drifted"
+    consumers = [i for i, p in enumerate(plays) if unarchives(p)]
+    assert consumers, "no aws-ec2-host.yml play unarchives anything — this guard has drifted"
     assert all(base < i for i in consumers), "flip_base_packages must run before every play that unarchives"
     role_defaults = REPO_ROOT / "trust/deploy/ansible/roles/flip_base_packages/defaults/main.yml"
     defaults = yaml.safe_load(role_defaults.read_text())

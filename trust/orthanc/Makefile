@@ -19,7 +19,7 @@ export $(shell sed 's/=.*//' $(KIT_ENV_FILE))
 endif
 
 service_name = orthanc
-docker_command = docker compose --project-directory .. -f ../deploy/compose_trust.development.yml
+docker_command = docker compose --project-directory .. -f ../deploy/compose/compose_trust.development.yml
 run_clean = run --rm --remove-orphans
 
 network1 = deploy_trust-network-1

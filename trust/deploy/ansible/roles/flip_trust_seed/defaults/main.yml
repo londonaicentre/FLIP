@@ -1,0 +1,41 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+---
+omop_dir: "/opt/flip/omop"
+orthanc_base_dir: "/opt/flip/orthanc"
+orthanc_data_dir: "/opt/flip/orthanc/orthanc-storage"
+seed_dir: "/opt/flip/seed"
+seed_trust_num: "{{ trust_num | default('1') }}"
+# Optional extra-vars get DISTINCT internal names (like hf_trust_data_repo above): a play
+# var that references itself (`x: "{{ x | default(...) }}"`) is fine only while an
+# extra-var of the same name shadows it, and these four are passed by `make
+# seed-trust-data` only when the operator sets them — unset, the first use would recurse
+# ("Recursive loop detected in template").
+seed_source_trust: "{{ source_trust | default(seed_trust_num) }}"
+seed_num_trusts: "{{ num_trusts | default('2') }}"
+seed_project_list: "{{ seed_projects | default('cxr_project', true) }}"
+seed_orthanc_enabled: "{{ seed_orthanc | default(true) }}"
+# Recovery only — see the seed task below.
+seed_force_dicom_vocab: "{{ force_dicom_vocab | default(false) }}"
+hf_trust_data_repo: "{{ trust_data_hf_repo | default('aicentreflip/trust-data') }}"
+hf_trust_data_revision: "{{ trust_data_hf_revision | default(trust_data_version) }}"
+omop_db_image: "ghcr.io/londonaicentre/omop-db:{{ omop_db_tag | default('stag', true) }}"
+orthanc_image: "ghcr.io/londonaicentre/orthanc:{{ omop_db_tag | default('stag', true) }}"
+# uv's image, pinned by digest — the same one the Helm chart's trust-seed hook runs in.
+uv_image: "ghcr.io/astral-sh/uv@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58"
+seed_omop_port: "15499"
+seed_orthanc_port: "15442"
+seed_omop_user: "{{ omop_postgres_user | default('postgres', true) }}"
+seed_omop_db: "{{ omop_postgres_db | default('trustomopdb', true) }}"
+
+# The checkout the loaders are copied from (roles/flip_trust_seed -> repo root).
+flip_repo_root: "{{ role_path }}/../../../../.."

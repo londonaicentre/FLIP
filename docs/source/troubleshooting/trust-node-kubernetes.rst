@@ -39,7 +39,7 @@ Quick checks, in order
    kubectl get pods -n flip-trust
    helm list -n flip-trust
 
-   # 2. The chart's own checks: release status, XNAT plugin roster, smoke tests
+   # 2. The chart's own checks: release status, XNAT plugins, smoke tests
    make -C trust/deploy/helm status
    make -C trust/deploy/helm smoke-cstore     # a real C-STORE through the PACS into XNAT
 
@@ -113,6 +113,59 @@ Start with the pod's events and logs:
 
    The "Troubleshooting" section of the :gh:`chart README <trust/deploy/helm/README.md>` for pods stuck in
    ``Pending`` or ``CrashLoopBackOff``, a slow XNAT start and the FL client checklist.
+
+.. _ts-k8s-xnat-db-roles:
+
+xnat-db crash-loops on upgrade: no ``postgres`` role
+====================================================
+
+*Symptom.* ``helm upgrade`` reports success, then ``xnat-db-0`` goes ``CrashLoopBackOff``. The pod's events
+carry a ``FailedPostStartHook`` entry whose message ends in::
+
+   psql: error: could not connect to server: FATAL:  role "postgres" does not exist
+
+The ``postgres`` container log carries the server's own side of the same refusal, timestamped::
+
+   FATAL:  role "postgres" does not exist
+
+``xnat-web`` then fails its readiness check and every DICOM path stops with it.
+
+*Cause.* The volume was first initialised by a chart that rendered ``POSTGRES_USER``. The Postgres entrypoint
+honours that variable only at the first initdb, so that database's single superuser is ``xnat`` and no
+``postgres`` role exists. A data volume is never initialised twice, so the layout survives every later chart
+and only shows up when a release starts connecting to it.
+
+*Check.* Ask the database which roles it holds:
+
+.. code-block:: shell
+
+   kubectl -n flip-trust exec <release>-flip-trust-xnat-db-0 -c postgres -- psql -X -U xnat -d postgres \
+     -tAc "select rolname, rolsuper from pg_roles where rolname in ('postgres','xnat')"
+
+``xnat|t`` on its own is this layout. ``postgres|t`` alongside ``xnat|f`` is a current one.
+
+*Fix.* A release that carries FLIP#1658 probes both roles over the local socket and connects as whichever
+answers, so the upgrade completes and the application role's password is re-synced either way. On an older
+release, create the missing role once, after dumping the database:
+
+.. code-block:: shell
+
+   kubectl -n flip-trust exec <release>-flip-trust-xnat-db-0 -c postgres -- \
+     psql -X -v ON_ERROR_STOP=1 -U xnat -d postgres -c "CREATE ROLE postgres SUPERUSER LOGIN"
+
+No password is needed: the statement runs over the container's local socket, where the image's authentication
+is ``trust``.
+
+.. note::
+
+   On this layout the application role is also the database superuser, which a current install does not allow.
+   The chart leaves the layout alone rather than rewriting roles on a live database at container start;
+   converging it is an operator job (``ALTER DATABASE ... OWNER TO``, then ``REASSIGN OWNED``), tracked as
+   FLIP#1666.
+
+.. seealso::
+
+   The upgrade path itself, including this case, is in :ref:`admin-upgrading-sites`.
 
 .. _ts-k8s-secret-conflict:
 
@@ -221,23 +274,27 @@ crashing:
    kubectl exec -n flip-trust "$XNAT_POD" -- \
      grep -E 'AbstractMethodError|unable to read DICOM object null' /data/xnat/home/logs/dicom.log
 
-**Cause.** The running ``xnat-web`` pod has older plugin jars than the chart lists. A C-ECHO never reaches XNAT's
-importer, so it cannot detect this. The pod downloads its plugins afresh every time it is created, so wrong jars
-mean the pod itself is old: no deploy has replaced it since the plugin list changed. Three reasons are common:
+**Cause.** The image the pod runs pairs a plugin with the wrong XNAT core. A C-ECHO never reaches XNAT's importer, so
+it cannot detect this. Three reasons are common:
 
-#. **The deploy never carried the new list**: an older checkout, or an overrides file pinning old versions. Check
-   with ``helm get values trust-release -n flip-trust --revision <N> --all | grep -A5 urls``.
-#. **The rollout stalled.** Releases deployed before the chart switched ``xnat-web`` to the ``Recreate`` strategy
-   start the new pod beside the old one; it never gets the volume and the old pod keeps serving. Two ReplicaSets
-   with a stuck pod in ``kubectl -n flip-trust get rs,pods -l app.kubernetes.io/component=xnat-web`` show this.
-#. **The deploy never finished**, because the ``xnat-init`` job outran the wait: :ref:`ts-k8s-xnat-init-timeout`.
+#. **The pod runs an image built before the fix**: one pinned in your overrides or kit file, or a tag such as
+   ``stag`` that was rebuilt after the pod pulled it. A redeploy does not replace the pod while its tag is
+   unchanged; restart it to pull the rebuilt image:
+   ``kubectl -n flip-trust rollout restart deployment/trust-release-flip-trust-xnat-web``.
+#. **The new pod never replaced the old one.** Releases deployed before the chart switched ``xnat-web`` to the
+   ``Recreate`` strategy start the new pod beside the old one; it never gets the volume and the old pod keeps
+   serving. Two ReplicaSets with a stuck pod in
+   ``kubectl -n flip-trust get rs,pods -l app.kubernetes.io/component=xnat-web`` show this. A deploy whose
+   ``xnat-init`` job outran the wait stops short the same way: :ref:`ts-k8s-xnat-init-timeout`.
+#. **The plugin list FLIP builds the image from pairs them wrongly**, so every image built from it does. Report it to
+   the FLIP team: the fix is a new image.
 
 **Check.**
 
 .. code-block:: shell
 
+   kubectl -n flip-trust get pod "$XNAT_POD" -o jsonpath='{.status.containerStatuses[0].imageID}'   # the digest it runs
    kubectl exec -n flip-trust "$XNAT_POD" -- ls -la /data/xnat/home/plugins   # the jars the pod carries
-   make -C trust/deploy/helm status          # fails naming both versions when the roster drifted
 
 **Fix.** Get one deploy to complete, from a current checkout, with a wait budget above the init job's real
 duration:
@@ -251,7 +308,7 @@ can take the volume. Then confirm the pod was replaced and send a test study:
 
 .. code-block:: shell
 
-   kubectl exec -n flip-trust "$XNAT_POD" -- ls -la /data/xnat/home/plugins   # dated today
+   kubectl -n flip-trust get pods -l app.kubernetes.io/component=xnat-web       # a new pod
    make -C trust/deploy/helm smoke-cstore
 
 If ``smoke-cstore`` finds no receipt line and no new prearchive object, the study went to something other than

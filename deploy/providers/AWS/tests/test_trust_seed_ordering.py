@@ -26,7 +26,7 @@ Makefile or the play against a host:
 
 * ``deploy-trust`` seeds in its recipe, after ``down-trust-ec2`` and before ``up-trust-ec2``,
   and no longer lists ``seed-trust-data`` as a prerequisite.
-* The seed play refuses, before its first ``docker run``, while any container on the host has
+* The seed role refuses, before its first ``docker run``, while any container on the host has
   the data directory open.
 """
 
@@ -35,9 +35,8 @@ from pathlib import Path
 
 AWS_PROVIDER_DIR = Path(__file__).resolve().parent.parent
 MAKEFILE = AWS_PROVIDER_DIR / "Makefile"
-SITE_YML = AWS_PROVIDER_DIR / "site.yml"
+SEED_TASKS = AWS_PROVIDER_DIR.parents[2] / "trust/deploy/ansible/roles/flip_trust_seed/tasks/main.yml"
 
-SEED_PLAY = "- name: seed the trust's OMOP database and Orthanc from the canonical dataset on Trust EC2\n"
 HOLDERS_TASK = "- name: check nothing on this host has the OMOP data directory open\n"
 REFUSAL_TASK = "- name: refuse to seed while the trust's own cluster has the data directory open\n"
 
@@ -73,12 +72,8 @@ def test_deploy_trust_seeds_between_stopping_and_starting_the_stack():
 
 
 def _seed_play() -> str:
-    text = SITE_YML.read_text()
-    start = text.find(SEED_PLAY)
-    assert start != -1, "the seed play is not in site.yml — this guard has drifted"
-    rest = text[start + len(SEED_PLAY) :]
-    next_play = re.search(r"^- name: ", rest, re.MULTILINE)
-    return rest[: next_play.start()] if next_play else rest
+    """The seed play's tasks: the flip_trust_seed role, which aws-ec2-host.yml composes."""
+    return SEED_TASKS.read_text()
 
 
 def test_seed_play_refuses_before_its_first_docker_run():
@@ -103,7 +98,7 @@ def test_the_guard_looks_at_every_omop_db_on_the_host():
 def test_the_refusal_fails_on_any_holder():
     play = _seed_play()
     task = play[play.find(REFUSAL_TASK) :]
-    task = task[: task.find("\n    - name: ")]
+    task = task[: task.find("\n- name: ")]
     assert "assert:" in task
     assert re.search(r"omop_dir_holders\.stdout\s*\|\s*trim\s*\|\s*length\s*==\s*0", task)
     assert "down-trust-ec2" in task, "the fail_msg must tell the operator what to run"

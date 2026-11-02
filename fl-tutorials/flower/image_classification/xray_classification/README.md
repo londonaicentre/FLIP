@@ -23,7 +23,7 @@ server has no internet route, nor does a trust host behind an NHS firewall, and 
 fetch bypasses the scanned upload path). The FLARE tutorial's README records the
 measurement behind dropping the ImageNet initialisation rather than shipping it. Apps
 that do need pretrained weights ship them as an uploaded file; the FLARE
-latent-diffusion tutorial shows the pattern (`make weights`).
+autoencoder tutorial shows the pattern (`make weights`).
 
 The cohort query (`query.sql`) is copied verbatim from the FLARE tutorial
 and matches the chest-X-ray data seeded into the trust mock OMOP DB
