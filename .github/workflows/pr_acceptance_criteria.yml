@@ -50,15 +50,22 @@ jobs:
               const currentBody = context.payload.pull_request.body || '';
               const updatedBody = currentBody.replace(/^(## Fixes)\s*$/m, `$1 #${issueNumber}`);
 
+              // Replace only GitHub's branch-derived default ("1105 monai overlay"); a typed title is kept,
+              // since a second PR on one issue (suggestions, follow-up) is not the issue's work (FLIP#1763).
+              const currentTitle = context.payload.pull_request.title.trim();
+              const branchTitle = branchName.replace(/[-_]+/g, ' ').trim();
+              const isDefault = currentTitle.toLowerCase() === branchTitle.toLowerCase();
+              const title = isDefault ? issue.data.title : currentTitle;
+
               await github.rest.pulls.update({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 pull_number: context.payload.pull_request.number,
-                title: issue.data.title,
+                title,
                 body: updatedBody,
               });
 
-              console.log(`PR title set to: "${issue.data.title}"`);
+              console.log(isDefault ? `PR title set to: "${title}"` : `PR title kept: "${title}"`);
               console.log(`PR body updated with Fixes #${issueNumber}`);
             } catch (error) {
               console.error(`Could not set PR title from issue #${issueNumber}: ${error.message}`);
