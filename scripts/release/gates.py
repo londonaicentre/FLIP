@@ -131,13 +131,21 @@ def stop_own_simulators() -> list[str]:
     return stopped
 
 
-# The start of flip.flower.privacy's over-clipping WARNING (stdlib only here, so it cannot be imported).
+# The starts of flip.flower.privacy's per-round report and over-clipping WARNING (stdlib only here, so they
+# cannot be imported).
+DP_REPORTED = "FLIP local DP: update pre-clip L2 norm"
 DP_OVER_CLIPPED = "FLIP local DP: clipping scaled this update by"
+
+
+def dp_tutorials() -> set[str]:
+    """The Flower tutorials whose ClientApp registers the local-DP mod, so must report every round."""
+    apps = (REPO / "fl-tutorials" / "flower").glob("*/*/app/client_app.py")
+    return {app.parents[1].name for app in apps if "flip_local_dp_mod" in app.read_text()}
 
 
 def tutorial_metrics(lines: list[tuple[float, str]]) -> dict:
     """Per tutorial from ``run-all-tutorials`` output (one ``🚀 Running`` line each): pass/fail, seconds, and how
-    many updates DP clipping shrank more than tenfold (#1754)."""
+    many updates the DP mod reported and how many of those clipping shrank more than tenfold (#1754)."""
     runs: list[dict] = []
     for t, line in lines:
         start = re.search(r"🚀 Running (?:FLARE|Flower) tutorial (\S+)", line)
@@ -149,6 +157,8 @@ def tutorial_metrics(lines: list[tuple[float, str]]) -> dict:
             continue
         elif re.search(r"❌ tutorial \S+ failed", line):
             runs[-1]["passed"] = False
+        elif DP_REPORTED in line:
+            runs[-1]["dp_reports"] = runs[-1].get("dp_reports", 0) + 1
         elif DP_OVER_CLIPPED in line:
             runs[-1]["dp_over_clipped"] = runs[-1].get("dp_over_clipped", 0) + 1
     if runs and "_t" in runs[-1]:
@@ -156,16 +166,22 @@ def tutorial_metrics(lines: list[tuple[float, str]]) -> dict:
     return {"tutorials": runs, "passed": sum(r["passed"] for r in runs), "total": len(runs)}
 
 
-def dp_clipping_verdict(metrics: dict) -> str | None:
-    """Fail a tutorial run in which DP clipping shrank updates more than tenfold: it trains, and learns nothing."""
+def dp_clipping_verdict(metrics: dict, dp: set[str] | None = None) -> str | None:
+    """Fail a run in which DP clipping shrank updates more than tenfold (it trains, and learns nothing), or in
+    which a DP tutorial reported nothing (logs lost or the mod unwired: no WARNING would not mean clean)."""
+    dp = dp_tutorials() if dp is None else dp
     runs = metrics.get("tutorials", [])
+    silent = [r["name"] for r in runs if r["name"] in dp and not r.get("dp_reports")]
     clipped = [f"{r['name']} ({r['dp_over_clipped']}x)" for r in runs if r.get("dp_over_clipped")]
-    if not clipped:
-        return None
-    return (
-        f"DP clipping shrank updates more than tenfold in {', '.join(clipped)}: raise that tutorial's "
-        "dp-clipping-norm towards its typical update norm (FLIP#1754)"
-    )
+    reasons = []
+    if silent:
+        reasons.append(f"no DP report from {', '.join(silent)}: the gate cannot see whether clipping throttled them")
+    if clipped:
+        reasons.append(
+            f"DP clipping shrank updates more than tenfold in {', '.join(clipped)}: raise that tutorial's "
+            "dp-clipping-norm towards its typical update norm"
+        )
+    return f"{'; '.join(reasons)} (FLIP#1754)" if reasons else None
 
 
 def smoke_metrics(lines: list[tuple[float, str]]) -> dict:
@@ -224,25 +240,27 @@ def run_gate(gate: Gate, out_dir: Path, base: dict, env: dict[str, str]) -> dict
     lines: list[tuple[float, str]] = []
     start, t0, code = datetime.now(timezone.utc), time.monotonic(), 0
     with log_path.open("w") as log:
-        for step in gate.steps:
-            try:
-                if isinstance(step, Check):
-                    code = _run_check(step, log)
-                else:
-                    code = _run_command(step() if callable(step) else step, log, env, lines)
-            except ReleaseError as e:
-                log.write(f"❌ {e}\n")
+        try:
+            for step in gate.steps:
+                try:
+                    if isinstance(step, Check):
+                        code = _run_check(step, log)
+                    else:
+                        code = _run_command(step() if callable(step) else step, log, env, lines)
+                except ReleaseError as e:
+                    log.write(f"❌ {e}\n")
+                    code = 1
+                if code:
+                    break
+            metrics = gate.metrics(lines) if lines else {}
+            reason = gate.verdict(metrics) if gate.verdict and code == 0 else None
+            if reason:
+                log.write(f"❌ {reason}\n")
                 code = 1
-            if code:
-                break
-        metrics = gate.metrics(lines) if lines else {}
-        reason = gate.verdict(metrics) if gate.verdict and code == 0 else None
-        if reason:
-            log.write(f"❌ {reason}\n")
-            code = 1
-        if gate.cleanup:
-            for done in gate.cleanup():
-                log.write(f"🧹 {done}\n")
+        finally:
+            if gate.cleanup:
+                for done in gate.cleanup():
+                    log.write(f"🧹 {done}\n")
     result = {
         **base,
         "gate": gate.name,

@@ -110,7 +110,7 @@ def _released(
 class TestLocalDpConfig:
     """The config object owns FLIP's defaults, validation, and the noise-scale formula."""
 
-    def test_defaults_are_on_with_utility_first_parameters(self):
+    def test_defaults_are_on_with_placeholder_parameters(self):
         config = LocalDpConfig()
         assert config.enabled is True
         assert config.clipping_norm == 1.0
@@ -443,6 +443,16 @@ class TestClippingReport:
         if warns:
             assert f"scaled this update by {scale}" in warnings[0]
             assert CONFIG_CLIPPING_NORM in warnings[0]
+
+    @pytest.mark.parametrize("bad", [np.nan, np.inf])
+    def test_a_non_finite_update_is_not_released(self, bad):
+        # min(1, C/nan) is 1: without the guard a NaN anywhere released every other array unclipped.
+        with pytest.raises(ValueError, match="non-finite"):
+            _released({"a": np.zeros(2), "b": np.zeros(2)}, {"a": np.array([bad, 0.0]), "b": np.array([30.0, 40.0])})
+
+    def test_an_update_equal_to_the_global_model_fails_clearly(self):
+        with pytest.raises(ValueError, match="identical to the global model"):
+            _released({"w": np.ones(2)}, {"w": np.ones(2)}, {})
 
     def test_the_norm_is_of_the_update_not_the_weights(self, monkeypatch):
         [line], _ = self._report(monkeypatch, [100.0, 100.0], [103.0, 104.0], 10.0)

@@ -85,12 +85,11 @@ OVER_CLIPPING_SCALE = 0.1
 class LocalDpConfig:
     """Parameters of the local (epsilon, delta) mechanism, with FLIP's defaults.
 
-    The defaults are deliberately **utility-first**: they keep the shipped tutorials trainable
-    while the mechanism is live, so a DP-on run still converges and the effect stays visible. They
-    are not a defensible privacy budget. A real budget calibrates ``sensitivity`` to the local
-    dataset (``2 * clipping_norm / |D|`` for an average-of-examples update) and accounts for
-    composition across rounds, neither of which this mechanism does — each round spends the budget
-    again.
+    The defaults are placeholders, not a defensible privacy budget. ``clipping_norm`` is absolute,
+    so size it to the model's update norm, which the mod logs each round (#1754). A real budget
+    calibrates ``sensitivity`` to the local dataset (``2 * clipping_norm / |D|`` for an
+    average-of-examples update) and accounts for composition across rounds, neither of which this
+    mechanism does — each round spends the budget again (#1760).
 
     Attributes:
         enabled (bool): Whether to privatise the update at all. False makes the mod a pass-through,
@@ -183,9 +182,10 @@ def flip_local_dp_mod(msg: Message, context: Context, call_next: ClientAppCallab
         Message: The reply, with its update clipped and noised unless DP was skipped.
 
     Raises:
-        ValueError: If the DP parameters are invalid, or the messages do not carry exactly one
-            ArrayRecord with matching keys. Failing loudly is deliberate — silently skipping the
-            mechanism would release a raw update from the trust.
+        ValueError: If the DP parameters are invalid, the update is non-finite or unchanged from the
+            global model, or the messages do not carry exactly one ArrayRecord with matching keys.
+            Failing loudly is deliberate — silently skipping the mechanism would release a raw update
+            from the trust.
     """
     # ``@app.train(mods=[...])`` already scopes this to training, but the guard makes the scope
     # structural for an app that instead registers the mod on the whole ClientApp: only training
@@ -264,6 +264,17 @@ def flip_local_dp_mod(msg: Message, context: Context, call_next: ClientAppCallab
     # Flower's compute_clip_model_update, unrolled so the norm its clip decides on can be reported.
     deltas = [np.subtract(u, b) for u, b in zip(updates, baselines, strict=True)]
     pre_clip_norm = get_norm(deltas)
+    # min(1, C/nan) is 1, so a NaN would release every other array unclipped.
+    if not math.isfinite(pre_clip_norm):
+        raise ValueError(
+            f"FLIP local DP: the update's L2 norm is non-finite ({pre_clip_norm}): training diverged, so the "
+            "update is not being released."
+        )
+    if pre_clip_norm == 0.0:
+        raise ValueError(
+            "FLIP local DP: the update is identical to the global model (L2 norm 0): did this site train on any "
+            "data? Nothing is being released."
+        )
     scale = min(1.0, config.clipping_norm / pre_clip_norm)
     clip_inputs_inplace(deltas, config.clipping_norm)
     clipped = [b + d for b, d in zip(baselines, deltas, strict=True)]
