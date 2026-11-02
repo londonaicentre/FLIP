@@ -27,28 +27,19 @@ from imaging_api.routers.projects import router as projects_router
 from imaging_api.routers.retrieval import router as retrieval_router
 from imaging_api.routers.upload import router as upload_router
 from imaging_api.routers.users import router as users_router
-from imaging_api.services.cache_retention import SWEEP_TASK_NAME, run_cache_retention_sweeper
-from imaging_api.utils.background import reset_dead_background_tasks, watch_background_task
-from imaging_api.utils.logger import logger
+from imaging_api.services.cache_retention import run_sweeper
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Runs the image-cache retention sweeper (FLIP#1050) for the app's lifetime.
-
-    Args:
-        app (FastAPI): The FastAPI application instance being started.
-    """
-    reset_dead_background_tasks()
-    if not get_settings().IMAGE_CACHE_RETENTION_ENABLED:
-        logger.info("Image-cache retention sweeper disabled (IMAGE_CACHE_RETENTION_ENABLED=false)")
+    """Runs the image-cache sweeper (FLIP#1050) for the app's lifetime; a TTL of 0 or less turns it off."""
+    if get_settings().IMAGE_CACHE_RETENTION_HOURS <= 0:
         yield
         return
-    sweeper = asyncio.create_task(run_cache_retention_sweeper(), name=SWEEP_TASK_NAME)
-    sweeper.add_done_callback(watch_background_task)  # a sweeper that ends turns /health degraded
+    sweeper = asyncio.create_task(run_sweeper())
     yield
     sweeper.cancel()
-    with suppress(asyncio.CancelledError, Exception):  # a death before shutdown was already logged
+    with suppress(asyncio.CancelledError):
         await sweeper
 
 

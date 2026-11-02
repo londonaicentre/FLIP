@@ -213,7 +213,7 @@ and, on Flower, the next job.
 
 A study unused for seven days is deleted from disk; it is downloaded again from XNAT if a job asks for it later.
 Trust operators can change the period with ``IMAGE_CACHE_RETENTION_HOURS`` in the kit file (``imagingApi.env`` on
-Kubernetes), or turn the clean-up off with ``IMAGE_CACHE_RETENTION_ENABLED=false``.
+Kubernetes); ``0`` keeps every study.
 
 What this means for training code:
 
