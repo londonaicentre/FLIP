@@ -7,6 +7,10 @@ Overview
 This page maps FLIP's components: what runs on the Central Hub, what runs at each Trust, and how the two connect. It
 is for engineers evaluating, deploying or operating FLIP. Each component has its own page with the detail.
 
+.. contents:: On this page
+   :local:
+   :depth: 1
+
 ************
 Architecture
 ************

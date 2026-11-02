@@ -6,6 +6,10 @@ The Federated Learning Interoperability Platform (FLIP) trains and evaluates med
 Trusts without moving patient data. The model goes to each Trust and trains on that Trust's data locally. Only the
 model's updates come back, and FLIP combines them into one shared model.
 
+.. contents:: On this page
+   :local:
+   :depth: 1
+
 *************
 How it works
 *************

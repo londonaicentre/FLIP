@@ -131,7 +131,7 @@ Governance and people
 - ☐ **The trust understands what leaves.** Approving a project also approves the release of the trained model to the
   research team, and a trained model is derived data whose disclosiveness the trust should consider.
 - ☐ *Optional:* the trust wants its own privacy filter or access rules on top of the defaults. A per-trust governance
-  document can tighten them; see "Trust governance document" on :ref:`fl-update-privacy`.
+  document can tighten them; see "Trust governance document (per trust)" on :ref:`fl-update-privacy`.
 
 .. _readiness-clinical-data:
 
@@ -160,7 +160,7 @@ Model. A trust whose records are not in OMOP cannot answer any cohort query, so 
 - ☐ **The trust can obtain the OMOP vocabularies under its own licences.** Cohort queries resolve clinical concepts
   through SNOMED CT, LOINC and the other standard vocabularies, which every site downloads itself: the FLIP team
   cannot hand on its copy. Without them the node starts and passes every health check, but every cohort query
-  returns nothing. What this involves:
+  that names a clinical concept returns nothing. What this involves:
 
   - **Cost:** no licence fees for an NHS trust. SNOMED International charges nothing for SNOMED CT in member
     countries and the UK is one, so the affiliate licence is free; LOINC is free with a registered account; the
@@ -245,28 +245,32 @@ How big the server must be depends on the kind of projects the trust wants to ta
      - What FLIP's own examples needed
    * - **Health-record (tabular) models only**: risk prediction from coded data, no imaging
      - None. A CPU-only host takes part in every project that asks for no GPU
-     - The whole node, with the sample data, runs on 4 cores, 16 GB of memory and a 100 GB disk, the defaults of
-       FLIP's cloud nodes
+     - The whole node, with the sample data, runs on 4 cores and 16 GB of memory, the size FLIP's own cloud nodes
+       default to
    * - **2D imaging**: classification of X-rays and other single images
      - One current NVIDIA GPU
-     - FLIP's X-ray classification and fine-tuning examples; the fine-tuning dataset alone is about 15 GB on disk
+     - FLIP's X-ray classification and fine-tuning examples; the fine-tuning example needs about 15 GB of free
+       disk, of which the dataset is about 6 GB
    * - **3D imaging**: segmentation of CT or MRI volumes
      - One GPU with 24 GB of memory or more
      - FLIP's prostate segmentation example is planned for a 24 GB GPU; deeper configurations no longer fit
    * - **Generative models**: diffusion models trained on the trust's images
      - One GPU with 32 GB of memory, or more
      - FLIP's brain MRI diffusion example used about 10 GB of GPU memory per site at the smallest batch size and
-       trained for 12 hours on a 32 GB workstation GPU
+       trained for 12 hours (autoencoder stage) plus 6 hours (diffusion stage) on a 32 GB workstation GPU
 
 Whatever the tier:
 
 - ☐ **An Ubuntu 22.04 or newer server or virtual machine**, with an administrator account and internet access for
   installation (:ref:`deploy-flip-node-on-prem`).
-- ☐ **Disk for the imaging archive.** The node keeps a copy of each approved project's images for the project's
-  lifetime, so size the disk to the largest cohort the trust expects to offer, on top of the 100 GB the node itself
-  needs. A chest X-ray study is a few megabytes; a CT or MRI study is hundreds.
-- ☐ **For GPU tiers, an NVIDIA GPU with driver version 580 or newer.** FLIP's training images bring their own CUDA
-  runtime, so the host needs no CUDA toolkit. A trust can start CPU-only and add a GPU later.
+- ☐ **Disk for the imaging archive.** The node keeps a copy of each approved project's images, and keeps it after
+  the project closes: deleting it is the trust's own decision, under its retention schedule ("Retention and
+  deletion" on :doc:`../governance-and-compliance`). Size the disk to the largest cohort the trust expects to
+  offer. FLIP's own cloud nodes start at 100 GB for everything, archive included. A chest X-ray study is a few
+  megabytes; a CT or MRI study is hundreds.
+- ☐ **For GPU tiers, an NVIDIA GPU with driver version 580 or newer, and the NVIDIA Container Toolkit.** FLIP's
+  training images bring their own CUDA runtime, so the host needs no CUDA toolkit. A trust can start CPU-only and
+  add a GPU later.
 - ☐ **Or one of the alternatives:** an Azure VM (:doc:`deploy-flip-node-azure`), an AWS EC2 instance
   (:doc:`deploy-flip-node-aws-ec2`) or EKS cluster (:doc:`deploy-flip-node-aws-eks`) built from FLIP's own
   infrastructure code in the trust's account, or the Helm chart on the trust's Kubernetes
