@@ -32,13 +32,19 @@ the alternative is torch's ``num_samples=0`` several frames later, which reads l
 v0.1 reads the ``NIFTI`` resource only. The schema accepts ``SEG`` and ``DICOM`` so overlays need not
 change when they are supported, but this module refuses them by name rather than guessing a layout.
 
+Validation split. :func:`split_cohort` divides the cohort by patient before :func:`build_datalist`
+runs, so the two halves fill the bundle's ``train#dataset#data`` and ``validate#dataset#data`` (MONAI's
+``train_dataset_data`` / ``val_dataset_data`` workflow properties) instead of the bundle's own globs.
+
 The query is the caller's: on the platform it is the project's approved cohort, delivered in the
 client config, never a file inside the bundle.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -136,6 +142,29 @@ def _qc(item: dict[str, str], expected_ndim: int | None, report: DatalistReport)
         report.shape_mismatch += 1
         return False
     return True
+
+
+def split_cohort(dataframe: pd.DataFrame, validation_fraction: float) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split the cohort into training and validation rows by patient, for the bundle's two datasets.
+
+    Patients are grouped by ``person_id`` when the cohort has it, else by ``accession_id``, so one
+    patient's studies never sit on both sides. Groups are ranked by a hash of their id rather than
+    shuffled: the split is the same on every run, and a patient leaving the cohort moves few others.
+
+    Args:
+        dataframe: The cohort, as passed to :func:`build_datalist`.
+        validation_fraction: ``flip.imaging.validation_fraction``; 0 returns an empty validation set.
+
+    Returns:
+        tuple: ``(train_rows, validation_rows)``. Validation takes at least one patient when the
+        fraction is non-zero, and never the last one.
+    """
+    column = "person_id" if "person_id" in dataframe.columns else "accession_id"
+    ids = dataframe[column]
+    groups = sorted(ids.dropna().astype(str).unique(), key=lambda g: hashlib.sha256(g.encode()).hexdigest())
+    n_val = min(math.ceil(len(groups) * validation_fraction), max(len(groups) - 1, 0))
+    is_val = ids.notna() & ids.astype(str).isin(groups[:n_val])
+    return dataframe[~is_val], dataframe[is_val]
 
 
 def build_datalist(

@@ -40,7 +40,13 @@ import json
 import sys
 from pathlib import Path
 
-from flip.monai.overlay import CONFIG_SUFFIXES, GOVERNANCE_PROFILE_V0_1, PLACEHOLDER_PREFIX, BundleSource
+from flip.monai.overlay import (
+    CONFIG_SUFFIXES,
+    GOVERNANCE_PROFILE_V0_1,
+    PLACEHOLDER_PREFIX,
+    SCHEMA_VERSION,
+    BundleSource,
+)
 
 
 class SkeletonError(ValueError):
@@ -115,6 +121,7 @@ def generate_skeleton(bundle_dir: str | Path, source: BundleSource | str = Bundl
         "# the platform refuses an overlay that still holds one.",
         "#   LOCKED   identifies the bundle or the governance profile; do not edit.",
         "#   EDITABLE is yours to set.",
+        f"schema_version: {_q(SCHEMA_VERSION)}  # LOCKED",
         "bundle:",
         f"  source: {_q(source.value)}  # LOCKED (stated at generation, not derivable from the bundle)",
         f"  name: {_q(bundle_dir.name)}  # LOCKED (bundle directory name)",
@@ -132,6 +139,7 @@ def generate_skeleton(bundle_dir: str | Path, source: BundleSource | str = Bundl
         "    keys:  # EDITABLE (one entry per datalist key the bundle's configs read; 'image' is required)",
         f'      image: {{pattern: "{PLACEHOLDER_PREFIX}: file glob, e.g. input_*.nii.gz>"}}',
         f'      label: {{pattern: "{PLACEHOLDER_PREFIX}: file glob, e.g. label_*.nii.gz>"}}',
+        "    validation_fraction: 0.1  # EDITABLE (share of patients held out for validation; 0 = none)",
         "  fl:",
         "    local_epochs: 1  # EDITABLE",
         "    exchange:  # EDITABLE (draft until the adapter design is final)",

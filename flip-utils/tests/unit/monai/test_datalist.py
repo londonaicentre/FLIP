@@ -22,7 +22,7 @@ import pytest
 nib = pytest.importorskip("nibabel")
 
 from flip.constants.flip_constants import ResourceType  # noqa: E402
-from flip.monai.datalist import DatalistError, build_datalist, pair_siblings, stem_of  # noqa: E402
+from flip.monai.datalist import DatalistError, build_datalist, pair_siblings, split_cohort, stem_of  # noqa: E402
 from flip.monai.overlay import ImagingBinding, OverlayError, parse_overlay  # noqa: E402
 from tests.unit.monai.test_overlay import VALID, _with  # noqa: E402
 
@@ -242,3 +242,26 @@ def test_valid_overlay_binding_drives_the_datalist(tmp_path: Path):
     acc = _spleen_accession(tmp_path, "ACC1", ["a"])
     items, _ = build_datalist(_flip({"ACC1": acc}), "p", _cohort("ACC1"), binding)
     assert set(items[0]) == {"image", "label"}
+
+
+def test_split_keeps_each_patient_on_one_side():
+    """Two studies of one patient must not land in both sets."""
+    persons = [f"P{i}" for i in range(10) for _ in range(2)]
+    cohort = pd.DataFrame({"person_id": persons, "accession_id": [f"A{n}" for n in range(20)]})
+
+    train, val = split_cohort(cohort, 0.2)
+
+    assert set(train["person_id"]).isdisjoint(val["person_id"])
+    assert val["person_id"].nunique() == 2
+    assert len(train) + len(val) == len(cohort)
+    # Ranked by a hash of the id, not shuffled: the same cohort always splits the same way.
+    assert val.equals(split_cohort(cohort.sample(frac=1, random_state=0), 0.2)[1].sort_index())
+
+
+@pytest.mark.parametrize(("fraction", "n_val"), [(0, 0), (0.01, 1), (0.99, 2)])
+def test_split_sizes_by_accession_without_person_id(fraction, n_val):
+    """At least one patient when non-zero, never all of them; a NULL id is never held out."""
+    train, val = split_cohort(_cohort("ACC1", "ACC2", "ACC3", None), fraction)
+    assert len(val) == n_val
+    assert val["accession_id"].notna().all()
+    assert len(train) == 4 - n_val
