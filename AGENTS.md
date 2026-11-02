@@ -254,6 +254,8 @@ make -C flip-api backfill_cohort_snapshots # Freeze the approved-cohort membersh
 make -C flip-api delete_testing_projects   # Clean up test data
 make seed-demo-projects                    # Curated radiology catalogue in honest lifecycle states
                                            # (EXTRA_ARGS="--cleanup" removes it again)
+make capture-demo-project EXTRA_ARGS="--project-id <uuid> --slug <name>"  # Capture a project from the running hub as
+                                           # public-demo fixtures under flip-ui/mocks/demo/projects/<name>/ (FLIP#1746)
 make -C trust seed-trusts PROJECTS="cxr_project"   # Seed the RUNNING dev trusts with a published DICOM set (#1100)
 make -C trust seed KIT=GSTT PROJECTS="…"   # one trust; seed-omop / seed-orthanc for one half
 make -C fl-tutorials seed-spleen KIT=GSTT      # spleen / brain_mri: DICOMs regenerate locally (#1221), so their
