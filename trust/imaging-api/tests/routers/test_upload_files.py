@@ -13,10 +13,12 @@
 """The multipart upload (FLIP#1049): files staged under the net's upload folder for the upload, then removed."""
 
 import asyncio
+import io
 import os
 from unittest.mock import patch
 
 import pytest
+from fastapi import UploadFile
 
 from imaging_api.services import upload as upload_service
 
@@ -66,6 +68,23 @@ def test_upload_files_rejects_an_unsafe_scan_id_and_leaves_nothing_behind(client
     assert response.status_code == 422
     service.assert_not_called()
     assert os.listdir(tmp_path / "net1" / "upload") == []
+
+
+def test_upload_files_answers_400_when_staging_refuses(client):
+    with patch("imaging_api.routers.upload.stage_uploads", side_effect=ValueError("every uploaded file needs a name")):
+        response = client.put("/upload/images/net1/files", data=_FORM, files=[("files", ("a.nii", b"b"))])
+
+    assert response.status_code == 400
+    assert "needs a name" in response.json()["detail"]
+
+
+def test_staging_refuses_a_file_with_no_name_before_writing_anything(tmp_path, monkeypatch):
+    monkeypatch.setattr(upload_service, "BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path))
+
+    with pytest.raises(ValueError, match="needs a name"):
+        asyncio.run(upload_service.stage_uploads("net1", [UploadFile(file=io.BytesIO(b"b"), filename="")]))
+
+    assert not (tmp_path / "net1").exists()
 
 
 def test_staging_refuses_a_net_id_that_leaves_the_images_dir(tmp_path, monkeypatch):

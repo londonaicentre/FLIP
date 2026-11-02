@@ -171,18 +171,16 @@ async def stage_uploads(net_id: str, uploads: list[UploadFile]) -> tuple[str, li
     upload_directory_abs = os.path.realpath(os.path.join(BASE_IMAGES_DOWNLOAD_DIR, net_id, "upload"))
     if not upload_directory_abs.startswith(os.path.realpath(BASE_IMAGES_DOWNLOAD_DIR) + os.sep):
         raise ValueError(f"Path traversal detected in net ID: {net_id}")
+    names = [os.path.basename(upload.filename or "") for upload in uploads]
+    if not all(names):
+        raise ValueError("every uploaded file needs a name")
     request_id = uuid.uuid4().hex
     staging_dir = os.path.join(upload_directory_abs, request_id)
     os.makedirs(staging_dir)
-    relative_paths = []
-    for upload in uploads:
-        name = os.path.basename(upload.filename or "")
-        if not name:
-            raise ValueError("every uploaded file needs a name")
+    for upload, name in zip(uploads, names, strict=True):
         with open(os.path.join(staging_dir, name), "wb") as staged:
             shutil.copyfileobj(upload.file, staged)
-        relative_paths.append(f"{request_id}/{name}")
-    return staging_dir, relative_paths
+    return staging_dir, [f"{request_id}/{name}" for name in names]
 
 
 def create_xnat_scan(

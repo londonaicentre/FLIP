@@ -62,6 +62,21 @@ def test_get_by_accession_number_streams_the_study_into_the_process_dir(stream_c
     assert post.call_args.kwargs["headers"]["x-trust-internal-service-key"] == "test-trust-internal-key"
 
 
+def test_the_study_dir_is_made_once_and_removed_at_exit(monkeypatch):
+    monkeypatch.setattr(standard, "_study_dir_path", None)
+    registered = []
+    monkeypatch.setattr(standard.atexit, "register", lambda func, *args, **kwargs: registered.append((func, args)))
+
+    first = standard._study_dir()
+    try:
+        assert first.is_dir()
+        assert first.name.startswith("flip-studies-")
+        assert standard._study_dir() == first
+        assert registered == [(standard.shutil.rmtree, (first,))]
+    finally:
+        standard.shutil.rmtree(first, ignore_errors=True)
+
+
 def test_add_resource_sends_the_files_themselves(stream_constants, tmp_path):
     segmentation = tmp_path / "seg.nii.gz"
     segmentation.write_bytes(b"seg")
