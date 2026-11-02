@@ -44,6 +44,14 @@ resource "aws_ecs_task_definition" "flower_register_supernode_keys" {
         { name = "TRUST_NAMES", value = var.FL_KIT_SLOT_NAMES },
       ]
 
+      # /register_node on the fl-api requires the FL API key like every other route.
+      secrets = [
+        {
+          name      = "FL_API_KEY"
+          valueFrom = "${module.flip_api_secret.secret_arn}:fl_api_key::"
+        },
+      ]
+
       mountPoints = [
         {
           sourceVolume  = "efs-fl-net-1-certs"
@@ -95,8 +103,8 @@ resource "aws_ecs_task_definition" "flower_register_supernode_keys" {
 # Runs the one-shot after both FL services exist, waiting for them to be
 # stable first (compose expresses this as depends_on fl-server started +
 # fl-api healthy). Runs with the fl-api SG so the Flower control-plane SG
-# rules in ecs_sg.tf cover its SuperLink Control API (8000) call, and the fl-api's
-# VPC HTTP rule covers FL_API_ADDRESS. A FLOWER_KIT_DATE bump re-runs it after
+# rules in ecs_sg.tf cover its SuperLink Control API (8000) call, and the fl-api SG's
+# self rule covers FL_API_ADDRESS. A FLOWER_KIT_DATE bump re-runs it after
 # the EFS re-sync and the FL services' rollout (their task definitions carry the
 # kit as FL_KIT_SOURCE, locals.tf), so it registers against a SuperLink already
 # serving the new kit's certificates (FLIP#1738); tainting re-runs it alone.

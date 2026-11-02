@@ -128,6 +128,7 @@ export TF_VAR_POSTGRES_DB=${POSTGRES_DB}
 export TF_VAR_AES_KEY_BASE64=${AES_KEY_BASE64}
 export TF_VAR_INTERNAL_SERVICE_KEY_HASH=${INTERNAL_SERVICE_KEY_HASH}
 export TF_VAR_INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
+export TF_VAR_FL_API_KEY=${FL_API_KEY}
 export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 # ── Fail-fast env guards ────────────────────────────────────────────────────────────────────
 # Parse-time refusals of a deploy env file that cannot work. They stand aside only when every
@@ -166,6 +167,7 @@ $(if $(call unset_or_placeholder,$(AICENTRE_BUCKET_NAME)),$(error 🪶 AICENTRE_
 $(if $(INTERNAL_SERVICE_KEY),,$(error 🔑 INTERNAL_SERVICE_KEY must be set in $(MAIN_ENV_FILE) — generate with `make -C ../../../flip-api generate-internal-service-key`))
 $(if $(INTERNAL_SERVICE_KEY_HASH),,$(error 🔑 INTERNAL_SERVICE_KEY_HASH must be set in $(MAIN_ENV_FILE) — must be sha256 of INTERNAL_SERVICE_KEY))
 $(if $(INTERNAL_SERVICE_KEY_HEADER),,$(error 📨 INTERNAL_SERVICE_KEY_HEADER must be set in $(MAIN_ENV_FILE)))
+$(if $(FL_API_KEY),,$(error 🔑 FL_API_KEY must be set in $(MAIN_ENV_FILE) — generate with `make -C ../../../flip-api generate-fl-api-key ENV_FILE=$(abspath $(MAIN_ENV_FILE))`))
 endif
 
 # The GPUs fl-api on ECS writes into a job that declares none (mirrors compose).

@@ -59,6 +59,7 @@ STUB_ENV = {
     "INTERNAL_SERVICE_KEY": "probe",  # pragma: allowlist secret
     "INTERNAL_SERVICE_KEY_HASH": "probe",  # pragma: allowlist secret
     "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
+    "FL_API_KEY": "probe",  # pragma: allowlist secret
 }
 
 # Selector inputs the caller's shell may carry; every run here states its own.
@@ -233,6 +234,7 @@ COMPOSE_ENV = {
     "FL_ADMIN_DIRECTORY": "/app",
     "FL_SERVER_PORT": "8002",
     "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
+    "FL_API_KEY": "probe",  # pragma: allowlist secret
     "TRUST_API_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
     "SES_VERIFIED_EMAIL": "probe@example.com",
     "ALB_SUBDOMAIN": "alb",

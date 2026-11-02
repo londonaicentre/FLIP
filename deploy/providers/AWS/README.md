@@ -1131,7 +1131,7 @@ Each holds `TF_PLAN_ROLE_ARN` and `TF_APPLY_ROLE_ARN` (the roles described in
 `scripts/setup-github-environments.sh`),
 the hub variable `TF_HUB`, and the Terraform inputs. Stored as environment
 *secrets*: `ADMIN_USER_PASSWORD`, `AES_KEY_BASE64`, `INTERNAL_SERVICE_KEY`,
-`INTERNAL_SERVICE_KEY_HASH`. Everything else is a variable, including
+`INTERNAL_SERVICE_KEY_HASH`, `FL_API_KEY`. Everything else is a variable, including
 `POSTGRES_DB` / `POSTGRES_USER` — they are configuration rather than credentials
 and are rendered in the clear into the public plan comment either way
 (`variables.tf` explains the decision). The authoritative lists are

@@ -129,7 +129,15 @@ resource "aws_ecs_task_definition" "flip_api" {
         ],
       )
 
-      secrets = []
+      # The key flip-api presents on every FL API call; the fl-api task below reads the same
+      # field, so the two cannot drift. Never plain env: the raw key would land in the task
+      # definition JSON.
+      secrets = [
+        {
+          name      = "FL_API_KEY"
+          valueFrom = "${module.flip_api_secret.secret_arn}:fl_api_key::"
+        },
+      ]
 
       logConfiguration = {
         logDriver = "awslogs"
@@ -180,6 +188,15 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
       environment = [
         for k, v in(var.fl_backend == "flower" ? local.ecs_task_env.fl_api_flower : local.ecs_task_env.fl_api) :
         { name = k, value = v }
+      ]
+
+      # Every FL API route but /health requires this key (fl_api/utils/auth.py); flip-api's
+      # task reads the same Secrets Manager field.
+      secrets = [
+        {
+          name      = "FL_API_KEY"
+          valueFrom = "${module.flip_api_secret.secret_arn}:fl_api_key::"
+        },
       ]
 
       # Container paths must match what the fl-api image expects. FLARE

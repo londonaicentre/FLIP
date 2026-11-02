@@ -68,6 +68,7 @@ SECRET_KEYS = {
     "AES_KEY_BASE64",
     "INTERNAL_SERVICE_KEY",
     "INTERNAL_SERVICE_KEY_HASH",
+    "FL_API_KEY",
 }
 
 
@@ -356,6 +357,7 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "AES_KEY_BASE64": secret.get("aes_key", ""),
         "INTERNAL_SERVICE_KEY": secret.get("internal_service_key", ""),
         "INTERNAL_SERVICE_KEY_HASH": secret.get("internal_service_key_hash", ""),
+        "FL_API_KEY": secret.get("fl_api_key", ""),
         "JOB_RESOURCE_SPEC_NUM_GPUS": fl_api_env.get("JOB_RESOURCE_SPEC_NUM_GPUS", ""),
         # The keys every estate requires (compose-ci-env.sh's LZA_REQUIRED_KEYS).
         "ACCESS_LOGS_BUCKET_NAME": st.attrs("aws_s3_bucket", "flip_access_logs").get("bucket", ""),
@@ -374,7 +376,7 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
     for group, keys in (
         ("live ECS service", ("DOCKER_TAG", "DOCKER_FL_TAG")),
         ("live SSM parameter", ("FL_KIT_SLOT_NAMES",)),
-        ("live Secrets Manager", ("AES_KEY_BASE64", "INTERNAL_SERVICE_KEY", "INTERNAL_SERVICE_KEY_HASH")),
+        ("live Secrets Manager", ("AES_KEY_BASE64", "INTERNAL_SERVICE_KEY", "INTERNAL_SERVICE_KEY_HASH", "FL_API_KEY")),
     ):
         sources.update(dict.fromkeys(keys, group))
     return v, sources
