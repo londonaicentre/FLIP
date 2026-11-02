@@ -1,0 +1,15 @@
+{
+  "data": [
+    {
+      "description": "E2E smoke model",
+      "id": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+      "name": "EHR risk model",
+      "owner_id": "00000000-0000-4000-8000-000000000001",
+      "status": "RESULTS_UPLOADED"
+    }
+  ],
+  "page": 1,
+  "pageSize": 20,
+  "totalPages": 1,
+  "totalRecords": 1
+}

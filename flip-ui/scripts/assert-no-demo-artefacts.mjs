@@ -38,48 +38,65 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const UI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const REGISTER = join(UI_ROOT, "mocks/demo/ark-plus-register.ts");
+const ROSTER = join(UI_ROOT, "mocks/demo/roster.json");
 
-/**
- * The demo viewer's user id, read from the register rather than duplicated, so
- * a re-capture or a re-scrub of that constant cannot leave this check asserting
- * on a value nothing emits any more.
- */
-export function demoUserId() {
-    const source = readFileSync(REGISTER, "utf8");
-    const match = /export const DEMO_USER = \{\s*\n\s*id: "([^"]+)"/.exec(source);
-
-    if (match === null) {
+/** The demo roster, read from its one source rather than duplicated. */
+function roster() {
+    try {
+        return JSON.parse(readFileSync(ROSTER, "utf8"));
+    }
+    catch (error) {
         throw new Error(
-            `Could not read DEMO_USER.id from ${relative(UI_ROOT, REGISTER)} — the constant was renamed or `
-            + "reshaped. Update this script together with it; do not delete the check."
+            `Could not read ${relative(UI_ROOT, ROSTER)} (${error.message}). Update this script together with it; `
+            + "do not delete the check."
         );
     }
+}
 
-    return match[1];
+/**
+ * The demo viewer's user id, read from the roster so a change there cannot leave
+ * this check asserting on a value nothing emits any more.
+ */
+export function demoUserId() {
+    return roster().user.id;
 }
 
 /**
  * Strings that must not appear in a deploy build, each standing in for one
  * class of leaked content: recorded register data, the demo boot branch, or the
- * Mirage/Pretender library code itself. Model and project ids are deliberately
- * absent: they are public URL path segments carried by src/demo/bootstrap.ts
- * (the demo download map), which every build legitimately contains.
+ * Mirage/Pretender library code itself.
  */
 export function sentinels() {
     return [
-        { label: "demo viewer user id (a Cognito sub shape)", needle: demoUserId() },
-        { label: "recorded OMOP cohort SQL", needle: "WITH project_images AS" },
-        { label: "recorded trust roster", needle: "Bangkok Dusit Medical Services" },
-        { label: "recorded trust roster", needle: "AI Centre Private" },
-        { label: "demo-mode boot branch", needle: "Running in Ark+ demo mode" },
+        {
+            label: "demo viewer user id (a Cognito sub shape)",
+            needle: demoUserId()
+        },
+        {
+            label: "recorded OMOP cohort SQL",
+            needle: "WITH project_images AS"
+        },
+        {
+            label: "demo roster site id",
+            needle: roster().sites[0].id
+        },
+        {
+            label: "demo-mode boot branch",
+            needle: "Running in FLIP demo mode"
+        },
         // Mirage itself, not just the register (FLIP#1041): mocks/server (the
         // VITE_LOCAL dev mock) carries no register data, so a static re-import
         // of it — or a mock branch that stops folding — ships Mirage/Pretender
         // without touching any needle above. These literals live in the
         // libraries' own code and survive minification.
-        { label: "MirageJS library code", needle: "Mirage: Passthrough request for " },
-        { label: "Pretender library code", needle: "Pretender intercepted" }
+        {
+            label: "MirageJS library code",
+            needle: "Mirage: Passthrough request for "
+        },
+        {
+            label: "Pretender library code",
+            needle: "Pretender intercepted"
+        }
     ];
 }
 
@@ -109,6 +126,11 @@ export function scan(distDir) {
     // Text formats only: a leak has to be readable to be a leak, and hashing
     // every font/image wastes the budget this check is meant to fit inside.
     const scannable = walk(distDir).filter(f => /\.(js|mjs|cjs|css|html|json|map|txt)$/i.test(f));
+    if (scannable.length === 0) {
+        // An empty build output must not pass vacuously: nothing scanned is
+        // nothing proven (the Ark+ review's residual, FLIP#1746).
+        throw new Error(`no scannable build output under ${distDir}`);
+    }
     const hits = [];
 
     for (const file of scannable) {
@@ -116,12 +138,19 @@ export function scan(distDir) {
 
         for (const { label, needle } of sentinels()) {
             if (content.includes(needle)) {
-                hits.push({ file: relative(UI_ROOT, file), label, needle });
+                hits.push({
+                    file: relative(UI_ROOT, file),
+                    label,
+                    needle
+                });
             }
         }
     }
 
-    return { hits, scanned: scannable.length };
+    return {
+        hits,
+        scanned: scannable.length
+    };
 }
 
 export function runCli(argv, io) {
