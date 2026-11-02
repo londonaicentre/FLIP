@@ -12,7 +12,7 @@
 
 import json
 import uuid
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from uuid import UUID
 
 import pytest
@@ -20,6 +20,7 @@ from fastapi import HTTPException, status
 from fastapi.testclient import TestClient
 
 from flip_api.auth.access_manager import authenticate_trust
+from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Trust
 from flip_api.domain.schemas.private import (
     AggregatedCohortStats,
@@ -31,8 +32,10 @@ from flip_api.domain.schemas.private import (
     Results,
     TrustSpecificData,
 )
+from flip_api.domain.schemas.status import ProjectStatus, TaskStatus
 from flip_api.main import app
 from flip_api.private_services.receive_cohort_results import (
+    _NOT_DISPATCHED_DETAIL,
     _aggregate_and_save_results,
     _save_individual_result,
 )
@@ -433,3 +436,98 @@ class TestReceiveCohortResultsEndpointAuth:
             assert "not authorised" in response.json()["detail"]
         finally:
             app.dependency_overrides.pop(authenticate_trust, None)
+
+
+class TestReceiveCohortResultsDispatchGate:
+    """A result is written only for a query the hub dispatched to this trust, while the project is UNSTAGED.
+
+    The session is mocked in the order the gate reads: first the trust's ``cohort_query`` task
+    statuses for the query, then the ``(query id, project status)`` row. Saving and aggregation
+    are patched out so each test asserts whether the write path was reached.
+    """
+
+    @pytest.fixture
+    def trust(self):
+        return Trust(id=uuid.uuid4(), name="Dispatched Trust")
+
+    @pytest.fixture
+    def payload(self, trust):
+        return {
+            "query_id": str(uuid.uuid4()),
+            "trust_id": str(trust.id),
+            "created": "2023-10-01T12:00:00Z",
+            "record_count": 5,
+            "data": [],
+        }
+
+    @staticmethod
+    def _post(mock_db_session, trust, payload, task_statuses, query_row):
+        mock_db_session.exec.side_effect = [
+            MagicMock(all=MagicMock(return_value=task_statuses)),
+            MagicMock(first=MagicMock(return_value=query_row)),
+        ]
+        app.dependency_overrides[authenticate_trust] = lambda: trust
+        app.dependency_overrides[get_session] = lambda: mock_db_session
+        try:
+            with (
+                patch("flip_api.private_services.receive_cohort_results._save_individual_result") as save,
+                patch("flip_api.private_services.receive_cohort_results._aggregate_and_save_results") as aggregate,
+            ):
+                response = TestClient(app).post("/api/cohort/results", json=payload)
+        finally:
+            app.dependency_overrides.pop(authenticate_trust, None)
+            app.dependency_overrides.pop(get_session, None)
+        return response, save, aggregate
+
+    @pytest.mark.parametrize("task_status", [TaskStatus.IN_PROGRESS, TaskStatus.COMPLETED, TaskStatus.FAILED])
+    def test_dispatched_task_and_unstaged_project_writes_the_result(self, mock_db_session, trust, payload, task_status):
+        query_row = (UUID(payload["query_id"]), ProjectStatus.UNSTAGED)
+        response, save, aggregate = self._post(mock_db_session, trust, payload, [task_status], query_row)
+
+        assert response.status_code == 200, response.text
+        save.assert_called_once()
+        aggregate.assert_called_once_with(mock_db_session, UUID(payload["query_id"]))
+
+    def test_query_without_a_project_is_accepted(self, mock_db_session, trust, payload):
+        query_row = (UUID(payload["query_id"]), None)
+        response, save, _ = self._post(mock_db_session, trust, payload, [TaskStatus.IN_PROGRESS], query_row)
+
+        assert response.status_code == 200, response.text
+        save.assert_called_once()
+
+    def test_no_task_for_query_and_trust_is_refused_without_a_query_lookup(self, mock_db_session, trust, payload):
+        """Covers both a query dispatched to other trusts and a query id that does not exist:
+        neither has a task for this trust, and the refusal is identical so nothing is leaked."""
+        response, save, aggregate = self._post(mock_db_session, trust, payload, [], None)
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == _NOT_DISPATCHED_DETAIL
+        assert "not found" not in _NOT_DISPATCHED_DETAIL.lower()
+        assert mock_db_session.exec.call_count == 1
+        save.assert_not_called()
+        aggregate.assert_not_called()
+
+    @pytest.mark.parametrize("task_status", [TaskStatus.PENDING, TaskStatus.CANCELLED])
+    def test_task_not_yet_handed_to_the_trust_is_refused(self, mock_db_session, trust, payload, task_status):
+        query_row = (UUID(payload["query_id"]), ProjectStatus.UNSTAGED)
+        response, save, _ = self._post(mock_db_session, trust, payload, [task_status], query_row)
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == _NOT_DISPATCHED_DETAIL
+        save.assert_not_called()
+
+    def test_dispatched_task_whose_query_row_is_gone_is_404_not_500(self, mock_db_session, trust, payload):
+        response, save, _ = self._post(mock_db_session, trust, payload, [TaskStatus.IN_PROGRESS], None)
+
+        assert response.status_code == 404
+        save.assert_not_called()
+
+    @pytest.mark.parametrize("project_status", [ProjectStatus.STAGED, ProjectStatus.APPROVED])
+    def test_project_no_longer_unstaged_is_refused(self, mock_db_session, trust, payload, project_status):
+        query_row = (UUID(payload["query_id"]), project_status)
+        response, save, aggregate = self._post(mock_db_session, trust, payload, [TaskStatus.IN_PROGRESS], query_row)
+
+        assert response.status_code == 403
+        assert "staged/approved" in response.json()["detail"]
+        save.assert_not_called()
+        aggregate.assert_not_called()
