@@ -32,18 +32,12 @@ locals {
   }
 
   deploy_user      = "${local.prefix}_DEPLOY_USER"
-  hub_eai          = "${local.prefix}_HUB_EAI"
-  resource_monitor = "${local.prefix}_RM"
-  network_policy   = "${local.prefix}_ADMIN_NP"
-  password_policy  = "${local.prefix}_PASSWORD_POLICY"
-  session_policy   = "${local.prefix}_SESSION_POLICY"
 
   # The platform tier owns one small database. An event table needs a database, and putting it in
   # the trust database would make the workload root's destroy take the account's logging with it.
   platform_database = "FLIP_PLATFORM"
   platform_schemas = {
     obs      = "OBS"
-    policies = "POLICIES"
   }
   event_table     = "FLIP_EVENTS"
   event_table_fqn = "${local.platform_database}.${local.platform_schemas.obs}.${local.event_table}"
@@ -82,9 +76,5 @@ locals {
 
   warehouse = "${local.prefix}_WH"
 
-  # Egress is a closed list: the hub API on 443 and the FL server endpoints from the kit.
-  egress_hosts = var.enable_hub_egress ? concat(
-    var.hub_api_host == "" ? [] : ["${var.hub_api_host}:443"],
-    var.fl_server_endpoints,
-  ) : []
+
 }

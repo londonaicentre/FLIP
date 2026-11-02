@@ -30,11 +30,6 @@ output "deploy_account_privileges" {
   value       = local.deploy_account_privileges
 }
 
-output "external_access_integration_name" {
-  description = "The hub egress integration, or an empty string when enable_hub_egress is false."
-  value       = var.enable_hub_egress ? local.hub_eai : ""
-}
-
 output "event_table_name" {
   description = "Fully qualified event table the account logs to (#1584)."
   value       = local.event_table_fqn
@@ -64,16 +59,11 @@ output "observer_role_name" {
 }
 
 output "platform_database_name" {
-  description = "The small platform-owned database holding the event table and the account policies."
+  description = "The small platform-owned database holding the event table and the observability views."
   value       = snowflake_database.platform.name
-}
-
-output "resource_monitor_name" {
-  description = "The resource monitor the workload root attaches to its warehouse."
-  value       = snowflake_resource_monitor.trust.name
 }
 
 output "warehouse_name" {
   description = "The trust warehouse, platform-owned with the resource monitor attached; the deploy role has USAGE/OPERATE/MONITOR."
-  value       = snowflake_warehouse.trust.name
+  value       = local.warehouse
 }

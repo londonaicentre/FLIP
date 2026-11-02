@@ -22,8 +22,8 @@
 resource "snowflake_network_rule" "hub_egress" {
   count = var.enable_hub_egress ? 1 : 0
 
-  database   = snowflake_database.platform.name
-  schema     = snowflake_schema.platform["policies"].name
+  database   = snowflake_database.admin.name
+  schema     = snowflake_schema.admin_policies.name
   name       = "${local.prefix}_HUB_EGRESS"
   type       = "HOST_PORT"
   mode       = "EGRESS"

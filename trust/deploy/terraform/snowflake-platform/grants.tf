@@ -26,32 +26,6 @@ resource "snowflake_grant_privileges_to_account_role" "deploy_account" {
   on_account        = true
 }
 
-# USAGE on the egress integration, so a service spec may reference it. The integration itself is
-# an account object the workload role can neither create nor alter.
-resource "snowflake_grant_privileges_to_account_role" "deploy_eai" {
-  count = var.enable_hub_egress ? 1 : 0
-
-  account_role_name = snowflake_account_role.deploy.name
-  privileges        = ["USAGE"]
-
-  on_account_object {
-    object_type = "INTEGRATION"
-    object_name = snowflake_external_access_integration.hub[0].name
-  }
-}
-
-resource "snowflake_grant_privileges_to_account_role" "svc_eai" {
-  count = var.enable_hub_egress ? 1 : 0
-
-  account_role_name = snowflake_account_role.svc.name
-  privileges        = ["USAGE"]
-
-  on_account_object {
-    object_type = "INTEGRATION"
-    object_name = snowflake_external_access_integration.hub[0].name
-  }
-}
-
 # The observer role reads the account's logs: the platform database, its OBS schema, and the event
 # table itself. No clinical data lives here.
 resource "snowflake_grant_privileges_to_account_role" "observer_platform_database" {

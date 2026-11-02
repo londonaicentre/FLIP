@@ -17,7 +17,7 @@ account_name      = "MYACCOUNT"
 
 # The break-glass PERSON user's role. ACCOUNTADMIN is needed for the account parameter, the
 # resource monitor and the account policy attachments.
-platform_role      = "ACCOUNTADMIN"
+platform_role      = "FLIP_PLATFORM_CI"
 platform_warehouse = "COMPUTE_WH"
 
 # SNOWFLAKE_JWT (default): the just-in-time operator, key pair from SNOWFLAKE_PRIVATE_KEY (PEM contents) + SNOWFLAKE_PRIVATE_KEY_PASSPHRASE.
@@ -33,10 +33,8 @@ trust_code = "GSTT"
 deploy_user_public_key = "REPLACE_WITH_THE_PUBLIC_KEY_BODY"
 
 # Warehouse credit cap. Compute pools are capped in the workload root instead.
-credit_quota = 50
 
 # Off on a trial account: trials exclude external network access.
-enable_hub_egress = false
 
 # Only read when enable_hub_egress is true.
 # hub_api_host        = "api.example.invalid"

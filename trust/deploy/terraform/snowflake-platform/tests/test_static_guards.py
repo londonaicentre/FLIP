@@ -35,11 +35,8 @@ ROOT_FILES = (
     "roles.tf",
     "user.tf",
     "platform_database.tf",
-    "network.tf",
-    "policies.tf",
     "observability.tf",
     "observability_views.tf",
-    "cost.tf",
     "warehouse.tf",
     "grants.tf",
     "outputs.tf",
@@ -210,55 +207,6 @@ def test_no_secret_resource_anywhere():
 # --- egress and account policies ----------------------------------------------------------------------
 
 
-def test_hub_egress_is_off_by_default():
-    assert "default     = false" in hcl_block(source("variables.tf"), 'variable "enable_hub_egress"')
-
-
-def test_the_egress_integration_exists_only_when_enabled():
-    text = source("network.tf")
-    for header in (
-        'resource "snowflake_network_rule" "hub_egress"',
-        'resource "snowflake_external_access_integration" "hub"',
-    ):
-        block = hcl_block(text, header)
-        assert "count = var.enable_hub_egress ? 1 : 0" in block, f"{header} must be gated on enable_hub_egress"
-
-
-def test_egress_is_limited_to_the_hub_and_the_fl_endpoints():
-    block = hcl_block(source("network.tf"), 'resource "snowflake_network_rule" "hub_egress"')
-    assert 'type       = "HOST_PORT"' in block, "egress is named hosts and ports, never an address range"
-    assert "value_list = local.egress_hosts" in block
-    locals_text = source("locals.tf")
-    assert "var.hub_api_host}:443" in locals_text, "the hub is reachable on 443 only"
-    assert "var.fl_server_endpoints" in locals_text
-    assert "0.0.0.0" not in locals_text, "no catch-all egress"
-
-
-def test_the_integration_allows_no_authentication_secrets():
-    block = hcl_block(source("network.tf"), 'resource "snowflake_external_access_integration" "hub"')
-    assert "none = true" in block, "secrets are bound to services by sync-kit, not through the integration"
-
-
-def test_the_eai_is_usable_by_the_deploy_and_service_roles():
-    """A service spec can only reference an integration its role holds USAGE on."""
-    for name in ("deploy_eai", "svc_eai"):
-        block = hcl_block(source("grants.tf"), f'resource "snowflake_grant_privileges_to_account_role" "{name}"')
-        assert block, name
-        assert 'object_type = "INTEGRATION"' in block
-        assert 'privileges        = ["USAGE"]' in block
-
-
-def test_the_account_policies_live_here():
-    for resource_type in (
-        "snowflake_password_policy",
-        "snowflake_session_policy",
-        "snowflake_account_password_policy_attachment",
-        "snowflake_account_session_policy_attachment",
-    ):
-        assert resource_blocks(all_terraform(), resource_type), resource_type
-    assert resource_blocks(source("network.tf"), "snowflake_network_policy_attachment")
-
-
 # --- observability and cost -----------------------------------------------------------------------
 
 
@@ -272,13 +220,6 @@ def test_the_event_table_lives_in_a_platform_database():
     assert "FLIP_TRUST_" not in source("observability.tf"), (
         "the event table must not live in a database the workload root can destroy"
     )
-
-
-def test_the_account_parameter_points_at_that_event_table():
-    block = hcl_block(source("observability.tf"), 'resource "snowflake_account_parameter" "event_table"')
-    assert block, "EVENT_TABLE is an account parameter, so it belongs to the break-glass tier"
-    assert 'key   = "EVENT_TABLE"' in block
-    assert "value = local.event_table_fqn" in block
 
 
 def test_the_observer_role_can_read_the_event_table():
@@ -308,25 +249,6 @@ def test_only_the_observer_and_deploy_roles_can_read_the_logs():
             raise AssertionError("CONVERTER (CREATE SERVICE) is reachable only through the deploy role")
     event_table_grants = re.findall(r"GRANT SELECT ON EVENT TABLE \S+ TO ROLE \$\{([^}]+)\}", all_terraform())
     assert event_table_grants == ["snowflake_account_role.observer.name"]
-
-
-def test_a_resource_monitor_caps_warehouse_credits():
-    block = hcl_block(source("cost.tf"), 'resource "snowflake_resource_monitor" "trust"')
-    assert "credit_quota = var.credit_quota" in block
-    assert "suspend_immediate_trigger = 100" in block
-
-
-def test_the_warehouse_is_platform_owned_with_the_monitor_attached():
-    """Assigning a resource monitor needs ACCOUNTADMIN, so the warehouse lives here. The deploy role
-    may use and operate it but not MODIFY or own it, so the deploy key cannot detach the monitor."""
-    block = hcl_block(source("warehouse.tf"), 'resource "snowflake_warehouse" "trust"')
-    assert "resource_monitor = snowflake_resource_monitor.trust.name" in block
-    header = 'resource "snowflake_grant_privileges_to_account_role" "deploy_warehouse"'
-    grant = hcl_block(source("warehouse.tf"), header)
-    assert 'privileges        = ["USAGE", "OPERATE", "MONITOR"]' in grant
-    assert "MODIFY" not in grant
-    assert "OWNERSHIP" not in grant
-    assert "deploy_resource_monitor" not in source("grants.tf"), "the deploy role needs no MODIFY on the monitor"
 
 
 # --- account hygiene --------------------------------------------------------------------------------
@@ -598,3 +520,13 @@ def test_the_grafana_follow_up_is_recorded_and_not_half_built():
     readme = (ROOT_DIR / "README.md").read_text()
     assert "Grafana" in readme, "the Grafana-on-SPCS follow-up is a note in Open points, nothing more"
     assert "grafana" not in all_terraform().lower(), "nothing about Grafana is built in this issue"
+
+
+def test_the_trust_roles_use_the_bootstrap_warehouse_without_owning_it():
+    """The warehouse and its monitor are the bootstrap's; this root grants its use by name only."""
+    grant = hcl_block(source("warehouse.tf"), 'resource "snowflake_grant_privileges_to_account_role" "deploy_warehouse"')
+    assert 'privileges        = ["USAGE", "OPERATE", "MONITOR"]' in grant
+    assert "object_name = local.warehouse" in grant
+    for word in ("MODIFY", "OWNERSHIP"):
+        assert word not in source("warehouse.tf")
+    assert not resource_blocks(all_terraform(), "snowflake_warehouse")
