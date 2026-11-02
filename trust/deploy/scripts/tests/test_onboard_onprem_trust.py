@@ -761,6 +761,7 @@ def test_36_relative_data_dirs_warn() -> None:
             ORTHANC_STORAGE_DIR="./orthanc/orthanc-storage-trust1",
             BASE_IMAGES_DOWNLOAD_DIR="./data/trust",
             COHORT_SNAPSHOT_STORAGE_DIR=f"{td}/snapshots",
+            XNAT_DATA_DIR=f"{td}/xnat",
         )
     _assert(check.status == mod.Status.WARN, "WARN", f"{check.status}: {check.detail}")
     _assert("ORTHANC_STORAGE_DIR, BASE_IMAGES_DOWNLOAD_DIR" in check.detail, "names both", check.detail)
@@ -768,8 +769,11 @@ def test_36_relative_data_dirs_warn() -> None:
 
 
 def test_37_uncreatable_data_dir_fails() -> None:
-    """A dir the bring-up's mkdir cannot create fails here, not halfway through `up` (FLIP#1723)."""
-    print("▶ data dir under an unwritable parent -> FAIL; the container-made store is exempt")
+    """A dir the bring-up's mkdir cannot create fails here, not halfway through `up` (FLIP#1723).
+
+    Every dir counts, the membership store and XNAT's tree included: on an on-prem host they are
+    plain mkdirs as this user too. An unset one is judged at its /opt/flip default for the kit's slot."""
+    print("▶ data dir under an unwritable parent -> FAIL, store and XNAT included; unset -> the slot default")
     with tempfile.TemporaryDirectory() as td:
         locked = Path(td) / "locked"
         locked.mkdir()
@@ -780,10 +784,13 @@ def test_37_uncreatable_data_dir_fails() -> None:
                 ORTHANC_STORAGE_DIR=f"{td}/orthanc",
                 BASE_IMAGES_DOWNLOAD_DIR=f"{td}/images",
                 COHORT_SNAPSHOT_STORAGE_DIR=f"{locked}/snapshots",
+                XNAT_DATA_DIR=f"{td}/xnat",
             )
+            unset = _paths(OMOP_DATA_DIR=f"{td}/omop", ORTHANC_STORAGE_DIR=f"{td}/orthanc", FL_KIT_SLOT_NUMBER="3")
     _assert(check.status == mod.Status.FAIL, "FAIL", f"{check.status}: {check.detail}")
     _assert(f"OMOP_DATA_DIR ({locked} is not writable)" in check.detail, "names the var and parent", check.detail)
-    _assert("COHORT_SNAPSHOT_STORAGE_DIR" not in check.detail, "membership store exempt", check.detail)
+    _assert(f"COHORT_SNAPSHOT_STORAGE_DIR ({locked} is not writable)" in check.detail, "store counted", check.detail)
+    _assert(unset.status == mod.Status.PASS, "unset dirs judged at their /opt/flip defaults", str(unset))
 
 
 def test_38_absolute_creatable_data_dirs_pass() -> None:
@@ -791,6 +798,39 @@ def test_38_absolute_creatable_data_dirs_pass() -> None:
     with tempfile.TemporaryDirectory() as td:
         check = _paths(**{var: f"{td}/{var.lower()}" for var in mod.DATA_DIR_VARS})
     _assert(check.status == mod.Status.PASS, "PASS", f"{check.status}: {check.detail}")
+
+
+def test_41_untraversable_parent_is_a_fail_not_a_crash() -> None:
+    """Path.exists re-raises EACCES; a kit path under a 700 mount of another uid must not kill the checklist."""
+    print("▶ data dir under a parent this user cannot traverse -> FAIL naming it")
+    if os.getuid() == 0:
+        print("  (skipped as root: every directory is traversable)")
+        return
+    with tempfile.TemporaryDirectory() as td:
+        locked = Path(td) / "locked"
+        locked.mkdir(mode=0o000)
+        try:
+            check = _paths(
+                OMOP_DATA_DIR=f"{locked}/opt/flip/omop",
+                ORTHANC_STORAGE_DIR=f"{td}/orthanc",
+                BASE_IMAGES_DOWNLOAD_DIR=f"{td}/images",
+                COHORT_SNAPSHOT_STORAGE_DIR=f"{td}/snapshots",
+                XNAT_DATA_DIR=f"{td}/xnat",
+            )
+        finally:
+            locked.chmod(0o755)
+    _assert(check.status == mod.Status.FAIL, "FAIL", f"{check.status}: {check.detail}")
+    _assert("OMOP_DATA_DIR" in check.detail and "not traversable" in check.detail, "names the var", check.detail)
+
+
+def test_42_rows_judge_the_sudo_user_not_root() -> None:
+    """Under `sudo -E` the operator's own ids come from SUDO_UID/SUDO_GID, as the next-step prefix already does."""
+    print("▶ container uid and data-dir rows judge SUDO_UID under sudo")
+    with mock.patch.dict(os.environ, {"SUDO_UID": "4242", "SUDO_GID": "4243", "SUDO_USER": "op"}):
+        check = mod.check_container_uid({"FLIP_UID": "4242", "FLIP_GID": "4243"}, True, "trust/.env.SITE.prod")
+        hint = mod.check_data_dir_paths({"FLIP_UID": "4242", "ORTHANC_STORAGE_DIR": "./p"}, True, "k").hints[0]
+    _assert(check.status == mod.Status.PASS and "this user" in check.detail, "sudo user's ids PASS", str(check))
+    _assert("mkdir -p" in hint, "data-dir hint says mkdir for the sudo user", hint)
 
 
 def test_39_trust_health_probe_ignores_the_proxy() -> None:
@@ -822,19 +862,22 @@ def test_39_trust_health_probe_ignores_the_proxy() -> None:
 
 
 def test_40_container_uid_row() -> None:
-    """FLIP_UID/FLIP_GID: unset keeps the image users, this user's ids PASS, another's WARN, half-set FAIL."""
+    """FLIP_UID/FLIP_GID: unset keeps the image users, this user's ids PASS, another's WARN, FLIP_GID alone
+    or a non-number FAIL, and FLIP_UID alone takes FLIP_GID=FLIP_UID as deploy/portable.mk does."""
     print("▶ container uid row")
     me = {"FLIP_UID": str(os.getuid()), "FLIP_GID": str(os.getgid())}
     cases = (
         ({}, mod.Status.PASS, "each image's own user"),
         (me, mod.Status.PASS, "this user"),
         ({"FLIP_UID": str(os.getuid() + 1), "FLIP_GID": str(os.getgid())}, mod.Status.WARN, "is not this user"),
-        ({"FLIP_UID": str(os.getuid())}, mod.Status.FAIL, "both must be set"),
-        ({"FLIP_UID": "alex", "FLIP_GID": "1"}, mod.Status.FAIL, "both must be set"),
+        ({"FLIP_GID": str(os.getgid())}, mod.Status.FAIL, "FLIP_UID must be set"),
+        ({"FLIP_UID": "alex", "FLIP_GID": "1"}, mod.Status.FAIL, "FLIP_UID must be set"),
     )
     for kit, status, words in cases:
         check = mod.check_container_uid(kit, True, "trust/.env.SITE.prod")
         _assert(check.status == status and words in check.detail, f"{status.name}: {check.detail}", str(check))
+    uid_only = mod.check_container_uid({"FLIP_UID": "4242"}, True, "trust/.env.SITE.prod")
+    _assert(uid_only.status == mod.Status.WARN and "4242:4242" in uid_only.detail, "gid follows uid", str(uid_only))
     pending = mod.check_container_uid({}, False, "trust/.env.SITE.prod")
     _assert(pending.status == mod.Status.PENDING, "PENDING without the kit")
     hint = mod.check_data_dir_paths({**me, "ORTHANC_STORAGE_DIR": "./pacs"}, True, "trust/.env.SITE.prod").hints[0]
@@ -885,6 +928,8 @@ def main() -> None:
     test_38_absolute_creatable_data_dirs_pass()
     test_39_trust_health_probe_ignores_the_proxy()
     test_40_container_uid_row()
+    test_41_untraversable_parent_is_a_fail_not_a_crash()
+    test_42_rows_judge_the_sudo_user_not_root()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

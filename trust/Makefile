@@ -106,21 +106,21 @@ IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(IS_DEPLOYED),/opt/flip/dat
 include ../deploy/portable.mk
 
 # Pre-create the per-net images bind sources (keep in lockstep with the fl-client-net-*
-# compose services) owned like their base dir. A plain `mkdir -p` is not enough: the
-# documented on-prem bring-up runs this Makefile under sudo, and Docker root-creates any
-# missing source dir — either way a root-owned net-N means imaging-api (uid 1000,
-# CapDrop ALL) cannot write inside it, every download 500s, and training dies much later
-# with a misleading num_samples=0. The base dir's owner UID is authoritative (set by the
-# provisioning playbooks in prod, by this mkdir as the host user in dev) and imaging-api
-# runs as it on every path, so it always owns net-N.
+# compose services) owned like their base dir. A plain `mkdir -p` is not enough: a root
+# bring-up (the playbook host) or Docker root-creates any missing source dir, and a
+# root-owned net-N means imaging-api (uid 1000, CapDrop ALL) cannot write inside it, every
+# download 500s, and training dies much later with a misleading num_samples=0. With
+# FLIP_UID unset the base dir's owner UID is authoritative (set by the provisioning
+# playbooks or prepare-host-dirs in prod, by this mkdir as the host user in dev) and
+# imaging-api runs as it on every path, so it always owns net-N.
 #
 # The GROUP and MODE are backend-aware, because the fl-client writes inside net-N too
 # (flip.add_resource stages under net-N/upload/, FLARE CleanupImages deletes net-N's
 # children) and on Flower it does not share imaging-api's UID: the Flower client is built
 # on the upstream flwr/base image, which runs as `app` (uid/gid 49999). Mirrors the K8s
 # chart's images-init (trust/deploy/helm/templates/fl-client.yaml):
-#   * FLIP_UID set, any env — FLIP_UID:FLIP_GID, 0755: imaging-api and the client are then
-#     the same user, whichever backend (FLIP#1731).
+#   * FLIP_UID set (a deployed kit's knob; the dev composes ignore it) — FLIP_UID:FLIP_GID,
+#     0755: imaging-api and the client are then the same user, whichever backend (FLIP#1731).
 #   * FLARE, any env      — the base dir's own owner:group, 0755. Its client shares
 #     imaging-api's UID, so owner write covers both writers.
 #   * Flower, prod/stag     — <base-uid>:49999, 0775. The prod compose adds no
@@ -521,11 +521,12 @@ prepare-artifacts:
 
 # Create every bind-mount source this trust's containers write, each owned by its container's uid
 # (FLIP#1723). Setting another uid's ownership needs root, so this is the one step of an on-prem
-# bring-up that does: whoever prepares the host runs it once, as root, on the host itself; up-trust
-# and upgrade-trust then only check. It deletes nothing, so it is safe to re-run. The on-prem
-# Ansible playbook does the same for /opt/flip. A root-created images base would hand its root
-# ownership to the net dirs, so it goes to imaging-api's uid first. A kit whose FLIP_UID/FLIP_GID
-# are the operator's own ids needs none of this: its containers run as them (FLIP#1731).
+# bring-up that does: whoever prepares the host runs it once, as root, on the host itself; a
+# non-root bring-up then only checks. It deletes nothing and never touches xnat-db's data dir,
+# so it is safe to re-run beside a live site. The on-prem Ansible playbook does the same for
+# /opt/flip. The images base hands its owner to the net dirs, so whoever created it (root, or
+# the operator before the first refusal) it goes to imaging-api's uid first. A kit whose
+# FLIP_UID/FLIP_GID are the operator's own ids needs none of this: its containers run as them (FLIP#1731).
 prepare-host-dirs:
 	$(require_kit_file)
 	@[ "$$(id -u)" = 0 ] || { \
@@ -533,7 +534,7 @@ prepare-host-dirs:
 	  echo "   Run it as root on the trust host (sudo -E make -C trust prepare-host-dirs KIT=$(KIT)$(if $(HUB), HUB=$(HUB))),"; \
 	  echo "   or ask the host owner to."; exit 1; }
 	@base="$(IMAGES_BASE)"; mkdir -p "$$base"; \
-	[ "$$($(call stat_fmt,%u) "$$base")" != 0 ] || chown $(API_UID):$(API_GID) "$$base"
+	[ "$$($(call stat_fmt,%u) "$$base")" = "$(API_UID)" ] || chown $(API_UID):$(API_GID) "$$base"
 	$(call ensure_data_dirs,$(OMOP_DATA_ABS),$(ORTHANC_STORAGE_ABS))
 	$(ensure_net_dirs)
 	$(ensure_snapshot_dir)
@@ -777,6 +778,24 @@ upgrade-trust: require-xnat-aetitle
 	uv run --no-config deploy/scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
 	$(MAKE) _upgrade-trust-apply KIT=$(KIT) HUB=$(HUB) DEBUG=$(DEBUG)
 
+# FLIP_UID is a first-install choice (FLIP#1731): a site's data dirs carry the ids its install
+# gave them, and a kit that turns FLIP_UID on (or changes it) afterwards recreates omop-db and
+# Orthanc as a uid that owns none of their files, so they crash-loop while the first visible
+# refusal is XNAT's. Refuse before anything is pulled, naming the directory that disagrees;
+# re-owning data is the operator's deliberate step, never this verb's.
+define refuse_flip_uid_change
+	@if [ -n "$(FLIP_UID)" ]; then \
+	  for d in "$(OMOP_DATA_ABS)" "$(ORTHANC_STORAGE_ABS)" "$(IMAGES_BASE)/net-1"; do \
+	    [ -d "$$d" ] || continue; \
+	    owner="$$($(call stat_fmt,%u) "$$d")"; \
+	    [ "$$owner" = "$(FLIP_UID)" ] || { \
+	      echo "❌ The kit sets FLIP_UID=$(FLIP_UID), but $$d is owned by uid $$owner: this site was installed under other ids."; \
+	      echo "   FLIP_UID is a first-install choice. To move a live site, stop it and re-own its data dirs as root first"; \
+	      echo "   (chown -R, which this verb never does: they hold data), or unset FLIP_UID in the kit."; exit 1; }; \
+	  done; \
+	fi
+endef
+
 # Phase 2 of upgrade-trust — never call directly (the tag it applies is whatever the
 # kit says, which is only right after phase 1 wrote it). No ensure_net_dirs: the net
 # dirs of a running site already exist with the ownership its first install gave them,
@@ -784,6 +803,7 @@ upgrade-trust: require-xnat-aetitle
 _upgrade-trust-apply:
 	$(require_kit_file)
 	$(check_slot_not_taken)
+	$(refuse_flip_uid_change)
 	@echo "⬆️  Upgrading trust services (KIT=$(KIT)) to $(DOCKER_TAG) (FL client $(DOCKER_FL_TAG))..."
 	@echo "$(GPU_STATUS_MSG)"
 	# A site upgrading from before the membership store (FLIP#857) has no directory for it yet.

@@ -80,8 +80,8 @@ PROD_COMPOSE_GLOBS = (
 )
 # The prod services that write a host bind mount, and each image's own uid:gid — what the service
 # runs as when the kit sets no FLIP_UID (FLIP#1731). omop-db's is root: its entrypoint re-owns the
-# data dir, then drops to postgres. xnat-db is absent on purpose: its Alpine Postgres has no
-# nss_wrapper, so it keeps the root entrypoint under FLIP_UID too.
+# data dir, then drops to postgres. xnat-db is absent on purpose: its pinned postgres:12.2-alpine
+# predates nss_wrapper in the Alpine variants, so it keeps the root entrypoint under FLIP_UID too.
 PROD_BIND_MOUNT_WRITERS = {
     ("compose_trust.prod.yml", "omop-db"): "0:0",
     ("compose_trust.prod.yml", "orthanc"): "999:999",
@@ -388,6 +388,36 @@ def check_images_tolerate_a_foreign_uid(failures: list[str]) -> None:
                 )
 
 
+# Images that take a `USER root` step to apply those changes must hand back to their own user.
+IMAGES_ENDING_NON_ROOT = ("trust/orthanc/Dockerfile", "trust/xnat/xnat/Dockerfile")
+
+# XNAT's Container Service jobs run as the uid the backend's `container-user` names; under FLIP_UID
+# that must be xnat-web's uid, or dcm2niix cannot read the 640 files it archives (FLIP#1731).
+CS_CONTAINER_USER_PLUMBING = {
+    "trust/xnat/Makefile": "export XNAT_CS_CONTAINER_USER := $(if $(FLIP_UID),$(FLIP_UID):$(FLIP_GID))",
+    "trust/xnat/docker-compose-stack.prod.yml": "XNAT_CS_CONTAINER_USER=${XNAT_CS_CONTAINER_USER:-}",
+    "trust/xnat/xnat/config/configure-dcm2niix.sh": '.["container-user"] = $user',
+}
+
+
+def check_images_hand_back_to_their_user(failures: list[str]) -> None:
+    """A Dockerfile that steps to root for a mode change ends on a non-root USER."""
+    for rel in IMAGES_ENDING_NON_ROOT:
+        users = re.findall(r"^USER\s+(\S+)", (REPO_ROOT / rel).read_text(), re.M)
+        if not users or users[-1] in ("root", "0", "0:0"):
+            last = users[-1] if users else "missing"
+            failures.append(f"{rel}: the last USER directive is {last}; it must not be root.")
+
+
+def check_container_service_jobs_follow_flip_uid(failures: list[str]) -> None:
+    for rel, needle in CS_CONTAINER_USER_PLUMBING.items():
+        if needle not in (REPO_ROOT / rel).read_text():
+            failures.append(
+                f"{rel}: no longer contains `{needle}`: under FLIP_UID the Container Service jobs would run "
+                f"as 1001 and could not read the archive xnat-web writes (FLIP#1731)."
+            )
+
+
 def check_no_uname_runtime_paths(failures: list[str]) -> None:
     """`/home/${UNAME}` as a runtime path is the build/runtime conflation itself.
 
@@ -416,6 +446,8 @@ def main() -> int:
         check_dev_fl_services_are_non_root(failures)
         check_production_user_follows_flip_uid(failures)
         check_images_tolerate_a_foreign_uid(failures)
+        check_images_hand_back_to_their_user(failures)
+        check_container_service_jobs_follow_flip_uid(failures)
         check_no_uname_runtime_paths(failures)
     except ValueError as exc:
         failures.append(str(exc))

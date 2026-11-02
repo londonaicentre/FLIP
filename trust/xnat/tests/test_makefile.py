@@ -294,7 +294,7 @@ class XnatDirsWithoutRoot(unittest.TestCase):
             left.write_text("x")
             reset = self._run("xnat-reset", data, tmp, uid=self.other_uid)
             assert reset.returncode != 0, reset.stdout
-            assert "holds files from an earlier install" in reset.stdout, reset.stdout
+            assert "from an earlier install" in reset.stdout, reset.stdout
             assert f"uid {os.getuid()} cannot wipe and re-create the tree for uid {self.other_uid}." in reset.stdout, (
                 reset.stdout
             )

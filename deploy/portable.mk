@@ -21,7 +21,7 @@ endif
 
 # The remedy every bind-mount ownership guard prints beside `sudo chown` (FLIP#1723). Setting a
 # directory's owner to a container's uid needs root, so it belongs to whoever prepares the host, once;
-# bring-up only checks it.
+# a non-root bring-up only checks it.
 prepare_host_dirs_hint = echo "   or have the host owner run, as root: make -C trust prepare-host-dirs KIT=$(KIT)$(if $(HUB), HUB=$(HUB))"
 
 # Who runs each container that writes a bind mount (FLIP#1731). A kit may set FLIP_UID and
@@ -29,10 +29,12 @@ prepare_host_dirs_hint = echo "   or have the host owner run, as root: make -C t
 # operator creates with mkdir are already right and nothing needs chown. Unset, each image keeps
 # its own user. The prod composes carry the same defaults (`${FLIP_UID:-1000}` …), so Make and
 # compose cannot disagree about who must own a directory. FLIP_GID follows FLIP_UID when the kit
-# sets only one, and is exported because compose reads it from the environment.
+# sets only FLIP_UID (the checklist's Container uid row applies the same default), and is exported
+# because compose reads it from the environment. FLIP_UID is a first-install choice: a site's data
+# dirs carry the ids its install gave them, and upgrade-trust refuses a kit that changes it.
 FLIP_GID := $(or $(FLIP_GID),$(FLIP_UID))
 export FLIP_GID
-# trust-api, imaging-api, data-access-api and the FLARE client share one uid.
+# imaging-api, data-access-api and the FLARE client share one uid (trust-api too, but it writes no mount).
 API_UID := $(or $(FLIP_UID),1000)
 API_GID := $(or $(FLIP_GID),1000)
 ORTHANC_UID := $(or $(FLIP_UID),999)

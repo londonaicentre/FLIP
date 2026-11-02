@@ -13,9 +13,10 @@
 #
 
 
-# Under a kit's FLIP_UID (FLIP#1731) this uid has no passwd entry: HOME would be "/" and
-# getpass.getuser() raises inside torch's import. Name the user and give it a home it can write.
-if ! id -un >/dev/null 2>&1; then
+# Under a kit's FLIP_UID (FLIP#1731) this uid has no passwd entry, so HOME is "/" and
+# getpass.getuser() raises during torch's import; a uid the image does know (nobody, 65534) has a
+# home it cannot write. Either way, name the user and give it a home it can write.
+if ! id -un >/dev/null 2>&1 || [ ! -w "${HOME:-/}" ]; then
     export HOME=/tmp USER=flip LOGNAME=flip
 fi
 

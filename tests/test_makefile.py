@@ -126,6 +126,12 @@ class HostDirsArePreparedNotEscalated(unittest.TestCase):
         assert "xnat-prepare-dirs KIT=SCR HUB=prod" in out, out
         assert "chown 1001:1001 /nonexistent/xnat /nonexistent/xnat/xnat-data" in out, out
         assert "rm -rf" not in out, out
+        # The images base goes to imaging-api's uid whoever created it (an operator-owned base would hand
+        # its owner to the net dirs, which imaging-api then cannot write); xnat-db-data is Postgres's own
+        # after its first boot, so it is created and never re-owned (FLIP#1731 review).
+        assert '= "1000" ] || chown 1000:1000 "$base"' in out, out
+        xnat_chown = next(line for line in out.splitlines() if "chown 1001:1001 /nonexistent/xnat " in line)
+        assert "xnat-db-data" not in xnat_chown, xnat_chown
 
     def test_prepare_host_dirs_follows_the_kits_flip_uid(self):
         """A kit's FLIP_UID:FLIP_GID is who every bind-mount writer runs as, so it is who owns the dirs;

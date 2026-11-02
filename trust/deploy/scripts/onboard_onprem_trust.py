@@ -1015,41 +1015,58 @@ def check_data_dir(
     return Check(label, Status.PASS, str(resolved))
 
 
-# Every host-side bind-mount source a kit sets. The membership store is prepared by a container on
-# the docker host, so only the first three are created by a plain mkdir as this user.
-DATA_DIR_VARS: tuple[str, ...] = (
-    "OMOP_DATA_DIR",
-    "ORTHANC_STORAGE_DIR",
-    "BASE_IMAGES_DOWNLOAD_DIR",
-    "COHORT_SNAPSHOT_STORAGE_DIR",
-)
-MKDIR_DATA_DIR_VARS = DATA_DIR_VARS[:3]
+# Every host-side bind-mount source a kit sets, with the deployed default the Makefiles use when it
+# is unset (trust/Makefile IMAGES_BASE and COHORT_SNAPSHOT_DIR_HOST, trust/xnat/Makefile
+# XNAT_DATA_DIR). The OMOP and Orthanc dirs have no deployed default: `check_data_dir` fails them
+# unset. On an on-prem host every one is a plain mkdir as the invoking user; only over a remote
+# DOCKER_CONTEXT is the membership store prepared by a container.
+DATA_DIR_DEFAULTS: dict[str, str | None] = {
+    "OMOP_DATA_DIR": None,
+    "ORTHANC_STORAGE_DIR": None,
+    "BASE_IMAGES_DOWNLOAD_DIR": "/opt/flip/data/trust-{slot}",
+    "COHORT_SNAPSHOT_STORAGE_DIR": "/opt/flip/cohort-snapshots/trust-{slot}",
+    "XNAT_DATA_DIR": "/opt/flip/xnat-trust{slot}",
+}
+DATA_DIR_VARS: tuple[str, ...] = tuple(DATA_DIR_DEFAULTS)
+
+
+def invoking_ids() -> tuple[int, int]:
+    """The operator's uid and gid: under sudo the real user's, as the printed next step already assumes."""
+    try:
+        return int(os.environ.get("SUDO_UID", os.getuid())), int(os.environ.get("SUDO_GID", os.getgid()))
+    except ValueError:
+        return os.getuid(), os.getgid()
 
 
 def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: str) -> Check:
     """Every data dir is absolute, and the bring-up can create it as this user (FLIP#1723).
 
     The kit template carries the development paths, which are relative: on a deployed trust they
-    resolve inside this checkout, on whatever disk it sits on. An unset one falls back to /opt/flip,
-    which a non-root operator usually cannot create.
+    resolve inside this checkout, on whatever disk it sits on. An unset one falls back to its
+    /opt/flip default, which a non-root operator usually cannot create.
     """
     label = "Data dir paths"
     if not kit_present:
         return Check(label, Status.PENDING, "pending — needs kit file")
+    slot = kit_vars.get("FL_KIT_SLOT_NUMBER", "").strip() or "<N>"
     relative: list[str] = []
     blocked: list[str] = []
-    for var in DATA_DIR_VARS:
+    for var, default in DATA_DIR_DEFAULTS.items():
         raw = kit_vars.get(var, "").strip()
         if raw and not raw.startswith("/"):
             relative.append(var)
             continue
-        if var not in MKDIR_DATA_DIR_VARS:
+        if not raw and default is None:
             continue
-        path = Path(raw or "/opt/flip")
-        nearest = next(p for p in (path, *path.parents) if p.exists())
+        path = Path(raw or default.format(slot=slot))  # type: ignore[union-attr]
+        try:
+            nearest = next(p for p in (path, *path.parents) if p.exists())
+        except OSError as error:  # Path.exists re-raises EACCES: a parent this user cannot traverse
+            blocked.append(f"{var} ({error.filename} is not traversable: {error.strerror})")
+            continue
         if nearest != path and not os.access(nearest, os.W_OK):
             blocked.append(f"{var} ({nearest} is not writable)")
-    if kit_vars.get("FLIP_UID", "").strip() == str(os.getuid()):
+    if kit_vars.get("FLIP_UID", "").strip() == str(invoking_ids()[0]):
         then = "create them yourself with mkdir -p: the containers run as you (FLIP_UID)."
     else:
         then = (
@@ -1064,33 +1081,42 @@ def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: 
     return Check(label, Status.PASS, "absolute")
 
 
-IMAGE_USERS = "1000 the APIs and the FLARE client, 999 Orthanc, 1001 xnat-web, 49999 the Flower SuperNode"
+IMAGE_USERS = (
+    "1000 imaging-api, data-access-api and the FLARE client, 999 Orthanc, 1001 xnat-web, 49999 the Flower SuperNode"
+)
 
 
 def check_container_uid(kit_vars: dict[str, str], kit_present: bool, kit_path: str) -> Check:
     """Who the bind-mount writers run as, and whether that is this user (FLIP#1731).
 
     FLIP_UID/FLIP_GID set to the operator's own ids means the directories they create need no
-    chown; any other value, or none, means `prepare-host-dirs` as root.
+    chown; any other value, or none, means `prepare-host-dirs` as root (or a root bring-up).
+    FLIP_GID follows FLIP_UID when the kit sets only the uid, as deploy/portable.mk does.
     """
     label = "Container uid"
     if not kit_present:
         return Check(label, Status.PENDING, "pending — needs kit file")
     uid = kit_vars.get("FLIP_UID", "").strip()
-    gid = kit_vars.get("FLIP_GID", "").strip()
-    root_step = "the bind-mount dirs need `make -C trust prepare-host-dirs`, as root"
+    gid = kit_vars.get("FLIP_GID", "").strip() or uid
+    root_step = (
+        "running as root: the bring-up sets the owners itself"
+        if os.getuid() == 0
+        else "the bind-mount dirs need `make -C trust prepare-host-dirs`, as root"
+    )
     if not uid and not gid:
         return Check(label, Status.PASS, f"unset: each image's own user ({IMAGE_USERS}); {root_step}")
     if not (uid.isdigit() and gid.isdigit()):
         return Check(
             label,
             Status.FAIL,
-            f"FLIP_UID={uid or '<unset>'} FLIP_GID={gid or '<unset>'}: both must be set, as numbers",
+            f"FLIP_UID={uid or '<unset>'} FLIP_GID={gid or '<unset>'}: FLIP_UID must be set, as a number"
+            " (FLIP_GID defaults to it)",
             hints=[f"Edit {kit_path}: FLIP_UID=$(id -u) and FLIP_GID=$(id -g) run the containers as you."],
         )
-    if (int(uid), int(gid)) == (os.getuid(), os.getgid()):
+    me = invoking_ids()
+    if (int(uid), int(gid)) == me:
         return Check(label, Status.PASS, f"{uid}:{gid}, this user: directories you create need no chown")
-    return Check(label, Status.WARN, f"{uid}:{gid} is not this user ({os.getuid()}:{os.getgid()}); {root_step}")
+    return Check(label, Status.WARN, f"{uid}:{gid} is not this user ({me[0]}:{me[1]}); {root_step}")
 
 
 # ─────────────────────────────────────────────────────────────────────

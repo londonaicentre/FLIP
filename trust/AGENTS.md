@@ -105,7 +105,12 @@ writer runs as them (prod compose `user: "${FLIP_UID:-<image uid>}:${FLIP_GID:-<
 the same defaults as `deploy/portable.mk`'s `API_UID`/`ORTHANC_UID`/`XNAT_CONTAINER_UID`, which
 the ownership guards read), so the operator's own `mkdir` is enough and `xnat-reset` provisions the
 XNAT tree itself, as in development. xnat-db alone keeps its
-root entrypoint (Alpine Postgres, no nss_wrapper). The images' runtime-written paths are
+root entrypoint (its pinned `postgres:12.2-alpine` predates nss_wrapper in the Alpine variants), so
+`xnat-prepare-dirs` creates but never re-owns `xnat-db-data`, and XNAT's Container Service jobs run as
+`FLIP_UID` too (`XNAT_CS_CONTAINER_USER`, written into the Docker backend by `configure-dcm2niix.sh`), or
+dcm2niix could not read the 640 files xnat-web archives. `FLIP_UID` is a first-install choice:
+`_upgrade-trust-apply` refuses a kit whose `FLIP_UID` differs from the owner of the data dirs. A second
+install on the same tree needs one root `rm -rf` of `XNAT_DATA_DIR` (xnat-db's data is uid 70's). The images' runtime-written paths are
 world-writable with the sticky bit for that uid (`scripts/tests/test_container_identity.py`
 pins both the defaults and those lines).
 

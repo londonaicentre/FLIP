@@ -30,12 +30,13 @@ ENV ORTHANC__AUTHENTICATION_ENABLED=true
 COPY --chmod=0755 flip-entrypoint.sh /flip-entrypoint.sh
 
 # The container also runs as a kit's FLIP_UID (FLIP#1731), which owns neither /etc/hostid nor
-# the plugin files. The base entrypoint rewrites /etc/hostid at every start (a random hostid, so
-# DCMTK's UID generation never waits on DNS), so the file is made writable. Its configurator
-# hard-links each enabled plugin into /usr/share/orthanc/plugins at start, which the kernel's
-# protected_hardlinks refuses to a uid that does not own the .so; it skips a link that already
-# exists, so the two the base image enables by default are linked here. Enabling another plugin
-# needs the image's own uid.
+# the plugin files. The base entrypoint writes a random /etc/hostid on a container's first start
+# (the image ships it as `not-generated`; the hostid keeps DCMTK's UID generation off DNS), so the
+# file is made writable. Its configurator hard-links each enabled plugin into
+# /usr/share/orthanc/plugins at start, which a foreign uid cannot do: the kernel's
+# protected_hardlinks refuses a link to a .so it does not own, and the directory is orthanc's. It
+# skips a link that already exists, so the two the base image enables by default are linked here.
+# Enabling another plugin needs the image's own uid.
 USER root
 RUN chmod 666 /etc/hostid \
     && ln /usr/share/orthanc/plugins-available/libOrthancGdcm.so \

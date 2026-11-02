@@ -155,6 +155,12 @@ export XNAT_DATA_DIR
 
 include ../../deploy/portable.mk
 
+# Who XNAT's Container Service runs its jobs (dcm2niix, export-mask) as. Under FLIP_UID the
+# archive xnat-web writes is 640 to that uid, so the jobs must be the same uid or they can read
+# nothing; empty keeps each job image's own user (1001, xnat-web's default). Read by
+# docker-compose-stack.prod.yml and written into the Docker backend by configure-dcm2niix.sh (FLIP#1731).
+export XNAT_CS_CONTAINER_USER := $(if $(FLIP_UID),$(FLIP_UID):$(FLIP_GID))
+
 # uid/gid every XNAT bind-mount source must be owned by (XNAT_CONTAINER_UID/GID, from
 # deploy/portable.mk): the kit's FLIP_UID:FLIP_GID when set — xnat-web then runs as them
 # (FLIP#1731) — else the in-image `xnat` user, created with a fixed id in
@@ -174,8 +180,10 @@ include ../../deploy/portable.mk
 # and the stock postgres entrypoint re-chowns PGDATA and drops to `postgres` itself.
 # That is what makes a 1001-owned xnat-db-data harmless, and it is what would go away
 # if someone pinned a `user:` on xnat-db. It keeps starting as root under FLIP_UID too: its
-# Alpine Postgres has no nss_wrapper, so it cannot run as a uid it does not know. Its dir is included on stag/prod only, so
-# the whole tree carries one owner.
+# pinned postgres:12.2-alpine predates nss_wrapper in the Alpine variants (docker-library/postgres#1018),
+# so an unknown uid fails initdb. Its dir is included on stag/prod only, so the whole tree carries
+# one owner at reset time; after Postgres's first boot it is uid 70's, which is why
+# xnat-prepare-dirs and upgrade-xnat leave it alone.
 #
 # trust/deploy/ansible/aws-ec2-host.yml and onprem.yml
 # provision XNAT's bind mounts with this same id: the uid is the invariant all three
@@ -203,7 +211,8 @@ XNAT_WEB_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archiv
 # $(ensure_net_dirs) in trust/Makefile. Checked after the chown rather than
 # instead of it as defence in depth, not because the chown itself might be
 # refused: every branch chowns under sudo or as the owner itself, and `set -e`
-# aborts on one that fails outright before the guard is reached. What is left for the guard is a
+# aborts on one that fails outright before the guard is reached — except the non-root
+# local branch, which chowns nothing and relies on this guard alone (FLIP#1723). What is left for the guard is a
 # chown that did not cover what it was meant to — it applies recursively to
 # $(XNAT_DATA_DIR) while the guard stats each entry of $(XNAT_DATA_DIRS), so those
 # two drifting apart, or a later edit narrowing or dropping the chown on one
@@ -577,7 +586,7 @@ xnat-plugins-check:
 	@./scripts/xnat_artifacts.sh check plugin xnat/plugins
 
 # Creates the data-volume directory structure for one trust's XNAT stack and
-# wipes any previous data. Docker Swarm requires host directories to exist
+# wipes any previous data where it may (the branches below). Docker Swarm requires host directories to exist
 # before bind-mounting; the wipe avoids stale bind mounts from a prior run
 # (the second xnat-web otherwise crash-loops on a locked SQLite index).
 # Data dir defaults vary by HUB — see the XNAT_DATA_DIR comment above
@@ -638,17 +647,24 @@ xnat-reset:
 			*) \
 				echo "  💻 local docker context '$$xnat_ctx' ($$xnat_endpoint) — resetting XNAT dirs on this host"; \
 				if [ "$$(id -u)" = 0 ]; then \
-					rm -rf $(XNAT_DATA_DIR) && mkdir -p $(XNAT_DATA_DIRS) && chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
+					rm -rf $(XNAT_DATA_DIR) && mkdir -p $(XNAT_DATA_DIRS) && chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR) \
+					  || { echo "❌  could not wipe and re-create $(XNAT_DATA_DIR) (a mount still in use?)"; exit 1; }; \
 				elif $(operator_owns_xnat_tree); then \
 					echo "  🔓 Operator is uid $(XNAT_CONTAINER_UID) and owns the tree — resetting it without root (FLIP#1731)"; \
-					rm -rf $(XNAT_DATA_DIR) && mkdir -p $(XNAT_DATA_DIRS) && chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
+					rm -rf $(XNAT_DATA_DIR) && mkdir -p $(XNAT_DATA_DIRS) && chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR) \
+					  || { echo "❌  uid $$(id -u) could not wipe and re-create $(XNAT_DATA_DIR): its parent must be writable by you, or exist already."; \
+					       $(prepare_host_dirs_hint); exit 1; }; \
 				else \
 					echo "  👤 not root — deleting nothing, checking the tree prepare-host-dirs made (FLIP#1723)"; \
 					if [ -d $(XNAT_DATA_DIR) ] && [ -n "$$(find $(XNAT_DATA_DIR) -mindepth 1 ! -type d -print 2>&1 | head -n 1)" ]; then \
 						others=$$(find $(XNAT_DATA_DIR) ! -user $$(id -u) -print0 2>/dev/null | xargs -0 $(call stat_fmt,%u) 2>/dev/null | sort -un | paste -sd, -); \
-						echo "❌  $(XNAT_DATA_DIR) holds files from an earlier install. This first install starts XNAT fresh, and"; \
-						echo "    uid $$(id -u) cannot wipe and re-create the tree for uid $(XNAT_CONTAINER_UID)$${others:+ (files owned by uid $$others are in the way)}. As root on this host:"; \
-						echo "    rm -rf $(XNAT_DATA_DIR) && make -C trust prepare-host-dirs KIT=$(KIT)$(if $(HUB), HUB=$(HUB))"; \
+						echo "❌  $(XNAT_DATA_DIR) holds files, or directories uid $$(id -u) cannot read, from an earlier install. This first install"; \
+						echo "    starts XNAT fresh, and uid $$(id -u) cannot wipe and re-create the tree for uid $(XNAT_CONTAINER_UID)$${others:+ (files owned by uid $$others are in the way)}. As root on this host:"; \
+						if [ "$$(id -u)" = "$(XNAT_CONTAINER_UID)" ]; then \
+							echo "    rm -rf $(XNAT_DATA_DIR)    # then re-run this as yourself: an absent tree you re-create unprivileged"; \
+						else \
+							echo "    rm -rf $(XNAT_DATA_DIR) && make -C trust prepare-host-dirs KIT=$(KIT)$(if $(HUB), HUB=$(HUB))"; \
+						fi; \
 						exit 1; \
 					fi; \
 				fi; \
@@ -671,11 +687,14 @@ xnat-reset:
 
 # The XNAT half of `make -C trust prepare-host-dirs` (FLIP#1723): the bind-mount sources, owned by
 # xnat-web's uid. Run as root; it deletes nothing (xnat-reset is the destructive first-install step).
+# xnat-db-data is created but never re-owned: Postgres's entrypoint takes it on first boot, and
+# re-owning it beside a running xnat-db would lock Postgres out of its own data (upgrade-xnat's
+# ownership guard points here from a live site).
 xnat-prepare-dirs:
 	$(require_kit)
 	mkdir -p $(XNAT_DATA_DIRS)
-	chown $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR) $(XNAT_DATA_DIR)/xnat-data $(XNAT_DATA_DIRS)
-	@$(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_DATA_DIRS))
+	chown $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR) $(XNAT_DATA_DIR)/xnat-data $(XNAT_WEB_DATA_DIRS)
+	@$(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_WEB_DATA_DIRS),,$(words $(XNAT_WEB_DATA_DIRS)))
 
 # Configure an XNAT instance with initial settings and run dcm2niix setup.
 # Usage: make xnat-configure XNAT_PROJECT=<stack-name>

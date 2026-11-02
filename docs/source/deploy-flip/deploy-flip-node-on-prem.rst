@@ -53,8 +53,10 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
     ``id -g``). Every container that writes a bind mount then runs as you, so the directories you create with
     ``mkdir -p`` are already right and nothing needs root. This is the route for a host where you have Docker but
     no ``sudo``. The one exception is ``xnat-db``, which still starts as root and re-owns its own data directory
-    (its Alpine Postgres cannot run as a uid it does not know): you create that directory too, and deleting it
-    later needs root.
+    (its pinned Alpine Postgres predates ``nss_wrapper``, so it cannot run as a uid it does not know): deleting that
+    directory later needs root, so a second install on the same tree does too. Decide before the first install:
+    a live site's data carries the ids it was installed with, and ``make upgrade-onprem-trust`` refuses a kit that
+    turns ``FLIP_UID`` on or changes it afterwards.
   - **Keep the images' own users** (the table below) and have whoever prepares the host run, once, as root:
 
     .. code-block:: shell
@@ -73,9 +75,14 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
      * - Written by
        - uid (default)
        - Directory (kit file)
-     * - trust-api, imaging-api, data-access-api, the FLARE client
+     * - imaging-api, data-access-api, the FLARE client
        - 1000
        - ``BASE_IMAGES_DOWNLOAD_DIR``, ``COHORT_SNAPSHOT_STORAGE_DIR``
+     * - the FLARE client alone
+       - 1000
+       - ``FL_KIT_DIR/net-<N>/services/<slot>/local`` and ``transfer``: the kit itself, which it writes at start.
+         ``prepare-host-dirs`` does not touch the kit, so extract it as uid 1000 or ``chown -R 1000`` those two
+         directories (the Ansible playbook does; under ``FLIP_UID`` the kit you extracted is already yours).
      * - xnat-web
        - 1001
        - ``XNAT_DATA_DIR``
@@ -86,11 +93,11 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
        - gid 49999
        - ``BASE_IMAGES_DOWNLOAD_DIR/net-<N>``, group-writable
 
-  Set ``OMOP_DATA_DIR``, ``ORTHANC_STORAGE_DIR``, ``BASE_IMAGES_DOWNLOAD_DIR`` and ``COHORT_SNAPSHOT_STORAGE_DIR``
-  in the kit to absolute paths on the data disk before they are created. The kit template carries the
-  development values, which are relative and so land inside the checkout; unset ones fall back to ``/opt/flip``.
-  The checklist's *Data dir paths* row warns on a relative path and fails on one that does not exist yet and that
-  you cannot create.
+  Set ``OMOP_DATA_DIR``, ``ORTHANC_STORAGE_DIR``, ``BASE_IMAGES_DOWNLOAD_DIR``, ``COHORT_SNAPSHOT_STORAGE_DIR`` and
+  ``XNAT_DATA_DIR`` in the kit to absolute paths on the data disk before they are created. The kit template carries
+  the development values, which are relative and so land inside the checkout; unset ones fall back to per-slot
+  directories under ``/opt/flip``. The checklist's *Data dir paths* row warns on a relative path and fails on one
+  that does not exist yet and that you cannot create, or whose parent you cannot even enter.
 - **Read access to the checkout and the FL kit** (``FL_KIT_DIR``).
 - **Python 3.11 or later** for the readiness checklist and ``make -C trust check-governance``, which read TOML with
   the standard library. ``uv`` installs one when it can download it; otherwise the host must provide a
@@ -135,7 +142,8 @@ Where all outbound traffic goes through a proxy, as in most trusted research env
   ``FL_EDGE_PORT``, else ``FL_SERVER_PORT``), not only 443.
 - **Your shell** may export ``http_proxy`` too. Then ``curl http://127.0.0.1:<port>`` goes to the proxy, and a
   published port seems not to answer. Use ``curl --noproxy '*' …``, or export ``NO_PROXY=localhost,127.0.0.1``
-  (and ``no_proxy``). The readiness checklist's own probe bypasses the proxy.
+  (and ``no_proxy``). The readiness checklist's loopback probe of trust-api bypasses the proxy; its hub and
+  registry probes go through it, as the containers will.
 
 *******************************
 Provision the host with Ansible
@@ -218,7 +226,8 @@ the admin manages them.
      - If needed
    * - ``FLIP_UID`` and ``FLIP_GID``
      - Your own ids (``id -u``, ``id -g``) to run the containers as you, so the directories you create need no root
-       to prepare (:ref:`onprem-operator-access`). Leave unset to keep the images' own users.
+       to prepare (:ref:`onprem-operator-access`). Leave unset to keep the images' own users. A first-install
+       choice: the upgrade verb refuses a kit that changes it on a live site.
      - If needed
    * - Trust-local passwords
      - Replace every default password in the *Trust-local credentials* section with a real secret.
