@@ -24,6 +24,7 @@ installed Flower rather than against mocks.
 """
 
 import math
+from logging import INFO, WARNING
 
 import numpy as np
 import pytest
@@ -414,3 +415,65 @@ class TestFlipLocalDpMod:
 
         with pytest.raises(ValueError, match="no floating-point arrays"):
             flip_local_dp_mod(msg, _context(), _call_next({"counter": np.array(2, dtype=np.int64)}))
+
+
+class TestClippingReport:
+    """The mod reports how hard clipping bit, so an over-clipped run is visible in the logs (#1754).
+
+    A fixed absolute clipping norm far below a model's typical update scales every update down —
+    effectively a lower learning rate each round. That is what kept the spleen tutorial at Dice ~0.02
+    for three months without anything failing, so the scale factor is logged every round and a scale
+    below a tenth is a WARNING.
+    """
+
+    @staticmethod
+    def _capture(monkeypatch) -> list[tuple[int, str]]:
+        calls: list[tuple[int, str]] = []
+        monkeypatch.setattr("flip.flower.privacy.log", lambda level, fmt, *args: calls.append((level, fmt % args)))
+        return calls
+
+    @staticmethod
+    def _clipping_lines(calls: list[tuple[int, str]], level: int) -> list[str]:
+        return [message for lvl, message in calls if lvl == level and "clip" in message]
+
+    def test_reports_the_pre_clip_norm_and_the_scale_factor(self, monkeypatch):
+        calls = self._capture(monkeypatch)
+        _released({"w": np.zeros(2)}, {"w": np.array([3.0, 4.0])}, {CONFIG_CLIPPING_NORM: 2.0})
+
+        [line] = self._clipping_lines(calls, INFO)
+        assert "pre-clip L2 norm 5.0000" in line
+        assert "clipped to 2.0000" in line
+        assert "scaled by 0.4000" in line
+
+    def test_warns_when_clipping_shrinks_the_update_more_than_tenfold(self, monkeypatch):
+        calls = self._capture(monkeypatch)
+        _released({"w": np.zeros(2)}, {"w": np.array([30.0, 40.0])}, {CONFIG_CLIPPING_NORM: 1.0})
+
+        [warning] = self._clipping_lines(calls, WARNING)
+        assert "0.0200" in warning
+        assert "pre-clip L2 norm 50.0000" in warning
+        assert CONFIG_CLIPPING_NORM in warning
+
+    def test_does_not_warn_at_exactly_a_tenth(self, monkeypatch):
+        calls = self._capture(monkeypatch)
+        _released({"w": np.zeros(2)}, {"w": np.array([6.0, 8.0])}, {CONFIG_CLIPPING_NORM: 1.0})
+
+        assert self._clipping_lines(calls, WARNING) == []
+        [line] = self._clipping_lines(calls, INFO)
+        assert "scaled by 0.1000" in line
+
+    def test_an_update_inside_the_norm_is_not_scaled(self, monkeypatch):
+        calls = self._capture(monkeypatch)
+        _released({"w": np.zeros(2)}, {"w": np.array([0.3, 0.4])}, {CONFIG_CLIPPING_NORM: 1.0})
+
+        assert self._clipping_lines(calls, WARNING) == []
+        [line] = self._clipping_lines(calls, INFO)
+        assert "pre-clip L2 norm 0.5000" in line
+        assert "scaled by 1.0000" in line
+
+    def test_the_norm_is_of_the_update_not_the_weights(self, monkeypatch):
+        calls = self._capture(monkeypatch)
+        _released({"w": np.array([100.0, 100.0])}, {"w": np.array([103.0, 104.0])}, {CONFIG_CLIPPING_NORM: 10.0})
+
+        [line] = self._clipping_lines(calls, INFO)
+        assert "pre-clip L2 norm 5.0000" in line

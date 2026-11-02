@@ -70,6 +70,9 @@ from flwr.supercore.differential_privacy import (
 __all__ = ["LocalDpConfig", "flip_local_dp_mod"]
 
 # ``run_config`` keys, as declared under ``[tool.flwr.app.config]`` in the app's pyproject.toml.
+# Clipping that scales an update below this fraction is reported as a WARNING (#1754).
+OVER_CLIPPING_SCALE = 0.1
+
 CONFIG_ENABLED = "dp-enabled"
 CONFIG_CLIPPING_NORM = "dp-clipping-norm"
 CONFIG_SENSITIVITY = "dp-sensitivity"
@@ -257,6 +260,8 @@ def flip_local_dp_mod(msg: Message, context: Context, call_next: ClientAppCallab
 
     updates = [reply_arrays[i] for i in float_indices]
     baselines = [global_arrays[i] for i in float_indices]
+    pre_clip_norm = _update_norm(updates, baselines)
+    scale = 1.0 if pre_clip_norm <= config.clipping_norm else config.clipping_norm / pre_clip_norm
 
     # compute_clip_model_update rebinds list entries rather than mutating the arrays, so the
     # clipped values have to be read back off `updates` — which is also what the noise lands on.
@@ -270,14 +275,36 @@ def flip_local_dp_mod(msg: Message, context: Context, call_next: ClientAppCallab
     )
     log(
         INFO,
-        "FLIP local DP: update clipped to L2 norm %.4f and Gaussian noise of stddev %.3e added "
-        "across %d array(s); %d integer array(s) passed through.",
+        "FLIP local DP: update pre-clip L2 norm %.4f clipped to %.4f (scaled by %.4f) and Gaussian noise of "
+        "stddev %.3e added across %d array(s); %d integer array(s) passed through.",
+        pre_clip_norm,
         config.clipping_norm,
+        scale,
         config.noise_stddev,
         len(float_indices),
         len(reply_arrays) - len(float_indices),
     )
+    if scale < OVER_CLIPPING_SCALE:
+        # Scaling every update down is a smaller learning rate in disguise: a run can look healthy
+        # and learn nothing (#1754). Say so where the operator and the model developer both look.
+        log(
+            WARNING,
+            "FLIP local DP: clipping scaled this update by %.4f (pre-clip L2 norm %.4f, %s %.4f), so "
+            "training is throttled. Raise %s towards the typical update norm.",
+            scale,
+            pre_clip_norm,
+            CONFIG_CLIPPING_NORM,
+            config.clipping_norm,
+            CONFIG_CLIPPING_NORM,
+        )
     return reply
+
+
+def _update_norm(updates: list[np.ndarray], baselines: list[np.ndarray]) -> float:
+    """L2 norm of the whole update (trained minus global), across every array — what clipping bounds."""
+    return math.sqrt(
+        sum(float(np.sum(np.square(u.astype(np.float64) - b.astype(np.float64)))) for u, b in zip(updates, baselines))
+    )
 
 
 def _single_array_record(message: Message, description: str) -> tuple[str, ArrayRecord]:
