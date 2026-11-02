@@ -67,7 +67,7 @@ module "flip_stag_terraform_ci" {
 - **`ui_bucket_name`** — the FLIP root's `FLIP_UI_BUCKET_NAME`. Setting it creates the UI-publish role CI uses to
   ship flip-ui after an apply; left empty, the module creates no such role.
 - **`snowflake_github_environment`** — the GitHub environment the Snowflake trust workflows declare in this
-  account (`sf-stag` / `sf-prod`, epic #1589). Setting it creates the two Snowflake state roles; left empty, the
+  account (`sf-stag` / `sf-prod`, epic #1589). The plan and drift workflows declare `<that>-plan` (Snowflake maps one OIDC subject to one user, so plan and apply need different subjects). Setting it creates the two Snowflake state roles; left empty, the
   module creates neither. `snowflake_state_prefix` (default `snowflake-trust`) is the key prefix they reach.
 - **`create_permissions_boundary` / `permissions_boundary_name`** — by default the module declares
   `AICentre-FLIPTerraformBoundary`. Where the platform already deploys a boundary and requires it on every role, as an

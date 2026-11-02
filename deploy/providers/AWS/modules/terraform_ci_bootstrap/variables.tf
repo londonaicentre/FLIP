@@ -355,7 +355,7 @@ variable "state_writer_principal_arns" {
 # The Snowflake trust's state roles (epic #1589). Off unless the GitHub environment the Snowflake
 # workflows declare is named, so callers that predate them are unchanged.
 variable "snowflake_github_environment" {
-  description = "GitHub environment the Snowflake trust workflows declare in this account (sf-stag / sf-prod). Setting it creates the two Snowflake state roles; empty creates none."
+  description = "GitHub environment the Snowflake trust workflows declare in this account (sf-stag / sf-prod); the plan and drift workflows declare <this>-plan. Setting it creates the two Snowflake state roles; empty creates none."
   type        = string
   default     = ""
 }

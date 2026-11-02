@@ -905,6 +905,9 @@ def test_the_snowflake_state_roles_trust_their_own_environment_and_workflows() -
     assert locals_["snowflake_oidc_sub"] == _normalise(
         '"repo:${local.repo}:environment:${var.snowflake_github_environment}"'
     )
+    assert locals_["snowflake_plan_oidc_sub"] == _normalise(
+        '"repo:${local.repo}:environment:${var.snowflake_github_environment}-plan"'
+    )
     assert locals_["snowflake_apply_workflow_refs"] == _normalise(
         '["${local.workflow_ref_prefix}/${var.snowflake_apply_workflow_file}@refs/heads/${var.apply_branch}"]'
     )
@@ -913,9 +916,9 @@ def test_the_snowflake_state_roles_trust_their_own_environment_and_workflows() -
         '["${local.workflow_ref_prefix}/${var.snowflake_plan_workflow_file}@refs/pull/*/merge"] : [],'
         ' ["${local.workflow_ref_prefix}/${var.snowflake_drift_workflow_file}@refs/heads/${var.drift_branch}"],)'
     )
-    for role, test, refs in (
-        ("plan", '"StringLike"', "local.snowflake_plan_workflow_refs"),
-        ("apply", '"StringEquals"', "local.snowflake_apply_workflow_refs"),
+    for role, test, refs, sub in (
+        ("plan", '"StringLike"', "local.snowflake_plan_workflow_refs", "[local.snowflake_plan_oidc_sub]"),
+        ("apply", '"StringEquals"', "local.snowflake_apply_workflow_refs", "[local.snowflake_oidc_sub]"),
     ):
         trust = _block(
             _module_block(f'data "aws_iam_policy_document" "snowflake_state_{role}_assume_role"'), "statement"
@@ -933,7 +936,7 @@ def test_the_snowflake_state_roles_trust_their_own_environment_and_workflows() -
             {
                 "test": '"StringEquals"',
                 "variable": '"token.actions.githubusercontent.com:sub"',
-                "values": "[local.snowflake_oidc_sub]",
+                "values": sub,
             },
             {"test": test, "variable": '"token.actions.githubusercontent.com:job_workflow_ref"', "values": refs},
         ], role

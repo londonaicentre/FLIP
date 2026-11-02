@@ -46,7 +46,7 @@ data "aws_iam_policy_document" "snowflake_state_plan_assume_role" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = [local.snowflake_oidc_sub]
+      values   = [local.snowflake_plan_oidc_sub]
     }
 
     # StringLike: the pull-request ref carries the PR number.
