@@ -123,7 +123,7 @@ def test_offline_trusts_message_says_what_each_backend_does():
     flower = fl_scheduler_service.offline_trusts_message(["GSTT"], "net-2", FLBackend.FLOWER)
 
     assert nvflare.startswith("Not connected to 'net-1' when training was submitted: GSTT, KCH. FLARE starts")
-    assert "about 40 minutes" in nvflare
+    assert "within about an hour, the model fails" in nvflare
     assert flower == (
         "Not connected to 'net-2' when training was submitted: GSTT. "
         "Flower starts the job once as many trusts are connected as were selected."

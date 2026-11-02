@@ -114,7 +114,8 @@ bundling or submitting. The model is then set to ``ERROR`` with the reason in it
 
 - **FLARE** trains on exactly the Trusts selected for the run, and every one of them is mandatory. FLARE's
   scheduler holds the job until all of them are connected. It retries for about 40 minutes, and then the job ends
-  and the model is set to ``ERROR``.
+  and the model is set to ``ERROR``. While no client at all is connected to the net, FLARE does not try, so the hub
+  fails the job itself once it has waited ``FL_JOB_START_TIMEOUT_MINUTES``.
 - **Flower** waits until at least as many SuperNodes are connected as Trusts were selected, then trains on
   **every SuperNode connected to the net**, selected or not.
 
@@ -156,6 +157,9 @@ These are Central Hub API settings. All are in minutes except the strike count.
    * - ``FL_JOB_PREPARE_TIMEOUT_MINUTES``
      - How long a job may stay in preparation after pickup.
      - 30
+   * - ``FL_JOB_START_TIMEOUT_MINUTES``
+     - How long after pickup the FL server may hold a job unstarted.
+     - 60
 
 GPU requirements and FLARE's scheduler
 ========================================
