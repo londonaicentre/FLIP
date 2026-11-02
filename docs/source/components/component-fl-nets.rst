@@ -112,12 +112,14 @@ bundling or submitting. The model is then set to ``ERROR`` with the reason in it
 
 **Which clients train** differs by backend:
 
-- **FLARE** trains on exactly the Trusts selected for the run, and every one of them is mandatory. Before
-  submitting, the hub checks that all of them are connected; if one is not, the model fails straight away with
-  *Clients unavailable* and the Trust's slot name.
+- **FLARE** trains on exactly the Trusts selected for the run, and every one of them is mandatory. FLARE's
+  scheduler holds the job until all of them are connected. It retries for about 40 minutes, and then the job ends
+  and the model is set to ``ERROR``.
 - **Flower** waits until at least as many SuperNodes are connected as Trusts were selected, then trains on
-  **every SuperNode connected to the net**, selected or not. The hub only logs a warning about a selected Trust
-  that is not connected.
+  **every SuperNode connected to the net**, selected or not.
+
+On both backends a selected Trust that is not connected when the job is submitted does not stop it: the model's
+log names the Trust and says what the backend does next.
 
 When a job dies without reporting
 ---------------------------------

@@ -205,64 +205,22 @@ def test_add_fl_backend_job_id_raises_if_job_missing(fl_job_id, fake_session):
 
 
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_all_offline(mock_get_status):
-    # The backend is passed in explicitly now (resolved per-net at runtime), not read from settings.
+def test_unavailable_clients_names_only_the_clients_not_connected(mock_get_status):
     mock_get_status.return_value = [
         IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY),
         IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS),
     ]
 
-    with pytest.raises(ValueError, match="Clients unavailable: trust-1"):
-        fl_service.validate_client_availability(["trust-1"], "endpoint", FLBackend.NVFLARE)
+    # Trust_3 is not in the statuses at all, which counts as not connected.
+    assert fl_service.unavailable_clients(["Trust_2", "Trust_1", "Trust_3"], "endpoint") == ["Trust_2", "Trust_3"]
 
 
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_some_online(mock_get_status):
-    mock_get_status.return_value = [
-        IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY),
-        IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS),
-    ]
+def test_unavailable_clients_never_raises_when_the_fl_api_reports_nothing(mock_get_status):
+    """No statuses means nothing is known: no client is named and the submission goes ahead (#1133)."""
+    mock_get_status.return_value = None
 
-    # This has to raise an error for Trust_2 only.
-    with pytest.raises(ValueError, match="Clients unavailable: Trust_2"):
-        fl_service.validate_client_availability(["Trust_2", "Trust_1"], "endpoint", FLBackend.NVFLARE)
-
-
-@patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_empty_statuses(mock_get_status):
-    mock_get_status.return_value = []
-
-    with pytest.raises(ValueError, match="Unable to fetch client statuses"):
-        fl_service.validate_client_availability(["trust-1"], "endpoint", FLBackend.NVFLARE)
-
-
-@patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_flower_soft_on_empty(mock_get_status):
-    """Flower backend: empty client statuses logs warning instead of raising."""
-    mock_get_status.return_value = []
-
-    # Should NOT raise — Flower degrades gracefully
-    fl_service.validate_client_availability(["Trust_1"], "endpoint", FLBackend.FLOWER)
-
-
-@patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_flower_soft_on_unavailable(mock_get_status):
-    """Flower backend: unavailable clients logs warning instead of raising."""
-    mock_get_status.return_value = [
-        IClientStatus(name="Trust_1", status=ClientStatus.DISCONNECTED),
-    ]
-
-    # Should NOT raise — Flower degrades gracefully
-    fl_service.validate_client_availability(["Trust_1"], "endpoint", FLBackend.FLOWER)
-
-
-@patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_nvflare_still_raises(mock_get_status):
-    """FLARE backend: empty client statuses still raises ValueError."""
-    mock_get_status.return_value = []
-
-    with pytest.raises(ValueError, match="Unable to fetch client statuses"):
-        fl_service.validate_client_availability(["Trust_1"], "endpoint", FLBackend.NVFLARE)
+    assert fl_service.unavailable_clients(["Trust_1"], "endpoint") == []
 
 
 @patch("flip_api.fl_services.services.fl_service.http_delete")

@@ -58,7 +58,7 @@ def test_prepare_and_start_training_success(fake_session, model_id, fl_job_id):
         ) as mock_bundle,
         patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id") as mock_get_net,
         patch(
-            "flip_api.fl_services.services.fl_scheduler_service.validate_client_availability"
+            "flip_api.fl_services.services.fl_scheduler_service.unavailable_clients", return_value=[]
         ) as mock_validate_clients,
         patch("flip_api.fl_services.services.fl_scheduler_service.get_bundle_urls", return_value=["url1", "url2"]),
         patch("flip_api.fl_services.services.fl_scheduler_service.start_training") as mock_start,
@@ -80,6 +80,54 @@ def test_prepare_and_start_training_success(fake_session, model_id, fl_job_id):
         mock_validate_clients.assert_called_once()
         mock_start.assert_called_once()
         mock_log.assert_called()
+
+
+@pytest.mark.parametrize("fl_backend", [FLBackend.NVFLARE, FLBackend.FLOWER])
+def test_prepare_and_start_training_submits_despite_an_offline_trust(fake_session, model_id, fl_job_id, fl_backend):
+    """An offline trust is logged on the model by its hub name and the job is still submitted (#1133)."""
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS
+    # The slot lookup, then the hub names of the offline slots.
+    fake_session.exec.return_value.all.side_effect = [["Trust_1", "Trust_2"], ["KCH"]]
+    with (
+        patch("flip_api.fl_services.services.fl_scheduler_service.bundle_nvflare_application", return_value="s3://d"),
+        patch("flip_api.fl_services.services.fl_scheduler_service.bundle_flower_application", return_value="s3://d"),
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id") as mock_get_net,
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.unavailable_clients", return_value=["Trust_2"]
+        ) as mock_unavailable,
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_bundle_urls", return_value=["url1"]),
+        patch("flip_api.fl_services.services.fl_scheduler_service.start_training") as mock_start,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_log,
+        patch("flip_api.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
+    ):
+        mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-1", fl_backend=fl_backend)
+
+        started = fl_scheduler_service.prepare_and_start_training(
+            model_id=model_id, fl_job_id=fl_job_id, trust_ids=[uuid4(), uuid4()], session=fake_session
+        )
+
+    assert started is True
+    # The FL boundary is addressed by slot name, never by the hub name.
+    mock_unavailable.assert_called_once_with(["Trust_1", "Trust_2"], "endpoint")
+    assert mock_start.call_args.kwargs["clients"] == ["Trust_1", "Trust_2"]
+    mock_log.assert_called_with(
+        model_id, fl_scheduler_service.offline_trusts_message(["KCH"], "net-1", fl_backend), fake_session
+    )
+    mock_remove.assert_not_called()
+    mock_status.assert_not_called()
+
+
+def test_offline_trusts_message_says_what_each_backend_does():
+    nvflare = fl_scheduler_service.offline_trusts_message(["GSTT", "KCH"], "net-1", FLBackend.NVFLARE)
+    flower = fl_scheduler_service.offline_trusts_message(["GSTT"], "net-2", FLBackend.FLOWER)
+
+    assert nvflare.startswith("Not connected to 'net-1' when training was submitted: GSTT, KCH. FLARE starts")
+    assert "about 40 minutes" in nvflare
+    assert flower == (
+        "Not connected to 'net-2' when training was submitted: GSTT. "
+        "Flower starts the job once as many trusts are connected as were selected."
+    )
 
 
 def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
@@ -121,7 +169,7 @@ def test_prepare_and_start_training_aborted_mid_prepare_returns_false(fake_sessi
             return_value="s3://dest/model",
         ),
         patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id") as mock_get_net,
-        patch("flip_api.fl_services.services.fl_scheduler_service.validate_client_availability"),
+        patch("flip_api.fl_services.services.fl_scheduler_service.unavailable_clients", return_value=[]),
         patch("flip_api.fl_services.services.fl_scheduler_service.get_bundle_urls", return_value=["url1"]),
         patch(
             "flip_api.fl_services.services.fl_scheduler_service.start_training",
