@@ -777,8 +777,10 @@ def test_37_uncreatable_data_dir_fails() -> None:
     with tempfile.TemporaryDirectory() as td:
         locked = Path(td) / "locked"
         locked.mkdir()
+        (locked / "pacs").mkdir()  # exists, but its parent (where the seed marker goes) is not writable
         writable = lambda path, mode: Path(path) != locked  # noqa: E731 — root ignores mode bits, so fake it
         with mock.patch.object(mod.os, "access", side_effect=writable):
+            marker = _paths(OMOP_DATA_DIR=f"{td}/omop", ORTHANC_STORAGE_DIR=f"{locked}/pacs")
             check = _paths(
                 OMOP_DATA_DIR=f"{locked}/omop",
                 ORTHANC_STORAGE_DIR=f"{td}/orthanc",
@@ -790,6 +792,7 @@ def test_37_uncreatable_data_dir_fails() -> None:
     _assert(check.status == mod.Status.FAIL, "FAIL", f"{check.status}: {check.detail}")
     _assert(f"OMOP_DATA_DIR ({locked} is not writable)" in check.detail, "names the var and parent", check.detail)
     _assert(f"COHORT_SNAPSHOT_STORAGE_DIR ({locked} is not writable)" in check.detail, "store counted", check.detail)
+    _assert(marker.status == mod.Status.FAIL and "seed marker" in marker.detail, "marker parent checked", str(marker))
     _assert(unset.status == mod.Status.PASS, "unset dirs judged at their /opt/flip defaults", str(unset))
 
 

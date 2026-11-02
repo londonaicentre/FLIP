@@ -1028,6 +1028,10 @@ DATA_DIR_DEFAULTS: dict[str, str | None] = {
     "XNAT_DATA_DIR": "/opt/flip/xnat-trust{slot}",
 }
 DATA_DIR_VARS: tuple[str, ...] = tuple(DATA_DIR_DEFAULTS)
+# The seeders write their markers beside these two dirs (trust/Makefile OMOP_SEED_MARKER /
+# ORTHANC_SEED_MARKER), as the invoking user, so that parent must be writable even when the dirs
+# themselves belong to a container uid.
+SEED_MARKER_DIR_VARS = ("OMOP_DATA_DIR", "ORTHANC_STORAGE_DIR")
 
 
 def invoking_ids() -> tuple[int, int]:
@@ -1066,6 +1070,8 @@ def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: 
             continue
         if nearest != path and not os.access(nearest, os.W_OK):
             blocked.append(f"{var} ({nearest} is not writable)")
+        elif var in SEED_MARKER_DIR_VARS and path.parent.exists() and not os.access(path.parent, os.W_OK):
+            blocked.append(f"{var} ({path.parent} is not writable, and the seed marker is written there)")
     if kit_vars.get("FLIP_UID", "").strip() == str(invoking_ids()[0]):
         then = "create them yourself with mkdir -p: the containers run as you (FLIP_UID)."
     else:

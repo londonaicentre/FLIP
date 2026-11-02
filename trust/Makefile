@@ -533,6 +533,14 @@ prepare-host-dirs:
 	  echo "❌ prepare-host-dirs sets directory owners to the containers' uids, which needs root."; \
 	  echo "   Run it as root on the trust host (sudo -E make -C trust prepare-host-dirs KIT=$(KIT)$(if $(HUB), HUB=$(HUB))),"; \
 	  echo "   or ask the host owner to."; exit 1; }
+	@# The seed markers are written beside the OMOP and Orthanc dirs by the operator's own bring-up
+	@# (OMOP_SEED_MARKER / ORTHANC_SEED_MARKER below), so that parent is theirs to create: made here
+	@# it would be root's, and ensure-seeded would fail on the marker after a complete seed.
+	@for d in "$(OMOP_DATA_ABS)" "$(ORTHANC_STORAGE_ABS)"; do \
+	  parent="$$(dirname "$$d")"; [ -d "$$parent" ] || { \
+	    echo "❌ $$parent does not exist. Create it as yourself first (mkdir -p $$parent): the bring-up writes"; \
+	    echo "   the seed markers beside the data dirs, and a parent made here would be root's."; exit 1; }; \
+	done
 	@base="$(IMAGES_BASE)"; mkdir -p "$$base"; \
 	[ "$$($(call stat_fmt,%u) "$$base")" = "$(API_UID)" ] || chown $(API_UID):$(API_GID) "$$base"
 	$(call ensure_data_dirs,$(OMOP_DATA_ABS),$(ORTHANC_STORAGE_ABS))
