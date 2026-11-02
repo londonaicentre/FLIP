@@ -113,6 +113,11 @@ $(if $(KIT),$(call kit_hint,$(patsubst $(REPO_ROOT)/%,%,$(KIT_FILE))))
 # waits — raise this too, or the extra budget is unreachable.
 HELM_TIMEOUT ?= 30m
 
+# GNU make runs any recipe line whose text contains "$(MAKE)" even under -n, so a sub-target
+# spelled that way would make `make -n deploy` deploy for real. Indirecting through a variable
+# keeps the recursion without that flag; `make -n` then prints the step like any other line.
+SUBMAKE := $(MAKE)
+
 # Determine which values files to pass
 VALUES_OPTS := -f $(VALUES_FILE)
 ifneq ($(strip $(SECRETS_FILE)),)
@@ -239,16 +244,24 @@ deploy: preflight ## Deploy the Helm chart to the cluster
 	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) --namespace $(NAMESPACE) $(VALUES_OPTS) | \
 		NAMESPACE=$(NAMESPACE) RELEASE_NAME=$(RELEASE_NAME) KUBECTL="$(KUBECTL)" $(CHART_DIR)/scripts/migrate-strategy.sh
-	@rev=$$($(HELM) status $(RELEASE_NAME) --namespace $(NAMESPACE) -o json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' 2>/dev/null); \
-	rc=0; \
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
-		--timeout $(HELM_TIMEOUT) \
-		$(VALUES_OPTS) || rc=$$?; \
-	python3 $(CHART_DIR)/scripts/deploy_verdict.py \
-		--release $(RELEASE_NAME) --namespace $(NAMESPACE) \
-		$(if $(KUBE_CONTEXT),--context $(KUBE_CONTEXT)) \
-		--helm-rc $$rc --revision-before "$$rev"
+		--wait --timeout $(HELM_TIMEOUT) \
+		--set xnat.initJob.enabled=false \
+		$(VALUES_OPTS) \
+		|| { $(SUBMAKE) --no-print-directory failing-hooks; exit 1; }
+	@$(SUBMAKE) --no-print-directory xnat-init || { \
+		printf '\033[0;33m%s\033[0m\n' \
+			"⚠️  the release is live and rolled out, but xnat-init did not complete (see #565)." \
+			"⚠️  Re-run: make -C trust/deploy/helm xnat-init (raise HELM_TIMEOUT if it just needed longer)."; \
+		exit 3; }
+
+# Helm records every hook's outcome for the current revision, so when the upgrade fails the
+# operator is told which one failed instead of reading the whole output. Best-effort: a cluster
+# that cannot be read prints nothing and never changes the exit code of the caller.
+failing-hooks: ## Name the post-upgrade hooks that did not succeed on the current revision
+	-@$(HELM) status $(RELEASE_NAME) --namespace $(NAMESPACE) -o json 2>/dev/null \
+		| python3 $(CHART_DIR)/scripts/failing_hooks.py 2>/dev/null
 
 undeploy: ## Remove the Helm release from the cluster
 	$(HELM) uninstall $(RELEASE_NAME) --namespace $(NAMESPACE)

@@ -1130,26 +1130,34 @@ make -C trust/deploy/helm test
 `helm upgrade` exiting non-zero used to be ambiguous: it was usually the `xnat-init`
 post-upgrade hook timing out (#565) on a release that had deployed perfectly well, but it
 could equally be a genuine failure where nothing reached the cluster. Telling the two apart
-meant reading the output. Since FLIP#1645 the deploy classifies itself from cluster
-evidence and exits one of three codes:
+meant reading the output. Since FLIP#1645 the ambiguity is removed at the source rather than
+classified after the fact: `xnat-init` is the one hook that produces it, so `make deploy`
+takes it out of helm's path (`--set xnat.initJob.enabled=false`) and runs the existing
+`xnat-init` target as a separate step afterwards. Helm itself runs with `--wait`. Each exit
+code then means exactly one thing:
 
 | Exit | Meaning | What to do |
 |------|---------|------------|
-| `0` | The upgrade landed. Either helm exited 0, or its wait expired but the new revision is live, every workload has rolled out and `xnat-init` completed. | Nothing. |
-| `1` | A real failure: the new spec never applied (the release revision did not advance, so the cluster still runs the old one), a workload did not roll out, or the evidence could not be read. | Read the helm error. The trust is on its previous release. |
+| `0` | The upgrade landed: applied, every workload rolled out, every hook succeeded and `xnat-init` completed. | Nothing. |
+| `1` | Helm failed: the apply was rejected, a workload did not roll out within `HELM_TIMEOUT`, or a hook (`omop-vocab-load`, `trust-seed`) failed. | Read the helm error; the failing hook is named for you. The trust is on its previous release. |
 | `3` | The release is live and every workload rolled out, but `xnat-init` did not complete. | The trust is on the new release; re-run `make -C trust/deploy/helm xnat-init`, raising `HELM_TIMEOUT` if the job simply needed longer. |
 
 `3` is still a failure as far as `make` is concerned — it just says something different from
 `1`, so unattended callers (the auto-upgrade agent, FLIP#1640) can report "upgraded, init
 incomplete" instead of guessing.
 
-The decision deliberately does not trust `Ready`. FLIP#1228 was a correct chart that never
-reached the running pod across five upgrades, and the old pods were `Ready` throughout, so a
-workload counts as rolled out only when its controller has observed the new generation
-(`observedGeneration >= generation`) and every replica is both updated and ready. Missing
-evidence always counts against the upgrade: an unreadable cluster is reported as `1`, never
-as a quiet pass. The logic lives in `scripts/deploy_verdict.py` and is tested without a
-cluster in `tests/test_deploy_verdict.py`.
+Rollout is judged by `--wait`, which is helm's own waiter: it requires the controller to have
+observed the new generation and every replica to be updated as well as ready, so `Ready` old
+pods do not satisfy it. That matters because FLIP#1228 was a correct chart that never reached
+the running pod across five upgrades while the old pods stayed `Ready` throughout. Nothing
+re-derives the verdict from cluster evidence afterwards — a second opinion assembled from a
+revision number and pod counts is what fails open when helm's apply is rejected. On the
+failure path `scripts/failing_hooks.py` reads `helm status -o json` and names the hooks that
+did not succeed; it is diagnostics only and cannot change the exit code. Both are tested
+without a cluster in `tests/test_deploy_split.py`.
+
+The hook annotation itself is unchanged, so a plain `helm install` of the chart still runs
+`xnat-init`; only the Makefile path opts out of it.
 
 ### Running the XNAT init job by hand
 
