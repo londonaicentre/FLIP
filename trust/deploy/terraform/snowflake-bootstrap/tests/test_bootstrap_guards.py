@@ -220,7 +220,14 @@ def test_the_ci_users_log_in_with_github_oidc_only():
     assert 'github_oidc_subject = "repo:${var.github_repository}:environment:${var.ci_github_environment}"' in source(
         "locals.tf"
     ), "the environment form of the subject: a ref form would let any branch push in"
-    assert 'plan  = { name = "FLIP_CI_PLAN_USER", role = local.ci_read_role' in source("locals.tf")
+    assert (
+        'github_oidc_plan_subject = "repo:${var.github_repository}:environment:${var.ci_github_environment}-plan"'
+        in source("locals.tf")
+    )
+    assert (
+        'plan  = { name = "FLIP_CI_PLAN_USER", role = local.ci_read_role, subject = local.github_oidc_plan_subject }'
+        in source("locals.tf")
+    ), "one OIDC subject maps to one Snowflake user: plan and apply need different environments"
     assert 'apply = { name = "FLIP_CI_APPLY_USER", role = local.ci_role' in source("locals.tf")
 
 

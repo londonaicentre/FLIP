@@ -18,8 +18,9 @@ operator (`make jit-grant` / `make jit-revoke`, passkey MFA in Snowsight, never 
 what nothing else may:
 
 - `FLIP_PLATFORM_CI` and `FLIP_PLATFORM_CI_READ`, and the two CI service users that hold them
-  (`FLIP_CI_APPLY_USER`, `FLIP_CI_PLAN_USER`), which log in only with a GitHub OIDC token from the
-  account's `sf-stag` / `sf-prod` environment: no password, no key;
+  (`FLIP_CI_APPLY_USER`, `FLIP_CI_PLAN_USER`), which log in only with a GitHub OIDC token: apply from
+  the account's protected `sf-stag` / `sf-prod` environment, plan from `sf-stag-plan` / `sf-prod-plan`
+  (Snowflake maps one subject to one user). No password, no key;
 - the resource monitor and the trust warehouse it caps;
 - the `EVENT_TABLE` account parameter;
 - the account password, session and network policies, in their own `FLIP_ADMIN` database;

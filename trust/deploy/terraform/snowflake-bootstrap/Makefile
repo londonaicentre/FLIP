@@ -147,7 +147,7 @@ adopt-sql: ## Print the SQL that hands the pre-split platform objects to FLIP_PL
 	echo "-- the old policies sit in FLIP_PLATFORM, which CI will own: detach and drop them first,"; \
 	echo "-- then make apply here recreates and attaches them in FLIP_ADMIN."; \
 	echo "ALTER ACCOUNT UNSET PASSWORD POLICY;"; \
-	echo "ALTER ACCOUNT UNSET SESSION POLICY;"; \
+	echo "ALTER ACCOUNT UNSET SESSION POLICY FOR ALL PERSON USERS;"; \
 	echo "DROP SCHEMA IF EXISTS FLIP_PLATFORM.POLICIES;"; \
 	echo "ALTER TASK FLIP_PLATFORM.OBS.FLIP_PLATFORM_PRUNE_EVENTS SUSPEND;"; \
 	for r in DEPLOY SVC OMOP_READER OMOP_LOADER OBSERVER CONVERTER; do \

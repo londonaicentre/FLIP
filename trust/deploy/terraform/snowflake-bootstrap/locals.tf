@@ -60,9 +60,13 @@ locals {
   # What the platform root grants on the warehouse (DEPLOY gets all three, the others a subset).
   ci_warehouse_privileges = ["USAGE", "OPERATE", "MONITOR"]
 
-  github_oidc_subject = "repo:${var.github_repository}:environment:${var.ci_github_environment}"
+  # Snowflake maps one OIDC subject to one user, so plan and apply trust different environments:
+  # sf-<env> (protected: the apply branch only) for apply, sf-<env>-plan (any PR) for the read-only
+  # plan user. A pull request's job can therefore never present the apply user's subject.
+  github_oidc_subject      = "repo:${var.github_repository}:environment:${var.ci_github_environment}"
+  github_oidc_plan_subject = "repo:${var.github_repository}:environment:${var.ci_github_environment}-plan"
   ci_users = {
-    plan  = { name = "FLIP_CI_PLAN_USER", role = local.ci_read_role, subject = local.github_oidc_subject }
+    plan  = { name = "FLIP_CI_PLAN_USER", role = local.ci_read_role, subject = local.github_oidc_plan_subject }
     apply = { name = "FLIP_CI_APPLY_USER", role = local.ci_role, subject = local.github_oidc_subject }
   }
 
