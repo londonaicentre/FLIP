@@ -20,6 +20,8 @@ on:
       # The Makefile derives the kit env token from PROD through it.
       - "deploy/env_mode.mk"
       - ".github/workflows/test_snowflake_specs.yml"
+      # tests/test_ci_prepare.py reads the deploy workflow.
+      - ".github/workflows/snowflake_trust_deploy.yml"
   pull_request:
     branches: [main, develop]
 
@@ -41,6 +43,7 @@ jobs:
         trust/deploy/snowflake/**
         deploy/env_mode.mk
         .github/workflows/test_snowflake_specs.yml
+        .github/workflows/snowflake_trust_deploy.yml
 
   spec-guards:
     needs: changes
