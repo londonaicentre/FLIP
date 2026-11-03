@@ -106,7 +106,7 @@ exit 0
 class XnatBackup(unittest.TestCase):
     """xnat-backup, run for real against a stub docker: only a complete dump counts as a backup."""
 
-    def _backup(self, *, locked_backups: bool = False, extra_kit: str = "", **env: str):
+    def _backup(self, *, locked_backups: bool = False, locked_data: bool = False, extra_kit: str = "", **env: str):
         with tempfile.TemporaryDirectory() as tmp:
             bin_dir = Path(tmp) / "bin"
             bin_dir.mkdir()
@@ -117,6 +117,8 @@ class XnatBackup(unittest.TestCase):
             data.mkdir()
             if locked_backups:  # a backups/ an earlier upgrade made as root: this uid cannot write it
                 (data / "backups").mkdir(mode=0o555)
+            if locked_data:  # no backups/ yet, in a data dir this uid cannot write
+                data.chmod(0o555)
             users = Path(tmp) / "run-users"
             try:
                 result = run_target(
@@ -130,6 +132,7 @@ class XnatBackup(unittest.TestCase):
             finally:
                 if locked_backups:
                     (data / "backups").chmod(0o755)
+                data.chmod(0o755)
             self.run_users = users.read_text().split() if users.exists() else []
             return result.returncode, result.stdout + result.stderr, kept
 
@@ -169,6 +172,17 @@ class XnatBackup(unittest.TestCase):
         assert "chown -R 1001:1001" in out, out
         assert "Backing up" not in out, "refused before dumping"
         assert kept == [], kept
+
+    def test_a_data_dir_the_uid_cannot_create_backups_in_names_that_dir(self):
+        """No backups/ yet: the fix is to create it for the uid, not to chown a path that is not there."""
+        if os.getuid() == 0:
+            self.skipTest("root writes a 0555 directory anyway")
+        code, out, kept = self._backup(DUMP="ok", locked_data=True)
+        assert code != 0, out
+        assert "is not writable by uid 1001:1001, which creates backups/ in it" in out, out
+        assert "&& chown 1001:1001" in out, out
+        assert "chown -R" not in out, out
+        assert "Backing up" not in out, "refused before dumping"
 
     def test_no_running_db_is_a_refusal(self):
         """Its one caller is upgrade-xnat: no db to dump means no upgrade, never a skipped backup."""

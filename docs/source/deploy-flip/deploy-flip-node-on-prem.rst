@@ -45,8 +45,8 @@ Access the operator needs
 
 No FLIP command on this page runs ``sudo`` itself. The account that runs them needs:
 
-- **Docker socket access**: ``docker ps`` works, and the daemon is in swarm mode (``docker swarm init`` once, for
-  XNAT). Socket access is root-equivalent on the host, so granting it is the host owner's decision, not FLIP's.
+- **Docker socket access**: ``docker ps`` works, and the daemon is in swarm mode as a manager (``docker swarm init``
+  once makes it one; a worker node cannot ``docker stack deploy`` XNAT). Socket access is root-equivalent on the host, so granting it is the host owner's decision, not FLIP's.
 - **Bind-mount directories owned by the uid of the container that writes them.** Two ways to get there:
 
   - **Run the containers as yourself.** Set ``FLIP_UID`` and ``FLIP_GID`` in the kit to your own ids (``id -u``,
@@ -56,7 +56,7 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
     (its pinned Alpine Postgres predates ``nss_wrapper``, so it cannot run as a uid it does not know): deleting that
     directory later needs root, so a second install on the same tree does too. Decide before the first install:
     a live site's data carries the ids it was installed with, and ``make upgrade-onprem-trust`` refuses a kit that
-    turns ``FLIP_UID`` on or changes it afterwards.
+    turns ``FLIP_UID`` on, changes it or clears it afterwards.
   - **Keep the images' own users** (the table below). Create the directory the data dirs sit in yourself
     (``mkdir -p /data/flip``, say: your own bring-up writes the seed markers beside the data dirs, so that parent
     must be yours), then have whoever prepares the host run, once, as root:
@@ -93,6 +93,11 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
      * - Orthanc
        - 999
        - ``ORTHANC_STORAGE_DIR``
+     * - omop-db
+       - 999 (Postgres)
+       - ``OMOP_DATA_DIR``. omop-db starts as root and its entrypoint hands this directory to Postgres on first
+         boot, so leave its owner to that rather than setting it by hand. Under ``FLIP_UID`` it runs as you instead,
+         and the directory must already be yours.
      * - Flower SuperNode
        - gid 49999
        - ``BASE_IMAGES_DOWNLOAD_DIR/net-<N>``, group-writable

@@ -98,23 +98,34 @@ class UpgradeTrust(unittest.TestCase):
         assert 'owner="1000:1000"' not in out, out
 
     def test_apply_phase_refuses_a_flip_uid_the_data_dirs_do_not_carry(self):
-        """FLIP_UID is a first-install choice: turned on afterwards, the recreated omop-db and Orthanc would own
-        none of their files. The apply phase checks the data dirs' owner before pulling anything (FLIP#1731)."""
+        """FLIP_UID is a first-install choice: turned on, changed or cleared afterwards, the recreated Orthanc and
+        APIs would own none of their files. The apply phase checks the data dirs' owner before pulling anything
+        (FLIP#1731): all three under FLIP_UID, and the Orthanc dir (999 on the image-uid route) either way."""
         out = dry_run("_upgrade-trust-apply", kit=KIT + "FLIP_UID=4242\nFLIP_GID=4243\n")
-        assert 'if [ -n "4242" ]; then' in out, out  # the check is live
+        assert '[ "$owner" = "4242" ]' in out, out
+        assert '"/nonexistent/omop"' in out, out
         assert out.index("FLIP_UID is a first-install choice") < out.index(" pull"), out
-        assert 'if [ -n "" ]; then' in dry_run("_upgrade-trust-apply"), "no FLIP_UID, no check"
+        assert out.index("which writes the XNAT backup") < out.index(" pull"), "the backup dir is checked first too"
+        unset = dry_run("_upgrade-trust-apply")
+        assert '[ "$owner" = "999" ]' in unset, unset
+        assert '"/nonexistent/omop"' not in unset, unset
         with tempfile.TemporaryDirectory() as td:
             for d in ("omop", "pacs", "images/net-1"):
                 Path(td, d).mkdir(parents=True)
             kit = KIT.replace("/nonexistent/omop", f"{td}/omop").replace("/nonexistent/orthanc", f"{td}/pacs")
             kit = kit.replace("/nonexistent/images", f"{td}/images")
-            kit += f"FLIP_UID={os.getuid() + 1}\nFLIP_GID={os.getgid()}\n"
             assert kit.count(td) == 3, kit
-            result = run_target("_upgrade-trust-apply", kit=kit)
-        assert result.returncode != 0, result.stdout
-        assert f"{td}/omop is owned by uid {os.getuid()}" in result.stdout, result.stdout
-        assert " pull" not in result.stdout, "refused before anything was pulled"
+            other_uid = f"FLIP_UID={os.getuid() + 1}\nFLIP_GID={os.getgid()}\n"
+            changed = run_target("_upgrade-trust-apply", kit=kit + other_uid)
+            cleared = run_target("_upgrade-trust-apply", kit=kit)  # installed as this user, FLIP_UID since removed
+            remote = run_target("_upgrade-trust-apply", kit=kit, env={"DOCKER_CONTEXT": "ec2-node"})
+        assert changed.returncode != 0, changed.stdout
+        assert f"{td}/omop is owned by uid {os.getuid()}" in changed.stdout, changed.stdout
+        assert " pull" not in changed.stdout, "refused before anything was pulled"
+        assert cleared.returncode != 0, cleared.stdout
+        assert f"leaves FLIP_UID unset (the image uids), but {td}/pacs is owned by uid {os.getuid()}" in cleared.stdout
+        assert " pull" not in cleared.stdout, "refused before anything was pulled"
+        assert "FLIP_UID is a first-install choice" not in remote.stdout, "a remote host's dirs are not here"
 
     def test_up_trust_is_still_the_first_install_verb(self):
         """The guard would be meaningless if up-trust had quietly stopped seeding and resetting."""

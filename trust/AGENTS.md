@@ -109,7 +109,7 @@ root entrypoint (its pinned `postgres:12.2-alpine` predates nss_wrapper in the A
 `xnat-prepare-dirs` creates but never re-owns `xnat-db-data`, and XNAT's Container Service jobs run as
 `FLIP_UID` too (`XNAT_CS_CONTAINER_USER`, written into the Docker backend by `configure-dcm2niix.sh`), or
 dcm2niix could not read the 640 files xnat-web archives. `FLIP_UID` is a first-install choice:
-`_upgrade-trust-apply` refuses a kit whose `FLIP_UID` differs from the owner of the data dirs. A second
+`_upgrade-trust-apply` refuses a kit whose `FLIP_UID` differs from the owner of the data dirs (unset, the Orthanc dir's 999, so clearing it is caught too). A second
 install on the same tree needs one root `rm -rf` of `XNAT_DATA_DIR` (xnat-db's data is uid 70's). The images' runtime-written paths are
 world-writable with the sticky bit for that uid (`scripts/tests/test_container_identity.py`
 pins both the defaults and those lines).

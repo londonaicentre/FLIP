@@ -917,6 +917,65 @@ def test_43_fl_kit_contents_warn_when_the_client_uid_cannot_read_its_key() -> No
     _assert(flower.status == mod.Status.WARN and "supernode_credentials_1" in flower.detail, "flower too", str(flower))
 
 
+def test_44_fl_kit_contents_survives_a_non_numeric_flip_uid() -> None:
+    """The Container uid row reports a non-numeric FLIP_UID; the kit row, run first, must not raise on it."""
+    print("▶ FL kit contents: FLIP_UID=alice -> no traceback, the Container uid row FAILs it")
+    with tempfile.TemporaryDirectory() as td:
+        slot = Path(td) / "net-1" / "services" / "Trust_1"
+        for d in ("local", "startup", "transfer"):
+            (slot / d).mkdir(parents=True)
+        (slot / "startup" / "client.key").write_text("secret")
+        kit = {"FL_KIT_DIR": td, "FL_BACKEND": "nvflare", "FL_KIT_SLOT": "Trust_1", "FLIP_UID": "alice"}
+        try:
+            row = mod.check_fl_kit_contents(kit, True)
+        except ValueError as exc:
+            _assert(False, "no traceback", repr(exc))
+            return
+    _assert(row.status == mod.Status.PASS, "the kit row judges the layout only", str(row))
+    uid_row = mod.check_container_uid(kit, True, "trust/.env.SITE.prod")
+    _assert(uid_row.status == mod.Status.FAIL, "the Container uid row FAILs it", str(uid_row))
+
+
+def test_45_fl_kit_contents_warn_when_the_client_cannot_enter_the_mount_root() -> None:
+    """startup/ is the bind-mount root, so the client must enter it; it never walks the dirs above it."""
+    print("▶ FL kit contents: a world-readable key in a 0700 startup/ -> WARN naming the dir")
+    with tempfile.TemporaryDirectory() as td:
+        slot = Path(td) / "net-1" / "services" / "Trust_1"
+        for d in ("local", "startup", "transfer"):
+            (slot / d).mkdir(parents=True)
+        key = slot / "startup" / "client.key"
+        key.write_text("secret")
+        key.chmod(0o644)
+        (slot / "startup").chmod(0o755)
+        base = {"FL_KIT_DIR": td, "FL_BACKEND": "nvflare", "FL_KIT_SLOT": "Trust_1", "FLIP_UID": str(os.getuid() + 1)}
+        Path(td).chmod(0o700)  # above the mount root: never walked by the client
+        open_root = mod.check_fl_kit_contents(base, True)
+        (slot / "startup").chmod(0o700)
+        closed_root = mod.check_fl_kit_contents(base, True)
+        (slot / "startup").chmod(0o755)
+    _assert(open_root.status == mod.Status.PASS, "0700 above the mount root: PASS", str(open_root))
+    _assert(closed_root.status == mod.Status.WARN, "0700 mount root: WARN", str(closed_root))
+    _assert(f"{slot / 'startup'} (mode 700) cannot be entered" in closed_root.detail, "names it", closed_root.detail)
+
+
+def test_46_swarm_worker_fails_naming_the_manager() -> None:
+    """`docker stack deploy` (up-xnat) needs a swarm manager, so an active worker is not a PASS."""
+    print("▶ Docker swarm: active manager PASS, active worker FAIL naming the manager")
+
+    def state(stdout: str) -> str:
+        done = subprocess.CompletedProcess([], 0, stdout=stdout, stderr="")
+        with mock.patch.object(mod.subprocess, "run", return_value=done):
+            return mod.docker_swarm_state()
+
+    _assert(state("active true\n") == "active", "manager: active")
+    _assert(state("active false\n") == "worker", "worker: worker")
+    _assert(state("inactive false\n") == "inactive", "inactive stays inactive")
+    with mock.patch.object(mod, "docker_swarm_state", return_value="worker"):
+        row = mod.check_swarm()
+    _assert(row.status == mod.Status.FAIL and "needs a manager" in row.detail, "worker FAILs", str(row))
+    _assert("docker node promote" in row.hints[0], "hint names the promotion", row.hints[0])
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -964,6 +1023,9 @@ def main() -> None:
     test_41_untraversable_parent_is_a_fail_not_a_crash()
     test_42_rows_judge_the_sudo_user_not_root()
     test_43_fl_kit_contents_warn_when_the_client_uid_cannot_read_its_key()
+    test_44_fl_kit_contents_survives_a_non_numeric_flip_uid()
+    test_45_fl_kit_contents_warn_when_the_client_cannot_enter_the_mount_root()
+    test_46_swarm_worker_fails_naming_the_manager()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

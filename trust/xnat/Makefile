@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build up down up-xnat down-xnat upgrade-xnat xnat-backup xnat-shell xnat-stack-down clean \
+.PHONY: build up down up-xnat down-xnat upgrade-xnat xnat-backup xnat-backup-writable xnat-shell xnat-stack-down clean \
 	xnat-war-download xnat-plugins-download xnat-plugins-check xnat-reset xnat-configure \
 	xnat-configure-export-mask xnat-prepare-dirs \
 	create-xnat-network test unit_test local_test
@@ -518,23 +518,15 @@ upgrade-xnat: create-xnat-network
 # it only when it decompresses to pg_dumpall's completion trailer. The db is found by the swarm
 # labels, like xnat-web (FLIP#1210). The container runs as xnat-web's uid, the owner of the rest of
 # the tree, so the backups stay deletable by the operator under FLIP_UID and a later xnat-reset
-# still finds a tree it owns (FLIP#1731). Upgrades before that wrote backups/ as root, so a backups/
-# that uid cannot write is a refusal naming the one-time chown, checked before anything is dumped.
+# still finds a tree it owns (FLIP#1731); xnat-backup-writable checks it can, before anything is dumped.
 xnat-backup: SHELL := /bin/bash
-xnat-backup:
+xnat-backup: xnat-backup-writable
 	$(require_kit)
 	@set -o pipefail; \
 	db=$$($(call xnat_service_container_ids,$(XNAT_STACK),xnat-db) | head -1); \
 	if [ -z "$$db" ]; then \
 	  echo "❌ No running $(XNAT_STACK)_xnat-db to back up — refusing to upgrade XNAT without a dump."; \
 	  echo "   Check the stack: docker stack ps $(XNAT_STACK)"; \
-	  exit 1; \
-	fi; \
-	if ! docker run --rm --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" alpine:3.20 \
-	     sh -c 'if [ -e /x/backups ]; then [ -w /x/backups ]; else [ -w /x/. ]; fi'; then \
-	  echo "❌ $(XNAT_DATA_DIR)/backups is not writable by uid $(XNAT_DIR_OWNER), which writes the backup (an upgrade"; \
-	  echo "   before FLIP#1731 made it as root). Nothing was dumped or upgraded. As root on the host, once:"; \
-	  echo "   chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)/backups"; \
 	  exit 1; \
 	fi; \
 	dump="backups/xnat-db-$$(date +%Y%m%d-%H%M%S).sql.gz"; \
@@ -549,6 +541,24 @@ xnat-backup:
 	docker run --rm --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" alpine:3.20 rm -f "/x/$$dump"; \
 	echo "❌ The XNAT database dump failed or is incomplete — no backup was kept, and nothing was upgraded."; \
 	exit 1
+
+# Can xnat-backup's uid write $(XNAT_DATA_DIR)/backups (or create it)? Upgrades before FLIP#1731
+# wrote backups/ as root. A refusal names the one-time fix for the case it found. upgrade-trust
+# runs this before it pulls anything, so a refused upgrade leaves the whole site on its release.
+xnat-backup-writable:
+	$(require_kit)
+	@rc=0; docker run --rm --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" alpine:3.20 \
+	  sh -c 'if [ -e /x/backups ]; then [ -w /x/backups ] || exit 3; else [ -w /x/. ] || exit 4; fi' || rc=$$?; \
+	case $$rc in \
+	  0) ;; \
+	  3) echo "❌ $(XNAT_DATA_DIR)/backups is not writable by uid $(XNAT_DIR_OWNER), which writes the XNAT backup (an"; \
+	     echo "   upgrade before FLIP#1731 made it as root). Nothing was dumped or upgraded. As root on the host, once:"; \
+	     echo "   chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)/backups"; exit 1 ;; \
+	  4) echo "❌ $(XNAT_DATA_DIR) is not writable by uid $(XNAT_DIR_OWNER), which creates backups/ in it for the XNAT"; \
+	     echo "   backup. Nothing was dumped or upgraded. As root on the host, once:"; \
+	     echo "   mkdir $(XNAT_DATA_DIR)/backups && chown $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)/backups"; exit 1 ;; \
+	  *) echo "❌ Could not check that uid $(XNAT_DIR_OWNER) can write $(XNAT_DATA_DIR)/backups (docker run failed)."; exit 1 ;; \
+	esac
 
 # Get a shell in the running xnat-web container for the selected trust.
 xnat-shell:

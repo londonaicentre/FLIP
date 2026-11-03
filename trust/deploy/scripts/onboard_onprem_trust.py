@@ -200,10 +200,11 @@ def is_filled(value: str | None) -> bool:
 
 
 def docker_swarm_state() -> str:
-    """Return the local docker swarm state (`active`, `inactive`, etc.), `permission-denied`, or `unavailable`."""
+    """Return the local docker swarm state (`active`, `inactive`, etc.), `worker` for an active node that is
+    not a manager (`docker stack deploy` needs one), `permission-denied`, or `unavailable`."""
     try:
         result = subprocess.run(
-            ["docker", "info", "--format", "{{.Swarm.LocalNodeState}}"],
+            ["docker", "info", "--format", "{{.Swarm.LocalNodeState}} {{.Swarm.ControlAvailable}}"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -214,7 +215,10 @@ def docker_swarm_state() -> str:
         if "permission denied" in (result.stderr or "").lower():
             return "permission-denied"
         return "unavailable"
-    return result.stdout.strip() or "inactive"
+    state, _, manager = result.stdout.strip().partition(" ")
+    if state == "active" and manager != "true":
+        return "worker"
+    return state or "inactive"
 
 
 def detect_host_gpu_count() -> int | None:
@@ -261,8 +265,15 @@ def check_swarm() -> Check:
                 "This user cannot reach the Docker socket. On a host provisioned by the on-prem playbook"
                 " that is deliberate (the docker group is root-equivalent): re-run via"
                 " sudo -E make onboard-onprem-trust KIT=<CODE>. Otherwise ask the host admin for Docker"
-                " access — see 'Access the operator needs' in the on-prem deployment guide.",
+                " access on a swarm manager — see 'Access the operator needs' in the on-prem deployment guide.",
             ],
+        )
+    if state == "worker":
+        return Check(
+            "Docker swarm",
+            Status.FAIL,
+            "active, but this node is a swarm worker: the XNAT stack deploy needs a manager",
+            hints=["Run the trust on a swarm manager, or ask the swarm admin: docker node promote <this node>"],
         )
     if state == "unavailable":
         return Check(
@@ -654,18 +665,31 @@ def _client_cannot_read(path: Path, kit_vars: dict[str, str], image_uid: int) ->
 
     The kit's private key is 600/660 to whoever extracted it; the client runs as FLIP_UID, else the
     image's uid, and the operator cannot test another uid's access, so judge owner, group and mode.
+    The key's directory is the bind-mount root, so the client must also enter it; the host dirs above
+    it are resolved by the daemon and never walked by the client. A non-numeric id is the Container
+    uid row's to report, so it is skipped here rather than raised.
     """
-    uid = int(kit_vars.get("FLIP_UID", "").strip() or image_uid)
-    gid = int(kit_vars.get("FLIP_GID", "").strip() or kit_vars.get("FLIP_UID", "").strip() or image_uid)
+    raw_uid = kit_vars.get("FLIP_UID", "").strip()
+    raw_gid = kit_vars.get("FLIP_GID", "").strip() or raw_uid
+    if not (raw_uid or "0").isdigit() or not (raw_gid or "0").isdigit():
+        return ""
+    uid, gid = int(raw_uid or image_uid), int(raw_gid or image_uid)
+
+    def allowed(p: Path, owner_bit: int) -> bool:
+        st = p.stat()
+        bit = owner_bit if st.st_uid == uid else owner_bit >> 3 if st.st_gid == gid else owner_bit >> 6
+        return bool(st.st_mode & bit)
+
     try:
+        if not allowed(path.parent, 0o100):
+            mode = path.parent.stat().st_mode & 0o777
+            return f"{path.parent} (mode {mode:o}) cannot be entered by the client, which runs as uid {uid}"
+        if allowed(path, 0o400):
+            return ""
         st = path.stat()
     except OSError:
         return ""
-    mode = st.st_mode & 0o777
-    readable = st.st_uid == uid and mode & 0o400 or st.st_gid == gid and mode & 0o040 or mode & 0o004
-    if readable:
-        return ""
-    return f"{path} is owned by uid {st.st_uid} mode {mode:o}, and the client runs as uid {uid}"
+    return f"{path} is owned by uid {st.st_uid} mode {st.st_mode & 0o777:o}, and the client runs as uid {uid}"
 
 
 def check_fl_kit_contents(kit_vars: dict[str, str], kit_present: bool) -> Check:

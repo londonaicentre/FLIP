@@ -787,21 +787,24 @@ upgrade-trust: require-xnat-aetitle
 	$(MAKE) _upgrade-trust-apply KIT=$(KIT) HUB=$(HUB) DEBUG=$(DEBUG)
 
 # FLIP_UID is a first-install choice (FLIP#1731): a site's data dirs carry the ids its install
-# gave them, and a kit that turns FLIP_UID on (or changes it) afterwards recreates omop-db and
-# Orthanc as a uid that owns none of their files, so they crash-loop while the first visible
-# refusal is XNAT's. Refuse before anything is pulled, naming the directory that disagrees;
-# re-owning data is the operator's deliberate step, never this verb's.
+# gave them, and a kit that turns FLIP_UID on, changes it or clears it afterwards recreates
+# Orthanc and the APIs as a uid that owns none of their files, so they crash-loop while the first
+# visible refusal is XNAT's. Refuse before anything is pulled, naming the directory that disagrees;
+# re-owning data is the operator's deliberate step, never this verb's. The Orthanc dir always
+# belongs to $(ORTHANC_UID) (FLIP_UID, else 999: every bring-up chowns it so), which catches all
+# three; the OMOP and net-1 dirs only have a fixed owner under FLIP_UID (without it, Postgres's
+# and the Ansible flip_owner's). Over a remote DOCKER_CONTEXT the dirs are on another host.
 define refuse_flip_uid_change
-	@if [ -n "$(FLIP_UID)" ]; then \
-	  for d in "$(OMOP_DATA_ABS)" "$(ORTHANC_STORAGE_ABS)" "$(IMAGES_BASE)/net-1"; do \
-	    [ -d "$$d" ] || continue; \
-	    owner="$$($(call stat_fmt,%u) "$$d")"; \
-	    [ "$$owner" = "$(FLIP_UID)" ] || { \
-	      echo "❌ The kit sets FLIP_UID=$(FLIP_UID), but $$d is owned by uid $$owner: this site was installed under other ids."; \
-	      echo "   FLIP_UID is a first-install choice. To move a live site, stop it and re-own its data dirs as root first"; \
-	      echo "   (chown -R, which this verb never does: they hold data), or unset FLIP_UID in the kit."; exit 1; }; \
-	  done; \
-	fi
+	@[ -z "$$DOCKER_CONTEXT" ] || exit 0; \
+	for d in $(if $(FLIP_UID),"$(OMOP_DATA_ABS)") "$(ORTHANC_STORAGE_ABS)" $(if $(FLIP_UID),"$(IMAGES_BASE)/net-1"); do \
+	  [ -d "$$d" ] || continue; \
+	  owner="$$($(call stat_fmt,%u) "$$d")"; \
+	  [ "$$owner" = "$(ORTHANC_UID)" ] || { \
+	    echo "❌ The kit $(if $(FLIP_UID),sets FLIP_UID=$(FLIP_UID),leaves FLIP_UID unset (the image uids)), but $$d is owned by uid $$owner:"; \
+	    echo "   this site was installed under other ids. FLIP_UID is a first-install choice: put back the FLIP_UID the"; \
+	    echo "   site was installed with$(if $(FLIP_UID), (or unset it),), or, to move a live site, stop it and re-own its data dirs as"; \
+	    echo "   root first (chown -R, which this verb never does: they hold data)."; exit 1; }; \
+	done
 endef
 
 # Phase 2 of upgrade-trust — never call directly (the tag it applies is whatever the
@@ -812,6 +815,7 @@ _upgrade-trust-apply:
 	$(require_kit_file)
 	$(check_slot_not_taken)
 	$(refuse_flip_uid_change)
+	$(MAKE) --no-print-directory -C xnat xnat-backup-writable KIT=$(KIT) HUB=$(HUB)
 	@echo "⬆️  Upgrading trust services (KIT=$(KIT)) to $(DOCKER_TAG) (FL client $(DOCKER_FL_TAG))..."
 	@echo "$(GPU_STATUS_MSG)"
 	# A site upgrading from before the membership store (FLIP#857) has no directory for it yet.
