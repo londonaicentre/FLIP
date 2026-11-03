@@ -33,9 +33,18 @@ from tests.e2e_smoke import (
 @pytest.mark.parametrize(
     ("path", "label"),
     [
-        ("../fl-tutorials/flower/tabular_classification/ehr_risk_prediction/app", "Type 2 diabetes risk from health records"),
-        ("../fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files", "Type 2 diabetes risk from health records"),
-        ("../fl-tutorials/nvflare/image_classification/xray_classification/app_files", "Chest X-ray lesion classification"),
+        (
+            "../fl-tutorials/flower/tabular_classification/ehr_risk_prediction/app",
+            "Type 2 diabetes risk from health records",
+        ),
+        (
+            "../fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files",
+            "Type 2 diabetes risk from health records",
+        ),
+        (
+            "../fl-tutorials/nvflare/image_classification/xray_classification/app_files",
+            "Chest X-ray lesion classification",
+        ),
         (
             "../fl-tutorials/nvflare/image_generation/brain_mri_ldm_stage2_diffusion/app_files",
             "Brain MRI generation, step 2: latent diffusion",
@@ -50,7 +59,10 @@ from tests.e2e_smoke import (
         # An unknown app whose directory name carries an acronym: it survives unchanged.
         ("/srv/MRI_segmentation/app", "MRI segmentation"),
         # The tutorial directory itself, without its app/ leaf.
-        ("../fl-tutorials/flower/tabular_classification/ehr_risk_prediction", "Type 2 diabetes risk from health records"),
+        (
+            "../fl-tutorials/flower/tabular_classification/ehr_risk_prediction",
+            "Type 2 diabetes risk from health records",
+        ),
         (
             "../fl-tutorials/flower/image_evaluation/3d_spleen_segmentation_evaluation",
             "Evaluating a spleen segmentation model",
