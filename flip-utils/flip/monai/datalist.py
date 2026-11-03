@@ -32,13 +32,20 @@ the alternative is torch's ``num_samples=0`` several frames later, which reads l
 v0.1 reads the ``NIFTI`` resource only. The schema accepts ``SEG`` and ``DICOM`` so overlays need not
 change when they are supported, but this module refuses them by name rather than guessing a layout.
 
+Validation split. :func:`split_cohort` divides the cohort by patient, at the overlay's
+``validation_fraction``, before :func:`build_datalist` runs. The adapter (FLIP#1107) is to feed the two
+halves to the bundle's ``train#dataset#data`` and ``validate#dataset#data`` (MONAI's ``train_dataset_data``
+/ ``val_dataset_data`` workflow properties) instead of the bundle's own globs.
+
 The query is the caller's: on the platform it is the project's approved cohort, delivered in the
 client config, never a file inside the bundle.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -136,6 +143,40 @@ def _qc(item: dict[str, str], expected_ndim: int | None, report: DatalistReport)
         report.shape_mismatch += 1
         return False
     return True
+
+
+def split_cohort(dataframe: pd.DataFrame, binding: ImagingBinding) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split the cohort into training and validation rows by patient, for the bundle's two datasets.
+
+    Each row is grouped by its ``person_id``, or by its ``accession_id`` where ``person_id`` is absent or
+    NULL, so one patient's studies never sit on both sides. A row without a ``person_id`` cannot be tied to
+    its patient and is placed by its accession. Groups are ranked by a hash of their id rather than
+    shuffled: the split is the same on every run, and a patient leaving the cohort moves few others.
+
+    Args:
+        dataframe: The cohort, as passed to :func:`build_datalist`.
+        binding: The overlay's ``flip.imaging`` block; its ``validation_fraction`` sets the split, 0 = none.
+
+    Returns:
+        tuple: ``(train_rows, validation_rows)``. Validation takes at least one patient when the
+        fraction is non-zero and the cohort has more than one, and never all of them.
+
+    Raises:
+        ValueError: If ``validation_fraction`` is outside ``[0, 1)``.
+    """
+    fraction = binding.validation_fraction
+    if not 0 <= fraction < 1:
+        raise ValueError(f"validation_fraction must be in [0, 1), got {fraction!r}")
+    ids = dataframe["accession_id"]
+    if "person_id" in dataframe.columns:
+        ids = dataframe["person_id"].astype("string").fillna(ids.astype("string"))
+    ids = ids.dropna().astype(str)
+    groups = sorted(ids.unique(), key=lambda g: hashlib.sha256(g.encode()).hexdigest())
+    n_val = min(math.ceil(len(groups) * fraction), max(len(groups) - 1, 0))
+    if fraction and not n_val:
+        logger.warning("validation_fraction=%s, %d patient(s): no validation set", fraction, len(groups))
+    is_val = dataframe.index.isin(ids[ids.isin(groups[:n_val])].index)
+    return dataframe[~is_val], dataframe[is_val]
 
 
 def build_datalist(

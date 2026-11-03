@@ -49,6 +49,9 @@ CONFIG_SUFFIXES = (".json", ".yaml", ".yml")
 
 GOVERNANCE_PROFILE_V0_1: Literal["monai-flip-v0.1"] = "monai-flip-v0.1"
 
+SCHEMA_VERSION: Literal["0.1"] = "0.1"
+"""The overlay schema version this module reads. Quoted in YAML: a bare ``0.1`` is a float."""
+
 
 class BundleSource(StrEnum):
     """Where the bundle content came from."""
@@ -167,6 +170,8 @@ class ImagingBinding(_Strict):
 
     resource: ResourceType
     keys: dict[str, ImagingKey]
+    # Share of the cohort held out, by patient, for the bundle's validation set (datalist.split_cohort); 0 = none.
+    validation_fraction: Annotated[float, Field(ge=0, lt=1)] = 0.1
 
     @field_validator("resource", mode="before")
     @classmethod
@@ -207,7 +212,10 @@ class FLSettings(_Strict):
 
 
 class Governance(_Strict):
-    """The governance profile the bundle is checked against and the outputs it may emit."""
+    """The governance profile the bundle is checked against and the outputs it may emit.
+
+    ``fl.exchange.statistics`` is not listed here: its egress is filtered by ``StatsPrivacy`` (FLIP#1117).
+    """
 
     profile: Literal["monai-flip-v0.1"] = GOVERNANCE_PROFILE_V0_1
     allowed_outputs: Annotated[list[Literal["metrics", "model"]], Field(min_length=1)]
@@ -224,13 +232,17 @@ class FlipSection(_Strict):
 class MonaiFlipOverlay(_Strict):
     """A complete ``monai-flip.yaml``, schema v0.1."""
 
+    schema_version: Literal["0.1"]
     bundle: BundleRef
     flip: FlipSection
 
     @model_validator(mode="after")
     def _outputs_match_exchange(self) -> MonaiFlipOverlay:
         exchange = self.flip.fl.exchange
-        if exchange.metrics and "metrics" not in self.flip.governance.allowed_outputs:
+        allowed = self.flip.governance.allowed_outputs
+        if "model" not in allowed:
+            raise ValueError("every round sends flip.fl.exchange.weights, so governance.allowed_outputs needs 'model'")
+        if exchange.metrics and "metrics" not in allowed:
             raise ValueError("flip.fl.exchange.metrics is set but 'metrics' is not in governance.allowed_outputs")
         return self
 
@@ -251,6 +263,11 @@ def parse_overlay(data: Any, source: str = "<overlay>") -> MonaiFlipOverlay:
     """
     if not isinstance(data, dict):
         raise OverlayError(f"{source}: the overlay must be a YAML mapping, got {type(data).__name__}")
+    # Checked first: an overlay written for a newer schema would otherwise fail as a list of unknown keys.
+    if data.get("schema_version") != SCHEMA_VERSION:
+        raise OverlayError(
+            f"{source}: schema_version must be {SCHEMA_VERSION!r} (quoted), got {data.get('schema_version')!r}"
+        )
     try:
         return MonaiFlipOverlay.model_validate(data)
     except ValidationError as exc:

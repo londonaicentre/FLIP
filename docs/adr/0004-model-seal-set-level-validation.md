@@ -17,14 +17,14 @@ Every validation FLIP has today is **per-file at scan time**: `reconcile_uploade
 object, picklescan and Bandit run on it, `_finalise_scan_status()` promotes it into `scanned/`.
 Every validation the MONAI bundle on-ramp needs is **per-set**: "no `.py` anywhere in this
 bundle" needs the complete file list, the config analyser must follow `@refs` and `%macros` across
-`configs/`, and cohort/XNAT validation needs `monai-flip.yaml` together with the `.sql` it names.
+`configs/`, and the imaging binding in `monai-flip.yaml` is only meaningful against those configs.
 There was no event in FLIP where a complete upload set is known and validated, so we add one:
-**`POST /models/{id}/seal`**, which runs every set-level gate and sets `flip_ready`. Approval is
-gated on `flip_ready`.
+**`POST /models/{id}/seal`**, which runs every set-level gate and sets `flip_ready`. Starting
+training (`initiate_training`) is gated on `flip_ready`; FLIP has no separate model-approval step.
 
 `job_type` also moves onto the `Model` row, declared at creation. Today it is discovered by
 downloading `config.json` from S3 inside `bundle_nvflare_application()`, i.e. at training start,
-long after a human approved the model. Declaring it up front lets `presigned_url_for_upload` reject
+long after the files were uploaded and scanned. Declaring it up front lets `presigned_url_for_upload` reject
 a `.py` for a `monai_bundle` model at policy-mint time, before the object ever reaches S3. The
 column is **nullable**: when unset, the existing `config.json` inference applies unchanged, so
 every current job type keeps working and `monai_bundle` is simply the first type that requires it
@@ -34,11 +34,11 @@ declared.
 
 - **Enforce at bundling time only** (no new endpoint, no migration). Rejected: it inverts the
   governance claim. The researcher uploads, the per-file scans pass because `.py` is a permitted
-  extension, an admin approves, training starts, and only then does the bundle get rejected. The
-  human approved an artefact that nothing had validated.
+  extension, training is started, and only then does the bundle get rejected. The run was launched
+  on an artefact that nothing had validated.
 - **Run the analyser per-file inside the existing scan pipeline.** Rejected as insufficient rather
   than wrong: it fits `malware_scan_service.py` neatly, but it cannot see the set, so the no-`.py`
-  rule and the overlay/`.sql` cross-check have nowhere to live and fall back to bundling time
+  rule and the overlay/config cross-check have nowhere to live and fall back to bundling time
   anyway.
 
 ## Consequences
@@ -50,4 +50,4 @@ declared.
   extends existing machinery: `flip-ui/src/services/model-service.ts` already fetches
   `/model/job-types` and derives per-type required files.
 - Seal is idempotent and re-runnable: uploading another file clears `flip_ready`, so a set cannot be
-  sealed, extended, and approved on the strength of the earlier seal.
+  sealed, extended, and trained on the strength of the earlier seal.

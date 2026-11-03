@@ -22,7 +22,7 @@ import pytest
 nib = pytest.importorskip("nibabel")
 
 from flip.constants.flip_constants import ResourceType  # noqa: E402
-from flip.monai.datalist import DatalistError, build_datalist, pair_siblings, stem_of  # noqa: E402
+from flip.monai.datalist import DatalistError, build_datalist, pair_siblings, split_cohort, stem_of  # noqa: E402
 from flip.monai.overlay import ImagingBinding, OverlayError, parse_overlay  # noqa: E402
 from tests.unit.monai.test_overlay import VALID, _with  # noqa: E402
 
@@ -242,3 +242,76 @@ def test_valid_overlay_binding_drives_the_datalist(tmp_path: Path):
     acc = _spleen_accession(tmp_path, "ACC1", ["a"])
     items, _ = build_datalist(_flip({"ACC1": acc}), "p", _cohort("ACC1"), binding)
     assert set(items[0]) == {"image", "label"}
+
+
+def _fraction(value: float) -> ImagingBinding:
+    """The spleen binding at another validation_fraction (model_copy skips validation, as a caller could)."""
+    return SPLEEN.model_copy(update={"validation_fraction": value})
+
+
+def test_split_keeps_each_patient_on_one_side():
+    """Two studies of one patient must not land in both sets."""
+    persons = [f"P{i}" for i in range(10) for _ in range(2)]
+    cohort = pd.DataFrame({"person_id": persons, "accession_id": [f"A{n}" for n in range(20)]})
+
+    train, val = split_cohort(cohort, _fraction(0.2))
+
+    assert set(train["person_id"]).isdisjoint(val["person_id"])
+    assert val["person_id"].nunique() == 2
+    assert len(train) + len(val) == len(cohort)
+    # Ranked by a hash of the id, not shuffled: the same cohort always splits the same way.
+    assert val.equals(split_cohort(cohort.sample(frac=1, random_state=0), _fraction(0.2))[1].sort_index())
+
+
+def test_split_reads_the_overlay_fraction():
+    binding = parse_overlay(_with("flip.imaging.validation_fraction", 0.5)).flip.imaging
+    _, val = split_cohort(_cohort("ACC1", "ACC2", "ACC3", "ACC4"), binding)
+    assert len(val) == 2
+
+
+@pytest.mark.parametrize(
+    ("ids", "fraction", "n_val"),
+    [
+        (("ACC1", "ACC2", "ACC3", None), 0, 0),
+        (("ACC1", "ACC2", "ACC3", None), 0.01, 1),
+        (("ACC1", "ACC2", "ACC3", None), 0.99, 2),
+        (("ACC1",), 0.5, 0),  # one patient: nothing can be held out without emptying training
+    ],
+)
+def test_split_sizes_by_accession_without_person_id(ids, fraction, n_val):
+    """At least one patient when non-zero and there are two or more, never all; a NULL id is never held out."""
+    train, val = split_cohort(_cohort(*ids), _fraction(fraction))
+    assert len(val) == n_val
+    assert val["accession_id"].notna().all()
+    assert len(train) == len(ids) - n_val
+
+
+def test_split_falls_back_to_accession_for_null_person_id():
+    """An all-NULL person_id column still splits, by accession, rather than silently holding nothing out."""
+    cohort = pd.DataFrame({"person_id": [None] * 4, "accession_id": ["A1", "A2", "A3", "A4"]})
+    _, val = split_cohort(cohort, _fraction(0.5))
+    assert len(val) == 2
+
+
+def test_split_places_a_partially_null_person_id_row_by_accession():
+    """A row with no person_id is grouped by its accession, not sent to training every time."""
+    cohort = pd.DataFrame({"person_id": [None, "P1", "P2", "P3"], "accession_id": ["A1", "A2", "A3", "A4"]})
+    filled = cohort.assign(person_id=["A1", "P1", "P2", "P3"])
+    for frac in (0.25, 0.5, 0.75):
+        _, val = split_cohort(cohort, _fraction(frac))
+        _, expected = split_cohort(filled, _fraction(frac))
+        assert list(val["accession_id"]) == list(expected["accession_id"])
+    assert "A1" in set(split_cohort(cohort, _fraction(0.75))[1]["accession_id"])  # was always in training
+
+
+def test_split_warns_when_no_validation_set(caplog):
+    with caplog.at_level("WARNING", logger="flip.monai.datalist"):
+        _, val = split_cohort(_cohort("ACC1"), _fraction(0.1))
+    assert val.empty
+    assert "no validation set" in caplog.text
+
+
+@pytest.mark.parametrize("fraction", [-0.5, 1, 1.5])
+def test_split_refuses_a_fraction_outside_the_range(fraction):
+    with pytest.raises(ValueError, match="validation_fraction"):
+        split_cohort(_cohort("ACC1", "ACC2", "ACC3", "ACC4"), _fraction(fraction))

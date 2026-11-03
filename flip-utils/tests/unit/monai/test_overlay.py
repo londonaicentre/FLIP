@@ -23,6 +23,7 @@ from flip.constants.flip_constants import ResourceType
 from flip.monai.overlay import BundleSource, OverlayError, load_overlay, parse_overlay
 
 VALID = {
+    "schema_version": "0.1",
     "bundle": {
         "source": "monai-model-zoo",
         "name": "spleen_ct_segmentation",
@@ -109,6 +110,7 @@ def test_load_overlay_from_file(tmp_path: Path):
         ("bundle.configs.train", "train.json", "under configs/"),
         ("bundle.configs.train", "configs/train.py", "configs/train.py"),
         ("bundle.configs.train", "configs/../../etc/passwd.json", "no '..'"),
+        ("bundle.configs.train", "configs\\..\\..\\x.json", "'/' separators"),
         # A path whose PurePosixPath has no parts must still raise OverlayError, not IndexError.
         ("bundle.configs.train", ".", "under configs/"),
         ("bundle.configs.train", "./", "under configs/"),
@@ -131,6 +133,10 @@ def test_load_overlay_from_file(tmp_path: Path):
         ("flip.governance.allowed_outputs", [], "allowed_outputs"),
         ("flip.governance.allowed_outputs", ["raw_data"], "allowed_outputs"),
         ("flip.governance.allowed_outputs", ["model"], "'metrics' is not in governance.allowed_outputs"),
+        # Training always sends the model, so an overlay cannot claim it stays in the trust.
+        ("flip.governance.allowed_outputs", ["metrics"], "needs 'model'"),
+        ("flip.imaging.validation_fraction", 1, "flip.imaging.validation_fraction"),
+        ("flip.imaging.validation_fraction", -0.1, "flip.imaging.validation_fraction"),
         ("flip.imaging", ..., "flip.imaging"),
     ],
 )
@@ -140,6 +146,18 @@ def test_invalid_overlays_rejected_with_field_path(path, value, fragment):
     message = str(excinfo.value)
     assert message.startswith("test.yaml: invalid monai-flip overlay")
     assert fragment in message
+
+
+@pytest.mark.parametrize("version", [..., 0.1, "0.2"])
+def test_schema_version_checked_before_the_schema(version):
+    """A missing, unquoted or newer version fails on the version alone, not on a list of unknown keys."""
+    data = _with("schema_version", version)
+    data["flip"]["fl"]["new_v02_key"] = True
+    with pytest.raises(OverlayError) as excinfo:
+        parse_overlay(data, source="test.yaml")
+    message = str(excinfo.value)
+    assert "schema_version must be '0.1' (quoted)" in message
+    assert "new_v02_key" not in message
 
 
 def test_placeholder_patterns_refused_when_only_resource_is_filled():

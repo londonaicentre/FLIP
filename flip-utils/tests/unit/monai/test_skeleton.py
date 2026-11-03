@@ -75,10 +75,20 @@ def test_skeleton_is_refused_until_filled(bundle: Path):
 def test_every_value_line_is_marked_locked_or_editable(bundle: Path):
     text = generate_skeleton(bundle)
     marked = {line.split(":")[0].strip() for line in text.splitlines() if "# LOCKED" in line or "# EDITABLE" in line}
-    for key in ("source", "name", "version", "configs", "resource", "keys", "local_epochs", "profile"):
+    for key in (
+        "schema_version",
+        "source",
+        "name",
+        "version",
+        "configs",
+        "resource",
+        "keys",
+        "local_epochs",
+        "profile",
+    ):
         assert key in marked, key
     assert "query_ref" not in text
-    for key in ("source", "name", "version", "configs", "profile"):
+    for key in ("schema_version", "source", "name", "version", "configs", "profile"):
         line = next(ln for ln in text.splitlines() if ln.strip().startswith(f"{key}:"))
         assert "# LOCKED" in line, line
 
@@ -106,6 +116,12 @@ def test_inference_only_bundle_refused(bundle: Path):
 def test_missing_metadata_refused(bundle: Path):
     (bundle / "configs" / "metadata.json").unlink()
     with pytest.raises(SkeletonError, match="metadata.json not found"):
+        generate_skeleton(bundle)
+
+
+def test_unparseable_metadata_refused(bundle: Path):
+    (bundle / "configs" / "metadata.json").write_text("{not json")
+    with pytest.raises(SkeletonError, match="cannot read"):
         generate_skeleton(bundle)
 
 
