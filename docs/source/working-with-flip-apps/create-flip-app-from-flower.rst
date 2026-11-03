@@ -417,7 +417,8 @@ differential-privacy mod on your training handler:
 On each SuperNode, the mod clips the local update to ``dp-clipping-norm`` and adds Gaussian noise scaled by
 ``dp-sensitivity``, ``dp-epsilon`` and ``dp-delta``, so the FL server only ever receives a privatised update.
 ``dp-enabled`` turns it on or off. The template declares all five keys, so you can override them per run in
-``config.toml``.
+``config.toml``. The template's ``dp-clipping-norm = 1.0`` is a placeholder: set it near the pre-clip norm the mod
+logs each round, or clipping shrinks every update and the run learns next to nothing.
 
 Integer buffers, such as BatchNorm's ``num_batches_tracked`` counters, pass through untouched. See *Privacy filters
 on shared model updates* on :ref:`fl-update-privacy` for how it works and its caveats.
@@ -556,7 +557,7 @@ FLIP run-config keys (placeholder values are fine) and your training hyperparame
    batch-size = 2
    # Client-side DP knobs read by flip_local_dp_mod
    dp-enabled = true
-   dp-clipping-norm = 1.0
+   dp-clipping-norm = 1.0   # placeholder: size it to your model (see "privatising the update" above)
    dp-sensitivity = 1e-4
    dp-epsilon = 10.0
    dp-delta = 1e-5
