@@ -12,7 +12,7 @@
 {{- if .Values.monailabel.enabled }}
 # Optional MONAI Label server: AI-assisted annotation (SAM click-to-segment, DeepEdit
 # multi-organ) in the XNAT OHIF viewer. Mirrors the compose overlay
-# (trust/deploy/compose_trust.*.monailabel.yml) — see trust/README.md#monai-label-optional
+# (trust/deploy/compose/compose_trust.*.monailabel.yml) — see trust/README.md#monai-label-optional
 # for the operational caveats (browser-reachable URL, unauthenticated API, stock-viewer
 # quirks). The chart's XNAT image carries the ohif-viewer plugin (as every FLIP XNAT
 # does), so there is no separate plugin step here.

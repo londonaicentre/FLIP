@@ -84,7 +84,7 @@ RELEASE_NAME ?= trust-release
 CHART_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 VALUES_FILE ?= $(CHART_DIR)/values.yaml
 
-# REPO_ROOT is where scripts/site_upgrade.py and the shared make fragments live.
+# REPO_ROOT is where trust/deploy/scripts/site_upgrade.py and the shared make fragments live.
 REPO_ROOT := $(abspath $(CHART_DIR)/../../..)
 # Kit-file env token (ENV) from HUB, derived once for every Makefile that reads HUB.
 include $(REPO_ROOT)/deploy/env_mode.mk
@@ -308,7 +308,7 @@ smoke-cstore: ## Send a real C-STORE through the PACS and verify XNAT received i
 upgrade-trust-k8s: ## Move a deployed trust to a release tag (data-safe helm upgrade)
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> is required"; exit 1; }
 	@[ -f "$(CHART_DIR)/k8s-trust-$(KIT).yaml" ] || { echo "❌ $(CHART_DIR)/k8s-trust-$(KIT).yaml not found — run make sync-kit KIT=$(KIT) first"; exit 1; }
-	uv run --no-config $(REPO_ROOT)/scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
+	uv run --no-config $(REPO_ROOT)/trust/deploy/scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
 	$(MAKE) _upgrade-trust-k8s-apply KIT=$(KIT) HUB=$(HUB)
 
 # Phase 2: regenerate the override from the kit the resolver just pinned — that is how

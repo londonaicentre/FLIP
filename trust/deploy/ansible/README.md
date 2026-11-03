@@ -19,8 +19,8 @@
 
 Ansible playbook and supporting files to provision an on-premises Ubuntu host as a FLIP Trust node. The provisioned host polls the Central Hub (running in AWS) for tasks — all communication is outbound from the trust.
 
-`onprem.yml` is the on-prem counterpart of the EC2 play [`deploy/providers/AWS/site.yml`](../../../deploy/providers/AWS/site.yml),
-which the [AWS provider](../../../deploy/providers/AWS/README.md) runs against the cloud trust it creates. Together they implement the
+`onprem.yml` is the on-prem counterpart of the EC2 plays [`aws-ec2-host.yml`](aws-ec2-host.yml), which
+[`aws-ec2.yml`](aws-ec2.yml) runs against a node from [`../terraform/aws/ec2`](../terraform/aws/ec2/README.md). Together they implement the
 [hybrid deployment model](../../../docs/source/deploy-flip.rst).
 
 ## Architecture
@@ -54,7 +54,7 @@ Each local Trust host runs:
 | data-access-api | 8000 | HTTP (internal) |
 | fl-client | — | TCP (connects outbound to FL server via NLB) |
 
-The on-prem trust kit (`trust/.env.<CODE>.prod`) can default `IMAGING_API_PORT` / `DATA_ACCESS_API_PORT` / `TRUST_API_PORT` to host ports shifted off the first dev trust's allocation (`8005` / `8014` / `8024` vs the dev `8001` / `8010` / `8020`), so the prod-pointed stack coexists on a developer laptop with `make up` (whose first dev trust binds the original ports via `trust/deploy/compose_trust-1_override.yml`). A real on-prem operator on a dedicated host can revert the kit-file values to standard `8001` / `8010` / `8020` if their tooling expects them.
+The on-prem trust kit (`trust/.env.<CODE>.prod`) can default `IMAGING_API_PORT` / `DATA_ACCESS_API_PORT` / `TRUST_API_PORT` to host ports shifted off the first dev trust's allocation (`8005` / `8014` / `8024` vs the dev `8001` / `8010` / `8020`), so the prod-pointed stack coexists on a developer laptop with `make up` (whose first dev trust binds the original ports via `trust/deploy/compose/compose_trust-1_override.yml`). A real on-prem operator on a dedicated host can revert the kit-file values to standard `8001` / `8010` / `8020` if their tooling expects them.
 
 ## Prerequisites
 
@@ -128,7 +128,7 @@ make provision-local-trust KIT=<CODE> HUB=<stag|prod>
 ### What `provision-local-trust` does
 
 1. Runs the Ansible playbook (`onprem.yml`), a composition of the shared roles in
-   [`roles/`](roles/README.md) (the EC2 play `deploy/providers/AWS/site.yml` composes the same ones):
+   [`roles/`](roles/README.md) (the EC2 plays `aws-ec2-host.yml` compose the same ones):
    - Installs Docker and the base packages (`flip_base_packages`, `flip_docker` — no docker-group grant)
    - Creates the application, images and XNAT directories under `/opt/flip/` (`flip_trust_dirs`):
      - `/opt/flip/` and `/opt/flip/data/images/`, owned by `ubuntu`
@@ -176,7 +176,7 @@ make provision-local-trust KIT=<CODE> HUB=<stag|prod>
 2. Downloads the FL participant kit from S3 and stages it under `/tmp`, printing the `sudo rsync` commands to deploy it into `${FL_KIT_DIR}/net-1/...` (default `/opt/flip/fl-kit/net-1/...`).
 
 > **Warning — the playbook's XNAT directory is not the one XNAT uses.** Both this
-> playbook and `deploy/providers/AWS/site.yml` provision `/opt/flip/xnat/...`, but
+> playbook and `aws-ec2-host.yml` provision `/opt/flip/xnat/...`, but
 > the tree XNAT actually writes to is whatever `XNAT_DATA_DIR` resolves to in
 > `trust/xnat/Makefile`, and the kit file's value wins. Every scaffolded kit sets one
 > — `trust/.env.example`, which `make new-trust` copies, carries

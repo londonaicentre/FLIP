@@ -120,7 +120,7 @@ def test_the_trust_data_version_maps_through():
 
 
 def test_orthanc_users_come_from_the_kits_orthanc_login():
-    """Compose builds the same map from the same two keys (trust/deploy/compose_trust.*.yml)."""
+    """Compose builds the same map from the same two keys (trust/deploy/compose/compose_trust.*.yml)."""
     _, secrets = generate_values.build_values({"ORTHANC_USERNAME": "admin", "ORTHANC_PASSWORD": 'p"w'})
 
     assert json.loads(secrets["orthanc-registered-users"]) == {"admin": 'p"w'}

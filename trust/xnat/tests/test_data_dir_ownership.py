@@ -62,11 +62,11 @@ from pathlib import Path
 import pytest
 
 XNAT_DIR = Path(__file__).resolve().parents[1]
-REPO_ROOT = XNAT_DIR.parents[1]
 MAKEFILE = XNAT_DIR / "Makefile"
 DOCKERFILE = XNAT_DIR / "xnat" / "Dockerfile"
 DCM2NIIX_DOCKERFILE = XNAT_DIR / "dcm2niix" / "Dockerfile"
-AWS_PLAYBOOK = REPO_ROOT / "deploy" / "providers" / "AWS" / "site.yml"
+# The EC2 host play, imported by both the hub's site.yml and the standalone aws-ec2.yml.
+AWS_PLAYBOOK = XNAT_DIR.parent / "deploy" / "ansible" / "aws-ec2-host.yml"
 LOCAL_PLAYBOOK = XNAT_DIR.parent / "deploy" / "ansible" / "onprem.yml"
 # Both plays compose this role; it is the one place the XNAT bind-mount dirs are provisioned.
 DIRS_ROLE = "flip_trust_dirs"

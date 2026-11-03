@@ -86,7 +86,7 @@ class BuildTrue(unittest.TestCase):
     def test_every_repo_built_dev_service_pulls_by_default_and_builds_on_build_true(self):
         services = {
             **repo_built_services("deploy/compose.development.yml"),
-            **repo_built_services("trust/deploy/compose_trust.development.yml"),
+            **repo_built_services("trust/deploy/compose/compose_trust.development.yml"),
         }
         assert {"flip-api", "omop-db", "orthanc", "trust-api"} <= services.keys(), services.keys()
         for name, body in services.items():
@@ -107,6 +107,32 @@ class UpgradeOnpremTrust(unittest.TestCase):
         assert ".env.SCR.prod" in gate, gate
         assert "_upgrade-trust-apply" in out, out
         assert_data_safe(out, "upgrade-onprem-trust")
+
+
+class RestartFlFleetProxies(unittest.TestCase):
+    """restart-fl's server step carries Flower's fleet proxies, and drops them on NVFLARE (FLIP#1517).
+
+    On Flower a trust dials ``fl-server-net-<N>`` on ``fl-net-<N>``, which is the proxy's alias
+    there: a switch that restarts the servers alone leaves no trust able to reach the SuperLink.
+    On NVFLARE a proxy left over from a Flower run still answers to that alias and takes a share
+    of the clients' connections, so the step removes orphans as ``up`` and ``down`` do.
+    """
+
+    @staticmethod
+    def _server_step(backend: str) -> str:
+        out = dry_run("restart-fl", f"FL_BACKEND={backend}", "ALLOW_FOREIGN_PROJECT=1", subdir=".")
+        return next(line for line in out.splitlines() if " up " in line and "fl-server-net-1" in line)
+
+    def test_flower_restarts_the_proxies_with_the_servers(self):
+        step = self._server_step("flower")
+        for svc in ("fl-server-net-1", "fl-server-net-2", "fl-fleet-proxy-net-1", "fl-fleet-proxy-net-2"):
+            assert svc in step.split(), step
+        assert "--remove-orphans" in step, step
+
+    def test_nvflare_drops_leftover_proxies(self):
+        step = self._server_step("nvflare")
+        assert "fl-fleet-proxy" not in step, step
+        assert "--remove-orphans" in step, step
 
 
 class CentralHubNetworks(unittest.TestCase):
@@ -221,7 +247,7 @@ class MakeKitSelection(unittest.TestCase):
     def check_selected(self, expected, hub=None, *extra, subdir="."):
         output = self.run_make("onboard-onprem-trust", hub, *extra, subdir=subdir)
         args = json.loads(self.args_file.read_text())
-        assert args[:4] == ["run", "--no-config", "../scripts/onboard_onprem_trust.py", "SITE"], args
+        assert args[:4] == ["run", "--no-config", "deploy/scripts/onboard_onprem_trust.py", "SITE"], args
         assert Path(args[args.index("--kit-file") + 1]) == self.root / "trust" / expected, args
         assert self.hub_file.read_text() == (hub or ("" if subdir == "trust" else "prod"))
         return output
@@ -278,7 +304,7 @@ class MakeKitSelection(unittest.TestCase):
         assert not self.args_file.exists(), "new_trust.py must not run"
         result = self.make("new-trust", "TRUST_CODE=OTHER", "TRUST_NAME=Other", "HUB=prod")
         assert result.returncode == 0, result.stdout + result.stderr
-        assert "scripts/new_trust.py" in self.args_file.read_text()
+        assert "trust/deploy/scripts/new_trust.py" in self.args_file.read_text()
 
     def test_sweeps_take_current_names_and_name_the_old_kits_they_skip(self):
         """Only KIT= finds an old name: a sweep also took trust/.env.<word> (.env.local) for a kit."""
@@ -443,7 +469,7 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
         for hub in ("prod", "stag"):
             generated = subprocess.run(
                 [sys.executable, "-c", code, str(selected)],
-                env={**self.env, "PYTHONPATH": str(REPO / "scripts"), "HUB": hub},
+                env={**self.env, "PYTHONPATH": str(REPO / "trust" / "deploy" / "scripts"), "HUB": hub},
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -601,10 +627,47 @@ OWNER_GUARDED_TARGETS = {
     "up-pgadmin",
     "reset-keycloak",
     "register-trust",
+    "rotate-trust-keys",
 }
 
 
 COMPOSE_COMMAND = re.compile(r"\b(DEBUG_OVERRIDE_COMPOSE_COMMAND|DOCKER_COMMAND)\b")
+
+
+class RotateTrustKeys(unittest.TestCase):
+    """The dev rotation target drives the register_trust CLI the way its argparse accepts.
+
+    `--name` is the CLI's required argument and `--code` belongs to registration only: the CLI
+    exits 2 on `--rotate --code`, before anything rotates.
+    """
+
+    def recipe(self) -> str:
+        out = dry_run("rotate-trust-keys", subdir=".")
+        line = next((ln for ln in out.splitlines() if "flip_api.scripts.register_trust" in ln), None)
+        assert line is not None, out
+        return line
+
+    def test_it_rotates_by_name_only(self):
+        line = self.recipe()
+        assert "--rotate" in line, line
+        assert "--name" in line, line
+        assert "--code" not in line, line
+
+    def test_it_does_not_call_a_separate_rotation_module(self):
+        """Rotation is a flag on the registration CLI; there is no rotate_trust_keys module."""
+        assert "rotate_trust_keys" not in dry_run("rotate-trust-keys", subdir=".")
+
+    def test_the_kit_writer_failure_is_fatal(self):
+        """A kit the writer could not save must not be reported as a completed rotation.
+
+        The hub commits the new hash before the kit is written, so an unchecked writer
+        leaves the kit file holding the old, now-refused keys while make exits 0.
+        """
+        out = dry_run("rotate-trust-keys", subdir=".")
+        writer = next((ln for ln in out.splitlines() if "distribute_trust_kits.py" in ln), None)
+        assert writer is not None, out
+        assert writer.rstrip().endswith("\\"), "the writer call must continue into its failure guard"
+        assert "could not be written" in out, out
 
 
 def compose_targets(makefile: str) -> set[str]:
@@ -768,7 +831,8 @@ class BuildFl(unittest.TestCase):
         out = run_target("build-fl", f"FL_BACKEND={backend}", *extra, subdir=".", dry=True, env=env)
         assert out.returncode == 0, out.stdout + out.stderr
         lines = [line for line in out.stdout.splitlines() if "docker compose" in line and " build " in line]
-        assert len(lines) == 2, out.stdout  # fl-base, then the images built FROM it
+        # fl-base, then the images built FROM it; flower also builds its fleet proxy from the secure compose
+        assert len(lines) == {"nvflare": 2, "flower": 3}[backend], out.stdout
         return lines
 
     def test_default_tag_stays_dev(self):

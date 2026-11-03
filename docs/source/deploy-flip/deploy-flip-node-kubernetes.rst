@@ -146,12 +146,21 @@ GPU training needs the `NVIDIA GPU Operator <https://github.com/NVIDIA/gpu-opera
 **580 or newer** on the GPU nodes, because the FL images ship PyTorch built for CUDA 13. The operator installs the
 driver itself, so pin its ``driver.version`` to a 580+ release, or set ``driver.enabled=false`` and pre-install one on
 the node. Then set ``flClient.gpu.enabled: true`` and ``flClient.gpu.count: 1`` (on NVFLARE the chart accepts only 1;
-see `Key values`_).
+see `Key values`_). The client then requests ``nvidia.com/gpu`` (``flClient.gpu.allocation: devicePlugin``, the
+default), so Kubernetes reserves a GPU for it and places it on a node that has one. On a single node with no device
+plugin, whose default container runtime is ``nvidia`` (a k3s workstation), set ``flClient.gpu.allocation: runtime``
+instead: the pod then takes that node's GPU 0 without a reservation.
+
+The trust offers the FL scheduler only the GPUs it is configured with. A trust left at the default
+``flClient.gpu.enabled: false`` offers none, so every job that asks for a GPU waits and then fails, and the hub shows
+the trust as "waiting for resources". To lend a cluster's GPUs one per job instead of holding one around the clock,
+use NVFLARE job pods (``flClient.nvflare.jobPods``, with ``maxGpus`` set to the GPUs FLIP may use); see the chart
+README's "NVFLARE job pods" section.
 
 Extra network egress
 ====================
 
-On top of the hub endpoints every node needs:
+On top of :ref:`deploy-trust-node-network`:
 
 .. list-table::
    :header-rows: 1
@@ -161,8 +170,9 @@ On top of the hub endpoints every node needs:
      - Needed for
    * - FL server, the kit's FL port
      - ``sync-kit`` adds this port to the chart's egress policy for you.
-   * - ``huggingface.co``, ``github.com``, ``raw.githubusercontent.com`` and PyPI
-     - The mock-data seed job (``trustData.seed``), on install and on every upgrade while it is enabled.
+   * - ``github.com``, ``codeload.github.com``, ``raw.githubusercontent.com``
+     - The sample-data seed job (``trustData.seed``) fetches its scripts from FLIP's repository, on install and on
+       every upgrade while it is enabled. It also needs the sample-data hosts in the general table.
    * - Your S3 vocabulary bucket
      - The OMOP vocabulary load job, only if ``omopDb.vocabLoad.s3Bucket`` is set.
 
@@ -257,8 +267,8 @@ the FL client starts.
 If you skip this step, the FL client pod stays ``Pending`` with a ``hostPath type check failed`` event naming the
 missing path.
 
-On a managed cluster (AKS): the kit from a Secret
-=================================================
+On a managed cluster (AKS, EKS): the kit from a Secret
+======================================================
 
 A managed node pool replaces nodes at will, so nothing may live on one. Put the kit in a Secret instead and deploy
 with ``flClient.kit.source=secret`` (FLIP#1390):
@@ -275,6 +285,8 @@ with ``flClient.kit.source=secret`` (FLIP#1390):
   ``deploy``, ``deploy-trust-k8s`` and ``upgrade-trust-k8s`` with that ``KIT`` then applies it. A run without it
   moves PGDATA back to the volume root (both databases crash-loop) and looks for the kit on the node (the FL client
   stays ``Pending``).
+- On EKS the overlay is ``values-eks.yaml`` (the same settings, for the EBS CSI default class). The
+  :doc:`EKS root <deploy-flip-node-aws-eks>` creates the cluster and runs both steps for you with ``make join``.
 - The overlays live beside the chart in the repository, not in the packaged chart, so a deploy from a chart tarball
   passes a checkout's copy by path.
 - ``kit-secret`` makes one key per mounted file in ``<release>-flip-trust-fl-kit``. It refuses a kit missing its
@@ -475,9 +487,10 @@ chart defaults, and the generated override still wins for the keys it sets. Do n
      - from the kit
      - The release every FLIP-built image runs. Set from the kit's ``DOCKER_TAG``; ``upgrade-trust-k8s TAG=`` moves
        it.
-   * - ``flClient.gpu.enabled`` / ``flClient.gpu.count``
-     - ``false`` / ``0``
-     - Request GPUs for the FL client. Needs the GPU Operator (see `GPUs`_).
+   * - ``flClient.gpu.enabled`` / ``flClient.gpu.count`` / ``flClient.gpu.allocation``
+     - ``false`` / ``0`` / ``devicePlugin``
+     - Give the FL client a GPU. Needs the GPU Operator (see `GPUs`_); ``allocation: runtime`` for a node with no
+       device plugin.
    * - ``trustData.seed.enabled``
      - ``true``
      - Loads the **mock** projects into OMOP (and Orthanc) on install and every upgrade. **Turn it off** for a site
