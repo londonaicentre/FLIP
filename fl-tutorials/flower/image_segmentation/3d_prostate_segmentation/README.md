@@ -36,13 +36,13 @@ grew out of — see [Where the reference trainer went](#where-the-reference-trai
 
 ## At a glance
 
-| | |
+| Item | Value |
 |---|---|
-| What you upload | the `app/` package (flat; every file listed below, the committed plan JSON included) |
-| Job type | `standard` (`job_type` in `app/config.json`; the `fl-apps/flower/standard` template — plain FedAvg over the planned DynUNet) |
-| Imaging | **on**, with **DICOM to NIfTI on** — three series per study; the whole-gland and zonal masks reach every trust's XNAT as data enrichment (`upload-prostate-labels`) |
-| Cohort query | `query.sql` (saved on the project, not uploaded; one row per series) |
-| Dataset | `make -C fl-tutorials prepare-prostate-local-data NUM_CASES=12` for the simulator; `download-prostate-data FOLDS=0` for the platform path |
+| What you upload | everything in `app/`, the committed plan included |
+| Job type | standard |
+| Imaging | on, DICOM to NIfTI on; masks uploaded as data enrichment |
+| Cohort query | `query.sql` |
+| Dataset | `make -C fl-tutorials prepare-prostate-local-data NUM_CASES=12` (simulator); `download-prostate-data FOLDS=0` (platform) |
 | Simulator | `make -C fl-tutorials sim-tutorial TUTORIAL=3d_prostate_segmentation FL_BACKEND=flower` (GPU; Flower only) |
 
 ## Folder structure

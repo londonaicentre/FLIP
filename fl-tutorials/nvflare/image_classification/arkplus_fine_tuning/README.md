@@ -23,14 +23,14 @@ legacy Executor API to the Client API. The job is defined entirely in Python via
 
 ## At a glance
 
-| | |
+| Item | Value |
 |---|---|
-| What you upload | the files in `app_files/` (`trainer.py`, `models.py`, `arkplus_flat_models.py`, `data_utils.py`, `loss_and_metrics.py`, `config.json`, `meta.json`) plus the `pretrained_weights.pt` that `make prepare-checkpoint` derives — the server loads it (`SERVER_CHECKPOINT`); clients receive the weights at round 0, never the file |
-| Job type | `standard` (`job_type` in `app_files/config.json`; `FlipFedAvgRecipe` with `aggregate_only_regex`) |
-| Imaging | **on**, with **DICOM to NIfTI off** — the cohort projects `accession_id` and the app reads the pulled DICOMs |
-| Cohort query | `query.sql` (saved on the project, not uploaded) |
-| Dataset | `make -C fl-tutorials download-arkplus-finetuning-data`; the raw Ark+ checkpoint `make download-raw-checkpoint` here (access-gated, see *Checkpoint setup*) |
-| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning` (GPU; `MAX_SAMPLES=128` smoke by default); `make export` here builds the job config without a GPU |
+| What you upload | everything in `app_files/`, plus the checkpoint from `make prepare-checkpoint` |
+| Job type | standard: FedAvg, but only the classification head is averaged |
+| Imaging | on, DICOM to NIfTI off |
+| Cohort query | `query.sql` |
+| Dataset | `make -C fl-tutorials download-arkplus-finetuning-data`, plus the raw Ark+ checkpoint (`make download-raw-checkpoint`) |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning` (GPU; `MAX_SAMPLES=128` by default) |
 
 ```mermaid
 flowchart LR
@@ -40,13 +40,6 @@ flowchart LR
     AGG --> S
     C -. "is_evaluate(): per-lesion AUC on the local split" .-> H["hub metrics, best model"]
 ```
-
-## Compatible job type
-
-`config.json["job_type"] = "standard"`. Each client runs [`app_files/trainer.py`](app_files/trainer.py)
-as an in-process Client-API script (`flare.init()` → `flare.receive()`/`flare.send()` round loop) via
-FLARE's `ClientAPIExecutor` (`in_process` mode). There is **no `validator.py`** — the held-out validation folds
-into the trainer's `flare.is_evaluate()` branch (server-driven evaluation: each site scores the final aggregated model on its own data).
 
 ## Target labels
 
@@ -286,7 +279,7 @@ run's `GLOBAL_ROUNDS`). If the simulation finished but packing failed (or you wa
 - [`app_files/data_utils.py`](app_files/data_utils.py): data loading, per-site resolution, DICOM parsing, transforms.
 - [`app_files/config.json`](app_files/config.json): model, training, finetuning and per-site data settings.
 
-There is **no `validator.py`** — validation runs in the trainer's `flare.is_evaluate()` branch.
+There is **no `validator.py`** — validation runs in the trainer's `flare.is_evaluate()` branch: each site scores the final aggregated model on its own data, in the same in-process Client-API script.
 
 ## Dependency note
 

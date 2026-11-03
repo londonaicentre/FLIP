@@ -32,13 +32,13 @@ flowchart LR
 
 ## At a glance
 
-| | |
+| Item | Value |
 |---|---|
-| What you upload | the `app/` package, with the `model.pt` that `make download-checkpoints` places in it (the e2e smoke uploads it as one of the model files) |
-| Job type | `evaluation` (`job_type` in `app/config.json`; the `fl-apps/flower/evaluation` template) |
-| Imaging | **on**, with **DICOM to NIfTI on** — the app pairs each converted `input_*.nii.gz` with the `label_*.nii.gz` uploaded as data enrichment and refuses to run when no pair exists (see the training tutorial's *data enrichment* section) |
-| Cohort query | none of its own: the project uses the training tutorial's [`query.sql`](../../image_segmentation/3d_spleen_segmentation/query.sql) |
-| Dataset | `make -C fl-tutorials download-spleen-data` (MSD images + the checkpoint, into `fl-tutorials/data/`) |
+| What you upload | everything in `app/`, plus `model.pt` from `make download-checkpoints` |
+| Job type | evaluation |
+| Imaging | on, DICOM to NIfTI on; labels uploaded as data enrichment |
+| Cohort query | the training tutorial's [`query.sql`](../../image_segmentation/3d_spleen_segmentation/query.sql) |
+| Dataset | `make -C fl-tutorials download-spleen-data` |
 | Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower` (GPU) |
 
 ## Key Features

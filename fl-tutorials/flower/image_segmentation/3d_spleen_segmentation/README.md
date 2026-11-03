@@ -25,13 +25,13 @@ The cohort query (`query.sql`) is copied verbatim from the FLARE tutorial.
 
 ## At a glance
 
-| | |
+| Item | Value |
 |---|---|
-| What you upload | the `app/` package (every file listed below) |
-| Job type | `standard` (`job_type` in `app/config.json`; the `fl-apps/flower/standard` template) |
-| Imaging | **on**, with **DICOM to NIfTI on** — the cohort projects `accession_id`, XNAT converts the pulled CT and the app reads `input_*.nii.gz` next to the `label_*.nii.gz` you upload as data enrichment (below) |
-| Cohort query | `query.sql` (saved on the project, not uploaded) |
-| Dataset | `make -C fl-tutorials download-spleen-data` (`NUM_CASES=41` before enriching a platform project; shared with the FLARE tutorial) |
+| What you upload | everything in `app/` |
+| Job type | standard |
+| Imaging | on, DICOM to NIfTI on; labels uploaded as [data enrichment](#running-on-a-real-flip-project-data-enrichment) |
+| Cohort query | `query.sql` |
+| Dataset | `make -C fl-tutorials download-spleen-data` |
 | Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower` (GPU) |
 
 ## Set up the project

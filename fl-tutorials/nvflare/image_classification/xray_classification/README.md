@@ -10,14 +10,14 @@ validation runs server-side via cross-site model evaluation.
 
 ## At a glance
 
-| | |
+| Item | Value |
 |---|---|
-| What you upload | the files in `app_files/` (`trainer.py`, `models.py`, `transforms.py`, `data_utils.py`, `loss_and_metrics.py`, `config.json`) |
-| Job type | `standard` (`job_type` in `app_files/config.json`; FedAvg via `FlipFedAvgRecipe`) |
-| Imaging | **on** — the cohort projects `accession_id` and the app reads the pulled DICOMs; create the project with **DICOM to NIfTI off** |
-| Cohort query | `query.sql` (saved on the project, not uploaded; `query_novocab.sql` for a trust without the OMOP vocabulary) |
+| What you upload | everything in `app_files/` |
+| Job type | standard |
+| Imaging | on, DICOM to NIfTI off |
+| Cohort query | `query.sql` (`query_novocab.sql` for a trust without the OMOP vocabulary) |
 | Dataset | `make -C fl-tutorials download-xray-data` |
-| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=xray_classification` (GPU); `make export` here builds the job config without one |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=xray_classification` (GPU) |
 
 ## Data requirements
 

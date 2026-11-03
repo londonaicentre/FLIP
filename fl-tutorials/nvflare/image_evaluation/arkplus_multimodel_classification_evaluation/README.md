@@ -50,22 +50,18 @@ flowchart LR
 
 ## At a glance
 
-| | |
+| Item | Value |
 |---|---|
-| What you upload | the files in `app_files/` (`evaluator.py`, `models.py`, `arkplus_flat_models.py`, `data_utils.py`, `metrics_utils.py`, `config.json`, `meta.json`) plus the two checkpoints `make prepare-checkpoint` places there — the server loads them; clients never open a `.pt` |
-| Job type | `evaluation` (`job_type` in `app_files/config.json`; `FlipEvalRecipe`, one validate task per entry of `config.json["models"]`) |
-| Imaging | **on**, with **DICOM to NIfTI off** — the cohort projects `accession_id` and the evaluator reads the pulled DICOMs |
-| Cohort query | `query.sql` (the hold-out chest X-ray set; saved on the project, not uploaded) |
-| Dataset | `make -C fl-tutorials download-arkplus-eval-data`; the raw Ark+ checkpoint `make download-raw-checkpoint` here (access-gated); the fine-tuned one is fetched by `make prepare-checkpoint` |
-| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=arkplus_multimodel_classification_evaluation` (GPU, both models resident; `MAX_SAMPLES=128` smoke by default); `make export` here builds the job config without a GPU |
+| What you upload | everything in `app_files/`, plus the two checkpoints from `make prepare-checkpoint` |
+| Job type | evaluation, one validate task per model |
+| Imaging | on, DICOM to NIfTI off |
+| Cohort query | `query.sql` (the hold-out set) |
+| Dataset | `make -C fl-tutorials download-arkplus-eval-data`, plus the raw Ark+ checkpoint (`make download-raw-checkpoint`) |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=arkplus_multimodel_classification_evaluation` (GPU; `MAX_SAMPLES=128` by default) |
 
 Example radiographs, one per target lesion, are in the fine-tuning tutorial's
 [`docs/dataset_examples.png`](../../image_classification/arkplus_fine_tuning/docs/dataset_examples.png)
 (same dataset family; this tutorial scores the hold-out splits).
-
-## Compatible job type
-
-This tutorial is designed for `JOB_TYPE=evaluation`.
 
 ## Prerequisites
 

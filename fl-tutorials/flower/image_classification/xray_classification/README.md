@@ -32,13 +32,13 @@ and matches the chest-X-ray data seeded into the trust mock OMOP DB
 
 ## At a glance
 
-| | |
+| Item | Value |
 |---|---|
-| What you upload | the `app/` package (every file listed below) |
-| Job type | `standard` (`job_type` in `app/config.json`; the `fl-apps/flower/standard` template) |
-| Imaging | **on** — the cohort projects `accession_id` and the app reads the pulled DICOMs; create the project with **DICOM to NIfTI off** |
-| Cohort query | `query.sql` (saved on the project, not uploaded; `query_novocab.sql` for a trust without the OMOP vocabulary) |
-| Dataset | `make -C fl-tutorials download-xray-data` (shared with the FLARE tutorial) |
+| What you upload | everything in `app/` |
+| Job type | standard |
+| Imaging | on, DICOM to NIfTI off |
+| Cohort query | `query.sql` (`query_novocab.sql` for a trust without the OMOP vocabulary) |
+| Dataset | `make -C fl-tutorials download-xray-data` |
 | Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=xray_classification FL_BACKEND=flower` (GPU) |
 
 ## Folder structure

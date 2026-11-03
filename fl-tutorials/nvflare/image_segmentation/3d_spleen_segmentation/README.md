@@ -14,19 +14,15 @@ The training code is adapted from the MONAI spleen example:
 
 ## At a glance
 
-| | |
+| Item | Value |
 |---|---|
-| What you upload | the files in `app_files/` (`trainer.py`, `models.py`, `transforms.py`, `config.json`) |
-| Job type | `standard` (`job_type` in `app_files/config.json`; FedAvg via `FlipFedAvgRecipe`) |
-| Imaging | **on**, with **DICOM to NIfTI on** — the cohort projects `accession_id`, XNAT converts the pulled CT and the app reads `input_*.nii.gz` next to the `label_*.nii.gz` you upload as data enrichment (below) |
-| Cohort query | `query.sql` (saved on the project, not uploaded) |
-| Dataset | `make -C fl-tutorials download-spleen-data` (`NUM_CASES=41` before enriching a platform project) |
-| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation` (GPU); `make export` here builds the job config without one |
-| MAP packaging | `export/metadata.json` + `export/inference.json` (not uploaded; see the docs' *Wrap a model for deployment*) |
-
-## Compatible job type
-
-This tutorial is designed for `JOB_TYPE=standard`.
+| What you upload | everything in `app_files/` |
+| Job type | standard |
+| Imaging | on, DICOM to NIfTI on; labels uploaded as [data enrichment](#running-on-a-real-flip-project-data-enrichment) |
+| Cohort query | `query.sql` |
+| Dataset | `make -C fl-tutorials download-spleen-data` |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation` (GPU) |
+| MAP packaging | `export/metadata.json` and `export/inference.json` (not uploaded) |
 
 ## Data requirements
 

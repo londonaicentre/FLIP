@@ -29,18 +29,14 @@ Nothing is trained and no weights are aggregated: the one round is a validate ta
 
 ## At a glance
 
-| | |
+| Item | Value |
 |---|---|
-| What you upload | the files in `app_files/` (`evaluator.py`, `models.py`, `transforms.py`, `config.json`) plus the `model.pt` that `make download-checkpoints` places there |
-| Job type | `evaluation` (`job_type` in `app_files/config.json`; `FlipEvalRecipe`) |
-| Imaging | **on**, with **DICOM to NIfTI on** — the evaluator pairs each converted `input_*.nii.gz` with the `label_*.nii.gz` uploaded as data enrichment and refuses to run when no pair exists (see the training tutorial's *data enrichment* section) |
-| Cohort query | none of its own: the project uses the training tutorial's [`query.sql`](../../image_segmentation/3d_spleen_segmentation/query.sql) |
-| Dataset | `make -C fl-tutorials download-spleen-data`; checkpoint `make download-checkpoints` here (`make run` / `make export` do it for you) |
-| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation` (GPU); `make export` here builds the job config without one |
-
-## Compatible job type
-
-This tutorial is designed for `JOB_TYPE=evaluation`.
+| What you upload | everything in `app_files/`, plus `model.pt` from `make download-checkpoints` |
+| Job type | evaluation |
+| Imaging | on, DICOM to NIfTI on; labels uploaded as data enrichment |
+| Cohort query | the training tutorial's [`query.sql`](../../image_segmentation/3d_spleen_segmentation/query.sql) |
+| Dataset | `make -C fl-tutorials download-spleen-data` |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation` (GPU) |
 
 ## Prerequisites
 
