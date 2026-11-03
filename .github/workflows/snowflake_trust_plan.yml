@@ -1,0 +1,109 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Snowflake trust: plan on pull request (epic #1589).
+#
+# Plans the platform and workload roots against the staging trust account and writes both plans
+# to the job summary. The twin of terraform_plan.yml for the hub, with one deliberate difference:
+# the plan reads nothing from Snowflake.
+#
+#   * The job declares `environment: sf-stag-plan`. Snowflake maps one OIDC subject to one user,
+#     so that environment's subject logs in as FLIP_CI_PLAN_USER, whose only role is
+#     FLIP_PLATFORM_CI_READ (warehouse USAGE, nothing else). A pull request can never present
+#     the apply user's subject: that is `environment:sf-stag`, which admits develop alone.
+#   * A refreshed plan cannot be made read-only on Snowflake (reading a task needs MANAGE GRANTS,
+#     MONITOR on a user hides its properties, stages and procedures need data access), so the
+#     plan runs with -refresh=false: the diff of this change against the stored state. Changes
+#     made outside Terraform are the drift run's job (snowflake_trust_drift.yml).
+#   * The AWS role is the Snowflake state plan role from terraform_ci_bootstrap: GetObject on
+#     snowflake-trust/* and nothing else, trusted for this file at a pull-request merge ref.
+#
+# Nothing runs until the repository variable SF_CI_ENABLED is `true`: the state roles, the
+# environments and the migrated state must all exist first (README "CI").
+name: Snowflake Trust Plan
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "trust/deploy/terraform/snowflake/**"
+      - "trust/deploy/terraform/snowflake-platform/**"
+      - "trust/deploy/terraform/scripts/sf-ci-tofu.sh"
+      - ".github/workflows/snowflake_trust_plan.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sf-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Plan (sf-stag, ${{ matrix.root }})
+    if: github.repository == 'londonaicentre/FLIP' && github.event.pull_request.head.repo.full_name == github.repository && vars.SF_CI_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: sf-stag-plan
+    permissions:
+      contents: read
+      id-token: write # the OIDC tokens for AWS (state) and Snowflake (login)
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        root: [platform, workload]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Configure AWS credentials (state, read only)
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ vars.SF_STATE_PLAN_ROLE_ARN }}
+          role-session-name: flip-sf-plan-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Snowflake login (workload identity, no stored key)
+        uses: snowflakedb/snowflake-actions@424478745f451798751b44a7bde98080aba1cf9c # v3.5.2
+        with:
+          snowflake-cli: "true"
+          cli-version: "3.20.0"
+          use-oidc: "true"
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: "1.13.2"
+          tofu_wrapper: false
+      - name: Plan
+        env:
+          SF_TRUST_CODE: ${{ vars.SF_TRUST_CODE }}
+          SF_WAREHOUSE: ${{ vars.SF_WAREHOUSE }}
+          SF_TFSTATE_BUCKET: ${{ vars.SF_TFSTATE_BUCKET }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          SF_DEPLOY_USER_PUBLIC_KEY: ${{ vars.SF_DEPLOY_USER_PUBLIC_KEY }}
+          SNOWFLAKE_ORGANIZATION_NAME: ${{ secrets.SNOWFLAKE_ORGANIZATION_NAME }}
+          SNOWFLAKE_ACCOUNT_NAME: ${{ secrets.SNOWFLAKE_ACCOUNT_NAME }}
+          SF_PLATFORM_STATE_PASSPHRASE: ${{ secrets.SF_PLATFORM_STATE_PASSPHRASE }}
+          SF_WORKLOAD_STATE_PASSPHRASE: ${{ secrets.SF_WORKLOAD_STATE_PASSPHRASE }}
+        run: trust/deploy/terraform/scripts/sf-ci-tofu.sh "${{ matrix.root }}" plan
+      - name: Write the plan to the job summary
+        if: always()
+        working-directory: trust/deploy/terraform/${{ matrix.root == 'platform' && 'snowflake-platform' || 'snowflake' }}
+        env:
+          TF_VAR_state_passphrase: ${{ matrix.root == 'platform' && secrets.SF_PLATFORM_STATE_PASSPHRASE || secrets.SF_WORKLOAD_STATE_PASSPHRASE }}
+        run: |
+          [ -f tfplan ] || exit 0
+          {
+            echo "### Snowflake ${{ matrix.root }} root, sf-stag (refresh off)"
+            echo '```'
+            tofu show -no-color tfplan | tail -c 60000
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

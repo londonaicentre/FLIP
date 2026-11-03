@@ -1,0 +1,333 @@
+<!--
+    Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+        http://www.apache.org/licenses/LICENSE-2.0
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+-->
+
+# Snowflake platform tier, applied by CI (FLIP#1581, epic #1589)
+
+This root creates the trust's identities and the platform database:
+
+- the six `FLIP_<CODE>_*` roles and the role hierarchy (`DEPLOY`, `SVC`, `OMOP_READER`,
+  `OMOP_LOADER`, `OBSERVER`, `CONVERTER`), nothing granted to `PUBLIC`;
+- the deploy `SERVICE` user, public key only;
+- the deploy role's four account privileges, and its use of the trust warehouse;
+- the `FLIP_PLATFORM` database: the event table, the observability views and the prune task.
+
+It is applied as **`FLIP_PLATFORM_CI`**, a contained role that
+[`../snowflake-bootstrap`](../snowflake-bootstrap/README.md) creates. That role may create roles,
+users and databases, and may pass on only the deploy role's privileges and the warehouse's use,
+which it holds with the grant option. It holds no `MANAGE GRANTS`, no system role and no account
+policy, so nothing applied here can reach `ACCOUNTADMIN`. Everything that needs `ACCOUNTADMIN`
+(resource monitor, warehouse, `EVENT_TABLE` parameter, account policies, egress integration, and the
+CI role itself) lives in the bootstrap root, applied rarely by the just-in-time operator. Routine
+work belongs in [`../snowflake`](../snowflake/README.md), the workload root, applied as
+`FLIP_<CODE>_DEPLOY_USER`. The three roots keep **separate state**.
+
+## The three tiers
+
+| | Bootstrap (`../snowflake-bootstrap`) | Platform (here) | Workload (`../snowflake`) |
+| --- | --- | --- | --- |
+| Identity | person operator, passkey MFA, JIT | CI service user, GitHub OIDC | `FLIP_<CODE>_DEPLOY_USER` (key pair) |
+| Role | `ACCOUNTADMIN` | `FLIP_PLATFORM_CI` (plan: `FLIP_PLATFORM_CI_READ`) | `FLIP_<CODE>_DEPLOY` |
+| Frequency | once per account, then rarely | on merge | every deploy |
+| Creates | CI role and users, resource monitor, trust warehouse, `EVENT_TABLE` parameter, account policies, EAI | roles, deploy user, account grants, `FLIP_PLATFORM` (event table, views, task) | database, schemas, pools, image repository, stages, nightly task |
+| State | `terraform-bootstrap.<env>.tfstate` | `terraform-platform.<env>.tfstate` | `terraform.<env>.tfstate` |
+
+The **account privileges** `FLIP_<CODE>_DEPLOY` holds are exactly:
+
+```
+CREATE DATABASE, CREATE COMPUTE POOL, BIND SERVICE ENDPOINT, EXECUTE TASK
+```
+
+Deliberately absent: `CREATE ROLE`, `CREATE USER`, `CREATE INTEGRATION`, `CREATE NETWORK POLICY`,
+`MANAGE GRANTS`, any `APPLY <policy>`, `MONITOR USAGE`. A compromised deploy key therefore cannot
+mint an identity, open an egress path, detach an account policy or re-grant anything it does not
+own. Both roots' pytest guards fail if that list ever grows.
+
+### How the tiers hand over
+
+The workload role **owns** every object it creates, and an owner may grant privileges on its own
+objects **without** `MANAGE GRANTS`. What an owner cannot do is name a role it does not hold. So
+this root grants `SVC`, `OMOP_READER`, `OMOP_LOADER`, `OBSERVER` and `CONVERTER` **to** `FLIP_<CODE>_DEPLOY`
+once (`roles.tf`), and from then on a routine apply can say "grant `SELECT` on this table to
+`FLIP_<CODE>_OMOP_READER`" entirely within its own privileges. Ownership stays with the deploy
+role throughout.
+
+The trust warehouse lives in the bootstrap root, because assigning a resource monitor to a
+warehouse needs `ACCOUNTADMIN`. That root owns `FLIP_<CODE>_WH` with `FLIP_<CODE>_RM` attached;
+this one grants the deploy role, by name, USAGE, OPERATE and MONITOR (no MODIFY, no OWNERSHIP), so the cost guard is
+out of the deploy key's reach. `EXECUTE TASK` is the deploy role's fourth account privilege so it
+can run the nightly pool-suspend task it owns.
+
+There is **no remote-state data source** between the roots. Both derive every name from
+`trust_code` by the contract in [#1589](https://github.com/londonaicentre/FLIP/issues/1589), so
+neither can read, lock or corrupt the other's state.
+
+## Object names
+
+With `trust_code = GSTT`:
+
+| Object | Name |
+| ------ | ---- |
+| Roles | `FLIP_GSTT_DEPLOY`, `FLIP_GSTT_SVC`, `FLIP_GSTT_OMOP_READER`, `FLIP_GSTT_OMOP_LOADER`, `FLIP_GSTT_OBSERVER`, `FLIP_GSTT_CONVERTER` |
+| Deploy user | `FLIP_GSTT_DEPLOY_USER` (`TYPE = SERVICE`, key pair) |
+| Egress integration | `FLIP_GSTT_HUB_EAI` (optional, off by default) |
+| Account policies | `FLIP_GSTT_ADMIN_NP`, `FLIP_GSTT_PASSWORD_POLICY`, `FLIP_GSTT_SESSION_POLICY` |
+| Resource monitor | `FLIP_GSTT_RM` |
+| Platform database | `FLIP_PLATFORM`, schemas `OBS` (the event table and its views) and `POLICIES` |
+| Event table | `FLIP_PLATFORM.OBS.FLIP_EVENTS` |
+| Observability views | `FLIP_PLATFORM.OBS.V_EVENTS`, `V_SERVICE_STATUS`, `V_SERVICE_RESTARTS`, `V_RECENT_ERRORS`, `V_FL_CLIENT_LOGS`, `V_COMPUTE_POOL_COST`, `V_WAREHOUSE_COST` |
+| Retention task | `FLIP_PLATFORM.OBS.FLIP_PLATFORM_PRUNE_EVENTS` |
+
+`FLIP_<CODE>_ADMIN` is **retired** (two-tier decision, 2026-10-20, epic #1589). See the migration
+note below.
+
+The event table lives in `FLIP_PLATFORM`, not in `FLIP_TRUST_<CODE>`, because the `EVENT_TABLE`
+account parameter must point somewhere that outlives any one trust: in the trust database a
+workload `make destroy` would silently turn the account's logging off. `FLIP_<CODE>_OBSERVER` is
+granted `USAGE` on the database and schema and `SELECT` on the event table.
+
+## Observability (FLIP#1584)
+
+Everything a trust on Snowflake can be watched with lives in `FLIP_PLATFORM.OBS`, and
+`FLIP_<CODE>_OBSERVER` is the only role that can read it.
+
+| Piece | Where | Why here and not in the workload root |
+| ----- | ----- | ------------------------------------- |
+| Event table `FLIP_EVENTS` + the `EVENT_TABLE` account parameter | `observability.tf` | Setting an account parameter needs `ACCOUNTADMIN`, and a table in `FLIP_TRUST_<CODE>` would go with a workload `make destroy` |
+| Views over the event table (`V_EVENTS`, `V_SERVICE_STATUS`, `V_SERVICE_RESTARTS`, `V_RECENT_ERRORS`, `V_FL_CLIENT_LOGS`) | `observability_views.tf` | They sit beside the table they read, and a workload destroy leaves them standing |
+| Cost views (`V_COMPUTE_POOL_COST`, `V_WAREHOUSE_COST`) | `observability_views.tf` | A view runs with its **owner's** rights, so a view over `SNOWFLAKE.ACCOUNT_USAGE` can only be owned by a role holding `IMPORTED PRIVILEGES` on database `SNOWFLAKE`. The deploy role holds four account privileges and that is not one of them |
+| Retention | `observability.tf`, task `FLIP_PLATFORM_PRUNE_EVENTS` | Platform-owned, so the deploy key can neither lengthen the window nor switch it off |
+| Dashboard | [`dashboards/`](dashboards/) | Snowsight has no API and no provider resource, so the dashboard is in-repo as the SQL of its tiles |
+
+Who sees what:
+
+- `FLIP_<CODE>_OBSERVER` holds `USAGE` on `FLIP_PLATFORM` and its `OBS` schema, `SELECT` on the
+  event table and `SELECT` on the views (current and future).
+- `FLIP_<CODE>_OBSERVER` is granted **only** to `FLIP_<CODE>_DEPLOY`, never into the service
+  hierarchy. `FLIP_<CODE>_SVC` has no `USAGE` on `FLIP_PLATFORM` at all, so a running container
+  cannot read its neighbours' logs.
+- The observer gets **no** `IMPORTED PRIVILEGES` and no `SNOWFLAKE` database role. It reads
+  account usage through the owner's-rights views and nowhere else.
+
+### Retention
+
+`DATA_RETENTION_TIME_IN_DAYS` on an event table is **Time Travel, not row expiry**: Snowflake
+never deletes event rows by itself. So the retention policy is the daily task
+`FLIP_PLATFORM_PRUNE_EVENTS`, which deletes records older than `event_table_retention_days`
+(default 14, capped at 90), and the table's Time Travel window is held at one day so a pruned row
+is not kept for another week in storage. The task runs on `FLIP_<CODE>_WH`, the platform-owned
+warehouse with the resource monitor attached.
+
+### Log volume
+
+There is deliberately **no account, database or schema `LOG_LEVEL` parameter** in either root:
+that would collect Snowflake-internal output for every object in the account and bill its storage.
+Verbosity is set per service, in each spec's `logExporters.eventTableConfig.logLevel`, from
+`service_log_level` in the workload root (default `INFO`; `DEBUG` and `TRACE` are refused by a
+variable validation, and a static guard keeps them out of the tfvars reach).
+
+### The dashboard
+
+[`dashboards/flip_trust_observability.sql`](dashboards/flip_trust_observability.sql) is the
+dashboard, one statement per `-- TILE:` marker; [`dashboards/README.md`](dashboards/README.md) says
+how to paste it into Snowsight as a dashboard or run it as a worksheet. The static guards pin both
+directions: every view Terraform creates has a tile, and every view a tile reads exists.
+
+## Credentials
+
+Every credential comes from the environment. Nothing here accepts one as a Terraform variable: a
+password or a passcode in a variable would land in state and in every plan file.
+
+### Break-glass operator (just-in-time, the default)
+
+The default identity is `FLIP_PLATFORM_OPERATOR`, a key-pair `SERVICE` user that **holds no role
+while idle**. An admin signed in to Snowsight with MFA (any method, passkeys included) grants it the
+platform role immediately before an apply and revokes it straight after, so every privileged
+session is gated by a human MFA login and leaves a GRANT/REVOKE pair in the account's audit trail.
+This is the pattern for a passkey-only admin, where Terraform cannot complete the MFA itself.
+
+One-off setup, as `ACCOUNTADMIN` in Snowsight (the key pair is generated on the operator machine,
+encrypted, exactly like the deploy user's):
+
+```sql
+USE ROLE ACCOUNTADMIN;
+CREATE USER FLIP_PLATFORM_OPERATOR TYPE = SERVICE
+  RSA_PUBLIC_KEY = '<public key body>'
+  COMMENT = 'FLIP break-glass operator: no role while idle; granted ACCOUNTADMIN only for an apply';
+-- Only from the operator machine. A user-level policy overrides the account policy for this user.
+-- The rule lives in a small ACCOUNTADMIN-owned database that neither root manages, so no apply
+-- can widen or drop the operator's own fence.
+CREATE DATABASE IF NOT EXISTS FLIP_SECURITY COMMENT = 'Hand-managed break-glass objects; not in any Terraform root';
+CREATE SCHEMA IF NOT EXISTS FLIP_SECURITY.NETWORK;
+CREATE NETWORK RULE FLIP_SECURITY.NETWORK.OPERATOR_IPS MODE = INGRESS TYPE = IPV4 VALUE_LIST = ('<ip>/32');
+CREATE NETWORK POLICY FLIP_PLATFORM_OPERATOR_POLICY ALLOWED_NETWORK_RULE_LIST = ('FLIP_SECURITY.NETWORK.OPERATOR_IPS');
+ALTER USER FLIP_PLATFORM_OPERATOR SET NETWORK_POLICY = FLIP_PLATFORM_OPERATOR_POLICY;
+```
+
+This root never creates, alters or grants to the operator or `FLIP_SECURITY`; a static guard
+enforces the first, because an identity that manages itself can keep its own privilege.
+
+Each apply:
+
+```bash
+make jit-grant          # prints: GRANT ROLE ACCOUNTADMIN TO USER FLIP_PLATFORM_OPERATOR; run it in Snowsight
+export SNOWFLAKE_USER=FLIP_PLATFORM_OPERATOR
+export SNOWFLAKE_PRIVATE_KEY="$(cat ~/.snowflake/flip_platform_operator.p8)"   # the encrypted PEM itself; the provider has no *_PATH variable
+read -rsp 'Operator key passphrase: ' SNOWFLAKE_PRIVATE_KEY_PASSPHRASE; echo; export SNOWFLAKE_PRIVATE_KEY_PASSPHRASE
+make plan && make apply # apply prints the REVOKE when it ends, success or failure
+make jit-revoke         # the same REVOKE, if you need it again; then SHOW GRANTS TO USER ... is empty
+```
+
+Audit: `SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY` and `QUERY_HISTORY` filtered on
+`FLIP_PLATFORM_OPERATOR`, and `GRANTS_TO_USERS` for the grant windows.
+
+### Other authenticators
+
+```bash
+export SNOWFLAKE_USER=jane.doe            # a PERSON user with MFA
+export SNOWFLAKE_PASSWORD=...             # read from your password manager, never typed into a file
+export SNOWFLAKE_PASSCODE=...             # the current TOTP code
+```
+
+`authenticator = "USERNAMEPASSWORDMFA"` pairs the password with that passcode, for an admin
+enrolled with an authenticator app. `authenticator = "EXTERNALBROWSER"` delegates to the account's
+IdP and needs no password in the environment at all; use it wherever the account is federated.
+
+`platform_role` has **no default**: the operator names it in their gitignored tfvars file, so no
+privileged role name is committed.
+
+### Keep a second emergency account admin
+
+Create a **second** `ACCOUNTADMIN` person user with its **own** MFA enrolment and credentials held
+offline (a sealed envelope in the usual place for break-glass credentials). Snowflake will not let
+you back in if the only admin's authenticator is lost, and this root cannot help you: it is applied
+*through* that identity. Review the pair whenever someone leaves.
+
+## Usage
+
+```bash
+cd trust/deploy/terraform/snowflake-platform
+cp terraform.tfvars.example terraform.development.tfvars   # gitignored; fill it in
+make plan
+make apply        # prints the BREAK GLASS banner, asks twice, then applies
+make output
+make lint         # fmt, validate, tflint, checkov
+make test         # the credential-free pytest guards
+```
+
+`make apply` and `make destroy` both print a loud banner and require the operator to type
+`BREAK GLASS` before anything else happens; `apply` then shows the saved plan and asks a second
+time. No target skips a prompt.
+
+State and backend work exactly as in the workload root (partial backend configuration, local state
+plus OpenTofu state encryption on the test account, a site-chosen remote backend in production),
+but the state **file name differs** so the two roots can never share one.
+
+## Migrating an account bootstrapped with FLIP_<CODE>_ADMIN
+
+Earlier drafts of #1581 bootstrapped a single `FLIP_<CODE>_ADMIN` role holding `CREATE ROLE`,
+`CREATE USER`, `CREATE INTEGRATION`, `CREATE NETWORK POLICY` and `BIND SERVICE ENDPOINT WITH GRANT
+OPTION`, and ran every apply as it. That role is retired. On an account already bootstrapped that
+way, as `ACCOUNTADMIN`:
+
+```sql
+USE ROLE ACCOUNTADMIN;
+
+-- 1. See what it holds and owns before changing anything.
+SHOW GRANTS TO ROLE FLIP_GSTT_ADMIN;
+SHOW GRANTS ON ACCOUNT;
+
+-- 2. Take the account privileges away.
+REVOKE CREATE DATABASE, CREATE WAREHOUSE, CREATE COMPUTE POOL, CREATE ROLE, CREATE USER,
+       CREATE INTEGRATION, CREATE NETWORK POLICY, EXECUTE TASK, MONITOR USAGE
+  ON ACCOUNT FROM ROLE FLIP_GSTT_ADMIN;
+REVOKE BIND SERVICE ENDPOINT ON ACCOUNT FROM ROLE FLIP_GSTT_ADMIN;
+
+-- 3. Move everything it owns to the workload role. Repeat per object type that SHOW GRANTS
+--    reported; ownership transfer is explicit in Snowflake.
+GRANT OWNERSHIP ON DATABASE FLIP_TRUST_GSTT TO ROLE FLIP_GSTT_DEPLOY COPY CURRENT GRANTS;
+GRANT OWNERSHIP ON ALL SCHEMAS IN DATABASE FLIP_TRUST_GSTT TO ROLE FLIP_GSTT_DEPLOY COPY CURRENT GRANTS;
+GRANT OWNERSHIP ON ALL TABLES IN DATABASE FLIP_TRUST_GSTT TO ROLE FLIP_GSTT_DEPLOY COPY CURRENT GRANTS;
+GRANT OWNERSHIP ON ALL STAGES IN DATABASE FLIP_TRUST_GSTT TO ROLE FLIP_GSTT_DEPLOY COPY CURRENT GRANTS;
+GRANT OWNERSHIP ON ALL TASKS IN DATABASE FLIP_TRUST_GSTT TO ROLE FLIP_GSTT_DEPLOY COPY CURRENT GRANTS;
+GRANT OWNERSHIP ON WAREHOUSE FLIP_GSTT_WH TO ROLE FLIP_GSTT_DEPLOY COPY CURRENT GRANTS;
+GRANT OWNERSHIP ON COMPUTE POOL FLIP_GSTT_POOL TO ROLE FLIP_GSTT_DEPLOY COPY CURRENT GRANTS;
+GRANT OWNERSHIP ON COMPUTE POOL FLIP_GSTT_JOB_POOL TO ROLE FLIP_GSTT_DEPLOY COPY CURRENT GRANTS;
+GRANT OWNERSHIP ON IMAGE REPOSITORY FLIP_TRUST_GSTT.APP.IMAGES TO ROLE FLIP_GSTT_DEPLOY COPY CURRENT GRANTS;
+
+-- 4. Nothing should hold it any more.
+REVOKE ROLE FLIP_GSTT_ADMIN FROM USER FLIP_GSTT_DEPLOY_USER;
+REVOKE ROLE FLIP_GSTT_ADMIN FROM ROLE SYSADMIN;
+
+-- 5. Drop it.
+DROP ROLE FLIP_GSTT_ADMIN;
+```
+
+Then apply this root (it adopts or creates the roles, the user and the account grant), and
+re-apply the workload root. Expect the workload plan to show grant churn and nothing destructive;
+read it before typing `yes`. If the old state file mixed both tiers, split it with
+`tofu state rm` for the moved resources rather than letting the workload root destroy them.
+
+## CI
+
+**Static checks**, credential-free, in `validate_terraform.yml`: `fmt`, `validate`, tflint (bundled
+terraform ruleset, there is no Snowflake plugin), checkov, and the pytest guards in `tests/`.
+
+**Plan, apply and drift** (epic #1589), for this root and the workload root together, through
+`../scripts/sf-ci-tofu.sh`:
+
+| Workflow | When | Environment, Snowflake user, role | What it does |
+|----------|------|-----------------------------------|--------------|
+| `snowflake_trust_plan.yml` | pull request | `sf-stag-plan`, `FLIP_CI_PLAN_USER`, `FLIP_PLATFORM_CI_READ` | `plan -refresh=false -lock=false`, both plans in the job summary |
+| `snowflake_trust_apply.yml` | push to develop | `sf-stag`, `FLIP_CI_APPLY_USER`, `FLIP_PLATFORM_CI` then `FLIP_<CODE>_DEPLOY` | platform apply, then workload apply |
+| `snowflake_trust_drift.yml` | nightly | none of its own | dispatches the apply workflow with `mode=drift` (a refreshed plan, no apply) and keeps one issue open |
+
+- **No stored Snowflake credential.** Both users log in with the job's GitHub OIDC token
+  (workload identity federation); Snowflake maps one subject to one user, so the plan and apply
+  jobs use different environments. `sf-stag` admits develop only.
+- **Pull-request plans read nothing.** A refreshed plan cannot be read-only here: reading the
+  prune task needs MANAGE GRANTS, MONITOR on a user hides its properties (the plan then replaces
+  the user), and stages and procedures need data access. So a PR plan shows the change against the
+  stored state, and changes made outside Terraform are found by the nightly drift run, which uses
+  the apply identity from develop.
+- **State** is in the hub account's state bucket under `snowflake-trust/<CODE>/`, reached through
+  the Snowflake state roles of `terraform_ci_bootstrap` (plan: read; apply: read and write; no
+  other AWS permission), and still OpenTofu-encrypted with the passphrases held as environment
+  secrets.
+- **Off until the account side exists.** Every job waits for the repository variable
+  `SF_CI_ENABLED=true`. Before setting it: the state roles applied in the AWS account, the
+  environments' variables (`AWS_REGION`, `SF_TFSTATE_BUCKET`, `SF_STATE_PLAN_ROLE_ARN` /
+  `SF_STATE_APPLY_ROLE_ARN`, `SF_TRUST_CODE`, `SF_WAREHOUSE`, `SF_DEPLOY_USER_PUBLIC_KEY`) and
+  secrets (`SNOWFLAKE_ORGANIZATION_NAME`, `SNOWFLAKE_ACCOUNT_NAME`,
+  `SF_PLATFORM_STATE_PASSPHRASE`, `SF_WORKLOAD_STATE_PASSPHRASE`), a platform apply with
+  `ci_apply_user_name = "FLIP_CI_APPLY_USER"`, and each root's laptop state moved into the bucket
+  with `sf-ci-tofu.sh <root> migrate`.
+- Images, kit secrets, services and the self-test gate are not in these workflows yet.
+
+## Open points
+
+- **No event-table resource.** The 2.x provider has none, so `observability.tf` creates the table,
+  and `grants.tf` grants `SELECT` on it, through `snowflake_execute` statement pairs whose reverts
+  undo them. Replace with first-class resources when they appear.
+- **`EVENT_TABLE` is account-wide,** so an account hosting two trusts points at the last one
+  applied. One trust per account is the tested shape; `FLIP_PLATFORM` is shared when it is not.
+- **No budget resource.** Snowflake budgets are a native application with no provider resource, so
+  the credit cap here is the resource monitor plus the workload tier's pool guards.
+- **Grafana on SPCS is a follow-up, not part of #1584.** A Grafana service in the trust's compute
+  pool, reading the event table through the Snowflake data source, would give dashboards that
+  refresh themselves and alerting. It needs the egress integration (so not on a trial account), a
+  service with an endpoint and its own authentication, and a decision about who may reach that
+  endpoint. The Snowsight dashboard here is the no-new-attack-surface answer and stays useful
+  either way. Tracked under epic #1589.
+- **Preview resources.** The network rule, the external access integration and the
+  password/session/network policy attachments are still preview features in the 2.x provider and
+  are enabled explicitly in `providers.tf`.

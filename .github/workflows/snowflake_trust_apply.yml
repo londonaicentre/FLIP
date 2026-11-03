@@ -1,0 +1,129 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Snowflake trust: apply on merge to develop, and the refreshed drift plan (epic #1589).
+#
+# A push to develop that touches the trust's Terraform applies the platform root, then the
+# workload root, to the staging trust account. The same file, dispatched with mode=drift, runs a
+# refreshed plan of both and applies nothing: snowflake_trust_drift.yml does that every night,
+# because a refreshed plan needs the apply identity (the read-only plan role cannot read a task,
+# a user's properties, or a stage) and that identity is reachable from this file on develop only.
+#
+#   * `environment: sf-stag` admits develop alone. Its OIDC subject is the one FLIP_CI_APPLY_USER
+#     trusts, and that user holds FLIP_PLATFORM_CI (the contained platform role from
+#     snowflake-bootstrap) and the trust's deploy role, with secondary roles off.
+#   * The AWS role is the Snowflake state apply role: read/write on snowflake-trust/* and nothing
+#     else, trusted for this file at refs/heads/develop only.
+#   * Production (sf-prod, main) is not wired yet: it needs its own trial account first.
+#
+# Images, kit secrets, services and the self-test gate are the next step; this workflow is
+# Terraform only.
+name: Snowflake Trust Apply
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "trust/deploy/terraform/snowflake/**"
+      - "trust/deploy/terraform/snowflake-platform/**"
+      - "trust/deploy/terraform/scripts/sf-ci-tofu.sh"
+      - ".github/workflows/snowflake_trust_apply.yml"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "apply, or drift (a refreshed plan of both roots that applies nothing)"
+        type: choice
+        options: [apply, drift]
+        default: apply
+
+permissions:
+  contents: read
+
+# One run at a time against the account; a queued apply waits rather than cancelling one that
+# is half way through.
+concurrency:
+  group: sf-apply-develop
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    name: ${{ inputs.mode == 'drift' && 'Drift' || 'Apply' }} (sf-stag)
+    if: github.repository == 'londonaicentre/FLIP' && github.ref == 'refs/heads/develop' && vars.SF_CI_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: sf-stag
+    permissions:
+      contents: read
+      id-token: write # the OIDC tokens for AWS (state) and Snowflake (login)
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Configure AWS credentials (state)
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ vars.SF_STATE_APPLY_ROLE_ARN }}
+          role-session-name: flip-sf-apply-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Snowflake login (workload identity, no stored key)
+        uses: snowflakedb/snowflake-actions@424478745f451798751b44a7bde98080aba1cf9c # v3.5.2
+        with:
+          snowflake-cli: "true"
+          cli-version: "3.20.0"
+          use-oidc: "true"
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: "1.13.2"
+          tofu_wrapper: false
+      # Platform first: it creates the roles and grants the workload root is applied as. Drift
+      # plans both and reports each; exit code 2 means drift, anything else non-zero an error.
+      - name: ${{ inputs.mode == 'drift' && 'Drift plan' || 'Apply' }}
+        id: run
+        env:
+          MODE: ${{ inputs.mode == 'drift' && 'drift' || 'apply' }}
+          SF_TRUST_CODE: ${{ vars.SF_TRUST_CODE }}
+          SF_WAREHOUSE: ${{ vars.SF_WAREHOUSE }}
+          SF_TFSTATE_BUCKET: ${{ vars.SF_TFSTATE_BUCKET }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          SF_DEPLOY_USER_PUBLIC_KEY: ${{ vars.SF_DEPLOY_USER_PUBLIC_KEY }}
+          SNOWFLAKE_ORGANIZATION_NAME: ${{ secrets.SNOWFLAKE_ORGANIZATION_NAME }}
+          SNOWFLAKE_ACCOUNT_NAME: ${{ secrets.SNOWFLAKE_ACCOUNT_NAME }}
+          SF_PLATFORM_STATE_PASSPHRASE: ${{ secrets.SF_PLATFORM_STATE_PASSPHRASE }}
+          SF_WORKLOAD_STATE_PASSPHRASE: ${{ secrets.SF_WORKLOAD_STATE_PASSPHRASE }}
+        run: |
+          script=trust/deploy/terraform/scripts/sf-ci-tofu.sh
+          if [ "$MODE" = apply ]; then
+            "$script" platform apply
+            "$script" workload apply
+            exit 0
+          fi
+          result=in-sync
+          for root in platform workload; do
+            set +e
+            "$script" "$root" drift > "$RUNNER_TEMP/drift-$root.txt" 2>&1
+            code=$?
+            set -e
+            case $code in
+              0) echo "$root: in sync" ;;
+              2) echo "$root: DRIFT"; result=drift ;;
+              *) echo "$root: plan failed ($code)"; result=error ;;
+            esac
+            {
+              echo "### $root root (exit $code)"
+              echo '```'
+              tail -c 30000 "$RUNNER_TEMP/drift-$root.txt"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "result=$result" >> "$GITHUB_OUTPUT"
+          [ "$result" != error ] || exit 1
+          [ "$result" != drift ] || exit 2
