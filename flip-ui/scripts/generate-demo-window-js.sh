@@ -30,7 +30,7 @@ set -eu
 
 # Both provenance inputs are REQUIRED, not best-effort. They previously fell
 # back to "unknown" / swallowed git's stderr, which contradicted the "cannot
-# drift" claim above: a rename of DEMO_CAPTURE_DATE, or a build from a directory
+# drift" claim above: a rename of LATEST_CAPTURE_DATE, or a build from a directory
 # that is not a git checkout, silently stamped an unidentifiable
 # RELEASE_VERSION onto a published snapshot — exactly when knowing which
 # snapshot is being served matters most (FLIP#794 review). Fail the build

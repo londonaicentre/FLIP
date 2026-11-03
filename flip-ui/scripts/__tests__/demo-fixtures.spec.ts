@@ -197,6 +197,14 @@ describe("scrubFiles", () => {
         expect(out["m1_logs.json"][0].log).toBe(`Selected trusts for training: ${kch.name}, ${gstt.name}`);
     });
 
+    it("rewrites any FL net named in free text onto the demo world's one net", () => {
+        const files = rawFiles();
+        files["m1_logs.json"].push({ ...files["m1_logs.json"][0], log: "Model training assigned to 'net-2'" });
+        const logs = (scrubFiles(files, TRUST_MAP) as Record<string, Json>)["m1_logs.json"];
+
+        expect(logs.at(-1).log).toBe(`Model training assigned to '${ROSTER.net}'`);
+    });
+
     it("drops a non-participant from every list and map, including suppressed and errored trusts", () => {
         expect(text).not.toContain(OTHER.id);
         expect(text).not.toMatch(/AI Centre Private|AICP/);
@@ -309,7 +317,10 @@ describe("assertClean", () => {
         ["a presigned signature", { q: "X-Amz-Signature=abc" }, /X-Amz-/],
         ["an IPv4 address", { h: "10.0.4.20" }, /IPv4/],
         ["a foreign email", { e: "someone@nhs.net" }, /someone@nhs\.net/],
-        ["a captured trust id", { t: PROD_A.id }, /f43abcd0/]
+        ["a captured trust id", { t: PROD_A.id }, /f43abcd0/],
+        ["a captured id the re-keying missed", { projectId: PROJECT_ID }, /2b837f54-8052-4bfa-b75b-c05f036e6086 is not a roster or demo id/],
+        ["an id that is v8 but not a demo id's variant", { id: "11111111-2222-8333-c444-555555555555" }, /is not a roster or demo id/],
+        ["an FL net other than the demo world's", { log: "Model training assigned to 'net-2'" }, /FL net net-2/]
     ])("refuses %s", (_label, payload, message) => {
         expect(() => assertClean(payload, "t", [PROD_A.id])).toThrow(message);
     });
@@ -318,7 +329,10 @@ describe("assertClean", () => {
         expect(() => assertClean({
             uid: "1.2.826.0.1.3680043.2.1125.1206566393649540309891485253789764977",
             email: ROSTER.user.email,
-            id: demoId(PROJECT_ID)
+            id: demoId(PROJECT_ID),
+            trust: ROSTER.sites[0].id,
+            user: ROSTER.user.id,
+            log: `Model training assigned to '${ROSTER.net}'`
         }, "t")).not.toThrow();
     });
 });
@@ -477,10 +491,20 @@ describe("runCli", () => {
         expect(io.log).toHaveBeenCalledWith("demo-fixtures: scrubbed p1");
     });
 
-    it("scrub says so when nothing matched", () => {
+    it("scrub fails on a slug that names no project, and rewrites nothing", () => {
+        writeRawProject(demoDir);
+        const before = readFileSync(path.join(demoDir, "projects/p1/data/project.json"), "utf8");
         const io = makeIo();
 
-        expect(runCli(["scrub", "nope"], io, { demoDir })).toBe(0);
+        expect(runCli(["scrub", "p1", "nope"], io, { demoDir })).toBe(1);
+        expect(io.error).toHaveBeenCalledWith(expect.stringMatching(/no project nope .*scrubbed nothing/));
+        expect(readFileSync(path.join(demoDir, "projects/p1/data/project.json"), "utf8")).toBe(before);
+    });
+
+    it("scrub with no slug means every project, and an empty directory is not an error", () => {
+        const io = makeIo();
+
+        expect(runCli(["scrub"], io, { demoDir })).toBe(0);
         expect(io.log).toHaveBeenCalledWith("demo-fixtures: scrubbed nothing");
     });
 
