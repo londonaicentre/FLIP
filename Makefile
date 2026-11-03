@@ -631,6 +631,11 @@ demo-video:
 demo-users:
 	$(MAKE) -C flip-api create_demo_users
 
+# Capture a project from the running hub as public-demo fixtures (FLIP#1746):
+#   make capture-demo-project EXTRA_ARGS="--project-id <uuid> --slug ehr-risk"
+capture-demo-project:
+	$(MAKE) -C flip-api capture_demo_project $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
+
 # Recreate the dev identity provider from deploy/keycloak/flip-realm.json. The
 # keycloak service keeps no volume and `--import-realm` skips a realm that
 # already exists, so an edit to the realm file only applies to a fresh
