@@ -50,8 +50,9 @@ make -C trust/monailabel-demo demo-gifs   # -> out/gifs/monailabel/monailabel-<c
 ```
 
 To publish them, fetch the other GIFs (`uv run docs/scripts/fetch_docs_gifs.py`; every recording carries
-the full set), copy `out/gifs/monailabel/` into `docs/source/assets/generated/gifs/`, then publish to the
-dataset branch of the PR they belong to: `uv run docs/scripts/publish_docs_gifs.py --branch pr-<N>
+the full set), copy `out/gifs/monailabel/` into `docs/source/assets/generated/gifs/`, pin each GIF's sha256 in
+`docs/scripts/live-recorded-gifs.txt` (the publisher refuses an unpinned one and prints its line), then publish
+to the dataset branch of the PR they belong to: `uv run docs/scripts/publish_docs_gifs.py --branch pr-<N>
 --source-commit <sha>` (an HF write token), and rebuild that PR's preview. Once the PR merges, CI carries
 them into the dataset's `main` (CONTRIBUTING.md, "Documentation GIFs").
 

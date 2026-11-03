@@ -51,7 +51,7 @@ def test_the_workflow_and_both_jobs_are_read_only(workflow, jobs):
     """Nothing comes back to git: the recording is published to the dataset alone."""
     assert workflow["permissions"] == {"contents": "read"}
     assert jobs["record"]["permissions"] == {"contents": "read"}
-    assert jobs["publish"]["permissions"] == {"contents": "read", "pull-requests": "read"}
+    assert jobs["publish"]["permissions"] == {"contents": "read"}
     assert not mentions_secrets(jobs["record"]), "the recording job must run without any secret"
 
 
@@ -83,24 +83,9 @@ def test_only_develop_publishes_and_only_to_main(jobs):
     assert "--branch main" in publish["run"]
 
 
-def test_a_merged_prs_live_recordings_reach_main(workflow, jobs):
-    """Its hand recordings are on dataset branch pr-<N>: a change to the live list publishes, carrying from there."""
+def test_a_merged_prs_live_recordings_reach_main(workflow):
+    """A change to the live list's pins publishes; the publisher finds the pinned bytes on the PR's dataset branch."""
     assert "docs/scripts/live-recorded-gifs.txt" in workflow[True]["push"]["paths"]  # PyYAML reads `on:` as True
-    steps = [step["name"] for step in steps_of(jobs["publish"])]
-    assert steps.index("Find the merged PR") < steps.index("Publish to the dataset")
-    publish = next(step for step in steps_of(jobs["publish"]) if step["name"] == "Publish to the dataset")
-    assert publish["env"]["PR"] == "${{ steps.pr.outputs.number }}"
-    assert '${PR:+--carry-from "pr-$PR"}' in publish["run"]
-
-
-def test_a_dispatch_can_carry_a_merged_prs_live_recordings(workflow, jobs):
-    """A newer push cancels a merged PR's recording; a dispatch names it instead, merged and numeric only."""
-    assert set(workflow[True]["workflow_dispatch"]["inputs"]) == {"pr"}
-    find = next(step for step in steps_of(jobs["publish"]) if step["name"] == "Find the merged PR")
-    assert find["env"]["DISPATCH_PR"] == "${{ inputs.pr }}"
-    assert "inputs." not in find["run"], "the input must reach the script through env, never interpolated"
-    assert "^[0-9]+$" in find["run"]
-    assert ".merged_at" in find["run"]
 
 
 def test_the_version_is_minted_by_the_recording_job(jobs):
