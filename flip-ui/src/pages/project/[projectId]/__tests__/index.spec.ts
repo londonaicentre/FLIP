@@ -551,11 +551,15 @@ describe("Project page (/project/[id]/index.vue)", () => {
             {
                 id: "u1",
                 email: "a@x",
+                name: "User A",
+                organisation: "Org",
                 isDisabled: false
             },
             {
                 id: "u2",
                 email: "b@x",
+                name: "User B",
+                organisation: "Org",
                 isDisabled: false
             }
         ];
@@ -635,11 +639,15 @@ describe("Project page (/project/[id]/index.vue)", () => {
                 {
                     id: "u1",
                     email: "a@x",
+                    name: "User A",
+                    organisation: "Org",
                     isDisabled: false
                 },
                 {
                     id: "u2",
                     email: "b@x",
+                    name: "User B",
+                    organisation: "Org",
                     isDisabled: false
                 }
             ];
