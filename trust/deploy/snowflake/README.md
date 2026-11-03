@@ -288,7 +288,51 @@ is not an error: a trust running no XNAT has no XNAT passwords, and nothing maps
 SPCS bills each compute-pool node while it runs, and **a resource monitor does not cover
 compute pools**. So `make suspend` suspends every service *and* every pool, pool
 auto-suspend is set by the Terraform root, and a nightly suspend task is part of the
-epic's deliverable. An idle trust that was never suspended is the expensive failure mode.
+epic's deliverable. A CI deploy also schedules its own suspend at the end of its test window
+(see Continuous deployment). An idle trust that was never suspended is the expensive failure mode.
+
+## Continuous deployment
+
+`snowflake_trust_deploy.yml` deploys the staging trust after every successful Terraform apply
+on `develop` (`snowflake_trust_apply.yml`), and on any `develop` change to this directory.
+It runs as `FLIP_CI_APPLY_USER` through GitHub OIDC in the `sf-stag` environment, with the
+trust's deploy role. No key is stored in GitHub. The steps are the Quick start's 2 to 5, then
+the self-test (`ci_deploy.py`):
+
+1. **Images.** `mirror-images` copies the kit's `DOCKER_TAG` (`stag` = the develop builds)
+   into the account registry, and the specs pin the resulting digests. A dispatch can name a
+   release (`vX.Y.Z`, `vX.Y.Z-rc.N`) or a `sha-` build instead.
+2. **FL gate.** The run holds (exit 3) when a *running* fl-client would get a different spec,
+   because a restart kills an in-flight round. Each deploy stamps every service's COMMENT with
+   the SHA-256 of its spec, so the check compares two hashes. A running client without a stamp
+   holds too. Re-dispatch with `fl_quiesced=true` once no round is running.
+3. **Kit.** The whole kit file is one environment secret, `SF_KIT_FILE`, written to the runner
+   with mode 600 and removed afterwards. CI pushes only its SECRET values
+   (`--no-fl-kit --no-governance`). The FL participant kit and the governance document stay
+   operator steps, `make sync-kit`.
+4. **Deploy and gate.** Resume the pools, CREATE/ALTER the services, wait for READY, run
+   `xnat-configure` (retried once, since XNAT can still be initialising), `smoke-cstore`, and
+   `selftest`. The run passes only when the self-test prints `SELFTEST ALL PASS`. The PACS seed
+   is not re-run: it lives on Orthanc's block volume and is a first-install step.
+5. **Test window.** However the run ends, it replaces a one-shot task,
+   `FLIP_<CODE>_CI_EXPIRE`, that suspends every service and pool `SF_TEST_WINDOW_HOURS`
+   (default 2) later, then suspends itself. Snowflake's scheduler fires it, not the runner, so an
+   abandoned run does not leave compute billing. The nightly suspend task stays as the backstop.
+6. **Report.** The result, the self-test lines and the time the trust suspends go to the run
+   summary and to one tracking issue, "Snowflake trust deploy: sf-stag", mentioning
+   `SF_NOTIFY_USERS`. A separate job holding no Snowflake access posts them.
+
+The `sf-stag` environment holds:
+
+| Kind | Name | Value |
+|------|------|-------|
+| secret | `SNOWFLAKE_ORGANIZATION_NAME`, `SNOWFLAKE_ACCOUNT_NAME` | The account identifier (shared with the Terraform workflows) |
+| secret | `SF_KIT_FILE` | The trust's whole kit file, `trust/.env.<CODE>.stag` |
+| variable | `SF_TRUST_CODE`, `SF_WAREHOUSE` | e.g. `SFTEST`, `FLIP_SFTEST_WH` |
+| variable | `SF_TEST_WINDOW_HOURS` | Hours the trust stays up after a deploy (default 2) |
+| variable | `SF_NOTIFY_USERS` | Space-separated GitHub users to mention |
+
+Nothing runs until the repository variable `SF_CI_ENABLED` is `true`.
 
 ## Testing
 

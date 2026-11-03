@@ -1,0 +1,69 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Names only: no credential, no account identifier, nothing that is a secret. The workload root
+# does NOT read these (there is no remote-state coupling between the roots); it derives the same
+# names from the same trust_code. They are printed so an operator can confirm the two agree.
+output "role_names" {
+  description = "The five FLIP roles, by purpose. FLIP_<CODE>_ADMIN is retired."
+  value       = local.roles
+}
+
+output "deploy_user_name" {
+  description = "The deploy SERVICE user. Its private key lives outside Terraform."
+  value       = snowflake_service_user.deploy.name
+}
+
+output "deploy_account_privileges" {
+  description = "The account privileges the workload role holds, and the complete list of them."
+  value       = local.deploy_account_privileges
+}
+
+output "event_table_name" {
+  description = "Fully qualified event table the account logs to (#1584)."
+  value       = local.event_table_fqn
+}
+
+output "event_table_retention_days" {
+  description = "How long a log record is kept, enforced by the nightly prune task (#1584)."
+  value       = var.event_table_retention_days
+}
+
+output "observability_view_names" {
+  description = "Fully qualified observability views in FLIP_PLATFORM.OBS, readable by the observer role (#1584)."
+  value = {
+    events            = snowflake_view.events.fully_qualified_name
+    service_status    = snowflake_view.service_status.fully_qualified_name
+    service_restarts  = snowflake_view.service_restarts.fully_qualified_name
+    recent_errors     = snowflake_view.recent_errors.fully_qualified_name
+    fl_client_logs    = snowflake_view.fl_client_logs.fully_qualified_name
+    compute_pool_cost = snowflake_view.compute_pool_cost.fully_qualified_name
+    warehouse_cost    = snowflake_view.warehouse_cost.fully_qualified_name
+  }
+}
+
+output "observer_role_name" {
+  description = "The role the observability views and the Snowsight dashboard are granted to (#1584)."
+  value       = snowflake_account_role.observer.name
+}
+
+output "platform_database_name" {
+  description = "The small platform-owned database holding the event table and the observability views."
+  value       = snowflake_database.platform.name
+}
+
+output "warehouse_name" {
+  description = "The trust warehouse, platform-owned with the resource monitor attached; the deploy role has USAGE/OPERATE/MONITOR."
+  value       = local.warehouse
+}

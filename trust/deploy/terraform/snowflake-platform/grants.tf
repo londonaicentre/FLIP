@@ -1,0 +1,100 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# The only account-level grant in either root. Exactly four privileges, listed in locals.tf and
+# pinned by the static guards here and in the workload root:
+#
+#   CREATE DATABASE, CREATE COMPUTE POOL, BIND SERVICE ENDPOINT, EXECUTE TASK
+#
+# Deliberately absent: CREATE ROLE, CREATE USER, CREATE INTEGRATION, CREATE NETWORK POLICY,
+# MANAGE GRANTS, APPLY <policy>, MONITOR USAGE. A compromised deploy key therefore cannot mint an
+# identity, open an egress path, detach an account policy or re-grant anything it does not own.
+resource "snowflake_grant_privileges_to_account_role" "deploy_account" {
+  account_role_name = snowflake_account_role.deploy.name
+  privileges        = local.deploy_account_privileges
+  on_account        = true
+}
+
+# The observer role reads the account's logs: the platform database, its OBS schema, and the event
+# table itself. No clinical data lives here.
+resource "snowflake_grant_privileges_to_account_role" "observer_platform_database" {
+  account_role_name = snowflake_account_role.observer.name
+  privileges        = ["USAGE"]
+
+  on_account_object {
+    object_type = "DATABASE"
+    object_name = snowflake_database.platform.name
+  }
+}
+
+resource "snowflake_grant_privileges_to_account_role" "observer_obs_schema" {
+  account_role_name = snowflake_account_role.observer.name
+  privileges        = ["USAGE"]
+
+  on_schema {
+    schema_name = "\"${snowflake_database.platform.name}\".\"${local.platform_schemas.obs}\""
+  }
+
+  depends_on = [snowflake_schema.platform]
+}
+
+# The 2.x provider has no event-table resource, so SELECT on it is granted by statement, with a
+# revert that takes it away again. See the open point in README.md.
+resource "snowflake_execute" "observer_event_table" {
+  execute = "GRANT SELECT ON EVENT TABLE ${local.event_table_fqn} TO ROLE ${snowflake_account_role.observer.name}"
+  revert  = "REVOKE SELECT ON EVENT TABLE ${local.event_table_fqn} FROM ROLE ${snowflake_account_role.observer.name}"
+  query   = "SHOW GRANTS ON EVENT TABLE ${local.event_table_fqn}"
+
+  depends_on = [snowflake_execute.event_table]
+}
+
+# SELECT on the observability views (#1584), current and future. The views are owner's-rights and
+# the platform tier owns them, so the observer reads account usage and every service's logs
+# through them without holding IMPORTED PRIVILEGES on database SNOWFLAKE or SELECT on anything
+# else. Nothing here grants an account-level privilege to the observer: that is the point.
+resource "snowflake_grant_privileges_to_account_role" "observer_obs_views" {
+  account_role_name = snowflake_account_role.observer.name
+  privileges        = ["SELECT"]
+
+  on_schema_object {
+    all {
+      object_type_plural = "VIEWS"
+      in_schema          = "\"${snowflake_database.platform.name}\".\"${local.platform_schemas.obs}\""
+    }
+  }
+
+  depends_on = [
+    snowflake_view.events,
+    snowflake_view.service_status,
+    snowflake_view.service_restarts,
+    snowflake_view.recent_errors,
+    snowflake_view.fl_client_logs,
+    snowflake_view.compute_pool_cost,
+    snowflake_view.warehouse_cost,
+  ]
+}
+
+resource "snowflake_grant_privileges_to_account_role" "observer_future_obs_views" {
+  account_role_name = snowflake_account_role.observer.name
+  privileges        = ["SELECT"]
+
+  on_schema_object {
+    future {
+      object_type_plural = "VIEWS"
+      in_schema          = "\"${snowflake_database.platform.name}\".\"${local.platform_schemas.obs}\""
+    }
+  }
+
+  depends_on = [snowflake_schema.platform]
+}

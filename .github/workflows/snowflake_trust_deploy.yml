@@ -1,0 +1,213 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Snowflake trust: deploy the node and gate it on the self-test (epic #1589).
+#
+# After the Terraform apply (snowflake_trust_apply.yml), and on any develop change to the node
+# itself (trust/deploy/snowflake/), this deploys the staging trust and proves it:
+#
+#   mirror the images (GHCR -> account registry, pinned by digest) -> render the specs
+#   -> FL gate -> sync the kit SECRETs -> CREATE/ALTER the services -> wait READY
+#   -> xnat-configure -> smoke-cstore -> self-test (the gate) -> report
+#
+#   * Images are the kit's DOCKER_TAG (stag = the develop builds) unless the dispatch names a
+#     release or a sha- tag. Digests, not tags, go into the specs.
+#   * The FL gate holds the run (exit 3) when a running fl-client would be restarted with a
+#     different spec: that kills an in-flight round. Re-dispatch with fl_quiesced=true once no
+#     round is running, as for the hub's terraform_apply.yml.
+#   * The kit lives in the sf-stag environment as one secret, SF_KIT_FILE, written to the runner
+#     with mode 600 and removed at the end. Only its SECRET values reach Snowflake (sync-kit, over
+#     stdin); the FL participant kit and the governance document stay operator steps.
+#   * Every run, passed or failed, ends with the trust scheduled to suspend itself after
+#     SF_TEST_WINDOW_HOURS (default 2), by a Snowflake task rather than the runner, and posts the
+#     report to one tracking issue, mentioning SF_NOTIFY_USERS so the result arrives by e-mail.
+#
+# Same login as the apply: environment sf-stag (develop only), FLIP_CI_APPLY_USER through GitHub
+# OIDC, here as the trust's deploy role. No AWS access: this job touches no Terraform state.
+name: Snowflake Trust Deploy
+
+on:
+  workflow_run:
+    workflows: [Snowflake Trust Apply]
+    types: [completed]
+    branches: [develop]
+  push:
+    branches: [develop]
+    paths:
+      - "trust/deploy/snowflake/**"
+      - ".github/workflows/snowflake_trust_deploy.yml"
+  workflow_dispatch:
+    inputs:
+      docker_tag:
+        description: "Image tag to deploy instead of the kit's DOCKER_TAG: vX.Y.Z, vX.Y.Z-rc.N or sha-<7 hex>"
+        type: string
+        default: ""
+      fl_quiesced:
+        description: "No FL round is running: deploy even if it restarts the fl-client"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# The same group as the apply, so a deploy never runs while the Terraform apply changes the
+# account under it, and neither cancels the other.
+concurrency:
+  group: sf-apply-develop
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy and self-test (sf-stag)
+    if: >-
+      github.repository == 'londonaicentre/FLIP' && vars.SF_CI_ENABLED == 'true' &&
+      github.ref == 'refs/heads/develop' &&
+      (github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event != 'workflow_dispatch'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    environment: sf-stag
+    permissions:
+      contents: read
+      id-token: write # the OIDC token for the Snowflake login
+    env:
+      SF_TRUST_CODE: ${{ vars.SF_TRUST_CODE }}
+      SNOW_CONNECTION: ci
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Check the inputs
+        env:
+          DOCKER_TAG_INPUT: ${{ inputs.docker_tag }}
+        run: |
+          [[ $SF_TRUST_CODE =~ ^[A-Z][A-Z0-9]{1,15}$ ]] || { echo "::error::SF_TRUST_CODE is not a trust code"; exit 1; }
+          if [ -n "$DOCKER_TAG_INPUT" ] && ! [[ $DOCKER_TAG_INPUT =~ ^(v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?|sha-[0-9a-f]{7})$ ]]; then
+            echo "::error::docker_tag must be vX.Y.Z, vX.Y.Z-rc.N or sha-<7 hex>"
+            exit 1
+          fi
+      # The kit, the snow connection and the rendered specs live only on this runner.
+      - name: Write the kit file and the snow connection
+        env:
+          SF_KIT_FILE: ${{ secrets.SF_KIT_FILE }}
+          DOCKER_TAG_INPUT: ${{ inputs.docker_tag }}
+          SNOWFLAKE_ORGANIZATION_NAME: ${{ secrets.SNOWFLAKE_ORGANIZATION_NAME }}
+          SNOWFLAKE_ACCOUNT_NAME: ${{ secrets.SNOWFLAKE_ACCOUNT_NAME }}
+          SF_WAREHOUSE: ${{ vars.SF_WAREHOUSE }}
+        run: trust/deploy/snowflake/scripts/ci-prepare.sh
+      - name: Snowflake login (workload identity, no stored key)
+        uses: snowflakedb/snowflake-actions@424478745f451798751b44a7bde98080aba1cf9c # v3.5.2
+        with:
+          snowflake-cli: "true"
+          cli-version: "3.20.0"
+          use-oidc: "true"
+      - name: Free runner disk for the images
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/.ghcup
+          sudo docker system prune -af >/dev/null 2>&1 || true
+          FREE_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          echo "Free: ${FREE_GB} GB"
+          [ "$FREE_GB" -ge 30 ] || { echo "::error::Only ${FREE_GB} GB free; the trust images need ~30 GB."; exit 1; }
+      - name: Mirror the images (GHCR -> account registry)
+        run: |
+          . trust/deploy/terraform/scripts/sf-ci-token.sh
+          sf_ci_refresh_token "$SNOW_CONNECTION"
+          make -C trust/deploy/snowflake mirror-images KIT="$SF_TRUST_CODE" HUB=stag SNOW_CONNECTION="$SNOW_CONNECTION"
+      - name: Render the specs
+        run: make -C trust/deploy/snowflake render KIT="$SF_TRUST_CODE" HUB=stag
+      - name: FL gate
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.fl_quiesced) }}
+        run: |
+          set +e
+          python3 trust/deploy/snowflake/ci_deploy.py fl-gate --dir "trust/deploy/snowflake/rendered/$SF_TRUST_CODE.stag" --connection "$SNOW_CONNECTION"
+          code=$?
+          if [ "$code" -eq 3 ]; then
+            echo "::error title=FL gate::This deploy restarts a running fl-client. Re-dispatch with fl_quiesced=true once no round is running."
+          fi
+          exit "$code"
+      - name: FL gate skipped
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.fl_quiesced }}
+        env:
+          ACTOR: ${{ github.actor }}
+        run: echo "::warning title=FL gate skipped::${ACTOR} dispatched with fl_quiesced=true; a running round is killed if that is wrong."
+      - name: Sync the kit SECRETs
+        run: |
+          . trust/deploy/terraform/scripts/sf-ci-token.sh
+          sf_ci_refresh_token "$SNOW_CONNECTION"
+          python3 trust/deploy/snowflake/sync_snowflake_kit.py --kit "$SF_TRUST_CODE" --env stag \
+            --connection "$SNOW_CONNECTION" --no-fl-kit --no-governance
+      - name: Deploy and self-test
+        id: deploy
+        env:
+          TTL_HOURS: ${{ vars.SF_TEST_WINDOW_HOURS || '2' }}
+        run: |
+          python3 trust/deploy/snowflake/ci_deploy.py deploy --dir "trust/deploy/snowflake/rendered/$SF_TRUST_CODE.stag" \
+            --connection "$SNOW_CONNECTION" --ttl-hours "$TTL_HOURS" --report-dir "$RUNNER_TEMP/sf-report"
+      - name: Report
+        if: always() && steps.deploy.outcome != 'skipped'
+        run: |
+          [ -f "$RUNNER_TEMP/sf-report/report.md" ] || exit 0
+          cat "$RUNNER_TEMP/sf-report/report.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove the kit file
+        if: always()
+        run: rm -f "trust/.env.$SF_TRUST_CODE.stag" ~/.snowflake/config.toml
+      - name: Upload the report
+        if: always() && steps.deploy.outcome != 'skipped'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sf-deploy-report
+          path: ${{ runner.temp }}/sf-report/
+          if-no-files-found: ignore
+
+  # A separate job with no Snowflake access posts the result, so the token that writes issues
+  # never shares a job with the deploy identity.
+  notify:
+    name: Notify
+    needs: deploy
+    if: always() && needs.deploy.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: "Snowflake trust deploy: sf-stag"
+      NOTIFY: ${{ vars.SF_NOTIFY_USERS }}
+      RESULT: ${{ needs.deploy.result }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Download the report
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          name: sf-deploy-report
+          path: report
+      - name: Post to the tracking issue
+        run: |
+          mentions=""
+          for user in $NOTIFY; do
+            [[ $user =~ ^[A-Za-z0-9-]{1,39}$ ]] && mentions+="@$user "
+          done
+          if [ -f report/report.md ]; then
+            body="$(cat report/report.md)"
+          else
+            body="The deploy job ended **$RESULT** before it produced a report (the FL gate holds a run this way too). Run: $RUN_URL"
+          fi
+          body="${mentions:+$mentions
+          }$body"
+          issue=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number // empty')
+          if [ -z "$issue" ]; then
+            gh issue create --title "$TITLE" --body "One comment per deploy of the staging Snowflake trust (snowflake_trust_deploy.yml)."
+            issue=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number')
+          fi
+          gh issue comment "$issue" --body "$body"
