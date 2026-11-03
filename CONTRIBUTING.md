@@ -342,7 +342,7 @@ Keycloak, because the browser uses the OIDC password grant, which has no equival
 and forgot-password; use the Keycloak console for those. The admin "Reset password" button works (FLIP#1705): flip-api
 re-sends the invitation, and with no mail server in dev sets the shared `ADMIN_USER_PASSWORD` as a temporary password. Everything else —
 register, roles, enable/disable, MFA reset from the admin screen, projects, cohorts, uploads — works the same. Scripts
-that sign in (`make e2e_smoke`, `make -C flip-api create_testing_projects`, `make seed-demo-projects`, `make demo-users`,
+that sign in (`make e2e_smoke`, `make -C flip-api create_testing_projects`, `make seed-demo-projects`, `make demo-users`, `make capture-demo-project`,
 the demo recorder) go through the configured provider, so they need no AWS session either. Details:
 [`deploy/keycloak/README.md`](deploy/keycloak/README.md).
 

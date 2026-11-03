@@ -42,7 +42,6 @@ dependencies = [
     "apscheduler>=3.11.0",
     "slowapi>=0.1.9",
     "starlette>=0.49.1",
-    "tornado>=6.5.8",
     "urllib3>=2.7.0",
     "picklescan>=1.0.5",
     "bandit>=1.7.10",
@@ -134,4 +133,5 @@ constraint-dependencies = [
     "anyio>=4.14.2",  # CVE-2026-63374, CVE-2026-64847; transitive via httpx, starlette, watchfiles
     "certifi>=2026.10.19",  # GHSA-6q48-6c7w-9gw2
     "dnspython>=2.9.0",  # GHSA-45c3-73f7-pv4m
+    "tornado>=6.6",  # GHSA-pcg2-g6cj-q92c, GHSA-pw9p-v7r6-gx4p, GHSA-r4j5-9xpp-3985; transitive via ipykernel (dev)
 ]

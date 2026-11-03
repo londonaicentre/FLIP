@@ -44,6 +44,12 @@ Why is my training job stuck?
 For Trust staff
 **************************
 
+What does a Trust need before it can join?
+   Clinical records in the OMOP Common Data Model with imaging linked by accession number, a PACS that will serve
+   FLIP's node, a few outbound firewall rules, a server sized for the projects it wants to run, and the data
+   protection decisions for the federated flow. :doc:`deploy-flip/trust-readiness-checklist` lists every item by
+   owner, in order, in plain language.
+
 Can a Trust decline a project?
    Yes. Each staged Trust decides in its own time; the decision is recorded by the Trust's own Trust Admin or, if it
    has none, by the FLIP admin. A Trust that declines is left out of the image import and of training. Once the

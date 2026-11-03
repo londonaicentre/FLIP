@@ -23,6 +23,10 @@ Models and files
 A project can hold several **models**. Each model is one FL app: the code and configuration you upload, which FLIP
 then trains across the participating Trusts.
 
+.. contents:: On this page
+   :local:
+   :depth: 1
+
 .. _create-model:
 
 **************

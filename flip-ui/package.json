@@ -21,8 +21,10 @@
         "postbuild:deploy": "npm run assert-no-demo-artefacts && sh scripts/generate-window-js.sh > dist/js/window.js",
         "prebuild:demo": "npm run check-build-flags && npm run generate-demo-window-js",
         "build:demo": "vite build --mode demo",
-        "postbuild:demo": "sh scripts/generate-demo-window-js.sh > dist/js/window.js",
+        "postbuild:demo": "sh scripts/generate-demo-window-js.sh > dist/js/window.js && node scripts/demo-fixtures.mjs check --dist dist",
         "serve:demo": "vite preview --mode demo --port 4174",
+        "test:public-demo": "cypress run --config-file cypress.public-demo.config.ts",
+        "demo-fixtures": "node scripts/demo-fixtures.mjs",
         "serve": "vite preview",
         "test:unit": "vitest run --silent --coverage",
         "test:types": "tsc --noEmit -p test/tsconfig.json",
@@ -114,7 +116,7 @@
         "xml2js": ">=0.5.0",
         "lodash": "^4.18.1",
         "lodash-es": "^4.18.1",
-        "follow-redirects": ">=1.15.12",
+        "follow-redirects": ">=1.16.2",
         "uuid": "$uuid",
         "fast-xml-parser": ">=5.7.0",
         "fast-xml-builder": ">=1.1.7",
@@ -127,8 +129,9 @@
         "nanoid": ">=3.3.18 <4.0.0",
         "@babel/core": ">=7.29.6 <8.0.0",
         "svgo": ">=3.3.5 <4.0.0",
-        "joi": ">=17.13.6 <18.0.0",
+        "joi": ">=17.13.9 <18.0.0",
         "source-map-js": ">=1.2.2",
-        "postcss-selector-parser": ">=7.1.6"
+        "postcss-selector-parser": ">=7.1.6",
+        "systeminformation": ">=5.33.16 <6.0.0"
     }
 }
