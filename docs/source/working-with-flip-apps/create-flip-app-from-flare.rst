@@ -77,6 +77,10 @@ lifecycle for you (see :ref:`flare-server-side`).
      - ``make run-tutorial`` (simulator), as on FLARE
      - ``job.py`` recipe: ``make export`` / ``make sim``
 
+.. contents:: On this page
+   :local:
+   :depth: 1
+
 *****************
 Starting point
 *****************

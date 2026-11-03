@@ -28,6 +28,7 @@
         "serve": "vite preview",
         "test:unit": "vitest run --silent --coverage",
         "test:types": "tsc --noEmit -p test/tsconfig.json",
+        "type-check": "vue-tsc --noEmit",
         "lint": "npx eslint \"./src/**/*.vue\" \"./src/**/*.ts\" \"./mocks/**/*.ts\"",
         "prepare": "husky install",
         "test:unit:update": "vitest run -u --silent --coverage",
@@ -115,7 +116,7 @@
         "xml2js": ">=0.5.0",
         "lodash": "^4.18.1",
         "lodash-es": "^4.18.1",
-        "follow-redirects": ">=1.15.12",
+        "follow-redirects": ">=1.16.2",
         "uuid": "$uuid",
         "fast-xml-parser": ">=5.7.0",
         "fast-xml-builder": ">=1.1.7",
@@ -128,8 +129,9 @@
         "nanoid": ">=3.3.18 <4.0.0",
         "@babel/core": ">=7.29.6 <8.0.0",
         "svgo": ">=3.3.5 <4.0.0",
-        "joi": ">=17.13.6 <18.0.0",
+        "joi": ">=17.13.9 <18.0.0",
         "source-map-js": ">=1.2.2",
-        "postcss-selector-parser": ">=7.1.6"
+        "postcss-selector-parser": ">=7.1.6",
+        "systeminformation": ">=5.33.16 <6.0.0"
     }
 }

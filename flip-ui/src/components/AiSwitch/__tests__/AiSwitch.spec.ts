@@ -51,7 +51,7 @@ describe("AiSwitch", () => {
         const comp = mount(AiSwitch, {
             props: {
                 name: "flag",
-                value: true
+                value: "true"
             },
             global: {
                 plugins: [createTestingPinia({
@@ -218,7 +218,7 @@ describe("AiSwitch", () => {
         const comp = mount(AiSwitch, {
             props: {
                 name: "flag",
-                value: true,
+                value: "true",
                 disabled: true
             },
             global: {
@@ -240,7 +240,7 @@ describe("AiSwitch", () => {
         const comp = mount(AiSwitch, {
             props: {
                 name: "flag",
-                value: true,
+                value: "true",
                 disabled: true
             },
             global: {
@@ -267,7 +267,7 @@ describe("AiSwitch", () => {
         const comp = mount(AiSwitch, {
             props: {
                 name: "flag",
-                value: true,
+                value: "true",
                 disabled: true
             },
             global: {
@@ -285,7 +285,7 @@ describe("AiSwitch", () => {
         const comp = mount(AiSwitch, {
             props: {
                 name: "flag",
-                value: true
+                value: "true"
             },
             global: {
                 plugins: [createTestingPinia({

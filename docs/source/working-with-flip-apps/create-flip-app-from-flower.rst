@@ -42,6 +42,10 @@ The FLIP touchpoints your app needs are:
    - ``fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/`` — MONAI spleen segmentation. Exercises every touchpoint below,
      including best-model selection.
 
+.. contents:: On this page
+   :local:
+   :depth: 1
+
 *****************
 Starting point
 *****************
