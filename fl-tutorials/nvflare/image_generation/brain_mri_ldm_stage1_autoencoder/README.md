@@ -1,4 +1,4 @@
-# Brain MRI autoencoder — FLIP tutorial
+# Brain MRI generation, step 1: autoencoder
 
 This tutorial trains a KL-regularised autoencoder (MONAI `AutoencoderKL`) and a patch discriminator
 on 3-D brain MRI, using the **FLARE Client API** (`nvflare.client`), with the job defined in Python

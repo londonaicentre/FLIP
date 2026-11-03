@@ -1,4 +1,4 @@
-# Brain MRI latent diffusion model — FLIP tutorial
+# Brain MRI generation, step 2: latent diffusion
 
 This tutorial trains a diffusion UNet (MONAI `DiffusionModelUNet`) in the latent space of a frozen
 autoencoder, on 3-D brain MRI, conditioned on the MR sequence, using the **FLARE Client API**

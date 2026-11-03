@@ -1,4 +1,4 @@
-# EHR Risk Prediction — FLIP tutorial (Flower)
+# Type 2 diabetes risk from health records
 
 Federated training of a small **multi-layer perceptron (MLP)** that predicts **type-2-diabetes
 (T2DM) onset** from OMOP tabular features — patient demographics plus pre-diagnosis condition and

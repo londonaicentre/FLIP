@@ -11,7 +11,7 @@
     limitations under the License.
 -->
 
-# Baseline Ark+ Chest X-ray Evaluation (FLARE Client API) — FLIP tutorial
+# Evaluating a chest X-ray foundation model (Ark+)
 
 FLIP tutorial for federated evaluation of a single zero-shot Ark+ foundation model on chest X-ray
 classification, using the **FLARE Client API**. The hold-out data at each site is scored against the

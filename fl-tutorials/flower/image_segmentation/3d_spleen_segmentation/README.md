@@ -11,7 +11,7 @@
     limitations under the License.
 -->
 
-# 3D spleen segmentation (Flower)
+# Spleen segmentation on CT
 
 Flower port of the spleen-segmentation tutorial that lives at
 `fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation`, adapted from Flower's MONAI

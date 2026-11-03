@@ -11,7 +11,7 @@
     limitations under the License.
 -->
 
-# 3D spleen segmentation evaluation (Flower)
+# Evaluating a spleen segmentation model
 
 Flower twin of the FLARE evaluation tutorial at
 `fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation`. It scores a pre-trained

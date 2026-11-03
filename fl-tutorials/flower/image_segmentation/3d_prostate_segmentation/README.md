@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-# Federated 3D prostate zonal segmentation with nnU-Net planning, MONAI and Flower
+# Prostate MRI zonal segmentation
 
 This tutorial trains a 3D U-Net to outline the **prostate gland and its two zones** (peripheral
 zone, PZ, and transition zone, TZ) on T2-weighted MRI from the public

@@ -1,4 +1,4 @@
-# Evaluation of a 3D segmentation model (FLARE Client API) — FLIP tutorial
+# Evaluating a spleen segmentation model
 
 FLIP tutorial for federated evaluation of a 3D spleen segmentation model using the **FLARE Client
 API**. It evaluates a model trained with

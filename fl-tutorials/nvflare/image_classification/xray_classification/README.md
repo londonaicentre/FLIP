@@ -1,4 +1,4 @@
-# X-Ray Classification — FLIP tutorial
+# Chest X-ray lesion classification
 
 This tutorial trains a DenseNet-121 classifier of X-Ray pathologies (Effusion, Edema) using the
 **FLARE Client API** (`nvflare.client`). The job is defined entirely in Python via

@@ -11,7 +11,7 @@
     limitations under the License.
 -->
 
-# Chest-X-ray multi-lesion classification (Flower)
+# Chest X-ray lesion classification
 
 Flower port of the chest-X-ray tutorial that lives at
 `fl-tutorials/nvflare/image_classification/xray_classification`. It scores

@@ -11,7 +11,7 @@
     limitations under the License.
 -->
 
-# Multi-model Ark+ Chest X-ray Evaluation (FLARE Client API) — FLIP tutorial
+# Comparing two chest X-ray models: pretrained vs fine-tuned
 
 FLIP tutorial for federated evaluation of **multiple** Ark+ models (a zero-shot foundation model and a
 fine-tuned model) on chest X-ray classification, using the **FLARE Client API**. The same hold-out data

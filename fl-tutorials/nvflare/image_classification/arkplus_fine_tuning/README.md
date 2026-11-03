@@ -11,7 +11,7 @@
     limitations under the License.
 -->
 
-# Ark+ Fine-tuning — Chest X-ray Classification
+# Fine-tuning a chest X-ray foundation model (Ark+)
 
 FLIP tutorial for **federated fine-tuning** of an Ark+ Swin foundation model on chest X-ray
 classification, using the FLARE **Client API** (`nvflare.client`). It replaces the earlier

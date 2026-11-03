@@ -1,4 +1,4 @@
-# Chest X-ray diffusion model — FLIP tutorial
+# Generating chest X-rays with diffusion
 
 This tutorial trains a denoising diffusion model (DDPM) that generates 2-D chest X-rays, using the
 **FLARE Client API** (`nvflare.client`). A single network, MONAI's `DiffusionModelUNet`, learns to

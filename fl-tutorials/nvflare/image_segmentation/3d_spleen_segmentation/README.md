@@ -1,4 +1,4 @@
-# 3D Spleen Segmentation — FLIP tutorial
+# Spleen segmentation on CT
 
 This tutorial trains a 3D UNet spleen segmentation model on CT scans from the
 [Medical Segmentation Decathlon (MSD)](http://medicaldecathlon.com/) using the **FLARE Client API**
