@@ -46,7 +46,11 @@ mode=$2
 case $mode in plan | apply | drift | migrate) ;; *) usage ;; esac
 
 TOFU=${TOFU:-tofu}
-TF_DIR=${SF_TF_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
+SCRIPTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+TF_DIR=${SF_TF_DIR:-$(dirname "$SCRIPTS_DIR")}
+# A GitHub OIDC token lives five minutes: refresh it before every command that connects.
+# shellcheck source=trust/deploy/terraform/scripts/sf-ci-token.sh
+. "$SCRIPTS_DIR/sf-ci-token.sh"
 
 missing=()
 for name in SF_TRUST_CODE SF_WAREHOUSE SF_TFSTATE_BUCKET AWS_REGION SNOWFLAKE_ORGANIZATION_NAME SNOWFLAKE_ACCOUNT_NAME; do
@@ -125,12 +129,14 @@ fi
 "$TOFU" init -reconfigure "${init_args[@]}"
 
 echo "▶ $root $mode for $code as $role"
+sf_ci_refresh_token
 case $mode in
   plan)
     "$TOFU" plan -input=false -no-color -refresh=false -lock=false -out=tfplan
     ;;
   apply)
     "$TOFU" plan -input=false -no-color -out=tfplan
+    sf_ci_refresh_token
     "$TOFU" apply -input=false -no-color tfplan
     ;;
   drift)

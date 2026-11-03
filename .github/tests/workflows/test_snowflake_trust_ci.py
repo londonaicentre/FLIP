@@ -136,6 +136,32 @@ class Wrapper(unittest.TestCase):
         assert (self.tmp / "snowflake" / "backend_override.tf").read_text().count('backend "s3"') == 1
         assert (self.tmp / "snowflake" / "encryption.tf").exists()
 
+    def test_a_fresh_oidc_token_is_minted_before_each_command_that_connects(self) -> None:
+        """GitHub OIDC tokens live five minutes; plan + apply of one root can outlast one."""
+        server = self.tmp / "oidc"
+        server.write_text('{"value": "fresh-oidc-token"}')  # pragma: allowlist secret
+        curl = self.tmp / "curl"
+        curl.write_text(f'#!/usr/bin/env bash\necho mint >> "$STUB_LOG"\ncat {server}\n')
+        curl.chmod(0o755)
+        stub = self.tmp / "tofu"
+        stub.write_text(STUB.replace("{\n", '{\n  printf "TOKEN %s\\n" "${SNOWFLAKE_TOKEN:-none}"\n', 1))
+        result = self.run_script(
+            "workload",
+            "apply",
+            PATH=f"{self.tmp}:{os.environ['PATH']}",
+            ACTIONS_ID_TOKEN_REQUEST_URL="https://example.invalid/token?x=1",
+            ACTIONS_ID_TOKEN_REQUEST_TOKEN="request-token",  # pragma: allowlist secret
+        )
+        assert result.returncode == 0, result.stderr
+        lines = self.calls().splitlines()
+        plan, apply = (
+            lines.index("ARGS plan -input=false -no-color -out=tfplan"),
+            next(i for i, line in enumerate(lines) if line.startswith("ARGS apply")),
+        )
+        assert lines[plan - 1] == "TOKEN fresh-oidc-token"  # pragma: allowlist secret
+        assert "mint" in lines[plan + 1 : apply], "no fresh token between plan and apply"
+        assert "::add-mask::fresh-oidc-token" in result.stdout  # pragma: allowlist secret
+
     def test_no_passphrase_or_secret_reaches_argv_or_output(self) -> None:
         result = self.run_script("platform", "apply")
         seen = self.calls() + result.stdout + result.stderr
