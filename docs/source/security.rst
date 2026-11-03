@@ -24,6 +24,10 @@ described below exists to keep that boundary intact.
 FLIP is open source under Apache 2.0. The code, its full change history, and the
 automated checks that run against every change are publicly inspectable.
 
+.. contents:: On this page
+   :local:
+   :depth: 1
+
 *********************
 Network and perimeter
 *********************

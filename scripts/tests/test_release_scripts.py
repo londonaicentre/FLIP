@@ -281,6 +281,101 @@ class Gates(unittest.TestCase):
         )
         assert flower["tutorials"][0]["name"] == "xray_classification"
 
+    def test_tutorial_metrics_count_dp_reports_and_heavy_clipping(self):
+        report = "INFO :      FLIP local DP: update pre-clip L2 norm 50.0000 clipped to 1.0000 (scaled by 0.0200) ..."
+        warn = "WARNING :   FLIP local DP: clipping scaled this update by 0.0200; raise dp-clipping-norm ..."
+        lines = [
+            (0.0, "🚀 Running Flower tutorial ehr_risk_prediction"),
+            (1.0, "🚀 Running Flower tutorial 3d_spleen_segmentation"),
+            (2.0, report),
+            (3.0, warn),
+            (4.0, report),
+        ]
+        ehr, spleen = gates.tutorial_metrics(lines)["tutorials"]
+        assert (spleen["dp_reports"], spleen["dp_over_clipped"]) == (2, 1)
+        assert "dp_reports" not in ehr
+        assert "dp_over_clipped" not in ehr
+
+    def test_the_dp_markers_are_the_mods_own_log_lines(self):
+        # Reworded in flip-utils alone, the gate would silently stop catching over-clipping.
+        privacy = (ROOT / "flip-utils" / "flip" / "flower" / "privacy.py").read_text()
+        assert gates.DP_OVER_CLIPPED in privacy
+        assert gates.DP_REPORTED in privacy
+
+    def test_the_dp_tutorials_are_those_that_register_the_mod(self):
+        assert {"3d_spleen_segmentation", "ehr_risk_prediction", "xray_classification"} <= gates.dp_tutorials()
+        assert "3d_spleen_segmentation_evaluation" not in gates.dp_tutorials()
+
+    def test_flower_tutorial_verdict_fails_on_heavy_dp_clipping(self):
+        dp = {"ehr_risk_prediction", "3d_spleen_segmentation"}
+        clean = {
+            "tutorials": [
+                {"name": "ehr_risk_prediction", "dp_reports": 4},
+                {"name": "3d_spleen_segmentation", "dp_reports": 4},
+                {"name": "eval"},
+            ]
+        }
+        clipped = {"tutorials": [{"name": "3d_spleen_segmentation", "dp_reports": 4, "dp_over_clipped": 1}]}
+        assert gates.dp_clipping_verdict(clean, dp) is None
+        reason = gates.dp_clipping_verdict(clipped, dp)
+        assert "3d_spleen_segmentation (1x)" in reason
+        assert "dp-clipping-norm" in reason
+
+    def test_flower_tutorial_verdict_fails_when_a_dp_tutorial_reports_nothing(self):
+        # No WARNING because no DP line arrived at all (logs lost, mod unwired) must not read as clean.
+        silent = {"tutorials": [{"name": "ehr_risk_prediction"}]}
+        reason = gates.dp_clipping_verdict(silent, {"ehr_risk_prediction"})
+        assert "ehr_risk_prediction" in reason
+        assert "no DP report" in reason
+        flower = gates.build_gates("v0.0.1", "rel0001", lambda: "")["tutorials-flower"]
+        assert flower.verdict is gates.dp_clipping_verdict
+
+    def test_flower_tutorial_verdict_fails_when_a_dp_tutorial_did_not_run(self):
+        ran = {"tutorials": [{"name": "ehr_risk_prediction", "dp_reports": 4}]}
+        reason = gates.dp_clipping_verdict(ran, {"ehr_risk_prediction", "xray_classification"})
+        assert "xray_classification" in reason
+        assert "ehr_risk_prediction" not in reason
+
+    def test_flower_tutorial_verdict_fails_when_no_tutorial_ran(self):
+        # An empty run-all-tutorials that still exits 0 must not pass vacuously.
+        reason = gates.dp_clipping_verdict({"tutorials": []}, set())
+        assert "no tutorial was reported" in reason
+        assert gates.dp_clipping_verdict({}, set()) == reason
+
+    def test_a_verdict_fails_a_gate_whose_steps_passed(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        gate = gates.Gate(
+            "x",
+            [[sys.executable, "-c", "print('🚀 Running Flower tutorial a')"]],
+            gates.tutorial_metrics,
+            verdict=lambda metrics: "tutorial a learned nothing" if metrics["total"] else None,
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = gates.run_gate(gate, tmp, {}, {})
+        assert result["status"] == "failed"
+        assert result["exit_code"] == 1
+        assert "❌ tutorial a learned nothing" in (tmp / "x.log").read_text()
+
+    def test_cleanup_runs_when_the_verdict_raises(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+
+        def broken(_metrics):
+            raise KeyError("name")
+
+        gate = gates.Gate(
+            "x", [[sys.executable, "-c", "print(1)"]], gates.tutorial_metrics, lambda: ["stopped 42"], broken
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            try:
+                gates.run_gate(gate, tmp, {}, {})
+            except KeyError:
+                pass
+            else:
+                raise AssertionError("the verdict's exception was swallowed")
+        assert "🧹 stopped 42" in (tmp / "x.log").read_text()
+
     def test_smoke_metrics(self):
         lines = [
             (0.0, "   project_id   = a02be724"),

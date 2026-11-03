@@ -27,3 +27,6 @@ local-epochs = 5
 learning-rate = 5e-5
 best-model-metric = "test_dice"
 best-model-metric-minimize = false
+
+# Pre-clip update norm measured 21-22; the template's 1.0 placeholder stopped training (FLIP#1754).
+dp-clipping-norm = 20.0

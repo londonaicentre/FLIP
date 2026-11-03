@@ -23,6 +23,10 @@ data**:
 - The controls that decide what may leave a trust run on the trust's own infrastructure,
   alongside the data they protect.
 
+.. contents:: On this page
+   :local:
+   :depth: 1
+
 *****************************************
 Each site can veto any individual project
 *****************************************
