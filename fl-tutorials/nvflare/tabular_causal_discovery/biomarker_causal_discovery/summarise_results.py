@@ -50,12 +50,14 @@ from federated_fci import (  # noqa: E402
     EDGE_MEANINGS,
     EDGE_SYMBOLS,
     STATE_KEYS,
-    as_pags,
+    STATISTICS_RESIDUAL_TOLERANCE,
     decode,
     edge_frequencies,
     federation_mode,
     format_edges,
+    integral_pags,
     recover_site_counts,
+    statistics_residual,
 )
 
 # Column of the figure each variable is drawn in, by its role in the background knowledge:
@@ -291,17 +293,24 @@ def main(argv: list[str] | None = None) -> int:
     config = json.loads(args.config.read_text())
     state = load_state(args.model)
     variables = list(config["VARIABLES"])
-    pags = as_pags(state["pag"])
+    # The statistics first: a job stopped after round 1 has no PAGs, and its model is the one that
+    # holds the pooled statistics.
+    holds_statistics = statistics_residual(state) > STATISTICS_RESIDUAL_TOLERANCE
+    sensitive = (
+        "this model holds the pooled statistics (each site's mean and second moments, pooled), which a "
+        "finished pooled_statistics run consumes in round 2. Treat the file as sensitive and do not share it."
+    )
+    try:
+        pags = integral_pags(state["pag"])
+    except ValueError as refused:
+        raise SystemExit(f"{refused}{f'; also, {sensitive}' if holds_statistics else ''}") from None
     if not np.any(pags):
+        if holds_statistics:
+            raise SystemExit(f"the model holds no PAGs: the job stopped after round 1, and {sensitive}")
         raise SystemExit("the model holds no PAGs yet: the run did not reach its orientation round")
+    if holds_statistics:
+        print(f"WARNING: the statistics buffers are not zero: {sensitive} The job was stopped or failed in round 2.")
     pooled_n, sizes = recover_site_counts(state["site_counts"], federation_mode(config) == "pooled_statistics")
-    residual = max(float(np.max(np.abs(state["stats_mean"]))), float(np.max(np.abs(state["stats_moment"]))))
-    if residual > 1e-6:
-        print(
-            f"WARNING: the statistics buffers are not zero (max |value| {residual:.3g}): this model holds the "
-            "pooled statistics, which a finished pooled_statistics run consumes in round 2 — the job was stopped "
-            "or failed after round 1. Treat the file as sensitive and do not share it."
-        )
     rows = edge_frequencies(pags, variables)
     min_prob = args.min_prob if args.min_prob is not None else float(config.get("STABLE_EDGE_PROB", 0.5))
 

@@ -36,6 +36,7 @@ import types
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 from tutorial_apps import TUTORIALS_ROOT, load_module
 
 APP_FILES = TUTORIALS_ROOT / "nvflare" / "tabular_causal_discovery" / "biomarker_causal_discovery" / "app_files"
@@ -151,6 +152,13 @@ def stable_edges(ff, pags: np.ndarray) -> dict[tuple[str, str], str]:
     }
 
 
+def assert_no_digits(message: str, *allowed: str) -> None:
+    """A refusal that reaches the hub carries no number: no count, no floor, no column index."""
+    for text in ("site-1", "site-2", "Trust_1", *allowed):
+        message = message.replace(text, "")
+    assert not re.search(r"\d", message), message
+
+
 # --- exactness of the pooled statistics ---------------------------------------------------
 
 
@@ -241,19 +249,21 @@ def test_pooled_mode_refuses_a_one_round_job(ff, config, two_sites):
     assert weight == matrix.shape[0]
 
 
-def test_filter_bound_follows_a_stricter_site_policy(ff, monkeypatch):
-    class Policy:
-        gamma = 0.001
+def test_filter_bounds_are_the_stricter_of_the_site_policy_and_the_stock_filter(ff, monkeypatch):
+    """FLARE runs the site's filter and the job's stock one, so the tighter clip and the higher percentile apply."""
 
-    monkeypatch.setattr(ff, "resolve_policy", lambda env: (Policy(), "env"))
-    assert ff.effective_percentile_clip() == pytest.approx(0.001)
+    def policy(gamma, percentile):
+        return lambda env: (type("Policy", (), {"gamma": gamma, "percentile": percentile})(), "env")
+
+    stock = (ff.PERCENTILE_CLIP, ff.PERCENTILE_STOCK)
+    monkeypatch.setattr(ff, "resolve_policy", policy(0.001, 25.0))
+    assert ff.effective_percentile_policy() == (pytest.approx(0.001), 25.0)
+    monkeypatch.setattr(ff, "resolve_policy", policy(0.5, 2.0))
+    assert ff.effective_percentile_policy() == stock  # never looser than the stock filter, on either bound
     monkeypatch.setattr(ff, "resolve_policy", lambda env: (None, "none"))
-    assert ff.effective_percentile_clip() == ff.PERCENTILE_CLIP
-    looser = type("P", (), {"gamma": 0.5})()
-    monkeypatch.setattr(ff, "resolve_policy", lambda env: (looser, "env"))
-    assert ff.effective_percentile_clip() == ff.PERCENTILE_CLIP  # never looser than the stock clip
+    assert ff.effective_percentile_policy() == stock
     monkeypatch.setattr(ff, "resolve_policy", lambda env: (_ for _ in ()).throw(RuntimeError("bad policy")))
-    assert ff.effective_percentile_clip() == ff.PERCENTILE_CLIP
+    assert ff.effective_percentile_policy() == stock
 
 
 def test_correlation_fisherz_matches_causallearn_on_the_same_rows(ff, config):
@@ -474,6 +484,8 @@ def test_round_two_only_config_errors_are_caught_before_the_release(ff, config, 
         {"ALPHA": 1.5},
         {"MAX_DEPTH": 2.5},
         {"SEED": "later"},
+        {"SEED": -1},  # default_rng refuses it, but only in round 2
+        {"SEED": 1.5},
         {"KNOWLEDGE": {**config["KNOWLEDGE"], "SINKS": ["not_a_column"]}},
         {"LOG_TRANSFORM": ["not_a_column"]},
         {"SCALE": {"u_mri": 0}},
@@ -481,6 +493,42 @@ def test_round_two_only_config_errors_are_caught_before_the_release(ff, config, 
     ):
         with pytest.raises((ValueError, TypeError)):
             ff.client_round(ff.empty_state(config), 0, 2, matrix, "site-1", {**config, **bad})
+
+
+def test_pooled_mode_refuses_a_ci_test_it_would_not_run(ff, config, two_sites):
+    """Pooled mode always runs Fisher's z on the pooled correlation; a config naming kci must not report that as kci."""
+    matrix = next(iter(two_sites.values()))
+    with pytest.raises(ValueError, match="CI_TEST must be fisherz"):
+        ff.client_round(ff.empty_state(config), 0, 2, matrix, "site-1", {**config, "CI_TEST": "kci"})
+    voting = {**config, "FEDERATION": "layer_voting", "CI_TEST": "kci"}
+    ff.validate_config(voting)  # voting mode runs the named test on rows
+
+
+def test_a_tiny_site_gets_the_floor_refusal_not_a_finer_one(ff, config):
+    """In pooled mode the release checks run first, so the hub cannot tell "fewer than 5" from "below the floor"."""
+    tiny = ff.prepare_cohort(sample_scm(3, 4), config)[0]
+    with pytest.raises(ValueError, match="below the site floor"):
+        ff.client_round(ff.empty_state(config), 0, 2, tiny, "site-1", config)
+
+
+def test_a_site_that_failed_round_two_makes_the_average_refused_not_rounded(ff, config, two_sites, monkeypatch):
+    """Its zeroing payload carries an empty PAG at its full weight; the mean of that and a real PAG is no PAG."""
+    pooled = ff.encode(_pooled_state(ff, config, two_sites))
+    (name_a, rows_a), (name_b, rows_b) = two_sites.items()
+    good, n_a, _ = ff.client_round(ff.decode(pooled), 1, 2, rows_a, name_a, config)
+    monkeypatch.setattr(ff, "fci_from_correlation", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    with pytest.raises(ff.RoundFailed) as err:
+        ff.client_round(ff.decode(pooled), 1, 2, rows_b, name_b, config)
+    failed, n_b = err.value.target, err.value.weight
+    mixed = {
+        key: (n_a * ff.encode(good)[key].astype(np.float64) + n_b * ff.encode(failed)[key].astype(np.float64))
+        / (n_a + n_b)
+        for key in ff.STATE_KEYS
+    }
+    with pytest.raises(ValueError, match="not whole endpoint marks") as refused:
+        ff.evaluate_state(ff.decode(mixed), config)
+    assert_no_digits(str(refused.value))
+    ff.evaluate_state(ff.decode(ff.encode(good)), config)  # a whole PAG passes
 
 
 def test_a_failure_after_the_release_still_sends_the_zeroing_payload(ff, config, two_sites, monkeypatch):
@@ -505,8 +553,9 @@ def test_a_non_positive_value_in_a_log_column_is_refused_not_dropped(ff, config)
     would differ by exactly that row's contribution."""
     frame = sample_scm(100, 7)
     frame.loc[3, "x_fluid"] = 0.0
-    with pytest.raises(ValueError, match="x_fluid.*non-positive"):
+    with pytest.raises(ValueError, match="LOG_TRANSFORM column holds non-positive") as err:
         ff.prepare_cohort(frame, config)
+    assert "x_fluid" not in str(err.value)  # which column stays in the site's own log
 
 
 def test_incomplete_rows_make_the_site_refuse(ff, config):
@@ -766,3 +815,64 @@ def test_trainer_raises_a_last_round_failure_when_no_task_follows(ff, monkeypatc
     with pytest.raises(RuntimeError, match="last round"):
         trainer.main()
     assert len(sent) == 1  # the zeroing payload travelled before the error
+
+
+# --- the downloaded model: statistics and PAG checks -------------------------------------------
+
+
+def nvflare_fedavg(ff, config: dict, sites: dict[str, np.ndarray], total_rounds: int, stop_after: int | None = None):
+    """NVFLARE's server arithmetic: float32 DIFFs through its WeightedAggregationHelper, added to a float32 state."""
+    from nvflare.app_common.aggregators.weighted_aggregation_helper import WeightedAggregationHelper
+
+    state = ff.encode(ff.empty_state(config))
+    for round_index in range(total_rounds if stop_after is None else stop_after):
+        helper = WeightedAggregationHelper()
+        for name, matrix in sites.items():
+            target, weight, _ = ff.client_round(ff.decode(state), round_index, total_rounds, matrix, name, config)
+            diff = {key: ff.encode(target)[key] - state[key] for key in ff.STATE_KEYS}
+            helper.add(data=diff, weight=float(weight), contributor_name=name, contribution_round=round_index)
+        mean_diff = helper.get_result()
+        state = {key: (state[key] + mean_diff[key]).astype(np.float32) for key in ff.STATE_KEYS}
+    return state
+
+
+@pytest.fixture(scope="module")
+def uneven_sites(ff, config) -> dict[str, np.ndarray]:
+    return {f"site-{i + 1}": ff.prepare_cohort(sample_scm(n, 40 + i), config)[0] for i, n in enumerate((180, 260, 120))}
+
+
+def _summarise_model(summarise, tmp_path, config, encoded, capsys):
+    model, config_file = tmp_path / "FL_global_model.pt", tmp_path / "config.json"
+    torch.save({key: torch.from_numpy(np.ascontiguousarray(encoded[key])) for key in encoded}, model)
+    config_file.write_text(json.dumps(config))
+    summarise.main([str(model), "--config", str(config_file)])
+    return capsys.readouterr().out
+
+
+def test_a_finished_nvflare_run_leaves_only_float32_rounding_in_the_statistics(
+    ff, config, uneven_sites, summarise, tmp_path, capsys
+):
+    """NVFLARE adds DIFFs in float32, so round 2's zeroing leaves ulps behind; that is not 'statistics present'."""
+    final = nvflare_fedavg(ff, config, uneven_sites, total_rounds=2)
+    residual = ff.statistics_residual(ff.decode(final))
+    assert 0 < residual < ff.STATISTICS_RESIDUAL_TOLERANCE / 10  # ulps, with a margin
+    out = _summarise_model(summarise, tmp_path, config, final, capsys)
+    assert "WARNING" not in out
+    assert "Edges with frequency" in out
+
+
+def test_a_model_stopped_after_round_one_is_flagged_as_holding_the_statistics(
+    ff, config, uneven_sites, summarise, tmp_path, capsys
+):
+    """No PAGs yet, and the pooled statistics in the buffers: the message has to say the second, not only the first."""
+    after_one = nvflare_fedavg(ff, config, uneven_sites, total_rounds=2, stop_after=1)
+    assert ff.statistics_residual(ff.decode(after_one)) > 1.0  # genuine moments are far above the tolerance
+    with pytest.raises(SystemExit, match="stopped after round 1.*holds the pooled statistics"):
+        _summarise_model(summarise, tmp_path, config, after_one, capsys)
+
+
+def test_summarise_refuses_a_non_integral_average(ff, config, two_sites, summarise, tmp_path, capsys):
+    final = fedavg(ff, config, two_sites, total_rounds=2)
+    final["pag"] = final["pag"] * 0.6  # one of two equal sites sent an empty PAG
+    with pytest.raises(SystemExit, match="not whole endpoint marks"):
+        _summarise_model(summarise, tmp_path, config, ff.encode(final), capsys)

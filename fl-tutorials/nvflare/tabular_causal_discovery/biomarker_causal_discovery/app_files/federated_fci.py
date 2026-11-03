@@ -234,16 +234,18 @@ def validate_config(config: dict) -> None:
     ):
         raise ValueError("VARIABLES must list at least two distinct column names")
     federation_mode(config)
-    for key, low in (("N_BOOTSTRAPS", 0), ("MAX_DEPTH", -1), ("MIN_SITE_ROWS", 0), ("MIN_CELL_COUNT", 0)):
+    for key, low in (("N_BOOTSTRAPS", 0), ("MAX_DEPTH", -1), ("MIN_SITE_ROWS", 0), ("MIN_CELL_COUNT", 0), ("SEED", 0)):
         value = config.get(key, low)
-        if int(value) != value or int(value) < low:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or int(value) != value or int(value) < low:
             raise ValueError(f"{key} must be an integer of at least {low}, got {value!r}")
-    int(config.get("SEED", 0))
     for key, low, high in (("ALPHA", 0.0, 1.0), ("STABLE_EDGE_PROB", 0.0, 1.0), ("VOTE_RATIO", 0.0, 1.0)):
         value = float(config.get(key, 0.5))
         if not low < value <= high or (key == "ALPHA" and value >= 1.0):
             raise ValueError(f"{key} must lie in ({low}, {high}{']' if key != 'ALPHA' else ')'}, got {value!r}")
-    str(config.get("CI_TEST", "fisherz"))
+    if federation_mode(config) == "pooled_statistics" and config.get("CI_TEST", "fisherz") != "fisherz":
+        # Pooled mode tests on the pooled correlation, which only Fisher's z can use; a config naming another
+        # test would otherwise report a Fisher-z graph under that test's name.
+        raise ValueError("pooled_statistics runs Fisher's z on the pooled correlation: CI_TEST must be fisherz")
     present = set(variables)
     unknown = [c for c in config.get("LOG_TRANSFORM", []) if c not in present]
     if unknown:
@@ -302,12 +304,49 @@ def as_pags(pag_array: np.ndarray) -> np.ndarray:
     return np.rint(np.asarray(pag_array, dtype=np.float64)).astype(np.int8)
 
 
+#: The largest |value| a statistics buffer may hold and still count as zeroed, in natural units. Round 2
+#: zeroes the statistics; Flower's FedAvg then holds exact zeros, but NVFLARE adds each site's DIFF to
+#: the global state in float32, which leaves a few ulps of the round-1 values behind (about 1e-6 on an
+#: uneven three-site split). Genuine pooled statistics include every variable's second moment, which the
+#: configured LOG_TRANSFORM / SCALE keep of order one, so they sit orders of magnitude above this.
+STATISTICS_RESIDUAL_TOLERANCE = 1e-4
+
+
+def statistics_residual(state: dict[str, np.ndarray]) -> float:
+    """Largest |value| left in the decoded statistics buffers (see :data:`STATISTICS_RESIDUAL_TOLERANCE`)."""
+    return max(float(np.max(np.abs(state["stats_mean"]))), float(np.max(np.abs(state["stats_moment"]))))
+
+
+#: How far an averaged endpoint mark may sit from an integer and still be a float32 round trip.
+PAG_INTEGRALITY_TOLERANCE = 1e-3
+
+
+def integral_pags(pag_array: np.ndarray) -> np.ndarray:
+    """:func:`as_pags`, refusing an average that is not a whole mark.
+
+    Every site computes the same PAGs from the same pooled statistics (or the same voted
+    skeleton), so their weighted mean is that PAG again. A mark between integers means the
+    sites' PAGs differed: one site failed its orientation round and sent the empty PAG of its
+    zeroing payload, or the sites computed different graphs. Rounding would turn the mixture into
+    a wrong mark (a circle averaged with nothing reads as an arrowhead) without any error.
+    """
+    pags = np.asarray(pag_array, dtype=np.float64)
+    if pags.size and float(np.max(np.abs(pags - np.rint(pags)))) > PAG_INTEGRALITY_TOLERANCE:
+        raise ValueError(
+            "the averaged PAGs are not whole endpoint marks: the sites disagree, or a site failed its "
+            "orientation round — the graph is not usable"
+        )
+    return as_pags(pags)
+
+
 def effective_percentile_policy(env: dict | None = None) -> tuple[float, float]:
     """The (clip, percentile) the trust's NVFLARE site policy actually applies.
 
     A trust may lower ``gamma`` or raise ``percentile`` through ``FL_SITE_PRIVACY_*`` or its
     governance document, and the stock filter clips and zeroes silently, so the bounds checked
-    below must be the site's, not the defaults. The clip is never looser than the stock one.
+    below must be the site's, not the defaults. FLARE runs the site's filter *and* the job's
+    stock one (site-scope filters first), so the effective clip is the tighter of the two and the
+    effective percentile the higher.
     """
     if resolve_policy is None:
         return PERCENTILE_CLIP, PERCENTILE_STOCK
@@ -318,7 +357,7 @@ def effective_percentile_policy(env: dict | None = None) -> tuple[float, float]:
         return PERCENTILE_CLIP, PERCENTILE_STOCK
     if policy is None:
         return PERCENTILE_CLIP, PERCENTILE_STOCK
-    return min(PERCENTILE_CLIP, float(policy.gamma)), float(getattr(policy, "percentile", PERCENTILE_STOCK))
+    return min(PERCENTILE_CLIP, float(policy.gamma)), max(PERCENTILE_STOCK, float(policy.percentile))
 
 
 def effective_percentile_clip(env: dict | None = None) -> float:
@@ -497,10 +536,13 @@ def prepare_cohort(dataframe, config: dict) -> tuple[np.ndarray, np.ndarray | No
         values = matrix[:, index]
         if np.any(values[np.isfinite(values)] <= 0):
             # Dropping such a row instead would let a config choice select rows: two jobs, with and
-            # without the transform, would differ by exactly the dropped rows' contribution.
+            # without the transform, would differ by exactly the dropped rows' contribution. The column
+            # stays in the site's own log: named to the hub, the refusal would say that some patient here
+            # holds a non-positive value in a column the researcher chose.
+            logger.info("LOG_TRANSFORM column %s holds non-positive values at this site", column)
             raise ValueError(
-                f"{column} is listed in LOG_TRANSFORM but holds non-positive values: the cohort query has to "
-                "exclude or mask them (the converter masks non-positive assay values)"
+                "a LOG_TRANSFORM column holds non-positive values at this site: the cohort query has to exclude "
+                "or mask them (the converter masks non-positive assay values)"
             )
         matrix[:, index] = np.log(values)
     for column, divisor in config.get("SCALE", {}).items():
@@ -987,12 +1029,6 @@ def client_round(
     variables = list(config["VARIABLES"])
     mode = federation_mode(config)
     n = int(matrix.shape[0])
-    # Refusals below carry no count: Flower forwards a client's exception text to the hub, and a
-    # below-floor count is exactly what the platform's cohort threshold keeps indistinguishable from
-    # empty. The count goes to the site's own log only.
-    if n < 5:
-        logger.info("site %s: %d complete rows, too few for any conditional-independence test", site_name, n)
-        raise ValueError(f"site {site_name!r} holds too few complete rows for a conditional-independence test")
     if mode == "layer_voting" and not layer_voting_allowed(local_dev):
         raise ValueError(
             "layer_voting is experimental (its leakage is unanalysed) and runs only on the simulator; "
@@ -1002,6 +1038,17 @@ def client_round(
         # Round 2 is where the pooled statistics are consumed and zeroed. With one round the job's
         # result bundle would be the pooled mean and second-moment matrix themselves.
         raise ValueError("pooled_statistics needs GLOBAL_ROUNDS of at least 2: one round would publish the statistics")
+    if mode == "pooled_statistics":
+        # Every round, not only the releasing one: a site that refused in round 1 is still asked for
+        # round 2 and the evaluation, and must not report its count there either. First, so that no
+        # other refusal tells the hub anything finer than "below the floor".
+        assert_site_may_release(matrix, config, person_ids, dropped_rows, site_name)
+    # Refusals carry no count: Flower forwards a client's exception text to the hub, and a below-floor
+    # count is exactly what the platform's cohort threshold keeps indistinguishable from empty. In
+    # pooled mode the floor above already covers this; voting mode has no floor of its own.
+    if n < 5:
+        logger.info("site %s: %d complete rows, too few for any conditional-independence test", site_name, n)
+        raise ValueError(f"site {site_name!r} holds too few complete rows for a conditional-independence test")
     slot = site_slot(site_name)
     b_total = n_bootstrap_slabs(config)
     stable_prob = float(config.get("STABLE_EDGE_PROB", 0.5))
@@ -1010,9 +1057,6 @@ def client_round(
     metrics: dict[str, float] = {"site_rows": float(n)}
 
     if mode == "pooled_statistics":
-        # Every round, not only the releasing one: a site that refused in round 1 is still asked for
-        # round 2 and the evaluation, and must not report its count there either.
-        assert_site_may_release(matrix, config, person_ids, dropped_rows, site_name)
         if round_index == 0:
             target = empty_state(config)
             target["stats_mean"], target["stats_moment"] = site_statistics(matrix)
@@ -1028,7 +1072,7 @@ def client_round(
         metrics["pooled_rows"] = float(pooled_n)
         metrics["sites_seen"] = float(len(sizes))
         try:
-            if not np.any(as_pags(received["pag"])):
+            if not np.any(integral_pags(received["pag"])):
                 variance = np.diag(received["stats_moment"] - np.outer(received["stats_mean"], received["stats_mean"]))
                 # Relative to the second moment: the statistics made a float32 round trip through the transport.
                 negligible = 1e-5 * np.maximum(np.abs(np.diag(received["stats_moment"])), 1e-300)
@@ -1079,7 +1123,7 @@ def client_round(
         assert_within_filter_bounds(target, 1)
         return target, 1, metrics
     target["skeleton"], target["sepsets"] = skeleton, sepsets
-    if not np.any(as_pags(received["pag"])):
+    if not np.any(integral_pags(received["pag"])):
         target["pag"] = np.stack(
             [pag_from_skeleton(skeleton[b], sepsets[b], variables, config, b) for b in range(b_total)]
         ).astype(np.float64)
@@ -1092,7 +1136,7 @@ def evaluate_state(received: dict[str, np.ndarray], config: dict) -> dict[str, f
     """The scalars a site reports when asked to evaluate the global state (the final PAGs)."""
     variables = list(config["VARIABLES"])
     stable_prob = float(config.get("STABLE_EDGE_PROB", 0.5))
-    metrics = summary_metrics(received["pag"], variables, stable_prob)
+    metrics = summary_metrics(integral_pags(received["pag"]), variables, stable_prob)
     pooled_n, sizes = recover_site_counts(received["site_counts"], federation_mode(config) == "pooled_statistics")
     metrics["pooled_rows"] = float(pooled_n)
     metrics["sites_seen"] = float(len(sizes))

@@ -31,7 +31,7 @@ import torch
 from flip import FLIP
 from flip.constants import FlipConstants
 from flip.flower.identity import client_identity, partition_cohort
-from flip.flower.privacy import flip_local_dp_mod
+from flip.flower.privacy import LocalDpConfig, flip_local_dp_mod
 from flwr.app import Array, ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 from flwr.common import log
@@ -102,9 +102,11 @@ def _assert_local_dp_off(context: Context) -> None:
 
     ``config.toml`` sets ``dp-enabled = false``, but the upload path does not require that file,
     so an upload without it runs the base bundle's ``dp-enabled = true``. Refuse rather than
-    report a graph computed from noise.
+    report a graph computed from noise. The run config is read exactly as the mod reads it
+    (:meth:`LocalDpConfig.from_run_config`), so a run config without the key, which the mod treats
+    as DP on, is refused too.
     """
-    if bool(context.run_config.get("dp-enabled", False)):
+    if LocalDpConfig.from_run_config(context.run_config).enabled:
         raise ValueError(
             "dp-enabled is true for this run: the per-update clip-and-noise mod is not a mechanism for pooled "
             "statistics (see the README's privacy section) — upload app/config.toml, which sets dp-enabled = false"
