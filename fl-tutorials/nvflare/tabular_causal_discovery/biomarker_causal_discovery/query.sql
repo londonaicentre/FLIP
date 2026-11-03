@@ -88,7 +88,8 @@ FROM
     JOIN values_at_baseline v ON v.person_id = p.person_id
     JOIN education e ON e.person_id = p.person_id
 WHERE
-    v.apoe4_copies IS NOT NULL
+    e.education_years IS NOT NULL
+    AND v.apoe4_copies IS NOT NULL
     AND v.plasma_ab42_ab40_ratio IS NOT NULL
     AND v.plasma_ptau217 IS NOT NULL
     AND v.plasma_nfl IS NOT NULL

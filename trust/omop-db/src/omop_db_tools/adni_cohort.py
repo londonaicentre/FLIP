@@ -198,8 +198,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--allow-remote",
         action="store_true",
-        help="Load into a database that is not on this host, or under PROD. Off by default: the cohort is "
-        "licence-restricted and belongs on the licence holder's own machines only.",
+        help="Load into a database that is not on this host, or under HUB (or the retired PROD). Off by default: "
+        "the cohort is licence-restricted and belongs on the licence holder's own machines only.",
     )
     return parser.parse_args(argv)
 
@@ -210,7 +210,8 @@ LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 def refuse_unless_local(host: str, env: dict, allow_remote: bool) -> None:
     """The documentation's 'never a shared or published trust' rule, enforced.
 
-    A remote ``OMOP_DB_HOST`` or a ``PROD`` environment means a trust other people's projects read;
+    A remote ``OMOP_DB_HOST``, or a ``HUB`` (``prod``/``stag``, FLIP#1479) or the retired ``PROD`` in the
+    environment, means a trust other people's projects read;
     ADNI rows there would breach the Data Use Agreement. ``--allow-remote`` is the explicit override.
     """
     if allow_remote:
@@ -218,8 +219,9 @@ def refuse_unless_local(host: str, env: dict, allow_remote: bool) -> None:
     problems = []
     if host not in LOCAL_HOSTS:
         problems.append(f"OMOP_DB_HOST={host!r} is not this host")
-    if env.get("PROD"):
-        problems.append(f"PROD={env['PROD']!r} selects a deployed environment")
+    for selector in ("HUB", "PROD"):
+        if env.get(selector):
+            problems.append(f"{selector}={env[selector]!r} selects a deployed environment")
     if problems:
         raise SystemExit(
             "❌ Refusing to load the ADNI cohort: " + "; ".join(problems) + ". This loader is for a LOCAL dev "

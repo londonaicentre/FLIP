@@ -926,7 +926,10 @@ load-synthea-ehr:
 # `make -C fl-tutorials convert-adni-cohort` writes. Run once per trust:
 #   make -C trust load-adni-cohort TRUST_INDEX=1 OMOP_DB_PORT=5434   # GSTT
 #   make -C trust load-adni-cohort TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH
+# A relative ADNI_COHORT is read from trust/ (make -C changes directory first), so from anywhere
+# else pass an absolute path; a path that does not exist fails here, naming where it looked.
 load-adni-cohort:
+	$(if $(ADNI_COHORT),@test -f "$(abspath $(ADNI_COHORT))" || { echo "❌ ADNI_COHORT=$(ADNI_COHORT) resolves to $(abspath $(ADNI_COHORT)) which does not exist. A relative path is taken from trust/ (make -C); pass an absolute one" >&2; exit 1; })
 	$(OMOP_DB_CMD) load-adni-cohort TRUST_INDEX=$(TRUST_INDEX) OMOP_DB_PORT=$(OMOP_DB_PORT) \
 		$(if $(ADNI_COHORT),ADNI_COHORT="$(abspath $(ADNI_COHORT))")
 

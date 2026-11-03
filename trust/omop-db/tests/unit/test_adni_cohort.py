@@ -211,6 +211,21 @@ class TestReloadByProvenance:
             ).scalars()
             assert sorted(loaded) == [PERSON_ID_OFFSET + 1, PERSON_ID_OFFSET + 3]
 
+    def test_query_sql_returns_the_loaded_cohort(self, engine, cohort: pd.DataFrame):
+        """The tutorial's actual query.sql, run over what this loader writes, gives the cohort back.
+
+        The loader keeps its own copy of the converter's OMOP mapping (codes, baseline date, birth
+        year), so this is the check that the copy still produces rows the query selects, value for value.
+        """
+        load_adni_cohort(engine, cohort, num_trusts=2, trust_index=1)
+        with engine.connect() as conn:
+            result = pd.read_sql_query(text(QUERY_SQL.read_text()), conn)
+        assert list(result.columns) == COHORT_COLUMNS
+        result["person_id"] -= PERSON_ID_OFFSET
+        result = result.sort_values("person_id").reset_index(drop=True)
+        expected = _trust_slice(cohort, 2, 1).sort_values("person_id").reset_index(drop=True)
+        pd.testing.assert_frame_equal(result.astype(float), expected.astype(float), check_exact=False, atol=1e-9)
+
 
 class TestMain:
     def test_rejects_bad_trust_index(self, tmp_path: Path):
@@ -256,6 +271,14 @@ class TestLocalOnly:
     def test_prod_environment_is_refused(self):
         with pytest.raises(SystemExit, match="PROD='stag'"):
             refuse_unless_local("localhost", {"PROD": "stag"}, allow_remote=False)
+
+    @pytest.mark.parametrize("hub", ["prod", "stag"])
+    def test_hub_environment_is_refused(self, hub: str):
+        with pytest.raises(SystemExit, match=f"HUB='{hub}' selects a deployed environment"):
+            refuse_unless_local("localhost", {"HUB": hub}, allow_remote=False)
+
+    def test_empty_hub_is_the_dev_shape(self):
+        refuse_unless_local("localhost", {"HUB": ""}, allow_remote=False)
 
     def test_override_lets_it_through(self):
         refuse_unless_local("omop.stag.example", {"PROD": "stag"}, allow_remote=True)

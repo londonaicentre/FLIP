@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import re
+import types
 
 import numpy as np
 import pandas as pd
@@ -724,3 +725,44 @@ def test_reference_scoring_matches_on_a_real_run(ff, config, two_sites, summaris
     metrics = summarise.graph_metrics(graph, summarise.stable_graph(truth, 0.5))
     assert metrics["skeleton_recall"] == 1.0
     assert metrics["shd"] <= 1
+
+
+# --- NVFLARE client loop ----------------------------------------------------------------------
+
+
+def test_trainer_raises_a_last_round_failure_when_no_task_follows(ff, monkeypatch):
+    """A round that fails after the release still sends its zeroing payload, then the client ends in error.
+
+    The failure is deferred to the next task; when the failing round is the last one and the loop ends
+    (``receive()`` returns None), the client must still raise rather than exit cleanly.
+    """
+    trainer = load_module("biomarker_nvflare_trainer", APP_FILES / "trainer.py")
+    zeros = {key: np.zeros(1, dtype=np.float32) for key in ff.STATE_KEYS}
+    tasks = iter([types.SimpleNamespace(params=zeros, current_round=1, total_rounds=2), None])
+    sent = []
+    fake_flare = types.SimpleNamespace(
+        init=lambda: None,
+        get_site_name=lambda: "site-1",
+        is_running=lambda: True,
+        receive=lambda: next(tasks),
+        is_train=lambda: True,
+        send=sent.append,
+        FLModel=lambda **kwargs: kwargs,
+    )
+    cause = RuntimeError("FCI failed in the last round")
+
+    def failing_round(*_args, **_kwargs):
+        raise ff.RoundFailed(zeros, 0, {"round_failed": 1.0}, cause)
+
+    monkeypatch.setattr(trainer, "flare", fake_flare)
+    monkeypatch.setattr(trainer, "parse_args", lambda: types.SimpleNamespace(project_id=""))
+    monkeypatch.setattr(trainer, "load_config", lambda: {"GLOBAL_ROUNDS": 2})
+    monkeypatch.setattr(trainer, "load_query", lambda: "")
+    monkeypatch.setattr(trainer, "resolve_dataframe", lambda *_: pd.DataFrame())
+    monkeypatch.setattr(trainer, "prepare_cohort", lambda *_: (np.zeros((0, 1)), [], 0))
+    monkeypatch.setattr(trainer, "client_round", failing_round)
+    monkeypatch.setattr(trainer, "encode", lambda target: target)
+    monkeypatch.setattr(trainer, "SummaryWriter", lambda: types.SimpleNamespace(add_scalar=lambda *a, **k: None))
+    with pytest.raises(RuntimeError, match="last round"):
+        trainer.main()
+    assert len(sent) == 1  # the zeroing payload travelled before the error

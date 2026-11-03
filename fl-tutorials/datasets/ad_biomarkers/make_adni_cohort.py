@@ -222,8 +222,13 @@ def load_demographics(path: Path) -> pd.DataFrame:
 
 
 def load_apoe(path: Path) -> pd.DataFrame:
-    """APOE ε4 allele count from the genotype string (``'3/4'`` → 1, ``'4/4'`` → 2)."""
+    """APOE ε4 allele count from the genotype string (``'3/4'`` → 1, ``'4/4'`` → 2).
+
+    Anything that is not an ``'a/b'`` pair of alleles 2–4 (ADNI's negative missing-value codes such as
+    ``'-4'``) is missing, not counted: ``'-4'.count('4')`` would make an unknown genotype a carrier.
+    """
     raw = _read(path, ["RID", "GENOTYPE"]).dropna(subset=["GENOTYPE"])
+    raw = raw[raw["GENOTYPE"].astype(str).str.strip().str.fullmatch(r"[234]/[234]")]
     out = pd.DataFrame({"RID": raw["RID"].astype(int), "apoe4_copies": raw["GENOTYPE"].astype(str).str.count("4")})
     return out.drop_duplicates("RID")
 

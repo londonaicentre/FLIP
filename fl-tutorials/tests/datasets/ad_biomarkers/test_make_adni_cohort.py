@@ -201,6 +201,15 @@ def test_missing_column_is_named(converter: ModuleType, tmp_path: Path):
         converter.load_apoe(bad)
 
 
+def test_apoe_missing_codes_are_missing_not_carriers(converter: ModuleType, tmp_path: Path):
+    """ADNI's negative missing codes ('-4') hold a '4' but are no allele; the person has no genotype."""
+    path = tmp_path / "APOERES_x.csv"
+    rows = [(1, "3/4"), (2, "-4"), (3, "-1"), (4, "4/4"), (5, " 2/3 ")]
+    pd.DataFrame({"RID": [r for r, _ in rows], "GENOTYPE": [g for _, g in rows]}).to_csv(path, index=False)
+    apoe = converter.load_apoe(path).set_index("RID")["apoe4_copies"].to_dict()
+    assert apoe == {1: 1, 4: 2, 5: 0}
+
+
 def test_cli_writes_splits_and_a_counts_only_summary(converter: ModuleType, tables: Path, tmp_path: Path, capsys):
     out = tmp_path / "cohort"
     assert converter.main(["--adni-dir", str(tables), "--output-dir", str(out), "--num-sites", "2"]) == 0
@@ -259,6 +268,20 @@ def test_query_sql_drops_persons_missing_any_measurement(converter: ModuleType, 
     result = run_query(QUERY_FILES["nvflare"], tables)
     assert victim not in set(result["person_id"])
     assert len(result) == len(cohort) - 1
+
+
+@pytest.mark.parametrize("backend", sorted(QUERY_FILES))
+def test_query_sql_drops_persons_with_null_education(converter: ModuleType, cohort: pd.DataFrame, backend: str):
+    """A NULL education value is filtered by the query: returned, it would make the whole site refuse."""
+    tables = converter.to_omop_tables(cohort)
+    victim = int(cohort["person_id"].iloc[0])
+    observation = tables["observation"].copy()
+    observation.loc[observation["person_id"] == victim, "value_as_number"] = None
+    tables["observation"] = observation
+    result = run_query(QUERY_FILES[backend], tables)
+    assert victim not in set(result["person_id"])
+    assert len(result) == len(cohort) - 1
+    assert result["education_years"].notna().all()
 
 
 # --- rules a reviewer asked to pin -----------------------------------------------------------

@@ -170,6 +170,10 @@ def main() -> None:
         else:
             logger.warning("Received unknown task; ignoring.")
 
+    # The last round's failure has no next task to surface on: end this client in error, not cleanly.
+    if pending_error is not None:
+        raise pending_error
+
 
 if __name__ == "__main__":
     main()

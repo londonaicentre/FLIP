@@ -52,11 +52,13 @@ export:
 # --- SimEnv local simulation (CPU) ---
 # Requires the cohort built from your own ADNI download (`make -C fl-tutorials convert-adni-cohort
 # ADNI_DIR=<IDA tables>`, README "Running on real ADNI data"). Data paths are made absolute because
-# the simulator's client workers run from the workspace dir.
+# the simulator's client workers run from the workspace dir. The two per-site files are the
+# converter's 2-way split, so they are passed only for N_CLIENTS=2: with any other count every site
+# slices DEV_DATAFRAME by person_id (the two are blanked, since .env.app exports them), and no person
+# is at two sites.
 sim:
 	@echo "Running tutorial with: n_clients=$(N_CLIENTS), num_rounds=$(NUM_ROUNDS)"
-	SITE1_DATAFRAME="$(abspath $(SITE1_DATAFRAME))" \
-	SITE2_DATAFRAME="$(abspath $(SITE2_DATAFRAME))" \
+	$(if $(filter 2,$(N_CLIENTS)),SITE1_DATAFRAME="$(abspath $(SITE1_DATAFRAME))" SITE2_DATAFRAME="$(abspath $(SITE2_DATAFRAME))",SITE1_DATAFRAME= SITE2_DATAFRAME=) \
 	DEV_DATAFRAME="$(abspath $(DEV_DATAFRAME))" \
 	DEV_NUM_PARTITIONS="$(N_CLIENTS)" \
 	$(UV_RUN) python job.py \
