@@ -1,0 +1,45 @@
+{
+  "job_type": "standard",
+  "GLOBAL_ROUNDS": 2,
+  "FEDERATION": "pooled_statistics",
+  "N_BOOTSTRAPS": 50,
+  "MIN_SITE_ROWS": 30,
+  "MIN_CELL_COUNT": 5,
+  "SEED": 42,
+  "ALPHA": 0.05,
+  "CI_TEST": "fisherz",
+  "VOTE_RATIO": 0.5,
+  "STABLE_EDGE_PROB": 0.5,
+  "VARIABLES": [
+    "age",
+    "is_female",
+    "education_years",
+    "apoe4_copies",
+    "plasma_ab42_ab40_ratio",
+    "plasma_ptau217",
+    "plasma_nfl",
+    "plasma_gfap",
+    "icv_mm3",
+    "hippocampus_mm3",
+    "adas_cog13"
+  ],
+  "LOG_TRANSFORM": [
+    "plasma_ab42_ab40_ratio",
+    "plasma_ptau217",
+    "plasma_nfl",
+    "plasma_gfap"
+  ],
+  "SCALE": {
+    "age": 100,
+    "education_years": 20,
+    "icv_mm3": 1000000,
+    "hippocampus_mm3": 10000,
+    "adas_cog13": 100
+  },
+  "KNOWLEDGE": {
+    "EXOGENOUS": ["age", "is_female", "education_years", "apoe4_copies"],
+    "SINKS": ["adas_cog13"],
+    "NEVER_CONDITION_ON": ["adas_cog13"],
+    "FORBIDDEN": []
+  }
+}

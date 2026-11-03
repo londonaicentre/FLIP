@@ -479,6 +479,7 @@ fl-tutorials/datasets/spleen/uv.lock
 fl-tutorials/datasets/prostate/uv.lock
 fl-tutorials/datasets/cxr/uv.lock
 fl-tutorials/datasets/synthea/uv.lock
+fl-tutorials/datasets/ad_biomarkers/uv.lock
 fl-tutorials/datasets/brain_mri/uv.lock
 
 # Output of the spleen and cxr OMOP generation chains (FLIP#1092). Regenerated on demand and verified against
