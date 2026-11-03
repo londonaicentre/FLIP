@@ -20,6 +20,8 @@ export interface Roster {
 }
 
 export declare const ROSTER: Roster;
+export declare const DENIED_NAMES: readonly string[];
+export declare const DENIED_ADDRESSES: readonly string[];
 export declare const DENIED_STRINGS: readonly string[];
 export declare function demoId(id: string): string;
 export declare function assertClean(payload: unknown, where: string, extraDenied?: readonly string[]): void;

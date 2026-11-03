@@ -46,12 +46,16 @@ const DEMO_DIR = join(UI_ROOT, "mocks/demo");
 
 export const ROSTER = JSON.parse(readFileSync(join(DEMO_DIR, "roster.json"), "utf8"));
 
-/** Production identities and estate addresses that must never be served. */
-export const DENIED_STRINGS = [
+/** Production identities: never in a fixture, never in a built bundle. */
+export const DENIED_NAMES = [
     "Bangkok Dusit", "BDMS", "King's College London", "KCL", "AI Centre Private", "AICP",
-    "K8s Staging Trust", "K8S1", "AZ1",
+    "K8s Staging Trust", "K8S1", "AZ1"
+];
+/** Estate addresses: never in a fixture. Not checked in the bundle, where library code legitimately carries them. */
+export const DENIED_ADDRESSES = [
     "amazonaws.com", "cloudfront.net", "arn:aws", "/ark_demo/", "localhost", "X-Amz-", "Signature="
 ];
+export const DENIED_STRINGS = [...DENIED_NAMES, ...DENIED_ADDRESSES];
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const URL_SCHEME = /\b(?:https?|s3):\/\//i;
@@ -65,6 +69,8 @@ const bounded = needle => new RegExp(
 );
 const isObj = value => typeof value === "object" && value !== null && !Array.isArray(value);
 const KEEP_IDS = new Set([...ROSTER.sites.map(site => site.id), ROSTER.user.id]);
+const isDemoId = id => id[14] === "8" && "89ab".includes(id[19]);
+const NET = /(?<![A-Za-z0-9])net-\d+(?![0-9])/g;
 
 /** A stable demo id for a captured UUID: UUIDv8 from a hash. Roster, demo-user and demo ids map to themselves. */
 export function demoId(id) {
@@ -88,6 +94,14 @@ export function assertClean(payload, where, extraDenied = []) {
     for (const email of text.match(EMAIL) ?? []) {
         if (email !== ROSTER.user.email) throw new Error(`${where}: e-mail ${email} in served payload`);
     }
+    // An allowlist, not a denylist: every id served is a roster id, the demo user's or a re-keyed demo id,
+    // so a captured project, model or file id that escaped the re-keying fails here whatever it is.
+    for (const id of text.match(UUID) ?? []) {
+        const lower = id.toLowerCase();
+        if (!KEEP_IDS.has(lower) && !isDemoId(lower)) throw new Error(`${where}: id ${id} is not a roster or demo id`);
+    }
+    const net = (text.match(NET) ?? []).find(name => name !== ROSTER.net);
+    if (net) throw new Error(`${where}: FL net ${net} is not the demo world's ${ROSTER.net}`);
 }
 
 /**
@@ -144,6 +158,7 @@ export function scrubFiles(files, trustMap) {
     );
     const rewriteText = (text, where) => text
         .replace(termRe, term => replacements.get(term))
+        .replace(NET, ROSTER.net)
         .replace(UUID, id => {
             const lower = id.toLowerCase();
             if (dropped.has(lower)) throw new Error(`unmapped trust id ${id} (dropped) in text at ${where}`);
@@ -298,13 +313,12 @@ const COPYRIGHT_LINE = /Copyright \(c\) \d{4} Guy's and St Thomas' NHS Foundatio
 export function checkDist(distDir, extraDenied = capturedIds()) {
     const files = walkFiles(distDir).filter(f => /\.(js|mjs|css|html|json|map|txt)$/i.test(f));
     if (files.length === 0) throw new Error(`no scannable build output under ${distDir}`);
-    const names = DENIED_STRINGS.slice(0, DENIED_STRINGS.indexOf("amazonaws.com"));
     const problems = [];
     for (const file of files) {
         const text = readFileSync(file, "utf8").replace(COPYRIGHT_LINE, "");
         const realEmail = email => email !== ROSTER.user.email && !APP_CONTACT_EMAILS.has(email)
             && /@(?:gmail|nhs|kcl|aicentre)/i.test(email);
-        const hit = [...names, ...extraDenied].find(needle => bounded(needle).test(text))
+        const hit = [...DENIED_NAMES, ...extraDenied].find(needle => bounded(needle).test(text))
             ?? (text.match(EMAIL) ?? []).find(realEmail);
         if (hit) problems.push({
             file: relative(distDir, file),
@@ -327,6 +341,13 @@ const USAGE = "usage: node scripts/demo-fixtures.mjs scrub [slug ...] | check [-
 export function runCli(argv, io, { demoDir = DEMO_DIR } = {}) {
     const [command, ...rest] = argv;
     if (command === "scrub") {
+        const known = new Set(projectDirs(demoDir).map(dir => dir.split("/").pop()));
+        const unknown = rest.filter(slug => !known.has(slug));
+        if (unknown.length) {
+            io.error(`demo-fixtures: no project ${unknown.join(", ")} under ${relative(UI_ROOT, join(demoDir, "projects"))}; scrubbed nothing`);
+
+            return 1;
+        }
         io.log(`demo-fixtures: scrubbed ${scrubProjects(rest, demoDir).join(", ") || "nothing"}`);
 
         return 0;

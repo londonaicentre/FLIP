@@ -154,7 +154,7 @@ export default defineConfigWithVueTs(
         // not-user-facing. See flip-ui/README.md -> Dependency scoping.
         //
         // `mocks/` is deliberately NOT exempt: mocks/demo-server.ts ships in the public
-        // /ark_demo bundle, so its imports are production imports.
+        // /demo bundle, so its imports are production imports.
         name: "flip-ui/dependency-scoping",
         files: ["src/**/*.ts", "src/**/*.vue", "mocks/**/*.ts"],
         ignores: ["**/*.spec.ts", "**/__tests__/**", "src/unit-tests/**"],
@@ -223,15 +223,15 @@ export default defineConfigWithVueTs(
 
     {
         // The single sanctioned static import across the src/ <- mocks/ boundary.
-        // src/demo/DemoBanner.vue reads DEMO_CAPTURE_DATE from
-        // mocks/demo/ark-plus-register.ts — scrubbed capture constants with no imports
-        // of its own, so it cannot reach Mirage, and those identity constants are meant
-        // to ship in the demo bundle (see the isDemoBuild comment in src/App.vue, and
-        // scripts/assert-no-demo-artefacts.mjs, which reads that same file by path).
+        // src/demo/DemoBanner.vue reads EARLIEST_/LATEST_CAPTURE_DATE and PROJECT_COUNT
+        // from mocks/demo/capture-window.ts — constants with no imports of its own, so it
+        // cannot reach Mirage, and they are meant to ship in the demo bundle (see the
+        // isDemoBuild comment in src/App.vue, and scripts/assert-no-demo-artefacts.mjs,
+        // which keeps the demo roster out of every other build).
         //
         // The exception is scoped to the file that owns it rather than widened into the
         // group above, so the rule above stays a rule about the tree: every other src/
-        // file importing anything under mocks/ — this register included — is an error.
+        // file importing anything under mocks/ — capture-window.ts included — is an error.
         // The narrower spellings are not available: these are gitignore-style patterns,
         // where excluding the mocks/demo directory also excludes its contents and "!"
         // cannot re-include a file whose parent directory is excluded.
