@@ -19,7 +19,8 @@ This is the runbook for adding a trust to a running FLIP network, on any platfor
 admin's; steps 5 to 7 are the trust operator's. Only step 5, the install, differs by platform, and it lives on
 the platform's own page.
 
-Before you start, check the requirements on :doc:`deploy-trust-node`.
+Before you start, the trust should have worked through :doc:`trust-readiness-checklist`, and you should check the
+requirements on :doc:`deploy-trust-node`.
 
 .. contents:: On this page
    :local:

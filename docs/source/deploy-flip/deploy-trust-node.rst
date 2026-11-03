@@ -19,8 +19,24 @@ A **trust node** is FLIP's footprint inside a participating trust: trust-api, im
 client, an OMOP database, XNAT, a PACS (mocked by Orthanc until you connect your own) and a logging stack. It polls
 the Central Hub for work over HTTPS. **All traffic to the hub is outbound**; no inbound port is opened for it.
 
-Read this page first. It covers what every trust node needs, whatever it runs on. Then follow
+A trust deciding whether it can join, and the people who must prepare its data, PACS, network and host, start
+with :doc:`trust-readiness-checklist`: the prerequisites in plain language, by owner, in order.
+
+Read this page next. It covers what every trust node needs, whatever it runs on. Then follow
 :doc:`onboarding-a-trust`, which sends you to your platform's page for the install.
+
+.. toctree::
+   :maxdepth: 1
+   :hidden:
+
+   trust-readiness-checklist
+   onboarding-a-trust
+   deploy-flip-node-on-prem
+   deploy-flip-node-azure
+   deploy-flip-node-aws-ec2
+   deploy-flip-node-aws-eks
+   deploy-flip-node-kubernetes
+   deploy-flip-node-in-tre
 
 .. contents:: On this page
    :local:
@@ -232,14 +248,3 @@ The deploy commands always pull, so the registries are needed in a TRE too (see 
 platforms add destinations of their own: the Kubernetes chart (:doc:`deploy-flip-node-kubernetes`), the Azure VM's
 first boot and AKS (:doc:`deploy-flip-node-azure`), and the AWS services an EC2 node uses
 (:doc:`deploy-flip-node-aws-ec2`).
-
-.. toctree::
-   :maxdepth: 1
-
-   onboarding-a-trust
-   deploy-flip-node-on-prem
-   deploy-flip-node-azure
-   deploy-flip-node-aws-ec2
-   deploy-flip-node-aws-eks
-   deploy-flip-node-kubernetes
-   deploy-flip-node-in-tre
