@@ -32,9 +32,12 @@ directory basename, the same on both backends) and optionally one backend; defau
    `fl-tutorials/README.md`, both `AGENTS.md`; the `e2e_smoke_<name>` target and the demo recorder's
    `APPS` profile when the cohort is seeded on the dev trusts (`references/registration-checklist.md`
    is the full list).
-3. **README.** Walk `references/readme-shape.md`: what to upload, the job type, the imaging toggle,
-   the dataset target and the simulator command (every quoted `make -C fl-tutorials` target must
-   resolve); an input → output figure from a committed `docs/make_<what>_figure.py`; "Expected
+3. **README.** Walk `references/readme-shape.md`: the title (task and data, sentence case, same on
+   both backends); the at-a-glance table — what to upload, the job type, the imaging toggle, the
+   dataset target and the simulator command, one value per cell, replacing any "Compatible job
+   type" section (every quoted `make -C fl-tutorials` target must resolve); code formatting only for
+   what the reader types or opens; a diagram only where the loop needs one, in plain words; an
+   input → output figure from a committed `docs/make_<what>_figure.py`; "Expected
    performance" with a reference curve or table, rounds to plateau, hardware and failure signatures;
    `## References` with BibTeX and what differs from the paper; the demo video link.
 4. **Known drift** (the skill's §6 list): a Flower client reading `SUPERNODE_NAME` directly, a

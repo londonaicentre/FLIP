@@ -204,8 +204,9 @@ template, required files present, template files byte-identical), `test_flower_m
   pickle host-side under `process_tools/`). Two-stage: two `standard` jobs, the second
   taking the first's result as a frozen `SERVER_CHECKPOINT` (`prepare-checkpoint` extracts it,
   `AGGREGATE_ONLY_REGEX` keeps it out of aggregation), perceptual-loss weights via `make weights`;
-  NVFLARE only (`image_generation/brain_mri_ldm_*`). Show
-  the loop as a Mermaid block in the README. `fed_opt` has a template and no tutorial yet.
+  NVFLARE only (`image_generation/brain_mri_ldm_*`). A flow diagram only where the loop cannot be
+  said in two sentences, in plain words (`references/readme-shape.md`). `fed_opt` has a template and
+  no tutorial yet.
 - **Weights and checkpoints** follow the root `AGENTS.md` security rule: no run-time download in
   app code, every `torch.load` with `weights_only=True`, uploads `.safetensors` preferred
   (`test_offline_apps.py` is the guard).
@@ -245,4 +246,6 @@ workflow's `paths:` if needed. Changing the dataset or job type: re-run §1 for 
 every registration that named the old value. Known drift to look for when auditing: a Flower client
 reading `SUPERNODE_NAME`, a README quoting a target the root Makefile does not forward, a tutorial
 missing from the docs catalogue or the recorder's `APPS`, a `torch.load` without `weights_only=True`,
-a README with no figure, no Expected performance, no citation. Fix what is small in place; file the rest.
+a README with no figure, no Expected performance, no citation; a title that names the backend or
+"FLIP tutorial" instead of the task, a "Compatible job type" section beside the at-a-glance table, a
+diagram that restates a sentence. Fix what is small in place; file the rest.
