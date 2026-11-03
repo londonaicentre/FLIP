@@ -367,10 +367,10 @@ def test_heartbeat_with_body_persists_services_and_stamps_server_time(mock_auth,
     app.dependency_overrides.pop(get_session, None)
 
 
-@pytest.mark.parametrize("job_mode", ["pods", "process", "a-future-mode"])
+@pytest.mark.parametrize("job_mode", ["pods", "process", "a-future-mode", "k8s-pods2"])
 def test_heartbeat_stores_the_fl_client_job_mode_and_leaves_other_entries_as_sent(mock_auth, mock_trust, job_mode):
-    """The fl-client entry's job_mode is stored, any mode string included, so a newer trust is never refused its
-    whole snapshot; entries without one are stored exactly as sent (FLIP#1739)."""
+    """The fl-client entry's job_mode is stored, any well-formed mode included, so a newer trust's new mode does not
+    cost it its whole snapshot; entries without one are stored exactly as sent (FLIP#1739)."""
     body = _snapshot_body()
     body["services"]["fl-client"] = {"status": "unknown", "version": "sha-abc1234", "job_mode": job_mode}
     mock_db = MagicMock()

@@ -234,11 +234,12 @@ class ServiceHealthEntry(BaseModel):
     status: ServiceHealthStatus
     version: str | None = Field(default=None, max_length=64)
     response_ms: int | None = Field(default=None, ge=0, le=1_000_000)
-    # Only the fl-client entry carries it: how the trust runs an FL job, ``process`` (inside the fl-client's own
-    # container) or ``pods`` (a pod per job, NVFLARE on Kubernetes). A string, not an enum, so a trust reporting a
-    # new mode is not refused its whole snapshot; left out of the stored entry when absent (FLIP#1739).
+    # How the trust runs an FL job: ``process`` (inside the fl-client's own container) or ``pods`` (a pod per job).
+    # The trust sends it on the fl-client entry only; the hub does not check which entry. A string, not an enum, so
+    # a well-formed new mode does not cost the trust its whole snapshot; left out of the stored entry when absent
+    # (FLIP#1739).
     job_mode: str | None = Field(
-        default=None, max_length=16, pattern=r"^[a-z-]+$", exclude_if=lambda mode: mode is None
+        default=None, max_length=16, pattern=r"^[a-z0-9-]+$", exclude_if=lambda mode: mode is None
     )
 
 

@@ -22,16 +22,15 @@ import pytest
 CHART_DIR = Path(__file__).resolve().parents[1]
 
 
-def _job_mode(*extra: str) -> str:
-    out = subprocess.run(
+def _render(*extra: str) -> str:
+    return subprocess.run(
         ["helm", "template", "t", str(CHART_DIR), "--set", "flClient.enabled=true", "--set", "flClient.kitHostPath=/k"]
         + list(extra),
         capture_output=True,
         text=True,
         check=True,
         env={**os.environ, "HELM_NAMESPACE": "flip-trust"},
-    )
-    return re.findall(r'FL_CLIENT_JOB_MODE: "(\w+)"', out.stdout)[0]
+    ).stdout
 
 
 @pytest.mark.skipif(shutil.which("helm") is None, reason="helm is not installed")
@@ -41,7 +40,23 @@ def _job_mode(*extra: str) -> str:
         ((), "process"),
         (("--set", "flClient.nvflare.jobPods.enabled=true", "--set", "flClient.gpu.enabled=false"), "pods"),
         (("--set", "flBackend=flower"), "process"),
+        # Only reachable with the fl-client off (the chart refuses job pods on Flower otherwise): pins the
+        # backend check.
+        (
+            (
+                "--set",
+                "flBackend=flower",
+                "--set",
+                "flClient.enabled=false",
+                "--set",
+                "flClient.nvflare.jobPods.enabled=true",
+            ),
+            "process",
+        ),
     ],
 )
 def test_trust_api_reports_how_the_trust_runs_fl_jobs(values, mode):
-    assert _job_mode(*values) == mode
+    out = _render(*values)
+    assert re.findall(r'FL_CLIENT_JOB_MODE: "(\w+)"', out) == [mode]
+    # trust-api reads the mode once, at start, so its pod template carries it too: a changed mode rolls the pod.
+    assert re.findall(r'flip-trust/fl-client-job-mode: "(\w+)"', out) == [mode]

@@ -116,6 +116,7 @@ def test_get_trusts_serialises_services_health():
     services = {
         "trust-api": {"status": "healthy", "version": "0.3.0", "response_ms": None},
         "xnat": {"status": "down", "version": None, "response_ms": None},
+        "fl-client": {"status": "unknown", "version": "sha-abc1234", "response_ms": None, "job_mode": "pods"},
     }
     trust.services_health = services
     trust.services_health_at = datetime(2026, 5, 27, 12, 0, 0)
@@ -124,6 +125,7 @@ def test_get_trusts_serialises_services_health():
     result = get_trusts(db=db, user_id=uuid.uuid4())
 
     assert result[0].services == {key: ServiceHealthEntry(**entry) for key, entry in services.items()}
+    assert result[0].services["fl-client"].job_mode == "pods"
     # The roster key stays free-form: the hub is roster-agnostic, so a trust can
     # report a service the hub has never heard of without a hub deploy.
     trust.services_health = {"brand-new-service": {"status": "healthy", "version": None, "response_ms": 12}}
