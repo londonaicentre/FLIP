@@ -251,6 +251,20 @@ def test_only_the_observer_and_deploy_roles_can_read_the_logs():
     assert event_table_grants == ["snowflake_account_role.observer.name"]
 
 
+def test_the_deploy_role_reaches_two_users_only():
+    """The trust's deploy user, and CI's apply user from snowflake-bootstrap when it is named."""
+    to_users = [b for b in resource_blocks(all_terraform(), "snowflake_grant_account_role") if "user_name" in b]
+    assert {re.search(r'"(\w+)" \{', b.split("\n", 1)[0])[1] for b in to_users} == {
+        "deploy_to_user",
+        "deploy_to_ci_apply_user",
+    }
+    for block in to_users:
+        assert "role_name = snowflake_account_role.deploy.name" in block, block
+    variable = hcl_block(source("variables.tf"), 'variable "ci_apply_user_name"')
+    assert 'contains(["", "FLIP_CI_APPLY_USER"], var.ci_apply_user_name)' in variable
+    assert 'default     = ""' in variable
+
+
 # --- account hygiene --------------------------------------------------------------------------------
 
 

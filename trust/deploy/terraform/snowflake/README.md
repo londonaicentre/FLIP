@@ -215,9 +215,10 @@ credential, no account identifier. The role, user and integration names are deri
 
 Static and credential-free, in `validate_terraform.yml`: `tofu fmt`, `tofu validate`, tflint
 (bundled terraform ruleset, there is no Snowflake plugin), checkov, and the pytest guards in
-`tests/`, for **both** roots. No Snowflake credential exists in CI, so nothing plans or applies
-there. The workflow's path filter covers `trust/deploy/terraform/**` only, so a change here never
-triggers the hub's plan or apply workflows.
+`tests/`, for **both** roots. Plan on pull request, apply on develop and nightly drift run for this
+root together with the platform root: see `../snowflake-platform/README.md` "CI". CI applies this
+root as `FLIP_<CODE>_DEPLOY` and plans it as `FLIP_PLATFORM_CI_READ` with refresh off, which is
+why `terraform_role` accepts those two values and nothing else.
 
 ## Open points
 
@@ -252,4 +253,3 @@ command and mounts. Stage volumes cannot be mounted read-only, so the job mounts
 archive subpath and writes under `CONVERTER_IO/<project>/<session>/<scan>`; imaging-api registers
 the output in XNAT over REST. `CALL APP.CONVERT_STATUS(...)` returns the job's SPCS status JSON
 (`[]` before it exists).
-

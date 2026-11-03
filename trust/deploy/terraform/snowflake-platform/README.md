@@ -279,9 +279,39 @@ read it before typing `yes`. If the old state file mixed both tiers, split it wi
 
 ## CI
 
-Static and credential-free, in `validate_terraform.yml`: `fmt`, `validate`, tflint (bundled
-terraform ruleset, there is no Snowflake plugin), checkov, and the pytest guards in `tests/`. No
-Snowflake credential exists in CI, and this tier is never applied there by design.
+**Static checks**, credential-free, in `validate_terraform.yml`: `fmt`, `validate`, tflint (bundled
+terraform ruleset, there is no Snowflake plugin), checkov, and the pytest guards in `tests/`.
+
+**Plan, apply and drift** (epic #1589), for this root and the workload root together, through
+`../scripts/sf-ci-tofu.sh`:
+
+| Workflow | When | Environment, Snowflake user, role | What it does |
+|----------|------|-----------------------------------|--------------|
+| `snowflake_trust_plan.yml` | pull request | `sf-stag-plan`, `FLIP_CI_PLAN_USER`, `FLIP_PLATFORM_CI_READ` | `plan -refresh=false -lock=false`, both plans in the job summary |
+| `snowflake_trust_apply.yml` | push to develop | `sf-stag`, `FLIP_CI_APPLY_USER`, `FLIP_PLATFORM_CI` then `FLIP_<CODE>_DEPLOY` | platform apply, then workload apply |
+| `snowflake_trust_drift.yml` | nightly | none of its own | dispatches the apply workflow with `mode=drift` (a refreshed plan, no apply) and keeps one issue open |
+
+- **No stored Snowflake credential.** Both users log in with the job's GitHub OIDC token
+  (workload identity federation); Snowflake maps one subject to one user, so the plan and apply
+  jobs use different environments. `sf-stag` admits develop only.
+- **Pull-request plans read nothing.** A refreshed plan cannot be read-only here: reading the
+  prune task needs MANAGE GRANTS, MONITOR on a user hides its properties (the plan then replaces
+  the user), and stages and procedures need data access. So a PR plan shows the change against the
+  stored state, and changes made outside Terraform are found by the nightly drift run, which uses
+  the apply identity from develop.
+- **State** is in the hub account's state bucket under `snowflake-trust/<CODE>/`, reached through
+  the Snowflake state roles of `terraform_ci_bootstrap` (plan: read; apply: read and write; no
+  other AWS permission), and still OpenTofu-encrypted with the passphrases held as environment
+  secrets.
+- **Off until the account side exists.** Every job waits for the repository variable
+  `SF_CI_ENABLED=true`. Before setting it: the state roles applied in the AWS account, the
+  environments' variables (`AWS_REGION`, `SF_TFSTATE_BUCKET`, `SF_STATE_PLAN_ROLE_ARN` /
+  `SF_STATE_APPLY_ROLE_ARN`, `SF_TRUST_CODE`, `SF_WAREHOUSE`, `SF_DEPLOY_USER_PUBLIC_KEY`) and
+  secrets (`SNOWFLAKE_ORGANIZATION_NAME`, `SNOWFLAKE_ACCOUNT_NAME`,
+  `SF_PLATFORM_STATE_PASSPHRASE`, `SF_WORKLOAD_STATE_PASSPHRASE`), a platform apply with
+  `ci_apply_user_name = "FLIP_CI_APPLY_USER"`, and each root's laptop state moved into the bucket
+  with `sf-ci-tofu.sh <root> migrate`.
+- Images, kit secrets, services and the self-test gate are not in these workflows yet.
 
 ## Open points
 

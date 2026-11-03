@@ -138,3 +138,13 @@ variable "cost_window_days" {
   }
 }
 
+variable "ci_apply_user_name" {
+  description = "CI's apply user from snowflake-bootstrap (FLIP_CI_APPLY_USER), granted this trust's deploy role so CI can apply the workload root. Empty grants nothing."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = contains(["", "FLIP_CI_APPLY_USER"], var.ci_apply_user_name)
+    error_message = "ci_apply_user_name is empty or FLIP_CI_APPLY_USER: the deploy role goes to the bootstrap's apply user and no one else."
+  }
+}

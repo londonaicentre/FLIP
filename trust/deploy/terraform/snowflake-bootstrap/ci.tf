@@ -81,6 +81,8 @@ resource "snowflake_service_user" "ci" {
   comment      = "FLIP platform: ${each.key} identity of the Snowflake trust CI (epic #1589); GitHub OIDC only."
   display_name = each.value.name
   default_role = each.value.role
+  # Only the role CI asks for is active: no secondary role can widen a session.
+  default_secondary_roles_option = "NONE"
 
   default_workload_identity {
     oidc {
