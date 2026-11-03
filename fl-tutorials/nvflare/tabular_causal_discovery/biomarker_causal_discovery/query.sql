@@ -97,8 +97,8 @@ WHERE
     AND v.icv_mm3 IS NOT NULL
     AND v.hippocampus_mm3 IS NOT NULL
     AND v.adas_cog13 IS NOT NULL
--- Deterministic order so two fetches of the cohort agree row for row (the bootstrap streams
--- resample row positions).
+-- Deterministic order so two fetches of the cohort agree row for row (voting mode's bootstrap
+-- streams resample row positions).
 ORDER BY
     p.person_id
 LIMIT 5000

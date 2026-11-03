@@ -18,12 +18,11 @@ dev stack. The tutorial's ``query.sql`` pivots ``omop.measurement`` rows matched
 observation into one row per person; the shipped mock OMOP carries none of those, so without this
 loader the cohort query returns nothing.
 
-The data is ADNI, which is access-controlled: nothing derived from it may be published, so unlike
-the Synthea loader this one downloads nothing. It reads the twelve-column ``dataframe.csv`` that
-``make -C fl-tutorials convert-adni-cohort`` built from the user's own IDA download (gitignored,
-never committed) and appends a per-trust ``person_id % num_trusts`` slice into **that user's own**
-trust databases — the same machines, the same team, which the Data Use Agreement allows. It must
-never be pointed at a shared or published trust.
+The data is ADNI, which is access-controlled (the tutorial README's "Data" section has what its
+agreement allows), so unlike the Synthea loader this one downloads nothing. It reads the
+twelve-column ``dataframe.csv`` that ``make -C fl-tutorials convert-adni-cohort`` built from the
+user's own download and appends a per-trust ``person_id % num_trusts`` slice into **that user's own**
+local trust databases; :func:`refuse_unless_local` refuses any other.
 
 Design notes, mirroring ``synthea_ehr.py``:
 

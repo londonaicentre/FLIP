@@ -26,8 +26,7 @@ export $(shell sed -e '/^[[:space:]]*\#/d' -e 's/=.*//' ./.env.app)
 endif
 
 # --- Local-run knobs ---
-# pooled_statistics (the default FEDERATION in app_files/config.json) completes in 2 rounds;
-# layer_voting needs (max conditioning-set size + 2), e.g. NUM_ROUNDS=6 for sets of up to 4.
+# NUM_ROUNDS by the FEDERATION in app_files/config.json (the rounds formula: README, config table).
 # Local only: in production the FL API reads GLOBAL_ROUNDS from config.json at submit time.
 NUM_ROUNDS ?= 2
 N_CLIENTS ?= 2

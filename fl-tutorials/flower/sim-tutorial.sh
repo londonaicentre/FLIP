@@ -250,9 +250,7 @@ case "$TUTORIAL" in
     DATASET_TARGET=download-synthea-data ;;
   biomarker_causal_discovery)
     # Tabular-only, like ehr_risk_prediction: one shared CSV, sliced per site by partition_cohort.
-    # The cohort is built from the user's OWN ADNI download (access-controlled; nothing derived from
-    # it enters the repository): convert-adni-cohort needs ADNI_DIR=<the five IDA tables> — the
-    # tutorial README's "Running on real ADNI data" has the application and download steps.
+    # Built from the user's own ADNI download (access-controlled: the tutorial README's "Data").
     export DEV_DATAFRAME="$DATA_ROOT/ad_biomarkers/dataframe.csv"
     DATASET_TARGET="convert-adni-cohort ADNI_DIR=<your IDA tables>"
     ACCESS_CONTROLLED=1 ;;

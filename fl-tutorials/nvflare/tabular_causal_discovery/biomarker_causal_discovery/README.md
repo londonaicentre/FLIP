@@ -25,8 +25,9 @@ carries it, because what the sites average is chosen so that the average *is* th
 
 *The output: the partial ancestral graph two simulated sites recover from the real ADNI cohort
 (560 participants, 280 per site, 50 bootstraps), each edge labelled with its bootstrap frequency.
-It is the stable graph of the centralised analysis's Fisher-z preset (its main preset uses the kernel test, KCI). ADNI is access-controlled, so the repository ships
-this summary figure and the converter that rebuilds the cohort from your own download, never data.*
+Its 16 stable edges hold all 14 of the centralised analysis's Fisher-z preset (its main preset uses
+the kernel test, KCI), plus two pTau217 orientations near 0.5 ("Expected performance"). The
+repository ships this summary figure and the converter, never data (see "Data").*
 
 ## The use case
 
@@ -60,36 +61,30 @@ flowchart LR
 **`pooled_statistics`** is the pooled-test idea of FedC²SL (Wang et al., 2023) specialised to
 Fisher's z, whose test needs nothing but second moments and a sample size. Each site sends **one**
 mean vector and **one** second-moment matrix of its (log-transformed, fixed-scaled) variables over
-all its rows, weighted by its row count — `p + p²` numbers, 132 for the eleven variables here. The
-weighted mean of those is exactly the pooled cohort's statistics, so the correlation matrix every
-site gets back in round 2 is the centralised one to machine precision, and FCI on it — the complete
-algorithm, possible-D-sep stage and all, run identically at every site — is exactly centralised
-Fisher-z FCI on the pooled rows (`tests/test_biomarker_causal_discovery.py` pins this against
-causal-learn's own `fci()`). The bootstrap is drawn *after* pooling, from the pooled correlation
+all its rows, weighted by its row count — p(p+3)/2 = 77 independent numbers for the eleven variables
+here (the moment matrix is symmetric). The weighted mean of those is exactly the pooled cohort's
+statistics, so the correlation matrix every site gets back in round 2 is the centralised one to
+machine precision, and causal-learn's own `fci()` on it — the complete algorithm, possible-D-sep
+stage and all, run identically at every site — is exactly centralised Fisher-z FCI on the pooled
+rows (`tests/test_biomarker_causal_discovery.py` pins this against `fci()` on the rows). The bootstrap is drawn *after* pooling, from the pooled correlation
 (a parametric bootstrap: Wishart draws of the sample covariance under the Gaussian model Fisher's z
 already assumes, re-standardised, with a stream every site shares), so no site ever releases more
 than that one statistic — see "Privacy" for why a per-resample statistic would be too much. In
 round 2 the statistics are zeroed out of what a site returns, so the downloaded model carries only
 graphs and row counts. Two rounds, no raw rows.
 
-**`layer_voting`** is FedPC (Huang et al., 2023), whose MATLAB release the design was read from: one
-global round per conditioning-set size ℓ. Each site tests every still-adjacent pair against subsets
+**`layer_voting`** is FedPC (Huang et al., 2023): one global round per conditioning-set size ℓ. Each site tests every still-adjacent pair against subsets
 of size ℓ of the neighbours in the *global* skeleton, on its own rows, and returns a 0/1 adjacency
 matrix plus 0/1 separating-set membership with weight one. The plain average is the share of sites
 that kept each edge; sites threshold it at `VOTE_RATIO` next round (FedPC's vote) and take the union
 of separating sets. The last round orients the voted skeleton with FCI's test-free rules. This mode
 runs any local CI test — `CI_TEST: "kci"` for the kernel test the centralised main analysis used —
 at the cost of exactness: a vote is not a pooled test, small sites' tests are weak, and FedPC itself
-does not orient from that union — its paper (§3.2.2) notes that clients disagree on separating sets,
-discards them after skeleton learning and re-derives one per unshielded triple by a highest-p-value
-search over client data (FedOrien). Orienting from the union is this mode's own simplification; the
-orientation errors it causes on otherwise correct adjacencies are visible in the comparison below.
-
-Bootstrapping differs by mode. In pooled mode the *B* resamples are parametric, drawn after pooling
-from the pooled correlation with one stream shared by every site, so a site releases one statistic
-however large *B* is (see Privacy). In voting mode bootstrap *b* at site *s* resamples that site's
-own rows with the stream `(SEED, s, b)`. In both, all *B* resamples travel at once (the graph arrays
-carry a bootstrap axis), so the round count never depends on *B*.
+re-derives separating sets after skeleton learning (its FedOrien step) rather than orienting from
+their union. Orienting from the union is this mode's own simplification; the orientation errors it
+causes are visible in the comparison below. Its bootstrap *b* at site *s* resamples that site's own
+rows with the stream `(SEED, s, b)`. In both modes all *B* resamples travel at once, so the round
+count never depends on *B*.
 
 ## Data
 
@@ -164,9 +159,9 @@ in "Expected performance" as numbers only.
 
 **On the platform.** `query.sql` pivots each person's *baseline* (earliest-dated) OMOP measurements
 matched on `measurement_source_value` (`PLASMA_PTAU217`, `ICV_MM3`, …) and the education
-observation into one row, deterministically ordered. `tests/datasets/ad_biomarkers/` runs it on SQLite
-over OMOP tables written from an invented cohort of the same shape and diffs the two, so the
-simulator CSV and a deployed fetch cannot drift. The cohort is **not seeded on the dev trusts** and
+observation into one row, deterministically ordered. The trust loader's tests
+(`trust/omop-db/tests/unit/test_adni_cohort.py`) run it on SQLite over the OMOP rows the loader writes
+from an invented cohort and diff the two, so the simulator CSV and a deployed fetch cannot drift. The cohort is **not seeded on the dev trusts** and
 never will be from the shared trust-data set: nothing ADNI-derived can be published there. A licence
 holder loads their own converted cohort into their **local** dev trusts instead — still their team's
 copy under the agreement — and then the platform smoke runs end to end:
@@ -181,21 +176,24 @@ The loader (`trust/omop-db/src/omop_db_tools/adni_cohort.py`) writes each trust'
 slice as `person` / `measurement` / `observation` rows, exactly the split the simulator's `site1/` and
 `site2/` hold, and reloads idempotently. Run this way on a local Flower dev stack (two trusts of 280,
 `has_imaging=false`), the smoke's downloaded `FL_global_model.pt` summarises to the same 16 stable
-edges as the simulator run above with identical frequencies: the bootstrap streams are keyed on the
-site index, which both paths resolve the same way. The FL images must carry causal-learn: build them from this
-tree (`make build-fl`) and run the stack with `DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev`. There is no
-demo-video profile, since a recording would show ADNI-derived values.
+edges as the simulator: both paths pool the same statistics, and the pooled bootstrap stream is
+`[SEED, 104729]`, with no site term. Frequencies agree to within one bootstrap on a test that sits at
+α: NVFLARE adds each site's DIFF in float32, so its pooled statistics differ from Flower's (exact) by
+ulps, which on this cohort flips one of 50 bootstraps of a weak edge (Aβ42/40 → ADAS-Cog13, 0.32 on
+NVFLARE, 0.34 on Flower). The FL images carry
+causal-learn (flip-utils' `full` extra). There is no demo-video profile, since a recording would show
+ADNI-derived values.
 
 ## Preprocessing and background knowledge (`config.json`)
 
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `FEDERATION` | `pooled_statistics` | or `layer_voting` |
-| `GLOBAL_ROUNDS` | `2` | pooled mode needs exactly 2; voting needs (largest conditioning set + 2), e.g. 6 for sets up to size 4 |
+| `GLOBAL_ROUNDS` | `2` | **the rounds formula:** pooled mode needs at least 2 (a site refuses fewer; more only repeat the evaluation); voting needs (largest conditioning set + 2), e.g. 6 for sets up to size 4 |
 | `N_BOOTSTRAPS` | `50` | bootstrap resamples (`0` = one unresampled fit): parametric draws of the pooled correlation in pooled mode, row resamples per site in voting mode; the centralised analysis used 200 |
 | `ALPHA` | `0.05` | CI-test significance level |
-| `CI_TEST` | `fisherz` | voting mode only (`kci`, `fastkci`, `rcit`, …); pooled mode is Fisher-z by construction |
-| `VOTE_RATIO` | `0.5` | voting mode: keep an edge if at least this share of sites kept it (≥, as in FedPC's MATLAB release, whose default is 0.3; the paper's text says "more than") |
+| `CI_TEST` | `fisherz` | voting mode only (`kci`, `fastkci`, `rcit`, …); pooled mode runs Fisher's z on the pooled correlation and refuses any other value |
+| `VOTE_RATIO` | `0.5` | voting mode: keep an edge if at least this share of sites kept it (FedPC's default is 0.3) |
 | `LOG_TRANSFORM` | the four plasma markers | fixed, site-independent log of the right-skewed markers; the centralised analysis applied a data-fitted Yeo-Johnson to every column with skew above 1 — the same four markers plus intracranial volume and ADAS-Cog13 — and a fitted λ cannot be shared without exchanging it, so this is a departure in the transform and, for those two columns, in whether one is applied at all (see Honest caveats) |
 | `SCALE` | volumes, age, education, ADAS | fixed divisors so second moments are O(1) — see "Privacy" for why this is load-bearing |
 | `KNOWLEDGE.EXOGENOUS` | age, sex, education, APOE4 | nothing may cause these |
@@ -212,9 +210,12 @@ variable keeps the graph simple, and Fisher's z on an ordinal is the usual appro
 (`site_counts, stats_mean, stats_moment, skeleton, sepsets, pag, padding`), sized from
 `config.json`. The downloaded `FL_global_model.pt` therefore *is* the result: `summarise_results.py`
 decodes it into the edge-frequency table and the figure below (`make summarise RESULTS=<path>`). By
-the time it is downloaded the statistics buffers are zero — only `pag` and `site_counts` carry
-anything — so the result bundle says nothing about the variables beyond the graphs;
-`summarise_results.py` warns when they are not zero (a job stopped or failed after round 1, see Privacy).
+the time it is downloaded the statistics buffers are zero — exactly on Flower; on NVFLARE, which adds
+each site's DIFF in float32, to within a few ulps of the round-1 values (about 1e-6, far below
+`STATISTICS_RESIDUAL_TOLERANCE`) — so only `pag` and `site_counts` carry anything. `summarise_results.py`
+says when a model holds the statistics (a job stopped or failed after round 1, see Privacy), and
+refuses PAGs whose average is not whole endpoint marks: every site computes the same PAGs, so a
+mixture means the sites disagree or one failed its orientation round.
 Per-round metrics streamed to the hub are `site_rows`, `pooled_rows`, `sites_seen`, `stable_edges`,
 `mean_edges_per_pag`, `stable_adjacencies` (and `mean_edges_kept` per voting layer); the final
 evaluation reports the same for the aggregated PAGs. There is no best-model selection — "best" has
@@ -227,12 +228,13 @@ Two platform mechanics decide the wire format, and both are worth knowing before
   trailing number of `Trust_3` / `site-3`); after size-weighted averaging slot *j* holds `n_j² / N`,
   and `N = (Σ_j √slot_j)²` recovers the total exactly.
 - **The standard template's percentile-privacy filter** zeroes the 10 % smallest entries of a
-  site's update and clips the rest at ±0.01 per local step. Both are no-ops by construction: every
-  array travels scaled by `ENCODING_SCALE`, a zero `padding` array keeps the 10th percentile at
-  exactly zero, and `SCALE` keeps the moments small enough. A raw volume in mm³ overshoots by orders
-  of magnitude — the first simulator run of this tutorial lost every hippocampus edge to the clip
-  before `SCALE` existed — so `assert_within_filter_bounds` now refuses such a payload with an error
-  naming the variable rather than letting the filter corrupt it silently.
+  site's update and clips the rest at ±0.01 per local step. The payload is shaped so both stay
+  no-ops: every array travels scaled by `ENCODING_SCALE`, a zero `padding` array keeps the 10th
+  percentile at exactly zero, and `SCALE` keeps the moments small enough. That last part is the
+  config's job, not the encoding's: a raw volume in mm³ overshoots the clip by orders of magnitude and
+  the filter would silently cut every edge of that variable, so `assert_within_filter_bounds` refuses
+  such a payload, checked against the trust's effective clip and percentile (the stricter of its site
+  policy and the stock filter, since FLARE runs both).
 
 ## Expected performance
 
@@ -240,8 +242,9 @@ Reference run: the shipped config (`pooled_statistics`, 50 parametric bootstraps
 560-participant ADNI cohort that `convert-adni-cohort` builds from the tables listed above (April
 2025 plasma release), two `person_id`-modulo sites of 280, NVFLARE simulator on CPU (16-thread
 i9-9900K): **under one minute** end to end, of which FCI on 50 bootstraps is about 10 s per site.
-The federated run reports the centralised analysis's stable set — 16 edges at frequency ≥ 0.5 — and
-a licence holder following the four steps gets these numbers to the second decimal. The table puts the
+The federated run finds all 14 stable edges of the centralised analysis plus two pTau217 orientations
+near 0.5 — 16 edges at frequency ≥ 0.5 — and a licence holder following the four steps gets these
+numbers to the second decimal. The table puts the
 three ways of getting the graph side by side on the same cohort: the centralised Fisher-z analysis
 (200 whole-cohort bootstraps, APOE4 as two dummies), the `pooled_statistics` mode (the default;
 50 parametric bootstraps drawn after pooling) and the FedPC-style `layer_voting` mode
@@ -309,8 +312,8 @@ CSV in the `--csv` format: `make summarise REFERENCE=<edges.csv>` (or `summarise
 --reference`). The centralised runs themselves are not shipped as a tool.
 
 **What a wrong run looks like.** `stable_edges` of 0 after the final round means the orientation
-round never happened: `GLOBAL_ROUNDS` (or `--num_rounds`) is too small for the mode (2 for pooled;
-largest conditioning set + 2 for voting). A graph missing every edge of one variable, with the rest
+round never happened: `GLOBAL_ROUNDS` (or `--num_rounds`) is too small for the mode (the rounds
+formula in the config table). A graph missing every edge of one variable, with the rest
 intact, is the percentile clip above — check that the variable is in `SCALE` or `LOG_TRANSFORM`
 (a run on this release raises instead). In voting mode, frequencies all exactly 0 or 1 with
 `N_BOOTSTRAPS > 1` mean the sites' bootstrap streams collapsed: check that the site names end in
@@ -331,12 +334,13 @@ operator and the FL server see every site's statistics in the clear whatever the
 secure aggregation, below). Read the rest with that split in mind.
 
 **What leaves a site, how often, and what protects it.** In pooled mode a site releases exactly one
-mean vector and one second-moment matrix of its transformed variables (`p + p²` = 132 numbers) plus
+mean vector and one second-moment matrix of its transformed variables (p(p+3)/2 = 77 independent
+numbers) plus
 its row count (the `site_rows` metric and the aggregation weight are exact counts), once, in
 round 1 — the pooled-statistics pattern of DataSHIELD and of secure regression on distributed
 databases (Gaye et al. 2014; Karr et al. 2005). A single covariance of a few hundred rows is not
 invertible to the rows for the *continuous* columns of the shipped variable set: 11 numbers per
-participant against 132 released. That holds for this column set. A query that adds an engineered
+participant against 77 released. That holds for this column set. A query that adds an engineered
 column — one person's indicator scaled onto an existing variable — would make a single release that
 person's record, and no site-side rule can tell such a column from a real one; the approval of the
 cohort query is the control there. The **discrete** columns are different: the moments of sex and
@@ -357,14 +361,16 @@ refuses a job with `GLOBAL_ROUNDS` of 1, whose result would be the statistics th
 a later round reads (`ALPHA`, `MAX_DEPTH`, `SEED`, the knowledge block, …) is validated in round 1,
 before the release, so a value that would only fail in round 2 never gets that far; and a round that
 fails after the release still sends its zeroing payload and fails the job on the site's next task.
-**What a researcher can still do is stop the job after round 1.** On NVFLARE the server persists the
-global model after every round and uploads it when the job ends, however it ends, so that bundle holds
-the pooled statistics; `summarise_results.py` warns loudly when it reads such a model. Closing this
-needs the platform — a server-side rule that refuses to persist or upload a state whose statistics
-buffers are non-zero, or no per-round persistence for this job shape — and until then a trust should
-treat the pooled statistics as something the researcher of an approved project can obtain. On NVFLARE
-the researcher-settable `AGGREGATION_WEIGHTS` would further let one site be weighted to dominance,
-turning the "pooled" statistics into that site's; an approver should reject a config that sets it.
+**What remains: a job's result can carry its round-1 statistics.** On NVFLARE the server persists
+the global model after every round and uploads it when the job ends, however it ends, so a researcher
+who stops the job after round 1 downloads the pooled statistics. On Flower the same happens when every
+round-2 reply is lost: FedAvg keeps the previous arrays and the template uploads them. On NVFLARE the
+researcher-settable `AGGREGATION_WEIGHTS` would further let one site be weighted to dominance, turning
+the "pooled" statistics into that site's; an approver should reject a config that sets it.
+`summarise_results.py` says when a model holds the statistics, but on the researcher's machine, after
+the download. Closing this needs the platform: a job output contract that declares what a result may
+hold, enforced by the server (#1778). Until then a trust should treat the pooled statistics as
+something the researcher of an approved project can obtain.
 There is also no per-project release ledger: a researcher can re-run the job under one approval with a
 different `LOG_TRANSFORM` and collect the moments of another function of the same rows, one more
 equation about them per run (`SCALE` is linear and adds nothing). A trust-side ledger that releases
@@ -374,14 +380,12 @@ Voting mode releases 0/1 decisions per edge, bootstrap and layer and no statisti
 whose indices are public; its leakage has **not** been analysed, so it runs on the simulator only.
 A deployed FL client has no switch for it, and a researcher's `config.json` cannot turn it on.
 
-**Why not one statistic per bootstrap.** An earlier version of this tutorial sent a mean and a
-second-moment matrix for *each* of the 50 resamples, with resample indices drawn from a seed in
-`config.json`. A reviewer showed that this is a system of 50 known weighted sums of the same rows
-with publicly reproducible weights, and recovered a 120-row site's rows exactly from one upload, and
-most of a 280-row site's binary columns. The present design — one statistic per site, the bootstrap
-drawn after pooling from the pooled correlation — removes that channel; the cost is that the
-resamples are parametric (Gaussian, the model Fisher's z assumes anyway) rather than resamples of
-the actual rows, and the frequencies differ from the earlier runs by a few hundredths.
+**Why one statistic, not one per bootstrap.** A mean and a second-moment matrix for *each* resample,
+with resample indices reproducible from a seed in `config.json`, would be *B* known weighted sums of
+the same rows — a linear system that solves back to the rows for cohorts of a few hundred (Dinur &
+Nissim 2003). So the bootstrap is drawn after pooling, from the pooled correlation; the cost is that
+the resamples are parametric (Gaussian, the model Fisher's z assumes anyway) rather than resamples of
+the actual rows.
 
 **Floors and what is still unprotected.** A site refuses to release its statistics below 30
 complete rows of distinct persons (a query with several rows per person does not clear the floor
@@ -398,21 +402,22 @@ releases; in voting mode they do, which is one reason that mode is gated. What r
 the one covariance per site itself: with two sites, each can subtract its own from the pooled one and
 read the other's. A formal guarantee would add calibrated noise to that single matrix — the Gaussian
 mechanism of Analyze Gauss (Dwork et al. 2014) or the Wishart mechanism (Jiang et al. 2016) — at
-little accuracy cost at this dimension. The NVFLARE percentile filter and Flower's per-update
+little accuracy cost at this dimension (#1779). The NVFLARE percentile filter and Flower's per-update
 clip-and-noise are not that mechanism, both being calibrated for weight deltas: the payload is
 shaped so the former is a no-op (checked against the trust's effective clip *and* percentile, from
 its site policy), and the latter is switched off in `config.toml`, with the ClientApp refusing a run
-that turns it back on, because clip-and-noise on these arrays corrupts the graph silently. Neither
-is a trust-side control for this payload in any case — the filter's clip scales with a weight the
-client sets, and the mod with a file the researcher uploads. Secure aggregation, so the hub sees only
-the sum, is platform work and only helps with three or more sites.
+that turns it back on, because clip-and-noise on these arrays corrupts the graph silently. This is the
+one place the reason for switching Flower's DP off is written down; the code and config point here.
+Neither is a trust-side control for this payload in any case — the filter's clip scales with a weight
+the client sets, and the mod with a file the researcher uploads. Secure aggregation, so the hub sees
+only the sum, is platform work and only helps with three or more sites.
 
 ## How to run
 
 ```bash
 make -C fl-tutorials convert-adni-cohort ADNI_DIR=~/adni_tables         # once, from your own ADNI download (see Data)
 make -C fl-tutorials run-tutorial TUTORIAL=biomarker_causal_discovery  # NVFLARE simulator, CPU, < 1 min
-make -C fl-tutorials run-tutorial TUTORIAL=biomarker_causal_discovery NUM_ROUNDS=6   # after setting FEDERATION=layer_voting
+make -C fl-tutorials run-tutorial TUTORIAL=biomarker_causal_discovery NUM_ROUNDS=6   # FEDERATION=layer_voting (rounds formula above)
 make -C fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery summarise   # edge table + PAG figure
 make -C fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery export      # the job folder, no data needed
 ```
@@ -425,7 +430,7 @@ installs.
 
 **On the platform:** upload `app_files/` as a `standard` job with imaging **off**
 (`has_imaging=false`; the cohort is tabular), paste `query.sql` as the cohort query, and set
-`GLOBAL_ROUNDS` in `config.json` to 2 (a site refuses a one-round pooled job, see Privacy). The result bundle's
+`GLOBAL_ROUNDS` in `config.json` by the rounds formula (2 for pooled mode). The result bundle's
 `FL_global_model.pt` goes through `summarise_results.py` on your machine.
 
 ## Honest caveats
@@ -442,7 +447,8 @@ installs.
   bootstrap; with very unequal sites the frequencies differ slightly.
 - The reference run reproduces the centralised analysis's graph from the same 560 participants,
   so agreement between the two is a check of the federation machinery, not independent evidence
-  about Alzheimer's disease.
+  about Alzheimer's disease. Both simulated sites are `person_id`-modulo samples of one cohort; sites
+  that genuinely differ (acquisition site, scanner) are untested (#1780).
 - `LOG_TRANSFORM` logs the four plasma markers. The centralised run (both presets, per its
   `preprocessing.csv`) Yeo-Johnson-transformed every column whose skew exceeded 1: those four plus
   intracranial volume and ADAS-Cog13, the latter just over the threshold; hippocampal volume, age and
@@ -465,9 +471,8 @@ installs.
   Implementation: causal-learn (Zheng, Y. et al., *JMLR* 25, 2024, https://github.com/py-why/causal-learn).
 - **FedPC** (the `layer_voting` mode): Huang, J., Guo, X., Yu, K., Cao, F., Liang, J. "Towards
   Privacy-Aware Causal Structure Learning in Federated Setting", *IEEE Transactions on Big Data*,
-  2023. https://arxiv.org/abs/2211.06919 (the MATLAB release's layer-wise `layer_federate` vote is
-  what this mode reproduces; FedPC discards separating sets after the skeleton and re-derives them in
-  its FedOrien p-value step, which this mode replaces with the union of the sites' sets).
+  2023. https://arxiv.org/abs/2211.06919 (its layer-wise vote is what this mode reproduces; its
+  FedOrien step re-derives separating sets, which this mode replaces with the union of the sites').
 - **FedC²SL** (the `pooled_statistics` idea): Wang, Z., Ma, P., Wang, S. "Towards Practical
   Federated Causal Structure Learning", *ECML PKDD 2023*, LNCS 14170. https://arxiv.org/abs/2306.09433,
   code https://github.com/wangzhaoyu07/FedC2SL. Their federated CI test is for discrete variables
@@ -481,7 +486,7 @@ installs.
   of Computational and Graphical Statistics* 14(2), 2005; Gaye, A. et al. "DataSHIELD: taking the
   analysis to the data, not the data to the analysis", *International Journal of Epidemiology* 43(6),
   2014.
-- **The Fisher-z test** used on the pooled correlation (`CorrelationFisherZ`): Kalisch, M.,
+- **The Fisher-z test** used on the pooled correlation (`CorrelationFisherZ`, causal-learn's `fisherz` on a given matrix): Kalisch, M.,
   Bühlmann, P. "Estimating high-dimensional directed acyclic graphs with the PC-algorithm", *JMLR*
   8, 2007 — partial correlations from the correlation matrix, `n − |S| − 3` degrees of freedom.
 - **PC-stable**, the order-independent skeleton search each voting layer runs: Colombo, D.,
@@ -490,7 +495,7 @@ installs.
   M., Wyner, A. "Data analysis with Bayesian networks: a bootstrap approach", *UAI 1999*. **The
   parametric bootstrap** drawn from the pooled correlation: Efron, B., Tibshirani, R. J. *An
   Introduction to the Bootstrap*, Chapman & Hall, 1993, §6.5 (Wishart sampling of the covariance).
-- **Why per-resample statistics were withdrawn**: Dinur, I., Nissim, K. "Revealing information while
+- **Why one statistic per site**: Dinur, I., Nissim, K. "Revealing information while
   preserving privacy", *PODS 2003* — enough released linear functions of the same rows reconstruct
   them.
 - **Formal protection for the released covariance** (follow-up): Dwork, C., Talwar, K., Thakurta,

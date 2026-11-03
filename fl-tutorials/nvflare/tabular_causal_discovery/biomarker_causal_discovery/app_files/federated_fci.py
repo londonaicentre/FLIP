@@ -29,7 +29,8 @@ Two federation modes, selected by ``config.json``'s ``FEDERATION``:
     FCI with the Fisher-z test. This is the pooled-test idea of FedC²SL (Wang et al., 2023)
     specialised to the Gaussian case, where the test needs nothing but second moments — without
     that paper's secure aggregation or random-projection encoding, which FLIP does not provide.
-    Two rounds; one exchange of ``p + p × p`` numbers per site; no raw rows leave a site.
+    Two rounds; one exchange of p(p+3)/2 independent numbers per site (the moment matrix is
+    symmetric); no raw rows leave a site.
     In round 2 the statistics are zeroed in what a site sends back, so the final model carries
     only the graphs and the row counts.
 
@@ -52,7 +53,7 @@ bootstrap: Wishart draws of the sample covariance under the Gaussian model Fishe
 re-standardised, with a stream shared by every site), so a site never sends more than one
 statistic of its rows. Sending one mean and one moment matrix per bootstrap resample instead would
 hand out ``B`` different weighted sums of the same rows with publicly reproducible weights — a
-linear system a reviewer showed can be solved back to the rows for cohorts of a few hundred. In
+linear system that solves back to the rows for cohorts of a few hundred. In
 voting mode (0/1 decisions, no statistics) bootstrap ``b`` at site ``s`` still resamples that
 site's own rows with the stream ``(SEED, s, b)``. Everything is computed for all ``B`` bootstraps
 at once (the graph arrays carry a leading bootstrap axis), so the number of rounds does not
@@ -81,14 +82,12 @@ Two platform details shape the wire format:
 
 * The NVFLARE standard template applies a percentile-privacy filter to every training result:
   it zeroes the smallest 10 % of a site's update (by absolute value, across all arrays) and
-  clips the rest to ±0.01 per local step. Both are no-ops here by construction: arrays are
-  sent multiplied by :data:`ENCODING_SCALE` (so no entry reaches the clip), and a zero
-  ``padding`` array a quarter the size of the rest guarantees the 10th percentile is exactly
-  zero (so nothing non-zero is zeroed). The Flower local-DP mod is off in config.toml: its
-  per-update clip-and-noise is calibrated for weight deltas, not for a moment matrix whose
-  entries the federation adds exactly; a calibrated Gaussian mechanism on the single covariance
-  (Analyze Gauss, Dwork et al. 2014) is the right tool for a formal guarantee and is left as
-  follow-up work — see the README's privacy section for what is and is not protected.
+  clips the rest to ±0.01 per local step. The payload is shaped so both stay no-ops: arrays are
+  sent multiplied by :data:`ENCODING_SCALE`, a zero ``padding`` array a quarter the size of the
+  rest keeps the 10th percentile at exactly zero, and config.json's ``SCALE`` / ``LOG_TRANSFORM``
+  keep the moments below the clip — which raw units (a volume in mm³) do not, hence
+  :func:`assert_within_filter_bounds`. The Flower local-DP mod is off in config.toml (why: the
+  README's Privacy section).
 * No site knows how many sites there are, yet Fisher's z needs the pooled sample size. Each
   site writes its own count into one slot of ``site_counts`` (slot = its site index); after
   size-weighted averaging slot ``j`` holds ``n_j² / N``, and ``N = (Σ_j √slot_j)²`` recovers
@@ -131,9 +130,10 @@ logger = logging.getLogger(__name__)
 GraphNode.__hash__ = lambda node: zlib.crc32(node.name.encode())  # type: ignore[method-assign]
 
 MODES = ("pooled_statistics", "layer_voting")
-#: Every array is sent multiplied by this (and divided by it on receipt), so the NVFLARE
-#: percentile-privacy clip at ±0.01 never engages. Float32 keeps ~7 significant digits, which
-#: is far more than a correlation needs.
+#: Every array is sent multiplied by this (and divided by it on receipt), so that, with the
+#: configured ``SCALE`` / ``LOG_TRANSFORM``, the NVFLARE percentile-privacy clip at ±0.01 is not
+#: reached (:func:`assert_within_filter_bounds` refuses a payload that would reach it). Float32
+#: keeps ~7 significant digits, which is far more than a correlation needs.
 ENCODING_SCALE = 1e-5
 #: The NVFLARE percentile-privacy filter's clip, per local step (stock ``gamma``). Every sent entry
 #: must stay below it once scaled, or the filter silently truncates it — hence ``SCALE`` in
@@ -826,9 +826,8 @@ def layer_step(
     PC-stable: neighbourhoods come from the skeleton as received, so the result does not depend
     on the order pairs are visited. Returns the site's 0/1 skeleton and the accumulated 0/1
     separating-set membership (received union ∪ newly found). The marks accumulate across layers
-    for every pair, including pairs the vote kept; FedPC's MATLAB release rebuilds its union each
-    layer for the pairs that lost the vote only, and then never orients from it (see the module
-    docstring).
+    for every pair, including pairs the vote kept; FedPC re-derives separating sets in its own
+    orientation step instead (see the module docstring).
     """
     p = skeleton.shape[0]
     adjacency = skeleton > 0

@@ -174,8 +174,7 @@ risk-prediction tutorials are the first such cohort and have their own target,
 `make e2e_smoke_ehr [FL_BACKEND=flower]`, which pins `--no-imaging` for you. The biomarker causal-discovery
 tutorial is the second: `make e2e_smoke_causal [FL_BACKEND=flower]`, after the licence holder's converted ADNI
 cohort has been loaded into the **local** dev trusts (`make -C trust load-adni-cohort TRUST_INDEX=<1|2>
-OMOP_DB_PORT=<5434|5436>`) and the FL images rebuilt from this tree so they carry causal-learn (`make build-fl`,
-`DOCKER_FL_TAG=dev`).
+OMOP_DB_PORT=<5434|5436>`); the FL images carry causal-learn through flip-utils' `full` extra.
 
 ### Running FL Tutorials Locally
 

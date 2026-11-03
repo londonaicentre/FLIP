@@ -27,9 +27,8 @@ this page covers what differs on Flower.
 ![Recovered PAG from the federated run on the ADNI cohort](docs/recovered_pag.png)
 
 *The output: the partial ancestral graph the two simulated sites recover from the real ADNI
-cohort (560 participants, 50 bootstraps), edges labelled with their bootstrap frequency. ADNI is
-access-controlled, so the repository ships this summary figure and the converter that rebuilds the
-cohort from a licence holder's own download, never the data.*
+cohort (560 participants, 50 bootstraps), edges labelled with their bootstrap frequency. The
+repository ships this summary figure and the converter, never data (NVFLARE README, "Data").*
 
 ```mermaid
 flowchart LR
@@ -70,8 +69,8 @@ one, so editing them here would make the simulator run something the platform do
   It is the only per-tutorial knob that rides through the upload flow, which is why the ClientApp
   reads it rather than `run_config`.
 - `app/config.toml` — the run-config keys fl-api passes to `flwr run --run-config` at submit:
-  `num-server-rounds = 2` (pooled mode; `largest conditioning set + 2` for voting) and
-  `dp-enabled = false`. On the simulator the same values come from `pyproject.toml`'s
+  `num-server-rounds = 2` (pooled mode; the NVFLARE README's config table has the rounds formula)
+  and `dp-enabled = false`. On the simulator the same values come from `pyproject.toml`'s
   `[tool.flwr.app.config]`.
 
 `flip-utils` is deliberately not declared in `pyproject.toml` (FLIP#767: a declared copy would
@@ -86,7 +85,7 @@ needs it the same way it needs torch, and the FL image carries it through flip-u
 | `@app.train` returns `arrays` + `metrics` with `num-examples` | returns the state the site wants the global one to become; `num-examples` is the site's row count (pooled mode) or 1 (voting mode), so the template's weighted mean is the pooled statistic or the vote share |
 | `@app.evaluate` reports a `MetricRecord` | edge counts of the final PAGs (`stable_edges`, `mean_edges_per_pag`, …) |
 | best-model selection by a reported metric | off (`best-model-metric = ""`): "best" has no meaning for a federated state |
-| `flip_local_dp_mod` on training replies | registered as in every FLIP app, disabled by `dp-enabled = false` — see the privacy section of the NVFLARE README for why clipping and noising a covariance matrix is not a meaningful mechanism here; the mod logs a warning that the update is unprivatised, which is accurate |
+| `flip_local_dp_mod` on training replies | registered as in every FLIP app, disabled by `dp-enabled = false` (why: the NVFLARE README's Privacy section); the mod logs a warning that the update is unprivatised, which is accurate |
 
 Site identity comes from `flip.flower.identity.client_identity` (`SUPERNODE_NAME` when deployed,
 `partition-id` under the simulator) and, under `LOCAL_DEV`, `partition_cohort` slices the shared
@@ -95,20 +94,21 @@ through which every site learns the pooled sample size Fisher's z needs.
 
 ## Differential privacy
 
-Off for this tutorial (`dp-enabled = false` in both `pyproject.toml` and `config.toml`). What
-leaves a site in pooled mode is one `p × p` second-moment matrix and one mean vector, once, plus
-its row count — not per bootstrap: the resamples are drawn after pooling — and the downloaded
-model holds only graphs and counts. That is aggregate statistics rather than rows, but with no
-formal guarantee and visible to the hub and the other sites. The NVFLARE README's "Privacy"
-section says exactly what is and is not protected, why the per-resample design it replaced was
-unsafe, and what a formal guarantee would add. Flower's per-update clip-and-noise mod is not that
-mechanism, which is why it is off rather than tuned. The upload path does not require `config.toml`,
-and without it the base bundle's `dp-enabled = true` would clip and noise the statistics silently, so
-the ClientApp refuses a run whose run config turns the mod on. Flower forwards a client's exception
-text to the hub, which is why every refusal in `federated_fci` names neither a count nor a column
-nor a statistic; a round that fails after the statistics were released still sends its zeroing
-payload and fails the job on the next task. The ClientApp fetches the cohort once per run and keeps
-it in `context.state`, so a trust logs one row-level egress per run, not one per round.
+Off for this tutorial (`dp-enabled = false` in both `pyproject.toml` and `config.toml`); the
+NVFLARE README's "Privacy" section is the one place that says why, what leaves a site and what is
+and is not protected. What is Flower-specific:
+
+- The upload path does not require `config.toml`, and without it the base bundle's
+  `dp-enabled = true` would clip and noise the statistics silently. The ClientApp therefore refuses a
+  run whose run config turns the mod on, reading it as the mod does (`LocalDpConfig.from_run_config`:
+  a missing key means on).
+- Flower forwards a client's exception text to the hub, which is why every refusal in
+  `federated_fci` names neither a count nor a column nor a statistic. A round that fails after the
+  statistics were released still sends its zeroing payload and fails the job on the next task.
+- The ClientApp fetches the cohort once per run and keeps it in `context.state`, so a trust logs one
+  row-level egress per run, not one per round.
+- Flower's FedAvg sums exactly, so a finished run's statistics buffers are exactly zero (NVFLARE's
+  float32 aggregation leaves ulps).
 
 ## Data
 
@@ -125,9 +125,8 @@ cohort elsewhere, pass `OUT=/secure/flip-data/ad_biomarkers` and run with
 SIM_DATA_ROOT=/secure/flip-data make -C fl-tutorials run-tutorial TUTORIAL=biomarker_causal_discovery FL_BACKEND=flower
 ```
 
-Every ClientApp slices its own `person_id`-modulo partition from that `dataframe.csv`. The cohort
-must never be committed, and the Data Use Agreement forbids putting its rows into third-party AI
-tools; the NVFLARE README's section has the detail.
+Every ClientApp slices its own `person_id`-modulo partition from that `dataframe.csv`. What the Data
+Use Agreement requires of you is in the NVFLARE README's "Data" section.
 
 On the platform the cohort is `query.sql` on each trust's OMOP. It is never seeded on the shared dev
 trusts (nothing ADNI-derived can be published there); a licence holder loads their own converted cohort
@@ -136,13 +135,15 @@ into their local dev trusts instead, see "On the platform" below.
 ## Expected performance
 
 Same reference run as the NVFLARE README (the 560-participant ADNI cohort over two sites of 280,
-50 bootstraps, pooled mode): the centralised analysis's stable set, 16 edges at frequency ≥ 0.5,
-with the frequencies listed there, in well under a minute of compute once the per-run environment
+50 bootstraps, pooled mode): 16 edges at frequency ≥ 0.5 — all 14 stable edges of the centralised
+analysis plus two pTau217 orientations near 0.5 — with the frequencies listed there, in well under a minute of compute once the per-run environment
 exists (the first `flwr run` builds it, which downloads torch and takes several minutes). The two
 backends compute the same statistics and the same PAGs — the module is byte-identical and the
 test suite pins the pooled result to centralised FCI — so the edge table from
-`summarise_results.py` matches the NVFLARE one up to the bootstrap streams, which are keyed on
-the site index both backends resolve the same way.
+`summarise_results.py` matches the NVFLARE one (the pooled bootstrap stream is `[SEED, 104729]`,
+with no site term) except where a test sits at α: NVFLARE's float32 aggregation moves the pooled
+statistics by ulps, which on this cohort flips one of 50 bootstraps of one weak edge (Aβ42/40 →
+ADAS-Cog13, 0.32 on NVFLARE, 0.34 here). The stable edges are the same.
 
 The NVFLARE README's "Graph metrics" scores the final graph against two centralised references
 (SHD and skeleton / oriented precision, recall and F1); `summarise_results.py --reference <edges.csv>`
@@ -178,19 +179,17 @@ uv run --project ../../../../flip-utils --extra full --group dev python summaris
 
 Upload `app/` as a `standard` job with imaging **off** (`has_imaging=false`), paste `query.sql` as
 the cohort query, and keep `num-server-rounds` in `config.toml` at the mode's round count (2 for
-`pooled_statistics`: a site refuses a one-round pooled job, see the NVFLARE README's Privacy section).
+`pooled_statistics`; the rounds formula is in the NVFLARE README's config table).
 `make e2e_smoke_causal FL_BACKEND=flower` runs it on a local dev stack once your converted cohort is
-loaded into the two dev trusts (`make -C trust load-adni-cohort …`, NVFLARE README "On the platform")
-and the Flower FL images are built from this tree so they carry causal-learn (`make build-fl
-FL_BACKEND=flower`, run with `DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev`). That run's downloaded model
-summarises to the same 16 stable edges, with identical frequencies, as the simulator run.
+loaded into the two dev trusts (`make -C trust load-adni-cohort …`, NVFLARE README "On the platform").
+That run's downloaded model summarises to the same 16 stable edges, with identical frequencies, as
+the simulator run.
 
 ## References
 
 As in the [NVFLARE README](../../../nvflare/tabular_causal_discovery/biomarker_causal_discovery/README.md#references):
 FCI (Spirtes, Glymour & Scheines 2000; Zhang 2008; causal-learn), FedPC (Huang et al., *IEEE TBD*
 2023 — the `layer_voting` mode), FedC²SL (Wang, Ma & Wang, *ECML PKDD* 2023 — the pooled-statistics
-idea), and the centralised ADNI analysis this federates (N. Glazman, `adni_fci`, 2026). ADNI data
-are used only by licence holders under the ADNI Data Use Agreement; the repository ships no data.
-The ADNI acknowledgement and the data version (download dates, plasma release) behind the
+idea), and the centralised ADNI analysis this federates (N. Glazman, `adni_fci`, 2026). The ADNI
+acknowledgement and the data version (download dates, plasma release) behind the
 real-cohort numbers quoted above are in the NVFLARE README's References section.

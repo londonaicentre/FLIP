@@ -231,7 +231,7 @@ def test_explicit_paths_override_the_directory(converter: ModuleType, tables: Pa
     assert (out / "dataframe.csv").exists()
 
 
-# --- rules a reviewer asked to pin -----------------------------------------------------------
+# --- cohort rules: dates, codes, columns -------------------------------------------------------
 
 
 def test_earliest_scan_is_decided_by_date_not_by_string_order(converter: ModuleType, tmp_path: Path):

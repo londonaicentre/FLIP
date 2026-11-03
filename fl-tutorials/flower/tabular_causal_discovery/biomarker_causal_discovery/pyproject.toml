@@ -56,12 +56,9 @@ serverapp = "app.server_app:app"
 clientapp = "app.client_app:app"
 
 [tool.flwr.app.config]
-# pooled_statistics completes in 2 rounds (statistics, then FCI). layer_voting needs
-# (max conditioning-set size + 2) rounds — override with --run-config 'num-server-rounds=6'.
+# Rounds by config.json's FEDERATION (the README's rounds formula); override with --run-config.
 num-server-rounds = 2
-# Client-side differential privacy (flip.flower.privacy) is OFF for this tutorial: clipping and
-# noising pooled second moments (or 0/1 votes) is not a meaningful mechanism for them and breaks
-# the arithmetic the federation relies on. See the README's privacy section.
+# Off: the mod's clip-and-noise is calibrated for weight deltas and would corrupt the pooled statistics silently (README, Privacy).
 dp-enabled = false
 dp-clipping-norm = 1.0
 dp-sensitivity = 1e-4

@@ -106,8 +106,8 @@ load-synthea-ehr:
 # is the dataframe.csv that `make -C fl-tutorials convert-adni-cohort` built from the user's own IDA
 # download (gitignored, never committed). Appends this trust's person_id-modulo slice (ids shifted
 # clear of the imaging and Synthea bands) as person + measurement + observation rows; idempotent by
-# provenance (person_source_value 'adni-cohort-…'). The Data Use Agreement covers the user's own
-# machines only — never point this at a shared or published trust.
+# provenance (person_source_value 'adni-cohort-…'). Local dev trusts only (the tutorial README's
+# "Data" section has what the ADNI agreement allows); the loader refuses a remote host or HUB.
 #   make load-adni-cohort TRUST_INDEX=1 OMOP_DB_PORT=5434   # GSTT
 #   make load-adni-cohort TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH
 ADNI_COHORT ?= ../../fl-tutorials/data/ad_biomarkers/dataframe.csv

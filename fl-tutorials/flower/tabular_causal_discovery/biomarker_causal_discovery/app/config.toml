@@ -13,10 +13,7 @@
 # Flower run-config overrides, passed to `flwr run --run-config` by fl-api-flower's
 # submit_run. Keys here override the base bundle pyproject.toml [tool.flwr.app.config].
 #
-# pooled_statistics (config.json's FEDERATION) completes in 2 rounds: statistics, then FCI.
-# layer_voting needs (max conditioning-set size + 2) rounds, e.g. 6 for sets of up to 4.
+# Rounds by config.json's FEDERATION: the rounds formula in the README's config table.
 num-server-rounds = 2
-# The local-DP mod clips the update's L2 norm and adds Gaussian noise. Applied to pooled
-# second moments (or 0/1 votes) it does not provide a meaningful guarantee and it does break the
-# arithmetic the federation relies on, so it is off here — see the README's privacy section.
+# Off: the mod's clip-and-noise is calibrated for weight deltas and would corrupt the pooled statistics silently (README, Privacy).
 dp-enabled = false

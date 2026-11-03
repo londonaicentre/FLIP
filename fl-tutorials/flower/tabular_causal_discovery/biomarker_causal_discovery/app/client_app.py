@@ -126,9 +126,9 @@ def _array_record(encoded: dict[str, np.ndarray]) -> ArrayRecord:
     return ArrayRecord(model.state_dict())
 
 
-# The local-DP mod stays registered as in every FLIP app, but config.toml sets dp-enabled = false
-# for this tutorial: clipping and noising a correlation matrix (or a 0/1 vote) is not a
-# meaningful privacy mechanism for it. See the README's privacy section.
+# The local-DP mod stays registered as in every FLIP app; config.toml sets dp-enabled = false.
+# Off: the mod's clip-and-noise is calibrated for weight deltas and would corrupt the pooled statistics
+# silently (README, Privacy).
 @app.train(mods=[flip_local_dp_mod])
 def train(msg: Message, context: Context) -> Message:
     """One federated round: statistics, a skeleton vote, or the oriented PAGs (see federated_fci)."""

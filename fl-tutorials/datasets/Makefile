@@ -155,12 +155,9 @@ download-synthea-data:
 # IDA study tables in ADNI_DIR (PTDEMOG, APOERES, ADAS, UCSFFSX7, UPENN_PLASMA_FUJIREBIO_QUANTERIX,
 # matched by prefix) become dataframe.csv + site1/ + site2/ (person_id-modulo splits) + a counts-only
 # summary under OUT (an absolute path; default: the gitignored data/ad_biomarkers/, where both
-# simulators look). ADNI
-# is access-controlled — every user signs its Data Use Agreement, which forbids redistributing
-# participant-level data in any form — so this repository ships the converter (code) and never the
-# cohort: the converter itself refuses an OUT inside a git checkout that git does not ignore (symlinks
-# resolved), and prints counts, never a row. How to apply for access and which tables to download: the tutorial README,
-# "Running on real ADNI data". Runs in ad_biomarkers/'s own uv project (numpy + pandas).
+# simulators look). ADNI is access-controlled (the tutorial README's "Data" section), so the repository
+# ships the converter, never the cohort: the converter refuses an OUT inside a git checkout that git does
+# not ignore (symlinks resolved), and prints counts, never a row. Runs in ad_biomarkers/'s own uv project.
 AD_BIOMARKERS_UV := uv run --project ad_biomarkers
 convert-adni-cohort: OUT ?= $(DATA_DIR)/ad_biomarkers
 convert-adni-cohort:

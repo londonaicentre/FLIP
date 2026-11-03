@@ -11,12 +11,11 @@
 
 """Build the biomarker_causal_discovery cohort from a licence holder's own ADNI download.
 
-ADNI (the Alzheimer's Disease Neuroimaging Initiative) is access-controlled: every user applies
-at https://adni.loni.usc.edu and signs the Data Use Agreement, which forbids redistributing
-participant-level data in any form. So this repository ships **code, not data**: this script
-reads the five study tables a licence holder downloads from the LONI Image and Data Archive (IDA)
-and writes the twelve-column CSV the tutorial's ``query.sql`` returns on the platform, so the
-simulator and a deployed run read the same thing. The output must stay out of git: the default
+ADNI (the Alzheimer's Disease Neuroimaging Initiative) is access-controlled — what its Data Use
+Agreement requires is in the tutorial README's "Data" section — so this repository ships **code,
+not data**: this script reads the five study tables a licence holder downloads from the LONI Image
+and Data Archive (IDA) and writes the twelve-column CSV the tutorial's ``query.sql`` returns on the
+platform, so the simulator and a deployed run read the same thing. The output must stay out of git: the default
 location is the gitignored ``fl-tutorials/data/ad_biomarkers/`` both simulators look in.
 
 The cohort rules are those of the centralised analysis the tutorial federates (N. Glazman,

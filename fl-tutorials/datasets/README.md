@@ -120,9 +120,9 @@ script imports, like the others):
   same tiny tables and diffs it against `derive_features` row for row.
 
 [`ad_biomarkers/`](ad_biomarkers/) owns the biomarker causal-discovery tutorial's cohort, in a uv
-project as small as synthea's (numpy + pandas). The data is ADNI, which is **access-controlled** —
-every user signs a Data Use Agreement that forbids redistributing participant-level data in any
-form — so there is no download target and no synthetic stand-in: the user applies for ADNI access
+project as small as synthea's (numpy + pandas). The data is ADNI, which is **access-controlled** (what
+its Data Use Agreement requires: the tutorial README's "Data" section), so there is no download target
+and no synthetic stand-in: the user applies for ADNI access
 (the tutorial README's "Running on real ADNI data" has the steps), downloads five study tables, and
 
 - `make_adni_cohort.py` — *converts* (`convert-adni-cohort ADNI_DIR=<IDA downloads> [OUT=…]`) that
