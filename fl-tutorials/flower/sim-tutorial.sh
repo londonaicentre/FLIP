@@ -254,7 +254,8 @@ case "$TUTORIAL" in
     # it enters the repository): convert-adni-cohort needs ADNI_DIR=<the five IDA tables> — the
     # tutorial README's "Running on real ADNI data" has the application and download steps.
     export DEV_DATAFRAME="$DATA_ROOT/ad_biomarkers/dataframe.csv"
-    DATASET_TARGET="convert-adni-cohort ADNI_DIR=<your IDA tables>" ;;
+    DATASET_TARGET="convert-adni-cohort ADNI_DIR=<your IDA tables>"
+    ACCESS_CONTROLLED=1 ;;
   3d_prostate_segmentation)
     # The XNAT-export-shaped tree prepare_prostate_local_data.py writes from the PI-CAI download
     # (three scans per study, masks beside each), honouring NUM_CASES.
@@ -276,6 +277,12 @@ if [ "$TUTORIAL" = 3d_spleen_segmentation_evaluation ]; then
 fi
 for p in "${REQUIRED[@]}"; do
   if [ ! -e "$p" ]; then
+    # No release host may hold an access-controlled dataset, so the catalogue loop
+    # (run-all-tutorials) reports such a tutorial as skipped rather than failed.
+    if [ -n "${ACCESS_CONTROLLED:-}" ] && [ -n "${TUTORIAL_SKIP_RESTRICTED_IF_ABSENT:-}" ]; then
+      echo "⏭️ tutorial $TUTORIAL skipped: access-controlled dataset absent ($p)"
+      exit 0
+    fi
     echo "❌ Dataset missing: $p"
     echo "   Run: make -C fl-tutorials $DATASET_TARGET"
     exit 1

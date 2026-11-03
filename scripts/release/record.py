@@ -63,8 +63,15 @@ def _tutorials(label: str, result: dict | None) -> str:
     if not result or result.get("status") != "passed":
         return f"{label}: {_state(result)}."
     m = result.get("metrics", {})
-    runs = ", ".join(f"{t['name']} {_duration(t.get('seconds'))}" for t in m.get("tutorials", []))
-    return f"{label}: all {m.get('total', '?')} tutorials passed in {_duration(result.get('seconds'))} — {runs}."
+    tutorials = m.get("tutorials", [])
+    runs = ", ".join(f"{t['name']} {_duration(t.get('seconds'))}" for t in tutorials if not t.get("skipped"))
+    skipped = [t["name"] for t in tutorials if t.get("skipped")]
+    if not skipped:
+        return f"{label}: all {m.get('total', '?')} tutorials passed in {_duration(result.get('seconds'))} — {runs}."
+    return (
+        f"{label}: {m.get('passed', '?')} of {m.get('total', '?')} tutorials passed in "
+        f"{_duration(result.get('seconds'))} — {runs}; skipped (access-controlled data absent): {', '.join(skipped)}."
+    )
 
 
 def render(results: dict[str, dict]) -> str:

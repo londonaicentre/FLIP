@@ -36,7 +36,7 @@ N_CLIENTS ?= 2
 WORKSPACE ?= /tmp/nvflare/causal
 RESULTS ?= $(WORKSPACE)/flip_fedavg/server/simulate_job/FL_global_model.pt
 
-.PHONY: run export sim clean summarise
+.PHONY: run export sim sim-run clean summarise
 
 # --- Tutorial-harness entrypoint ---
 run: sim
@@ -56,7 +56,24 @@ export:
 # converter's 2-way split, so they are passed only for N_CLIENTS=2: with any other count every site
 # slices DEV_DATAFRAME by person_id (the two are blanked, since .env.app exports them), and no person
 # is at two sites.
+#
+# The cohort is access-controlled, so a host without it cannot run the tutorial. Run on its own,
+# a missing cohort fails with the convert step; under run-all-tutorials (which exports
+# TUTORIAL_SKIP_RESTRICTED_IF_ABSENT=1) it is reported as skipped, so the catalogue loop goes on.
+SIM_INPUTS := $(if $(filter 2,$(N_CLIENTS)),$(SITE1_DATAFRAME) $(SITE2_DATAFRAME),$(DEV_DATAFRAME))
 sim:
+	@for f in $(abspath $(SIM_INPUTS)); do \
+		[ -e "$$f" ] && continue; \
+		if [ -n "$$TUTORIAL_SKIP_RESTRICTED_IF_ABSENT" ]; then \
+			echo "⏭️ tutorial biomarker_causal_discovery skipped: access-controlled dataset absent ($$f)"; exit 0; \
+		fi; \
+		echo "❌ Dataset missing: $$f"; \
+		echo "   Build it from your own ADNI download: make -C fl-tutorials convert-adni-cohort ADNI_DIR=<IDA tables>"; \
+		exit 1; \
+	done; \
+	$(MAKE) --no-print-directory sim-run
+
+sim-run:
 	@echo "Running tutorial with: n_clients=$(N_CLIENTS), num_rounds=$(NUM_ROUNDS)"
 	$(if $(filter 2,$(N_CLIENTS)),SITE1_DATAFRAME="$(abspath $(SITE1_DATAFRAME))" SITE2_DATAFRAME="$(abspath $(SITE2_DATAFRAME))",SITE1_DATAFRAME= SITE2_DATAFRAME=) \
 	DEV_DATAFRAME="$(abspath $(DEV_DATAFRAME))" \

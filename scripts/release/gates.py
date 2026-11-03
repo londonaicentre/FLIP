@@ -130,7 +130,11 @@ def stop_own_simulators() -> list[str]:
 
 
 def tutorial_metrics(lines: list[tuple[float, str]]) -> dict:
-    """Per-tutorial pass/fail and seconds from ``run-all-tutorials`` output (one ``🚀 Running`` line each)."""
+    """Per-tutorial pass/fail/skip and seconds from ``run-all-tutorials`` output (one ``🚀 Running`` line each).
+
+    An access-controlled tutorial whose data the host does not hold prints ``⏭️ tutorial <name> skipped``
+    and exits 0; it is counted as skipped, not passed, so the record never claims it ran.
+    """
     runs: list[dict] = []
     for t, line in lines:
         start = re.search(r"🚀 Running (?:FLARE|Flower) tutorial (\S+)", line)
@@ -140,9 +144,12 @@ def tutorial_metrics(lines: list[tuple[float, str]]) -> dict:
             runs.append({"name": Path(start[1]).name, "passed": True, "_t": t})
         elif re.search(r"❌ tutorial \S+ failed", line) and runs:
             runs[-1]["passed"] = False
+        elif re.search(r"⏭️ tutorial \S+ skipped", line) and runs:
+            runs[-1].update(passed=False, skipped=True)
     if runs and "_t" in runs[-1]:
         runs[-1]["seconds"] = round(lines[-1][0] - runs[-1].pop("_t"))
-    return {"tutorials": runs, "passed": sum(r["passed"] for r in runs), "total": len(runs)}
+    skipped = sum(bool(r.get("skipped")) for r in runs)
+    return {"tutorials": runs, "passed": sum(r["passed"] for r in runs), "skipped": skipped, "total": len(runs)}
 
 
 def smoke_metrics(lines: list[tuple[float, str]]) -> dict:

@@ -281,6 +281,17 @@ class Gates(unittest.TestCase):
         )
         assert flower["tutorials"][0]["name"] == "xray_classification"
 
+    def test_tutorial_metrics_count_an_access_controlled_skip_as_skipped(self):
+        lines = [
+            (0.0, "🚀 Running Flower tutorial fl-tutorials/flower/tabular_causal_discovery/biomarker_causal_discovery"),
+            (1.0, "⏭️ tutorial biomarker_causal_discovery skipped: access-controlled dataset absent (/x.csv)"),
+            (2.0, "🚀 Running Flower tutorial fl-tutorials/flower/tabular_classification/ehr_risk_prediction"),
+        ]
+        m = gates.tutorial_metrics(lines + [(30.0, "done")])
+        assert (m["total"], m["passed"], m["skipped"]) == (2, 1, 1)
+        assert m["tutorials"][0] == {"name": "biomarker_causal_discovery", "passed": False, "skipped": True, "seconds": 2}
+        assert m["tutorials"][1]["passed"] is True
+
     def test_smoke_metrics(self):
         lines = [
             (0.0, "   project_id   = a02be724"),
@@ -412,6 +423,15 @@ class Record(unittest.TestCase):
         assert "gpu-box" not in text  # the public notes never name the host
         assert "xray 53 s" in text
         assert "`aaaaaaaaa`" in text
+
+    def test_a_skipped_tutorial_is_named_not_counted_as_passed(self):
+        tutorials = [{"name": "xray", "seconds": 53}, {"name": "biomarker_causal_discovery", "skipped": True}]
+        text = record.render(
+            {"tutorials-flower": result("tutorials-flower", tutorials=tutorials, passed=1, skipped=1, total=2)}
+        )
+        assert "Flower: 1 of 2 tutorials passed" in text
+        assert "skipped (access-controlled data absent): biomarker_causal_discovery" in text
+        assert "all 2 tutorials passed" not in text
 
     def test_failed_or_missing_gates_stay_unticked(self):
         text = record.render({"tutorials-nvflare": result("tutorials-nvflare", "failed")})
