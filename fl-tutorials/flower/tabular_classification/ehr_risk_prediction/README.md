@@ -13,6 +13,17 @@ label, preprocessing and network are identical to the FLARE tutorial; see
 [its README](../../../nvflare/tabular_classification/ehr_risk_prediction/README.md) for the full
 treatment of those. This page focuses on the **Flower-specific mechanics** and how to run it.
 
+## At a glance
+
+| Item | Value |
+|---|---|
+| What you upload | everything in `app/` |
+| Job type | standard |
+| Imaging | off |
+| Cohort query | `query.sql` |
+| Dataset | `make -C fl-tutorials download-synthea-data` |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=ehr_risk_prediction FL_BACKEND=flower` (CPU) |
+
 ---
 
 ## Layout

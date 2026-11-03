@@ -11,6 +11,17 @@ trust's OMOP CDM database — and touches **no imaging at all**: no Orthanc, no 
 data-enrichment step. It is the counterpart to the imaging tutorials, exercising the platform's
 other data path, and **CPU is enough** to train it.
 
+## At a glance
+
+| Item | Value |
+|---|---|
+| What you upload | everything in `app_files/` |
+| Job type | standard |
+| Imaging | off |
+| Cohort query | `query.sql` |
+| Dataset | `make -C fl-tutorials download-synthea-data` |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=ehr_risk_prediction` (CPU) |
+
 ---
 
 ## Table of contents
