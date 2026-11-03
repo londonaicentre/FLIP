@@ -1,0 +1,43 @@
+# Spike #1765: ONE trust-facing listener for every project's SuperLink.
+# The project comes from the host name the SuperNode dialled (project-<p>.fleet.flip.test, one wildcard
+# certificate) and selects the Service superlink-<p> in the hub namespace, so a new project needs a new
+# Service, never a proxy change. The name is limited to [a-z0-9-], so it cannot leave that namespace.
+resolver kube-dns.kube-system.svc.cluster.local valid=10s ipv6=off;
+
+map $host $fleet_project {
+    default "";
+    "~^project-(?<p>[a-z0-9-]{1,40})\.fleet\.flip\.test$" $p;
+}
+
+server {
+    listen 9092 ssl;
+    ssl_certificate /certs/server.pem;
+    ssl_certificate_key /certs/server.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    client_max_body_size 64m;
+    proxy_request_buffering off;
+    proxy_buffering off;
+
+    if ($fleet_route_allowed = 0) {
+        return 404;
+    }
+    if ($fleet_project = "") {
+        return 404;
+    }
+
+    location / {
+        set $fleet_upstream https://superlink-$fleet_project.hub.svc.cluster.local:8000;
+        proxy_pass $fleet_upstream;
+        proxy_http_version 1.1;
+        proxy_read_timeout 300s;
+        proxy_ssl_verify on;
+        proxy_ssl_trusted_certificate /ca/ca.crt;
+        proxy_ssl_name superlink-$fleet_project;
+        proxy_ssl_server_name on;
+        error_page 502 =503 @superlink_unavailable;
+    }
+
+    location @superlink_unavailable {
+        return 503;
+    }
+}

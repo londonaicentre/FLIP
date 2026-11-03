@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "spike1765"
+version = "1.0.0"
+description = "Spike 1765: which SuperNodes does a run reach, and what can each ClientApp see?"
+license = "Apache-2.0"
+dependencies = ["flwr>=1.42.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.flwr.app]
+publisher = "flip"
+
+[tool.flwr.app.components]
+serverapp = "app.server_app:app"
+clientapp = "app.client_app:app"
+
+[tool.flwr.app.config]
+rounds = 2
