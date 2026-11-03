@@ -32,9 +32,9 @@ FLIP#1547). A recording made by hand — GIFs CI cannot record, such as ones tha
 branch ``pr-<N>`` of the PR that documents them, which that PR's ReadTheDocs preview fetches.
 
 The GIFs listed in ``docs/scripts/live-recorded-gifs.txt`` are only ever recorded by hand, and the list pins each
-one's sha256. One missing from ``--gifs-dir`` is fetched from whichever dataset branch holds those bytes — the
-target branch, ``main``, then every ``pr-<N>`` — so the hand recording a merged PR pinned reaches ``main`` on the
-next CI publish, whichever run that is.
+one's sha256. One missing from ``--gifs-dir`` is fetched from whichever dataset ref holds those bytes — the
+target branch, ``main``, every ``pr-<N>``, then every tag — so the hand recording a merged PR pinned reaches
+``main`` on the next CI publish, whichever run that is.
 
 A recording's version is ``YYYYMMDDTHHMMSSZ-<sha7>``: the UTC instant it started and the commit it was recorded
 from (the CI workflow mints it before Cypress runs, and the manifest's ``recorded_at`` is read back from it).
@@ -64,7 +64,7 @@ from pathlib import Path
 from typing import Any
 
 from huggingface_hub import CommitOperationAdd, CommitOperationDelete, HfApi, hf_hub_download
-from huggingface_hub.errors import EntryNotFoundError, RevisionNotFoundError
+from huggingface_hub.errors import RemoteEntryNotFoundError, RevisionNotFoundError
 
 DOCS_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = DOCS_DIR.parent
@@ -89,21 +89,24 @@ BRANCH_RE = re.compile(r"main|pr-\d+")
 Operation = CommitOperationAdd | CommitOperationDelete
 
 
-def live_gifs(live_list: Path | None) -> dict[str, str]:
+def live_gifs(live_list: Path) -> dict[str, str]:
     """``{<category>/<name>.gif: sha256}`` from the live-recorded list's lines (comments and blanks skipped).
 
     Raises:
-        SystemExit: If a line is not ``<category>/<name>.gif <sha256>``.
+        SystemExit: If the list is missing (a typo would otherwise delete every live GIF), a line is not
+            ``<category>/<name>.gif <sha256>``, or a path is listed twice.
     """
-    if live_list is None or not live_list.is_file():
-        return {}
-    pins = {}
+    if not live_list.is_file():
+        raise SystemExit(f"❌ no live-recorded list at {live_list}")
+    pins: dict[str, str] = {}
     for line in live_list.read_text().splitlines():
         fields = line.split("#", 1)[0].split()
         if not fields:
             continue
         if len(fields) != 2 or not GIF_PATH_RE.fullmatch(fields[0]) or not SHA256_RE.fullmatch(fields[1]):
             raise SystemExit(f"❌ {live_list}: {line.strip()!r} is not <category>/<name>.gif <sha256> (lowercase)")
+        if fields[0] in pins:
+            raise SystemExit(f"❌ {live_list}: {fields[0]} is listed twice; keep one pin")
         pins[fields[0]] = fields[1]
     return pins
 
@@ -116,8 +119,7 @@ def expected_gifs(specs_dir: Path, live_list: Path | None = None) -> list[str]:
         SystemExit: If a spec is not exactly one directory deep, there are none, or a live-recorded GIF has the
             same path as a spec's.
 
-    ``live_list`` defaults to docs/scripts/live-recorded-gifs.txt, read at call time; a path that does not
-    exist means none.
+    ``live_list`` defaults to docs/scripts/live-recorded-gifs.txt, read at call time.
     """
     paths = []
     for spec in sorted(specs_dir.rglob(f"*{SPEC_SUFFIX}")):
@@ -158,7 +160,7 @@ def carry_forward(
         if ref not in manifests:
             try:
                 manifests[ref] = json.loads(Path(download(MANIFEST_NAME, ref)).read_text()).get("files", {})
-            except (RevisionNotFoundError, EntryNotFoundError):
+            except (RevisionNotFoundError, RemoteEntryNotFoundError):  # 404s only: a network error fails the run
                 manifests[ref] = {}  # a pr-<N> nobody published, or a ref from before the manifest
         return manifests[ref]
 
@@ -167,7 +169,10 @@ def carry_forward(
         target = gifs_dir / path
         if target.is_file():
             if (local := sha256_of(target)) != sha:
-                raise SystemExit(f"❌ {target} is not the pinned recording; to publish it, pin it: {path} {local}")
+                raise SystemExit(
+                    f"❌ {target} is not the pinned recording. Re-cut it? Pin it: {path} {local} — "
+                    "otherwise merge develop, whose pin it probably is"
+                )
             continue
         ref = next((ref for ref in refs if files_at(ref).get(path, {}).get("sha256") == sha), None)
         if ref is None:
@@ -333,13 +338,15 @@ def main(argv: list[str] | None = None) -> int:
 
     expected = expected_gifs(args.specs_dir, args.live_list)
     api = HfApi()
-    branches = [ref.name for ref in api.list_repo_refs(args.repo, repo_type="dataset").branches]
+    refs = api.list_repo_refs(args.repo, repo_type="dataset")
+    branches = [ref.name for ref in refs.branches]
     pr_branches = sorted((b for b in branches if b != "main" and BRANCH_RE.fullmatch(b)), key=lambda b: -int(b[3:]))
+    # Tags last: a release keeps every recording it shipped, so a pin a revert restores is still found.
     carry_forward(
         args.gifs_dir,
         live_gifs(args.live_list),
         args.repo,
-        list(dict.fromkeys([args.branch, "main", *pr_branches])),
+        list(dict.fromkeys([args.branch, "main", *pr_branches, *(tag.name for tag in refs.tags)])),
         lambda filename, ref: hf_hub_download(args.repo, filename, repo_type="dataset", revision=ref),
     )
     manifest = build_manifest(

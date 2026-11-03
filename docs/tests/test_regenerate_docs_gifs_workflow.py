@@ -83,8 +83,8 @@ def test_only_develop_publishes_and_only_to_main(jobs):
     assert "--branch main" in publish["run"]
 
 
-def test_a_merged_prs_live_recordings_reach_main(workflow):
-    """A change to the live list's pins publishes; the publisher finds the pinned bytes on the PR's dataset branch."""
+def test_a_change_to_the_live_list_publishes(workflow):
+    """A merged PR that re-pins a live GIF triggers a publish, which carries its pinned bytes to main."""
     assert "docs/scripts/live-recorded-gifs.txt" in workflow[True]["push"]["paths"]  # PyYAML reads `on:` as True
 
 

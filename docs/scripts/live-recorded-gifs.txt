@@ -5,9 +5,9 @@
 #
 # Re-cut them on a trust with MONAI Label (trust/monailabel-demo/README.md):
 #     make -C trust/monailabel-demo demo-video demo-gifs KIT=<CODE> XNAT_EXPERIMENT=<session>
-# then pin each one's sha256 here (the publisher refuses an unpinned GIF and prints its line) and publish them to
-# dataset branch pr-<N> of the PR that carries them (its preview shows them). A CI publish cannot record them,
-# so it fetches the pinned bytes from whichever dataset branch holds them: main, else any pr-<N>.
+# then pin each one's sha256 here (the publisher refuses a re-cut whose pin is stale, printing the line) and
+# publish them to dataset branch pr-<N> of the PR that carries them (its preview shows them). A CI publish cannot
+# record them, so it fetches the pinned bytes from whichever dataset ref holds them: main, a pr-<N> or a tag.
 monailabel/monailabel-enable.gif c02a6314486ecd1f40e173b785e36c9e1486bc19d75843c16cc20a38dba6aedf
 monailabel/monailabel-sam-clicks.gif 02ccf493068f7ec7cf928f3fe6e2094a50b18a27b87b0b182b6801e452b00527
 monailabel/monailabel-export.gif 4dfbe466e1679301661ed57b3bdc093bce238ce3039c36a0835d5b6d1d35f1bd
