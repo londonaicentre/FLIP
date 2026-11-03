@@ -1123,7 +1123,7 @@ run was 95% of a clone). Instead:
   they go to the dataset branch of the PR that pins them, which that PR's ReadTheDocs preview then shows (see
   "Publishing by hand"). The next CI publish after that PR merges fetches the pinned bytes from its `pr-<N>`;
   every later one carries them forward unchanged from `main`. Only CI writes the dataset's `main`; delete
-  `pr-<N>` once `main`'s manifest lists the pinned sha256.
+  the dataset branch `pr-<N>` (not the git branch) once `main`'s manifest lists the pinned sha256.
 
 ### Adding a new GIF
 
