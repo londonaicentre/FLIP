@@ -203,13 +203,11 @@ def test_a_site_below_the_row_floor_refuses_without_saying_how_many(ff, config):
     assert target["stats_moment"].shape == (len(VARIABLES), len(VARIABLES))
 
 
-def test_the_row_floor_is_the_hard_floor_raised_by_config_or_the_trust(ff, config, monkeypatch):
-    assert ff.site_row_floor({**config, "MIN_SITE_ROWS": 1}, env={}) == ff.HARD_MIN_SITE_ROWS  # config cannot lower it
-    assert ff.site_row_floor({**config, "MIN_SITE_ROWS": 80}, env={}) == 80
-    assert ff.site_row_floor(config, env={"COHORT_QUERY_THRESHOLD": "100"}) == 100  # the trust raises it
-    assert ff.site_row_floor({**config, "MIN_SITE_ROWS": 80}, env={"COHORT_QUERY_THRESHOLD": "60"}) == 80
-    assert ff.site_row_floor(config, env={"COHORT_QUERY_THRESHOLD": "junk"}) == ff.HARD_MIN_SITE_ROWS
-    assert ff.site_row_floor(config, env={"COHORT_QUERY_THRESHOLD": " "}) == ff.HARD_MIN_SITE_ROWS
+def test_the_row_floor_is_the_hard_floor_raised_by_config(ff, config, monkeypatch):
+    assert ff.site_row_floor({**config, "MIN_SITE_ROWS": 1}) == ff.HARD_MIN_SITE_ROWS  # config cannot lower it
+    assert ff.site_row_floor({**config, "MIN_SITE_ROWS": 80}) == 80
+    monkeypatch.setenv("COHORT_QUERY_THRESHOLD", "100")  # the trust's floor is the data-access-api's, not the app's
+    assert ff.site_row_floor(config) == ff.HARD_MIN_SITE_ROWS
 
 
 def test_a_small_cell_in_a_discrete_column_blocks_the_release(ff, config):

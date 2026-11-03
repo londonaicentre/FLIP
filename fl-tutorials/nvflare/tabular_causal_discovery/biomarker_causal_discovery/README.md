@@ -386,11 +386,10 @@ the actual rows, and the frequencies differ from the earlier runs by a few hundr
 **Floors and what is still unprotected.** A site refuses to release its statistics below 30
 complete rows of distinct persons (a query with several rows per person does not clear the floor
 with few people). That floor is a constant in the module; `MIN_SITE_ROWS` in `config.json` can
-raise it and never lower it, and the trust raises it further through its own disclosure floor: the
-kit's `COHORT_QUERY_THRESHOLD`, which the trust compose files and the Helm chart export to the FL
-client as well as to the data-access-api. A trust whose governance document sets a higher
-`min_cohort_size` than that variable should set the variable to the same value: the data-access-api
-takes the larger of the two, the FL client sees only the variable. The checks run every round and at
+raise it and never lower it. The trust's own disclosure floor is enforced before the app sees a row:
+its data-access-api serves no cohort below its effective threshold (the kit's
+`COHORT_QUERY_THRESHOLD`, raised by the governance document's `min_cohort_size`), counted in distinct
+persons on every fetch. The checks run every round and at
 the final evaluation, so a site that refused in round 1 reports nothing later either. Refusals name
 neither the count nor, for a small cell, the column, nor any statistic: Flower forwards a client's
 exception text to the hub (NVFLARE's client API forwards only a generic failure), and the numbers go

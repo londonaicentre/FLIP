@@ -143,16 +143,13 @@ PERCENTILE_CLIP = 0.01
 # zero fraction must stay above the site's P (``assert_within_filter_bounds``).
 PERCENTILE_STOCK = 10.0
 #: No site releases its statistics for fewer complete rows than this, whatever the researcher's
-#: config.json says (``MIN_SITE_ROWS`` there can only raise it). A trust raises it further through
-#: :data:`SITE_FLOOR_VAR` in the FL client's environment. With 11 numbers per row and p + p² = 132
-#: released, a floor of 30 keeps the released system well under-determined; the small-cell rule
-#: below covers the discrete columns, where a moment is an exact count.
+#: config.json says (``MIN_SITE_ROWS`` there can only raise it). The trust's own disclosure floor is
+#: enforced before this, by its data-access-api, which serves no cohort below its effective threshold
+#: (the kit's ``COHORT_QUERY_THRESHOLD``, raised by the governance document), counted in distinct
+#: persons on every fetch. With 11 numbers per row and p(p + 3)/2 = 77 independent numbers released (the
+#: moment matrix is symmetric), a floor of 30 keeps the released system well under-determined; the
+#: small-cell rule below covers the discrete columns, where a moment is an exact count.
 HARD_MIN_SITE_ROWS = 30
-#: The trust's own disclosure floor (its kit file's ``COHORT_QUERY_THRESHOLD``, the same value its
-#: data-access-api refuses cohorts below), which the trust compose files and the Helm chart export to
-#: the FL client as well. The researcher cannot edit the client's environment, so this can only raise
-#: the floor above the constant and config.json.
-SITE_FLOOR_VAR = "COHORT_QUERY_THRESHOLD"
 #: A discrete column (three or fewer distinct values: sex, an allele count) releases, through its
 #: moments, the exact count of every level and the sum of every other variable over that level. A
 #: level with fewer rows than this is a small cell in the statistical-disclosure-control sense, and
@@ -404,17 +401,9 @@ def assert_within_filter_bounds(
 # --- what a site may release ---------------------------------------------------------------
 
 
-def site_row_floor(config: dict, env: dict | None = None) -> int:
-    """Fewest complete rows a site releases statistics for: the hard floor, raised by config or the trust."""
-    env = os.environ if env is None else env
-    floor = max(HARD_MIN_SITE_ROWS, int(config.get("MIN_SITE_ROWS", 0)))
-    raw = (env.get(SITE_FLOOR_VAR) or "").strip()
-    if raw:
-        try:
-            floor = max(floor, int(float(raw)))
-        except ValueError:
-            logger.warning("%s=%r is not a number; the site floor stays at %d", SITE_FLOOR_VAR, raw, floor)
-    return floor
+def site_row_floor(config: dict) -> int:
+    """Fewest complete rows a site releases statistics for: the hard floor, raised (never lowered) by config."""
+    return max(HARD_MIN_SITE_ROWS, int(config.get("MIN_SITE_ROWS", 0)))
 
 
 def small_cells(matrix: np.ndarray, config: dict) -> list[int]:

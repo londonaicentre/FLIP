@@ -200,9 +200,10 @@ template, required files present, template files byte-identical), `test_flower_m
   (`biomarker_causal_discovery`: bootstrapped FCI as pooled sufficient statistics). Each site releases
   **one** statistic per run, never one per bootstrap — reproducible resamples are a system of known
   weighted sums that inverts to rows (the #1484 review). Floors the config can only raise (a hard row
-  floor, the trust's `COHORT_QUERY_THRESHOLD`, which reaches the FL client, a small-cell rule for discrete
-  columns) and refusals that name neither count nor column, since both backends forward a client's
-  exception text to the hub. The last round consumes and zeroes the statistics, so the job refuses
+  floor above the trust's own `COHORT_QUERY_THRESHOLD`, which its data-access-api enforces before the app
+  sees a row, and a small-cell rule for discrete columns) and refusals that name neither count nor
+  column, since Flower forwards a client's exception text to the hub (NVFLARE's client API sends a
+  generic failure). The last round consumes and zeroes the statistics, so the job refuses
   fewer than two rounds. Shape the payload so the NVFLARE percentile filter is a no-op; Flower's
   clip-and-noise cannot be made one, so switch it off in both `pyproject.toml` and `config.toml`
   (the exception to §4's `dp-enabled = true`), refuse a run config that turns it back on, and say
