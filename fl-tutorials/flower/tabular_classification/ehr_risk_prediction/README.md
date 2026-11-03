@@ -96,10 +96,12 @@ rounds only — `@app.evaluate` is untouched.
 
 Override per run without editing the app: `flwr run . --run-config "dp-enabled=false"`.
 
-> ⚠️ The DP defaults are **demonstration values, chosen utility-first** so the tutorial still
-> converges with the mechanism live; they are not a defensible privacy budget (no cross-round
-> composition accounting, and noise does not average down with only a handful of trusts). See the
-> xray tutorial's DP section for the full discussion.
+> ⚠️ The DP defaults are **demonstration values, not a privacy budget.** `dp-clipping-norm` is
+> sized to this model's update so clipping does not throttle training, but the noise comes from
+> `dp-sensitivity` alone, which is negligible beside an update of that norm: the configured
+> `dp-epsilon` is not the guarantee these runs get until the noise is calibrated to the clipping norm
+> (FLIP#1760). There is also no cross-round composition accounting, and noise does not average down
+> with only a handful of trusts. See the xray tutorial's DP section for the full discussion.
 
 ## Data
 

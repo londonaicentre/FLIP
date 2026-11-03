@@ -198,7 +198,8 @@ It is wired in `app/client_app.py` as `@app.train(mods=[flip_local_dp_mod])`, so
 rounds only — `@app.evaluate` is untouched. That mirrors the scope of the FLARE apps'
 `PercentilePrivacy` result filter, though the mechanism is stronger: FLARE sparsifies by
 percentile and adds no noise, while this is a real (epsilon, delta) mechanism built on Flower's own
-`compute_clip_model_update` / `add_gaussian_noise_inplace`.
+`clip_inputs_inplace` / `add_gaussian_noise_inplace` (its `compute_clip_model_update`, unrolled so
+the mod can log the pre-clip norm).
 
 | Key                | Default | Meaning |
 |--------------------|---------|---------|
@@ -215,9 +216,11 @@ flwr run . --run-config "dp-enabled=false"
 flwr run . --run-config "dp-epsilon=1.0 dp-clipping-norm=0.5"
 ```
 
-> ⚠️ **The defaults are demonstration values, chosen utility-first** so this tutorial still
-> converges with the mechanism live (they give sigma ≈ 4.8e-5). They are **not** a defensible
-> privacy budget. A real one calibrates `dp-sensitivity` to the local dataset — roughly
+> ⚠️ **The defaults are demonstration values, not a privacy budget.** `dp-clipping-norm` is sized
+> to this model's update so clipping does not throttle training, but the noise comes from
+> `dp-sensitivity` alone (sigma ≈ 4.8e-5), which is negligible beside an update of that norm. The
+> configured `dp-epsilon` is therefore not the guarantee these runs get until the noise is
+> calibrated to the clipping norm (FLIP#1760). A real budget calibrates `dp-sensitivity` to the local dataset — roughly
 > `2 * dp-clipping-norm / |D|` for an average-of-examples update — and accounts for composition
 > across rounds, which this mod does not do: every round spends the budget again. With only a
 > handful of trusts the noise also does not average down the way central DP's does.
