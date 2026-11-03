@@ -16,6 +16,7 @@
 workspace reset."""
 
 import json
+import re
 from contextlib import nullcontext
 from pathlib import Path
 from urllib.parse import quote
@@ -33,8 +34,10 @@ from tests.demo_video import (
     APPS,
     REPO_ROOT,
     app_files_for,
+    check_prepared_files,
     check_reused_project_matches_profile,
     reset_researcher_workspace,
+    resolve_enrichment,
     resolve_trust_admin,
     resolve_ui_credentials,
     trust_admin_of,
@@ -161,7 +164,9 @@ def _stub_project_has_imaging(monkeypatch: pytest.MonkeyPatch, value: bool) -> N
     monkeypatch.setattr(demo_video.e2e_smoke, "project_has_imaging", lambda client, headers, project_id: value)
 
 
-@pytest.mark.parametrize(("app", "project_imaging"), [("xray", True), ("spleen", True), ("ehr", False)])
+@pytest.mark.parametrize(
+    ("app", "project_imaging"), [("xray", True), ("spleen", True), ("digipath", True), ("ehr", False)]
+)
 def test_reused_project_matching_its_profile_passes(monkeypatch: pytest.MonkeyPatch, app: str, project_imaging: bool):
     _stub_project_has_imaging(monkeypatch, project_imaging)
     check_reused_project_matches_profile(requests.Session(), {}, "proj-1", app, APPS[app])  # no raise
@@ -178,8 +183,66 @@ def test_resuming_an_ehr_project_under_the_default_xray_profile_is_refused(monke
 def test_resuming_an_imaging_project_under_the_ehr_profile_is_refused(monkeypatch: pytest.MonkeyPatch):
     """The inverse would skip the imaging wait and upload the EHR app onto an imaging project."""
     _stub_project_has_imaging(monkeypatch, True)
-    with pytest.raises(SmokeFailure, match=r"has_imaging=true.*tabular-only study.*pass --app spleen / xray"):
+    # The remedy names every imaging profile, so derive the list rather than pin today's roster.
+    imaging_apps = " / ".join(sorted(name for name, profile in APPS.items() if profile.get("has_imaging", True)))
+    with pytest.raises(
+        SmokeFailure, match=rf"has_imaging=true.*tabular-only study.*pass --app {re.escape(imaging_apps)}"
+    ):
         check_reused_project_matches_profile(requests.Session(), {}, "proj-1", "ehr", APPS["ehr"])
+
+
+# ---------------------------------------------------------------------------------------------
+# resolve_enrichment: a profile may carry its own off-camera enrichment step (digipath).
+# ---------------------------------------------------------------------------------------------
+
+
+def test_a_profile_without_enrichment_runs_none() -> None:
+    assert resolve_enrichment(demo_video.parse_args([]), APPS["xray"]) == (None, None)
+
+
+def test_digipath_uploads_its_annotations_to_every_trust() -> None:
+    """The annotations cannot ride the pull, so the profile's step runs on every take, at every XNAT."""
+    args = demo_video.parse_args(["--app", "digipath", "--xnat-urls", "http://a:1 http://b:2"])
+    cwd, cmd = resolve_enrichment(args, APPS["digipath"])
+    assert cwd == str(REPO_ROOT / "fl-tutorials" / "datasets")
+    assert Path(cwd).is_dir()
+    assert cmd == (
+        'make upload-idc-pathology-annotations FLIP_PROJECT_ID="$FLIP_PROJECT_ID" XNAT_URLS="http://a:1 http://b:2"'
+    )
+    # The password travels by env var (set by the recorder), never on the command line.
+    assert "XNAT_PASS" not in cmd
+
+
+def test_explicit_enrichment_flags_beat_the_profile() -> None:
+    args = demo_video.parse_args(["--data-enrichment-cwd", "/tmp/x", "--data-enrichment-cmd", "true"])
+    assert resolve_enrichment(args, APPS["digipath"]) == ("/tmp/x", "true")
+
+
+def test_digipath_is_an_evaluation_that_says_so() -> None:
+    """No live chart in segment 5, and segment 6 must not claim a model was trained."""
+    profile = APPS["digipath"]
+    assert profile["evaluation"] is True
+    assert "trained" not in profile["closing_caption"]
+    assert not any(p.get("evaluation") for name, p in APPS.items() if name != "digipath")
+
+
+def test_an_app_without_the_requested_backend_is_refused() -> None:
+    with pytest.raises(SmokeFailure, match="--app digipath has no flower tutorial"):
+        demo_video.main(["--app", "digipath", "--fl-backend", "flower"])
+
+
+def test_digipath_refuses_to_start_without_its_generated_detector(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    tutorial = APPS["digipath"]["backends"]["nvflare"]
+    app_dir = tmp_path / "tutorial" / "app_files"
+    app_dir.mkdir(parents=True)
+    monkeypatch.setattr(demo_video, "REPO_ROOT", tmp_path)
+
+    with pytest.raises(SmokeFailure, match=r"detector_specification\.pt.*make -C tutorial prepare-model"):
+        check_prepared_files(app_dir, tutorial)
+
+    (app_dir / "detector_specification.pt").write_bytes(b"")
+    check_prepared_files(app_dir, tutorial)  # no raise
+    check_prepared_files(app_dir, APPS["xray"]["backends"]["nvflare"])  # nothing to prepare
 
 
 def test_licence_header_is_stripped_from_the_on_camera_query() -> None:
@@ -444,6 +507,29 @@ def test_xnat_sessions_are_cleared_after_the_last_poll(clock: FakeClock, monkeyp
     assert resolved == {"project": "xp1", "experiment": "XNAT_E1", "has_segmentation": ""}
     assert xnat.calls[-1] == ("DELETE", "http://xnat/xapi/users/active/admin")
     assert _container_polls(xnat) == 2
+
+
+SESSIONS = [{"ID": "XNAT_E1", "label": "TCGA-A8-A081"}, {"ID": "XNAT_E2", "label": "TCGA-A8-A06Y"}]
+
+
+def test_segment_3_opens_the_preferred_session(capsys) -> None:
+    chosen = demo_video._pick_experiment(FakeXnat([[]]), "http://xnat", list(SESSIONS), "TCGA-A8-A06Y")
+
+    assert chosen["ID"] == "XNAT_E2"
+    assert "opening preferred session TCGA-A8-A06Y" in capsys.readouterr().out
+
+
+def test_an_unknown_preferred_session_falls_back_to_the_first(capsys) -> None:
+    chosen = demo_video._pick_experiment(FakeXnat([[]]), "http://xnat", list(SESSIONS), "TCGA-NOPE")
+
+    assert chosen["ID"] == "XNAT_E1"
+    assert "session TCGA-NOPE not in this project" in capsys.readouterr().out
+
+
+def test_digipath_opens_a_session_showing_nuclei_unless_told_otherwise() -> None:
+    assert APPS["digipath"]["xnat_session_label"] == "TCGA-A8-A06Y"
+    assert demo_video.parse_args([]).xnat_session_label is None
+    assert demo_video.parse_args(["--xnat-session-label", "X"]).xnat_session_label == "X"
 
 
 def test_workspace_reset_spares_kept_projects(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -458,7 +458,7 @@ endef
 # redeploy the stack (Swarm rolls each service onto the new image; the bind-mounted
 # archive and xnat-db-data stay put; XNAT migrates its schema on boot), then re-run the
 # configure pass, which converges an already-initialised instance (receiver, DQR, PACS,
-# Container Service, dcm2niix). Everything up-xnat does EXCEPT xnat-reset — that rm -rf
+# Container Service, dcm2niix, data types). Everything up-xnat does EXCEPT xnat-reset — that rm -rf
 # is why up-xnat can never be the upgrade verb.
 #
 # The ownership check is what turns a pre-1.10 site's upgrade into a loud, one-line fix
@@ -670,9 +670,10 @@ xnat-configure:
 	CONTAINER=$$($(call xnat_web_container_ids,$(XNAT_PROJECT))); \
 	[ -n "$$CONTAINER" ] || { echo "❌ ERROR: $(XNAT_PROJECT)_xnat-web container not found at configure time"; exit 1; }; \
 	$(call require_one_xnat_web_container,$(XNAT_PROJECT)); \
-	rm -f "$(XNAT_CONFIGURE_LOG_DIR)/configure-xnat-$(XNAT_PROJECT).log" "$(XNAT_CONFIGURE_LOG_DIR)/configure-dcm2niix-$(XNAT_PROJECT).log"; \
+	rm -f "$(XNAT_CONFIGURE_LOG_DIR)/configure-xnat-$(XNAT_PROJECT).log" "$(XNAT_CONFIGURE_LOG_DIR)/configure-dcm2niix-$(XNAT_PROJECT).log" "$(XNAT_CONFIGURE_LOG_DIR)/setup-datatypes-$(XNAT_PROJECT).log"; \
 	bash -o pipefail -c "docker exec -e XNAT_PLUGIN_READINESS_ROSTER=1 $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-xnat.sh' 2>&1 | tee '$(XNAT_CONFIGURE_LOG_DIR)/configure-xnat-$(XNAT_PROJECT).log'" && \
-	bash -o pipefail -c "docker exec $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-dcm2niix.sh' 2>&1 | tee '$(XNAT_CONFIGURE_LOG_DIR)/configure-dcm2niix-$(XNAT_PROJECT).log'"
+	bash -o pipefail -c "docker exec $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-dcm2niix.sh' 2>&1 | tee '$(XNAT_CONFIGURE_LOG_DIR)/configure-dcm2niix-$(XNAT_PROJECT).log'" && \
+	bash -o pipefail -c "docker exec $$CONTAINER bash -c 'cd /data/xnat/config && bash setup-datatypes.sh' 2>&1 | tee '$(XNAT_CONFIGURE_LOG_DIR)/setup-datatypes-$(XNAT_PROJECT).log'"
 	$(MAKE) xnat-configure-export-mask XNAT_PROJECT=$(XNAT_PROJECT)
 
 # export_mask (DICOM-SEG -> NIfTI) is registered ONLY when this trust runs MONAI Label.

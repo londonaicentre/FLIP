@@ -238,12 +238,20 @@ class EvaluationModelLocator(ModelLocator):
             return
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.models = {}
+        models: dict[str, Any] = {}
+        missing: list[str] = []
         for name, model_info in config["models"].items():
             checkpoint_path = self._resolve_checkpoint_path(fl_ctx, app_dir, name, model_info["checkpoint"])
             if checkpoint_path is None:
+                missing.append(name)
                 continue
-            self.models[name] = torch.load(checkpoint_path, weights_only=True, map_location=device)
+            models[name] = torch.load(checkpoint_path, weights_only=True, map_location=device)
+
+        # Fail the run rather than evaluate fewer models than configured: a skipped model used to end
+        # as RESULTS_UPLOADED with nothing scored. Raised here, CrossSiteModelEval panics the run.
+        if missing:
+            raise RuntimeError(f"No checkpoint found for evaluation model(s) {missing}; see the errors above.")
+        self.models = models
 
     def get_model_names(self, fl_ctx: FLContext) -> list[str]:
         if self.models is None:
