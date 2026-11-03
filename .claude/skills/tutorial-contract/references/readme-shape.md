@@ -56,8 +56,8 @@ out. Concretely:
   the model sees (FLIP#821 — the figure stayed upright while the model trained on transposed
   images). The `fl-tutorials/tests/` transform suite is the evidence for that, not the figure.
 - A **flow diagram** of the federated loop is optional: only when the loop cannot be said in two
-  sentences (the Ark+ fine-tune's "full model at round 0, then only the head is averaged"; the
-  causal-discovery tutorial's two federation modes). Labels in plain words, never class names,
+  sentences (the Ark+ fine-tune's "full model at round 0, then only the head is averaged"). Labels in
+  plain words, never class names,
   which mean nothing to a researcher and go stale at the next rename. An evaluation-only job gets
   none — "the server sends the model, each trust scores it" is a sentence. A Mermaid block renders
   on GitHub without an asset; the generic job-type figure already lives in the docs

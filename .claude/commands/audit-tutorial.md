@@ -24,7 +24,7 @@ directory basename, the same on both backends) and optionally one backend; defau
    `bash scripts/check_tutorial_sync.sh`. For NVFLARE, `make export` in the tutorial dir builds the
    full job config without a GPU or data, but not always without a download: the evaluation and
    diffusion tutorials first stage their checkpoint or weights (`download-checkpoints`, `weights`),
-   and the three Ark+ tutorials need the access-gated raw checkpoint (`download-raw-checkpoint`,
+   and the three Ark+ tutorials need the raw Ark+ checkpoint (`download-raw-checkpoint`,
    then `prepare-checkpoint`) — without it their export is blocked, which is a finding, not a fix.
 2. **Registrations.** Read, do not assume: the Flower `sim-tutorial.sh` `case` entry (+ `RUN_CONFIG`
    for evaluation); `DICOM_APPS` for a 2-D DICOM app; `scripts/check_tutorial_sync.sh` for files

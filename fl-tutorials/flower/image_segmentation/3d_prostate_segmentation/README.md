@@ -13,8 +13,8 @@ limitations under the License.
 
 # Prostate MRI zonal segmentation
 
-This tutorial trains a 3D U-Net to outline the **prostate gland and its two zones** (peripheral
-zone, PZ, and transition zone, TZ) on T2-weighted MRI from the public
+This tutorial trains a 3D U-Net, planned with nnU-Net and built with MONAI, to outline the
+**prostate gland and its two zones** (peripheral zone, PZ, and transition zone, TZ) on T2-weighted MRI from the public
 [PI-CAI](https://pi-cai.grand-challenge.org/) dataset, across several FLIP trusts. It differs from
 the [spleen tutorial](../3d_spleen_segmentation/README.md) in two ways worth learning from:
 
