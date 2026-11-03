@@ -146,6 +146,11 @@ def percentile_filter(ff, encoded: dict[str, np.ndarray], weight: int) -> dict[s
     return out
 
 
+def matrix_of(ff, frame: pd.DataFrame, config: dict) -> np.ndarray:
+    """The analysis matrix ``prepare_cohort`` builds (the person ids and drop count are for the floor)."""
+    return ff.prepare_cohort(frame, config)[0]
+
+
 def stable_edges(ff, pags: np.ndarray) -> dict[tuple[str, str], str]:
     return {
         (r["source"], r["target"]): r["edge"] for r in ff.edge_frequencies(pags, VARIABLES) if r["probability"] >= 0.5
@@ -164,8 +169,8 @@ def assert_no_digits(message: str, *allowed: str) -> None:
 
 def test_pooled_statistics_equal_the_centralised_correlation(ff, config):
     frame = sample_scm(900, 11)
-    full = ff.prepare_matrix(frame, config)
-    parts = {f"site-{i + 1}": ff.prepare_matrix(frame[frame.person_id % 3 == i], config) for i in range(3)}
+    full = matrix_of(ff, frame, config)
+    parts = {f"site-{i + 1}": matrix_of(ff, frame[frame.person_id % 3 == i], config) for i in range(3)}
     weighted = [(len(m), *ff.site_statistics(m)) for m in parts.values()]
     total = sum(n for n, _, _ in weighted)
     mean = sum(n * mu for n, mu, _ in weighted) / total
@@ -176,7 +181,7 @@ def test_pooled_statistics_equal_the_centralised_correlation(ff, config):
 
 def test_bootstrap_correlations_are_shared_centred_and_standardised(ff, config):
     """The parametric bootstrap: same stream at every site, spread around the pooled correlation."""
-    full = ff.prepare_matrix(sample_scm(600, 13), config)
+    full = matrix_of(ff, sample_scm(600, 13), config)
     mean, moment = ff.site_statistics(full)
     boot = {**config, "N_BOOTSTRAPS": 400}
     draws = ff.bootstrap_correlations(mean, moment, len(full), boot)
@@ -193,7 +198,7 @@ def test_bootstrap_correlations_are_shared_centred_and_standardised(ff, config):
 
 
 def test_a_site_below_the_row_floor_refuses_without_saying_how_many(ff, config):
-    small = ff.prepare_matrix(sample_scm(40, 2), config)
+    small = matrix_of(ff, sample_scm(40, 2), config)
     state = ff.empty_state(config)
     with pytest.raises(ValueError, match="too few complete rows") as refused:
         ff.client_round(state, 0, 2, small, "site-1", {**config, "MIN_SITE_ROWS": 50})
@@ -211,7 +216,7 @@ def test_the_row_floor_is_the_hard_floor_raised_by_config(ff, config, monkeypatc
 
 
 def test_a_small_cell_in_a_discrete_column_blocks_the_release(ff, config):
-    matrix = ff.prepare_matrix(sample_scm(200, 3), config)
+    matrix = matrix_of(ff, sample_scm(200, 3), config)
     b = VARIABLES.index("b_root")
     assert ff.small_cells(matrix, config) == []
     matrix[:, b] = 0.0
@@ -230,8 +235,6 @@ def test_a_small_cell_in_a_discrete_column_blocks_the_release(ff, config):
 def test_layer_voting_runs_on_the_simulator_only(ff, config, two_sites):
     voting = {**config, "FEDERATION": "layer_voting"}
     matrix = next(iter(two_sites.values()))
-    assert ff.layer_voting_allowed(True)
-    assert not ff.layer_voting_allowed(False)
     with pytest.raises(ValueError, match="experimental"):
         ff.client_round(ff.empty_state(voting), 0, 6, matrix, "site-1", voting, local_dev=False)
     with pytest.raises(ValueError, match="experimental"):
@@ -267,18 +270,18 @@ def test_filter_bounds_are_the_stricter_of_the_site_policy_and_the_stock_filter(
 def test_correlation_fisherz_matches_causallearn_on_the_same_rows(ff, config):
     from causallearn.utils.cit import CIT
 
-    full = ff.prepare_matrix(sample_scm(500, 5), config)
+    full = matrix_of(ff, sample_scm(500, 5), config)
     reference = CIT(full, "fisherz")
-    mine = ff.CorrelationFisherZ(np.corrcoef(full.T), len(full))
+    mine = CIT(np.zeros_like(full), "correlation_fisherz", correlation=np.corrcoef(full.T))  # registered by name
     for x, y, s in ((0, 1, []), (2, 3, [0]), (4, 5, [1, 2, 3]), (0, 6, [2, 5])):
         assert mine(x, y, s) == pytest.approx(reference(x, y, s), abs=1e-12)
 
 
 def test_never_condition_drops_the_sink_from_conditioning_sets(ff, config):
-    full = ff.prepare_matrix(sample_scm(400, 8), config)
+    full = matrix_of(ff, sample_scm(400, 8), config)
     corr = np.corrcoef(full.T)
-    plain = ff.CorrelationFisherZ(corr, len(full))
-    restricted = ff.CorrelationFisherZ(corr, len(full), never_condition={6})
+    plain = ff.CorrelationFisherZ(np.zeros_like(full), correlation=corr)
+    restricted = ff.CorrelationFisherZ(np.zeros_like(full), correlation=corr, never_condition={6})
     assert restricted(2, 4, [6, 1]) == pytest.approx(plain(2, 4, [1]))
 
 
@@ -323,9 +326,15 @@ def test_state_shapes_follow_the_config(ff, config):
     p = len(VARIABLES)
     assert shapes["stats_mean"] == (p,)  # one statistic per site, whatever the bootstrap count
     assert shapes["stats_moment"] == (p, p)
-    assert shapes["sepsets"] == (7, p, p, p)
+    assert shapes["pag"] == (7, p, p)
+    assert shapes["skeleton"] == (1, p, p)  # pooled mode never fills the vote arrays
+    assert shapes["sepsets"] == (1, p, p, p)
     assert shapes["site_counts"] == (ff.MAX_SITES,)
-    assert shapes["padding"][0] >= ff.PADDING_FRACTION * (p + p * p + 7 * (2 * p * p + p**3) + ff.MAX_SITES)
+    assert shapes["padding"][0] >= ff.PADDING_FRACTION * (p + p * p + 7 * p * p + p * p + p**3 + ff.MAX_SITES)
+    voting = ff.state_shapes({**config, "N_BOOTSTRAPS": 7, "FEDERATION": "layer_voting"})
+    assert voting["skeleton"] == (7, p, p)
+    assert voting["sepsets"] == (7, p, p, p)
+    assert set(voting) == set(shapes) == set(ff.STATE_KEYS)
     assert ff.state_shapes(config)["pag"] == (1, p, p)  # N_BOOTSTRAPS 0 -> one unresampled slab
 
 
@@ -340,7 +349,7 @@ def test_encode_decode_round_trip_keeps_seven_digits(ff, config):
 
 
 def test_percentile_privacy_filter_is_a_no_op_on_a_round_one_payload(ff, config):
-    matrix = ff.prepare_matrix(sample_scm(300, 2), config)
+    matrix = matrix_of(ff, sample_scm(300, 2), config)
     target, weight, _ = ff.client_round(ff.decode(ff.encode(ff.empty_state(config))), 0, 2, matrix, "site-1", config)
     encoded = ff.encode(target)
     filtered = percentile_filter(ff, encoded, weight)
@@ -350,7 +359,7 @@ def test_percentile_privacy_filter_is_a_no_op_on_a_round_one_payload(ff, config)
 
 def test_unscaled_large_units_are_refused_rather_than_clipped(ff, config):
     unscaled = {**config, "SCALE": {}}  # u_mri in its raw thousands
-    matrix = ff.prepare_matrix(sample_scm(300, 2), unscaled)
+    matrix = matrix_of(ff, sample_scm(300, 2), unscaled)
     with pytest.raises(ValueError, match="u_mri|stats_moment.*SCALE"):
         ff.client_round(ff.decode(ff.encode(ff.empty_state(unscaled))), 0, 2, matrix, "site-1", unscaled)
 
@@ -362,7 +371,7 @@ def test_unscaled_large_units_are_refused_rather_than_clipped(ff, config):
 def two_sites(ff, config) -> dict[str, np.ndarray]:
     frame = pd.concat([sample_scm(700, 21, age_shift=0.4), sample_scm(500, 22, age_shift=-0.4)], ignore_index=True)
     frame["person_id"] = np.arange(1, len(frame) + 1)
-    return {f"site-{i + 1}": ff.prepare_matrix(frame[frame.person_id % 2 == i], config) for i in range(2)}
+    return {f"site-{i + 1}": matrix_of(ff, frame[frame.person_id % 2 == i], config) for i in range(2)}
 
 
 def test_pooled_mode_recovers_the_generating_graph(ff, config, two_sites):
@@ -593,7 +602,7 @@ def test_release_checks_run_every_round(ff, config, two_sites):
 def test_filter_refusals_carry_no_numbers(ff, config):
     """The largest second moment and the limit (the row count in disguise) stay in the site log."""
     unscaled = {**config, "SCALE": {}}
-    matrix = ff.prepare_matrix(sample_scm(300, 2), unscaled)
+    matrix = matrix_of(ff, sample_scm(300, 2), unscaled)
     with pytest.raises(ValueError, match="privacy filter") as err:
         ff.client_round(ff.decode(ff.encode(ff.empty_state(unscaled))), 0, 2, matrix, "site-1", unscaled)
     assert not re.search(r"\d", str(err.value).replace("site-1", "")), str(err.value)
@@ -628,7 +637,7 @@ def test_edge_frequencies_mirror_and_count(ff):
 
 
 def test_layer_step_removes_marginally_independent_pairs_and_records_the_set(ff, config):
-    matrix = ff.prepare_matrix(sample_scm(800, 4), config)
+    matrix = matrix_of(ff, sample_scm(800, 4), config)
     p = len(VARIABLES)
     skeleton = ff.complete_skeleton(VARIABLES, config)
     assert skeleton[0, 1] == 0  # two roots: forbidden both ways, never adjacent

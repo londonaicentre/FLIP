@@ -52,6 +52,7 @@ import pandas as pd
 from sqlalchemy import Connection, Engine, create_engine, text
 
 from omop_db_tools.config import get_settings
+from omop_db_tools.dataset import split_for_trust
 
 #: The converter's column contract (datasets/ad_biomarkers/make_adni_cohort.py; query.sql returns the same).
 COHORT_COLUMNS = [
@@ -98,11 +99,6 @@ def read_cohort(path: Path) -> pd.DataFrame:
     if missing:
         raise SystemExit(f"❌ {path} lacks the cohort columns {missing}; build it with convert-adni-cohort")
     return frame[COHORT_COLUMNS]
-
-
-def _trust_slice(frame: pd.DataFrame, num_trusts: int, trust_index: int) -> pd.DataFrame:
-    """This trust's ``person_id % num_trusts`` slice — the converter's ``site<trust_index>/`` rows."""
-    return frame[frame["person_id"] % num_trusts == (trust_index - 1)].reset_index(drop=True)
 
 
 def build_person_rows(cohort: pd.DataFrame) -> pd.DataFrame:
@@ -174,7 +170,8 @@ def clean_by_provenance(conn: Connection) -> None:
 
 def load_adni_cohort(engine: Engine, frame: pd.DataFrame, num_trusts: int, trust_index: int) -> int:
     """Load this trust's slice of the cohort in one transaction. Returns the person count loaded."""
-    cohort = _trust_slice(frame, num_trusts, trust_index)
+    # The person_id % num_trusts slice: the converter's site<trust_index>/ rows.
+    cohort = split_for_trust(frame, num_trusts, trust_index, mode="modulo")
     person_rows = build_person_rows(cohort)
     measurement_rows = build_measurement_rows(cohort)
     observation_rows = build_observation_rows(cohort)
@@ -198,7 +195,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--allow-remote",
         action="store_true",
-        help="Load into a database that is not on this host, or under HUB (or the retired PROD). Off by default: "
+        help="Load into a database that is not on this host, or with HUB set (a deployed hub). Off by default: "
         "the cohort is licence-restricted and belongs on the licence holder's own machines only.",
     )
     return parser.parse_args(argv)
@@ -210,18 +207,17 @@ LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 def refuse_unless_local(host: str, env: dict, allow_remote: bool) -> None:
     """The documentation's 'never a shared or published trust' rule, enforced.
 
-    A remote ``OMOP_DB_HOST``, or a ``HUB`` (``prod``/``stag``, FLIP#1479) or the retired ``PROD`` in the
-    environment, means a trust other people's projects read;
-    ADNI rows there would breach the Data Use Agreement. ``--allow-remote`` is the explicit override.
+    A remote ``OMOP_DB_HOST``, or a ``HUB`` (``prod``/``stag``, FLIP#1479) in the environment, means a trust
+    other people's projects read; ADNI rows there would breach the Data Use Agreement. ``--allow-remote``
+    is the explicit override.
     """
     if allow_remote:
         return
     problems = []
     if host not in LOCAL_HOSTS:
         problems.append(f"OMOP_DB_HOST={host!r} is not this host")
-    for selector in ("HUB", "PROD"):
-        if env.get(selector):
-            problems.append(f"{selector}={env[selector]!r} selects a deployed environment")
+    if env.get("HUB"):
+        problems.append(f"HUB={env['HUB']!r} selects a deployed environment")
     if problems:
         raise SystemExit(
             "❌ Refusing to load the ADNI cohort: " + "; ".join(problems) + ". This loader is for a LOCAL dev "

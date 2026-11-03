@@ -13,7 +13,7 @@
 .PHONY: build up down prepare-artifacts up-trust down-trust create-trust-network selftest-node restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit onboard-onprem-trust \
 	create-networks remove-networks recreate-networks tests \
-	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
+	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr load-adni-cohort \
 	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance \
 	reconvert-nifti
 # HUB selects the compose-file suffix (__DCKR_SUFFIX: every deployed environment
@@ -926,10 +926,9 @@ load-synthea-ehr:
 # `make -C fl-tutorials convert-adni-cohort` writes. Run once per trust:
 #   make -C trust load-adni-cohort TRUST_INDEX=1 OMOP_DB_PORT=5434   # GSTT
 #   make -C trust load-adni-cohort TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH
-# A relative ADNI_COHORT is read from trust/ (make -C changes directory first), so from anywhere
-# else pass an absolute path; a path that does not exist fails here, naming where it looked.
+# A relative ADNI_COHORT is read from trust/ (make -C changes directory first); the loader names
+# the absolute path when it is missing.
 load-adni-cohort:
-	$(if $(ADNI_COHORT),@test -f "$(abspath $(ADNI_COHORT))" || { echo "❌ ADNI_COHORT=$(ADNI_COHORT) resolves to $(abspath $(ADNI_COHORT)) which does not exist. A relative path is taken from trust/ (make -C); pass an absolute one" >&2; exit 1; })
 	$(OMOP_DB_CMD) load-adni-cohort TRUST_INDEX=$(TRUST_INDEX) OMOP_DB_PORT=$(OMOP_DB_PORT) \
 		$(if $(ADNI_COHORT),ADNI_COHORT="$(abspath $(ADNI_COHORT))")
 

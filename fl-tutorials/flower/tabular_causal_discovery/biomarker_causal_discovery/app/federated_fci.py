@@ -114,8 +114,8 @@ from causallearn.graph.Endpoint import Endpoint
 from causallearn.graph.GeneralGraph import GeneralGraph
 from causallearn.graph.GraphNode import GraphNode
 from causallearn.search.ConstraintBased import FCI as fci_rules
-from causallearn.utils.cit import CIT, CIT_Base
-from causallearn.utils.FAS import fas
+from causallearn.search.ConstraintBased.FCI import fci
+from causallearn.utils.cit import CIT, NO_SPECIFIED_PARAMETERS_MSG, CIT_Base, FisherZ, register_ci_test
 from causallearn.utils.PCUtils.BackgroundKnowledge import BackgroundKnowledge
 
 try:  # the trust's NVFLARE site policy (percentile / gamma); stdlib-only module, absent on a bare Flower image
@@ -266,16 +266,19 @@ def state_shapes(config: dict) -> dict[str, tuple[int, ...]]:
     """Shape of every array in the wire format, from the variable count and bootstrap count.
 
     The statistics carry no bootstrap axis on purpose (see the module docstring): one mean
-    vector and one second-moment matrix per site, whatever ``N_BOOTSTRAPS`` says.
+    vector and one second-moment matrix per site, whatever ``N_BOOTSTRAPS`` says. The vote arrays
+    (``skeleton``, ``sepsets``) carry one per bootstrap only in ``layer_voting``; pooled mode never
+    fills them, so there they keep a single slab and the keys stay the same in both modes.
     """
     p = len(config["VARIABLES"])
     b = n_bootstrap_slabs(config)
+    votes = b if federation_mode(config) == "layer_voting" else 1
     core = {
         "site_counts": (MAX_SITES,),
         "stats_mean": (p,),
         "stats_moment": (p, p),
-        "skeleton": (b, p, p),
-        "sepsets": (b, p, p, p),
+        "skeleton": (votes, p, p),
+        "sepsets": (votes, p, p, p),
         "pag": (b, p, p),
     }
     n_core = sum(math.prod(shape) for shape in core.values())
@@ -336,7 +339,7 @@ def integral_pags(pag_array: np.ndarray) -> np.ndarray:
     return as_pags(pags)
 
 
-def effective_percentile_policy(env: dict | None = None) -> tuple[float, float]:
+def effective_percentile_policy() -> tuple[float, float]:
     """The (clip, percentile) the trust's NVFLARE site policy actually applies.
 
     A trust may lower ``gamma`` or raise ``percentile`` through ``FL_SITE_PRIVACY_*`` or its
@@ -348,18 +351,13 @@ def effective_percentile_policy(env: dict | None = None) -> tuple[float, float]:
     if resolve_policy is None:
         return PERCENTILE_CLIP, PERCENTILE_STOCK
     try:
-        policy, _ = resolve_policy(os.environ if env is None else env)
+        policy, _ = resolve_policy(os.environ)
     except Exception as error:  # a malformed policy stops the container elsewhere; here, stay strict
         logger.warning("could not resolve the site privacy policy (%s); assuming the stock filter", error)
         return PERCENTILE_CLIP, PERCENTILE_STOCK
     if policy is None:
         return PERCENTILE_CLIP, PERCENTILE_STOCK
     return min(PERCENTILE_CLIP, float(policy.gamma)), max(PERCENTILE_STOCK, float(policy.percentile))
-
-
-def effective_percentile_clip(env: dict | None = None) -> float:
-    """The clip the trust's NVFLARE site policy actually applies: the stock gamma, or a stricter one."""
-    return effective_percentile_policy(env)[0]
 
 
 def assert_within_filter_bounds(
@@ -420,16 +418,6 @@ def small_cells(matrix: np.ndarray, config: dict) -> list[int]:
         if len(values) <= 3 and np.any(counts < minimum):
             offenders.append(j)
     return offenders
-
-
-def layer_voting_allowed(local_dev: bool) -> bool:
-    """Voting mode runs on the simulator only, until its leakage has been analysed.
-
-    ``layer_voting`` releases per-bootstrap 0/1 test outcomes on resamples whose indices are public.
-    There is no opt-in: a deployed trust's FL client has no switch for it, and a researcher's
-    config.json cannot turn it on.
-    """
-    return bool(local_dev)
 
 
 def assert_site_may_release(
@@ -493,8 +481,9 @@ def assert_site_may_release(
 # --- data ---------------------------------------------------------------------------------
 
 
-def prepare_matrix(dataframe, config: dict) -> np.ndarray:
-    """The analysis matrix: ``VARIABLES`` columns, logged or divided by a constant as configured.
+def prepare_cohort(dataframe, config: dict) -> tuple[np.ndarray, np.ndarray | None, int]:
+    """The analysis matrix (``VARIABLES`` columns, logged or divided by a constant as configured) and
+    what the release floor needs: the kept rows' ``person_id`` and the drop count.
 
     Log-transforming the right-skewed markers is a fixed, site-independent choice (the
     centralised analysis used a data-fitted Yeo-Johnson transform, which cannot be shared
@@ -503,12 +492,6 @@ def prepare_matrix(dataframe, config: dict) -> np.ndarray:
     the platform's privacy filter clips large values (see :func:`assert_within_filter_bounds`).
     Nothing is standardised per site: pooling second moments that each site had standardised
     separately would not give the pooled cohort's correlation.
-    """
-    return prepare_cohort(dataframe, config)[0]
-
-
-def prepare_cohort(dataframe, config: dict) -> tuple[np.ndarray, np.ndarray | None, int]:
-    """:func:`prepare_matrix` plus what the release floor needs: the kept rows' ``person_id`` and the drop count.
 
     Returns ``(matrix, person_ids, dropped_rows)``. ``person_ids`` is ``None`` when the cohort has
     no such column. Rows incomplete for ``VARIABLES`` are dropped and counted: in pooled mode a
@@ -657,65 +640,43 @@ def recover_site_counts(site_counts: np.ndarray, weighted_by_size: bool) -> tupl
     return int(round(total)), sizes
 
 
-class CorrelationFisherZ(CIT_Base):
-    """Fisher's z test from a correlation matrix and a sample size, no data needed.
+class CorrelationFisherZ(FisherZ):
+    """causal-learn's Fisher's z test on a given correlation matrix instead of one computed from rows.
 
-    The partial correlation comes from the inverse of the sub-correlation matrix and the
-    statistic is ``√(n − |S| − 3) · atanh(r)``, as in Kalisch & Bühlmann (JMLR 2007) — the same
-    test causal-learn's ``fisherz`` computes from rows (pinned by the tests).
-
-    causal-learn's ``FisherZ`` computes the correlation matrix from rows; this one takes the
-    matrix directly (the pooled one), so the full FCI machinery — including the possible-D-sep
-    stage and rule R4, which issue further tests — runs unchanged. Indices in
-    ``never_condition`` are dropped from every conditioning set (the centralised analysis
-    never conditioned on the cognitive score, a downstream collider).
+    ``fisherz`` correlates its data; this one is handed the matrix (the pooled one) and a data array
+    of zeros whose row count is the sample size, which is all FAS and the FCI rules read from it.
+    Registered as ``correlation_fisherz``, so causal-learn's own :func:`fci` runs the complete
+    algorithm on it, possible-D-sep stage and rule R4 included. Indices in ``never_condition`` are
+    dropped from every conditioning set (the centralised analysis never conditioned on the cognitive
+    score, a downstream collider). A singular sub-matrix or an undefined partial correlation is no
+    evidence of dependence (p = 1).
     """
 
-    def __init__(self, correlation: np.ndarray, sample_size: int, never_condition: Iterable[int] = ()):
-        p = correlation.shape[0]
-        # CIT_Base wants a data array; FAS and the rules only ever read its shape.
-        super().__init__(np.zeros((max(int(sample_size), 2), p)))
-        self.method = "fisherz"
+    def __init__(self, data, correlation, never_condition=(), **kwargs):
+        CIT_Base.__init__(self, data, **kwargs)  # no rows to correlate
+        self.check_cache_method_consistent("fisherz", NO_SPECIFIED_PARAMETERS_MSG)
         self.correlation_matrix = np.asarray(correlation, dtype=np.float64)
-        self.sample_size = int(sample_size)
         self.never_condition = frozenset(int(i) for i in never_condition)
 
     def __call__(self, X, Y, condition_set=None):
-        if condition_set is not None:
-            condition_set = [int(c) for c in condition_set if int(c) not in self.never_condition]
-        Xs, Ys, condition_set, cache_key = self.get_formatted_XYZ_and_cachekey(X, Y, condition_set)
-        if cache_key in self.pvalue_cache:
-            return self.pvalue_cache[cache_key]
-        var = Xs + Ys + condition_set
-        sub = self.correlation_matrix[np.ix_(var, var)]
+        kept = [c for c in condition_set or () if int(c) not in self.never_condition]
         try:
-            inv = np.linalg.inv(sub)
-            r = -inv[0, 1] / math.sqrt(abs(inv[0, 0] * inv[1, 1]))
-        except (np.linalg.LinAlgError, ZeroDivisionError, ValueError):
-            r = float("nan")
-        if not np.isfinite(r):
-            p_value = 1.0  # an undefined partial correlation is treated as "no evidence of dependence"
-        else:
-            if abs(r) >= 1:
-                r = (1.0 - np.finfo(float).eps) * np.sign(r)
-            z = 0.5 * math.log((1 + r) / (1 - r))
-            statistic = math.sqrt(max(self.sample_size - len(condition_set) - 3, 1)) * abs(z)
-            p_value = float(math.erfc(statistic / math.sqrt(2.0)))  # 2 * (1 - Phi(|statistic|))
-        self.pvalue_cache[cache_key] = p_value
-        return p_value
+            p_value = super().__call__(X, Y, kept)
+        except ValueError:  # a singular sub-matrix
+            return 1.0
+        return p_value if np.isfinite(p_value) else 1.0
+
+
+register_ci_test("correlation_fisherz", CorrelationFisherZ)
 
 
 # --- background knowledge and orientation -------------------------------------------------
 
 
-def knowledge_block(config: dict) -> dict:
-    return dict(config.get("KNOWLEDGE", {}))
-
-
 def forbidden_pairs(variables: Sequence[str], config: dict) -> set[tuple[int, int]]:
     """Every (cause, effect) index pair the background knowledge rules out."""
     index = {name: i for i, name in enumerate(variables)}
-    block = knowledge_block(config)
+    block = config.get("KNOWLEDGE", {})
     forbidden: set[tuple[int, int]] = set()
     present = set(variables)
     for root in block.get("EXOGENOUS", []):  # nothing causes a root
@@ -731,7 +692,7 @@ def forbidden_pairs(variables: Sequence[str], config: dict) -> set[tuple[int, in
 
 
 def never_condition_indices(variables: Sequence[str], config: dict) -> frozenset[int]:
-    names = set(knowledge_block(config).get("NEVER_CONDITION_ON", []))
+    names = set(config.get("KNOWLEDGE", {}).get("NEVER_CONDITION_ON", []))
     return frozenset(i for i, v in enumerate(variables) if v in names)
 
 
@@ -751,60 +712,29 @@ def background_knowledge(nodes: Sequence[GraphNode], forbidden: Iterable[tuple[i
     return bk
 
 
-def orient_pag(
-    graph: GeneralGraph,
-    nodes: Sequence[GraphNode],
-    sep_sets: dict,
-    bk: BackgroundKnowledge | None,
-    *,
-    ci_test: CIT_Base | None = None,
-    data: np.ndarray | None = None,
-    alpha: float = 0.05,
-    max_path_length: int = -1,
-) -> None:
-    """FCI's orientation phase on a skeleton, in place — causal-learn's ``fci()`` after FAS.
+def orient_pag(graph: GeneralGraph, nodes: Sequence[GraphNode], sep_sets: dict, bk: BackgroundKnowledge | None) -> None:
+    """FCI's test-free orientation phase on a skeleton, in place: what ``layer_voting``'s voted skeleton supports.
 
-    With a ``ci_test`` this is the complete algorithm (the possible-D-sep removal and rule R4
-    issue further tests); without one it is the test-free subset, which is what the voted
-    skeleton of ``layer_voting`` mode can support.
+    This is causal-learn's :func:`fci` after FAS without the two steps that issue further tests (the
+    possible-D-sep removal and rule R4), which need data the voted skeleton does not have. Pooled mode
+    runs :func:`fci` itself (:func:`fci_from_correlation`).
     """
     rules = fci_rules
     with contextlib.redirect_stdout(io.StringIO()):  # causal-learn prints every knowledge orientation
-        _orient_pag(graph, nodes, sep_sets, bk, rules, ci_test, data, alpha, max_path_length)
-
-
-def _orient_pag(graph, nodes, sep_sets, bk, rules, ci_test, data, alpha, max_path_length) -> None:
-    rules.reorientAllWith(graph, Endpoint.CIRCLE)
-    rules.rule0(graph, list(nodes), sep_sets, bk, False)
-    if ci_test is not None:
-        rules.removeByPossibleDsep(graph, ci_test, alpha, sep_sets)
         rules.reorientAllWith(graph, Endpoint.CIRCLE)
         rules.rule0(graph, list(nodes), sep_sets, bk, False)
-
-    change, first_time = True, True
-    while change:
-        change = False
-        change = rules.rulesR1R2cycle(graph, bk, change, False)
-        change = rules.ruleR3(graph, sep_sets, bk, change, False)
-        if ci_test is not None and (
-            change
-            or (
-                first_time
-                and bk is not None
-                and len(bk.forbidden_rules_specs) > 0
-                and len(bk.required_rules_specs) > 0
-                and len(bk.tier_map.keys()) > 0
-            )
-        ):
-            change = rules.ruleR4B(graph, max_path_length, data, ci_test, alpha, sep_sets, change, bk, False)
-            first_time = False
-        change = rules.ruleR5(graph, change, False)
-        change = rules.ruleR6(graph, change, False)
-        change = rules.ruleR7(graph, change, False)
-        change = rules.rule8(graph, list(nodes), change)
-        change = rules.rule9(graph, list(nodes), change)
-        change = rules.rule10(graph, change)
-    graph.set_pag(True)
+        change = True
+        while change:
+            change = False
+            change = rules.rulesR1R2cycle(graph, bk, change, False)
+            change = rules.ruleR3(graph, sep_sets, bk, change, False)
+            change = rules.ruleR5(graph, change, False)
+            change = rules.ruleR6(graph, change, False)
+            change = rules.ruleR7(graph, change, False)
+            change = rules.rule8(graph, list(nodes), change)
+            change = rules.rule9(graph, list(nodes), change)
+            change = rules.rule10(graph, change)
+        graph.set_pag(True)
 
 
 def _unpermute(pag: np.ndarray, order: np.ndarray) -> np.ndarray:
@@ -816,24 +746,25 @@ def _unpermute(pag: np.ndarray, order: np.ndarray) -> np.ndarray:
 def fci_from_correlation(
     correlation: np.ndarray, sample_size: int, variables: Sequence[str], config: dict, b: int
 ) -> np.ndarray:
-    """Complete FCI (Fisher-z) on one correlation matrix; the PAG in canonical variable order."""
-    p = len(variables)
-    order = column_order(b, int(config.get("SEED", 0)), p)
+    """Complete FCI (Fisher-z) on one correlation matrix — causal-learn's own :func:`fci` — in canonical order.
+
+    The columns are permuted per bootstrap (:func:`column_order`), and the knowledge and the
+    never-condition set are read off the permuted names, so they arrive in permuted indices.
+    """
+    order = column_order(b, int(config.get("SEED", 0)), len(variables))
     names = [variables[k] for k in order]
-    forbidden = {
-        (int(np.where(order == c)[0][0]), int(np.where(order == e)[0][0]))
-        for c, e in forbidden_pairs(variables, config)
-    }
-    never = {int(np.where(order == i)[0][0]) for i in never_condition_indices(variables, config)}
-    nodes = make_nodes(names)
-    bk = background_knowledge(nodes, forbidden)
-    ci_test = CorrelationFisherZ(correlation[np.ix_(order, order)], sample_size, never)
-    alpha = float(config.get("ALPHA", 0.05))
-    data = np.zeros((max(int(sample_size), 2), p))
-    graph, sep_sets, _ = fas(
-        data, nodes, ci_test, alpha=alpha, knowledge=bk, depth=int(config.get("MAX_DEPTH", -1)), show_progress=False
-    )
-    orient_pag(graph, nodes, sep_sets, bk, ci_test=ci_test, data=data, alpha=alpha)
+    with contextlib.redirect_stdout(io.StringIO()):  # causal-learn prints every knowledge orientation
+        graph, _ = fci(
+            np.zeros((max(int(sample_size), 2), len(names))),  # the sample size; no rows are read
+            "correlation_fisherz",
+            alpha=float(config.get("ALPHA", 0.05)),
+            depth=int(config.get("MAX_DEPTH", -1)),
+            background_knowledge=background_knowledge(make_nodes(names), forbidden_pairs(names, config)),
+            node_names=names,
+            show_progress=False,
+            correlation=correlation[np.ix_(order, order)],
+            never_condition=never_condition_indices(names, config),
+        )
     return _unpermute(graph.graph.astype(np.int8), order)
 
 
@@ -1018,7 +949,10 @@ def client_round(
     variables = list(config["VARIABLES"])
     mode = federation_mode(config)
     n = int(matrix.shape[0])
-    if mode == "layer_voting" and not layer_voting_allowed(local_dev):
+    # Voting mode runs on the simulator only, until its leakage has been analysed: it releases per-bootstrap
+    # 0/1 test outcomes on resamples whose indices are public. There is no opt-in: a deployed trust's FL
+    # client has no switch for it, and a researcher's config.json cannot turn it on.
+    if mode == "layer_voting" and not local_dev:
         raise ValueError(
             "layer_voting is experimental (its leakage is unanalysed) and runs only on the simulator; "
             "use pooled_statistics"

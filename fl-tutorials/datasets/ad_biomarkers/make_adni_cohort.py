@@ -65,15 +65,16 @@ or directly:
 
 Nothing here contacts the network, and the script prints counts only — never a row.
 
-``to_omop_tables`` writes a cohort frame as the three OMOP tables ``query.sql`` reads (person,
-measurement, observation): the tests run the actual query over them on SQLite and diff the result
-against the frame, and a trust seeding this cohort would load the same tables.
+The cohort reaches OMOP through the trust loader (``trust/omop-db``'s ``omop_db_tools.adni_cohort``,
+``make -C trust load-adni-cohort``), whose tests run the tutorial's actual ``query.sql`` over the rows
+it writes.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -263,62 +264,6 @@ def build_cohort(
     return cohort[COLUMNS]
 
 
-#: ``measurement_source_value`` / ``observation_source_value`` codes query.sql matches on.
-MEASUREMENT_CODES = {
-    "apoe4_copies": "APOE4_COPIES",
-    "plasma_ab42_ab40_ratio": "PLASMA_AB42_AB40_RATIO",
-    "plasma_ptau217": "PLASMA_PTAU217",
-    "plasma_nfl": "PLASMA_NFL",
-    "plasma_gfap": "PLASMA_GFAP",
-    "icv_mm3": "ICV_MM3",
-    "hippocampus_mm3": "HIPPOCAMPUS_MM3",
-    "adas_cog13": "ADAS_COG13",
-}
-OBSERVATION_CODES = {"education_years": "EDUCATION_YEARS"}
-BASELINE_YEAR = 2024  # the nominal "MRI date" every baseline measurement carries in the OMOP form
-
-
-def to_omop_tables(frame: pd.DataFrame) -> dict[str, pd.DataFrame]:
-    """The cohort as the three OMOP tables query.sql reads: person, measurement, observation.
-
-    One baseline measurement per person and code, dated ``BASELINE_YEAR``-01-15, with
-    ``year_of_birth`` set so that query.sql's age arithmetic returns the frame's ``age``. The real
-    scan dates are not carried (the cohort CSV has none); for a trust seed that is a nominal date,
-    as it is for the other mock cohorts.
-    """
-    person = pd.DataFrame(
-        {
-            "person_id": frame["person_id"],
-            "gender_concept_id": np.where(frame["is_female"] == 1, 8532, 8507),
-            "year_of_birth": BASELINE_YEAR - frame["age"],
-        }
-    )
-    date = f"{BASELINE_YEAR}-01-15"
-    measurement_rows = [
-        pd.DataFrame(
-            {
-                "person_id": frame["person_id"],
-                "measurement_source_value": code,
-                "measurement_date": date,
-                "value_as_number": frame[column].astype(float),
-            }
-        )
-        for column, code in MEASUREMENT_CODES.items()
-    ]
-    measurement = pd.concat(measurement_rows, ignore_index=True)
-    measurement.insert(0, "measurement_id", np.arange(1, len(measurement) + 1))
-    observation = pd.DataFrame(
-        {
-            "observation_id": np.arange(1, len(frame) + 1),
-            "person_id": frame["person_id"],
-            "observation_source_value": OBSERVATION_CODES["education_years"],
-            "observation_date": date,
-            "value_as_number": frame["education_years"].astype(float),
-        }
-    )
-    return {"person": person, "measurement": measurement, "observation": observation}
-
-
 def write_outputs(frame: pd.DataFrame, output_dir: Path, num_sites: int) -> dict[str, int]:
     """Write dataframe.csv, the per-site splits and a counts-only summary; return the counts."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -335,6 +280,34 @@ def write_outputs(frame: pd.DataFrame, output_dir: Path, num_sites: int) -> dict
     return summary
 
 
+def refuse_unignored_output(output_dir: Path) -> None:
+    """Refuse an output directory inside a git checkout unless git ignores it: ADNI rows are never committed.
+
+    The path is resolved first, so a symlink into a checkout is judged by where it lands. The
+    checkout is the one holding the nearest existing ancestor, so a sibling directory whose name
+    merely starts with the checkout's is not mistaken for part of it.
+    """
+    target = output_dir.expanduser().resolve()
+    probe = target
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    try:
+        top = subprocess.run(
+            ["git", "-C", str(probe), "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False
+        )
+    except FileNotFoundError:  # no git on this host: nothing here can be committed from it
+        return
+    if top.returncode != 0:  # not inside a git checkout
+        return
+    root = Path(top.stdout.strip()).resolve()
+    ignored = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "--", str(target)], check=False)
+    if ignored.returncode != 0:
+        raise SystemExit(
+            f"❌ --output-dir {target} is inside the git checkout {root} and not gitignored: ADNI data must never be "
+            "committed. Write it under fl-tutorials/data/ (gitignored) or outside the checkout."
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--adni-dir", type=Path, help="directory of IDA downloads, tables found by prefix")
@@ -346,6 +319,7 @@ def main(argv: list[str] | None = None) -> int:
         "--match-window-months", type=int, default=3, help="plasma draw must lie within ± this of the scan (default 3)"
     )
     args = parser.parse_args(argv)
+    refuse_unignored_output(args.output_dir)
 
     paths: dict[str, Path] = {}
     for name in TABLE_PREFIXES:

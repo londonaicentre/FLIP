@@ -14,16 +14,15 @@
 Every fixture here is invented in-process: the point is to pin the cohort rules (baseline visit,
 ±3-month scan matching, the earliest eligible scan, ADNI's missing-value codes, the FreeSurfer QC
 count, left + right hippocampus) and the column contract shared with the tutorial's ``query.sql``,
-so a licence holder's run produces the cohort the README describes. The second half writes the
-converted frame *as* OMOP tables and runs the actual ``query.sql`` (both backends' byte-identical
-copies) over them on SQLite, so the simulator CSV and a deployed fetch cannot drift apart. No ADNI
-value appears in this file, and none may.
+so a licence holder's run produces the cohort the README describes. The query side (the tutorial's
+``query.sql`` over the rows the trust loader writes) is tested with the loader, in
+``trust/omop-db/tests/unit/test_adni_cohort.py``. No ADNI value appears in this file, and none may.
 """
 
 from __future__ import annotations
 
 import importlib.util
-import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -34,10 +33,6 @@ import pytest
 
 FL_TUTORIALS_DIR = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = FL_TUTORIALS_DIR / "datasets" / "ad_biomarkers" / "make_adni_cohort.py"
-QUERY_FILES = {
-    "nvflare": FL_TUTORIALS_DIR / "nvflare" / "tabular_causal_discovery" / "biomarker_causal_discovery" / "query.sql",
-    "flower": FL_TUTORIALS_DIR / "flower" / "tabular_causal_discovery" / "biomarker_causal_discovery" / "query.sql",
-}
 
 
 @pytest.fixture(scope="module")
@@ -236,54 +231,6 @@ def test_explicit_paths_override_the_directory(converter: ModuleType, tables: Pa
     assert (out / "dataframe.csv").exists()
 
 
-# --- query.sql parity -----------------------------------------------------------------------
-
-
-def run_query(query_file: Path, tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """Run the tutorial's query.sql on SQLite over the OMOP tables (schema ``omop`` attached)."""
-    con = sqlite3.connect(":memory:")
-    con.execute("ATTACH DATABASE ':memory:' AS omop")
-    for name, table in tables.items():
-        # pandas' plain-sqlite3 writer ignores schema=, so stage in main and move under omop.
-        table.to_sql(name, con, index=False)
-        con.execute(f"CREATE TABLE omop.{name} AS SELECT * FROM main.{name}")
-        con.execute(f"DROP TABLE main.{name}")
-    return pd.read_sql_query(query_file.read_text(), con)
-
-
-@pytest.mark.parametrize("backend", sorted(QUERY_FILES))
-def test_query_sql_returns_the_converted_frame(converter: ModuleType, cohort: pd.DataFrame, backend: str):
-    result = run_query(QUERY_FILES[backend], converter.to_omop_tables(cohort))
-    assert list(result.columns) == converter.COLUMNS
-    expected = cohort.sort_values("person_id").reset_index(drop=True)
-    result = result.sort_values("person_id").reset_index(drop=True)
-    pd.testing.assert_frame_equal(result.astype(float), expected.astype(float), check_exact=False, atol=1e-9)
-
-
-def test_query_sql_drops_persons_missing_any_measurement(converter: ModuleType, cohort: pd.DataFrame):
-    tables = converter.to_omop_tables(cohort)
-    victim = int(cohort["person_id"].iloc[0])
-    m = tables["measurement"]
-    tables["measurement"] = m[~((m["person_id"] == victim) & (m["measurement_source_value"] == "PLASMA_NFL"))]
-    result = run_query(QUERY_FILES["nvflare"], tables)
-    assert victim not in set(result["person_id"])
-    assert len(result) == len(cohort) - 1
-
-
-@pytest.mark.parametrize("backend", sorted(QUERY_FILES))
-def test_query_sql_drops_persons_with_null_education(converter: ModuleType, cohort: pd.DataFrame, backend: str):
-    """A NULL education value is filtered by the query: returned, it would make the whole site refuse."""
-    tables = converter.to_omop_tables(cohort)
-    victim = int(cohort["person_id"].iloc[0])
-    observation = tables["observation"].copy()
-    observation.loc[observation["person_id"] == victim, "value_as_number"] = None
-    tables["observation"] = observation
-    result = run_query(QUERY_FILES[backend], tables)
-    assert victim not in set(result["person_id"])
-    assert len(result) == len(cohort) - 1
-    assert result["education_years"].notna().all()
-
-
 # --- rules a reviewer asked to pin -----------------------------------------------------------
 
 
@@ -312,3 +259,43 @@ def test_non_positive_assay_values_count_as_missing(converter: ModuleType, tmp_p
     path = tmp_path / "UPENN_PLASMA_FUJIREBIO_QUANTERIX_x.csv"
     pd.DataFrame(rows).to_csv(path, index=False)
     assert converter.load_plasma(path)["RID"].tolist() == [1]
+
+
+# --- the output directory: never a committable path ---------------------------------------------
+
+
+@pytest.fixture
+def checkout(tmp_path: Path) -> Path:
+    """A throwaway git checkout that ignores data/ and tracks src/."""
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / ".gitignore").write_text("data/\n")
+    return repo
+
+
+def test_an_output_dir_git_would_track_is_refused(converter: ModuleType, checkout: Path):
+    with pytest.raises(SystemExit, match="not gitignored"):
+        converter.refuse_unignored_output(checkout / "src" / "leak")
+
+
+def test_a_symlink_into_the_checkout_is_judged_where_it_lands(converter: ModuleType, checkout: Path, tmp_path: Path):
+    link = tmp_path / "link"
+    link.symlink_to(checkout / "src", target_is_directory=True)
+    with pytest.raises(SystemExit, match="not gitignored"):
+        converter.refuse_unignored_output(link / "leak")
+
+
+def test_an_ignored_output_dir_is_accepted(converter: ModuleType, checkout: Path):
+    converter.refuse_unignored_output(checkout / "data" / "ad_biomarkers")
+
+
+def test_a_sibling_named_like_the_checkout_is_not_part_of_it(converter: ModuleType, checkout: Path):
+    sibling = checkout.parent / f"{checkout.name}-other" / "cohort"
+    sibling.parent.mkdir()
+    converter.refuse_unignored_output(sibling)  # outside any checkout: nothing to refuse
+
+
+def test_main_refuses_before_reading_any_table(converter: ModuleType, checkout: Path, tmp_path: Path):
+    with pytest.raises(SystemExit, match="not gitignored"):
+        converter.main(["--adni-dir", str(tmp_path / "absent"), "--output-dir", str(checkout / "src" / "leak")])

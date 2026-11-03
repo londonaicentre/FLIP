@@ -158,16 +158,13 @@ download-synthea-data:
 # simulators look). ADNI
 # is access-controlled — every user signs its Data Use Agreement, which forbids redistributing
 # participant-level data in any form — so this repository ships the converter (code) and never the
-# cohort: OUT must be gitignored or outside the repository (checked against the git toplevel), and the script prints counts,
-# never a row. How to apply for access and which tables to download: the tutorial README,
+# cohort: the converter itself refuses an OUT inside a git checkout that git does not ignore (symlinks
+# resolved), and prints counts, never a row. How to apply for access and which tables to download: the tutorial README,
 # "Running on real ADNI data". Runs in ad_biomarkers/'s own uv project (numpy + pandas).
 AD_BIOMARKERS_UV := uv run --project ad_biomarkers
 convert-adni-cohort: OUT ?= $(DATA_DIR)/ad_biomarkers
 convert-adni-cohort:
 	@test -n "$(ADNI_DIR)" || { echo "❌ ADNI_DIR=<directory of the five IDA table downloads> is required"; exit 2; }
-	@case "$(abspath $(OUT))" in "$$(git -C "$(CURDIR)" rev-parse --show-toplevel)"*) \
-		git -C "$(CURDIR)" check-ignore -q "$(abspath $(OUT))" || { \
-		echo "❌ OUT=$(abspath $(OUT)) is inside the repository and not gitignored — ADNI data must never be committed"; exit 2; };; esac
 	@echo "🧬 Building the biomarker cohort from the ADNI tables in $(ADNI_DIR)..."
 	@$(AD_BIOMARKERS_UV) python ad_biomarkers/make_adni_cohort.py --adni-dir "$(ADNI_DIR)" --output-dir "$(OUT)" \
 		$(if $(NUM_SITES),--num-sites $(NUM_SITES))

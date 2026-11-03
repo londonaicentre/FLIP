@@ -31,7 +31,6 @@ from omop_db_tools.adni_cohort import (
     COHORT_COLUMNS,
     MEASUREMENT_CODES,
     PERSON_ID_OFFSET,
-    _trust_slice,
     build_measurement_rows,
     build_observation_rows,
     build_person_rows,
@@ -40,6 +39,7 @@ from omop_db_tools.adni_cohort import (
     read_cohort,
     refuse_unless_local,
 )
+from omop_db_tools.dataset import split_for_trust
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 QUERY_SQL = REPO_ROOT / "fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery/query.sql"
@@ -79,8 +79,8 @@ def test_measurement_codes_are_the_ones_query_sql_matches():
 
 
 def test_trust_slice_matches_the_converters_site_split(cohort: pd.DataFrame):
-    site1 = _trust_slice(cohort, 2, 1)
-    site2 = _trust_slice(cohort, 2, 2)
+    site1 = split_for_trust(cohort, 2, 1, mode="modulo")
+    site2 = split_for_trust(cohort, 2, 2, mode="modulo")
     assert site1["person_id"].tolist() == [2, 4]  # person_id % 2 == 0 is site 1 / trust 1
     assert site2["person_id"].tolist() == [1, 3]
 
@@ -223,8 +223,35 @@ class TestReloadByProvenance:
         assert list(result.columns) == COHORT_COLUMNS
         result["person_id"] -= PERSON_ID_OFFSET
         result = result.sort_values("person_id").reset_index(drop=True)
-        expected = _trust_slice(cohort, 2, 1).sort_values("person_id").reset_index(drop=True)
+        expected = split_for_trust(cohort, 2, 1, mode="modulo").sort_values("person_id").reset_index(drop=True)
         pd.testing.assert_frame_equal(result.astype(float), expected.astype(float), check_exact=False, atol=1e-9)
+
+    def _query(self, engine) -> pd.DataFrame:
+        with engine.connect() as conn:
+            return pd.read_sql_query(text(QUERY_SQL.read_text()), conn)
+
+    def test_query_sql_drops_a_person_missing_any_measurement(self, engine, cohort: pd.DataFrame):
+        load_adni_cohort(engine, cohort, num_trusts=1, trust_index=1)
+        victim = PERSON_ID_OFFSET + int(cohort["person_id"].iloc[0])
+        with engine.begin() as conn:
+            conn.execute(
+                text("DELETE FROM omop.measurement WHERE person_id = :p AND measurement_source_value = 'PLASMA_NFL'"),
+                {"p": victim},
+            )
+        result = self._query(engine)
+        assert victim not in set(result["person_id"])
+        assert len(result) == len(cohort) - 1
+
+    def test_query_sql_drops_a_person_with_null_education(self, engine, cohort: pd.DataFrame):
+        """Returned, a NULL education value would make the whole site refuse its release (it refuses, not drops)."""
+        load_adni_cohort(engine, cohort, num_trusts=1, trust_index=1)
+        victim = PERSON_ID_OFFSET + int(cohort["person_id"].iloc[0])
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE omop.observation SET value_as_number = NULL WHERE person_id = :p"), {"p": victim})
+        result = self._query(engine)
+        assert victim not in set(result["person_id"])
+        assert len(result) == len(cohort) - 1
+        assert result["education_years"].notna().all()
 
 
 class TestMain:
@@ -260,28 +287,21 @@ class TestMain:
 class TestLocalOnly:
     """The loader refuses a trust that is not on this host, or a deployed environment, unless overridden."""
 
-    def test_local_host_and_no_prod_pass(self):
+    def test_local_host_and_no_hub_pass(self):
         refuse_unless_local("localhost", {}, allow_remote=False)
-        refuse_unless_local("127.0.0.1", {"PROD": ""}, allow_remote=False)
+        refuse_unless_local("127.0.0.1", {"HUB": ""}, allow_remote=False)
 
     def test_remote_host_is_refused_and_names_the_reason(self):
         with pytest.raises(SystemExit, match="OMOP_DB_HOST='omop.stag.example' is not this host"):
             refuse_unless_local("omop.stag.example", {}, allow_remote=False)
-
-    def test_prod_environment_is_refused(self):
-        with pytest.raises(SystemExit, match="PROD='stag'"):
-            refuse_unless_local("localhost", {"PROD": "stag"}, allow_remote=False)
 
     @pytest.mark.parametrize("hub", ["prod", "stag"])
     def test_hub_environment_is_refused(self, hub: str):
         with pytest.raises(SystemExit, match=f"HUB='{hub}' selects a deployed environment"):
             refuse_unless_local("localhost", {"HUB": hub}, allow_remote=False)
 
-    def test_empty_hub_is_the_dev_shape(self):
-        refuse_unless_local("localhost", {"HUB": ""}, allow_remote=False)
-
     def test_override_lets_it_through(self):
-        refuse_unless_local("omop.stag.example", {"PROD": "stag"}, allow_remote=True)
+        refuse_unless_local("omop.stag.example", {"HUB": "stag"}, allow_remote=True)
 
     def test_main_checks_before_connecting(self, tmp_path: Path, cohort: pd.DataFrame, monkeypatch):
         path = tmp_path / "dataframe.csv"

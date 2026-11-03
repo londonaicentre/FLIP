@@ -132,11 +132,11 @@ form — so there is no download target and no synthetic stand-in: the user appl
   `person_id`-modulo site splits and a counts-only summary, applying the centralised analysis's
   rules (earliest FreeSurfer scan with a baseline plasma draw within ±3 months, ADNI missing-value
   codes, left + right hippocampus, APOE ε4 count from the genotype). Code only: `OUT` defaults to the
-  gitignored `data/ad_biomarkers/` and the target refuses any path inside the repository that git
-  does not ignore; the script prints counts, never a row. `to_omop_tables` writes a cohort frame as
-  `person` / `measurement` / `observation`, and `tests/datasets/ad_biomarkers/` pins the cohort rules
-  on invented ADNI-shaped tables and runs the actual `query.sql` over those OMOP tables on SQLite,
-  so the simulator's CSV and a deployed query agree row for row.
+  gitignored `data/ad_biomarkers/` and the converter refuses any output path inside a git checkout
+  that git does not ignore (symlinks resolved); the script prints counts, never a row.
+  `tests/datasets/ad_biomarkers/` pins the cohort rules on invented ADNI-shaped tables; the trust
+  loader's tests (`trust/omop-db/tests/unit/test_adni_cohort.py`) run the actual `query.sql` over the
+  OMOP rows it writes on SQLite, so the simulator's CSV and a deployed query agree row for row.
 
 [`prostate/`](prostate/) owns the prostate download/preprocessing scripts. The dataset class that
 reads this data lives with the tutorial instead, at
