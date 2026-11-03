@@ -128,8 +128,8 @@ jobs:
           EOF
 
       - name: Build production bundle
-        # build:deploy = `vite build` (skips vue-tsc, which has pre-existing
-        # root type errors unrelated to this audit). Perf / unused-JS metrics
+        # build:deploy = `vite build` (no vue-tsc; test_flip_ui.yml runs the
+        # typecheck). Perf / unused-JS metrics
         # are only meaningful on the built, code-split, minified bundle — never
         # on the dev server.
         # postbuild:deploy writes dist/js/window.js from these. Both auth

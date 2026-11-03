@@ -737,9 +737,8 @@ rollback-centralhub: ## Repoint each Central Hub ECS service at its previous ACT
 .PHONY: deploy-ui
 deploy-ui: ## Build flip-ui from the working tree and publish it to the UI bucket (CI does this after every apply, FLIP#1186)
 	@echo "🖼️  Building flip-ui from working tree..."
-	@# Uses build:deploy (vite build only). The type-checked `npm run build` fails
-	@# on pre-existing TypeScript errors in the repo — tracked separately. Its
-	@# postbuild:deploy hook writes dist/js/window.js from $(MAIN_ENV_FILE), which
+	@# Uses build:deploy (vite build only); test_flip_ui.yml runs the vue-tsc
+	@# typecheck. Its postbuild:deploy hook writes dist/js/window.js from $(MAIN_ENV_FILE), which
 	@# this Makefile exports.
 	@cd ../../../flip-ui && npm ci && npm run build:deploy
 	@# The sync and its cache-control split are scripts/publish-ui.sh, shared with

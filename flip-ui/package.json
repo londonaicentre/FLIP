@@ -28,6 +28,7 @@
         "serve": "vite preview",
         "test:unit": "vitest run --silent --coverage",
         "test:types": "tsc --noEmit -p test/tsconfig.json",
+        "type-check": "vue-tsc --noEmit",
         "lint": "npx eslint \"./src/**/*.vue\" \"./src/**/*.ts\" \"./mocks/**/*.ts\"",
         "prepare": "husky install",
         "test:unit:update": "vitest run -u --silent --coverage",
