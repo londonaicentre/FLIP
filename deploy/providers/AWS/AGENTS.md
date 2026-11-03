@@ -56,8 +56,8 @@ make init/plan/apply                          # Terraform workflow
 make deploy-centralhub                        # ECS deploy at env branch tip via sha-<short7> task-def revisions + the UI to S3 (FLIP#751; TAG= to pin). Prints an FL quiesce reminder (FLIP#770): enable Deployment Mode (pauses FL job pickup) + wait for the running job before deploying; GET /fl/quiesce reports deployment_mode + fl_quiesced. HUB=prod additionally asks "Are you sure you want to continue?" (stag stays non-interactive)
 make rollback-centralhub                      # Repoint ECS services at the previous ACTIVE task-def revision + deregister the rolled-away one; on FLARE, resets the fl-server's EFS local/ first (FLIP#1390; SKIP_FL_LOCAL_RESET=1 skips)
 make register-trusts KIT=<CODE> HUB=<stag|prod>  # Register CODE-named trust kit(s) on the hub + write trust/.env.<CODE>.<hub> — runs `scripts/register-trusts.sh` (a one-off ECS task + SSM SecureString handoff, mirroring the dev `make register-trusts` contract)
-make deploy-ui                                # Manual fallback: build + publish UI via scripts/publish-ui.sh (excludes ark_demo/*; no invalidation, the edge distribution is the networking account's). CI publishes after every apply (FLIP#1186)
-make deploy-ark-demo                          # Build the public Ark+ demo SPA + sync to S3 under ark_demo/
+make deploy-ui                                # Manual fallback: build + publish UI via scripts/publish-ui.sh (excludes demo/*; no invalidation, the edge distribution is the networking account's). CI publishes after every apply (FLIP#1186)
+make deploy-demo                              # Build the public demo + sync to S3 under demo/ (refused unless PUBLIC_DEMO=true, FLIP#1746)
 make status                                   # Health checks
 make ssh-config                               # Generate SSH config with SSM ProxyCommand
 make provision-local-trust                     # Provision an on-prem trust host (run ON the host)
@@ -221,7 +221,7 @@ Things worth knowing before touching any of it:
   `TF_UI_PUBLISH_ROLE_ARN`, the module's optional `AICentre-FLIPUiPublishRole` (created
   when the caller sets `ui_bucket_name`). That role trusts `publish_ui.yml@refs/heads/<branch>`
   — for a reusable workflow, `job_workflow_ref` names the called file — and can list the
-  bucket and write its objects, never `ark_demo/*`. `scripts/publish-ui.sh` is the one
+  bucket and write its objects, never `demo/*`. `scripts/publish-ui.sh` is the one
   sync recipe, shared with `make deploy-ui`; `.github/tests/workflows/test_publish_ui.py`
   and `scripts/tests/test_publish_ui.sh` pin both halves.
 - **The pytest suite under `tests/` runs in CI** as the `AWS deploy tests` job in
@@ -249,13 +249,7 @@ Things worth knowing before touching any of it:
   inputs from deployed state and reports drift (secrets shown as digests, never
   values). Staging's checked-out file was a batch of values stale, including a
   renamed UI bucket that plans as a `prevent_destroy` violation. Its `--out` writes
-  only the Terraform inputs, so it refuses to overwrite a real operator env file,
-  and on `--env prod` it treats an empty `DEMO_ASSETS_BUCKET_NAME` as a failed
-  recovery rather than a value — empty there plans the Ark+ demo bucket's destroy,
-  which `prevent_destroy` turns into a failed apply. The key recovers from
-  `module.flip_demo_assets_bucket`'s `aws_s3_bucket.this` (FLIP#1199); the module has
-  to be matched by name, since every `flip_s3_bucket` caller contributes an
-  `aws_s3_bucket.this`.
+  only the Terraform inputs, so it refuses to overwrite a real operator env file.
 
 Full flow, one-time setup and break-glass: [README.md](README.md#terraform-ci-plan-on-pr-apply-on-merge).
 

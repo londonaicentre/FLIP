@@ -177,7 +177,7 @@ picks the implementation once at boot from `window.AUTH_BACKEND`.
 **Production source may not import a package that is only declared in `devDependencies`, nor one that is
 declared nowhere and resolves through npm's hoisting of a parent's tree.** "Production source" is everything
 the deployed bundles reach: `src/`, minus its test files, plus `mocks/` — which `build:demo` pulls into the
-public `/demo` bundle.
+public `/demo/` bundle.
 
 This is enforced, not just documented: the `flip-ui/dependency-scoping` block in
 [`eslint.config.mjs`](eslint.config.mjs) runs `import-x/no-extraneous-dependencies` over exactly that file

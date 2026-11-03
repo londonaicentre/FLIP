@@ -154,7 +154,7 @@ export default defineConfigWithVueTs(
         // not-user-facing. See flip-ui/README.md -> Dependency scoping.
         //
         // `mocks/` is deliberately NOT exempt: mocks/demo-server.ts ships in the public
-        // /demo bundle, so its imports are production imports.
+        // /demo/ bundle, so its imports are production imports.
         name: "flip-ui/dependency-scoping",
         files: ["src/**/*.ts", "src/**/*.vue", "mocks/**/*.ts"],
         ignores: ["**/*.spec.ts", "**/__tests__/**", "src/unit-tests/**"],
