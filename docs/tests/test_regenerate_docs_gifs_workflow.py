@@ -93,6 +93,16 @@ def test_a_merged_prs_live_recordings_reach_main(workflow, jobs):
     assert '${PR:+--carry-from "pr-$PR"}' in publish["run"]
 
 
+def test_a_dispatch_can_carry_a_merged_prs_live_recordings(workflow, jobs):
+    """A newer push cancels a merged PR's recording; a dispatch names it instead, merged and numeric only."""
+    assert set(workflow[True]["workflow_dispatch"]["inputs"]) == {"pr"}
+    find = next(step for step in steps_of(jobs["publish"]) if step["name"] == "Find the merged PR")
+    assert find["env"]["DISPATCH_PR"] == "${{ inputs.pr }}"
+    assert "inputs." not in find["run"], "the input must reach the script through env, never interpolated"
+    assert "^[0-9]+$" in find["run"]
+    assert ".merged_at" in find["run"]
+
+
 def test_the_version_is_minted_by_the_recording_job(jobs):
     """``recorded_at`` in the manifest is the version's timestamp, so it must be minted before Cypress runs."""
     record_steps = [step["name"] for step in steps_of(jobs["record"])]

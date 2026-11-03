@@ -7,6 +7,8 @@
 #     make -C trust/monailabel-demo demo-video demo-gifs KIT=<CODE> XNAT_EXPERIMENT=<session>
 # and publish them to dataset branch pr-<N> of the PR that carries them (its preview shows them). A CI publish
 # cannot record them, so it carries them forward: from the merged PR's pr-<N>, else unchanged from main.
+# If that PR's own publish never ran (a newer develop push cancels a recording), dispatch
+# regenerate_docs_gifs.yml on develop with pr=<N>.
 monailabel/monailabel-enable.gif
 monailabel/monailabel-sam-clicks.gif
 monailabel/monailabel-export.gif

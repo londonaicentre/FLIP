@@ -76,4 +76,6 @@ GIFs that need a live trust (the MONAI Label walkthrough: GPU + the real XNAT OH
 wiring test and the publisher treat them alike. They are cut by `make -C trust/monailabel-demo demo-gifs` and
 published by hand to dataset branch `pr-<N>` of the PR that re-cuts them (its preview shows them); a CI publish,
 which cannot record them, carries each one forward from the merged PR's `pr-<N>`, else from `main`
-(`--carry-from`, sha256-checked against that ref's manifest).
+(`--carry-from`, sha256-checked against that ref's manifest). A newer develop push cancels the recording of
+the one before, so a merged PR's own publish can be lost; dispatch the workflow on `develop` with `pr=<N>`
+to carry its GIFs then.

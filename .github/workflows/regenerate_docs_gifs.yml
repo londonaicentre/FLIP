@@ -41,6 +41,13 @@ on:
       - "docs/scripts/live-recorded-gifs.txt"
       - ".github/workflows/regenerate_docs_gifs.yml"
   workflow_dispatch:
+    inputs:
+      pr:
+        # A newer develop push cancels the recording of the one before, so a merged PR's own publish can
+        # be lost; dispatching on develop with its number carries its live-trust GIFs to main after all.
+        description: "Merged PR whose live-trust GIFs (dataset branch pr-<N>) this publish carries"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -172,11 +179,20 @@ jobs:
         id: pr
         # CI cannot record the live-trust GIFs (docs/scripts/live-recorded-gifs.txt); a PR that
         # re-cut them published them to dataset branch pr-<N>, so the publish takes them from there
-        # first, then carries the rest forward from main.
+        # first, then carries the rest forward from main. A dispatch names the PR instead; it must be
+        # merged, or its unreviewed recordings would reach main.
         env:
           GH_TOKEN: ${{ github.token }}
+          DISPATCH_PR: ${{ inputs.pr }}
         run: |
-          number=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[0].number // empty')
+          if [ -n "$DISPATCH_PR" ]; then
+            [[ $DISPATCH_PR =~ ^[0-9]+$ ]] || { echo "::error::pr must be a PR number, got '$DISPATCH_PR'"; exit 1; }
+            merged=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$DISPATCH_PR" --jq '.merged_at // empty')
+            [ -n "$merged" ] || { echo "::error::PR #$DISPATCH_PR is not merged"; exit 1; }
+            number=$DISPATCH_PR
+          else
+            number=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[0].number // empty')
+          fi
           echo "number=$number" >> "$GITHUB_OUTPUT"
 
       - name: Publish to the dataset
