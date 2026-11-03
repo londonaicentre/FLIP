@@ -89,17 +89,19 @@ rounds only — `@app.evaluate` is untouched.
 | Key                | Default | Meaning |
 |--------------------|---------|---------|
 | `dp-enabled`       | `true`  | Master switch. `false` makes the mod a pass-through, so DP-on / DP-off runs use an identical app |
-| `dp-clipping-norm` | `1.0`   | L2 norm the update is clipped to before noise |
+| `dp-clipping-norm` | `3.0`   | L2 norm the update is clipped to before noise; sized to this model's measured update norm (2.9-3.6) |
 | `dp-sensitivity`   | `1e-4`  | How much one training example can move the update |
 | `dp-epsilon`       | `10.0`  | Privacy budget — smaller means more privacy and more noise |
 | `dp-delta`         | `1e-5`  | Probability the guarantee fails outright |
 
 Override per run without editing the app: `flwr run . --run-config "dp-enabled=false"`.
 
-> ⚠️ The DP defaults are **demonstration values, chosen utility-first** so the tutorial still
-> converges with the mechanism live; they are not a defensible privacy budget (no cross-round
-> composition accounting, and noise does not average down with only a handful of trusts). See the
-> xray tutorial's DP section for the full discussion.
+> ⚠️ The DP defaults are **demonstration values, not a privacy budget.** `dp-clipping-norm` is
+> sized to this model's update so clipping does not throttle training, but the noise comes from
+> `dp-sensitivity` alone, which is negligible beside an update of that norm: the configured
+> `dp-epsilon` is not the guarantee these runs get until the noise is calibrated to the clipping norm
+> (FLIP#1760). There is also no cross-round composition accounting, and noise does not average down
+> with only a handful of trusts. See the xray tutorial's DP section for the full discussion.
 
 ## Data
 

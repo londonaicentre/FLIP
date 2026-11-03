@@ -183,6 +183,13 @@ e2e_smoke:
 	@echo "🚀 Running e2e smoke (model files: $(MODEL_FILES_DIR), query: $(QUERY_FILE))..."
 	env DB_HOST=localhost uv run python -m tests.e2e_smoke --model-files-dir "$(MODEL_FILES_DIR)" --query-file "$(QUERY_FILE)" $(ENRICHMENT_ARGS) $(TARGET_ARGS) $(EXTRA_ARGS)
 
+# Capture one project's API responses as fixtures for the public demo (FLIP#1746):
+#   make capture_demo_project EXTRA_ARGS="--project-id <uuid> --slug ehr-risk"
+# Writes ../flip-ui/mocks/demo/projects/<slug>/data/*.json and prints the trusts to map in its register.
+capture_demo_project:
+	@echo "📸 Capturing demo fixtures ($(EXTRA_ARGS))..."
+	env DB_HOST=localhost uv run python -m tests.capture_demo_project $(EXTRA_ARGS)
+
 # Spleen-segmentation variant of e2e_smoke: same recipe, with the spleen tutorial
 # defaults plus a data-enrichment step that uploads segmentation labels into every
 # trust's XNAT between image pull and training. Target-specific vars override the

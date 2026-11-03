@@ -19,6 +19,10 @@ FLIP trains several models at several Trusts at the same time, using :term:`NVID
 :term:`Flower Framework` to train, test and aggregate at each site. This page covers starting and stopping a run,
 following it, and downloading what it produces.
 
+.. contents:: On this page
+   :local:
+   :depth: 1
+
 *************************
 How training is scheduled
 *************************
