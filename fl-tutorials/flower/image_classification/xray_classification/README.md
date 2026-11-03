@@ -223,9 +223,8 @@ the mod can log the pre-clip norm).
 | `dp-epsilon`       | `10.0`  | Privacy budget — smaller means more privacy and more noise |
 | `dp-delta`         | `1e-5`  | Probability the guarantee fails outright |
 
-Override per run without editing the app. `sim-tutorial.sh` (what `make run-tutorial` runs) passes
-everything after the tutorial name through to `flwr run`, and a later `--run-config` overrides the same
-keys, so call it directly rather than a raw `flwr run` (see the edges above):
+To override per run without editing the app, pass `--run-config` to `sim-tutorial.sh` (what
+`make run-tutorial` runs); it forwards everything after the tutorial name to `flwr run`:
 
 ```bash
 bash fl-tutorials/flower/sim-tutorial.sh xray_classification --run-config "dp-enabled=false"

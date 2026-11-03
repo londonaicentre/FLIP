@@ -201,17 +201,9 @@ only) is left out:
 ```
 
 (Values above are **real measured scores**, not a fabricated example: the pretrained checkpoint over one
-hold-out cohort. Treat them as one cohort's result, not a target to reproduce.)
-
-## Expected performance
-
-There is nothing to converge here — one evaluate round, no training — so "expected" is the range the
-zero-shot checkpoint scores on the published hold-out splits: the per-lesion AUROCs listed above
-(0.86 for Infiltration up to 0.998 for Effusion on one site's cohort). A lesion with a single class in
-a site's cohort reports `NaN` and is left out of the hub plots rather than pulling the others down,
-which is the first thing to check when a lesion is missing. With the default `MAX_SAMPLES=128` cap a
-simulator run is a smoke test of the round-trip, not a measurement; `MAX_SAMPLES=0` scores the full
-~470 studies per site.
+hold-out cohort. Treat them as one cohort's result, not a target to reproduce. With the default
+`MAX_SAMPLES=128` cap a simulator run is a smoke test of the round-trip, not a measurement; `MAX_SAMPLES=0`
+scores the full ~470 studies per site.)
 
 ### Fields
 

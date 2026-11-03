@@ -13,15 +13,10 @@
 
 # Spleen segmentation on CT
 
-Flower port of the spleen-segmentation tutorial that lives at
-`fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation`, adapted from Flower's MONAI
-quickstart example. It trains the same MONAI 3D UNet (`app/models.py`) with DiceCE loss on CT volumes
-from the [Medical Segmentation Decathlon](http://medicaldecathlon.com/), reading each
-`input_*.nii.gz` with its sibling `label_*.nii.gz`; under `LOCAL_DEV` the data comes from the shared
-`fl-tutorials/data/spleen/` tree (see *Data Location*), deployed it is the NIfTI XNAT converted plus
-the labels uploaded as data enrichment. The `ClientApp` trains and evaluates; the template
-`ServerApp` writes the final and best global models and `cross_val_results.json` under `WORKING_DIR`.
-The cohort query (`query.sql`) is copied verbatim from the FLARE tutorial.
+Flower port of the [NVFLARE spleen segmentation tutorial](../../../nvflare/image_segmentation/3d_spleen_segmentation),
+adapted from Flower's MONAI quickstart. It trains the same MONAI 3D UNet on CT volumes from the
+[Medical Segmentation Decathlon](http://medicaldecathlon.com/); *Data Location* below says where
+the data comes from locally and on the platform.
 
 ## At a glance
 
@@ -211,9 +206,8 @@ the mod can log the pre-clip norm).
 | `dp-epsilon`       | `10.0`  | Privacy budget — smaller means more privacy and more noise |
 | `dp-delta`         | `1e-5`  | Probability the guarantee fails outright |
 
-Override per run without editing the app. `sim-tutorial.sh` (what `make run-tutorial` runs) passes
-everything after the tutorial name through to `flwr run`, and a later `--run-config` overrides the same
-keys, so call it directly rather than a raw `flwr run` (the five edges above):
+To override per run without editing the app, pass `--run-config` to `sim-tutorial.sh` (what
+`make run-tutorial` runs); it forwards everything after the tutorial name to `flwr run`:
 
 ```bash
 bash fl-tutorials/flower/sim-tutorial.sh 3d_spleen_segmentation --run-config "dp-enabled=false"
