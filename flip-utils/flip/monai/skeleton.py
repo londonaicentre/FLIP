@@ -148,7 +148,7 @@ def generate_skeleton(bundle_dir: str | Path, source: BundleSource | str = Bundl
         "      statistics: [data_count]",
         "  governance:",
         f"    profile: {_q(GOVERNANCE_PROFILE_V0_1)}  # LOCKED",
-        "    allowed_outputs: [metrics, model]  # EDITABLE (may only be narrowed)",
+        "    allowed_outputs: [metrics, model]  # EDITABLE (model is required; metrics optional)",
         "",
     ]
     return "\n".join(lines)
