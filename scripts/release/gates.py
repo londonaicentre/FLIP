@@ -168,10 +168,13 @@ def tutorial_metrics(lines: list[tuple[float, str]]) -> dict:
 
 def dp_clipping_verdict(metrics: dict, dp: set[str] | None = None) -> str | None:
     """Fail a run in which DP clipping shrank updates more than tenfold (it trains, and learns nothing), or in
-    which a DP tutorial reported nothing (logs lost or the mod unwired: no WARNING would not mean clean)."""
+    which a DP tutorial reported nothing or did not run (logs lost or the mod unwired: no WARNING would not mean
+    clean)."""
     dp = dp_tutorials() if dp is None else dp
     runs = metrics.get("tutorials", [])
-    silent = [r["name"] for r in runs if r["name"] in dp and not r.get("dp_reports")]
+    if not runs:
+        return "no tutorial was reported at all: the gate cannot vouch for any of them (FLIP#1754)"
+    silent = sorted(dp - {r["name"] for r in runs if r.get("dp_reports")})
     clipped = [f"{r['name']} ({r['dp_over_clipped']}x)" for r in runs if r.get("dp_over_clipped")]
     reasons = []
     if silent:

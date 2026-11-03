@@ -308,7 +308,13 @@ class Gates(unittest.TestCase):
 
     def test_flower_tutorial_verdict_fails_on_heavy_dp_clipping(self):
         dp = {"ehr_risk_prediction", "3d_spleen_segmentation"}
-        clean = {"tutorials": [{"name": "ehr_risk_prediction", "dp_reports": 4}, {"name": "eval"}]}
+        clean = {
+            "tutorials": [
+                {"name": "ehr_risk_prediction", "dp_reports": 4},
+                {"name": "3d_spleen_segmentation", "dp_reports": 4},
+                {"name": "eval"},
+            ]
+        }
         clipped = {"tutorials": [{"name": "3d_spleen_segmentation", "dp_reports": 4, "dp_over_clipped": 1}]}
         assert gates.dp_clipping_verdict(clean, dp) is None
         reason = gates.dp_clipping_verdict(clipped, dp)
@@ -323,6 +329,18 @@ class Gates(unittest.TestCase):
         assert "no DP report" in reason
         flower = gates.build_gates("v0.0.1", "rel0001", lambda: "")["tutorials-flower"]
         assert flower.verdict is gates.dp_clipping_verdict
+
+    def test_flower_tutorial_verdict_fails_when_a_dp_tutorial_did_not_run(self):
+        ran = {"tutorials": [{"name": "ehr_risk_prediction", "dp_reports": 4}]}
+        reason = gates.dp_clipping_verdict(ran, {"ehr_risk_prediction", "xray_classification"})
+        assert "xray_classification" in reason
+        assert "ehr_risk_prediction" not in reason
+
+    def test_flower_tutorial_verdict_fails_when_no_tutorial_ran(self):
+        # An empty run-all-tutorials that still exits 0 must not pass vacuously.
+        reason = gates.dp_clipping_verdict({"tutorials": []}, set())
+        assert "no tutorial was reported" in reason
+        assert gates.dp_clipping_verdict({}, set()) == reason
 
     def test_a_verdict_fails_a_gate_whose_steps_passed(self):
         tmp = Path(tempfile.mkdtemp())
