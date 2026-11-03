@@ -16,17 +16,6 @@ The recipe loads the uploaded checkpoint on the server and broadcasts it to ever
 `FLModel`; the client's `is_evaluate()` branch scores it on the local cohort and returns aggregate
 metrics. The `evaluation_results.json` output is unchanged.
 
-```mermaid
-flowchart LR
-    U["Uploaded app_files/<br/>(evaluator, models, transforms, config, model.pt)"] --> S["FL server<br/>FlipEvalRecipe loads model.pt"]
-    S -- "one FLModel per entry in config['models']" --> A["Trust A client<br/>is_evaluate(): local cohort,<br/>input_/label_ NIfTI pairs"]
-    S -- "same model" --> B["Trust B client<br/>is_evaluate()"]
-    A -- "aggregate metrics only" --> R["evaluation_results.json<br/>per-trust mean_dice, hausdorff_95,<br/>surface_dice, iou → hub model page"]
-    B -- "aggregate metrics only" --> R
-```
-
-Nothing is trained and no weights are aggregated: the one round is a validate task per checkpoint.
-
 ## At a glance
 
 | Item | Value |

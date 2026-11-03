@@ -34,11 +34,10 @@ legacy Executor API to the Client API. The job is defined entirely in Python via
 
 ```mermaid
 flowchart LR
-    CK["pretrained_weights.pt<br/>backbone only, from make prepare-checkpoint"] -- "SERVER_CHECKPOINT seeds round 0" --> S["FL server<br/>InitialCheckpointPTModelPersistor"]
-    S -- "round 0: full model<br/>later rounds: head only (TrimBroadcastVars)" --> C["each trust client<br/>ReconstructFullModel → backbone frozen,<br/>omni_heads trained (teacher/student EMA)"]
-    C -- "KeepOnlyVars: the omni_heads diff" --> AGG["FedAvg over the head only<br/>(AGGREGATE_ONLY_REGEX = omni_heads)"]
-    AGG --> S
-    C -. "is_evaluate(): per-lesion AUC on the local split" .-> H["hub metrics, best model"]
+    A["round 0: the server sends the full model (backbone from the checkpoint)"] --> B["each site trains only the classification head"]
+    B --> C["sites send back their head updates"]
+    C --> D["the server averages the head; later rounds send the head only"]
+    D --> B
 ```
 
 ## Target labels

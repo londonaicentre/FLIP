@@ -30,15 +30,6 @@ per-lesion AUROC. The numerical pipeline (model, transforms, head inference, lab
 identical to the previous implementation's, so the reported metrics match — only the FL transport
 differs. The `evaluation_results.json` output contract is unchanged.
 
-```mermaid
-flowchart LR
-    U["Uploaded app_files/<br/>incl. arkplus_pretrained_weights.pt"] --> S["FL server<br/>EvaluationModelLocator loads the .pt"]
-    S -- "one FLModel, broadcast as a validate task" --> A["Trust A client<br/>is_evaluate(): local hold-out cohort,<br/>DICOM → Ark+ heads → DECAF lesion mapping"]
-    S -- "same model" --> B["Trust B client<br/>is_evaluate()"]
-    A -- "aggregate per-lesion AUROC only" --> R["evaluation_results.json<br/>per site → hub model page (AUROC_&lt;LESION&gt;)"]
-    B -- "aggregate per-lesion AUROC only" --> R
-```
-
 ## At a glance
 
 | Item | Value |

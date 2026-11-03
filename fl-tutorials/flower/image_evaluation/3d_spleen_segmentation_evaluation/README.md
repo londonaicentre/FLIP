@@ -20,16 +20,6 @@ tutorial trains) on each trust's cohort without training it: the `ServerApp` loa
 every `ClientApp` evaluates it on its own `input_`/`label_` NIfTI pairs, and the strategy averages the
 metrics.
 
-```mermaid
-flowchart LR
-    U["Uploaded app/ incl. model.pt"] --> S["ServerApp opens<br/>&lt;flip-job-dir&gt;/&lt;checkpoint&gt;"]
-    S -- "1 evaluate round, same weights" --> A["Trust A ClientApp<br/>mean_dice, mean_iou on its cohort"]
-    S -- "1 evaluate round, same weights" --> B["Trust B ClientApp"]
-    A -- "MetricRecord + num-examples" --> E["EvaluationStrategy<br/>weighted mean by num-examples<br/>+ per-client breakdown → hub"]
-    B -- "MetricRecord + num-examples" --> E
-    E --> R["WORKING_DIR/&lt;model_id&gt;/evaluation_outputs/<br/>evaluation_results.json (S3 unless LOCAL_DEV)"]
-```
-
 ## At a glance
 
 | Item | Value |

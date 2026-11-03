@@ -40,14 +40,6 @@ legacy tutorial.
 > enough to name its evaluation broadcasts (`EvaluationModelLocator` stamping `flip_eval_model_name`);
 > the evaluator fails with that remedy if the meta is absent.
 
-```mermaid
-flowchart LR
-    U["Uploaded app_files/<br/>incl. arkplus_pretrained_weights.pt<br/>and arkplus_finetuned_weights.pt"] --> S["FL server<br/>EvaluationModelLocator loads every config['models'] entry"]
-    S -- "validate task 1: pretrained<br/>(flip_eval_model_name in the DXO meta)" --> C["each trust client<br/>scores the broadcast on its hold-out cohort,<br/>caches per-sample scores across tasks"]
-    S -- "validate task 2: finetuned" --> C
-    C -- "reply = every model scored so far:<br/>per-lesion AUROC + pairwise DeLong p / BH q" --> R["EvaluationJsonGenerator (last reply wins)<br/>evaluation_results.json per site → hub plots<br/>&lt;MODEL&gt;/AUROC_&lt;LESION&gt;"]
-```
-
 ## At a glance
 
 | Item | Value |
