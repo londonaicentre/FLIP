@@ -37,10 +37,10 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
+from biomarker_cohort import shipped_shape_cohort
 from tutorial_apps import TUTORIALS_ROOT, load_module
 
 APP_FILES = TUTORIALS_ROOT / "nvflare" / "tabular_causal_discovery" / "biomarker_causal_discovery" / "app_files"
-FLOWER_APP = TUTORIALS_ROOT / "flower" / "tabular_causal_discovery" / "biomarker_causal_discovery" / "app"
 VARIABLES = ["a_root", "b_root", "x_fluid", "y_fluid", "u_mri", "v_mri", "z_sink"]
 TRUE_EDGES = {
     ("a_root", "x_fluid"),
@@ -134,18 +134,6 @@ def fedavg(
     return ff.decode(encoded)
 
 
-def percentile_filter(ff, encoded: dict[str, np.ndarray], weight: int) -> dict[str, np.ndarray]:
-    """NVFLARE's PercentilePrivacy maths (stock percentile 10, gamma 0.01) on one site's update."""
-    delta = {k: v.astype(np.float64) / weight for k, v in encoded.items()}
-    cutoff = np.percentile(np.concatenate([np.abs(d.ravel()) for d in delta.values()]), 10)
-    out = {}
-    for key, d in delta.items():
-        d = d.copy()
-        d[(d > -cutoff) & (d < cutoff)] = 0.0
-        out[key] = (np.clip(d, -ff.PERCENTILE_CLIP, ff.PERCENTILE_CLIP) * weight).astype(np.float32)
-    return out
-
-
 def matrix_of(ff, frame: pd.DataFrame, config: dict) -> np.ndarray:
     """The analysis matrix ``prepare_cohort`` builds (the person ids and drop count are for the floor)."""
     return ff.prepare_cohort(frame, config)[0]
@@ -202,7 +190,7 @@ def test_a_site_below_the_row_floor_refuses_without_saying_how_many(ff, config):
     state = ff.empty_state(config)
     with pytest.raises(ValueError, match="too few complete rows") as refused:
         ff.client_round(state, 0, 2, small, "site-1", {**config, "MIN_SITE_ROWS": 50})
-    assert "40" not in str(refused.value)  # the count stays in the site's own log
+    assert_no_digits(str(refused.value))  # the count stays in the site's own log
     target, weight, _ = ff.client_round(state, 0, 2, small, "site-1", {**config, "MIN_SITE_ROWS": 40})
     assert weight == 40
     assert target["stats_moment"].shape == (len(VARIABLES), len(VARIABLES))
@@ -224,7 +212,7 @@ def test_a_small_cell_in_a_discrete_column_blocks_the_release(ff, config):
     assert ff.small_cells(matrix, config) == [b]
     with pytest.raises(ValueError, match="discrete variable") as refused:
         ff.client_round(ff.empty_state(config), 0, 2, matrix, "site-1", config)
-    assert "2 " not in str(refused.value)
+    assert_no_digits(str(refused.value))
     assert "b_root" not in str(refused.value)  # neither the count nor the column reaches the hub
     assert ff.small_cells(matrix, {**config, "MIN_CELL_COUNT": 1}) == [b]  # config cannot lower the floor
     matrix[:6, b] = 1.0  # six rows: clears the default floor of five ...
@@ -348,13 +336,29 @@ def test_encode_decode_round_trip_keeps_seven_digits(ff, config):
     assert list(ff.encode(state)) == list(ff.STATE_KEYS)
 
 
-def test_percentile_privacy_filter_is_a_no_op_on_a_round_one_payload(ff, config):
+def test_nvflares_percentile_privacy_filter_leaves_a_round_one_payload_intact(ff, config):
+    """NVFLARE's own filter (stock percentile 10, gamma 0.01) on a site's round-1 DIFF: nothing zeroed, nothing clipped.
+
+    Not bit-exact: the filter divides the update by its weight and multiplies back in float32, which moves
+    some entries by an ulp. Every zero stays a zero and every non-zero stays non-zero and in place.
+    """
+    from unittest.mock import MagicMock
+
+    from nvflare.apis.dxo import DXO, DataKind, MetaKey
+    from nvflare.app_common.filters.percentile_privacy import PercentilePrivacy
+
     matrix = matrix_of(ff, sample_scm(300, 2), config)
-    target, weight, _ = ff.client_round(ff.decode(ff.encode(ff.empty_state(config))), 0, 2, matrix, "site-1", config)
-    encoded = ff.encode(target)
-    filtered = percentile_filter(ff, encoded, weight)
+    received = ff.encode(ff.empty_state(config))
+    target, weight, _ = ff.client_round(ff.decode(received), 0, 2, matrix, "site-1", config)
+    diff = {key: ff.encode(target)[key] - received[key] for key in ff.STATE_KEYS}
+    dxo = DXO(data_kind=DataKind.WEIGHT_DIFF, data={key: value.copy() for key, value in diff.items()})
+    dxo.set_meta_prop(MetaKey.NUM_STEPS_CURRENT_ROUND, weight)
+    fl_ctx = MagicMock()
+    fl_ctx.get_peer_context.return_value = None
+    filtered = PercentilePrivacy(percentile=10, gamma=0.01).process_dxo(dxo, MagicMock(), fl_ctx).data
     for key in ff.STATE_KEYS:
-        assert np.array_equal(filtered[key], encoded[key]), key
+        assert np.array_equal(filtered[key] == 0, diff[key] == 0), key
+        assert np.allclose(filtered[key], diff[key], rtol=1e-6, atol=0), key
 
 
 def test_unscaled_large_units_are_refused_rather_than_clipped(ff, config):
@@ -413,49 +417,29 @@ def test_bootstraps_give_frequencies_strictly_between_zero_and_one_somewhere(ff,
     assert all(r["count"] <= 6 for r in rows)
 
 
-def test_the_final_model_carries_graphs_and_counts_but_no_statistics(ff, config, two_sites):
+@pytest.mark.parametrize("rounds", [2, 3])
+def test_the_final_model_carries_graphs_and_counts_but_no_statistics(ff, config, two_sites, rounds):
     """What a researcher downloads: PAGs and row counts. The pooled moments never travel on."""
-    final = fedavg(ff, {**config, "N_BOOTSTRAPS": 6}, two_sites, total_rounds=2)
+    final = fedavg(ff, {**config, "N_BOOTSTRAPS": 6}, two_sites, total_rounds=rounds)
     assert np.any(ff.as_pags(final["pag"]))
     assert ff.recover_site_counts(final["site_counts"], True)[0] == sum(len(m) for m in two_sites.values())
     assert not np.any(final["stats_mean"])
     assert not np.any(final["stats_moment"])
     # ... whereas a two-round job the hub stops after round one holds, by design, the pooled statistics.
-    after_round_one = fedavg(ff, {**config, "N_BOOTSTRAPS": 6}, two_sites, total_rounds=2, stop_after=1)
+    after_round_one = fedavg(ff, {**config, "N_BOOTSTRAPS": 6}, two_sites, total_rounds=rounds, stop_after=1)
     assert np.any(after_round_one["stats_moment"])
 
 
 def test_every_site_computes_the_same_pag_so_averaging_is_exact(ff, config, two_sites):
     """Round 2 of pooled mode: both sites must produce identical PAGs, or their mean is garbage."""
-    encoded = ff.encode(ff.empty_state(config))
-    targets, weights = [], []
-    for name, matrix in two_sites.items():
-        t, w, _ = ff.client_round(ff.decode(encoded), 0, 2, matrix, name, config)
-        targets.append(ff.encode(t))
-        weights.append(w)
-    pooled = {
-        k: sum(w * t[k].astype(np.float64) for w, t in zip(weights, targets, strict=True)) / sum(weights)
-        for k in ff.STATE_KEYS
-    }
-    pags = [
-        ff.client_round(ff.decode(pooled), 1, 2, matrix, name, config)[0]["pag"] for name, matrix in two_sites.items()
-    ]
+    pooled = _pooled_state(ff, config, two_sites)
+    pags = [ff.client_round(pooled, 1, 2, matrix, name, config)[0]["pag"] for name, matrix in two_sites.items()]
     assert np.array_equal(pags[0], pags[1])
 
 
 def _pooled_state(ff, config, sites):
     """Round 1 of pooled mode for every site, aggregated the way the platform does it."""
-    encoded = ff.encode(ff.empty_state(config))
-    targets, weights = [], []
-    for name, matrix in sites.items():
-        t, w, _ = ff.client_round(ff.decode(encoded), 0, 2, matrix, name, config)
-        targets.append(ff.encode(t))
-        weights.append(w)
-    pooled = {
-        k: sum(w * t[k].astype(np.float64) for w, t in zip(weights, targets, strict=True)) / sum(weights)
-        for k in ff.STATE_KEYS
-    }
-    return ff.decode(pooled)
+    return fedavg(ff, config, sites, total_rounds=2, stop_after=1)
 
 
 def test_a_variable_constant_at_a_site_is_refused_before_the_release(ff, config, two_sites):
@@ -572,7 +556,7 @@ def test_incomplete_rows_make_the_site_refuse(ff, config):
     assert (matrix.shape[0], dropped, len(person_ids)) == (99, 1, 99)
     with pytest.raises(ValueError, match="incomplete for VARIABLES") as err:
         ff.client_round(ff.empty_state(config), 0, 2, matrix, "site-1", config, person_ids=person_ids, dropped_rows=1)
-    assert "99" not in str(err.value)
+    assert_no_digits(str(err.value))
     assert ff.prepare_cohort(sample_scm(100, 8), config)[2] == 0
 
 
@@ -605,7 +589,30 @@ def test_filter_refusals_carry_no_numbers(ff, config):
     matrix = matrix_of(ff, sample_scm(300, 2), unscaled)
     with pytest.raises(ValueError, match="privacy filter") as err:
         ff.client_round(ff.decode(ff.encode(ff.empty_state(unscaled))), 0, 2, matrix, "site-1", unscaled)
-    assert not re.search(r"\d", str(err.value).replace("site-1", "")), str(err.value)
+    assert_no_digits(str(err.value))
+
+
+def test_round_two_checks_its_own_payload_against_the_filter(ff, config, two_sites, monkeypatch):
+    """Round 2 sends PAGs and the negated statistics, far fewer zeros than round 1: a site percentile between the
+    two passes round 1 and must stop round 2 (as RoundFailed, so the zeroing payload still travels)."""
+    pooled = _pooled_state(ff, config, two_sites)
+    name, matrix = next(iter(two_sites.items()))
+    received = ff.decode(ff.encode(ff.empty_state(config)))
+
+    def zero_share(target, before):
+        update = {key: target[key] - before[key] for key in target}
+        return (
+            100.0 * sum(int(np.count_nonzero(a == 0)) for a in update.values()) / sum(a.size for a in update.values())
+        )
+
+    first = zero_share(ff.client_round(received, 0, 2, matrix, name, config)[0], received)
+    second = zero_share(ff.client_round(pooled, 1, 2, matrix, name, config)[0], pooled)
+    assert second < first
+    policy = type("Policy", (), {"gamma": 0.01, "percentile": (first + second) / 2})()
+    monkeypatch.setattr(ff, "resolve_policy", lambda env: (policy, "env"))
+    ff.client_round(received, 0, 2, matrix, name, config)  # round 1 still clears it
+    with pytest.raises(ff.RoundFailed, match="percentile"):
+        ff.client_round(pooled, 1, 2, matrix, name, config)
 
 
 def test_a_site_percentile_above_the_payload_zero_fraction_is_refused(ff, config, two_sites, monkeypatch):
@@ -674,13 +681,7 @@ def test_knowledge_forbidden_pairs_carry_no_separating_set(ff, config):
 
 def test_shipped_config_names_only_known_variables(ff):
     config = json.loads((APP_FILES / "config.json").read_text())
-    variables = set(config["VARIABLES"])
-    knowledge = config["KNOWLEDGE"]
-    for key in ("EXOGENOUS", "SINKS", "NEVER_CONDITION_ON"):
-        assert set(knowledge[key]) <= variables, key
-    assert set(config["LOG_TRANSFORM"]) <= variables
-    assert set(config["SCALE"]) <= variables
-    assert ff.federation_mode(config) in ff.MODES
+    ff.validate_config(config)  # every key round 1 checks before a site releases
     assert config["GLOBAL_ROUNDS"] == 2 if config["FEDERATION"] == "pooled_statistics" else config["GLOBAL_ROUNDS"] >= 3
 
 
@@ -693,10 +694,6 @@ def test_get_model_buffers_match_the_wire_format():
     for key, shape in ff.state_shapes(config).items():
         assert tuple(state[key].shape) == shape, key
         assert not state[key].any()
-
-
-def test_the_flower_copy_is_the_same_module():
-    assert (FLOWER_APP / "federated_fci.py").read_bytes() == (APP_FILES / "federated_fci.py").read_bytes()
 
 
 # --- summarise_results.py --reference: SHD and precision / recall / F1 of the final graph ----------------
@@ -786,42 +783,130 @@ def test_reference_scoring_matches_on_a_real_run(ff, config, two_sites, summaris
 # --- NVFLARE client loop ----------------------------------------------------------------------
 
 
-def test_trainer_raises_a_last_round_failure_when_no_task_follows(ff, monkeypatch):
-    """A round that fails after the release still sends its zeroing payload, then the client ends in error.
+SHIPPED_CONFIG = json.loads((APP_FILES / "config.json").read_text())
 
-    The failure is deferred to the next task; when the failing round is the last one and the loop ends
-    (``receive()`` returns None), the client must still raise rather than exit cleanly.
+
+class FakeNvflare:
+    """``nvflare.client`` for one site: a task queue, and a server that adds the site's DIFF to the global state.
+
+    With one site the weighted mean of the DIFFs is that site's DIFF, so the global state follows exactly
+    what the client sent. ``sent`` keeps every FLModel the client built, as keyword arguments.
     """
+
+    def __init__(self, ff, config: dict, tasks: list[str]):
+        self.ff, self.tasks, self.kind, self.sent = ff, list(tasks), None, []
+        self.rounds = sum(t == "train" for t in tasks)
+        self.state = ff.encode(ff.empty_state(config))
+        self.round = 0
+
+    def init(self):
+        pass
+
+    def get_site_name(self):
+        return "site-1"
+
+    def is_running(self):
+        return True
+
+    def receive(self):
+        if not self.tasks:
+            return None
+        self.kind = self.tasks.pop(0)
+        return types.SimpleNamespace(params=dict(self.state), current_round=self.round, total_rounds=self.rounds)
+
+    def is_train(self):
+        return self.kind == "train"
+
+    def is_evaluate(self):
+        return self.kind == "evaluate"
+
+    def is_submit_model(self):
+        return self.kind == "submit"
+
+    def send(self, model: dict):
+        self.sent.append(model)
+        if self.kind == "train":
+            self.state = {
+                key: (self.state[key] + model["params"][key]).astype(np.float32) for key in self.ff.STATE_KEYS
+            }
+            self.round += 1
+
+    @staticmethod
+    def FLModel(**kwargs):  # noqa: N802 - the name nvflare.client uses
+        return kwargs
+
+
+@pytest.fixture
+def run_trainer(ff, monkeypatch):
+    """Run trainer.main() for one site over ``tasks`` on ``frame``; returns the fake and the client_round calls."""
     trainer = load_module("biomarker_nvflare_trainer", APP_FILES / "trainer.py")
-    zeros = {key: np.zeros(1, dtype=np.float32) for key in ff.STATE_KEYS}
-    tasks = iter([types.SimpleNamespace(params=zeros, current_round=1, total_rounds=2), None])
-    sent = []
-    fake_flare = types.SimpleNamespace(
-        init=lambda: None,
-        get_site_name=lambda: "site-1",
-        is_running=lambda: True,
-        receive=lambda: next(tasks),
-        is_train=lambda: True,
-        send=sent.append,
-        FLModel=lambda **kwargs: kwargs,
-    )
-    cause = RuntimeError("FCI failed in the last round")
 
-    def failing_round(*_args, **_kwargs):
-        raise ff.RoundFailed(zeros, 0, {"round_failed": 1.0}, cause)
+    def run(frame: pd.DataFrame, tasks: list[str], local_dev: bool = False):
+        config = {**SHIPPED_CONFIG, "N_BOOTSTRAPS": 4, "GLOBAL_ROUNDS": sum(t == "train" for t in tasks)}
+        fake = FakeNvflare(ff, config, tasks)
+        calls = []
 
-    monkeypatch.setattr(trainer, "flare", fake_flare)
-    monkeypatch.setattr(trainer, "parse_args", lambda: types.SimpleNamespace(project_id=""))
-    monkeypatch.setattr(trainer, "load_config", lambda: {"GLOBAL_ROUNDS": 2})
-    monkeypatch.setattr(trainer, "load_query", lambda: "")
-    monkeypatch.setattr(trainer, "resolve_dataframe", lambda *_: pd.DataFrame())
-    monkeypatch.setattr(trainer, "prepare_cohort", lambda *_: (np.zeros((0, 1)), [], 0))
-    monkeypatch.setattr(trainer, "client_round", failing_round)
-    monkeypatch.setattr(trainer, "encode", lambda target: target)
-    monkeypatch.setattr(trainer, "SummaryWriter", lambda: types.SimpleNamespace(add_scalar=lambda *a, **k: None))
-    with pytest.raises(RuntimeError, match="last round"):
+        def recording_round(*args, **kwargs):
+            calls.append(kwargs)
+            return ff.client_round(*args, **kwargs)
+
+        monkeypatch.setattr(trainer, "flare", fake)
+        monkeypatch.setattr(trainer, "FlipConstants", types.SimpleNamespace(LOCAL_DEV=local_dev))
+        monkeypatch.setattr(trainer, "parse_args", lambda: types.SimpleNamespace(project_id="p"))
+        monkeypatch.setattr(trainer, "load_config", lambda: config)
+        monkeypatch.setattr(trainer, "resolve_dataframe", lambda *_: frame.copy())
+        monkeypatch.setattr(trainer, "client_round", recording_round)
+        monkeypatch.setattr(trainer, "SummaryWriter", lambda: types.SimpleNamespace(add_scalar=lambda *a, **k: None))
+        run.last = fake  # still readable when main() raises
         trainer.main()
-    assert len(sent) == 1  # the zeroing payload travelled before the error
+        return fake, calls
+
+    return run
+
+
+@pytest.mark.parametrize("rounds", [2, 3])
+def test_the_nvflare_client_sends_weighted_diffs_and_a_statistics_free_result(ff, run_trainer, rounds):
+    """The FedAvg weight key, a DIFF payload, person ids for the floor and the deployed gate, end to end."""
+    fake, calls = run_trainer(shipped_shape_cohort(120), ["train"] * rounds + ["evaluate"])
+    trains = [m for m in fake.sent if "params" in m]
+    assert len(trains) == rounds
+    for model in trains:
+        assert model["params_type"] == "DIFF"  # the server adds it to the global state
+        assert model["meta"] == {"NUM_STEPS_CURRENT_ROUND": 120}  # NVFLARE's FedAvg weight key: the row count
+    for kwargs in calls:
+        assert kwargs["local_dev"] is False  # from FlipConstants, not hard-coded
+        assert kwargs["person_ids"] is not None  # the floor counts persons
+        assert len(kwargs["person_ids"]) == 120
+        assert kwargs["dropped_rows"] == 0
+    final = ff.decode(fake.state)
+    assert ff.statistics_residual(final) < ff.STATISTICS_RESIDUAL_TOLERANCE
+    assert np.any(ff.as_pags(final["pag"]))
+    assert fake.sent[-1]["metrics"]["pooled_rows"] == 120.0  # the evaluation reported on the final state
+
+
+def test_the_nvflare_client_applies_the_floor_at_evaluation(run_trainer):
+    """A site below the floor reports nothing at evaluation either: its metrics would include its count."""
+    with pytest.raises(ValueError, match="below the site floor") as refused:
+        run_trainer(shipped_shape_cohort(24), ["evaluate"])
+    assert_no_digits(str(refused.value))
+
+
+@pytest.mark.parametrize("tasks", [["train", "train"], ["train", "train", "evaluate"]])
+def test_a_round_two_failure_sends_the_zeroing_payload_then_ends_the_client_in_error(
+    ff, run_trainer, monkeypatch, tasks
+):
+    """With a task after it, the deferred error surfaces there; with none (the last round), after the loop."""
+    monkeypatch.setattr(ff, "fci_from_correlation", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("fci broke")))
+    with pytest.raises(RuntimeError, match="fci broke"):
+        run_trainer(shipped_shape_cohort(120), tasks)
+    fake = run_trainer.last
+    trains = [m for m in fake.sent if "params" in m]
+    assert len(trains) == 2  # round 2 still replied
+    assert len(fake.sent) == 2  # ... and a following evaluate task raised before evaluating anything
+    assert trains[1]["metrics"]["round_failed"] == 1.0
+    final = ff.decode(fake.state)
+    assert ff.statistics_residual(final) < ff.STATISTICS_RESIDUAL_TOLERANCE  # the statistics left the global state
+    assert not np.any(ff.as_pags(final["pag"]))
 
 
 # --- the downloaded model: statistics and PAG checks -------------------------------------------
