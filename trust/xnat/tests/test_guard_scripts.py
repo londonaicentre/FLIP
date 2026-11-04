@@ -39,7 +39,7 @@ from pathlib import Path
 
 import pytest
 
-from test_password_guards import CANONICAL_WEAK_VALUES, GUARD_XNAT_DB, WAIT_FOR_POSTGRES
+from test_password_guards import CANONICAL_WEAK_VALUES, GUARD_XNAT_DB, MAKE_XNAT_CONFIG, WAIT_FOR_POSTGRES
 
 # A guard that stops refusing is a security regression; a guard that stops
 # terminating is a boot hang. Both must fail the suite rather than wedge CI.
@@ -476,3 +476,138 @@ def test_xnat_web_entrypoint_retries_while_postgres_is_unreachable(
     assert len(calls.read_text().splitlines()) == 3, "expected two retries then a successful connection"
     assert "Postgres is unavailable - sleeping" in result.stderr
     assert record.read_text().splitlines() == ["0"]
+
+
+#
+# xnat-web: which Postgres the entrypoint waits for (FLIP#1583)
+#
+# The host used to be the literal "xnat-db", the Compose and Helm service name, which is
+# the one name Snowpark Container Services cannot resolve. These pin the three-way
+# resolution so the SPCS deploy and the Compose deploy cannot drift apart: an explicit
+# XNAT_DB_HOST, else the host in the JDBC URL XNAT itself connects with, else "xnat-db".
+#
+# An explicit XNAT_DB_HOST takes the whole decision, port included (XNAT_DB_PORT, default
+# 5432). Half-reading the URL would be worse than not reading it: a host override paired
+# with a port from a URL naming a different host is a combination nobody configured.
+#
+
+
+def _install_host_recording_psql(stub_bin: Path, calls: Path) -> None:
+    """Install a ``psql`` stub that records the -h and -p it was handed, then succeeds.
+
+    Args:
+        stub_bin (Path): Mock-bin directory.
+        calls (Path): File the stub writes ``<host>:<port>`` to.
+    """
+    quoted = shlex.quote(str(calls))
+    _write_stub(
+        stub_bin,
+        "psql",
+        'host=""; port=""\n'
+        'while [ "$#" -gt 0 ]; do\n'
+        '  case "$1" in\n'
+        '    -h) host="$2"; shift 2 ;;\n'
+        '    -p) port="$2"; shift 2 ;;\n'
+        "    *) shift ;;\n"
+        "  esac\n"
+        "done\n"
+        f'printf "%s:%s\\n" "$host" "$port" > {quoted}\n'
+        "exit 0",
+    )
+
+
+XNAT_DB_HOST_CASES = [
+    ({}, "xnat-db:5432", "compose-default"),
+    ({"XNAT_DB_HOST": "db.internal", "XNAT_DB_PORT": "6543"}, "db.internal:6543", "explicit-host-and-port"),
+    (
+        {"XNAT_DATASOURCE_URL": "jdbc:postgresql://xnat-db.app.flip-trust-gstt.snowflakecomputing.internal:5432/xnat"},
+        "xnat-db.app.flip-trust-gstt.snowflakecomputing.internal:5432",
+        "from-spcs-jdbc-url",
+    ),
+    ({"XNAT_DATASOURCE_URL": "jdbc:postgresql://plain-host/xnat"}, "plain-host:5432", "jdbc-url-without-port"),
+    (
+        {"XNAT_DB_HOST": "wins", "XNAT_DATASOURCE_URL": "jdbc:postgresql://loses:5433/xnat"},
+        "wins:5432",
+        "explicit-host-beats-jdbc-url",
+    ),
+]
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [(case[0], case[1]) for case in XNAT_DB_HOST_CASES],
+    ids=[case[2] for case in XNAT_DB_HOST_CASES],
+)
+def test_xnat_web_entrypoint_waits_for_the_configured_database_host(
+    shell: tuple[str, ...], overrides: dict[str, str], expected: str, stub_bin: Path, tmp_path: Path
+) -> None:
+    """The wait must target the database XNAT is configured to use, on any platform."""
+    calls = tmp_path / "psql-host"
+    _install_host_recording_psql(stub_bin, calls)
+    _install_argv_recorder(stub_bin, "record-argv", tmp_path / "argv")
+
+    result = _run(WAIT_FOR_POSTGRES, _xnat_web_env(**overrides), shell=shell, stub_bin=stub_bin, argv=("record-argv",))
+
+    assert result.returncode == 0, result.stderr
+    assert calls.read_text().strip() == expected
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+def test_make_xnat_config_survives_an_unwritable_share_dir(
+    shell: tuple[str, ...], stub_bin: Path, tmp_path: Path
+) -> None:
+    """A share directory the container cannot create must warn, not kill the container.
+
+    Under SPCS the process is uid 1001 and /usr/local/share is root-owned, so the
+    unconditional ``mkdir -p`` aborted the entrypoint (it runs under ``set -e``) before
+    Tomcat ever started. The rendered configuration is the deliverable; the copy is not.
+    """
+    xnat_home = tmp_path / "home"
+    (xnat_home / "config").mkdir(parents=True)
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a directory")
+
+    result = _run(
+        MAKE_XNAT_CONFIG,
+        {
+            "XNAT_HOME": str(xnat_home),
+            "XNAT_CONFIG_SHARE_DIR": str(blocked / "xnat"),
+            "XNAT_DATASOURCE_DRIVER": "org.postgresql.Driver",
+            "XNAT_DATASOURCE_URL": "jdbc:postgresql://xnat-db:5432/xnat",
+            "XNAT_DATASOURCE_USERNAME": "xnat",
+            "XNAT_DATASOURCE_PASSWORD": STRONG_PASSWORD,
+        },
+        shell=shell,
+        stub_bin=stub_bin,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "skipping the config copy" in result.stderr
+    assert (xnat_home / "config" / "xnat-conf.properties").exists()
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+def test_make_xnat_config_writes_the_copy_where_it_can(shell: tuple[str, ...], stub_bin: Path, tmp_path: Path) -> None:
+    """With a writable destination the convenience copy is still made."""
+    xnat_home = tmp_path / "home"
+    (xnat_home / "config").mkdir(parents=True)
+    share = tmp_path / "share" / "xnat"
+
+    result = _run(
+        MAKE_XNAT_CONFIG,
+        {
+            "XNAT_HOME": str(xnat_home),
+            "XNAT_CONFIG_SHARE_DIR": str(share),
+            "XNAT_DATASOURCE_DRIVER": "org.postgresql.Driver",
+            "XNAT_DATASOURCE_URL": "jdbc:postgresql://xnat-db:5432/xnat",
+            "XNAT_DATASOURCE_USERNAME": "xnat",
+            "XNAT_DATASOURCE_PASSWORD": STRONG_PASSWORD,
+        },
+        shell=shell,
+        stub_bin=stub_bin,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (share / "xnat-conf.properties").exists()
+    assert (share / "prefs-init.ini").exists()

@@ -179,6 +179,43 @@ lists the archived scans that have DICOM and no NIfTI and, with `--launch`, conv
 Container Service bulk launch per project. See
 [`../deploy/helm/TROUBLESHOOTING.md` §2.3e](../deploy/helm/TROUBLESHOOTING.md#23e-scans-archived-without-nifti-converting-the-backlog).
 
+#### Converting on Snowflake: `CONVERTER_BACKEND=snowflake`
+
+Snowpark Container Services has no Docker socket, no swarm and no Kubernetes backend, so XNAT's
+Container Service cannot launch dcm2niix there at all. `CONVERTER_BACKEND` selects which machinery
+converts, and it stays at `container-service` on Compose and Kubernetes, which are unchanged.
+
+On `snowflake` (`imaging_api/services/snowflake_converter.py`, FLIP#1583):
+
+1. imaging-api CALLs `APP.CONVERT_SCAN(project, session, scan)` instead of launching a wrapper. That
+   is an owner's-rights procedure owned by `FLIP_<CODE>_CONVERTER` and created by Terraform
+   (FLIP#1581), because launching a job needs `CREATE SERVICE` and a service's OAuth token carries
+   the role that OWNS it: granting the services role that privilege would let the fl-client, which
+   runs researcher code, start arbitrary containers. The procedure validates the three identifiers
+   and launches a specification fixed in Terraform, so the image, pool, command and mounts are not
+   parameters this service can influence.
+2. It polls `APP.CONVERT_STATUS`. An empty status (`[]`) means the job exists and has not been
+   scheduled yet, which is **pending**: reading it as a failure relaunches a healthy conversion on
+   every poll.
+3. It reads the converter's output from its own mount of the `CONVERTER_IO` stage, at
+   `<CONVERTER_IO_DIR>/<project>/<session>/<scan>/`, and registers it in XNAT over REST as a `NIFTI`
+   resource (`PUT .../resources/NIFTI`, then one `PUT .../files/<name>?inbody=true` per file). That
+   is the step the Container Service output handler performed before; nothing else does it here.
+
+`session` is the XNAT session **label**, because the archive tree is
+`<project>/arc001/<label>/SCANS/<scan>/DICOM` and that is the path the procedure mounts; the REST
+registration addresses the **experiment id**. Both appear on this path and they are not the same.
+
+`reconvert_nifti` takes the same route (`make -C trust/deploy/snowflake reconvert-nifti KIT=<CODE>`
+runs it as a job service). The scan selection is identical, because it reads XNAT and nothing else.
+Two things it cannot do there: `--max-attempts` has nothing to act on, since `CONVERT_SCAN` drops
+and replaces a scan's job on each launch and leaves no history to count; and there is no
+wrapper-image check, since the image is fixed in the procedure rather than chosen per launch.
+
+The credential is the OAuth session token SPCS mounts at `SNOWFLAKE_TOKEN_FILE`
+(`authenticator="oauth"`). There is no password and no private key on this path, and
+`snowflake-connector-python` is imported lazily so a Compose trust never loads it.
+
 ### Retrieval
 
 Get import status or count for a project:
@@ -250,6 +287,12 @@ Key environment variables. Most come from the trust kit file — template at [`.
 | `DATA_ACCESS_API_URL` | Internal URL of the data-access-api (default `http://data-access-api:8000`) |
 | `DCM2NIIX_IMAGE` | Container Service image used for automatic DICOM→NIfTI conversion. The default is `ghcr.io/londonaicentre/xnat-dcm2niix:<version>` at the tag `ARG DCM2NIIX_VERSION` in `trust/xnat/dcm2niix/Dockerfile` names — the one source of truth, which `trust/xnat/dcm2niix/check_image_pin_sync.sh` (pre-commit + CI, FLIP#980) checks `imaging_api/config.py` against. The per-project event subscription looks the XNAT command up by this **exact** image string, so it must match what `trust/xnat/xnat/config/dcm2niix_command.json` registers — pinned by version tag, never `latest` |
 | `BASE_IMAGES_DOWNLOAD_DIR` | **Required.** Root of the downloaded-images tree as seen **inside the container** — the composes and the Helm chart inject the literal `/app/data/images`. The kit file's same-named `BASE_IMAGES_DOWNLOAD_DIR` is a different value: the *host* directory the composes bind-mount onto that path (the same host-vs-container dual meaning the trust-api README notes for the kit's `OMOP_DB_PORT`). imaging-api mounts the whole tree; each fl-client mounts only its own `net-N` slice |
+| `CONVERTER_BACKEND` | Which machinery converts DICOM to NIfTI: `container-service` (default, Compose and Kubernetes) or `snowflake` (SPCS, where Container Service cannot run). See "Converting on Snowflake" above. A setting rather than an auto-detection, because "am I on SPCS?" has no reliable answer and a wrong guess silently picks a converter that cannot run |
+| `SNOWFLAKE_HOST`, `SNOWFLAKE_ACCOUNT` | Injected into every SPCS container by the platform; not set by the spec, which is why both default to empty. Read only when `CONVERTER_BACKEND=snowflake` |
+| `SNOWFLAKE_DATABASE`, `SNOWFLAKE_SCHEMA` | Where the converter procedures live: `FLIP_TRUST_<CODE>` and `APP` |
+| `SNOWFLAKE_TOKEN_FILE` | The SPCS OAuth session token (default `/snowflake/session/token`). This **is** the credential; the service spec must set `mountSessionToken: true` |
+| `CONVERTER_IO_DIR` | This container's mount of the `CONVERTER_IO` stage (default `/converter-io`), where the converter job writes and imaging-api reads |
+| `CONVERT_POLL_SECONDS`, `CONVERT_TIMEOUT_SECONDS` | Seconds between `CONVERT_STATUS` polls (default 15) and the ceiling on one scan's conversion (default 1800) |
 | `REIMPORT_STUDIES_ENABLED` | Whether the retry-failed-imports route is available (default `true`). When `false`, `PUT` to the reimport endpoint returns `418` with "Reimport studies feature is not enabled" |
 | `AES_KEY_BASE64` | AES-256 key shared with the hub, used to open the AES-256-GCM-enveloped project identifiers the FL client forwards (FLIP#1179). Must be byte-identical to the hub's and to trust-api's; a mismatch fails closed |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |

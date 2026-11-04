@@ -63,5 +63,19 @@ smtpAuth=$XNAT_SMTP_AUTH
 EOF
 fi
 
-mkdir -p /usr/local/share/xnat
-find $XNAT_HOME/config -mindepth 1 -maxdepth 1 -type f -exec cp {} /usr/local/share/xnat \;
+# A copy of the rendered configuration, for an operator reading it back out of a running
+# container. /usr/local/share is root-owned in the image and this script runs as uid 1001,
+# so on Snowpark Container Services the mkdir failed and, under the entrypoint's `set -e`,
+# took the whole container down before Tomcat ever started (FLIP#1583, spike FLIP#1577).
+#
+# Two changes: the destination is configurable (XNAT_CONFIG_SHARE_DIR, which the SPCS spec
+# points at a writable path), and failing to write it is a warning rather than a fatal
+# error. It is a convenience copy; $XNAT_HOME/config is the file XNAT actually reads.
+XNAT_CONFIG_SHARE_DIR="${XNAT_CONFIG_SHARE_DIR:-/usr/local/share/xnat}"
+if mkdir -p "$XNAT_CONFIG_SHARE_DIR" 2>/dev/null; then
+  find "$XNAT_HOME/config" -mindepth 1 -maxdepth 1 -type f -exec cp {} "$XNAT_CONFIG_SHARE_DIR" \; || \
+    >&2 echo "WARNING: could not copy the rendered XNAT config into $XNAT_CONFIG_SHARE_DIR (continuing)"
+else
+  >&2 echo "WARNING: $XNAT_CONFIG_SHARE_DIR is not writable by uid $(id -u); skipping the config copy."
+  >&2 echo "         Set XNAT_CONFIG_SHARE_DIR to a writable path to keep it."
+fi

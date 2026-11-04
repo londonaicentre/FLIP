@@ -50,11 +50,23 @@ RUN rm -f /tmp/xnat-web-${XNAT_VERSION}.war
 # the webapp (not a bind mount) so it is present in dev and prod alike.
 COPY branding/flip-logo.png ${TOMCAT_XNAT_FOLDER_PATH}/images/flip-logo.png
 
-# Create a non-root xnat user and group, and set ownership on all XNAT paths
+# Create a non-root xnat user and group, and set ownership on all XNAT paths.
+#
+# conf/Catalina/localhost is pre-created because Tomcat creates it on first start for its
+# per-host context descriptors, and under Snowpark Container Services it could not:
+# ${CATALINA_HOME}/conf is root-owned and the process is uid 1001, so every boot logged a
+# SEVERE (non-fatal, but it recurs and hides real errors). Creating it here makes the
+# runtime write unnecessary on every platform (FLIP#1583, spike FLIP#1577).
+#
+# /usr/local/share/xnat is the default destination of make-xnat-config.sh's convenience
+# copy of the rendered configuration; owned by xnat so the copy succeeds for the same reason.
 RUN groupadd --system --gid 1001 xnat \
     && useradd --system --uid 1001 --gid xnat --home "${XNAT_HOME}" --shell /sbin/nologin xnat \
+    && mkdir -p "${CATALINA_HOME}/conf/Catalina/localhost" /usr/local/share/xnat \
     && chown -R xnat:xnat \
         "${TOMCAT_XNAT_FOLDER_PATH}" \
+        "${CATALINA_HOME}/conf/Catalina" \
+        /usr/local/share/xnat \
         "${XNAT_HOME}" \
         "${XNAT_ROOT}"
 
