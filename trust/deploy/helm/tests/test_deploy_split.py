@@ -87,15 +87,35 @@ def _upgrade_invocation(recipe: str) -> str:
 
 
 @needs_make
-def test_helm_waits_so_helm_judges_the_rollout():
-    """Without --wait, exit 0 means "applied", not "rolled out".
+def test_the_rollout_is_waited_for_before_the_deploy_reports_success():
+    """Without a rollout wait, exit 0 means "applied", not "rolled out".
 
-    FLIP#1228 was a correct chart that never reached the running pod across five upgrades. With
-    --wait that upgrade fails rather than exiting 0, and the check is Helm's own, not a
-    reimplementation of it.
+    FLIP#1228 was a correct chart that never reached the running pod across five upgrades. The
+    wait is scoped rather than Helm's own `--wait`, because `--wait` is all-or-nothing and one
+    permanently-Pending optional pod (an idle GPU fl-client) would fail every upgrade; see
+    scripts/rollout_wait.py. What matters here is that SOMETHING fails the deploy when a core
+    workload does not roll out.
     """
-    upgrade = _upgrade_invocation(deploy_recipe())
-    assert "--wait" in upgrade, upgrade
+    recipe = deploy_recipe()
+    assert "rollout_wait.py" in recipe, recipe
+    assert recipe.index("helm upgrade --install") < recipe.index("rollout_wait.py"), recipe
+
+
+@needs_make
+def test_helms_own_all_or_nothing_wait_is_not_used():
+    """`--wait` fails the whole upgrade on one unschedulable pod (verified on a live cluster:
+    exit 1, release left `failed`, every other workload healthy). Two supported configurations
+    sit Pending by design — an fl-client on a scale-from-zero GPU pool, and one awaiting its
+    kit — so `--wait` would turn every unattended upgrade (FLIP#1640) into a failure."""
+    assert "--wait" not in _upgrade_invocation(deploy_recipe())
+
+
+@needs_make
+def test_a_failed_rollout_exits_1_not_0():
+    """The scoped wait must be wired to fail the deploy, not merely print."""
+    recipe = deploy_recipe()
+    tail = recipe[recipe.index("rollout_wait.py") :]
+    assert "exit 1" in tail, tail
 
 
 @needs_make
@@ -162,9 +182,7 @@ def test_a_release_with_no_hooks_is_silent():
 
 def test_unreadable_input_is_silent_rather_than_wrong():
     """A diagnostic that cannot read the cluster must not change what the deploy reported."""
-    proc = subprocess.run(
-        [sys.executable, str(HOOKS_PY)], input="not json", capture_output=True, text=True, timeout=60
-    )
+    proc = subprocess.run([sys.executable, str(HOOKS_PY)], input="not json", capture_output=True, text=True, timeout=60)
     assert proc.returncode == 0
     assert proc.stdout.strip() == ""
 

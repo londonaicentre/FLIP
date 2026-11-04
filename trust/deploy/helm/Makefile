@@ -246,9 +246,13 @@ deploy: preflight ## Deploy the Helm chart to the cluster
 		NAMESPACE=$(NAMESPACE) RELEASE_NAME=$(RELEASE_NAME) KUBECTL="$(KUBECTL)" $(CHART_DIR)/scripts/migrate-strategy.sh
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
-		--wait --timeout $(HELM_TIMEOUT) \
+		--timeout $(HELM_TIMEOUT) \
 		--set xnat.initJob.enabled=false \
 		$(VALUES_OPTS) \
+		|| { $(SUBMAKE) --no-print-directory failing-hooks; exit 1; }
+	@python3 $(CHART_DIR)/scripts/rollout_wait.py \
+		--namespace $(NAMESPACE) --release $(RELEASE_NAME) \
+		--timeout $(HELM_TIMEOUT) --kubectl "$(KUBECTL)" \
 		|| { $(SUBMAKE) --no-print-directory failing-hooks; exit 1; }
 	@$(SUBMAKE) --no-print-directory xnat-init || { \
 		printf '\033[0;33m%s\033[0m\n' \
