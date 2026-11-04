@@ -84,8 +84,10 @@ With `trust_code = GSTT`:
 | Egress integration | `FLIP_GSTT_HUB_EAI` (optional, off by default) |
 | Account policies | `FLIP_GSTT_ADMIN_NP`, `FLIP_GSTT_PASSWORD_POLICY`, `FLIP_GSTT_SESSION_POLICY` |
 | Resource monitor | `FLIP_GSTT_RM` |
-| Platform database | `FLIP_PLATFORM`, schemas `OBS` (the event table) and `POLICIES` |
+| Platform database | `FLIP_PLATFORM`, schemas `OBS` (the event table and its views) and `POLICIES` |
 | Event table | `FLIP_PLATFORM.OBS.FLIP_EVENTS` |
+| Observability views | `FLIP_PLATFORM.OBS.V_EVENTS`, `V_SERVICE_STATUS`, `V_SERVICE_RESTARTS`, `V_RECENT_ERRORS`, `V_FL_CLIENT_LOGS`, `V_COMPUTE_POOL_COST`, `V_WAREHOUSE_COST` |
+| Retention task | `FLIP_PLATFORM.OBS.FLIP_PLATFORM_PRUNE_EVENTS` |
 
 `FLIP_<CODE>_ADMIN` is **retired** (two-tier decision, 2026-10-20, epic #1589). See the migration
 note below.
@@ -94,6 +96,53 @@ The event table lives in `FLIP_PLATFORM`, not in `FLIP_TRUST_<CODE>`, because th
 account parameter must point somewhere that outlives any one trust: in the trust database a
 workload `make destroy` would silently turn the account's logging off. `FLIP_<CODE>_OBSERVER` is
 granted `USAGE` on the database and schema and `SELECT` on the event table.
+
+## Observability (FLIP#1584)
+
+Everything a trust on Snowflake can be watched with lives in `FLIP_PLATFORM.OBS`, and
+`FLIP_<CODE>_OBSERVER` is the only role that can read it.
+
+| Piece | Where | Why here and not in the workload root |
+| ----- | ----- | ------------------------------------- |
+| Event table `FLIP_EVENTS` + the `EVENT_TABLE` account parameter | `observability.tf` | Setting an account parameter needs `ACCOUNTADMIN`, and a table in `FLIP_TRUST_<CODE>` would go with a workload `make destroy` |
+| Views over the event table (`V_EVENTS`, `V_SERVICE_STATUS`, `V_SERVICE_RESTARTS`, `V_RECENT_ERRORS`, `V_FL_CLIENT_LOGS`) | `observability_views.tf` | They sit beside the table they read, and a workload destroy leaves them standing |
+| Cost views (`V_COMPUTE_POOL_COST`, `V_WAREHOUSE_COST`) | `observability_views.tf` | A view runs with its **owner's** rights, so a view over `SNOWFLAKE.ACCOUNT_USAGE` can only be owned by a role holding `IMPORTED PRIVILEGES` on database `SNOWFLAKE`. The deploy role holds four account privileges and that is not one of them |
+| Retention | `observability.tf`, task `FLIP_PLATFORM_PRUNE_EVENTS` | Platform-owned, so the deploy key can neither lengthen the window nor switch it off |
+| Dashboard | [`dashboards/`](dashboards/) | Snowsight has no API and no provider resource, so the dashboard is in-repo as the SQL of its tiles |
+
+Who sees what:
+
+- `FLIP_<CODE>_OBSERVER` holds `USAGE` on `FLIP_PLATFORM` and its `OBS` schema, `SELECT` on the
+  event table and `SELECT` on the views (current and future).
+- `FLIP_<CODE>_OBSERVER` is granted **only** to `FLIP_<CODE>_DEPLOY`, never into the service
+  hierarchy. `FLIP_<CODE>_SVC` has no `USAGE` on `FLIP_PLATFORM` at all, so a running container
+  cannot read its neighbours' logs.
+- The observer gets **no** `IMPORTED PRIVILEGES` and no `SNOWFLAKE` database role. It reads
+  account usage through the owner's-rights views and nowhere else.
+
+### Retention
+
+`DATA_RETENTION_TIME_IN_DAYS` on an event table is **Time Travel, not row expiry**: Snowflake
+never deletes event rows by itself. So the retention policy is the daily task
+`FLIP_PLATFORM_PRUNE_EVENTS`, which deletes records older than `event_table_retention_days`
+(default 14, capped at 90), and the table's Time Travel window is held at one day so a pruned row
+is not kept for another week in storage. The task runs on `FLIP_<CODE>_WH`, the platform-owned
+warehouse with the resource monitor attached.
+
+### Log volume
+
+There is deliberately **no account, database or schema `LOG_LEVEL` parameter** in either root:
+that would collect Snowflake-internal output for every object in the account and bill its storage.
+Verbosity is set per service, in each spec's `logExporters.eventTableConfig.logLevel`, from
+`service_log_level` in the workload root (default `INFO`; `DEBUG` and `TRACE` are refused by a
+variable validation, and a static guard keeps them out of the tfvars reach).
+
+### The dashboard
+
+[`dashboards/flip_trust_observability.sql`](dashboards/flip_trust_observability.sql) is the
+dashboard, one statement per `-- TILE:` marker; [`dashboards/README.md`](dashboards/README.md) says
+how to paste it into Snowsight as a dashboard or run it as a worksheet. The static guards pin both
+directions: every view Terraform creates has a tile, and every view a tile reads exists.
 
 ## Credentials
 
@@ -245,6 +294,12 @@ Snowflake credential exists in CI, and this tier is never applied there by desig
   applied. One trust per account is the tested shape; `FLIP_PLATFORM` is shared when it is not.
 - **No budget resource.** Snowflake budgets are a native application with no provider resource, so
   the credit cap here is the resource monitor plus the workload tier's pool guards.
+- **Grafana on SPCS is a follow-up, not part of #1584.** A Grafana service in the trust's compute
+  pool, reading the event table through the Snowflake data source, would give dashboards that
+  refresh themselves and alerting. It needs the egress integration (so not on a trial account), a
+  service with an endpoint and its own authentication, and a decision about who may reach that
+  endpoint. The Snowsight dashboard here is the no-new-attack-surface answer and stays useful
+  either way. Tracked under epic #1589.
 - **Preview resources.** The network rule, the external access integration and the
   password/session/network policy attachments are still preview features in the 2.x provider and
   are enabled explicitly in `providers.tf`.

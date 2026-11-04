@@ -94,7 +94,7 @@ resource "snowflake_procedure_sql" "convert_scan" {
       volumes:
       - {name: input, source: "@${local.archive_stage}/' || :PROJECT || '/arc001/' || :SESSION || '", uid: 1001, gid: 1001}
       - {name: output, source: "@${local.converter_stage}/' || :PROJECT || '/' || :SESSION || '/' || :SCAN || '", uid: 1001, gid: 1001}
-      logExporters: {eventTableConfig: {logLevel: INFO}}';
+      logExporters: {eventTableConfig: {logLevel: ${var.service_log_level}}}';
       -- A re-run of the same scan replaces its finished job.
       EXECUTE IMMEDIATE 'DROP SERVICE IF EXISTS ${local.app_schema_fqn}.' || :JOB;
       EXECUTE IMMEDIATE 'EXECUTE JOB SERVICE IN COMPUTE POOL ${local.job_pool} NAME = ${local.app_schema_fqn}.' || :JOB
