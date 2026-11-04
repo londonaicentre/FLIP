@@ -271,10 +271,10 @@ Whatever the tier:
 - ☐ **For GPU tiers, an NVIDIA GPU with driver version 580 or newer, and the NVIDIA Container Toolkit.** FLIP's
   training images bring their own CUDA runtime, so the host needs no CUDA toolkit. A trust can start CPU-only and
   add a GPU later.
-- ☐ **Or one of the alternatives:** an Azure VM (:doc:`deploy-flip-node-azure`), an AWS EC2 instance
-  (:doc:`deploy-flip-node-aws-ec2`) or EKS cluster (:doc:`deploy-flip-node-aws-eks`) built from FLIP's own
-  infrastructure code in the trust's account, or the Helm chart on the trust's Kubernetes
-  (:doc:`deploy-flip-node-kubernetes`).
+- ☐ **Or one of the alternatives:** the Helm chart on the trust's Kubernetes (:doc:`deploy-flip-node-kubernetes`),
+  or, built from FLIP's own infrastructure code in the trust's account, an AWS EC2 instance
+  (:doc:`deploy-flip-node-aws-ec2`) or EKS cluster (:doc:`deploy-flip-node-aws-eks`), or an Azure VM
+  (:doc:`deploy-flip-node-azure`) or AKS cluster (:doc:`deploy-flip-node-azure-aks`).
 - ☐ **Or a Trusted Research Environment**, where governance bars live access to the hospital systems. The node then
   runs inside the TRE against a project-specific extract that the TRE operator loads (:doc:`deploy-flip-node-in-tre`).
 

@@ -11,12 +11,13 @@
 
 .. _deploy-flip-node-kubernetes:
 
-##################################
-Deploy a FLIP node on Kubernetes
-##################################
+########################################
+Deploy on an existing Kubernetes cluster
+########################################
 
 The ``flip-trust`` Helm chart deploys the trust node onto a Kubernetes cluster the trust already runs. Use it when
-the trust's platform team operates Kubernetes rather than standalone hosts. This page is step 5 of
+the trust's platform team operates Kubernetes rather than standalone hosts. To build a cluster for the chart from
+code instead, see :doc:`deploy-flip-node-aws-eks` or :doc:`deploy-flip-node-azure-aks`. This page is step 5 of
 :doc:`onboarding-a-trust`.
 
 As on every platform, **all traffic to the hub is outbound**. Every application Service is ``ClusterIP``; the one
@@ -286,7 +287,8 @@ with ``flClient.kit.source=secret`` (FLIP#1390):
   moves PGDATA back to the volume root (both databases crash-loop) and looks for the kit on the node (the FL client
   stays ``Pending``).
 - On EKS the overlay is ``values-eks.yaml`` (the same settings, for the EBS CSI default class). The
-  :doc:`EKS root <deploy-flip-node-aws-eks>` creates the cluster and runs both steps for you with ``make join``.
+  :doc:`EKS root <deploy-flip-node-aws-eks>` creates the cluster and runs both steps for you with ``make join``;
+  the :doc:`AKS root <deploy-flip-node-azure-aks>` does the same with ``make aks-join``.
 - The overlays live beside the chart in the repository, not in the packaged chart, so a deploy from a chart tarball
   passes a checkout's copy by path.
 - ``kit-secret`` makes one key per mounted file in ``<release>-flip-trust-fl-kit``. It refuses a kit missing its

@@ -6,7 +6,7 @@ Deploy a FLIP node on Amazon EKS
 
 A FLIP node on Amazon EKS runs the trust-side stack as the ``flip-trust`` Helm chart on a small EKS
 cluster, built from code in ``trust/deploy/terraform/aws/eks``. It is the AWS twin of the AKS cluster on
-:doc:`deploy-flip-node-azure`: a cluster for the chart and nothing else. It can go in **any AWS account and
+:doc:`deploy-flip-node-azure-aks`: a cluster for the chart and nothing else. It can go in **any AWS account and
 VPC**, including the site's own: it reads nothing from the hub (no remote state, no hub env file, no hub
 credentials). Its only links to a hub are its **kit** and its **registration**, as for any trust. The
 nodes have no public IP and accept no inbound connection; the operator reaches the cluster's API from one

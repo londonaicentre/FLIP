@@ -31,7 +31,7 @@ server; no inbound ports are exposed from the K8s cluster.
 
 > **Deploying a trust?** The operator guide — prerequisites, staging the FL kit, deploying,
 > the `HELM_TIMEOUT` wait budget, verifying, upgrading and uninstalling — is
-> [Deploy a FLIP node on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html).
+> [Deploy on an existing Kubernetes cluster](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html).
 > This README is the chart's reference: values, secrets, internals and development notes.
 
 ## Quickstart
