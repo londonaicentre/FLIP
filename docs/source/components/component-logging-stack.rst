@@ -209,14 +209,17 @@ services, with the same images in the Helm chart (``observability.enabled`` turn
      - Image
      - Role
    * - ``loki``
-     - ``grafana/loki:3.4.0``
+     - ``ghcr.io/londonaicentre/mirror/grafana/loki:3.4.0``
      - Log storage
    * - ``alloy``
-     - ``grafana/alloy:v1.9.0``
+     - ``ghcr.io/londonaicentre/mirror/grafana/alloy:v1.9.0``
      - Log collector (starts after Loki)
    * - ``grafana``
-     - ``grafana/grafana:11.5.0``
+     - ``ghcr.io/londonaicentre/mirror/grafana/grafana:11.5.0``
      - Dashboard (starts after Loki)
+
+The images are FLIP's byte-identical mirrors of upstream's, pinned by digest, so a trust pulls them from GHCR
+alongside FLIP's own images (:gh:`trust/deploy/mirror-images.manifest`).
 
 In production, Loki and Grafana keep their data in persistent volumes. On hosts provisioned with Ansible (AWS
 EC2 or on-prem), these are ``/opt/flip/volumes/loki`` and ``/opt/flip/volumes/grafana``.

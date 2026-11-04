@@ -163,6 +163,19 @@ uv add <package-name> --group <group>  # dependency in a named group
 The `pyproject.toml` file is the source of truth for dependencies. The Python version in `.python-version` must match
 the version used in the service's Dockerfile.
 
+### Third-party container images (one registry per trust node)
+
+Every image a trust node runs comes from `ghcr.io/londonaicentre/`: FLIP's own, and byte-identical copies of the
+third-party ones (Grafana, Loki, Alloy, XNAT's Docker socket proxy, the chart's `uv` and `busybox` helpers) under
+`ghcr.io/londonaicentre/mirror/`, listed with their digests in `trust/deploy/mirror-images.manifest` and pinned
+`<name>:<tag>@<digest>` in the compose files, the Helm chart and the Ansible seed role
+(`scripts/tests/test_mirror_images.py` fails on drift). A site's proxy allowlist is by host name and cannot be
+narrowed to FLIP's packages, so one registry is the smallest ask and the digest is the control. Never add a
+`docker.io` image to anything a trust runs. To bump one: `docker buildx imagetools inspect <upstream>` for the new
+digest, update the manifest line and every pin, then `gh workflow run mirror_images.yml --ref <branch>` (or
+`make mirror-images` with a `write:packages` GHCR login) before the PR merges; CI checks the mirror on the PR and
+copies on develop/main. Loki and Grafana are AGPL-3.0: each mirror package's description links to its upstream source.
+
 ### Dependency cooldown (supply-chain protection)
 
 Recent npm and PyPI supply-chain attacks follow a consistent pattern: a maintainer's credentials are compromised, a

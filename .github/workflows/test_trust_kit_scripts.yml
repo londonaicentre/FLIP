@@ -51,6 +51,11 @@ on:
       - "fl-services/flower/*/Dockerfile"
       - "trust/deploy/helm/templates/**"
       - "trust/deploy/helm/values*.yaml"
+      # test_mirror_images.py asserts every third-party image a trust node runs is pinned to the
+      # mirror manifest (FLIP#1721).
+      - "trust/deploy/mirror-images.manifest"
+      - "trust/xnat/docker-compose-stack.yml"
+      - "trust/deploy/ansible/roles/flip_trust_seed/defaults/main.yml"
       # test_secret_scanning_gate.py asserts on the secret-scanning workflow, the
       # pre-commit pin and the baseline (FLIP#1215) — same trap, same fix.
       - ".github/workflows/secret-scanning.yml"
