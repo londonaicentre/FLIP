@@ -138,7 +138,7 @@ A mock trust can run in the hub's own account on the Landing Zone Accelerator es
 no internet egress: the estate's central firewall drops every connection it has no rule for. The platform
 team allows the hosts in :ref:`deploy-trust-node-network` from the node's address, and from nothing else in
 the VPC, so the hub keeps no internet access. Agree the address with them before ``plan``. Otherwise the
-node differs from one in its own account in five ways:
+node differs from one in its own account in four ways:
 
 - **An existing subnet and a fixed address.** The estate denies ``ec2:CreateVpc``, so ``SUBNET_ID`` is one
   of the hub VPC's ``app`` subnets, and ``PRIVATE_IP`` is the address the firewall allows. Changing
@@ -149,9 +149,6 @@ node differs from one in its own account in five ways:
 - **The kit from the hub's bucket.** ``KIT_BUCKET`` and ``KIT_KMS_KEY_ARN`` are the hub's kit bucket and
   its key, and ``FL_KIT_DATE`` the hub's kit date for its FL backend. The node reads its slot's kit and the
   vocabulary itself, so ``provision`` and ``stage-kit`` need no ``KIT_SRC``.
-- **Images from GHCR.** Registration fills the kit's ``DOCKER_REGISTRY`` with the hub's registry, an ECR
-  pull-through cache the node cannot log in to yet. Set it to ``ghcr.io/londonaicentre/`` before
-  ``deploy``.
 
 .. code-block:: bash
 
