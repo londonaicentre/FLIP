@@ -198,7 +198,14 @@ logged when it differs). Consequences:
   without re-running the query, so it cannot re-admit patients. There is no way to replace a membership:
   only a project with no record (never frozen, deleted, or lost with the store) is frozen afresh. The
   store is write-once at the filesystem level (a single rename the kernel refuses over an existing
-  record), and a record that is present but unreadable answers 500 rather than being frozen over;
+  record), and a record that is present but unreadable answers 500 rather than being frozen over.
+  On Snowpark Container Services (FLIP#1580) that directory is a mounted **stage volume**, i.e. an
+  object-store prefix whose rename is emulated by a FUSE layer with semantics Snowflake does not
+  document; no live account exists to measure it against, so it is an assumption pending the SPCS
+  runtime spike (FLIP#1579). Write-once therefore does not rest on the rename alone: the service
+  checks for an existing record before writing and reads back what landed afterwards, refusing
+  unless it is the record that request wrote. On a real filesystem both checks are redundant;
+  on a permissive mount they are what stops a re-queued snapshot overwriting an approved cohort;
 - the governance policy is asked at freeze time as for `cohort.statistics` — the freeze reports the
   same counts to the hub — so a project denied statistics is not frozen, and a policy
   `min_cohort_size` raise applies to the freeze as it does to the statistics route;

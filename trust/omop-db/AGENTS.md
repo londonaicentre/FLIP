@@ -88,6 +88,18 @@ tolerate the DICOM vocab the seed has already loaded):
   records `source=<dir>` in place of a version. `unseed-omop` (`import_tables --remove-only`) deletes
   the listed projects' rows by the person ids in the given tables and loads nothing — the surgical
   move off a re-cut project (point `HF_TRUST_DATA_REVISION` at the cut the trust holds).
+- **Seeding a Snowflake trust** (#1580): `omop_db_tools.snowflake_seed` is the twin of `import_tables`,
+  reached by `make -C trust/omop-db seed-omop-snowflake KIT=<CODE>` (and `ensure-seeded-snowflake` /
+  `unseed-omop-snowflake`). Same canonical source, same `source_trust` selection (it calls
+  `dataset.split_for_trust`, it does not reimplement it), same re-seed contract; the load is an internal
+  stage PUT + `COPY INTO`, and the marker is the table `OMOP._FLIP_SEED_MARKER` instead of the `.seeded`
+  file, rendering the same text. The OMOP tables are **translated from
+  `files/OMOPCDM_postgresql_5.4_ddl.sql`** by `snowflake_ddl.py`, never maintained separately, and
+  `tests/unit/test_snowflake_ddl.py` fails if a table is missed. The DICOM vocabulary is loaded first and
+  skipped when present. Everything runs through `snow sql --stdin` as `FLIP_<CODE>_OMOP_LOADER` (role pinned
+  by `USE ROLE`); `DRY_RUN=1` prints the SQL and executes nothing. Object names follow the epic #1589
+  contract. The loader lives here, not in `trust/deploy/snowflake/` (#1582), so the fetch and the split
+  have one implementation; that Makefile forwards to these targets.
 - **Synthea EHR cohort** (`src/omop_db_tools/synthea_ehr.py`, `make load-synthea-ehr`): the populate
   side of the EHR risk-prediction tutorial. The shipped mock OMOP has NO `condition_occurrence`
   rows, so that tutorial's `query.sql` returns nothing until this loads the public 1k-person

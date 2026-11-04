@@ -37,6 +37,19 @@ refuses when a record is already there. So a reader never observes a half-writte
 mid-write leaves (at worst) a stale temp directory that the boot-time sweep removes, and no write —
 a re-queued snapshot, two racing ones — can replace a frozen membership. There is no TTL and no
 in-place mutation: a record is written once and then only deleted.
+
+**On a store that is not a POSIX filesystem** (FLIP#1580): on Snowpark Container Services this
+directory is a mounted stage volume, i.e. an object-store prefix, and object stores have no
+rename: a FUSE layer emulates it, and whether that emulation refuses to replace a non-empty
+directory is a property of the mount, not something FLIP can assert. Snowflake does not document
+POSIX rename semantics for stage volumes, and no live account exists to measure it against, so
+this is recorded as an assumption to be settled by the SPCS runtime spike (FLIP#1579). Until it
+is, write-once does not rest on the rename alone: ``save_snapshot`` checks for an existing record
+before writing and reads the record back after the rename, refusing unless it is the one that
+request wrote. The pre-check stops the realistic case (a re-queued snapshot for an approved
+project) whatever the mount does, and the read-back closes the two-racing-writers case for the
+loser. Both are cheap (one small read each, on a path taken once per project) and neither weakens
+anything on a real filesystem, where the kernel rename remains the actual guarantee.
 """
 
 from __future__ import annotations
@@ -285,6 +298,15 @@ def save_snapshot(
     nonce = uuid.uuid4().hex[:8]
     workdir = base / f"{_TMP_PREFIX}{canonical}-{nonce}"
     final = base / canonical
+
+    # Pre-check, for stores whose rename does not refuse a non-empty target (FLIP#1580,
+    # SPCS stage volumes; see the module docstring). Racy ON ITS OWN, which is why the kernel
+    # rename below and the read-back after it both stay: on a real filesystem this check is
+    # redundant and the rename is the guarantee, while on a permissive mount it is what stops
+    # a re-queued snapshot from overwriting an approved cohort.
+    if _read_membership(final) is not None:
+        raise SnapshotExists(f"a cohort membership is already frozen for project {canonical}")
+
     try:
         workdir.mkdir()
         with open(workdir / _MEMBERSHIP_FILENAME, "wb") as handle:
@@ -304,11 +326,47 @@ def save_snapshot(
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
+    # Backstop for stores where rename is NOT the kernel operation above (FLIP#1580). On a
+    # Snowpark Container Services stage volume the store is a mounted object-store prefix, not a
+    # POSIX filesystem, and a mount whose rename silently replaces an existing record would turn
+    # write-once into last-write-wins: a frozen cohort quietly rewritten. So the record is read
+    # back and must be the one just written; anything else is reported as an existing record,
+    # which is the fail-closed answer. Costs one small read on a path taken once per project.
+    landed = _read_membership(final)
+    if (
+        landed is None
+        or landed.get("query_hash") != snapshot.query_hash
+        or landed.get("created_at") != snapshot.created_at
+    ):
+        raise SnapshotExists(
+            f"a cohort membership is already frozen for project {canonical} "
+            "(the record on disk after the write is not the one this request wrote)"
+        )
+
     logger.info(
         f"Cohort membership saved for project {canonical}: {len(person_ids or [])} person ids, "
         f"{len(accession_ids or [])} accession ids, {len(payload)} bytes"
     )
     return snapshot
+
+
+def _read_membership(record_dir: Path) -> dict[str, object] | None:
+    """The raw JSON of a record directory, or None when it is absent or unreadable.
+
+    Deliberately lenient and non-raising: its only caller is the post-write read-back guard,
+    which treats "not the record I wrote" and "cannot tell" identically (fail closed).
+
+    Args:
+        record_dir (Path): The project's record directory.
+
+    Returns:
+        dict[str, object] | None: The decoded record, or None.
+    """
+    try:
+        raw = json.loads((record_dir / _MEMBERSHIP_FILENAME).read_text())
+    except (OSError, ValueError):
+        return None
+    return raw if isinstance(raw, dict) else None
 
 
 def load_snapshot(project_id: str) -> Snapshot | None:

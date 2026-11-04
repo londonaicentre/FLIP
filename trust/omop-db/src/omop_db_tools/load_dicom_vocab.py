@@ -114,10 +114,87 @@ def dicom_vocabulary_loaded(engine: Engine) -> bool:
     return row is not None
 
 
+def vocabulary_metadata_frames() -> dict[str, pd.DataFrame]:
+    """The DICOM scaffolding rows, keyed by target table.
+
+    Pure data, no database: the Postgres loader below inserts them row by row, while the
+    Snowflake seeder (``snowflake_seed.py``) writes them to CSV and COPYs them. Keeping one
+    definition means the two paths cannot drift in what "the DICOM vocabulary" is.
+
+    Returns:
+        dict[str, pd.DataFrame]: Frames for CONCEPT, VOCABULARY and CONCEPT_CLASS.
+    """
+    return {
+        "CONCEPT": _dicom_concept_scaffolding(),
+        "VOCABULARY": _dicom_vocabulary_row(),
+        "CONCEPT_CLASS": _dicom_concept_classes(),
+    }
+
+
+def concept_frame(vocab_dir: Path) -> pd.DataFrame:
+    """The DICOM CONCEPT definitions from the staging CSV, dates and VARCHAR(1) fields fixed.
+
+    Args:
+        vocab_dir (Path): Directory holding the DICOM vocab CSVs.
+
+    Returns:
+        pd.DataFrame: Concept rows ready to load.
+    """
+    omop_table_staging = pd.read_csv(vocab_dir / "omop_table_staging_v5.csv")
+    # errors="raise": a malformed date should name the offending value here, not
+    # surface later as an opaque NOT NULL / adaptation failure inside the insert.
+    omop_table_staging["valid_start_date"] = pd.to_datetime(
+        omop_table_staging["valid_start_date"].astype(str), format="%Y%m%d", errors="raise"
+    )
+    omop_table_staging["valid_end_date"] = pd.to_datetime(
+        omop_table_staging["valid_end_date"].astype(str), format="%Y%m%d", errors="raise"
+    )
+    # FIX: OMOP VARCHAR(1) fields should be NULL for DICOM
+    omop_table_staging["standard_concept"] = None
+    omop_table_staging["invalid_reason"] = None
+    return omop_table_staging
+
+
+def relationship_frame(vocab_dir: Path) -> pd.DataFrame:
+    """The CONCEPT_RELATIONSHIP rows from the three relationship CSVs, concatenated.
+
+    Args:
+        vocab_dir (Path): Directory holding the DICOM vocab CSVs.
+
+    Returns:
+        pd.DataFrame: Relationship rows ready to load.
+    """
+    # 1. Attributes-CID-ValueSets
+    concept_relationship_staging = pd.read_csv(vocab_dir / "part3_to_part16_relationship_via_CID.csv")
+    # 2. Attributes-Code String values
+    cs_values_maps_to_value = pd.read_csv(vocab_dir / "cs_values_maps_to_value.csv")
+    # 3. DICOM Code String to OMOP Standard coding systems
+    cs_values_maps_to = pd.read_csv(vocab_dir / "cs_values_maps_to.csv")
+    return pd.concat(
+        [
+            _fix_relationship_dates(_drop_index_columns(concept_relationship_staging)),
+            _fix_relationship_dates(cs_values_maps_to_value),
+            _fix_relationship_dates(_drop_index_columns(cs_values_maps_to)),
+        ],
+        ignore_index=True,
+    )
+
+
 def load_vocabulary_metadata(engine: Engine) -> None:
     """Insert the DICOM VOCABULARY / CONCEPT_CLASS scaffolding concepts (2128000000-2)."""
     print("Ensuring DICOM vocabulary and concept class concepts exist (2128000000-2)...")
-    df_vocab_concept = pd.DataFrame(
+    df_vocab_concept = _dicom_concept_scaffolding()
+    safe_insert("CONCEPT", df_vocab_concept, engine)
+
+    print("Loading DICOM VOCABULARY...")
+    safe_insert("VOCABULARY", _dicom_vocabulary_row(), engine)
+
+    print("Loading DICOM CONCEPT_CLASS...")
+    safe_insert("CONCEPT_CLASS", _dicom_concept_classes(), engine)
+
+
+def _dicom_concept_scaffolding() -> pd.DataFrame:
+    return pd.DataFrame(
         [
             {
                 "concept_id": 2128000000,
@@ -157,10 +234,10 @@ def load_vocabulary_metadata(engine: Engine) -> None:
             },
         ]
     )
-    safe_insert("CONCEPT", df_vocab_concept, engine)
 
-    print("Loading DICOM VOCABULARY...")
-    df_vocab = pd.DataFrame(
+
+def _dicom_vocabulary_row() -> pd.DataFrame:
+    return pd.DataFrame(
         [
             {
                 "vocabulary_id": "DICOM",
@@ -171,10 +248,10 @@ def load_vocabulary_metadata(engine: Engine) -> None:
             }
         ]
     )
-    safe_insert("VOCABULARY", df_vocab, engine)
 
-    print("Loading DICOM CONCEPT_CLASS...")
-    df_classes = pd.DataFrame(
+
+def _dicom_concept_classes() -> pd.DataFrame:
+    return pd.DataFrame(
         [
             {
                 "concept_class_id": "DICOM Attributes",
@@ -188,28 +265,12 @@ def load_vocabulary_metadata(engine: Engine) -> None:
             },
         ]
     )
-    safe_insert("CONCEPT_CLASS", df_classes, engine)
 
 
 def load_concepts(engine: Engine, vocab_dir: Path) -> None:
     """Load the DICOM CONCEPT definitions from the staging CSV."""
     print("Loading DICOM CONCEPT definitions...")
-    omop_table_staging = pd.read_csv(vocab_dir / "omop_table_staging_v5.csv")
-
-    # errors="raise": a malformed date should name the offending value here, not
-    # surface later as an opaque NOT NULL / adaptation failure inside the insert.
-    omop_table_staging["valid_start_date"] = pd.to_datetime(
-        omop_table_staging["valid_start_date"].astype(str), format="%Y%m%d", errors="raise"
-    )
-    omop_table_staging["valid_end_date"] = pd.to_datetime(
-        omop_table_staging["valid_end_date"].astype(str), format="%Y%m%d", errors="raise"
-    )
-
-    # FIX: OMOP VARCHAR(1) fields should be NULL for DICOM
-    omop_table_staging["standard_concept"] = None
-    omop_table_staging["invalid_reason"] = None
-
-    safe_insert("CONCEPT", omop_table_staging, engine)
+    safe_insert("CONCEPT", concept_frame(vocab_dir), engine)
 
 
 def _drop_index_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -225,23 +286,7 @@ def _fix_relationship_dates(df: pd.DataFrame) -> pd.DataFrame:
 def load_relationships(engine: Engine, vocab_dir: Path) -> None:
     """Load CONCEPT_RELATIONSHIP rows from the three relationship CSVs."""
     print("Loading DICOM relationships...")
-
-    # 1. Attributes-CID-ValueSets
-    concept_relationship_staging = pd.read_csv(vocab_dir / "part3_to_part16_relationship_via_CID.csv")
-    # 2. Attributes-Code String values
-    cs_values_maps_to_value = pd.read_csv(vocab_dir / "cs_values_maps_to_value.csv")
-    # 3. DICOM Code String to OMOP Standard coding systems
-    cs_values_maps_to = pd.read_csv(vocab_dir / "cs_values_maps_to.csv")
-
-    df_relationships = pd.concat(
-        [
-            _fix_relationship_dates(_drop_index_columns(concept_relationship_staging)),
-            _fix_relationship_dates(cs_values_maps_to_value),
-            _fix_relationship_dates(_drop_index_columns(cs_values_maps_to)),
-        ],
-        ignore_index=True,
-    )
-    safe_insert("CONCEPT_RELATIONSHIP", df_relationships, engine)
+    safe_insert("CONCEPT_RELATIONSHIP", relationship_frame(vocab_dir), engine)
 
 
 def main(argv: list[str] | None = None) -> None:
