@@ -48,6 +48,7 @@ import json
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -72,6 +73,10 @@ VERIFY_TIMEOUT_S = 600
 REPORT_ATTEMPTS = 4
 REPORT_RETRY_WAIT_S = 5
 VERIFY_POLL_S = 10
+# While `make` runs, re-post STARTING this often. The hub already treats a same-release STARTING as a
+# renewal, so this needs no new protocol: it means the 2h TTL only ever expires on a dead agent,
+# never on a slow-but-working upgrade.
+LEASE_RENEW_EVERY_S = 20 * 60
 # Same shape the hub and flip-ui accept as a comparable release identity.
 RELEASE_TAG = re.compile(r"^v\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$")
 
@@ -324,6 +329,43 @@ def report_status(kit: dict[str, str], body: dict, attempts: int = REPORT_ATTEMP
     return False
 
 
+class LeaseRenewal:
+    """Re-posts STARTING while `make` runs, so an upgrade slower than the lease cannot lose it.
+
+    The hub treats a STARTING for the release already holding the lease as a renewal (it resets the
+    expiry rather than refusing), so this needs no new endpoint. A failed renewal is ignored on
+    purpose: the upgrade is the fact, the lease is bookkeeping, and the final report is what the hub
+    acts on — an exception here would abort an upgrade that is going perfectly well.
+
+    Stops before the terminal report is posted, so a late renewal cannot re-claim a release the
+    report has just marked FAILED.
+    """
+
+    def __init__(self, kit: dict[str, str], release: str, every: float = LEASE_RENEW_EVERY_S) -> None:
+        self._kit = kit
+        self._release = release
+        self._every = every
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self) -> "LeaseRenewal":
+        self._thread = threading.Thread(target=self._run, name="lease-renewal", daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=HTTP_TIMEOUT_S * 2)
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._every):
+            try:
+                hub_call(self._kit, "POST", "/trust/upgrade-status", {"state": "STARTING", "release": self._release})
+            except Exception as exc:  # noqa: BLE001 - a renewal is never worth failing the upgrade for
+                print(f"lease renewal failed ({type(exc).__name__}: {exc}); continuing", file=sys.stderr)
+
+
 def tick(kit_file: Path, repo: Path, dry_run: bool) -> int:
     try:
         kit = read_kit(kit_file)
@@ -360,13 +402,15 @@ def tick(kit_file: Path, repo: Path, dry_run: bool) -> int:
     ok = False
     detail = "the agent stopped before it could report an outcome"
     try:
-        ok, tail = upgrade(repo, kit_file, decision.release)
-        detail = tail
-        if ok:
-            # The verb exiting 0 only says the deployment was applied. Confirm the site actually came
-            # back up ON the target before telling the hub it SUCCEEDED.
-            ok, detail = verify(kit, decision.release)
-            print(detail)
+        # Renewal covers the verification too: it is a ten-minute wait on the site coming back.
+        with LeaseRenewal(kit, decision.release):
+            ok, tail = upgrade(repo, kit_file, decision.release)
+            detail = tail
+            if ok:
+                # The verb exiting 0 only says the deployment was applied. Confirm the site actually
+                # came back up ON the target before telling the hub it SUCCEEDED.
+                ok, detail = verify(kit, decision.release)
+                print(detail)
     except BaseException as exc:  # noqa: BLE001 - including SystemExit/KeyboardInterrupt: the report matters more
         ok, detail = False, f"the upgrade raised {type(exc).__name__}: {exc}"
         print(detail, file=sys.stderr)

@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import time
 import unittest
+import urllib.error
 from datetime import datetime
 from pathlib import Path
 from unittest import mock
@@ -239,7 +241,7 @@ class Tick(unittest.TestCase):
             mock.patch.object(agent, "hub_call", hub),
             mock.patch.object(agent, "local_state", return_value=CLEAN),
             mock.patch.object(agent, "upgrade", return_value=(False, "boom")),
-            mock.patch.object(agent.time, "sleep", lambda s: None),
+            mock.patch.object(agent.time, "sleep"),
         ):
             self.assertEqual(agent.tick(self.kit, Path("/nonexistent"), False), 1)
         self.assertEqual(len(attempts), 3)
@@ -346,6 +348,62 @@ class UpgradeRuns(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("no such tag", tail)
         self.assertNotIn("make", [c[0] for c in calls])
+
+
+class LeaseRenewal(unittest.TestCase):
+    """A `make` that outlives the 2h lease must not lose it — the hub already allows renewal."""
+
+    KIT = {
+        "CENTRAL_HUB_API_URL": "https://hub.example/api",
+        "TRUST_API_KEY_HEADER": "X-Key",  # pragma: allowlist secret
+        "TRUST_API_KEY": "k",  # pragma: allowlist secret
+    }
+
+    def test_renews_while_the_upgrade_runs(self):
+        calls = []
+
+        def fake_hub_call(kit, method, route, body=None):
+            calls.append((method, route, body))
+            return 200, None
+
+        with mock.patch.object(agent, "hub_call", fake_hub_call):
+            with agent.LeaseRenewal(self.KIT, "v1.3.0", every=0.01):
+                time.sleep(0.15)
+
+        renewals = [c for c in calls if c[2] == {"state": "STARTING", "release": "v1.3.0"}]
+        self.assertGreaterEqual(len(renewals), 2)
+        self.assertEqual(renewals[0][1], "/trust/upgrade-status")
+
+    def test_stops_renewing_once_the_upgrade_is_over(self):
+        """A renewal arriving after the FAILED report would re-claim the release nobody cleared."""
+        calls = []
+
+        def fake_hub_call(kit, method, route, body=None):
+            calls.append(body)
+            return 200, None
+
+        with mock.patch.object(agent, "hub_call", fake_hub_call):
+            with agent.LeaseRenewal(self.KIT, "v1.3.0", every=0.01):
+                time.sleep(0.05)
+            seen = len(calls)
+            time.sleep(0.1)
+
+        self.assertEqual(len(calls), seen)
+
+    def test_a_failed_renewal_does_not_break_the_upgrade(self):
+        def fake_hub_call(*a, **k):
+            raise urllib.error.URLError("hub unreachable")
+
+        with mock.patch.object(agent, "hub_call", fake_hub_call):
+            with agent.LeaseRenewal(self.KIT, "v1.3.0", every=0.01):
+                time.sleep(0.08)
+        # Reaching here at all is the assertion: the context manager swallowed it.
+
+    def test_it_renews_before_the_interval_has_passed_nothing(self):
+        with mock.patch.object(agent, "hub_call") as hub_call:
+            with agent.LeaseRenewal(self.KIT, "v1.3.0", every=60):
+                time.sleep(0.02)
+        self.assertEqual(hub_call.call_args_list, [])
 
 
 class KitFile(unittest.TestCase):

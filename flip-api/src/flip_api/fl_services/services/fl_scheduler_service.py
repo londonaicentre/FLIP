@@ -621,6 +621,7 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
             locked = session.exec(
                 select(Trust)
                 .where(col(Trust.id).in_(job_trust_ids))
+                .order_by(col(Trust.id))
                 .with_for_update()
                 .execution_options(populate_existing=True)
             ).all()
