@@ -107,6 +107,11 @@ Choose your platform
      - Governance requires data access through a Trusted Research Environment loaded with a project-specific
        subset. The node itself installs as a Docker Compose host.
      - :doc:`deploy-flip-node-in-tre`
+   * - **Snowflake Snowpark**
+     - The trust already keeps its data in Snowflake, or would rather not run a host: the node runs as Snowpark
+       Container Services with OMOP in native tables. Needs an Enterprise account, and an On-Demand one to reach
+       a hub.
+     - :doc:`deploy-flip-node-snowflake`
 
 The mock trust on an AWS EC2 instance, which the Central Hub deployment can create for testing, is covered in
 :gh:`deploy/providers/AWS/README.md`.
@@ -193,3 +198,4 @@ Kubernetes adds a few destinations of its own; see :doc:`deploy-flip-node-kubern
    deploy-flip-node-aws-eks
    deploy-flip-node-kubernetes
    deploy-flip-node-in-tre
+   deploy-flip-node-snowflake
