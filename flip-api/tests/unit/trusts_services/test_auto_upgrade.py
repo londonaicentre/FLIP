@@ -293,6 +293,36 @@ class TestClaim:
         assert t.upgrade_blocker is None
         assert t.upgrade_blocker_detail == "UNSUPPORTED_MODE"
 
+    def test_a_stale_terminal_report_does_not_free_another_releases_lease(self):
+        """A late FAILED from the agent that lost its lease must not unlock the upgrade now running."""
+        t = _trust(
+            auto_upgrade_enabled=True,
+            upgrade_lease_release="v1.4.0",
+            upgrade_lease_expires_at=datetime.utcnow() + timedelta(hours=1),
+        )
+        db = MagicMock()
+        db.exec.return_value.one.return_value = t
+        svc.record_status(
+            t.id, UpgradeStatusInput(state=UpgradeReportState.FAILED, release="v1.3.0"), db
+        )
+        assert t.upgrade_lease_release == "v1.4.0"
+        assert t.upgrade_lease_expires_at is not None
+        # The attempt is still recorded: it is the truth about v1.3.0.
+        assert (t.last_upgrade_release, t.last_upgrade_state) == ("v1.3.0", "FAILED")
+
+    def test_its_own_terminal_report_clears_its_lease(self):
+        t = _trust(
+            auto_upgrade_enabled=True,
+            upgrade_lease_release="v1.3.0",
+            upgrade_lease_expires_at=datetime.utcnow() + timedelta(hours=1),
+        )
+        db = MagicMock()
+        db.exec.return_value.one.return_value = t
+        svc.record_status(
+            t.id, UpgradeStatusInput(state=UpgradeReportState.SUCCEEDED, release="v1.3.0"), db
+        )
+        assert (t.upgrade_lease_release, t.upgrade_lease_expires_at) == (None, None)
+
 
 class TestRoutes:
     """The agent routes authenticate by trust key; the portal routes by user and trust-scoped permission."""

@@ -301,9 +301,12 @@ def record_status(trust_id: UUID, report: UpgradeStatusInput, db: Session) -> Up
         db.commit()
         return None
 
-    # SUCCEEDED / FAILED: release the lease and record the attempt.
-    trust.upgrade_lease_expires_at = None
-    trust.upgrade_lease_release = None
+    # SUCCEEDED / FAILED: record the attempt, and release the lease only if it is this release's.
+    # A stale agent reporting late (its own lease expired, another upgrade now holds one) must not
+    # free that other one — the outcome it reports is still the truth about its own attempt.
+    if trust.upgrade_lease_release is None or trust.upgrade_lease_release == report.release:
+        trust.upgrade_lease_expires_at = None
+        trust.upgrade_lease_release = None
     trust.last_upgrade_state = report.state
     trust.last_upgrade_release = report.release
     trust.last_upgrade_at = now
