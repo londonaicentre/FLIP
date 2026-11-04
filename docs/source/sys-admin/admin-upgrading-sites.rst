@@ -286,8 +286,8 @@ populated data, and the API deployments roll onto the new images.
 .. warning::
 
    Unlike Compose, the chart's mock-data seed also runs on upgrade. While ``trustData.seed.enabled`` is on, every
-   upgrade re-applies the listed mock projects (only those projects' rows are replaced). **Turn it off in the
-   override for a site whose stores hold real data only.**
+   upgrade re-applies the listed mock projects (only those projects' rows are replaced). For a site whose stores
+   hold real data only, set ``TRUST_DATA_SEED=false`` in the kit; ``sync-kit`` carries it into the release.
 
 **Databases initialised before the role split.** A trust whose XNAT database volume was created by a chart
 older than the xnat-db role split holds a single superuser named ``xnat`` and no ``postgres`` role. Releases

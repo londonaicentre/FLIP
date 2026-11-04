@@ -759,6 +759,47 @@ def test_no_answer_from_xnat_is_status_zero(tmp_path):
     assert status == 0
 
 
+# ── checks that need sample data (FLIP#1687) ────────────────────────────────────────
+
+
+def _values(**seed):
+    return {"flBackend": "nvflare", "trustData": {"seed": {"enabled": True, "omop": True, "orthanc": True, **seed}}}
+
+
+def _no_smoke():
+    raise AssertionError("the C-STORE smoke ran")
+
+
+def _checks(values, smoke=_no_smoke, **cluster):
+    return {c.name: c for c in selftest.run_checks(FakeCluster(**cluster), values, smoke, 0, 0)}
+
+
+def test_a_release_without_sample_data_skips_what_needs_it_and_says_why():
+    # Empty stores: each of these would fail if it ran.
+    checks = _checks(_values(enabled=False), person_count="0", orthanc_statistics='{"CountInstances": 0}')
+    for name in ("omop seeded", "orthanc seeded", "xnat c-store", "dcm2niix conversion"):
+        assert checks[name].ok, checks[name]
+        assert checks[name].detail.startswith("skipped: trustData.seed.enabled=false"), checks[name]
+    assert checks["orthanc requires auth"].ok
+    assert all(c.ok for c in checks.values()), checks
+
+
+def test_the_chart_default_without_orthanc_seeding_skips_only_the_orthanc_checks():
+    checks = _checks(_values(orthanc=False), orthanc_statistics='{"CountInstances": 0}')
+    assert checks["omop seeded"].detail == "4166 rows in omop.person"
+    for name in ("orthanc seeded", "xnat c-store", "dcm2niix conversion"):
+        assert checks[name].detail.startswith("skipped: trustData.seed.orthanc=false"), checks[name]
+
+
+def test_a_seeded_release_still_runs_the_store_and_the_conversion(monkeypatch):
+    converted = selftest.Check("dcm2niix conversion", True, "converted")
+    monkeypatch.setattr(selftest, "check_conversion", lambda *args: converted)
+    checks = _checks(_values(), smoke=lambda: (1, "❌ XNAT received nothing", ""))
+    assert checks["xnat c-store"] == selftest.Check("xnat c-store", False, "❌ XNAT received nothing")
+    assert checks["dcm2niix conversion"] is converted
+    assert checks["orthanc seeded"].detail == "250 instances"
+
+
 # ── the report ──────────────────────────────────────────────────────────────────────
 
 

@@ -90,6 +90,50 @@ class UpgradeTrust(unittest.TestCase):
         assert "up-xnat" in out, out
 
 
+class SampleDataOff(unittest.TestCase):
+    """TRUST_DATA_SEED=false: a real trust's first install fetches, loads and marks nothing (FLIP#1687)."""
+
+    KIT_OFF = KIT + "TRUST_DATA_SEED=false\n"
+    SEED_STEPS = ("seed-omop", "seed-orthanc", ".seeded", "pg_isready")
+
+    def test_a_first_install_loads_nothing_even_after_a_data_version_bump(self):
+        for extra in ((), ("HF_TRUST_DATA_REVISION=main",)):
+            out = dry_run("up-trust", *extra, kit=self.KIT_OFF)
+            assert "Sample data is off for SCR" in out, out
+            for step in self.SEED_STEPS:
+                assert step not in out, f"{step!r} with the sample data off:\n{out}"
+
+    def test_unset_or_true_still_seeds(self):
+        for kit in (KIT, KIT + "TRUST_DATA_SEED=true\n"):
+            out = dry_run("ensure-seeded", kit=kit)
+            assert "seed-omop" in out, out
+            assert "seed-orthanc" in out, out
+
+    def test_any_other_value_is_refused_rather_than_read_as_true(self):
+        result = run_target("ensure-seeded", kit=KIT + "TRUST_DATA_SEED=no\n")
+        assert result.returncode != 0, result.stdout
+        assert "TRUST_DATA_SEED must be true or false" in result.stdout, result.stdout + result.stderr
+
+    def test_up_trust_refuses_a_bad_value_before_any_container_starts(self):
+        out = dry_run("up-trust", kit=KIT + "TRUST_DATA_SEED=no\n")
+        assert out.index("TRUST_DATA_SEED must be true or false") < out.index(" up -d"), out
+
+    def test_quotes_and_a_trailing_comment_read_as_sync_kit_reads_them(self):
+        for line in ('TRUST_DATA_SEED="false"', "TRUST_DATA_SEED='false'", "TRUST_DATA_SEED=false  # real trust"):
+            out = dry_run("ensure-seeded", kit=KIT + line + "\n")
+            assert "Sample data is off for SCR" in out, f"{line}:\n{out}"
+
+    def test_the_explicit_seed_verbs_refuse_a_trust_with_the_sample_data_off_unless_forced(self):
+        for target in ("seed", "seed-omop", "seed-orthanc", "unseed-omop", "unseed-orthanc"):
+            result = run_target(target, kit=self.KIT_OFF)
+            assert result.returncode != 0, f"{target} ran with the sample data off:\n{result.stdout}"
+            assert "has TRUST_DATA_SEED=false" in result.stdout, result.stdout + result.stderr
+            assert "TRUST_INDEX" not in result.stdout, result.stdout
+        out = dry_run("seed", "FORCE=1", kit=self.KIT_OFF)
+        assert "seed-omop TRUST_INDEX" in out, out
+        assert "seed-orthanc TRUST_INDEX" in out, out
+
+
 MONAI_KIT = KIT.replace("NUM_AVAILABLE_GPUS=0", "NUM_AVAILABLE_GPUS=1")
 
 

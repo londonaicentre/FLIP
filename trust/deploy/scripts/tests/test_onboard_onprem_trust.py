@@ -748,6 +748,18 @@ def test_35_the_checklist_carries_the_three_rows_and_gates_on_the_hub() -> None:
     _assert(registries.status == mod.Status.PASS, "registries probed through probe_tcp", str(registries))
 
 
+def test_36_empty_dir_with_sample_data_off_says_nothing_is_seeded() -> None:
+    """TRUST_DATA_SEED=false: an empty store is still a WARN, but the hint no longer promises a seed (FLIP#1687)."""
+    print("\n[36] empty data dir with TRUST_DATA_SEED=false -> WARN, no seed promised")
+    with tempfile.TemporaryDirectory() as td:
+        for value in ("false", '"false"', "false  # real trust"):
+            kit_vars = {"OMOP_DATA_DIR": td, "TRUST_DATA_SEED": value}
+            result = mod.check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, True, SCRIPTS_DIR.parent)
+            _assert(result.status == mod.Status.WARN, f"{value!r}: status is WARN", result.detail)
+            _assert(any("TRUST_DATA_SEED=false" in h for h in result.hints), "hint says the sample data is off")
+            _assert(not any("seeds it" in h for h in result.hints), "and does not say up-trust seeds it", str(result))
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -787,6 +799,7 @@ def main() -> None:
     test_33_fl_endpoint_comes_from_what_the_client_dials()
     test_34_registries_warn_and_name_the_mirror()
     test_35_the_checklist_carries_the_three_rows_and_gates_on_the_hub()
+    test_36_empty_dir_with_sample_data_off_says_nothing_is_seeded()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

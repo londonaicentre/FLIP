@@ -15,7 +15,8 @@ The Kubernetes form of the VM node self-test (FLIP#1406), the acceptance checkli
 every trust shape runs: the release is ready, the FL client has its kit, the three APIs are
 healthy, OMOP and Orthanc are seeded, Orthanc refuses anonymous requests, XNAT accepts a real
 C-STORE (smoke-cstore.sh), dcm2niix converts a stored series to NIfTI, and the FL client stays
-up. It needs no hub: an unreachable hub or FL server is not a failure. It runs from the
+up. A check that needs sample data the release does not load passes as skipped, saying why. It needs
+no hub: an unreachable hub or FL server is not a failure. It runs from the
 operator's machine through kubectl, as `status` and `smoke-cstore` do, and writes the same JSON
 and markdown report as the node self-test.
 
@@ -633,6 +634,72 @@ def now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def missing_sample_data(values: dict) -> tuple[str, str]:
+    """Why OMOP, and why Orthanc, hold no sample data for the checks that need it: empty when the release seeds it.
+
+    A real trust turns the seed off (trustData.seed.enabled, from the kit's TRUST_DATA_SEED, FLIP#1687), and the
+    chart seeds Orthanc only with trustData.seed.orthanc, which is off by default.
+    """
+    seed = values.get("trustData", {}).get("seed", {})
+    if not seed.get("enabled", True):
+        reason = "trustData.seed.enabled=false, so the release holds no sample data"
+        return reason, reason
+    omop = "" if seed.get("omop", True) else "trustData.seed.omop=false, so OMOP holds no sample data"
+    orthanc = "" if seed.get("orthanc", False) else "trustData.seed.orthanc=false, so Orthanc holds no sample studies"
+    return omop, orthanc
+
+
+def run_checks(
+    cluster: Cluster,
+    values: dict,
+    smoke: Callable[[], tuple[int, str, str]],
+    conversion_timeout: int,
+    fl_settle_seconds: int,
+) -> list[Check]:
+    """Every check, in report order, printing each as it lands; a check that needs absent sample data is skipped."""
+    backend = values.get("flBackend", "nvflare")
+    fl_enabled = values.get("flClient", {}).get("enabled", True)
+    no_omop, no_orthanc = missing_sample_data(values)
+    checks: list[Check] = []
+
+    def record(check: Check) -> None:
+        checks.append(check)
+        print(f"  ✅ {check.name}" if check.ok else f"  ❌ {check.name}: {check.detail}")
+
+    def skip(name: str, reason: str) -> None:
+        checks.append(Check(name, True, f"skipped: {reason}"))
+        print(f"  ⏭️  {name}: skipped, {reason}")
+
+    record(check_release_ready(cluster))
+    if fl_enabled:
+        record(check_fl_kit(cluster, backend))
+    for component in API_COMPONENTS:
+        record(check_health(cluster, component))
+    if no_omop:
+        skip("omop seeded", no_omop)
+    else:
+        record(check_omop_seeded(cluster))
+    orthanc_seeded, orthanc_auth = check_orthanc(cluster)
+    if no_orthanc:
+        skip("orthanc seeded", no_orthanc)
+    else:
+        record(orthanc_seeded)
+    record(orthanc_auth)
+    if no_orthanc:
+        skip("xnat c-store", f"{no_orthanc} to send")
+        skip("dcm2niix conversion", f"{no_orthanc} to convert")
+    else:
+        record(check_cstore(smoke))
+        xnat_pod = cluster.pod("xnat-web")
+        if xnat_pod:
+            record(check_conversion(XnatPod(cluster, xnat_pod), cluster.orthanc_credentials(), conversion_timeout))
+        else:
+            record(Check("dcm2niix conversion", False, "no running xnat-web pod"))
+    if fl_enabled:
+        record(check_fl_client(cluster, fl_settle_seconds))
+    return checks
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--namespace", default="flip-trust")
@@ -650,33 +717,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"❌ no release {args.release} in {args.namespace} (helm get values failed)", file=sys.stderr)
         return 2
     backend = values.get("flBackend", "nvflare")
-    fl_enabled = values.get("flClient", {}).get("enabled", True)
 
     started, stamp = now(), datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     print(f"== Kubernetes self-test ({backend}) of {args.release} in {args.namespace}, started {started}")
-    checks: list[Check] = []
-
-    def record(check: Check) -> None:
-        checks.append(check)
-        print(f"  ✅ {check.name}" if check.ok else f"  ❌ {check.name}: {check.detail}")
-
-    record(check_release_ready(cluster))
-    if fl_enabled:
-        record(check_fl_kit(cluster, backend))
-    for component in API_COMPONENTS:
-        record(check_health(cluster, component))
-    record(check_omop_seeded(cluster))
-    for check in check_orthanc(cluster):
-        record(check)
-    record(check_cstore(lambda: run_smoke(args.namespace, args.release, args.context)))
-    xnat_pod = cluster.pod("xnat-web")
-    if xnat_pod:
-        record(check_conversion(XnatPod(cluster, xnat_pod), cluster.orthanc_credentials(), args.conversion_timeout))
-    else:
-        record(Check("dcm2niix conversion", False, "no running xnat-web pod"))
-    if fl_enabled:
-        record(check_fl_client(cluster, args.fl_settle_seconds))
-
+    checks = run_checks(
+        cluster,
+        values,
+        lambda: run_smoke(args.namespace, args.release, args.context),
+        args.conversion_timeout,
+        args.fl_settle_seconds,
+    )
     return 0 if write_report(checks, args.out, backend, started, now(), stamp) else 1
 
 

@@ -57,9 +57,9 @@ def managed_values(backend: str, docker_tag: str) -> dict[str, str]:
     }
 
 
-def host_values(fl_kit_dir: str, data_root: str) -> dict[str, str]:
+def host_values(fl_kit_dir: str, data_root: str, trust_data_seed: str | None = None) -> dict[str, str]:
     """Host-local settings for a CPU-only node with its data under data_root."""
-    return {
+    values = {
         "NUM_AVAILABLE_GPUS": "0",
         "MEMORY_PER_GPU_IN_GIB": "0",
         "FL_KIT_DIR": fl_kit_dir,
@@ -70,12 +70,17 @@ def host_values(fl_kit_dir: str, data_root: str) -> dict[str, str]:
         # empties this directory, and a node that has joined a hub keeps its XNAT at /opt/flip/xnat.
         "XNAT_DATA_DIR": f"{data_root}/xnat",
     }
+    if trust_data_seed:
+        values["TRUST_DATA_SEED"] = trust_data_seed
+    return values
 
 
-def render(template: str, backend: str, docker_tag: str, fl_kit_dir: str, data_root: str) -> str:
+def render(
+    template: str, backend: str, docker_tag: str, fl_kit_dir: str, data_root: str, trust_data_seed: str | None = None
+) -> str:
     """Fill every placeholder and host setting in the template; refuse an unknown placeholder."""
     managed = managed_values(backend, docker_tag)
-    host = host_values(fl_kit_dir, data_root)
+    host = host_values(fl_kit_dir, data_root, trust_data_seed)
     seen: set[str] = set()
     lines = ["TRUST_NAME=Self-test node", "TRUST_CODE=SELFTEST"]
     unfilled = []
@@ -108,6 +113,8 @@ def main() -> int:
     parser.add_argument("--out", required=True)
     parser.add_argument("--docker-tag", default="stag")
     parser.add_argument("--template", default=str(REPO_ROOT / "trust" / ".env.example"))
+    # false: the stack loads no sample data, for a node that cannot reach Hugging Face or PyPI.
+    parser.add_argument("--trust-data-seed", choices=["true", "false"])
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
@@ -116,7 +123,14 @@ def main() -> int:
         print(f"ERROR: {out} already exists. Pass --force to replace it.", file=sys.stderr)
         return 1
     try:
-        body = render(Path(args.template).read_text(), args.backend, args.docker_tag, args.fl_kit_dir, args.data_root)
+        body = render(
+            Path(args.template).read_text(),
+            args.backend,
+            args.docker_tag,
+            args.fl_kit_dir,
+            args.data_root,
+            args.trust_data_seed,
+        )
     except (OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

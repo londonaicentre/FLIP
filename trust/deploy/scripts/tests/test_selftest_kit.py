@@ -120,6 +120,13 @@ def main() -> int:
     )
     _assert(kv.get("CENTRAL_HUB_API_URL", "").endswith(".invalid/api"), "hub URL can never resolve")
 
+    print("sample_data_follows_the_flag")
+    _assert("TRUST_DATA_SEED" not in kv, "unset by default: the stack seeds as usual")
+    noseed = tmp / ".env.NOSEED.prod"
+    _assert(_run(noseed, "--trust-data-seed", "false").returncode == 0, "--trust-data-seed false accepted")
+    lines = [line for line in noseed.read_text().splitlines() if line.startswith("TRUST_DATA_SEED=")]
+    _assert(lines == ["TRUST_DATA_SEED=false"], "written once, as false", "\n".join(lines))
+
     print("file_mode_is_0600")
     _assert(out.exists() and (out.stat().st_mode & 0o777) == 0o600, "kit is 0600")
 
