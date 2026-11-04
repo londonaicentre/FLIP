@@ -52,6 +52,7 @@ make -C trust/deploy/terraform/snowflake-platform apply KIT=GSTT HUB=stag
 
 # 1b. Infrastructure, the workload root (FLIP#1581)
 make -C trust/deploy/terraform/snowflake apply KIT=GSTT HUB=stag
+#    (or from here: make plan|apply|destroy KIT=GSTT HUB=stag; TF_ROOT=platform for 1a)
 
 # 2. Images into the account repository (needs docker + GHCR login + egress)
 make -C trust/deploy/snowflake mirror-images KIT=GSTT HUB=stag

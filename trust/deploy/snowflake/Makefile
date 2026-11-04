@@ -70,6 +70,7 @@ help:
 	@echo "  make render        KIT=<CODE> HUB=<env>   Render one SPCS spec per service"
 	@echo "  make mirror-images KIT=<CODE> HUB=<env>   Mirror GHCR images into the account repository"
 	@echo "                    MIRROR_PULL=false       ...pushing the local daemon's images (local builds) as is"
+	@echo "  make plan|apply|destroy  HUB=<env>        The Terraform root (TF_ROOT=workload, or platform)"
 	@echo "  make sync-kit      KIT=<CODE> HUB=<env>   Write SECRET objects, push FL kit + governance"
 	@echo "  make up            KIT=<CODE> HUB=<env>   CREATE (or ALTER) each service from the rendered specs"
 	@echo "  make down          KIT=<CODE> HUB=<env>   Drop every service"
@@ -148,3 +149,16 @@ test:
 clean:
 	@rm -rf $(SNOWFLAKE_DIR)rendered
 	@echo "✓ Removed rendered specs"
+
+# --- Infrastructure: forwarded to the Terraform roots ---------------------------------------
+# So the node's whole lifecycle is one Makefile, named like the Azure targets. The workload
+# root (trust/deploy/terraform/snowflake) is the default and is applied by the deploy user;
+# TF_ROOT=platform reaches the break-glass tier, whose own Makefile prints its warning and asks.
+# The bootstrap root is not forwarded: it is applied by a person with ACCOUNTADMIN, by hand.
+TF_ROOT ?= workload
+TF_ROOT_DIR = $(REPO_ROOT)/trust/deploy/terraform/$(if $(filter platform,$(TF_ROOT)),snowflake-platform,snowflake)
+
+.PHONY: plan apply destroy
+plan apply destroy:
+	@case "$(TF_ROOT)" in workload|platform) ;; *) echo "❌ TF_ROOT must be workload or platform, not '$(TF_ROOT)'."; exit 2;; esac
+	$(MAKE) -C $(TF_ROOT_DIR) $@
