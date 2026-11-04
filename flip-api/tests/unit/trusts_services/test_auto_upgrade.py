@@ -191,7 +191,9 @@ class TestClaim:
         db = MagicMock()
         db.exec.return_value.one.return_value = trust
         with patch(f"{SVC}.is_busy", return_value=busy):
-            return svc.record_status(trust.id, UpgradeStatusInput(state=UpgradeReportState.STARTING, release=release), db), db
+            return svc.record_status(
+                trust.id, UpgradeStatusInput(state=UpgradeReportState.STARTING, release=release), db
+            ), db
 
     def test_grants_a_two_hour_lease(self):
         t = _trust(auto_upgrade_enabled=True)
@@ -250,7 +252,9 @@ class TestClaim:
         t = _trust(auto_upgrade_enabled=True)
         db = MagicMock()
         db.exec.return_value.one.return_value = t
-        svc.record_status(t.id, UpgradeStatusInput(state=UpgradeReportState.FAILED, release="v1.3.0", detail="boom"), db)
+        svc.record_status(
+            t.id, UpgradeStatusInput(state=UpgradeReportState.FAILED, release="v1.3.0", detail="boom"), db
+        )
         assert t.last_upgrade_detail == "boom"
         assert svc.failed_release(t) == "v1.3.0"
 
@@ -259,10 +263,14 @@ class TestClaim:
         db = MagicMock()
         db.exec.return_value.one.return_value = t
         svc.record_status(
-            t.id, UpgradeStatusInput(state=UpgradeReportState.BLOCKED, release="v1.3.0", blocker="LOCAL_MODIFICATIONS"), db
+            t.id,
+            UpgradeStatusInput(state=UpgradeReportState.BLOCKED, release="v1.3.0", blocker="LOCAL_MODIFICATIONS"),
+            db,
         )
         assert t.upgrade_blocker == "LOCAL_MODIFICATIONS"
-        svc.record_status(t.id, UpgradeStatusInput(state=UpgradeReportState.BLOCKED, release="v1.3.0", blocker="<script>"), db)
+        svc.record_status(
+            t.id, UpgradeStatusInput(state=UpgradeReportState.BLOCKED, release="v1.3.0", blocker="<script>"), db
+        )
         assert t.upgrade_blocker is None
 
     def test_a_blocker_is_read_from_its_own_field_not_the_prose(self):
@@ -289,7 +297,9 @@ class TestClaim:
         t = _trust()
         db = MagicMock()
         db.exec.return_value.one.return_value = t
-        svc.record_status(t.id, UpgradeStatusInput(state=UpgradeReportState.BLOCKED, release="v1.3.0", detail="UNSUPPORTED_MODE"), db)
+        svc.record_status(
+            t.id, UpgradeStatusInput(state=UpgradeReportState.BLOCKED, release="v1.3.0", detail="UNSUPPORTED_MODE"), db
+        )
         assert t.upgrade_blocker is None
         assert t.upgrade_blocker_detail == "UNSUPPORTED_MODE"
 
@@ -302,9 +312,7 @@ class TestClaim:
         )
         db = MagicMock()
         db.exec.return_value.one.return_value = t
-        svc.record_status(
-            t.id, UpgradeStatusInput(state=UpgradeReportState.FAILED, release="v1.3.0"), db
-        )
+        svc.record_status(t.id, UpgradeStatusInput(state=UpgradeReportState.FAILED, release="v1.3.0"), db)
         assert t.upgrade_lease_release == "v1.4.0"
         assert t.upgrade_lease_expires_at is not None
         # The attempt is still recorded: it is the truth about v1.3.0.
@@ -318,9 +326,7 @@ class TestClaim:
         )
         db = MagicMock()
         db.exec.return_value.one.return_value = t
-        svc.record_status(
-            t.id, UpgradeStatusInput(state=UpgradeReportState.SUCCEEDED, release="v1.3.0"), db
-        )
+        svc.record_status(t.id, UpgradeStatusInput(state=UpgradeReportState.SUCCEEDED, release="v1.3.0"), db)
         assert (t.upgrade_lease_release, t.upgrade_lease_expires_at) == (None, None)
 
 
