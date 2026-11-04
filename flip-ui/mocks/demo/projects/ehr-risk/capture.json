@@ -1,0 +1,8 @@
+{
+    "_comment": "Tooling input for scripts/demo-fixtures.mjs, never imported by the app: the run this capture came from and its captured-trust -> demo-site map (null = a trust that only answered the cohort query).",
+    "sourceRun": "make e2e_smoke_ehr FL_BACKEND=flower on the dev stack (Synthea OMOP, no imaging), captured 2026-11-02.",
+    "trustMap": {
+        "4d3f1dba-7589-42e4-ba13-7111418b2b1f": "00000000-0000-4000-8000-00000000a001",
+        "dc67e332-e305-4350-b23c-62b314b01003": "00000000-0000-4000-8000-00000000a002"
+    }
+}

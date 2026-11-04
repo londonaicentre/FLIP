@@ -423,16 +423,6 @@ set_one() {
             UNSET_HERE+=("${key}")
             return 0
         }
-        # DEMO_ASSETS_BUCKET_NAME is OPTIONAL in the manifest because empty is
-        # correct on stag, which hosts no public Ark+ demo. On prod empty is not
-        # a value but a gap (FLIP#1199): it gates module.flip_demo_assets_bucket,
-        # the Terraform-managed bucket itself. prevent_destroy makes that a hard
-        # apply failure rather than a silent loss — still a broken apply.
-        # Same asymmetry as keys_expected_empty() in reconcile_ci_env.py.
-        if [[ "${key}" == "DEMO_ASSETS_BUCKET_NAME" && "${ENV}" == "prod" ]]; then
-            MISSING+=("${key}")
-            return 0
-        fi
         if [[ " ${REQUIRED_KEYS[*]} " == *" ${key} "* ]]; then
             MISSING+=("${key}")
         else

@@ -24,6 +24,10 @@ Projects and cohort queries
 A **project** groups the people, the cohort and the models of one piece of work. This page covers the project from
 creation to the point where the Trusts have approved it and imaging is arriving at each Trust.
 
+.. contents:: On this page
+   :local:
+   :depth: 1
+
 *********************
 The Projects page
 *********************

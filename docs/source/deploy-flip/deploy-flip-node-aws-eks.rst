@@ -85,11 +85,10 @@ Network and security
 - **Standard support only.** The cluster's upgrade policy is ``STANDARD``: a version in extended support
   costs six times as much per hour, and nothing else would say so.
 - **Control-plane logs** (``api``, ``audit``, ``authenticator``) go to CloudWatch Logs.
-- **Egress** is the list on :doc:`deploy-flip-node-aws-ec2` (hub, FL endpoint exempt from TLS inspection,
+- **Egress** is the list in :ref:`deploy-trust-node-network` (hub, FL endpoint exempt from TLS inspection,
   GHCR, Docker Hub, Hugging Face, PyPI), plus the chart's own (*Extra network egress* on
-  :doc:`deploy-flip-node-kubernetes`, and XNAT's plugin downloads, listed for AKS on
-  :doc:`deploy-flip-node-azure`), plus the AWS endpoints EKS nodes need (EKS, ECR for the add-on images,
-  STS, EC2).
+  :doc:`deploy-flip-node-kubernetes`), plus the AWS endpoints EKS nodes need (EKS, ECR for the add-on
+  images, STS, EC2).
 
 Where the account requires a permissions boundary on new roles, pass it as ``BOUNDARY_ARN``.
 

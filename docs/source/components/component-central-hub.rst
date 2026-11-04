@@ -169,7 +169,8 @@ The hub **never connects to a Trust**. Work for a Trust is queued as a task on t
      - Sent on every poll, with the Trust's health snapshot when it has one.
    * - ``POST /api/cohort/results``
      - A cohort query's aggregate statistics from one Trust. The hub saves them and recomputes the combined
-       statistics each time a Trust answers.
+       statistics each time a Trust answers. It accepts them only from a Trust it dispatched that query to (the
+       Trust's ``cohort_query`` task) and only while the project is still unstaged; anything else is refused.
 
 The task types are ``cohort_query``, ``persist_cohort``, ``create_imaging``, ``delete_imaging``,
 ``get_imaging_status``, ``reimport_studies`` and ``update_user_profile``. Task payloads are encrypted with the

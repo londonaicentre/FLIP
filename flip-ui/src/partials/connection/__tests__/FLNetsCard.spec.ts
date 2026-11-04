@@ -187,15 +187,18 @@ describe("FLNetsCard", () => {
                 clients: [
                     {
                         name: "Zebra",
-                        online: true
+                        online: true,
+                        status: "no_jobs"
                     },
                     {
                         name: "Acme",
-                        online: true
+                        online: true,
+                        status: "no_jobs"
                     },
                     {
                         name: "Maple",
-                        online: true
+                        online: true,
+                        status: "no_jobs"
                     }
                 ]
             }
@@ -213,11 +216,13 @@ describe("FLNetsCard", () => {
                 clients: [
                     {
                         name: "Trust A",
-                        online: true
+                        online: true,
+                        status: "no_jobs"
                     },
                     {
                         name: "Trust B",
-                        online: false
+                        online: false,
+                        status: "no_reply"
                     }
                 ]
             }
@@ -237,7 +242,8 @@ describe("FLNetsCard", () => {
                 fl_backend: "nvflare",
                 clients: [{
                     name: "Trust A",
-                    online: true
+                    online: true,
+                    status: "no_jobs"
                 }]
             }];
             mockGetNetDetailedStatus.mockResolvedValue({
@@ -262,7 +268,8 @@ describe("FLNetsCard", () => {
                 name: "net-1",
                 clients: [{
                     name: "Trust A",
-                    online: true
+                    online: true,
+                    status: "no_jobs"
                 }]
             }];
             mockGetNetDetailedStatus.mockRejectedValue(new Error("nope"));
@@ -287,7 +294,8 @@ describe("FLNetsCard", () => {
                     name: "net-1",
                     clients: [{
                         name: "Trust A",
-                        online: true
+                        online: true,
+                        status: "no_jobs"
                     }]
                 }];
                 mockGetNetDetailedStatus.mockResolvedValue({ status: "OK" });
@@ -325,11 +333,13 @@ describe("FLNetsCard", () => {
                 clients: [
                     {
                         name: "Trust A",
-                        online: true
+                        online: true,
+                        status: "no_jobs"
                     },
                     {
                         name: "Trust B",
-                        online: false
+                        online: false,
+                        status: "no_reply"
                     }
                 ]
             },
@@ -338,7 +348,8 @@ describe("FLNetsCard", () => {
                 fl_backend: "nvflare",
                 clients: [{
                     name: "Trust C",
-                    online: true
+                    online: true,
+                    status: "no_jobs"
                 }]
             }
         ];

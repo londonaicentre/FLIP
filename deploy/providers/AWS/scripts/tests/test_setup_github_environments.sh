@@ -29,7 +29,7 @@
 # reclassifies real required keys as optional, and the operator is told a key the
 # workflow will dereference is "fine to omit". So the fixture omits one key from
 # the middle of REQUIRED_KEYS (AWS_REGION) and one from its end
-# (DEPLOY_TRUST_EC2), and asserts both.
+# (FL_KIT_SLOT_NAMES), and asserts both.
 #
 # Usage:
 #     bash deploy/providers/AWS/scripts/tests/test_setup_github_environments.sh
@@ -227,12 +227,12 @@ echo "==== setup-github-environments.sh ===="
 # 1. THE REGRESSION. Both ends of REQUIRED_KEYS must be classified as required: a
 #    membership glob that only matches the final element reports every other
 #    required key as an optional absence, which is the opposite of this script's
-#    job. AWS_REGION is first in the list, DEPLOY_TRUST_EC2 last.
+#    job. AWS_REGION is first in the list, FL_KIT_SLOT_NAMES last.
 run_case "a partial env file is read in dry-run" -- \
     --hub stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
 expect_rc 0 "dry run succeeds"
 expect_mentions "- AWS_REGION" "a required key in the middle of the list is reported"
-expect_mentions "- DEPLOY_TRUST_EC2" "and so is the one at the end"
+expect_mentions "- FL_KIT_SLOT_NAMES" "and so is the one at the end"
 expect_mentions "REQUIRED but absent" "under the required heading"
 expect_mentions "reconcile_ci_env.py --env stag" "with the recovery command for this hub"
 
@@ -242,8 +242,6 @@ expect_mentions "optional key(s) absent" "optional absences are grouped separate
 expect_mentions "JOB_RESOURCE_SPEC_NUM_GPUS" "an optional absent key is named there"
 expect_silent_about "- JOB_RESOURCE_SPEC_NUM_GPUS" "and not in the required list"
 expect_mentions "skip ENFORCE_MFA" "ENFORCE_MFA is skipped, not reported"
-# ...and the demo bucket is optional on stag, where no public Ark+ demo is hosted.
-expect_silent_about "- DEMO_ASSETS_BUCKET_NAME" "an absent demo bucket is not required on stag"
 
 # 3. The header's promise: key names only. Values arrive on stdin, so neither the
 #    env file's values nor the ARNs read from IAM may reach the output.
@@ -264,17 +262,13 @@ else
     no "TF_HUB is not listed as an absent key" "${STDOUT}"
 fi
 
-# 5. Prod-only asymmetry: an empty demo bucket on prod is a gap, not an omission
-#    (cloudfront.tf gates four objects on it being non-empty). The env file is the
-#    same one case 1 used, where the same key was optional — the difference is the
-#    hub alone.
-run_case "prod treats an absent demo bucket as required" \
+# 5. Prod is held to main.
+run_case "prod states its branch policy" \
     STUB_SUB="repo:acme/flip:environment:aws-prod" \
     STUB_APPLY_REF="acme/flip/.github/workflows/terraform_apply.yml@refs/heads/main" -- \
     --hub prod --env-file "${ENV_FILE}" --repo acme/flip --dry-run
 expect_rc 0 "dry run succeeds"
-expect_mentions "- DEMO_ASSETS_BUCKET_NAME" "the demo bucket is required on prod"
-expect_mentions "branch policy: main only" "and prod's branch policy is stated"
+expect_mentions "branch policy: main only" "prod's branch policy is main only"
 
 # 6. Every estate requires the LZA keys, appended to the same array — the
 #    classification has to survive the append, not just the base list.

@@ -1,0 +1,372 @@
+[
+  {
+    "globalRound": null,
+    "id": "b35f554f-cfdb-8387-87ec-edbdf1708b29",
+    "log": "Model Queued (1)",
+    "logDate": "2026-11-02T11:57:41.998490",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": null,
+    "id": "4c6527c5-0c80-8232-b72a-3dbe892654ab",
+    "log": "Selected trusts for training: Guy's and St Thomas' Trust, King's College Hospital",
+    "logDate": "2026-11-02T11:57:42.000614",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": null,
+    "id": "1c25e4d3-ea2b-8a58-aa25-aa862144122d",
+    "log": "Model training assigned to 'net-1'",
+    "logDate": "2026-11-02T11:57:55.139207",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": null,
+    "id": "843dc283-38cf-8389-ab04-5af9b0d18ce9",
+    "log": "This model has been selected from the queue and will be prepared to run.",
+    "logDate": "2026-11-02T11:57:56.979111",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": null,
+    "id": "42887ec4-3510-8937-b3a9-3541c7bc5515",
+    "log": "This model has been prepared and its job will begin shortly.",
+    "logDate": "2026-11-02T11:57:56.987950",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": null,
+    "id": "4c7e29c1-3f37-8a69-80a1-3a06e820a6f8",
+    "log": "The job for this model is now running.",
+    "logDate": "2026-11-02T11:57:56.994857",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": 1,
+    "id": "bf7e1b14-187d-8635-b314-74b48a1b0993",
+    "log": "Round 1 initiated · global model dispatched",
+    "logDate": "2026-11-02T11:57:57.003251",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": 1,
+    "id": "3a9dcd10-9d1f-815c-8a53-5262d8ce7350",
+    "log": "Round 1 weights uploaded · 1.9 KB",
+    "logDate": "2026-11-02T11:58:03.243875",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": "GSTT",
+    "trustName": "Guy's and St Thomas' Trust"
+  },
+  {
+    "globalRound": 1,
+    "id": "9d4653bc-5be2-8a4b-87d3-e6221398b5fb",
+    "log": "Round 1 weights uploaded · 1.9 KB",
+    "logDate": "2026-11-02T11:58:03.406152",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": "KCH",
+    "trustName": "King's College Hospital"
+  },
+  {
+    "globalRound": 1,
+    "id": "eba970ef-cf8e-8da0-baca-3ab125574f2e",
+    "log": "Round 1 aggregated · 2 of 2 trusts returned",
+    "logDate": "2026-11-02T11:58:03.410142",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": 1,
+    "id": "d78f040a-de60-898a-ae00-74bd77c1135f",
+    "log": "Round 1 results returned",
+    "logDate": "2026-11-02T11:58:09.490908",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": "KCH",
+    "trustName": "King's College Hospital"
+  },
+  {
+    "globalRound": 1,
+    "id": "96318593-cecf-86ee-af6f-49cea4ab9282",
+    "log": "Round 1 results returned",
+    "logDate": "2026-11-02T11:58:09.514480",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": "GSTT",
+    "trustName": "Guy's and St Thomas' Trust"
+  },
+  {
+    "globalRound": 2,
+    "id": "f6fe83fb-a273-8523-b53c-5f75aa218bf5",
+    "log": "Round 2 initiated · global model dispatched",
+    "logDate": "2026-11-02T11:58:09.521059",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": 2,
+    "id": "51599e8d-ca84-8ab7-b468-5568f0a56c6c",
+    "log": "Round 2 weights uploaded · 1.9 KB",
+    "logDate": "2026-11-02T11:58:18.827682",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": "GSTT",
+    "trustName": "Guy's and St Thomas' Trust"
+  },
+  {
+    "globalRound": 2,
+    "id": "ffd8e9f7-77b6-86a9-901a-10d4054ec7e7",
+    "log": "Round 2 weights uploaded · 1.9 KB",
+    "logDate": "2026-11-02T11:58:19.018164",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": "KCH",
+    "trustName": "King's College Hospital"
+  },
+  {
+    "globalRound": 2,
+    "id": "22d63d60-49c0-84b9-91cc-f03615b8a1d6",
+    "log": "Round 2 aggregated · 2 of 2 trusts returned",
+    "logDate": "2026-11-02T11:58:19.023112",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": 2,
+    "id": "cb19ed6a-e440-8ba0-879c-3782a459b245",
+    "log": "Round 2 results returned",
+    "logDate": "2026-11-02T11:58:25.110673",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": "KCH",
+    "trustName": "King's College Hospital"
+  },
+  {
+    "globalRound": 2,
+    "id": "4d4e444c-4efb-865c-85de-bc75079decf7",
+    "log": "Round 2 results returned",
+    "logDate": "2026-11-02T11:58:25.140487",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": "GSTT",
+    "trustName": "Guy's and St Thomas' Trust"
+  },
+  {
+    "globalRound": 3,
+    "id": "4694fe00-c2c8-8560-92db-d02f569f78b4",
+    "log": "Round 3 initiated · global model dispatched",
+    "logDate": "2026-11-02T11:58:25.149393",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": 3,
+    "id": "c541fbe8-227b-8138-b733-c3418962b8d3",
+    "log": "Round 3 weights uploaded · 1.9 KB",
+    "logDate": "2026-11-02T11:58:34.429873",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": "GSTT",
+    "trustName": "Guy's and St Thomas' Trust"
+  },
+  {
+    "globalRound": 3,
+    "id": "a41f65c6-03c5-8046-86bf-c6e5648a671d",
+    "log": "Round 3 weights uploaded · 1.9 KB",
+    "logDate": "2026-11-02T11:58:34.639792",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": "KCH",
+    "trustName": "King's College Hospital"
+  },
+  {
+    "globalRound": 3,
+    "id": "cdb5ca71-bc80-8c0d-b78e-590ada455cf2",
+    "log": "Round 3 aggregated · 2 of 2 trusts returned",
+    "logDate": "2026-11-02T11:58:34.643331",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": 3,
+    "id": "7599e4f5-2176-8b23-8b6c-222b9ac97c6f",
+    "log": "Round 3 results returned",
+    "logDate": "2026-11-02T11:58:40.800579",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": "GSTT",
+    "trustName": "Guy's and St Thomas' Trust"
+  },
+  {
+    "globalRound": 3,
+    "id": "cf0502cc-644c-8b15-a049-93bac880ec03",
+    "log": "Round 3 results returned",
+    "logDate": "2026-11-02T11:58:40.886890",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": "KCH",
+    "trustName": "King's College Hospital"
+  },
+  {
+    "globalRound": 4,
+    "id": "784a6d8f-77cd-8b10-b7e3-8e8411c9ea89",
+    "log": "Round 4 aggregated · 2 of 2 trusts returned",
+    "logDate": "2026-11-02T11:58:47.332039",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": 4,
+    "id": "1f047ea7-2011-82da-b423-954b91feac2a",
+    "log": "Round 4 results returned",
+    "logDate": "2026-11-02T11:58:53.495898",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": "GSTT",
+    "trustName": "Guy's and St Thomas' Trust"
+  },
+  {
+    "globalRound": 5,
+    "id": "9bd0dec2-d27c-8b33-89d4-2afd65c52f47",
+    "log": "Round 5 weights uploaded · 1.9 KB",
+    "logDate": "2026-11-02T11:58:59.933605",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": "KCH",
+    "trustName": "King's College Hospital"
+  },
+  {
+    "globalRound": 4,
+    "id": "bca8a2cc-cfb4-89cc-b469-15b2ffde36ce",
+    "log": "Round 4 initiated · global model dispatched",
+    "logDate": "2026-11-02T11:58:40.895418",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": 4,
+    "id": "746fab0e-e136-8b2b-92ca-7b1ba4d74de8",
+    "log": "Round 4 weights uploaded · 1.9 KB",
+    "logDate": "2026-11-02T11:58:47.127473",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": "KCH",
+    "trustName": "King's College Hospital"
+  },
+  {
+    "globalRound": 4,
+    "id": "28b1657c-69fb-89ca-845b-8da0f8dc739b",
+    "log": "Round 4 results returned",
+    "logDate": "2026-11-02T11:58:53.468150",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": "KCH",
+    "trustName": "King's College Hospital"
+  },
+  {
+    "globalRound": 5,
+    "id": "db2f6734-8681-8be9-b763-bc45e854f424",
+    "log": "Round 5 initiated · global model dispatched",
+    "logDate": "2026-11-02T11:58:53.505066",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": 5,
+    "id": "ad774cc0-b1a8-8e14-a469-f41662c04f16",
+    "log": "Round 5 aggregated · 2 of 2 trusts returned",
+    "logDate": "2026-11-02T11:58:59.937068",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": 4,
+    "id": "f624a559-b5fb-859f-b448-50d36bd53d3c",
+    "log": "Round 4 weights uploaded · 1.9 KB",
+    "logDate": "2026-11-02T11:58:47.327926",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": "GSTT",
+    "trustName": "Guy's and St Thomas' Trust"
+  },
+  {
+    "globalRound": 5,
+    "id": "7b6d862d-c557-8905-91bc-1daaf80f12c6",
+    "log": "Round 5 results returned",
+    "logDate": "2026-11-02T11:59:06.039724",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": "KCH",
+    "trustName": "King's College Hospital"
+  },
+  {
+    "globalRound": 5,
+    "id": "51cf2a23-ad1f-8c8a-aca4-0f78a58d2b23",
+    "log": "Round 5 weights uploaded · 1.9 KB",
+    "logDate": "2026-11-02T11:58:59.743563",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": "GSTT",
+    "trustName": "Guy's and St Thomas' Trust"
+  },
+  {
+    "globalRound": 5,
+    "id": "447c13dd-85e1-8974-b959-17aabfc9069d",
+    "log": "Round 5 results returned",
+    "logDate": "2026-11-02T11:59:06.073690",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": "GSTT",
+    "trustName": "Guy's and St Thomas' Trust"
+  },
+  {
+    "globalRound": null,
+    "id": "bbc847b6-981b-8e20-9f04-f6b897e05dc0",
+    "log": "The results of this model have been uploaded and can now be downloaded.",
+    "logDate": "2026-11-02T11:59:06.157800",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  }
+]

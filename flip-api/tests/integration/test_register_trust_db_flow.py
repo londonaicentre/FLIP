@@ -10,21 +10,30 @@
 # limitations under the License.
 #
 
-"""register_trust's slot claim + reconcile-on-miss against real Postgres.
+"""register_trust's slot claim + reconcile-on-miss, and key rotation, against real Postgres.
 
 The unit tests mock the session, so the mechanics that make the reconcile safe —
 ``begin_nested()`` savepoint flush, rollback leaving the outer transaction usable,
 and the retried ``SELECT ... FOR UPDATE SKIP LOCKED`` seeing rows inserted in the
-same open transaction — are only exercised here.
+same open transaction — are only exercised here. Rotation is here for the same reason: whether
+the hub really refuses the old key afterwards is a property of the committed row, not of a mock.
 """
 
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 from sqlmodel import select
 
-from flip_api.db.models.main_models import FLKitSlot, Trust
-from flip_api.trusts_services.services.register_trust import NoFreeKitSlotError, register_trust
+from flip_api.auth import trust_key_cache
+from flip_api.auth.access_manager import authenticate_trust
+from flip_api.db.models.main_models import FLKitSlot, Trust, TrustsAudit
+from flip_api.domain.schemas.actions import TrustAuditAction
+from flip_api.trusts_services.services.register_trust import (
+    NoFreeKitSlotError,
+    register_trust,
+    rotate_trust_keys,
+)
 
 
 @patch("flip_api.trusts_services.services.register_trust.resolve_fl_kit_slot_names")
@@ -62,3 +71,51 @@ def test_exhausted_pool_raises_and_commits_nothing(mock_resolve, session):
     slots = session.exec(select(FLKitSlot)).all()
     assert [s.slot_name for s in slots] == ["Trust_702"]
     assert slots[0].assigned_to_trust_id is not None
+
+
+@patch("flip_api.trusts_services.services.register_trust.resolve_fl_kit_slot_names")
+def test_rotation_refuses_the_old_key_and_leaves_identity_untouched(mock_resolve, session):
+    """After rotation the old key 401s, the new one authenticates, and only the hash moved."""
+    mock_resolve.return_value = ["Trust_703"]
+    registered = register_trust(name="Rotating Trust", code="ROT", region=None, session=session)
+    trust_id, slot_name = registered.trust.id, registered.fl_kit_slot.slot_name
+    old_key = registered.trust_api_key
+    # The committed hash of the old key, read before the rotation moves it. Taking it from the
+    # row rather than re-hashing here keeps the cache-seeding below on the production hash.
+    old_key_hash = session.exec(select(Trust).where(Trust.id == trust_id)).one().api_key_hash
+    assert old_key_hash is not None
+    # Warm the auth cache on the old key: a cache hit must not survive the rotation either.
+    assert authenticate_trust(api_key=old_key, db=session).id == trust_id
+
+    try:
+        rotated = rotate_trust_keys(session, name="Rotating Trust")
+
+        assert rotated.trust_api_key != old_key
+        with pytest.raises(HTTPException) as excinfo:
+            authenticate_trust(api_key=old_key, db=session)
+        assert excinfo.value.status_code == 401
+
+        # rotate_trust_keys invalidates this process's cache, so the assertion above never
+        # reaches the cache-hit branch. Every other hub worker keeps its warm entry, and the
+        # live-hash re-check inside that branch is the only thing refusing the old key there.
+        # Seed the entry the way another worker would still hold it, and retry.
+        trust_key_cache.remember(old_key_hash, trust_id)
+        with pytest.raises(HTTPException) as cached_excinfo:
+            authenticate_trust(api_key=old_key, db=session)
+        assert cached_excinfo.value.status_code == 401
+
+        assert authenticate_trust(api_key=rotated.trust_api_key, db=session).id == trust_id
+
+        # Identity and the slot assignment are untouched; the audit log is the only new row.
+        assert rotated.trust.id == trust_id
+        assert rotated.fl_kit_slot.slot_name == slot_name
+        session.expire_all()
+        slot = session.exec(select(FLKitSlot).where(FLKitSlot.slot_name == slot_name)).one()
+        assert slot.assigned_to_trust_id == trust_id
+        rotations = session.exec(
+            select(TrustsAudit).where(TrustsAudit.trust_id == trust_id, TrustsAudit.action == TrustAuditAction.ROTATED)
+        ).all()
+        assert len(rotations) == 1
+    finally:
+        # A failed assertion must not leak a warm entry into the tests that follow.
+        trust_key_cache.invalidate()

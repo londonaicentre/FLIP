@@ -12,9 +12,8 @@
 # aws-ec2-host.yml — provisions an EC2 trust host: the hosts in group trust_ec2.
 #
 # Not run on its own. aws-ec2.yml imports it after building the inventory from the
-# trust/deploy/terraform/aws/ec2 root, and deploy/providers/AWS/site.yml imports it for the hub's
-# own trust EC2 until FLIP#1438 PR 3 removes that one. Every play composes ./roles, shared with
-# onprem.yml and azure.yml; what is EC2-specific is stated in each play's vars.
+# trust/deploy/terraform/aws/ec2 root. Every play composes ./roles, shared with onprem.yml and
+# azure.yml; what is EC2-specific is stated in each play's vars.
 #
 # Needs: flip_aicentre_bucket, fl_kit_date and trust_data_version (asserted by the importing
 # play), trust_num (the kit's slot number; 1 before registration), fl_backend.

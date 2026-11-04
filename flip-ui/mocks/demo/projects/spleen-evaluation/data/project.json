@@ -1,0 +1,69 @@
+{
+  "approved": null,
+  "approvedTrusts": [
+    {
+      "code": "KCH",
+      "decidedAs": "HUB",
+      "decidedAt": "2026-11-02T13:10:56.827Z",
+      "decidedBy": "00000000-0000-4000-8000-000000000001",
+      "decidedByName": "FLIP Demo",
+      "hasTrustAdmin": false,
+      "id": "00000000-0000-4000-8000-00000000a002",
+      "name": "King's College Hospital",
+      "status": "APPROVED"
+    },
+    {
+      "code": "GSTT",
+      "decidedAs": "HUB",
+      "decidedAt": "2026-11-02T13:10:56.827Z",
+      "decidedBy": "00000000-0000-4000-8000-000000000001",
+      "decidedByName": "FLIP Demo",
+      "hasTrustAdmin": false,
+      "id": "00000000-0000-4000-8000-00000000a001",
+      "name": "Guy's and St Thomas' Trust",
+      "status": "APPROVED"
+    }
+  ],
+  "creationtimestamp": "2026-11-02T13:10:51.661Z",
+  "deleted": false,
+  "description": "Scores a shipped spleen model on each site CT without retraining.",
+  "dicom_to_nifti": true,
+  "has_imaging": true,
+  "id": "6f98c2ef-c38b-887d-8f43-9748587995d0",
+  "name": "Spleen segmentation evaluation",
+  "ownerEmail": "demo@flip.local",
+  "ownerId": "00000000-0000-4000-8000-000000000001",
+  "ownerName": null,
+  "query": {
+    "cancelledTrustIds": [],
+    "created": "2026-11-02T13:10:51.683Z",
+    "createdBy": "FLIP Demo",
+    "emptyTrustIds": [],
+    "erroredTrustIds": [],
+    "id": "82279255-daaf-85b6-b853-5937e9135fd9",
+    "name": "E2E smoke query",
+    "pendingTrustIds": [],
+    "queriedTrustIds": [
+      "00000000-0000-4000-8000-00000000a001",
+      "00000000-0000-4000-8000-00000000a002"
+    ],
+    "query": "SELECT *\nFROM omop.image_occurrence\nWHERE modality_concept_id = 4300757\n-- Load-bearing, not cosmetic: without it the LIMIT below picks an unspecified 50 studies in an\n-- unspecified order, so the same cohort can disagree with itself between approval, the imaging\n-- pull and training -- the app can then be handed a study whose DICOM was never fetched. Ordered\n-- on the primary key rather than accession_id, which carries no unique constraint and so is not a\n-- total order.\nORDER BY\n    image_occurrence_id\nLIMIT 50\n",
+    "respondedTrustIds": [
+      "00000000-0000-4000-8000-00000000a001",
+      "00000000-0000-4000-8000-00000000a002"
+    ],
+    "totalCohort": 41
+  },
+  "stagedAt": "2026-11-02T13:10:56.812Z",
+  "status": "APPROVED",
+  "userCount": 1,
+  "users": [
+    {
+      "email": "demo@flip.local",
+      "id": "00000000-0000-4000-8000-000000000001",
+      "isDisabled": false,
+      "name": "FLIP Demo",
+      "organisation": "FLIP"
+    }
+  ]
+}

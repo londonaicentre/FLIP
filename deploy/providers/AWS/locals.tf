@@ -179,6 +179,11 @@ locals {
       # <root>/<model_id>/ here (FLIP#695). Matches the default in
       # flip-utils FlipConstants + compose.prod.nvflare.yml.
       SERVER_CHECKPOINT_ROOT = "/app/server-checkpoints"
+      # The kit this task runs on (ecs_efs_provision.tf syncs it to EFS). The image
+      # ignores it; it is here so a kit-date change registers a new revision and
+      # rolls the service, which reads the kit only at start. The Flower one-shot
+      # that registers SuperNode keys waits for that rollout (ecs_flower.tf, FLIP#1738).
+      FL_KIT_SOURCE = local.fl_provision_base_s3
       # INTERNAL_SERVICE_KEY is injected via the `secrets` block in
       # ecs_tasks.tf (sourced from the FLIP_API Secrets Manager secret),
       # never exposed as plain env in the task definition.
@@ -197,6 +202,8 @@ locals {
       # Requests GPUs on the fl-CLIENTS (trust hosts) — the hub Fargate tasks are
       # CPU-only. Default 0; jobs declare their own in their meta.json (FLIP#70).
       JOB_RESOURCE_SPEC_NUM_GPUS = tostring(var.JOB_RESOURCE_SPEC_NUM_GPUS)
+      # Rolls the service on a kit-date change; see fl_server's (FLIP#1738).
+      FL_KIT_SOURCE = local.fl_provision_base_s3
       # The only origin the server-side bundle fetch may download from: the
       # presign origin above (FLIP#905). Empty would mean "any public host".
       BUNDLE_URL_ALLOWED_ORIGINS = "https://${local.s3_regional_endpoint_host}"
@@ -220,6 +227,8 @@ locals {
       # cold sync outlives Flower's task heartbeat, so the run never starts (FLIP#1418).
       # Researcher package additions ship via image rebuild, not pyproject.
       FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION = "1"
+      # Rolls the service on a kit-date change; see fl_server's (FLIP#1738).
+      FL_KIT_SOURCE = local.flower_creds_base_s3
     })
     # Flower fl-api (compose.prod.flower.yml fl-api-net-1). SuperLink
     # addresses use the Cloud Map name — the provisioned server cert must
@@ -231,6 +240,8 @@ locals {
       SUPERLINK_HEALTH_ADDRESS    = "${local.service_discovery_names.fl_server}:9097"
       SUPERLINK_ROOT_CERTIFICATES = "/certs/ca.crt"
       FLOWER_SRC_ROOT             = "/app/src"
+      # Rolls the service on a kit-date change; see fl_server's (FLIP#1738).
+      FL_KIT_SOURCE = local.flower_creds_base_s3
       # Same bundle-fetch allow-list as the FLARE map (FLIP#905), and the same inert old name.
       BUNDLE_URL_ALLOWED_ORIGINS = "https://${local.s3_regional_endpoint_host}"
       BUNDLE_URL_ALLOWED_HOSTS   = local.s3_regional_endpoint_host
