@@ -76,7 +76,7 @@ help:
 	@echo "  make down          KIT=<CODE> HUB=<env>   Drop every service"
 	@echo "  make suspend       KIT=<CODE> HUB=<env>   Suspend every service AND every compute pool"
 	@echo "  make status        KIT=<CODE> HUB=<env>   Service and compute-pool status"
-	@echo "  make selftest      KIT=<CODE> HUB=<env>   Placeholder self-test (real asserts: FLIP#1585)"
+	@echo "  make selftest      KIT=<CODE> HUB=<env>   In-account self-test; passes on SELFTEST ALL PASS"
 	@echo ""
 	@echo "  One-shot jobs (EXECUTE JOB SERVICE, ASYNC; follow with job-status):"
 	@echo "  make xnat-configure KIT=<CODE> HUB=<env>  Register the DICOM receiver, the PACS and the DQR schedule"
