@@ -38,7 +38,11 @@ def test_every_lifecycle_target_exists(target: str) -> None:
 )
 @pytest.mark.parametrize("target", ["plan", "apply", "destroy"])
 def test_infrastructure_targets_forward_to_the_terraform_root(target: str, root: str, directory: str) -> None:
-    out = dry(target, f"TF_ROOT={root}").stdout
+    if not (SNOWFLAKE_DIR.parents[2] / directory / "Makefile").is_file():
+        pytest.skip(f"{directory} is not on this branch yet (it lands with #1599)")
+    result = dry(target, f"TF_ROOT={root}")
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
     assert f"{directory} {target}" in out, out
 
 
