@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -102,6 +103,7 @@ def render(kit: dict[str, str], code: str, env: str, out_dir: Path, digests: dic
                 "volumes": [volume["name"] for volume in item.spec["spec"].get("volumes", [])],
                 "read_only_volumes": item.read_only_volumes,
                 "endpoints": item.spec["spec"].get("endpoints", []),
+                "external_access_integrations": item.spec["spec"].get("externalAccessIntegrations", []),
             }
         )
 
@@ -120,6 +122,10 @@ def render(kit: dict[str, str], code: str, env: str, out_dir: Path, digests: dic
         "image_repository": names.image_repository,
         "image_repository_path": names.image_repository_path,
         "pools": {"service": names.pool, "job": names.job_pool, "gpu": names.gpu_pool},
+        # Empty unless the platform tier was applied with enable_hub_egress (#1599/#1586).
+        "external_access_integrations": sorted(
+            {name for service in services for name in service["external_access_integrations"]}
+        ),
         "services": services,
     }
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -160,6 +166,11 @@ def main() -> None:
             f"     make sync-trust-kit KIT={args.kit} HUB={env}"
         )
     kit = read_env_vars(path)
+    # One switch, the platform root's enable_hub_egress made visible to the specs: a kit may
+    # carry HUB_EGRESS, and HUB_EGRESS=... on the make line beats it (so a deploy can turn
+    # egress on for one run without editing the kit).
+    if os.environ.get("HUB_EGRESS"):
+        kit["HUB_EGRESS"] = os.environ["HUB_EGRESS"]
     out_dir = args.out_dir or HERE / "rendered" / f"{names.code}.{env}"
     digests = load_digests(HERE)
     manifest = render(kit, args.kit, env, out_dir, digests)

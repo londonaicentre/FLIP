@@ -155,6 +155,17 @@ class Names:
         return f"FLIP_{self.code}_SVC"
 
     @property
+    def hub_eai(self) -> str:
+        """The hub/FL egress integration, owned by the platform tier (#1599).
+
+        Derived, not passed: the platform root names it from the same prefix, so a spec
+        that attaches it and the object that exists cannot drift apart. It exists only
+        when the platform root was applied with ``enable_hub_egress``; a trial account has
+        no external network access at all, so the trial renders hubless.
+        """
+        return f"FLIP_{self.code}_HUB_EAI"
+
+    @property
     def omop_reader_role(self) -> str:
         return f"FLIP_{self.code}_OMOP_READER"
 

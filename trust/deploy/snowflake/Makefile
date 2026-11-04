@@ -73,6 +73,7 @@ help:
 	@echo "  make plan|apply|destroy  HUB=<env>        The Terraform root (TF_ROOT=workload, or platform)"
 	@echo "  make sync-kit      KIT=<CODE> HUB=<env>   Write SECRET objects, push FL kit + governance"
 	@echo "  make up            KIT=<CODE> HUB=<env>   CREATE (or ALTER) each service from the rendered specs"
+	@echo "                    HUB_EGRESS=true        ...attaching the hub/FL egress integration"
 	@echo "  make down          KIT=<CODE> HUB=<env>   Drop every service"
 	@echo "  make suspend       KIT=<CODE> HUB=<env>   Suspend every service AND every compute pool"
 	@echo "  make status        KIT=<CODE> HUB=<env>   Service and compute-pool status"
@@ -90,7 +91,7 @@ require-kit:
 
 # ── Specs ────────────────────────────────────────────────────────────────────
 render: require-kit
-	@$(PYTHON) $(SNOWFLAKE_DIR)render_specs.py --kit $(KIT) --env $(KIT_ENV) --out-dir $(RENDER_DIR)
+	@HUB_EGRESS=$(HUB_EGRESS) $(PYTHON) $(SNOWFLAKE_DIR)render_specs.py --kit $(KIT) --env $(KIT_ENV) --out-dir $(RENDER_DIR)
 
 # ── Images ───────────────────────────────────────────────────────────────────
 # Pull by tag from GHCR, retag into the account repository, push, and record the digest

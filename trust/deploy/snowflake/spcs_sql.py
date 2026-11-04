@@ -211,11 +211,11 @@ def print_runner(statements: list[str]) -> None:
     print("\n".join(statements))
 
 
-def existing_services(snow: str, connection: str, manifest: dict[str, Any]) -> frozenset[str]:
-    """The services already in the trust's APP schema, as unqualified upper-case names."""
+def show_rows(snow: str, connection: str, statement: str) -> list[dict[str, Any]]:
+    """Run one SHOW statement and return its rows."""
     out = subprocess.run(
         [snow, "sql", "--stdin", "--enable-templating", "NONE", "--format", "json", "--connection", connection],
-        input=f"SHOW SERVICES IN SCHEMA {manifest['database']}.APP;\n",
+        input=f"{statement}\n",
         text=True,
         capture_output=True,
         check=True,
@@ -223,7 +223,28 @@ def existing_services(snow: str, connection: str, manifest: dict[str, Any]) -> f
     rows = json.loads(out) if out.strip() else []
     if rows and isinstance(rows[0], list):  # one result list per statement
         rows = rows[-1]
-    return frozenset(str(row.get("name", "")).upper() for row in rows if isinstance(row, dict))
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def existing_services(snow: str, connection: str, manifest: dict[str, Any]) -> frozenset[str]:
+    """The services already in the trust's APP schema, as unqualified upper-case names."""
+    rows = show_rows(snow, connection, f"SHOW SERVICES IN SCHEMA {manifest['database']}.APP;")
+    return frozenset(str(row.get("name", "")).upper() for row in rows)
+
+
+def missing_integrations(snow: str, connection: str, manifest: dict[str, Any]) -> list[str]:
+    """The egress integrations a spec attaches that the account does not have.
+
+    Attaching one that does not exist fails CREATE SERVICE with a Snowflake error about the
+    integration, which reads like a typo rather than "the platform tier was never applied with
+    enable_hub_egress". Naming them here, before anything is granted, says which.
+    """
+    missing = []
+    for name in manifest.get("external_access_integrations", []):
+        rows = show_rows(snow, connection, f"SHOW INTEGRATIONS LIKE '{name}';")
+        if not rows:
+            missing.append(name)
+    return missing
 
 
 def run_up(
@@ -270,6 +291,14 @@ def main() -> None:
         if args.dry_run:
             run_up(args.dir, manifest, print_runner)
         else:
+            missing = missing_integrations(args.snow, args.connection, manifest)
+            if missing:
+                sys.exit(
+                    f"❌ The rendered specs attach {', '.join(missing)}, which this account does not have.\n"
+                    "   Apply the platform root with enable_hub_egress = true first\n"
+                    "   (trust/deploy/terraform/snowflake-platform), then re-run. Rendering with\n"
+                    "   HUB_EGRESS=false deploys the trust without egress instead."
+                )
             existing = existing_services(args.snow, args.connection, manifest)
             run_up(args.dir, manifest, snow_runner(args.snow, args.connection), existing)
         return

@@ -162,6 +162,30 @@ deploy's services fail to start on a privilege error about an object that plainl
 Terraform provider cannot grant on an object that does not exist yet and these objects
 are created here, not there.
 
+### Egress: the one integration a trust may attach
+
+A trust reaches the hub and the FL server, and nothing else. That list lives in **one**
+object, the external access integration `FLIP_<CODE>_HUB_EAI`, owned by the platform tier
+(`trust/deploy/terraform/snowflake-platform`, `enable_hub_egress`). No rendered spec holds a
+host, an IP or a rule of its own: a spec either attaches that integration by name or reaches
+nothing. Two services attach it, `trust-api` (polls the hub) and each `fl-client-net-N`
+(reaches the FL server); the guards in `tests/test_egress.py` fail if any other service does.
+
+The switch is the kit's (or the make line's) `HUB_EGRESS`, read literally as `true` or
+`false` and defaulting to false, because a trial account has no external network access at
+all: the trial renders hubless, the same specs, and the self-test runs without egress.
+Anything else (`yes`, `1`, a typo) fails naming the variable rather than quietly granting or
+withholding.
+
+```bash
+make render KIT=GSTT HUB=stag HUB_EGRESS=true   # attach the integration
+make up     KIT=GSTT HUB=stag HUB_EGRESS=true
+```
+
+`up` checks the integration exists before it grants anything, and fails naming it and
+`enable_hub_egress` if the platform root has not been applied with it. That error is worth
+having: Snowflake's own message for an unknown integration reads like a typo in a name.
+
 ## Roles
 
 Everything in this directory runs as **`FLIP_<CODE>_DEPLOY`**, the least-privilege

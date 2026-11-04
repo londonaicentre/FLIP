@@ -131,6 +131,38 @@ def _resources(cpu: str, memory: str, cpu_limit: str, memory_limit: str) -> dict
     }
 
 
+#: The two services that leave the account: trust-api polls the hub, and the fl-client
+#: reaches the FL server. Nothing else gets egress, and the guards below pin both halves.
+EGRESS_SERVICES = ("trust-api", "fl-client")
+
+
+def hub_egress(kit: dict[str, str]) -> bool:
+    """Whether to attach the hub/FL egress integration, from the kit's ``HUB_EGRESS``.
+
+    Literally ``true`` or ``false``, as the PACS switches are: a typo must fail naming the
+    variable rather than quietly granting or withholding egress. Absent means false, which
+    is what a trial account needs (it has no external network access at all).
+    """
+    raw = (kit.get("HUB_EGRESS") or "").strip().lower()
+    if raw in ("", "false"):
+        return False
+    if raw == "true":
+        return True
+    raise ValueError(f"HUB_EGRESS must be true or false, not {kit.get('HUB_EGRESS')!r}")
+
+
+def _egress(service: str, kit: dict[str, str], names: Names) -> dict[str, Any]:
+    """The spec-level ``externalAccessIntegrations`` key, or nothing.
+
+    SPCS has one integration per trust and it carries the closed egress list (the hub host
+    and the FL endpoints), so attaching it is all a spec does; the hosts live in the
+    platform tier and never in a spec.
+    """
+    if service in EGRESS_SERVICES and hub_egress(kit):
+        return {"externalAccessIntegrations": [names.hub_eai]}
+    return {}
+
+
 def _secrets(service: str, names: Names) -> list[dict[str, Any]]:
     """``containers.secrets`` entries for a service, from :data:`SECRET_MAP`.
 
@@ -223,6 +255,7 @@ def _trust_api(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Re
                 }
             ],
             "endpoints": [{"name": "api", "port": 8000, "protocol": "HTTP", "public": False}],
+            **_egress("trust-api", kit, names),
             **_event_table_exports(),
         }
     }
@@ -434,6 +467,7 @@ def _fl_client(kit: dict[str, str], names: Names, digests: dict[str, str], net: 
                 {"name": "dshm", "source": "memory", "size": "8Gi"},
                 *flare_workspace,
             ],
+            **_egress("fl-client", kit, names),
             **_event_table_exports(),
         }
     }
