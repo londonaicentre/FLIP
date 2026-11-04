@@ -142,6 +142,7 @@ jobs:
                       docker_build_trust_data_access_api.yml \
                       docker_build_trust_imaging_api.yml \
                       docker_build_trust_trust_api.yml \
+                      docker_build_trust_upgrade_agent.yml \
                       docker_build_xnat_db.yml \
                       docker_build_xnat_dcm2niix.yml \
                       docker_build_xnat_export_mask.yml \

@@ -1,0 +1,183 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# The in-cluster auto-upgrade agent (#1644): the host's systemd timer, for a cluster with no host.
+#
+# The identity is deliberately narrow, and the narrowness is the design:
+#   - no `secrets` verbs. The one credential the agent needs arrives as a projected Secret volume
+#     with an `items:` list, which the kubelet mounts without consulting this ServiceAccount, so the
+#     pod holds the trust's API key and none of the OMOP/XNAT/Grafana passwords.
+#   - no cluster-scoped permissions. Everything here is a Role in this one namespace.
+#   - the kinds are enumerated, not `*`. tests/test_upgrade_agent_rbac.py re-renders the chart and
+#     fails when a template renders a kind this Role does not cover, so the list cannot rot.
+#
+# Helm release records: HELM_DRIVER=configmap. Helm's Secret driver finds a release by LISTing
+# secrets with a label selector, and RBAC cannot scope a list to a name — a list returns contents.
+# ConfigMap records cost this identity configmap write access (it could rewrite the rendered
+# governance document), which is a smaller exposure than read-every-credential. The deploy side has
+# to use the same driver, or it cannot see the release this agent upgrades.
+{{- if .Values.autoUpgrade.enabled }}
+{{- $fullname := include "flip-trust.fullname" . }}
+{{- $ns := include "flip-trust.namespace" . }}
+{{- $secret := .Values.autoUpgrade.kitSecretName | default (printf "%s-secrets" $fullname) }}
+{{- $tag := .Values.autoUpgrade.image.tag | default .Values.global.image.tag }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fullname }}-upgrade-agent
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: upgrade-agent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullname }}-upgrade-agent
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: upgrade-agent
+rules:
+  # Everything a `helm upgrade` of this chart has to create, patch or delete. `get`/`list` are
+  # needed because Helm compares the render against what is live before it applies.
+  - apiGroups: [""]
+    resources: ["configmaps", "services", "serviceaccounts", "persistentvolumeclaims", "resourcequotas"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["batch"]
+    # `cronjobs` included because the agent's own CronJob is part of the release: without it the
+    # first upgrade after enabling the agent cannot patch the object it runs under.
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Rendered only when their values block is enabled; listed so enabling one does not silently
+  # break the agent on the next upgrade.
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullname }}-upgrade-agent
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: upgrade-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fullname }}-upgrade-agent
+subjects:
+  - kind: ServiceAccount
+    name: {{ $fullname }}-upgrade-agent
+    namespace: {{ $ns }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $fullname }}-upgrade-agent
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: upgrade-agent
+spec:
+  schedule: {{ .Values.autoUpgrade.schedule | quote }}
+  suspend: {{ .Values.autoUpgrade.suspend }}
+  # A tick that overruns its hour must not be joined by the next: two agents racing for the lease
+  # waste an upgrade, and the loser's report can misdate which release moved.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # One attempt per tick. A retry inside the same hour would re-run an hour-old decision, and
+      # the hub's lease is the only thing that would then stop it.
+      backoffLimit: {{ .Values.autoUpgrade.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.autoUpgrade.activeDeadlineSeconds }}
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            {{- include "flip-trust.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: upgrade-agent
+        spec:
+          serviceAccountName: {{ $fullname }}-upgrade-agent
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: upgrade-agent
+              image: "{{ .Values.autoUpgrade.image.repository }}:{{ $tag }}"
+              imagePullPolicy: {{ .Values.autoUpgrade.image.pullPolicy }}
+              args:
+                - tick
+                - --mode
+                - cluster
+                - --namespace
+                - {{ $ns }}
+                - --release
+                - {{ .Release.Name }}
+                - --chart-repository
+                - {{ .Values.autoUpgrade.chartRepository }}
+                - --kit-name
+                - {{ .Values.trustName }}
+                - --hub
+                - {{ .Values.environment | replace "production" "prod" | replace "staging" "stag" }}
+              env:
+                # The non-secret halves of the kit; the API key itself comes from the volume below.
+                - name: CENTRAL_HUB_API_URL
+                  value: {{ .Values.trustApi.env.CENTRAL_HUB_API_URL | quote }}
+                - name: TRUST_API_KEY_HEADER
+                  value: {{ .Values.trustApi.env.TRUST_API_KEY_HEADER | quote }}
+                # Helm records, in ConfigMaps rather than Secrets (see the header comment).
+                - name: HELM_DRIVER
+                  value: configmap
+              volumeMounts:
+                - name: kit
+                  mountPath: /etc/flip/upgrade-kit
+                  readOnly: true
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                {{- toYaml .Values.autoUpgrade.resources | nindent 16 }}
+          volumes:
+            - name: kit
+              secret:
+                secretName: {{ $secret }}
+                # Only the trust's API key. The kubelet mounts this for the pod without the
+                # ServiceAccount holding any `secrets` verb, which is the point of the projection.
+                items:
+                  - key: trust-api-key
+                    path: trust-api-key
+                defaultMode: 0400
+{{- end }}
