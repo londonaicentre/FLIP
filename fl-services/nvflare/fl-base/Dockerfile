@@ -67,6 +67,9 @@ COPY flip-utils/flip/ ./flip/
 # If LOCAL_DEV is set to true, install dev dependencies as well, else --no-dev
 # --frozen ensures exact versions from uv.lock are used
 # Install with full optional dependencies for ML frameworks
+# --compile-bytecode ships the venv's .pyc files (FLIP#1782). PYTHONDONTWRITEBYTECODE
+# stops runtime writes only, so without them every FL job process compiled torch,
+# MONAI and NVFLARE from source on each start (~7-11 s, 2.6 s with them).
 # Chaining the chown onto this RUN (rather than a separate layer) matters: the
 # venv this creates is ~7GB, and overlayfs copies up every byte a later layer
 # touches. A standalone `chown -R /app` after this step would copy the whole
@@ -82,6 +85,6 @@ COPY flip-utils/flip/ ./flip/
 # not on its contents — so `chmod -R` would copy the venv up for no benefit, and
 # would additionally make every installed file group-writable, which is a
 # permission grant this does not need and should not make.
-RUN uv sync --frozen --no-cache --extra full $(if [ "$LOCAL_DEV" = "true" ]; then echo "--dev"; else echo "--no-dev"; fi) && \
+RUN uv sync --frozen --no-cache --compile-bytecode --extra full $(if [ "$LOCAL_DEV" = "true" ]; then echo "--dev"; else echo "--no-dev"; fi) && \
     chown -R ${UNAME}:${UNAME} /app && \
     chmod g+rwX /app /home/${UNAME}
