@@ -25,10 +25,13 @@ RUN apk add --no-cache curl ca-certificates
 
 WORKDIR /out
 RUN set -eux; \
-    curl -fsSLo helm.tgz "https://get.helm.sh/helm-v${HELM_VERSION}-linux-${TARGETARCH}.tar.gz"; \
-    curl -fsSLo helm.sha256 "https://get.helm.sh/helm-v${HELM_VERSION}-linux-${TARGETARCH}.tar.gz.sha256sum"; \
-    sha256sum -c helm.sha256; \
-    tar -xzf helm.tgz -C . "linux-${TARGETARCH}/helm"; \
+    # Keep upstream's file name: its .sha256sum lists the hash against that name, and sha256sum -c
+    # reads the name from the file rather than from our argument.
+    TARBALL="helm-v${HELM_VERSION}-linux-${TARGETARCH}.tar.gz"; \
+    curl -fsSLo "$TARBALL" "https://get.helm.sh/$TARBALL"; \
+    curl -fsSLo "$TARBALL.sha256sum" "https://get.helm.sh/$TARBALL.sha256sum"; \
+    sha256sum -c "$TARBALL.sha256sum"; \
+    tar -xzf "$TARBALL" -C . "linux-${TARGETARCH}/helm"; \
     mv "linux-${TARGETARCH}/helm" /usr/local/bin/helm; \
     curl -fsSLo kubectl "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl"; \
     curl -fsSLo kubectl.sha256 "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl.sha256"; \
