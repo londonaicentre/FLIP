@@ -267,6 +267,29 @@ Run ``make onboard-onprem-trust KIT=<CODE>`` to see every checklist row again.
 On the hub, the FLIP admin sees the same versions in *Connection Status → trust drawer*. Any container still on another
 build shows an amber ``≠ hub`` pill.
 
+The release bundle
+==================
+
+Every release also publishes ``flip-compose-bundle-vX.Y.Z.tar.gz`` — the compose files, the
+``Makefile`` chain and the scripts an upgrade runs, and nothing else. It is the artifact a compose Trust
+upgrades *to*, so that a site no longer has to hold a git checkout of the platform to take a release.
+It ships with a ``.tar.gz.sha256`` beside it::
+
+    gh release download v0.13.0 --repo londonaicentre/FLIP \
+        --pattern 'flip-compose-bundle-v0.13.0.tar.gz*'
+    sha256sum -c flip-compose-bundle-v0.13.0.tar.gz.sha256
+    tar xzf flip-compose-bundle-v0.13.0.tar.gz -C /opt/flip/releases/v0.13.0
+
+``BUNDLE.json`` inside it names the release and the commit it was built from, which is what a checkout's
+``git describe`` used to tell you. The bundle holds no ``.env`` file, no kit and no key: the packaging
+step refuses to build one that does.
+
+.. note::
+
+   Today the bundle is published but ``scripts/site_upgrade.py`` still runs from a checkout, so a compose
+   Trust's upgrade path is unchanged. Pointing it at a bundle is the second half of FLIP#1753 and is what
+   removes the "move your checkout to the tag" step above.
+
 Kubernetes
 ==========
 

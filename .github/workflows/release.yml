@@ -326,6 +326,21 @@ jobs:
                   APPLY_CONFIRM_POLL_SECONDS: ${{ vars.RELEASE_APPLY_CONFIRM_POLL_SECONDS || 15 }}
               run: bash "$GITHUB_WORKSPACE/.github/scripts/confirm-release-apply.sh"
 
+            # The compose bundle (FLIP#1753): the artifact a compose trust upgrades *to*, so the
+            # release is what a site downloads rather than "move your checkout to the tag". Built
+            # after the apply has been confirmed, so a release that never reached production does
+            # not hand out an artifact that claims to be it.
+            - name: Package the compose bundle
+              if: steps.release_check.outputs.exists == 'false'
+              env:
+                  TAG: ${{ steps.version.outputs.tag }}
+              run: |
+                  set -euo pipefail
+                  python3 scripts/package_compose_bundle.py "$TAG" --out dist --checksum
+                  echo "--- what the bundle holds ---"
+                  tar tzf "dist/flip-compose-bundle-${TAG}.tar.gz" | wc -l
+                  cat "dist/flip-compose-bundle-${TAG}.sha256"
+
             - name: Create GitHub Release
               if: steps.release_check.outputs.exists == 'false'
               uses: softprops/action-gh-release@v3
@@ -333,3 +348,8 @@ jobs:
                   tag_name: ${{ steps.version.outputs.tag }}
                   name: "Release ${{ steps.version.outputs.tag }}"
                   body_path: ${{ steps.notes.outputs.notes_file }}
+                  # The bundle and its checksum travel with the release: a trust verifies the
+                  # download against the .sha256 beside it before it runs anything.
+                  files: |
+                      dist/flip-compose-bundle-${{ steps.version.outputs.tag }}.tar.gz
+                      dist/flip-compose-bundle-${{ steps.version.outputs.tag }}.sha256
