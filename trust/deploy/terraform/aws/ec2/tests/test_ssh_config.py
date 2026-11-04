@@ -33,11 +33,11 @@ def run(config: Path, instance_id: str = "i-0123456789abcdef0", *extra: str) -> 
 
 def test_writes_an_entry_reaching_the_node_over_ssm(tmp_path):
     config = tmp_path / "config"
-    assert run(config, "i-0123456789abcdef0", "--profile", "lza-stag").returncode == 0
+    assert run(config, "i-0123456789abcdef0", "--profile", "stag").returncode == 0
     text = config.read_text()
     assert "Host flip-stag-gstt\n    HostName i-0123456789abcdef0\n" in text
     assert "--document-name AWS-StartSSHSession" in text
-    assert "--profile lza-stag" in text
+    assert "--profile stag" in text
     assert stat.S_IMODE(config.stat().st_mode) == 0o600
 
 

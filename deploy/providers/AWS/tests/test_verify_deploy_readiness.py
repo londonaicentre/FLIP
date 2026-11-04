@@ -195,4 +195,4 @@ class TestIntegration:
         assert check_makefile_dependency_absent(
             "deploy-centralhub", "ssh-config", "Deploy Central Hub does not depend on SSH config"
         )
-        assert check_makefile_dependency("deploy-trust", "ssh-config", "Deploy Trust depends on ssh-config")
+        assert check_makefile_dependency("full-deploy", "ansible-init", "Full deploy configures the bastion")

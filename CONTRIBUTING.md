@@ -277,7 +277,7 @@ For the full local stack, replace every placeholder in these minimum groups befo
 | Central Hub auth | `ADMIN_USER_PASSWORD` — the password of every seeded dev identity (the Keycloak realm imports it). Development signs in through Keycloak, the identity-provider container in `deploy/compose.development.yml`, and nothing else: there is no `AUTH_BACKEND` to set (flip-api pins `keycloak` in development and `cognito` in staging/production) and no AWS account needed to sign in |
 | Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
 | Object store | Nothing: `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME` and `FLIP_APP_BUNDLES_BUCKET_NAME` ship with working names, created in the local store at `make up` |
-| FL kits (AWS, optional) | `AICENTRE_BUCKET_NAME` — only for staging/production kit uploads and `make stage-fl-kit`; leave it commented out for a local stack, since the two shipped dev kits are provisioned in-tree and never fetch it (see [What still needs AWS in development](#what-still-needs-aws-in-development)) |
+| FL kits (AWS, optional) | `AICENTRE_BUCKET_NAME` — only for staging/production kit uploads and kit staging onto an AWS node; leave it commented out for a local stack, since the two shipped dev kits are provisioned in-tree and never fetch it (see [What still needs AWS in development](#what-still-needs-aws-in-development)) |
 | XNAT plugins | Nothing to set. Run `make -C trust prepare-artifacts` before the first `make up`, and again after a pull that changes `trust/xnat/artifacts.manifest`: it downloads the plugins from their public upstream URLs, checksum-verified, with no AWS access (see [`trust/xnat/README.md`](trust/xnat/README.md#plugins)) |
 
 **Object storage needs no configuration in development** (FLIP#1291). `make up` starts `object-store`, an S3-compatible
@@ -315,7 +315,7 @@ table is the capability matrix behind it.
 | The example Trusts' XNAT plugins (first `make up`) | Nothing | `make -C trust prepare-artifacts` downloads them from upstream, checksum-verified |
 | Building the XNAT images locally (`make -C trust/xnat build`) | Nothing | The build downloads the WAR and plugins from upstream the same way; most developers pull the published `xnat-*` images and never build |
 | OMOP core vocabulary (`make -C trust/omop-db load-omop-vocab`, optional) | AI Centre developers: the `dev` AWS profile (`FLIPDeveloperAccess`, see [Setting up AWS access](#setting-up-aws-access)) | Request an export from [OHDSI Athena](https://athena.ohdsi.org/) under your own licences (UK editions via NHS TRUD) and load it as described in [`trust/omop-db/README.md`](trust/omop-db/README.md#the-core-vocabulary-bundle). `make up` never loads it: seeding loads the public DICOM vocabulary, so the shipped tutorials run, but cohort queries that join `omop.concept` for other vocabularies return nothing |
-| Participant kits for remote or EC2 Trusts (`make -C deploy/providers/AWS stage-fl-kit KIT=<CODE> HUB=<hub>`, the `upload-kits-to-s3` / `upload-creds-to-s3` targets in `fl-services/<backend>/`) | `AICENTRE_BUCKET_NAME` | Not needed on one host: the two dev kits are provisioned in-tree |
+| Participant kits for remote or EC2 Trusts (`make -C trust/deploy/terraform/aws/ec2 stage-kit KIT=<CODE> KIT_BUCKET=<bucket>`, the `upload-kits-to-s3` / `upload-creds-to-s3` targets in `fl-services/<backend>/`) | `AICENTRE_BUCKET_NAME` | Not needed on one host: the two dev kits are provisioned in-tree |
 | Testing SES or Cognito themselves | A staging environment | Not testable in development: flip-api pins `EMAIL_BACKEND=console` and `AUTH_BACKEND=keycloak` there |
 | `deploy/providers/AWS` (Terraform, EC2 Trusts, hub deploys) | AWS credentials | — |
 
@@ -339,9 +339,10 @@ unless `KEYCLOAK_ADMIN_USERNAME` / `KEYCLOAK_ADMIN_PASSWORD` are set; `KEYCLOAK_
 editing the realm run `make reset-keycloak` — the import skips a realm that already exists. Not available in-app under
 Keycloak, because the browser uses the OIDC password grant, which has no equivalent: TOTP enrolment/challenge (keep
 `ENFORCE_MFA=false`, which the dev compose sets — `true` only logs a warning and locks browser users out),
-forgot-password, and the admin "Reset password" button; use the Keycloak console for those. Everything else —
+and forgot-password; use the Keycloak console for those. The admin "Reset password" button works (FLIP#1705): flip-api
+re-sends the invitation, and with no mail server in dev sets the shared `ADMIN_USER_PASSWORD` as a temporary password. Everything else —
 register, roles, enable/disable, MFA reset from the admin screen, projects, cohorts, uploads — works the same. Scripts
-that sign in (`make e2e_smoke`, `make -C flip-api create_testing_projects`, `make seed-demo-projects`, `make demo-users`,
+that sign in (`make e2e_smoke`, `make -C flip-api create_testing_projects`, `make seed-demo-projects`, `make demo-users`, `make capture-demo-project`,
 the demo recorder) go through the configured provider, so they need no AWS session either. Details:
 [`deploy/keycloak/README.md`](deploy/keycloak/README.md).
 
@@ -350,6 +351,11 @@ Trusts are registered on the **running hub** with `make register-trusts` (shippe
 `api_key_hash`), claims an FL kit slot, and fills that trust's kit file `trust/.env.<CODE>.<env>`
 carrying `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY`. `make up` runs `register-trusts`
 automatically once the hub is up.
+
+`make rotate-trust-keys KIT=<CODE>` reissues an already-registered trust's two keys in place and
+rewrites the same kit file. The trust keeps its id, its code and its FL kit slot. The hub refuses
+the old key as soon as the rotation commits, so the trust is offline until its containers are
+recreated from the new kit.
 
 For an on-prem trust, `make onboard-onprem-trust KIT=<CODE>` checks the same kit
 that `up-onprem-trust` and `upgrade-onprem-trust` use: `trust/.env.<CODE>.<env>`, resolved by
@@ -384,6 +390,7 @@ Hub) communicates with flip-api. FL clients relay metrics and exceptions to the 
 
 - `FL_PROVISIONED_DIR` — path to the FLARE or Flower provisioned workspace, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`. The Makefile automatically converts this to an absolute path (Docker requires absolute paths for volume mounts). This directory contains certificates, keys, `fed_client.json`, and other files generated during provisioning for each network. Both are now provisioned in-tree (gitignored): FLARE at `fl-services/nvflare/provision/workspace-dev`, Flower at `fl-services/flower/provision/creds`.
 - `FL_API_PORT` — port for FL API services (default: `8000`).
+- `HUB_BIND_ADDRESS` — address the hub composes publish host ports on (default `127.0.0.1`; set `0.0.0.0` to publish on every interface). Trust kits have `TRUST_BIND_ADDRESS` for the same purpose.
 
 ### Setting up AWS access
 
@@ -786,7 +793,7 @@ failure rather than an un-deployed chart.
 the kit (a trust holds no FLIP AWS credentials), so `flClient.kitHostPath` must already exist
 on the node. It reads the backend from the kit's own shape and chowns to that backend's uid.
 The previous `make patch-aws-creds` target is gone along with the chart's in-cluster S3 fetch;
-see "Upgrading an install that fetched its kit from S3" in the K8s README for the full list of
+see ["Upgrading: the chart no longer fetches the FL kit"](trust/deploy/helm/README.md#upgrading-the-chart-no-longer-fetches-the-fl-kit) in the K8s README for the full list of
 removed values.
 
 The chart has a `check_status.py` smoke test script (which also checks that XNAT on each running
@@ -979,7 +986,7 @@ The list below is what they check and do, and what stays manual (the notes' pros
 The release is not deployed by merging. Two steps, in this order:
 
 1. **Hub.** Enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, then `make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=v<X.Y.Z>` (the guard accepts `sha-<short7>` or `v<X.Y.Z>`), then disable Deployment Mode. The UI ships with the release apply: the `ui` job of `terraform_apply.yml` publishes it from the tagged commit once that apply succeeds, so a held apply holds the UI too (FLIP#1186). The user menu then shows `v<X.Y.Z>`. If the `ui` job fails, re-run it from the apply run, or run `make -C deploy/providers/AWS deploy-ui HUB=prod` from a checkout at the tag. If the apply that accompanied the merge rotated any Hub-shared value — the AES key, the FL kit date — reconcile the operator env from deployed state and re-issue kits **before** telling sites to upgrade: `deploy/providers/AWS/scripts/reconcile_ci_env.py --env prod --compare .env.prod` → `make sync-trust-kits HUB=prod` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod`.
-1. **Sites, operator-triggered.** Each site's operator moves their FLIP checkout to the tag (`git fetch --tags origin && git checkout v<X.Y.Z>` — the compose files, Makefiles and the verb itself come from the checkout, and the verb refuses a release tag from any other checkout) and runs `make upgrade-onprem-trust KIT=<CODE>` (Kubernetes: `upgrade-trust-k8s`; EC2: `upgrade-trust-ec2`, both from a checkout at the tag), which defaults to the release the hub now reports. Nothing pushes upgrades to sites; the release notes' *Site upgrade* section is the prompt, and the Connection Status drawer shows which containers are still on another build. The full operator runbook is `docs/source/sys-admin/admin-upgrading-sites.rst`.
+1. **Sites, operator-triggered.** Each site's operator moves their FLIP checkout to the tag (`git fetch --tags origin && git checkout v<X.Y.Z>` — the compose files, Makefiles and the verb itself come from the checkout, and the verb refuses a release tag from any other checkout) and runs `make upgrade-onprem-trust KIT=<CODE>` (Kubernetes: `upgrade-trust-k8s`; an EC2 node: `make -C trust/deploy/terraform/aws/ec2 upgrade`, both from a checkout at the tag), which defaults to the release the hub now reports. Nothing pushes upgrades to sites; the release notes' *Site upgrade* section is the prompt, and the Connection Status drawer shows which containers are still on another build. The full operator runbook is `docs/source/sys-admin/admin-upgrading-sites.rst`.
 
 ### Release notes
 
@@ -1155,10 +1162,11 @@ run was 95% of a clone). Instead:
   contains as `vX.Y.Z` on the dataset (`docs/scripts/freeze_docs_gifs.py`) before it pushes the git tag, so
   that release's docs, and git `main`'s, keep showing them. Release tags are never moved or deleted.
 - **GIFs CI cannot record** (the MONAI Label walkthrough needs a live trust) are listed in
-  `docs/scripts/live-recorded-gifs.txt` instead of having a spec. Recorded by hand, they go to the dataset
-  branch of the PR that carries them, which that PR's ReadTheDocs preview then shows (see "Publishing by
-  hand"). When that PR merges, the CI publish takes them from its `pr-<N>`; every later CI publish carries
-  them forward unchanged from `main`. Only CI writes the dataset's `main`; delete `pr-<N>` once the PR merges.
+  `docs/scripts/live-recorded-gifs.txt`, with each one's sha256, instead of having a spec. Recorded by hand,
+  they go to the dataset branch of the PR that pins them, which that PR's ReadTheDocs preview then shows (see
+  "Publishing by hand"). The next CI publish after that PR merges fetches the pinned bytes from its `pr-<N>`;
+  every later one carries them forward unchanged from `main`. Only CI writes the dataset's `main`; delete
+  the dataset branch `pr-<N>` (not the git branch) once `main`'s manifest lists the pinned sha256.
 
 ### Adding a new GIF
 
@@ -1189,7 +1197,7 @@ Without the skip flag the build restores the published bytes over any file that 
 Only for GIFs CI cannot record, and only to the dataset branch of your PR (the script refuses `main`). From a
 laptop with an account that can write to the dataset, with the full set under
 `docs/source/assets/generated/gifs/` (fetch the rest with `uv run docs/scripts/fetch_docs_gifs.py`, then add
-yours):
+yours) and each of yours pinned by its sha256 in `docs/scripts/live-recorded-gifs.txt`:
 
 ```bash
 uvx --from 'huggingface_hub>=1.6' hf auth login

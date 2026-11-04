@@ -64,6 +64,7 @@ from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.utils import constants
 from tests.integration.utils import admin_authentication
+from tests.query_files import read_query_file
 
 # Resolve next to this file so the default works regardless of CWD (direct
 # `uv run` from any directory, not just `flip-api/`). `make e2e_smoke` passes
@@ -1132,7 +1133,7 @@ def main(argv: list[str] | None = None) -> int:
         _log(f"❌ Query file not found: {args.query_file}")
         return 2
 
-    query = args.query_file.read_text()
+    query = read_query_file(args.query_file)
     _log(f"🎯 Target hub: {constants.BASE_URL}")
     headers = authenticate()
     client = requests.Session()

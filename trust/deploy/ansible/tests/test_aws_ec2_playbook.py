@@ -14,8 +14,7 @@
 """Static guards on aws-ec2.yml, the play for a node from trust/deploy/terraform/aws/ec2 (FLIP#1528).
 
 Its inventory comes from that root's outputs, never the hub's, and the host itself is provisioned by
-aws-ec2-host.yml, the plays the hub's site.yml imports too. How those plays compose the roles is
-pinned in deploy/providers/AWS/tests/test_site_roles.py.
+aws-ec2-host.yml. How those plays compose the roles is pinned in test_aws_ec2_host_roles.py.
 """
 
 from pathlib import Path

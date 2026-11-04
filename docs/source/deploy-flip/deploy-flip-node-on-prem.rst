@@ -116,13 +116,17 @@ the admin manages them.
        (shipped defaults: 8104 and 8105).
      - Yes
    * - Other host ports, e.g. ``OMOP_DB_PORT``, ``TRUST_API_PORT``, ``GRAFANA_PORT``
-     - The stack publishes these on the host. Change any that clash with something already there.
+     - The stack publishes these on the host's loopback interface only (``TRUST_BIND_ADDRESS``, default
+       ``127.0.0.1``), so reach Grafana, Orthanc or the database over an SSH tunnel. Change any that clash
+       with something already there.
      - If needed
    * - Storage and bind-mount directories
      - Point them at your host's disk layout.
      - If needed
    * - Trust-local passwords
-     - Replace every default password in the *Trust-local credentials* section with a real secret.
+     - ``make new-trust`` mints a random value for each. A kit scaffolded from an older template still carries
+       the mock-stack defaults; replace every one in the *Trust-local credentials* section, or the readiness
+       checklist refuses a ``.prod`` / ``.stag`` kit.
      - Yes
    * - ``NUM_AVAILABLE_GPUS``
      - Number of GPUs for FL jobs; ``0`` on a CPU-only host.
@@ -149,9 +153,10 @@ Step 4 — Run the readiness checklist and start the stack
    sudo -E make up-onprem-trust KIT=<CODE>        # starts only if every check passes
 
 Both default to the production hub (``HUB=prod``); add ``HUB=stag`` for staging. The checklist prints a ✅ or ❌ for
-each precondition: the kit file, Docker swarm, the hub-shared settings and credentials being filled in, trust-local
-passwords, ``FL_KIT_DIR`` and the FL kit contents, and GPU capacity. Fix every ❌ row; ``up-onprem-trust`` runs the
-same checks and will not start until they pass.
+each precondition: the kit file, Docker swarm, the hub-shared settings and credentials being filled in, the hub API
+and the FL endpoint reachable from this host (the image registries too, as a warning), trust-local passwords,
+``FL_KIT_DIR`` and the FL kit contents, and GPU capacity. Fix every ❌ row; ``up-onprem-trust`` runs the same checks
+and will not start until they pass.
 
 Then continue at step 6 of :doc:`onboarding-a-trust`.
 

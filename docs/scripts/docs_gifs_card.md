@@ -53,7 +53,8 @@ point at recordings ([FLIP#1547](https://github.com/londonaicentre/FLIP/issues/1
   are **never moved** and **never deleted**, so that release's documentation keeps resolving them. The same
   holds for the `YYYYMMDDTHHMMSSZ-<sha7>` tags pinned by releases v0.8.0 to v0.12.0, from before release tags.
 - **`pr-<N>` branches**: a recording made by hand for FLIP pull request #N, for GIFs CI cannot record (one
-  that needs a live trust, say); that PR's documentation preview shows it. Delete the branch once the PR closes.
+  that needs a live trust, say); that PR's documentation preview shows it. Delete the branch once `main`'s
+  manifest lists the sha256 the PR pinned for each such GIF; until then it is their only copy.
 
 ## Manifest
 

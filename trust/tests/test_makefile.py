@@ -50,9 +50,9 @@ class UpgradeTrust(unittest.TestCase):
         assert_data_safe(out, "_upgrade-trust-apply")
 
     def test_apply_phase_honours_a_cpu_only_override(self):
-        """upgrade-trust-ec2 passes NUM_AVAILABLE_GPUS=0: it must beat a template kit's 1 (FLIP#1204).
+        """The EC2 root's upgrade passes NUM_AVAILABLE_GPUS=0: it must beat a template kit's 1 (FLIP#1204).
 
-        The EC2 trust is GPU-less; with the kit's value the apply phase adds the GPU overlay and the
+        The EC2 node is GPU-less; with the kit's value the apply phase adds the GPU overlay and the
         recreated fl-client fails with "could not select device driver nvidia".
         """
         gpu_kit = kit_with("NUM_AVAILABLE_GPUS=0", "NUM_AVAILABLE_GPUS=1")

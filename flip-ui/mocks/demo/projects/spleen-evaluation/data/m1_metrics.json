@@ -1,0 +1,50 @@
+[
+  {
+    "metrics": [
+      {
+        "data": [
+          {
+            "xValue": 1,
+            "yValue": 0.9350039731888544
+          }
+        ],
+        "seriesLabel": "GSTT"
+      },
+      {
+        "data": [
+          {
+            "xValue": 1,
+            "yValue": 0.9329982556794819
+          }
+        ],
+        "seriesLabel": "KCH"
+      }
+    ],
+    "xLabel": "Global Rounds",
+    "yLabel": "MEAN_DICE"
+  },
+  {
+    "metrics": [
+      {
+        "data": [
+          {
+            "xValue": 1,
+            "yValue": 0.8787858315876552
+          }
+        ],
+        "seriesLabel": "GSTT"
+      },
+      {
+        "data": [
+          {
+            "xValue": 1,
+            "yValue": 0.875508942102131
+          }
+        ],
+        "seriesLabel": "KCH"
+      }
+    ],
+    "xLabel": "Global Rounds",
+    "yLabel": "MEAN_IOU"
+  }
+]

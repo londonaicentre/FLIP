@@ -54,9 +54,6 @@ DESTROY_TARGETS=(
   -target=module.ses.aws_ses_template.flip_access_request
   -target=module.ses.aws_ses_template.flip_xnat_invite
   -target=module.ses.aws_ses_template.flip_xnat_added_to_project
-  -target=module.trust_ec2.aws_instance.trust_host
-  -target=module.trust_security_group
-  -target=aws_key_pair.host_key
 )
 
 terraform destroy -auto-approve \

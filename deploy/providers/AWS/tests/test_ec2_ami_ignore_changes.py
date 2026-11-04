@@ -17,8 +17,7 @@
 The hosts read their image from Canonical's ``.../stable/current/.../ami-id`` SSM parameter, which
 moves with every Ubuntu release, and ``ami`` forces replacement. Without ``ignore_changes = [ami]``
 each new image replaces the host on the next apply — an unattended one in CI included — leaving it
-unprovisioned (``site.yml`` is not re-run) and, on the trust host, deleting the root volume that holds
-the trust's data. A deliberate replacement still launches from the current image, because
+unprovisioned (``site.yml`` is not re-run). A deliberate replacement still launches from the current image, because
 ``ignore_changes`` suppresses updates, not the value used on create.
 
 Every ``aws_instance`` whose ``ami`` comes from an ``aws_ssm_parameter`` is discovered from source
@@ -37,7 +36,7 @@ INSTANCE_HEADER = re.compile(r'resource\s+"aws_instance"\s+"([A-Za-z0-9_-]+)"')
 
 # The hosts this guard exists for; discovery must find at least these, so a rename that
 # breaks the scan fails here rather than passing vacuously.
-EXPECTED = {("main.tf", "ec2_instance"), ("modules/trust_ec2/main.tf", "trust_host")}
+EXPECTED = {("main.tf", "ec2_instance")}
 
 
 def _tf_files() -> list[Path]:
