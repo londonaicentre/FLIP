@@ -32,10 +32,10 @@ Read this page next. It covers what every trust node needs, whatever it runs on.
    trust-readiness-checklist
    onboarding-a-trust
    deploy-flip-node-on-prem
-   deploy-flip-node-azure
+   deploy-flip-node-kubernetes
    deploy-flip-node-aws-ec2
    deploy-flip-node-aws-eks
-   deploy-flip-node-kubernetes
+   deploy-flip-node-azure
    deploy-flip-node-in-tre
 
 .. contents:: On this page
@@ -103,10 +103,10 @@ Choose your platform
      - The trust runs an Ubuntu host (physical or VM) with governed access to its own OMOP database and PACS. The
        common case.
      - :doc:`deploy-flip-node-on-prem`
-   * - **Azure VM**
-     - The trust builds the node from code in its own Azure subscription. It is a Docker Compose host on a VM
-       that configures itself and accepts no inbound connection.
-     - :doc:`deploy-flip-node-azure`
+   * - **Kubernetes**
+     - The trust's platform team runs Kubernetes. The Helm chart is validated on single-node k3s; read its known
+       limitations first.
+     - :doc:`deploy-flip-node-kubernetes`
    * - **AWS EC2**
      - The trust builds the node from code in its own AWS account and VPC. It is a Docker Compose host on an
        EC2 instance with no public IP and no inbound rule, reached through SSM only.
@@ -115,10 +115,10 @@ Choose your platform
      - The trust builds a small EKS cluster from code in its own AWS account and runs the ``flip-trust`` Helm
        chart on it. Nodes have no public IP; the API endpoint admits the operator's address only.
      - :doc:`deploy-flip-node-aws-eks`
-   * - **Kubernetes**
-     - The trust's platform team runs Kubernetes. The Helm chart is validated on single-node k3s; read its known
-       limitations first.
-     - :doc:`deploy-flip-node-kubernetes`
+   * - **Azure VM**
+     - The trust builds the node from code in its own Azure subscription. It is a Docker Compose host on a VM
+       that configures itself and accepts no inbound connection.
+     - :doc:`deploy-flip-node-azure`
    * - **Inside a TRE**
      - Governance requires data access through a Trusted Research Environment loaded with a project-specific
        subset. The node itself installs as a Docker Compose host.
