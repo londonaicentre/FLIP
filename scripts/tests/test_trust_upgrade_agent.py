@@ -168,7 +168,12 @@ class Tick(unittest.TestCase):
     def test_failure_reports_the_log_tail_and_exits_nonzero(self):
         code, calls, _ = self._run(upgrade_result=(False, "boom"))
         self.assertEqual(code, 1)
-        self.assertEqual(calls[-1][2], {"state": "FAILED", "release": "v1.3.0", "detail": "boom"})
+        report = calls[-1][2]
+        self.assertEqual((report["state"], report["release"]), ("FAILED", "v1.3.0"))
+        # The outcome of the automatic rollback is part of the report: "site is back on v1.2.0" and
+        # "site is still on the release that broke it" are different things to have to fix.
+        self.assertIn("boom", report["detail"])
+        self.assertIn("rollback", report["detail"])
 
     def test_a_refused_claim_upgrades_nothing(self):
         code, calls, up = self._run(claim_status=409)
@@ -404,6 +409,119 @@ class LeaseRenewal(unittest.TestCase):
             with agent.LeaseRenewal(self.KIT, "v1.3.0", every=60):
                 time.sleep(0.02)
         self.assertEqual(hub_call.call_args_list, [])
+
+
+class Rollback(unittest.TestCase):
+    """A failed attempt puts the site back, once, and says so in the failure report."""
+
+    KIT = {}  # read_health is patched; nothing here talks to the hub
+    PREV = "v0.12.0"
+    TARGET = "v0.13.0"
+
+    def _rollback(self, upgrade_result=(True, "applied"), verified=(True, "up"), previous=PREV):
+        run_upgrade = mock.Mock(return_value=upgrade_result)
+        with mock.patch.object(agent, "verify", return_value=verified) as verify:
+            rolled, how = agent.rollback(self.KIT, run_upgrade, previous, self.TARGET)
+        return (rolled, how), run_upgrade, verify
+
+    def test_it_moves_the_site_back_to_the_previous_release(self):
+        (rolled, how), run_upgrade, _ = self._rollback()
+        self.assertTrue(rolled)
+        self.assertIn(self.PREV, how)
+        # The tag asked for is the previous release, not the one that failed.
+        run_upgrade.assert_called_once_with(self.PREV)
+
+    def test_it_verifies_the_site_is_back_on_the_previous_release(self):
+        _, _, verify = self._rollback()
+        self.assertEqual(verify.call_args[0][1], self.PREV)
+        self.assertLess(
+            verify.call_args[1]["timeout_s"],
+            agent.VERIFY_TIMEOUT_S,
+            "a return to a release that already worked is judged sooner than a forward upgrade",
+        )
+
+    def test_an_applied_rollback_that_does_not_come_up_is_not_reported_as_a_success(self):
+        (rolled, how), _, _ = self._rollback(verified=(False, "trust-api reports v0.11.0"))
+        self.assertFalse(rolled)
+        self.assertIn("did not come up", how)
+
+    def test_a_failed_rollback_is_reported_with_its_log(self):
+        (rolled, how), _, _ = self._rollback(upgrade_result=(False, "boom"))
+        self.assertFalse(rolled)
+        self.assertIn("failed", how)
+        self.assertIn("boom", how)
+
+    def test_there_is_nothing_to_roll_back_to_on_a_first_upgrade(self):
+        """No previous release means nothing is known to work, so the attempt stands as it is."""
+        (rolled, how), run_upgrade, _ = self._rollback(previous=None)
+        self.assertFalse(rolled)
+        self.assertIn("nothing to roll back to", how)
+        run_upgrade.assert_not_called()
+
+    def test_a_previous_release_that_is_not_a_tag_is_not_rolled_back_to(self):
+        (rolled, how), run_upgrade, _ = self._rollback(previous="sha-abc1234")
+        self.assertFalse(rolled)
+        self.assertIn("not a tag", how)
+        run_upgrade.assert_not_called()
+
+    def test_it_does_not_re_run_the_release_that_just_failed(self):
+        (rolled, how), run_upgrade, _ = self._rollback(previous=self.TARGET)
+        self.assertFalse(rolled)
+        self.assertIn("nothing to roll back to", how)
+        run_upgrade.assert_not_called()
+
+
+class TickRollsBack(unittest.TestCase):
+    """The tick rolls back on either failure — the verb's, or the site not coming up."""
+
+    KIT_FILE = Path("/nonexistent")
+    REPO = Path("/nope")
+
+    def _tick(self, upgrade_result, verify_result=(True, "v0.13.0")):
+        policy = {"enabled": True, "target_release": "v0.13.0", "lease": None}
+        local = agent.Local("v0.12.0", True, False, agent.Health(True, "ok", "v0.12.0", True, ()))
+        reports = []
+
+        def fake_hub_call(kit, method, route, body=None):
+            if body and body.get("state") in ("SUCCEEDED", "FAILED", "BLOCKED"):
+                reports.append(body)
+            return (200, policy if method == "GET" else None)
+
+        with (
+            mock.patch.object(agent, "read_kit", return_value={}),
+            mock.patch.object(agent, "kit_identity", return_value=("GSTT", "prod")),
+            mock.patch.object(agent, "hub_call", fake_hub_call),
+            mock.patch.object(agent, "local_state", return_value=local),
+            mock.patch.object(agent, "upgrade", return_value=upgrade_result),
+            mock.patch.object(agent, "verify", return_value=verify_result),
+            mock.patch.object(agent, "rollback", return_value=(True, "rolled back to v0.12.0")) as rollback,
+            mock.patch.object(agent, "LeaseRenewal"),
+        ):
+            rc = agent.tick(self.KIT_FILE, self.REPO, False)
+        return rc, reports, rollback
+
+    def test_a_failed_upgrade_rolls_back_and_reports_failed(self):
+        rc, reports, rollback = self._tick((False, "apply failed"))
+        self.assertEqual(rc, 1)
+        rollback.assert_called_once()
+        self.assertEqual(reports[-1]["state"], "FAILED")
+        self.assertIn("rolled back to v0.12.0", reports[-1]["detail"])
+
+    def test_a_site_that_does_not_come_up_rolls_back_too(self):
+        rc, reports, rollback = self._tick((True, "applied"), verify_result=(False, "never came back"))
+        self.assertEqual(rc, 1)
+        rollback.assert_called_once()
+        self.assertEqual(reports[-1]["state"], "FAILED")
+
+    def test_the_rollback_target_is_the_release_the_site_was_already_on(self):
+        _, _, rollback = self._tick((False, "apply failed"))
+        self.assertEqual(rollback.call_args[0][2], "v0.12.0")
+
+    def test_a_successful_upgrade_is_not_rolled_back(self):
+        rc, reports, rollback = self._tick((True, "applied"), verify_result=(True, "v0.13.0"))
+        self.assertEqual(rc, 0)
+        rollback.assert_not_called()
+        self.assertEqual(reports[-1]["state"], "SUCCEEDED")
 
 
 class KitFile(unittest.TestCase):

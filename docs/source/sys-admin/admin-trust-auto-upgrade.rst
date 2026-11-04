@@ -274,7 +274,8 @@ When it fails
 *************
 
 .. mermaid::
-   :caption: The agent stops and reports. It does not roll back, and it does not retry that release by itself.
+   :caption: The agent puts the Trust back on the release it came from, reports, and does not retry that release by
+      itself.
 
    stateDiagram-v2
        [*] --> Checking
@@ -282,20 +283,33 @@ When it fails
        Waiting --> Checking: next hourly check
        Checking --> Upgrading: allowed and idle
        Upgrading --> Succeeded: services healthy
-       Upgrading --> Failed: a step fails
+       Upgrading --> RollingBack: a step fails,<br/>or the Trust does not come up
+       RollingBack --> Failed: back on the previous release
+       RollingBack --> Failed: the rollback did not take
        Succeeded --> [*]
        Failed --> Blocked: stop
        Blocked --> Checking: operator clears the failure<br/>in the portal
 
-An upgrade recreates database-backed services and runs XNAT's in-place schema upgrade. Rolling that back
-automatically can do more damage than stopping, so the agent does not try. Instead it:
+An upgrade recreates database-backed services and runs XNAT's in-place schema upgrade, so a half-applied upgrade
+leaves a Trust that is neither on the old release nor on the new one. The agent therefore puts it back on the
+release it was on before the attempt — once, immediately, inside the same lease — and then stops:
 
-- stops, and reports **Failed** with the tail of the log, shown on My Trust;
-- refuses to try that release again until an operator has looked at the Trust and **cleared the failure** in the
+- it rolls back to the release the Trust was running, and checks the Trust comes up again on it. A release that
+  already worked on this site is judged on a shorter leash (five minutes) than a forward upgrade (ten);
+- it reports **Failed** with the tail of the log and what the rollback did, both shown on My Trust. *Failed, back
+  on v0.13.0* and *Failed, still on the release that broke it* are different things to have to fix, so the card
+  says which one it is;
+- it refuses to try that release again until an operator has looked at the Trust and **cleared the failure** in the
   portal — the *Try this release again* button on the card;
-- treats every failure the same way, including one that never got as far as recreating anything: the upgrade is a
+- it does not retry the rollback. One attempt, reported either way: a rollback loop would be worse than a Trust
+  sitting still and saying where it is;
+- it treats every failure the same way, including one that never got as far as recreating anything: the upgrade is a
   single `make` run, so a pull that fails, a compose error and a container that dies on start all end as **Failed**
-  on that release. The hub blocks that one release; other releases are unaffected.
+  on that release, after the same rollback attempt. The hub blocks that one release; other releases are unaffected.
+
+The rollback is a redeploy of the previous release, not a schema downgrade: XNAT's schema upgrade and any database
+migration stay applied. A Trust that was running fine before the attempt is what you get back; a Trust whose data
+a migration made unreadable by the old release still needs a person.
 
 .. figure:: ../assets/flip/trust-auto-upgrade/failed.png
    :align: center

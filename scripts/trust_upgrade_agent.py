@@ -24,8 +24,10 @@ then upgrades only when every condition holds: the switch is on, the site is beh
 failed-release rule allows it, the clock is inside the maintenance window, no job holds the trust
 and the checkout is clean. It then claims a lease (``POST /trust/upgrade-status`` ``STARTING``;
 the hub re-checks "no job" under a row lock and refuses with 409 if one just landed) and runs the same
-data-safe verb an operator would: ``make upgrade-onprem-trust``. The result is reported back and a
-failure is never retried until an operator clears it in the portal.
+data-safe verb an operator would: ``make upgrade-onprem-trust``. A failed attempt is first put back on
+the release the site came from — once, inside the same lease — and the report says whether that took.
+The result is then reported back, and a failure is never retried until an operator clears it in the
+portal.
 
 ``decide`` is pure and holds every rule; the rest of the file is I/O around it.
 
@@ -52,6 +54,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -73,6 +76,9 @@ VERIFY_TIMEOUT_S = 600
 REPORT_ATTEMPTS = 4
 REPORT_RETRY_WAIT_S = 5
 VERIFY_POLL_S = 10
+# A rollback is judged on a shorter leash than a forward upgrade: the previous release is known to
+# have worked on this site, so a slow return is itself the finding rather than something to wait out.
+ROLLBACK_VERIFY_TIMEOUT_S = 300
 # While `make` runs, re-post STARTING this often. The hub already treats a same-release STARTING as a
 # renewal, so this needs no new protocol: it means the 2h TTL only ever expires on a dead agent,
 # never on a slow-but-working upgrade.
@@ -315,6 +321,39 @@ def verify(
     return False, f"the upgrade applied but the site did not come up on {tag} within {timeout_s}s: {last}"
 
 
+def rollback(
+    kit: dict[str, str],
+    run_upgrade: Callable[[str], tuple[bool, str]],
+    previous: str | None,
+    failed: str,
+) -> tuple[bool, str]:
+    """Put the site back on the release it came from, once, after a failed attempt.
+
+    A failed upgrade leaves the site half-applied — some containers on the new release, some on the
+    old, or a release Helm marked failed. Moving again is the only way back to something known to
+    work there, and waiting for a human means waiting with the site in that state.
+
+    Deliberately one attempt and no loop: a rollback that does not take is reported, not retried.
+    The distinction the operator needs is "failed, site is back on vX" versus "failed, site is still
+    on the release that broke it", so the outcome of this is part of the failure report either way.
+    """
+    if not previous:
+        return False, "no previous release recorded, so nothing to roll back to"
+    if not RELEASE_TAG.match(previous):
+        return False, f"the previous release ({previous!r}) is not a tag, so it cannot be rolled back to"
+    if previous == failed:
+        return False, f"the site was already on {failed} before this attempt, so there is nothing to roll back to"
+
+    ok, tail = run_upgrade(previous)
+    if not ok:
+        return False, f"automatic rollback to {previous} failed:\n{tail}"
+
+    verified, what = verify(kit, previous, timeout_s=ROLLBACK_VERIFY_TIMEOUT_S)
+    if not verified:
+        return False, f"automatic rollback to {previous} applied but the site did not come up on it: {what}"
+    return True, f"rolled back to {previous}, which came up"
+
+
 def report_status(kit: dict[str, str], body: dict, attempts: int = REPORT_ATTEMPTS) -> bool:
     """POST a terminal report, retrying: losing it holds the lease and loses the outcome."""
     for attempt in range(1, attempts + 1):
@@ -377,7 +416,8 @@ def tick(kit_file: Path, repo: Path, dry_run: bool) -> int:
         print(f"cannot read the policy: {exc}", file=sys.stderr)
         return 2
     assert policy is not None
-    decision = decide(policy, local_state(kit, repo), datetime.now(timezone.utc).replace(tzinfo=None))
+    state = local_state(kit, repo)
+    decision = decide(policy, state, datetime.now(timezone.utc).replace(tzinfo=None))
     print(f"{decision.action}: {decision.reason}")
     if decision.action == "SKIP" or dry_run:
         return 0
@@ -404,13 +444,21 @@ def tick(kit_file: Path, repo: Path, dry_run: bool) -> int:
     try:
         # Renewal covers the verification too: it is a ten-minute wait on the site coming back.
         with LeaseRenewal(kit, decision.release):
-            ok, tail = upgrade(repo, kit_file, decision.release)
+            run_upgrade = lambda tag: upgrade(repo, kit_file, tag)  # noqa: E731 - one line, one backend
+            ok, tail = run_upgrade(decision.release)
             detail = tail
             if ok:
                 # The verb exiting 0 only says the deployment was applied. Confirm the site actually
                 # came back up ON the target before telling the hub it SUCCEEDED.
                 ok, detail = verify(kit, decision.release)
                 print(detail)
+            if not ok:
+                # Either the verb failed or the site did not come back on the target. Both leave it
+                # half-applied, so put it back on the release it was on — inside the same lease, so
+                # no second agent can start while this is happening.
+                rolled, how = rollback(kit, run_upgrade, state.current_release, decision.release)
+                detail = f"{detail}\n{how}"
+                print(how)
     except BaseException as exc:  # noqa: BLE001 - including SystemExit/KeyboardInterrupt: the report matters more
         ok, detail = False, f"the upgrade raised {type(exc).__name__}: {exc}"
         print(detail, file=sys.stderr)
