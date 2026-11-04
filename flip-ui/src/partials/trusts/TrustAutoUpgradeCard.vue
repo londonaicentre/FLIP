@@ -86,6 +86,18 @@
                 <span>{{ text }}</span>
             </li>
         </ul>
+        <!-- A FAILED attempt is never retried on its own; the operator who has checked the Trust is the
+             only one who can release it, so the control has to live here rather than in a runbook. -->
+        <button
+            v-if="statusView.key === 'failed'"
+            type="button"
+            data-test="auto-upgrade-clear-failure"
+            class="px-3.5 py-2 mt-3 text-sm font-semibold border rounded-md text-gray-800 border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed dark:text-gray-100 dark:border-dark-border dark:hover:bg-dark-surface"
+            :disabled="clearing"
+            @click="emit('clear-failure')"
+        >
+            {{ clearing ? "Clearing…" : "Try this release again" }}
+        </button>
 
         <div v-if="autoUpgrade.lastAttempt" data-test="auto-upgrade-last-attempt" class="mt-4 text-[12.5px] text-gray-600 dark:text-gray-300">
             Last attempt:
@@ -151,7 +163,7 @@
                 data-test="auto-upgrade-save"
                 class="px-3.5 py-2 mt-3 text-sm font-semibold text-white rounded-md bg-primary-600 hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 :disabled="!dirty || !!windowError || saving"
-                @click="emit('save', { ...draft })"
+                @click="emit('save', normalize(draft))"
             >
                 Save window
             </button>
@@ -172,10 +184,12 @@ import { shortDate } from "@/utils/trust-decisions";
 const props = defineProps<{
     autoUpgrade: IAutoUpgrade;
     saving?: boolean;
+    clearing?: boolean;
 }>();
 
 const emit = defineEmits<{
     (e: "save", settings: IAutoUpgradeSettings): void;
+    (e: "clear-failure"): void;
 }>();
 
 const fromServer = (a: IAutoUpgrade): IAutoUpgradeSettings => ({
@@ -187,9 +201,18 @@ const fromServer = (a: IAutoUpgrade): IAutoUpgradeSettings => ({
 
 const draft = reactive<IAutoUpgradeSettings>(fromServer(props.autoUpgrade));
 
-// A fresh answer from the hub (after a save, or the next poll) replaces the draft.
-watch(() => props.autoUpgrade, (a) => {
-    Object.assign(draft, fromServer(a));
+// A fresh answer from the hub replaces the draft — but swrv hands back a new object on every
+// revalidation (every 30s, and on window focus), so resetting unconditionally wipes a half-typed
+// window mid-edit. Reset only when the server's values actually moved, or when there is nothing
+// unsaved to lose.
+const sameSettings = (a: IAutoUpgradeSettings, b: IAutoUpgradeSettings) => a.enabled === b.enabled
+    && a.windowStart === b.windowStart
+    && a.windowEnd === b.windowEnd
+    && a.timezone === b.timezone;
+watch(() => props.autoUpgrade, (next, previous) => {
+    if (!dirty.value || !sameSettings(fromServer(next), fromServer(previous))) {
+        Object.assign(draft, fromServer(next));
+    }
 });
 
 // The switch saves at once; the window needs its own Save, because two half-typed times are not a window.
@@ -202,6 +225,15 @@ const toggle = (enabled: boolean) => {
 };
 
 const blank = (v: string | null) => (v ?? "") === "";
+// The draft holds "" for a cleared input (that is what <input type="time"> gives back), but the hub
+// stores "no window" as NULL and rejects an empty string as a time. Normalise on the way out so
+// clearing both inputs actually clears the window instead of returning 422.
+const normalize = (s: IAutoUpgradeSettings): IAutoUpgradeSettings => ({
+    enabled: s.enabled,
+    windowStart: s.windowStart || null,
+    windowEnd: s.windowEnd || null,
+    timezone: s.timezone || null
+});
 const dirty = computed(() => {
     const saved = fromServer(props.autoUpgrade);
 
@@ -212,6 +244,7 @@ const dirty = computed(() => {
 const windowError = computed(() => {
     if (blank(draft.windowStart) !== blank(draft.windowEnd)) return "Set both the start and the end of the window, or clear both.";
     if (!blank(draft.windowStart) && blank(draft.timezone)) return "Name the Trust's time zone, e.g. Europe/London.";
+    if (!blank(draft.windowStart) && draft.windowStart === draft.windowEnd) return "The window cannot start and end at the same time.";
 
     return "";
 });
@@ -230,8 +263,10 @@ const BLOCKER_TEXT: Record<AutoUpgradeBlocker, string> = {
 const DETAILED: AutoUpgradeBlocker[] = ["LOCAL_MODIFICATIONS", "UNSUPPORTED_MODE", "UNKNOWN_CHECKOUT", "SITE_UNHEALTHY"];
 const blockerTexts = computed(() => {
     const a = props.autoUpgrade;
+
     return (a.state === "PENDING" ? a.blockers : []).map(b => {
         const text = BLOCKER_TEXT[b] ?? b;
+
         return a.blockerDetail && DETAILED.includes(b) ? `${text} (${a.blockerDetail})` : text;
     });
 });

@@ -111,11 +111,20 @@
                                 <AiLoader />
                             </div>
                         </AiCard>
-                        <AiCard v-if="autoUpgrade" class="mt-6" data-test="auto-upgrade-column">
+                        <div
+                            v-if="autoUpgradeFailed"
+                            data-test="auto-upgrade-error"
+                            class="px-6 py-5 mt-6 text-sm text-red-700 bg-white border border-red-200 rounded-xl dark:bg-dark-canvas dark:border-red-800 dark:text-red-300"
+                        >
+                            This Trust's automatic upgrade setting could not be loaded. Reload the page to try again.
+                        </div>
+                        <AiCard v-else-if="autoUpgrade && !autoUpgradeMissing" class="mt-6" data-test="auto-upgrade-column">
                             <TrustAutoUpgradeCard
                                 :auto-upgrade="autoUpgrade"
                                 :saving="savingAutoUpgrade"
+                                :clearing="clearingAutoUpgrade"
                                 @save="saveAutoUpgrade"
+                                @clear-failure="clearAutoUpgrade"
                             />
                         </AiCard>
                     </div>
@@ -136,6 +145,7 @@
 </template>
 
 <script setup lang="ts">
+import { isAxiosError } from "axios";
 import useSWRV from "swrv";
 import { computed, onBeforeMount, ref } from "vue";
 
@@ -148,7 +158,8 @@ import TrustDecisionsTable from "@/partials/trusts/TrustDecisionsTable.vue";
 import TrustRequestCard from "@/partials/trusts/TrustRequestCard.vue";
 import { routeChange } from "@/router";
 import { approveProject } from "@/services/project-service";
-import { getAutoUpgrade,
+import {     clearAutoUpgradeFailure,
+    getAutoUpgrade,
     getHubHealth,
     getTrustDecisions,
     getTrustStatuses,
@@ -202,8 +213,10 @@ const { data: decisions, error: decisionsError, mutate: refreshDecisions } = use
 const pending = computed(() => (decisions.value ?? []).filter(d => d.status === "PENDING"));
 const decided = computed(() => (decisions.value ?? []).filter(d => d.status !== "PENDING"));
 
-// A hub that predates auto-upgrade answers 404: the error is swallowed and the card simply does not render.
-const { data: autoUpgrade, mutate: refreshAutoUpgrade } = useSWRV<IAutoUpgrade>(
+// A hub that predates auto-upgrade answers 404, and there is nothing to show. Any *other* failure —
+// 403 for an admin without the permission, a 500, a network blip — is a real problem and gets a line
+// like the decisions card, rather than making the whole card disappear without explanation.
+const { data: autoUpgrade, error: autoUpgradeError, mutate: refreshAutoUpgrade } = useSWRV<IAutoUpgrade>(
     () => (trustAdminOf.value ? `/trust/${trustAdminOf.value.id}/auto-upgrade` : null),
     () => getAutoUpgrade(trustAdminOf.value!.id),
     {
@@ -212,7 +225,32 @@ const { data: autoUpgrade, mutate: refreshAutoUpgrade } = useSWRV<IAutoUpgrade>(
         refreshInterval: 30_000
     }
 );
+const autoUpgradeMissing = computed(() => isAxiosError(autoUpgradeError.value)
+    && autoUpgradeError.value.response?.status === 404);
+const autoUpgradeFailed = computed(() => !!autoUpgradeError.value && !autoUpgradeMissing.value);
 const savingAutoUpgrade = ref(false);
+const clearingAutoUpgrade = ref(false);
+
+const clearAutoUpgrade = async () => {
+    if (!trustAdminOf.value) return;
+    clearingAutoUpgrade.value = true;
+    try {
+        await clearAutoUpgradeFailure(trustAdminOf.value.id);
+        Snackbar.success({
+            title: "Ready to retry",
+            text: `${trustName.value} will try that release again when it is idle.`
+        });
+        await refreshAutoUpgrade();
+    } catch (e) {
+        Snackbar.error({
+            title: "Could not clear the failure",
+            text: extractErrorDetail(e, "The failure could not be cleared, please try again.")
+        });
+        await refreshAutoUpgrade();
+    } finally {
+        clearingAutoUpgrade.value = false;
+    }
+};
 
 const saveAutoUpgrade = async (settings: IAutoUpgradeSettings) => {
     if (!trustAdminOf.value) return;

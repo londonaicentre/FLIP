@@ -25,6 +25,7 @@ const decisionsRef = ref<ITrustDecision[] | undefined>(undefined);
 const decisionsErrorRef = ref<unknown>(null);
 const mutateDecisions = vi.fn();
 const autoUpgradeRef = ref<IAutoUpgrade | undefined>(undefined);
+const autoUpgradeErrorRef = ref<unknown>(null);
 const mutateAutoUpgrade = vi.fn();
 
 vi.mock("swrv", () => ({
@@ -49,7 +50,7 @@ vi.mock("swrv", () => ({
             return {
                 data: autoUpgradeRef,
                 mutate: mutateAutoUpgrade,
-                error: ref(null)
+                error: autoUpgradeErrorRef
             };
         }
         if (key === "hub-health") {
@@ -79,12 +80,14 @@ vi.mock("@/services/project-service", async (importOriginal) => {
 });
 
 const mockUpdateAutoUpgrade = vi.fn();
+const mockClearAutoUpgradeFailure = vi.fn();
 vi.mock("@/services/trust-service", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/services/trust-service")>();
 
     return {
         ...actual,
-        updateAutoUpgrade: (...args: unknown[]) => mockUpdateAutoUpgrade(...args)
+        updateAutoUpgrade: (...args: unknown[]) => mockUpdateAutoUpgrade(...args),
+        clearAutoUpgradeFailure: (...args: unknown[]) => mockClearAutoUpgradeFailure(...args)
     };
 });
 
@@ -177,6 +180,7 @@ beforeEach(() => {
     vi.clearAllMocks();
     decisionsErrorRef.value = null;
     autoUpgradeRef.value = undefined;
+    autoUpgradeErrorRef.value = null;
     trustsRef.value = [
         {
             id: "dta",
@@ -571,6 +575,105 @@ describe("My Trust", () => {
                 windowEnd: "05:00",
                 timezone: "Europe/London"
             });
+        });
+
+
+        it("stays hidden on a 404, which is a hub that predates the feature", async () => {
+            autoUpgradeRef.value = undefined;
+            autoUpgradeErrorRef.value = {
+                isAxiosError: true,
+                response: { status: 404 }
+            };
+            const wrapper = mountPage();
+            await nextTick();
+
+            expect(wrapper.find("[data-test='auto-upgrade-card']").exists()).toBe(false);
+            expect(wrapper.find("[data-test='auto-upgrade-error']").exists()).toBe(false);
+        });
+
+        it("says so when the setting could not be loaded for any other reason", async () => {
+            // A 403 (an admin without the permission), a 500 and a network blip all used to make the
+            // card vanish silently, which reads as "this Trust has no such setting".
+            autoUpgradeRef.value = undefined;
+            autoUpgradeErrorRef.value = {
+                isAxiosError: true,
+                response: { status: 403 }
+            };
+            const wrapper = mountPage();
+            await nextTick();
+
+            expect(wrapper.find("[data-test='auto-upgrade-error']").exists()).toBe(true);
+            expect(wrapper.find("[data-test='auto-upgrade-card']").exists()).toBe(false);
+        });
+
+        it("clears both times to null so a saved window can be removed", async () => {
+            autoUpgradeRef.value = autoUpgrade({
+                windowStart: "01:00",
+                windowEnd: "05:00",
+                timezone: "Europe/London"
+            });
+            mockUpdateAutoUpgrade.mockResolvedValue({});
+            const wrapper = mountPage();
+            await nextTick();
+
+            await wrapper.find("[data-test='auto-upgrade-window-start']").setValue("");
+            await wrapper.find("[data-test='auto-upgrade-window-end']").setValue("");
+            await wrapper.find("[data-test='auto-upgrade-save']").trigger("click");
+            await flushPromises();
+
+            // "" is what the input gives back, but the hub stores no window as NULL and rejects
+            // an empty string as a time, so an unnormalised save came back 422.
+            expect(mockUpdateAutoUpgrade).toHaveBeenCalledWith("dta", {
+                enabled: true,
+                windowStart: null,
+                windowEnd: null,
+                timezone: "Europe/London"
+            });
+        });
+
+        it("offers the operator a way to clear a failure", async () => {
+            autoUpgradeRef.value = autoUpgrade({
+                state: "FAILED",
+                blockers: [],
+                lastAttempt: {
+                    state: "FAILED",
+                    release: "v1.3.0",
+                    at: "2026-10-21T02:10:00.000Z",
+                    detail: "xnat-web did not become healthy"
+                }
+            });
+            mockClearAutoUpgradeFailure.mockResolvedValue({});
+            const wrapper = mountPage();
+            await nextTick();
+
+            const button = wrapper.find("[data-test='auto-upgrade-clear-failure']");
+            expect(button.exists()).toBe(true);
+            await button.trigger("click");
+            await flushPromises();
+
+            expect(mockClearAutoUpgradeFailure).toHaveBeenCalledWith("dta");
+            expect(mockSnackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Ready to retry" }));
+        });
+
+        it("shows the hub's reason when clearing is refused", async () => {
+            autoUpgradeRef.value = autoUpgrade({
+                state: "FAILED",
+                blockers: [],
+                lastAttempt: {
+                    state: "FAILED",
+                    release: "v1.3.0",
+                    at: "2026-10-21T02:10:00.000Z",
+                    detail: null
+                }
+            });
+            mockClearAutoUpgradeFailure.mockRejectedValue(new Error("boom"));
+            const wrapper = mountPage();
+            await nextTick();
+
+            await wrapper.find("[data-test='auto-upgrade-clear-failure']").trigger("click");
+            await flushPromises();
+
+            expect(mockSnackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "Could not clear the failure" }));
         });
 
         it("reports a failed save as an error", async () => {

@@ -98,9 +98,11 @@ running now" and "the scheduler sends one a second later": while it is held, the
 and it refuses the claim if a job arrived in between. A claim that is never finished (the host died) expires by itself
 after about two hours, so a dead agent cannot lock the Trust out of training.
 
-**6–7.** The agent runs the same upgrade the operator would: it moves its own copy of FLIP to the release tag, pulls the
-images, and recreates the services in place. Before anything is recreated it pulls the new images and health-checks
-them, and stops with the Trust untouched if one fails.
+**6–7.** The agent runs the same upgrade the operator would: it moves its own copy of FLIP to the release tag, then
+runs the site upgrade, which pulls the new images and recreates the services in place. There is no dry run first — the
+one thing checked before anything is touched is that the release's images exist in the registry (a `docker manifest
+inspect`, which pulls nothing). A pull that fails during the upgrade ends as **Failed** like any other step, and that
+release stays blocked until an operator clears it.
 
 **8–9.** The agent reports success or failure. My Trust shows the result.
 
@@ -278,9 +280,7 @@ When it fails
        [*] --> Checking
        Checking --> Waiting: newer release, not yet allowed
        Waiting --> Checking: next hourly check
-       Checking --> PreFlight: allowed and idle
-       PreFlight --> Checking: pull or health check fails<br/>(nothing recreated, retried next check)
-       PreFlight --> Upgrading: new images are healthy
+       Checking --> Upgrading: allowed and idle
        Upgrading --> Succeeded: services healthy
        Upgrading --> Failed: a step fails
        Succeeded --> [*]
@@ -290,11 +290,18 @@ When it fails
 An upgrade recreates database-backed services and runs XNAT's in-place schema upgrade. Rolling that back
 automatically can do more damage than stopping, so the agent does not try. Instead it:
 
-- stops, and reports **Failed** with the tail of the log, shown on My Trust (see the figure above);
+- stops, and reports **Failed** with the tail of the log, shown on My Trust;
 - refuses to try that release again until an operator has looked at the Trust and **cleared the failure** in the
-  portal;
-- keeps retrying only when the problem was in the *pre-flight* phase (an image would not pull, or did not become
-  healthy in a throwaway container), because nothing has been recreated by then.
+  portal — the *Try this release again* button on the card;
+- treats every failure the same way, including one that never got as far as recreating anything: the upgrade is a
+  single `make` run, so a pull that fails, a compose error and a container that dies on start all end as **Failed**
+  on that release. The hub blocks that one release; other releases are unaffected.
+
+.. figure:: ../assets/flip/trust-auto-upgrade/failed.png
+   :align: center
+   :width: 100%
+
+   A failed attempt, showing the tail of the upgrade log. *Try this release again* is what clears it.
 
 To recover, follow the failure detail and the troubleshooting pages for your deployment, restore the Trust by hand
 (see :ref:`admin-upgrading-sites`), then clear the failure.
@@ -303,14 +310,21 @@ To recover, follow the failure detail and the troubleshooting pages for your dep
 Turning it on or off
 ********************
 
-- **Defaults.** A new installation has automatic upgrades **on**; the installer states this and says it can be turned
-  off at any time from the portal. Trusts that existed before this feature was introduced start **off**, so no live
-  site is surprised. A Trust Admin opts in from My Trust.
+- **Defaults.** `make setup-auto-upgrade` asks once and defaults to **yes**; `up-onprem-trust` only prints a hint and
+  installs nothing. So a Trust where the installer was never run, and every Trust that predates this feature, starts
+  **off** — no live site is surprised. A Trust Admin opts in from My Trust, and the setting can be turned off there at
+  any time.
+- **What the agent checks first.** Before the window or the job list it looks at the site itself: `trust-api`'s
+  `/health` answering, no dead tasks, and a hub key that still matches. A Site that fails any of those is reported
+  **Blocked** with the failing check, rather than being recreated on top of a problem the upgrade did not cause. The
+  full order is: unsupported mode → the agent's own checkout → site health → the maintenance window → whether a job
+  is running.
 - **Who can change it.** The Trust Admin of that Trust, and FLIP admins for support.
 - **Changing it during an upgrade.** An upgrade already running finishes. The new setting applies from the next
   release.
-- **Not covered.** Snowflake-hosted Trusts are not upgraded automatically; they report that their mode is
-  unsupported.
+- **Not covered.** A Trust driven over a remote Docker socket (`DOCKER_HOST`/`DOCKER_CONTEXT` at `ssh://` or
+  `tcp://`, which includes the EC2 Trust) is refused at install time, so its agent never runs; automatic upgrades are
+  for Trusts deployed on their own host.
 
 .. _auto-upgrade-busy-trust:
 

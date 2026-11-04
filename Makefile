@@ -290,8 +290,12 @@ up-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> is required: the name in trust/.env.<CODE>.prod (e.g. KIT=GSTT)"; exit 1)
 	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS=--gate
 	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust KIT=$(KIT) HUB=$(or $(HUB),prod)
-	@[ -n "$(AUTO_UPGRADE)" ] || [ -e /etc/systemd/system/flip-trust-upgrade.timer ] || \
+ifdef AUTO_UPGRADE
+	$(MAKE) setup-auto-upgrade KIT=$(KIT) HUB=$(or $(HUB),prod) AUTO_UPGRADE=$(AUTO_UPGRADE)
+else
+	@[ -e /etc/systemd/system/flip-trust-upgrade.timer ] || \
 		echo "ℹ️  Automatic upgrades are not configured: run sudo -E make setup-auto-upgrade KIT=$(KIT) HUB=$(or $(HUB),prod) (or pass AUTO_UPGRADE=yes|no)"
+endif
 
 # Upgrade twin of up-onprem-trust (FLIP#1204): the same readiness-checklist gate, then
 # trust/Makefile's data-safe upgrade-trust — pull the target release, recreate what

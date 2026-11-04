@@ -50,6 +50,40 @@ describe("extractErrorDetail", () => {
         expect(extractErrorDetail(err, FALLBACK)).toBe(FALLBACK);
     });
 
+    it("flattens a request-validation detail list into one sentence", () => {
+        // FastAPI answers a pydantic failure with detail: [{loc, msg, type}], not a string, so every
+        // validation error used to show the generic fallback and the user never learnt which field was wrong.
+        const err = axiosErrorWithBody({
+            detail: [
+                {
+                    loc: ["body", "windowStart"],
+                    msg: "The window times must be HH:MM, 24-hour",
+                    type: "value_error"
+                },
+                {
+                    loc: ["body", "timezone"],
+                    msg: "'Mars/Olympus' is not a known IANA time zone, e.g. Europe/London",
+                    type: "value_error"
+                }
+            ]
+        });
+
+        expect(extractErrorDetail(err, FALLBACK))
+            .toBe("The window times must be HH:MM, 24-hour. 'Mars/Olympus' is not a known IANA time zone, e.g. Europe/London");
+    });
+
+    it("does not repeat the same message twice", () => {
+        const err = axiosErrorWithBody({ detail: [{ msg: "Required" }, { msg: "Required" }] });
+
+        expect(extractErrorDetail(err, FALLBACK)).toBe("Required");
+    });
+
+    it("returns the fallback for a detail list with no messages", () => {
+        const err = axiosErrorWithBody({ detail: [{ loc: ["body"] }, null] });
+
+        expect(extractErrorDetail(err, FALLBACK)).toBe(FALLBACK);
+    });
+
     it("returns the fallback when detail is the empty string", () => {
         const err = axiosErrorWithBody({ detail: "" });
 

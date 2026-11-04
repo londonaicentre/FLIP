@@ -28,12 +28,16 @@ from sqlmodel import Session, col, select
 from flip_api.db.models.main_models import FLJob, FLJobTrust, Trust
 from flip_api.domain.schemas.status import JobStatus
 from flip_api.domain.schemas.trusts import (
+    REPORTABLE_BLOCKERS,
     AutoUpgradeLastAttempt,
     AutoUpgradeSettings,
     AutoUpgradeView,
+    UpgradeBlocker,
     UpgradeLease,
     UpgradePolicy,
+    UpgradeReportState,
     UpgradeStatusInput,
+    UpgradeViewState,
     UpgradeWindow,
 )
 from flip_api.private_services.upgrade_notifications import notify_upgrade_finished, notify_upgrade_started
@@ -45,14 +49,8 @@ LEASE_TTL = timedelta(hours=2)
 # The agent ticks hourly; two missed ticks and a bit of slack means it is not running.
 AGENT_STALE_AFTER = timedelta(hours=3)
 
-# Blocker codes shown in the portal (mirrored by flip-ui's AutoUpgradeBlocker).
-JOBS_RUNNING = "JOBS_RUNNING"
-OUTSIDE_WINDOW = "OUTSIDE_WINDOW"
-LOCAL_MODIFICATIONS = "LOCAL_MODIFICATIONS"
-AGENT_OFFLINE = "AGENT_OFFLINE"
-SITE_UNHEALTHY = "SITE_UNHEALTHY"
-# What a host agent may report under BLOCKED.
-REPORTABLE_BLOCKERS = frozenset({LOCAL_MODIFICATIONS, "UNSUPPORTED_MODE", "UNKNOWN_CHECKOUT", SITE_UNHEALTHY})
+# Blocker codes shown in the portal live in the schema (UpgradeBlocker), so the wire type, the view
+# and the agent's permitted set cannot drift apart.
 
 # Only an immutable CI tag is comparable between the hub and a trust (mirrors flip-ui's isImageTag).
 _IMAGE_TAG = re.compile(r"^v\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$")
@@ -121,7 +119,7 @@ def _is_stale(moment: datetime | None, now: datetime) -> bool:
 
 def failed_release(trust: Trust) -> str | None:
     """The release whose last attempt FAILED and has not been cleared by an operator."""
-    return trust.last_upgrade_release if trust.last_upgrade_state == "FAILED" else None
+    return trust.last_upgrade_release if trust.last_upgrade_state == UpgradeReportState.FAILED else None
 
 
 def note_agent_tick(trust: Trust, db: Session) -> None:
@@ -168,41 +166,46 @@ def view_for_admin(trust: Trust, db: Session) -> AutoUpgradeView:
     behind = bool(target and current and current != target)
     failed = failed_release(trust)
 
-    blockers: list[str] = []
+    blockers: list[UpgradeBlocker] = []
     blocker_detail: str | None = None
     if lease_active(trust, now):
-        state = "IN_PROGRESS"
+        state = UpgradeViewState.IN_PROGRESS
     elif failed is not None:
-        state = "FAILED"
+        state = UpgradeViewState.FAILED
     elif behind:
-        state = "PENDING"
+        state = UpgradeViewState.PENDING
         if trust.auto_upgrade_enabled:
             if is_busy(trust.id, db):
-                blockers.append(JOBS_RUNNING)
+                blockers.append(UpgradeBlocker.JOBS_RUNNING)
             if not in_window(
                 now, trust.auto_upgrade_window_start, trust.auto_upgrade_window_end, trust.auto_upgrade_timezone
             ):
-                blockers.append(OUTSIDE_WINDOW)
+                blockers.append(UpgradeBlocker.OUTSIDE_WINDOW)
             # Every reportable blocker, not just LOCAL_MODIFICATIONS: the other three are
             # recorded by record_status and were previously stored and never shown.
             if trust.upgrade_blocker and not _is_stale(trust.upgrade_blocker_at, now):
-                blockers.append(trust.upgrade_blocker)
-                blocker_detail = trust.upgrade_blocker_detail
+                # The column is a plain string; only a code the UI knows can be rendered.
+                if trust.upgrade_blocker in REPORTABLE_BLOCKERS:
+                    blockers.append(UpgradeBlocker(trust.upgrade_blocker))
+                    blocker_detail = trust.upgrade_blocker_detail
             if _is_stale(trust.upgrade_agent_seen_at, now):
-                blockers.append(AGENT_OFFLINE)
-    elif trust.last_upgrade_state == "SUCCEEDED" and trust.last_upgrade_release == current:
-        state = "SUCCEEDED"
+                blockers.append(UpgradeBlocker.AGENT_OFFLINE)
+    elif trust.last_upgrade_state == UpgradeReportState.SUCCEEDED and trust.last_upgrade_release == current:
+        state = UpgradeViewState.SUCCEEDED
     else:
-        state = "UP_TO_DATE"
+        state = UpgradeViewState.UP_TO_DATE
 
     last = (
         AutoUpgradeLastAttempt(
             state=trust.last_upgrade_state,
             release=trust.last_upgrade_release or "",
             at=_iso(trust.last_upgrade_at) or "",
-            detail=trust.last_upgrade_detail if trust.last_upgrade_state == "FAILED" else None,
+            detail=trust.last_upgrade_detail if trust.last_upgrade_state == UpgradeReportState.FAILED else None,
         )
-        if trust.last_upgrade_state in ("SUCCEEDED", "FAILED") and trust.last_upgrade_at
+        if (
+            trust.last_upgrade_state in (UpgradeReportState.SUCCEEDED, UpgradeReportState.FAILED)
+            and trust.last_upgrade_at
+        )
         else None
     )
     return AutoUpgradeView(
@@ -232,7 +235,7 @@ def apply_settings(trust: Trust, settings: AutoUpgradeSettings, db: Session) -> 
 
 def clear_failure(trust: Trust, db: Session) -> None:
     """An operator has looked at a failed upgrade: allow the release to be tried again."""
-    if trust.last_upgrade_state != "FAILED":
+    if trust.last_upgrade_state != UpgradeReportState.FAILED:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="There is no failed upgrade to clear.")
     trust.last_upgrade_state = None
     db.add(trust)
@@ -264,7 +267,7 @@ def record_status(trust_id: UUID, report: UpgradeStatusInput, db: Session) -> Up
     ).one()
     now = _now()
 
-    if report.state == "STARTING":
+    if report.state == UpgradeReportState.STARTING:
         if not trust.auto_upgrade_enabled:
             raise HTTPException(status.HTTP_409_CONFLICT, "Automatic upgrades are switched off for this trust.")
         if failed_release(trust) == report.release:
@@ -284,7 +287,7 @@ def record_status(trust_id: UUID, report: UpgradeStatusInput, db: Session) -> Up
         notify_upgrade_started(trust, report.release, db)
         return UpgradeLease(release=report.release, expires_at=_iso(trust.upgrade_lease_expires_at) or "")
 
-    if report.state == "BLOCKED":
+    if report.state == UpgradeReportState.BLOCKED:
         # Keyed off `blocker` (the code), never `detail` (prose): a code the UI does not know is
         # dropped rather than shown raw, and logged so that is distinguishable from "no blocker".
         if report.blocker in REPORTABLE_BLOCKERS:
@@ -304,7 +307,7 @@ def record_status(trust_id: UUID, report: UpgradeStatusInput, db: Session) -> Up
     trust.last_upgrade_state = report.state
     trust.last_upgrade_release = report.release
     trust.last_upgrade_at = now
-    trust.last_upgrade_detail = report.detail if report.state == "FAILED" else None
+    trust.last_upgrade_detail = report.detail if report.state == UpgradeReportState.FAILED else None
     trust.upgrade_blocker = None
     db.add(trust)
     db.commit()

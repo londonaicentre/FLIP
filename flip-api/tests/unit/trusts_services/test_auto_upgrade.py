@@ -21,10 +21,21 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from flip_api.db.models.main_models import Trust
-from flip_api.domain.schemas.trusts import AutoUpgradeSettings, UpgradeStatusInput
+from flip_api.domain.schemas.trusts import AutoUpgradeSettings, UpgradeReportState, UpgradeStatusInput
 from flip_api.trusts_services.services import auto_upgrade as svc
 
 SVC = "flip_api.trusts_services.services.auto_upgrade"
+
+
+@pytest.fixture(autouse=True)
+def _emails_never_send(monkeypatch):
+    """Email is tested on its own (test_upgrade_notifications); here it only has to not run.
+
+    The real path reaches SES, so a suite that let it through was making a network call on every
+    STARTING/FAILED test and only passing because the notifier swallows its own failures.
+    """
+    monkeypatch.setattr(f"{SVC}.notify_upgrade_started", lambda *a, **k: None)
+    monkeypatch.setattr(f"{SVC}.notify_upgrade_finished", lambda *a, **k: None)
 
 
 def _trust(**kw) -> Trust:
@@ -113,9 +124,7 @@ class TestView:
         v = self._view(_trust(auto_upgrade_enabled=True, upgrade_agent_seen_at=datetime.utcnow() - timedelta(hours=9)))
         assert "AGENT_OFFLINE" in v.blockers
 
-    @pytest.mark.parametrize(
-        "code", ["LOCAL_MODIFICATIONS", "UNSUPPORTED_MODE", "UNKNOWN_CHECKOUT", "SITE_UNHEALTHY"]
-    )
+    @pytest.mark.parametrize("code", ["LOCAL_MODIFICATIONS", "UNSUPPORTED_MODE", "UNKNOWN_CHECKOUT", "SITE_UNHEALTHY"])
     def test_every_reportable_blocker_reaches_the_admin(self, code: str):
         """Storing a blocker the view never reads would leave the admin with a silent PENDING."""
         v = self._view(
@@ -182,7 +191,7 @@ class TestClaim:
         db = MagicMock()
         db.exec.return_value.one.return_value = trust
         with patch(f"{SVC}.is_busy", return_value=busy):
-            return svc.record_status(trust.id, UpgradeStatusInput(state="STARTING", release=release), db), db
+            return svc.record_status(trust.id, UpgradeStatusInput(state=UpgradeReportState.STARTING, release=release), db), db
 
     def test_grants_a_two_hour_lease(self):
         t = _trust(auto_upgrade_enabled=True)
@@ -233,7 +242,7 @@ class TestClaim:
         )
         db = MagicMock()
         db.exec.return_value.one.return_value = t
-        svc.record_status(t.id, UpgradeStatusInput(state="SUCCEEDED", release="v1.3.0"), db)
+        svc.record_status(t.id, UpgradeStatusInput(state=UpgradeReportState.SUCCEEDED, release="v1.3.0"), db)
         assert t.upgrade_lease_expires_at is None
         assert (t.last_upgrade_state, t.last_upgrade_release) == ("SUCCEEDED", "v1.3.0")
 
@@ -241,7 +250,7 @@ class TestClaim:
         t = _trust(auto_upgrade_enabled=True)
         db = MagicMock()
         db.exec.return_value.one.return_value = t
-        svc.record_status(t.id, UpgradeStatusInput(state="FAILED", release="v1.3.0", detail="boom"), db)
+        svc.record_status(t.id, UpgradeStatusInput(state=UpgradeReportState.FAILED, release="v1.3.0", detail="boom"), db)
         assert t.last_upgrade_detail == "boom"
         assert svc.failed_release(t) == "v1.3.0"
 
@@ -250,10 +259,10 @@ class TestClaim:
         db = MagicMock()
         db.exec.return_value.one.return_value = t
         svc.record_status(
-            t.id, UpgradeStatusInput(state="BLOCKED", release="v1.3.0", blocker="LOCAL_MODIFICATIONS"), db
+            t.id, UpgradeStatusInput(state=UpgradeReportState.BLOCKED, release="v1.3.0", blocker="LOCAL_MODIFICATIONS"), db
         )
         assert t.upgrade_blocker == "LOCAL_MODIFICATIONS"
-        svc.record_status(t.id, UpgradeStatusInput(state="BLOCKED", release="v1.3.0", blocker="<script>"), db)
+        svc.record_status(t.id, UpgradeStatusInput(state=UpgradeReportState.BLOCKED, release="v1.3.0", blocker="<script>"), db)
         assert t.upgrade_blocker is None
 
     def test_a_blocker_is_read_from_its_own_field_not_the_prose(self):
@@ -280,7 +289,7 @@ class TestClaim:
         t = _trust()
         db = MagicMock()
         db.exec.return_value.one.return_value = t
-        svc.record_status(t.id, UpgradeStatusInput(state="BLOCKED", release="v1.3.0", detail="UNSUPPORTED_MODE"), db)
+        svc.record_status(t.id, UpgradeStatusInput(state=UpgradeReportState.BLOCKED, release="v1.3.0", detail="UNSUPPORTED_MODE"), db)
         assert t.upgrade_blocker is None
         assert t.upgrade_blocker_detail == "UNSUPPORTED_MODE"
 
@@ -347,3 +356,178 @@ class TestRoutes:
         assert body["targetRelease"] == "v1.3.0"
         assert body["currentRelease"] == "v1.2.0"
         assert body["blockers"] == ["JOBS_RUNNING"]
+
+
+class TestAgentTick:
+    """`note_agent_tick` is what makes a silent agent visible, and what dates the Waiting card.
+
+    Both facts are read by the view (`AGENT_OFFLINE`, `pendingSince`), so a function that never
+    stamped them would leave an agent that stopped an hour after install looking healthy forever.
+    """
+
+    def test_it_stamps_the_tick(self):
+        t = _trust(upgrade_agent_seen_at=None)
+        svc.note_agent_tick(t, MagicMock())
+        assert t.upgrade_agent_seen_at is not None
+
+    def test_the_first_tick_behind_the_hub_dates_the_wait(self):
+        t = _trust(services_health={"trust-api": {"version": "v1.2.0"}})
+        with patch(f"{SVC}.target_release", return_value="v1.3.0"):
+            svc.note_agent_tick(t, MagicMock())
+        assert t.upgrade_pending_since is not None
+
+    def test_a_later_tick_does_not_redate_the_wait(self):
+        """The card says "waiting since" — re-dating it hourly would make a week-old gap look new."""
+        first = datetime.utcnow() - timedelta(days=2)
+        t = _trust(services_health={"trust-api": {"version": "v1.2.0"}}, upgrade_pending_since=first)
+        with patch(f"{SVC}.target_release", return_value="v1.3.0"):
+            svc.note_agent_tick(t, MagicMock())
+        assert t.upgrade_pending_since == first
+
+    def test_catching_up_clears_the_wait(self):
+        t = _trust(
+            services_health={"trust-api": {"version": "v1.3.0"}},
+            upgrade_pending_since=datetime.utcnow() - timedelta(days=2),
+        )
+        with patch(f"{SVC}.target_release", return_value="v1.3.0"):
+            svc.note_agent_tick(t, MagicMock())
+        assert t.upgrade_pending_since is None
+
+
+class TestApplySettings:
+    def test_the_window_and_zone_round_trip(self):
+        """A dropped zone would silently turn a window into "always open" (in_window needs all three)."""
+        t = _trust()
+        settings = AutoUpgradeSettings(enabled=True, windowStart="01:00", windowEnd="05:00", timezone="Europe/London")
+        svc.apply_settings(t, settings, MagicMock())
+        assert t.auto_upgrade_enabled is True
+        assert (t.auto_upgrade_window_start, t.auto_upgrade_window_end) == ("01:00", "05:00")
+        assert t.auto_upgrade_timezone == "Europe/London"
+
+    def test_clearing_the_window_stores_none(self):
+        t = _trust(auto_upgrade_window_start="01:00", auto_upgrade_window_end="02:00", auto_upgrade_timezone="UTC")
+        svc.apply_settings(t, AutoUpgradeSettings(enabled=True), MagicMock())
+        assert (t.auto_upgrade_window_start, t.auto_upgrade_window_end, t.auto_upgrade_timezone) == (None, None, None)
+
+
+class TestWindowStart:
+    def test_the_start_is_inclusive(self):
+        """The end is exclusive; the start has to be inclusive or the first minute of the window is unreachable."""
+        assert svc.in_window(datetime(2026, 10, 23, 1, 0), "01:00", "05:00", "UTC")
+
+    def test_the_minute_before_the_start_is_outside(self):
+        assert not svc.in_window(datetime(2026, 10, 23, 0, 59), "01:00", "05:00", "UTC")
+
+
+class TestRenewal:
+    def test_the_same_release_renews_its_own_lease(self):
+        """A long upgrade needs to re-post STARTING; the hub must let the holder extend, not refuse it."""
+        t = _trust(
+            auto_upgrade_enabled=True,
+            upgrade_lease_release="v1.3.0",
+            upgrade_lease_expires_at=datetime.utcnow() + timedelta(minutes=2),
+        )
+        db = MagicMock()
+        db.exec.return_value.one.return_value = t
+        with patch(f"{SVC}.is_busy", return_value=False):
+            lease = svc.record_status(t.id, UpgradeStatusInput(state=UpgradeReportState.STARTING, release="v1.3.0"), db)
+        assert lease is not None
+        assert t.upgrade_lease_expires_at > datetime.utcnow() + timedelta(hours=1)
+        db.commit.assert_called_once()
+
+
+class TestManualMove:
+    def test_a_manual_move_is_not_reported_as_the_agents_success(self):
+        """An operator upgrading by hand leaves the agent's last SUCCEEDED at the old release."""
+        t = _trust(
+            services_health={"trust-api": {"version": "v1.3.0"}},
+            last_upgrade_state="SUCCEEDED",
+            last_upgrade_release="v1.2.0",
+            last_upgrade_at=datetime(2026, 10, 22, 2, 41),
+        )
+        # The trust now runs v1.3.0, which is the hub's release, but the agent's last success was
+        # v1.2.0 — an operator did this one. Reporting SUCCEEDED would credit the agent.
+        with patch(f"{SVC}.target_release", return_value="v1.3.0"), patch(f"{SVC}.is_busy", return_value=False):
+            assert svc.view_for_admin(t, MagicMock()).state == "UP_TO_DATE"
+
+
+class TestAgentRoutesThroughTheApp:
+    """The two routes the host agent uses, driven through the app rather than called as functions.
+
+    They were only ever exercised as service calls, so nothing checked the wire shape the agent
+    actually parses (snake_case, the lease object, which HTTP status a refusal gives).
+    """
+
+    def _client(self, trust: Trust, db: MagicMock):
+        from fastapi.testclient import TestClient
+
+        from flip_api.auth.access_manager import authenticate_trust
+        from flip_api.db.database import get_session
+        from flip_api.main import app
+
+        app.dependency_overrides[authenticate_trust] = lambda: trust
+        app.dependency_overrides[get_session] = lambda: db
+        return TestClient(app), app
+
+    def test_the_policy_is_machine_shaped_snake_case(self):
+        t = _trust(auto_upgrade_enabled=True)
+        db = MagicMock()
+        client, app = self._client(t, db)
+        try:
+            with patch(f"{SVC}.target_release", return_value="v1.3.0"), patch(f"{SVC}.is_busy", return_value=False):
+                r = client.get("/api/trust/upgrade-policy")
+        finally:
+            app.dependency_overrides.clear()
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["enabled"] is True
+        assert body["target_release"] == "v1.3.0"
+        assert body["lease"] is None
+        assert body["failed_release"] is None
+        # The agent reads these keys by name; a camel-case alias would silently send nothing.
+        assert set(body) >= {"enabled", "target_release", "maintenance_window", "timezone", "is_busy", "lease"}
+
+    def test_a_starting_report_returns_the_lease_the_agent_keeps(self):
+        t = _trust(auto_upgrade_enabled=True)
+        db = MagicMock()
+        db.exec.return_value.one.return_value = t
+        client, app = self._client(t, db)
+        try:
+            with (
+                patch(f"{SVC}.is_busy", return_value=False),
+                patch(f"{SVC}.notify_upgrade_started") as notify,
+            ):
+                r = client.post("/api/trust/upgrade-status", json={"state": "STARTING", "release": "v1.3.0"})
+        finally:
+            app.dependency_overrides.clear()
+
+        assert r.status_code == 200
+        assert r.json()["release"] == "v1.3.0"
+        assert r.json()["expires_at"]
+        notify.assert_called_once()
+
+    def test_a_refused_claim_is_409_not_500(self):
+        t = _trust(auto_upgrade_enabled=False)
+        db = MagicMock()
+        db.exec.return_value.one.return_value = t
+        client, app = self._client(t, db)
+        try:
+            r = client.post("/api/trust/upgrade-status", json={"state": "STARTING", "release": "v1.3.0"})
+        finally:
+            app.dependency_overrides.clear()
+
+        assert r.status_code == 409
+
+    def test_an_unknown_state_is_rejected_by_the_schema(self):
+        """The enum is the wire contract: a typo must fail here, not be stored as a status."""
+        t = _trust(auto_upgrade_enabled=True)
+        db = MagicMock()
+        db.exec.return_value.one.return_value = t
+        client, app = self._client(t, db)
+        try:
+            r = client.post("/api/trust/upgrade-status", json={"state": "UPGRADING", "release": "v1.3.0"})
+        finally:
+            app.dependency_overrides.clear()
+
+        assert r.status_code == 422

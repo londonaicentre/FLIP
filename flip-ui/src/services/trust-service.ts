@@ -190,3 +190,10 @@ export async function updateAutoUpgrade(trustId: string, settings: IAutoUpgradeS
 
     return response.data;
 }
+
+/** Release a FAILED attempt so the agent may try that release again, once an operator has checked the Trust. */
+export async function clearAutoUpgradeFailure(trustId: string): Promise<IAutoUpgrade> {
+    const response = await _http.post<IAutoUpgrade>(`/trust/${trustId}/auto-upgrade/clear-failure`);
+
+    return response.data;
+}

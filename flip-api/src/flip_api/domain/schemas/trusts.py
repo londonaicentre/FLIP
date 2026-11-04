@@ -11,17 +11,12 @@
 #
 
 import re
-from typing import Literal
+from enum import StrEnum
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from flip_api.domain.schemas.types import TrimStr
-
-
-class UpdateTrustStatusSchema(BaseModel):
-    fl_client_endpoint: TrimStr = Field(..., description="'fl_client_endpoint' is required")
-
 
 # ---------------------------------------------------------------------------
 # Automatic upgrades (trust auto-upgrade)
@@ -29,7 +24,59 @@ class UpdateTrustStatusSchema(BaseModel):
 
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
-UPGRADE_LEASE_STATES = ("STARTING", "SUCCEEDED", "FAILED", "BLOCKED")
+
+class UpgradeReportState(StrEnum):
+    """What a host agent reports (``POST /trust/upgrade-status``).
+
+    ``STARTING`` claims the lease; ``SUCCEEDED``, ``FAILED`` and ``BLOCKED`` release it.
+    """
+
+    STARTING = "STARTING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    BLOCKED = "BLOCKED"
+
+
+class UpgradeViewState(StrEnum):
+    """What My Trust shows for a trust (``GET /trust/{id}/auto-upgrade``)."""
+
+    UP_TO_DATE = "UP_TO_DATE"
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class UpgradeBlocker(StrEnum):
+    """Why an upgrade is waiting (``PENDING``) or blocked (``BLOCKED``).
+
+    Mirrored by flip-ui's ``AutoUpgradeBlocker``.
+    """
+
+    # Computed by the hub from the policy it just assembled.
+    JOBS_RUNNING = "JOBS_RUNNING"
+    OUTSIDE_WINDOW = "OUTSIDE_WINDOW"
+    AGENT_OFFLINE = "AGENT_OFFLINE"
+    # Reported by the host agent itself.
+    LOCAL_MODIFICATIONS = "LOCAL_MODIFICATIONS"
+    UNSUPPORTED_MODE = "UNSUPPORTED_MODE"
+    UNKNOWN_CHECKOUT = "UNKNOWN_CHECKOUT"
+    SITE_UNHEALTHY = "SITE_UNHEALTHY"
+
+
+# The codes a host agent may report: its own view of the host, never the hub's job/window findings.
+REPORTABLE_BLOCKERS = frozenset(
+    {
+        UpgradeBlocker.LOCAL_MODIFICATIONS,
+        UpgradeBlocker.UNSUPPORTED_MODE,
+        UpgradeBlocker.UNKNOWN_CHECKOUT,
+        UpgradeBlocker.SITE_UNHEALTHY,
+    }
+)
+
+
+class UpdateTrustStatusSchema(BaseModel):
+    fl_client_endpoint: TrimStr = Field(..., description="'fl_client_endpoint' is required")
 
 
 def _check_timezone(name: str) -> str:
@@ -86,8 +133,8 @@ class AutoUpgradeView(BaseModel):
     window_start: str | None = Field(default=None, alias="windowStart")
     window_end: str | None = Field(default=None, alias="windowEnd")
     timezone: str | None = None
-    state: str
-    blockers: list[str] = Field(default_factory=list)
+    state: UpgradeViewState
+    blockers: list[UpgradeBlocker] = Field(default_factory=list)
     # The agent's prose for the current blocker, when it sent any: a code like SITE_UNHEALTHY
     # tells an admin a check failed but not which one.
     blocker_detail: str | None = Field(default=None, alias="blockerDetail")
@@ -123,7 +170,7 @@ class UpgradePolicy(BaseModel):
 class UpgradeStatusInput(BaseModel):
     """What the host agent reports (``POST /trust/upgrade-status``)."""
 
-    state: Literal["STARTING", "SUCCEEDED", "FAILED", "BLOCKED"]
+    state: UpgradeReportState
     release: str = Field(min_length=1, max_length=64)
     # A captured log tail on FAILED, or the human-readable reason on BLOCKED.
     detail: str | None = Field(default=None, max_length=8000)
