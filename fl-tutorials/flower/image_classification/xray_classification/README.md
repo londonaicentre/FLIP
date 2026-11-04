@@ -11,7 +11,7 @@
     limitations under the License.
 -->
 
-# Chest-X-ray multi-lesion classification (Flower)
+# Chest X-ray lesion classification
 
 Flower port of the chest-X-ray tutorial that lives at
 `fl-tutorials/nvflare/image_classification/xray_classification`. It scores
@@ -29,6 +29,17 @@ The cohort query (`query.sql`) is copied verbatim from the FLARE tutorial
 and matches the chest-X-ray data seeded into the trust mock OMOP DB
 (concept ids 4215818 / 4196943 / 40481136). This is the tutorial that
 `make e2e_smoke` from FLIP picks when `FL_BACKEND=flower`.
+
+## At a glance
+
+| Item | Value |
+|---|---|
+| What you upload | everything in `app/` |
+| Job type | standard |
+| Imaging | on, DICOM to NIfTI off |
+| Cohort query | `query.sql` (`query_novocab.sql` for a trust without the OMOP vocabulary) |
+| Dataset | `make -C fl-tutorials download-xray-data` |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=xray_classification FL_BACKEND=flower` (GPU) |
 
 ## Folder structure
 
@@ -69,7 +80,10 @@ the upload flow is unaffected.
 
 ### Run on the flwr simulator (`make run-tutorial`)
 
+First download the reference dataset (once; the FLARE tutorial reads the same copy), then run:
+
 ```bash
+make -C fl-tutorials download-xray-data   # pulls aicentreflip/flip-fl-base-test-data into fl-tutorials/data/xrays_mini_300/
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification FL_BACKEND=flower
 ```
 
@@ -209,11 +223,12 @@ the mod can log the pre-clip norm).
 | `dp-epsilon`       | `10.0`  | Privacy budget — smaller means more privacy and more noise |
 | `dp-delta`         | `1e-5`  | Probability the guarantee fails outright |
 
-Override per run without editing the app:
+To override per run without editing the app, pass `--run-config` to `sim-tutorial.sh` (what
+`make run-tutorial` runs); it forwards everything after the tutorial name to `flwr run`:
 
 ```bash
-flwr run . --run-config "dp-enabled=false"
-flwr run . --run-config "dp-epsilon=1.0 dp-clipping-norm=0.5"
+bash fl-tutorials/flower/sim-tutorial.sh xray_classification --run-config "dp-enabled=false"
+bash fl-tutorials/flower/sim-tutorial.sh xray_classification --run-config "dp-epsilon=1.0 dp-clipping-norm=0.5"
 ```
 
 > ⚠️ **The defaults are demonstration values, not a privacy budget.** `dp-clipping-norm` is sized

@@ -1,4 +1,4 @@
-# Evaluation of a 3D segmentation model (FLARE Client API) — FLIP tutorial
+# Evaluating a spleen segmentation model
 
 FLIP tutorial for federated evaluation of a 3D spleen segmentation model using the **FLARE Client
 API**. It evaluates a model trained with
@@ -16,9 +16,16 @@ The recipe loads the uploaded checkpoint on the server and broadcasts it to ever
 `FLModel`; the client's `is_evaluate()` branch scores it on the local cohort and returns aggregate
 metrics. The `evaluation_results.json` output is unchanged.
 
-## Compatible job type
+## At a glance
 
-This tutorial is designed for `JOB_TYPE=evaluation`.
+| Item | Value |
+|---|---|
+| What you upload | everything in `app_files/`, plus `model.pt` from `make download-checkpoints` |
+| Job type | evaluation |
+| Imaging | on, DICOM to NIfTI on; labels uploaded as data enrichment |
+| Cohort query | the training tutorial's [`query.sql`](../../image_segmentation/3d_spleen_segmentation/query.sql) |
+| Dataset | `make -C fl-tutorials download-spleen-data` |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation` (GPU) |
 
 ## Prerequisites
 
