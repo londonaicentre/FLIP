@@ -37,15 +37,15 @@ RUN set -eux; \
     chmod +x /usr/local/bin/helm /usr/local/bin/kubectl
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates python3 \
-    && adduser -D -u 65534 -H -s /sbin/nologin agent
+RUN apk add --no-cache ca-certificates python3
 COPY --from=fetch /usr/local/bin/helm /usr/local/bin/helm
 COPY --from=fetch /usr/local/bin/kubectl /usr/local/bin/kubectl
 # The tick, as it runs on a host. Same file, same protocol; --mode cluster differs only in what
 # "current release" and "upgrade" mean.
 COPY --chmod=0400 scripts/trust_upgrade_agent.py /opt/flip/trust_upgrade_agent.py
 
-# Matches the chart's runAsUser; the agent never needs a shell or a writable root.
+# The chart's runAsUser is 65534, which Alpine already owns as `nobody` — no account to add, and
+# the agent never needs a shell or a writable root.
 USER 65534:65534
 WORKDIR /tmp
 
