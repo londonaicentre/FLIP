@@ -1140,7 +1140,7 @@ code then means exactly one thing:
 | Exit | Meaning | What to do |
 |------|---------|------------|
 | `0` | The upgrade landed: applied, every core workload rolled out, every hook succeeded and `xnat-init` completed. | Nothing. |
-| `1` | Helm failed, or a core workload did not roll out within `HELM_TIMEOUT`, or a hook (`omop-vocab-load`, `trust-seed`) failed. | Read the helm error; the failing hook is named for you. On a hook or apply failure the trust is on its previous release. |
+| `1` | Helm failed, or a core workload did not roll out within `HELM_TIMEOUT`, or a hook (`omop-vocab-load`, `trust-seed`) failed. | Read the helm error; the failing hook is named for you. If helm rejected the apply the trust is on its previous release; after a rollout timeout or a failed hook the new spec is already live, so look at which workloads or hooks are short. |
 | `3` | The release is live and every core workload rolled out, but `xnat-init` did not complete. | The trust is on the new release; re-run `make -C trust/deploy/helm xnat-init`, raising `HELM_TIMEOUT` if the job simply needed longer. |
 
 `3` is still a failure as far as `make` is concerned — it just says something different from
@@ -1199,6 +1199,18 @@ It re-renders only the `xnat-init` job from the chart (`--set
 xnat.initJob.enabled=true`, applied with the
 `app.kubernetes.io/component=xnat-init` selector), waits up to `HELM_TIMEOUT` (default
 `30m`) for it to complete, and on failure tails the job's logs before exiting non-zero.
+
+Two things worth knowing now that `make deploy` calls this target itself:
+
+- **It runs on every deploy**, including on a trust that set `xnat.initJob.enabled=false`
+  deliberately. That is intended: the setting controls whether *helm* runs the hook, and the
+  Makefile path keeps the init out of helm's hands so exit `1` stays unambiguous. There is no
+  way to opt out of the post-deploy step short of deploying with `helm` directly.
+- **On a trust with `xnat.enabled=false` it is a no-op.** The chart renders no init job at all
+  in that case, and an `apply` with no matching objects fails ("no objects passed to apply") —
+  which used to turn a perfectly good deploy of an XNAT-less trust into exit `3`. The target
+  now renders first, checks for the job's `app.kubernetes.io/component: xnat-init` label, and
+  prints `nothing to initialise` instead of applying.
 
 ### CI Validation
 

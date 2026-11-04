@@ -417,28 +417,39 @@ clean: ## Clean up rendered output
 # This target then reads trust/.env.<KIT>.<env>, patches the per-trust keys into the
 # chart's Kubernetes Secret, and writes a secret-free Helm override. Then deploy with
 # `make up OVERRIDES_FILE=k8s-trust-<KIT>.yaml`. Env from $(HUB).
-xnat-init: ## Run the XNAT post-install init job manually (use after XNAT web is ready, when initJob.enabled=false)
-	@# An earlier Job (a manual run, or a hook that failed) would make the apply "unchanged" and the
-	@# wait return at once, without running the configuration again.
-	@$(KUBECTL) delete job -n $(NAMESPACE) --selector app.kubernetes.io/component=xnat-init \
-		--ignore-not-found --cascade=foreground --timeout=$(HELM_TIMEOUT)
+xnat-init: ## Run the XNAT post-install init job (a no-op when xnat.enabled=false)
+	@# One shell for the whole target: the "nothing to do" case must skip the wait too, and a
+	@# bare `exit 0` in one recipe line would only end that line.
+	@# Render first and look, because with `xnat.enabled=false` the chart renders no init Job at
+	@# all (templates/xnat-init-job.yaml is guarded on both). `kubectl apply --selector` is then
+	@# handed zero objects and fails with "no objects passed to apply", which turned a deploy of a
+	@# trust that has no XNAT to configure into exit 3.
 	@echo "▶  Rendering XNAT init job from chart templates..."
-	@$(HELM) template $(RELEASE_NAME) $(CHART_DIR) \
+	@tmp=$$(mktemp); \
+	trap 'rm -f "$$tmp"' EXIT; \
+	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
 		$(VALUES_OPTS) \
-		--set xnat.initJob.enabled=true \
-		| $(KUBECTL) apply -n $(NAMESPACE) -f - \
-		--selector app.kubernetes.io/component=xnat-init
-	@echo "⏳  Waiting for xnat-init job to complete (timeout $(HELM_TIMEOUT))..."
-	@$(KUBECTL) wait job \
+		--set xnat.initJob.enabled=true > $$tmp; \
+	if ! grep -q 'app.kubernetes.io/component: xnat-init' $$tmp; then \
+		echo "⏭  XNAT is disabled (xnat.enabled=false) — nothing to initialise."; \
+		exit 0; \
+	fi; \
+	$(KUBECTL) delete job -n $(NAMESPACE) --selector app.kubernetes.io/component=xnat-init \
+		--ignore-not-found --cascade=foreground --timeout=$(HELM_TIMEOUT) || exit 1; \
+	$(KUBECTL) apply -n $(NAMESPACE) -f $$tmp \
+		--selector app.kubernetes.io/component=xnat-init || exit 1; \
+	echo "⏳  Waiting for xnat-init job to complete (timeout $(HELM_TIMEOUT))..."; \
+	$(KUBECTL) wait job \
 		--selector app.kubernetes.io/component=xnat-init \
 		--for=condition=complete \
 		--namespace $(NAMESPACE) \
 		--timeout=$(HELM_TIMEOUT) && \
-	echo "✅  XNAT init complete." || \
-	(echo "❌  XNAT init failed — check logs:"; \
-	 $(KUBECTL) logs -n $(NAMESPACE) -l app.kubernetes.io/component=xnat-init --tail=40; \
-	 exit 1)
+	echo "✅  XNAT init complete." || { \
+		echo "❌  XNAT init failed — check logs:"; \
+		$(KUBECTL) logs -n $(NAMESPACE) -l app.kubernetes.io/component=xnat-init --tail=40; \
+		exit 1; \
+	}
 
 sync-kit-override: ## Regenerate the k8s-trust-<KIT>.yaml override from the kit (validates its governance document) without touching the cluster Secret
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit-override KIT=Trust_K8s HUB=stag"; exit 1)

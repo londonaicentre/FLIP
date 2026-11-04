@@ -17,14 +17,17 @@ A human reads the output and decides; the auto-upgrade agent (FLIP#1640) cannot.
 
 The ambiguity is removed at the source rather than classified afterwards. `xnat-init` is the hook
 that makes a deploy ambiguous, so the Makefile takes it out of Helm's path (`--set
-xnat.initJob.enabled=false`) and runs the existing `xnat-init` target after. Helm runs with
-`--wait`, so Helm's own waiter — which already compares `observedGeneration` with `generation`,
-checks the new ReplicaSet for Deployments and `currentRevision == updateRevision` for StatefulSets
-— judges apply and rollout on BOTH the success and the failure path. Each exit code then means one
-thing by construction, with nothing re-deriving it from cluster evidence:
+xnat.initJob.enabled=false`) and runs the existing `xnat-init` target after. The rollout is then
+waited for by `scripts/rollout_wait.py`, which delegates to `kubectl rollout status` — `helm --wait`
+is all-or-nothing and would fail the whole deploy on a workload that is legitimately Pending (an
+`flClient` on a scale-from-zero GPU pool, or one deployed before its kit is staged). `kubectl
+rollout status` applies Helm's own readiness rules (`observedGeneration` vs `generation`, the new
+ReplicaSet for a Deployment, `currentRevision == updateRevision` for a StatefulSet) to the core
+workloads only. Each exit code then means one thing by construction, with nothing re-deriving it
+from cluster evidence:
 
-* 1 — helm failed: the apply was rejected, a workload did not roll out, or a remaining hook
-  (`omop-vocab-load`, `trust-seed`) failed;
+* 1 — helm failed: the apply was rejected or a remaining hook (`omop-vocab-load`, `trust-seed`) failed;
+  or the core workloads did not roll out within `HELM_TIMEOUT`;
 * 3 — the release is live and rolled out, and only XNAT's configuration step failed;
 * 0 — applied, rolled out, every hook succeeded.
 
