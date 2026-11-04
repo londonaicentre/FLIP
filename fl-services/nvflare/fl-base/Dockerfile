@@ -82,6 +82,8 @@ COPY flip-utils/flip/ ./flip/
 # not on its contents — so `chmod -R` would copy the venv up for no benefit, and
 # would additionally make every installed file group-writable, which is a
 # permission grant this does not need and should not make.
+# /app itself is also world-writable, sticky: a kit's FLIP_UID (FLIP#1731) is neither this
+# user nor in its group and still has to create those entries. The files under it are untouched.
 RUN uv sync --frozen --no-cache --extra full $(if [ "$LOCAL_DEV" = "true" ]; then echo "--dev"; else echo "--no-dev"; fi) && \
     chown -R ${UNAME}:${UNAME} /app && \
-    chmod g+rwX /app /home/${UNAME}
+    chmod 1777 /app && chmod g+rwX /home/${UNAME}
