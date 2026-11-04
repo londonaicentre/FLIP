@@ -53,6 +53,12 @@ def test_site_plan_reads_no_hub_value(kit):
     assert "stag-vpc" not in out
 
 
+def test_private_ip_reaches_the_plan(kit):
+    assert "-var 'private_ip='" in make("plan", kit).stdout, "unset, AWS picks the address"
+    out = make("plan", kit, "SUBNET_ID=subnet-0hub", "PRIVATE_IP=10.8.0.200").stdout
+    assert "-var 'subnet_id=subnet-0hub' -var 'private_ip=10.8.0.200'" in out
+
+
 def test_plan_refuses_a_kit_the_hub_has_not_registered(tmp_path):
     unregistered = tmp_path / ".env.TEST.stag"
     unregistered.write_text("FL_BACKEND=nvflare\n")
