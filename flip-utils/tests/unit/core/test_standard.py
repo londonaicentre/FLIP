@@ -19,12 +19,22 @@ from unittest.mock import Mock, patch
 import pandas as pd
 import pytest
 from pydantic import HttpUrl
-from requests import HTTPError
+from requests import HTTPError, Request
 
 from flip.constants import ModelStatus, ResourceType
 from flip.core.standard import FLIPStandardDev, FLIPStandardProd
 from flip.exceptions import ResultsUploadError
 from flip.schemas import FLLogEvent
+
+
+@pytest.fixture
+def hub_constants():
+    """Provide production reporting settings independently of the local test config."""
+    with patch("flip.core.standard.FlipConstants") as constants:
+        constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
+        constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
+        constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
+        yield constants
 
 
 class TestFLIPStandardDevGetDataframe:
@@ -750,6 +760,44 @@ class TestFLIPStandardProdSendMetrics:
             payload = mock_post.call_args.kwargs["json"]
             assert payload["x_value"] == 7.5
             assert payload["global_round"] == 2
+
+    @pytest.mark.parametrize("field", ["value", "x_value"])
+    @pytest.mark.parametrize("non_finite", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "minus-inf"])
+    def test_non_finite_metric_is_dropped_and_next_metric_sends(self, flip_prod, hub_constants, field, non_finite):
+        response = Mock(status_code=204, text="")
+        kwargs = {"value": 0.5, "x_value": 2.0, field: non_finite}
+        with (
+            patch("flip.core.standard.requests.post", return_value=response) as post,
+            patch.object(flip_prod.logger, "warning") as warning,
+        ):
+            flip_prod.send_metrics("Trust_1", "550e8400-e29b-41d4-a716-446655440000", "loss", global_round=2, **kwargs)
+            post.assert_not_called()
+            warning.assert_called_once()
+            assert "Dropping invalid metric" in warning.call_args.args[0]
+            assert warning.call_args.args[1:4] == ("loss", "Trust_1", "550e8400-e29b-41d4-a716-446655440000")
+
+            flip_prod.send_metrics("Trust_1", "550e8400-e29b-41d4-a716-446655440000", "loss", 0.25, 2)
+            post.assert_called_once()
+            assert post.call_args.kwargs["json"]["result"] == 0.25
+            # Exercise the real requests serializer; it refuses NaN/Inf before sending.
+            Request("POST", "https://hub.example.com/metrics", json=post.call_args.kwargs["json"]).prepare()
+
+    def test_http_error_without_response_is_non_fatal(self, flip_prod, hub_constants):
+        failure = HTTPError("no response")
+        with (
+            patch("flip.core.standard.requests.post", side_effect=failure),
+            patch.object(flip_prod.logger, "error") as error,
+            patch.object(flip_prod.logger, "exception") as logged,
+        ):
+            flip_prod.send_metrics("Trust_1", "550e8400-e29b-41d4-a716-446655440000", "loss", 0.5, 2)
+            assert "status code unknown" in error.call_args.args[0]
+            logged.assert_called_once_with(failure)
+
+    def test_schema_validation_failure_is_non_fatal(self, flip_prod):
+        with patch("flip.core.standard.requests.post") as post, patch.object(flip_prod.logger, "warning") as warning:
+            flip_prod.send_metrics("Trust_1", "550e8400-e29b-41d4-a716-446655440000", "loss", 0.5, -1)
+            post.assert_not_called()
+            warning.assert_called_once()
 
 
 class TestFLIPStandardProdUploadResultsToS3:

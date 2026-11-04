@@ -89,7 +89,7 @@ reach the API (a compromised trust container, an SSM port-forward). `validate_bu
    `AWS_ENDPOINT_URL_S3=https://s3.<AWS_REGION>.amazonaws.com`, which makes boto3 presign
    *path-style* URLs — bucket in the path, host exactly `s3.<AWS_REGION>.amazonaws.com` — so
    `https://s3.<AWS_REGION>.amazonaws.com` is the value, set in
-   `deploy/compose.production.<backend>.yml` and, on ECS, in `deploy/providers/AWS/locals.tf` from
+   `deploy/compose.prod.<backend>.yml` and, on ECS, in `deploy/providers/AWS/locals.tf` from
    the same local as flip-api's endpoint (a static test in `deploy/providers/AWS/tests/` holds both
    fl-api task families to it); the dev compose lists its RustFS service, `http://object-store:9000`
    (FLIP#1291). Moving the presign endpoint without the allow-list 400s every bundle download, i.e.
@@ -109,6 +109,10 @@ has no hub and leaves the variable unset — nothing presigns bundle URLs for it
 `WARNING` naming the variable once at startup (and again on the first validation if startup was
 bypassed) saying exactly what is disabled: fetches from *any* public https host, with only the
 range check and its rebinding window left. On a hub deployment that warning is a wiring regression.
+
+Bundle-fetch logs and errors show the URL's origin and file name, without credentials, query parameters
+or fragments. Download errors name the exception type rather than repeating its URL-bearing message.
+The signed URL is preserved for the actual fetch.
 
 ## Testing
 

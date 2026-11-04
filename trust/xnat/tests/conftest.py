@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,15 @@ from pydicom.uid import UID, CTImageStorage, ExplicitVRLittleEndian
 from anon_engine import Rule, XnatLabels, parse_script
 
 ANON_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "xnat" / "config" / "anon_script.das"
+
+# These tests run make themselves. Run from a make (`make unit_test XNAT_TAG=…`), they would inherit its
+# command-line variables, both through MAKEFLAGS and as plain environment variables, and render recipes for
+# that caller instead of their own inputs. Drop both.
+for _token in os.environ.get("MAKEFLAGS", "").split():
+    if "=" in _token and not _token.startswith("-"):
+        os.environ.pop(_token.split("=", 1)[0], None)
+for _var in ("MAKEFLAGS", "MFLAGS", "MAKEOVERRIDES", "MAKELEVEL"):
+    os.environ.pop(_var, None)
 
 
 @pytest.fixture(scope="session")

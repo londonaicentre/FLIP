@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Verify that the shared URL/path guards in the two fl-api services have not drifted.
+# Verify that the shared URL/path guards and researcher refusal contract have not drifted.
 #
 # `safe_join` and `validate_bundle_url` are byte-identical copies in the FLARE and Flower
 # fl-api services. They are the only SSRF and path-traversal guards in front of the server-side
@@ -21,9 +21,9 @@
 # build contexts, separate uv projects and separate published images, so extracting a shared
 # distributable costs far more than it protects. This check is the cheaper guarantee.
 #
-# The whole files are NOT compared -- they legitimately differ (copyright header, and the Flower
+# The validation files are NOT compared -- they legitimately differ (copyright header, and the Flower
 # copy carries a flower-only validate_tutorial_folder_name plus its _SAFE_NAME constant). Only the
-# shared function bodies are compared.
+# shared function bodies are compared. The refusal modules are wholly shared and compared byte-for-byte.
 #
 # Paths are relative to the repo root (this script lives in scripts/, so cd up one).
 cd "$(dirname "$0")/.." || exit 1
@@ -39,6 +39,13 @@ FLOWER_FILE="fl-services/flower/fl-api-flower/fl_api/utils/validation.py"
 REQUIRED_SHARED_FUNCTIONS=("safe_join" "validate_bundle_url" "bundle_url_allowed_origins" "warn_if_bundle_url_allow_list_empty")
 
 status=0
+
+# Only explicit refusals may reach the researcher feed; both services must use the same wire contract.
+if ! cmp -s "fl-services/nvflare/fl-api-base/fl_api/utils/refusals.py" \
+    "fl-services/flower/fl-api-flower/fl_api/utils/refusals.py"; then
+    echo "ERROR: researcher refusal contract has drifted between the two fl-api copies."
+    status=1
+fi
 
 for file in "$NVFLARE_FILE" "$FLOWER_FILE"; do
     if [ ! -f "$file" ]; then
@@ -105,7 +112,7 @@ for func in "${SHARED_FUNCTIONS[@]}"; do
 done
 
 if [ "$status" -eq 0 ]; then
-    echo "fl-api validation guards are in sync (${SHARED_FUNCTIONS[*]})."
+    echo "fl-api validation guards and researcher refusals are in sync (${SHARED_FUNCTIONS[*]})."
 fi
 
 exit "$status"

@@ -34,7 +34,7 @@ build-backend = "setuptools.build_meta"
 
 [dependency-groups]
 dev = [
-    "black>=26.3.1",
+    "black>=26.10.1",  # GHSA-cg8m-r9f2-5wm2
     "frictionless>=5.18.1",
     "ipykernel>=6.29.5",
     "isort>=6.0.1",
@@ -46,7 +46,7 @@ dev = [
     "simpleeval>=1.0.4",
     "taskipy>=1.14.1",
     "terraform-local>=0.24.1",
-    "tornado>=6.5.8",
+    "tornado>=6.6",  # GHSA-pcg2-g6cj-q92c, GHSA-pw9p-v7r6-gx4p, GHSA-r4j5-9xpp-3985
 ]
 
 
@@ -82,3 +82,7 @@ packages = []
 [tool.uv]
 # 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
 exclude-newer = "3 days"
+# Security: minimum versions for transitive packages with open CVEs.
+constraint-dependencies = [
+    "certifi>=2026.10.19",  # GHSA-6q48-6c7w-9gw2
+]

@@ -20,10 +20,8 @@
 # Accelerator pipeline (londonaicentre/lza) and the GRNETSEC2 SCP denies
 # CreateVpc / CreateSubnet / CreateInternetGateway / AllocateAddress /
 # CreateVpcEndpoint to everything but that pipeline (GRTGWVPN makes even
-# route-table edits pipeline-only), so this stack cannot create its own network
-# there. When var.lza_managed_network is set the VPC module is skipped
-# (create_vpc = false in main.tf) and the platform VPC + subnets are discovered
-# by Name tag below.
+# route-table edits pipeline-only), so this stack cannot create its own network:
+# the platform VPC + subnets are discovered by Name tag below.
 #
 # Subnet semantics on the LZA VPC (WP0 probe findings on FLIP#749):
 #   - app subnets (<vpc>-app-*): default-route 0.0.0.0/0 to the Transit
@@ -39,8 +37,6 @@
 # team is adding appear on the next plan without a code change.
 
 data "aws_vpc" "lza" {
-  count = var.lza_managed_network ? 1 : 0
-
   filter {
     name   = "tag:Name"
     values = [var.lza_vpc_name]
@@ -48,11 +44,9 @@ data "aws_vpc" "lza" {
 }
 
 data "aws_subnets" "lza_app" {
-  count = var.lza_managed_network ? 1 : 0
-
   filter {
     name   = "vpc-id"
-    values = [data.aws_vpc.lza[0].id]
+    values = [data.aws_vpc.lza.id]
   }
 
   filter {
@@ -62,11 +56,9 @@ data "aws_subnets" "lza_app" {
 }
 
 data "aws_subnets" "lza_data" {
-  count = var.lza_managed_network ? 1 : 0
-
   filter {
     name   = "vpc-id"
-    values = [data.aws_vpc.lza[0].id]
+    values = [data.aws_vpc.lza.id]
   }
 
   filter {
@@ -75,24 +67,13 @@ data "aws_subnets" "lza_data" {
   }
 }
 
-# Network source of truth for BOTH paths — every consumer references these
-# locals; only this file and main.tf's module "flip_vpc" know which path is
-# active. The data-lookup branches are sort()ed because aws_subnets returns ids
-# in no guaranteed order and positional consumers (e.g. the bastion's
-# app_subnet_ids[0]) must not be reshuffled between plans; the legacy branches
-# keep the module outputs untouched so existing state never sees an order
-# change.
+# Network source of truth: every consumer references these locals. The subnet lists are
+# sort()ed because aws_subnets returns ids in no guaranteed order and positional consumers
+# (e.g. the bastion's app_subnet_ids[0]) must not be reshuffled between plans.
 locals {
-  vpc_id         = var.lza_managed_network ? data.aws_vpc.lza[0].id : module.flip_vpc.vpc_id
-  vpc_cidr_block = var.lza_managed_network ? data.aws_vpc.lza[0].cidr_block : var.vpc_cidr
+  vpc_id         = data.aws_vpc.lza.id
+  vpc_cidr_block = data.aws_vpc.lza.cidr_block
 
-  # Legacy envs have no app/data split — both roles map onto the private subnets.
-  app_subnet_ids  = var.lza_managed_network ? sort(data.aws_subnets.lza_app[0].ids) : module.flip_vpc.private_subnets
-  data_subnet_ids = var.lza_managed_network ? sort(data.aws_subnets.lza_data[0].ids) : module.flip_vpc.private_subnets
-
-  # The in-account interface endpoints (vpc_endpoints.tf) and the SG rule that
-  # admits them (main.tf) exist only where this stack owns the network: the
-  # platform-managed VPC reaches AWS services through the accelerator's central
-  # endpoints. One predicate for every gate.
-  create_vpc_endpoints = var.enable_ecs_endpoints && !var.lza_managed_network
+  app_subnet_ids  = sort(data.aws_subnets.lza_app.ids)
+  data_subnet_ids = sort(data.aws_subnets.lza_data.ids)
 }

@@ -250,11 +250,10 @@ def test_readiness_probe_authenticates_against_both_routes(tmp_path: Path) -> No
 
 
 def test_without_the_flag_the_wait_takes_the_dqr_route_alone(tmp_path: Path) -> None:
-    """The xnat-init pod sees the image's baked jars, which the running XNAT never loads.
+    """The xnat-init pod's jars may be a newer pull than the running XNAT's, so without the flag none is read.
 
-    The dangerous direction is a plugin the image carries but xnat.web.plugins.urls does not: a
-    roster read from that disk would wait out the whole budget for it on every install and upgrade.
-    So without the flag no jar is read at all — an unreadable one included.
+    A roster read from a disk XNAT never loaded would wait out the whole budget for a plugin XNAT
+    does not have, on every install and upgrade — an unreadable jar included.
     """
     jars = {**PLUGIN_JARS, "baked-only-1.0.jar": "bakedOnlyPlugin"}
     env = _readiness_env(tmp_path, jars=jars, listed=declared_ids(), roster=False)
@@ -276,7 +275,7 @@ def test_without_the_flag_the_dqr_wait_stays_bounded_and_fail_loud(tmp_path: Pat
 
 
 def test_the_charts_init_job_does_not_ask_for_the_roster() -> None:
-    """Its pod sees the image's baked jars, not the ones the running XNAT loaded (see the script header).
+    """A mutable tag can be rebuilt between its pull and xnat-web's (see the script header).
 
     The Compose recipe that does set the flag is pinned by test_container_lookup.py.
     """
@@ -517,9 +516,9 @@ def test_up_xnat_skips_the_host_plugin_cache_outside_development() -> None:
     An on-prem or EC2 trust host never prepares the dev cache, so checking it there would fail a
     bring-up that has no use for it.
     """
-    for prod in ("true", "stag"):
-        stdout = _dry_run_up_xnat(PROD=prod).stdout
-        assert "xnat_artifacts.sh" not in stdout, f"PROD={prod} still reaches for the dev cache"
+    for hub in ("prod", "stag"):
+        stdout = _dry_run_up_xnat(HUB=hub).stdout
+        assert "xnat_artifacts.sh" not in stdout, f"HUB={hub} still reaches for the dev cache"
 
 
 def test_root_smoke_target_resolves_relative_paths_from_repo_root() -> None:
@@ -551,7 +550,7 @@ def _kit_tree(tmp_path: Path) -> Path:
     here aborts the parse and reads as a loop that never ran.
     """
     (tmp_path / "deploy").mkdir()
-    for fragment in ("env_mode.mk", "fl_backend.mk", "instance.mk"):
+    for fragment in ("env_mode.mk", "fl_backend.mk", "instance.mk", "portable.mk"):
         shutil.copy(REPO_ROOT / "deploy" / fragment, tmp_path / "deploy" / fragment)
     trust_dir = tmp_path / "trust"
     (trust_dir / "xnat").mkdir(parents=True)
@@ -922,3 +921,79 @@ def test_abs_or_relative_to_only_joins_relative_values(tmp_path: Path, value: st
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == expected
+
+
+def test_a_trust_on_any_slot_gets_its_own_network(tmp_path: Path) -> None:
+    """up-trust attaches to deploy_trust-network-<slot>; create-networks only ever made 1 and 2.
+
+    A trust the hub gave slot Trust_3 (the Azure node on LZA stag, FLIP#1390) created every
+    container and then failed "network deploy_trust-network-3 not found". Driven against a stub
+    docker so the test proves the network is created, not that a recipe mentions it.
+    """
+    trust_dir = _kit_tree(tmp_path)
+    (trust_dir / ".env.AZ1.development").write_text("FL_KIT_SLOT=Trust_3\nFL_KIT_SLOT_NUMBER=3\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    record = tmp_path / "docker-calls"
+    _write_executable(
+        bin_dir / "docker",
+        f'#!/bin/sh\necho "$@" >> "{record}"\n[ "$1 $2" = "network inspect" ] && exit 1\nexit 0\n',
+    )
+    env = _make_env({**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"})
+
+    result = subprocess.run(
+        ["make", "-f", str(REPO_ROOT / "trust" / "Makefile"), "create-trust-network", "KIT=AZ1", "FL_BACKEND=nvflare"],
+        cwd=trust_dir,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "network create --driver overlay --attachable deploy_trust-network-3" in record.read_text()
+
+    up_trust = next(
+        line for line in (REPO_ROOT / "trust" / "Makefile").read_text().splitlines() if line.startswith("up-trust:")
+    )
+    assert "create-trust-network" in up_trust.split(":", 1)[1], "up-trust must create its network before compose"
+
+
+def test_recreate_networks_brings_back_the_slot_network(tmp_path: Path) -> None:
+    """remove-networks drops the kit's slot network and recreate-networks makes it again."""
+    trust_dir = _kit_tree(tmp_path)
+    (trust_dir / ".env.AZ1.development").write_text("FL_KIT_SLOT=Trust_3\nFL_KIT_SLOT_NUMBER=3\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    record = tmp_path / "docker-calls"
+    _write_executable(
+        bin_dir / "docker",
+        f'#!/bin/sh\necho "$@" >> "{record}"\n[ "$1 $2" = "network inspect" ] && exit 1\nexit 0\n',
+    )
+    env = _make_env({**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"})
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["make", "-f", str(REPO_ROOT / "trust" / "Makefile"), *args, "FL_BACKEND=nvflare"],
+            cwd=trust_dir,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    result = run("recreate-networks", "KIT=AZ1")
+
+    assert result.returncode == 0, result.stderr
+    calls = record.read_text().splitlines()
+    rm = next(c for c in calls if c.startswith("network rm") and "trust-network-1" in c)
+    assert "deploy_trust-network-3" in rm
+    assert "network create --driver overlay --attachable deploy_trust-network-3" in calls
+
+    record.unlink()
+    result = run("recreate-networks")
+
+    assert result.returncode == 0, "without a KIT (the root Makefile's call) nothing slot-specific runs"
+    assert "trust-network-3" not in record.read_text()

@@ -22,6 +22,7 @@ exports[`Ai Pagination > Renders Component 1`] = `
           data-v-bf58aa44=""
         >
           <button
+            aria-label="Previous page"
             class="relative flex flex-row justify-center btn-base btn-text btn-disabled"
             data-test="page-btn-prev"
             data-v-90422ccc=""
@@ -92,6 +93,7 @@ exports[`Ai Pagination > Renders Component 1`] = `
           data-v-bf58aa44=""
         >
           <button
+            aria-label="Next page"
             class="relative flex flex-row justify-center btn-base btn-text btn-disabled"
             data-test="page-btn-next"
             data-v-90422ccc=""

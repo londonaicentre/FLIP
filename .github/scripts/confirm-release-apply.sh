@@ -29,7 +29,7 @@
 #   * started (in_progress), or concluded in any way  -> confirmed; this step's job
 #     is done. The apply's own outcome is reported by the apply's own run, which
 #     is red and visible; failing the release here as well would only block the
-#     GitHub Release and send a re-run back through all twelve image builds.
+#     GitHub Release and send a re-run back through all fourteen image builds.
 #   * still queued when the budget expires -> a warning, not a failure. Queuing
 #     behind a long push apply is legitimate and the release is not wrong.
 #

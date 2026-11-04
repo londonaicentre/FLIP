@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     FL_ADMIN_DIRECTORY: str
 
     TIMEOUT_SESSION_CONNECT: float = 20.0
+    # How long the API keeps trying its first connection while the FL server starts up.
+    TIMEOUT_FL_SERVER_STARTUP: float = 600.0
 
     # The GPUs, per site, for a job that declares none (FLIP#70). A job declares its own in its meta.json
     # resource_spec, and a researcher can override that when submitting training; see

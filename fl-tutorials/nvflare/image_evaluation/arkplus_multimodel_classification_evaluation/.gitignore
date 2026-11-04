@@ -2,3 +2,4 @@
 # Processed model weights (*.pt) are ignored globally at the repo root.
 uv.lock
 models/
+fl_job/

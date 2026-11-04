@@ -49,6 +49,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
 
 from fl_api.config import get_settings
+from fl_api.utils.refusals import ResearcherRefusal
 from fl_api.utils.schemas import MAX_GPUS_PER_SITE, JobResources
 
 PORTABLE_DEFAULT_KEY = "@default"
@@ -102,13 +103,13 @@ def parse_job_meta(raw: Any) -> JobMeta:
         JobMeta: the job's portable resources and its ``custom_props``, without FLIP's legacy ``model_id``.
 
     Raises:
-        ValueError: naming the key, if the file holds something FLIP refuses (see the module docstring).
+        ResearcherRefusal: naming the key, if the file holds something FLIP refuses (see the module docstring).
     """
     if not isinstance(raw, dict):
-        raise ValueError("meta.json must be a JSON object")
+        raise ResearcherRefusal("meta.json must be a JSON object")
     refused = sorted(set(raw) - FLIP_OWNED_META_KEYS - RESEARCHER_META_KEYS)
     if refused:
-        raise ValueError(
+        raise ResearcherRefusal(
             f"meta.json has key(s) FLIP does not accept: {refused}. A job's meta.json may declare resource_spec "
             f"and custom_props; FLIP writes {sorted(FLIP_OWNED_META_KEYS)} from the run, and how a trust runs the "
             "job is the trust's choice."
@@ -117,25 +118,25 @@ def parse_job_meta(raw: Any) -> JobMeta:
     # None is how FLARE spells "nothing" too; an empty list or string is a mistake, not nothing.
     resource_spec = {} if raw.get("resource_spec") is None else raw["resource_spec"]
     if not isinstance(resource_spec, dict):
-        raise ValueError('meta.json resource_spec must be an object such as {"@default": {"num_of_gpus": 1}}')
+        raise ResearcherRefusal('meta.json resource_spec must be an object such as {"@default": {"num_of_gpus": 1}}')
     per_site = sorted(set(resource_spec) - {PORTABLE_DEFAULT_KEY})
     if per_site:
-        raise ValueError(
+        raise ResearcherRefusal(
             f"meta.json resource_spec has per-site block(s) {per_site}. Declare what the job needs at every trust "
             f'under "{PORTABLE_DEFAULT_KEY}" instead: a job cannot know the trusts\' site names.'
         )
     default_block = {} if resource_spec.get(PORTABLE_DEFAULT_KEY) is None else resource_spec[PORTABLE_DEFAULT_KEY]
     if not isinstance(default_block, dict):
-        raise ValueError(f'meta.json resource_spec["{PORTABLE_DEFAULT_KEY}"] must be an object')
+        raise ResearcherRefusal(f'meta.json resource_spec["{PORTABLE_DEFAULT_KEY}"] must be an object')
     try:
         resources = PortableResources(**default_block)
     except ValidationError as e:
         problems = "; ".join(f"{'.'.join(map(str, err['loc'])) or 'value'}: {err['msg']}" for err in e.errors())
-        raise ValueError(f'meta.json resource_spec["{PORTABLE_DEFAULT_KEY}"] is invalid: {problems}') from e
+        raise ResearcherRefusal(f'meta.json resource_spec["{PORTABLE_DEFAULT_KEY}"] is invalid: {problems}') from e
 
     custom_props = {} if raw.get("custom_props") is None else raw["custom_props"]
     if not isinstance(custom_props, dict):
-        raise ValueError("meta.json custom_props must be an object")
+        raise ResearcherRefusal("meta.json custom_props must be an object")
     custom_props = {key: value for key, value in custom_props.items() if key != LEGACY_MODEL_ID_PROP}
 
     return JobMeta(resources=resources, custom_props=custom_props)

@@ -56,7 +56,7 @@ def get_concepts_from_pathologies(pathologies_str: str, conditioning: str) -> li
     """Convert `pathologies` and `conditioning` values from the synthetic x-ray table to a dictionary of concept IDs.
 
     Args:
-        pathologies (str): comma-delimited list of findings, e.g. "no_pleural_effusion,edema".
+        pathologies_str (str): comma-delimited list of findings, e.g. "no_pleural_effusion,edema".
         conditioning (str): full text description of the findings, e.g. "No pleural effusion. Right-sided pulmonary
         edema."
 

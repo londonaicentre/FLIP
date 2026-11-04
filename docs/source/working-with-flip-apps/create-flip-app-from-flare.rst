@@ -77,6 +77,10 @@ lifecycle for you (see :ref:`flare-server-side`).
      - ``make run-tutorial`` (simulator), as on FLARE
      - ``job.py`` recipe: ``make export`` / ``make sim``
 
+.. contents:: On this page
+   :local:
+   :depth: 1
+
 *****************
 Starting point
 *****************
@@ -703,9 +707,6 @@ API shape and change only what the script returns:
   The script handles ``flare.is_evaluate()`` only and returns aggregate metrics with
   ``flare.send(flare.FLModel(metrics={...}))`` — never per-patient values. Reference:
   ``fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation/``.
-- ``diffusion_model`` — two-stage latent-diffusion training. Adds ``validator.py`` and per-stage
-  ``GLOBAL_ROUNDS_AE`` / ``GLOBAL_ROUNDS_DM`` keys. Reference:
-  ``fl-tutorials/nvflare/image_synthesis/latent_diffusion_model/``.
 
 :ref:`fl-required-files` is the authoritative list of required files per job type.
 

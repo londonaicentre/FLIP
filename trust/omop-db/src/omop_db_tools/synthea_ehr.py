@@ -12,7 +12,7 @@
 """Load the public Synthea-in-OMOP tabular cohort into a running trust OMOP database.
 
 This is the populate side of the EHR risk-prediction tutorial
-(``fl-tutorials/{nvflare/tabular_classification,flower}/ehr_risk_prediction``). That tutorial's
+(``fl-tutorials/{nvflare,flower}/tabular_classification/ehr_risk_prediction``). That tutorial's
 ``query.sql`` reads ``omop.person`` / ``omop.condition_occurrence`` / ``omop.visit_occurrence``,
 but the shipped mock OMOP carries no condition rows at all — so without this loader the cohort
 query returns nothing. Here we download three OMOP CDM tables of the fully synthetic 1k-person

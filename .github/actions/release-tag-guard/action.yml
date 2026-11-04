@@ -14,7 +14,7 @@ description: |
   Refuse to publish release images for a stable v<X.Y.Z> tag whose commit is not on main.
 
   Every image workflow builds at refs/tags/v*.*.* (FLIP#1204) — dispatched by release.yml for a
-  real release, triggered by the push for a hand-pushed one — so the twelve image workflows
+  real release, triggered by the push for a hand-pushed one — so the fourteen image workflows
   publish one :v<X.Y.Z> per release. A tag push is not gated by branch protection: anyone with
   write access can push a v* tag at any commit, and without this step that would publish
   release-looking images, pinnable by a site, from code that was never released. Releases are

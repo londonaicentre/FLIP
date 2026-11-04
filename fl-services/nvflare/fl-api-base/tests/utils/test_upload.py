@@ -11,17 +11,21 @@
 #
 
 import json
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 from fastapi import HTTPException
 
+from fl_api.utils.refusals import ResearcherRefusal
 from fl_api.utils.schemas import JobResources, UploadAppRequest
 from fl_api.utils.upload import upload_application, validate_config
 
 TEST_MODEL_ID = "c7f72374-0752-473f-a28f-592e4d8b7a47"
 TMP_PATH_UPLOAD_DIR = "/tmp/tests/_upload_dir"
+_URL_SECRET = "bundle-signature-sentinel"  # pragma: allowlist secret (synthetic sentinel)
+_SIGNED_QUERY = f"?X-Amz-Signature={_URL_SECRET}&X-Amz-Security-Token={_URL_SECRET}"
 
 
 # Tests in upload_app.
@@ -148,10 +152,17 @@ def test_error_requests_get(
 def test_upload_app_success(
     mock_requests_get_success,
     mock_upload_correct_request,
+    caplog,
 ):
-    response = upload_application(TEST_MODEL_ID, mock_upload_correct_request, TMP_PATH_UPLOAD_DIR)
+    caplog.set_level(logging.INFO)
+    body = mock_upload_correct_request.model_copy(
+        update={"bundle_urls": [url + _SIGNED_QUERY for url in mock_upload_correct_request.bundle_urls]}
+    )
+    response = upload_application(TEST_MODEL_ID, body, TMP_PATH_UPLOAD_DIR)
 
     assert "Application uploaded successfully" in response["message"]
+    assert _URL_SECRET not in caplog.text
+    assert [call.args[0] for call in mock_requests_get_success.call_args_list] == body.bundle_urls
 
 
 @patch("fl_api.utils.upload.configure_environment", MagicMock())
@@ -175,10 +186,11 @@ def test_upload_multiple_apps_missing_meta_json(
     mock_requests_get_success,
     mock_upload_multiple_apps_request_missing_meta_json,
 ):
-    with pytest.raises(FileNotFoundError) as exc_info:
+    with pytest.raises(ResearcherRefusal) as exc_info:
         _ = upload_application(TEST_MODEL_ID, mock_upload_multiple_apps_request_missing_meta_json, TMP_PATH_UPLOAD_DIR)
 
     assert "Application must contain a meta.json file" in str(exc_info.value)
+    assert exc_info.value.status_code == 404
 
 
 @patch("fl_api.utils.upload.configure_environment", MagicMock())
@@ -245,15 +257,16 @@ def test_upload_clears_stale_server_checkpoints(
     assert not stale.exists()
 
 
-def test_upload_rejects_redirect_on_server_checkpoint_fetch(mock_requests_get_success, tmp_path, monkeypatch):
+def test_upload_rejects_redirect_on_server_checkpoint_fetch(mock_requests_get_success, tmp_path, monkeypatch, caplog):
     """A 3xx on the staged-checkpoint stream is rejected like any other bundle fetch: the redirect
     target was never seen by validate_bundle_url (SSRF), so nothing must be written."""
+    caplog.set_level(logging.INFO)
     ckpt_root = tmp_path / "server-checkpoints"
     monkeypatch.setenv("SERVER_CHECKPOINT_ROOT", str(ckpt_root))
     mock_requests_get_success.return_value.is_redirect = True
 
     body = UploadAppRequest(
-        bundle_urls=[f"https://test.local/bundles/{TEST_MODEL_ID}/server_checkpoints/weights.pt"],
+        bundle_urls=[f"https://test.local/bundles/{TEST_MODEL_ID}/server_checkpoints/weights.pt{_SIGNED_QUERY}"],
         project_id="123456789",
         cohort_query="SELECT 1",
         trusts=["Trust_1"],
@@ -262,6 +275,8 @@ def test_upload_rejects_redirect_on_server_checkpoint_fetch(mock_requests_get_su
     with pytest.raises(HTTPException) as exc:
         upload_application(TEST_MODEL_ID, body, str(tmp_path / "jobs"))
     assert exc.value.status_code == 400
+    assert _URL_SECRET not in str(exc.value.detail)
+    assert _URL_SECRET not in caplog.text
     assert not (ckpt_root / TEST_MODEL_ID / "weights.pt").exists()
 
 
@@ -436,21 +451,58 @@ def test_upload_app_rejects_disallowed_bundle_host(monkeypatch):
     assert exc.value.status_code == 400
 
 
-def test_upload_app_rejects_redirect_response(mock_requests_get_success, mock_upload_correct_request):
+def test_upload_app_rejects_redirect_response(mock_requests_get_success, mock_upload_correct_request, caplog):
     """A 3xx redirect on a bundle fetch is rejected: it would dodge validate_bundle_url (SSRF)."""
+    caplog.set_level(logging.INFO)
+    body = mock_upload_correct_request.model_copy(
+        update={"bundle_urls": [url + _SIGNED_QUERY for url in mock_upload_correct_request.bundle_urls]}
+    )
     mock_requests_get_success.return_value.is_redirect = True
 
     with pytest.raises(HTTPException) as exc:
-        upload_application(TEST_MODEL_ID, mock_upload_correct_request, TMP_PATH_UPLOAD_DIR)
+        upload_application(TEST_MODEL_ID, body, TMP_PATH_UPLOAD_DIR)
     assert exc.value.status_code == 400
+    assert _URL_SECRET not in str(exc.value.detail)
+    assert _URL_SECRET not in caplog.text
 
 
-def test_upload_app_raises_on_http_error_response(mock_requests_get_success, mock_upload_correct_request):
-    """A non-2xx bundle response raises, so its error body is never written as the bundle file."""
-    mock_requests_get_success.return_value.raise_for_status.side_effect = requests.HTTPError("404 Not Found")
+def test_upload_app_raises_on_http_error_response(mock_requests_get_success, mock_upload_correct_request, caplog):
+    """A failed fetch stays a 500 without exposing the signed URL in Requests' error text."""
+    caplog.set_level(logging.INFO)
+    body = mock_upload_correct_request.model_copy(
+        update={"bundle_urls": [url + _SIGNED_QUERY for url in mock_upload_correct_request.bundle_urls]}
+    )
+    mock_requests_get_success.return_value.raise_for_status.side_effect = requests.HTTPError(
+        f"404 Not Found for url: {body.bundle_urls[0]}"
+    )
 
-    with pytest.raises(requests.HTTPError):
-        upload_application(TEST_MODEL_ID, mock_upload_correct_request, TMP_PATH_UPLOAD_DIR)
+    with pytest.raises(HTTPException) as exc:
+        upload_application(TEST_MODEL_ID, body, TMP_PATH_UPLOAD_DIR)
+    assert exc.value.status_code == 500
+    assert "HTTPError" in exc.value.detail
+    assert _URL_SECRET not in str(exc.value.detail)
+    assert _URL_SECRET not in caplog.text
+    assert exc.value.__suppress_context__
+
+
+@pytest.mark.parametrize("failure_at", ["raise_for_status", "iter_content"])
+def test_checkpoint_download_failures_do_not_expose_signed_url(
+    mock_requests_get_success, tmp_path, monkeypatch, caplog, failure_at
+):
+    caplog.set_level(logging.INFO)
+    monkeypatch.setenv("SERVER_CHECKPOINT_ROOT", str(tmp_path / "checkpoints"))
+    url = f"https://test.local/bundles/{TEST_MODEL_ID}/server_checkpoints/weights.pt{_SIGNED_QUERY}"
+    body = UploadAppRequest(bundle_urls=[url], project_id="project", cohort_query="SELECT 1", trusts=["Trust_1"])
+    failure = requests.exceptions.ChunkedEncodingError(f"Broken response from {url}")
+    getattr(mock_requests_get_success.return_value, failure_at).side_effect = failure
+
+    with pytest.raises(HTTPException) as exc:
+        upload_application(TEST_MODEL_ID, body, str(tmp_path / "jobs"))
+    assert exc.value.status_code == 500
+    assert _URL_SECRET not in str(exc.value.detail)
+    assert _URL_SECRET not in caplog.text
+    assert exc.value.__suppress_context__
+    assert mock_requests_get_success.call_args.args[0] == url
 
 
 # ── the job's meta.json and the model id (FLIP#70) ──────────────────────────────────
@@ -552,18 +604,18 @@ def test_a_submission_override_beats_the_jobs_meta_json(tmp_path, monkeypatch):
 
 
 def test_a_meta_json_that_is_not_json_is_refused_naming_the_file(tmp_path, monkeypatch):
-    with pytest.raises(ValueError, match="meta.json is not valid JSON"):
+    with pytest.raises(ResearcherRefusal, match="meta.json is not valid JSON"):
         _assemble(tmp_path, monkeypatch, meta='{"resource_spec": ')
 
 
 def test_a_meta_json_choosing_how_a_trust_runs_the_job_is_refused(tmp_path, monkeypatch):
-    with pytest.raises(ValueError, match="launcher_spec"):
+    with pytest.raises(ResearcherRefusal, match="launcher_spec"):
         _assemble(tmp_path, monkeypatch, meta={"launcher_spec": {"default": {"k8s": {"image": "x"}}}})
 
 
 def test_a_job_of_per_site_variants_alone_is_refused(tmp_path, monkeypatch):
     """FLIP deploys app/ to every selected trust. The hub always ships meta.json, which is not an app folder."""
-    with pytest.raises(ValueError, match="no app/ folder"):
+    with pytest.raises(ResearcherRefusal, match="no app/ folder"):
         _assemble(tmp_path, monkeypatch, meta={"resource_spec": {}}, app="app-trust1")
 
 

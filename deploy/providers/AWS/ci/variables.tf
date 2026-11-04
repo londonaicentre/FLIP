@@ -86,6 +86,12 @@ variable "apply_workflow_file" {
   default     = "terraform_apply.yml"
 }
 
+variable "power_workflow_file" {
+  description = "Staging power workflow (FLIP#1596), which assumes the apply role to stop and start the estate."
+  type        = string
+  default     = "staging_lifecycle.yml"
+}
+
 variable "drift_workflow_file" {
   description = "Scheduled drift-detection workflow, which also plans."
   type        = string
@@ -107,8 +113,9 @@ variable "managed_role_names" {
     "ecs-fl-api-task-role",
     "ecs-fl-server-task-role",
     "flip-rds-proxy-role",
-    "flip-sg-drift-lambda-role",
     "ec2-role",
+    # Retiring (FLIP#1438): the root no longer declares it. Kept so the apply that deletes it is
+    # allowed; remove once stag and prod have applied that change.
     "trust-ec2-role",
   ]
 }
@@ -140,6 +147,8 @@ variable "managed_instance_profile_names" {
   type        = list(string)
   default = [
     "ec2-role-profile",
+    # Retiring (FLIP#1438): the root no longer declares it. Kept so the apply that deletes it is
+    # allowed; remove once stag and prod have applied that change.
     "trust-ec2-role-profile",
   ]
 }
@@ -150,15 +159,12 @@ variable "apply_service_prefixes" {
   default = [
     "acm",
     "cloudfront",
-    "cloudwatch",
     "cognito-idp",
     "ec2",
     "ecs",
     "elasticfilesystem",
     "elasticloadbalancing",
-    "events",
     "kms",
-    "lambda",
     "logs",
     "rds",
     "route53",
@@ -166,10 +172,7 @@ variable "apply_service_prefixes" {
     "secretsmanager",
     "servicediscovery",
     "ses",
-    "sns",
-    "sqs",
     "ssm",
-    "wafv2",
   ]
 
   validation {
@@ -203,6 +206,24 @@ variable "tags" {
     ManagedBy = "terraform"
     Component = "terraform-ci"
   }
+}
+
+variable "ui_bucket_name" {
+  description = "Name of the flip-ui bucket. Setting it creates the UI-publish role (TF_UI_PUBLISH_ROLE_ARN); empty creates none."
+  type        = string
+  default     = ""
+}
+
+variable "ui_publish_workflow_file" {
+  description = "Reusable workflow permitted to assume the UI-publish role."
+  type        = string
+  default     = "publish_ui.yml"
+}
+
+variable "ui_publish_role_name" {
+  description = "Name of the UI-publish role."
+  type        = string
+  default     = "AICentre-FLIPUiPublishRole"
 }
 
 variable "manage_state_bucket" {

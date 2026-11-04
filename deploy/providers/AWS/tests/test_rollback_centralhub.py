@@ -20,30 +20,9 @@ These tests run the real target with ``aws`` stubbed on PATH (no credentials, no
 ECS calls it made. The script's own behaviour is covered by ``scripts/tests/test_reset_fl_server_local.sh``.
 """
 
-import os
-import subprocess
 from pathlib import Path
 
-AWS_DIR = Path(__file__).resolve().parents[1]
-
-# The smallest env file the Makefile's parse-time guards accept, as in test_iam_permissions_boundary.py.
-STUB_ENV = {
-    "AWS_PROFILE": "probe",
-    "PROD_AWS_PROFILE": "probe",
-    "STAG_AWS_PROFILE": "probe",
-    "LZA_AWS_PROFILE": "probe",
-    "LZA_STAG_AWS_PROFILE": "probe",
-    "LZA_VPC_NAME": "probe-vpc",
-    "FLARE_KIT_DATE": "00000000",
-    "FLOWER_KIT_DATE": "00000000",
-    "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": "probe-uploads",
-    "FLIP_FL_RESULTS_BUCKET_NAME": "probe-results",
-    "FLIP_APP_BUNDLES_BUCKET_NAME": "probe-bundles",
-    "AICENTRE_BUCKET_NAME": "probe-aicentre",
-    "INTERNAL_SERVICE_KEY": "probe",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY_HASH": "probe",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
-}
+from stub_make import run_make_with_stubs
 
 # Every service sits on revision 7 with revision 6 below it, so each rolls back 7 -> 6. The provisioning
 # task exits with $RESET_EXIT_CODE.
@@ -79,27 +58,14 @@ esac
 
 def _rollback(tmp_path: Path, *, reset_exit_code: str = "0", **variables: str) -> tuple[int, list[str], str]:
     """Run ``make rollback-centralhub`` against the stub; returns its exit code, the aws calls and its output."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    aws = bin_dir / "aws"
-    aws.write_text(STUB_AWS)
-    aws.chmod(0o755)
-    calls = tmp_path / "calls"
-    calls.touch()
-    env_file = tmp_path / ".env.probe-stag"
-    env_file.write_text("".join(f"{k}={v}\n" for k, v in STUB_ENV.items()))
-
-    env = {k: v for k, v in os.environ.items() if not k.startswith("TF_VAR_")}
-    env.update(PATH=f"{bin_dir}{os.pathsep}{env['PATH']}", CALLS=str(calls), RESET_EXIT_CODE=reset_exit_code)
-    args = {"PROD": "stag", "MAIN_ENV_FILE": str(env_file), "FL_BACKEND": "nvflare", **variables}
-    result = subprocess.run(
-        ["make", "-s", "rollback-centralhub", *(f"{k}={v}" for k, v in args.items())],
-        cwd=AWS_DIR,
-        env=env,
-        text=True,
-        capture_output=True,
+    run = run_make_with_stubs(
+        tmp_path,
+        "rollback-centralhub",
+        {"aws": STUB_AWS},
+        {"RESET_EXIT_CODE": reset_exit_code},
+        **{"FL_BACKEND": "nvflare", **variables},
     )
-    return result.returncode, calls.read_text().splitlines(), result.stdout + result.stderr
+    return run.returncode, run.calls, run.output
 
 
 def _index(calls: list[str], fragment: str) -> int:

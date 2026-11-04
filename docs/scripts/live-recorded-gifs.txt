@@ -1,0 +1,13 @@
+# Documentation GIFs recorded on a live trust instead of by Cypress in CI: they need a GPU, MONAI Label and
+# the real XNAT OHIF viewer, none of which a CI runner has. Each line is <category>/<name>.gif <sha256>; with
+# one GIF per flip-ui/test/cypress/docs/<category>/<name>.spec.ts this is the set publish_docs_gifs.py
+# publishes and docs/tests/test_docs_gifs_wiring.py holds the rst figures to.
+#
+# Re-cut them on a trust with MONAI Label (trust/monailabel-demo/README.md):
+#     make -C trust/monailabel-demo demo-video demo-gifs KIT=<CODE> XNAT_EXPERIMENT=<session>
+# then pin each one's sha256 here (the publisher refuses a re-cut whose pin is stale, printing the line) and
+# publish them to dataset branch pr-<N> of the PR that carries them (its preview shows them). A CI publish cannot
+# record them, so it fetches the pinned bytes from whichever dataset ref holds them: main, a pr-<N> or a tag.
+monailabel/monailabel-enable.gif c02a6314486ecd1f40e173b785e36c9e1486bc19d75843c16cc20a38dba6aedf
+monailabel/monailabel-sam-clicks.gif 02ccf493068f7ec7cf928f3fe6e2094a50b18a27b87b0b182b6801e452b00527
+monailabel/monailabel-export.gif 4dfbe466e1679301661ed57b3bdc093bce238ce3039c36a0835d5b6d1d35f1bd

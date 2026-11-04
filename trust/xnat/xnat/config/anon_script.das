@@ -1,6 +1,6 @@
 version "6.3"
 // FLIP Site-Wide DICOM Anonymization Script
-// Compatible with XNAT 1.10.0 (DicomEdit 6.9.x)
+// Checked on XNAT 1.10.0 (DicomEdit 6.9.0) and 1.10.2.1 (DicomEdit 6.10.0)
 //
 // This script is applied to all incoming DICOM data when anonymizationEnabled
 // is set to true on the SCP receiver. It acts on every attribute in DICOM PS3.15

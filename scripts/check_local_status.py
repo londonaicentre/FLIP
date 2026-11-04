@@ -493,7 +493,7 @@ def discover_trust_kits(trust_dir: Path, env: str) -> list[TrustKit]:
 
     Args:
         trust_dir (Path): The trust/ directory holding the kit files.
-        env (str): Environment token (development / stag / production).
+        env (str): Environment token (development / stag / prod).
 
     Returns:
         list[TrustKit]: One entry per discovered kit, sorted by filename.
@@ -914,7 +914,7 @@ def main(
                 )
 
         # Check Trust endpoints. Only the trust assigned FL slot Trust_1 publishes
-        # its APIs on the host (trust/deploy/compose_trust-1_override.yml); the rest are
+        # its APIs on the host (trust/deploy/compose/compose_trust-1_override.yml); the rest are
         # internal-only, so we check the slot-1 trust's kit ports.
         print_section("Trust Service Endpoint Checks")
 

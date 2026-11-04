@@ -99,9 +99,13 @@ esac
 
 
 def _recipe(target: str, *variables: str) -> str:
-    """The shell ``make`` would run for ``target``, exactly as the Makefile generates it."""
+    """The shell ``make`` would run for ``target``, exactly as the Makefile generates it.
+
+    ``FLIP_INSTANCE=`` pins the unprefixed stack: a value from the caller's environment (the root
+    Makefile exports ``.env.development``) would otherwise prefix ``XNAT_STACK``.
+    """
     result = subprocess.run(
-        ["make", "-n", "--no-print-directory", target, "KIT=GSTT", *variables],
+        ["make", "-n", "--no-print-directory", target, "KIT=GSTT", "FLIP_INSTANCE=", *variables],
         cwd=XNAT_DIR,
         capture_output=True,
         text=True,

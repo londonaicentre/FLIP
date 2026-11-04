@@ -106,7 +106,7 @@
                             v-if="driftsFromHub(svc)"
                             data-test="version-drift"
                             class="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
-                            :title="`This container runs ${svc.version}; the hub runs ${hubVersion}. Move the site with: make upgrade-onprem-trust KIT=<slot>`"
+                            :title="`This container runs ${svc.version}; the hub runs ${hubVersion}. Move the site with: make upgrade-onprem-trust KIT=<CODE>`"
                         >≠ hub {{ hubVersion }}</span>
                         <span class="mx-2 text-gray-300 dark:text-gray-600">·</span>
                         <span

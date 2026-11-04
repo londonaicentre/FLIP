@@ -34,7 +34,7 @@
 #
 # A POLL FAILURE IS NOT A BUILD FAILURE. One 502 from `gh run list` used to abort
 # the whole wait under `set -e`, with no `::error::`, and the re-run rebuilt all
-# twelve images. A failed poll now reads as "still pending"; only
+# fourteen images. A failed poll now reads as "still pending"; only
 # BUILD_POLL_MAX_FAILURES consecutive failures (a real outage, or a token that
 # lost its scope) stop the release, with a message saying which it was.
 #
@@ -51,7 +51,7 @@
 # WHAT A RE-RUN COSTS. Every message below used to end "re-run this workflow".
 # That is rarely the right advice: the GitHub Release does not exist yet when the
 # wait fails, so a re-run goes back through the dispatch step and rebuilds all
-# twelve images, overwriting `:v<X.Y.Z>` with fresh digests (the builds are not
+# fourteen images, overwriting `:v<X.Y.Z>` with fresh digests (the builds are not
 # reproducible). Any site that already pulled `:v<X.Y.Z>` then holds a different
 # digest from the one the hub pins. And a red build is usually fixed by a new
 # commit, which a re-run of the old run cannot pick up and which the main-HEAD
@@ -69,10 +69,10 @@ BUILD_POLL_SECONDS="${BUILD_POLL_SECONDS:-30}"
 BUILD_POLL_MAX_FAILURES="${BUILD_POLL_MAX_FAILURES:-10}"
 
 # The images are already building (or built); what is lost is only this job's
-# knowledge of them. Re-running this workflow would re-dispatch all twelve and
+# knowledge of them. Re-running this workflow would re-dispatch all fourteen and
 # republish :TAG with new digests, so point at the apply instead.
 manual_apply_hint() {
-    echo "::notice::Do NOT re-run this workflow to recover: the Release does not exist yet, so a re-run re-dispatches all twelve builds and republishes ${TAG} with different digests than any site has already pulled. Watch the builds at the tag instead, and once they are green dispatch the apply yourself: gh workflow run terraform_apply.yml --ref main -f release_tag=${TAG}"
+    echo "::notice::Do NOT re-run this workflow to recover: the Release does not exist yet, so a re-run re-dispatches all fourteen builds and republishes ${TAG} with different digests than any site has already pulled. Watch the builds at the tag instead, and once they are green dispatch the apply yourself: gh workflow run terraform_apply.yml --ref main -f release_tag=${TAG}"
 }
 
 read -r -a pending <<<"${WORKFLOWS}"

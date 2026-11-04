@@ -23,6 +23,10 @@ data**:
 - The controls that decide what may leave a trust run on the trust's own infrastructure,
   alongside the data they protect.
 
+.. contents:: On this page
+   :local:
+   :depth: 1
+
 *****************************************
 Each site can veto any individual project
 *****************************************
@@ -296,7 +300,7 @@ positions:
    * - Log class
      - Retention
      - Why
-   * - Hub infrastructure logs (the ECS, trust EC2 and WAF log groups)
+   * - Hub infrastructure logs (the ECS and WAF log groups)
      - **365 days** in production; **90 days** in staging
      - Production matches the retention baseline the organisation's Landing Zone
        Accelerator already applies to every log group it creates in the same accounts.
@@ -426,8 +430,7 @@ As noted above, it evidences supplier posture only and grants no DSPT exemption.
      - - Trust environments expose no inbound ports and poll outbound only.
        - Services run in private subnets with no public address.
        - A single hardened CloudFront edge fronts the hub, with an internal-only load
-         balancer behind it. In the self-contained AWS deployment, the FL server's load
-         balancer is also public but admits only allowlisted trust IP addresses.
+         balancer behind it.
        - AWS WAF managed rules are deployed.
      - Operational (WAF rules moving from monitoring to enforcement)
    * - **2. Secure configuration**
@@ -685,10 +688,8 @@ Objective B — Protecting against cyber attacks and data breaches
      - —
    * - **B5.b** Design for resilience
      - Hub
-     - Private subnets with no public addresses; a single hardened hub edge (plus, in the
-       self-contained deployment, an FL server endpoint open only to allowlisted trust
-       IPs); account separation and centrally managed guardrails under the AWS Landing
-       Zone Accelerator.
+     - Private subnets with no public addresses; a single hardened hub edge; account
+       separation and centrally managed guardrails under the AWS Landing Zone Accelerator.
      - LZA consolidation is in delivery, not complete.
    * - **B5.c** Backups
      - Shared

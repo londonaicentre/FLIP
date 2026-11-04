@@ -37,6 +37,9 @@ on:
       - "flip-ui/test/cypress/docs/**"
       - "flip-ui/cypress.docs.config.ts"
       - "flip-ui/scripts/videos-to-gifs.sh"
+      # A PR that adds or re-cuts a live-trust GIF pins its sha256 there and publishes it to dataset branch pr-<N>;
+      # its merge brings it to main (or the next publish does, if a newer push cancelled this one).
+      - "docs/scripts/live-recorded-gifs.txt"
       - ".github/workflows/regenerate_docs_gifs.yml"
   workflow_dispatch:
 
@@ -166,6 +169,8 @@ jobs:
           path: ${{ env.GIFS_DIR }}
 
       - name: Publish to the dataset
+        # CI cannot record the live-trust GIFs; docs/scripts/live-recorded-gifs.txt pins their sha256
+        # and the publisher fetches those bytes from whichever dataset branch holds them.
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           VERSION: ${{ needs.record.outputs.version }}

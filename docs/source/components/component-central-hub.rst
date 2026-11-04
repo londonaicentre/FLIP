@@ -86,19 +86,14 @@ the Trust API keys, never the keys. Database migrations run at every start-up (s
 Deployment
 **********
 
-The hub runs on AWS, provisioned with Terraform/OpenTofu, in one of two modes:
-
-- **self-contained** in a single AWS account;
-- on a `Landing Zone Accelerator <https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/>`_
-  estate, where a platform team owns the network and the edge.
-
-The services on this page are the same in both modes; only where they sit and how traffic reaches them differs.
+The hub runs on AWS, provisioned with Terraform/OpenTofu from one root module, on a `Landing Zone
+Accelerator <https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/>`_ estate
+whose platform team owns the network and the edge.
 
 .. seealso::
 
-   :ref:`deploy-central-hub` has the architecture diagrams and runbooks, one page per mode
-   (:doc:`/deploy-flip/deploy-central-hub-aws` and :doc:`/deploy-flip/deploy-central-hub-aws-lza`). Security
-   controls are on :ref:`security`.
+   :ref:`deploy-central-hub` and :doc:`/deploy-flip/deploy-central-hub-aws-lza` have the architecture diagrams,
+   the resource layout and the runbook. Security controls are on :ref:`security`.
 
 ********
 Start-up
@@ -174,7 +169,8 @@ The hub **never connects to a Trust**. Work for a Trust is queued as a task on t
      - Sent on every poll, with the Trust's health snapshot when it has one.
    * - ``POST /api/cohort/results``
      - A cohort query's aggregate statistics from one Trust. The hub saves them and recomputes the combined
-       statistics each time a Trust answers.
+       statistics each time a Trust answers. It accepts them only from a Trust it dispatched that query to (the
+       Trust's ``cohort_query`` task) and only while the project is still unstaged; anything else is refused.
 
 The task types are ``cohort_query``, ``persist_cohort``, ``create_imaging``, ``delete_imaging``,
 ``get_imaging_status``, ``reimport_studies`` and ``update_user_profile``. Task payloads are encrypted with the
@@ -269,8 +265,8 @@ FLIP's own emails (access-request notifications, XNAT credentials) are sent acco
   redacted, so a local stack needs no SES setup.
 
 The identity provider sends its own invitations and password-reset codes. In staging and production, Cognito
-sends them. The development Keycloak has no mail server, so a new user gets the shared dev password
-(``ADMIN_USER_PASSWORD``) as a temporary password and changes it at first sign-in.
+sends them. The development Keycloak has no mail server, so a new user, or one an admin resets, gets the shared dev
+password (``ADMIN_USER_PASSWORD``) as a temporary password and changes it at first sign-in.
 
 ***************
 Further reading

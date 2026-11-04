@@ -17,6 +17,10 @@ here.
 Enrichment happens **once per project**, inside XNAT. Both :term:`NVIDIA FLARE` and the :term:`Flower Framework` read
 the same enriched data, so the FL backend makes no difference.
 
+.. contents:: On this page
+   :local:
+   :depth: 1
+
 .. _enrichment-do-i-need-it:
 
 **************************************
@@ -46,7 +50,7 @@ when the cohort changes — it is just another column of SQL.
 * The **chest X-ray classification** tutorial uses the cohort query: its ``query.sql`` selects ``Effusion``, ``Edema``
   and ``Lungs in normal arrangement`` as columns. It does **no enrichment**.
 * The **spleen segmentation** tutorials use enrichment: a 3D segmentation mask has no place in OMOP, so it is uploaded
-  beside the image.
+  beside the image. If the masks have not been drawn yet, see :ref:`enrichment-draw-labels`.
 
 .. note::
 
@@ -91,6 +95,8 @@ Apps find labels by this pairing. The spleen tutorials, for example, replace ``/
 path. Always take the name from the image that is actually in XNAT rather than assuming it.
 
 .. warning:: Do not upload an enrichment file under the image's own name. It will overwrite the imaging data for that scan.
+
+.. note:: Masks saved from the XNAT viewer (for example with MONAI Label) are the exception: they live in ROI collections, not in the scan's ``NIFTI`` resource, and an app reads them with ``ResourceType.SEGMENTATION``. See :ref:`monai-label-labelling`.
 
 .. _enrichment-manual:
 
@@ -240,6 +246,21 @@ Remove ``DRY_RUN=1`` to do the upload. Things to know:
   assigns at registration.
 
 See the tutorial READMEs under ``fl-tutorials/`` for the full walkthrough.
+
+.. _enrichment-draw-labels:
+
+*************************************
+Drawing labels with MONAI Label
+*************************************
+
+When the masks do not exist yet, they can be drawn at the Trust in the XNAT viewer, with MONAI Label
+proposing them. They are saved as ROI collections rather than in the scan's ``NIFTI`` resource, so the
+app reads them differently; the page below covers drawing, saving and reading them.
+
+.. toctree::
+   :maxdepth: 1
+
+   data-enrichment/monai-label
 
 .. _confirm-enrichment:
 

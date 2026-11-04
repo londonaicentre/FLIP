@@ -83,6 +83,11 @@ def test_only_develop_publishes_and_only_to_main(jobs):
     assert "--branch main" in publish["run"]
 
 
+def test_a_change_to_the_live_list_publishes(workflow):
+    """A merged PR that re-pins a live GIF triggers a publish, which carries its pinned bytes to main."""
+    assert "docs/scripts/live-recorded-gifs.txt" in workflow[True]["push"]["paths"]  # PyYAML reads `on:` as True
+
+
 def test_the_version_is_minted_by_the_recording_job(jobs):
     """``recorded_at`` in the manifest is the version's timestamp, so it must be minted before Cypress runs."""
     record_steps = [step["name"] for step in steps_of(jobs["record"])]

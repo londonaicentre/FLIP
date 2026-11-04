@@ -99,6 +99,7 @@
                     <select
                         v-model="sortKey"
                         class="rounded-md border-gray-200 dark:border-dark-border dark:bg-dark-canvas text-sm py-2 pl-3 pr-8"
+                        aria-label="Sort projects"
                         data-test="project-sort"
                     >
                         <option value="created">
@@ -165,6 +166,28 @@
                          anchor itself so no leaf can be missed; the name, pills and cohort figure carry
                          their own font-semibold. -->
                     <AiCard class="overflow-hidden p-0">
+                        <!-- Header row, as on the Models table (from md — the stacked mobile
+                             rows have no columns to head). Same spine width, padding and
+                             ROW_GRID_CLASS as the rows, so the labels sit over their columns. -->
+                        <div
+                            class="hidden md:flex items-stretch bg-gray-50 border-b border-gray-200 dark:bg-dark-surface dark:border-dark-border"
+                            data-test="projects-list-header"
+                        >
+                            <div class="w-2 shrink-0" />
+                            <div
+                                :class="ROW_GRID_CLASS"
+                                class="grid flex-1 gap-5 px-5 py-3 text-xs font-mono font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300"
+                            >
+                                <div>Project</div>
+                                <div>Description</div>
+                                <div class="hidden lg:block">
+                                    Trusts
+                                </div>
+                                <div class="text-right">
+                                    Status
+                                </div>
+                            </div>
+                        </div>
                         <router-link
                             v-for="(project, idx) in sortedProjects"
                             :key="project.id"
@@ -201,7 +224,8 @@
                                      right. From md the normal column flow takes over. -->
                                 <div
                                     class="col-start-1 row-start-2 md:col-start-auto md:row-start-auto
-                                    text-[12.5px] md:text-sm text-gray-600 dark:text-gray-300 leading-snug line-clamp-2"
+                                    text-[12.5px] md:text-[13px] text-gray-600 dark:text-gray-300
+                                    leading-snug line-clamp-2"
                                     data-test="project-row-description"
                                 >
                                     {{ project.description || "—" }}
@@ -371,8 +395,8 @@ const userId = authStore.user?.userId;
 // the md template deliberately declares three tracks to the lg template's four.
 // Keep each class name whole within one string literal: Tailwind's extractor scans
 // source text, so a class split across a concatenation is never generated.
-const ROW_GRID_CLASS = "grid-cols-[minmax(0,1fr)_8rem] md:grid-cols-[minmax(0,1.6fr)_minmax(0,1.8fr)_10rem] "
-    + "lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1.8fr)_15rem_10rem]";
+const ROW_GRID_CLASS = "grid-cols-[minmax(0,1fr)_8rem] md:grid-cols-[minmax(0,1.2fr)_minmax(0,1.8fr)_10rem] "
+    + "lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1.8fr)_11rem_10rem]";
 
 type ViewMode = "list" | "grid";
 const viewMode = ref<ViewMode>("list");

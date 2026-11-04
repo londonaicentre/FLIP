@@ -17,7 +17,7 @@
 ############################
 #
 # The bucket holding the FLIP root's state in this account. Until this module,
-# nothing declared it: three were made by scripts/create-backend.sh and one by
+# nothing declared it: three were made by a since-removed create-backend.sh and one by
 # hand, and they had drifted (three SSE-S3, one SSE-KMS; one carried a
 # hand-added policy granting another account write access). Declaring it here
 # makes its settings reviewed and consistent. The IAM policies above address it

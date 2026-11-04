@@ -43,7 +43,7 @@ SCRIPT_PATH = FL_TUTORIALS_DIR / "datasets" / "synthea" / "build_synthea_datafra
 # the FLARE one); test the reference and the copy both, so either drifting from pandas is caught.
 QUERY_FILES = {
     "nvflare": FL_TUTORIALS_DIR / "nvflare" / "tabular_classification" / "ehr_risk_prediction" / "query.sql",
-    "flower": FL_TUTORIALS_DIR / "flower" / "ehr_risk_prediction" / "query.sql",
+    "flower": FL_TUTORIALS_DIR / "flower" / "tabular_classification" / "ehr_risk_prediction" / "query.sql",
 }
 
 

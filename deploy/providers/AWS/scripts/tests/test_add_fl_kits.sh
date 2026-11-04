@@ -120,7 +120,7 @@ FAIL=0
 STARTUP_OVERRIDES=()
 KEYCOUNT_OVERRIDES=()
 YES_MODE=""
-ENV_MODE=""  # ENV_NAME for the next run_case (default stag; the Makefile passes it from PROD via deploy/env_mode.mk)
+ENV_MODE=""  # ENV_NAME for the next run_case (default stag; the Makefile passes it from HUB via deploy/env_mode.mk)
 
 run_case() {
     local name="$1" N="$2" env_json="$3" nets="$4"
@@ -291,8 +291,8 @@ check_refuses "refuses net-2 overwrite" "already has objects — refusing to ove
 check_refuses "reports the net-1 upload" "Kits already uploaded this run: net-1/Trust_3"
 check_refuses "warns against the instinctive re-run" "Do NOT re-run add-fl-kits"
 
-# --- ENV_NAME (FLIP#749): the environment CLASS the Makefile derives from PROD (deploy/env_mode.mk's
-# --- ENV_CLASS — the LZA pair rides the legacy env workspaces); anything else is refused ---
+# --- ENV_NAME (FLIP#749): the environment CLASS the Makefile derives from HUB (deploy/env_mode.mk's
+# --- ENV_CLASS); anything else is refused ---
 
 ENV_MODE=stag
 run_case "ENV_NAME=stag plans as the stag env (N=2)" 2 '["Trust_1", "Trust_2"]' "net-1 net-2" \
@@ -306,7 +306,7 @@ run_case "ENV_NAME=prod plans as the prod env (N=1)" 1 '["Trust_1", "Trust_2"]' 
 check_contains "plan header names the prod env" 1 "Plan (prod):"
 
 ENV_MODE=lza-stag
-run_case "a raw PROD value is refused — the Makefile must map it first (N=1)" 1 '["Trust_1", "Trust_2"]' "net-1 net-2" \
+run_case "anything but prod|stag is refused (N=1)" 1 '["Trust_1", "Trust_2"]' "net-1 net-2" \
     "net-1=Trust_1 Trust_2 fl-server-net-1" "net-2=Trust_1 Trust_2 fl-server-net-2"
 check_refuses "rejects ENV_NAME=lza-stag before touching anything" "ENV_NAME must be"
 

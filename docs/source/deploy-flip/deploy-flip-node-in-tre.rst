@@ -55,10 +55,18 @@ operator. The TRE operator is responsible for:
   FL data, OMOP DB volumes, and observability storage. The
   :gh:`on-prem Ansible playbook <trust/deploy/ansible/onprem.yml>` shows the full list.
 
-**Container image ingestion**
+**Container images**
 
-FLIP container images are published to the GitHub Container Registry
-(``ghcr.io/londonaicentre/*``). TREs typically block direct pulls from public registries,
+FLIP's own images are published to the GitHub Container Registry
+(``ghcr.io/londonaicentre/*``). The observability stack and XNAT's Docker socket proxy come
+from Docker Hub: ``grafana/loki``, ``grafana/alloy``, ``grafana/grafana`` and
+``tecnativa/docker-socket-proxy``, at the tags ``trust/deploy/compose/compose_trust.prod.yml``
+and ``trust/xnat/docker-compose-stack.yml`` pin.
+
+Where the TRE lets the FLIP host pull directly (CREATE does this for GHCR), allow both hosts of
+each registry in :ref:`deploy-trust-node-network`.
+
+Otherwise, TREs typically block direct pulls from public registries,
 so images have to come in through the TRE's normal file-ingress process, for example as
 ``docker save`` tarballs loaded with ``docker load``, or through a TRE-internal registry.
 
@@ -71,11 +79,14 @@ so images have to come in through the TRE's normal file-ingress process, for exa
    air-gapped TRE therefore needs site-specific adaptation; agree it with the FLIP team
    before the TRE build starts.
 
+The XNAT image carries its plugins, so a trust downloads none at start, on Compose or Kubernetes.
+
 **Network policy**
 
-- Allow the outbound connections in :ref:`deploy-trust-node-network`: the Central Hub API
-  and the FL server are **separate** hosts, and allowlisting the API host alone is not
-  sufficient.
+- Allow the outbound connections in :ref:`deploy-trust-node-network`. The Central Hub API
+  and the FL server are **separate** hosts, and the FL server must be exempt from TLS
+  inspection. Once the kit file is on the host, ``make onboard-onprem-trust KIT=<CODE>`` probes
+  them from there and prints what it cannot reach: run it before and after the firewall change.
 - No inbound ports need to be opened on the TRE perimeter.
 
 **Output review**
@@ -124,11 +135,12 @@ back. The FL server never initiates inbound connections to client sites:
 - In NVIDIA FLARE, the FL client sends ``GET_TASK`` requests to the FL server and receives
   tasks in the response, then returns results via ``SUBMIT_RESULT``.
 
-- In Flower, each SuperNode acts as a gRPC client connecting outbound to the SuperLink.
-  SuperNodes initiate all requests and do not accept incoming connections.
+- In Flower (flwr 1.40 and later), each SuperNode is an HTTPS client (HTTP/1.1 over TLS)
+  that calls the Fleet API outbound, through the Central Hub's fleet proxy. SuperNodes
+  initiate all requests and do not accept incoming connections.
 
-The TRE need only whitelist outbound gRPC (or HTTP, if using an HTTP/REST transport
-fallback) to the FL server endpoint.
+The TRE need only allow outbound TLS to the FL server endpoint: gRPC for NVIDIA FLARE,
+HTTPS (HTTP/1.1) for Flower.
 
 **Central Hub FLIP API <-> Trust API**
 
@@ -236,9 +248,9 @@ Networking
 ----------
 
 The outbound connections in :ref:`deploy-trust-node-network`, and no inbound ones. If the
-TRE's network inspection appliances block HTTP/2 (required for gRPC), most FL frameworks
-offer HTTP/REST transport fallbacks that work over standard HTTP/1.1 (e.g. NVIDIA FLARE's
-HTTP driver, Flower's REST transport).
+TRE's network inspection appliances block HTTP/2 (required for gRPC), NVIDIA FLARE offers
+an HTTP driver that works over standard HTTP/1.1; Flower already uses plain HTTPS
+(HTTP/1.1).
 
 Data
 ----

@@ -366,11 +366,13 @@ ghcr.io/londonaicentre/flare-fl-server:${SHA_TAG}" \
     "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
     "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-9999999"
 run_resolve "stdout carries only KEY=value lines"
-if [[ "$(printf '%s\n' "${STDOUT}" | grep -cvE '^(DOCKER_TAG|DOCKER_FL_TAG|DOCKER_FL_API_TAG)=')" -eq 0 ]]; then
-    ok "stdout is exactly the three assignments"
+if [[ "$(printf '%s\n' "${STDOUT}" | grep -cvE '^(DOCKER_TAG|DOCKER_FL_TAG|DOCKER_FL_API_TAG|DOCKER_FL_PROXY_TAG)=')" -eq 0 ]]; then
+    ok "stdout is exactly the four assignments"
 else
-    no "stdout is exactly the three assignments" "stdout: ${STDOUT}"
+    no "stdout is exactly the four assignments" "stdout: ${STDOUT}"
 fi
+# NVFLARE has no fleet proxy (FLIP#1517): the key is there, empty, so Terraform falls back.
+expect_tag DOCKER_FL_PROXY_TAG ""
 
 # 11. FAIL CLOSED ON AN AWS ERROR. The invariant in the header only holds if
 #     "no service" is distinguishable from "the call did not work". An expired
@@ -714,6 +716,7 @@ fi
 # ---------------------------------------------------------------------------
 API_DIGEST="sha256:3333333333333333333333333333333333333333333333333333333333333333"
 HUB_DIGEST="sha256:4444444444444444444444444444444444444444444444444444444444444444"
+PROXY_DIGEST="sha256:5555555555555555555555555555555555555555555555555555555555555555"
 
 fixture "ghcr.io/londonaicentre/flip-api:v1.2.3
 ghcr.io/londonaicentre/flare-fl-server:v1.2.3" \
@@ -736,9 +739,27 @@ ghcr.io/londonaicentre/flower-superlink:v1.2.3" \
     "fl-server-net-1:12" "ghcr.io/londonaicentre/flower-superlink:sha-8888888"
 printf '%s' "${FL_DIGEST}" >"${FIXTURE_DIR}/digest.flower-superlink"
 printf '%s' "${API_DIGEST}" >"${FIXTURE_DIR}/digest.flower-fl-api"
+printf '%s\n' "ghcr.io/londonaicentre/flower-fleet-proxy:v1.2.3" >>"${FIXTURE_DIR}/published"
+printf '%s' "${PROXY_DIGEST}" >"${FIXTURE_DIR}/digest.flower-fleet-proxy"
 FL_BACKEND_UNDER_TEST=flower run_resolve "flower pins flower-fl-api separately" RELEASE_TAG=v1.2.3
 expect_tag DOCKER_FL_TAG "v1.2.3@${FL_DIGEST}"
 expect_tag DOCKER_FL_API_TAG "v1.2.3@${API_DIGEST}"
+# ...and the fleet proxy, a third FL repository, with its own (FLIP#1517).
+expect_tag DOCKER_FL_PROXY_TAG "v1.2.3@${PROXY_DIGEST}"
+
+# The proxy's live tag is read off the fl-server task's `fleet-proxy` container, and a
+# release whose proxy image is missing fails closed like any other release image.
+fixture "ghcr.io/londonaicentre/flip-api:v1.2.3
+ghcr.io/londonaicentre/flower-superlink:v1.2.3" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flower-superlink:sha-8888888"
+FL_BACKEND_UNDER_TEST=flower run_resolve "flower release with no fleet proxy image" RELEASE_TAG=v1.2.3
+expect_rc 1 "dies"
+if [[ "${STDERR}" == *"flower-fleet-proxy:v1.2.3 is not published"* ]]; then
+    ok "names the missing proxy image"
+else
+    no "names the missing proxy image" "stderr: ${STDERR}"
+fi
 
 # 27. "Dies if the release image is absent" has to cover the FL API too — it was
 #     the half of the FL set nobody checked. The fl-server release is published

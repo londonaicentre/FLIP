@@ -15,17 +15,11 @@
 
 """Static guard on the IAM permissions boundary (FLIP#1082, FLIP#1199, FLIP#1280).
 
-Every IAM role this root owns carries ``var.iam_permissions_boundary_name``. Which
-policy that names depends on who owns the account's guardrails:
-
-- The self-contained modes take the ``variables.tf`` default,
-  ``AICentre-FLIPTerraformBoundary``, declared by ``modules/terraform_ci_bootstrap``
-  (through ``ci/``, or a platform repository that instantiates it).
-- The LZA modes take the platform's ``AICentre-WorkloadRoleBoundary``
-  (londonaicentre/lza#51), which the accelerator deploys to every workload
-  account. An LZA SCP denies creating a role, or attaching or writing a policy
-  onto one, unless the role carries it — so a blank or a different name there
-  fails every role change, from a laptop or from CI.
+Every IAM role this root owns carries ``var.iam_permissions_boundary_name``: the
+platform's ``AICentre-WorkloadRoleBoundary`` (londonaicentre/lza#51), which the
+accelerator deploys to every LZA workload account. An LZA SCP denies creating a role,
+or attaching or writing a policy onto one, unless the role carries it — so a blank or
+a different name fails every role change, from a laptop or from CI.
 
 These probes run ``make`` for real, with the env-file include pointed at nothing
 so they are independent of any local ``.env.*`` file, and read back what
@@ -49,9 +43,8 @@ STUB_ENV = {
     "AWS_PROFILE": "probe",
     "PROD_AWS_PROFILE": "probe",
     "STAG_AWS_PROFILE": "probe",
-    "LZA_AWS_PROFILE": "probe",
-    "LZA_STAG_AWS_PROFILE": "probe",
     "LZA_VPC_NAME": "probe-vpc",
+    "MANAGE_DNS": "false",
     "FLARE_KIT_DATE": "00000000",
     "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": "probe-uploads",
     "FLIP_FL_RESULTS_BUCKET_NAME": "probe-results",
@@ -63,50 +56,35 @@ STUB_ENV = {
 }
 
 
-def _probe(tmp_path: Path, prod: str, extra_env: dict[str, str] | None = None) -> str:
-    """Return ``<value>|<exported>`` for the boundary variable as terraform would see it.
-
-    ``${V-UNSET}`` prints UNSET only when the variable is absent from the environment (an
-    empty export prints ""); ``${V+exported}`` prints "exported" whenever it is present.
-    """
-    env_file = tmp_path / f".env.probe-{prod}"
+def _probe(tmp_path: Path, hub: str, items: list[str], extra_env: dict[str, str] | None = None) -> list[str]:
+    """Evaluate ``items`` in a recipe of the AWS Makefile, with a stub env file and no TF_VAR_* inherited."""
+    env_file = tmp_path / f".env.probe-{hub}"
     env_file.write_text("".join(f"{k}={v}\n" for k, v in {**STUB_ENV, **(extra_env or {})}.items()))
     env = {k: v for k, v in os.environ.items() if not k.startswith("TF_VAR_")}
-    values = probe_make(
-        AWS_DIR,
-        ["$${TF_VAR_iam_permissions_boundary_name-UNSET}", "$${TF_VAR_iam_permissions_boundary_name+exported}"],
-        {"PROD": prod, "MAIN_ENV_FILE": str(env_file)},
-        env=env,
-    )
-    return "|".join(values)
+    return probe_make(AWS_DIR, items, {"HUB": hub, "MAIN_ENV_FILE": str(env_file)}, env=env)
 
 
-@pytest.mark.parametrize("prod", ["stag", "true"])
-def test_the_self_contained_modes_let_the_terraform_default_apply(tmp_path: Path, prod: str) -> None:
-    """The modes the pipeline applies: no export at all, so the default stands.
-
-    An exported empty string here would be the FLIP#1199 bug in reverse — those
-    accounts *have* a boundary policy, so blanking it silently strips the boundary
-    from every role the apply creates or updates.
-    """
-    assert _probe(tmp_path, prod) == "UNSET|"
+#: ``${V-UNSET}`` prints UNSET only when the variable is absent from the environment (an
+#: empty export prints ""); ``${V+exported}`` prints "exported" whenever it is present.
+BOUNDARY = ["$${TF_VAR_iam_permissions_boundary_name-UNSET}", "$${TF_VAR_iam_permissions_boundary_name+exported}"]
 
 
-@pytest.mark.parametrize("prod", ["lza-stag", "lza"])
-def test_the_lza_modes_carry_the_platform_boundary(tmp_path: Path, prod: str) -> None:
-    """The LZA modes default to the platform's boundary, never to ``""``.
-
-    ``AICentre-FLIPTerraformBoundary`` does not exist in those accounts (the
-    platform instantiates the bootstrap with its own boundary), and the platform SCP rejects a role without
-    ``AICentre-WorkloadRoleBoundary``. Either wrong value fails every role change.
-    """
-    assert _probe(tmp_path, prod) == "AICentre-WorkloadRoleBoundary|exported"
+@pytest.mark.parametrize("hub", ["stag", "prod"])
+def test_every_estate_carries_the_platform_boundary(tmp_path: Path, hub: str) -> None:
+    """The platform's boundary, never ``""``: an empty export strips it from every role."""
+    assert _probe(tmp_path, hub, BOUNDARY) == ["AICentre-WorkloadRoleBoundary", "exported"]
 
 
-@pytest.mark.parametrize("prod", ["stag", "true", "lza-stag", "lza"])
-def test_an_env_file_boundary_name_still_wins(tmp_path: Path, prod: str) -> None:
+@pytest.mark.parametrize("hub", ["stag", "prod"])
+def test_an_env_file_boundary_name_still_wins(tmp_path: Path, hub: str) -> None:
     # `?=` supplies a default, it does not override: an operator who sets the
-    # variable in the env file (which `include` exports) gets that name on every
-    # mode, LZA included.
-    probe = _probe(tmp_path, prod, {"TF_VAR_iam_permissions_boundary_name": "Custom-Boundary"})
-    assert probe == "Custom-Boundary|exported"
+    # variable in the env file (which `include` exports) gets that name.
+    probe = _probe(tmp_path, hub, BOUNDARY, {"TF_VAR_iam_permissions_boundary_name": "Custom-Boundary"})
+    assert probe == ["Custom-Boundary", "exported"]
+
+
+@pytest.mark.parametrize("hub", ["stag", "prod"])
+def test_terraform_sees_the_estate_hub_names(tmp_path: Path, hub: str) -> None:
+    """The environment class is the one HUB names; the network-mode input is gone with the self-contained mode."""
+    items = ["$${TF_VAR_environment}", "$${TF_VAR_lza_managed_network-UNSET}"]
+    assert _probe(tmp_path, hub, items) == [hub, "UNSET"]

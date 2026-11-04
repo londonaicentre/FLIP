@@ -41,7 +41,7 @@
 set -euo pipefail
 
 # Lint the source as CI does, with no variable values supplied: tflint resolves variables from
-# TF_VAR_*, which the AWS Makefile exports (literals, values derived from PROD and FL_BACKEND,
+# TF_VAR_*, which the AWS Makefile exports (literals, values derived from HUB and FL_BACKEND,
 # and the deploy env file's keys, which are empty strings without one).
 for var in "${!TF_VAR_@}"; do
     unset "${var}" 2> /dev/null || {

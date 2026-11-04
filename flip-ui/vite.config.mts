@@ -29,9 +29,9 @@ export default defineConfig(({ mode, command, isPreview }) => {
         throw new Error(checkViteE2e(mode, command));
     }
 
-    // Public Ark+ demo build (`vite --mode demo` / `vite build --mode demo`).
+    // Public demo build (`vite --mode demo` / `vite build --mode demo`).
     // The deployable build (and `vite preview`, which serves that build) lives
-    // under /ark_demo/; the dev server stays at "/" so local eyeballing needs
+    // under /demo/; the dev server stays at "/" so local eyeballing needs
     // no path juggling.
     const isDemo = mode === "demo";
     const demoBase = isDemo && (command === "build" || isPreview);
@@ -79,7 +79,7 @@ export default defineConfig(({ mode, command, isPreview }) => {
     );
 
     return {
-        base: demoBase ? "/ark_demo/" : "/",
+        base: demoBase ? "/demo/" : "/",
         plugins: [
             progress(),
             vue(
@@ -164,14 +164,10 @@ export default defineConfig(({ mode, command, isPreview }) => {
         build: {
             sourcemap: false,
             chunkSizeWarningLimit: 1024,
-            // Demo build only: Vite's default assetsDir ("assets") would put the
-            // SPA's own JS/CSS/font bundle at /ark_demo/assets/*, colliding with
-            // the CloudFront behavior that routes /ark_demo/assets/* to the
-            // separate demo-downloads S3 bucket (deploy/providers/AWS/cloudfront.tf,
-            // "Public Ark+ demo download assets"). That behavior would intercept
-            // the bundle's own JS/CSS requests and 403 them against the wrong
-            // bucket, breaking the app before Vue ever mounts. Non-demo builds
-            // keep Vite's default.
+            // Demo build only: the bundle's own JS/CSS/fonts live under /demo/static/*
+            // rather than Vite's default "assets", keeping the SPA's files apart
+            // from any other path a CloudFront behaviour may claim under the demo
+            // prefix. Non-demo builds keep Vite's default.
             assetsDir: isDemo ? "static" : "assets",
             rolldownOptions: {
                 output: {
@@ -231,6 +227,9 @@ export default defineConfig(({ mode, command, isPreview }) => {
             globals: true,
             environment: "jsdom",
             setupFiles: ["./test/setup.ts"],
+            // A file's first test also pays for transforming the component it mounts; on a loaded host
+            // (the release gates run beside a full stack) that alone can pass vitest's 5 s default.
+            testTimeout: 20000,
             include: ["src/**/*.spec.ts", "scripts/**/*.spec.ts", "mocks/**/*.spec.ts"],
             coverage: { reporter: ["text", "json", "cobertura"] },
             server: {

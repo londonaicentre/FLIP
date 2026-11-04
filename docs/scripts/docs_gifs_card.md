@@ -37,6 +37,7 @@ One copy of every file, at an unversioned path:
 | --- | --- |
 | `admin/<name>.gif` | one per `flip-ui/test/cypress/docs/admin/<name>.spec.ts` |
 | `flip/<name>.gif` | one per `flip-ui/test/cypress/docs/flip/<name>.spec.ts` |
+| `<category>/<name>.gif` | one per line of `docs/scripts/live-recorded-gifs.txt`: recorded on a live trust (e.g. `monailabel/`, the MONAI Label walkthrough), carried forward unchanged by CI publishes |
 | `manifest.json` | the provenance of this recording and the sha256 + size of every GIF |
 | `README.md` | this card (`docs/scripts/docs_gifs_card.md` in the FLIP repository) |
 
@@ -52,7 +53,8 @@ point at recordings ([FLIP#1547](https://github.com/londonaicentre/FLIP/issues/1
   are **never moved** and **never deleted**, so that release's documentation keeps resolving them. The same
   holds for the `YYYYMMDDTHHMMSSZ-<sha7>` tags pinned by releases v0.8.0 to v0.12.0, from before release tags.
 - **`pr-<N>` branches**: a recording made by hand for FLIP pull request #N, for GIFs CI cannot record (one
-  that needs a live trust, say); that PR's documentation preview shows it. Delete the branch once the PR closes.
+  that needs a live trust, say); that PR's documentation preview shows it. Delete the branch once `main`'s
+  manifest lists the sha256 the PR pinned for each such GIF; until then it is their only copy.
 
 ## Manifest
 

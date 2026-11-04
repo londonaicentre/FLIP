@@ -34,6 +34,8 @@ on:
       - "flip-utils/flip/**"
       - "flip-utils/pyproject.toml"
       - "flip-utils/uv.lock"
+      # tests/test_tutorial_catalogue.py reads the sync script's PAIRS, so a change there re-runs the suite.
+      - "scripts/check_tutorial_sync.sh"
       - ".github/workflows/fl-tutorials-tests.yml"
   pull_request:
     branches: [main, develop]
@@ -44,6 +46,8 @@ on:
       - "flip-utils/flip/**"
       - "flip-utils/pyproject.toml"
       - "flip-utils/uv.lock"
+      # tests/test_tutorial_catalogue.py reads the sync script's PAIRS, so a change there re-runs the suite.
+      - "scripts/check_tutorial_sync.sh"
       - ".github/workflows/fl-tutorials-tests.yml"
 
 permissions:
@@ -73,11 +77,12 @@ jobs:
         run: make lint
 
       # Tutorial-app tests run in flip-utils' environment (`flip-utils[full]`), which is what
-      # the FL images give these apps at runtime. Synced as its own step so an environment
+      # the FL images give these apps at runtime, plus the `diffusion` group for the image-generation
+      # tutorials' local plotting helpers. Synced as its own step so an environment
       # failure is distinguishable from a test failure in the log.
       - name: Sync the flip-utils environment
         working-directory: ./flip-utils
-        run: uv sync --extra full --group dev
+        run: uv sync --extra full --group dev --group diffusion
 
       - name: Run the tutorial transform tests
         run: make pytest

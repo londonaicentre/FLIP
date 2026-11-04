@@ -315,7 +315,7 @@ def _check_on(backend: str, tmp_path, **env: str) -> int:
 class TestBackendCheck:
     """--check --fl-backend: a privacy control only FLARE enforces must fail on any other backend.
 
-    Reporting "site privacy policy ACTIVE ... jobs cannot opt out" on a Flower trust, where no
+    Reporting "site privacy policy ACTIVE ... a job's config cannot opt out" on a Flower trust, where no
     client reads the section, is the silent-ignore this feature exists to remove.
     """
 

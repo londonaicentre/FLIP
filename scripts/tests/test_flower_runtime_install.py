@@ -53,7 +53,7 @@ SUPERLINK_ENV = "FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION"
 # chart template or image is covered without anyone remembering to add it here.
 FLAG_SCAN_GLOBS = (
     "deploy/compose*.yml",
-    "trust/deploy/compose*.yml",
+    "trust/deploy/compose/*.yml",
     "fl-services/flower/compose*.yml",
     "trust/deploy/helm/templates/*",
     "trust/deploy/helm/values*.yaml",
@@ -72,7 +72,7 @@ FLOWER_COMPOSE_GLOBS = (
 # check below would pass by asserting over nothing after a rename.
 SUPERLINK_COMPOSES = (
     "deploy/compose.development.flower.yml",
-    "deploy/compose.production.flower.yml",
+    "deploy/compose.prod.flower.yml",
     "fl-services/flower/compose.dev.yml",
     "fl-services/flower/compose.secure.yml",
 )

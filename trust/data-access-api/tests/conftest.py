@@ -37,9 +37,11 @@ _TEST_ENV_DEFAULTS = {
     "DATA_ACCESS_POSTGRES_USER": "test_user",
     "DATA_ACCESS_POSTGRES_PASSWORD": "test_password",  # pragma: allowlist secret
     "OMOP_POSTGRES_DB": "test_omop_db",
-    "AES_KEY_BASE64": TEST_AES_KEY_BASE64,
-    "TRUST_INTERNAL_SERVICE_KEY": TEST_TRUST_INTERNAL_SERVICE_KEY,
 }
+# The keys the test request headers are built from are pinned, not defaulted: a developer's exported key (a dev
+# instance's env file mints a real one) would otherwise win and every authenticated route would answer 403.
+os.environ["AES_KEY_BASE64"] = TEST_AES_KEY_BASE64
+os.environ["TRUST_INTERNAL_SERVICE_KEY"] = TEST_TRUST_INTERNAL_SERVICE_KEY
 
 for key, value in _TEST_ENV_DEFAULTS.items():
     # Treat unset *and* unreplaced `<placeholder>` values from .env.development.example

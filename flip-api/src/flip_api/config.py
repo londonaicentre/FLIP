@@ -12,9 +12,10 @@
 
 import json
 import logging
+import os
 from typing import Annotated, Literal
 
-from pydantic import EmailStr, SecretStr, ValidationInfo, field_validator, model_validator
+from pydantic import EmailStr, Field, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from flip_api.domain.schemas.types import FLBackend
@@ -298,7 +299,7 @@ class Settings(BaseSettings):
         dev defaults on DevSettings and the base values elsewhere.
         """
         if v is None or v == "":
-            return cls.model_fields[info.field_name].default  # type: ignore[index]
+            return cls.model_fields[info.field_name].get_default(call_default_factory=True)  # type: ignore[index]
         return v
 
     @model_validator(mode="after")
@@ -460,7 +461,11 @@ class DevSettings(Settings):
     # with the realm import; it protects nothing outside a laptop and
     # ProdSettings cannot select this backend.
     KEYCLOAK_URL: str | None = "http://keycloak:8080"
-    KEYCLOAK_PUBLIC_URL: str | None = "http://localhost:8180"
+    # The public URL follows KEYCLOAK_PORT exactly as the compose does, so the host-side e2e smoke of a
+    # second instance signs in at that instance's Keycloak, not the default one (FLIP#1604).
+    KEYCLOAK_PUBLIC_URL: str | None = Field(
+        default_factory=lambda: f"http://localhost:{os.environ.get('KEYCLOAK_PORT') or 8180}"
+    )
     KEYCLOAK_ADMIN_CLIENT_SECRET: SecretStr | None = SecretStr("flip-dev-admin-secret")  # pragma: allowlist secret
 
     # The dev object store's published host port, matching the `object-store`

@@ -201,8 +201,8 @@ reconnects on its own, retrying every 10 seconds.
 
 **Fix.** Wait a minute. If the client never reconnects:
 
-- On an on-prem host, check whether the trust's public IP changed: the hub's FL load balancer only admits listed
-  addresses (see step 6 of :doc:`../deploy-flip/onboarding-a-trust`).
+- On an on-prem host, check that the host and network firewalls still allow outbound traffic on the FL port (see
+  :ref:`deploy-trust-node-network`).
 - On Kubernetes, check the egress policy: :ref:`ts-k8s-fl-port-blocked`.
 - A FLIP admin can confirm the server sees the client:
 

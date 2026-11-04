@@ -38,8 +38,9 @@ from fl_api.utils.prepare_config import (
     configure_server,
     validate_config,
 )
+from fl_api.utils.refusals import ResearcherRefusal
 from fl_api.utils.schemas import FLAggregators, TrainingRound, UploadAppRequest
-from fl_api.utils.validation import safe_join, validate_bundle_url
+from fl_api.utils.validation import redact_url, safe_join, validate_bundle_url
 
 # De-bundled evaluation checkpoints are large (hundreds of MB); allow far more time than the
 # code-file default used for the rest of the bundle.
@@ -79,7 +80,7 @@ def _stage_server_checkpoint(url: str, model_id: str, file_name: str) -> None:
         # validate_bundle_url (which only saw the original URL), and raise_for_status() stops an
         # S3 error body from being written out as the checkpoint.
         if resp.is_redirect or resp.is_permanent_redirect:
-            raise HTTPException(status_code=400, detail=f"Bundle URL returned a redirect: {url!r}.")
+            raise HTTPException(status_code=400, detail=f"Bundle URL returned a redirect: {redact_url(url)!r}.")
         resp.raise_for_status()
         with open(dest_path, "wb") as fh:
             for chunk in resp.iter_content(chunk_size=8 * 1024 * 1024):
@@ -155,8 +156,9 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
         upload_dir (str): directory where the application will be uploaded (session's upload dir.)
     Raises:
         HTTPException: if the application fails to upload, an error is raised.
-        FileNotFoundError: if the application path is not found, an error is raised.
-        ValueError: if the bundle has no ``app`` folder, or its meta.json holds something FLIP refuses.
+        ResearcherRefusal: If required config/metadata is missing, the bundle has no ``app`` folder,
+            or its meta.json is invalid.
+        ValueError: If the operator's default GPU count is invalid.
     Returns:
         dict[str, Any]: a success message naming where the application was uploaded, the GPU count written into
         meta.json (``resources``) and where it came from (``resources_source``: submission, meta.json or default;
@@ -228,7 +230,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
     app_folder_names: set[str] = set()
 
     for url in bundle_urls:
-        logger.info(f"Downloading file from {url}")
+        logger.info(f"Downloading file from {redact_url(url)}")
 
         # The FL API fetches each URL server-side, so reject off-origin URLs. With no allow-list set the check
         # also resolves the name; requests resolves it again on connect, and that pair is the DNS-rebinding
@@ -241,21 +243,26 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
 
         # Server-only evaluation checkpoints are staged on the shared volume for the fl-server
         # to load from disk; they are NOT part of the FLARE job (never deployed to clients).
-        if f"/{SERVER_CHECKPOINTS_PREFIX}" in s3_file_dir:
-            _stage_server_checkpoint(url, model_id, file_name)
-            continue
-
         try:
+            if f"/{SERVER_CHECKPOINTS_PREFIX}" in s3_file_dir:
+                _stage_server_checkpoint(url, model_id, file_name)
+                continue
             resp = requests.get(url, timeout=60, allow_redirects=False)
             # A redirect would dodge validate_bundle_url (which only saw the original URL),
             # reopening the SSRF hole; treat any 3xx as a failure. raise_for_status() also
             # stops an S3 4xx/5xx error body from being written out as the bundle file.
             if resp.is_redirect or resp.is_permanent_redirect:
-                raise HTTPException(status_code=400, detail=f"Bundle URL returned a redirect: {url!r}.")
+                raise HTTPException(status_code=400, detail=f"Bundle URL returned a redirect: {redact_url(url)!r}.")
             resp.raise_for_status()
             content = resp.content
+        except HTTPException:
+            raise
+        except requests.RequestException as e:
+            message = f"Failed to download file from {redact_url(url)} ({type(e).__name__})."
+            logger.error(message)
+            raise HTTPException(status_code=500, detail=message) from None
         except Exception as e:
-            logger.error(f"Failed to download from URL {url} with error: {e}")
+            logger.error(f"Failed to download file from {redact_url(url)} ({type(e).__name__}).")
             raise
 
         app_folder_name, relative_dir = _relative_dir_for_download(model_id, s3_file_dir, file_name)
@@ -276,7 +283,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
     # FLIP deploys "app" to the server and every selected trust (configure_meta). A job cannot name the trusts'
     # sites, so app_* variants alone leave nothing to deploy.
     if "app" not in app_folder_names:
-        raise ValueError(
+        raise ResearcherRefusal(
             f"The application has no app/ folder (found {sorted(app_folder_names)}). FLIP deploys app/ to the "
             "server and every selected trust."
         )
@@ -291,7 +298,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
                 " multiple app sub-folders indicating different behaviors per site."
             )
             logger.error(error_message)
-            raise FileNotFoundError(error_message)
+            raise ResearcherRefusal(error_message, status_code=404)
 
     # A federated learning job consists of, at least, a CONFIG and CUSTOM folder. Within CONFIG, two files,
     # config_fed_server.json and config_fed_client.json. Within custom, all uploaded files. In addition to
@@ -308,7 +315,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
         try:
             raw_meta = read_config(meta_json_path)
         except json.JSONDecodeError as e:
-            raise ValueError(f"meta.json is not valid JSON: {e}") from e
+            raise ResearcherRefusal(f"meta.json is not valid JSON: {e}") from e
         job_meta = parse_job_meta(raw_meta)
     resources, resources_source = resolve_job_resources(
         override=body.resources,

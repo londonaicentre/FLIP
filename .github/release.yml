@@ -11,7 +11,9 @@
 
 changelog:
   exclude:
+    # Release plumbing (the version-bump PR, develop -> main) is not a change of its own.
     labels:
+      - release
       - ignore-for-release
   categories:
     - title: "🚀 Features"

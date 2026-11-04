@@ -38,14 +38,18 @@ data "aws_iam_policy_document" "apply_assume_role" {
       values   = [local.oidc_sub]
     }
 
-    # StringEquals, not StringLike: exactly one workflow file at exactly one ref.
-    # This is the condition that makes "automatic apply on merge to main"
-    # (decision 1) safe to switch on — a PR editing the apply workflow presents
-    # `@refs/pull/<n>/merge` and is denied.
+    # StringEquals, not StringLike: an exact set of workflow files, each at an
+    # exact ref. This is the condition that makes "automatic apply on merge to
+    # main" (decision 1) safe to switch on — a PR editing the apply workflow
+    # presents `@refs/pull/<n>/merge` and is denied.
+    #
+    # On production the set is one value, terraform_apply.yml. On staging it also
+    # holds staging_lifecycle.yml, which stops and starts the estate with the
+    # same role; see local.apply_workflow_refs.
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:job_workflow_ref"
-      values   = [local.apply_workflow_ref]
+      values   = local.apply_workflow_refs
     }
   }
 }
@@ -246,7 +250,7 @@ data "aws_iam_policy_document" "apply_iam" {
   }
 
   # Belt and braces now that every Allow above is scoped to named roles that
-  # never include these two: an operator widening managed_role_names by mistake
+  # never include these three: an operator widening managed_role_names by mistake
   # must still not hand the pipeline its own identity.
   statement {
     sid    = "NoSelfEscalation"
@@ -266,6 +270,7 @@ data "aws_iam_policy_document" "apply_iam" {
     resources = [
       local.apply_role_arn,
       local.plan_role_arn,
+      local.ui_publish_role_arn,
     ]
   }
 

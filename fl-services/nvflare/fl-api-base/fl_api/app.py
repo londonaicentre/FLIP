@@ -26,6 +26,7 @@ from fl_api.utils.exception_handlers import (
     value_error_handler,
 )
 from fl_api.utils.logger import logger
+from fl_api.utils.refusals import ResearcherRefusal, researcher_refusal_handler
 from fl_api.utils.validation import warn_if_bundle_url_allow_list_empty
 from fl_api.utils.version import build_identity
 
@@ -36,6 +37,8 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+app.add_exception_handler(ResearcherRefusal, researcher_refusal_handler)
 
 # Register exception handlers
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)

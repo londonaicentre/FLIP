@@ -94,7 +94,7 @@ class JobSchedulingReporter(FLComponent):
         flip (FLIPBase | None): FLIP client used to reach the hub. Defaults to ``FLIP()``.
     """
 
-    def __init__(self, job_scheduler_id: str = "job_scheduler", flip: FLIPBase | None = None):
+    def __init__(self, job_scheduler_id: str = "job_scheduler", flip: FLIPBase | None = None) -> None:
         super().__init__()
         self.job_scheduler_id = job_scheduler_id
         self.flip = flip if flip is not None else FLIP()

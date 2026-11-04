@@ -14,7 +14,7 @@
 
 # Flower-only (fl_backend=flower): one-shot task registering the SuperNode
 # public keys with the SuperLink after the FL services come up — the ECS
-# analogue of compose.production.flower.yml's register-supernode-keys-net-1
+# analogue of compose.prod.flower.yml's register-supernode-keys-net-1
 # service. The script (/scripts/register-supernode-keys.sh, baked into the
 # SuperLink image) reads the per-slot keys from EFS, registers each with the
 # SuperLink over the Control API, and maps the resulting node_ids on the fl-api.
@@ -96,8 +96,10 @@ resource "aws_ecs_task_definition" "flower_register_supernode_keys" {
 # stable first (compose expresses this as depends_on fl-server started +
 # fl-api healthy). Runs with the fl-api SG so the Flower control-plane SG
 # rules in ecs_sg.tf cover its SuperLink Control API (8000) call, and the fl-api's
-# VPC HTTP rule covers FL_API_ADDRESS. Re-run on key rotation by bumping
-# FLOWER_KIT_DATE (retriggers via the provisioning task's arn) or tainting.
+# VPC HTTP rule covers FL_API_ADDRESS. A FLOWER_KIT_DATE bump re-runs it after
+# the EFS re-sync and the FL services' rollout (their task definitions carry the
+# kit as FL_KIT_SOURCE, locals.tf), so it registers against a SuperLink already
+# serving the new kit's certificates (FLIP#1738); tainting re-runs it alone.
 resource "null_resource" "flower_register_supernode_keys" {
   count = var.enable_service_discovery && var.enable_efs && var.fl_backend == "flower" ? 1 : 0
 

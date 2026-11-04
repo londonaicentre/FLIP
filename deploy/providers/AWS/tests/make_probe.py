@@ -45,7 +45,7 @@ def probe_make(
         cwd (Path): Directory holding the ``Makefile`` to include.
         items (Sequence[str]): Recipe-level expressions to print, e.g. ``"$(ENV)"`` for a make
             variable or ``"$${NAME-UNSET}"`` for what a child process would see in its environment.
-        variables (Mapping[str, str]): Command-line ``NAME=value`` overrides (``PROD``, ``KIT``, …).
+        variables (Mapping[str, str]): Command-line ``NAME=value`` overrides (``HUB``, ``KIT``, …).
         env (Mapping[str, str] | None): Process environment; defaults to the caller's.
 
     Returns:

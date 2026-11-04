@@ -50,9 +50,9 @@ class UpgradeTrust(unittest.TestCase):
         assert_data_safe(out, "_upgrade-trust-apply")
 
     def test_apply_phase_honours_a_cpu_only_override(self):
-        """upgrade-trust-ec2 passes NUM_AVAILABLE_GPUS=0: it must beat a template kit's 1 (FLIP#1204).
+        """The EC2 root's upgrade passes NUM_AVAILABLE_GPUS=0: it must beat a template kit's 1 (FLIP#1204).
 
-        The EC2 trust is GPU-less; with the kit's value the apply phase adds the GPU overlay and the
+        The EC2 node is GPU-less; with the kit's value the apply phase adds the GPU overlay and the
         recreated fl-client fails with "could not select device driver nvidia".
         """
         gpu_kit = kit_with("NUM_AVAILABLE_GPUS=0", "NUM_AVAILABLE_GPUS=1")
@@ -88,6 +88,23 @@ class UpgradeTrust(unittest.TestCase):
         out = dry_run("up-trust")
         assert "ensure-seeded" in out, out
         assert "up-xnat" in out, out
+
+
+MONAI_KIT = KIT.replace("NUM_AVAILABLE_GPUS=0", "NUM_AVAILABLE_GPUS=1")
+
+
+class MonaiLabelArchive(unittest.TestCase):
+    """up-xnat's xnat-reset recreates the archive under a running monailabel, whose mount keeps the deleted one."""
+
+    def test_up_trust_checks_the_fresh_archive_then_recreates_monailabel_onto_it(self):
+        out = dry_run("up-trust", "MONAI_LABEL=true", kit=MONAI_KIT)
+        reset = out.index("xnat-reset")
+        check = out.index('[ ! -d "/nonexistent/xnat/xnat-data/archive" ]')
+        recreate = out.index("up -d --force-recreate --no-deps monailabel")
+        assert reset < check < recreate, out
+
+    def test_a_trust_without_monai_label_recreates_nothing(self):
+        assert "--force-recreate" not in dry_run("up-trust")
 
 
 GOVERNED_KIT = KIT + "ACCESS_POLICY_FILE=./governance.SCR.toml\n"
@@ -205,13 +222,20 @@ class DevelopmentFlRegistry(unittest.TestCase):
         """DOCKER_FL_REGISTRY as trust/Makefile exports it to its recipes (what compose reads)."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for rel in ("deploy/env_mode.mk", "deploy/fl_backend.mk", "deploy/instance.mk", "trust/Makefile"):
+            for rel in (
+                "deploy/env_mode.mk",
+                "deploy/fl_backend.mk",
+                "deploy/instance.mk",
+                "deploy/portable.mk",
+                "trust/Makefile",
+            ):
                 (root / rel).parent.mkdir(parents=True, exist_ok=True)
                 (root / rel).write_text((Path(__file__).resolve().parents[2] / rel).read_text())
             (root / ".env.development").write_text(hub_env)
             (root / "trust" / ".env.SCR.development").write_text(self.DEV_KIT)
-            # The caller's DOCKER_*/PROD/MAKEFLAGS would pre-empt the scratch env files.
-            dropped = {"PROD", "MAKEFLAGS"}
+            (root / "probe.mk").write_text("fl-registry: ; @echo [$$DOCKER_FL_REGISTRY]\n")
+            # The caller's DOCKER_*/HUB/MAKEFLAGS would pre-empt the scratch env files.
+            dropped = {"PROD", "HUB", "MAKEFLAGS"}
             env = {k: v for k, v in os.environ.items() if not k.startswith("DOCKER_") and k not in dropped}
             out = subprocess.run(
                 [
@@ -219,8 +243,11 @@ class DevelopmentFlRegistry(unittest.TestCase):
                     "-s",
                     "-C",
                     str(root / "trust"),
-                    "--eval",
-                    "fl-registry: ; @echo [$$DOCKER_FL_REGISTRY]",
+                    # Read after the Makefile, like --eval, which make 3.81 lacks.
+                    "-f",
+                    "Makefile",
+                    "-f",
+                    str(root / "probe.mk"),
                     "fl-registry",
                     "KIT=SCR",
                     *extra,

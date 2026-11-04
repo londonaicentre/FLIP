@@ -46,14 +46,14 @@ Three checks narrow most problems down to one component:
 
    .. code-block:: shell
 
-      make -C deploy/providers/AWS status PROD=<stag|true>
+      make -C deploy/providers/AWS status HUB=<stag|prod>
 
 #. **Trust health.** The trust operator checks the services on the trust host:
 
    .. code-block:: shell
 
       sudo docker ps                         # Compose: every service should be Up
-      make -C trust/deploy/helm status       # Kubernetes: release status, plugin roster and smoke tests
+      make -C trust/deploy/helm status       # Kubernetes: release status, XNAT plugins and smoke tests
 
 .. seealso::
 

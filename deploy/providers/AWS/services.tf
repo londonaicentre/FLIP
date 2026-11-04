@@ -36,9 +36,8 @@
 #
 # State migration: the old `aws_s3_bucket.flip_bucket` resource and its
 # sub-resources are dropped from this stack via `removed` blocks at the
-# bottom of this file. The underlying AWS bucket is left in place so its
-# contents can be migrated and verified out-of-band (`make migrate-flip-bucket`)
-# before manual decommission.
+# bottom of this file. The underlying AWS bucket was left in place, migrated
+# out-of-band and then decommissioned by hand (FLIP#24).
 
 module "flip_model_files_uploads_bucket" {
   source      = "./modules/flip_s3_bucket"
@@ -90,62 +89,6 @@ module "flip_app_bundles_bucket" {
   logging_target_bucket = local.access_logs_bucket_name
   kms_key_arn           = aws_kms_key.flip_app_key.arn
   depends_on            = [aws_s3_bucket_acl.flip_access_logs]
-}
-
-############################
-# Ark+ demo assets bucket (LZA estates only)
-############################
-#
-# On a self-contained (legacy) account the demo-assets bucket predates this
-# stack and is adopted through `data.aws_s3_bucket.demo_assets` — see the long
-# header in cloudfront.tf. On an LZA estate there is nothing to adopt: the
-# account is new, so the bucket is created here, through the same module as
-# every other FLIP bucket, and `local.demo_assets_managed` (cloudfront.tf)
-# keeps the two shapes mutually exclusive. The legacy plan is unchanged: the
-# count is 0 whenever lza_managed_network is false.
-#
-# Two deliberate departures from the sibling buckets:
-#
-#   * AES256, not the app CMK. CloudFront reads this bucket directly through
-#     OAC, and on LZA that CloudFront lives in ANOTHER account (the networking
-#     account's edge). A cross-account service principal cannot decrypt with
-#     this account's CMK without a key-policy grant, and never with the
-#     AWS-managed aws/s3 key. aws_s3_bucket.flip_ui — the other bucket the edge
-#     reads — is on AES256 for the same reason. The objects are public demo
-#     downloads: there is nothing confidential to protect with a CMK.
-#   * An extra bucket-policy statement rather than a second policy resource:
-#     S3 allows one policy per bucket, and the module already owns it.
-#
-# The grant is scoped to the `ark_demo/assets/*` prefix (not the whole bucket)
-# and carries no s3:ListBucket, so a missing key 403s instead of listing the
-# bucket — identical to the legacy policy. `AWS:SourceArn` is empty until the
-# edge stack exists (the two-phase wiring in README, "Edge wiring is
-# two-phase"); an empty string matches no distribution, so the grant is
-# fail-closed rather than open until the second apply fills it in.
-module "flip_demo_assets_bucket" {
-  count = local.demo_assets_managed ? 1 : 0
-
-  source      = "./modules/flip_s3_bucket"
-  bucket_name = var.DEMO_ASSETS_BUCKET_NAME
-  # No CORS: the bundles are fetched as top-level navigations (a download
-  # link), never by XHR/fetch from the demo SPA.
-  logging_target_bucket = local.access_logs_bucket_name
-  sse_algorithm         = "AES256"
-
-  extra_bucket_policy_statements_json = jsonencode([{
-    Sid       = "AllowCloudFrontOACDemoAssetsPrefix"
-    Effect    = "Allow"
-    Principal = { Service = "cloudfront.amazonaws.com" }
-    Action    = "s3:GetObject"
-    Resource  = "arn:aws:s3:::${var.DEMO_ASSETS_BUCKET_NAME}/ark_demo/assets/*"
-    Condition = {
-      StringEquals = {
-        "AWS:SourceArn" = var.lza_web_edge_distribution_arn
-      }
-    }
-  }])
-
-  depends_on = [aws_s3_bucket_acl.flip_access_logs]
 }
 
 ############################
@@ -254,15 +197,15 @@ module "cognito" {
   # Hostname stamped into invite emails; derived from local.ui_origin
   # (cloudfront.tf) so a zone-less bring-up (FLIP#749) sends the reachable
   # CloudFront default domain rather than a dead subdomain. Identical to
-  # var.flip_alb_subdomain whenever DNS is managed (all legacy envs).
+  # var.flip_alb_subdomain whenever DNS is managed.
   sign_in_hostname = trimprefix(local.ui_origin, "https://")
   # Managed Login (v2) blocks PrivateLink access to cognito-idp, and the LZA
   # account's ONLY path to Cognito is the central interface endpoint -- flip-api
   # cannot boot against a v2 pool there (FLIP#749). Cosmetic either way: the
   # FLIP UI signs in via the SDK, not the hosted UI.
-  managed_login_version   = var.lza_managed_network ? 1 : 2
-  user_pool_tier          = var.lza_managed_network ? "LITE" : null
-  create_hosted_ui_domain = !var.lza_managed_network
+  managed_login_version   = 1
+  user_pool_tier          = "LITE"
+  create_hosted_ui_domain = false
   admin_email             = var.flip_cognito_admin_email
   researcher_email        = var.flip_cognito_researcher_email
   seed_user_password      = var.ADMIN_USER_PASSWORD
@@ -295,9 +238,8 @@ module "cognito" {
   #
   # The one origin is local.ui_origin (cloudfront.tf) rather than a literal
   # "https://${var.flip_alb_subdomain}": the two are the same string wherever DNS
-  # is managed — every legacy environment — and on a zone-less LZA bring-up
-  # (FLIP#749) the local resolves to the reachable edge/CloudFront domain, which
-  # is the browser origin there. It is the same value fed to the S3 bucket CORS
+  # is managed, and while it is not (FLIP#749) the local resolves to the edge
+  # distribution's domain, which is the browser origin there. It is the same value fed to the S3 bucket CORS
   # rules above, so the two allowlists cannot drift apart.
   callback_urls = [local.ui_origin]
 
@@ -360,9 +302,8 @@ moved {
 # The previous design colocated three tenants under `aws_s3_bucket.flip_bucket`
 # (see the head of this file for the rationale). These `removed` blocks tell
 # Terraform to forget those resources from state without destroying the
-# underlying AWS bucket — the bucket holds production data that is migrated
-# out-of-band via `make migrate-flip-bucket` and then manually decommissioned
-# (`aws s3 rb`) after a cooldown.
+# underlying AWS bucket — the bucket held production data that was migrated
+# out-of-band and then manually decommissioned (`aws s3 rb`) after a cooldown.
 #
 # `lifecycle { destroy = false }` is what makes this safe: without it,
 # `removed` would attempt to delete the AWS resource on the next apply and

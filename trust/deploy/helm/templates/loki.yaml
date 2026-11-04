@@ -68,6 +68,11 @@ spec:
         app.kubernetes.io/component: loki
     spec:
       enableServiceLinks: false
+      # A fresh cloud disk mounts root-owned and Loki runs as uid 10001: fsGroup hands it the volume, as
+      # Orthanc's does (FLIP#1390). kind's world-writable local-path volumes hid the gap.
+      securityContext:
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
 {{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
