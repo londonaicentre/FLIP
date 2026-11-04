@@ -45,7 +45,12 @@ COPY --from=fetch /usr/local/bin/helm /usr/local/bin/helm
 COPY --from=fetch /usr/local/bin/kubectl /usr/local/bin/kubectl
 # The tick, as it runs on a host. Same file, same protocol; --mode cluster differs only in what
 # "current release" and "upgrade" mean.
-COPY --chmod=0400 scripts/trust_upgrade_agent.py /opt/flip/trust_upgrade_agent.py
+# The parent is created first, and deliberately: COPY --chmod also applies to the directories it
+# has to create, so an implicit /opt/flip would end up without its execute bit and nothing outside
+# root could reach the file inside it.
+RUN mkdir -p /opt/flip
+# 0444, not 0400: the container runs as uid 65534, and a root-owned 0400 file is unreadable to it.
+COPY --chmod=0444 scripts/trust_upgrade_agent.py /opt/flip/trust_upgrade_agent.py
 
 # The chart's runAsUser is 65534, which Alpine already owns as `nobody` — no account to add, and
 # the agent never needs a shell or a writable root.
