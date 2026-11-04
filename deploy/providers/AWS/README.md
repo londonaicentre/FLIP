@@ -267,7 +267,7 @@ make plan
 # 6. Apply infrastructure
 make apply
 
-# 7. Refresh the root env file with Terraform outputs (DB_HOST, the two Cognito IDs)
+# 7. Refresh the root env file with Terraform outputs (the two Cognito IDs)
 make update-env
 
 # 8. Configure SSH access
