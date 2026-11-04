@@ -200,7 +200,7 @@ make lint                 # fmt, validate, tflint, checkov
 make test                 # the credential-free pytest guards
 ```
 
-`PROD` selects the tfvars and state file names through `deploy/env_mode.mk`
+`HUB` selects the tfvars and state file names through `deploy/env_mode.mk`
 (`terraform.$(ENV).tfvars`, `terraform.$(ENV).tfstate`); there is no other per-environment
 behaviour yet. No target skips the confirmation prompt.
 

@@ -27,7 +27,7 @@
 
 SHELL := /bin/bash
 
-# PROD only names the state and tfvars files here; there is no per-environment behaviour yet.
+# HUB only names the state and tfvars files here; there is no per-environment behaviour yet.
 include ../../../../deploy/env_mode.mk
 
 # OpenTofu is the supported runtime (state encryption, which this root relies on for local state);

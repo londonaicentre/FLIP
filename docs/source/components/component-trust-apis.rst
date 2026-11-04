@@ -11,7 +11,8 @@ Three FastAPI services make up FLIP's footprint inside a Trust's Secure Enclave:
 - ``data-access-api`` — runs cohort queries against the Trust's OMOP database.
 
 They run as containers alongside XNAT, the OMOP database, the FL clients and the logging stack, either under
-Docker Compose on a Trust host or from the Kubernetes Helm chart. This page is for engineers and Trust operators
+Docker Compose on a Trust host, from the Kubernetes Helm chart, or as a Snowflake Snowpark
+Container Services node. This page is for engineers and Trust operators
 who need to know what each service does, what it talks to and which privacy controls it enforces.
 
 .. contents:: On this page

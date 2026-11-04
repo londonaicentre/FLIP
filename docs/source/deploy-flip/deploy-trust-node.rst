@@ -38,6 +38,7 @@ Then read this page, which covers what every trust node needs whatever it runs o
    deploy-flip-node-azure
    deploy-flip-node-azure-aks
    deploy-flip-node-in-tre
+   deploy-flip-node-snowflake
 
 .. contents:: On this page
    :local:
@@ -129,6 +130,11 @@ Choose your platform
      - Governance requires data access through a Trusted Research Environment loaded with a project-specific
        subset. The node itself installs as a Docker Compose host.
      - :doc:`deploy-flip-node-in-tre`
+   * - **Snowflake Snowpark**
+     - The trust already keeps its data in Snowflake, or would rather not run a host: the node runs as Snowpark
+       Container Services with OMOP in native tables. Needs an Enterprise account, and an On-Demand one to reach
+       a hub.
+     - :doc:`deploy-flip-node-snowflake`
 
 To run a trust on AWS, in any account, use :doc:`deploy-flip-node-aws-ec2` or :doc:`deploy-flip-node-aws-eks`.
 Deploying the Central Hub does not create a trust node.

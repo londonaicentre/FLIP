@@ -20,6 +20,8 @@
 > per target: [`azure/`](terraform/azure/README.md), [`aws/ec2/`](terraform/aws/ec2/README.md), [`aws/eks/`](terraform/aws/eks/)) and [`scripts/`](scripts/) (the trust lifecycle and node
 > self-test scripts). The Central Hub stack lives in [`deploy/`](../../deploy/README.md); see
 > [where things live](../../deploy/README.md#where-things-live) for the rule behind the layout.
+> The operator runbook for the Snowflake shape is
+> [`docs/source/deploy-flip/deploy-flip-node-snowflake.rst`](../../docs/source/deploy-flip/deploy-flip-node-snowflake.rst).
 
 Do not run these files directly — they are driven by [`trust/Makefile`](../Makefile), which selects the right
 combination for the environment, FL backend, GPU availability and kit slot. Start here instead:
