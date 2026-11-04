@@ -320,6 +320,16 @@ a migration made unreadable by the old release still needs a person.
 To recover, follow the failure detail and the troubleshooting pages for your deployment, restore the Trust by hand
 (see :ref:`admin-upgrading-sites`), then clear the failure.
 
+***************************
+The whole fleet at a glance
+***************************
+
+My Trust is one Trust. A FLIP admin who runs several needs the other direction: who is behind, whose upgrade failed, and
+whose switch is off. **Connection status** carries that as an *Upgrade* column, one row per Trust, showing the same
+states the card shows — *Up to date*, *Pending*, *Upgrading*, *Upgraded*, *Failed* — with the release it is waiting for
+or failing on in the cell's tooltip. It is one hub call for the fleet, so the column costs nothing per row, and it is
+admin-only: a Trust Admin's own Trust is on My Trust.
+
 ********************
 Turning it on or off
 ********************

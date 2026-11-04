@@ -229,6 +229,15 @@
                                     </span>
                                     <span class="flex-1" />
                                     <span
+                                        v-if="upgradeFor(t.id)"
+                                        data-test="trust-upgrade-mobile"
+                                        class="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0"
+                                        :class="UPGRADE_CLASSES[upgradeFor(t.id)!.state]"
+                                        :title="upgradeTitle(upgradeFor(t.id)!)"
+                                    >
+                                        {{ UPGRADE_LABELS[upgradeFor(t.id)!.state] }}
+                                    </span>
+                                    <span
                                         data-test="trust-services-mobile"
                                         class="inline-flex items-center gap-[5px] shrink-0"
                                     >
@@ -351,6 +360,17 @@
                                             />
                                         </div>
                                     </td>
+                                    <td class="px-4 py-4 align-middle" data-test="trust-upgrade">
+                                        <span
+                                            v-if="upgradeFor(t.id)"
+                                            class="inline-block px-2 py-0.5 rounded text-[11px] font-medium whitespace-nowrap"
+                                            :class="UPGRADE_CLASSES[upgradeFor(t.id)!.state]"
+                                            :title="upgradeTitle(upgradeFor(t.id)!)"
+                                        >
+                                            {{ UPGRADE_LABELS[upgradeFor(t.id)!.state] }}
+                                        </span>
+                                        <span v-else class="text-gray-400 dark:text-gray-500">—</span>
+                                    </td>
                                     <td
                                         class="px-4 py-4 align-middle font-mono text-sm"
                                         :class="t._state === 'offline' ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-300'"
@@ -369,7 +389,7 @@
                                     </td>
                                 </tr>
                                 <tr v-if="!displayedTrusts.length">
-                                    <td colspan="7" class="text-center py-6 text-gray-500 dark:text-gray-300">
+                                    <td colspan="8" class="text-center py-6 text-gray-500 dark:text-gray-300">
                                         {{ activeTile ? "No trusts match this filter." : "No trusts registered yet." }}
                                     </td>
                                 </tr>
@@ -698,7 +718,15 @@ import TrustDetailDrawer from "@/partials/connection/TrustDetailDrawer.vue";
 import AddTrustModal from "@/partials/trusts/AddTrustModal.vue";
 import TrustKitModal from "@/partials/trusts/TrustKitModal.vue";
 import { ICreatedTrust } from "@/services/admin-trusts-service";
-import { getHubHealth, getTrustStatuses, IHubHealth, ITrustResponse, ServiceStatus } from "@/services/trust-service";
+import { AutoUpgradeState,
+    getAutoUpgradeFleet,
+    getHubHealth,
+    getTrustStatuses,
+    IAutoUpgrade,
+    IAutoUpgradeFleetRow,
+    IHubHealth,
+    ITrustResponse,
+    ServiceStatus } from "@/services/trust-service";
 import { useAuthStore } from "@/store/auth";
 import { deriveTrust,
     deriveTrustState,
@@ -742,6 +770,64 @@ const { data: hubHealth } = useSWRV<IHubHealth>(
     }
 );
 const hubVersion = computed<string | null>(() => hubHealth.value?.version ?? null);
+
+// The fleet's upgrade state (one admin-only call, not one per row). A Trust Admin has no fleet to see —
+// the API refuses them — so ask only when the page is showing the fleet column to an admin, and treat
+// an empty answer as "no column data" rather than an error worth a toast.
+const { data: upgradeFleet } = useSWRV<IAutoUpgradeFleetRow[]>(
+    "auto-upgrade-fleet",
+    () => (isAdmin.value ? getAutoUpgradeFleet() : Promise.resolve([])),
+    {
+        dedupingInterval: 15_000,
+        shouldRetryOnError: false,
+        refreshInterval: 60_000
+    }
+);
+
+const upgradeById = computed<Record<string, IAutoUpgrade>>(() => {
+    const byId: Record<string, IAutoUpgrade> = {};
+    for (const row of upgradeFleet.value ?? []) {
+        byId[row.trust_id] = row.view;
+    }
+
+    return byId;
+});
+
+const upgradeFor = (trustId: string): IAutoUpgrade | null => upgradeById.value[trustId] ?? null;
+
+const UPGRADE_LABELS: Record<AutoUpgradeState, string> = {
+    UP_TO_DATE: "Up to date",
+    PENDING: "Pending",
+    IN_PROGRESS: "Upgrading",
+    SUCCEEDED: "Upgraded",
+    FAILED: "Failed"
+};
+
+// Whole literals so the JIT emits them: a failed upgrade is the one an admin has to act on.
+const UPGRADE_CLASSES: Record<AutoUpgradeState, string> = {
+    UP_TO_DATE: "bg-gray-100 text-gray-600 dark:bg-dark-surface dark:text-gray-300",
+    PENDING: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
+    IN_PROGRESS: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
+    SUCCEEDED: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
+    FAILED: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300"
+};
+
+// What the pill cannot say in two words: which release, and for a failure, what went wrong.
+const upgradeTitle = (view: IAutoUpgrade): string => {
+    if (view.state === "PENDING") {
+        return view.targetRelease ? `Waiting to move to ${view.targetRelease}` : "Waiting to move";
+    }
+    if (view.state === "FAILED") {
+        return view.lastAttempt?.detail
+            ? `Failed to move to ${view.lastAttempt.release}: ${view.lastAttempt.detail}`
+            : `Failed to move to ${view.lastAttempt?.release ?? view.targetRelease ?? "the next release"}`;
+    }
+    if (view.state === "IN_PROGRESS") {
+        return view.targetRelease ? `Upgrading to ${view.targetRelease}` : "Upgrading";
+    }
+
+    return view.currentRelease ? `On ${view.currentRelease}` : "";
+};
 
 // Labels + pill classes are shared with the drawer via connection-health.ts.
 const stateLabel = (s: TrustState): string => STATE_LABELS[s];
@@ -820,6 +906,12 @@ const columns: IColumn[] = [
     {
         label: "Services",
         width: "w-36"
+    },
+    {
+        // Only an admin's fleet call fills this in; a Trust Admin sees the same status on My Trust
+        // instead, so everyone else gets an em dash rather than a column that is silently wrong.
+        label: "Upgrade",
+        width: "w-32"
     },
     {
         key: "heartbeat",

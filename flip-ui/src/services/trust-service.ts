@@ -192,6 +192,25 @@ export async function updateAutoUpgrade(trustId: string, settings: IAutoUpgradeS
 }
 
 /** Release a FAILED attempt so the agent may try that release again, once an operator has checked the Trust. */
+/**
+ * One row of the Connection page's upgrade column: every trust's state in one call.
+ *
+ * Admins only — a Trust Admin reads their own trust through `getAutoUpgrade`. The view is the same
+ * object My Trust renders, so the column and the card cannot disagree about what a state means.
+ */
+export interface IAutoUpgradeFleetRow {
+    trust_id: string;
+    name: string;
+    code: string | null;
+    view: IAutoUpgrade;
+}
+
+export async function getAutoUpgradeFleet(): Promise<IAutoUpgradeFleetRow[]> {
+    const response = await _http.get<IAutoUpgradeFleetRow[]>("/trusts/auto-upgrade");
+
+    return response.data;
+}
+
 export async function clearAutoUpgradeFailure(trustId: string): Promise<IAutoUpgrade> {
     const response = await _http.post<IAutoUpgrade>(`/trust/${trustId}/auto-upgrade/clear-failure`);
 

@@ -21,7 +21,14 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from flip_api.db.models.main_models import Trust
-from flip_api.domain.schemas.trusts import AutoUpgradeSettings, UpgradeReportState, UpgradeStatusInput
+from flip_api.domain.schemas.trusts import (
+    AutoUpgradeLastAttempt,
+    AutoUpgradeSettings,
+    AutoUpgradeView,
+    UpgradeReportState,
+    UpgradeStatusInput,
+    UpgradeViewState,
+)
 from flip_api.trusts_services.services import auto_upgrade as svc
 
 SVC = "flip_api.trusts_services.services.auto_upgrade"
@@ -392,6 +399,68 @@ class TestRoutes:
         assert body["targetRelease"] == "v1.3.0"
         assert body["currentRelease"] == "v1.2.0"
         assert body["blockers"] == ["JOBS_RUNNING"]
+
+
+class TestFleet:
+    """The Connection page's upgrade column: one row per trust, and admins only."""
+
+    def _client(self, db: MagicMock):
+        from fastapi.testclient import TestClient
+
+        from flip_api.auth.dependencies import verify_token
+        from flip_api.db.database import get_session
+        from flip_api.main import app
+
+        app.dependency_overrides[get_session] = lambda: db
+        app.dependency_overrides[verify_token] = lambda: uuid.uuid4()
+        return TestClient(app), app
+
+    def _get(self, db: MagicMock, *, admin: bool):
+        client, app = self._client(db)
+        route = "flip_api.trusts_services.trust_auto_upgrade.has_permissions"
+        try:
+            with patch(route, return_value=admin):
+                return client.get("/api/trusts/auto-upgrade")
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_an_admin_gets_a_row_for_every_trust(self):
+        oncs = [_trust(name="GSTT"), _trust(name="KCH"), _trust(name="UCLH")]
+        db = MagicMock()
+        db.exec.return_value.all.return_value = oncs
+        view = AutoUpgradeView(enabled=True, state=UpgradeViewState.PENDING, current_release="v0.12.0")
+        with patch(f"{SVC}.view_for_admin", return_value=view):
+            r = self._get(db, admin=True)
+        assert r.status_code == 200
+        assert [row["name"] for row in r.json()] == ["GSTT", "KCH", "UCLH"]
+
+    def test_the_row_carries_the_same_view_the_trust_card_gets(self):
+        """One definition of what "failed" means: the column is not a second projection of the row."""
+        trust = _trust(name="GSTT", code="GSTT")
+        db = MagicMock()
+        db.exec.return_value.all.return_value = [trust]
+        view = AutoUpgradeView(
+            enabled=True,
+            state=UpgradeViewState.FAILED,
+            last_attempt=AutoUpgradeLastAttempt(state="FAILED", release="v0.13.0", at="x"),
+        )
+        with patch(f"{SVC}.view_for_admin", return_value=view):
+            r = self._get(db, admin=True)
+        row = r.json()[0]
+        assert (row["trust_id"], row["code"]) == (str(trust.id), "GSTT")
+        assert row["view"]["state"] == "FAILED"
+        assert row["view"]["lastAttempt"]["release"] == "v0.13.0"
+
+    def test_a_trust_admin_is_refused_the_fleet(self):
+        r = self._get(MagicMock(), admin=False)
+        assert r.status_code == 403
+
+    def test_the_fleet_is_one_query_not_one_per_trust(self):
+        db = MagicMock()
+        db.exec.return_value.all.return_value = []
+        with patch(f"{SVC}.view_for_admin"):
+            self._get(db, admin=True)
+        assert db.exec.call_count == 1
 
 
 class TestAgentTick:

@@ -159,6 +159,16 @@ def policy_for_agent(trust: Trust, db: Session) -> UpgradePolicy:
     )
 
 
+def fleet(db: Session) -> list[tuple[Trust, AutoUpgradeView]]:
+    """Every trust with its upgrade view, ordered by name — one row of the Connection page's column each.
+
+    Deliberately the same ``view_for_admin`` the My Trust card calls rather than a cheaper projection: the
+    two are shown side by side by the same people, and a second way of deciding what "failed" means would
+    drift from the first. The cost is a few small queries per trust, on a page that already polls.
+    """
+    return [(trust, view_for_admin(trust, db)) for trust in db.exec(select(Trust).order_by(col(Trust.name))).all()]
+
+
 def view_for_admin(trust: Trust, db: Session) -> AutoUpgradeView:
     """The settings and status the My Trust card shows."""
     now = _now()
