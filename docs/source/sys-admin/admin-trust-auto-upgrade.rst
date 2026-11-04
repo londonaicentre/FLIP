@@ -196,7 +196,7 @@ The agent runs ``make upgrade-onprem-trust`` itself, after moving its own checko
 does is exactly what ``admin-upgrading-sites`` describes for an operator.
 
 Installing it on a Kubernetes Trust
-==================================
+===================================
 
 A cluster has no host to put a timer on, so the same agent runs as a CronJob in the Trust's own namespace. It is off
 by default: enabling it hands a ServiceAccount the ability to rewrite every workload in that namespace, so it is an
