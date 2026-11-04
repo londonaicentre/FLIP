@@ -52,12 +52,14 @@ failed, 2 the hub or kit could not be read.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import textwrap
 import threading
 import time
 import urllib.error
@@ -377,6 +379,74 @@ def cluster_upgrade(cluster: Cluster, tag: str) -> tuple[bool, str]:
     return upgraded.returncode == 0, (upgraded.stdout + upgraded.stderr)[-LOG_TAIL_BYTES:]
 
 
+GOVERNANCE_COMPONENT = "governance"
+GOVERNANCE_KEY = "governance.toml"
+
+
+def _document(text: str) -> str:
+    """A governance document as content: no sheet indentation, no trailing space, no blank edges."""
+    return "\n".join(line.rstrip() for line in textwrap.dedent(text).strip().splitlines())
+
+
+def governance_drift(cluster: Cluster) -> str | None:
+    """Whether the live governance document still says what the deployed release says it should.
+
+    The agent's identity can write ConfigMaps, because Helm keeps its release records there and RBAC
+    cannot carve a single name out of that. The same access therefore reaches the trust's governance
+    document, which decides cohort disclosure and the FLARE privacy policy. The agent has no reason to
+    touch it — and this is how a site finds out if it, or anything else holding that access, ever did:
+    compare the ConfigMap against the document in the release's own values before reporting an upgrade
+    as done. A drifted document stops the tick reporting SUCCEEDED; it does not trigger a rollback,
+    because the document was not changed by the upgrade and rolling back would quietly revert whatever
+    the site meant to say.
+
+    None means there is nothing to compare: a trust with no governance document, or values without one.
+    """
+    env = {**os.environ, "HELM_DRIVER": HELM_DRIVER}
+    values = run(["helm", "get", "values", cluster.release, "-n", cluster.namespace, "-o", "json"], Path("/"), env=env)
+    if values.returncode != 0:
+        return f"could not read the release values to check the governance document:\n{values.stderr[-400:]}"
+    try:
+        wanted = (json.loads(values.stdout or "{}").get("governance") or {}).get("document") or ""
+    except json.JSONDecodeError:
+        return "the release values are not JSON, so the governance document could not be checked"
+    if not wanted.strip():
+        return None
+    live = run(
+        [
+            "kubectl",
+            "get",
+            "configmap",
+            "-n",
+            cluster.namespace,
+            "-l",
+            f"app.kubernetes.io/component={GOVERNANCE_COMPONENT}",
+            "-o",
+            "json",
+        ],
+        Path("/"),
+    )
+    if live.returncode != 0:
+        return f"could not read the governance ConfigMap:\n{live.stderr[-400:]}"
+    try:
+        items = json.loads(live.stdout or "{}").get("items", [])
+    except json.JSONDecodeError:
+        return "kubectl returned something other than JSON for the governance ConfigMap"
+    if not items:
+        return "the release carries a governance document but the cluster has no governance ConfigMap"
+    if len(items) > 1:
+        return f"{len(items)} ConfigMaps carry the governance component label; a trust has one"
+    have = _document((items[0].get("data") or {}).get(GOVERNANCE_KEY, ""))
+    want = _document(wanted)
+    if have != want:
+        return (
+            "the governance document in the cluster does not match the one the release carries, so it was "
+            f"changed outside Helm (live sha256 {hashlib.sha256(have.encode()).hexdigest()[:12]}, release "
+            f"sha256 {hashlib.sha256(want.encode()).hexdigest()[:12]})"
+        )
+    return None
+
+
 def checkout(repo: Path, tag: str) -> str | None:
     """Move the checkout to the release tag (compose files and the upgrade verb come from it); error text or None."""
     for cmd in (["git", "fetch", "--tags", "origin"], ["git", "checkout", "--detach", f"refs/tags/{tag}"]):
@@ -583,6 +653,13 @@ def tick(kit_file: Path, repo: Path, dry_run: bool, cluster: Cluster | None = No
                 rolled, how = rollback(kit, run_upgrade, state.current_release, decision.release)
                 detail = f"{detail}\n{how}"
                 print(how)
+            elif cluster is not None:
+                # The upgrade applied and the site came up. Before calling it done, check the release's
+                # own governance document is still what the cluster holds (see governance_drift).
+                drift = governance_drift(cluster)
+                if drift:
+                    ok, detail = False, drift
+                    print(drift)
     except BaseException as exc:  # noqa: BLE001 - including SystemExit/KeyboardInterrupt: the report matters more
         ok, detail = False, f"the upgrade raised {type(exc).__name__}: {exc}"
         print(detail, file=sys.stderr)

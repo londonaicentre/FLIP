@@ -17,6 +17,7 @@ Stdlib only, run as ``python scripts/tests/test_trust_upgrade_agent.py`` like it
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -680,11 +681,122 @@ class ClusterTick(unittest.TestCase):
             mock.patch.object(agent, "cluster_state", return_value=local),
             mock.patch.object(agent, "cluster_upgrade", return_value=(True, "fine")) as upgrade,
             mock.patch.object(agent, "verify", return_value=(True, "v0.13.0")),
+            mock.patch.object(agent, "governance_drift", return_value=None),
             mock.patch.object(agent, "LeaseRenewal"),
         ):
             rc = agent.tick(Path("/nonexistent"), Path("/nope"), False, self.CLUSTER)
         self.assertEqual(rc, 0)
         upgrade.assert_called_once_with(self.CLUSTER, "v0.13.0")
+
+
+class GovernanceDrift(unittest.TestCase):
+    """The agent can write ConfigMaps for Helm's records, so it checks it did not change the document."""
+
+    DOC = "[fl_privacy]\nminimum_cohort_size = 10\n"
+    CLUSTER = agent.Cluster(
+        namespace="flip-trust", release="flip-trust", chart_repository="oci://x", kit_name="GSTT", hub="prod"
+    )
+
+    def _drift(self, values=None, items=None, helm_rc=0, kubectl_rc=0):
+        values_cm = mock.Mock(returncode=helm_rc, stdout=json.dumps(values or {}), stderr="boom")
+        items_json = json.dumps({"items": items if items is not None else [{"data": {agent.GOVERNANCE_KEY: self.DOC}}]})
+        kubectl_cm = mock.Mock(returncode=kubectl_rc, stdout=items_json, stderr="nope")
+        calls = []
+
+        def fake_run(cmd, cwd, env=None):
+            calls.append(cmd)
+            return values_cm if cmd[0] == "helm" else kubectl_cm
+
+        with mock.patch.object(agent, "run", fake_run):
+            return agent.governance_drift(self.CLUSTER), calls
+
+    def test_a_document_that_matches_is_not_drift(self):
+        drift, _ = self._drift(values={"governance": {"document": self.DOC}})
+        self.assertIsNone(drift)
+
+    def test_a_document_changed_in_the_cluster_is_drift(self):
+        drift, _ = self._drift(
+            values={"governance": {"document": self.DOC}},
+            items=[{"data": {agent.GOVERNANCE_KEY: "[fl_privacy]\nminimum_cohort_size = 1\n"}}],
+        )
+        self.assertIn("changed outside Helm", drift)
+
+    def test_the_comparison_ignores_the_indentation_helm_renders_with(self):
+        drift, _ = self._drift(
+            values={"governance": {"document": self.DOC}},
+            items=[{"data": {agent.GOVERNANCE_KEY: "    " + self.DOC.replace("\n", "\n    ").rstrip()}}],
+        )
+        self.assertIsNone(drift)
+
+    def test_a_missing_configmap_is_drift(self):
+        drift, _ = self._drift(values={"governance": {"document": self.DOC}}, items=[])
+        self.assertIn("no governance ConfigMap", drift)
+
+    def test_two_configmaps_with_the_label_are_drift(self):
+        item = {"data": {agent.GOVERNANCE_KEY: self.DOC}}
+        drift, _ = self._drift(values={"governance": {"document": self.DOC}}, items=[item, item])
+        self.assertIn("2 ConfigMaps", drift)
+
+    def test_a_trust_with_no_governance_document_has_nothing_to_compare(self):
+        drift, calls = self._drift(values={"governance": {}})
+        self.assertIsNone(drift)
+        self.assertEqual([c[0] for c in calls], ["helm"], "no document means no ConfigMap read either")
+
+    def test_values_it_cannot_read_are_reported_rather_than_passed(self):
+        drift, _ = self._drift(helm_rc=1)
+        self.assertIn("could not read the release values", drift)
+
+    def test_values_that_are_not_json_are_reported(self):
+        values_cm = mock.Mock(returncode=0, stdout="not json", stderr="")
+        with mock.patch.object(agent, "run", return_value=values_cm):
+            drift = agent.governance_drift(self.CLUSTER)
+        self.assertIn("not JSON", drift)
+
+
+class TickChecksGovernance(unittest.TestCase):
+    """A drifted document does not get reported as a successful upgrade — and does not roll back."""
+
+    def _tick(self, drift):
+        policy = {"enabled": True, "target_release": "v0.13.0", "lease": None}
+        local = agent.Local("v0.12.0", True, False, agent.Health(True, "ok", "v0.12.0", True, ()))
+        cluster = agent.Cluster(
+            namespace="ns", release="flip-trust", chart_repository="oci://x", kit_name="G", hub="prod"
+        )
+        reports = []
+
+        def fake_hub_call(kit, method, route, body=None):
+            if body and body.get("state") in ("SUCCEEDED", "FAILED", "BLOCKED"):
+                reports.append(body)
+            return (200, policy if method == "GET" else None)
+
+        with (
+            mock.patch.object(agent, "cluster_kit", return_value={}),
+            mock.patch.object(agent, "hub_call", fake_hub_call),
+            mock.patch.object(agent, "cluster_state", return_value=local),
+            mock.patch.object(agent, "cluster_upgrade", return_value=(True, "applied")),
+            mock.patch.object(agent, "verify", return_value=(True, "up")),
+            mock.patch.object(agent, "rollback", return_value=(True, "rolled back")) as rollback,
+            mock.patch.object(agent, "governance_drift", return_value=drift),
+            mock.patch.object(agent, "LeaseRenewal"),
+        ):
+            rc = agent.tick(Path("/nonexistent"), Path("/nope"), False, cluster)
+        return rc, reports, rollback
+
+    def test_drift_stops_the_success_report(self):
+        rc, reports, _ = self._tick("the governance document in the cluster does not match ...")
+        self.assertEqual(rc, 1)
+        self.assertEqual(reports[-1]["state"], "FAILED")
+        self.assertIn("governance document", reports[-1]["detail"])
+
+    def test_drift_does_not_roll_the_release_back(self):
+        """The document is not changed by the upgrade, so a rollback would revert what the site means to say."""
+        _, _, rollback = self._tick("drift")
+        rollback.assert_not_called()
+
+    def test_no_drift_reports_success(self):
+        rc, reports, _ = self._tick(None)
+        self.assertEqual(rc, 0)
+        self.assertEqual(reports[-1]["state"], "SUCCEEDED")
 
 
 class KitFile(unittest.TestCase):

@@ -1065,6 +1065,14 @@ That last point is a real trade, not a free win: an identity that can write Conf
 the rendered governance document. It is still strictly smaller than read-every-credential, and it is
 the reason the driver is pinned in `values.yaml`, asserted in the chart tests, and repeated here.
 
+The trade is **checked**, not just documented. Before the agent reports an upgrade as done it compares
+the live governance ConfigMap with the `governance.document` in the release's own values (a 4-space
+indentation difference does not count, content does). If they differ — a rewrite by anything holding
+that access, including the agent itself — the tick reports FAILED naming both digests instead of
+SUCCEEDED, so the change cannot pass unnoticed as a healthy upgrade. It deliberately does *not* roll
+back: the document is not something the upgrade changed, and reverting it would discard whatever the
+site meant to say. Set no `governance.document` and there is nothing to compare, and no extra read.
+
 ### The deploy side has to agree on the driver
 
 The agent runs `helm upgrade` with `HELM_DRIVER=configmap`, so it can only see a release *recorded*

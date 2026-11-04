@@ -218,7 +218,10 @@ What differs from the host:
 - **The identity is narrow on purpose.** It holds no ``secrets`` permission at all — its API key arrives as a
   projected volume carrying that one key — and its Role covers only the kinds the chart renders, in that one
   namespace. Helm's own record of the release lives in ConfigMaps rather than Secrets, because finding a release in
-  Secrets means *listing* them, and a list returns their contents.
+  Secrets means *listing* them, and a list returns their contents. That write access reaches the Trust's
+  governance document too, so before reporting an upgrade as done the agent compares the live document with the
+  one the release carries and reports **Failed** if they differ; see the chart's README for why it does not
+  instead roll back.
 
 Everything the Trust Admin sees is the same: the switch, the window, the pending-since date, the blocker and the
 failure in My Trust. The questions below apply to both.
