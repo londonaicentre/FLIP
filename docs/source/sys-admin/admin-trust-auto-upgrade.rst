@@ -195,6 +195,43 @@ Admin can change it any time in My Trust. A Trust that is driven remotely (``DOC
 The agent runs ``make upgrade-onprem-trust`` itself, after moving its own checkout to the release tag, so what it
 does is exactly what ``admin-upgrading-sites`` describes for an operator.
 
+Installing it on a Kubernetes Trust
+===================================
+
+A cluster has no host to put a timer on, so the same agent runs as a CronJob in the Trust's own namespace. It is off
+by default: enabling it hands a ServiceAccount the ability to rewrite every workload in that namespace, so it is an
+opt-in rather than something a chart update turns on.
+
+.. code-block:: bash
+
+   helm upgrade flip-trust oci://ghcr.io/londonaicentre/charts/flip-trust \
+     -n flip-trust --reuse-values --set autoUpgrade.enabled=true
+
+What differs from the host:
+
+- **The current release comes from the Helm record**, not a checkout. There is also nothing to be dirty, so the
+  "local modifications" check has no cluster equivalent and never blocks here.
+- **The upgrade is Helm's**: the agent pulls the published chart at the target release and runs ``helm upgrade
+  --reuse-values``, so the live per-Trust values are kept and only the image tag moves. It never passes
+  ``--install``: a release it cannot see fails the check instead of being installed a second time underneath the
+  running one.
+- **The identity is narrow on purpose.** It holds no ``secrets`` permission at all — its API key arrives as a
+  projected volume carrying that one key — and its Role covers only the kinds the chart renders, in that one
+  namespace. Helm's own record of the release lives in ConfigMaps rather than Secrets, because finding a release in
+  Secrets means *listing* them, and a list returns their contents. That write access reaches the Trust's
+  governance document too, so before reporting an upgrade as done the agent compares the live document with the
+  one the release carries and reports **Failed** if they differ; see the chart's README for why it does not
+  instead roll back.
+
+Everything the Trust Admin sees is the same: the switch, the window, the pending-since date, the blocker and the
+failure in My Trust. The questions below apply to both.
+
+.. warning::
+
+   A Kubernetes Trust whose release is still recorded the old way (Helm's Secret driver) cannot be upgraded by the
+   agent; it will report **Failed** instead. Moving such a Trust across is a deliberate one-off migration, not
+   something a chart upgrade does to a live site.
+
 Off
 ===
 

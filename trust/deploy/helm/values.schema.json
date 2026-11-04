@@ -6,6 +6,28 @@
   "additionalProperties": true,
   "required": ["trustName", "trustNumber"],
   "properties": {
+    "autoUpgrade": {
+      "type": "object",
+      "description": "The in-cluster upgrade agent (#1644). Off by default: an existing trust has to be opted in, as on the host path.",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "schedule": {"type": "string"},
+        "suspend": {"type": "boolean"},
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": {"type": "string"},
+            "tag": {"type": "string"},
+            "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}
+          }
+        },
+        "chartRepository": {"type": "string"},
+        "kitSecretName": {"type": "string"},
+        "backoffLimit": {"type": "integer", "minimum": 0},
+        "activeDeadlineSeconds": {"type": "integer", "minimum": 60},
+        "resources": {"type": "object"}
+      }
+    },
     "trustName": {
       "type": "string",
       "description": "Name of the trust (e.g. Trust_1)"

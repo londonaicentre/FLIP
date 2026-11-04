@@ -29,6 +29,12 @@ the release the site came from — once, inside the same lease — and the repor
 The result is then reported back, and a failure is never retried until an operator clears it in the
 portal.
 
+On Kubernetes/AKS there is no host to put the timer on, so the same tick runs as a chart-owned
+CronJob with ``--mode cluster``: the current release comes from Helm instead of a checkout, and the
+upgrade is ``helm pull`` of the published chart plus ``helm upgrade --reuse-values`` (the live release
+already holds the per-trust values, so the pod needs no kit parsing and no generated override). The
+lease, the report, the window and the failed-release latch are the hub's and are identical either way.
+
 ``decide`` is pure and holds every rule; the rest of the file is I/O around it.
 
 Usage:
@@ -46,10 +52,14 @@ failed, 2 the hub or kit could not be read.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
+import textwrap
 import threading
 import time
 import urllib.error
@@ -62,6 +72,14 @@ from zoneinfo import ZoneInfo
 
 # The agent's OWN checkout: the operator's working tree is never moved under them.
 DEFAULT_CHECKOUT = Path("/opt/flip/releases/FLIP")
+# In-cluster: the projection carrying ONLY the trust's API key (a Secret volume `items:` list, so
+# the kubelet mounts it without the pod's ServiceAccount holding any `secrets` verb).
+CLUSTER_KIT_DIR = Path("/etc/flip/upgrade-kit")
+DEFAULT_TRUST_API_KEY_HEADER = "X-Trust-API-Key"  # pragma: allowlist secret
+# Helm keeps release records as Secrets by default, and its lookup LISTS them by label — which RBAC
+# cannot narrow to a name, and which returns their contents. ConfigMaps put the agent's writes in a
+# smaller blast radius; the deploy side has to agree, or the record is invisible to it.
+HELM_DRIVER = "configmap"
 # Kit file name token -> deploy/env_mode.mk HUB value (FLIP#1479 renamed the selector and the
 # kit tokens; the pre-rename names are still accepted for one release, as the Makefiles do).
 ENV_TOKEN_TO_HUB = {"prod": "prod", "stag": "stag", "production": "prod", "lza-prod": "prod", "lza-stag": "stag"}
@@ -130,6 +148,18 @@ class Local:
     checkout_clean: bool | None  # None: git could not say
     unsupported: bool  # a remotely driven (EC2 / DOCKER_HOST) site
     health: Health  # always read: a skippable pre-flight is a representable "health check never ran"
+
+
+@dataclass(frozen=True)
+class Cluster:
+    """What an in-cluster agent knows instead of a checkout: the release Helm tracks, and where to pull."""
+
+    namespace: str
+    release: str
+    chart_repository: str
+    kit_name: str
+    hub: str
+    kit_dir: Path = CLUSTER_KIT_DIR
 
 
 @dataclass(frozen=True)
@@ -259,6 +289,162 @@ def local_state(kit: dict[str, str], repo: Path) -> Local:
     clean = (status.stdout.strip() == "") if status.returncode == 0 else None
     health = read_health(kit)
     return Local(health.version, clean, unsupported, health)
+
+
+def cluster_kit(cluster: Cluster) -> dict[str, str]:
+    """The kit a pod is given: the API key projected as a file, the non-secret half from the env.
+
+    Deliberately not a kit file. The projection carries one key and nothing else, so the pod never
+    holds the trust's OMOP, XNAT or Grafana passwords, and the identity it runs under needs no
+    ``secrets`` verb to read them.
+    """
+    try:
+        key = (cluster.kit_dir / "trust-api-key").read_text().strip()
+    except OSError as exc:
+        raise ValueError(f"cannot read the projected API key at {cluster.kit_dir}/trust-api-key: {exc}") from exc
+    kit = {
+        "CENTRAL_HUB_API_URL": os.environ.get("CENTRAL_HUB_API_URL", ""),
+        "TRUST_API_KEY_HEADER": os.environ.get("TRUST_API_KEY_HEADER") or DEFAULT_TRUST_API_KEY_HEADER,
+        "TRUST_API_KEY": key,
+    }
+    if not kit["CENTRAL_HUB_API_URL"]:
+        raise ValueError("CENTRAL_HUB_API_URL is empty; the CronJob takes it from trustApi.env")
+    return kit
+
+
+def cluster_state(cluster: Cluster) -> Local:
+    """Current release from the Helm record, health from trust-api; a cluster has no checkout to dirty.
+
+    ``app_version`` is the release tag (the chart's ``version`` is SemVer and cannot carry the ``v``,
+    so the release tag rides on ``appVersion``). Two sources can disagree for a moment after an
+    upgrade: Helm's record is the fact the next upgrade acts on, so it wins, and ``/health`` is only
+    the fallback when the record cannot be read.
+    """
+    health = read_health(cluster_kit(cluster))
+    out = run(
+        ["helm", "list", "--namespace", cluster.namespace, "--filter", f"^{cluster.release}$", "-o", "json"],
+        Path.cwd(),
+        env={**os.environ, "HELM_DRIVER": HELM_DRIVER},
+    )
+    current = None
+    if out.returncode == 0:
+        try:
+            releases = json.loads(out.stdout or "[]")
+        except json.JSONDecodeError:
+            releases = []
+        if releases:
+            current = releases[0].get("app_version") or None
+    return Local(current or health.version, True, False, health)
+
+
+def cluster_upgrade(cluster: Cluster, tag: str) -> tuple[bool, str]:
+    """Pull the published chart for ``tag`` and move the release onto it, keeping the live values.
+
+    ``--reuse-values`` is what replaces the host path's per-trust override: the release already holds
+    the values ``sync-kit`` last wrote, so the pod parses no kit and generates no override file. Only
+    ``global.image.tag`` moves — the per-image pins (omopDb, orthanc, xnat, flClient) are deliberate
+    settings the kit owns, and an upgrade must not quietly reset them.
+
+    No ``--install``: a release the configmap driver cannot see (one still recorded as Secrets) has
+    to fail loudly here rather than be installed a second time underneath the running one.
+    """
+    env = {**os.environ, "HELM_DRIVER": HELM_DRIVER}
+    version = tag[1:] if tag.startswith("v") else tag
+    with tempfile.TemporaryDirectory() as tmp:
+        pulled = run(
+            ["helm", "pull", cluster.chart_repository, "--version", version, "--untar", "--untardir", tmp],
+            Path(tmp),
+            env=env,
+        )
+        if pulled.returncode != 0:
+            tail = (pulled.stderr or pulled.stdout)[-LOG_TAIL_BYTES:]
+            return False, f"helm pull {cluster.chart_repository}:{version} failed:\n{tail}"
+        upgraded = run(
+            [
+                "helm",
+                "upgrade",
+                cluster.release,
+                str(Path(tmp) / "flip-trust"),
+                "--namespace",
+                cluster.namespace,
+                "--reuse-values",
+                "--set",
+                f"global.image.tag={tag}",
+                "--history-max",
+                "10",
+            ],
+            Path(tmp),
+            env=env,
+        )
+    return upgraded.returncode == 0, (upgraded.stdout + upgraded.stderr)[-LOG_TAIL_BYTES:]
+
+
+GOVERNANCE_COMPONENT = "governance"
+GOVERNANCE_KEY = "governance.toml"
+
+
+def _document(text: str) -> str:
+    """A governance document as content: no sheet indentation, no trailing space, no blank edges."""
+    return "\n".join(line.rstrip() for line in textwrap.dedent(text).strip().splitlines())
+
+
+def governance_drift(cluster: Cluster) -> str | None:
+    """Whether the live governance document still says what the deployed release says it should.
+
+    The agent's identity can write ConfigMaps, because Helm keeps its release records there and RBAC
+    cannot carve a single name out of that. The same access therefore reaches the trust's governance
+    document, which decides cohort disclosure and the FLARE privacy policy. The agent has no reason to
+    touch it — and this is how a site finds out if it, or anything else holding that access, ever did:
+    compare the ConfigMap against the document in the release's own values before reporting an upgrade
+    as done. A drifted document stops the tick reporting SUCCEEDED; it does not trigger a rollback,
+    because the document was not changed by the upgrade and rolling back would quietly revert whatever
+    the site meant to say.
+
+    None means there is nothing to compare: a trust with no governance document, or values without one.
+    """
+    env = {**os.environ, "HELM_DRIVER": HELM_DRIVER}
+    values = run(["helm", "get", "values", cluster.release, "-n", cluster.namespace, "-o", "json"], Path("/"), env=env)
+    if values.returncode != 0:
+        return f"could not read the release values to check the governance document:\n{values.stderr[-400:]}"
+    try:
+        wanted = (json.loads(values.stdout or "{}").get("governance") or {}).get("document") or ""
+    except json.JSONDecodeError:
+        return "the release values are not JSON, so the governance document could not be checked"
+    if not wanted.strip():
+        return None
+    live = run(
+        [
+            "kubectl",
+            "get",
+            "configmap",
+            "-n",
+            cluster.namespace,
+            "-l",
+            f"app.kubernetes.io/component={GOVERNANCE_COMPONENT}",
+            "-o",
+            "json",
+        ],
+        Path("/"),
+    )
+    if live.returncode != 0:
+        return f"could not read the governance ConfigMap:\n{live.stderr[-400:]}"
+    try:
+        items = json.loads(live.stdout or "{}").get("items", [])
+    except json.JSONDecodeError:
+        return "kubectl returned something other than JSON for the governance ConfigMap"
+    if not items:
+        return "the release carries a governance document but the cluster has no governance ConfigMap"
+    if len(items) > 1:
+        return f"{len(items)} ConfigMaps carry the governance component label; a trust has one"
+    have = _document((items[0].get("data") or {}).get(GOVERNANCE_KEY, ""))
+    want = _document(wanted)
+    if have != want:
+        return (
+            "the governance document in the cluster does not match the one the release carries, so it was "
+            f"changed outside Helm (live sha256 {hashlib.sha256(have.encode()).hexdigest()[:12]}, release "
+            f"sha256 {hashlib.sha256(want.encode()).hexdigest()[:12]})"
+        )
+    return None
 
 
 def checkout(repo: Path, tag: str) -> str | None:
@@ -405,18 +591,22 @@ class LeaseRenewal:
                 print(f"lease renewal failed ({type(exc).__name__}: {exc}); continuing", file=sys.stderr)
 
 
-def tick(kit_file: Path, repo: Path, dry_run: bool) -> int:
+def tick(kit_file: Path, repo: Path, dry_run: bool, cluster: Cluster | None = None) -> int:
+    """One tick. ``cluster`` selects the Kubernetes backend; ``kit_file`` is then unused."""
     try:
-        kit = read_kit(kit_file)
-        # Before anything is claimed: a kit this agent cannot name would otherwise fail inside
-        # `upgrade()` with the lease already held, and repeat on every lease expiry.
-        kit_identity(kit_file)
+        if cluster is None:
+            kit = read_kit(kit_file)
+            # Before anything is claimed: a kit this agent cannot name would otherwise fail inside
+            # `upgrade()` with the lease already held, and repeat on every lease expiry.
+            kit_identity(kit_file)
+        else:
+            kit = cluster_kit(cluster)
         _, policy = hub_call(kit, "GET", "/trust/upgrade-policy")
     except (OSError, KeyError, ValueError, urllib.error.URLError) as exc:
         print(f"cannot read the policy: {exc}", file=sys.stderr)
         return 2
     assert policy is not None
-    state = local_state(kit, repo)
+    state = local_state(kit, repo) if cluster is None else cluster_state(cluster)
     decision = decide(policy, state, datetime.now(timezone.utc).replace(tzinfo=None))
     print(f"{decision.action}: {decision.reason}")
     if decision.action == "SKIP" or dry_run:
@@ -444,7 +634,11 @@ def tick(kit_file: Path, repo: Path, dry_run: bool) -> int:
     try:
         # Renewal covers the verification too: it is a ten-minute wait on the site coming back.
         with LeaseRenewal(kit, decision.release):
-            run_upgrade = lambda tag: upgrade(repo, kit_file, tag)  # noqa: E731 - one line, one backend
+            run_upgrade = (
+                (lambda tag: upgrade(repo, kit_file, tag))
+                if cluster is None
+                else (lambda tag: cluster_upgrade(cluster, tag))
+            )
             ok, tail = run_upgrade(decision.release)
             detail = tail
             if ok:
@@ -459,6 +653,13 @@ def tick(kit_file: Path, repo: Path, dry_run: bool) -> int:
                 rolled, how = rollback(kit, run_upgrade, state.current_release, decision.release)
                 detail = f"{detail}\n{how}"
                 print(how)
+            elif cluster is not None:
+                # The upgrade applied and the site came up. Before calling it done, check the release's
+                # own governance document is still what the cluster holds (see governance_drift).
+                drift = governance_drift(cluster)
+                if drift:
+                    ok, detail = False, drift
+                    print(drift)
     except BaseException as exc:  # noqa: BLE001 - including SystemExit/KeyboardInterrupt: the report matters more
         ok, detail = False, f"the upgrade raised {type(exc).__name__}: {exc}"
         print(detail, file=sys.stderr)
@@ -476,11 +677,26 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
     t = sub.add_parser("tick", help="decide, and if due, upgrade")
-    t.add_argument("--kit-file", required=True, type=Path)
+    t.add_argument("--kit-file", type=Path, help="the trust's kit file (host mode)")
     t.add_argument("--checkout", type=Path, default=DEFAULT_CHECKOUT, help="the agent's own FLIP checkout")
     t.add_argument("--dry-run", action="store_true", help="print the decision, change nothing")
+    cluster_args = t.add_argument_group("cluster mode", "the chart's CronJob passes these; no checkout")
+    cluster_args.add_argument("--mode", choices=("host", "cluster"), default="host")
+    cluster_args.add_argument("--namespace", help="the trust's namespace")
+    cluster_args.add_argument("--release", help="the Helm release name")
+    cluster_args.add_argument("--chart-repository", help="e.g. oci://ghcr.io/londonaicentre/charts/flip-trust")
+    cluster_args.add_argument("--kit-name", help="TRUST_CODE, for the hub's log line")
+    cluster_args.add_argument("--hub", help="prod | stag (the kit token, not the URL)")
     args = parser.parse_args(argv)
-    return tick(args.kit_file, args.checkout, args.dry_run)
+    cluster = None
+    if args.mode == "cluster":
+        missing = [k for k in ("namespace", "release", "chart_repository", "kit_name", "hub") if not getattr(args, k)]
+        if missing:
+            t.error(f"--mode cluster needs {', '.join('--' + m.replace('_', '-') for m in missing)}")
+        cluster = Cluster(args.namespace, args.release, args.chart_repository, args.kit_name, args.hub)
+    elif not args.kit_file:
+        t.error("--kit-file is required unless --mode cluster")
+    return tick(args.kit_file, args.checkout, args.dry_run, cluster)
 
 
 if __name__ == "__main__":

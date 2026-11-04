@@ -1045,6 +1045,53 @@ autoscaling:
   targetMemoryUtilizationPercentage: 80
 
 # ---------------------------------------------------------------------------
+# Automatic upgrade agent (#1644) — the Kubernetes half of the auto-upgrade epic
+# ---------------------------------------------------------------------------
+# On a host the agent is a systemd timer (`make setup-auto-upgrade`). Here there is no host, so the
+# same tick runs as a CronJob in this namespace, against the same hub protocol and the same lease.
+#
+# OFF by default, and deliberately so: enabling it hands a ServiceAccount the ability to rewrite
+# every workload in this namespace. Read README.md "Automatic upgrades" before switching it on.
+#
+# What the identity can and cannot do:
+#   - no `secrets` verbs at all; the trust's API key reaches the pod through a projected Secret
+#     volume that carries that one key (items:), which the kubelet mounts without RBAC
+#   - Helm release records live in ConfigMaps (HELM_DRIVER=configmap), because Helm's Secret driver
+#     LISTS secrets by label and a list returns their contents
+#   - the Role enumerates the kinds this chart renders instead of using `*`; the chart's test suite
+#     fails if a template ever renders a kind the Role does not cover
+#
+# The deploy side must agree on the driver: `make deploy` sets HELM_DRIVER=configmap too, and a
+# release still recorded as Secrets is invisible to this agent (it fails the tick rather than
+# installing a second copy underneath the running one).
+autoUpgrade:
+  enabled: false
+  # Hourly, matching the host timer's cadence. One tick is one decision; a tick that has nothing to
+  # do costs a hub call and exits.
+  schedule: "17 * * * *"
+  suspend: false
+  image:
+    repository: ghcr.io/londonaicentre/trust-upgrade-agent
+    # Empty means the release tag (which is what the agent moves the site to anyway).
+    tag: ""
+    pullPolicy: IfNotPresent
+  # The published chart, pulled per release. Its --version is the release tag without the leading v.
+  chartRepository: oci://ghcr.io/londonaicentre/charts/flip-trust
+  # The Secret holding this trust's API key, under `trust-api-key`. Empty means the chart's own
+  # <fullname>-secrets. Only that one key is projected into the pod.
+  kitSecretName: ""
+  backoffLimit: 0
+  # Under the hub's 2h lease, so a stuck tick reports FAILED instead of dying holding the lease.
+  activeDeadlineSeconds: 6600
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+# ---------------------------------------------------------------------------
 # Pod Disruption Budget
 # ---------------------------------------------------------------------------
 podDisruptionBudget:
