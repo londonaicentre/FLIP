@@ -25,15 +25,16 @@ data "azurerm_virtual_network" "ws" {
   resource_group_name = data.azurerm_resource_group.ws.name
 }
 
-# The base workspace's subnet: it carries the workspace's route table and the storage account's
-# private endpoints.
+# The base workspace's subnet: the node's subnet takes its route table.
 data "azurerm_subnet" "services" {
   name                 = "ServicesSubnet"
   virtual_network_name = data.azurerm_virtual_network.ws.name
   resource_group_name  = data.azurerm_resource_group.ws.name
 }
 
-data "azurerm_storage_account" "ws" {
-  name                = local.storage_name
-  resource_group_name = data.azurerm_resource_group.ws.name
+# The core TRE's blob zone, linked to every workspace VNet, as the base workspace looks it up.
+data "azurerm_private_dns_zone" "blobcore" {
+  provider            = azurerm.core
+  name                = "privatelink.blob.core.windows.net"
+  resource_group_name = "rg-${var.tre_id}"
 }

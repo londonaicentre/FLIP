@@ -22,18 +22,16 @@ mock_provider "azurerm" {
 
 # The provider checks ID shapes even when mocked; the subscription is the nil GUID.
 override_data {
-  target = data.azurerm_storage_account.ws
+  target = data.azurerm_private_dns_zone.blobcore
   values = {
-    id                    = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-mytre-ws-0a9e/providers/Microsoft.Storage/storageAccounts/stgws0a9e"
-    primary_blob_endpoint = "https://stgws0a9e.blob.core.windows.net/"
+    id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-mytre/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
   }
 }
 
 override_data {
   target = data.azurerm_subnet.services
   values = {
-    address_prefixes = ["10.1.4.0/25"]
-    route_table_id   = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-mytre/providers/Microsoft.Network/routeTables/rt-mytre"
+    route_table_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-mytre/providers/Microsoft.Network/routeTables/rt-mytre"
   }
 }
 
@@ -84,6 +82,46 @@ run "subnet_and_nsg" {
     ]) == toset(["443", "80", "8002"])
     error_message = "Outbound allows only 443, 80 and the FL port."
   }
+  assert {
+    condition = one([
+      for r in azurerm_network_security_group.node.security_rule : r.destination_address_prefix
+      if r.name == "to-kit-drop"
+    ]) == "10.1.5.0/24"
+    error_message = "The kit drop's private endpoint is reached inside the node's own subnet only."
+  }
+}
+
+run "kit_drop" {
+  command = plan
+
+  assert {
+    condition     = azurerm_storage_account.kits.shared_access_key_enabled == false
+    error_message = "Shared keys must be off: only Entra identities with a data role read a kit."
+  }
+  assert {
+    condition     = azurerm_storage_account.kits.public_network_access_enabled == false
+    error_message = "The kit drop has no public endpoint."
+  }
+  assert {
+    condition     = azurerm_storage_account.kits.name == "stfkmytre0a9e1b2c"
+    error_message = "The kit drop is the service's own storage account, not the workspace's."
+  }
+  assert {
+    condition     = azurerm_private_endpoint.kits.private_service_connection[0].subresource_names == tolist(["blob"])
+    error_message = "The kit drop is reached through a blob private endpoint."
+  }
+  assert {
+    condition     = azurerm_private_endpoint.kits.private_dns_zone_group[0].private_dns_zone_ids == tolist(["/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-mytre/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"])
+    error_message = "The private endpoint registers in the core TRE's privatelink.blob zone."
+  }
+  assert {
+    condition     = azurerm_role_assignment.node_reads_kits.role_definition_name == "Storage Blob Data Reader"
+    error_message = "The node may only read kits."
+  }
+  assert {
+    condition     = azurerm_storage_management_policy.kits.rule[0].actions[0].base_blob[0].delete_after_days_since_modification_greater_than == 1
+    error_message = "Kits are deleted a day after upload."
+  }
 }
 
 run "vm" {
@@ -122,12 +160,12 @@ run "cloud_init" {
     condition = one([
       for f in yamldecode(nonsensitive(base64decode(azurerm_linux_virtual_machine.node.custom_data))).write_files : f.content
       if f.path == "/etc/flip/node.env"
-    ]) == "FLIP_REPO_URL=https://github.com/londonaicentre/FLIP.git\nFLIP_REF=v0.14.0\nFLIP_ADMIN_USER=azureuser\nFL_BACKEND=nvflare\nKIT_DROP_URL=https://stgws0a9e.blob.core.windows.net/flip-kits-1b2c\n"
+    ]) == "FLIP_REPO_URL=https://github.com/londonaicentre/FLIP.git\nFLIP_REF=v0.14.0\nFLIP_ADMIN_USER=azureuser\nFL_BACKEND=nvflare\nKIT_DROP_URL=https://stfkmytre0a9e1b2c.blob.core.windows.net/kits\n"
     error_message = "node.env must pin the release and point flip-node at the kit container."
   }
   assert {
-    condition     = output.kit_drop_url == "https://stgws0a9e.blob.core.windows.net/flip-kits-1b2c"
-    error_message = "The kit drop is a container of the workspace storage account."
+    condition     = output.kit_drop_url == "https://stfkmytre0a9e1b2c.blob.core.windows.net/kits"
+    error_message = "flip-node fetches kits from the service's own storage account."
   }
 }
 
@@ -149,4 +187,82 @@ run "rejects_an_fl_server_hostname" {
   }
 
   expect_failures = [var.fl_server_ip_addresses]
+}
+
+run "rejects_a_private_fl_server_address" {
+  command = plan
+
+  variables {
+    fl_server_ip_addresses = "WyIxMC4xLjIuMyJd" # ["10.1.2.3"]
+  }
+
+  expect_failures = [var.fl_server_ip_addresses]
+}
+
+run "rejects_a_private_address_beside_a_public_one" {
+  command = plan
+
+  variables {
+    fl_server_ip_addresses = "WyIxOTguNTEuMTAwLjEwIiwgIjE3Mi4zMS4wLjEiXQ==" # ["198.51.100.10", "172.31.0.1"]
+  }
+
+  expect_failures = [var.fl_server_ip_addresses]
+}
+
+run "rejects_a_link_local_fl_server_address" {
+  command = plan
+
+  variables {
+    fl_server_ip_addresses = "WyIxNjkuMjU0LjE2OS4yNTQiXQ==" # ["169.254.169.254"]
+  }
+
+  expect_failures = [var.fl_server_ip_addresses]
+}
+
+run "rejects_a_loopback_fl_server_address" {
+  command = plan
+
+  variables {
+    fl_server_ip_addresses = "WyIxMjcuMC4wLjEiXQ==" # ["127.0.0.1"]
+  }
+
+  expect_failures = [var.fl_server_ip_addresses]
+}
+
+run "rejects_the_unspecified_address" {
+  command = plan
+
+  variables {
+    fl_server_ip_addresses = "WyIwLjAuMC4wIl0=" # ["0.0.0.0"]
+  }
+
+  expect_failures = [var.fl_server_ip_addresses]
+}
+
+run "rejects_more_than_four_fl_server_addresses" {
+  command = plan
+
+  variables {
+    fl_server_ip_addresses = "WyIxOTguNTEuMTAwLjEiLCAiMTk4LjUxLjEwMC4yIiwgIjE5OC41MS4xMDAuMyIsICIxOTguNTEuMTAwLjQiLCAiMTk4LjUxLjEwMC41Il0=" # pragma: allowlist secret (five documentation addresses, base64 JSON)
+  }
+
+  expect_failures = [var.fl_server_ip_addresses]
+}
+
+run "accepts_172_32_which_is_public" {
+  command = plan
+
+  variables {
+    fl_server_ip_addresses = "WyIxNzIuMzIuMC4xIl0=" # ["172.32.0.1"], just past 172.16.0.0/12
+  }
+}
+
+run "rejects_a_port_other_than_the_hubs" {
+  command = plan
+
+  variables {
+    fl_port = 8080
+  }
+
+  expect_failures = [var.fl_port]
 }

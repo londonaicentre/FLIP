@@ -72,12 +72,17 @@ variable "fl_server_ip_addresses" {
   type        = string
   description = "The FL server's IPv4 addresses: the base64 JSON list the resource processor passes for an array property"
 
+  # The schema's checks again: one to four public IPv4 addresses. A private, loopback, link-local or
+  # unspecified one would open the TRE firewall towards internal networks.
   validation {
-    condition = try(length(jsondecode(base64decode(var.fl_server_ip_addresses))) > 0 && alltrue([
+    condition = try(length(jsondecode(base64decode(var.fl_server_ip_addresses))) <= 4 && alltrue([
       for ip in jsondecode(base64decode(var.fl_server_ip_addresses)) :
-      can(cidrhost("${ip}/32", 0)) && length(split(".", ip)) == 4
-    ]), false)
-    error_message = "fl_server_ip_addresses must be base64 JSON of a non-empty list of IPv4 addresses (not hostnames)."
+      can(cidrhost("${ip}/32", 0)) && length(split(".", ip)) == 4 && !anytrue([
+        for net in ["0.0.0.0/8", "10.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16"] :
+        cidrhost("${ip}/${split("/", net)[1]}", 0) == cidrhost(net, 0)
+      ])
+    ]) && length(jsondecode(base64decode(var.fl_server_ip_addresses))) > 0, false)
+    error_message = "fl_server_ip_addresses must be base64 JSON of one to four public IPv4 addresses (not hostnames, not private ranges)."
   }
 }
 
@@ -86,8 +91,8 @@ variable "fl_port" {
   description = "The kit's FL port"
 
   validation {
-    condition     = var.fl_port >= 1 && var.fl_port <= 65535 && floor(var.fl_port) == var.fl_port
-    error_message = "fl_port must be a TCP port number."
+    condition     = contains([8002, 8003], var.fl_port)
+    error_message = "fl_port must be 8002 (production) or 8003 (staging)."
   }
 }
 

@@ -23,16 +23,19 @@ what leaves the TRE) is on
 
 ## What it creates
 
-- **A subnet of its own** in the workspace VNet, from an address range the TRE API allocates (a /24),
-  on the workspace's route table, so everything leaves through the TRE firewall.
+- **A subnet of its own** in the workspace VNet, from an address range the TRE API allocates (a /24;
+  no one deploying the service can choose it), on the workspace's route table, so everything leaves
+  through the TRE firewall.
 - **A network security group** on that subnet. Nothing inbound. Outbound: 443 to the internet and to
-  the workspace's private endpoints, 80 to the internet (OS packages), and the FL port to the FL
-  server's IP addresses. The firewall rules below narrow 443 and 80 to named hosts.
+  the kit drop's private endpoint in the same subnet, 80 to the internet (OS packages), and the FL
+  port to the FL server's IP addresses. The firewall rules below narrow 443 and 80 to named hosts.
 - **An Ubuntu 24.04 VM** (`flipnode<id>`): Trusted Launch, encryption at host, a system-assigned
   identity, no public IP, and a 128 GB data disk for `/opt/flip`. An optional daily shutdown is off by
   default: a node that is off misses the hub's tasks.
-- **A kit drop**: a private container `flip-kits-<id>` in the workspace storage account, which the
-  VM's identity may read.
+- **A kit drop**: a storage account of the service's own (`stfk<tre><ws><id>`) with shared keys and
+  public network access off, a private endpoint in the node's subnet registered in the TRE's
+  `privatelink.blob.core.windows.net` zone, and a rule deleting kits a day after upload. Only the VM's
+  identity is granted a data role (Storage Blob Data Reader).
 - **Firewall rules** in the TRE firewall, added and removed by the template's `pipeline`.
 
 At first boot cloud-init clones FLIP at the chosen release, installs the `flip-node` helper that
@@ -67,40 +70,43 @@ make -C trust/deploy/azuretre test lint
 |----------|---------|-------|
 | `flip_release` | (required) | A release tag, `vX.Y.Z`, v0.14.0 or later. Use the release your hub runs. Read at first boot only: later, `flip-node reprovision vX.Y.Z` moves the code. |
 | `fl_backend` | `nvflare` | `nvflare` or `flower`, as the hub runs. |
-| `hub_api_hostname` | `app.flip.aicentre.co.uk` | The host of the hub URL in your kit. |
-| `fl_server_ip_addresses` | (required) | The FL endpoint's fixed IPv4 addresses. The FLIP team gives you these with the kit. |
+| `hub_api_hostname` | `app.flip.aicentre.co.uk` | FLIP's production hub, or `stag.flip.aicentre.co.uk`: the host of the hub URL in your kit. |
+| `fl_server_ip_addresses` | (required) | One to four public IPv4 addresses of the hub's FL endpoint, from the FLIP team. Private, loopback, link-local and unspecified addresses are refused. |
 | `fl_port` | `8002` | Your kit's FL port: 8002 on production, 8003 on staging. |
 | `vm_size` | 4 CPU, 16 GB | `Standard_D4s_v5`, `D8s_v5` or `D16s_v5`. CPU only. |
-| `address_space_size` | `small` | `small` lets the TRE allocate a /24; `custom` uses `address_space`. |
 | `enable_shutdown_schedule` | off | With `shutdown_time` (HHmm) and `shutdown_timezone`. |
 
-The hub hostname, FL addresses and FL port can be changed later (an upgrade updates both the NSG and
-the firewall).
+The hub, FL addresses and FL port set what the TRE firewall lets out, so they are limited to FLIP's own
+and fixed once deployed: changing one means a TRE admin removing the service and adding it again. The
+subnet's range is always the TRE API's choice: the template declares no `address_space_size`, so the
+API never accepts a `custom` range, and it replaces any `address_space` given.
 
 ## Getting the kit to the node
 
-The hub admin sends the trust a kit tarball, as for any trust. The node fetches it from its kit drop
-with its own identity when you run `flip-node join`, so it has to be put there first. The kit drop is
-in the workspace storage account, which accepts connections from the workspace network only:
+The hub admin sends the trust a kit tarball, as for any trust. It holds the trust's API key, the AES
+key and the FL client's private key, which no researcher may read. So a **TRE admin** puts it in the
+kit drop; it never goes through the airlock or a researcher's VM, and never into the workspace
+storage account (AzureTRE's Guacamole VMs carry that account's key to mount its file share). The node
+fetches it with its own identity when you run `flip-node join`.
 
-1. Bring the tarball into the workspace with an **airlock import** request. It holds the trust's API
-   key and FL credentials, so agree who reviews it.
-2. From a VM in the workspace, download the approved file from the link the airlock gives, and upload
-   it with the `kit_upload_command` output:
+The kit drop has no public endpoint, so upload from a host on the TRE network, such as AzureTRE's
+**Admin VM** shared service (`tre-shared-service-admin-vm`, in the core network, reached through
+Bastion):
+
+1. Grant yourself the upload role on the container, then upload with the `kit_upload_command` output:
 
    ```bash
+   az role assignment create --role "Storage Blob Data Contributor" --assignee <your object id> \
+     --scope <kit storage account id>/blobServices/default/containers/kits
    az storage blob upload --auth-mode login --blob-url <kit_drop_url>/<kit>.tar.gz --file <kit>.tar.gz
    ```
 
-   The uploader needs **Storage Blob Data Contributor** on the container, which a TRE admin grants:
-   `az role assignment create --role "Storage Blob Data Contributor" --assignee <uploader> --scope <container resource id>`.
-3. Join (below), then delete the blob. Nothing expires it: FLIP's own kit drop deletes kits within
-   about 48 hours, but this container belongs to the workspace's storage account, whose lifecycle
-   policy the template does not own.
+2. Join (below). The kit is deleted within about 48 hours of upload; remove your role assignment when
+   done.
 
-> **TODO (first deployment):** confirm step 2 on a real TRE. A workspace VM has to sign in to Entra ID
-> through the firewall. A simpler route would be `flip-node` fetching the airlock's approved link
-> itself, which is a change to FLIP, not to this bundle.
+> **TODO (first deployment):** confirm the upload route on a real TRE: that the Admin VM resolves the
+> kit drop to its private endpoint (the core network is linked to the same DNS zone) and reaches it
+> across the workspace peering.
 
 ## Running the node
 

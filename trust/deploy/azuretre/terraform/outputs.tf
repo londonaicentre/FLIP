@@ -24,7 +24,7 @@ output "kit_drop_url" {
 }
 
 output "kit_upload_command" {
-  description = "Run from inside the workspace network, with Storage Blob Data Contributor on the container"
+  description = "For a TRE admin on the TRE network (the Admin VM), holding Storage Blob Data Contributor on the container"
   value       = "az storage blob upload --auth-mode login --blob-url ${local.kit_drop_url}/<kit>.tar.gz --file <kit>.tar.gz"
 }
 

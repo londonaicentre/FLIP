@@ -39,17 +39,18 @@ resource "azurerm_network_security_group" "node" {
 
   lifecycle { ignore_changes = [tags] }
 
+  # The subnet holds only the VM and the kit drop's private endpoint.
   security_rule {
-    name                         = "to-workspace-private-endpoints"
-    description                  = "The kit drop, through the workspace storage account's private endpoint"
-    priority                     = 100
-    direction                    = "Outbound"
-    access                       = "Allow"
-    protocol                     = "Tcp"
-    source_port_range            = "*"
-    destination_port_range       = "443"
-    source_address_prefix        = "*"
-    destination_address_prefixes = data.azurerm_subnet.services.address_prefixes
+    name                       = "to-kit-drop"
+    description                = "The kit drop's private endpoint, in this subnet"
+    priority                   = 100
+    direction                  = "Outbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "443"
+    source_address_prefix      = "*"
+    destination_address_prefix = var.address_space
   }
 
   security_rule {
