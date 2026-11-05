@@ -212,15 +212,44 @@ connection into the trust. What the firewall must allow is a short list of outbo
 with which ones have been measured behind a deny-everything firewall, on :ref:`deploy-trust-node-network`.
 
 - ☐ **Outbound HTTPS to the Central Hub**, and to the hub's separate federated-learning endpoint on its own port.
-  The addresses and port come with the trust's kit. The federated-learning connection is mutual TLS and must be
-  exempt from TLS inspection.
+  The addresses and port come with the trust's kit. The federated-learning connection is mutual TLS on a
+  non-standard port (8002 on the production hub) and must be exempt from TLS inspection. It is the one rule that
+  differs from the usual "outbound 443"; the questions below settle how the site can allow it.
 - ☐ **Outbound access to the container registries and package sources** the node installs and updates from, as
   listed on :ref:`deploy-trust-node-network`. A trust with no route to the registries needs a mirror; see
   :doc:`deploy-flip-node-in-tre`.
 - ☐ **A secure channel to receive the kit.** The kit is a small file holding the trust's keys and must not travel by
   plain email.
-- ☐ **No fixed public address is needed.** The hub identifies a trust by its certificates and API key, so a changed
-  public address needs no change on the hub.
+- ☐ **The trust's outbound address is known.** The hub identifies a trust by its certificates and API key, not by
+  its address, and the node needs no fixed public address of its own. The FLIP team still asks for the address the
+  node's traffic leaves the trust from, so the hub's federated-learning edge can admit declared trusts only, and
+  needs to hear when it changes.
+
+.. rubric:: Questions for your network team
+
+Whether the federated-learning rule is a five-minute change or a months-long project depends on answers only the
+network team has. Settle them before the node is built:
+
+- **How does the node reach the internet?** Directly, through a firewall with an allow-list, is the normal case and
+  needs one rule. A site whose only route is an explicit web proxy is not supported yet. A site with no internet
+  route for this traffic needs a site-to-site VPN (:ref:`site-to-site-vpn`).
+- **Does the firewall classify traffic by application?** Palo Alto, Fortinet and Check Point devices do. A rule that
+  allows ``ssl`` only on its default port passes 443 and resets the federated-learning connection on its port: the
+  TCP connection opens, the TLS handshake starts, and the connection is reset with nothing read back. Ask for the
+  ``ssl`` application to be allowed to the FL endpoint on its port, or for an application override for it.
+- **Is outbound TLS decrypted?** Then the FL endpoint needs an exemption. Mutual TLS cannot be decrypted, and a
+  re-signed connection fails the client's certificate check.
+- **Can rules name a host, or only an address?** The FL endpoint has a fixed address, so either works; give both.
+- **Can the node resolve public names?** Some enclaves have no public DNS. The node then needs a hosts entry for the
+  hub and the FL endpoint.
+- **How long may an idle connection live?** The FL client holds a long-lived connection to the FL server. A firewall
+  that drops idle flows after a few minutes forces reconnects. It does not break training, but it is worth knowing.
+
+The request itself, in the form a firewall team can copy: *from the FLIP node to the FL endpoint host, at its fixed
+address, TCP on the FL port, mutually authenticated TLS, exempt from decryption, allowed as the* ``ssl`` *application
+on that non-default port.* On a Compose node ``make onboard-onprem-trust KIT=<CODE>`` probes every destination from
+the host and prints what it cannot reach, and :ref:`deploy-trust-node-network` has the check that tells a blocked
+port from a firewall that resets the handshake.
 
 .. _readiness-hardware:
 

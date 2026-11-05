@@ -65,6 +65,21 @@ Does the hub need inbound access to the Trust?
    opened to the internet. The one exception is retrieval from the Trust's own PACS, which needs a rule inside the
    Trust's network. See :ref:`deploy-trust-node-network`.
 
+Why is the federated-learning connection not on port 443 like everything else?
+   The FL client connects out to the hub's FL endpoint over mutual TLS on its own port (8002 on the production hub).
+   NVIDIA, whose framework carries that traffic, advises against 443 because the protocol is gRPC rather than
+   plain HTTPS and some inspection appliances reject it there. What matters is how the Trust's firewall decides:
+   one that filters by port needs one rule; one that classifies by application must allow ``ssl`` on that port;
+   one that decrypts outbound TLS must exempt the endpoint. :ref:`readiness-network` has the questions to ask.
+
+Does a Trust need a site-to-site VPN?
+   Only when it cannot allow that one outbound connection over the internet, by policy or because its network team
+   will not write a per-port rule. Everything else FLIP does is ordinary outbound HTTPS. See :ref:`site-to-site-vpn`.
+
+Can the node sit behind the Trust's web proxy?
+   Not yet. The node needs a direct route, through a firewall allow-list, to the destinations on
+   :ref:`deploy-trust-node-network`. A site whose only route is an explicit proxy should say so early.
+
 How is a Trust upgraded to a new release?
    The Trust's operator runs one upgrade command when ready; nothing on the hub pushes an upgrade. A site runs the
    release its hub runs, and the command defaults to it. Never use the first-install commands on a live site: they
