@@ -247,10 +247,16 @@ memory requirements depend on the model architecture.
 Networking
 ----------
 
-The outbound connections in :ref:`deploy-trust-node-network`, and no inbound ones. If the
-TRE's network inspection appliances block HTTP/2 (required for gRPC), NVIDIA FLARE offers
-an HTTP driver that works over standard HTTP/1.1; Flower already uses plain HTTPS
-(HTTP/1.1).
+The outbound connections in :ref:`deploy-trust-node-network`, and no inbound ones, with the
+questions on :ref:`readiness-network` settled first. The two frameworks differ at the wire:
+Flower's SuperNode speaks plain HTTPS (HTTP/1.1), while NVIDIA FLARE's client speaks gRPC
+(HTTP/2) under mutual TLS. An appliance that classifies by port and protocol sees both as TLS
+on a non-default port; one that understands only HTTP/1.1 can tell them apart only by
+decrypting the traffic, which breaks mutual TLS on any port. NVIDIA FLARE also ships a
+websocket transport, its ``http`` driver, chosen at provisioning time, which starts as an
+ordinary HTTP/1.1 request before upgrading. FLIP provisions gRPC only and has not tested that
+transport on the platform, so raise it with the FLIP team as an option to evaluate for a
+site, not a setting to rely on.
 
 Data
 ----
