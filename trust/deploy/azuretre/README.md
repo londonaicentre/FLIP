@@ -71,7 +71,7 @@ make -C trust/deploy/azuretre test lint
 | `flip_release` | (required) | A release tag, `vX.Y.Z`, v0.14.0 or later. Use the release your hub runs. Read at first boot only: later, `flip-node reprovision vX.Y.Z` moves the code. |
 | `fl_backend` | `nvflare` | `nvflare` or `flower`, as the hub runs. |
 | `hub_api_hostname` | `app.flip.aicentre.co.uk` | FLIP's production hub, or `stag.flip.aicentre.co.uk`: the host of the hub URL in your kit. |
-| `fl_server_ip_addresses` | (required) | One to four public IPv4 addresses of the hub's FL endpoint, from the FLIP team. Private, loopback, link-local and unspecified addresses are refused. |
+| `fl_server_ip_addresses` | (required) | One to four public IPv4 addresses of the hub's FL endpoint, from the FLIP team. Private, shared, loopback, link-local, multicast and reserved ranges, and Azure's 168.63.129.16, are refused. Before installing, the TRE admin checks them against the FL hostname (`dig +short fl.<hub host>`): they cannot be changed afterwards. |
 | `fl_port` | `8002` | Your kit's FL port: 8002 on production, 8003 on staging. |
 | `vm_size` | 4 CPU, 16 GB | `Standard_D4s_v5`, `D8s_v5` or `D16s_v5`. CPU only. |
 | `enable_shutdown_schedule` | off | With `shutdown_time` (HHmm) and `shutdown_timezone`. |

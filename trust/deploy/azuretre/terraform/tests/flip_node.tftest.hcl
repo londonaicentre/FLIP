@@ -239,6 +239,36 @@ run "rejects_the_unspecified_address" {
   expect_failures = [var.fl_server_ip_addresses]
 }
 
+run "rejects_the_azure_platform_address" {
+  command = plan
+
+  variables {
+    fl_server_ip_addresses = "WyIxNjguNjMuMTI5LjE2Il0=" # pragma: allowlist secret (["168.63.129.16"])
+  }
+
+  expect_failures = [var.fl_server_ip_addresses]
+}
+
+run "rejects_the_shared_cgnat_address" {
+  command = plan
+
+  variables {
+    fl_server_ip_addresses = "WyIxMDAuNjQuMC4xIl0=" # pragma: allowlist secret (["100.64.0.1"])
+  }
+
+  expect_failures = [var.fl_server_ip_addresses]
+}
+
+run "rejects_the_multicast_address" {
+  command = plan
+
+  variables {
+    fl_server_ip_addresses = "WyIyMjQuMC4wLjEiXQ==" # pragma: allowlist secret (["224.0.0.1"])
+  }
+
+  expect_failures = [var.fl_server_ip_addresses]
+}
+
 run "rejects_more_than_four_fl_server_addresses" {
   command = plan
 
