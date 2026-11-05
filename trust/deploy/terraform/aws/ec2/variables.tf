@@ -34,6 +34,17 @@ variable "subnet_id" {
   default     = ""
 }
 
+variable "private_ip" {
+  description = "A fixed private address for the node, inside subnet_id, for a firewall that allowlists the node by address (a hub's Landing Zone Accelerator account). Changing it replaces the node and its data. Empty lets AWS pick one."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.private_ip == "" || (var.subnet_id != "" && can(cidrhost("${var.private_ip}/32", 0)))
+    error_message = "private_ip must be a single IPv4 address, and needs subnet_id: a VPC this root creates has no firewall allowlist to pin an address for."
+  }
+}
+
 variable "instance_type" {
   description = "EC2 instance type. t3.xlarge runs the full trust stack; a smaller size suits a mock trust whose workload fits."
   type        = string
