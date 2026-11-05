@@ -105,8 +105,8 @@ Choose your platform
        common case.
      - :doc:`deploy-flip-node-on-prem`
    * - **Existing Kubernetes cluster**
-     - The trust's platform team runs Kubernetes. The Helm chart is validated on single-node k3s; read its known
-       limitations first.
+     - The trust's platform team runs Kubernetes. The Helm chart is validated on single-node k3s, AKS and Amazon
+       EKS; read its known limitations first.
      - :doc:`deploy-flip-node-kubernetes`
    * - **AWS EC2**
      - The trust builds the node from code in its own AWS account and VPC. It is a Docker Compose host on an

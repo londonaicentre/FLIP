@@ -23,7 +23,7 @@ the same **zero inbound trust** architecture as the Docker Compose deployment:
 trust services only make outbound connections to the Central Hub and the FL
 server; no inbound ports are exposed from the K8s cluster.
 
-> **Deployment status.** The chart is validated on single-node k3s and includes
+> **Deployment status.** The chart is validated on single-node k3s, AKS and Amazon EKS, and includes
 > kit staging, default-deny ingress, audited egress rules, least-privilege
 > service accounts, and stateless-workload hardening. Review the
 > [known limitations](#known-limitations), particularly storage and Pod Security

@@ -29,8 +29,9 @@ optional inbound path is the DICOM receiver for a real PACS (see `Connect a real
    Do steps 1 to 4 of :doc:`onboarding-a-trust` first: you need the kit file and this trust's FL participant kit.
    When the node is deployed and its DICOM path verified, continue at step 6 there.
 
-The chart is validated on single-node k3s: read `Known limitations`_, particularly storage and Pod Security, before
-choosing it for a production trust. The :gh:`Helm chart README <trust/deploy/helm/README.md>` has the full values
+The chart is validated on single-node k3s, and its self-test passes on AKS (:doc:`deploy-flip-node-azure-aks`) and
+Amazon EKS (:doc:`deploy-flip-node-aws-eks`) with both FL backends. Read `Known limitations`_, particularly storage
+and Pod Security, before choosing it for a production trust. The :gh:`Helm chart README <trust/deploy/helm/README.md>` has the full values
 and secrets reference.
 
 .. contents:: On this page
