@@ -274,6 +274,35 @@ retention, and Grafana provides a pre-provisioned dashboard. **The stack runs en
 inside the TRE boundary**: no log data is sent to the Central Hub. See
 :doc:`/components/component-logging-stack` for configuration, ports, and persistent volumes.
 
+On AzureTRE
+-----------
+
+FLIP has not yet been deployed on an `AzureTRE <https://github.com/microsoft/AzureTRE>`_. These notes come from
+reading AzureTRE v0.29.1 (September 2026) and cover what differs from the requirements above.
+
+- **The host comes from a template you register.** A workspace runs only what a registered template deploys, and
+  FLIP does not ship one. The nearest starting point is AzureTRE's Guacamole Linux VM user resource
+  (``templates/workspace_services/guacamole/user_resources/guacamole-azure-linuxvm``), which already installs
+  Docker from cloud-init on Ubuntu 22.04; a workspace service of its own is the longer-lived option. FLIP's Azure
+  VM Terraform (:doc:`deploy-flip-node-azure`) does not drop in, because it creates its own network and kit drop.
+- **Open the FL port at both layers.** A workspace's network security group allows outbound internet traffic on
+  443 only, so the kit's FL port (8002 on production, 8003 on staging) needs an outbound NSG rule as well as a
+  firewall rule. The firewall runs no DNS proxy, so that rule names the FL endpoint's fixed IP addresses, not its
+  hostname.
+- **Allow the HTTPS hosts in the firewall.** Add the 443 hosts from :ref:`deploy-trust-node-network` as rules in
+  the template's ``pipeline`` section (AzureTRE's
+  `firewall rules guide <https://github.com/microsoft/AzureTRE/blob/main/docs/tre-workspace-authors/firewall-rules.md>`_).
+  The shared Nexus mirror proxies Docker Hub but not GHCR, so ``ghcr.io`` and
+  ``pkg-containers.githubusercontent.com`` need rules of their own.
+- **Agree the FL channel alongside the airlock.** The airlock is AzureTRE's route for data in and out, with human
+  approval. Model updates over the FL port do not pass through it, so agree the egress policy first (see
+  `What leaves the TRE, and under what policy`_). Federated evaluation, which returns metrics only, is the easier
+  start.
+- **Bring FLIP's own data services.** AzureTRE's OHDSI service runs ATLAS against Azure Synapse, and its health
+  services deploy the Azure DICOM service, which speaks DICOMweb. FLIP needs PostgreSQL with an ``omop`` schema
+  and a PACS it can query with C-FIND and C-MOVE (`Data`_ above), so load the project extract into the node's own
+  OMOP database and Orthanc.
+
 Use case 1: federated evaluation
 ================================
 
