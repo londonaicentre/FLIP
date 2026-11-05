@@ -144,10 +144,11 @@ Step 5 — Install on your platform
 Follow your platform's page, then come back here for step 6:
 
 - **Docker Compose host** (on-prem or in a TRE): :doc:`deploy-flip-node-on-prem`
-- **Azure VM**: :doc:`deploy-flip-node-azure`
+- **Existing Kubernetes cluster**: :doc:`deploy-flip-node-kubernetes`
 - **AWS EC2**: :doc:`deploy-flip-node-aws-ec2`
 - **Amazon EKS**: :doc:`deploy-flip-node-aws-eks`
-- **Kubernetes**: :doc:`deploy-flip-node-kubernetes`
+- **Azure VM**: :doc:`deploy-flip-node-azure`
+- **Azure AKS**: :doc:`deploy-flip-node-azure-aks`
 
 **************************************
 Step 6 — Check the trust is polling

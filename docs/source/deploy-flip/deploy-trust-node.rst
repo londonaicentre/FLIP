@@ -32,10 +32,11 @@ Read this page next. It covers what every trust node needs, whatever it runs on.
    trust-readiness-checklist
    onboarding-a-trust
    deploy-flip-node-on-prem
-   deploy-flip-node-azure
+   deploy-flip-node-kubernetes
    deploy-flip-node-aws-ec2
    deploy-flip-node-aws-eks
-   deploy-flip-node-kubernetes
+   deploy-flip-node-azure
+   deploy-flip-node-azure-aks
    deploy-flip-node-in-tre
 
 .. contents:: On this page
@@ -103,10 +104,10 @@ Choose your platform
      - The trust runs an Ubuntu host (physical or VM) with governed access to its own OMOP database and PACS. The
        common case.
      - :doc:`deploy-flip-node-on-prem`
-   * - **Azure VM**
-     - The trust builds the node from code in its own Azure subscription. It is a Docker Compose host on a VM
-       that configures itself and accepts no inbound connection.
-     - :doc:`deploy-flip-node-azure`
+   * - **Existing Kubernetes cluster**
+     - The trust's platform team runs Kubernetes. The Helm chart is validated on single-node k3s, AKS and Amazon
+       EKS; read its known limitations first.
+     - :doc:`deploy-flip-node-kubernetes`
    * - **AWS EC2**
      - The trust builds the node from code in its own AWS account and VPC. It is a Docker Compose host on an
        EC2 instance with no public IP and no inbound rule, reached through SSM only.
@@ -115,10 +116,15 @@ Choose your platform
      - The trust builds a small EKS cluster from code in its own AWS account and runs the ``flip-trust`` Helm
        chart on it. Nodes have no public IP; the API endpoint admits the operator's address only.
      - :doc:`deploy-flip-node-aws-eks`
-   * - **Kubernetes**
-     - The trust's platform team runs Kubernetes. The Helm chart is validated on single-node k3s; read its known
-       limitations first.
-     - :doc:`deploy-flip-node-kubernetes`
+   * - **Azure VM**
+     - The trust builds the node from code in its own Azure subscription. It is a Docker Compose host on a VM
+       that configures itself and accepts no inbound connection.
+     - :doc:`deploy-flip-node-azure`
+   * - **Azure AKS**
+     - The trust builds a one-node AKS cluster from code in its own Azure subscription and runs the ``flip-trust``
+       Helm chart on it. Sign-in is through Entra; the API server admits the operator's address and the nodes'
+       egress only.
+     - :doc:`deploy-flip-node-azure-aks`
    * - **Inside a TRE**
      - Governance requires data access through a Trusted Research Environment loaded with a project-specific
        subset. The node itself installs as a Docker Compose host.
@@ -246,5 +252,5 @@ mTLS certificates decide who gets in, so a changed public IP needs no hub-side c
 
 The deploy commands always pull, so the registries are needed in a TRE too (see :doc:`deploy-flip-node-in-tre`). Some
 platforms add destinations of their own: the Kubernetes chart (:doc:`deploy-flip-node-kubernetes`), the Azure VM's
-first boot and AKS (:doc:`deploy-flip-node-azure`), and the AWS services an EC2 node uses
+first boot (:doc:`deploy-flip-node-azure`), AKS (:doc:`deploy-flip-node-azure-aks`), and the AWS services an EC2 node uses
 (:doc:`deploy-flip-node-aws-ec2`).
