@@ -161,7 +161,7 @@ Join the hub
    make selftest KIT=$KIT HUB=$HUB
    make status   KIT=$KIT HUB=$HUB
 
-``join`` does what ``aks-join`` does on Azure: it unpacks the tarball under ``build/kits/``, installs the
+``join`` does what AKS's ``join`` does on Azure: it unpacks the tarball under ``build/kits/``, installs the
 kit file as ``trust/.env.<CODE>.<env>``, puts the FL kit in a Secret (a managed node can be replaced at
 any time; a Flower Secret holds only ``ca.crt`` and the slot's own credential), and deploys the chart with
 ``values-eks.yaml`` and ``values-small-node.yaml``, recording them in the kit file as

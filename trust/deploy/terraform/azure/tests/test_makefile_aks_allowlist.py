@@ -10,19 +10,24 @@
 # limitations under the License.
 """The AKS API server admits the operator's current IP and the nodes' egress (FLIP#1390).
 
-An operator's public IP moves (home, office, VPN), so `make aks-allow-ip` resets it without a
-Terraform plan, and `make aks-start` does so once the cluster is up. Both keep the nodes' egress
+An operator's public IP moves (home, office, VPN), so aks/'s `make allow-ip` resets it without a
+Terraform plan, and `make start` does so once the cluster is up. Both keep the nodes' egress
 ranges from the aks state: without them the nodes lose their API server. These tests run the real
 targets with az, terraform and curl stubbed on PATH and read back the calls.
 """
 
 from __future__ import annotations
 
+from functools import partial
+
 import pytest
-from conftest import run_make
+from conftest import run_make as run_any_make
+
+# Every test here runs aks/Makefile.
+run_make = partial(run_any_make, root="aks")
 
 SUB = "00000000-0000-0000-0000-000000000000"
-ADMITTING = ["aks-allow-ip", "aks-start"]
+ADMITTING = ["allow-ip", "start"]
 NODES = "198.51.100.9/32"
 ADMITTED = f"--api-server-authorized-ip-ranges 203.0.113.7/32,{NODES}"
 
@@ -32,10 +37,10 @@ def _aks(calls: list[str]) -> list[str]:
 
 
 def test_allow_ip_admits_the_operator_and_keeps_the_nodes(tmp_path):
-    result, calls = run_make(tmp_path, "aks-allow-ip", tf_output=NODES, OPERATOR_IP="203.0.113.7")
+    result, calls = run_make(tmp_path, "allow-ip", tf_output=NODES, OPERATOR_IP="203.0.113.7")
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "terraform -chdir=aks output -raw api_server_node_ranges" in calls
+    assert "terraform output -raw api_server_node_ranges" in calls
     assert _aks(calls) == [f"aks update --subscription {SUB} -g flipaz-aks-rg -n flipaz-aks {ADMITTED}"]
 
 
@@ -43,7 +48,7 @@ def test_allow_ip_admits_the_operator_and_keeps_the_nodes(tmp_path):
 def test_unreadable_node_ranges_leave_the_allowlist_alone(tmp_path, nodes):
     sentinel = str(tmp_path / "PWNED")
     result, calls = run_make(
-        tmp_path, "aks-allow-ip", tf_output=nodes.replace("PWNED", sentinel), OPERATOR_IP="203.0.113.7"
+        tmp_path, "allow-ip", tf_output=nodes.replace("PWNED", sentinel), OPERATOR_IP="203.0.113.7"
     )
 
     assert result.returncode != 0
@@ -53,7 +58,7 @@ def test_unreadable_node_ranges_leave_the_allowlist_alone(tmp_path, nodes):
 
 
 def test_start_admits_the_operator_once_the_cluster_is_up(tmp_path):
-    result, calls = run_make(tmp_path, "aks-start", tf_output=NODES, OPERATOR_IP="203.0.113.7")
+    result, calls = run_make(tmp_path, "start", tf_output=NODES, OPERATOR_IP="203.0.113.7")
 
     assert result.returncode == 0, result.stdout + result.stderr
     verbs = [c.split()[1] for c in _aks(calls)]
@@ -87,20 +92,20 @@ def test_anything_but_one_ipv4_address_is_refused_before_any_aks_call(tmp_path, 
 
 
 def test_a_start_whose_allowlist_update_fails_says_the_cluster_is_running(tmp_path):
-    result, calls = run_make(tmp_path, "aks-start", az_fail="aks update", tf_output=NODES, OPERATOR_IP="203.0.113.7")
+    result, calls = run_make(tmp_path, "start", az_fail="aks update", tf_output=NODES, OPERATOR_IP="203.0.113.7")
 
     output = result.stdout + result.stderr
     assert result.returncode != 0
     assert [c.split()[1] for c in _aks(calls)] == ["start", "update"]
     assert "The cluster is running" in output, "a started cluster bills even when the next step fails"
-    assert "make aks-allow-ip" in output, "the retry is named"
-    assert "make aks-stop" in output, "and so is the way to stop paying"
+    assert "make allow-ip" in output, "the retry is named"
+    assert "make stop" in output, "and so is the way to stop paying"
 
 
 def test_the_ip_lookup_runs_once_so_the_checked_answer_is_the_one_sent(tmp_path):
     sentinel = str(tmp_path / "PWNED")
     result, calls = run_make(
-        tmp_path, "aks-start", tf_output=NODES, ipify=["203.0.113.7", f'198.51.100.1"; touch {sentinel}; "']
+        tmp_path, "start", tf_output=NODES, ipify=["203.0.113.7", f'198.51.100.1"; touch {sentinel}; "']
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -109,34 +114,34 @@ def test_the_ip_lookup_runs_once_so_the_checked_answer_is_the_one_sent(tmp_path)
     assert not (tmp_path / "PWNED").exists(), "a second, different answer never reached the shell"
 
 
-def test_aks_destroy_needs_no_ip_lookup(tmp_path):
-    result, calls = run_make(tmp_path, "aks-destroy", ipify=[""])
+def test_destroy_needs_no_ip_lookup(tmp_path):
+    result, calls = run_make(tmp_path, "destroy", ipify=[""])
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert not [c for c in calls if c.startswith("curl ")], "a failed lookup must not block a teardown"
-    (destroy,) = [c for c in calls if c.startswith("terraform -chdir=aks destroy")]
+    (destroy,) = [c for c in calls if c.startswith("terraform destroy")]
     assert destroy.endswith(" -var operator_ip=192.0.2.1")
 
 
-def test_aks_destroy_on_a_site_subnet_needs_no_egress_ips(tmp_path):
-    result, calls = run_make(tmp_path, "aks-destroy", SUBNET_ID="/sub/x", NODE_EGRESS_IPS="")
+def test_destroy_on_a_site_subnet_needs_no_egress_ips(tmp_path):
+    result, calls = run_make(tmp_path, "destroy", SUBNET_ID="/sub/x", NODE_EGRESS_IPS="")
 
     assert result.returncode == 0, result.stdout + result.stderr
-    (destroy,) = [c for c in calls if c.startswith("terraform -chdir=aks destroy")]
+    (destroy,) = [c for c in calls if c.startswith("terraform destroy")]
     assert 'node_egress_ips=["192.0.2.1"]' in destroy, "a teardown never applies the allowlist"
 
 
 def test_plan_hands_the_site_egress_ips_to_terraform(tmp_path):
     result, calls = run_make(
         tmp_path,
-        "aks-plan",
+        "plan",
         OPERATOR_IP="203.0.113.7",
         SUBNET_ID="/sub/x",
         NODE_EGRESS_IPS="198.51.100.9,198.51.100.10",
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    plan = next(c for c in calls if c.startswith("terraform -chdir=aks plan"))
+    plan = next(c for c in calls if c.startswith("terraform plan"))
     assert 'node_egress_ips=["198.51.100.9","198.51.100.10"]' in plan
 
 
@@ -144,10 +149,10 @@ def test_plan_hands_the_site_egress_ips_to_terraform(tmp_path):
 def test_anything_but_ipv4_addresses_is_refused_as_node_egress(tmp_path, ips):
     sentinel = str(tmp_path / "PWNED")
     result, calls = run_make(
-        tmp_path, "aks-plan", OPERATOR_IP="203.0.113.7", NODE_EGRESS_IPS=ips.replace("PWNED", sentinel)
+        tmp_path, "plan", OPERATOR_IP="203.0.113.7", NODE_EGRESS_IPS=ips.replace("PWNED", sentinel)
     )
 
     assert result.returncode != 0
     assert "NODE_EGRESS_IPS=" in result.stdout + result.stderr
-    assert not [c for c in calls if c.startswith("terraform -chdir=aks")], "terraform never ran"
+    assert not [c for c in calls if c.startswith("terraform ")], "terraform never ran"
     assert not (tmp_path / "PWNED").exists()

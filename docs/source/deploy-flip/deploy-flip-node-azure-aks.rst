@@ -17,7 +17,8 @@ Deploy a FLIP node on Azure AKS
 
 A FLIP node on AKS runs the trust-side stack as the ``flip-trust`` Helm chart on a one-node AKS cluster
 (``Standard_D4s_v5``, Free control-plane tier), built from code in ``trust/deploy/terraform/azure`` by its ``aks``
-root, on the same bootstrap layer as the Azure VM. Sign-in is through Entra.
+root, on the same bootstrap layer as the Azure VM. Sign-in is through Entra. Its commands run in
+``trust/deploy/terraform/azure/aks``, as the EKS root's run in its own directory.
 
 For the same trust on one Azure VM under Docker Compose see :doc:`deploy-flip-node-azure`; for the chart itself, its
 values and known limits, :doc:`deploy-flip-node-kubernetes`. Its AWS twin is :doc:`deploy-flip-node-aws-eks`.
@@ -54,7 +55,7 @@ subnet (``SUBNET_ID``) the cluster uses the Trust's routes and creates no outbou
 table sending outbound traffic to the Trust's firewall, which AKS checks before it creates the cluster; without
 ``SUBNET_ID`` it leaves through its own NAT gateway. The API server admits only your IP and the nodes' own egress:
 the NAT gateway's IP, or on the Trust's subnet the firewall's public IPs, which you pass as
-``NODE_EGRESS_IPS=<ip>[,<ip>]`` to ``aks-plan`` (``aks-destroy`` needs no addresses). A node that cannot reach its
+``NODE_EGRESS_IPS=<ip>[,<ip>]`` to ``plan`` (``destroy`` needs no addresses). A node that cannot reach its
 API server never joins the cluster.
 
 Behind the Trust's firewall the cluster needs, on top of :ref:`deploy-trust-node-network`:
@@ -73,7 +74,8 @@ Prerequisites
 - The subscription, region and tools of the VM's :ref:`prerequisites <deploy-flip-node-azure-prerequisites>`.
 - On your machine you also need ``kubectl``, ``kubelogin``, Helm 3.16 or newer, ``jq``,
   ``python3`` and ``uv``.
-- The trial's 4 vCPUs are the VM's too, so ``aks-apply`` refuses while the VM exists: ``make destroy`` first. A
+- The trial's 4 vCPUs are the VM's too, so ``apply`` refuses while the VM exists: run ``make destroy`` in ``vm/``
+  first. A
   running cluster costs roughly $0.25 an hour, plus the NAT gateway on a standalone cluster.
 
 *****************
@@ -85,11 +87,12 @@ Build the cluster
    cd trust/deploy/terraform/azure
    SUB="<subscription name>"
 
-   make bootstrap       AZ_SUBSCRIPTION="$SUB" STATE_SA=<unique storage name> ALERT_EMAIL=<you>   # once
-   make aks-init        AZ_SUBSCRIPTION="$SUB"
-   make aks-plan        AZ_SUBSCRIPTION="$SUB" LOCATION=<region> SUBNET_ID=<subnet resource id, or empty> NODE_EGRESS_IPS=<firewall IPs, with SUBNET_ID>
-   make aks-apply       AZ_SUBSCRIPTION="$SUB"      # shows the plan and the subscription, asks for yes
-   make aks-credentials AZ_SUBSCRIPTION="$SUB"      # kube context flipaz-aks, signed in through Entra
+   make bootstrap   AZ_SUBSCRIPTION="$SUB" STATE_SA=<unique storage name> ALERT_EMAIL=<you>   # once
+   cd aks
+   make init        AZ_SUBSCRIPTION="$SUB"
+   make plan        AZ_SUBSCRIPTION="$SUB" LOCATION=<region> SUBNET_ID=<subnet resource id, or empty> NODE_EGRESS_IPS=<firewall IPs, with SUBNET_ID>
+   make apply       AZ_SUBSCRIPTION="$SUB"      # shows the plan and the subscription, asks for yes
+   make credentials AZ_SUBSCRIPTION="$SUB"      # kube context flipaz-aks, signed in through Entra
 
 **********
 Join a hub
@@ -100,10 +103,10 @@ the tarball in hand:
 
 .. code-block:: bash
 
-   make aks-join TARBALL=flip-trust-kit-<slot>-<date>.tar.gz KIT=<CODE> HUB=<env>   # MOCK_PACS=1 on a test node
-   make aks-selftest
+   make join TARBALL=flip-trust-kit-<slot>-<date>.tar.gz KIT=<CODE> HUB=<env>   # MOCK_PACS=1 on a test node
+   make selftest
 
-``aks-join`` unpacks the tarball under ``build/kits/``, installs the kit file as
+``join`` unpacks the tarball under ``aks/build/kits/``, installs the kit file as
 ``trust/.env.<CODE>.<env>``, generates the chart's ``values-secrets.yaml`` from it and puts the FL
 kit in a Secret, because a managed node can be replaced at any time. A Flower kit's Secret holds only
 ``ca.crt`` and the slot's own SuperNode credential: the tarball's ``certificates/`` also carries the
@@ -117,7 +120,7 @@ The chart loads no OMOP core vocabulary: it is licensed, so each site loads its 
 :ref:`onprem-core-vocabulary` describes. Until then, cohort queries that name concepts through
 ``omop.concept`` return nothing, so test with a query that does not.
 
-``aks-selftest`` runs the VM self-test's checks against the release
+``selftest`` runs the VM self-test's checks against the release
 and writes its report under ``build/selftest/`` at the repo root; it needs no hub. The trust has joined when its
 heartbeat is answered:
 
@@ -129,20 +132,20 @@ heartbeat is answered:
 Operate and remove
 ******************
 
-- ``make aks-stop`` stops the node billing; ``make aks-start`` starts it and admits your current
-  IP. After your IP changes, ``make aks-allow-ip`` admits the new one.
-- ``make aks-deploy KIT=<CODE> HUB=<env>`` redeploys or upgrades from the installed kit.
-- ``make aks-destroy`` (with the same ``SUBNET_ID``) removes the cluster and its network and keeps
+- ``make stop`` stops the node billing; ``make start`` starts it and admits your current
+  IP. After your IP changes, ``make allow-ip`` admits the new one.
+- ``make deploy KIT=<CODE> HUB=<env>`` redeploys or upgrades from the installed kit.
+- ``make destroy`` (with the same ``SUBNET_ID``) removes the cluster and its network and keeps
   the bootstrap layer;
-  ``make destroy-bootstrap`` refuses while the cluster or a VM exists.
+  ``make destroy-bootstrap``, in the directory above, refuses while the cluster or a VM exists.
 
 ***************
 Troubleshooting
 ***************
 
-- **kubectl times out or is refused.** Your IP has changed: ``make aks-allow-ip``.
+- **kubectl times out or is refused.** Your IP has changed: ``make allow-ip``.
 - **Pods stay Pending while the node is full of dcm2niix Jobs.** Jobs created before the
-  conversion cap still request a CPU each. ``make aks-clear-jobs`` selects the Jobs whose pod
+  conversion cap still request a CPU each. ``make clear-jobs`` selects the Jobs whose pod
   template carries a CPU limit at all (the capped registration sets none), lists them and deletes
   them once you type ``yes``. Then relaunch dcm2niix on those scans from XNAT
   (``trust/deploy/helm/TROUBLESHOOTING.md`` §2.3d).

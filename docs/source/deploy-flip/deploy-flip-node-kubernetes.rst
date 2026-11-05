@@ -287,8 +287,9 @@ with ``flClient.kit.source=secret`` (FLIP#1390):
   moves PGDATA back to the volume root (both databases crash-loop) and looks for the kit on the node (the FL client
   stays ``Pending``).
 - On EKS the overlay is ``values-eks.yaml`` (the same settings, for the EBS CSI default class). The
-  :doc:`EKS root <deploy-flip-node-aws-eks>` creates the cluster and runs both steps for you with ``make join``;
-  the :doc:`AKS root <deploy-flip-node-azure-aks>` does the same with ``make aks-join``.
+  :doc:`EKS root <deploy-flip-node-aws-eks>` creates the cluster and runs both steps for you with
+  ``make -C trust/deploy/terraform/aws/eks join``; the :doc:`AKS root <deploy-flip-node-azure-aks>` does the same
+  with ``make -C trust/deploy/terraform/azure/aks join``.
 - The overlays live beside the chart in the repository, not in the packaged chart, so a deploy from a chart tarball
   passes a checkout's copy by path.
 - ``kit-secret`` makes one key per mounted file in ``<release>-flip-trust-fl-kit``. It refuses a kit missing its

@@ -130,12 +130,14 @@ Build the node and test it
    SUBNET=<subnet resource id>   # the site's subnet; leave empty for a standalone node (see below)
 
    make bootstrap AZ_SUBSCRIPTION="$SUB" STATE_SA=<unique storage name> ALERT_EMAIL=<you>   # once
+   cd vm
    make init      AZ_SUBSCRIPTION="$SUB"
    make plan      AZ_SUBSCRIPTION="$SUB" LOCATION=$REGION SUBNET_ID=$SUBNET
    make apply     AZ_SUBSCRIPTION="$SUB"      # shows the plan and the subscription, asks for yes
    make status    AZ_SUBSCRIPTION="$SUB"      # repeat until "provisioned: <time>"
 
-``init`` can be refused with a 403 for a minute or two after ``bootstrap``, while Azure applies
+The node's commands run in ``vm/``; only ``bootstrap`` and ``destroy-bootstrap`` run in the directory above, because
+the AKS cluster shares that layer. ``init`` can be refused with a 403 for a minute or two after ``bootstrap``, while Azure applies
 your access to the new state storage; run it again. First boot takes a few minutes.
 
 The VM is built from Canonical's latest Ubuntu 24.04 image (``image_version = "latest"``). To record
@@ -220,7 +222,7 @@ Operate and remove
   plus the NAT gateway on a standalone node). The VM also shuts itself down at 19:00 UK time by default.
 - ``make destroy`` (with the same ``SUBNET_ID``) removes the node, its network and the kit drop,
   and keeps the bootstrap layer;
-  ``make destroy-bootstrap`` removes the rest and refuses while a node exists.
+  ``make destroy-bootstrap``, in the directory above, removes the rest and refuses while a node or a cluster exists.
 
 ***************
 Troubleshooting
