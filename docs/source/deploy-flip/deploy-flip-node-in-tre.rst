@@ -372,6 +372,9 @@ are what a TRE's output-checking policy has to account for:
 - A training run produces one update per round (tens to hundreds of them) rather than one
   output per project.
 
+How an output checker should assess a trained model before it leaves a TRE is still being agreed across UK TREs:
+`UK TRE federation landscape`_ summarises the consensus work under way.
+
 `SATRE v2.0.1 <https://satre-specification.readthedocs.io/en/v2.0.1/specification.html#satre-3-3-07>`_
 addresses this case directly. Requirement **3.3.07** (Mandatory) asks a TRE for a documented
 policy covering outputs that cannot be manually checked, and names trained model weights as its
@@ -564,6 +567,30 @@ Related projects include
 around workflow outputs) and
 `SACRO <https://github.com/AI-SDC/ACRO>`_ (which provides semi-automated output checking
 tools, including an ML extension for attack simulation against trained models).
+
+HDR UK's webinar
+`Can the Model Leave the Room? <https://youtu.be/Y39EWYesWeY>`_
+(3 Nov 2026), by the SACRO and SDC-Reboot teams, launched a Delphi consensus process on when a trained model may
+leave a TRE, to give output checkers shared guidance. Its draft, still under consultation, groups models by what they
+do rather than by algorithm:
+
+- Models that compare a new input with stored training data (k-nearest neighbours, support vector machines) may not
+  be released.
+- Sequence-based and generative models, fine-tuned language models among them, may not be released for now.
+- Models that make an independent prediction for each input (regression, classification, segmentation) may be
+  released after checks.
+
+It also sets out three levels of egress. Metrics only are checked with standard statistical disclosure control. A
+whole model sent to an access-controlled server needs attack checks, query limits, auditing and a way to recall it.
+A model released openly must pass checks for its category: a segmentation model, for example, needs
+membership-inference resistance no better than chance and training with a differentially private optimiser. The
+checks build on `SACRO-ML <https://github.com/AI-SDC/SACRO-ML>`_.
+
+Three points bear on FLIP. Federated evaluation returns metrics only, so it falls in the first level. Federated
+training is not yet covered: the draft assumes one egress event per model, not an update every round. And a model
+trained with FLIP's FLARE update reduction would not meet the open-release checks as drafted, because that reduction
+is not differential privacy; the Flower backend's formal mechanism ships with demonstration settings
+(`What these controls do not do`_).
 
 FLIP's TRE deployment model aligns with this direction. As TREvolution matures, its Patterns
 framework could formalise different egress rules for different federated workflows (for
