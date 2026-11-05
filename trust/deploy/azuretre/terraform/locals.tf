@@ -18,12 +18,14 @@ locals {
   short_workspace_id             = substr(var.workspace_id, -4, -1)
   workspace_resource_name_suffix = "${var.tre_id}-ws-${local.short_workspace_id}"
   service_resource_name_suffix   = "${var.tre_id}-ws-${local.short_workspace_id}-svc-${local.short_service_id}"
-  storage_name                   = lower(replace("stg${substr(local.workspace_resource_name_suffix, -8, -1)}", "-", ""))
   vm_name                        = "flipnode${local.short_service_id}"
+  # The kit drop's own account: 3-24 lowercase letters and digits.
+  kit_storage_name = substr(lower(replace("stfk${var.tre_id}${local.short_workspace_id}${local.short_service_id}", "-", "")), 0, 24)
 
   vm_sizes      = yamldecode(file("${path.module}/../porter.yaml"))["custom"]["vm_sizes"]
   fl_server_ips = jsondecode(base64decode(var.fl_server_ip_addresses))
-  kit_drop_url  = "${trimsuffix(data.azurerm_storage_account.ws.primary_blob_endpoint, "/")}/${azurerm_storage_container.kits.name}"
+  # Public cloud, as flip-node's own token request (resource=https://storage.azure.com/) is.
+  kit_drop_url = "https://${local.kit_storage_name}.blob.core.windows.net/${azurerm_storage_container.kits.name}"
 
   # FLIP's Azure VM choices (trust/deploy/terraform/azure/vm).
   admin_username    = "azureuser"

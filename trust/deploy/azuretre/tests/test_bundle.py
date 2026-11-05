@@ -34,6 +34,8 @@ HUB_TOKEN = "{{ resource.properties.hub_api_hostname }}"
 FL_IPS_TOKEN = "{{ resource.properties.fl_server_ip_addresses }}"
 FL_PORT_TOKEN = "{{ resource.properties.fl_port }}"
 HOST = re.compile(r"``([a-z0-9*][a-z0-9.*-]*\.[a-z]+)``")
+FLIP_HUBS = ["app.flip.aicentre.co.uk", "stag.flip.aicentre.co.uk"]
+UBUNTU_MIRRORS = {"azure.archive.ubuntu.com", "archive.ubuntu.com", "security.ubuntu.com"}
 
 
 def _porter() -> dict:
@@ -154,10 +156,18 @@ def test_vm_sizes_match_the_schema():
     assert prop["default"] == next(p["default"] for p in _porter()["parameters"] if p["name"] == "vm_size")
 
 
-def test_schema_declares_address_space_for_the_api_to_allocate():
-    # The TRE API allocates a subnet range only for a template whose schema has address_space.
-    assert "address_space" in _schema()["properties"]
-    assert _schema()["pipeline"]["install"][0]["resourceType"] == "workspace"
+def test_address_space_is_only_ever_allocated_by_the_tre():
+    # The TRE API allocates a range only for a template whose schema has address_space, and replaces
+    # any given value unless address_space_size is "custom". AzureTRE rejects properties a template
+    # does not declare, so leaving address_space_size out means no one can ask for "custom": every
+    # firewall rule's source is a range the TRE chose.
+    schema = _schema()
+    prop = schema["properties"]["address_space"]
+    assert "address_space_size" not in schema["properties"]
+    assert '"custom"' not in (BUNDLE_DIR / "template_schema.json").read_text()
+    assert prop.get("updateable", False) is False
+    assert schema["uiSchema"]["address_space"] == {"classNames": "tre-hidden"}
+    assert schema["pipeline"]["install"][0]["resourceType"] == "workspace"
 
 
 def test_firewall_opens_before_the_vm_boots():
@@ -193,7 +203,7 @@ def test_app_rules_cover_every_https_host_in_the_egress_table():
         if port != "443":
             continue
         if destination.startswith("The hub URL"):
-            assert HUB_TOKEN in fqdns, "the hub's API hostname comes from the hub_api_hostname property"
+            assert {HUB_TOKEN} <= fqdns, "the hub's API hostname comes from the hub_api_hostname property"
             continue
         hosts = HOST.findall(destination)
         assert hosts, destination
@@ -202,15 +212,14 @@ def test_app_rules_cover_every_https_host_in_the_egress_table():
 
 def test_app_rules_cover_the_azure_vm_first_boot_hosts():
     hosts = _first_boot_hosts()
-    assert "github.com" in hosts, hosts
+    assert {"github.com"} <= hosts, hosts
     assert hosts <= _https_fqdns()
 
 
-def test_os_packages_are_allowed_over_http():
+def test_os_packages_are_allowed_over_http_to_ubuntu_mirrors_only():
     assert any(port == "80" for _, port in _egress_rows()), "the egress table lists OS packages on 80"
     http = [rule for rule in _app_rules() if rule["protocols"] == [{"port": "80", "type": "Http"}]]
-    assert http
-    assert all(fqdn.endswith("ubuntu.com") for rule in http for fqdn in rule["target_fqdns"])
+    assert {fqdn for rule in http for fqdn in rule["target_fqdns"]} == UBUNTU_MIRRORS
 
 
 def test_fl_rule_names_the_server_by_address():
@@ -218,8 +227,60 @@ def test_fl_rule_names_the_server_by_address():
     assert rule["destination_addresses"] == FL_IPS_TOKEN
     assert rule["destination_ports"] == [FL_PORT_TOKEN]
     assert "destination_fqdns" not in rule, "the TRE firewall runs no DNS proxy, so FQDNs in network rules fail"
-    assert _schema()["properties"]["fl_server_ip_addresses"]["items"] == {"type": "string", "format": "ipv4"}
-    assert _schema()["properties"]["fl_port"]["default"] == 8002
+    assert _schema()["properties"]["fl_server_ip_addresses"]["items"]["format"] == "ipv4"
+
+
+def test_destinations_are_flips_own_and_fixed_once_deployed():
+    # A workspace owner must not be able to point the TRE's egress allowlist anywhere else: the
+    # destinations are FLIP's hubs and ports, and changing one means a TRE admin reinstalling.
+    props = _schema()["properties"]
+    assert props["hub_api_hostname"]["enum"] == FLIP_HUBS
+    assert props["hub_api_hostname"]["default"] == "app.flip.aicentre.co.uk"
+    assert props["fl_port"]["enum"] == [8002, 8003]
+    assert props["fl_port"]["default"] == 8002
+    assert (props["fl_server_ip_addresses"]["minItems"], props["fl_server_ip_addresses"]["maxItems"]) == (1, 4)
+    for name in ("hub_api_hostname", "fl_server_ip_addresses", "fl_port"):
+        assert props[name]["updateable"] is False, name
+
+
+@pytest.mark.parametrize(
+    ("address", "allowed"),
+    [
+        ("198.51.100.10", True),
+        ("203.0.113.7", True),
+        ("11.0.0.1", True),
+        ("172.15.255.255", True),
+        ("172.32.0.1", True),
+        ("192.169.0.1", True),
+        ("169.253.1.1", True),
+        ("10.0.0.1", False),
+        ("172.16.0.1", False),
+        ("172.31.255.255", False),
+        ("192.168.0.1", False),
+        ("127.0.0.1", False),
+        ("169.254.169.254", False),
+        ("0.0.0.0", False),
+        ("256.1.1.1", False),
+        ("1.2.3", False),
+        ("fl.example.org", False),
+    ],
+)
+def test_fl_server_addresses_must_be_public_ipv4(address, allowed):
+    pattern = _schema()["properties"]["fl_server_ip_addresses"]["items"]["pattern"]
+    assert bool(re.fullmatch(pattern, address)) is allowed
+
+
+def test_only_the_node_may_read_the_kit_drop():
+    text = "\n".join(p.read_text() for p in TERRAFORM_DIR.glob("*.tf"))
+    assignments = re.findall(r'^resource "azurerm_role_assignment" "\w+" \{\n(.*?)^\}', text, re.MULTILINE | re.DOTALL)
+    assert len(assignments) == 1, "the template grants exactly one data role"
+    (body,) = assignments
+    assert re.search(r'^\s+role_definition_name\s+= "Storage Blob Data Reader"$', body, re.MULTILINE)
+    assert re.search(
+        r"^\s+principal_id\s+= azurerm_linux_virtual_machine\.node\.identity\[0\]\.principal_id$", body, re.MULTILINE
+    )
+    # Never the workspace's own storage account: AzureTRE's Guacamole VMs carry its key.
+    assert not re.search(r'data "azurerm_storage_account"', text)
 
 
 def test_cloud_init_writes_the_settings_flip_node_reads():

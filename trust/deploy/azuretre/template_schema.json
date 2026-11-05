@@ -61,46 +61,43 @@
     },
     "hub_api_hostname": {
       "type": "string",
-      "title": "Hub API hostname",
-      "description": "The hostname of the hub URL in your kit, without https://. Allowed through the TRE firewall on 443.",
-      "pattern": "^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$",
+      "title": "FLIP hub",
+      "description": "The host of the hub URL in your kit: production or staging. Fixed once deployed (a TRE admin reinstalls to change it).",
+      "enum": [
+        "app.flip.aicentre.co.uk",
+        "stag.flip.aicentre.co.uk"
+      ],
       "default": "app.flip.aicentre.co.uk",
-      "updateable": true
+      "updateable": false
     },
     "fl_server_ip_addresses": {
       "type": "array",
       "title": "FL server IP addresses",
-      "description": "The fixed IPv4 addresses of the hub's FL endpoint. Addresses, not a hostname: the TRE firewall resolves no names in network rules.",
+      "description": "The public IPv4 addresses of the hub's FL endpoint, from the FLIP team. Addresses, not a hostname: the TRE firewall resolves no names in network rules. Fixed once deployed.",
       "items": {
         "type": "string",
-        "format": "ipv4"
+        "format": "ipv4",
+        "pattern": "^(?!(?:0|10|127)\\.)(?!169\\.254\\.)(?!172\\.(?:1[6-9]|2[0-9]|3[01])\\.)(?!192\\.168\\.)(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$"
       },
       "minItems": 1,
-      "updateable": true
+      "maxItems": 4,
+      "updateable": false
     },
     "fl_port": {
       "type": "integer",
       "title": "FL port",
-      "description": "Your kit's FL port: 8002 on production, 8003 on staging.",
-      "minimum": 1,
-      "maximum": 65535,
-      "default": 8002,
-      "updateable": true
-    },
-    "address_space_size": {
-      "type": "string",
-      "title": "Address space size",
-      "description": "small: the TRE allocates a /24 for the node's subnet. custom: use the address space below.",
+      "description": "Your kit's FL port: 8002 on production, 8003 on staging. Fixed once deployed.",
       "enum": [
-        "small",
-        "custom"
+        8002,
+        8003
       ],
-      "default": "small"
+      "default": 8002,
+      "updateable": false
     },
     "address_space": {
       "type": "string",
       "title": "Address space",
-      "description": "The node subnet's address space. Read only with address space size custom; otherwise the TRE allocates it."
+      "description": "The node subnet's range. The TRE API allocates it: any value given is replaced."
     },
     "enable_shutdown_schedule": {
       "type": "boolean",
@@ -147,6 +144,9 @@
     }
   ],
   "uiSchema": {
+    "address_space": {
+      "classNames": "tre-hidden"
+    },
     "ui:order": [
       "display_name",
       "description",
@@ -157,8 +157,6 @@
       "fl_server_ip_addresses",
       "fl_port",
       "vm_size",
-      "address_space_size",
-      "address_space",
       "enable_shutdown_schedule",
       "*"
     ]
