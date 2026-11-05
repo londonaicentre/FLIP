@@ -72,13 +72,15 @@ variable "fl_server_ip_addresses" {
   type        = string
   description = "The FL server's IPv4 addresses: the base64 JSON list the resource processor passes for an array property"
 
-  # The schema's checks again: one to four public IPv4 addresses. A private, loopback, link-local or
-  # unspecified one would open the TRE firewall towards internal networks.
+  # The schema's checks again: one to four public IPv4 addresses. A private, shared (CGNAT), loopback,
+  # link-local, unspecified, benchmarking, multicast or reserved one, or Azure's platform address
+  # 168.63.129.16, would open the TRE firewall towards something that is not the hub.
   validation {
     condition = try(length(jsondecode(base64decode(var.fl_server_ip_addresses))) <= 4 && alltrue([
       for ip in jsondecode(base64decode(var.fl_server_ip_addresses)) :
       can(cidrhost("${ip}/32", 0)) && length(split(".", ip)) == 4 && !anytrue([
-        for net in ["0.0.0.0/8", "10.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16"] :
+        for net in ["0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "168.63.129.16/32", "169.254.0.0/16",
+        "172.16.0.0/12", "192.0.0.0/24", "192.168.0.0/16", "198.18.0.0/15", "224.0.0.0/4", "240.0.0.0/4"] :
         cidrhost("${ip}/${split("/", net)[1]}", 0) == cidrhost(net, 0)
       ])
     ]) && length(jsondecode(base64decode(var.fl_server_ip_addresses))) > 0, false)
