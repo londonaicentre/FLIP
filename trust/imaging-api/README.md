@@ -105,6 +105,12 @@ session folder, `simplified` and `legacy` reshape the folders below it. A zip wi
 lexically under `<accession_id>/`, is refused before anything is extracted (HTTP 500) and never marked complete. The
 check reads the member names, not the folder afterwards, because a re-download lands in an already-populated folder.
 
+`POST /download/images/{net_id}/stream` takes the same body and query and, after the same cache fill, answers with
+the cached study as an uncompressed tar rooted at `<accession_id>/` (`application/x-tar`, the cache's sentinels left
+out) instead of a path. It is for a client with no mount of the net's images folder, such as an NVFLARE job pod on
+Kubernetes (FLIP#1049): flip-utils uses it when `IMAGES_TRANSPORT=stream` and extracts the tar into the job's own
+directory.
+
 ### Imaging
 
 Interfaces with XNAT's DICOM Query-Retrieve (DQR) plugin. Full DQR API docs available at
@@ -231,6 +237,10 @@ leaves it in place and fails the request.
 
 A missing resource is created with the first file, and a missing `scan_id` with the type of the session's first
 scan; in a session with no scans, the upload fails.
+
+`PUT /upload/images/{net_id}/files` is the multipart twin for a client with no mount of the net's upload folder
+(FLIP#1049): the same fields as form data, the files themselves as `files` parts. They are staged under
+`<net_id>/upload/<request id>/` for the upload and removed afterwards.
 
 ### Users
 

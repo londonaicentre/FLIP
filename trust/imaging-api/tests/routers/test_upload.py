@@ -34,7 +34,7 @@ _EXPERIMENT_WITH_SCAN1 = {
 
 
 def test_upload_data_rejects_a_project_id_that_fails_authentication(client):
-    with patch("imaging_api.routers.upload.decrypt", side_effect=InvalidTag()):
+    with patch("imaging_api.routers.download.decrypt", side_effect=InvalidTag()):
         response = client.put("/upload/images/net1", json=_REQUEST_BODY)
 
     assert response.status_code == 400
@@ -43,7 +43,7 @@ def test_upload_data_rejects_a_project_id_that_fails_authentication(client):
 
 def test_upload_data_rejects_a_malformed_envelope(client):
     with patch(
-        "imaging_api.routers.upload.decrypt", side_effect=ValueError("Payload is not a FLIP encryption envelope")
+        "imaging_api.routers.download.decrypt", side_effect=ValueError("Payload is not a FLIP encryption envelope")
     ):
         response = client.put("/upload/images/net1", json=_REQUEST_BODY)
 
@@ -53,7 +53,7 @@ def test_upload_data_rejects_a_malformed_envelope(client):
 
 def test_upload_data_success(client):
     with (
-        patch("imaging_api.routers.upload.decrypt", return_value="decrypted-project-id"),
+        patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),
         patch(
             "imaging_api.routers.upload.upload_data_to_xnat",
             new_callable=AsyncMock,
@@ -67,7 +67,7 @@ def test_upload_data_success(client):
 
 
 def test_upload_data_decrypt_failure(client):
-    with patch("imaging_api.routers.upload.decrypt", side_effect=Exception("bad key")):
+    with patch("imaging_api.routers.download.decrypt", side_effect=Exception("bad key")):
         response = client.put("/upload/images/net1", json=_REQUEST_BODY)
 
     assert response.status_code == 500
@@ -118,7 +118,7 @@ def test_upload_data_rejects_resource_id_traversal_before_service_call(client):
 
 def test_upload_data_not_found(client):
     with (
-        patch("imaging_api.routers.upload.decrypt", return_value="decrypted-project-id"),
+        patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),
         patch(
             "imaging_api.routers.upload.upload_data_to_xnat",
             new_callable=AsyncMock,
@@ -133,7 +133,7 @@ def test_upload_data_not_found(client):
 
 def test_upload_data_invalid_request(client):
     with (
-        patch("imaging_api.routers.upload.decrypt", return_value="decrypted-project-id"),
+        patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),
         patch(
             "imaging_api.routers.upload.upload_data_to_xnat",
             new_callable=AsyncMock,
@@ -148,7 +148,7 @@ def test_upload_data_invalid_request(client):
 
 def test_upload_data_server_error(client):
     with (
-        patch("imaging_api.routers.upload.decrypt", return_value="decrypted-project-id"),
+        patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),
         patch(
             "imaging_api.routers.upload.upload_data_to_xnat",
             new_callable=AsyncMock,
@@ -169,7 +169,7 @@ def test_upload_data_rejected_xnat_put_is_an_error_not_a_url(client, tmp_path):
     (upload_dir / "scan.nii").write_bytes(b"nifti-data")
 
     with (
-        patch("imaging_api.routers.upload.decrypt", return_value="decrypted-project-id"),
+        patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),
         patch("imaging_api.services.upload.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)),
         patch("imaging_api.services.upload.get_project_from_central_hub_project_id", return_value=MagicMock(ID="P")),
         # SCAN1 already exists, so the upload sends no scan PUT and requests.put sees only the file.
@@ -196,7 +196,7 @@ def test_upload_data_file_xnat_kept_is_an_error_and_leaves_the_download_cache(cl
     kept.headers["Content-Type"] = "text/html"
 
     with (
-        patch("imaging_api.routers.upload.decrypt", return_value="decrypted-project-id"),
+        patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),
         patch("imaging_api.services.upload.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)),
         patch("imaging_api.services.upload.get_project_from_central_hub_project_id", return_value=MagicMock(ID="P")),
         # SCAN1 already exists, so the upload sends no scan PUT and requests.put sees only the file.
@@ -219,7 +219,7 @@ def test_upload_into_a_new_scan_of_a_session_without_scans_is_a_server_error(cli
     empty_session = {"items": [{"data_fields": {"subject_ID": "SUBJ1"}, "children": []}]}
 
     with (
-        patch("imaging_api.routers.upload.decrypt", return_value="decrypted-project-id"),
+        patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),
         patch("imaging_api.services.upload.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)),
         patch("imaging_api.services.upload.get_project_from_central_hub_project_id", return_value=MagicMock(ID="P")),
         patch("imaging_api.services.upload.get_experiment", return_value=empty_session),

@@ -10,18 +10,18 @@
 # limitations under the License.
 #
 
+import shutil
 from typing import Annotated
 
-from cryptography.exceptions import InvalidTag
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
+from pydantic import ValidationError
 
+from imaging_api.routers.download import open_project_id
 from imaging_api.routers.schemas import UploadDataRequest
-from imaging_api.services.upload import upload_data_to_xnat
+from imaging_api.services.upload import stage_uploads, upload_data_to_xnat
 from imaging_api.utils.auth import get_xnat_auth_headers
-from imaging_api.utils.encryption import PROJECT_ID_CONTEXT, decrypt
 from imaging_api.utils.exceptions import NotFoundError
 from imaging_api.utils.internal_auth import authenticate_internal_service
-from imaging_api.utils.logger import logger
 
 # Create router
 router = APIRouter(prefix="/upload", tags=["Upload"], dependencies=[Depends(authenticate_internal_service)])
@@ -46,23 +46,7 @@ async def upload_data(net_id: str, request_data: UploadDataRequest, headers: XNA
     Raises:
         HTTPException: If there is an error during the upload process or if the request cannot be processed.
     """
-    # Decrypt project ID
-    logger.info("Trying to decrypt Central Hub Project ID")
-    try:
-        central_hub_project_id = decrypt(request_data.encrypted_central_hub_project_id, context=PROJECT_ID_CONTEXT)
-    except InvalidTag:
-        # The caller's own payload is bad (tampered, sealed for another purpose, or the hub's
-        # AES_KEY_BASE64 is not this trust's): a 400 that says so, not a 500 with an empty reason.
-        logger.error("Central Hub project id failed authentication")
-        raise HTTPException(status_code=400, detail="Central Hub project id failed authentication")
-    except (ValueError, KeyError) as e:
-        logger.error(f"Central Hub project id is not a valid envelope: {e}")
-        raise HTTPException(status_code=400, detail=f"Central Hub project id is not a valid envelope: {e}")
-    except Exception as e:
-        # Not the caller's payload: a key that cannot be loaded, or a fault in the cipher itself.
-        # Name the type so an empty exception message never yields a blank reason.
-        logger.exception(f"Failed to decrypt Central Hub project id ({type(e).__name__}): {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to decrypt Central Hub project id ({type(e).__name__})")
+    central_hub_project_id = open_project_id(request_data.encrypted_central_hub_project_id)
 
     try:
         uploaded_files = await upload_data_to_xnat(
@@ -82,3 +66,53 @@ async def upload_data(net_id: str, request_data: UploadDataRequest, headers: XNA
         raise HTTPException(status_code=400, detail=f"Invalid upload request: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload files: {str(e)}")
+
+
+@router.put("/images/{net_id}/files", summary="Upload files to XNAT")
+async def upload_files(
+    net_id: str,
+    headers: XNATAuthHeaders,
+    files: list[UploadFile],
+    encrypted_central_hub_project_id: Annotated[str, Form()],
+    accession_id: Annotated[str, Form()],
+    scan_id: Annotated[str, Form()],
+    resource_id: Annotated[str, Form()],
+    exist_ok: Annotated[bool, Form()] = False,
+) -> list[str]:
+    """
+    The route above for a client with no mount of the net's upload folder (FLIP#1049): the files travel in the
+    request, are staged under ``<net>/upload/<request id>/`` for the upload, and are removed afterwards.
+
+    Args:
+        net_id (str): The FL net ID.
+        headers (XNATAuthHeaders): The XNAT authentication headers.
+        files (list[UploadFile]): The files to upload, each by its own name.
+        encrypted_central_hub_project_id (str): The hub's sealed project id.
+        accession_id (str): The XNAT experiment label.
+        scan_id (str): The scan to upload into, created if missing.
+        resource_id (str): The resource to upload into, created if missing.
+        exist_ok (bool): Whether to replace a file of the same name already in the resource.
+
+    Returns:
+        list[str]: List of URLs of the uploaded files.
+    """
+    try:
+        staging_dir, relative_paths = await stage_uploads(net_id, files)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid upload request: {str(e)}")
+    try:
+        request_data = UploadDataRequest(
+            encrypted_central_hub_project_id=encrypted_central_hub_project_id,
+            accession_id=accession_id,
+            scan_id=scan_id,
+            resource_id=resource_id,
+            files=relative_paths,
+            exist_ok=exist_ok,
+        )
+    except ValidationError as e:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise HTTPException(status_code=422, detail=e.errors(include_url=False, include_context=False))
+    try:
+        return await upload_data(net_id, request_data, headers)
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
