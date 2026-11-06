@@ -12,6 +12,7 @@
 
 from nvflare.apis.event_type import EventType
 from nvflare.apis.fl_component import FLComponent
+from nvflare.apis.fl_constant import FLContextKey
 from nvflare.apis.fl_context import FLContext
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
@@ -126,6 +127,28 @@ class ServerEventHandler(FLComponent):
             event_type=event,
             global_round=current_round + 1,
             details=details,
+        )
+
+    def _report_lost_client(self, fl_ctx: FLContext) -> None:
+        """Tell the hub which trust FLARE lost during the run, and in which round (FLIP#1428).
+
+        FLARE deems a client disconnected when it stops answering for this job, for example because the
+        trust could not start its job pod. The job then ends with a bare ERROR, so this row is what says
+        which trust and when. The client knows the exact cause but holds no hub credentials.
+
+        Args:
+            fl_ctx (FLContext): The FL context carrying the disconnected client's name.
+        """
+        client_name = fl_ctx.get_prop(FLContextKey.DISCONNECTED_CLIENT_NAME)
+        if not client_name:
+            return
+        current_round = fl_ctx.get_prop(AppConstants.CURRENT_ROUND)
+        self.flip.send_event(
+            model_id=self._resolve_model_id(fl_ctx),
+            event_type=FLLogEvent.CLIENT_LOST,
+            global_round=None if current_round is None else current_round + 1,
+            client_name=client_name,
+            success=False,
         )
 
     def _expected_client_count(self, fl_ctx: FLContext) -> int | None:
@@ -257,6 +280,9 @@ class ServerEventHandler(FLComponent):
         elif event_type == FlipEvents.ABORTED:
             self.log_info(fl_ctx, "Aborted event received")
             self.final_status = ModelStatus.STOPPED
+
+        elif event_type == EventType.CLIENT_DISCONNECTED:
+            self._report_lost_client(fl_ctx)
 
         elif event_type == EventType.START_RUN:
             self.log_info(fl_ctx, "Start run event received")
