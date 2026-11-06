@@ -1,0 +1,110 @@
+{
+  "schemaType": "ParameterSet",
+  "schemaVersion": "1.0.1",
+  "namespace": "",
+  "name": "tre-service-flip-node",
+  "parameters": [
+    {
+      "name": "id",
+      "source": {
+        "env": "ID"
+      }
+    },
+    {
+      "name": "tre_id",
+      "source": {
+        "env": "TRE_ID"
+      }
+    },
+    {
+      "name": "workspace_id",
+      "source": {
+        "env": "WORKSPACE_ID"
+      }
+    },
+    {
+      "name": "workspace_subscription_id",
+      "source": {
+        "env": "WORKSPACE_SUBSCRIPTION_ID"
+      }
+    },
+    {
+      "name": "address_space",
+      "source": {
+        "env": "ADDRESS_SPACE"
+      }
+    },
+    {
+      "name": "flip_release",
+      "source": {
+        "env": "FLIP_RELEASE"
+      }
+    },
+    {
+      "name": "fl_backend",
+      "source": {
+        "env": "FL_BACKEND"
+      }
+    },
+    {
+      "name": "vm_size",
+      "source": {
+        "env": "VM_SIZE"
+      }
+    },
+    {
+      "name": "fl_server_ip_addresses",
+      "source": {
+        "env": "FL_SERVER_IP_ADDRESSES"
+      }
+    },
+    {
+      "name": "fl_port",
+      "source": {
+        "env": "FL_PORT"
+      }
+    },
+    {
+      "name": "enable_shutdown_schedule",
+      "source": {
+        "env": "ENABLE_SHUTDOWN_SCHEDULE"
+      }
+    },
+    {
+      "name": "shutdown_time",
+      "source": {
+        "env": "SHUTDOWN_TIME"
+      }
+    },
+    {
+      "name": "shutdown_timezone",
+      "source": {
+        "env": "SHUTDOWN_TIMEZONE"
+      }
+    },
+    {
+      "name": "tfstate_container_name",
+      "source": {
+        "env": "TERRAFORM_STATE_CONTAINER_NAME"
+      }
+    },
+    {
+      "name": "tfstate_resource_group_name",
+      "source": {
+        "env": "MGMT_RESOURCE_GROUP_NAME"
+      }
+    },
+    {
+      "name": "tfstate_storage_account_name",
+      "source": {
+        "env": "MGMT_STORAGE_ACCOUNT_NAME"
+      }
+    },
+    {
+      "name": "arm_environment",
+      "source": {
+        "env": "ARM_ENVIRONMENT"
+      }
+    }
+  ]
+}

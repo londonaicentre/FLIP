@@ -286,11 +286,11 @@ On AzureTRE
 FLIP has not yet been deployed on an `AzureTRE <https://github.com/microsoft/AzureTRE>`_. These notes come from
 reading AzureTRE v0.29.1 (September 2026) and cover what differs from the requirements above.
 
-- **The host comes from a template you register.** A workspace runs only what a registered template deploys, and
-  FLIP does not ship one. The nearest starting point is AzureTRE's Guacamole Linux VM user resource
-  (``templates/workspace_services/guacamole/user_resources/guacamole-azure-linuxvm``), which already installs
-  Docker from cloud-init on Ubuntu 22.04; a workspace service of its own is the longer-lived option. FLIP's Azure
-  VM Terraform (:doc:`deploy-flip-node-azure`) does not drop in, because it creates its own network and kit drop.
+- **The host comes from a template you register.** A workspace runs only what a registered template deploys. FLIP
+  has a draft workspace service template, :gh:`trust/deploy/azuretre <trust/deploy/azuretre/README.md>`, not yet
+  deployed on an AzureTRE: it gives the node its own subnet, network rules and firewall rules, and installs the
+  ``flip-node`` helper FLIP's Azure VM uses. FLIP's Azure VM Terraform (:doc:`deploy-flip-node-azure`) does not drop
+  in, because it creates its own network and kit drop.
 - **Open the FL port at both layers.** A workspace's network security group allows outbound internet traffic on
   443 only, so the kit's FL port (8002 on production, 8003 on staging) needs an outbound NSG rule as well as a
   firewall rule. The firewall runs no DNS proxy, so that rule names the FL endpoint's fixed IP addresses, not its
