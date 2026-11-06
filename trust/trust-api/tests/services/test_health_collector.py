@@ -466,8 +466,30 @@ async def test_collect_once_names_the_fl_client_image_when_the_deploy_says_which
     ):
         snapshot = await collect_once(mock_client)
 
-    assert snapshot["services"]["fl-client"] == {"status": "unknown", "version": "sha-abc1234", "response_ms": None}
+    assert snapshot["services"]["fl-client"] == {
+        "status": "unknown",
+        "version": "sha-abc1234",
+        "response_ms": None,
+        "job_mode": "process",
+    }
     assert set(snapshot["services"].keys()) == ROSTER | {"fl-client"}
+
+
+@pytest.mark.asyncio
+async def test_collect_once_says_when_each_fl_job_runs_in_a_pod_of_its_own(monkeypatch):
+    """The chart with NVFLARE job pods sets the mode; the hub needs it before two jobs share a net (FLIP#1739)."""
+    monkeypatch.setattr(health_collector, "FL_CLIENT_IMAGE_TAG", "sha-abc1234")
+    monkeypatch.setattr(health_collector, "FL_CLIENT_JOB_MODE", "pods")
+    mock_client = AsyncMock()
+    mock_client.get.return_value = _response(200, {"status": "ok", "successful": True, "pingTime": 5})
+
+    with patch(
+        "trust_api.services.health_collector.asyncio.open_connection",
+        side_effect=ConnectionRefusedError("refused"),
+    ):
+        snapshot = await collect_once(mock_client)
+
+    assert snapshot["services"]["fl-client"]["job_mode"] == "pods"
 
 
 @pytest.mark.asyncio

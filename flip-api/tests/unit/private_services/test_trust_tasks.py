@@ -367,6 +367,24 @@ def test_heartbeat_with_body_persists_services_and_stamps_server_time(mock_auth,
     app.dependency_overrides.pop(get_session, None)
 
 
+@pytest.mark.parametrize("job_mode", ["pods", "process", "a-future-mode", "k8s-pods2"])
+def test_heartbeat_stores_the_fl_client_job_mode_and_leaves_other_entries_as_sent(mock_auth, mock_trust, job_mode):
+    """The fl-client entry's job_mode is stored, any well-formed mode included, so a newer trust's new mode does not
+    cost it its whole snapshot; entries without one are stored exactly as sent (FLIP#1739)."""
+    body = _snapshot_body()
+    body["services"]["fl-client"] = {"status": "unknown", "version": "sha-abc1234", "job_mode": job_mode}
+    mock_db = MagicMock()
+    app.dependency_overrides[get_session] = lambda: mock_db
+
+    response = client.post("/api/trust/heartbeat", json=body)
+
+    assert response.status_code == 200
+    assert mock_trust.services_health["fl-client"]["job_mode"] == job_mode
+    assert {k: v for k, v in mock_trust.services_health.items() if k != "fl-client"} == _snapshot_body()["services"]
+
+    app.dependency_overrides.pop(get_session, None)
+
+
 @pytest.mark.parametrize(
     ("mutate", "reason"),
     [
@@ -380,6 +398,8 @@ def test_heartbeat_with_body_persists_services_and_stamps_server_time(mock_auth,
         (lambda b: b["services"]["xnat"].update(version="v" * 65), "version over 64 chars"),
         (lambda b: b["services"]["xnat"].update(response_ms=-1), "negative response_ms"),
         (lambda b: b["services"]["xnat"].update(response_ms=1_000_001), "response_ms over cap"),
+        (lambda b: b["services"]["xnat"].update(job_mode="m" * 17), "job_mode over 16 chars"),
+        (lambda b: b["services"]["xnat"].update(job_mode="<pods>"), "job_mode with markup"),
         (lambda b: b.pop("services"), "body present but services missing"),
         (lambda b: b.update(services={}), "empty snapshot (would overwrite a good one and stamp it fresh)"),
     ],
