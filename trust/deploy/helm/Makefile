@@ -113,6 +113,11 @@ $(if $(KIT),$(call kit_hint,$(patsubst $(REPO_ROOT)/%,%,$(KIT_FILE))))
 # waits — raise this too, or the extra budget is unreachable.
 HELM_TIMEOUT ?= 30m
 
+# GNU make runs any recipe line whose text contains "$(MAKE)" even under -n, so a sub-target
+# spelled that way would make `make -n deploy` deploy for real. Indirecting through a variable
+# keeps the recursion without that flag; `make -n` then prints the step like any other line.
+SUBMAKE := $(MAKE)
+
 # Determine which values files to pass
 VALUES_OPTS := -f $(VALUES_FILE)
 ifneq ($(strip $(SECRETS_FILE)),)
@@ -242,7 +247,25 @@ deploy: preflight ## Deploy the Helm chart to the cluster
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
 		--timeout $(HELM_TIMEOUT) \
-		$(VALUES_OPTS)
+		--set xnat.initJob.enabled=false \
+		$(VALUES_OPTS) \
+		|| { $(SUBMAKE) --no-print-directory failing-hooks; exit 1; }
+	@python3 $(CHART_DIR)/scripts/rollout_wait.py \
+		--namespace $(NAMESPACE) --release $(RELEASE_NAME) \
+		--timeout $(HELM_TIMEOUT) --kubectl "$(KUBECTL)" \
+		|| { $(SUBMAKE) --no-print-directory failing-hooks; exit 1; }
+	@$(SUBMAKE) --no-print-directory xnat-init || { \
+		printf '\033[0;33m%s\033[0m\n' \
+			"⚠️  the release is live and rolled out, but xnat-init did not complete (see #565)." \
+			"⚠️  Re-run: make -C trust/deploy/helm xnat-init (raise HELM_TIMEOUT if it just needed longer)."; \
+		exit 3; }
+
+# Helm records every hook's outcome for the current revision, so when the upgrade fails the
+# operator is told which one failed instead of reading the whole output. Best-effort: a cluster
+# that cannot be read prints nothing and never changes the exit code of the caller.
+failing-hooks: ## Name the post-upgrade hooks that did not succeed on the current revision
+	-@$(HELM) status $(RELEASE_NAME) --namespace $(NAMESPACE) -o json 2>/dev/null \
+		| python3 $(CHART_DIR)/scripts/failing_hooks.py 2>/dev/null
 
 undeploy: ## Remove the Helm release from the cluster
 	$(HELM) uninstall $(RELEASE_NAME) --namespace $(NAMESPACE)
@@ -262,8 +285,10 @@ ifdef KIT
 	$(MAKE) sync-kit-override KIT=$(KIT)
 	@rc=0; \
 	$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml || rc=$$?; \
-	if [ $$rc -ne 0 ]; then \
-		echo "⚠️  deploy returned non-zero ($$rc) — often a non-fatal post-install hook (e.g. xnat-init — see #565), but it may be a genuine Helm failure. Patching per-trust secrets first so trust-api gets the correct key and does not poll with the stale seed key (#595), then re-exiting with the deploy status."; \
+	if [ $$rc -eq 3 ]; then \
+		echo "⚠️  the release is live but xnat-init did not complete (see #565). Patching per-trust secrets, then re-exiting 3."; \
+	elif [ $$rc -ne 0 ]; then \
+		echo "❌ deploy failed ($$rc). Patching per-trust secrets first so trust-api gets the correct key and does not poll with the stale seed key (#595), then re-exiting with the deploy status."; \
 	fi; \
 	$(MAKE) patch-kit-secrets KIT=$(KIT); \
 	exit $$rc
@@ -392,28 +417,39 @@ clean: ## Clean up rendered output
 # This target then reads trust/.env.<KIT>.<env>, patches the per-trust keys into the
 # chart's Kubernetes Secret, and writes a secret-free Helm override. Then deploy with
 # `make up OVERRIDES_FILE=k8s-trust-<KIT>.yaml`. Env from $(HUB).
-xnat-init: ## Run the XNAT post-install init job manually (use after XNAT web is ready, when initJob.enabled=false)
-	@# An earlier Job (a manual run, or a hook that failed) would make the apply "unchanged" and the
-	@# wait return at once, without running the configuration again.
-	@$(KUBECTL) delete job -n $(NAMESPACE) --selector app.kubernetes.io/component=xnat-init \
-		--ignore-not-found --cascade=foreground --timeout=$(HELM_TIMEOUT)
+xnat-init: ## Run the XNAT post-install init job (a no-op when xnat.enabled=false)
+	@# One shell for the whole target: the "nothing to do" case must skip the wait too, and a
+	@# bare `exit 0` in one recipe line would only end that line.
+	@# Render first and look, because with `xnat.enabled=false` the chart renders no init Job at
+	@# all (templates/xnat-init-job.yaml is guarded on both). `kubectl apply --selector` is then
+	@# handed zero objects and fails with "no objects passed to apply", which turned a deploy of a
+	@# trust that has no XNAT to configure into exit 3.
 	@echo "▶  Rendering XNAT init job from chart templates..."
-	@$(HELM) template $(RELEASE_NAME) $(CHART_DIR) \
+	@tmp=$$(mktemp); \
+	trap 'rm -f "$$tmp"' EXIT; \
+	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
 		$(VALUES_OPTS) \
-		--set xnat.initJob.enabled=true \
-		| $(KUBECTL) apply -n $(NAMESPACE) -f - \
-		--selector app.kubernetes.io/component=xnat-init
-	@echo "⏳  Waiting for xnat-init job to complete (timeout $(HELM_TIMEOUT))..."
-	@$(KUBECTL) wait job \
+		--set xnat.initJob.enabled=true > $$tmp; \
+	if ! grep -q 'app.kubernetes.io/component: xnat-init' $$tmp; then \
+		echo "⏭  XNAT is disabled (xnat.enabled=false) — nothing to initialise."; \
+		exit 0; \
+	fi; \
+	$(KUBECTL) delete job -n $(NAMESPACE) --selector app.kubernetes.io/component=xnat-init \
+		--ignore-not-found --cascade=foreground --timeout=$(HELM_TIMEOUT) || exit 1; \
+	$(KUBECTL) apply -n $(NAMESPACE) -f $$tmp \
+		--selector app.kubernetes.io/component=xnat-init || exit 1; \
+	echo "⏳  Waiting for xnat-init job to complete (timeout $(HELM_TIMEOUT))..."; \
+	$(KUBECTL) wait job \
 		--selector app.kubernetes.io/component=xnat-init \
 		--for=condition=complete \
 		--namespace $(NAMESPACE) \
 		--timeout=$(HELM_TIMEOUT) && \
-	echo "✅  XNAT init complete." || \
-	(echo "❌  XNAT init failed — check logs:"; \
-	 $(KUBECTL) logs -n $(NAMESPACE) -l app.kubernetes.io/component=xnat-init --tail=40; \
-	 exit 1)
+	echo "✅  XNAT init complete." || { \
+		echo "❌  XNAT init failed — check logs:"; \
+		$(KUBECTL) logs -n $(NAMESPACE) -l app.kubernetes.io/component=xnat-init --tail=40; \
+		exit 1; \
+	}
 
 sync-kit-override: ## Regenerate the k8s-trust-<KIT>.yaml override from the kit (validates its governance document) without touching the cluster Secret
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit-override KIT=Trust_K8s HUB=stag"; exit 1)
