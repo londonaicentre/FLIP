@@ -72,7 +72,7 @@ def _engine_returning(first_row: object | None) -> MagicMock:
 def test_zero_rows_without_vocabulary_logs_the_remedy(query_input: CohortQueryInput) -> None:
     """The whole point: say what is wrong and how to fix it, trust-side."""
     with (
-        patch("data_access_api.services.cohort.engine", _engine_returning(None)),
+        patch("data_access_api.services.cohort.get_engine", return_value=_engine_returning(None)),
         patch("data_access_api.services.cohort.logger") as mock_logger,
     ):
         get_statistics(pd.DataFrame(), query_input, threshold=10)
@@ -86,7 +86,7 @@ def test_zero_rows_without_vocabulary_logs_the_remedy(query_input: CohortQueryIn
 def test_zero_rows_with_vocabulary_stays_quiet(query_input: CohortQueryInput) -> None:
     """A genuinely empty cohort on a healthy trust is not a misconfiguration."""
     with (
-        patch("data_access_api.services.cohort.engine", _engine_returning((1,))),
+        patch("data_access_api.services.cohort.get_engine", return_value=_engine_returning((1,))),
         patch("data_access_api.services.cohort.logger") as mock_logger,
     ):
         get_statistics(pd.DataFrame(), query_input, threshold=10)
@@ -141,9 +141,9 @@ def test_response_is_identical_whether_or_not_the_vocabulary_is_loaded(
     healthy one — otherwise the log fix would have opened the very side channel the
     suppression exists to close.
     """
-    with patch("data_access_api.services.cohort.engine", _engine_returning(None)):
+    with patch("data_access_api.services.cohort.get_engine", return_value=_engine_returning(None)):
         without_vocabulary = get_statistics(pd.DataFrame(), query_input, threshold=10)
-    with patch("data_access_api.services.cohort.engine", _engine_returning((1,))):
+    with patch("data_access_api.services.cohort.get_engine", return_value=_engine_returning((1,))):
         with_vocabulary = get_statistics(pd.DataFrame(), query_input, threshold=10)
 
     assert without_vocabulary.model_dump(exclude={"created"}) == with_vocabulary.model_dump(exclude={"created"})
@@ -159,7 +159,7 @@ def test_probe_failure_does_not_break_the_response(query_input: CohortQueryInput
     engine.connect.side_effect = SQLAlchemyError("connection pool exhausted")
 
     with (
-        patch("data_access_api.services.cohort.engine", engine),
+        patch("data_access_api.services.cohort.get_engine", return_value=engine),
         patch("data_access_api.services.cohort.logger") as mock_logger,
     ):
         stats = get_statistics(pd.DataFrame(), query_input, threshold=10)
