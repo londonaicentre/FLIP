@@ -119,6 +119,7 @@ them only when diagnosing or deliberately changing that behaviour.
 | `SCHEDULER_FL_JOB_WATCHDOG_RATE` | `1` (minute) | How often the scheduler checks each running FL job against its net's FL API |
 | `FL_JOB_WATCHDOG_STRIKES` | `3` | Consecutive checks a job must look ended or lost on its backend before its model is set to `ERROR` and the net freed |
 | `FL_JOB_PREPARE_TIMEOUT_MINUTES` | `30` | How long a picked-up job may go without reaching the FL server before its model is set to `ERROR` |
+| `FL_JOB_START_TIMEOUT_MINUTES` | `60` | How long after pickup the FL server may hold a job unstarted, for example waiting for its trusts to connect, before its model is set to `ERROR` |
 | `SCHEDULER_KEEP_FL_API_SESSION_ALIVE_RATE` | `2` (minutes) | How often the scheduler pings fl-api to keep its session alive |
 | `SCHEDULER_REIMPORT_IMAGING_PROJECT_STUDIES_RATE` | `30` (minutes) | How often the scheduler checks for projects with unimported studies |
 | `SCHEDULER_MALWARE_SCAN_RECONCILE_RATE` | `1` (minute) | How often the scheduler re-checks uploads left `SCANNING` by a restart mid-scan |
