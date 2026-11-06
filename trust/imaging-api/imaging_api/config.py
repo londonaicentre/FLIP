@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     # Reimport settings
     REIMPORT_STUDIES_ENABLED: bool = True
 
+    # A cached study unused for this long is removed (FLIP#1050, services/cache_retention.py); 0 turns the sweep off.
+    # Must far exceed any FL job: an NVFLARE client reads a study once per job.
+    IMAGE_CACHE_RETENTION_HOURS: float = 168.0
+
 
 # Eager load once (for app use)
 _settings = Settings()  # type: ignore

@@ -134,6 +134,7 @@ services:
       DEBUG: ${DEBUG}
       ENV: development
       BASE_IMAGES_DOWNLOAD_DIR: /app/data/images
+      IMAGE_CACHE_RETENTION_HOURS: ${IMAGE_CACHE_RETENTION_HOURS:-168}
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
       TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
       # Dev-on-pull (see `user:` above): host-uid process imports the package via
