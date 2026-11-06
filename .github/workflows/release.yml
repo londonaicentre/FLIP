@@ -61,6 +61,7 @@ jobs:
         permissions: # override top-level read-only default to allow tag/release creation
             contents: write
             actions: write # dispatch the image builds at the release tag (see the step below)
+            packages: write # push the versioned trust chart to GHCR (FLIP#1646)
 
         steps:
             - name: Checkout repository
@@ -203,6 +204,27 @@ jobs:
                   BUILD_POLL_SECONDS: ${{ vars.RELEASE_BUILD_POLL_SECONDS || 30 }}
                   BUILD_POLL_MAX_FAILURES: ${{ vars.RELEASE_BUILD_POLL_MAX_FAILURES || 10 }}
               run: bash "$GITHUB_WORKSPACE/.github/scripts/wait-for-release-builds.sh"
+
+            # The trust Helm chart is published here, immediately after the images it deploys
+            # exist and before anything irreversible (the Terraform apply, the Release). A chart
+            # pushed earlier would reference tags that may never build.
+            #
+            # package_chart.py stamps three things from the tag: the chart's own SemVer version,
+            # appVersion, and `global.image.tag` in values.yaml. The last one is the whole point
+            # — without it `flip-trust:0.13.0` would be a versioned chart deploying whatever
+            # `stag` happens to be that week, which is exactly the property the trust auto-upgrade
+            # agent (FLIP#1640) cannot build on. The stamping is in-checkout only; nothing is
+            # committed back, so main's values.yaml keeps its empty (floating) default for dev.
+            - name: Publish the versioned trust Helm chart
+              if: steps.release_check.outputs.exists == 'false'
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  TAG: ${{ steps.version.outputs.tag }}
+              run: |
+                  set -euo pipefail
+                  echo "$GH_TOKEN" | helm registry login ghcr.io \
+                    --username "${{ github.actor }}" --password-stdin
+                  python3 trust/deploy/helm/scripts/package_chart.py --version "$TAG"
 
             # generate_release_notes lets GitHub choose the previous release itself, which is
             # whatever was published most recently — including a flip-utils release cut seconds
