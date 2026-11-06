@@ -87,10 +87,10 @@ services:
       - FL_APP_DESTINATION_BUCKET=${FL_APP_DESTINATION_BUCKET}
       - NET_ENDPOINTS=${NET_ENDPOINTS}
       - FL_BACKEND=${FL_BACKEND}
-      # No FL_KIT_SLOT_NAMES here: in production the kit-slot pool's single source
-      # is the /flip/fl_kit_slot_names SSM parameter (read at runtime by
-      # resolve_fl_kit_slot_names) — an env copy would be dead config that
-      # apply-fl-kit-slots never updates.
+      # No FL_KIT_SLOT_NAMES here: in production the kit-slot pool is read at
+      # runtime by resolve_fl_kit_slot_names — the complete kits under
+      # FLARE_KITS_S3_URI (NVFLARE) or the /flip/fl_kit_slot_names SSM parameter (Flower).
+      - FLARE_KITS_S3_URI=s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}
     security_opt:
       - no-new-privileges:true
     cap_drop:

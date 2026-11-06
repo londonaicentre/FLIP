@@ -55,13 +55,13 @@ resource "aws_ssm_parameter" "flip_app_bundles_bucket" {
   value       = local.flip_app_bundles_bucket_uri
 }
 
-# FL kit-slot pool names — flip-api's runtime source in production, read at boot
-# seeding and re-read when a trust registration finds the pool exhausted
-# (resolve_fl_kit_slot_names, reconcile-on-miss). Growing the pool is an env-file
-# edit + `make apply-fl-kit-slots` (targeted apply of this parameter): no
-# task-definition change, no flip-api restart. The value stays the JSON-list
-# *string* from the env file (flip-api json.loads it). Not a secret — just the
-# roster of pre-provisioned kit slots, hence SSM per the /flip convention above.
+# FL kit-slot pool names on a Flower hub — flip-api's runtime source there, read at
+# boot seeding and re-read when a trust registration finds the pool exhausted
+# (resolve_fl_kit_slot_names, reconcile-on-miss). The SuperLink labels SuperNodes
+# from the same list at startup (ecs_flower.tf), so it stays authored config. An
+# NVFLARE hub ignores it: its pool is the complete kits in S3 (FLIP#1720). The
+# value stays the JSON-list *string* from the env file (flip-api json.loads it).
+# Not a secret, hence SSM per the /flip convention above.
 resource "aws_ssm_parameter" "fl_kit_slot_names" {
   # checkov:skip=CKV2_AWS_34:non-secret operational config by design (see file header and the comment above) — SecureString adds KMS coupling for no confidentiality gain
   name        = "${local.ssm_prefix}/fl_kit_slot_names"
