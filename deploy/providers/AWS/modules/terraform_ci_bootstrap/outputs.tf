@@ -94,3 +94,13 @@ output "state_bucket_arn" {
   description = "ARN of the state bucket when this module manages it, otherwise null."
   value       = try(aws_s3_bucket.state[0].arn, null)
 }
+
+output "snowflake_state_plan_role_arn" {
+  description = "ARN for the sf-* environment's SNOWFLAKE_STATE_PLAN_ROLE_ARN variable; null when the Snowflake state roles are off."
+  value       = try(aws_iam_role.snowflake_state_plan[0].arn, null)
+}
+
+output "snowflake_state_apply_role_arn" {
+  description = "ARN for the sf-* environment's SNOWFLAKE_STATE_APPLY_ROLE_ARN variable; null when the Snowflake state roles are off."
+  value       = try(aws_iam_role.snowflake_state_apply[0].arn, null)
+}

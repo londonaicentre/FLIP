@@ -351,3 +351,52 @@ variable "state_writer_principal_arns" {
   type        = list(string)
   default     = []
 }
+
+# The Snowflake trust's state roles (epic #1589). Off unless the GitHub environment the Snowflake
+# workflows declare is named, so callers that predate them are unchanged.
+variable "snowflake_github_environment" {
+  description = "GitHub environment the Snowflake trust workflows declare in this account (sf-stag / sf-prod); the plan and drift workflows declare <this>-plan. Setting it creates the two Snowflake state roles; empty creates none."
+  type        = string
+  default     = ""
+}
+
+variable "snowflake_state_prefix" {
+  description = "Key prefix in the state bucket under which the Snowflake trust roots keep their state. The Snowflake roles reach these keys and nothing else."
+  type        = string
+  default     = "snowflake-trust"
+
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9-]*[a-z0-9]$", var.snowflake_state_prefix))
+    error_message = "snowflake_state_prefix must be lower-case letters, digits and dashes, with no slash."
+  }
+}
+
+variable "snowflake_plan_workflow_file" {
+  description = "Workflow permitted to assume the Snowflake state plan role from a pull request (staging only)."
+  type        = string
+  default     = "snowflake_trust_plan.yml"
+}
+
+variable "snowflake_apply_workflow_file" {
+  description = "Workflow permitted to assume the Snowflake state apply role, at apply_branch."
+  type        = string
+  default     = "snowflake_trust_apply.yml"
+}
+
+variable "snowflake_drift_workflow_file" {
+  description = "Workflow permitted to assume the Snowflake state plan role, at drift_branch."
+  type        = string
+  default     = "snowflake_trust_drift.yml"
+}
+
+variable "snowflake_state_plan_role_name" {
+  description = "Name of the Snowflake state plan (read-only) role."
+  type        = string
+  default     = "AICentre-FLIPSnowflakeStatePlanRole"
+}
+
+variable "snowflake_state_apply_role_name" {
+  description = "Name of the Snowflake state apply role."
+  type        = string
+  default     = "AICentre-FLIPSnowflakeStateApplyRole"
+}

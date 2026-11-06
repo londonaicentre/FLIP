@@ -79,3 +79,13 @@ output "state_bucket_arn" {
   description = "ARN of the state bucket when this root manages it, otherwise null."
   value       = module.terraform_ci.state_bucket_arn
 }
+
+output "snowflake_state_plan_role_arn" {
+  description = "ARN of the Snowflake state plan role, or null when snowflake_github_environment is empty."
+  value       = module.terraform_ci.snowflake_state_plan_role_arn
+}
+
+output "snowflake_state_apply_role_arn" {
+  description = "ARN of the Snowflake state apply role, or null when snowflake_github_environment is empty."
+  value       = module.terraform_ci.snowflake_state_apply_role_arn
+}
