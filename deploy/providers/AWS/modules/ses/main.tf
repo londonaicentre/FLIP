@@ -40,3 +40,21 @@ resource "aws_ses_template" "flip_xnat_added_to_project" {
   html    = file("${var.templates_dir}/flip-xnat-added-to-project.html")
   text    = file("${var.templates_dir}/flip-xnat-added-to-project.txt")
 }
+
+# Automatic trust upgrades (FLIP#1640). An unattended upgrade runs in a window chosen because
+# nobody is watching, so these two are the out-of-band trace of it for the trust's admins.
+resource "aws_ses_template" "flip_trust_upgrade_started" {
+  name    = var.template_name_prefix == "" ? "flip-trust-upgrade-started" : "${var.template_name_prefix}-flip-trust-upgrade-started"
+  subject = "Upgrade started on {{trust_name}}"
+  html    = file("${var.templates_dir}/flip-trust-upgrade-started.html")
+  text    = file("${var.templates_dir}/flip-trust-upgrade-started.txt")
+}
+
+# One template for both outcomes, branching on `succeeded`: the recipient set and the facts are
+# identical, and two templates would drift apart.
+resource "aws_ses_template" "flip_trust_upgrade_finished" {
+  name    = var.template_name_prefix == "" ? "flip-trust-upgrade-finished" : "${var.template_name_prefix}-flip-trust-upgrade-finished"
+  subject = "Upgrade {{state}} on {{trust_name}}"
+  html    = file("${var.templates_dir}/flip-trust-upgrade-finished.html")
+  text    = file("${var.templates_dir}/flip-trust-upgrade-finished.txt")
+}

@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -447,6 +447,7 @@ def test_check_for_queued_jobs_success(fake_session, scheduler_id, model_id):
 
     fake_session.exec.side_effect = [
         MagicMock(first=MagicMock(return_value=job)),
+        MagicMock(all=MagicMock(return_value=[])),  # the trusts' row locks: no upgrade lease held
     ]
     fake_session.get.return_value = scheduler
 
@@ -477,6 +478,7 @@ def test_check_for_queued_jobs_retires_a_job_with_unapproved_trusts(fake_session
 
     fake_session.exec.side_effect = [
         MagicMock(first=MagicMock(return_value=job)),
+        MagicMock(all=MagicMock(return_value=[])),  # the trusts' row locks: no upgrade lease held
         MagicMock(first=MagicMock(return_value=None)),
     ]
 
@@ -511,6 +513,7 @@ def test_check_for_queued_jobs_preserves_a_newer_valid_retry_when_retiring_an_in
 
     fake_session.exec.side_effect = [
         MagicMock(first=MagicMock(return_value=invalid_job)),
+        MagicMock(all=MagicMock(return_value=[])),  # the trusts' row locks: no upgrade lease held
         MagicMock(first=MagicMock(return_value=valid_retry)),
     ]
 
@@ -541,6 +544,7 @@ def test_check_for_queued_jobs_commits_the_retirement_before_any_bookkeeping(fak
 
     fake_session.exec.side_effect = [
         MagicMock(first=MagicMock(return_value=invalid_job)),
+        MagicMock(all=MagicMock(return_value=[])),  # the trusts' row locks: no upgrade lease held
         MagicMock(first=MagicMock(return_value=valid_retry)),
     ]
     commits_before_add_log = []
@@ -815,3 +819,41 @@ class TestLogQueuePositions:
         with patch.object(fl_scheduler_service, "log_queue_positions") as mock_positions:
             fl_scheduler_service.remove_job_from_queue(model_id, fake_session)
         mock_positions.assert_not_called()
+
+
+def test_check_for_queued_jobs_leaves_a_job_queued_while_its_trust_is_being_upgraded(
+    fake_session, scheduler_id, model_id
+):
+    """A trust that holds an upgrade lease gets no job: the job stays QUEUED and the net is released."""
+    trust = MagicMock(id=uuid4(), upgrade_lease_expires_at=datetime.utcnow() + timedelta(hours=1))
+    job = MagicMock(id=uuid4(), model_id=model_id, trusts=[trust], status=JobStatus.QUEUED)
+    fake_session.exec.side_effect = [
+        MagicMock(first=MagicMock(return_value=job)),
+        MagicMock(all=MagicMock(return_value=[trust])),
+    ]
+
+    with (
+        patch("flip_api.fl_services.services.fl_scheduler_service.validate_trust_ids") as validate,
+        patch("flip_api.fl_services.services.fl_scheduler_service.revert_scheduler_pickup") as revert,
+    ):
+        result = fl_scheduler_service.check_for_queued_jobs(scheduler_id, fake_session)
+
+    assert result is None
+    assert job.status == JobStatus.QUEUED
+    revert.assert_called_once_with(scheduler_id, fake_session)
+    validate.assert_not_called()
+
+
+def test_check_for_queued_jobs_ignores_an_expired_lease(fake_session, scheduler_id, model_id):
+    trust = MagicMock(id=uuid4(), upgrade_lease_expires_at=datetime.utcnow() - timedelta(minutes=1))
+    job = MagicMock(id=uuid4(), model_id=model_id, trusts=[trust])
+    fake_session.exec.side_effect = [
+        MagicMock(first=MagicMock(return_value=job)),
+        MagicMock(all=MagicMock(return_value=[trust])),
+    ]
+    fake_session.get.return_value = MagicMock()
+
+    with patch("flip_api.fl_services.services.fl_scheduler_service.validate_trust_ids", return_value=True):
+        result = fl_scheduler_service.check_for_queued_jobs(scheduler_id, fake_session)
+
+    assert isinstance(result, IJobResponse)

@@ -25,6 +25,10 @@ ACCESS_REQUEST_TEMPLATE_NAME = "flip-access-request"
 # Invite email carrying a host-less "set your own password" link — never a password (FLIP-PT-079).
 IMAGING_INVITE_TEMPLATE_NAME = "flip-xnat-invite"
 IMAGING_PROJECT_ACCESS_TEMPLATE_NAME = "flip-xnat-added-to-project"
+# Automatic trust upgrades (FLIP#1640): one email when an upgrade claims the
+# lease, one when it resolves either way.
+UPGRADE_STARTED_TEMPLATE_NAME = "flip-trust-upgrade-started"
+UPGRADE_FINISHED_TEMPLATE_NAME = "flip-trust-upgrade-finished"
 
 
 # Filename of the per-backend job-types/required-files manifest. It lives in each backend's
