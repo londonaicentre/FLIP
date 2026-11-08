@@ -28,7 +28,9 @@ else in the process is disturbed. None of this belongs to a real person.
 from __future__ import annotations
 
 import random
+from collections.abc import Callable
 from datetime import date, timedelta
+from typing import TypeVar
 
 import names
 
@@ -36,8 +38,10 @@ import names
 # the same words on the DICOM so the two never say different things about the same scan.
 STUDY_DESCRIPTION = "MR Prostate WO contrast"
 
+_T = TypeVar("_T")
 
-def _with_seeded_global_rng(seed: str, draw):
+
+def _with_seeded_global_rng(seed: str, draw: Callable[[], _T]) -> _T:
     """Run ``draw()`` with the global RNG seeded from ``seed``, then put the RNG back as it was."""
     state = random.getstate()
     try:

@@ -50,14 +50,14 @@ ANATOMIC_SITE_CONCEPT_ID = 4302605
 SLICE_THICKNESS_CONCEPT_ID = MAPPING_DICOM[f"{tag_for_keyword('SliceThickness'):08x}"]
 
 
-def nhs_number_to_integer(s):
+def nhs_number_to_integer(s: str) -> int:
     """Converts the PatientID (NHS number e.g. '123 456 789') to an integer"""
     return int(f"{s.replace(' ', '')[:9]}")
 
 
 def transform_dicom_metadata_to_omop_tables(
     csv_file_path: str,
-):
+) -> dict[str, pd.DataFrame]:
     """
     Convert a dicom_metadata.csv file to OMOP tables
     Returns a dictionary of OMOP tables by name.
@@ -254,7 +254,7 @@ def transform_dicom_metadata_to_omop_tables(
 def split_data_into_trusts_and_copy_dicoms(
     combined_tables: dict,
     COPY_DICOM: bool = False,
-):
+) -> dict[str, dict[str, pd.DataFrame]]:
     """
     Split the data into trust specific folders.
         * DICOMs are copied to the trust specific folders.

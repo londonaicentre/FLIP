@@ -38,7 +38,7 @@ from utils.omop_mappings import (
 from utils.omop_schemas import schemas
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     args = argparse.ArgumentParser()
     args.add_argument(
         "--dataset_table", type=str, default="data/cxr_metadata.csv", help="Path to the Dicom data table."
@@ -121,7 +121,7 @@ DICOM_FOLDER_PATH = "./dicom_output"
 PROJECT = "cxr_project"
 
 
-def nhs_number_to_integer(s):
+def nhs_number_to_integer(s: str) -> int:
     """Converts the PatientID (NHS number e.g. '123 456 789') to an integer"""
     return int(f"{s.replace(' ', '')[:9]}")
 
