@@ -357,15 +357,10 @@ Releases before the DICOM and web ports were split could send ``XNAT:8080``, the
 Studies arrive but land in the Unassigned prearchive
 ====================================================
 
-Retrieval works (the PACS sends, requests reach ``RECEIVED``), but no sessions appear in the project.
-``dqr.log`` shows:
-
-.. code-block:: text
-
-   WARN ... PacsDequeueThread - Cannot build session. 0 prearchive sessions found
-   for study 1.2.826... in project <imaging-project-id>.
-
-and ``/data/xnat/prearchive/`` fills with top-level timestamp folders instead of ``<project>/<timestamp>/``.
+Retrieval works (the PACS sends), but no sessions appear in the project, and ``/data/xnat/prearchive/`` fills
+with top-level timestamp folders instead of ``<project>/<timestamp>/``. The request's ``FAILED`` and the
+``Received zero files for study ... in project ...`` warning in ``dqr.log`` do not tell this apart: DQR reports
+every import into FLIP's direct-archive receiver that way.
 
 **Cause.** XNAT's DICOM receiver is the stock one. Routing studies to the requesting project, and relabelling them
 the way the FL client looks them up, needs the retrieval plugin's identifier on the receiver.
