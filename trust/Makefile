@@ -402,13 +402,18 @@ define require_trust_data_seed
 	esac
 endef
 
-# Guard: the explicit (un)seed verbs refuse a trust whose kit turns the sample data off, unless FORCE=1.
-# They need the kit file to tell: without it, or with a mistyped value, the setting would read as true.
+# Guard: the explicit (un)seed verbs refuse a trust whose kit turns the sample data off, unless FORCE_SEED=1:
+# its own name, as a plain FORCE=1 given to an outer make (upgrade-onprem-trust, release-instance) reaches every
+# sub-make. A DRY_RUN=1 of the two that honour it (seed-orthanc, unseed-orthanc) writes nothing, so it passes.
+# They need the kit file to tell, not a complete one: without it, or with a mistyped value, the setting would
+# read as true.
 define refuse_seed_when_off
-	$(require_kit_file)
+	$(require_kit)
+	@[ -f "$(KIT_FILE)" ] || { echo "❌ Kit file $(KIT_FILE_LABEL) not found: $@ reads TRUST_DATA_SEED from it."; exit 1; }
 	$(require_trust_data_seed)
-	@if [ "$(TRUST_DATA_SEED_EFFECTIVE)" = false ] && [ -z "$(FORCE)" ]; then \
-	    echo "❌ $(KIT) has TRUST_DATA_SEED=false: its OMOP and PACS hold its own data, which $@ would change. FORCE=1 runs it anyway."; \
+	@if [ "$(TRUST_DATA_SEED_EFFECTIVE)" = false ] && [ "$(FORCE_SEED)" != 1 ] && \
+	    [ "$(if $(filter seed-orthanc unseed-orthanc,$@),$(DRY_RUN))" != 1 ]; then \
+	    echo "❌ $(KIT) has TRUST_DATA_SEED=false: its OMOP and PACS hold its own data, which $@ would change. FORCE_SEED=1 runs it anyway."; \
 	    exit 1; \
 	fi
 endef

@@ -174,7 +174,7 @@ class SampleDataOff(unittest.TestCase):
             assert result.returncode != 0, f"{target} ran with the sample data off:\n{result.stdout}"
             assert "has TRUST_DATA_SEED=false" in result.stdout, result.stdout + result.stderr
             assert "TRUST_INDEX" not in result.stdout, result.stdout
-        out = dry_run("seed", "FORCE=1", kit=self.KIT_OFF)
+        out = dry_run("seed", "FORCE_SEED=1", kit=self.KIT_OFF)
         assert "seed-omop TRUST_INDEX" in out, out
         assert "seed-orthanc TRUST_INDEX" in out, out
 
@@ -189,6 +189,29 @@ class SampleDataOff(unittest.TestCase):
             assert "not found" in no_kit.stdout, no_kit.stdout + no_kit.stderr
             for result in (mistyped, no_kit):
                 assert "TRUST_INDEX" not in result.stdout, result.stdout
+
+    def test_a_plain_force_from_an_outer_make_does_not_open_the_guard(self):
+        """FORCE=1 belongs to upgrade-onprem-trust and release-instance, and make hands it to every sub-make."""
+        result = run_target("outer", "FORCE=1", kit=self.KIT_OFF, probe="outer:\n\t$(MAKE) seed-omop\n")
+        assert result.returncode != 0, result.stdout
+        assert "FORCE_SEED=1 runs it anyway" in result.stdout, result.stdout + result.stderr
+        assert "seed-omop TRUST_INDEX" not in result.stdout, result.stdout
+
+    def test_a_dry_run_passes_only_where_it_writes_nothing(self):
+        """seed-orthanc / unseed-orthanc honour DRY_RUN=1; seed-omop / unseed-omop would ignore it and write."""
+        for target in ("seed-orthanc", "unseed-orthanc"):
+            result = run_target(target, "DRY_RUN=1", kit=self.KIT_OFF)
+            assert "has TRUST_DATA_SEED=false" not in result.stdout, f"{target}:\n{result.stdout}"
+            assert f"{target} TRUST_INDEX" in result.stdout, f"{target} never ran:\n{result.stdout}{result.stderr}"
+        for target in ("seed-omop", "unseed-omop"):
+            result = run_target(target, "DRY_RUN=1", kit=self.KIT_OFF)
+            assert result.returncode != 0 and "has TRUST_DATA_SEED=false" in result.stdout, f"{target}:\n{result.stdout}"
+
+    def test_the_guard_needs_the_kit_file_not_a_complete_one(self):
+        """A kit still waiting on the hub's values can seed its own stores, as before the guard (needs only KIT)."""
+        kit = KIT + "SOMETHING=<run-make-sync-trust-kit>\n"
+        result = run_target("guard", kit=kit, probe="guard:\n\t$(refuse_seed_when_off)\n\t@echo GUARD-PASSED\n")
+        assert result.returncode == 0 and "GUARD-PASSED" in result.stdout, result.stdout + result.stderr
 
 
 MONAI_KIT = KIT.replace("NUM_AVAILABLE_GPUS=0", "NUM_AVAILABLE_GPUS=1")
