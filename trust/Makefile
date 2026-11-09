@@ -392,9 +392,8 @@ define require_kit
 	fi
 endef
 
-# The kit's TRUST_DATA_SEED (FLIP#1687): unset is true, and surrounding quotes are dropped as
-# sync-kit drops them, so both shapes read one kit line alike.
-TRUST_DATA_SEED_EFFECTIVE = $(or $(strip $(subst ",,$(subst ',,$(TRUST_DATA_SEED)))),true)
+# The kit's TRUST_DATA_SEED (FLIP#1687), read as every other reader reads it (deploy/env_mode.mk).
+TRUST_DATA_SEED_EFFECTIVE = $(call trust_data_seed,$(TRUST_DATA_SEED))
 
 # Guard: any other value is refused before a container starts, rather than read as true.
 define require_trust_data_seed

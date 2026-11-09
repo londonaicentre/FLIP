@@ -328,6 +328,20 @@ def _generate_values() -> ModuleType:
     return module
 
 
+@functools.cache
+def _kit_lib() -> ModuleType:
+    """``trust/deploy/scripts/trust_kit_lib.py`` (stdlib only), loaded by path: its ``trust_data_seed`` is the one
+    Python reader of the kit's TRUST_DATA_SEED, shared with the onboarding checklist and the node self-test."""
+    path = REPO_ROOT / "trust" / "deploy" / "scripts" / "trust_kit_lib.py"
+    spec = importlib.util.spec_from_file_location("_flip_trust_kit_lib", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load the kit library from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def yaml_quote(value: str) -> str:
     """``generate_values.yaml_quote`` — the one quoting rule both writers of the file use."""
     quoted: str = _generate_values().yaml_quote(value)
@@ -815,12 +829,10 @@ def render_override(
     # to the slot number, and the published data has only two partitions, so a trust on Trust_3 or
     # above names one in its kit (SOURCE_TRUST, as for the Compose stack) — FLIP#1390.
     # A real trust turns the hook off with the kit's TRUST_DATA_SEED=false, as on Compose (FLIP#1687);
-    # unset or true leaves the chart's value. A trailing `# comment` is dropped, as make drops it.
-    seed = kit.get("TRUST_DATA_SEED", "").split("#", 1)[0].strip().strip("\"'")
-    if seed not in ("", "true", "false"):
-        raise ValueError(f"TRUST_DATA_SEED must be true or false, not {seed!r}")
+    # unset or true leaves the chart's value, and anything else is refused.
+    seed = _kit_lib().trust_data_seed(kit)
     source_trust = kit.get("SOURCE_TRUST", "").strip()
-    seed_values = (["    enabled: false"] if seed == "false" else []) + (
+    seed_values = ([] if seed else ["    enabled: false"]) + (
         [f'    sourceTrust: "{source_trust}"'] if source_trust else []
     )
     if seed_values:

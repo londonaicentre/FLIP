@@ -1003,6 +1003,23 @@ def test_48_sample_data_off_needs_no_seed_marker_dir() -> None:
     _assert(check.status == mod.Status.PASS, "PASS", f"{check.status}: {check.detail}")
 
 
+def test_49_a_sample_data_value_up_trust_refuses_fails_the_checklist() -> None:
+    """TRUST_DATA_SEED other than true/false/unset: up-trust refuses it, so the gate fails first (FLIP#1687)."""
+    print("\n[49] TRUST_DATA_SEED=no -> Sample data FAIL, and no data-dir hint promises a seed")
+    with tempfile.TemporaryDirectory() as td:
+        for value, status in (("", mod.Status.PASS), ("true", mod.Status.PASS), ('"false"', mod.Status.PASS)):
+            row = mod.check_sample_data({"TRUST_DATA_SEED": value} if value else {}, True, "trust/.env.SITE.prod")
+            _assert(row.status == status, f"{value or 'unset'!r}: {status.name}", f"{row.status}: {row.detail}")
+        for value in ("no", "False"):
+            row = mod.check_sample_data({"TRUST_DATA_SEED": value}, True, "trust/.env.SITE.prod")
+            _assert(row.status == mod.Status.FAIL and "TRUST_DATA_SEED" in row.detail, f"{value!r}: FAIL", str(row))
+            kit_vars = {"OMOP_DATA_DIR": td, "TRUST_DATA_SEED": value}
+            data_dir = mod.check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, True, SCRIPTS_DIR.parent)
+            _assert(not any("seeds it" in h for h in data_dir.hints), f"{value!r}: no seed promised", str(data_dir))
+        pending = mod.check_sample_data({}, False, "trust/.env.SITE.prod")
+        _assert(pending.status == mod.Status.PENDING, "PENDING without the kit", str(pending))
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -1055,6 +1072,7 @@ def main() -> None:
     test_46_swarm_worker_fails_naming_the_manager()
     test_47_empty_dir_with_sample_data_off_says_nothing_is_seeded()
     test_48_sample_data_off_needs_no_seed_marker_dir()
+    test_49_a_sample_data_value_up_trust_refuses_fails_the_checklist()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
