@@ -28,17 +28,6 @@ ADD make-xnat-config.sh /usr/local/bin/make-xnat-config.sh
 ADD wait-for-postgres.sh /usr/local/bin/wait-for-postgres.sh
 
 RUN apt-get update && apt-get install -y postgresql-client wget jq unzip
-
-# Drop every eMudhra (emSign) root from the JVM trust store: intermediates under its G3 root are
-# compromised (CVE-2026-91403), and XNAT has no use for the CA. The build fails if one survives.
-RUN set -e; \
-    store="$(keytool -list -v -cacerts -storepass changeit)"; \
-    printf '%s\n' "$store" \
-        | awk '/^Alias name: /{a=substr($0,13)} /^Owner: .*eMudhra/{print a}' \
-        | while IFS= read -r a; do keytool -delete -cacerts -storepass changeit -alias "$a"; done; \
-    store="$(keytool -list -v -cacerts -storepass changeit)"; \
-    case "$store" in *eMudhra*) echo "eMudhra roots left in the JVM cacerts" >&2; exit 1 ;; esac
-
 RUN rm -rf ${CATALINA_HOME}/webapps/*
 RUN mkdir -p \
         ${TOMCAT_XNAT_FOLDER_PATH} \
