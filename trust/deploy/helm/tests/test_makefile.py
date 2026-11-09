@@ -130,7 +130,7 @@ case "$1" in
   exec)
     if [ "$2" = -i ]; then
       [[ "$(cat)" == *"pg_dump -Fc"* ]] && echo "stdin: migrate-dump" >> "$CALLS"
-      exit 0
+      [ -z "$DUMP_FAILS" ]; exit
     fi
     echo "$CURRENT"; exit 0 ;;
 esac
@@ -138,19 +138,19 @@ exit 0
 """
 
 
-def _migrate_dump(tmp_path: Path, **env: str) -> list[str]:
+def _migrate_dump(tmp_path: Path, fails: bool = False, **env: str) -> list[str]:
     stub = tmp_path / "bin" / "kubectl"
     stub.parent.mkdir()
     stub.write_text(STUB_KUBECTL)
     stub.chmod(0o755)
     calls = tmp_path / "calls"
-    subprocess.run(
+    result = subprocess.run(
         ["make", "-C", str(CHART_DIR), "xnat-db-migrate-dump"],
         capture_output=True,
         text=True,
-        check=True,
         env={**os.environ, "PATH": f"{stub.parent}:{os.environ['PATH']}", "CALLS": str(calls), **env},
     )
+    assert (result.returncode != 0) == fails, result.stdout + result.stderr
     return calls.read_text().splitlines() if calls.exists() else []
 
 
@@ -169,7 +169,21 @@ def test_xnat_db_migrate_dump_is_a_no_op_otherwise(tmp_path, env):
     assert not any(c.startswith(("scale", "exec -i")) for c in calls), calls
 
 
+def test_a_failed_dump_starts_xnat_web_again(tmp_path):
+    """Nothing was upgraded, so the site must not stay down on a full disk."""
+    calls = _migrate_dump(tmp_path, fails=True, CURRENT="12", DUMP_FAILS="1")
+    assert calls[-1].startswith("scale deployment"), calls
+    assert calls[-1].endswith("--replicas=1"), calls
+
+
+def test_a_major_that_is_not_a_number_is_refused_not_read_as_already_moved(tmp_path):
+    calls = _migrate_dump(tmp_path, fails=True, CURRENT="")
+    assert not any(c.startswith(("scale", "exec -i")) for c in calls), calls
+
+
 def test_upgrade_trust_k8s_takes_the_migration_dump_before_the_helm_upgrade():
     makefile = (CHART_DIR / "Makefile").read_text()
     apply = makefile.split("\n_upgrade-trust-k8s-apply:\n", 1)[1].split("\n\n", 1)[0]
     assert apply.index("sync-kit") < apply.index("xnat-db-migrate-dump") < apply.index("$(MAKE) deploy"), apply
+    # A release pinning the old xnat-db keeps it live, so the dump it did not use is dropped.
+    assert apply.index("$(MAKE) deploy") < apply.index("xnat-db-drop-unused-dump"), apply

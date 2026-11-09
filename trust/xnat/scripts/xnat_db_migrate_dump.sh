@@ -23,7 +23,9 @@ psql -XqAt -U postgres -d postgres -c 'select 1' >/dev/null 2>&1 || role=${XNAT_
 
 # Left by an earlier move this site rolled back from: this cluster has changed since.
 rm -rf "${PGDATA:?}/pg$target"
-pg_dump -Fc -U "$role" -f "$PGDATA/xnat-migrate.dump.tmp" "$POSTGRES_DB"
-pg_restore -l "$PGDATA/xnat-migrate.dump.tmp" >/dev/null
-mv "$PGDATA/xnat-migrate.dump.tmp" "$PGDATA/xnat-migrate.dump"
+tmp="$PGDATA/xnat-migrate.dump.tmp"
+trap 'rm -f "$tmp"' EXIT
+pg_dump -Fc -U "$role" -f "$tmp" "$POSTGRES_DB"
+pg_restore -l "$tmp" >/dev/null
+mv "$tmp" "$PGDATA/xnat-migrate.dump"
 ls -l "$PGDATA/xnat-migrate.dump"

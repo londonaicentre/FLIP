@@ -132,9 +132,13 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
   `postgres/restore-xnat-dump.sh` restores the dump into it before the server listens on TCP, so
   `xnat-web` never sees an empty database. The roles come from that fresh initialisation, so
   passwords are SCRAM hashes and a volume on the old single-superuser layout (FLIP#1666) comes out
-  with the two-role one. The old cluster stays where it was: rolling back is pinning `XNAT_TAG` to the
-  previous release. `postgres/guard-xnat-db-data.sh` refuses to start next to an older cluster with
-  no dump (it would start XNAT as an empty site), and after a restore that did not finish. Once the
+  with the two-role one. A dump that fails starts `xnat-web` again on the old server and upgrades
+  nothing. The old cluster stays where it was: rolling back is pinning `XNAT_TAG` to the previous
+  release, and after a rollback the way forward is `upgrade-trust` again, which takes a new dump.
+  `postgres/guard-xnat-db-data.sh` refuses to start next to an older cluster with no dump (it would
+  start XNAT as an empty site), after a restore that did not finish, and when the older cluster has
+  run again since the dump or the restore (they are out of date). A deploy that leaves `xnat-db` on
+  the old major, because the kit pins an older `XNAT_TAG`, has its unused dump removed. Once the
   site is confirmed on the new major, `make xnat-db-remove-old-cluster KIT=<CODE> HUB=<env>` lists the
   old cluster and `YES=1` deletes it. The Helm chart does the same through `upgrade-trust-k8s`.
 

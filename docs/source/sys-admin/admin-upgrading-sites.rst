@@ -311,6 +311,8 @@ When the release moves ``xnat-db`` to a newer PostgreSQL major (12 to 16 with FL
 cluster stays on the volume for a rollback until
 ``make -C trust/deploy/helm xnat-db-remove-old-cluster [YES=1]`` removes it. A plain ``helm upgrade`` takes no dump, so
 the new ``xnat-db`` refuses to start beside the old cluster: roll back, then use ``upgrade-trust-k8s``.
+It refuses in the same way after a rollback, when the old cluster has run again since the dump was taken: upgrade with
+the command again, which takes a new dump.
 
 .. warning::
 
