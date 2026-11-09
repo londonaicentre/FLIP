@@ -80,14 +80,21 @@
 
 Tutorial suite, on a GPU host:
 
-- [ ] FLARE — `make -C fl-tutorials run-all-tutorials`
-- [ ] Flower — `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`
-- [ ] Host and date recorded: —, —
+- [x] FLARE — `make -C fl-tutorials run-all-tutorials`
+- [x] Flower — `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`
+- [x] Host and date recorded: NVIDIA GeForce RTX 5090 workstation, 9 November 2026
+
+FLARE: all 10 tutorials passed in 24 min 38 s — arkplus_fine_tuning 1 min 42 s, xray_classification 40 s, 3d_spleen_segmentation_evaluation 1 min 2 s, arkplus_baseline_classification_evaluation 33 s, arkplus_multimodel_classification_evaluation 51 s, brain_mri_ldm_stage1_autoencoder 7 min 6 s, brain_mri_ldm_stage2_diffusion 2 min 38 s, xray_diffusion 3 min 33 s, 3d_spleen_segmentation 5 min 59 s, ehr_risk_prediction 34 s.
+Flower: all 5 tutorials passed in 4 min 27 s — xray_classification 29 s, 3d_spleen_segmentation_evaluation 51 s, 3d_prostate_segmentation 44 s, 3d_spleen_segmentation 2 min 2 s, ehr_risk_prediction 21 s.
 
 Full-platform smoke test, against a running deployment:
 
-- [ ] FLARE — `make e2e_smoke`
-- [ ] Flower — `make e2e_smoke FL_BACKEND=flower`
+- [x] FLARE — `make e2e_smoke`
+- [x] Flower — `make e2e_smoke FL_BACKEND=flower`
+
+Run at `c84351bd3` on an isolated instance (`rel0150`) built from that commit — every repo-built image at `:rel0150`, checked by `make release-verify` — started from empty state: FLARE reached RESULTS_UPLOADED in 10 min 19 s; Flower reached RESULTS_UPLOADED in 5 min 40 s.
+
+At the same commit: `make unit_test` passed, `make integration_test` passed.
 
 ## :file_folder: PRs merged in this release
 
