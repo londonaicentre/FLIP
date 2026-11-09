@@ -396,7 +396,7 @@ applied.
 | Plugin                          | Version for XNAT 1.10.2.1   | Installed | Action for 1.10.2.1 |
 | ------------------------------- | --------------------------- | --------- | ------------------- |
 | DICOM Query-Retrieve Plugin     | 3.0.0                       | Yes       | None — 3.0.0 requires XNAT 1.10.0 or newer (DQR changelog). 3.1.0, built for 1.10.1, marks a C-MOVE that delivers no files `FAILED` instead of leaving it `ISSUED`, a change imaging-api reads, so it is not part of this fix |
-| Container Service Plugin        | 3.9.0 (JDK 21 build)        | Yes       | Upgraded from 3.8.2 (FLIP#1817); needs XNAT 1.10.1 or newer. Docker Swarm status polling loads the database less, and on Kubernetes an XNAT restart no longer marks finished containers failed. Its build-directory cleanup stays off unless a site turns it on |
+| Container Service Plugin        | 3.9.0 (JDK 21 build)        | Yes       | Upgraded from 3.8.2 (FLIP#1817); needs XNAT 1.10.1 or newer. Docker Swarm status polling loads the database less, and on Kubernetes an XNAT restart no longer marks finished containers failed. FLIP turns on its daily build-directory cleanup (see [DICOM to NIfTI Conversion](#dicom-to-nifti-conversion)) |
 | Batch Launch Plugin             | 0.9.0 (JDK 8 build)         | Yes       | None — the matrix keeps BLP 0.9.0 for 1.10, and there is no later release |
 | OHIF Viewer Plugin              | 3.8.0 (`-fat` build)        | Yes       | None — 3.8.0 is the plugin's XNAT 1.10 release, and there is no later release; the optional MONAI Label server registers through it — see [MONAI Label](../README.md#monai-label-optional) |
 
@@ -488,8 +488,16 @@ registered only when none exists, and the step refuses to choose between two.
 
 The Container Service backend is sent again only when a field FLIP sets has drifted, and then as the
 server XNAT holds with only FLIP's fields changed. `POST /xapi/docker/server` resets every setting it
-leaves out, so a site's own settings, such as the build-directory cleanup Container Service 3.9.0 adds,
-survive a re-run (FLIP#1817).
+leaves out, so a site's own settings, such as the retention periods below, survive a re-run (FLIP#1817).
+
+FLIP turns on the build-directory cleanup Container Service 3.9.0 adds (`build-dir-cleanup-enabled`).
+Each conversion writes its output to a directory under XNAT's build path (`${XNAT_DATA_DIR}/xnat-data/build`
+on Compose, the `build` subPath of xnat-web's data volume on Helm), XNAT copies it into the scan's
+`NIFTI` resource, and before 3.9.0 nothing deleted the first copy. The daily job (02:00 UTC) deletes a
+build directory once every container of its launch has finished and its retention has passed: 7 days
+after a completed run, 14 after a failed one, 1 after a killed one. A site can change the time and the
+retention periods in XNAT; the switch itself is FLIP's, and a re-run turns it back on. Container logs are
+kept in the archive, and imaging-api reads NIfTI from the archive only.
 
 ### Converting scans archived without NIfTI
 
