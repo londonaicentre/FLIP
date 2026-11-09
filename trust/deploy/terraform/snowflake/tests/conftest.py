@@ -12,9 +12,13 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 SNOWFLAKE_DIR = Path(__file__).resolve().parent.parent
+
+# The architecture package (architecture/trust_snowflake.py) is imported by test_architecture_diagram.py.
+sys.path.insert(0, str(SNOWFLAKE_DIR))
 PLATFORM_DIR = SNOWFLAKE_DIR.parent / "snowflake-platform"
 TF_FILES = sorted(p for p in SNOWFLAKE_DIR.glob("*.tf"))
 
