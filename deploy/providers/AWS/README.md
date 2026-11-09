@@ -149,8 +149,11 @@ KIT=<CODE>` tarballs `trust/.env.<CODE>.<hub>` (or the kit named by `KIT_FILE=<p
   7 has been observed as `exitCode` 0), so the script treats an absent or empty kit in SSM as the failure. It
   salvages the `ERROR`/`WARNING` lines from the task's log stream before deleting it, falling back to the log tail
   for an unhandled traceback.
-- **Interactive debugging inside the running service** is still possible with ECS Exec, which is off by default
-  (`var.ecs_exec_enabled`):
+- **Interactive debugging inside the running service** was ECS Exec, which is off by default
+  (`var.ecs_exec_enabled`). It needs a writable root filesystem: the SSM agent it starts in the container cannot run
+  on the read-only one the task definitions now have (FLIP#1795), and the session fails with
+  `TargetNotConnectedException`. The commands below work only against a task-definition revision registered with
+  `readonlyRootFilesystem` off for that container:
 
   ```bash
   export AWS_PROFILE=<env> AWS_REGION=eu-west-2

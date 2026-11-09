@@ -47,9 +47,8 @@ USER app
 # within the cooldown window instead of failing, matching nvflare/fl-api-base.
 RUN uv sync --no-dev
 
-# The paths the API writes, for a read-only root filesystem on ECS (FLIP#1795): the entrypoint's
-# Flower CLI config and /tmp. Fargate mounts an empty volume root-owned unless the image declares
-# the path a VOLUME with its owner.
+# The paths the API writes on ECS's read-only root filesystem (/tmp and the entrypoint's Flower CLI
+# config); must stay VOLUMEs (FLIP#1795, deploy/providers/AWS/AGENTS.md).
 RUN mkdir -p /home/app/.flwr
 VOLUME ["/tmp", "/home/app/.flwr"]
 

@@ -17,6 +17,10 @@
 # FLARE writes its pid files, logs and per-job run directories there. /app unless the kit is
 # mounted elsewhere, as on ECS, where /app is on the read-only root filesystem (FLIP#1795).
 WORKSPACE="${FL_WORKSPACE:-/app}"
+if [ ! -f "$WORKSPACE/startup/start.sh" ] || [ ! -w "$WORKSPACE" ]; then
+    echo "❌ no FLARE kit in $WORKSPACE (FL_WORKSPACE), or the directory is not writable"
+    exit 1
+fi
 
 # Make scripts executable
 chmod +x "$WORKSPACE/startup/start.sh"

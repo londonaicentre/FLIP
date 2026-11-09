@@ -19,7 +19,7 @@
 #
 # These maps mirror compose.prod.yml + compose.prod.nvflare.yml so
 # the running container sees the same env whether it runs on EC2+compose or
-# ECS Fargate.
+# ECS Fargate, plus what the read-only root filesystem there takes (FLIP#1795).
 
 locals {
   flip_local_domain = "flip.local"
@@ -182,8 +182,7 @@ locals {
       # <root>/<model_id>/ here (FLIP#695). Matches the default in
       # flip-utils FlipConstants + compose.prod.nvflare.yml.
       SERVER_CHECKPOINT_ROOT = "/app/server-checkpoints"
-      # Where ecs_tasks.tf mounts the kit, and so FLARE's workspace: a writable
-      # volume, as /app is on the read-only root filesystem (FLIP#1795).
+      # Where ecs_tasks.tf mounts the kit (FLIP#1795).
       FL_WORKSPACE = "/workspace"
       # The kit this task runs on (ecs_efs_provision.tf syncs it to EFS). The image
       # ignores it; it is here so a kit-date change registers a new revision and

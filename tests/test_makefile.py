@@ -191,6 +191,36 @@ class RestartFlFleetProxies(unittest.TestCase):
         assert "--remove-orphans" in step, step
 
 
+class HubScratchVolumes(unittest.TestCase):
+    """restart-fl and down remove a hub container's anonymous volumes with it (FLIP#1795).
+
+    The hub images declare the paths they write as volumes. A recreate in place hands the new
+    container its predecessor's, so the FLARE server restarts on an old job store, or after a backend
+    switch on the other backend's ``/tmp``; ``down`` and ``up --renew-anon-volumes`` leave them
+    dangling on the host. ``rm -fsv`` is the one that takes them with the container.
+    """
+
+    @staticmethod
+    def _hub_compose_lines(target: str) -> list[str]:
+        out = dry_run(target, "FL_BACKEND=flower", "ALLOW_FOREIGN_PROJECT=1", subdir=".")
+        return [line for line in out.splitlines() if "docker compose -p deploy " in line]
+
+    def test_restart_fl_removes_each_service_before_starting_it(self):
+        lines = self._hub_compose_lines("restart-fl")
+        assert not any("--force-recreate" in line for line in lines), lines
+        for svc in ("flip-api", "fl-api-net-1", "fl-server-net-1", "register-supernode-keys-net-1"):
+            removed = next(i for i, line in enumerate(lines) if " rm -fsv " in line and svc in line.split())
+            started = next(i for i, line in enumerate(lines) if " up " in line and svc in line.split())
+            assert removed < started, lines
+
+    def test_down_removes_them_before_the_project(self):
+        lines = self._hub_compose_lines("down")
+        removed = next(i for i, line in enumerate(lines) if " rm -fsv " in line)
+        for svc in ("flip-api", "fl-api-net-1", "fl-api-net-2", "fl-server-net-1", "fl-fleet-proxy-net-2"):
+            assert svc in lines[removed].split(), lines[removed]
+        assert removed < next(i for i, line in enumerate(lines) if " down " in line), lines
+
+
 class CentralHubNetworks(unittest.TestCase):
     def test_the_compose_file_is_still_parsed(self):
         assert "deploy_central-hub-network" in hub_only_networks(), hub_only_networks()

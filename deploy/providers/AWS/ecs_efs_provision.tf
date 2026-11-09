@@ -245,14 +245,14 @@ resource "aws_ecs_task_definition" "efs_provision" {
     }
   ])
 
-  # Mount the same EFS access points as the runtime services. certs/keys
-  # access points still exist in efs.tf for state continuity, but the
-  # provisioning task no longer touches them (kit puts SSL files under
-  # local/site-1/ssl-*).
   volume {
     name = "tmp"
   }
 
+  # Mount the same EFS access points as the runtime services. certs/keys
+  # access points still exist in efs.tf for state continuity, but the
+  # provisioning task no longer touches them (kit puts SSL files under
+  # local/site-1/ssl-*).
   dynamic "volume" {
     for_each = var.fl_backend == "flower" ? {
       "efs-flower-certs" = "fl_server_certs"

@@ -14,8 +14,7 @@
 ARG BASE_REF=flower-fl-base:dev
 FROM ${BASE_REF}
 
-# The one path the SuperLink writes on ECS, where HOME and WORKING_DIR point at /tmp and the root
-# filesystem is read-only (FLIP#1795). Fargate mounts an empty volume root-owned 0755 unless the
-# image declares the path a VOLUME, which keeps /tmp's 1777.
+# The path the SuperLink writes on ECS's read-only root filesystem, where HOME and WORKING_DIR point
+# at it; must stay a VOLUME (FLIP#1795, deploy/providers/AWS/AGENTS.md).
 VOLUME ["/tmp"]
 ENTRYPOINT ["flower-superlink"]

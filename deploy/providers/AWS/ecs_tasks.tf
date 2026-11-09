@@ -45,7 +45,8 @@ locals {
   # both backends; var.fl_backend switches image (via var.fl_*_name from
   # fl_backend.mk), container ports, command, env map and mounts. FLARE
   # mirrors compose.prod.nvflare.yml; Flower mirrors
-  # compose.prod.flower.yml.
+  # compose.prod.flower.yml. Both differ from them in the read-only root
+  # filesystem and what it takes (the scratch volumes below, FLIP#1795).
   # flwr>=1.40 serves every SuperLink API — Fleet, Control, Runtime — on control_port;
   # trusts reach only the fleet proxy sidecar on its own port (FLIP#1517).
   flower_fleet_proxy_port       = 9092
@@ -95,8 +96,7 @@ locals {
   # readonlyRootFilesystem and writes only to its EFS mounts and to empty task volumes
   # (Fargate ephemeral storage), here volume name → container path for the FL tasks.
   # Each path is a VOLUME in its image: without that Fargate mounts the volume
-  # root-owned 0755 and the non-root container cannot write it. They are listed before
-  # the EFS mounts because the FLARE kit mounts sit inside /workspace.
+  # root-owned 0755 and a non-root container cannot write it.
   fl_api_scratch_volumes = {
     nvflare = { "tmp" = "/tmp", "admin-transfer" = "/app/admin/transfer" }
     flower  = { "tmp" = "/tmp", "flwr-config" = "/home/app/.flwr" }
@@ -376,13 +376,10 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
       ]
 
       # Container paths must match what the fl-server image expects.
-      # FLARE: the kit's {local,startup,transfer} under /workspace rather than
-      # compose.prod.nvflare.yml's /app. FLARE's workspace is the directory above
-      # startup/, where it writes its pid files, logs and per-job run directories,
-      # and /app also holds the image's .venv and code on the read-only root
-      # filesystem (FLIP#1795). The entrypoint finds it through FL_WORKSPACE, chmods
-      # the scripts in startup/ and reads local/log_config.template.json; wrong
-      # paths -> crash loop.
+      # FLARE: the kit's {local,startup,transfer} under /workspace (FL_WORKSPACE,
+      # see the entrypoint), not compose.prod.nvflare.yml's /app; wrong paths ->
+      # crash loop. The scratch volumes come first: the kit mounts nest inside
+      # /workspace.
       # certs and keys live inside local/ (FLARE puts them under
       # site-1/ssl-key, ssl-cert), so no separate mount is needed. The
       # checkpoints mount is the reader side of the shared staging volume
@@ -496,9 +493,9 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
   # fl-api-net-1 writes to (both tasks pinned to uid/gid 1001 by the access
   # point, so reader sees writer's files — FLIP#695); the Flower jobs volume
   # is likewise shared RW with fl-api-net-1. FLARE keeps SSL key + cert
-  # under /app/local/site-1/ssl-* (inside the local volume) so it needs no
+  # under /workspace/local/site-1/ssl-* (inside the local volume) so it needs no
   # certs mount; Flower mounts the fl_server_certs access point that was
-  # previously a FLARE leftover. FLARE now keeps them under /workspace/local.
+  # previously a FLARE leftover.
   dynamic "volume" {
     for_each = local.fl_server_task_volumes[var.fl_backend]
     content {

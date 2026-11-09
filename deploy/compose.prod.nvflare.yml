@@ -12,7 +12,8 @@
 
 # ROLE (FLIP#936): FLARE overlay of the local prod-image harness (see the note in
 # compose.prod.yml) — not a deployment target. The canonical production FL task definitions live in
-# deploy/providers/AWS/ecs_tasks.tf, whose FLARE branch (fl_backend=nvflare) mirrors this overlay.
+# deploy/providers/AWS/ecs_tasks.tf, whose FLARE branch (fl_backend=nvflare) mirrors this overlay
+# apart from its read-only root filesystem (the kit under /workspace there, FLIP#1795).
 
 # NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
 # inheriting service configs below
