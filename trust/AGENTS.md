@@ -279,9 +279,11 @@ its sample-data play, loading only the vocabulary from `KIT_BUCKET`. Any other v
 OMOP, and `up-trust` checks it before starting a container. `sync-kit` maps it onto `trustData.seed.enabled:
 false`, and every Helm Makefile render or deploy that names the `KIT` passes it as `--set` too, so a
 missing or stale override cannot seed. The onboarding checklist's data-dir hints and the
-node self-test (`SELFTEST_TRUST_DATA_SEED=false`: the seed-marker and C-STORE
-checks are skipped with the reason) follow it, as does the Kubernetes self-test (`selftest_k8s.py`, from the release's
-`trustData.seed` values, so it also skips the Orthanc checks under the chart default `seed.orthanc: false`). The
+node self-test (`SELFTEST_TRUST_DATA_SEED=false`: the seed-marker checks are skipped with the reason) follow it, as
+does the Kubernetes self-test (`selftest_k8s.py`, from the release's `trustData.seed` values, so the chart default
+`seed.orthanc: false` counts too). Both skip the C-STORE (and, on Kubernetes, `orthanc seeded` and the dcm2niix
+conversion) only while Orthanc also reports no instance: an Orthanc holding studies is stored into XNAT whatever
+the setting says. The
 explicit `seed*` / `unseed*` verbs refuse such a trust unless `FORCE_SEED=1`, and refuse a missing kit file or a
 mistyped value outright. The DICOM vocabulary
 then loads on its own (`make -C trust/omop-db load-dicom-vocab` with the kit's `OMOP_*` values); no trust

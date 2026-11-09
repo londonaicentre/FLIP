@@ -426,7 +426,8 @@ The trust self-test
 A check that needs sample data the release does not load passes as skipped, with the reason. With
 ``trustData.seed.enabled`` off (``TRUST_DATA_SEED=false`` in the kit) that is ``omop seeded``, ``orthanc seeded``,
 ``xnat c-store`` and ``dcm2niix conversion``; with only ``trustData.seed.orthanc`` off (the chart default), the last
-three. It needs no hub: an unreachable hub or FL server is not a failure. Every check runs in a pod the release
+three. The last three skip only while Orthanc reports no instance: when it holds studies all the same, loaded
+another way or the trust's own, one is sent to XNAT and one series converted, as a cohort pull would. It needs no hub: an unreachable hub or FL server is not a failure. Every check runs in a pod the release
 already has, so it adds no RBAC or NetworkPolicy exception. The conversion check starts one dcm2niix job, as a cohort
 pull would, and deletes its ``FLIPSELFTEST`` project when it ends, pass or fail: a C-STORE alone shows XNAT received a
 study, not that this cluster can convert it. If other conversions are queued, its job waits for a slot under the

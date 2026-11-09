@@ -656,7 +656,7 @@ def run_checks(
     conversion_timeout: int,
     fl_settle_seconds: int,
 ) -> list[Check]:
-    """Every check, in report order, printing each as it lands; a check that needs absent sample data is skipped."""
+    """Every check, in report order, printing each as it lands; a check with no data to work on is skipped."""
     backend = values.get("flBackend", "nvflare")
     fl_enabled = values.get("flClient", {}).get("enabled", True)
     no_omop, no_orthanc = missing_sample_data(values)
@@ -679,15 +679,18 @@ def run_checks(
         skip("omop seeded", no_omop)
     else:
         record(check_omop_seeded(cluster))
+    # Orthanc's own count, not the seed values, decides whether there is a study to send: a release whose Orthanc
+    # holds studies all the same (loaded another way, or a trust's own) still proves its DICOM path end to end.
     orthanc_seeded, orthanc_auth = check_orthanc(cluster)
-    if no_orthanc:
+    nothing_to_send = no_orthanc and not orthanc_seeded.ok
+    if nothing_to_send:
         skip("orthanc seeded", no_orthanc)
     else:
         record(orthanc_seeded)
     record(orthanc_auth)
-    if no_orthanc:
-        skip("xnat c-store", f"{no_orthanc} to send")
-        skip("dcm2niix conversion", f"{no_orthanc} to convert")
+    if nothing_to_send:
+        skip("xnat c-store", f"{no_orthanc}, and it reports no instance to send")
+        skip("dcm2niix conversion", f"{no_orthanc}, and it reports no instance to convert")
     else:
         record(check_cstore(smoke))
         xnat_pod = cluster.pod("xnat-web")

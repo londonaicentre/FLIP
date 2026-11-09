@@ -800,6 +800,18 @@ def test_a_seeded_release_still_runs_the_store_and_the_conversion(monkeypatch):
     assert checks["orthanc seeded"].detail == "250 instances"
 
 
+@pytest.mark.parametrize("seed", [{"enabled": False}, {"orthanc": False}], ids=["seed off", "chart default"])
+def test_an_orthanc_holding_studies_is_stored_and_converted_whatever_the_seed_values_say(monkeypatch, seed):
+    """Orthanc's count decides, not the seed values: a broken DICOM import (FLIP#1411) on a trust whose Orthanc
+    holds its own or otherwise-loaded studies must not hide behind a skip."""
+    converted = selftest.Check("dcm2niix conversion", True, "converted")
+    monkeypatch.setattr(selftest, "check_conversion", lambda *args: converted)
+    checks = _checks(_values(**seed), smoke=lambda: (1, "❌ XNAT received nothing", ""))
+    assert checks["xnat c-store"] == selftest.Check("xnat c-store", False, "❌ XNAT received nothing")
+    assert checks["dcm2niix conversion"] is converted
+    assert checks["orthanc seeded"].detail == "250 instances"
+
+
 # ── the report ──────────────────────────────────────────────────────────────────────
 
 

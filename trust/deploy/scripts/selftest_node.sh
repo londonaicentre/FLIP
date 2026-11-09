@@ -195,14 +195,16 @@ log_lines() {
     count="$(docker exec "${XNAT_CTR}" sh -c "wc -l < $1 2>/dev/null || echo 0" 2>/dev/null | tr -dc '0-9')"
     echo "${count:-0}"
 }
+# Orthanc's own answer, not TRUST_DATA_SEED, decides whether there is an instance to send: a node whose Orthanc
+# holds studies all the same still proves its DICOM path end to end.
+instance="$(orthanc_curl "http://127.0.0.1:8042/instances?since=0&limit=1" 2>/dev/null | tr -d '[]" \n')"
 if [ -z "${XNAT_CTR}" ]; then
     record "xnat c-store" false "no running xnat-web container"
-elif [ -n "${NO_SAMPLE_DATA}" ]; then
-    skip "xnat c-store" "${NO_SAMPLE_DATA}, so Orthanc has no instance to send"
+elif [ -z "${instance}" ] && [ -n "${NO_SAMPLE_DATA}" ]; then
+    skip "xnat c-store" "${NO_SAMPLE_DATA}, and Orthanc has no instance to send"
 else
     before="$(log_lines "${RECEIVED_LOG}")"
     dicom_before="$(log_lines "${DICOM_LOG}")"
-    instance="$(orthanc_curl "http://127.0.0.1:8042/instances?since=0&limit=1" 2>/dev/null | tr -d '[]" \n')"
     store="$(orthanc_curl -X POST "http://127.0.0.1:8042/modalities/XNAT/store" \
         -d "{\"Resources\":[\"${instance}\"],\"Synchronous\":true}" 2>/dev/null || true)"
     # XNAT records the receipt after the store has returned, so poll for it rather than read once
