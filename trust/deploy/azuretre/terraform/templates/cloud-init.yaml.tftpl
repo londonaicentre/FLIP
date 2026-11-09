@@ -38,14 +38,12 @@ write_files:
     permissions: "0755"
     content: |
       #!/bin/bash
-      # Install the pinned release's flip-node. Releases before FLIP#1438 ship it under deploy/providers/azure.
+      # Install the pinned release's flip-node.
       set -euo pipefail
       . /etc/flip/node.env
       src="$(mktemp -d)"
       git clone --quiet --depth 1 --branch "$FLIP_REF" "$FLIP_REPO_URL" "$src"
-      script="$src/trust/deploy/terraform/azure/vm/templates/flip-node.sh"
-      [ -f "$script" ] || script="$src/deploy/providers/azure/vm/templates/flip-node.sh"
-      install -m 0755 "$script" /usr/local/sbin/flip-node
+      install -m 0755 "$src/trust/deploy/terraform/azure/vm/templates/flip-node.sh" /usr/local/sbin/flip-node
       rm -rf "$src"
 runcmd:
   - [/usr/local/sbin/flip-node-install]

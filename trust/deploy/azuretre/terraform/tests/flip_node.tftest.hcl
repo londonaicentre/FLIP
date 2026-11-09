@@ -47,7 +47,7 @@ variables {
   tre_resource_id          = "flip-test-svc-1b2c"
   workspace_id             = "flip-test-ws-0a9e"
   address_space            = "10.1.5.0/24"
-  flip_release             = "v0.14.0"
+  flip_release             = "v0.15.0"
   fl_backend               = "nvflare"
   vm_size                  = "4 CPU | 16GB RAM"
   fl_server_ip_addresses   = "WyIxOTguNTEuMTAwLjEwIiwgIjE5OC41MS4xMDAuMTEiXQ==" # ["198.51.100.10", "198.51.100.11"]
@@ -160,7 +160,7 @@ run "cloud_init" {
     condition = one([
       for f in yamldecode(nonsensitive(base64decode(azurerm_linux_virtual_machine.node.custom_data))).write_files : f.content
       if f.path == "/etc/flip/node.env"
-    ]) == "FLIP_REPO_URL=https://github.com/londonaicentre/FLIP.git\nFLIP_REF=v0.14.0\nFLIP_ADMIN_USER=azureuser\nFL_BACKEND=nvflare\nKIT_DROP_URL=https://stfkmytre0a9e1b2c.blob.core.windows.net/kits\n"
+    ]) == "FLIP_REPO_URL=https://github.com/londonaicentre/FLIP.git\nFLIP_REF=v0.15.0\nFLIP_ADMIN_USER=azureuser\nFL_BACKEND=nvflare\nKIT_DROP_URL=https://stfkmytre0a9e1b2c.blob.core.windows.net/kits\n"
     error_message = "node.env must pin the release and point flip-node at the kit container."
   }
   assert {

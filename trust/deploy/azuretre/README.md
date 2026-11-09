@@ -42,7 +42,8 @@ At first boot cloud-init clones FLIP at the chosen release, installs the `flip-n
 release ships (`trust/deploy/terraform/azure/vm/templates/flip-node.sh`, the one FLIP's own Azure VM
 uses) and runs `flip-node provision`. That mounts the data disk, clones FLIP into `/opt/flip` and runs
 `trust/deploy/ansible/azure.yml`. The bundle carries no copy of `flip-node`, so the node always runs
-the helper of the release it installed. FLIP v0.14.0 is the first release with it.
+the helper of the release it installed. Use FLIP v0.15.0 or later: from that release every image the
+node runs comes from GHCR, so the firewall rules below open no Docker Hub host.
 
 ## Build and register
 
@@ -68,7 +69,7 @@ make -C trust/deploy/azuretre test lint
 
 | Property | Default | Notes |
 |----------|---------|-------|
-| `flip_release` | (required) | A release tag, `vX.Y.Z`, v0.14.0 or later. Use the release your hub runs. Read at first boot only: later, `flip-node reprovision vX.Y.Z` moves the code. |
+| `flip_release` | (required) | A release tag, `vX.Y.Z`, v0.15.0 or later. Use the release your hub runs. Read at first boot only: later, `flip-node reprovision vX.Y.Z` moves the code. |
 | `fl_backend` | `nvflare` | `nvflare` or `flower`, as the hub runs. |
 | `hub_api_hostname` | `app.flip.aicentre.co.uk` | FLIP's production hub, or `stag.flip.aicentre.co.uk`: the host of the hub URL in your kit. |
 | `fl_server_ip_addresses` | (required) | One to four public IPv4 addresses of the hub's FL endpoint, from the FLIP team. Private, shared, loopback, link-local, multicast and reserved ranges, and Azure's 168.63.129.16, are refused. Before installing, the TRE admin checks them against the FL hostname (`dig +short fl.<hub host>`): they cannot be changed afterwards. |
@@ -78,8 +79,8 @@ make -C trust/deploy/azuretre test lint
 
 The hub, FL addresses and FL port set what the TRE firewall lets out, so they are limited to FLIP's own
 and fixed once deployed: changing one means a TRE admin removing the service and adding it again. The
-subnet's range is always the TRE API's choice: the template declares no `address_space_size`, so the
-API never accepts a `custom` range, and it replaces any `address_space` given.
+subnet's range is always the TRE API's choice: the template fixes `address_space_size` to `small` (a
+/24), so the API refuses a `custom` range, and it replaces any `address_space` given.
 
 ## Getting the kit to the node
 
@@ -131,8 +132,7 @@ Every rule's source is the node's subnet only.
 |------|-------------|-----|
 | `flip-hub-api` | `hub_api_hostname`, 443 | Task polling, heartbeats and results |
 | `flip-fl-server` (network rule) | `fl_server_ip_addresses`, `fl_port` | Federated learning, mutual TLS. By address: the TRE firewall runs no DNS proxy, so network rules cannot use names. Keep it out of any TLS inspection |
-| `flip-images` | `ghcr.io`, `pkg-containers.githubusercontent.com` | FLIP's images. The TRE's Nexus mirror does not proxy GHCR |
-| `docker-hub` | `registry-1.docker.io`, `auth.docker.io`, `production.cloudfront.docker.com` | The logging stack and XNAT's Docker socket proxy |
+| `flip-images` | `ghcr.io`, `pkg-containers.githubusercontent.com` | Every image the node runs: FLIP's own and its mirrors of the third-party ones. The TRE's Nexus mirror does not proxy GHCR |
 | `docker-engine` | `download.docker.com` | Docker Engine |
 | `sample-data` | `huggingface.co`, `*.hf.co`, `pypi.org`, `files.pythonhosted.org` | FLIP's sample data, loaded by the first install |
 | `flip-provisioning` | `github.com`, `codeload.github.com`, `galaxy.ansible.com`, `astral.sh`, `releases.astral.sh` | Cloning FLIP, the Docker Ansible role, uv |
@@ -145,6 +145,10 @@ a firewall yet. If the workspace has AzureTRE's **DNS Security Policy** on, add 
 endpoint's hostname to the TRE's `allowed_dns` too.
 
 The rules are added **before** the VM is created, because its first boot clones FLIP from GitHub.
+
+**Tell the FLIP team the TRE firewall's public IP address** before joining, and again if it changes. The
+hub's FL edge admits declared trust addresses only, so without it the FL connection is dropped at the
+hub while every rule here is correct.
 
 ## The airlock decision
 

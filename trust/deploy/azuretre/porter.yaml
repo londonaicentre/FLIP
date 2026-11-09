@@ -64,9 +64,10 @@ parameters:
   - name: fl_server_ip_addresses
     type: string
     description: "The FL server's IPv4 addresses (the resource processor passes an array as base64 JSON)"
+  # A string: the firewall template takes ports as strings, and the pipeline passes this one through.
   - name: fl_port
-    type: integer
-    default: 8002
+    type: string
+    default: "8002"
   - name: enable_shutdown_schedule
     type: boolean
     default: false

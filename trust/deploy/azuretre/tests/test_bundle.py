@@ -158,15 +158,17 @@ def test_vm_sizes_match_the_schema():
 
 def test_address_space_is_only_ever_allocated_by_the_tre():
     # The TRE API allocates a range only for a template whose schema has address_space, and replaces
-    # any given value unless address_space_size is "custom". AzureTRE rejects properties a template
-    # does not declare, so leaving address_space_size out means no one can ask for "custom": every
-    # firewall rule's source is a range the TRE chose.
+    # any given value unless address_space_size is "custom". AzureTRE v0.29.1 accepts properties a
+    # template does not declare, so the size is declared with one allowed value: the API then
+    # refuses "custom", and every firewall rule's source is a range the TRE chose.
     schema = _schema()
     prop = schema["properties"]["address_space"]
-    assert "address_space_size" not in schema["properties"]
-    assert '"custom"' not in (BUNDLE_DIR / "template_schema.json").read_text()
+    size = schema["properties"]["address_space_size"]
+    assert (size["enum"], size["default"]) == (["small"], "small")
     assert prop.get("updateable", False) is False
-    assert schema["uiSchema"]["address_space"] == {"classNames": "tre-hidden"}
+    assert size.get("updateable", False) is False
+    for name in ("address_space", "address_space_size"):
+        assert schema["uiSchema"][name] == {"classNames": "tre-hidden"}
     assert schema["pipeline"]["install"][0]["resourceType"] == "workspace"
 
 
@@ -193,7 +195,7 @@ def test_every_rule_is_scoped_to_the_node_subnet():
 
 def test_egress_table_parses():
     rows = _egress_rows()
-    assert len(rows) >= 8, rows
+    assert len(rows) >= 7, rows
     assert any(port == "443" for _, port in rows)
 
 
@@ -230,14 +232,28 @@ def test_fl_rule_names_the_server_by_address():
     assert _schema()["properties"]["fl_server_ip_addresses"]["items"]["format"] == "ipv4"
 
 
+def test_fl_port_reaches_the_firewall_as_a_string():
+    # AzureTRE substitutes a whole-token value with its own type and validates the result against
+    # the firewall template, whose destination_ports items are strings: an integer port fails the
+    # firewall step before the VM exists.
+    assert _schema()["properties"]["fl_port"]["type"] == "string"
+    porter = next(p for p in _porter()["parameters"] if p["name"] == "fl_port")
+    assert (porter["type"], porter["default"]) == ("string", "8002")
+
+
+def test_no_docker_hub_host_is_opened():
+    # Every image the node runs comes from GHCR since v0.15.0 (FLIP#1721).
+    assert not [fqdn for fqdn in _https_fqdns() if fqdn.endswith("docker.io") or "cloudfront" in fqdn]
+
+
 def test_destinations_are_flips_own_and_fixed_once_deployed():
     # A workspace owner must not be able to point the TRE's egress allowlist anywhere else: the
     # destinations are FLIP's hubs and ports, and changing one means a TRE admin reinstalling.
     props = _schema()["properties"]
     assert props["hub_api_hostname"]["enum"] == FLIP_HUBS
     assert props["hub_api_hostname"]["default"] == "app.flip.aicentre.co.uk"
-    assert props["fl_port"]["enum"] == [8002, 8003]
-    assert props["fl_port"]["default"] == 8002
+    assert props["fl_port"]["enum"] == ["8002", "8003"]
+    assert props["fl_port"]["default"] == "8002"
     assert (props["fl_server_ip_addresses"]["minItems"], props["fl_server_ip_addresses"]["maxItems"]) == (1, 4)
     for name in ("hub_api_hostname", "fl_server_ip_addresses", "fl_port"):
         assert props[name]["updateable"] is False, name

@@ -34,7 +34,7 @@
     "flip_release": {
       "type": "string",
       "title": "FLIP release",
-      "description": "The FLIP release tag (vX.Y.Z, v0.14.0 or later) the node installs at first boot. Use the release your FLIP hub runs.",
+      "description": "The FLIP release tag (vX.Y.Z, v0.15.0 or later) the node installs at first boot. Use the release your FLIP hub runs.",
       "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
     },
     "fl_backend": {
@@ -84,20 +84,29 @@
       "updateable": false
     },
     "fl_port": {
-      "type": "integer",
+      "type": "string",
       "title": "FL port",
       "description": "Your kit's FL port: 8002 on production, 8003 on staging. Fixed once deployed.",
       "enum": [
-        8002,
-        8003
+        "8002",
+        "8003"
       ],
-      "default": 8002,
+      "default": "8002",
       "updateable": false
     },
     "address_space": {
       "type": "string",
       "title": "Address space",
       "description": "The node subnet's range. The TRE API allocates it: any value given is replaced."
+    },
+    "address_space_size": {
+      "type": "string",
+      "title": "Address space size",
+      "description": "Fixed: the TRE API allocates a /24. Declared so that it refuses \"custom\", which would let whoever deploys the service choose the range.",
+      "enum": [
+        "small"
+      ],
+      "default": "small"
     },
     "enable_shutdown_schedule": {
       "type": "boolean",
@@ -145,6 +154,9 @@
   ],
   "uiSchema": {
     "address_space": {
+      "classNames": "tre-hidden"
+    },
+    "address_space_size": {
       "classNames": "tre-hidden"
     },
     "ui:order": [
@@ -215,16 +227,9 @@
                 },
                 {
                   "name": "flip-images",
-                  "description": "FLIP's container images (GHCR and its layer host)",
+                  "description": "Every container image the node runs (GHCR and its layer host)",
                   "source_addresses": ["{{ resource.properties.address_space }}"],
                   "target_fqdns": ["ghcr.io", "pkg-containers.githubusercontent.com"],
-                  "protocols": [{"port": "443", "type": "Https"}]
-                },
-                {
-                  "name": "docker-hub",
-                  "description": "The logging stack and XNAT's Docker socket proxy",
-                  "source_addresses": ["{{ resource.properties.address_space }}"],
-                  "target_fqdns": ["registry-1.docker.io", "auth.docker.io", "production.cloudfront.docker.com"],
                   "protocols": [{"port": "443", "type": "Https"}]
                 },
                 {
@@ -310,16 +315,9 @@
                 },
                 {
                   "name": "flip-images",
-                  "description": "FLIP's container images (GHCR and its layer host)",
+                  "description": "Every container image the node runs (GHCR and its layer host)",
                   "source_addresses": ["{{ resource.properties.address_space }}"],
                   "target_fqdns": ["ghcr.io", "pkg-containers.githubusercontent.com"],
-                  "protocols": [{"port": "443", "type": "Https"}]
-                },
-                {
-                  "name": "docker-hub",
-                  "description": "The logging stack and XNAT's Docker socket proxy",
-                  "source_addresses": ["{{ resource.properties.address_space }}"],
-                  "target_fqdns": ["registry-1.docker.io", "auth.docker.io", "production.cloudfront.docker.com"],
                   "protocols": [{"port": "443", "type": "Https"}]
                 },
                 {
