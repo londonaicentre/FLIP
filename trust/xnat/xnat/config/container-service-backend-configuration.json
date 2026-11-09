@@ -1,5 +1,6 @@
 {
     "name": "Socket proxy",
+    "backend": "swarm",
     "host": "tcp://xnat-socket-proxy:2375",
     "cert-path": "",
     "swarm-mode": true,

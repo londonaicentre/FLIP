@@ -21,6 +21,8 @@ request:
 * A subscription is valid while its action key names a wrapper that exists and is enabled site-wide
   and for each of its projects.
 * ``GET /xapi/events/subscriptions`` is null while the Event Service is off.
+* ``POST /xapi/docker/server`` stores container-service 3.9.0's build-directory cleanup defaults for
+  each cleanup setting the body leaves out.
 """
 
 from __future__ import annotations
@@ -34,6 +36,13 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 ACTION_KEY_PREFIX = "org.nrg.containers.services.CommandActionProvider:"
+BUILD_DIR_CLEANUP_DEFAULTS = {
+    "build-dir-cleanup-enabled": False,
+    "build-dir-cleanup-time": "02:00",
+    "build-dir-retain-days-completed": 7,
+    "build-dir-retain-days-failed": 14,
+    "build-dir-retain-days-killed": 1,
+}
 
 VALUE_FLAGS = {
     "-X",
@@ -157,7 +166,7 @@ def handle(state: dict[str, Any], req: Request) -> tuple[int, str]:
         if method == "POST":
             # As XNAT does: every POST stores the server again, under a new id.
             state.setdefault("backend_seq", 0)
-            state["backend"] = {**req.json_body(), "id": _new_id(state, "backend_seq")}
+            state["backend"] = {**BUILD_DIR_CLEANUP_DEFAULTS, **req.json_body(), "id": _new_id(state, "backend_seq")}
             return 200, json.dumps(state["backend"])
         if state.get("backend") is None:
             return 404, '{"error":"no server"}'

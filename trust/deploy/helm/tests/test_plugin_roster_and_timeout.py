@@ -337,7 +337,7 @@ def test_a_pod_with_every_plugin_and_the_dqr_route_passes_naming_each_version(
     """A plugin XNAT reports no version for says so; a site extra, even a malformed one, is ignored."""
     body = {
         "batchLaunchPlugin": {"id": "batchLaunchPlugin"},
-        "containers": {"version": "3.8.2-fat"},
+        "containers": {"version": "3.9.0-fat"},
         "dicom-query-retrieve": {"version": "3.0.0-xpl"},
         "ohifViewerPlugin": {"version": "3.8.0"},
         "someSitePlugin": "not a plugin bean",
@@ -350,7 +350,7 @@ def test_a_pod_with_every_plugin_and_the_dqr_route_passes_naming_each_version(
         (
             "PASS",
             "XNAT on 'pod/xnat-1' lists all 4 plugins and its DQR route answers: batchLaunchPlugin (no version), "
-            "containers 3.8.2-fat, dicom-query-retrieve 3.0.0-xpl, ohifViewerPlugin 3.8.0",
+            "containers 3.9.0-fat, dicom-query-retrieve 3.0.0-xpl, ohifViewerPlugin 3.8.0",
         )
     ]
 
@@ -474,7 +474,7 @@ def test_the_fetch_puts_no_credential_in_any_argv(monkeypatch: pytest.MonkeyPatc
     stub = tmp_path / "curl"
     stub.write_text(
         f'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "{tmp_path}/argv"\ncat >> "{tmp_path}/stdin"\n'
-        'case "$*" in *dqr*) printf 403 ;; *) printf \'{"containers": {"version": "3.8.2"}}\\n200\\n\' ;; esac\n'
+        'case "$*" in *dqr*) printf 403 ;; *) printf \'{"containers": {"version": "3.9.0"}}\\n200\\n\' ;; esac\n'
     )
     stub.chmod(0o755)
     secret = "s3cret-pass"  # pragma: allowlist secret
@@ -505,7 +505,7 @@ def test_the_fetch_puts_no_credential_in_any_argv(monkeypatch: pytest.MonkeyPatc
     # What the script printed is what the parser reads.
     monkeypatch.setattr(check_status, "run_command", lambda *_a, **_k: (True, result.stdout.strip()))
     answer = check_status.ask_xnat_plugins("pod/xnat-1", "flip-trust")
-    assert (answer.plugins, answer.dqr_status) == ({"containers": "3.8.2"}, "403")
+    assert (answer.plugins, answer.dqr_status) == ({"containers": "3.9.0"}, "403")
 
 
 def test_the_fetch_refuses_without_the_pods_service_credential(tmp_path: Path) -> None:
