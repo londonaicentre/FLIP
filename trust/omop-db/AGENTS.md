@@ -96,7 +96,7 @@ tolerate the DICOM vocab the seed has already loaded):
   with the imaging cohorts' keys at INSERT time (the per-trust split is taken on the raw id before
   the shift, and the raw id is kept in `person_source_value` — never re-derive a trust from a
   shifted id) — but that offset is not what makes reloading safe: imaging `person_id` is
-  `nhs_number_to_integer(PatientID)`, the first 9 digits of a real NHS number, so it scatters across
+  `person_id(PatientID)`, the first 9 digits of a real NHS number, so it scatters across
   the whole 9-digit range rather than staying "small", and a plain id-range delete silently destroys
   imaging persons (and, via `ON DELETE CASCADE`, their `image_occurrence`/`procedure_occurrence`
   rows) that happen to land above the threshold — confirmed live at ~10% of one trust's imaging
