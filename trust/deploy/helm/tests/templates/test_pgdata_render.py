@@ -13,8 +13,10 @@
 
 A freshly formatted cloud disk (Azure Disk, EBS) has lost+found at its root, and postgres's initdb
 refuses a non-empty data directory, so omop-db and xnat-db never start on one. `pgdataSubdir`
-points PGDATA one level down. Off by default: an existing volume keeps its data at the root, and
-moving PGDATA under it would start an empty cluster beside the real one. Skipped without helm.
+moves the data one level down: omop-db's PGDATA, and the part of the volume xnat-db mounts, since
+its image keeps the cluster in pg<major>/ below the mount (FLIP#1812). Off by default: an existing
+volume keeps its data at the root, and moving it under would start an empty cluster beside the real
+one. Skipped without helm.
 """
 
 import shutil
@@ -30,12 +32,13 @@ STATEFULSETS = {"omop-db": "omopDb.persistence.pgdataSubdir", "xnat-db": "xnat.d
 pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm is not installed")
 
 
-def _pgdata(*sets: str) -> dict[str, str | None]:
+def _pgdata(*sets: str) -> dict[str, tuple[str | None, str | None]]:
+    """Each StatefulSet's (PGDATA env, data volumeMount subPath)."""
     args = ["helm", "template", "trust-release", str(CHART_DIR), "--set", "flClient.kitHostPath=/opt/flip/fl-kit"]
     for item in sets:
         args += ["--set", item]
     rendered = subprocess.run(args, capture_output=True, text=True, check=True, timeout=120).stdout
-    found: dict[str, str | None] = {}
+    found: dict[str, tuple[str | None, str | None]] = {}
     for doc in yaml.safe_load_all(rendered):
         if not doc or doc.get("kind") != "StatefulSet":
             continue
@@ -43,17 +46,18 @@ def _pgdata(*sets: str) -> dict[str, str | None]:
             if doc["metadata"]["name"].endswith(name):
                 container = doc["spec"]["template"]["spec"]["containers"][0]
                 env = {e["name"]: e.get("value") for e in container.get("env", [])}
-                found[name] = env.get("PGDATA")
+                mount = next(m for m in container["volumeMounts"] if m["mountPath"] == "/var/lib/postgresql/data")
+                found[name] = (env.get("PGDATA"), mount.get("subPath"))
     return found
 
 
 def test_pgdata_stays_at_the_volume_root_by_default():
-    assert _pgdata() == {"omop-db": None, "xnat-db": None}
+    assert _pgdata() == {"omop-db": (None, None), "xnat-db": (None, None)}
 
 
 def test_pgdata_moves_into_the_named_subdirectory():
     found = _pgdata(*(f"{key}=pgdata" for key in STATEFULSETS.values()))
-    assert found == {name: "/var/lib/postgresql/data/pgdata" for name in STATEFULSETS}
+    assert found == {"omop-db": ("/var/lib/postgresql/data/pgdata", None), "xnat-db": (None, "pgdata")}
 
 
 @pytest.mark.parametrize("value", ["/pgdata", "../pgdata", "pg/data", ".."])

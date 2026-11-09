@@ -334,6 +334,79 @@ def test_xnat_db_guard_execs_entrypoint_with_argv_intact(
 
 
 #
+# xnat-db — guard-xnat-db-data.sh (FLIP#1812), the entrypoint ahead of the password guard
+#
+
+GUARD_XNAT_DB_DATA = GUARD_XNAT_DB.with_name("guard-xnat-db-data.sh")
+
+
+def _data_guard(tmp_path: Path, stub_bin: Path, shell: tuple[str, ...], layout: set[str]):
+    """Run the data guard over a volume laid out as named, with PGDATA at <volume>/pg16.
+
+    ``layout`` holds any of: ``old`` (a PostgreSQL 12 cluster at the volume root), ``dump`` (the
+    migration dump beside it), ``initialised`` (a pg16 cluster) and ``restored`` (its marker).
+    Returns the result and the argv it handed the password guard, None when it did not.
+    """
+    root = tmp_path / "data"
+    pgdata = root / "pg16"
+    root.mkdir()
+    if "old" in layout:
+        (root / "PG_VERSION").write_text("12\n")
+    if "dump" in layout:
+        (root / "xnat-migrate.dump").write_text("dump")
+    if "initialised" in layout:
+        pgdata.mkdir()
+        (pgdata / "PG_VERSION").write_text("16\n")
+    if "restored" in layout:
+        (pgdata / "xnat-restored").touch()
+    record = tmp_path / "argv"
+    _install_argv_recorder(stub_bin, "guard-xnat-db-passwords.sh", record)
+    env = {"PGDATA": str(pgdata), "PG_MAJOR": "16"}
+    result = _run(GUARD_XNAT_DB_DATA, env, shell=shell, stub_bin=stub_bin, argv=("postgres", "one two"))
+    return result, record.read_text().splitlines() if record.exists() else None
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+@pytest.mark.parametrize(
+    "layout",
+    [
+        set(),  # a fresh install
+        {"old", "dump"},  # the first start after an upgrade's dump: init restores it
+        {"old", "dump", "initialised", "restored"},  # a restart after that restore
+        {"old", "initialised"},  # the old cluster's dump already removed
+        {"initialised"},  # after xnat-db-remove-old-cluster
+    ],
+    ids=["fresh", "first-start-restores", "restored", "dump-removed", "old-cluster-removed"],
+)
+def test_xnat_db_data_guard_hands_over_with_argv_intact(shell, layout, stub_bin: Path, tmp_path: Path) -> None:
+    result, handed = _data_guard(tmp_path, stub_bin, shell, layout)
+
+    assert result.returncode == 0, result.stderr
+    assert handed == ["2", "postgres", "one two"]
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+def test_xnat_db_data_guard_refuses_an_old_cluster_without_a_dump(shell, stub_bin: Path, tmp_path: Path) -> None:
+    """Initialising beside it would start XNAT as an empty site, the old database unread."""
+    result, handed = _data_guard(tmp_path, stub_bin, shell, {"old"})
+
+    assert result.returncode == 1
+    assert "holds a PostgreSQL 12 database" in result.stderr
+    assert "make upgrade-trust" in result.stderr
+    assert handed is None
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+def test_xnat_db_data_guard_refuses_a_restore_that_did_not_finish(shell, stub_bin: Path, tmp_path: Path) -> None:
+    """The entrypoint skips init over an initialised PGDATA, so a restart would serve half a database."""
+    result, handed = _data_guard(tmp_path, stub_bin, shell, {"old", "dump", "initialised"})
+
+    assert result.returncode == 1
+    assert "did not finish" in result.stderr
+    assert handed is None
+
+
+#
 # xnat-web — wait-for-postgres.sh
 #
 # The psql stub is installed on every case, so "psql was never called" is a real

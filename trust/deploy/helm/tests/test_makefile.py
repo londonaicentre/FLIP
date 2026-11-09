@@ -16,6 +16,7 @@ from ``deploy/env_mode.mk`` like every other Makefile that reads HUB, so a deplo
 ``.stag`` / ``.prod`` rather than a development kit that does not exist.
 """
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -117,3 +118,58 @@ def test_sync_k8s_kit_runs_with_the_dependencies_it_declares():
     assert "python3 $(CHART_DIR)/sync_k8s_kit.py" not in makefile
     assert makefile.count("uv run --no-config $(CHART_DIR)/sync_k8s_kit.py") == 3
     assert '# dependencies = ["pyyaml>=6.0.3"]' in script
+
+
+# A stand-in for kubectl, for xnat-db-migrate-dump (FLIP#1812): every call is logged to $CALLS,
+# `get pod` finds the xnat-db pod unless $NO_DB, `exec … cat …PG_VERSION` answers $CURRENT, and
+# `exec -i` logs which script came on stdin.
+STUB_KUBECTL = r"""#!/bin/bash
+echo "$*" >> "$CALLS"
+case "$1" in
+  get) [[ "$*" == *component=xnat-db* ]] && [ -z "$NO_DB" ] && echo pod/trust-release-flip-trust-xnat-db-0; exit 0 ;;
+  exec)
+    if [ "$2" = -i ]; then
+      [[ "$(cat)" == *"pg_dump -Fc"* ]] && echo "stdin: migrate-dump" >> "$CALLS"
+      exit 0
+    fi
+    echo "$CURRENT"; exit 0 ;;
+esac
+exit 0
+"""
+
+
+def _migrate_dump(tmp_path: Path, **env: str) -> list[str]:
+    stub = tmp_path / "bin" / "kubectl"
+    stub.parent.mkdir()
+    stub.write_text(STUB_KUBECTL)
+    stub.chmod(0o755)
+    calls = tmp_path / "calls"
+    subprocess.run(
+        ["make", "-C", str(CHART_DIR), "xnat-db-migrate-dump"],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={**os.environ, "PATH": f"{stub.parent}:{os.environ['PATH']}", "CALLS": str(calls), **env},
+    )
+    return calls.read_text().splitlines() if calls.exists() else []
+
+
+def test_an_older_xnat_db_is_dumped_after_xnat_web_stops(tmp_path):
+    calls = _migrate_dump(tmp_path, CURRENT="12")
+    scale = next(i for i, c in enumerate(calls) if c.startswith("scale deployment") and "--replicas=0" in c)
+    dump = next(i for i, c in enumerate(calls) if c.startswith("exec -i") and c.endswith("sh -s 16"))
+    assert "component=xnat-web" in calls[scale], calls
+    assert scale < dump, calls
+    assert calls[dump + 1] == "stdin: migrate-dump", calls
+
+
+@pytest.mark.parametrize("env", [{"CURRENT": "16"}, {"CURRENT": "12", "NO_DB": "1"}], ids=["same-major", "no-xnat-db"])
+def test_xnat_db_migrate_dump_is_a_no_op_otherwise(tmp_path, env):
+    calls = _migrate_dump(tmp_path, **env)
+    assert not any(c.startswith(("scale", "exec -i")) for c in calls), calls
+
+
+def test_upgrade_trust_k8s_takes_the_migration_dump_before_the_helm_upgrade():
+    makefile = (CHART_DIR / "Makefile").read_text()
+    apply = makefile.split("\n_upgrade-trust-k8s-apply:\n", 1)[1].split("\n\n", 1)[0]
+    assert apply.index("sync-kit") < apply.index("xnat-db-migrate-dump") < apply.index("$(MAKE) deploy"), apply

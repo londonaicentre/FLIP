@@ -349,6 +349,7 @@ Scripts in `scripts/release/` (stdlib only, so the GPU host's plain `python3` ru
 make upgrade-onprem-trust KIT=<CODE> [TAG=vX.Y.Z] [FL_TAG=…] [FORCE=1] [YES=1] [ALLOW_CHECKOUT_DRIFT=1]  # operator: readiness checklist → data-safe upgrade; a release TAG is refused unless the checkout is at that tag (exit 6) — `git fetch --tags origin && git checkout vX.Y.Z` first
 make -C trust upgrade-trust KIT=<CODE> HUB=<env> [TAG=…]                 # the verb itself (pull, recreate, XNAT in place)
 make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env> TAG=… [KUBE_CONTEXT=…]  # Helm: sync-kit → global.image.tag
+make -C trust/xnat xnat-db-remove-old-cluster KIT=<CODE> HUB=<env> [YES=1]  # after an xnat-db PostgreSQL major upgrade (FLIP#1812): list, then delete, the old cluster kept for a rollback (Helm: make -C trust/deploy/helm xnat-db-remove-old-cluster)
 make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env> TAG=… # EC2 node from that root (no re-seed)
 make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=vX.Y.Z        # hub; the guard takes sha-<short7> or vX.Y.Z
 ```
