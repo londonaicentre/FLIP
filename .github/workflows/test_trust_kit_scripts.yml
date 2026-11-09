@@ -51,6 +51,12 @@ on:
       # test_fl_kit_edge_port.py asserts on the FLARE provisioning templates (FLIP#1365).
       - "fl-services/nvflare/provision/net-*_project_*.yml"
       - "fl-services/flower/*/Dockerfile"
+      # test_terraform_image_wait.py holds the apply's image wait to the image builds (FLIP#1811).
+      - "fl-services/nvflare/*/Dockerfile"
+      - "flip-api/Dockerfile"
+      - ".github/workflows/terraform_apply.yml"
+      - "deploy/providers/AWS/scripts/image-wait-budgets.sh"
+      - "deploy/providers/AWS/scripts/resolve-image-tags.sh"
       - "trust/deploy/helm/templates/**"
       - "trust/deploy/helm/values*.yaml"
       # test_mirror_images.py asserts every third-party image a trust node runs is pinned to the
