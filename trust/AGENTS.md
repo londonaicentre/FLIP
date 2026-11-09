@@ -35,7 +35,7 @@ the commented dev form):
 
 | Section | Owner | Touched by |
 |---------|-------|-----------|
-| Host-local profile | Operator | hand-edit (ports, bind dirs, optional `FL_SITE_PRIVACY_*` site privacy policy) |
+| Host-local profile | Operator | hand-edit (ports, bind dirs, optional `FLIP_UID`/`FLIP_GID` to run the containers as the operator, optional `FL_SITE_PRIVACY_*` site privacy policy) |
 | Trust-local credentials | Operator | hand-edit (passwords, service URLs) |
 | Hub-shared (managed) | Hub admin | `register-trust KIT=<CODE>` (live in prod, commented in dev) / `sync-trust-kit KIT=<CODE>` (prod refresh) |
 | Kit credentials (managed) | Hub | `register-trust` only — write-once; hub keeps only the hash |
@@ -83,15 +83,36 @@ The packager does NOT edit the kit file.
 
 The operator extracts, copies `.env.<CODE>.prod` into their checkout,
 edits only the Host-local profile (sets `FL_KIT_DIR`, ports/dirs) and rotates
-the Trust-local passwords, runs `sudo -E make onboard-onprem-trust KIT=<CODE>`
+the Trust-local passwords, runs `make onboard-onprem-trust KIT=<CODE>`
 for the readiness checklist (kit present, swarm active — the swarm check queries
-the docker daemon, hence sudo; Hub-shared + Kit credentials populated; the hub API, the
+the docker daemon; Hub-shared + Kit credentials populated; the hub API, the
 FL endpoint and the image registries reachable from the host (FLIP#1726: probed before
 anything starts, FAIL / FAIL / WARN, wording is "reachable from this host" only); FL_KIT_DIR
-exists + has the expected files), then `sudo -E make up-onprem-trust KIT=<CODE>` (both default to `HUB=prod`).
-Sudo because the provisioned login user is deliberately not in the docker group
-(root-equivalent); `-E` preserves `$HOME` so root's docker reuses the operator's
-GHCR login from `~/.docker/config.json`.
+exists + has the expected files), then `make up-onprem-trust KIT=<CODE>` (both default to `HUB=prod`).
+Both need only Docker socket access plus bind-mount dirs owned by the container uids (the
+on-prem guide's "Access the operator needs", FLIP#1723); nothing in the Makefiles calls sudo. A
+host provisioned by the on-prem playbook deliberately leaves the login user out of the docker
+group (root-equivalent), so there the operator prefixes `sudo -E` (`-E` preserves `$HOME` so
+root's docker reuses the operator's GHCR login); the checklist then prints the same prefix for
+the next step (`SUDO_USER` set). Setting a bind mount's owner to a container's uid needs root,
+so bring-up only checks it: a non-root operator needs `make -C trust prepare-host-dirs KIT=<CODE>`
+run once, as root, by whoever prepares the host (it creates every mount source with its owner and
+deletes nothing), and `xnat-reset` then deletes nothing either, refusing a tree that holds files.
+Only development keeps a throwaway-container fallback, on the developer's own machine; a remote
+DOCKER_CONTEXT (EC2) still prepares the membership store through the remote daemon. A kit that sets
+`FLIP_UID`/`FLIP_GID` to the operator's own ids needs neither step (FLIP#1731): every bind-mount
+writer runs as them (prod compose `user: "${FLIP_UID:-<image uid>}:${FLIP_GID:-<image gid>}"`,
+the same defaults as `deploy/portable.mk`'s `API_UID`/`ORTHANC_UID`/`XNAT_CONTAINER_UID`, which
+the ownership guards read), so the operator's own `mkdir` is enough and `xnat-reset` provisions the
+XNAT tree itself, as in development. xnat-db alone keeps its
+root entrypoint (its pinned `postgres:12.2-alpine` predates nss_wrapper in the Alpine variants), so
+`xnat-prepare-dirs` creates but never re-owns `xnat-db-data`, and XNAT's Container Service jobs run as
+`FLIP_UID` too (`XNAT_CS_CONTAINER_USER`, written into the Docker backend by `configure-dcm2niix.sh`), or
+dcm2niix could not read the 640 files xnat-web archives. `FLIP_UID` is a first-install choice:
+`_upgrade-trust-apply` refuses a kit whose `FLIP_UID` differs from the owner of the data dirs (unset, the Orthanc dir's 999, so clearing it is caught too). A second
+install on the same tree needs one root `rm -rf` of `XNAT_DATA_DIR` (xnat-db's data is uid 70's). The images' runtime-written paths are
+world-writable with the sticky bit for that uid (`scripts/tests/test_container_identity.py`
+pins both the defaults and those lines).
 
 ## Key Files
 
@@ -131,7 +152,7 @@ make onboard-onprem-trust KIT=<CODE> HUB=<env>  # Read-only readiness check usin
 make restart-trust KIT=GSTT    # Restart one trust stack (down + up-trust — first-install semantics, resets XNAT)
 make upgrade-trust KIT=<CODE> HUB=<env> [TAG=vX.Y.Z] [FORCE=1] [YES=1]  # Move a LIVE trust to a release, data intact (FLIP#1204): resolver pins the kit, pull, recreate what changed, upgrade-xnat in place. Never up-trust/restart-trust for this
 make up-trust-ec2 KIT=GSTT     # Start one trust stack on a cloud EC2 host
-make up-trust KIT=<CODE> HUB=prod  # Start a trust pointing at a remote hub (on-prem hosts: prefix sudo -E — login user is not in the docker group)
+make up-trust KIT=<CODE> HUB=prod  # Start a trust pointing at a remote hub (needs Docker socket access; playbook-provisioned hosts: prefix sudo -E)
 make debug                     # Trust-1 in debug mode
 make debug-trust-api           # Debug trust-api only
 make debug-imaging-api         # Debug imaging-api only

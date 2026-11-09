@@ -863,7 +863,7 @@ endif
 	@echo ""
 	@echo "⚠️  REMAINING MANUAL STEPS:"
 	@echo "   1. Deploy the staged FL kit into /opt/flip (run the commands printed above)."
-	@echo "   2. Start the trust stack (sudo: the login user is deliberately not in the docker group):"
+	@echo "   2. Start the trust stack (sudo: this playbook leaves the login user without docker access):"
 	@echo "      cd ../../.. && sudo -E make -C trust up-trust KIT=$(KIT) HUB=$(HUB)"
 
 .PHONY: down

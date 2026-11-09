@@ -539,11 +539,12 @@ def test_29_ready_command_preserves_and_quotes_the_selected_kit() -> None:
         Path('/opt/operator kits/$HOME `echo unsafe` "file"'),
     )
     for selected in selected_paths:
-        for hub in (None, "prod", "stag"):
+        for hub, sudo_user in ((None, None), ("prod", None), ("stag", None), ("prod", "operator")):
+            env = {k: v for k, v in (("HUB", hub), ("SUDO_USER", sudo_user)) if v is not None}
             out = io.StringIO()
             exit_code = None
             with (
-                mock.patch.dict(os.environ, {} if hub is None else {"HUB": hub}, clear=True),
+                mock.patch.dict(os.environ, env, clear=True),
                 mock.patch.object(sys, "argv", ["prog", "SITE", "--kit-file", str(selected)]),
                 mock.patch.object(sys, "stdout", out),
                 mock.patch.object(mod, "run_checks", return_value=[mod.Check("x", mod.Status.PASS, "mocked")]),
@@ -553,9 +554,11 @@ def test_29_ready_command_preserves_and_quotes_the_selected_kit() -> None:
                 except SystemExit as error:
                     exit_code = error.code
             text = out.getvalue().replace(mod.BOLD, "").replace(mod.RESET, "")
-            command = next(line.strip() for line in text.splitlines() if "sudo -E make up-onprem-trust" in line)
+            command = next(line.strip() for line in text.splitlines() if "make up-onprem-trust" in line)
             _assert(exit_code == 0, f"{selected.name}: READY exits 0")
-            expected = ["sudo", "-E", "make", "up-onprem-trust", "KIT=SITE", f"KIT_FILE={selected}".replace("$", "$$")]
+            # Docker socket access is the requirement; sudo appears only when the checklist ran under it.
+            expected = ["sudo", "-E"] if sudo_user else []
+            expected += ["make", "up-onprem-trust", "KIT=SITE", f"KIT_FILE={selected}".replace("$", "$$")]
             if hub and hub != "prod":
                 expected.append(f"HUB={hub}")
             _assert(
@@ -748,6 +751,234 @@ def test_35_the_checklist_carries_the_three_rows_and_gates_on_the_hub() -> None:
     _assert(registries.status == mod.Status.PASS, "registries probed through probe_tcp", str(registries))
 
 
+def _paths(**kit: str):
+    return mod.check_data_dir_paths(kit, True, "trust/.env.SITE.prod")
+
+
+def test_36_relative_data_dirs_warn() -> None:
+    """The kit template's development paths resolve inside the checkout on a deployed trust (FLIP#1723)."""
+    print("▶ relative data dir paths -> WARN naming them")
+    with tempfile.TemporaryDirectory() as td:
+        check = _paths(
+            OMOP_DATA_DIR=f"{td}/omop",
+            ORTHANC_STORAGE_DIR="./orthanc/orthanc-storage-trust1",
+            BASE_IMAGES_DOWNLOAD_DIR="./data/trust",
+            COHORT_SNAPSHOT_STORAGE_DIR=f"{td}/snapshots",
+            XNAT_DATA_DIR=f"{td}/xnat",
+        )
+    _assert(check.status == mod.Status.WARN, "WARN", f"{check.status}: {check.detail}")
+    _assert("ORTHANC_STORAGE_DIR, BASE_IMAGES_DOWNLOAD_DIR" in check.detail, "names both", check.detail)
+    _assert("trust/.env.SITE.prod" in check.hints[0], "hint names the kit", check.hints[0])
+
+
+def test_37_uncreatable_data_dir_fails() -> None:
+    """A dir the bring-up's mkdir cannot create fails here, not halfway through `up` (FLIP#1723).
+
+    Every dir counts, the membership store and XNAT's tree included: on an on-prem host they are
+    plain mkdirs as this user too. An unset one is judged at its /opt/flip default for the kit's slot."""
+    print("▶ data dir under an unwritable parent -> FAIL, store and XNAT included; unset -> the slot default")
+    with tempfile.TemporaryDirectory() as td:
+        locked = Path(td) / "locked"
+        locked.mkdir()
+        (locked / "pacs").mkdir()  # exists, but its parent (where the seed marker goes) is not writable
+        writable = lambda path, mode: Path(path) != locked  # noqa: E731 — root ignores mode bits, so fake it
+        with mock.patch.object(mod.os, "access", side_effect=writable):
+            marker = _paths(OMOP_DATA_DIR=f"{td}/omop", ORTHANC_STORAGE_DIR=f"{locked}/pacs")
+            check = _paths(
+                OMOP_DATA_DIR=f"{locked}/omop",
+                ORTHANC_STORAGE_DIR=f"{td}/orthanc",
+                BASE_IMAGES_DOWNLOAD_DIR=f"{td}/images",
+                COHORT_SNAPSHOT_STORAGE_DIR=f"{locked}/snapshots",
+                XNAT_DATA_DIR=f"{td}/xnat",
+            )
+            unset = _paths(OMOP_DATA_DIR=f"{td}/omop", ORTHANC_STORAGE_DIR=f"{td}/orthanc", FL_KIT_SLOT_NUMBER="3")
+    _assert(check.status == mod.Status.FAIL, "FAIL", f"{check.status}: {check.detail}")
+    _assert(f"OMOP_DATA_DIR ({locked} is not writable)" in check.detail, "names the var and parent", check.detail)
+    _assert(f"COHORT_SNAPSHOT_STORAGE_DIR ({locked} is not writable)" in check.detail, "store counted", check.detail)
+    _assert(marker.status == mod.Status.FAIL and "seed marker" in marker.detail, "marker parent checked", str(marker))
+    _assert(unset.status == mod.Status.PASS, "unset dirs judged at their /opt/flip defaults", str(unset))
+
+
+def test_38_absolute_creatable_data_dirs_pass() -> None:
+    print("▶ absolute, creatable data dirs -> PASS")
+    with tempfile.TemporaryDirectory() as td:
+        check = _paths(**{var: f"{td}/{var.lower()}" for var in mod.DATA_DIR_VARS})
+    _assert(check.status == mod.Status.PASS, "PASS", f"{check.status}: {check.detail}")
+
+
+def test_41_untraversable_parent_is_a_fail_not_a_crash() -> None:
+    """Path.exists re-raises EACCES; a kit path under a 700 mount of another uid must not kill the checklist."""
+    print("▶ data dir under a parent this user cannot traverse -> FAIL naming it")
+    if os.getuid() == 0:
+        print("  (skipped as root: every directory is traversable)")
+        return
+    with tempfile.TemporaryDirectory() as td:
+        locked = Path(td) / "locked"
+        locked.mkdir(mode=0o000)
+        try:
+            check = _paths(
+                OMOP_DATA_DIR=f"{locked}/opt/flip/omop",
+                ORTHANC_STORAGE_DIR=f"{td}/orthanc",
+                BASE_IMAGES_DOWNLOAD_DIR=f"{td}/images",
+                COHORT_SNAPSHOT_STORAGE_DIR=f"{td}/snapshots",
+                XNAT_DATA_DIR=f"{td}/xnat",
+            )
+        finally:
+            locked.chmod(0o755)
+    _assert(check.status == mod.Status.FAIL, "FAIL", f"{check.status}: {check.detail}")
+    _assert("OMOP_DATA_DIR" in check.detail and "not traversable" in check.detail, "names the var", check.detail)
+
+
+def test_42_rows_judge_the_sudo_user_not_root() -> None:
+    """Under `sudo -E` the operator's own ids come from SUDO_UID/SUDO_GID, as the next-step prefix already does."""
+    print("▶ container uid and data-dir rows judge SUDO_UID under sudo")
+    with mock.patch.dict(os.environ, {"SUDO_UID": "4242", "SUDO_GID": "4243", "SUDO_USER": "op"}):
+        check = mod.check_container_uid({"FLIP_UID": "4242", "FLIP_GID": "4243"}, True, "trust/.env.SITE.prod")
+        hint = mod.check_data_dir_paths({"FLIP_UID": "4242", "ORTHANC_STORAGE_DIR": "./p"}, True, "k").hints[0]
+    _assert(check.status == mod.Status.PASS and "this user" in check.detail, "sudo user's ids PASS", str(check))
+    _assert("mkdir -p" in hint, "data-dir hint says mkdir for the sudo user", hint)
+
+
+def test_39_trust_health_probe_ignores_the_proxy() -> None:
+    """Behind a TRE proxy with NO_PROXY unset, urllib would send 127.0.0.1 to the proxy (FLIP#1723)."""
+    print("▶ local trust-api probe bypasses http_proxy")
+    import http.server
+    import threading
+
+    class Health(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 — http.server's name
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"status": "ok"}')
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Health)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with mock.patch.dict(os.environ, {"http_proxy": "http://127.0.0.1:9", "no_proxy": ""}):
+            try:
+                body = mod.fetch_local_trust_health(str(server.server_address[1]))
+            except OSError as error:
+                body = {"error": str(error)}
+    finally:
+        server.shutdown()
+    _assert(body == {"status": "ok"}, "answers directly", str(body))
+
+
+def test_40_container_uid_row() -> None:
+    """FLIP_UID/FLIP_GID: unset keeps the image users, this user's ids PASS, another's WARN, FLIP_GID alone
+    or a non-number FAIL, and FLIP_UID alone takes FLIP_GID=FLIP_UID as deploy/portable.mk does."""
+    print("▶ container uid row")
+    me = {"FLIP_UID": str(os.getuid()), "FLIP_GID": str(os.getgid())}
+    cases = (
+        ({}, mod.Status.PASS, "each image's own user"),
+        (me, mod.Status.PASS, "this user"),
+        ({"FLIP_UID": str(os.getuid() + 1), "FLIP_GID": str(os.getgid())}, mod.Status.WARN, "is not this user"),
+        ({"FLIP_GID": str(os.getgid())}, mod.Status.FAIL, "FLIP_UID must be set"),
+        ({"FLIP_UID": "alex", "FLIP_GID": "1"}, mod.Status.FAIL, "FLIP_UID must be set"),
+    )
+    for kit, status, words in cases:
+        check = mod.check_container_uid(kit, True, "trust/.env.SITE.prod")
+        _assert(check.status == status and words in check.detail, f"{status.name}: {check.detail}", str(check))
+    uid_only = mod.check_container_uid({"FLIP_UID": "4242"}, True, "trust/.env.SITE.prod")
+    _assert(uid_only.status == mod.Status.WARN and "4242:4242" in uid_only.detail, "gid follows uid", str(uid_only))
+    pending = mod.check_container_uid({}, False, "trust/.env.SITE.prod")
+    _assert(pending.status == mod.Status.PENDING, "PENDING without the kit")
+    hint = mod.check_data_dir_paths({**me, "ORTHANC_STORAGE_DIR": "./pacs"}, True, "trust/.env.SITE.prod").hints[0]
+    _assert("mkdir -p" in hint and "prepare-host-dirs" not in hint, "data-dir hint says mkdir when run as me", hint)
+
+
+def test_43_fl_kit_contents_warn_when_the_client_uid_cannot_read_its_key() -> None:
+    """The kit's private key is 600/660 to whoever extracted it; the client runs as FLIP_UID (FLIP#1731)."""
+    print("▶ FL kit contents: a key the client's uid cannot read -> WARN naming the chown")
+    me, other = str(os.getuid()), str(os.getuid() + 1)
+    with tempfile.TemporaryDirectory() as td:
+        slot = Path(td) / "net-1" / "services" / "Trust_1"
+        for d in ("local", "startup", "transfer"):
+            (slot / d).mkdir(parents=True)
+        key = slot / "startup" / "client.key"
+        key.write_text("secret")
+        key.chmod(0o600)
+        base = {"FL_KIT_DIR": td, "FL_BACKEND": "nvflare", "FL_KIT_SLOT": "Trust_1", "FL_KIT_SLOT_NUMBER": "1"}
+        mine = mod.check_fl_kit_contents({**base, "FLIP_UID": me, "FLIP_GID": str(os.getgid())}, True)
+        theirs = mod.check_fl_kit_contents({**base, "FLIP_UID": other, "FLIP_GID": other}, True)
+        image = mod.check_fl_kit_contents(base, True)  # the image's uid 1000 is not this user either
+        (Path(td) / "net-1" / "certificates").mkdir()
+        cred = Path(td) / "net-1" / "keys" / "supernode_credentials_1"
+        cred.parent.mkdir()
+        cred.write_text("secret")
+        cred.chmod(0o600)
+        flower = mod.check_fl_kit_contents({**base, "FL_BACKEND": "flower", "FLIP_UID": other}, True)
+    _assert(mine.status == mod.Status.PASS, "my key, my uid: PASS", str(mine))
+    _assert(theirs.status == mod.Status.WARN, "other uid: WARN", str(theirs))
+    _assert(f"runs as uid {other}" in theirs.detail, "names the client uid", theirs.detail)
+    _assert(f"chown -R <that uid> {slot}" in theirs.hints[0], "hint names the slot dir", theirs.hints[0])
+    expected = mod.Status.PASS if os.getuid() == 1000 else mod.Status.WARN
+    _assert(image.status == expected, "the image's uid 1000 is judged the same way", str(image))
+    _assert(flower.status == mod.Status.WARN and "supernode_credentials_1" in flower.detail, "flower too", str(flower))
+
+
+def test_44_fl_kit_contents_survives_a_non_numeric_flip_uid() -> None:
+    """The Container uid row reports a non-numeric FLIP_UID; the kit row, run first, must not raise on it."""
+    print("▶ FL kit contents: FLIP_UID=alice -> no traceback, the Container uid row FAILs it")
+    with tempfile.TemporaryDirectory() as td:
+        slot = Path(td) / "net-1" / "services" / "Trust_1"
+        for d in ("local", "startup", "transfer"):
+            (slot / d).mkdir(parents=True)
+        (slot / "startup" / "client.key").write_text("secret")
+        kit = {"FL_KIT_DIR": td, "FL_BACKEND": "nvflare", "FL_KIT_SLOT": "Trust_1", "FLIP_UID": "alice"}
+        try:
+            row = mod.check_fl_kit_contents(kit, True)
+        except ValueError as exc:
+            _assert(False, "no traceback", repr(exc))
+            return
+    _assert(row.status == mod.Status.PASS, "the kit row judges the layout only", str(row))
+    uid_row = mod.check_container_uid(kit, True, "trust/.env.SITE.prod")
+    _assert(uid_row.status == mod.Status.FAIL, "the Container uid row FAILs it", str(uid_row))
+
+
+def test_45_fl_kit_contents_warn_when_the_client_cannot_enter_the_mount_root() -> None:
+    """startup/ is the bind-mount root, so the client must enter it; it never walks the dirs above it."""
+    print("▶ FL kit contents: a world-readable key in a 0700 startup/ -> WARN naming the dir")
+    with tempfile.TemporaryDirectory() as td:
+        slot = Path(td) / "net-1" / "services" / "Trust_1"
+        for d in ("local", "startup", "transfer"):
+            (slot / d).mkdir(parents=True)
+        key = slot / "startup" / "client.key"
+        key.write_text("secret")
+        key.chmod(0o644)
+        (slot / "startup").chmod(0o755)
+        base = {"FL_KIT_DIR": td, "FL_BACKEND": "nvflare", "FL_KIT_SLOT": "Trust_1", "FLIP_UID": str(os.getuid() + 1)}
+        Path(td).chmod(0o700)  # above the mount root: never walked by the client
+        open_root = mod.check_fl_kit_contents(base, True)
+        (slot / "startup").chmod(0o700)
+        closed_root = mod.check_fl_kit_contents(base, True)
+        (slot / "startup").chmod(0o755)
+    _assert(open_root.status == mod.Status.PASS, "0700 above the mount root: PASS", str(open_root))
+    _assert(closed_root.status == mod.Status.WARN, "0700 mount root: WARN", str(closed_root))
+    _assert(f"{slot / 'startup'} (mode 700) cannot be entered" in closed_root.detail, "names it", closed_root.detail)
+
+
+def test_46_swarm_worker_fails_naming_the_manager() -> None:
+    """`docker stack deploy` (up-xnat) needs a swarm manager, so an active worker is not a PASS."""
+    print("▶ Docker swarm: active manager PASS, active worker FAIL naming the manager")
+
+    def state(stdout: str) -> str:
+        done = subprocess.CompletedProcess([], 0, stdout=stdout, stderr="")
+        with mock.patch.object(mod.subprocess, "run", return_value=done):
+            return mod.docker_swarm_state()
+
+    _assert(state("active true\n") == "active", "manager: active")
+    _assert(state("active false\n") == "worker", "worker: worker")
+    _assert(state("inactive false\n") == "inactive", "inactive stays inactive")
+    with mock.patch.object(mod, "docker_swarm_state", return_value="worker"):
+        row = mod.check_swarm()
+    _assert(row.status == mod.Status.FAIL and "needs a manager" in row.detail, "worker FAILs", str(row))
+    _assert("docker node promote" in row.hints[0], "hint names the promotion", row.hints[0])
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -787,6 +1018,17 @@ def main() -> None:
     test_33_fl_endpoint_comes_from_what_the_client_dials()
     test_34_registries_warn_and_name_the_mirror()
     test_35_the_checklist_carries_the_three_rows_and_gates_on_the_hub()
+    test_36_relative_data_dirs_warn()
+    test_37_uncreatable_data_dir_fails()
+    test_38_absolute_creatable_data_dirs_pass()
+    test_39_trust_health_probe_ignores_the_proxy()
+    test_40_container_uid_row()
+    test_41_untraversable_parent_is_a_fail_not_a_crash()
+    test_42_rows_judge_the_sudo_user_not_root()
+    test_43_fl_kit_contents_warn_when_the_client_uid_cannot_read_its_key()
+    test_44_fl_kit_contents_survives_a_non_numeric_flip_uid()
+    test_45_fl_kit_contents_warn_when_the_client_cannot_enter_the_mount_root()
+    test_46_swarm_worker_fails_naming_the_manager()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

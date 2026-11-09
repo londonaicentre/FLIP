@@ -195,10 +195,11 @@ make -C trust down-trust KIT=GSTT   # if a previous GSTT stack is running
 make -C trust up-trust KIT=GSTT
 ```
 
-On an on-prem host provisioned by the on-prem playbook, prefix these with `sudo -E` — the login
-user is deliberately not in the docker group (see
-[trust/deploy/ansible/README.md](deploy/ansible/README.md)). Dev workstations are
-unaffected.
+Run these as a user with Docker socket access. On a host provisioned by the on-prem playbook
+that means prefixing `sudo -E` — the login user is deliberately not in the docker group (see
+[trust/deploy/ansible/README.md](deploy/ansible/README.md)); what the stack needs from the
+account is listed under "Access the operator needs" in `docs/source/deploy-flip/deploy-flip-node-on-prem.rst`.
+Dev workstations are unaffected.
 
 The trust-api container authenticates with its `TRUST_API_KEY` and posts a heartbeat to `POST /trust/heartbeat` (no name segment — the hub resolves the trust's identity from the API key). The Connection status page flips the row online within ~30s.
 
@@ -499,11 +500,10 @@ Its heading and fix hints name that selected path. Pass `HUB=stag` to the checkl
 5. Start the stack:
    - EC2 trust: `make -C trust up-trust-ec2 KIT=<CODE> HUB=prod` (stop it with
      `make -C trust down-trust-ec2 KIT=<CODE> HUB=prod`)
-   - On-prem trust: `sudo -E make -C trust up-trust KIT=<CODE> HUB=prod`
-     (sudo: the provisioned login user is deliberately not in the docker group;
-     `-E` keeps `$HOME` so root's docker reuses your GHCR login)
-   - Laptop-against-prod: `make -C trust up-trust KIT=<CODE> HUB=prod` (no sudo —
-     your workstation isn't provisioned by the on-prem playbook)
+   - On-prem trust: `make -C trust up-trust KIT=<CODE> HUB=prod`, as a user with
+     Docker socket access (on a playbook-provisioned host: `sudo -E make …`, since
+     its login user has none; `-E` keeps `$HOME` so root's docker reuses your GHCR login)
+   - Laptop-against-prod: the same command, as yourself
 
    `HUB` names the hub you are joining, and with it the kit-file suffix the
    trust Makefiles read: `prod` → `.env.<CODE>.prod`, `stag` → `.env.<CODE>.stag`.
@@ -529,8 +529,8 @@ Its heading and fix hints name that selected path. Pass `HUB=stag` to the checkl
 
 ```bash
 git fetch --tags origin && git checkout vX.Y.Z              # the checkout first: compose files + this verb come from it
-sudo -E make upgrade-onprem-trust KIT=<CODE>              # → the release the hub runs
-sudo -E make upgrade-onprem-trust KIT=<CODE> TAG=vX.Y.Z   # → a named release
+make upgrade-onprem-trust KIT=<CODE>              # → the release the hub runs
+make upgrade-onprem-trust KIT=<CODE> TAG=vX.Y.Z   # → a named release
 ```
 
 Runs the readiness checklist, resolves the target (the hub's `/api/health`
@@ -560,7 +560,7 @@ channel. Replace **only the Hub-shared block** in your local copy (your
 Host-local profile and Trust-local credentials stay yours), then re-apply:
 
 ```bash
-sudo -E make upgrade-onprem-trust KIT=<CODE> YES=1
+make upgrade-onprem-trust KIT=<CODE> YES=1
 ```
 
 That recreates only the containers whose configuration changed and leaves the
