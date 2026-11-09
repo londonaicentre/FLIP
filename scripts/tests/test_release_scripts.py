@@ -27,6 +27,7 @@ import io
 import json
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -117,6 +118,16 @@ class Instance(unittest.TestCase):
             for key in TRUST_CONTAINER_PORTS:
                 assert kit[key] == documented_value(text, key), (example, key)
             assert kit["OMOP_DB_TAG"] == "rel0130"
+            assert kit["NUM_AVAILABLE_GPUS"] == "0"
+            assert read_env_text(instance.trust_kit(text, "rel0130", 10000, gpus=1))["NUM_AVAILABLE_GPUS"] == "1"
+
+    def test_host_gpus_counts_nvidia_smi_lines(self):
+        listing = "GPU 0: NVIDIA GeForce RTX 5090 (UUID: GPU-x)\nGPU 1: NVIDIA A100 (UUID: GPU-y)\n"
+        done = subprocess.CompletedProcess([], 0, stdout=listing)
+        with mock.patch.object(instance.subprocess, "run", return_value=done):
+            assert instance.host_gpus() == 2
+        with mock.patch.object(instance.subprocess, "run", side_effect=FileNotFoundError):
+            assert instance.host_gpus() == 0
 
     def test_write_files_refuses_to_overwrite_and_hides_secrets(self):
         with tempfile.TemporaryDirectory() as tmp:
