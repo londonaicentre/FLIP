@@ -799,6 +799,37 @@ async def test_get_import_status_direct_archive_receiving_is_processing(
 @patch("imaging_api.services.retrieval.get_experiments")
 @patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
 @patch("imaging_api.services.retrieval.encrypt")
+async def test_get_import_status_executed_failed_while_direct_archive_receives_is_processing(
+    mock_encrypt,
+    mock_get_accession_ids,
+    mock_get_experiments,
+    mock_get_project,
+    headers,
+):
+    """FLIP#1816: DQR 3.1.0 marks a C-MOVE into the direct archive FAILED ("Received zero files"), files or not.
+
+    A direct-archive session still receiving the study is the files arriving, so it is `processing`; with no
+    such session the same FAILED is a C-MOVE that delivered nothing, and is `failed`.
+    """
+    mock_encrypt.return_value = "encrypted_id"
+    mock_get_accession_ids.return_value = ["ACC_RECV", "ACC_NONE"]
+    mock_get_experiments.return_value = []
+
+    with _import_records(
+        direct_archive=[_direct_archive("ACC_RECV", "RECEIVING")],
+        executed=[_executed("ACC_RECV", "FAILED"), _executed("ACC_NONE", "FAILED")],
+    ):
+        status = await get_import_status("proj1", "SELECT *", headers)
+
+    assert status.processing == ["ACC_RECV"]
+    assert status.failed == ["ACC_NONE"]
+
+
+@patch("imaging_api.services.retrieval.get_project")
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.get_experiments")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
 async def test_get_import_status_direct_archive_error_without_name_falls_back_to_folder_name(
     mock_encrypt,
     mock_get_accession_ids,
