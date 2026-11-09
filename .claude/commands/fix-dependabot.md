@@ -72,13 +72,14 @@ which moves unrelated pins. Then apply the *Security floors* rule:
 - In a project that ships (a service image, an FL image, `flip-utils`, `trust/xnat/export-mask`), add a transitive fix
   to `constraint-dependencies`, next to the other advisory entries, with the GHSA IDs in a trailing comment.
 - In `flip-utils`, a vulnerable **direct** dependency (including the `[full]` extras) also needs its specifier raised.
-  PyPI installs and the Flower `fl-base` image use plain pip, which reads neither `uv.lock` nor `[tool.uv]` (#1703,
-  monai).
-- Carry any new `flip-utils` floor by hand into the `pip install` in `fl-services/flower/fl-base/Dockerfile`.
+  PyPI installs use plain pip, which reads neither `uv.lock` nor `[tool.uv]` (#1703, monai).
 - Leave dev and docs tooling (`docs/`, `deploy/providers/AWS/`, dev-only groups) lock-only, unless it already has a
   floor.
 - Projects that consume `flip-utils` by path need relocking when its constraints change. Run `make lock` (it uses
   the root `UV_PROJECTS` list) and check that the diff only touches what you meant to change.
+- flwr moves everywhere at once or not at all: the `flwr/base` tag (`fl-services/flower/fl-base/Dockerfile`,
+  `compose.secure.yml`) and the locked flwr in `fl-services/flower/fl-api-flower` and in `flip-utils`' dev group
+  (#1801). `tests/test_fleet_proxy_allowlist.py` fails while they differ.
 
 **npm (`flip-ui`).** For a transitive fix, add an entry to `overrides` in `package.json` with a range like
 `">=<fixed> <<next major>"`. For a direct dependency, raise its range. Then run `npm install --package-lock-only` and
