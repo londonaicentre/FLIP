@@ -980,12 +980,12 @@ def check_unrotated_passwords(
     kit: str,
     kit_path: str | None = None,
 ) -> Check:
-    """Soft-warn if any Trust-local password still matches the template default.
+    """Refuse a stag/prod kit whose Trust-local passwords still match the template defaults.
 
-    Every kit is scaffolded from trust/.env.example (`make new-trust`), whose Trust-local
-    credentials are dev-friendly defaults. For a real on-prem hospital deployment the
-    operator must rotate these before bringing the stack up. Returns Status.WARN (not FAIL)
-    — defaults are technically usable for dev/testing and we don't want to block that path.
+    `make new-trust` mints these, but a kit scaffolded from an older template, or edited by
+    hand, can still carry trust/.env.example's mock-stack values. On a development kit that
+    is a WARN (the defaults are usable for testing); on a `.stag` / `.prod` kit it is a FAIL,
+    since the stack publishes Orthanc, Grafana and the OMOP database on the host.
     """
     kit_path = kit_path or f"trust/.env.{kit}"
     if not kit_present:
@@ -999,14 +999,15 @@ def check_unrotated_passwords(
     ]
     if not unchanged:
         return Check("Trust-local passwords", Status.PASS, "all rotated from template defaults")
+    deployed = kit_path.rsplit(".", 1)[-1] in ("stag", "prod")
     return Check(
         "Trust-local passwords",
-        Status.WARN,
+        Status.FAIL if deployed else Status.WARN,
         f"{len(unchanged)}/{len(TRUST_LOCAL_PASSWORD_KEYS)} still match {template.name} defaults",
         hints=[
             f"Unchanged: {', '.join(unchanged)}",
-            f"For a real on-prem deployment, edit {kit_path} → Trust-local credentials",
-            "  section and replace with production-grade secrets.",
+            f"Edit {kit_path} → Trust-local credentials section and replace each with a",
+            "  random secret (`make new-trust` mints them for a fresh kit).",
         ],
     )
 

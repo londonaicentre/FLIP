@@ -28,45 +28,24 @@ import axios from "axios";
 import type { Server } from "miragejs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { DEMO_USER } from "../demo/ark-plus-register";
-import cohortP1 from "../demo/data/cohort.json";
-import imageStatusP1 from "../demo/data/image_status.json";
-import cohortP2 from "../demo/data/p2_cohort.json";
-import imageStatusP2 from "../demo/data/p2_image_status.json";
-import p2Step1 from "../demo/data/p2_m1_step.json";
-import p2Step2 from "../demo/data/p2_m2_step.json";
-import p2Project from "../demo/data/p2_project.json";
-import project from "../demo/data/project.json";
-import stepModel from "../demo/data/step_model.json";
-import trustHealth from "../demo/data/trust_health.json";
-import trusts from "../demo/data/trusts.json";
-import { makeDemoServer } from "../demo-server";
+import { assertClean } from "../../scripts/demo-fixtures.mjs";
+import { ARKPLUS_FINETUNE } from "../demo/projects/arkplus-finetune/register";
+import { type DemoProject } from "../demo/registry";
+import { DEMO_SITES, DEMO_USER } from "../demo/roster";
+import { DEMO_PROJECTS, makeDemoServer, projectCountFor } from "../demo-server";
 
 interface IProjectFixture {
     id: string;
     name: string;
     approvedTrusts: { id: string; code: string }[];
-    query: { id: string; queriedTrustIds: string[]; respondedTrustIds: string[]; totalCohort: number };
+    query: { id: string };
 }
-interface ICohortFixture {
-    recordCount: number;
-    trustsResults: { name: string; results: { trustName: string; trustId: string }[] }[];
-    trustRecordCounts: Record<string, number>;
-}
-interface IStepFixture { modelId: string }
+interface IModelsFixture { data: { id: string }[] }
 
-const p1 = project as unknown as IProjectFixture;
-const p2 = p2Project as unknown as IProjectFixture;
-const p1m1 = stepModel as unknown as IStepFixture;
-const p2m1 = p2Step1 as unknown as IStepFixture;
-const p2m2 = p2Step2 as unknown as IStepFixture;
-
-// The union of both recorded projects' approved trusts: the only trusts the
-// register may name anywhere, on any route (sanitisation rule 5 in
-// mocks/demo/ark-plus-register.ts).
-const participants = [...p1.approvedTrusts, ...p2.approvedTrusts];
-const PARTICIPANT_IDS = new Set(participants.map(t => t.id));
-const PARTICIPANT_CODES = new Set(participants.map(t => t.code));
+const projectOf = (demo: { project: unknown }): IProjectFixture => demo.project as IProjectFixture;
+const modelIdsOf = (demo: { models: unknown }): string[] => (demo.models as IModelsFixture).data.map(m => m.id);
+const SITE_IDS = new Set(DEMO_SITES.map(site => site.id));
+const SITE_CODES = new Set(DEMO_SITES.map(site => site.code));
 
 describe("makeDemoServer route coverage", () => {
     let server: Server;
@@ -108,10 +87,11 @@ describe("makeDemoServer route coverage", () => {
         expect(resPermissions.status).toBe(200);
     });
 
-    it("answers the top-level projects list", async () => {
+    it("lists every registered project, in registry order", async () => {
         const res = await client.get("/projects");
         expect(res.status).toBe(200);
-        expect(res.data.data).toHaveLength(2);
+        expect(res.data.totalRecords).toBe(DEMO_PROJECTS.length);
+        expect(res.data.data.map((p: { id: string }) => p.id)).toEqual(DEMO_PROJECTS.map(d => projectOf(d).id));
     });
 
     it("answers /model/job-types", async () => {
@@ -119,13 +99,15 @@ describe("makeDemoServer route coverage", () => {
         expect(res.status).toBe(200);
     });
 
-    it.each([p1, p2])("answers project routes for project $id", async (proj) => {
+    it.each(DEMO_PROJECTS.map(d => [d.slug, d] as const))("answers project routes for %s", async (_slug, demo) => {
+        const proj = projectOf(demo);
         const routes = [
             `/projects/${proj.id}`,
             `/projects/${proj.id}/models`,
-            `/projects/${proj.id}/image/status`,
+            `/projects/${proj.id}/cohort-snapshots`,
             `/cohort/${proj.query.id}`
         ];
+        if (demo.imageStatus !== undefined) routes.push(`/projects/${proj.id}/image/status`);
 
         for (const path of routes) {
             const res = await client.get(path);
@@ -133,48 +115,57 @@ describe("makeDemoServer route coverage", () => {
         }
     });
 
-    it.each([p1m1, p2m1, p2m2])("answers model dashboard routes for model $modelId", async (model) => {
-        const resStep = await client.post(`/step/model/${model.modelId}`);
+    it("answers 404 on image status for a tabular project", async () => {
+        server.shutdown();
+        const { imageStatus: _imageStatus, ...tabular } = ARKPLUS_FINETUNE;
+        void _imageStatus;
+        server = makeDemoServer({
+            timing: 0,
+            projects: [tabular as DemoProject]
+        });
+        const res = await client.get(`/projects/${projectOf(ARKPLUS_FINETUNE).id}/image/status`);
+        expect(res.status).toBe(404);
+    });
+
+    it.each(DEMO_PROJECTS.flatMap(d => modelIdsOf(d)))("answers model dashboard routes for model %s", async (modelId) => {
+        const resStep = await client.post(`/step/model/${modelId}`);
         expect(resStep.status, "/step/model").toBe(200);
 
         const getRoutes = [
-            `/model/${model.modelId}/metrics`,
-            `/model/${model.modelId}/logs`,
-            `/files/model/${model.modelId}/files/list`,
-            `/files/model/${model.modelId}/get/files`,
-            `/files/model/${model.modelId}/fl/results`,
-            `/files/model/${model.modelId}/config.json`
+            `/model/${modelId}/metrics`,
+            `/model/${modelId}/logs`,
+            `/files/model/${modelId}/files/list`,
+            `/files/model/${modelId}/get/files`,
+            `/files/model/${modelId}/fl/results`,
+            `/files/model/${modelId}/config.json`
         ];
-
         for (const path of getRoutes) {
             const res = await client.get(path);
             expect(res.status, path).toBe(200);
         }
     });
 
-    // The route-coverage cases above walk the project and model pages. These
-    // cover the other two `canAccess: true` top-level nav destinations, which
-    // an unauthenticated visitor can reach directly from the header and which
-    // shipped unregistered — Models rendered the generic "Something went wrong"
-    // error over a permanent spinner for every visitor (FLIP#794 review).
     it("answers the estate-wide Models list with the shape the page reads", async () => {
+        const total = DEMO_PROJECTS.reduce((n, d) => n + modelIdsOf(d).length, 0);
         const res = await client.get("/models?pageNumber=1&pageSize=20");
         expect(res.status).toBe(200);
-
-        // Three recorded models across the two recorded projects.
-        expect(res.data.data).toHaveLength(3);
-        expect(res.data.totalRecords).toBe(3);
-
-        // models.vue reads statusCounts to size its filter tiles; a bare
-        // paginated list would render every tile as 0.
-        expect(res.data.statusCounts).toEqual({ RESULTS_UPLOADED: 3 });
-
+        expect(res.data.data).toHaveLength(total);
+        expect(res.data.totalRecords).toBe(total);
         for (const model of res.data.data) {
-            // IModelSummary requires the project join and a status on every row.
             expect(model.projectId, model.id).toBeTruthy();
             expect(model.projectName, model.id).toBeTruthy();
             expect(model.status, model.id).toBeTruthy();
         }
+    });
+
+    it("filters the estate-wide Models list by project and sums statusCounts to totalRecords", async () => {
+        const twoModels = DEMO_PROJECTS.find(d => modelIdsOf(d).length === 2);
+        expect(twoModels, "a project with two models").toBeDefined();
+        const res = await client.get(`/models?project=${projectOf(twoModels as (typeof DEMO_PROJECTS)[number]).id}`);
+        expect(res.status).toBe(200);
+        expect(res.data.totalRecords).toBe(2);
+        const counted = Object.values(res.data.statusCounts as Record<string, number>).reduce((a, b) => a + b, 0);
+        expect(counted).toBe(res.data.totalRecords);
     });
 
     it("answers the FL network status routes behind the Connection Status nets card", async () => {
@@ -188,12 +179,6 @@ describe("makeDemoServer route coverage", () => {
     it("serves trust heartbeats relative to now, not the capture date", async () => {
         const res = await client.get("/trust");
         expect(res.status).toBe(200);
-
-        // ConnectionStatus derives OFFLINE/DEGRADED/ONLINE from
-        // Date.now() - last_heartbeat. Pinning the captured timestamps made the
-        // public exhibit report the whole federation offline, worsening daily
-        // (FLIP#794 review). Anything inside a minute is unambiguously "live"
-        // and leaves room for a slow CI machine.
         for (const trust of res.data) {
             const age = Date.now() - new Date(trust.last_heartbeat).getTime();
             expect(age, `${trust.code} heartbeat age`).toBeLessThan(60_000);
@@ -201,80 +186,85 @@ describe("makeDemoServer route coverage", () => {
         }
     });
 
-    // Sanitisation rule 5, estate half. The cohort fixtures are checked
-    // directly at the bottom of this file; these are the routes that read the
-    // roster, where a stray trust surfaces as a Connection Status row, a node
-    // in its topology view, and a client of net-1 on the FL nets card.
-    it("names no non-participating trust on any estate-wide route", async () => {
+    it("names only roster sites on every estate-wide route", async () => {
         const roster = await client.get("/trust");
-        for (const trust of roster.data) {
-            expect(PARTICIPANT_IDS, `/trust → ${trust.name}`).toContain(trust.id);
-        }
-
+        expect(roster.data.map((t: { id: string }) => t.id)).toEqual(DEMO_SITES.map(site => site.id));
         const health = await client.get("/trust/health");
         for (const trust of health.data) {
-            expect(PARTICIPANT_IDS, `/trust/health → ${trust.trustName}`).toContain(trust.trustId);
+            expect(SITE_IDS, `/trust/health → ${trust.trustName}`).toContain(trust.trustId);
         }
-
-        // flNets() derives its client list from the roster, so this fails for
-        // the same underlying reason rather than needing its own fixture edit.
         const nets = await client.get("/fl/status");
         for (const net of nets.data) {
             for (const netClient of net.clients) {
-                expect(PARTICIPANT_CODES, `/fl/status ${net.name} → ${netClient.name}`).toContain(netClient.name);
+                expect(SITE_CODES, `/fl/status ${net.name} → ${netClient.name}`).toContain(netClient.name);
             }
         }
     });
 
-    // Sanitisation rule 6. project_count is the number of project_trust_intersect
-    // rows (flip-api trusts_services/get_trusts.py), so against this register it
-    // is the number of recorded projects that approved the trust. The capture
-    // carried the production figures instead — KCL 41, BDMS 34 — publishing each
-    // trust's real project load next to an exhibit holding two projects.
-    it("counts each trust's projects from the register, not the live platform", async () => {
+    it("counts each site's projects from the register, not the live platform", async () => {
         const res = await client.get("/trust");
-
         for (const trust of res.data) {
-            const recorded = [p1, p2].filter(p => p.approvedTrusts.some(t => t.id === trust.id)).length;
-
-            expect(trust.project_count, `${trust.code} project_count`).toBe(recorded);
+            expect(trust.project_count, `${trust.code} project_count`).toBe(projectCountFor(trust.id, DEMO_PROJECTS));
         }
     });
 
-    // Sanitisation rule 6, the other half. userCount is only populated by the
-    // project LIST endpoint (get_projects.py `_load_user_counts`, counting
-    // ProjectUserAccess rows, owner included); the DETAIL payloads this register
-    // was captured from leave it at 0. demo-server serves those on /projects,
-    // where the UI reads the list shape — so the grid view rendered "0 users"
-    // for a project that has an owner.
     it("counts each project's users to match the users it lists", async () => {
         const res = await client.get("/projects");
-
         for (const proj of res.data.data) {
             expect(proj.userCount, `${proj.name} userCount`).toBe(proj.users.length);
         }
     });
 
     it("serves a config.json body the job-type resolver can parse", async () => {
-        // Previously asserted only `status === 200`, which is why the response
-        // being the config *body* where file-service expected a presigned
-        // `{url, fileName}` envelope went unnoticed: every poll tick threw on
-        // fetch(undefined) and both evaluation models silently fell back to
-        // jobType "standard" (FLIP#794 review).
-        const res = await client.get(`/files/model/${p2m1.modelId}/config.json`);
+        const [modelId] = modelIdsOf(DEMO_PROJECTS[1] as (typeof DEMO_PROJECTS)[number]);
+        const res = await client.get(`/files/model/${modelId}/config.json`);
         expect(res.status).toBe(200);
-
         const config = typeof res.data === "string"
             ? JSON.parse(res.data) as { job_type?: string }
             : res.data as { job_type?: string };
-
         expect(config.job_type).toBeTruthy();
     });
 
-    // The guarantee the whole design rests on: the published demo bundle cannot
-    // reach a real API, database or Cognito, which is what makes it safe to host
-    // unauthenticated. It holds only because demo-server.ts registers no
-    // passthrough — and nothing failed if someone added one (FLIP#794 review).
+    it("serves no download URL and no denied string on any route", async () => {
+        const gets = ["/trust", "/trust/health", "/fl/status", "/projects", "/models", "/models/projects", "/site/details"];
+        const posts: string[] = [];
+        for (const demo of DEMO_PROJECTS) {
+            const proj = projectOf(demo);
+            gets.push(
+                `/projects/${proj.id}`,
+                `/projects/${proj.id}/models`,
+                `/projects/${proj.id}/cohort-snapshots`,
+                `/cohort/${proj.query.id}`
+            );
+            if (demo.imageStatus !== undefined) gets.push(`/projects/${proj.id}/image/status`);
+            for (const modelId of modelIdsOf(demo)) {
+                posts.push(`/step/model/${modelId}`);
+                gets.push(
+                    `/model/${modelId}/metrics`,
+                    `/model/${modelId}/logs`,
+                    `/files/model/${modelId}/files/list`,
+                    `/files/model/${modelId}/get/files`,
+                    `/files/model/${modelId}/fl/results`,
+                    `/files/model/${modelId}/config.json`
+                );
+            }
+        }
+        const responses = [
+            ...await Promise.all(gets.map(async path => [path, await client.get(path)] as const)),
+            ...await Promise.all(posts.map(async path => [path, await client.post(path)] as const))
+        ];
+        for (const [path, res] of responses) {
+            expect(res.status, path).toBe(200);
+            expect(() => assertClean(res.data, path), path).not.toThrow();
+        }
+        for (const demo of DEMO_PROJECTS) {
+            for (const modelId of modelIdsOf(demo)) {
+                const res = await client.get(`/files/model/${modelId}/fl/results`);
+                expect(res.data, modelId).toEqual([]);
+            }
+        }
+    });
+
     describe("zero egress", () => {
         it("keeps an unregistered request inside Mirage instead of hitting the network", async () => {
             // With a passthrough registered, Pretender hands the request to the
@@ -287,7 +277,7 @@ describe("makeDemoServer route coverage", () => {
         it("passes no request through to the real network while serving the demo's own routes", async () => {
             const paths = [
                 "/trust", "/trust/health", "/site/details", "/projects", "/models",
-                "/fl/status", "/model/job-types", `/projects/${p1.id}`, `/cohort/${p1.query.id}`
+                "/fl/status", "/model/job-types", `/projects/${projectOf(DEMO_PROJECTS[0] as (typeof DEMO_PROJECTS)[number]).id}`, `/cohort/${projectOf(DEMO_PROJECTS[0] as (typeof DEMO_PROJECTS)[number]).query.id}`
             ];
 
             for (const path of paths) {
@@ -317,7 +307,7 @@ describe("makeDemoServer route coverage", () => {
                 vi.spyOn(console, name).mockImplementation(() => undefined));
 
             try {
-                await client.get(`/projects/${p2.id}`);
+                await client.get(`/projects/${projectOf(DEMO_PROJECTS[1] as (typeof DEMO_PROJECTS)[number]).id}`);
 
                 methods.forEach((name, i) => {
                     expect(spies[i], `console.${name}`).not.toHaveBeenCalled();
@@ -336,90 +326,29 @@ describe("makeDemoServer route coverage", () => {
     });
 });
 
-// Sanitisation rule 5 in mocks/demo/ark-plus-register.ts. flip-api broadcasts
-// every cohort query to EVERY registered trust, so a raw capture carries
-// trusts that never joined the project — publishing an uninvolved node's
-// per-finding record counts, and inflating the project's headline cohort
-// beyond what its own approved trusts contributed (FLIP#794 review).
-// Documented in the register; enforced here, because the failure mode is a
-// re-capture silently reintroducing it.
-describe.each([
-    ["fine-tuning", project as unknown as IProjectFixture, cohortP1 as unknown as ICohortFixture],
-    ["evaluation", p2Project as unknown as IProjectFixture, cohortP2 as unknown as ICohortFixture]
-])("%s project: cohort names only participating trusts", (_label, proj, cohort) => {
-    const approved = new Set(proj.approvedTrusts.map(t => t.id));
+// Fixture-level invariants over every registered project, as the server
+// serves it: a cohort names only roster sites, and names them the way the
+// roster does (an aggregate freezes the trust name as of its aggregation day;
+// the scrub rewrites it — FLIP#794 review rules 5 and 7).
+describe("every registered project names only roster sites, consistently", () => {
+    const roster = new Map(DEMO_SITES.map(site => [site.id, site.name]));
 
-    it("names no non-participating trust anywhere in the query or its results", () => {
+    it.each(DEMO_PROJECTS.map(d => [d.slug, d] as const))("%s", (_slug, demo) => {
+        const proj = projectOf(demo);
+        for (const trust of proj.approvedTrusts) {
+            expect(roster.get(trust.id), `approvedTrusts → ${trust.id}`).toBeDefined();
+        }
+        const cohort = demo.cohort as {
+            trustsResults: { results: { trustId: string; trustName: string }[] }[];
+            trustRecordCounts: Record<string, number>;
+            recordCount: number;
+        };
         for (const group of cohort.trustsResults) {
-            for (const row of group.results) {
-                expect(approved, `${group.name} → ${row.trustName}`).toContain(row.trustId);
+            for (const result of group.results) {
+                expect(roster.get(result.trustId), `cohort → ${result.trustName}`).toBe(result.trustName);
             }
         }
-
-        for (const trustId of Object.keys(cohort.trustRecordCounts)) {
-            expect(approved, `trustRecordCounts → ${trustId}`).toContain(trustId);
-        }
-
-        for (const trustId of [...proj.query.queriedTrustIds, ...proj.query.respondedTrustIds]) {
-            expect(approved, `query trust ids → ${trustId}`).toContain(trustId);
-        }
-    });
-
-    it("totals add up from the per-trust counts that remain", () => {
-        const summed = Object.values(cohort.trustRecordCounts).reduce((a, b) => a + b, 0);
-
-        expect(cohort.recordCount).toBe(summed);
-        expect(proj.query.totalCohort).toBe(summed);
-    });
-});
-
-// Sanitisation rule 7. A cohort aggregate freezes the trust name it joined at
-// aggregation time (receive_cohort_results.py), so a trust renamed between two
-// projects' queries leaves the register describing one id under two names —
-// which is what P1's cohort did, calling KCL "Guy's and St Thomas' Trust".
-// Walks every fixture rather than a route list: the failure is in the data, and
-// a payload served by a route added later would escape a route-shaped check.
-describe("register names every trust consistently", () => {
-    const roster = new Map((trusts as { id: string; name: string }[]).map(t => [t.id, t.name]));
-
-    /** Every {id-ish, name-ish} pair in a fixture whose id is a known trust. */
-    function trustNamePairs(node: unknown, path: string, out: { path: string; id: string; name: string }[]) {
-        if (Array.isArray(node)) {
-            node.forEach((v, i) => trustNamePairs(v, `${path}[${i}]`, out));
-
-            return;
-        }
-
-        if (node === null || typeof node !== "object") return;
-
-        const obj = node as Record<string, unknown>;
-        const id = obj["trustId"] ?? obj["id"];
-        const name = obj["trustName"] ?? obj["name"];
-
-        if (typeof id === "string" && typeof name === "string" && roster.has(id)) {
-            out.push({
-                path,
-                id,
-                name
-            });
-        }
-
-        for (const [k, v] of Object.entries(obj)) trustNamePairs(v, `${path}.${k}`, out);
-    }
-
-    it.each([
-        ["cohort.json", cohortP1], ["p2_cohort.json", cohortP2],
-        ["image_status.json", imageStatusP1], ["p2_image_status.json", imageStatusP2],
-        ["project.json", project], ["p2_project.json", p2Project],
-        ["step_model.json", stepModel], ["p2_m1_step.json", p2Step1], ["p2_m2_step.json", p2Step2],
-        ["trust_health.json", trustHealth], ["trusts.json", trusts]
-    ])("%s agrees with the roster", (_file, fixture) => {
-        const pairs: { path: string; id: string; name: string }[] = [];
-
-        trustNamePairs(fixture, "", pairs);
-
-        for (const { path, id, name } of pairs) {
-            expect(name, `${_file}${path}`).toBe(roster.get(id));
-        }
+        const total = Object.values(cohort.trustRecordCounts).reduce((a, b) => a + b, 0);
+        expect(cohort.recordCount).toBe(total);
     });
 });

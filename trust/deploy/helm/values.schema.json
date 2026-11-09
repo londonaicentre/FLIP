@@ -302,7 +302,8 @@
           "type": "object",
           "properties": {
             "enabled": { "type": "boolean" },
-            "count": { "type": "integer" }
+            "count": { "type": "integer" },
+            "allocation": { "type": "string", "enum": ["devicePlugin", "runtime"] }
           }
         }
       }

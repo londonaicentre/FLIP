@@ -18,8 +18,8 @@
 #
 #   * hashed bundles are content-addressed, so they are cached for a year;
 #   * index.html and js/window.js reference those bundles and must never be cached;
-#   * --delete removes the previous build, but never ark_demo/, the Ark+ demo published into the same
-#     bucket by `make deploy-ark-demo`.
+#   * --delete removes the previous build, but never demo/, the public demo published into the same
+#     bucket by `make deploy-demo` (FLIP#1746).
 #
 # Nothing is invalidated: the networking account's edge serves the bucket (FLIP#749), and the no-cache
 # objects are re-fetched anyway.
@@ -47,7 +47,7 @@ echo "📦 Syncing ${dist} to s3://${bucket}/ ..."
 aws s3 sync "${dist}/" "s3://${bucket}/" \
     --delete \
     --cache-control "public, max-age=31536000, immutable" \
-    --exclude "index.html" --exclude "js/window.js" --exclude "ark_demo/*"
+    --exclude "index.html" --exclude "js/window.js" --exclude "demo/*"
 aws s3 cp "${dist}/index.html" "s3://${bucket}/index.html" \
     --cache-control "no-cache, no-store, must-revalidate" \
     --content-type "text/html; charset=utf-8"

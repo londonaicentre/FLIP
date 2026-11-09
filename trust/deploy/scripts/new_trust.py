@@ -15,9 +15,10 @@
 """Scaffold a new trust kit file from the base template (stdlib only).
 
 Produces ``trust/.env.<CODE>.<env>`` by copying the base template (host-local
-profile + mock-stack default credentials + ``<run-make-register-trust>``
-placeholders for the hub-managed blocks) and prepending the trust's identity
-(``TRUST_NAME`` / ``TRUST_CODE`` / ``TRUST_REGION``).
+profile + ``<run-make-register-trust>`` placeholders for the hub-managed blocks),
+minting a random value for every Trust-local password the template ships as a
+mock-stack default, and prepending the trust's identity (``TRUST_NAME`` /
+``TRUST_CODE`` / ``TRUST_REGION``).
 
 The result is ready for registration to fill in the credentials, FL kit slot and
 hub-shared block: ``make register-trust KIT=<CODE>`` on the dev hub,
@@ -28,8 +29,35 @@ existing kit. Driven by ``make new-trust``.
 from __future__ import annotations
 
 import argparse
+import os
+import secrets
 import sys
 from pathlib import Path
+
+# Trust-local passwords minted per kit, so no site ever runs the template's mock-stack
+# defaults. Must stay in lockstep with TRUST_LOCAL_PASSWORD_KEYS in onboard_onprem_trust.py,
+# whose readiness checklist refuses a stag/prod kit that still carries a template value.
+# XNAT_ADMIN_INITIAL_PASSWORD is deliberately absent: it is XNAT's factory password, which
+# xnat-init replaces with XNAT_ADMIN_PASSWORD.
+TRUST_LOCAL_PASSWORD_KEYS: tuple[str, ...] = (
+    "ORTHANC_PASSWORD",
+    "OMOP_POSTGRES_PASSWORD",
+    "DATA_ACCESS_POSTGRES_PASSWORD",
+    "XNAT_ADMIN_PASSWORD",
+    "XNAT_SERVICE_PASSWORD",
+    "GRAFANA_ADMIN_PASSWORD",
+)
+
+
+def mint_passwords(template: str) -> str:
+    """Replace each Trust-local password assignment in the template with a random value."""
+    lines = []
+    for line in template.splitlines():
+        key, sep, _ = line.partition("=")
+        if sep and key in TRUST_LOCAL_PASSWORD_KEYS:
+            line = f"{key}={secrets.token_urlsafe(24)}"
+        lines.append(line)
+    return "\n".join(lines) + "\n"
 
 
 def main() -> None:
@@ -68,8 +96,10 @@ def main() -> None:
         identity.append(f"TRUST_REGION={args.region}")
     identity.append("")  # blank line before the template body
 
-    target.write_text("\n".join(identity) + "\n" + template.read_text())
-    target.chmod(0o600)
+    # Created 0600 before any content lands, since the file holds credentials from its first byte.
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as kit:
+        kit.write("\n".join(identity) + "\n" + mint_passwords(template.read_text()))
     print(f"✅ Scaffolded {target}")
     if args.env == "development":
         print(f"   Next: make register-trust KIT={args.code}")

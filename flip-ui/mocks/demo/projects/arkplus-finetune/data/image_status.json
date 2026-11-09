@@ -1,0 +1,28 @@
+[
+  {
+    "projectCreationCompleted": true,
+    "importStatus": {
+      "successful": 1872,
+      "failed": 0,
+      "processing": 0,
+      "queued": 0,
+      "queueFailed": 0
+    },
+    "reimportCount": 0,
+    "trustId": "00000000-0000-4000-8000-00000000a001",
+    "trustName": "Guy's and St Thomas' Trust"
+  },
+  {
+    "projectCreationCompleted": true,
+    "importStatus": {
+      "successful": 1910,
+      "failed": 0,
+      "processing": 0,
+      "queued": 0,
+      "queueFailed": 0
+    },
+    "reimportCount": 0,
+    "trustId": "00000000-0000-4000-8000-00000000a002",
+    "trustName": "King's College Hospital"
+  }
+]

@@ -81,6 +81,9 @@ flip/
 ├── training.py   # Shared guards for masked batches and non-finite losses (requires the full extra)
 ├── xnat/         # XNAT protocol client and enrichment helpers (also exposed as the `flip-xnat` CLI)
 ├── export/       # Model-export bundling (`python -m flip.export`; see map-apps/README.md)
+├── monai/        # MONAI bundle on-ramp (inbound): `monai-flip.yaml` overlay schema + skeleton
+│                 # generator (`python -m flip.monai.skeleton <bundle_dir>`), cohort → datalist
+│                 # builder (`build_datalist`); no torch/MONAI import
 ├── nvflare/           # FLARE-specific logic and components
 │   ├── controllers/   # FLIP workflows (ScatterAndGather, BroadcastTask, …)
 │   ├── components/    # Event handlers, persistors, privacy filters, locators, …

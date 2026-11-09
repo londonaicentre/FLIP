@@ -23,7 +23,7 @@ the same **zero inbound trust** architecture as the Docker Compose deployment:
 trust services only make outbound connections to the Central Hub and the FL
 server; no inbound ports are exposed from the K8s cluster.
 
-> **Deployment status.** The chart is validated on single-node k3s and includes
+> **Deployment status.** The chart is validated on single-node k3s, AKS and Amazon EKS, and includes
 > kit staging, default-deny ingress, audited egress rules, least-privilege
 > service accounts, and stateless-workload hardening. Review the
 > [known limitations](#known-limitations), particularly storage and Pod Security
@@ -31,7 +31,7 @@ server; no inbound ports are exposed from the K8s cluster.
 
 > **Deploying a trust?** The operator guide — prerequisites, staging the FL kit, deploying,
 > the `HELM_TIMEOUT` wait budget, verifying, upgrading and uninstalling — is
-> [Deploy a FLIP node on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html).
+> [Deploy on an existing Kubernetes cluster](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html).
 > This README is the chart's reference: values, secrets, internals and development notes.
 
 ## Quickstart
@@ -621,6 +621,7 @@ flClient:
   gpu:
     enabled: true
     count: 1
+    allocation: devicePlugin   # or runtime, see below
     memoryPerGpuInGiB: 7
 ```
 
@@ -629,6 +630,16 @@ installed in the cluster, with an NVIDIA driver of **580 or newer** on the GPU n
 images ship PyTorch built for CUDA 13. The operator installs the driver itself, so pin its
 `driver.version` to a 580+ release (or, with `driver.enabled=false`, pre-install one on the
 node).
+
+`flClient.gpu.allocation` says how the pod gets its GPU (FLIP#1766):
+
+- `devicePlugin` (default): the fl-client container requests `nvidia.com/gpu: 1`, merged into
+  `flClient.resources.limits`. The device plugin reserves a GPU, Kubernetes places the pod on a node with a free
+  one, and the plugin sets `NVIDIA_VISIBLE_DEVICES` to the device it allocated. Use it on any cluster whose nodes
+  list `nvidia.com/gpu` in their allocatable.
+- `runtime`: no request. The pod gets `NVIDIA_VISIBLE_DEVICES=0` and relies on the node's default container
+  runtime being `nvidia` (k3s: `default-runtime: nvidia`), so it takes that node's GPU 0 and nothing reserves it.
+  Only for a single node with no device plugin; on a shared cluster it can run on a GPU another workload holds.
 
 `flClient.gpu.memoryPerGpuInGiB` defaults to 7 GiB and controls the memory offered per GPU to the NVFLARE
 scheduler. Set it to the memory available for jobs on the site's GPU.
@@ -1185,9 +1196,10 @@ The chart is validated in CI via:
    A kit that IS on the node but was staged with the wrong owner (a Flower SuperNode logging `Permission denied` on `/certs` or `/keys`) means `stage-kit` chowned it for the other backend — it reads the backend off the kit's shape, so re-stage from the slot's own kit directory (or pass `FL_BACKEND=flower` explicitly).
 2. **Kit path mismatch**: Verify `flClient.kitHostPath` points at the directory ON THE NODE holding this trust's provisioned kit, and that it contains the slot's contents (FLARE: `local/`, `startup/`, `transfer/`; Flower: `certificates/` and `keys/` with this slot's credential). The chart never fetches the kit — it is delivered out-of-band and placed on the node before the workload starts. A missing path fails scheduling with the path named.
 3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.
-4. **GPU not visible**: Verify `nvidia.com/gpu` annotation on the fl-client pod. Check CUDA env vars (`CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES`) are set via `flClient.gpu.enabled: true`.
-5. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.
-6. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (FLARE 1000, Flower 49999). On FLARE its `local/` must also be writable.
+4. **GPU not visible**: Check the fl-client container requests `nvidia.com/gpu` (`flClient.gpu.allocation: devicePlugin`) and the node lists it in its allocatable, or, with `allocation: runtime`, that `NVIDIA_VISIBLE_DEVICES=0` is set and the node's default runtime is `nvidia`. `CUDA_VISIBLE_DEVICES=0` is set in both modes by `flClient.gpu.enabled: true`.
+5. **Jobs never start ("waiting for resources")**: the FL server logs `sites without the requested resources: {'<slot>': {'num_of_gpus': 1}}`. The trust offers fewer GPUs than the job asks for: `grep num_of_gpus` in the client's `local/resources.json` shows 0 while `flClient.gpu.enabled` is false. Enable the GPU, or use job pods (`flClient.nvflare.jobPods`) on a GPU pool.
+6. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.
+7. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (FLARE 1000, Flower 49999). On FLARE its `local/` must also be writable.
 
 ### Network policy blocking intra-service traffic
 

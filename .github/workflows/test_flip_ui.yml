@@ -75,9 +75,15 @@ jobs:
         run: npm run lint
 
       # Typechecks the Cypress test tree (test/tsconfig.json), which nothing
-      # else covers: lint is eslint-only and the build typechecks src/ alone.
+      # else covers: lint is eslint-only.
       - name: Run test-tree typecheck
         run: npm run test:types
+
+      # Typechecks src/ and mocks/ with vue-tsc. Vitest strips types without
+      # checking them, and every CI and deploy build is build:deploy (vite
+      # build alone), so without this step src/ type errors never fail a run.
+      - name: Run src typecheck
+        run: npm run type-check
 
       - name: Run tests with npm
         run: npm run test:unit

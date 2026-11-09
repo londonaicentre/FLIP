@@ -799,6 +799,19 @@ If you manage the values by hand, add the port to ``networkPolicies.allowedEgres
    "FL client won't connect" in the :gh:`chart README <trust/deploy/helm/README.md>` for the kit path, kit owner
    and GPU checks.
 
+.. _ts-k8s-fl-reset:
+
+The FL client's connection to the FL server is reset after the TLS hello
+========================================================================
+
+A TCP connection to the FL server succeeds and the egress policy allows the port, but the connection drops with
+nothing read back once the TLS handshake starts.
+
+**Cause.** An application-aware firewall at the site's perimeter rejecting TLS on a non-default port. Nothing in the
+cluster changes it. Confirm with the ``openssl`` check on :ref:`deploy-trust-node-network`, from a pod or the admin
+host, then ask the network team to allow the ``ssl`` application to the FL endpoint on its port, or use a site-to-site
+VPN (:ref:`site-to-site-vpn`).
+
 **********
 Governance
 **********

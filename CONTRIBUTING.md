@@ -342,7 +342,7 @@ Keycloak, because the browser uses the OIDC password grant, which has no equival
 and forgot-password; use the Keycloak console for those. The admin "Reset password" button works (FLIP#1705): flip-api
 re-sends the invitation, and with no mail server in dev sets the shared `ADMIN_USER_PASSWORD` as a temporary password. Everything else —
 register, roles, enable/disable, MFA reset from the admin screen, projects, cohorts, uploads — works the same. Scripts
-that sign in (`make e2e_smoke`, `make -C flip-api create_testing_projects`, `make seed-demo-projects`, `make demo-users`,
+that sign in (`make e2e_smoke`, `make -C flip-api create_testing_projects`, `make seed-demo-projects`, `make demo-users`, `make capture-demo-project`,
 the demo recorder) go through the configured provider, so they need no AWS session either. Details:
 [`deploy/keycloak/README.md`](deploy/keycloak/README.md).
 
@@ -390,6 +390,7 @@ Hub) communicates with flip-api. FL clients relay metrics and exceptions to the 
 
 - `FL_PROVISIONED_DIR` — path to the FLARE or Flower provisioned workspace, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`. The Makefile automatically converts this to an absolute path (Docker requires absolute paths for volume mounts). This directory contains certificates, keys, `fed_client.json`, and other files generated during provisioning for each network. Both are now provisioned in-tree (gitignored): FLARE at `fl-services/nvflare/provision/workspace-dev`, Flower at `fl-services/flower/provision/creds`.
 - `FL_API_PORT` — port for FL API services (default: `8000`).
+- `HUB_BIND_ADDRESS` — address the hub composes publish host ports on (default `127.0.0.1`; set `0.0.0.0` to publish on every interface). Trust kits have `TRUST_BIND_ADDRESS` for the same purpose.
 
 ### Setting up AWS access
 
@@ -1118,10 +1119,11 @@ run was 95% of a clone). Instead:
   contains as `vX.Y.Z` on the dataset (`docs/scripts/freeze_docs_gifs.py`) before it pushes the git tag, so
   that release's docs, and git `main`'s, keep showing them. Release tags are never moved or deleted.
 - **GIFs CI cannot record** (the MONAI Label walkthrough needs a live trust) are listed in
-  `docs/scripts/live-recorded-gifs.txt` instead of having a spec. Recorded by hand, they go to the dataset
-  branch of the PR that carries them, which that PR's ReadTheDocs preview then shows (see "Publishing by
-  hand"). When that PR merges, the CI publish takes them from its `pr-<N>`; every later CI publish carries
-  them forward unchanged from `main`. Only CI writes the dataset's `main`; delete `pr-<N>` once the PR merges.
+  `docs/scripts/live-recorded-gifs.txt`, with each one's sha256, instead of having a spec. Recorded by hand,
+  they go to the dataset branch of the PR that pins them, which that PR's ReadTheDocs preview then shows (see
+  "Publishing by hand"). The next CI publish after that PR merges fetches the pinned bytes from its `pr-<N>`;
+  every later one carries them forward unchanged from `main`. Only CI writes the dataset's `main`; delete
+  the dataset branch `pr-<N>` (not the git branch) once `main`'s manifest lists the pinned sha256.
 
 ### Adding a new GIF
 
@@ -1152,7 +1154,7 @@ Without the skip flag the build restores the published bytes over any file that 
 Only for GIFs CI cannot record, and only to the dataset branch of your PR (the script refuses `main`). From a
 laptop with an account that can write to the dataset, with the full set under
 `docs/source/assets/generated/gifs/` (fetch the rest with `uv run docs/scripts/fetch_docs_gifs.py`, then add
-yours):
+yours) and each of yours pinned by its sha256 in `docs/scripts/live-recorded-gifs.txt`:
 
 ```bash
 uvx --from 'huggingface_hub>=1.6' hf auth login

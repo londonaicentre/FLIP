@@ -187,7 +187,7 @@ describe("deriveServices", () => {
         const derived = deriveServices(t, NOW);
 
         expect(derived).toHaveLength(SERVICE_REGISTRY.length);
-        expect(derived.some(s => s.key === "mystery-svc")).toBe(false);
+        expect(derived.some(s => (s.key as string) === "mystery-svc")).toBe(false);
     });
 
     it("treats a snapshot without a timestamp as no data", () => {

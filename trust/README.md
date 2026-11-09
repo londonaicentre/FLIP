@@ -21,7 +21,7 @@ Deploy components at the trust level:
 * Trust API ([trust-api](trust-api))
 * OMOP Database ([omop-db](omop-db))
 * XNAT ([xnat](xnat))
-* Observability ([observability](observability)) — Grafana (host `GRAFANA_PORT`, container 3000),
+* Observability ([observability](observability)) — Grafana (host `GRAFANA_PORT` on loopback unless `TRUST_BIND_ADDRESS` says otherwise, container 3000),
   Loki (host `LOKI_PORT`, container 3100) and an Alloy log collector (internal only, no published
   port). Each trust runs its own; logs never leave the trust.
 

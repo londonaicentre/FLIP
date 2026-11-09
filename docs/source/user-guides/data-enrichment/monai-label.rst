@@ -24,6 +24,10 @@ leave the Trust: the viewer, the model and the saved labels all stay inside it.
    MONAI Label option, ask the Trust's administrator; the operator guide is the
    `trust README <https://github.com/londonaicentre/FLIP/blob/develop/trust/README.md#monai-label-optional>`_.
 
+.. contents:: On this page
+   :local:
+   :depth: 1
+
 ******************************
 Switch it on in your browser
 ******************************
