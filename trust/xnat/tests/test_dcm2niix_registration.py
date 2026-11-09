@@ -222,16 +222,49 @@ def test_an_unchanged_backend_is_not_registered_again(tmp_path: Path, backend: s
 
 
 def test_a_drifted_backend_is_registered_again(tmp_path: Path) -> None:
+    """Here the server Container Service defines on first start: a plain Docker socket."""
     first = configure(tmp_path / "one", xnat_state([command(4, 4)]))
     assert first.code == 0, first.output
     drifted = first.state
-    drifted["backend"]["host"] = "unix:///var/run/docker.sock"
+    drifted["backend"].update(host="unix:///var/run/docker.sock", backend="docker")
     second = configure(tmp_path / "two", drifted)
 
     assert second.code == 0, second.output
     assert second.made("POST", r"/xapi/docker/server")
-    assert "(drifted on host)" in second.output
-    assert second.state["backend"]["host"] == "tcp://xnat-socket-proxy:2375"
+    assert "(drifted on backend, host)" in second.output
+    assert (second.state["backend"]["backend"], second.state["backend"]["host"]) == (
+        "swarm",
+        "tcp://xnat-socket-proxy:2375",
+    )
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_a_drifted_backend_keeps_the_sites_own_settings(tmp_path: Path, backend: str) -> None:
+    """A POST resets each setting it leaves out, so a re-run must not turn a site's build-dir cleanup off."""
+    site_settings = {
+        "build-dir-cleanup-enabled": True,
+        "build-dir-cleanup-time": "03:30",
+        "build-dir-retain-days-completed": 30,
+        "build-dir-retain-days-failed": 60,
+        "build-dir-retain-days-killed": 2,
+        "max-concurrent-finalizing-jobs": 4,
+    }
+    flip_field, flip_value = (
+        ("path-translation-docker-prefix", DATA_PATH) if backend == "docker" else ("combined-pvc-name", PVC)
+    )
+    first = configure(tmp_path / "one", xnat_state([command(4, 4)]), backend)
+    assert first.code == 0, first.output
+    drifted = first.state
+    drifted["backend"].update(site_settings, **{flip_field: "/drifted"})
+    second = configure(tmp_path / "two", drifted, backend)
+
+    assert second.code == 0, second.output
+    (post,) = second.made("POST", r"/xapi/docker/server")
+    sent = json.loads(post["body"])
+    assert sent.items() >= site_settings.items()
+    assert sent[flip_field] == flip_value
+    assert "id" not in sent, "XNAT fails a POST that carries the server's id"
+    assert second.state["backend"].items() >= site_settings.items()
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
