@@ -47,6 +47,12 @@ USER app
 # within the cooldown window instead of failing, matching nvflare/fl-api-base.
 RUN uv sync --no-dev
 
+# The paths the API writes, for a read-only root filesystem on ECS (FLIP#1795): the entrypoint's
+# Flower CLI config and /tmp. Fargate mounts an empty volume root-owned unless the image declares
+# the path a VOLUME with its owner.
+RUN mkdir -p /home/app/.flwr
+VOLUME ["/tmp", "/home/app/.flwr"]
+
 # Add fastapi executable to path
 ENV PATH="/app/.venv/bin:$PATH"
 

@@ -37,6 +37,10 @@ RUN rm -f /etc/nginx/conf.d/default.conf \
     && chmod 644 /etc/nginx/nginx.conf /etc/nginx/fleet-routes.map \
     && chmod 755 /usr/local/bin/fleet-proxy-healthcheck
 
+# ECS runs the proxy on a read-only root filesystem with an empty volume at /tmp (FLIP#1795).
+# Fargate mounts it root-owned 0755 unless the image declares the path a VOLUME.
+VOLUME ["/tmp"]
+
 # The SuperLink's own uid/gid (flwr/base's `app`), so the proxy reads the server key
 # wherever the SuperLink can: the production harness's host-owned certs, with no compose
 # `user:` override (scripts/tests/test_container_identity.py). Dev compose adds the host

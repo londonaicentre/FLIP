@@ -42,9 +42,14 @@ resource "aws_ecs_task_definition" "flower_register_supernode_keys" {
         { name = "SUPERLINK_ADDRESS", value = "${local.service_discovery_names.fl_server}:${local.flower_superlink_control_port}" },
         { name = "FL_API_ADDRESS", value = "http://${local.service_discovery_names.fl_api}:${local.api_container_port}" },
         { name = "TRUST_NAMES", value = var.FL_KIT_SLOT_NAMES },
+        # The script writes the Flower CLI's ~/.flwr/config.toml; the image's HOME
+        # (/app) is on the read-only root filesystem (ECS.5, FLIP#1795).
+        { name = "HOME", value = "/tmp" },
       ]
 
+      readonlyRootFilesystem = true
       mountPoints = [
+        { sourceVolume = "tmp", containerPath = "/tmp", readOnly = false },
         {
           sourceVolume  = "efs-fl-net-1-certs"
           containerPath = "/certs"
@@ -67,6 +72,10 @@ resource "aws_ecs_task_definition" "flower_register_supernode_keys" {
       }
     }
   ])
+
+  volume {
+    name = "tmp"
+  }
 
   dynamic "volume" {
     for_each = {

@@ -76,4 +76,8 @@ COPY --chown=${UNAME}:${UNAME} fl_api/ /app/fl_api/
 # as both the download_dir and upload_dir in fed_admin.json
 RUN mkdir -p /app/admin/transfer && chown -R ${UNAME}:${UNAME} /app/admin
 
+# The paths the API writes, for a read-only root filesystem on ECS (FLIP#1795). Fargate mounts
+# an empty volume root-owned unless the image declares the path a VOLUME with its owner.
+VOLUME ["/tmp", "/app/admin/transfer"]
+
 CMD ["bash", "-c", "/app/entrypoint.sh"]
