@@ -132,7 +132,7 @@ Prerequisites
      - ``prod``
      - production
 
-Production gets the production-only database safeguards (RDS deletion protection and a final snapshot).
+Production gets the production-only database safeguard: a final snapshot when the instance is deleted.
 
 ************************
 Required IAM permissions
