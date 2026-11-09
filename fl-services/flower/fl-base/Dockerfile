@@ -53,8 +53,8 @@ COPY flip-utils/docs/ /opt/flip-utils/docs/
 COPY flip-utils/flip/ /opt/flip-utils/flip/
 # No cryptography pin: flwr>=1.40 requires cryptography>=50.0.0, past GHSA-537c-gmf6-5ccf.
 # No certifi or uv pin either: flwr>=1.42 requires certifi>=2026.10.19 and uv>=0.13.5 (GHSA-6q48-6c7w-9gw2,
-# GHSA-hq85-5cpj-mr62). pip does not apply flip-utils' UV constraints; carry its setuptools floor here.
-RUN python -m pip install -U --no-cache-dir "/opt/flip-utils[full]" "setuptools>=84.1.0" \
+# GHSA-hq85-5cpj-mr62). pip does not apply flip-utils' UV constraints; carry its setuptools and oauthlib floors here.
+RUN python -m pip install -U --no-cache-dir "/opt/flip-utils[full]" "setuptools>=84.1.0" "oauthlib>=4.0.1" \
       --extra-index-url https://download.pytorch.org/whl/cu130
 
 # Copy register-supernode-keys.sh (used by the secure / central-hub topology to
