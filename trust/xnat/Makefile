@@ -564,12 +564,13 @@ xnat-backup-writable:
 # Create the xnat-web bind-mount sources a live site lacks, as xnat-web's uid: a Swarm task whose
 # mount source is missing fails to start. prearchive/ is the one sites installed before FLIP#1818
 # lack. A throwaway container, like xnat-backup's, needs no sudo and reaches a remote swarm host too.
+# upgrade-trust runs this before it pulls anything, like xnat-backup-writable.
 xnat-web-dirs:
 	$(require_kit)
 	@docker run --rm --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" alpine:3.20 \
 	  mkdir -p $(patsubst $(XNAT_DATA_DIR)/%,/x/%,$(XNAT_WEB_DATA_DIRS)) || { \
-	  echo "❌ uid $(XNAT_DIR_OWNER) could not create the XNAT data dirs under $(XNAT_DATA_DIR)/xnat-data, so XNAT"; \
-	  echo "   was not upgraded. As root on the host, once:"; \
+	  echo "❌ uid $(XNAT_DIR_OWNER) could not create the XNAT data dirs under $(XNAT_DATA_DIR)/xnat-data."; \
+	  echo "   Nothing was upgraded. As root on the host, once:"; \
 	  echo "   chown $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)/xnat-data"; exit 1; }
 
 # Get a shell in the running xnat-web container for the selected trust.
