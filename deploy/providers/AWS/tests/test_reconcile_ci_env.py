@@ -407,25 +407,6 @@ class TestBuild:
         values, _ = rce.build("prod", "lza-prod", "eu-west-2", "flip-terraform-state-lza", "flip-cluster")
         assert values["MANAGE_DNS"] == "true"
 
-    @pytest.mark.parametrize(("web_protocol", "expected"), [("TCP", "false"), ("TLS", "true")])
-    def test_web_tls_follows_the_internal_nlb_web_listener(self, stub_aws, web_protocol, expected):
-        """A reconciled file that dropped WEB_TLS would turn a TLS listener back to TCP (FLIP#1797)."""
-        stub_aws.update(_minimal_state(lza=True))
-        stub_aws["resources"].append(
-            {
-                "module": "module.fl_server_internal_nlb",
-                "mode": "managed",
-                "type": "aws_lb_listener",
-                "name": "this",
-                "instances": [
-                    {"index_key": "fl-server-tcp-listener", "attributes": {"port": 8002, "protocol": "TCP"}},
-                    {"index_key": "web-listener", "attributes": {"port": 443, "protocol": web_protocol}},
-                ],
-            }
-        )
-        values, _ = rce.build("stag", "lza-stag", "eu-west-2", "flip-terraform-state-lza-stag", "flip-cluster")
-        assert values["WEB_TLS"] == expected
-
     def test_keys_state_cannot_answer_are_left_empty_to_be_flagged(self, stub_aws):
         """Empty is what main() reports as "Not recovered — set these by hand"."""
         stub_aws.update(_minimal_state())

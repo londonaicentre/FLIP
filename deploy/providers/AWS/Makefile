@@ -149,10 +149,6 @@ endif
 # No default either way: true on an account without a Route 53 zone fails the zone lookup, and
 # false on one with it plans the certificate and its records away.
 $(if $(filter true false,$(MANAGE_DNS)),,$(error MANAGE_DNS must be true or false in $(MAIN_ENV_FILE) — false while the account has no Route 53 hosted zone (FLIP#749); got '$(MANAGE_DNS)'))
-# TLS on the internal NLB's web listener (FLIP#1797). Off unless set, and turned on per
-# environment together with the edge (aicentre-lza-iac#99): /api/* fails between the two.
-WEB_TLS ?= false
-$(if $(filter true false,$(WEB_TLS)),,$(error WEB_TLS must be true or false in $(MAIN_ENV_FILE); got '$(WEB_TLS)'))
 # Fail fast with a useful message if the per-tenant bucket names are missing
 # from the env file. The variables are required (no default) so Terraform
 # would otherwise prompt mid-plan with a generic message that gives no hint
@@ -216,9 +212,9 @@ export TF_VAR_FL_SERVER_PORT=${FL_SERVER_PORT}
 export TF_VAR_AWS_REGION=${AWS_REGION}
 # DNS availability (FLIP#749): an LZA account has no Route53 hosted zone (the
 # platform keeps it), so its env file sets MANAGE_DNS=false (no custom
-# certs/records). Required, no default (the env guards above).
+# certs/records; the web listener's cert comes from the platform, FLIP#1797).
+# Required, no default (the env guards above).
 export TF_VAR_manage_dns=$(MANAGE_DNS)
-export TF_VAR_web_tls=$(WEB_TLS)
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
 export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}

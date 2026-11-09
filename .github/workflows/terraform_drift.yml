@@ -177,7 +177,6 @@ jobs:
           NETWORKING_INGRESS_CIDRS: ${{ vars.NETWORKING_INGRESS_CIDRS }}
           LZA_WEB_EDGE_DOMAIN: ${{ vars.LZA_WEB_EDGE_DOMAIN }}
           LZA_WEB_EDGE_DISTRIBUTION_ARN: ${{ vars.LZA_WEB_EDGE_DISTRIBUTION_ARN }}
-          WEB_TLS: ${{ vars.WEB_TLS }}
           ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
           INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}

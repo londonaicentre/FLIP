@@ -341,12 +341,6 @@ variable "manage_dns" {
   default     = true
 }
 
-variable "web_tls" {
-  description = "Whether the internal NLB's web listener terminates TLS (FLIP#1797). Its certificate is this stack's own when manage_dns is true, otherwise the ISSUED one for flip_alb_subdomain that the platform issues into the account (aicentre-lza-iac#99). Turned on per environment together with the edge's origin_tls, as the edge passes TLS through."
-  type        = bool
-  default     = false
-}
-
 variable "flip_alb_subdomain" {
   description = "Public canonical subdomain for FLIP, served by the networking account's edge distribution. Named for the ALB that once fronted it."
   type        = string

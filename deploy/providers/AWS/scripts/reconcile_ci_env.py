@@ -177,15 +177,6 @@ def networking_ingress_cidrs(st: State) -> str:
     return json.dumps([cidr for cidr in rule["cidr_blocks"] or [] if cidr != vpc_cidr])
 
 
-def web_tls(st: State) -> str:
-    """WEB_TLS: 'true' when the internal NLB has a TLS listener, as only its web listener can be."""
-    for r in st.doc.get("resources", []):
-        if r.get("module") == "module.fl_server_internal_nlb" and r.get("type") == "aws_lb_listener":
-            if any((i.get("attributes") or {}).get("protocol") == "TLS" for i in r.get("instances") or []):
-                return "true"
-    return "false"
-
-
 def first_port(container: dict) -> str:
     ports = container.get("portMappings") or []
     return str(ports[0]["containerPort"]) if ports else ""
@@ -367,8 +358,6 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         # certificate.tf creates the certificate exactly when manage_dns is true.
         "MANAGE_DNS": "true" if st.attrs("aws_acm_certificate", "flip") else "false",
         "NETWORKING_INGRESS_CIDRS": networking_ingress_cidrs(st),
-        # Optional, but a reconciled file without it would turn the web listener back to TCP.
-        "WEB_TLS": web_tls(st),
     }
     # Which values did NOT come from state. Built by grouping rather than as
     # literal `"KEY": "..."` pairs: secret-scanning treats a quoted string beside

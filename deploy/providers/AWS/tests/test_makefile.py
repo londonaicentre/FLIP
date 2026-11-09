@@ -24,7 +24,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from make_probe import probe_make
 
 AWS_PROVIDER_DIR = Path(__file__).resolve().parent.parent
 MAKEFILE = AWS_PROVIDER_DIR / "Makefile"
@@ -186,21 +185,12 @@ def test_a_complete_env_file_passes_every_guard(tmp_path: Path) -> None:
         # No default: true is wrong on a zone-less estate, false wrong on one with a zone.
         ({"MANAGE_DNS": None}, "MANAGE_DNS must be true or false"),
         ({"MANAGE_DNS": "yes"}, "MANAGE_DNS must be true or false"),
-        ({"WEB_TLS": "yes"}, "WEB_TLS must be true or false"),
     ],
 )
 def test_each_env_guard_still_refuses_a_real_goal(change: dict[str, str | None], named: str, tmp_path: Path) -> None:
     result = _make_dry_run("plan", tmp_path=tmp_path, env_file=_env_file(tmp_path, **change))
     assert result.returncode != 0
     assert named in result.stderr, result.stderr
-
-
-@pytest.mark.parametrize(("value", "expected"), [(None, "false"), ("true", "true")])
-def test_web_tls_is_off_unless_set(value: str | None, expected: str, tmp_path: Path) -> None:
-    """Optional (FLIP#1797): an environment's listener stays TCP until its TLS cut sets the key."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("TF_VAR_")}
-    overrides = {"HUB": "stag", "MAIN_ENV_FILE": str(_env_file(tmp_path, WEB_TLS=value))}
-    assert probe_make(AWS_PROVIDER_DIR, ["$${TF_VAR_web_tls}"], overrides, env=env) == [expected]
 
 
 def test_an_unset_hub_refuses_a_real_goal(tmp_path: Path) -> None:
