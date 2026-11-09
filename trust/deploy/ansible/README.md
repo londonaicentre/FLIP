@@ -145,7 +145,7 @@ make provision-local-trust KIT=<CODE> HUB=<stag|prod>
        (uid/gid 49999) on upstream `flwr/base`, so group `49999` + `0775`. Re-run
        the playbook (or fix by hand) if you switch `FL_BACKEND`.
      - the **XNAT bind mounts** `/opt/flip/xnat`,
-       `/opt/flip/xnat/xnat-data/{tomcat_logs,archive,build,cache}` and
+       `/opt/flip/xnat/xnat-data/{tomcat_logs,archive,build,cache,prearchive}` and
        `/opt/flip/xnat/xnat-db-data`, owned by **UID/GID 1001** — the in-image
        `xnat` user (`trust/xnat/xnat/Dockerfile`), not the login user. See the
        XNAT-directory warning below.
@@ -186,7 +186,7 @@ make provision-local-trust KIT=<CODE> HUB=<stag|prod>
 > `HUB=stag|prod` (`TRUST_NUM` is the kit's `FL_KIT_SLOT_NUMBER`; `./xnat-data-trust<N>`
 > in dev) — a deliberate split so two trusts sharing a host stay isolated. Compose,
 > `xnat-reset` and the ownership check all read that same variable, so the live tree
-> is `<XNAT_DATA_DIR>/xnat-data/{tomcat_logs,archive,build,cache}` plus
+> is `<XNAT_DATA_DIR>/xnat-data/{tomcat_logs,archive,build,cache,prearchive}` plus
 > `<XNAT_DATA_DIR>/xnat-db-data`, and chowning `/opt/flip/xnat` looks right but changes
 > nothing. Check the kit's `XNAT_DATA_DIR` (set it explicitly there if you want one
 > fixed path) and chown **that** to `1001:1001`. `up-xnat` runs `xnat-reset`, which

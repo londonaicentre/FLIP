@@ -106,6 +106,7 @@ class UpgradeTrust(unittest.TestCase):
         assert '"/nonexistent/omop"' in out, out
         assert out.index("FLIP_UID is a first-install choice") < out.index(" pull"), out
         assert out.index("which writes the XNAT backup") < out.index(" pull"), "the backup dir is checked first too"
+        assert out.index("could not create the XNAT data dirs") < out.index(" pull"), "and XNAT's mount sources made"
         unset = dry_run("_upgrade-trust-apply")
         assert '[ "$owner" = "999" ]' in unset, unset
         assert '"/nonexistent/omop"' not in unset, unset
