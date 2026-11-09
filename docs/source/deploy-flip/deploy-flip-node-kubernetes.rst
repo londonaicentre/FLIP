@@ -11,12 +11,13 @@
 
 .. _deploy-flip-node-kubernetes:
 
-##################################
-Deploy a FLIP node on Kubernetes
-##################################
+########################################
+Deploy on an existing Kubernetes cluster
+########################################
 
 The ``flip-trust`` Helm chart deploys the trust node onto a Kubernetes cluster the trust already runs. Use it when
-the trust's platform team operates Kubernetes rather than standalone hosts. This page is step 5 of
+the trust's platform team operates Kubernetes rather than standalone hosts. To build a cluster for the chart from
+code instead, see :doc:`deploy-flip-node-aws-eks` or :doc:`deploy-flip-node-azure-aks`. This page is step 5 of
 :doc:`onboarding-a-trust`.
 
 As on every platform, **all traffic to the hub is outbound**. Every application Service is ``ClusterIP``; the one
@@ -28,8 +29,9 @@ optional inbound path is the DICOM receiver for a real PACS (see `Connect a real
    Do steps 1 to 4 of :doc:`onboarding-a-trust` first: you need the kit file and this trust's FL participant kit.
    When the node is deployed and its DICOM path verified, continue at step 6 there.
 
-The chart is validated on single-node k3s: read `Known limitations`_, particularly storage and Pod Security, before
-choosing it for a production trust. The :gh:`Helm chart README <trust/deploy/helm/README.md>` has the full values
+The chart is validated on single-node k3s, and its self-test passes on AKS (:doc:`deploy-flip-node-azure-aks`) and
+Amazon EKS (:doc:`deploy-flip-node-aws-eks`) with both FL backends. Read `Known limitations`_, particularly storage
+and Pod Security, before choosing it for a production trust. The :gh:`Helm chart README <trust/deploy/helm/README.md>` has the full values
 and secrets reference.
 
 .. contents:: On this page
@@ -146,7 +148,16 @@ GPU training needs the `NVIDIA GPU Operator <https://github.com/NVIDIA/gpu-opera
 **580 or newer** on the GPU nodes, because the FL images ship PyTorch built for CUDA 13. The operator installs the
 driver itself, so pin its ``driver.version`` to a 580+ release, or set ``driver.enabled=false`` and pre-install one on
 the node. Then set ``flClient.gpu.enabled: true`` and ``flClient.gpu.count: 1`` (on NVFLARE the chart accepts only 1;
-see `Key values`_).
+see `Key values`_). The client then requests ``nvidia.com/gpu`` (``flClient.gpu.allocation: devicePlugin``, the
+default), so Kubernetes reserves a GPU for it and places it on a node that has one. On a single node with no device
+plugin, whose default container runtime is ``nvidia`` (a k3s workstation), set ``flClient.gpu.allocation: runtime``
+instead: the pod then takes that node's GPU 0 without a reservation.
+
+The trust offers the FL scheduler only the GPUs it is configured with. A trust left at the default
+``flClient.gpu.enabled: false`` offers none, so every job that asks for a GPU waits and then fails, and the hub shows
+the trust as "waiting for resources". To lend a cluster's GPUs one per job instead of holding one around the clock,
+use NVFLARE job pods (``flClient.nvflare.jobPods``, with ``maxGpus`` set to the GPUs FLIP may use); see the chart
+README's "NVFLARE job pods" section.
 
 Extra network egress
 ====================
@@ -283,7 +294,9 @@ with ``flClient.kit.source=secret`` (FLIP#1390):
   moves PGDATA back to the volume root (both databases crash-loop) and looks for the kit on the node (the FL client
   stays ``Pending``).
 - On EKS the overlay is ``values-eks.yaml`` (the same settings, for the EBS CSI default class). The
-  :doc:`EKS root <deploy-flip-node-aws-eks>` creates the cluster and runs both steps for you with ``make join``.
+  :doc:`EKS root <deploy-flip-node-aws-eks>` creates the cluster and runs both steps for you with
+  ``make -C trust/deploy/terraform/aws/eks join``; the :doc:`AKS root <deploy-flip-node-azure-aks>` does the same
+  with ``make -C trust/deploy/terraform/azure/aks join``.
 - The overlays live beside the chart in the repository, not in the packaged chart, so a deploy from a chart tarball
   passes a checkout's copy by path.
 - ``kit-secret`` makes one key per mounted file in ``<release>-flip-trust-fl-kit``. It refuses a kit missing its
@@ -487,9 +500,10 @@ chart defaults, and the generated override still wins for the keys it sets. Do n
      - from the kit
      - The release every FLIP-built image runs. Set from the kit's ``DOCKER_TAG``; ``upgrade-trust-k8s TAG=`` moves
        it.
-   * - ``flClient.gpu.enabled`` / ``flClient.gpu.count``
-     - ``false`` / ``0``
-     - Request GPUs for the FL client. Needs the GPU Operator (see `GPUs`_).
+   * - ``flClient.gpu.enabled`` / ``flClient.gpu.count`` / ``flClient.gpu.allocation``
+     - ``false`` / ``0`` / ``devicePlugin``
+     - Give the FL client a GPU. Needs the GPU Operator (see `GPUs`_); ``allocation: runtime`` for a node with no
+       device plugin.
    * - ``trustData.seed.enabled``
      - ``true``
      - Loads the **mock** projects into OMOP (and Orthanc) on install and every upgrade. A site whose stores hold

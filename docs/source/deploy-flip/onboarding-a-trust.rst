@@ -19,7 +19,8 @@ This is the runbook for adding a trust to a running FLIP network, on any platfor
 admin's; steps 5 to 7 are the trust operator's. Only step 5, the install, differs by platform, and it lives on
 the platform's own page.
 
-Before you start, check the requirements on :doc:`deploy-trust-node`.
+Before you start, the trust should have worked through :doc:`trust-readiness-checklist`, and you should check the
+requirements on :doc:`deploy-trust-node`.
 
 .. contents:: On this page
    :local:
@@ -143,10 +144,11 @@ Step 5 — Install on your platform
 Follow your platform's page, then come back here for step 6:
 
 - **Docker Compose host** (on-prem or in a TRE): :doc:`deploy-flip-node-on-prem`
-- **Azure VM**: :doc:`deploy-flip-node-azure`
+- **Existing Kubernetes cluster**: :doc:`deploy-flip-node-kubernetes`
 - **AWS EC2**: :doc:`deploy-flip-node-aws-ec2`
 - **Amazon EKS**: :doc:`deploy-flip-node-aws-eks`
-- **Kubernetes**: :doc:`deploy-flip-node-kubernetes`
+- **Azure VM**: :doc:`deploy-flip-node-azure`
+- **Azure AKS**: :doc:`deploy-flip-node-azure-aks`
 
 **************************************
 Step 6 — Check the trust is polling
@@ -161,7 +163,7 @@ Step 6 — Check the trust is polling
    * - Platform
      - Command
    * - Docker Compose host
-     - ``sudo docker logs -f trust<N>-trust-api-1``
+     - ``docker logs -f trust<N>-trust-api-1``
    * - Kubernetes
      - ``kubectl logs -n flip-trust -l app.kubernetes.io/component=trust-api``
 
@@ -225,7 +227,7 @@ the AI Centre cannot hand on its copy, because the licences do not clearly allow
       * - Platform
         - Command
       * - Docker Compose host
-        - ``sudo docker restart trust<N>-data-access-api-1``
+        - ``docker restart trust<N>-data-access-api-1``
       * - Kubernetes
         - ``kubectl -n flip-trust rollout restart deployment/trust-release-flip-trust-data-access-api``
 
@@ -268,8 +270,8 @@ code does: FLARE job code runs in the FL client's job process, so code review re
    stops the FL client at startup, by design.
 #. Apply it:
 
-   - **Docker Compose host:** ``sudo -E make onboard-onprem-trust KIT=<CODE>`` from the repo root validates the
-     settings; then restart the FL clients with ``sudo -E make -C trust up-fl-clients-kit KIT=<CODE> HUB=prod``.
+   - **Docker Compose host:** ``make onboard-onprem-trust KIT=<CODE>`` from the repo root validates the
+     settings; then restart the FL clients with ``make -C trust up-fl-clients-kit KIT=<CODE> HUB=prod``.
    - **Kubernetes:** re-run the deploy (Step 4 on :doc:`deploy-flip-node-kubernetes`), which carries the settings
      into the chart.
 
@@ -297,7 +299,7 @@ to be re-issued.
 
 #. *Trust operator:* replace only the *Hub-shared* block in your kit file, then apply it:
 
-   - **Docker Compose host:** ``sudo -E make upgrade-onprem-trust KIT=<CODE> YES=1`` from the repo root.
+   - **Docker Compose host:** ``make upgrade-onprem-trust KIT=<CODE> YES=1`` from the repo root.
    - **Kubernetes:** re-run the deploy (Step 4 on :doc:`deploy-flip-node-kubernetes`); it re-patches the keys into
      the Secret and restarts the API services.
 
@@ -314,7 +316,7 @@ Later — upgrade to a new release
 
 Check out the new release tag, then:
 
-- **Docker Compose host:** ``sudo -E make upgrade-onprem-trust KIT=<CODE>`` from the repo root.
+- **Docker Compose host:** ``make upgrade-onprem-trust KIT=<CODE>`` from the repo root.
 - **Kubernetes:** ``make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=prod``; see "Upgrading" on
   :doc:`deploy-flip-node-kubernetes`.
 

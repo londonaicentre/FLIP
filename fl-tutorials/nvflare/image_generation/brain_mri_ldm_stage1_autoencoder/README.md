@@ -1,4 +1,4 @@
-# Brain MRI autoencoder — FLIP tutorial
+# Brain MRI generation, step 1: autoencoder
 
 This tutorial trains a KL-regularised autoencoder (MONAI `AutoencoderKL`) and a patch discriminator
 on 3-D brain MRI, using the **FLARE Client API** (`nvflare.client`), with the job defined in Python
@@ -23,6 +23,17 @@ unchanged, 8 latent channels included; the example's notebook uses a smaller aut
 changed the training for FLIP: federated across sites, all four MR sequences, whole-brain 2 mm
 geometry, and a MedicalNet perceptual loss that loads uploaded weights instead of downloading them.
 
+## At a glance
+
+| Item | Value |
+|---|---|
+| What you upload | everything in `app_files/`, plus `medicalnet_perceptual.pt` from `make weights` |
+| Job type | standard |
+| Imaging | on, DICOM to NIfTI on |
+| Cohort query | `query.sql` |
+| Dataset | `make -C fl-tutorials download-brain-mri-msd-raw`, then `make -C fl-tutorials download-brain-mri-data NUM_CASES=20` |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=brain_mri_ldm_stage1_autoencoder` (GPU) |
+
 ## How the two jobs fit together
 
 ![Latent diffusion on FLIP in two jobs: train the autoencoder, extract it, then train the diffusion model with the autoencoder frozen](assets/latent_diffusion_in_two_jobs.svg)
@@ -41,12 +52,6 @@ can skip this one by starting from the published autoencoder.
 
 Brain-MRI studies from one site, each shown as input vs reconstruction in the sagittal, coronal and
 axial planes.
-
-## Compatible job type
-
-This tutorial is designed for `JOB_TYPE=standard`
-([`fl-apps/nvflare/standard/`](../../../../fl-apps/nvflare/standard/)): an ordinary single-stage
-FedAvg job, after which every site evaluates the final global model.
 
 ## Data requirements
 

@@ -1,8 +1,8 @@
 .. _deploy-flip-node-azure:
 
-###########################
-Deploy a FLIP node on Azure
-###########################
+#################################
+Deploy a FLIP node on an Azure VM
+#################################
 
 A FLIP node on Azure is an on-prem node whose host happens to be an Azure VM: the same trust-side
 stack (trust-api, imaging-api, data-access-api, FL client, XNAT, Orthanc), the same on-prem verbs,
@@ -11,7 +11,7 @@ is operated only through Azure Run Command: there are no inbound ports and no SS
 receives its kit the way any trust does, from the hub admin, through a private container it reads
 with its own identity. For a node on a Trust's own host see :doc:`deploy-flip-node-on-prem`. The
 same trust can run instead as the ``flip-trust`` Helm chart on a one-node AKS cluster: see
-`Run it on AKS instead`_.
+:doc:`deploy-flip-node-azure-aks`.
 
 .. contents:: On this page
    :local:
@@ -56,6 +56,8 @@ configurations: the node's own NAT gateway (no ``SUBNET_ID``), the budget alert 
 |                           | day after upload, so within about 48 hours                   |
 +---------------------------+--------------------------------------------------------------+
 
+.. _deploy-flip-node-azure-network:
+
 ********************
 Network and security
 ********************
@@ -99,6 +101,8 @@ reaches the node through the kit drop, a storage account with shared keys off, a
 admits only the node's subnet and the operator's IP, and a rule that deletes every kit within
 about 48 hours. The node reads it with its own managed identity.
 
+.. _deploy-flip-node-azure-prerequisites:
+
 *************
 Prerequisites
 *************
@@ -126,12 +130,14 @@ Build the node and test it
    SUBNET=<subnet resource id>   # the site's subnet; leave empty for a standalone node (see below)
 
    make bootstrap AZ_SUBSCRIPTION="$SUB" STATE_SA=<unique storage name> ALERT_EMAIL=<you>   # once
+   cd vm
    make init      AZ_SUBSCRIPTION="$SUB"
    make plan      AZ_SUBSCRIPTION="$SUB" LOCATION=$REGION SUBNET_ID=$SUBNET
    make apply     AZ_SUBSCRIPTION="$SUB"      # shows the plan and the subscription, asks for yes
    make status    AZ_SUBSCRIPTION="$SUB"      # repeat until "provisioned: <time>"
 
-``init`` can be refused with a 403 for a minute or two after ``bootstrap``, while Azure applies
+The node's commands run in ``vm/``; only ``bootstrap`` and ``destroy-bootstrap`` run in the directory above, because
+the AKS cluster shares that layer. ``init`` can be refused with a 403 for a minute or two after ``bootstrap``, while Azure applies
 your access to the new state storage; run it again. First boot takes a few minutes.
 
 The VM is built from Canonical's latest Ubuntu 24.04 image (``image_version = "latest"``). To record
@@ -170,6 +176,8 @@ progress``.
 
 The reports stay on the node, under ``/opt/flip/selftest/`` (``selftest-<backend>-<time>.md`` and
 ``.json``), and ``make destroy`` deletes them: keep a copy of each ``make report`` first.
+
+.. _deploy-flip-node-azure-join:
 
 **********
 Join a hub
@@ -214,7 +222,7 @@ Operate and remove
   plus the NAT gateway on a standalone node). The VM also shuts itself down at 19:00 UK time by default.
 - ``make destroy`` (with the same ``SUBNET_ID``) removes the node, its network and the kit drop,
   and keeps the bootstrap layer;
-  ``make destroy-bootstrap`` removes the rest and refuses while a node exists.
+  ``make destroy-bootstrap``, in the directory above, removes the rest and refuses while a node or a cluster exists.
 
 ***************
 Troubleshooting
@@ -232,104 +240,3 @@ Troubleshooting
   again (or pass ``OPERATOR_IP=<ip>``).
 - **A self-test check fails.** The report names it. Fix the cause in the repo and reprovision;
   do not edit the node by hand.
-
-**********************
-Run it on AKS instead
-**********************
-
-The ``aks`` root builds a one-node AKS cluster (``Standard_D4s_v5``, Free control-plane tier) on
-the same bootstrap layer, and the trust runs on it as the ``flip-trust`` Helm chart. Sign-in is
-through Entra. Outbound traffic follows the same two
-paths as the VM (`Network and security`_): on the Trust's subnet (``SUBNET_ID``) the cluster uses
-the Trust's routes and creates no outbound IP, and that subnet needs a route table sending
-outbound traffic to the Trust's firewall, which AKS checks before it creates the cluster; without
-``SUBNET_ID`` it leaves through its own NAT gateway. The API server admits only your IP and the
-nodes' own egress: the NAT gateway's IP, or on the Trust's subnet the firewall's public IPs, which
-you pass as ``NODE_EGRESS_IPS=<ip>[,<ip>]`` to ``aks-plan`` (``aks-destroy`` needs no addresses). A node that cannot
-reach its API server never joins the cluster. The trial's 4 vCPUs are the VM's too, so
-``aks-apply`` refuses while the VM exists: ``make destroy`` first. A running cluster costs roughly
-$0.25 an hour, plus the NAT gateway on a standalone cluster.
-
-.. figure:: ../assets/generated/trust-node-azure-aks.png
-   :align: center
-   :alt: In the Azure subscription, the bootstrap state storage and the AKS resource group. In the node
-         subnet, the AKS cluster (Free tier, Entra ID and Azure RBAC, Cilium network policies) with an API server
-         that admits only the operator's IP and the nodes' egress IPs, a cluster identity scoped to the subnet,
-         and one system node pool running the flip-trust chart's pods: trust-api, the FL client and the other
-         trust services. A NAT gateway with its own public IP exists only on a standalone cluster. The operator
-         uses kubectl and Helm through Entra ID; every arrow to the Central Hub, GHCR and Hugging Face leaves the
-         cluster.
-
-   The one-node AKS cluster running the ``flip-trust`` chart.
-
-Behind the Trust's firewall the cluster needs, on top of :ref:`deploy-trust-node-network`:
-
-- **AKS itself:** the outbound rules Microsoft documents for AKS ("Outbound network and FQDN
-  rules for AKS clusters"). On Azure Firewall that is the ``AzureKubernetesService`` FQDN tag,
-  and the region's ``AzureCloud`` service tag on TCP/UDP 443, 1194 and 9000, plus NTP.
-- **The Helm chart's own:** the sample-data seed job, listed in :doc:`deploy-flip-node-kubernetes`.
-
-The AKS rules were measured on 17 Oct by running this chapter behind a deny-all Azure Firewall Basic.
-
-On your machine you also need ``kubectl``, ``kubelogin``, Helm 3.16 or newer, ``jq``,
-``python3`` and ``uv``.
-
-.. code-block:: bash
-
-   cd trust/deploy/terraform/azure
-   SUB="<subscription name>"
-
-   make bootstrap       AZ_SUBSCRIPTION="$SUB" STATE_SA=<unique storage name> ALERT_EMAIL=<you>   # once
-   make aks-init        AZ_SUBSCRIPTION="$SUB"
-   make aks-plan        AZ_SUBSCRIPTION="$SUB" LOCATION=<region> SUBNET_ID=<subnet resource id, or empty> NODE_EGRESS_IPS=<firewall IPs, with SUBNET_ID>
-   make aks-apply       AZ_SUBSCRIPTION="$SUB"      # shows the plan and the subscription, asks for yes
-   make aks-credentials AZ_SUBSCRIPTION="$SUB"      # kube context flipaz-aks, signed in through Entra
-
-The hub admin registers the trust and packages its kit as in `Join a hub`_. With the tarball in
-hand:
-
-.. code-block:: bash
-
-   make aks-join TARBALL=flip-trust-kit-<slot>-<date>.tar.gz KIT=<CODE> HUB=<env>   # MOCK_PACS=1 on a test node
-   make aks-selftest
-
-``aks-join`` unpacks the tarball under ``build/kits/``, installs the kit file as
-``trust/.env.<CODE>.<env>``, generates the chart's ``values-secrets.yaml`` from it and puts the FL
-kit in a Secret, because a managed node can be replaced at any time. A Flower kit's Secret holds only
-``ca.crt`` and the slot's own SuperNode credential: the tarball's ``certificates/`` also carries the
-SuperLink's ``server.key``, which never belongs on a trust. It then deploys the chart with
-``values-aks.yaml`` and ``values-small-node.yaml``, and records them in the kit file as
-``K8S_PLATFORM_VALUES``, so a later deploy or upgrade of that slot keeps them. The first install takes up to half an
-hour, most of it XNAT's first start. ``MOCK_PACS=1`` seeds the published mock studies into the
-chart's Orthanc, which a test node needs for an imaging pull and for the self-test's C-STORE and conversion
-checks (skipped without it).
-
-The chart loads no OMOP core vocabulary: it is licensed, so each site loads its own copy, as
-:ref:`onprem-core-vocabulary` describes. Until then, cohort queries that name concepts through
-``omop.concept`` return nothing, so test with a query that does not.
-
-``aks-selftest`` runs the VM self-test's checks against the release
-and writes its report under ``build/selftest/`` at the repo root; it needs no hub. The trust has joined when its
-heartbeat is answered:
-
-.. code-block:: bash
-
-   kubectl --context flipaz-aks -n flip-trust logs deploy/trust-release-flip-trust-trust-api | grep heartbeat   # 200 OK
-
-Operate and remove:
-
-- ``make aks-stop`` stops the node billing; ``make aks-start`` starts it and admits your current
-  IP. After your IP changes, ``make aks-allow-ip`` admits the new one.
-- ``make aks-deploy KIT=<CODE> HUB=<env>`` redeploys or upgrades from the installed kit.
-- ``make aks-destroy`` (with the same ``SUBNET_ID``) removes the cluster and its network and keeps
-  the bootstrap layer;
-  ``make destroy-bootstrap`` refuses while the cluster or a VM exists.
-
-Troubleshooting:
-
-- **kubectl times out or is refused.** Your IP has changed: ``make aks-allow-ip``.
-- **Pods stay Pending while the node is full of dcm2niix Jobs.** Jobs created before the
-  conversion cap still request a CPU each. ``make aks-clear-jobs`` selects the Jobs whose pod
-  template carries a CPU limit at all (the capped registration sets none), lists them and deletes
-  them once you type ``yes``. Then relaunch dcm2niix on those scans from XNAT
-  (``trust/deploy/helm/TROUBLESHOOTING.md`` §2.3d).

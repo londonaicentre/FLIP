@@ -13,7 +13,7 @@
 """Tests for flip.flower.privacy — the client-side (epsilon, delta) update filter.
 
 The counterpart of ``tests/unit/nvflare/components/test_custom_percentile_privacy.py``. As there,
-the DP maths itself belongs to the framework (Flower's ``compute_clip_model_update`` /
+the DP maths itself belongs to the framework (Flower's ``get_norm``, ``clip_inputs_inplace`` and
 ``add_gaussian_noise_inplace``) and is not re-tested here. What is pinned is FLIP's contribution:
 the config toggle, the config-driven parameters, the train-only scope, and the integer-buffer
 carve-out that keeps the mod from crashing on real BatchNorm models.
@@ -24,6 +24,7 @@ installed Flower rather than against mocks.
 """
 
 import math
+from logging import INFO, WARNING
 
 import numpy as np
 import pytest
@@ -109,7 +110,7 @@ def _released(
 class TestLocalDpConfig:
     """The config object owns FLIP's defaults, validation, and the noise-scale formula."""
 
-    def test_defaults_are_on_with_utility_first_parameters(self):
+    def test_defaults_are_on_with_placeholder_parameters(self):
         config = LocalDpConfig()
         assert config.enabled is True
         assert config.clipping_norm == 1.0
@@ -414,3 +415,45 @@ class TestFlipLocalDpMod:
 
         with pytest.raises(ValueError, match="no floating-point arrays"):
             flip_local_dp_mod(msg, _context(), _call_next({"counter": np.array(2, dtype=np.int64)}))
+
+
+class TestClippingReport:
+    """The mod logs how hard clipping bit, and warns below a tenth: over-clipping fails silently (#1754)."""
+
+    @staticmethod
+    def _report(monkeypatch, global_w, trained_w, norm) -> tuple[list[str], list[str]]:
+        calls: list[tuple[int, str]] = []
+        monkeypatch.setattr("flip.flower.privacy.log", lambda level, fmt, *args: calls.append((level, fmt % args)))
+        _released({"w": np.array(global_w)}, {"w": np.array(trained_w)}, {CONFIG_CLIPPING_NORM: norm})
+        return [m for lvl, m in calls if lvl == INFO and "clip" in m], [m for lvl, m in calls if lvl == WARNING]
+
+    @pytest.mark.parametrize(
+        ("trained", "norm", "pre_clip", "scale", "warns"),
+        [
+            ([3.0, 4.0], 2.0, "5.0000", "0.4000", False),
+            ([30.0, 40.0], 1.0, "50.0000", "0.0200", True),
+            ([6.0, 8.0], 1.0, "10.0000", "0.1000", False),  # exactly a tenth does not warn
+            ([0.3, 0.4], 1.0, "0.5000", "1.0000", False),  # inside the norm: not scaled
+        ],
+    )
+    def test_reports_the_pre_clip_norm_and_the_scale(self, monkeypatch, trained, norm, pre_clip, scale, warns):
+        [line], warnings = self._report(monkeypatch, [0.0, 0.0], trained, norm)
+        assert f"pre-clip L2 norm {pre_clip} clipped to {norm:.4f} (scaled by {scale})" in line
+        assert len(warnings) == warns
+        if warns:
+            assert f"scaled this update by {scale}" in warnings[0]
+            assert CONFIG_CLIPPING_NORM in warnings[0]
+
+    @pytest.mark.parametrize("bad", [np.nan, np.inf])
+    def test_a_non_finite_update_is_not_released(self, bad):
+        # min(1, C/nan) is 1: without the guard a NaN anywhere released every other array unclipped.
+        with pytest.raises(ValueError, match="non-finite"):
+            _released({"a": np.zeros(2), "b": np.zeros(2)}, {"a": np.array([bad, 0.0]), "b": np.array([30.0, 40.0])})
+
+    def test_an_update_equal_to_the_global_model_fails_clearly(self):
+        with pytest.raises(ValueError, match="identical to the global model"):
+            _released({"w": np.ones(2)}, {"w": np.ones(2)}, {})
+
+    def test_the_norm_is_of_the_update_not_the_weights(self, monkeypatch):
+        [line], _ = self._report(monkeypatch, [100.0, 100.0], [103.0, 104.0], 10.0)
+        assert "pre-clip L2 norm 5.0000" in line

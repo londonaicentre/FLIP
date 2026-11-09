@@ -14,7 +14,7 @@
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks \
 		check-aws-access generate-internal-service-key generate-xnat-credentials _check-compose-project-owner \
 		register-trust register-trusts rotate-trust-keys new-trust _wait-for-hub integration_test \
-		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint aws-diagram \
+		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint mirror-images aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
 		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
 		demo-video demo-users seed-demo-projects reset-keycloak \
@@ -438,6 +438,12 @@ checkov-lint:
 # ruleset plugin on first run. Runs the script directly, like checkov-lint.
 tflint-lint:
 	bash deploy/providers/AWS/scripts/tflint_lint.sh
+# Copy the third-party images a trust node runs (trust/deploy/mirror-images.manifest) into
+# ghcr.io/londonaicentre/mirror/ by digest (FLIP#1721). CI does this on develop/main
+# (.github/workflows/mirror_images.yml); locally it needs a GHCR login with write:packages.
+# CHECK=1 pushes nothing and fails on a missing or drifted mirror.
+mirror-images:
+	bash scripts/mirror_images.sh $(if $(CHECK),--check)
 # Re-render the two committed Central Hub AWS diagrams under deploy/providers/AWS/docs/
 # (central-hub-aws-lza-{network,data}.png) from deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
 # build time instead). Uses the local graphviz when `dot` is installed; the dev hosts have none,
@@ -630,6 +636,11 @@ demo-video:
 # DEMO_RESEARCHER_PASSWORD / DEMO_ADMIN_PASSWORD / DEMO_TRUST_ADMIN_PASSWORD env vars, never committed).
 demo-users:
 	$(MAKE) -C flip-api create_demo_users
+
+# Capture a project from the running hub as public-demo fixtures (FLIP#1746):
+#   make capture-demo-project EXTRA_ARGS="--project-id <uuid> --slug ehr-risk"
+capture-demo-project:
+	$(MAKE) -C flip-api capture_demo_project $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
 # Recreate the dev identity provider from deploy/keycloak/flip-realm.json. The
 # keycloak service keeps no volume and `--import-realm` skips a realm that

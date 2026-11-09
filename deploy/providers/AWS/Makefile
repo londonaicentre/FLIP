@@ -220,9 +220,6 @@ export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
 export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
 export TF_VAR_FLIP_UI_BUCKET_NAME=${FLIP_UI_BUCKET_NAME}
-# Optional: bucket holding the public Ark+ demo download bundles, served via
-# CloudFront at /ark_demo/assets/*. Unset => no demo-assets resources (stag).
-export TF_VAR_DEMO_ASSETS_BUCKET_NAME=${DEMO_ASSETS_BUCKET_NAME}
 # flip-api / fl-* env vars consumed by the ECS task definitions (locals.tf) —
 # the canonical definition of production container config (#936). The prod
 # compose files mirror a subset as the local prod-image harness only; the hub
@@ -737,9 +734,8 @@ rollback-centralhub: ## Repoint each Central Hub ECS service at its previous ACT
 .PHONY: deploy-ui
 deploy-ui: ## Build flip-ui from the working tree and publish it to the UI bucket (CI does this after every apply, FLIP#1186)
 	@echo "🖼️  Building flip-ui from working tree..."
-	@# Uses build:deploy (vite build only). The type-checked `npm run build` fails
-	@# on pre-existing TypeScript errors in the repo — tracked separately. Its
-	@# postbuild:deploy hook writes dist/js/window.js from $(MAIN_ENV_FILE), which
+	@# Uses build:deploy (vite build only); test_flip_ui.yml runs the vue-tsc
+	@# typecheck. Its postbuild:deploy hook writes dist/js/window.js from $(MAIN_ENV_FILE), which
 	@# this Makefile exports.
 	@cd ../../../flip-ui && npm ci && npm run build:deploy
 	@# The sync and its cache-control split are scripts/publish-ui.sh, shared with
@@ -752,45 +748,39 @@ deploy-ui: ## Build flip-ui from the working tree and publish it to the UI bucke
 	[ -n "$$UI_BUCKET" ] || { echo "❌ Terraform output FlipUiBucketName is empty"; exit 1; }; \
 	$(_AWS_ENV) ./scripts/publish-ui.sh ../../../flip-ui/dist "$$UI_BUCKET"
 
-.PHONY: deploy-ark-demo
-deploy-ark-demo: ## Build the public Ark+ demo SPA from the working tree and deploy it to S3 (ark_demo/ prefix)
-	@# Refuse to publish the demo into an environment that hosts none (stag leaves
-	@# DEMO_ASSETS_BUCKET_NAME unset): served under the default behaviour, it would run
-	@# unauthenticated on the same origin as real Cognito tokens (FLIP#794 review). The
-	@# /ark_demo/* behaviour and its CSP live on the edge distribution (aicentre-lza-iac).
-	@if [ -z "$$DEMO_ASSETS_BUCKET_NAME" ]; then \
-		echo "❌ DEMO_ASSETS_BUCKET_NAME is not set for this environment, which hosts no public demo."; \
-		echo "   Set it (and apply), and give the edge distribution its /ark_demo/* behaviour, first."; \
+.PHONY: deploy-demo
+deploy-demo: ## Build the public demo SPA from the working tree and deploy it to S3 (demo/ prefix, FLIP#1746)
+	@# Refuse an estate whose edge has no /demo/* behaviour (aicentre-lza-iac): served
+	@# under the default behaviour, the unauthenticated demo would run on the same
+	@# origin as real Cognito tokens without its connect-src 'none' CSP (FLIP#794
+	@# review). PUBLIC_DEMO=true in the hub env file attests that behaviour is live.
+	@if [ "$$PUBLIC_DEMO" != "true" ]; then \
+		echo "❌ PUBLIC_DEMO is not true for this environment, which hosts no public demo."; \
+		echo "   Give the edge distribution its /demo/* behaviour, then set PUBLIC_DEMO=true in its env file."; \
 		exit 1; \
 	fi
-	@echo "🖼️  Building flip-ui Ark+ demo bundle from working tree..."
-	@# npm run build:demo's postbuild hook regenerates dist/js/window.js itself
-	@# (scripts/generate-demo-window-js.sh) — no separate window.js step needed,
-	@# unlike deploy-ui.
+	@echo "🖼️  Building flip-ui demo bundle from working tree..."
+	@# build:demo regenerates dist/js/window.js itself and checks dist for
+	@# unscrubbed fixtures (scripts/demo-fixtures.mjs check --dist dist).
 	@cd ../../../flip-ui && npm ci && npm run build:demo
-	@echo "📦 Syncing demo assets to the deployed UI bucket (ark_demo/ prefix)..."
-	@# Same cache-control discipline as deploy-ui: hashed assetsDir chunks
-	@# (dist/static/... for the demo build — see the Vite assetsDir note in
-	@# ../README.md) are content-addressed and safe to cache forever; index.html
-	@# and window.js must never be cached long since they reference the hashed
-	@# bundle. --delete is scoped to this sync's destination (the ark_demo/
-	@# prefix), so it never touches the real app's objects at the bucket root —
-	@# see deploy-ui's own --exclude "ark_demo/*" for the other half of that
-	@# separation.
+	@echo "📦 Syncing the demo to the deployed UI bucket (demo/ prefix)..."
+	@# Same cache-control split as scripts/publish-ui.sh. --delete is scoped to the
+	@# demo/ prefix, and publish-ui.sh excludes demo/*, so neither sync touches the
+	@# other's objects.
 	@UI_BUCKET=$$($(_AWS_ENV) terraform output -raw FlipUiBucketName); \
 	[ -n "$$UI_BUCKET" ] || { echo "❌ Terraform output FlipUiBucketName is empty"; exit 1; }; \
-	echo "   s3://$$UI_BUCKET/ark_demo/"; \
-	$(_AWS_ENV) aws s3 sync ../../../flip-ui/dist/ s3://$$UI_BUCKET/ark_demo/ \
+	echo "   s3://$$UI_BUCKET/demo/"; \
+	$(_AWS_ENV) aws s3 sync ../../../flip-ui/dist/ s3://$$UI_BUCKET/demo/ \
 		--delete \
 		--cache-control "public, max-age=31536000, immutable" \
 		--exclude "index.html" --exclude "js/window.js"; \
-	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/index.html s3://$$UI_BUCKET/ark_demo/index.html \
+	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/index.html s3://$$UI_BUCKET/demo/index.html \
 		--cache-control "no-cache, no-store, must-revalidate" \
 		--content-type "text/html; charset=utf-8"; \
-	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/ark_demo/js/window.js \
+	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/demo/js/window.js \
 		--cache-control "no-cache, no-store, must-revalidate" \
 		--content-type "application/javascript; charset=utf-8"
-	@echo "✅ deploy-ark-demo complete."
+	@echo "✅ deploy-demo complete."
 
 # Identity of the trust kit a hub-admin target acts on — a trust CODE that selects its kit
 # file trust/.env.<KIT>.<env>. REQUIRED on the command line (no default, so a prod op can't
@@ -873,7 +863,7 @@ endif
 	@echo ""
 	@echo "⚠️  REMAINING MANUAL STEPS:"
 	@echo "   1. Deploy the staged FL kit into /opt/flip (run the commands printed above)."
-	@echo "   2. Start the trust stack (sudo: the login user is deliberately not in the docker group):"
+	@echo "   2. Start the trust stack (sudo: this playbook leaves the login user without docker access):"
 	@echo "      cd ../../.. && sudo -E make -C trust up-trust KIT=$(KIT) HUB=$(HUB)"
 
 .PHONY: down
@@ -988,7 +978,7 @@ full-deploy: ## Full AWS deployment of the Central Hub; trusts deploy from trust
 	## 1. login + init: auth and Terraform init
 	## 2. generate-internal-service-key: mint the fl-server→hub key (idempotent)
 	## 3. plan+apply: provision the hub's AWS infrastructure (ECS, RDS, bastion, secrets)
-	## 4. update-env: refresh .env with Terraform outputs (bastion ID, DB endpoint, Cognito IDs)
+	## 4. update-env: refresh .env with Terraform outputs (the two Cognito IDs)
 	## 5. ssh-config + ansible-init: configure the SSM bastion
 	## 6. deploy-centralhub: deploy Central Hub ECS services at the env branch tip (new task-def revisions) + publish the UI
 	## 7. register-trusts: register every live trust/.env.*.<env> kit present (none yet is fine)

@@ -103,13 +103,15 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
 - Two XNAT instances are deployed as separate Swarm stacks (`xnat1`, `xnat2`), one per trust
 - **`up-xnat` is a fresh install; `upgrade-xnat` is the in-place upgrade (FLIP#1204).** `up-xnat`
   blocks on `down-xnat` and then runs `xnat-reset`, which `rm -rf`s `XNAT_DATA_DIR` and recreates
-  it — in development *and* in staging/production (local Docker context or remote-over-ssh alike).
-  In development the reset runs without `sudo` when the invoking user is the container uid (1001)
-  and already owns every directory in the tree; any other developer, or a root-created directory,
-  gets the `sudo` prompt. Never use it to move a live site to a release. `make upgrade-xnat KIT=<CODE> HUB=<env>` (driven
+  it wherever it may: as root, over ssh under sudo on a remote Docker context, or unprivileged when
+  the invoking user is the container uid (1001, or the kit's `FLIP_UID`) and owns every directory in
+  the tree. Any other non-root operator on a deployed host deletes nothing: the reset accepts the
+  empty tree `make -C trust prepare-host-dirs` made and refuses one that holds files, naming the
+  root `rm -rf` (FLIP#1723). In development any other developer, or a root-created directory, gets
+  the `sudo` prompt. Never use it to move a live site to a release. `make upgrade-xnat KIT=<CODE> HUB=<env>` (driven
   by `make -C trust upgrade-trust`) keeps the data dir: it takes a `pg_dumpall` of `xnat-db` into
   `$XNAT_DATA_DIR/backups/`, refuses to proceed unless the `xnat-data/` tree is owned by the
-  container uid (1001 — an archive written by a pre-hardening root `xnat-web` needs one
+  container uid (1001, or the kit's `FLIP_UID` — an archive written by a pre-hardening root `xnat-web` needs one
   `chown -R` first), redeploys the stack onto the kit's `XNAT_TAG` (XNAT migrates its own schema on
   boot; migrations are forward-only, hence the dump), then re-runs `configure-xnat.sh`, which
   *converges* a configured instance — picked by which admin password XNAT accepts, since a
@@ -488,7 +490,7 @@ registered only when none exists, and the step refuses to choose between two.
 
 A trigger fires on new scans only. `make -C trust reconvert-nifti KIT=<CODE> [PROJECT="<id> ..."]
 [LAUNCH=1]` converts the archived scans that have DICOM and no NIfTI, by Container Service bulk launch
-(report only without `LAUNCH=1`; on-prem prefix `sudo -E`). What it selects, what it leaves alone and
+(report only without `LAUNCH=1`). What it selects, what it leaves alone and
 its exit codes: [`trust/deploy/helm/TROUBLESHOOTING.md` §2.3e](../deploy/helm/TROUBLESHOOTING.md#23e-scans-archived-without-nifti-converting-the-backlog).
 
 ## Resource limits

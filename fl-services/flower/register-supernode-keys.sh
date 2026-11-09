@@ -23,6 +23,33 @@ EOF
 
 echo "Configured Flower CLI for SuperLink Control API at ${SUPERLINK_ADDRESS:-superlink:8000}"
 
+# The SuperLink serves the Control API over TLS with the kit's server.pem (mounted beside ca.crt),
+# so a certificate that does not name the host we dial can never pass the readiness loop below.
+# Check it first and name the fix, instead of timing out two minutes later (FLIP#1738).
+superlink_host="${SUPERLINK_ADDRESS:-superlink:8000}"
+superlink_host="${superlink_host%:*}"
+server_cert="${SUPERLINK_SERVER_CERTIFICATE:-$(dirname "${SUPERLINK_ROOT_CERTIFICATES:-/certs/ca.crt}")/server.pem}"
+if [ -r "$server_cert" ]; then
+    python - "$server_cert" "$superlink_host" <<'PY' || exit 1
+import sys
+
+from cryptography import x509
+
+cert_path, host = sys.argv[1], sys.argv[2]
+with open(cert_path, "rb") as f:
+    cert = x509.load_pem_x509_certificate(f.read())
+san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+names = san.get_values_for_type(x509.DNSName) + [str(ip) for ip in san.get_values_for_type(x509.IPAddress)]
+if host not in names:
+    print(
+        f"ERROR: {cert_path} does not name {host} (its SANs: {', '.join(names)}). Re-provision the kit with "
+        f"FLOWER_EXTRA_SERVER_SANS including {host} (fl-services/flower/Makefile) and upload it under a new kit date.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+PY
+fi
+
 # Compose starts this one-shot on "superlink started", not "superlink ready", and the SuperLink's
 # HTTP Control API (uvicorn, flwr>=1.37) takes a few seconds to accept connections. A register
 # call made before that returns {"success": false} with exit 0, so the key silently goes

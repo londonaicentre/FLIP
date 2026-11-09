@@ -447,9 +447,9 @@ EC2_SETTLED_STATES="stopped running"
 
 # The start path is split in two because the apply needs it split (FLIP#1596).
 #
-#   start-data      RDS and the hub host, and the wait for RDS. Terraform
-#                   refreshes RDS on every plan, so this much has to happen
-#                   BEFORE terraform_apply.yml plans.
+#   start-data      RDS and the hub host, and the wait for RDS. A stopped RDS
+#                   instance cannot be modified, so this much has to happen
+#                   BEFORE terraform_apply.yml applies.
 #   start-services  the ECS desired counts. This must happen AFTER the plan is
 #                   gated, because the gate's whole reason for passing a develop
 #                   apply unattended is that the FL services are at 0. Restore
