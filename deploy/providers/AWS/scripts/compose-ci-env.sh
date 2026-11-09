@@ -244,7 +244,9 @@ OPTIONAL_KEYS=(
 # The two web-edge values are the exception in the other direction: the edge is
 # built *from* this stack's outputs, so on a first apply the domain and ARN are
 # legitimately empty (variables.tf documents the two-phase wiring). Optional, so
-# they compose as omitted rather than as an empty string.
+# they compose as omitted rather than as an empty string. WEB_TLS is optional
+# too: unset leaves the Makefile's false, the web listener as it is until the
+# environment's TLS cut (FLIP#1797).
 LZA_REQUIRED_KEYS=(
     ACCESS_LOGS_BUCKET_NAME
     EFS_PROVISION_IMAGE
@@ -255,6 +257,7 @@ LZA_REQUIRED_KEYS=(
 LZA_OPTIONAL_KEYS=(
     LZA_WEB_EDGE_DOMAIN
     LZA_WEB_EDGE_DISTRIBUTION_ARN
+    WEB_TLS
 )
 
 REQUIRED_KEYS+=("${LZA_REQUIRED_KEYS[@]}")

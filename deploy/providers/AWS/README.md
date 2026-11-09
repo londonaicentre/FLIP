@@ -554,6 +554,7 @@ account reached as `stag`.
 | `deploy-centralhub` git ref | `origin/main` | `origin/develop` |
 | `LZA_VPC_NAME` | optional (defaults to the prod template name) | **required** in the env file — there is no defaultable staging VPC name, so the Makefile refuses to run without it rather than letting the lookup fail opaquely |
 | `MANAGE_DNS` | **required**, `true` or `false` (`false` while the account has no Route 53 zone) | the same |
+| `WEB_TLS` | optional, default `false`; `true` makes the internal NLB's web listener TLS (FLIP#1797) | the same, set separately |
 
 Everything below reads naturally for either value; where it says `HUB=prod`, staging substitutes `HUB=stag` and
 its own account-scoped values (state bucket, `flip-lza-stag-*` bucket namespace, pull-through registry URL); the raw
@@ -642,9 +643,11 @@ Maintainer notes the manual leaves out:
   `flip-lza-*` namespace — bucket names are global.
 - With `MANAGE_DNS=false` the zone lookup, every Route 53 record and both DNS-validated ACM certs are skipped. The
   workload CloudFront is gated off on LZA anyway, so `terraform output CloudfrontDistributionDomain` is null there by
-  design. The internal NLB's web listener is plain TCP until the zone lands, then TLS on the DNS-validated cert
-  (`fl_ingress_lza.tf`); flipping it is a cross-repo step, because the relay is TCP passthrough and the edge's VPC
-  origin in `aicentre-lza-iac` must switch to https-only with a matching origin host at the same time.
+  design. The zone stays in the networking account, so `MANAGE_DNS` stays `false`.
+- The internal NLB's web listener is plain TCP until `WEB_TLS=true`, then TLS on the certificate `aicentre-lza-iac`
+  issues into the account for `ALB_SUBDOMAIN` (`fl_ingress_lza.tf`, FLIP#1797). Turning it on is a cross-repo step:
+  the relay is TCP passthrough, so the same environment's edge entry must move to its https-only VPC origin
+  (`origin_tls`, aicentre-lza-iac#99), and `/api/*` fails between the two applies.
 - Secrets (`AES_KEY_BASE64`, `INTERNAL_SERVICE_KEY*`, `ADMIN_USER_PASSWORD`, …) were minted fresh for the account
   during the WP3 bring-up and later replaced by the carried-over legacy **values** in the WP4 data migration (so
   existing trust kits and encrypted data stayed valid) — never reuse the legacy Secrets Manager secret itself.
@@ -721,7 +724,7 @@ deploy/providers/AWS/
 ├── service_discovery.tf        # Cloud Map private DNS namespace (flip.local) for ECS task-to-task resolution
 ├── locals.tf                   # Shared locals
 ├── cloudfront.tf               # flip-ui bucket and its cross-account OAC read for the edge distribution
-├── certificate.tf              # ACM certificate for the internal NLB's web listener (MANAGE_DNS=true)
+├── certificate.tf              # ACM certificate for the web listener where this account keeps the zone (MANAGE_DNS=true)
 ├── modules/
 │   ├── cognito/                # shared: pool, domain, client, seed users
 │   ├── ses/                    # prod/stag only: sender identity, transactional templates
@@ -1681,9 +1684,9 @@ commit a re-render whose only change is the graphviz that made it.
 - **Network**: the accelerator-provisioned VPC, discovered by Name tag (`network_lza.tf`): compute in its TGW-routed **app** subnets, RDS in the isolated **data** subnets. No IGW and no NAT — AWS APIs go through the estate's central interface endpoints, images through the in-account ECR pull-through cache.
 - **ECS Fargate cluster**: Runs the Central Hub application services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) as awsvpc tasks in the **app subnets**. Task definitions, services, and per-service security groups live in `ecs*.tf` and `iam_ecs.tf`.
 - **Central Hub SSM bastion**: t3.micro instance with a 10 GB root volume in a **private subnet**. It carries only the SSM managed IAM policy and a PostgreSQL client for ad-hoc RDS operations; application workloads run on ECS Fargate.
-- **Internal NLB** (`module.fl_server_internal_nlb`, `fl_ingress_lza.tf`): one static private IP per app subnet, which the networking account's edge registers once as targets. A `:443` web listener forwards to the `ecs-flip-api-lza` target group (plain TCP until `MANAGE_DNS=true`, then TLS on the ACM certificate) and an `FL_SERVER_PORT` listener to the `fl-server-net-1` target group. Its security group admits the networking ingress CIDRs and the VPC CIDR. **Why an NLB?** FLARE FL traffic is end-to-end mutual-TLS over gRPC, and a Layer 7 load balancer terminates TLS, which breaks FLARE's own certificate handshake. An NLB (Layer 4) does raw TCP pass-through, so the FL client and FL server complete their mTLS handshake untouched.
+- **Internal NLB** (`module.fl_server_internal_nlb`, `fl_ingress_lza.tf`): one static private IP per app subnet, which the networking account's edge registers once as targets. A `:443` web listener forwards to the `ecs-flip-api-lza` target group (plain TCP until `WEB_TLS=true`, then TLS on the ACM certificate) and an `FL_SERVER_PORT` listener to the `fl-server-net-1` target group. Its security group admits the networking ingress CIDRs and the VPC CIDR. **Why an NLB?** FLARE FL traffic is end-to-end mutual-TLS over gRPC, and a Layer 7 load balancer terminates TLS, which breaks FLARE's own certificate handshake. An NLB (Layer 4) does raw TCP pass-through, so the FL client and FL server complete their mTLS handshake untouched.
 - **Edge (networking account)**: CloudFront with its WAF, serving the UI bucket over cross-account OAC and relaying `/api/*`, and an internet-facing edge NLB for FL traffic — declared in aicentre-lza-iac, not here.
-- **ACM**: one `eu-west-2` certificate for the web listener, created once `MANAGE_DNS=true`.
+- **ACM**: one `eu-west-2` certificate for the web listener, issued into the account by `aicentre-lza-iac` and used once `WEB_TLS=true`.
 - **Route53**: a private hosted zone resolving the FL server's bare name to the internal NLB for in-VPC callers; the public records live in the networking account.
 - **EFS**: Shared file systems and access points used by the FL services for workspace volumes (configs, certs, transfer dir). Mount targets live in the **app subnets**.
 - **Cloud Map (Service Discovery)**: Private DNS namespace `flip.local` used for ECS task-to-task resolution (e.g. `fl-api-net-1.flip.local`).
@@ -1725,7 +1728,7 @@ Ingress at the internal NLB (not at any EC2 SG — the bastion has no inbound ru
 | Port | Load balancer | Status | Source allow-list | Purpose |
 | ---- | ------------- | ------ | ----------------- | ------- |
 | **22** | — | 🔴 **CLOSED everywhere** | n/a | SSH never exposed — remote access is via SSM Session Manager tunnel |
-| **443** | Internal NLB | 🟢 **OPEN to the edge path** | `networking_ingress_cidrs` + the VPC CIDR | `/api/*` relayed from the edge CloudFront to `flip-api` (TCP until `MANAGE_DNS=true`, then TLS) |
+| **443** | Internal NLB | 🟢 **OPEN to the edge path** | `networking_ingress_cidrs` + the VPC CIDR | `/api/*` relayed from the edge CloudFront to `flip-api` (TCP until `WEB_TLS=true`, then TLS) |
 | **`FL_SERVER_PORT`** | Internal NLB | 🟢 **OPEN to the edge path** | `networking_ingress_cidrs` + the VPC CIDR | TCP/gRPC pass-through from the edge NLB to the `fl-server-net-1` Fargate task |
 
 Ports referenced internally only (no internet-facing ingress; reached only from inside the VPC or from the load balancers):

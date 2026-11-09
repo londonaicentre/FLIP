@@ -336,9 +336,15 @@ variable "FL_SERVER_PORT" {
 }
 
 variable "manage_dns" {
-  description = "Whether this account hosts the Route53 zone for flip_alb_subdomain. false (the LZA estates until the zone moves in the platform DNS migration — FLIP#749) skips the zone lookup, every Route53 record and the DNS-validated ACM cert, so the internal NLB's web listener serves plain TCP until a cert can be ISSUED, then TLS."
+  description = "Whether this account hosts the Route53 zone for flip_alb_subdomain. false (the LZA estates, whose zones stay in the networking account — FLIP#749) skips the zone lookup, every Route53 record and the DNS-validated ACM cert."
   type        = bool
   default     = true
+}
+
+variable "web_tls" {
+  description = "Whether the internal NLB's web listener terminates TLS (FLIP#1797). Its certificate is this stack's own when manage_dns is true, otherwise the ISSUED one for flip_alb_subdomain that the platform issues into the account (aicentre-lza-iac#99). Turned on per environment together with the edge's origin_tls, as the edge passes TLS through."
+  type        = bool
+  default     = false
 }
 
 variable "flip_alb_subdomain" {

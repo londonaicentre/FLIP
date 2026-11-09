@@ -234,6 +234,8 @@ specific to the estate:
 
    # DNS: false until the account has a hosted zone (see below)
    MANAGE_DNS=false
+   # Optional, default false: TLS on the internal load balancer's web listener (see below)
+   WEB_TLS=false
    ALB_SUBDOMAIN=<ui name>
    NLB_SUBDOMAIN=<fl name>
 
@@ -264,13 +266,16 @@ certificates, so the stack applies in an account with no zone yet. Until the zon
 - The UI is reached on the edge distribution's default ``*.cloudfront.net`` domain
   (``TF_VAR_lza_web_edge_domain``). Bucket CORS and the Cognito sign-in URLs follow it automatically.
 - Build the UI with ``CENTRAL_HUB_API_URL`` pointing at that domain, and give trusts the same URL.
-- The leg from the edge's relay to the workload's internal load balancer is plain TCP rather than TLS, because a
-  certificate cannot be issued without DNS validation. Viewer traffic is still HTTPS at the edge, and that leg stays
-  on the Transit Gateway and central-firewall path.
+- The leg from the edge's relay to the workload's internal load balancer is plain TCP until ``WEB_TLS=true``.
+  Viewer traffic is still HTTPS at the edge, and that leg stays on the Transit Gateway and central-firewall path.
 
-Once the zone lands, set ``MANAGE_DNS=true`` and apply again. Switching the web listener to TLS is a **two-sided
-change**: the edge's origin in the networking account must switch to HTTPS, with a host name matching the new
-certificate, at the same time.
+If the zone later moves into the account, set ``MANAGE_DNS=true`` and apply again.
+
+``WEB_TLS=true`` makes the internal load balancer's web listener terminate TLS. Its certificate is this stack's own
+when ``MANAGE_DNS=true``. Otherwise the platform team issues one for ``ALB_SUBDOMAIN`` into the account, validated in
+the zone they keep, and Terraform finds it by name. The certificate must carry the name viewers use, because the edge
+checks it against the host it forwards. Turning it on is a **two-sided change**: the relay passes TLS through, so the
+edge's origin in the networking account must switch to HTTPS in step, and ``/api/*`` fails between the two applies.
 
 Attaching the real domain
 -------------------------
