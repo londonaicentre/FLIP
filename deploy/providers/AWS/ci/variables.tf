@@ -86,6 +86,12 @@ variable "apply_workflow_file" {
   default     = "terraform_apply.yml"
 }
 
+variable "power_workflow_file" {
+  description = "Staging power workflow (FLIP#1596), which assumes the apply role to stop and start the estate."
+  type        = string
+  default     = "staging_lifecycle.yml"
+}
+
 variable "drift_workflow_file" {
   description = "Scheduled drift-detection workflow, which also plans."
   type        = string
@@ -108,6 +114,9 @@ variable "managed_role_names" {
     "ecs-fl-server-task-role",
     "flip-rds-proxy-role",
     "ec2-role",
+    "flip-rds-monitoring-role",
+    # Retiring (FLIP#1438): the root no longer declares it. Kept so the apply that deletes it is
+    # allowed; remove once stag and prod have applied that change.
     "trust-ec2-role",
   ]
 }
@@ -118,6 +127,7 @@ variable "attachable_managed_policies" {
   default = [
     "service-role/AmazonECSTaskExecutionRolePolicy",
     "AmazonSSMManagedInstanceCore",
+    "service-role/AmazonRDSEnhancedMonitoringRole",
     "CloudWatchAgentServerPolicy",
   ]
 }
@@ -139,6 +149,8 @@ variable "managed_instance_profile_names" {
   type        = list(string)
   default = [
     "ec2-role-profile",
+    # Retiring (FLIP#1438): the root no longer declares it. Kept so the apply that deletes it is
+    # allowed; remove once stag and prod have applied that change.
     "trust-ec2-role-profile",
   ]
 }
@@ -151,6 +163,7 @@ variable "apply_service_prefixes" {
     "cloudfront",
     "cognito-idp",
     "ec2",
+    "ecr",
     "ecs",
     "elasticfilesystem",
     "elasticloadbalancing",
@@ -238,6 +251,12 @@ variable "state_noncurrent_version_days" {
   description = "How many days a previous state version is kept before it may expire."
   type        = number
   default     = 90
+}
+
+variable "state_access_log_bucket" {
+  description = "Bucket, in the same account and region, that receives the state bucket's S3 server access logs. Empty turns access logging off."
+  type        = string
+  default     = ""
 }
 
 variable "restrict_state_writes" {

@@ -17,6 +17,10 @@ here.
 Enrichment happens **once per project**, inside XNAT. Both :term:`NVIDIA FLARE` and the :term:`Flower Framework` read
 the same enriched data, so the FL backend makes no difference.
 
+.. contents:: On this page
+   :local:
+   :depth: 1
+
 .. _enrichment-do-i-need-it:
 
 **************************************

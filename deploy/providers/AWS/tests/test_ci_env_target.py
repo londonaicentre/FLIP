@@ -128,7 +128,7 @@ def test_a_class_mismatch_is_refused(hub: str, expected: str) -> None:
     """``TF_HUB`` alone chooses the estate, so the caller's class is asserted.
 
     TF_HUB=stag on aws-prod composes a prod-sized plan whose RDS is refreshed as
-    ``deletion_protection = false``, ``skip_final_snapshot = true`` — and the apply
+    ``skip_final_snapshot = true`` — and the apply
     job then applies it unattended. The compose step is the last place that can stop
     it cheaply.
     """
@@ -243,7 +243,6 @@ COMPOSE_ENV = {
     "FL_BACKEND": "nvflare",
     "FLARE_KIT_DATE": "20260101",
     "FL_KIT_SLOT_NAMES": '["Trust_1"]',
-    "DEPLOY_TRUST_EC2": "false",
     "ACCESS_LOGS_BUCKET_NAME": "probe-access-logs",
     "EFS_PROVISION_IMAGE": "probe/image:1",
     "LZA_VPC_NAME": "AWSAccelerator-eu-west-2-stag",

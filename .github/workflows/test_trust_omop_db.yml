@@ -77,9 +77,10 @@ jobs:
       - name: Lint, type-check and unit tests
         run: make local_test
 
-      # The Kubernetes vocab-load Job unpacks the bundle with the image's own
-      # unzip so that it installs nothing at run time and needs no egress to a
-      # package mirror. That contract spans two repos' worth of distance — the
+      # The Kubernetes vocab-load Job fetches the bundle with the image's own AWS
+      # CLI and unpacks it with its own unzip, so that it installs nothing at run
+      # time and needs no egress to a package mirror (FLIP#1721 moved the fetch
+      # here from a Docker Hub aws-cli image). That contract spans two repos' worth of distance — the
       # Helm template assumes what this Dockerfile provides — so assert the
       # artifact itself rather than the Dockerfile text. This gates the GHCR
       # publish (docker_build_omop_db.yml runs on this workflow's success), so a
@@ -96,6 +97,7 @@ jobs:
           docker build -t omop-db-ci-check .
           docker run --rm omop-db-ci-check sh -c '
             command -v unzip > /dev/null || { echo "unzip missing from the image"; exit 1; }
+            aws --version > /dev/null || { echo "aws CLI missing from the image — the Kubernetes vocab-load fetch runs it"; exit 1; }
             test -x /flip/omop/load_core_vocab.sh || { echo "load_core_vocab.sh missing or not executable"; exit 1; }
             test -f /flip/omop/constraints.sql || { echo "constraints.sql missing"; exit 1; }
             test -f /flip/omop/create_readonly_users.sql || { echo "create_readonly_users.sql missing — the Kubernetes omop-db hook runs it"; exit 1; }

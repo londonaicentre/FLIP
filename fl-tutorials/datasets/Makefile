@@ -167,7 +167,7 @@ download-prostate-data:
 # (and the published set). PROSTATE_MODALITIES="t2w adc hbv sag cor" converts everything.
 PROSTATE_MODALITIES ?= t2w adc hbv
 convert-prostate-to-dicom:
-	@$(PROSTATE_UV) python prostate/convert_mha_to_dicom.py \
+	@PYTHONPATH=. $(PROSTATE_UV) python prostate/convert_mha_to_dicom.py \
 		--input $(DATA_DIR)/prostate/images --output $(DATA_DIR)/prostate/dicom \
 		--modalities $(PROSTATE_MODALITIES)
 

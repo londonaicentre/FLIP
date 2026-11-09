@@ -39,7 +39,7 @@ license = "Apache-2.0"
 # does not exist. Pick up flip-utils changes on the compose stacks with
 # `make build-fl FL_BACKEND=flower`.
 dependencies = [
-    "flwr[simulation]>=1.38.0",
+    "flwr[simulation]>=1.42.0",
     "numpy>=2.4.2",
     "pandas>=3.0.0",
     "scikit-learn>=1.7.0",
@@ -70,7 +70,8 @@ num-server-rounds = 5
 # Client-side differential privacy (flip.flower.privacy). On by default; set dp-enabled = false
 # to run the same app with the mechanism off. See the README's "Differential privacy" section.
 dp-enabled = true
-dp-clipping-norm = 1.0
+# Pre-clip update norm measured 2.9-3.6; the template's 1.0 placeholder stopped training (FLIP#1754).
+dp-clipping-norm = 3.0
 dp-sensitivity = 1e-4
 dp-epsilon = 10.0
 dp-delta = 1e-5

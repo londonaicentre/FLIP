@@ -40,7 +40,8 @@ The server config includes a PyTorch model persistor:
 
 ## FLIP site components
 
-At start-up the entrypoint runs `python -m flip.nvflare.server_site_config /app/local`, which writes
+At start-up the entrypoint runs `python -m flip.nvflare.server_site_config <workspace>/local` (the workspace is
+`/app`, or `FL_WORKSPACE`: `/workspace` on ECS), which writes
 `local/flip__p_resources.json`. FLARE merges every `local/*__p_resources.json` into the server's
 parent process config, the process that runs the job scheduler, and never into a job, so the
 provisioned `resources.json` stays untouched. It registers `JobSchedulingReporter`: when FLARE's

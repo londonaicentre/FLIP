@@ -34,21 +34,32 @@ locals {
   fl_api_tag      = var.fl_api_image_tag != "" ? var.fl_api_image_tag : var.flip_fl_image_tag
   fl_api_image    = "${var.docker_registry}${var.fl_api_name}:${local.fl_api_tag}"
   fl_server_image = "${var.docker_registry}${var.fl_server_name}:${var.flip_fl_image_tag}"
+  # Flower's fleet proxy (FLIP#1517), built and tagged with the SuperLink by
+  # fl-docker-build-flower.yml. Its own tag when CI resolved one (a release pins its
+  # own digest); otherwise the server's, minus any digest, which is that repository's.
+  fl_fleet_proxy_tag   = var.fl_fleet_proxy_image_tag != "" ? var.fl_fleet_proxy_image_tag : split("@", var.flip_fl_image_tag)[0]
+  fl_fleet_proxy_image = "${var.docker_registry}flower-fleet-proxy:${local.fl_fleet_proxy_tag}"
 
   # FL backend shape (#566): the same task FAMILIES (fl-api-net-1,
   # fl-server-net-1 — deploy-centralhub addresses services by family) serve
   # both backends; var.fl_backend switches image (via var.fl_*_name from
   # fl_backend.mk), container ports, command, env map and mounts. FLARE
   # mirrors compose.prod.nvflare.yml; Flower mirrors
-  # compose.prod.flower.yml.
-  flower_superlink_fleet_port   = 9092
+  # compose.prod.flower.yml. Both differ from them in the read-only root
+  # filesystem and what it takes (the scratch volumes below, FLIP#1795).
+  # flwr>=1.40 serves every SuperLink API — Fleet, Control, Runtime — on control_port;
+  # trusts reach only the fleet proxy sidecar on its own port (FLIP#1517).
+  flower_fleet_proxy_port       = 9092
   flower_superlink_control_port = 8000
   flower_superlink_health_port  = 9097
+
+  # The container the NLB target group binds: the proxy on Flower, the server on NVFLARE.
+  fl_server_lb_container = var.fl_backend == "flower" ? "fleet-proxy" : "fl-server-net-1"
 
   # Container port the NLB target group forwards to. The EXTERNAL listener
   # port stays var.FL_SERVER_PORT for both backends — compose maps
   # ${FL_SERVER_PORT}:9092 the same way for Flower.
-  fl_server_container_port = var.fl_backend == "flower" ? local.flower_superlink_fleet_port : var.FL_SERVER_PORT
+  fl_server_container_port = var.fl_backend == "flower" ? local.flower_fleet_proxy_port : var.FL_SERVER_PORT
 
   # EFS volumes per backend and task, name → access-point key (efs.tf).
   # Flower shares one RW jobs volume (/app/src — uploaded bundles +
@@ -80,6 +91,26 @@ locals {
       "efs-fl-net-1-jobs"  = "fl_jobs"
     }
   }
+
+  # Read-only root filesystems (Security Hub ECS.5, FLIP#1795). Every container sets
+  # readonlyRootFilesystem and writes only to its EFS mounts and to empty task volumes
+  # (Fargate ephemeral storage), here volume name → container path for the FL tasks.
+  # Each path is a VOLUME in its image: without that Fargate mounts the volume
+  # root-owned 0755 and a non-root container cannot write it. Each container's
+  # `user` (Security Hub ECS.20, FLIP#1796) is therefore its image's own uid:gid.
+  #
+  # The services give the read-only root up while var.ecs_exec_enabled is on: ECS
+  # Exec starts an SSM agent in every container of the task, and it has to write
+  # there. A debugging apply therefore fails ECS.5 until the variable is off again.
+  service_readonly_root = !var.ecs_exec_enabled
+  fl_api_scratch_volumes = {
+    nvflare = { "tmp" = "/tmp", "admin-transfer" = "/app/admin/transfer" }
+    flower  = { "tmp" = "/tmp", "flwr-config" = "/home/app/.flwr" }
+  }
+  fl_server_scratch_volumes = {
+    nvflare = { "tmp" = "/tmp", "workspace" = "/workspace", "home-cache" = "/home/flip/.cache" }
+    flower  = { "tmp" = "/tmp" }
+  }
 }
 
 ############################
@@ -101,6 +132,8 @@ resource "aws_ecs_task_definition" "flip_api" {
       image  = "${var.docker_registry}flip-api:${var.docker_image_tag}"
       cpu    = 512
       memory = 1024
+      # The image's own user, flip (flip-api/Dockerfile).
+      user = "1000:1000"
 
       portMappings = [
         {
@@ -121,6 +154,13 @@ resource "aws_ecs_task_definition" "flip_api" {
 
       secrets = []
 
+      # Read-only root filesystem (ECS.5, FLIP#1795): /tmp is the one path the API
+      # writes, and a VOLUME in its image (see local.fl_api_scratch_volumes for why).
+      readonlyRootFilesystem = local.service_readonly_root
+      mountPoints = [
+        { sourceVolume = "tmp", containerPath = "/tmp", readOnly = false },
+      ]
+
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -131,6 +171,10 @@ resource "aws_ecs_task_definition" "flip_api" {
       }
     }
   ])
+
+  volume {
+    name = "tmp"
+  }
 
   tags = {
     Name = "flip-api"
@@ -159,6 +203,8 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
       image             = local.fl_api_image
       cpu               = 1024
       memoryReservation = 4096
+      # Both backends' images run as 1000:1000 (flip in nvflare/fl-api-base, app in flower/fl-api-flower).
+      user = "1000:1000"
 
       portMappings = [
         {
@@ -180,34 +226,39 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
       # (SERVER_CHECKPOINT_ROOT; fl-server reads it back — FLIP#695).
       # Flower (compose.prod.flower.yml): SuperLink certs read-only
       # (only ca.crt is read) + the shared RW jobs volume at FLOWER_SRC_ROOT.
-      mountPoints = var.fl_backend == "flower" ? [
-        {
-          sourceVolume  = "efs-fl-net-1-certs"
-          containerPath = "/certs"
-          readOnly      = true
-        },
-        {
-          sourceVolume  = "efs-fl-net-1-jobs"
-          readOnly      = false
-          containerPath = "/app/src"
-        },
-        ] : [
-        {
-          sourceVolume  = "efs-fl-api-net-1-local"
-          readOnly      = false
-          containerPath = "/app/admin/local"
-        },
-        {
-          sourceVolume  = "efs-fl-api-net-1-startup"
-          readOnly      = false
-          containerPath = "/app/admin/startup"
-        },
-        {
-          sourceVolume  = "efs-fl-api-net-1-checkpoints"
-          readOnly      = false
-          containerPath = "/app/server-checkpoints"
-        },
-      ]
+      readonlyRootFilesystem = local.service_readonly_root
+      mountPoints = concat(
+        [for name, path in local.fl_api_scratch_volumes[var.fl_backend] :
+        { sourceVolume = name, containerPath = path, readOnly = false }],
+        var.fl_backend == "flower" ? [
+          {
+            sourceVolume  = "efs-fl-net-1-certs"
+            containerPath = "/certs"
+            readOnly      = true
+          },
+          {
+            sourceVolume  = "efs-fl-net-1-jobs"
+            readOnly      = false
+            containerPath = "/app/src"
+          },
+          ] : [
+          {
+            sourceVolume  = "efs-fl-api-net-1-local"
+            readOnly      = false
+            containerPath = "/app/admin/local"
+          },
+          {
+            sourceVolume  = "efs-fl-api-net-1-startup"
+            readOnly      = false
+            containerPath = "/app/admin/startup"
+          },
+          {
+            sourceVolume  = "efs-fl-api-net-1-checkpoints"
+            readOnly      = false
+            containerPath = "/app/server-checkpoints"
+          },
+        ],
+      )
 
       logConfiguration = {
         logDriver = "awslogs"
@@ -252,6 +303,13 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
     }
   }
 
+  dynamic "volume" {
+    for_each = local.fl_api_scratch_volumes[var.fl_backend]
+    content {
+      name = volume.key
+    }
+  }
+
   tags = {
     Name = "fl-api-net-1"
   }
@@ -274,12 +332,15 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
   execution_role_arn = aws_iam_role.ecs_task_execution.arn
   task_role_arn      = aws_iam_role.ecs_fl_server_task.arn
 
-  container_definitions = jsonencode([
+  container_definitions = jsonencode(concat([
     {
-      name              = "fl-server-net-1"
-      image             = local.fl_server_image
-      cpu               = 2048
-      memoryReservation = 8192
+      name  = "fl-server-net-1"
+      image = local.fl_server_image
+      cpu   = 2048
+      # The Flower fleet proxy below reserves the remaining 128 MiB of the task.
+      memoryReservation = var.fl_backend == "flower" ? 8064 : 8192
+      # The image's own user: flip in FLARE's (nvflare/fl-base), flwr/base's app in the SuperLink.
+      user = var.fl_backend == "flower" ? "49999:49999" : "1000:1000"
 
       # Flower-only settings, null (dropped by the ECS API) for FLARE. The
       # SuperLink image's entrypoint takes the TLS + SuperNode-auth flags as
@@ -299,10 +360,10 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
       linuxParameters = var.fl_backend == "flower" ? { initProcessEnabled = true } : null
 
       # FLARE serves client gRPC + admin multiplexed on one port. Flower's
-      # SuperLink splits Fleet (9092, what the NLB forwards to), the HTTP
-      # Control API (8000, fl-api submits runs here) and health (9097).
+      # SuperLink serves its HTTP APIs on 8000 (fl-api submits runs to the
+      # Control API there) and health on 9097; the NLB's 9092 is the fleet
+      # proxy's, below.
       portMappings = var.fl_backend == "flower" ? [
-        { containerPort = local.flower_superlink_fleet_port, protocol = "tcp" },
         { containerPort = local.flower_superlink_control_port, protocol = "tcp" },
         { containerPort = local.flower_superlink_health_port, protocol = "tcp" },
         ] : [
@@ -327,10 +388,11 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
       ]
 
       # Container paths must match what the fl-server image expects.
-      # FLARE (compose.prod.nvflare.yml): /app/{local,startup,
-      # transfer} — the entrypoint chmods scripts in /app/startup and reads
-      # /app/local/log_config.template.json; wrong paths -> crash loop.
-      # certs and keys live inside /app/local (FLARE puts them under
+      # FLARE: the kit's {local,startup,transfer} under /workspace (FL_WORKSPACE,
+      # see the entrypoint), not compose.prod.nvflare.yml's /app; wrong paths ->
+      # crash loop. The scratch volumes come first: the kit mounts nest inside
+      # /workspace.
+      # certs and keys live inside local/ (FLARE puts them under
       # site-1/ssl-key, ssl-cert), so no separate mount is needed. The
       # checkpoints mount is the reader side of the shared staging volume
       # (SERVER_CHECKPOINT_ROOT — FLIP#695).
@@ -338,39 +400,44 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
       # read-only at /certs (referenced by the command flags below) + the
       # shared RW jobs volume at /app/src (uploaded bundles + eval
       # checkpoints, read via the flip-job-dir run-config).
-      mountPoints = var.fl_backend == "flower" ? [
-        {
-          sourceVolume  = "efs-fl-net-1-certs"
-          containerPath = "/certs"
-          readOnly      = true
-        },
-        {
-          sourceVolume  = "efs-fl-net-1-jobs"
-          readOnly      = false
-          containerPath = "/app/src"
-        },
-        ] : [
-        {
-          sourceVolume  = "efs-fl-server-net-1-local"
-          readOnly      = false
-          containerPath = "/app/local"
-        },
-        {
-          sourceVolume  = "efs-fl-server-net-1-startup"
-          readOnly      = false
-          containerPath = "/app/startup"
-        },
-        {
-          sourceVolume  = "efs-fl-server-net-1-transfer"
-          readOnly      = false
-          containerPath = "/app/transfer"
-        },
-        {
-          sourceVolume  = "efs-fl-server-net-1-checkpoints"
-          readOnly      = false
-          containerPath = "/app/server-checkpoints"
-        },
-      ]
+      readonlyRootFilesystem = local.service_readonly_root
+      mountPoints = concat(
+        [for name, path in local.fl_server_scratch_volumes[var.fl_backend] :
+        { sourceVolume = name, containerPath = path, readOnly = false }],
+        var.fl_backend == "flower" ? [
+          {
+            sourceVolume  = "efs-fl-net-1-certs"
+            containerPath = "/certs"
+            readOnly      = true
+          },
+          {
+            sourceVolume  = "efs-fl-net-1-jobs"
+            readOnly      = false
+            containerPath = "/app/src"
+          },
+          ] : [
+          {
+            sourceVolume  = "efs-fl-server-net-1-local"
+            readOnly      = false
+            containerPath = "/workspace/local"
+          },
+          {
+            sourceVolume  = "efs-fl-server-net-1-startup"
+            readOnly      = false
+            containerPath = "/workspace/startup"
+          },
+          {
+            sourceVolume  = "efs-fl-server-net-1-transfer"
+            readOnly      = false
+            containerPath = "/workspace/transfer"
+          },
+          {
+            sourceVolume  = "efs-fl-server-net-1-checkpoints"
+            readOnly      = false
+            containerPath = "/app/server-checkpoints"
+          },
+        ],
+      )
 
       logConfiguration = {
         logDriver = "awslogs"
@@ -381,14 +448,66 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
         }
       }
     }
-  ])
+    ],
+    # Flower only (FLIP#1517): the SuperLink's one trust-facing listener. It shares the
+    # task's network namespace (awsvpc), takes the NLB's 9092 and forwards only the
+    # Fleet API routes to the SuperLink on localhost:8000, so a trust can never reach
+    # the Control or Runtime API there. The image's defaults are this shape; see
+    # fl-services/flower/fleet-proxy. NVFLARE has no sidecar.
+    var.fl_backend == "flower" ? [
+      {
+        name              = "fleet-proxy"
+        image             = local.fl_fleet_proxy_image
+        essential         = true
+        memoryReservation = 128
+        # The image's own USER, the SuperLink's uid:gid.
+        user = "49999:49999"
+
+        portMappings = [
+          { containerPort = local.flower_fleet_proxy_port, protocol = "tcp" },
+        ]
+
+        # The image's own check: a Fleet request must get through to the SuperLink. A
+        # proxy that cannot reach or verify it answers every SuperNode 503 while the
+        # NLB's TCP check still passes. Generous retries, as a failing check replaces
+        # the whole task, SuperLink and any run in flight included.
+        healthCheck = {
+          command     = ["CMD", "/usr/local/bin/fleet-proxy-healthcheck"]
+          interval    = 30
+          timeout     = 10
+          retries     = 5
+          startPeriod = 120
+        }
+
+        # The SuperLink's own server certificate, so trust kits and SANs are unchanged.
+        # /tmp holds everything nginx writes (its rendered config, pid and temp files).
+        readonlyRootFilesystem = local.service_readonly_root
+        mountPoints = [
+          { sourceVolume = "fleet-proxy-tmp", containerPath = "/tmp", readOnly = false },
+          {
+            sourceVolume  = "efs-fl-net-1-certs"
+            containerPath = "/certs"
+            readOnly      = true
+          },
+        ]
+
+        logConfiguration = {
+          logDriver = "awslogs"
+          options = {
+            awslogs-group         = aws_cloudwatch_log_group.ecs_fl_server_net_1.name
+            awslogs-region        = var.AWS_REGION
+            awslogs-stream-prefix = "fleet-proxy"
+          }
+        }
+      },
+  ] : []))
 
   # Volume set per backend (local.fl_server_task_volumes). Shared-volume
   # notes: the FLARE checkpoints volume is the SAME access point
   # fl-api-net-1 writes to (both tasks pinned to uid/gid 1001 by the access
   # point, so reader sees writer's files — FLIP#695); the Flower jobs volume
   # is likewise shared RW with fl-api-net-1. FLARE keeps SSL key + cert
-  # under /app/local/site-1/ssl-* (inside the local volume) so it needs no
+  # under /workspace/local/site-1/ssl-* (inside the local volume) so it needs no
   # certs mount; Flower mounts the fl_server_certs access point that was
   # previously a FLARE leftover.
   dynamic "volume" {
@@ -404,6 +523,16 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
           iam             = "ENABLED"
         }
       }
+    }
+  }
+
+  dynamic "volume" {
+    for_each = merge(
+      local.fl_server_scratch_volumes[var.fl_backend],
+      var.fl_backend == "flower" ? { "fleet-proxy-tmp" = "/tmp" } : {},
+    )
+    content {
+      name = volume.key
     }
   }
 

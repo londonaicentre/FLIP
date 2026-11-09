@@ -1,0 +1,42 @@
+[
+  {
+    "id": "902c8a69-bedd-8f74-b22c-96de67025abf",
+    "modelId": "70afa3f5-7537-85c4-ab62-bc95dde5036f",
+    "logDate": "2026-07-17T18:22:12.647432",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": null,
+    "log": "This model has been added to the queue."
+  },
+  {
+    "id": "4b3eeff2-d085-8c42-840e-8c1949b898da",
+    "modelId": "70afa3f5-7537-85c4-ab62-bc95dde5036f",
+    "logDate": "2026-07-17T18:22:12.666665",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": null,
+    "log": "Selected trusts for training: Guy's and St Thomas' Trust, King's College Hospital"
+  },
+  {
+    "id": "2cd7fc75-67f6-802d-845d-268ba5ac7582",
+    "modelId": "70afa3f5-7537-85c4-ab62-bc95dde5036f",
+    "logDate": "2026-07-17T18:25:08.543546",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": null,
+    "log": "Model training assigned to 'net-1'"
+  },
+  {
+    "id": "e094a540-58c3-84ef-bdac-875906145701",
+    "modelId": "70afa3f5-7537-85c4-ab62-bc95dde5036f",
+    "logDate": "2026-07-17T18:35:59.671240",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": null,
+    "log": "The results of this model have been uploaded and can now be downloaded."
+  }
+]

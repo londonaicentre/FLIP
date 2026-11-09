@@ -13,13 +13,15 @@
 # limitations under the License.
 #
 
-FROM flwr/base:${FLWR_VERSION:-1.38.0-py3.12-ubuntu24.04} AS base
+FROM flwr/base:${FLWR_VERSION:-1.42.0-py3.12-ubuntu24.04} AS base
 
 ARG LOCAL_DEV=false
 # torch's native Triton kernels compile a C helper on first use, and this image has no C compiler:
 # without this, a GPU backward through one of them fails (FLIP#1700). torch reads it at import.
 ENV TORCH_DISABLE_NATIVE_JIT=1
 WORKDIR /app
+# flwr/base on its own: a conflict it ships fails this step, not the `pip check` after flip-utils' install.
+RUN python -m pip check
 
 # Install flip-utils from the IN-REPO source (build context = repo root). This
 # replaces two older mechanisms now that flip-utils lives in this monorepo:
@@ -39,31 +41,35 @@ WORKDIR /app
 # "/opt/flip-utils" }` resolves against this copy rather than a PyPI release
 # (#767), and fails without it.
 #
-# --extra-index-url points pip at PyTorch's CUDA-13.0 wheel index. Combined with
-# flip-utils' "torch>=2.13,<2.14" pin, pip picks torch 2.13.x+cu130.
+# --extra-index-url points pip at PyTorch's CUDA-13.0 wheel index, where the lock's
+# torch 2.13.x+cu130 lives.
 # COPY's default root ownership is deliberate: user-submitted apps execute in
 # this container as the same non-root `app` user that flwr/base runs as, so an
 # app-writable copy could be mutated by app code, poisoning anything that later
 # resolves the templates' pin against it. Root-owned, the tree is read-only to
-# `app` — enough for the pip install below and any `uv sync` of a template,
+# `app` — enough for the wheel build below and any `uv sync` of a template,
 # which only read it (flip-utils' hatchling backend builds in temp dirs, never
 # the source tree).
-COPY flip-utils/pyproject.toml flip-utils/README.md /opt/flip-utils/
+COPY flip-utils/pyproject.toml flip-utils/uv.lock flip-utils/README.md /opt/flip-utils/
 COPY flip-utils/docs/ /opt/flip-utils/docs/
 COPY flip-utils/flip/ /opt/flip-utils/flip/
-# flwr/base ships flwr==1.38.0, which pins cryptography>=46.0.7,<47.0.0 (GHSA-537c-gmf6-5ccf
-# needs >=48.0.1). This is a plain `pip install`, not a `uv sync`, so the
-# `[tool.uv] override-dependencies` escape hatch used in fl-api-flower/pyproject.toml
-# doesn't apply here — listing cryptography directly on the install line is the pip
-# equivalent, forcing the upgrade past flwr's declared ceiling. Safe for the same reason
-# recorded there: flwr only uses cryptography for TLS cert loading in secure aggregation,
-# a stable surface across majors.
-# pip does not apply flip-utils' UV constraints; carry its security floors here too: setuptools, and certifi
-# and uv (GHSA-6q48-6c7w-9gw2, GHSA-hq85-5cpj-mr62), which flwr/base ships and flwr pins below the uv fix.
-RUN python -m pip install -U --no-cache-dir "/opt/flip-utils[full]" "cryptography>=50.0.0" "setuptools>=84.1.0" \
-      "certifi>=2026.10.19" "uv>=0.13.4" \
-      --extra-index-url https://download.pytorch.org/whl/cu130
+# Dependencies come from flip-utils' uv.lock, hash-checked, as in the NVFLARE fl-base (#1801), so its
+# security floors reach this image through the lock. flwr is not in the export (flip-utils' dev group):
+# the image keeps flwr/base's own, and `pip check` fails the build if the locked packages no longer fit it.
+# uv builds the flip-utils wheel, so hatchling comes within the 72h cooldown; pip would fetch the newest.
+RUN cd /opt/flip-utils \
+ && python -m uv export --frozen --extra full --no-dev --no-emit-project -o /tmp/flip-utils.txt \
+ && python -m pip install --no-cache-dir --require-hashes -r /tmp/flip-utils.txt \
+      --extra-index-url https://download.pytorch.org/whl/cu130 \
+ && python -m uv build --wheel --no-cache --out-dir /tmp/dist \
+ && python -m pip install --no-cache-dir --no-deps /tmp/dist/*.whl \
+ && python -m pip check \
+ && rm -r /tmp/flip-utils.txt /tmp/dist
 
 # Copy register-supernode-keys.sh (used by the secure / central-hub topology to
 # register SuperNode public keys with the SuperLink).
 COPY --chown=app:app fl-services/flower/register-supernode-keys.sh /scripts/register-supernode-keys.sh
+
+# HOME is /app (the flwr/base image's own). A kit's FLIP_UID (FLIP#1731) owns nothing here, so
+# the SuperNode's ~/.flwr and the caches under ~/.cache need /app writable by any uid, sticky.
+RUN mkdir -p /app/.cache && chmod 1777 /app /app/.cache

@@ -48,7 +48,7 @@ Terraform. The security controls are on :ref:`security`.
    :alt: Users and Trust nodes outside AWS; in the networking account an edge CloudFront with WAF, a web
          relay NLB, an internet-facing edge NLB, and a Network Firewall in front of a Transit Gateway; in
          the workload account the accelerator-provisioned VPC with app subnets holding one internal NLB,
-         three Fargate services, Cloud Map, an SSM bastion and an optional mock Trust, a private hosted
+         three Fargate services, Cloud Map and an SSM bastion, a private hosted
          zone, the UI bucket, the SSM handoff parameters and an ECR pull-through cache reaching GHCR.
 
    Request and FL paths on an LZA estate.
@@ -200,7 +200,8 @@ Preparing a workload account
         --ecr-repository-prefix ecr-public --upstream-registry-url public.ecr.aws
 
    Nothing is pre-populated: the first pull of each image fetches it from upstream. Cached mutable tags can be up
-   to about 24 hours stale, which is one reason deploys pin immutable ``sha-`` tags.
+   to about 24 hours stale, which is one reason deploys pin immutable ``sha-`` tags. The root gives the cached
+   repositories a lifecycle policy: existing ones directly, new ones through repository creation templates.
 
 3. **Add the operator profile.** Run ``aws configure sso`` against the account's Identity Center permission set and
    rename the profile ``prod`` or ``stag`` (override with ``PROD_AWS_PROFILE`` / ``STAG_AWS_PROFILE``).
@@ -258,18 +259,17 @@ First bring-up without a hosted zone
 ====================================
 
 With ``MANAGE_DNS=false``, Terraform skips the hosted-zone lookup, every Route 53 record and both DNS-validated
-certificates, so the stack applies in an account with no zone yet. Until the zone exists:
+certificates, so the stack applies in an account with no zone. If the zone later moves into the account, set
+``MANAGE_DNS=true`` and apply again.
 
-- The UI is reached on the edge distribution's default ``*.cloudfront.net`` domain
-  (``TF_VAR_lza_web_edge_domain``). Bucket CORS and the Cognito sign-in URLs follow it automatically.
-- Build the UI with ``CENTRAL_HUB_API_URL`` pointing at that domain, and give trusts the same URL.
-- The leg from the edge's relay to the workload's internal load balancer is plain TCP rather than TLS, because a
-  certificate cannot be issued without DNS validation. Viewer traffic is still HTTPS at the edge, and that leg stays
-  on the Transit Gateway and central-firewall path.
+The internal load balancer's web listener terminates TLS either way. With ``MANAGE_DNS=true`` it uses this stack's
+own certificate. Otherwise the platform team issues one for ``ALB_SUBDOMAIN`` into the account, validated in the zone
+they keep, and Terraform finds it by name, so it must be issued **before the first apply**: the plan fails without
+it. The relay passes TLS through, so the edge's origin in the networking account must be HTTPS-only.
 
-Once the zone lands, set ``MANAGE_DNS=true`` and apply again. Switching the web listener to TLS is a **two-sided
-change**: the edge's origin in the networking account must switch to HTTPS, with a host name matching the new
-certificate, at the same time.
+The edge checks that certificate against the host it forwards, so the API answers on ``ALB_SUBDOMAIN`` only, never
+on the distribution's default ``*.cloudfront.net`` domain. Attach the real domain (below) before building the UI or
+giving trusts a URL: ``CENTRAL_HUB_API_URL`` is ``https://<ALB_SUBDOMAIN>/api``.
 
 Attaching the real domain
 -------------------------
@@ -290,21 +290,27 @@ Two-phase edge handoff
 
 The edge is built from the workload stack's outputs, so the two are always applied in this order:
 
-1. **Apply the workload stack.** *Who: FLIP admin (or CI).*
+1. **Issue the web listener's certificate.** *Who: platform team.*
+
+   A certificate for ``ALB_SUBDOMAIN`` in the workload account, validated in the zone they keep. The workload plan
+   fails until it is issued.
+
+2. **Apply the workload stack.** *Who: FLIP admin (or CI).*
 
    The first ``apply`` publishes the handoff parameters under ``/flip/networking/*``: the internal NLB's fixed IP
    addresses, the web and FL ports, and its DNS name. Leave ``TF_VAR_lza_web_edge_domain`` and
    ``TF_VAR_lza_web_edge_distribution_arn`` empty. Until they are set, the UI bucket grants no one access and the UI
    origin is a placeholder.
 
-2. **Apply the edge.** *Who: platform team.*
+3. **Apply the edge.** *Who: platform team.*
 
    The edge stack in the networking account reads the handoff parameters.
 
-3. **Point the workload stack at the edge.** *Who: FLIP admin (or CI).*
+4. **Point the workload stack at the edge.** *Who: FLIP admin (or CI).*
 
-   Set the two variables to the edge distribution's domain and ARN in the env file, then apply again. This grants
-   the edge read access to the UI bucket and points bucket CORS and the Cognito callback URLs at the edge.
+   Set ``TF_VAR_lza_web_edge_domain`` to ``ALB_SUBDOMAIN``, the name the API answers on, and
+   ``TF_VAR_lza_web_edge_distribution_arn`` to the edge distribution's ARN, then apply again. This grants the edge
+   read access to the UI bucket and points bucket CORS and the Cognito callback URLs at the edge.
 
 Later changes to the workload load balancer follow the same order, networking stack first.
 
@@ -333,7 +339,7 @@ see "Repointing CI at the LZA accounts" in :gh:`deploy/providers/AWS/README.md`.
      - ``.env.prod``
      - ``.env.stag``
    * - Semantics
-     - Production (RDS deletion protection and final snapshot on)
+     - Production (RDS final snapshot on)
      - Staging
    * - Deploys from
      - ``origin/main``
@@ -381,11 +387,11 @@ The Makefile refuses to run when ``AWS_PROFILE`` does not match ``HUB``, and nee
       mkdir -p /tmp/lzakey
       aws ssm get-parameter --name /flip/ci/host_aws_public_key --profile <profile> \
         --query Parameter.Value --output text > /tmp/lzakey/host-aws.pub
-      LOCK=false make plan TF_VAR_flip_keypair=/tmp/lzakey/host-aws TF_VAR_ec2_public_key_path=/tmp/lzakey/host-aws.pub
+      LOCK=false make plan TF_VAR_flip_keypair=/tmp/lzakey/host-aws
 
 .. note::
 
-   - ``full-deploy`` and ``full-deploy-hub-only``, along with ``make status`` and ``make destroy``, are not yet
+   - ``full-deploy``, along with ``make status`` and ``make destroy``, are not yet
      exercised on an LZA estate.
    - CI publishes the UI after each successful apply, so ``deploy-ui`` is only needed when that publish fails or
      the UI must be rolled back. It does not invalidate a CloudFront cache, because the edge distribution is in

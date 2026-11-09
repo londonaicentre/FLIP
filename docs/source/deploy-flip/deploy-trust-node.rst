@@ -19,8 +19,25 @@ A **trust node** is FLIP's footprint inside a participating trust: trust-api, im
 client, an OMOP database, XNAT, a PACS (mocked by Orthanc until you connect your own) and a logging stack. It polls
 the Central Hub for work over HTTPS. **All traffic to the hub is outbound**; no inbound port is opened for it.
 
-Read this page first. It covers what every trust node needs, whatever it runs on. Then follow
+A trust deciding whether it can join, and the people who must prepare its data, PACS, network and host, start
+with :doc:`trust-readiness-checklist`: the prerequisites in plain language, by owner, in order.
+
+Read this page next. It covers what every trust node needs, whatever it runs on. Then follow
 :doc:`onboarding-a-trust`, which sends you to your platform's page for the install.
+
+.. toctree::
+   :maxdepth: 1
+   :hidden:
+
+   trust-readiness-checklist
+   onboarding-a-trust
+   deploy-flip-node-on-prem
+   deploy-flip-node-kubernetes
+   deploy-flip-node-aws-ec2
+   deploy-flip-node-aws-eks
+   deploy-flip-node-azure
+   deploy-flip-node-azure-aks
+   deploy-flip-node-in-tre
 
 .. contents:: On this page
    :local:
@@ -87,21 +104,34 @@ Choose your platform
      - The trust runs an Ubuntu host (physical or VM) with governed access to its own OMOP database and PACS. The
        common case.
      - :doc:`deploy-flip-node-on-prem`
+   * - **Existing Kubernetes cluster**
+     - The trust's platform team runs Kubernetes. The Helm chart is validated on single-node k3s, AKS and Amazon
+       EKS; read its known limitations first.
+     - :doc:`deploy-flip-node-kubernetes`
+   * - **AWS EC2**
+     - The trust builds the node from code in its own AWS account and VPC. It is a Docker Compose host on an
+       EC2 instance with no public IP and no inbound rule, reached through SSM only.
+     - :doc:`deploy-flip-node-aws-ec2`
+   * - **Amazon EKS**
+     - The trust builds a small EKS cluster from code in its own AWS account and runs the ``flip-trust`` Helm
+       chart on it. Nodes have no public IP; the API endpoint admits the operator's address only.
+     - :doc:`deploy-flip-node-aws-eks`
    * - **Azure VM**
      - The trust builds the node from code in its own Azure subscription. It is a Docker Compose host on a VM
        that configures itself and accepts no inbound connection.
      - :doc:`deploy-flip-node-azure`
-   * - **Kubernetes**
-     - The trust's platform team runs Kubernetes. The Helm chart is validated on single-node k3s; read its known
-       limitations first.
-     - :doc:`deploy-flip-node-kubernetes`
+   * - **Azure AKS**
+     - The trust builds a one-node AKS cluster from code in its own Azure subscription and runs the ``flip-trust``
+       Helm chart on it. Sign-in is through Entra; the API server admits the operator's address and the nodes'
+       egress only.
+     - :doc:`deploy-flip-node-azure-aks`
    * - **Inside a TRE**
      - Governance requires data access through a Trusted Research Environment loaded with a project-specific
        subset. The node itself installs as a Docker Compose host.
      - :doc:`deploy-flip-node-in-tre`
 
-The mock trust on an AWS EC2 instance, which the Central Hub deployment can create for testing, is covered in
-:gh:`deploy/providers/AWS/README.md`.
+A trust on AWS, in any account, is :doc:`deploy-flip-node-aws-ec2` or :doc:`deploy-flip-node-aws-eks`. The Central
+Hub deployment creates no trust of its own.
 
 ****************
 Before you start
@@ -151,35 +181,96 @@ Network requirements
 to the FL server. The one exception is retrieval from the trust's own PACS, which needs a rule inside the trust's
 network (see :doc:`../components/component-pacs`).
 
-The node must reach two **separate** hub endpoints. They have different hostnames behind different load balancers,
-so allow both:
+The node must reach two **separate** hub endpoints, the API and the FL server. They have different hostnames behind
+different load balancers, so allow both. This is everything a node connects out to:
+
+.. tip::
+
+   On a Docker Compose host, ``make onboard-onprem-trust KIT=<CODE>`` probes the first four rows from the host
+   itself once the kit file is in place, and prints the host:port and the failure (DNS, refused, timed out, HTTP
+   status) for each one it cannot reach. That output is the evidence to hand your network team. It says only
+   "reachable from this host": a firewall that filters one direction answers the probe while blocking nothing.
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 35 35
+   :widths: 26 14 13 35 12
 
-   * - Endpoint
-     - Example host
+   * - Destination
      - Port
-   * - Central Hub API (HTTPS)
-     - ``app.flip.aicentre.co.uk``
+     - When needed
+     - Why
+     - Measured behind a firewall
+   * - The hub URL in your kit, for example ``app.flip.aicentre.co.uk``
      - 443
-   * - FL server (gRPC or HTTP)
-     - ``fl.app.flip.aicentre.co.uk``
-     - The kit's ``FL_EDGE_PORT``, else ``FL_SERVER_PORT``: 8002 on production, 8003 on staging
+     - Always
+     - Task polling, heartbeats and results (HTTPS, API key)
+     - Yes, Oct 2026
+   * - The hub's FL endpoint, for example ``fl.app.flip.aicentre.co.uk``
+     - Your kit's FL port: 8002 on production, 8003 on staging
+     - Always
+     - Federated training, over mutual TLS. **Exempt it from TLS inspection**: a proxy that re-signs the traffic
+       breaks the client's certificate check. It has a fixed IP, so a firewall that filters by name only in HTTP
+       rules (Azure Firewall Basic, for example) can allow it by address
+     - Yes, Oct 2026
+   * - ``ghcr.io`` **and** ``pkg-containers.githubusercontent.com``
+     - 443
+     - Always
+     - Every container image the node runs, pulled on every deploy and upgrade: FLIP's own, and FLIP's mirrors of
+       the third-party ones (Grafana, Loki, Alloy, XNAT's Docker socket proxy, the chart's ``uv`` and ``busybox``
+       helpers). Nothing
+       comes from Docker Hub. The second host serves the image layers, so ``ghcr.io`` alone fails every pull
+     - Yes, Oct 2026
+   * - ``huggingface.co`` **and** ``*.hf.co``
+     - 443
+     - First install
+     - FLIP's sample trust data, which the first install loads by default. Downloads redirect to ``*.hf.co``, so
+       ``huggingface.co`` alone fails. Not needed with ``TRUST_DATA_SEED=false`` in the kit, unless you load the
+       DICOM vocabulary (:ref:`onprem-core-vocabulary`).
+     - Not yet
+   * - ``pypi.org``, ``files.pythonhosted.org``
+     - 443
+     - First install
+     - The Python packages the sample-data loaders run. The same exceptions apply as for Hugging Face; a Kubernetes
+       deployment host also fetches PyYAML for ``sync-kit``
+     - Not yet
+   * - Ubuntu's package mirrors, or your own
+     - 80
+     - Provisioning and updates
+     - OS packages and their security updates. ``esm.ubuntu.com`` is not expected to be needed
+     - Not yet
+   * - ``download.docker.com``
+     - 443
+     - Provisioning and updates
+     - Docker Engine and its updates, where FLIP's provisioning installs it
+     - Not yet
 
-The hub keeps no per-trust allowlist: the networking account's edge decides what reaches the FL server, and the kit's
-mTLS certificates decide who gets in, so a changed public IP needs no hub-side change.
+*Measured* means a node ran behind a firewall that denied everything not listed (an Azure node, October 2026).
 
-The node also needs outbound access to pull FLIP's container images (``ghcr.io/londonaicentre``) and OS packages.
-The Docker Compose deploy commands always pull, so this applies in a TRE too (see :doc:`deploy-flip-node-in-tre`).
-Kubernetes adds a few destinations of its own; see :doc:`deploy-flip-node-kubernetes`.
+A registry allowlist works by host name, so it admits every public package on GHCR, not only FLIP's. What the
+node runs is fixed by the image references instead: FLIP's images by release tag, the third-party ones by digest
+from ``ghcr.io/londonaicentre/mirror/`` (:gh:`trust/deploy/mirror-images.manifest`, byte-identical copies of
+upstream's images).
 
-.. toctree::
-   :maxdepth: 1
+The hub identifies a trust by its kit's mTLS certificates and API key, not by its address, so the node needs no fixed
+public address. Still tell the FLIP team the public address the node's traffic leaves from, and when it changes: the
+hub's FL edge is restricted to declared trust addresses.
 
-   onboarding-a-trust
-   deploy-flip-node-on-prem
-   deploy-flip-node-azure
-   deploy-flip-node-kubernetes
-   deploy-flip-node-in-tre
+A connection that opens and then drops is a different problem from a blocked port, and needs a different request.
+Check it from the node, with the FL endpoint and port from the kit:
+
+.. code-block:: shell
+
+   openssl s_client -connect <FL endpoint>:<FL port> -servername <FL endpoint> </dev/null
+
+- A server certificate chain comes back: the path is open. The handshake then fails for want of a client
+  certificate, which is expected outside the kit.
+- ``Connection timed out`` or ``Connection refused``: a blocked port, or no route. The usual firewall rule.
+- The connection is reset with nothing read back after the TLS hello: an application-aware firewall rejecting TLS
+  on a non-default port. The network team must allow the ``ssl`` application to this endpoint on this port, or the
+  site needs a site-to-site VPN (:ref:`site-to-site-vpn`). :ref:`readiness-network` lists the questions that settle
+  this before the node is built.
+
+The deploy commands always pull, so the registries are needed in a TRE too (see :doc:`deploy-flip-node-in-tre`). Some
+platforms add destinations of their own: the Kubernetes chart (:doc:`deploy-flip-node-kubernetes`), the Azure VM's
+first boot (:doc:`deploy-flip-node-azure`), AKS (:doc:`deploy-flip-node-azure-aks`), and the AWS services an EC2 node uses
+(:doc:`deploy-flip-node-aws-ec2`).

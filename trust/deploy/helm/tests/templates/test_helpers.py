@@ -27,6 +27,8 @@ import yaml
 
 CHART_DIR = Path(__file__).resolve().parents[2]
 FLIP_REGISTRY = "ghcr.io/londonaicentre/"
+# Third-party images, mirrored by digest (FLIP#1721): not FLIP-built, so the release never moves them.
+MIRROR = FLIP_REGISTRY + "mirror/"
 
 pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm is not installed")
 
@@ -56,7 +58,7 @@ def _images(*sets: str) -> list[str]:
 
 def test_the_release_moves_every_flip_image_and_a_pin_beats_it():
     images = _images("global.image.tag=v0.7.0", "orthanc.image.pin=sha-1111111", "flClient.image.pin=sha-2222222")
-    flip = {image for image in images if image.startswith(FLIP_REGISTRY)}
+    flip = {image for image in images if image.startswith(FLIP_REGISTRY) and not image.startswith(MIRROR)}
     assert flip, images
     for image in flip:
         name, tag = image.removeprefix(FLIP_REGISTRY).rsplit(":", 1)
@@ -66,6 +68,6 @@ def test_the_release_moves_every_flip_image_and_a_pin_beats_it():
 
 def test_the_release_never_touches_third_party_images():
     images = _images("global.image.tag=v0.7.0")
-    others = [image for image in images if not image.startswith(FLIP_REGISTRY)]
+    others = [image for image in images if not image.startswith(FLIP_REGISTRY) or image.startswith(MIRROR)]
     assert others, images
     assert not any(image.endswith(":v0.7.0") for image in others), others

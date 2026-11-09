@@ -11,9 +11,23 @@
     limitations under the License.
 -->
 
-# Federated Learning with MONAI and Flower (Quickstart Example)
+# Spleen segmentation on CT
 
-This example of Flower uses a small MONAI UNet based on FLIP's implementation and a training-only `ClientApp`. It reads NIfTI data from the local `./data` folder and does not write any outputs.
+Flower port of the [NVFLARE spleen segmentation tutorial](../../../nvflare/image_segmentation/3d_spleen_segmentation),
+adapted from Flower's MONAI quickstart. It trains the same MONAI 3D UNet on CT volumes from the
+[Medical Segmentation Decathlon](http://medicaldecathlon.com/); *Data Location* below says where
+the data comes from locally and on the platform.
+
+## At a glance
+
+| Item | Value |
+|---|---|
+| What you upload | everything in `app/` |
+| Job type | standard |
+| Imaging | on, DICOM to NIfTI on; labels uploaded as [data enrichment](#running-on-a-real-flip-project-data-enrichment) |
+| Cohort query | `query.sql` |
+| Dataset | `make -C fl-tutorials download-spleen-data` |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower` (GPU) |
 
 ## Set up the project
 
@@ -23,12 +37,17 @@ This example of Flower uses a small MONAI UNet based on FLIP's implementation an
 3d_spleen_segmentation
 ├── app
 │   ├── __init__.py
-│   ├── client_app.py   # Defines your ClientApp
-│   ├── data_loading.py # MONAI transforms + datalist
-│   ├── get_data.py     # Placeholder function for FLIP API, reads local data
-│   ├── server_app.py   # Defines your ServerApp
-│   └── task.py         # Defines model creation
-├── pyproject.toml      # Project metadata like dependencies and configs
+│   ├── client_app.py   # @app.train + @app.evaluate
+│   ├── task.py         # train / validate / test loops
+│   ├── data_loading.py # FLIP_BASE: cohort dataframe + NIfTI pairs, local or via flip
+│   ├── transforms.py   # MONAI transforms + the sliding-window inferer
+│   ├── models.py       # get_model(): the MONAI UNet
+│   ├── config.json     # job_type + per-tutorial hyperparameters
+│   ├── config.toml     # run-config overrides fl-api applies on a platform submit
+│   ├── server_app.py   # copy of fl-apps/flower/standard/app/server_app.py
+│   └── strategy.py     # copy of fl-apps/flower/standard/app/strategy.py
+├── pyproject.toml      # flwr app definition + run-config defaults (local simulator only)
+├── query.sql           # Cohort SQL — verbatim from the FLARE tutorial
 └── README.md
 ```
 
@@ -176,26 +195,30 @@ It is wired in `app/client_app.py` as `@app.train(mods=[flip_local_dp_mod])`, so
 rounds only — `@app.evaluate` is untouched. That mirrors the scope of the FLARE apps'
 `PercentilePrivacy` result filter, though the mechanism is stronger: FLARE sparsifies by
 percentile and adds no noise, while this is a real (epsilon, delta) mechanism built on Flower's own
-`compute_clip_model_update` / `add_gaussian_noise_inplace`.
+`clip_inputs_inplace` / `add_gaussian_noise_inplace` (its `compute_clip_model_update`, unrolled so
+the mod can log the pre-clip norm).
 
 | Key                | Default | Meaning |
 |--------------------|---------|---------|
 | `dp-enabled`       | `true`  | Master switch. `false` makes the mod a pass-through, so DP-on / DP-off runs use an identical app |
-| `dp-clipping-norm` | `1.0`   | L2 norm the update is clipped to before noise |
+| `dp-clipping-norm` | `20.0`  | L2 norm the update is clipped to before noise; sized to this model's measured update norm (21-22) |
 | `dp-sensitivity`   | `1e-4`  | How much one training example can move the update |
 | `dp-epsilon`       | `10.0`  | Privacy budget — smaller means more privacy and more noise |
 | `dp-delta`         | `1e-5`  | Probability the guarantee fails outright |
 
-Override per run without editing the app:
+To override per run without editing the app, pass `--run-config` to `sim-tutorial.sh` (what
+`make run-tutorial` runs); it forwards everything after the tutorial name to `flwr run`:
 
 ```bash
-flwr run . --run-config "dp-enabled=false"
-flwr run . --run-config "dp-epsilon=1.0 dp-clipping-norm=0.5"
+bash fl-tutorials/flower/sim-tutorial.sh 3d_spleen_segmentation --run-config "dp-enabled=false"
+bash fl-tutorials/flower/sim-tutorial.sh 3d_spleen_segmentation --run-config "dp-epsilon=1.0 dp-clipping-norm=0.5"
 ```
 
-> ⚠️ **The defaults are demonstration values, chosen utility-first** so this tutorial still
-> converges with the mechanism live (they give sigma ≈ 4.8e-5). They are **not** a defensible
-> privacy budget. A real one calibrates `dp-sensitivity` to the local dataset — roughly
+> ⚠️ **The defaults are demonstration values, not a privacy budget.** `dp-clipping-norm` is sized
+> to this model's update so clipping does not throttle training, but the noise comes from
+> `dp-sensitivity` alone (sigma ≈ 4.8e-5), which is negligible beside an update of that norm. The
+> configured `dp-epsilon` is therefore not the guarantee these runs get until the noise is
+> calibrated to the clipping norm (FLIP#1760). A real budget calibrates `dp-sensitivity` to the local dataset — roughly
 > `2 * dp-clipping-norm / |D|` for an average-of-examples update — and accounts for composition
 > across rounds, which this mod does not do: every round spends the budget again. With only a
 > handful of trusts the noise also does not average down the way central DP's does.

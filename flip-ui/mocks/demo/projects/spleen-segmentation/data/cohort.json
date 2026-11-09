@@ -1,0 +1,296 @@
+{
+  "recordCount": 41,
+  "trustErrors": {},
+  "trustRecordCounts": {
+    "00000000-0000-4000-8000-00000000a001": 21,
+    "00000000-0000-4000-8000-00000000a002": 20
+  },
+  "trustSuppressed": [],
+  "trustsResults": [
+    {
+      "name": "Age Distribution",
+      "results": [
+        {
+          "data": [
+            {
+              "count": 21,
+              "value": "Other"
+            }
+          ],
+          "trustId": "00000000-0000-4000-8000-00000000a001",
+          "trustName": "Guy's and St Thomas' Trust"
+        },
+        {
+          "data": [
+            {
+              "count": 20,
+              "value": "Other"
+            }
+          ],
+          "trustId": "00000000-0000-4000-8000-00000000a002",
+          "trustName": "King's College Hospital"
+        }
+      ]
+    },
+    {
+      "name": "Counts",
+      "results": [
+        {
+          "data": [
+            {
+              "count": 21,
+              "value": "image\noccurrence\nid"
+            },
+            {
+              "count": 21,
+              "value": "person\nid"
+            },
+            {
+              "count": 21,
+              "value": "procedure\noccurrence\nid"
+            },
+            {
+              "count": 21,
+              "value": "visit\noccurrence\nid"
+            },
+            {
+              "count": 21,
+              "value": "anatomic\nsite\nconcept\nid"
+            },
+            {
+              "count": 21,
+              "value": "local\npath"
+            },
+            {
+              "count": 21,
+              "value": "image\noccurrence\ndate"
+            },
+            {
+              "count": 21,
+              "value": "image\nstudy\nuid"
+            },
+            {
+              "count": 21,
+              "value": "image\nseries\nuid"
+            },
+            {
+              "count": 21,
+              "value": "modality\nconcept\nid"
+            },
+            {
+              "count": 21,
+              "value": "accession\nid"
+            }
+          ],
+          "trustId": "00000000-0000-4000-8000-00000000a001",
+          "trustName": "Guy's and St Thomas' Trust"
+        },
+        {
+          "data": [
+            {
+              "count": 20,
+              "value": "image\noccurrence\nid"
+            },
+            {
+              "count": 20,
+              "value": "person\nid"
+            },
+            {
+              "count": 20,
+              "value": "procedure\noccurrence\nid"
+            },
+            {
+              "count": 20,
+              "value": "visit\noccurrence\nid"
+            },
+            {
+              "count": 20,
+              "value": "anatomic\nsite\nconcept\nid"
+            },
+            {
+              "count": 20,
+              "value": "local\npath"
+            },
+            {
+              "count": 20,
+              "value": "image\noccurrence\ndate"
+            },
+            {
+              "count": 20,
+              "value": "image\nstudy\nuid"
+            },
+            {
+              "count": 20,
+              "value": "image\nseries\nuid"
+            },
+            {
+              "count": 20,
+              "value": "modality\nconcept\nid"
+            },
+            {
+              "count": 20,
+              "value": "accession\nid"
+            }
+          ],
+          "trustId": "00000000-0000-4000-8000-00000000a002",
+          "trustName": "King's College Hospital"
+        }
+      ]
+    },
+    {
+      "name": "Modality Distribution",
+      "results": [
+        {
+          "data": [
+            {
+              "count": 21,
+              "value": "Computed tomography"
+            }
+          ],
+          "trustId": "00000000-0000-4000-8000-00000000a001",
+          "trustName": "Guy's and St Thomas' Trust"
+        },
+        {
+          "data": [
+            {
+              "count": 20,
+              "value": "Computed tomography"
+            }
+          ],
+          "trustId": "00000000-0000-4000-8000-00000000a002",
+          "trustName": "King's College Hospital"
+        }
+      ]
+    },
+    {
+      "name": "Nulls",
+      "results": [
+        {
+          "data": [
+            {
+              "count": 0,
+              "value": "image\noccurrence\nid"
+            },
+            {
+              "count": 0,
+              "value": "person\nid"
+            },
+            {
+              "count": 0,
+              "value": "procedure\noccurrence\nid"
+            },
+            {
+              "count": 0,
+              "value": "visit\noccurrence\nid"
+            },
+            {
+              "count": 0,
+              "value": "anatomic\nsite\nconcept\nid"
+            },
+            {
+              "count": 0,
+              "value": "local\npath"
+            },
+            {
+              "count": 0,
+              "value": "image\noccurrence\ndate"
+            },
+            {
+              "count": 0,
+              "value": "image\nstudy\nuid"
+            },
+            {
+              "count": 0,
+              "value": "image\nseries\nuid"
+            },
+            {
+              "count": 0,
+              "value": "modality\nconcept\nid"
+            },
+            {
+              "count": 0,
+              "value": "accession\nid"
+            }
+          ],
+          "trustId": "00000000-0000-4000-8000-00000000a001",
+          "trustName": "Guy's and St Thomas' Trust"
+        },
+        {
+          "data": [
+            {
+              "count": 0,
+              "value": "image\noccurrence\nid"
+            },
+            {
+              "count": 0,
+              "value": "person\nid"
+            },
+            {
+              "count": 0,
+              "value": "procedure\noccurrence\nid"
+            },
+            {
+              "count": 0,
+              "value": "visit\noccurrence\nid"
+            },
+            {
+              "count": 0,
+              "value": "anatomic\nsite\nconcept\nid"
+            },
+            {
+              "count": 0,
+              "value": "local\npath"
+            },
+            {
+              "count": 0,
+              "value": "image\noccurrence\ndate"
+            },
+            {
+              "count": 0,
+              "value": "image\nstudy\nuid"
+            },
+            {
+              "count": 0,
+              "value": "image\nseries\nuid"
+            },
+            {
+              "count": 0,
+              "value": "modality\nconcept\nid"
+            },
+            {
+              "count": 0,
+              "value": "accession\nid"
+            }
+          ],
+          "trustId": "00000000-0000-4000-8000-00000000a002",
+          "trustName": "King's College Hospital"
+        }
+      ]
+    },
+    {
+      "name": "Sex Distribution",
+      "results": [
+        {
+          "data": [
+            {
+              "count": 14,
+              "value": "M"
+            }
+          ],
+          "trustId": "00000000-0000-4000-8000-00000000a001",
+          "trustName": "Guy's and St Thomas' Trust"
+        },
+        {
+          "data": [
+            {
+              "count": 12,
+              "value": "F"
+            }
+          ],
+          "trustId": "00000000-0000-4000-8000-00000000a002",
+          "trustName": "King's College Hospital"
+        }
+      ]
+    }
+  ]
+}

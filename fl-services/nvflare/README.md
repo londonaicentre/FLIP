@@ -91,7 +91,7 @@ Anywhere one of these containers bind-mounts a host path, that path must still b
 container runs as, or the entrypoint fails (loudly, since the entrypoint scripts exit non-zero when they
 can't write their generated config). Letting Docker auto-create the bind source leaves it root-owned and
 silently breaks the container. See the [trust troubleshooting page](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/trust-node-compose.html#ts-compose-images-permission) for the failure mode and
-`deploy/providers/AWS/site.yml` / `trust/deploy/ansible/onprem.yml` for how the provisioning
+`trust/deploy/ansible/aws-ec2-host.yml` / `trust/deploy/ansible/onprem.yml` for how the provisioning
 Ansible pre-creates these paths with the right owner.
 
 **Upgrading an existing environment:** hosts that already ran the previous (root) images may have
@@ -101,7 +101,7 @@ provisioned kit directories to the new container uid is needed before the first 
 
 ### Container capability hardening
 
-The trust-deployment `fl-client-net-*` services (`trust/deploy/compose_trust.{production,development}.nvflare.yml`)
+The trust-deployment `fl-client-net-*` services (`trust/deploy/compose/compose_trust.{production,development}.nvflare.yml`)
 also set `security_opt: [no-new-privileges:true]` and `cap_drop: [ALL]`, matching every other trust-side
 service. Development adds nothing back: the image is non-root, and Docker makes a `cap_add` effective only
 for root, so a grant there would sit unused in the bounding set (`CapEff` stays `0`). A `provision/workspace-dev/`

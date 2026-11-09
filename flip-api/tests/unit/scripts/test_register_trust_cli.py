@@ -40,6 +40,11 @@ def _kit(name: str, slot_name: str = "Trust_007", slot_number: int = 7) -> Regis
     )
 
 
+def _never_called(*_a, **_kw):
+    """Stand-in for the branch main() must not take."""
+    raise AssertionError("the other branch of main() was taken")
+
+
 @pytest.fixture
 def session():
     return MagicMock()
@@ -263,6 +268,68 @@ def test_main_exits_1_on_registration_error(monkeypatch, capsys):
     session.rollback.assert_called_once()
 
 
+def test_main_rotate_emits_a_full_kit(monkeypatch, capsys):
+    """`--rotate` takes the rotation path and always returns credentials: no skip shape."""
+    from flip_api.scripts import register_trust as cli
+
+    _patch_session(monkeypatch)
+    rotated = RegisteredTrust(
+        trust=Trust(id=uuid4(), name="Rotating Trust", code="ROT"),
+        fl_kit_slot=FLKitSlot(slot_name="Trust_003", slot_number=3),
+        trust_api_key="new-api",  # pragma: allowlist secret
+        trust_internal_service_key="new-internal",  # pragma: allowlist secret
+    )
+    monkeypatch.setattr(cli, "rotate_trust_keys", lambda _session, name: rotated)
+    monkeypatch.setattr(cli, "register_one_trust", _never_called)
+    monkeypatch.setattr("sys.argv", ["register_trust", "--name", "Rotating Trust", "--rotate"])
+
+    cli.main()
+
+    kit = json.loads(capsys.readouterr().out)[0]
+    assert kit["trust_name"] == "Rotating Trust"
+    assert kit["trust_api_key"] == "new-api"  # pragma: allowlist secret
+    assert kit["trust_internal_service_key"] == "new-internal"  # pragma: allowlist secret
+    assert kit["fl_kit_slot_number"] == 3
+    assert "hub_shared" in kit
+
+
+def test_main_exits_1_on_rotation_error(monkeypatch, capsys):
+    """Rotation failure takes the same contract as registration: rollback, `[]`, exit 1."""
+    from flip_api.scripts import register_trust as cli
+
+    session = _patch_session(monkeypatch)
+
+    def boom(*_a, **_kw):
+        raise TrustRegistrationError("No trust named 'Doomed' is registered.")
+
+    monkeypatch.setattr(cli, "rotate_one_trust", boom)
+    monkeypatch.setattr(cli, "register_one_trust", _never_called)
+    monkeypatch.setattr("sys.argv", ["register_trust", "--name", "Doomed", "--rotate"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main()
+
+    assert excinfo.value.code == 1
+    assert capsys.readouterr().out.strip() == "[]"
+    session.rollback.assert_called_once()
+
+
+@pytest.mark.parametrize("flag", [["--code", "ROT"], ["--region", "London"], ["--require-existing"]])
+def test_main_rotate_rejects_registration_flags(monkeypatch, capsys, flag):
+    """`--rotate` identifies the trust by name only; a registration flag is an error, not ignored."""
+    from flip_api.scripts import register_trust as cli
+
+    _patch_session(monkeypatch)
+    monkeypatch.setattr(cli, "rotate_one_trust", _never_called)
+    monkeypatch.setattr("sys.argv", ["register_trust", "--name", "Rotating Trust", "--rotate", *flag])
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main()
+
+    assert excinfo.value.code == 2
+    assert "--rotate" in capsys.readouterr().err
+
+
 def test_main_requires_name(monkeypatch, capsys):
     """argparse rejects a call with no --name and exits 2 (the argparse convention)."""
     from flip_api.scripts import register_trust as cli
@@ -442,7 +509,7 @@ def test_hub_shared_keys_in_lockstep():
 
     ``register_trust.py`` (the emitter) runs inside the flip-api container and
     cannot import the root ``scripts/`` package, so the hub-shared key set is
-    defined in two places. ``scripts/trust_kit_lib.py`` is the single
+    defined in two places. ``trust/deploy/scripts/trust_kit_lib.py`` is the single
     operator-side definition — ``sync_trust_kit.py`` and
     ``distribute_trust_kits.py`` both import it, and the prod
     ``register-trusts.sh`` delegates kit writing to the distributor. Drift
@@ -462,16 +529,16 @@ def test_hub_shared_keys_in_lockstep():
         repo_root = repo_root.parent
     assert repo_root.name, "Could not locate FLIP repo root from test file"
 
-    lib_path = repo_root / "scripts" / "trust_kit_lib.py"
+    lib_path = repo_root / "trust" / "deploy" / "scripts" / "trust_kit_lib.py"
 
-    # Parse scripts/trust_kit_lib.py:HUB_SHARED_KEYS — a tuple of string literals.
+    # Parse trust/deploy/scripts/trust_kit_lib.py:HUB_SHARED_KEYS — a tuple of string literals.
     lib_src = lib_path.read_text()
     match = re.search(r"HUB_SHARED_KEYS\s*:[^=]*=\s*\((?P<body>[^)]*)\)", lib_src)
     assert match, f"HUB_SHARED_KEYS tuple not found in {lib_path}"
     lib_keys = tuple(re.findall(r'"([A-Z0-9_]+)"', match.group("body")))
 
     assert HUB_SHARED_ENV_KEYS == lib_keys, (
-        f"flip-api register_trust.py and scripts/trust_kit_lib.py disagree:\n"
+        f"flip-api register_trust.py and trust/deploy/scripts/trust_kit_lib.py disagree:\n"
         f"  register_trust.py:HUB_SHARED_ENV_KEYS = {HUB_SHARED_ENV_KEYS}\n"
         f"  trust_kit_lib.py:HUB_SHARED_KEYS      = {lib_keys}"
     )

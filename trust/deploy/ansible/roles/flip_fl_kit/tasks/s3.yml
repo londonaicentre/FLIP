@@ -43,7 +43,7 @@
   #
   # The hierarchical dest (net-1/services/<slot>) preserves the
   # S3 bundle's own layout — the compose mount in
-  # trust/deploy/compose_trust.prod.nvflare.yml is
+  # trust/deploy/compose/compose_trust.prod.nvflare.yml is
   # ${FL_KIT_DIR}/net-1/services/${TRUST_NAME}/{local,startup,transfer},
   # which resolves to /opt/flip/fl-kit/net-1/services/<slot>/...
   #

@@ -14,11 +14,11 @@
 
 """Static guards on ``/flip/ci/host_aws_public_key``, the parameter Terraform CI reads its keypair from.
 
-Every CI workflow writes this parameter to ``~/.ssh/host-aws.pub`` before planning, because both
-``aws_key_pair`` resources read their key with ``file()`` and ``public_key`` is ForceNew — a runner
+Every CI workflow writes this parameter to ``~/.ssh/host-aws.pub`` before planning, because the
+bastion's ``aws_key_pair`` reads its key with ``file()`` and ``public_key`` is ForceNew — a runner
 without the file plans a keypair replacement that ripples into the bastion. The parameter used to be
-published by a make target; it is now declared, so the CI bootstrap is code. Three things have to
-stay true, and none is reachable from a runtime test:
+published by a make target; it is now declared, so the CI bootstrap is code. Two things have to
+stay true, and neither is reachable from a runtime test:
 
 * **Its value is the keypair's own public key**, not a variable or a file. That is what makes the
   loop stable — CI reads the parameter, the keypair reads the file CI wrote, and the parameter is
@@ -26,8 +26,6 @@ stay true, and none is reachable from a runtime test:
 * **It adopts an existing parameter.** The self-contained accounts already hold one from the retired
   make target, and CI applies stag on every merge to ``develop``: without ``overwrite = true`` that
   first apply fails ``ParameterAlreadyExists``.
-* **It refuses to publish when the two keypairs disagree.** CI can supply only one file, so a
-  mismatch would silently plan a replacement of whichever keypair differs.
 
 Assertions compare whole normalised expressions, not substrings, so an inverted condition or a
 swapped reference fails rather than passing on containment.
@@ -92,7 +90,7 @@ def test_name_is_the_one_the_workflows_read() -> None:
 def test_value_is_the_keypairs_own_public_key() -> None:
     """Not a variable or a file — the resource attribute is what keeps the loop stable."""
     value = _argument(_parameter(), "value")
-    assert value == "aws_key_pair.host_key.public_key", (
+    assert value == "aws_key_pair.flip_keypair.public_key", (
         f"the parameter must publish the key the keypair resource holds, so CI reproduces it byte for byte: {value}"
     )
 
@@ -102,15 +100,6 @@ def test_it_adopts_an_existing_parameter() -> None:
     assert _argument(_parameter(), "overwrite") == "true", (
         "overwrite must be true, or the first apply in an account that already has the parameter "
         "fails ParameterAlreadyExists"
-    )
-
-
-def test_it_refuses_when_the_two_keypairs_disagree() -> None:
-    """CI can supply one file, so both keypairs must hold the same key."""
-    precondition = hcl_block(hcl_block(_parameter(), "lifecycle"), "precondition")
-    condition = _argument(precondition, "condition")
-    assert condition == "aws_key_pair.flip_keypair.public_key == aws_key_pair.host_key.public_key", (
-        f"the precondition must compare the two keypairs for equality: {condition}"
     )
 
 

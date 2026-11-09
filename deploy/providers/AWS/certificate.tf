@@ -28,8 +28,9 @@
 # in a single pass.
 #
 # The whole chain is skipped when var.manage_dns is false (FLIP#749): DNS
-# validation is impossible without the hosted zone, so the internal NLB's web
-# listener serves plain TCP until then (fl_ingress_lza.tf).
+# validation is impossible without the hosted zone. The LZA estates keep it
+# that way, and the web listener's certificate comes from the platform instead
+# (fl_ingress_lza.tf, FLIP#1797).
 ############################
 
 resource "aws_acm_certificate" "flip" {

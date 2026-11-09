@@ -119,11 +119,12 @@ trustData:
     # image of them. Use the ref your service images were built from: `main` for :prod
     # tags, `develop` for :stag, a sha for a pinned deploy.
     sourceRef: "develop"
-    # uv's official image (python + uv, Debian slim). GHCR carries floating tags only, so the
-    # digest is what pins it: with `digest` set the image is `<repository>@<digest>` and `tag`
-    # is documentation. Refresh with `docker buildx imagetools inspect ghcr.io/astral-sh/uv:<tag>`.
+    # uv's official image (python + uv, Debian slim), from FLIP's GHCR mirror. Upstream carries
+    # floating tags only, so the digest is what pins it: with `digest` set the image is
+    # `<repository>@<digest>` and `tag` is documentation. The digest is the manifest's
+    # (trust/deploy/mirror-images.manifest).
     image:
-      repository: ghcr.io/astral-sh/uv
+      repository: ghcr.io/londonaicentre/mirror/astral-sh/uv
       tag: "python3.12-bookworm-slim"
       digest: "sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58"
       pullPolicy: IfNotPresent
@@ -314,6 +315,8 @@ imagingApi:
       initialDelaySeconds: 5
       periodSeconds: 10
       timeoutSeconds: 3
+  # The chart adds a required podAffinity to fl-client's node while the two share an RWO
+  # sharedImagesPvc (see the comment on that block); this is the operator's part.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
@@ -418,10 +421,12 @@ dataAccessApi:
 # (kind's local-path, EBS gp3) actually provide — ReadWriteMany needs an RWX-capable class
 # such as EFS or NFS, and asking for it by default would leave the claim Pending on a
 # single-node cluster. Because RWO binds the volume to one node while two pods mount it,
-# imaging-api and fl-client must land on the same node: flClient.affinity below carries a
-# required podAffinity that pins the fl-client to imaging-api's node, so a multi-node cluster
-# schedules them together instead of leaving one pod Pending forever. Switch accessMode to
-# ReadWriteMany on an RWX class and that affinity can be relaxed to a preferred rule.
+# imaging-api and fl-client must land on the same node. While the volume is enabled and RWO, the
+# chart gives both pods the flip/shared-images label and a required podAffinity to it, so whichever
+# is restarted follows the one still running; at install the first matches itself and goes
+# anywhere. Both are also Recreate on RWO, so a restart frees the pod's CPU on that node before
+# the new one asks for it. On ReadWriteMany (an RWX class), or with the volume off, the chart drops
+# the label, the affinity and Recreate, and the two place freely.
 sharedImagesPvc:
   enabled: true
   storageClassName: ""
@@ -435,23 +440,14 @@ flClient:
   enabled: true
   netId: "net-1"
   imagesDir: /app/data/images
-  # Co-schedule with imaging-api. The two share sharedImagesPvc, which ships ReadWriteOnce
-  # (see the comment on that block), and an RWO volume can only be mounted from one node —
-  # so on a multi-node cluster without this the scheduler is free to place them apart and one
-  # pod sits Pending indefinitely with no indication that the volume is the reason. `required`
-  # rather than `preferred` deliberately: a preferred rule degrades to exactly that silent
-  # Pending. Harmless on the single-node kind and k3s targets, where it is always satisfied.
-  # Set to {} if you move sharedImagesPvc to an RWX class and want free placement.
-  affinity:
-    podAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        - labelSelector:
-            matchExpressions:
-              - key: app.kubernetes.io/component
-                operator: In
-                values:
-                  - imaging-api
-          topologyKey: kubernetes.io/hostname
+  # The operator's affinity. The chart adds the co-scheduling with imaging-api itself while the
+  # two share an RWO sharedImagesPvc (see the comment on that block): an RWO volume can only be
+  # mounted from one node, so on a multi-node cluster without it the scheduler is free to place
+  # them apart and one pod sits Pending indefinitely with no indication that the volume is the
+  # reason. `required` rather than `preferred` deliberately: a preferred rule degrades to exactly
+  # that silent Pending. Harmless on the single-node kind and k3s targets, where it is always
+  # satisfied.
+  affinity: {}
   # Absolute path ON THE NODE holding this trust's already-provisioned FL participant
   # kit — the contents of the slot's kit directory (for FLARE: local/, startup/,
   # transfer/; for Flower: certificates/ and keys/ with this slot's credential).
@@ -565,6 +561,13 @@ flClient:
   gpu:
     enabled: false
     count: 0
+    # How the pod gets its GPU (FLIP#1766):
+    #   devicePlugin: the container requests nvidia.com/gpu, so the NVIDIA device plugin (or GPU Operator) reserves
+    #                 one and Kubernetes places the pod on a node with a free GPU. Use it on any cluster that
+    #                 lists nvidia.com/gpu in its nodes' allocatable.
+    #   runtime:      no request; the node's default container runtime is nvidia and the pod takes that node's
+    #                 GPU 0, reserved for nobody (single-node k3s with default-runtime: nvidia and no plugin).
+    allocation: devicePlugin
     # GPU memory offered to the NVFLARE scheduler, per GPU; set for the site's hardware.
     memoryPerGpuInGiB: 7
     operator:
@@ -679,6 +682,9 @@ omopDb:
     enabled: true
     s3Bucket: ""
     bundleName: "vocab_aicentre_core_20240916"
+    # The fetch initContainer runs in the omop-db image, which bakes the AWS CLI like unzip, so
+    # the Job installs nothing at run time and reaches no host but S3. It replaced a Docker Hub
+    # aws-cli image (FLIP#1721).
     # Scratch space for the downloaded bundle. Must hold the zip and its unpacked
     # contents at the same time — for the 20240916 bundle that is ~3.6 GiB
     # unpacked plus a ~600 MiB zip, so a peak near 4.2 GiB (both figures are in
@@ -688,8 +694,7 @@ omopDb:
     # rather than the pod being evicted before it has finished filling it.
     workDirSize: 10Gi
     # The fetch initContainer downloads the zip and stops there — unpacking is
-    # the loader's, because unzip is in the omop-db image and not in the aws-cli
-    # one. Its request is small for that reason, though the pod's request is set
+    # the loader's. Its request is small for that reason, though the pod's request is set
     # by loadResources either way (see the max rule below); the zip itself lands
     # in the emptyDir, which is charged to the pod and never to this container —
     # a container's own ephemeral-storage accounting covers only its writable
@@ -833,6 +838,12 @@ xnat:
       repository: ghcr.io/londonaicentre/xnat-web
       tag: stag
       pullPolicy: Always
+    # The init containers' shell (data-dir ownership, the wait for xnat-db): FLIP's mirror of
+    # busybox, pinned by digest (trust/deploy/mirror-images.manifest).
+    initImage:
+      repository: ghcr.io/londonaicentre/mirror/library/busybox
+      tag: "1.36"
+      digest: "sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662"
     # Tomcat/web-console only — the DICOM SCP is dicomService above, deliberately never on this
     # Service, so a NodePort/LoadBalancer exposure for DICOM can never expose the web UI with it.
     # Held at ClusterIP for a real-PACS install (validatePacsReachable refuses anything else): this
@@ -922,7 +933,7 @@ xnat:
 # MONAI Label — optional AI-assisted annotation in the XNAT OHIF viewer
 # ---------------------------------------------------------------------------
 # Off by default: needs an NVIDIA GPU node and pulls a ~10.4GB image. Mirrors the compose
-# overlay (trust/deploy/compose_trust.*.monailabel.yml); operational caveats — the
+# overlay (trust/deploy/compose/compose_trust.*.monailabel.yml); operational caveats — the
 # browser-reachable URL, the unauthenticated API, the stock-viewer quirks — are documented
 # in trust/README.md#monai-label-optional.
 monailabel:
@@ -977,13 +988,17 @@ monailabel:
 # ---------------------------------------------------------------------------
 # Observability Stack — Loki, Alloy, Grafana
 # ---------------------------------------------------------------------------
+#
+# The images are FLIP's GHCR mirrors of upstream's, pinned by digest: `<repository>:<tag>@<digest>`.
+# The digests are trust/deploy/mirror-images.manifest's.
 observability:
   enabled: true   # single gate: set false to skip all observability components
   loki:
     enabled: true
     image:
-      repository: grafana/loki
+      repository: ghcr.io/londonaicentre/mirror/grafana/loki
       tag: "3.4.0"
+      digest: "sha256:74b8ccbd6e4b4932874742cf3997389592389ea721b3f210aad266486b985a4c"
       pullPolicy: IfNotPresent
     service:
       port: 3100
@@ -1003,8 +1018,9 @@ observability:
   alloy:
     enabled: true
     image:
-      repository: grafana/alloy
+      repository: ghcr.io/londonaicentre/mirror/grafana/alloy
       tag: "v1.9.0"
+      digest: "sha256:32bc0ba6bad75ca24bdf4a6d2dd793a564dff06b6446927699c08d9f9c749c6e"
       pullPolicy: IfNotPresent
     service:
       port: 12345
@@ -1019,8 +1035,9 @@ observability:
   grafana:
     enabled: true
     image:
-      repository: grafana/grafana
+      repository: ghcr.io/londonaicentre/mirror/grafana/grafana
       tag: "11.5.0"
+      digest: "sha256:0a2874cf39c6487093c682215f7c7903ed8646d78ae5f911af945d2dfcc0a447"
       pullPolicy: IfNotPresent
     service:
       port: 3000
