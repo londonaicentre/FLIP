@@ -211,7 +211,7 @@ def test_upload_app_rejects_an_empty_trust_list(client, upload_dir, mock_request
     ServerApp is already running, where the raise is a log line the platform never surfaces and
     the model is left mid-status. The hub reaches here with an empty list whenever no
     participating trust holds an FL kit slot (``slot_names`` is a DB lookup that can return
-    ``[]``, and the Flower branch of ``validate_client_availability`` passes it through).
+    ``[]``, and the hub submits it as it is).
     """
     model_id = str(uuid4())
 

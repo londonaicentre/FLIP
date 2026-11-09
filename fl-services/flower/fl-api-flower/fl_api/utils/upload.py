@@ -107,7 +107,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
     # — but that raise happens inside the ServerApp at run time, long after submission, where the
     # only channel left is a log line the platform does not surface. It is reachable: the hub's
     # slot_names is a DB lookup returning [] when no participating trust holds an FL kit slot, and
-    # the Flower branch of validate_client_availability passes an empty list straight through.
+    # the hub submits that empty list as it is.
     # Refusing here turns it into the submit's error, which the hub already converts to ERROR on
     # the model, and keeps the previous bundle intact — the job dir is cleared further down.
     if not body.trusts:
