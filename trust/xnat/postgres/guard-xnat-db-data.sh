@@ -27,7 +27,8 @@ fail() {
 }
 
 # The upgrade verbs need the old server running to dump it, so going back comes first.
-how="Pin XNAT_TAG (Helm: xnat.image.pin) to the previous release so xnat-db starts on it again, then move the trust with make upgrade-trust (Compose) or make upgrade-trust-k8s (Helm), which dump it first."
+# On Kubernetes the pod is deleted by hand: a StatefulSet does not replace a pod that is not Ready.
+how="Pin XNAT_TAG (Helm: xnat.image.pin) to the previous release so xnat-db starts on it again (on Kubernetes, redeploy and then delete the xnat-db pod: a crash-looping one is not replaced). Then remove the pin and move the trust with make upgrade-trust (Compose) or make upgrade-trust-k8s (Helm), which dump it first."
 
 # The old server writes postmaster.opts at every start: newer than $1, it has run since $1 was made.
 old_started_since() { [ -e "$1" ] && [ "$root/postmaster.opts" -nt "$1" ]; }

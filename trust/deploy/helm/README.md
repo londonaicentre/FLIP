@@ -225,8 +225,11 @@ site is confirmed.
 `xnat.db.persistence.pgdataSubdir` keeps its value: it now names the part of the volume xnat-db
 mounts (`subPath`) rather than setting `PGDATA`, so `pgdata` on AKS and EKS still finds the old
 cluster where it was. A plain `helm upgrade` takes no dump. The new xnat-db then refuses to start
-beside the old cluster, rather than start XNAT empty: roll back with `xnat.image.pin`, then upgrade
-through `upgrade-trust-k8s`. The same holds after a rollback: the old cluster has run again, so
+beside the old cluster, rather than start XNAT empty. To recover, roll back with `xnat.image.pin` (or
+`XNAT_TAG` in the kit) and redeploy, then delete the `xnat-db` pod: the StatefulSet is `OrderedReady`,
+so Kubernetes does not replace a crash-looping pod with the pinned image on its own. Once xnat-db is up
+on the old release, remove the pin and upgrade through `upgrade-trust-k8s`; with the pin left in, the
+upgrade keeps xnat-db on 12. The same holds after a rollback: the old cluster has run again, so
 the earlier dump and `pg16/` are out of date, and xnat-db refuses them until `upgrade-trust-k8s`
 takes a new dump. The first start's restore runs inside the postStart hook's wait, which
 is now an hour.
