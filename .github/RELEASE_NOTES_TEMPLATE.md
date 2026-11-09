@@ -63,6 +63,7 @@
 ## :bug: Bug Fixes
 
 - Flower tutorials learn again: the default differential-privacy clipping of 1.0 had stopped the spleen tutorial learning (#1758).
+- The NVFLARE fl-api waits for a slow-starting FL server again: NVFLARE 2.9 reports "not up yet" as `NoConnection`, which the startup retry did not catch, so a server that took longer than 20 s left the API up but unable to reach it until restarted.
 - One outbound-traffic table for every node, and the EC2 CloudWatch agent from the regional bucket (#1686).
 - FL kit changes roll the hub's FL services before the Flower key registration, and a stale kit fails with a named fix (#1741). The Helm fl-client requests its GPU from the device plugin (#1767).
 - Security: dependency upgrades for the open Dependabot alerts (#1747, #1800); the Flower images built from flip-utils' lock (#1802).
