@@ -83,7 +83,7 @@ EXPECTED_AWS_PROFILE := $($(_AWS_PROFILE_KNOB_$(ENV)))
 
 ## SETTING VARIABLES FOR TERRAFORM
 # The environment class (prod|stag, from env_mode.mk). Used in main.tf to gate
-# prod-only RDS hardening (deletion protection, final snapshot).
+# the prod-only RDS final snapshot.
 export TF_VAR_environment=$(ENV_CLASS)
 
 # Name tag of the platform-managed VPC. Set LZA_VPC_NAME in the env file to override the variables.tf default (AWSAccelerator-eu-west-2-prod) —

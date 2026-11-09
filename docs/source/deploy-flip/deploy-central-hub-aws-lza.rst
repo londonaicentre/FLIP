@@ -200,7 +200,8 @@ Preparing a workload account
         --ecr-repository-prefix ecr-public --upstream-registry-url public.ecr.aws
 
    Nothing is pre-populated: the first pull of each image fetches it from upstream. Cached mutable tags can be up
-   to about 24 hours stale, which is one reason deploys pin immutable ``sha-`` tags.
+   to about 24 hours stale, which is one reason deploys pin immutable ``sha-`` tags. The root gives the cached
+   repositories a lifecycle policy: existing ones directly, new ones through repository creation templates.
 
 3. **Add the operator profile.** Run ``aws configure sso`` against the account's Identity Center permission set and
    rename the profile ``prod`` or ``stag`` (override with ``PROD_AWS_PROFILE`` / ``STAG_AWS_PROFILE``).
@@ -333,7 +334,7 @@ see "Repointing CI at the LZA accounts" in :gh:`deploy/providers/AWS/README.md`.
      - ``.env.prod``
      - ``.env.stag``
    * - Semantics
-     - Production (RDS deletion protection and final snapshot on)
+     - Production (RDS final snapshot on)
      - Staging
    * - Deploys from
      - ``origin/main``

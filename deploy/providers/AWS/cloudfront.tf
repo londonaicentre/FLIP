@@ -65,6 +65,24 @@ resource "aws_s3_bucket_versioning" "flip_ui" {
   }
 }
 
+# Security Hub S3.13 (FLIP#1796): abort incomplete multipart uploads after 7 days.
+resource "aws_s3_bucket_lifecycle_configuration" "flip_ui" {
+  bucket = aws_s3_bucket.flip_ui.id
+
+  rule {
+    id     = "abort-incomplete-multipart-uploads"
+    status = "Enabled"
+
+    filter {}
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.flip_ui]
+}
+
 ############################
 # CloudFront: OAC, function, bucket policy
 ############################

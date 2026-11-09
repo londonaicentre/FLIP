@@ -125,9 +125,11 @@ module "fl_server_internal_nlb" {
     }
   ]
 
-  create_security_group      = false
-  security_groups            = [module.fl_internal_nlb_security_group.security_group.id]
-  enable_deletion_protection = false
+  create_security_group = false
+  security_groups       = [module.fl_internal_nlb_security_group.security_group.id]
+  # Security Hub ELB.6 (FLIP#1796). The networking account registers this NLB's static IPs, so a
+  # change that would replace it fails the apply instead; turn this off first to replace or destroy it.
+  enable_deletion_protection = true
 
   # Forwards to the standalone Fargate TGs in main.tf, not the module's
   # target_groups map — same rationale as
