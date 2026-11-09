@@ -96,7 +96,16 @@ def test_every_container_has_a_read_only_root_filesystem(tf_file, task):
     body = _task(tf_file, task)
     containers = len(re.findall(r"^\s*image\s*=", body, re.M))
     assert containers, f"no container definition found in {task}"
-    assert len(re.findall(r"^\s*readonlyRootFilesystem\s*=\s*true$", body, re.M)) == containers
+    # The services follow var.ecs_exec_enabled (below); the one-shots are never exec'd into.
+    expected = "true" if (tf_file, task) in ONE_SHOTS else r"local\.service_readonly_root"
+    assert len(re.findall(rf"^\s*readonlyRootFilesystem\s*=\s*{expected}$", body, re.M)) == containers
+
+
+def test_only_ecs_exec_lifts_the_services_read_only_root():
+    """ECS Exec's SSM agent has to write the root filesystem, so a debugging apply gives it up."""
+    assert re.search(r"^\s*service_readonly_root\s*=\s*!var\.ecs_exec_enabled$", TASKS, re.M)
+    variable = hcl_block(SOURCES["variables.tf"], 'variable "ecs_exec_enabled"')
+    assert re.search(r"^\s*default\s*=\s*false$", variable, re.M)
 
 
 @pytest.mark.parametrize(("tf_file", "task"), TASK_DEFINITIONS)

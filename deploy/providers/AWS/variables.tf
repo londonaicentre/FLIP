@@ -389,7 +389,7 @@ variable "ENFORCE_MFA" {
 }
 
 variable "ecs_exec_enabled" {
-  description = "Enable ECS Exec (execute-command) on Fargate tasks. Default false. ECS Exec needs a writable root filesystem, which the task definitions do not have (FLIP#1795), so on its own this gives TargetNotConnectedException."
+  description = "Enable ECS Exec (execute-command) on the Fargate services, for debugging sessions via 'aws ecs execute-command'. Default false. ECS Exec needs a writable root filesystem, so this also lifts the services' read-only one and Security Hub ECS.5 fails while it is on (FLIP#1795)."
   type        = bool
   default     = false
 }

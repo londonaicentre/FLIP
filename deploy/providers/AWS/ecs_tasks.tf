@@ -97,6 +97,11 @@ locals {
   # (Fargate ephemeral storage), here volume name → container path for the FL tasks.
   # Each path is a VOLUME in its image: without that Fargate mounts the volume
   # root-owned 0755 and a non-root container cannot write it.
+  #
+  # The services give the read-only root up while var.ecs_exec_enabled is on: ECS
+  # Exec starts an SSM agent in every container of the task, and it has to write
+  # there. A debugging apply therefore fails ECS.5 until the variable is off again.
+  service_readonly_root = !var.ecs_exec_enabled
   fl_api_scratch_volumes = {
     nvflare = { "tmp" = "/tmp", "admin-transfer" = "/app/admin/transfer" }
     flower  = { "tmp" = "/tmp", "flwr-config" = "/home/app/.flwr" }
@@ -148,7 +153,7 @@ resource "aws_ecs_task_definition" "flip_api" {
 
       # Read-only root filesystem (ECS.5, FLIP#1795): /tmp is the one path the API
       # writes, and a VOLUME in its image (see local.fl_api_scratch_volumes for why).
-      readonlyRootFilesystem = true
+      readonlyRootFilesystem = local.service_readonly_root
       mountPoints = [
         { sourceVolume = "tmp", containerPath = "/tmp", readOnly = false },
       ]
@@ -216,7 +221,7 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
       # (SERVER_CHECKPOINT_ROOT; fl-server reads it back — FLIP#695).
       # Flower (compose.prod.flower.yml): SuperLink certs read-only
       # (only ca.crt is read) + the shared RW jobs volume at FLOWER_SRC_ROOT.
-      readonlyRootFilesystem = true
+      readonlyRootFilesystem = local.service_readonly_root
       mountPoints = concat(
         [for name, path in local.fl_api_scratch_volumes[var.fl_backend] :
         { sourceVolume = name, containerPath = path, readOnly = false }],
@@ -388,7 +393,7 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
       # read-only at /certs (referenced by the command flags below) + the
       # shared RW jobs volume at /app/src (uploaded bundles + eval
       # checkpoints, read via the flip-job-dir run-config).
-      readonlyRootFilesystem = true
+      readonlyRootFilesystem = local.service_readonly_root
       mountPoints = concat(
         [for name, path in local.fl_server_scratch_volumes[var.fl_backend] :
         { sourceVolume = name, containerPath = path, readOnly = false }],
@@ -467,7 +472,7 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
 
         # The SuperLink's own server certificate, so trust kits and SANs are unchanged.
         # /tmp holds everything nginx writes (its rendered config, pid and temp files).
-        readonlyRootFilesystem = true
+        readonlyRootFilesystem = local.service_readonly_root
         mountPoints = [
           { sourceVolume = "fleet-proxy-tmp", containerPath = "/tmp", readOnly = false },
           {
