@@ -50,7 +50,7 @@ SCRATCH_MAPS = {
     ("fl_server_scratch_volumes", "flower"): "fl-services/flower/superlink/Dockerfile",
 }
 # The images whose containers mount /tmp alone. The SuperLink's also runs the key-registration
-# one-shot; the EFS provisioning task runs amazon/aws-cli as root, so it needs no VOLUME.
+# one-shot; the EFS provisioning task's amazon/aws-cli declares none and writes only to EFS.
 TMP_ONLY_IMAGES = [
     "flip-api/Dockerfile",
     "fl-services/flower/superlink/Dockerfile",

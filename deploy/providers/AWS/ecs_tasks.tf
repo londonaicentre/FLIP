@@ -96,7 +96,8 @@ locals {
   # readonlyRootFilesystem and writes only to its EFS mounts and to empty task volumes
   # (Fargate ephemeral storage), here volume name → container path for the FL tasks.
   # Each path is a VOLUME in its image: without that Fargate mounts the volume
-  # root-owned 0755 and a non-root container cannot write it.
+  # root-owned 0755 and a non-root container cannot write it. Each container's
+  # `user` (Security Hub ECS.20, FLIP#1796) is therefore its image's own uid:gid.
   #
   # The services give the read-only root up while var.ecs_exec_enabled is on: ECS
   # Exec starts an SSM agent in every container of the task, and it has to write
@@ -131,6 +132,8 @@ resource "aws_ecs_task_definition" "flip_api" {
       image  = "${var.docker_registry}flip-api:${var.docker_image_tag}"
       cpu    = 512
       memory = 1024
+      # The image's own user, flip (flip-api/Dockerfile).
+      user = "1000:1000"
 
       portMappings = [
         {
@@ -200,6 +203,8 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
       image             = local.fl_api_image
       cpu               = 1024
       memoryReservation = 4096
+      # Both backends' images run as 1000:1000 (flip in nvflare/fl-api-base, app in flower/fl-api-flower).
+      user = "1000:1000"
 
       portMappings = [
         {
@@ -334,6 +339,8 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
       cpu   = 2048
       # The Flower fleet proxy below reserves the remaining 128 MiB of the task.
       memoryReservation = var.fl_backend == "flower" ? 8064 : 8192
+      # The image's own user: flip in FLARE's (nvflare/fl-base), flwr/base's app in the SuperLink.
+      user = var.fl_backend == "flower" ? "49999:49999" : "1000:1000"
 
       # Flower-only settings, null (dropped by the ECS API) for FLARE. The
       # SuperLink image's entrypoint takes the TLS + SuperNode-auth flags as
@@ -453,6 +460,8 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
         image             = local.fl_fleet_proxy_image
         essential         = true
         memoryReservation = 128
+        # The image's own USER, the SuperLink's uid:gid.
+        user = "49999:49999"
 
         portMappings = [
           { containerPort = local.flower_fleet_proxy_port, protocol = "tcp" },
