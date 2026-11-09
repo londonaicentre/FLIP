@@ -124,20 +124,25 @@ def test_every_template_variable_is_one_the_image_defines(template):
     assert "NGINX_ENVSUBST_FILTER=^FLEET_PROXY_" in dockerfile
 
 
-def test_this_lock_carries_the_superlink_images_flwr():
-    lock = tomllib.loads(_read(FLOWER_DIR / "fl-api-flower" / "uv.lock"))
-    locked = next(pkg["version"] for pkg in lock["package"] if pkg["name"] == "flwr")
+def _locked_flwr(lock_path: Path) -> str:
+    lock = tomllib.loads(_read(lock_path))
+    return next(pkg["version"] for pkg in lock["package"] if pkg["name"] == "flwr")
+
+
+def _fl_base_flwr() -> str:
     base = re.search(r"flwr/base:\$\{FLWR_VERSION:-([0-9.]+)-", _read(FLOWER_DIR / "fl-base" / "Dockerfile"))
     assert base, "fl-base/Dockerfile no longer defaults FLWR_VERSION to a flwr/base tag"
-    assert locked == base.group(1), f"fl-api-flower locks flwr {locked}; the SuperLink image is {base.group(1)}"
+    return base.group(1)
+
+
+def test_this_lock_carries_the_superlink_images_flwr():
+    locked, base = _locked_flwr(FLOWER_DIR / "fl-api-flower" / "uv.lock"), _fl_base_flwr()
+    assert locked == base, f"fl-api-flower locks flwr {locked}; the SuperLink image is {base}"
     secure = set(re.findall(r"flwr/base:([0-9.]+)-", _read(FLOWER_DIR / "compose.secure.yml")))
     assert secure == {locked}, f"compose.secure.yml runs flwr/base {sorted(secure)}"
 
 
 def test_flip_utils_lock_carries_the_fl_base_images_flwr():
     # fl-base installs flip-utils' locked packages beside flwr/base's flwr (#1801); they were resolved with this flwr.
-    lock = tomllib.loads(_read(FLOWER_DIR.parents[1] / "flip-utils" / "uv.lock"))
-    locked = next(pkg["version"] for pkg in lock["package"] if pkg["name"] == "flwr")
-    base = re.search(r"flwr/base:\$\{FLWR_VERSION:-([0-9.]+)-", _read(FLOWER_DIR / "fl-base" / "Dockerfile"))
-    assert base, "fl-base/Dockerfile no longer defaults FLWR_VERSION to a flwr/base tag"
-    assert locked == base.group(1), f"flip-utils locks flwr {locked}; fl-base is flwr/base {base.group(1)}"
+    locked, base = _locked_flwr(FLOWER_DIR.parents[1] / "flip-utils" / "uv.lock"), _fl_base_flwr()
+    assert locked == base, f"flip-utils locks flwr {locked}; fl-base is flwr/base {base}"

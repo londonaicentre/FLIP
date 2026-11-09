@@ -20,6 +20,8 @@ ARG LOCAL_DEV=false
 # without this, a GPU backward through one of them fails (FLIP#1700). torch reads it at import.
 ENV TORCH_DISABLE_NATIVE_JIT=1
 WORKDIR /app
+# flwr/base on its own: a conflict it ships fails this step, not the `pip check` after flip-utils' install.
+RUN python -m pip check
 
 # Install flip-utils from the IN-REPO source (build context = repo root). This
 # replaces two older mechanisms now that flip-utils lives in this monorepo:
@@ -45,7 +47,7 @@ WORKDIR /app
 # this container as the same non-root `app` user that flwr/base runs as, so an
 # app-writable copy could be mutated by app code, poisoning anything that later
 # resolves the templates' pin against it. Root-owned, the tree is read-only to
-# `app` — enough for the pip install below and any `uv sync` of a template,
+# `app` — enough for the wheel build below and any `uv sync` of a template,
 # which only read it (flip-utils' hatchling backend builds in temp dirs, never
 # the source tree).
 COPY flip-utils/pyproject.toml flip-utils/uv.lock flip-utils/README.md /opt/flip-utils/
@@ -54,13 +56,15 @@ COPY flip-utils/flip/ /opt/flip-utils/flip/
 # Dependencies come from flip-utils' uv.lock, hash-checked, as in the NVFLARE fl-base (#1801), so its
 # security floors reach this image through the lock. flwr is not in the export (flip-utils' dev group):
 # the image keeps flwr/base's own, and `pip check` fails the build if the locked packages no longer fit it.
+# uv builds the flip-utils wheel, so hatchling comes within the 72h cooldown; pip would fetch the newest.
 RUN cd /opt/flip-utils \
  && python -m uv export --frozen --extra full --no-dev --no-emit-project -o /tmp/flip-utils.txt \
  && python -m pip install --no-cache-dir --require-hashes -r /tmp/flip-utils.txt \
       --extra-index-url https://download.pytorch.org/whl/cu130 \
- && python -m pip install --no-cache-dir --no-deps /opt/flip-utils \
+ && python -m uv build --wheel --no-cache --out-dir /tmp/dist \
+ && python -m pip install --no-cache-dir --no-deps /tmp/dist/*.whl \
  && python -m pip check \
- && rm /tmp/flip-utils.txt
+ && rm -r /tmp/flip-utils.txt /tmp/dist
 
 # Copy register-supernode-keys.sh (used by the secure / central-hub topology to
 # register SuperNode public keys with the SuperLink).
