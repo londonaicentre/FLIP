@@ -183,6 +183,25 @@ def run_command(args: list[str], timeout: int = 30) -> tuple[bool, str]:
         return False, str(e)
 
 
+def failure_reason(output: str) -> str:
+    """The line of a failed kubectl call's output that says why it failed.
+
+    kubectl's last line names the reason (unknown context, refused, expired token); the lines above
+    repeat retries. A call run_command stopped keeps its "timed out after Ns" prefix, which is on the
+    first line.
+
+    Args:
+        output: The output of a failed :func:`run_command`.
+
+    Returns:
+        That line, or "" for no output.
+    """
+    lines = output.strip().splitlines()
+    if len(lines) > 1 and lines[0].startswith("timed out after "):
+        return f"{lines[0].split(':', 1)[0]}: {lines[-1]}"
+    return lines[-1] if lines else ""
+
+
 def kubectl_get_condition(resource_type: str, resource_name: str, condition: str) -> bool:
     """Check a Kubernetes resource condition.
 
@@ -409,7 +428,7 @@ def xnat_enabled(helm_release: str, namespace: str) -> tuple[bool | None, str]:
         timeout=30,
     )
     if not success:
-        return None, f"`helm get values {helm_release} -n {namespace}` failed: {output.strip()[:200]}"
+        return None, f"`{' '.join(HELM)} get values {helm_release} -n {namespace}` failed: {output.strip()[:200]}"
     try:
         values = json.loads(output)
     except json.JSONDecodeError as exc:
@@ -645,13 +664,15 @@ def main(
         print_status("INFO", f"Checking context '{context}'")
     else:
         success, current = run_command([*KUBECTL, "config", "current-context"])
-        named = f"'{current}'" if success else current.splitlines()[-1]
-        print_status("INFO", f"Checking kubectl's current context ({named})")
+        if success:
+            print_status("INFO", f"Checking kubectl's current context ('{current}')")
+        else:
+            # Not fatal: in a pod, kubectl reaches the cluster through its service account without one.
+            print_status("INFO", f"kubectl's current context is unknown: {failure_reason(current)}")
 
     success, nodes = run_command([*KUBECTL, "get", "nodes", "-o", "name"])
     if not success or not nodes.strip():
-        # kubectl's last line says why (unknown context, refused, expired token); the lines above repeat retries.
-        reason = nodes.strip().splitlines()[-1] if nodes.strip() else "no nodes listed"
+        reason = failure_reason(nodes) or "no nodes listed"
         print_status("FAIL", f"Cannot connect to Kubernetes cluster: {reason}")
         sys.exit(1)
 
@@ -663,7 +684,9 @@ def main(
 
     success, ns_output = run_command([*KUBECTL, "get", "ns", namespace])
     if not success or "Active" not in ns_output:
-        print_status("FAIL", f"Namespace '{namespace}' not found. Deploy first with: helm install {helm_release} ...")
+        print_status(
+            "FAIL", f"Namespace '{namespace}' not found. Deploy first with: {' '.join(HELM)} install {helm_release} ..."
+        )
         sys.exit(1)
     print_status("PASS", f"Namespace '{namespace}' exists")
 
