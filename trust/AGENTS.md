@@ -277,7 +277,8 @@ path: LOCAL_DEV reads `fl-tutorials/data/` straight from disk and touches no tru
 markers or the pin say (no Hugging Face or PyPI request either), and the EC2 root's `seed` (so its `deploy`) skips
 its sample-data play, loading only the vocabulary from `KIT_BUCKET`. Any other value is refused, since read as true it would seed a real
 OMOP, and `up-trust` checks it before starting a container. `sync-kit` maps it onto `trustData.seed.enabled:
-false`, below a platform overlay or `--set`. The onboarding checklist's data-dir hints and the
+false`, and every Helm Makefile render or deploy that names the `KIT` passes it as `--set` too, so a
+missing or stale override cannot seed. The onboarding checklist's data-dir hints and the
 node self-test (`SELFTEST_TRUST_DATA_SEED=false`: the seed-marker and C-STORE
 checks are skipped with the reason) follow it, as does the Kubernetes self-test (`selftest_k8s.py`, from the release's
 `trustData.seed` values, so it also skips the Orthanc checks under the chart default `seed.orthanc: false`). The

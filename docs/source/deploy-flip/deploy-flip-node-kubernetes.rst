@@ -198,8 +198,9 @@ itself: the kit file ``trust/.env.<CODE>.<env>`` is what the admin's registratio
 
 **A trust with real data:** add ``TRUST_DATA_SEED=false`` to the kit file before the first deploy. Every
 ``deploy-trust-k8s KIT=<CODE>`` and ``upgrade-trust-k8s`` then turns the chart's mock-data seed job off
-(``trustData.seed.enabled``), so FLIP's sample data never reaches your OMOP database or PACS; a plain ``deploy``
-without the kit override turns it back on. On AKS and EKS, ``join`` installs the kit from the tarball and deploys in
+(``trustData.seed.enabled``), so FLIP's sample data never reaches your OMOP database or PACS. Any other ``deploy``
+that names ``KIT=<CODE>`` turns it off as well, with or without the override; only a ``deploy`` naming no kit leaves
+the chart's default, which seeds. On AKS and EKS, ``join`` installs the kit from the tarball and deploys in
 one step, so ask the hub admin to add the line before packaging the kit. Leave it unset on a test trust. For the
 DICOM vocabulary that normally comes with the sample data, see :ref:`onprem-core-vocabulary`.
 
