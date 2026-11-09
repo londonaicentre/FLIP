@@ -8,8 +8,9 @@
 
 # XNAT 1.10.0 is the first release compiled against JDK 21 (it will not run on JDK 8).
 # Tomcat stays on the 9.x line — 1.10 still targets Tomcat 9, matching upstream's
-# reference stack (NrgXnat/xnat-docker-compose, branch 1.10.0-update).
-FROM tomcat:9.0.108-jdk21-temurin-noble AS development
+# reference stack (NrgXnat/xnat-docker-compose, branch 1.10.0-update). The 9.0 tag follows every
+# Tomcat and JDK release; a patch tag stops being rebuilt once the next patch ships.
+FROM tomcat:9.0-jdk21-temurin-noble AS development
 
 # Non-secret build args only. Datasource credentials, SMTP credentials, and
 # the admin password are loaded at container start from the runtime
@@ -27,6 +28,17 @@ ADD make-xnat-config.sh /usr/local/bin/make-xnat-config.sh
 ADD wait-for-postgres.sh /usr/local/bin/wait-for-postgres.sh
 
 RUN apt-get update && apt-get install -y postgresql-client wget jq unzip
+
+# Drop every eMudhra (emSign) root from the JVM trust store: intermediates under its G3 root are
+# compromised (CVE-2026-91403), and XNAT has no use for the CA. The build fails if one survives.
+RUN set -e; \
+    store="$(keytool -list -v -cacerts -storepass changeit)"; \
+    printf '%s\n' "$store" \
+        | awk '/^Alias name: /{a=substr($0,13)} /^Owner: .*eMudhra/{print a}' \
+        | while IFS= read -r a; do keytool -delete -cacerts -storepass changeit -alias "$a"; done; \
+    store="$(keytool -list -v -cacerts -storepass changeit)"; \
+    case "$store" in *eMudhra*) echo "eMudhra roots left in the JVM cacerts" >&2; exit 1 ;; esac
+
 RUN rm -rf ${CATALINA_HOME}/webapps/*
 RUN mkdir -p \
         ${TOMCAT_XNAT_FOLDER_PATH} \

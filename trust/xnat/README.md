@@ -137,6 +137,10 @@ This downloads the XNAT WAR and plugins from their upstream URLs in `artifacts.m
 `ARTIFACTS_DIR=<dir>`) and checks their SHA-256, then builds all three images (`xnat-web`, `xnat-db`, `xnat-nginx`) tagged as `${DOCKER_REGISTRY}xnat-<service>:${XNAT_TAG}`
 (`XNAT_TAG` defaults to `DOCKER_TAG`).
 
+`xnat-web` builds on the moving `tomcat:9.0-jdk21-temurin-noble` tag, so every build, in CI or `make build`
+(which pulls it), takes the current Tomcat 9 and JDK 21. The build also removes eMudhra's emSign roots from the
+JVM trust store (FLIP#1815).
+
 `make up BUILD=true` (from the repo root) runs this build before deploying each trust's stack, at `XNAT_TAG=dev`. The tag
 must be one the registry does not have: the swarm agent re-pulls a tag on every deploy and keeps the local image only
 when that pull fails, so a local `:stag` build would be replaced by the registry's `:stag`. Tags are daemon-wide, so a
