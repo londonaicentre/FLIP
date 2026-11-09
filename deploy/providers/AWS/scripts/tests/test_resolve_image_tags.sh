@@ -903,6 +903,41 @@ else
 fi
 expect_tag DOCKER_FL_API_TAG "stag"
 
+# 34. EACH GROUP HAS ITS OWN BUDGET (FLIP#1811). terraform_apply.yml gives the
+#     full budget only to a group whose build is running for this commit; the
+#     other must probe once, not wait GHCR_WAIT_SECONDS for an image no workflow
+#     builds.
+fixture "" "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+run_resolve "the hub waits its budget, FL probes once" \
+    GHCR_WAIT_SECONDS=0 GHCR_WAIT_SECONDS_HUB=2 GHCR_WAIT_SECONDS_FL=0 GHCR_POLL_SECONDS=2
+expect_rc 0 "exits 0"
+if [[ "${STDERR}" == *"not published within 2s"* && "${STDERR}" == *"not published within 0s"* ]]; then
+    ok "each group is held to its own budget"
+else
+    no "each group is held to its own budget" "stderr: ${STDERR}"
+fi
+expect_tag DOCKER_TAG "sha-9999999"
+expect_tag DOCKER_FL_TAG "sha-8888888"
+
+# ...and an empty group budget (a step output that was never written) is the
+# default budget, never 0.
+run_resolve "an empty group budget is GHCR_WAIT_SECONDS" \
+    GHCR_WAIT_SECONDS=2 GHCR_WAIT_SECONDS_HUB= GHCR_WAIT_SECONDS_FL= GHCR_POLL_SECONDS=2
+if [[ "${STDERR}" == *"not published within 2s"* && "${STDERR}" != *"within 0s"* ]]; then
+    ok "falls back to GHCR_WAIT_SECONDS"
+else
+    no "falls back to GHCR_WAIT_SECONDS" "stderr: ${STDERR}"
+fi
+
+# ...and a budget that is not a number stops the run rather than probing once.
+run_resolve "a non-numeric group budget is fatal" GHCR_WAIT_SECONDS_FL=15m
+if [[ "${RC}" -ne 0 && "${STDERR}" == *"GHCR_WAIT_SECONDS_FL"* && -z "${STDOUT}" ]]; then
+    ok "rejects GHCR_WAIT_SECONDS_FL=15m"
+else
+    no "rejects GHCR_WAIT_SECONDS_FL=15m" "exit ${RC}, stderr: ${STDERR}"
+fi
+
 echo ""
 echo "==== ${PASS} passed, ${FAIL} failed ===="
 [[ "${FAIL}" -eq 0 ]]

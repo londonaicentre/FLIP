@@ -116,6 +116,10 @@
 #                                no registry access at all (plan, drift)
 #     GHCR_WAIT_SECONDS          bound on waiting for the image (default 900);
 #                                0 probes once and moves on
+#     GHCR_WAIT_SECONDS_HUB      per-group bounds, for the hub image and for the
+#     GHCR_WAIT_SECONDS_FL       FL images; each defaults to GHCR_WAIT_SECONDS.
+#                                terraform_apply.yml sets them with
+#                                image-wait-budgets.sh (FLIP#1811)
 #     GHCR_POLL_SECONDS          gap between probes (default 30)
 #
 # Writes `KEY=value` lines to stdout:
@@ -155,6 +159,13 @@ ECS_CLUSTER="${ECS_CLUSTER:-flip-cluster}"
 RESOLVE_SHA_TAG="${RESOLVE_SHA_TAG:-true}"
 GHCR_WAIT_SECONDS="${GHCR_WAIT_SECONDS:-900}"
 GHCR_POLL_SECONDS="${GHCR_POLL_SECONDS:-30}"
+# Empty counts as unset: a step output that never got written must not read as 0.
+GHCR_WAIT_SECONDS_HUB="${GHCR_WAIT_SECONDS_HUB:-${GHCR_WAIT_SECONDS}}"
+GHCR_WAIT_SECONDS_FL="${GHCR_WAIT_SECONDS_FL:-${GHCR_WAIT_SECONDS}}"
+for seconds in "${GHCR_WAIT_SECONDS}" "${GHCR_WAIT_SECONDS_HUB}" "${GHCR_WAIT_SECONDS_FL}"; do
+    [[ "${seconds}" =~ ^[0-9]+$ ]] ||
+        die "GHCR_WAIT_SECONDS, GHCR_WAIT_SECONDS_HUB and GHCR_WAIT_SECONDS_FL must be whole seconds (got '${seconds}')"
+done
 # A zero poll interval never advances the elapsed counter, so a non-zero wait
 # budget would spin forever rather than time out.
 [[ "${GHCR_POLL_SECONDS}" -ge 1 ]] || GHCR_POLL_SECONDS=1
@@ -225,14 +236,14 @@ image_exists() {
 
 # Wait for one image, bounded. Returns 0 if it appeared, 1 if the budget ran out.
 wait_for_image() {
-    local ref="$1"
+    local ref="$1" budget="$2"
     local waited=0
     while true; do
         if image_exists "${ref}"; then
             [[ "${waited}" -gt 0 ]] && log "   ${ref} appeared after ${waited}s."
             return 0
         fi
-        if [[ "${waited}" -ge "${GHCR_WAIT_SECONDS}" ]]; then
+        if [[ "${waited}" -ge "${budget}" ]]; then
             return 1
         fi
         sleep "${GHCR_POLL_SECONDS}"
@@ -370,8 +381,8 @@ active_tag() {
 # Wait groups whose publishing workflow has already been waited out in full.
 # fl-server and fl-api are built and pushed by one workflow
 # (fl-docker-build-<backend>.yml), so a full timeout on the first is a timeout
-# on the second; the sibling then probes once instead of spending a second
-# GHCR_WAIT_SECONDS.
+# on the second; the sibling then probes once instead of spending the group's
+# budget again.
 WAIT_GROUPS_EXHAUSTED=""
 
 # Resolve one tag into RESOLVED_TAG: published sha tag, else the live tag, else
@@ -379,9 +390,14 @@ WAIT_GROUPS_EXHAUSTED=""
 RESOLVED_TAG=""
 
 resolve() {
-    local label="$1" image_name="$2" service="$3" container="$4" fallback="$5" wait_group="${6:-}"
-    local ref="${PROBE_REGISTRY}${image_name}:${SHA_TAG}"
+    local label="$1" image_name="$2" service="$3" container="$4" fallback="$5" wait_group="$6"
+    local ref="${PROBE_REGISTRY}${image_name}:${SHA_TAG}" budget
     RESOLVED_TAG=""
+    case "${wait_group}" in
+        hub) budget="${GHCR_WAIT_SECONDS_HUB}" ;;
+        fl) budget="${GHCR_WAIT_SECONDS_FL}" ;;
+        *) die "unknown wait group '${wait_group}'" ;;
+    esac
 
     if [[ "${RESOLVE_SHA_TAG}" == "true" ]]; then
         if [[ -n "${RELEASE_TAG}" ]]; then
@@ -407,13 +423,13 @@ resolve() {
             log "   pinning ${RESOLVED_TAG}"
             return 0
         fi
-        if [[ -n "${wait_group}" && " ${WAIT_GROUPS_EXHAUSTED} " == *" ${wait_group} "* ]]; then
+        if [[ " ${WAIT_GROUPS_EXHAUSTED} " == *" ${wait_group} "* ]]; then
             # One workflow publishes every image in this group, so its sha tags
             # appear together or not at all. A sibling has already waited the
-            # full GHCR_WAIT_SECONDS for that workflow and timed out; waiting
-            # again would only add another GHCR_WAIT_SECONDS to a run that is
-            # already going to fall back. Probe once instead (FLIP#1283).
-            log "🔎 ${label}: single probe for ${ref} — ${wait_group} already waited ${GHCR_WAIT_SECONDS}s"
+            # group's full budget for that workflow and timed out; waiting
+            # again would only add another budget to a run that is already
+            # going to fall back. Probe once instead (FLIP#1283).
+            log "🔎 ${label}: single probe for ${ref} — ${wait_group} already waited ${budget}s"
             if image_exists "${ref}"; then
                 log "   pinning ${SHA_TAG}"
                 RESOLVED_TAG="${SHA_TAG}"
@@ -422,13 +438,13 @@ resolve() {
             log "   not published — this merge probably changed no ${wait_group} code."
         else
             log "🔎 ${label}: looking for ${ref}"
-            if wait_for_image "${ref}"; then
+            if wait_for_image "${ref}" "${budget}"; then
                 log "   pinning ${SHA_TAG}"
                 RESOLVED_TAG="${SHA_TAG}"
                 return 0
             fi
-            [[ -z "${wait_group}" ]] || WAIT_GROUPS_EXHAUSTED="${WAIT_GROUPS_EXHAUSTED} ${wait_group}"
-            log "   not published within ${GHCR_WAIT_SECONDS}s — this merge probably changed no service code."
+            WAIT_GROUPS_EXHAUSTED="${WAIT_GROUPS_EXHAUSTED} ${wait_group}"
+            log "   not published within ${budget}s — this merge probably changed no service code."
         fi
     else
         # Plan and drift: what matters is agreeing with the deployed task
@@ -454,7 +470,7 @@ resolve() {
     RESOLVED_TAG="${fallback}"
 }
 
-resolve "hub images" "flip-api" "flip-api" "flip-api" "${FALLBACK_DOCKER_TAG}"
+resolve "hub images" "flip-api" "flip-api" "flip-api" "${FALLBACK_DOCKER_TAG}" "hub"
 hub_tag="${RESOLVED_TAG}"
 # The fl-server container is named for its net, not for the service role
 # (ecs_tasks.tf:275) — same string as the service, which is easy to mis-assume.
