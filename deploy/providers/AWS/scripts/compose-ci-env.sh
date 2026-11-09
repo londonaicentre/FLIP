@@ -51,7 +51,7 @@
 # required when this runs in CI and ignored on a laptop. One freely settable
 # variable chooses the estate, and the dangerous direction is silent: TF_HUB=stag on
 # aws-prod composes a prod-sized plan whose RDS is refreshed as
-# `deletion_protection = false`, `skip_final_snapshot = true` — in an unattended
+# `skip_final_snapshot = true` — in an unattended
 # apply on main. So a mis-set TF_HUB is a red compose step instead of a plan someone
 # has to read closely. tests/test_ci_env_target.py pins the class against
 # env_mode.mk's ENV_CLASS.
@@ -122,7 +122,7 @@ if [[ -n "${EXPECTED_ENV_CLASS:-}" ]]; then
    this is TF_HUB naming the wrong estate on the GitHub environment — not a reason
    to change the branch. Refusing to compose, because the dangerous direction is
    silent: HUB=stag on prod plans the prod RDS with
-   deletion_protection = false and skip_final_snapshot = true, unattended.
+   skip_final_snapshot = true, unattended.
    Fix TF_HUB (${GH_ENV} expects ${EXPECTED_ENV_CLASS})."
     fi
 elif [[ -n "${GITHUB_ACTIONS:-}" ]]; then

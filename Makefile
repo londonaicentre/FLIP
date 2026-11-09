@@ -341,6 +341,9 @@ down: _check-compose-project-owner
 	@echo "🛑 Stopping all services..."
 	$(MAKE) -C trust down
 
+	@# `down` leaves anonymous volumes behind, and these services' images declare their scratch
+	@# paths as volumes (FLIP#1795): remove those with their containers first.
+	${DOCKER_COMMAND} rm -fsv flip-api fl-api-net-1 fl-api-net-2 $(FL_SERVER_SERVICES)
 	${DOCKER_COMMAND} down --remove-orphans
 	@echo "🛌 All services stopped successfully!"
 
@@ -403,6 +406,10 @@ restart: down up
 #       to NVFLARE a proxy still answering to that alias would take some of the NVFLARE
 #       clients' connections. Orphans are scoped to this compose project, whose files define
 #       every shared service (flip-db, object-store, keycloak), so nothing else is touched.
+# NOTE: each service is removed with `rm -fsv` and then started, not recreated in place. The hub
+#       images declare the paths they write as volumes (FLIP#1795), and a recreate hands the new
+#       container its predecessor's: the FLARE server's job store, or on a backend switch the
+#       other backend's /tmp. `rm -v` takes those anonymous volumes with the container.
 FL_SERVER_SERVICES := fl-server-net-1 fl-server-net-2 \
 	$(if $(filter flower,$(FL_BACKEND)),fl-fleet-proxy-net-1 fl-fleet-proxy-net-2)
 restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir _ensure-object-store-dir
@@ -410,12 +417,15 @@ restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir _ensure-object-stor
 	@echo "🔄 Step 1: Stopping and removing old FL clients..."
 	$(MAKE) -C trust down-fl-clients
 	@echo "🔄 Step 2: Recreating flip-api to re-seed FLNets.fl_backend=$(FL_BACKEND)..."
-	${DOCKER_COMMAND} up -d --force-recreate --no-deps $(UP_PULL_FLAGS) flip-api
+	${DOCKER_COMMAND} rm -fsv flip-api
+	${DOCKER_COMMAND} up -d --no-deps $(UP_PULL_FLAGS) flip-api
 	@echo "🔄 Step 3: Restarting FL APIs and servers..."
-	${DOCKER_COMMAND} up -d --force-recreate --no-deps --remove-orphans $(UP_PULL_FLAGS) fl-api-net-1 fl-api-net-2 $(FL_SERVER_SERVICES)
+	${DOCKER_COMMAND} rm -fsv fl-api-net-1 fl-api-net-2 $(FL_SERVER_SERVICES)
+	${DOCKER_COMMAND} up -d --no-deps --remove-orphans $(UP_PULL_FLAGS) fl-api-net-1 fl-api-net-2 $(FL_SERVER_SERVICES)
 	@if [ "$(FL_BACKEND)" = "flower" ]; then \
 		echo "🔄 Step 4: Registering new client keys with FL servers (Flower only)..."; \
-		${DOCKER_COMMAND} up --force-recreate $(UP_PULL_FLAGS) register-supernode-keys-net-1 register-supernode-keys-net-2; \
+		${DOCKER_COMMAND} rm -fsv register-supernode-keys-net-1 register-supernode-keys-net-2; \
+		${DOCKER_COMMAND} up $(UP_PULL_FLAGS) register-supernode-keys-net-1 register-supernode-keys-net-2; \
 	fi
 	@echo "🔄 Step 5: Starting new FL clients..."
 	$(MAKE) -C trust up-fl-clients

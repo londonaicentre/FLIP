@@ -83,7 +83,7 @@ EXPECTED_AWS_PROFILE := $($(_AWS_PROFILE_KNOB_$(ENV)))
 
 ## SETTING VARIABLES FOR TERRAFORM
 # The environment class (prod|stag, from env_mode.mk). Used in main.tf to gate
-# prod-only RDS hardening (deletion protection, final snapshot).
+# the prod-only RDS final snapshot.
 export TF_VAR_environment=$(ENV_CLASS)
 
 # Name tag of the platform-managed VPC. Set LZA_VPC_NAME in the env file to override the variables.tf default (AWSAccelerator-eu-west-2-prod) —
@@ -177,7 +177,8 @@ endif
 ifneq ($(JOB_RESOURCE_SPEC_NUM_GPUS),)
 export TF_VAR_JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS}
 endif
-# Uncomment to enable ECS Exec on Fargate tasks for debugging:
+# Uncomment to enable ECS Exec on Fargate tasks for debugging. It also makes the services' root
+# filesystems writable, which ECS Exec needs, so Security Hub ECS.5 fails until it is off again (FLIP#1795):
 # export TF_VAR_ecs_exec_enabled=true
 
 export TF_VAR_docker_image_tag=${DOCKER_TAG}

@@ -109,8 +109,9 @@ resource "aws_iam_role_policy" "apply_services" {
 #   * a role can only be created, or given a policy, if it carries the
 #     permissions boundary — so a role the apply manages cannot be given IAM
 #     write, and cannot mint anything more powerful than itself;
-#   * only three named AWS-managed policies may be attached to anything, so
-#     `AttachRolePolicy AdministratorAccess` is denied outright;
+#   * only the named AWS-managed policies (var.attachable_managed_policies) may
+#     be attached to anything, so `AttachRolePolicy AdministratorAccess` is
+#     denied outright;
 #   * an explicit Deny on both CI roles and on the boundary policy, so an apply
 #     cannot re-trust itself or raise its own ceiling.
 #
@@ -158,8 +159,8 @@ data "aws_iam_policy_document" "apply_iam" {
 
   # Attaching a managed policy is the shortest path from "can create a role" to
   # "can create an administrator", so it carries both conditions: the target must
-  # be inside the boundary, and the policy must be one of the three the FLIP root
-  # actually attaches.
+  # be inside the boundary, and the policy must be one the FLIP root actually
+  # attaches.
   statement {
     sid       = "AttachOnlyTheManagedPoliciesThisRootUses"
     effect    = "Allow"
@@ -240,8 +241,10 @@ data "aws_iam_policy_document" "apply_iam" {
   }
 
   # Services create their own linked roles through the calling principal (ECS,
-  # RDS, load balancing, CloudFront VPC origins). A service-linked role's
-  # permissions are fixed by AWS, so creating one grants nothing to anyone else.
+  # RDS, load balancing, CloudFront VPC origins, and ECR's template role with the
+  # first repository creation template that sets no custom_role_arn). A
+  # service-linked role's permissions are fixed by AWS, so creating one grants
+  # nothing to anyone else.
   statement {
     sid       = "ServiceLinkedRoles"
     effect    = "Allow"
