@@ -16,8 +16,9 @@ SuperLink: it forwards the routes in fleet-routes.map and answers everything els
 tests read the routes from the flwr this service locks, so a Flower bump that adds, renames
 or drops a Fleet route fails here rather than 404ing SuperNodes mid-round, and a Control or
 Runtime route can never be allowlisted by accident. That only holds while this lock and the
-SuperLink image carry the same flwr, which the last test pins; the rest pin the nginx details
-the allowlist depends on.
+SuperLink image carry the same flwr, which test_this_lock_carries_the_superlink_images_flwr pins;
+the rest pin the nginx details the allowlist depends on, and the last test holds flip-utils' lock
+to the same flwr, since fl-base installs that lock beside flwr/base's own flwr (FLIP#1801).
 """
 
 import os

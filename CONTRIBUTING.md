@@ -243,8 +243,9 @@ that `uv lock` fails instead. When you fix an alert:
 - **Leave dev and docs tooling lock-only** (`docs/`, `deploy/providers/AWS/`, dev-only groups) unless the first rule
   applies. None of it ships.
 
-`constraint-dependencies` is read only by uv. Every image installs from its lockfile (the Flower `fl-base` through
-`uv export`), so a floor reaches the images through the lock. A downstream `pip install flip-utils` sees only the
+`constraint-dependencies` is read only by uv. Every service and FL image installs from its uv lockfile (the Flower
+`fl-base` through `uv export`), so a floor reaches those images through the lock. `trust/monailabel` is not a uv
+project: it pins with `trust/monailabel/constraints.txt`, so a fix there goes into that file. A downstream `pip install flip-utils` sees only the
 dependency specifiers, which is why a vulnerable direct dependency of `flip-utils` also needs its specifier raised.
 
 ### Environment variables
