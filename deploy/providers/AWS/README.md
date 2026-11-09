@@ -550,7 +550,7 @@ account reached as `stag`.
 | --- | --- | --- |
 | Env file / kit suffix | `.env.prod` / `trust/.env.<CODE>.prod` | `.env.stag` / `trust/.env.<CODE>.stag` |
 | Profile guard | `prod` (`PROD_AWS_PROFILE`) | `stag` (`STAG_AWS_PROFILE`) |
-| `TF_VAR_environment` | `prod` — RDS deletion protection + final snapshot on | `stag` — disposable |
+| `TF_VAR_environment` | `prod` — RDS final snapshot on | `stag` — no final snapshot |
 | `deploy-centralhub` git ref | `origin/main` | `origin/develop` |
 | `LZA_VPC_NAME` | optional (defaults to the prod template name) | **required** in the env file — there is no defaultable staging VPC name, so the Makefile refuses to run without it rather than letting the lookup fail opaquely |
 | `MANAGE_DNS` | **required**, `true` or `false` (`false` while the account has no Route 53 zone) | the same |
@@ -569,7 +569,7 @@ fixed per account by design.
 | --- | --- |
 | Env file | root `.env.prod` (gitignored, like the other env files) |
 | Profile guard | `AWS_PROFILE=prod` — a short local alias for the workload account's `FLIPAdminAccess` permission set (override via `PROD_AWS_PROFILE`) |
-| `TF_VAR_environment` | `prod` — all prod-only hardening (RDS deletion protection, final snapshot) stays on |
+| `TF_VAR_environment` | `prod` — the prod-only RDS final snapshot stays on |
 | Trust kit suffix | `trust/.env.<CODE>.prod` |
 | `deploy-centralhub` git ref | `origin/main` |
 | `TF_VAR_iam_permissions_boundary_name` | **`AICentre-WorkloadRoleBoundary`** — the platform's boundary ([londonaicentre/lza#51](https://github.com/londonaicentre/lza/pull/51)), deployed by the accelerator to every workload account. An LZA SCP denies creating a role, or attaching or writing a policy onto one, unless the role carries it, so no other value works there. An env file that sets the variable itself wins — `?=` only supplies the default ([FLIP#1280](https://github.com/londonaicentre/FLIP/issues/1280)) |
@@ -770,10 +770,10 @@ The RDS instance behaves differently per environment, driven by `TF_VAR_environm
 | Setting                            | `stag` (`HUB=stag`) | `prod` (`HUB=prod`)            |
 | ------------------------------------ | ------------------ | ----------------------------------- |
 | `skip_final_snapshot`              | `true`           | `false`                           |
-| `deletion_protection`              | `false`          | `true`                            |
+| `deletion_protection`              | `true`           | `true`                            |
 | `final_snapshot_identifier_prefix` | `flip-database-final` | `flip-database-final`        |
 
-In production, `terraform destroy` (or any `make destroy` against the prod account) will refuse to delete the RDS instance until deletion protection is removed manually, and a final snapshot named `flip-database-final-<suffix>` is taken before deletion. Staging stays disposable so trees can be torn down and rebuilt without snapshot cleanup.
+In both environments, `terraform destroy` (or `make destroy`) refuses to delete the RDS instance until deletion protection is removed manually (Security Hub RDS.8, FLIP#1796). In production a final snapshot named `flip-database-final-<suffix>` is then taken before deletion; staging skips it, so a torn-down tree needs no snapshot cleanup.
 
 ### Status Checking
 
@@ -1235,7 +1235,7 @@ as `EXPECTED_ENV_CLASS` (`main` → `prod`, otherwise `stag`; `stag` in
 `terraform_plan.yml`, which only ever plans staging) and the script refuses to
 compose when the two disagree. That is what keeps a mis-set `TF_HUB` from quietly
 planning the prod estate with staging's shape — the prod RDS then reads
-`deletion_protection = false` and `skip_final_snapshot = true` — in an unattended
+`skip_final_snapshot = true` — in an unattended
 apply on `main`.
 
 Run these in order **per account**, from a laptop authenticated to that account:
