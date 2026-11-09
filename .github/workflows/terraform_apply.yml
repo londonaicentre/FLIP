@@ -517,6 +517,11 @@ jobs:
   ui:
     name: Publish flip-ui (${{ github.ref_name == 'main' && 'prod' || 'stag' }})
     needs: apply
+    # Without a status function the implicit success() also requires apply's own
+    # dependencies, and start-staging is always skipped on main, so every
+    # production publish was skipped (v0.15.0). always() lifts that; the result
+    # check keeps a held or failed apply from publishing.
+    if: always() && needs.apply.result == 'success'
     uses: ./.github/workflows/publish_ui.yml
     # The ceiling for publish_ui.yml's jobs: its build job narrows to
     # contents: read, so only the publish job can mint a token.
