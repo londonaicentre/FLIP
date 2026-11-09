@@ -205,13 +205,15 @@ class SampleDataOff(unittest.TestCase):
             assert f"{target} TRUST_INDEX" in result.stdout, f"{target} never ran:\n{result.stdout}{result.stderr}"
         for target in ("seed-omop", "unseed-omop"):
             result = run_target(target, "DRY_RUN=1", kit=self.KIT_OFF)
-            assert result.returncode != 0 and "has TRUST_DATA_SEED=false" in result.stdout, f"{target}:\n{result.stdout}"
+            assert result.returncode != 0, f"{target} ran:\n{result.stdout}"
+            assert "has TRUST_DATA_SEED=false" in result.stdout, f"{target}:\n{result.stdout}"
 
     def test_the_guard_needs_the_kit_file_not_a_complete_one(self):
         """A kit still waiting on the hub's values can seed its own stores, as before the guard (needs only KIT)."""
         kit = KIT + "SOMETHING=<run-make-sync-trust-kit>\n"
         result = run_target("guard", kit=kit, probe="guard:\n\t$(refuse_seed_when_off)\n\t@echo GUARD-PASSED\n")
-        assert result.returncode == 0 and "GUARD-PASSED" in result.stdout, result.stdout + result.stderr
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "GUARD-PASSED" in result.stdout, result.stdout
 
 
 MONAI_KIT = KIT.replace("NUM_AVAILABLE_GPUS=0", "NUM_AVAILABLE_GPUS=1")
