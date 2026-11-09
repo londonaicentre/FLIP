@@ -127,6 +127,20 @@ def main() -> int:
     lines = [line for line in noseed.read_text().splitlines() if line.startswith("TRUST_DATA_SEED=")]
     _assert(lines == ["TRUST_DATA_SEED=false"], "written once, as false", "\n".join(lines))
 
+    print("a_template_setting_is_written_as_selftest_node_compares_it")
+    # selftest_node.sh compares the kit's line to `false` exactly; make reads these spellings as false too.
+    template = tmp / "seed-template"
+    for spelling in ('"false"', "false  # real trust"):
+        template.write_text(TEMPLATE.read_text() + f"TRUST_DATA_SEED={spelling}\n")
+        kit = tmp / ".env.SPELT.prod"
+        result = _run(kit, "--template", str(template), "--force")
+        lines = [line for line in kit.read_text().splitlines() if line.startswith("TRUST_DATA_SEED=")]
+        written_false = result.returncode == 0 and set(lines) == {"TRUST_DATA_SEED=false"}
+        _assert(written_false, f"{spelling!r} -> false", result.stderr)
+    template.write_text(TEMPLATE.read_text() + "TRUST_DATA_SEED=no\n")
+    refused = _run(tmp / "z", "--template", str(template))
+    _assert(refused.returncode == 1 and "TRUST_DATA_SEED must be true or false" in refused.stderr, "no is refused")
+
     print("file_mode_is_0600")
     _assert(out.exists() and (out.stat().st_mode & 0o777) == 0o600, "kit is 0600")
 

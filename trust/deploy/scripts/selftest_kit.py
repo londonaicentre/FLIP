@@ -28,6 +28,8 @@ import sys
 import uuid
 from pathlib import Path
 
+import trust_kit_lib
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PLACEHOLDER = re.compile(r"^([A-Z0-9_]+)=<run-make-[a-z-]+>$")
 
@@ -79,6 +81,11 @@ def render(
     template: str, backend: str, docker_tag: str, fl_kit_dir: str, data_root: str, trust_data_seed: str | None = None
 ) -> str:
     """Fill every placeholder and host setting in the template; refuse an unknown placeholder."""
+    own_seed = [line.split("=", 1)[1] for line in template.splitlines() if line.startswith("TRUST_DATA_SEED=")]
+    if trust_data_seed is None and own_seed:
+        # The template's own setting, written back as the one spelling selftest_node.sh compares against
+        # (FLIP#1687); a value up-trust would refuse is refused here.
+        trust_data_seed = "true" if trust_kit_lib.trust_data_seed({"TRUST_DATA_SEED": own_seed[-1]}) else "false"
     managed = managed_values(backend, docker_tag)
     host = host_values(fl_kit_dir, data_root, trust_data_seed)
     seen: set[str] = set()
