@@ -150,12 +150,13 @@ KIT=<CODE>` tarballs `trust/.env.<CODE>.<hub>` (or the kit named by `KIT_FILE=<p
   salvages the `ERROR`/`WARNING` lines from the task's log stream before deleting it, falling back to the log tail
   for an unhandled traceback.
 - **Interactive debugging inside the running service** is still possible with ECS Exec, which is off by default
-  (`var.ecs_exec_enabled`):
+  (`var.ecs_exec_enabled`). It needs a writable root filesystem (the SSM agent it starts in the container writes
+  there), so the variable also lifts the services' read-only one (FLIP#1795). Switching exec on with
+  `aws ecs update-service --enable-execute-command` alone leaves the root read-only and the session fails with
+  `TargetNotConnectedException`. Apply with `TF_VAR_ecs_exec_enabled=true` (the commented line in the Makefile), then:
 
   ```bash
   export AWS_PROFILE=<env> AWS_REGION=eu-west-2
-  aws ecs update-service --cluster flip-cluster --service flip-api \
-    --enable-execute-command --force-new-deployment
   aws ecs wait services-stable --cluster flip-cluster --services flip-api
   TASK=$(aws ecs list-tasks --cluster flip-cluster --service-name flip-api \
     --query 'taskArns[0]' --output text)
@@ -163,8 +164,9 @@ KIT=<CODE>` tarballs `trust/.env.<CODE>.<hub>` (or the kit named by `KIT_FILE=<p
     --container flip-api --interactive --command /bin/bash
   ```
 
-  Prefer `make register-trusts` for the real thing: an interactive session leaves the kit payload in the session
-  output rather than in an encrypted SSM parameter.
+  Security Hub's ECS.5 fails for these task definitions while the variable is on, so apply again without it when
+  the session is over. Prefer `make register-trusts` for the real thing: an interactive session leaves the kit
+  payload in the session output rather than in an encrypted SSM parameter.
 
 ### flip-ui on S3 + CloudFront
 
