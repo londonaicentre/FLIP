@@ -35,6 +35,7 @@ FL_IPS_TOKEN = "{{ resource.properties.fl_server_ip_addresses }}"
 FL_PORT_TOKEN = "{{ resource.properties.fl_port }}"
 HOST = re.compile(r"``([a-z0-9*][a-z0-9.*-]*\.[a-z]+)``")
 FLIP_HUBS = ["app.flip.aicentre.co.uk", "stag.flip.aicentre.co.uk"]
+DOCKER_HUB = {"registry-1.docker.io", "auth.docker.io", "production.cloudfront.docker.com"}
 UBUNTU_MIRRORS = {"azure.archive.ubuntu.com", "archive.ubuntu.com", "security.ubuntu.com"}
 
 
@@ -243,7 +244,7 @@ def test_fl_port_reaches_the_firewall_as_a_string():
 
 def test_no_docker_hub_host_is_opened():
     # Every image the node runs comes from GHCR since v0.15.0 (FLIP#1721).
-    assert not [fqdn for fqdn in _https_fqdns() if fqdn.endswith("docker.io") or "cloudfront" in fqdn]
+    assert _https_fqdns().isdisjoint(DOCKER_HUB)
 
 
 def test_destinations_are_flips_own_and_fixed_once_deployed():
