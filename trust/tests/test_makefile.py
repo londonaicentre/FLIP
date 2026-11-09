@@ -154,9 +154,10 @@ class SampleDataOff(unittest.TestCase):
             assert "seed-orthanc" in out, out
 
     def test_any_other_value_is_refused_rather_than_read_as_true(self):
-        result = run_target("ensure-seeded", kit=KIT + "TRUST_DATA_SEED=no\n")
-        assert result.returncode != 0, result.stdout
-        assert "TRUST_DATA_SEED must be true or false" in result.stdout, result.stdout + result.stderr
+        for value in ("no", "False"):
+            result = run_target("ensure-seeded", kit=KIT + f"TRUST_DATA_SEED={value}\n")
+            assert result.returncode != 0, result.stdout
+            assert "TRUST_DATA_SEED must be true or false" in result.stdout, result.stdout + result.stderr
 
     def test_up_trust_refuses_a_bad_value_before_any_container_starts(self):
         out = dry_run("up-trust", kit=KIT + "TRUST_DATA_SEED=no\n")
@@ -176,6 +177,18 @@ class SampleDataOff(unittest.TestCase):
         out = dry_run("seed", "FORCE=1", kit=self.KIT_OFF)
         assert "seed-omop TRUST_INDEX" in out, out
         assert "seed-orthanc TRUST_INDEX" in out, out
+
+    def test_the_seed_verbs_refuse_what_they_cannot_read_as_true_or_false(self):
+        """A mistyped value, or a kit file that is not there, must not read as "sample data on"."""
+        for target in ("seed-omop", "seed-orthanc", "unseed-omop", "unseed-orthanc"):
+            mistyped = run_target(target, kit=KIT + "TRUST_DATA_SEED=False\n")
+            assert mistyped.returncode != 0, f"{target} ran on TRUST_DATA_SEED=False:\n{mistyped.stdout}"
+            assert "TRUST_DATA_SEED must be true or false" in mistyped.stdout, mistyped.stdout + mistyped.stderr
+            no_kit = run_target(target, "KIT=NOPE")
+            assert no_kit.returncode != 0, f"{target} ran without a kit file:\n{no_kit.stdout}"
+            assert "not found" in no_kit.stdout, no_kit.stdout + no_kit.stderr
+            for result in (mistyped, no_kit):
+                assert "TRUST_INDEX" not in result.stdout, result.stdout
 
 
 MONAI_KIT = KIT.replace("NUM_AVAILABLE_GPUS=0", "NUM_AVAILABLE_GPUS=1")

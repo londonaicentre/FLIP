@@ -1012,6 +1012,11 @@ def check_unrotated_passwords(
     )
 
 
+def sample_data_off(kit_vars: dict[str, str]) -> bool:
+    """TRUST_DATA_SEED=false, read as trust/Makefile reads it: a trailing `# comment` and surrounding quotes dropped."""
+    return kit_vars.get("TRUST_DATA_SEED", "").split("#", 1)[0].strip().strip("\"'") == "false"
+
+
 def check_data_dir(
     label: str,
     var_name: str,
@@ -1038,8 +1043,7 @@ def check_data_dir(
         resolved = Path(raw)
     else:
         resolved = repo_root / "trust" / raw.removeprefix("./")
-    # Read as trust/Makefile reads it: a trailing `# comment` and surrounding quotes dropped.
-    if kit_vars.get("TRUST_DATA_SEED", "").split("#", 1)[0].strip().strip("\"'") == "false":
+    if sample_data_off(kit_vars):
         seed_hint = "Sample data is off (TRUST_DATA_SEED=false): `make -C trust up-trust` loads nothing into it."
     else:
         seed_hint = "Mocked test data: `make -C trust up-trust KIT=<CODE>` creates and seeds it, nothing to do."
@@ -1133,7 +1137,12 @@ def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: 
             continue
         if nearest != path and not os.access(nearest, os.W_OK):
             blocked.append(f"{var} ({nearest} is not writable)")
-        elif var in SEED_MARKER_DIR_VARS and path.parent.exists() and not os.access(path.parent, os.W_OK):
+        elif (
+            var in SEED_MARKER_DIR_VARS
+            and not sample_data_off(kit_vars)
+            and path.parent.exists()
+            and not os.access(path.parent, os.W_OK)
+        ):
             blocked.append(f"{var} ({path.parent} is not writable, and the seed marker is written there)")
     if kit_vars.get("FLIP_UID", "").strip() == str(invoking_ids()[0]):
         then = "create them yourself with mkdir -p: the containers run as you (FLIP_UID)."

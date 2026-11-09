@@ -85,6 +85,7 @@ def _run(
     abort_in_sleep: bool = False,
     keep_up: bool = False,
     seed: str = "",
+    xnat_up: bool = True,
 ) -> tuple[subprocess.CompletedProcess, dict | None, Path, Path]:
     tmp = Path(tempfile.mkdtemp(prefix=f"selftest-{case}-"))
     bin_dir, out, data = tmp / "bin", tmp / "out", tmp / "data"
@@ -135,7 +136,7 @@ def _run(
         bin_dir,
         "docker",
         f'echo "docker $*" >> "{calls}"\n'
-        'if [ "$1" = ps ]; then echo trust1_xnat-web.1; echo trust1-fl-client-net-1-1; fi\n'
+        f'if [ "$1" = ps ]; then {"echo trust1_xnat-web.1; " if xnat_up else ""}echo trust1-fl-client-net-1-1; fi\n'
         f'if [ "$1" = inspect ]; then head -1 "{states}"; '
         f'tail -n +2 "{states}" > "{states}.n"; mv "{states}.n" "{states}"; fi\n'
         'if [ "$1" = logs ]; then echo "fl-client log line"; fi\n'
@@ -284,6 +285,10 @@ def main() -> int:
         _assert(detail.startswith("skipped: TRUST_DATA_SEED=false"), f"'{name}' says why it is skipped", detail)
     _assert(_check(report, "orthanc requires auth").get("ok") is True, "orthanc auth is still checked")
     _assert("/modalities/XNAT/store" not in calls.read_text(), "no store is attempted")
+
+    print("sample_data_off_still_needs_xnat_running")
+    result, report, _, _ = _run("noseed-noxnat", seed="false", write_markers=False, xnat_up=False)
+    _assert(result.returncode != 0 and _check(report, "xnat c-store").get("ok") is False, "no xnat-web is a failure")
 
     print("health_failure_fails_run")
     result, report, _, _ = _run("health", failing_port="8010")

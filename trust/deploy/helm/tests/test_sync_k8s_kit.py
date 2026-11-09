@@ -190,8 +190,9 @@ def test_render_override_turns_the_seed_hook_off_for_a_trust_without_sample_data
 
 
 def test_render_override_refuses_a_seed_setting_it_would_read_as_true():
-    with pytest.raises(ValueError, match="TRUST_DATA_SEED must be true or false"):
-        sync_k8s_kit.render_override({**_FL_KIT, "TRUST_DATA_SEED": "no"}, "Trust_K8s", "eu-west-2")
+    for value in ("no", "False"):
+        with pytest.raises(ValueError, match="TRUST_DATA_SEED must be true or false"):
+            sync_k8s_kit.render_override({**_FL_KIT, "TRUST_DATA_SEED": value}, "Trust_K8s", "eu-west-2")
 
 
 def test_render_override_treats_a_placeholder_bucket_as_unset():

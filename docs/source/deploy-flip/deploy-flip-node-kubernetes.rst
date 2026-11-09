@@ -196,10 +196,12 @@ Step 1 — Check out the release and copy in the kit
 The chart templates come from the checkout, so never deploy from a branch tip. The chart never registers anything
 itself: the kit file ``trust/.env.<CODE>.<env>`` is what the admin's registration produced.
 
-**A trust with real data:** add ``TRUST_DATA_SEED=false`` to the kit file before the first deploy. Every deploy and
-upgrade then turns the chart's mock-data seed job off (``trustData.seed.enabled``), so FLIP's sample data never
-reaches your OMOP database or PACS. Leave it unset on a test trust. For the DICOM vocabulary that normally comes
-with the sample data, see :ref:`onprem-core-vocabulary`.
+**A trust with real data:** add ``TRUST_DATA_SEED=false`` to the kit file before the first deploy. Every
+``deploy-trust-k8s KIT=<CODE>`` and ``upgrade-trust-k8s`` then turns the chart's mock-data seed job off
+(``trustData.seed.enabled``), so FLIP's sample data never reaches your OMOP database or PACS; a plain ``deploy``
+without the kit override turns it back on. On AKS and EKS, ``join`` installs the kit from the tarball and deploys in
+one step, so ask the hub admin to add the line before packaging the kit. Leave it unset on a test trust. For the
+DICOM vocabulary that normally comes with the sample data, see :ref:`onprem-core-vocabulary`.
 
 **********************************
 Step 2 — Generate the secrets file

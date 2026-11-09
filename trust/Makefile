@@ -404,7 +404,10 @@ define require_trust_data_seed
 endef
 
 # Guard: the explicit (un)seed verbs refuse a trust whose kit turns the sample data off, unless FORCE=1.
+# They need the kit file to tell: without it, or with a mistyped value, the setting would read as true.
 define refuse_seed_when_off
+	$(require_kit_file)
+	$(require_trust_data_seed)
 	@if [ "$(TRUST_DATA_SEED_EFFECTIVE)" = false ] && [ -z "$(FORCE)" ]; then \
 	    echo "❌ $(KIT) has TRUST_DATA_SEED=false: its OMOP and PACS hold its own data, which $@ would change. FORCE=1 runs it anyway."; \
 	    exit 1; \
@@ -1050,7 +1053,6 @@ SOURCE_TRUST ?= $(TRUST_NUM)
 # changed, e.g. spleen at the FLIP#1221 cut:
 #   make -C trust seed-omop KIT=GSTT PROJECTS="cxr_project spleen_project" CLEAN=all CANONICAL_DIR=…
 seed-omop:
-	$(require_kit)
 	$(refuse_seed_when_off)
 	$(OMOP_DB_CMD) seed-omop TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  OMOP_DB_PORT=$(OMOP_DB_PORT) \
@@ -1068,7 +1070,6 @@ seed-omop:
 #   make -C trust seed-orthanc KIT=GSTT PROJECTS="cxr_project prostate_project"
 #   make -C trust seed-orthanc KIT=GSTT PROJECTS=brain_mri_project DICOM_SOURCE=/abs/dicom TABLES_DIR=/abs/canonical
 seed-orthanc:
-	$(require_kit)
 	$(refuse_seed_when_off)
 	$(ORTHANC_CMD) seed-orthanc TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  PACS_UI_PORT=$(PACS_UI_PORT) \
@@ -1095,7 +1096,6 @@ seed-trusts:
 #   make -C trust unseed KIT=GSTT PROJECTS=spleen_project HF_TRUST_DATA_REVISION=20260911
 #   make -C fl-tutorials seed-spleen KIT=GSTT
 unseed-omop:
-	$(require_kit)
 	$(refuse_seed_when_off)
 	$(OMOP_DB_CMD) unseed-omop TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  OMOP_DB_PORT=$(OMOP_DB_PORT) \
@@ -1105,7 +1105,6 @@ unseed-omop:
 	  $(if $(and $(TRUST_NUM),$(OMOP_DATA_DIR)),OMOP_DATA_DIR_TRUST_$(TRUST_NUM)=$(OMOP_DATA_DIR))
 
 unseed-orthanc:
-	$(require_kit)
 	$(refuse_seed_when_off)
 	$(ORTHANC_CMD) unseed-orthanc TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  PACS_UI_PORT=$(PACS_UI_PORT) \

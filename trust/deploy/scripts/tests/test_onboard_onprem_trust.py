@@ -991,6 +991,18 @@ def test_47_empty_dir_with_sample_data_off_says_nothing_is_seeded() -> None:
             _assert(not any("seeds it" in h for h in result.hints), "and does not say up-trust seeds it", str(result))
 
 
+def test_48_sample_data_off_needs_no_seed_marker_dir() -> None:
+    """TRUST_DATA_SEED=false writes no seed marker, so a data dir's unwritable parent is no FAIL (FLIP#1687)."""
+    print("▶ existing data dir under an unwritable parent, sample data off -> PASS")
+    with tempfile.TemporaryDirectory() as td:
+        locked = Path(td) / "locked"
+        (locked / "pacs").mkdir(parents=True)
+        writable = lambda path, mode: Path(path) != locked  # noqa: E731 — root ignores mode bits, so fake it
+        with mock.patch.object(mod.os, "access", side_effect=writable):
+            check = _paths(OMOP_DATA_DIR=f"{td}/omop", ORTHANC_STORAGE_DIR=f"{locked}/pacs", TRUST_DATA_SEED="false")
+    _assert(check.status == mod.Status.PASS, "PASS", f"{check.status}: {check.detail}")
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -1042,6 +1054,7 @@ def main() -> None:
     test_45_fl_kit_contents_warn_when_the_client_cannot_enter_the_mount_root()
     test_46_swarm_worker_fails_naming_the_manager()
     test_47_empty_dir_with_sample_data_off_says_nothing_is_seeded()
+    test_48_sample_data_off_needs_no_seed_marker_dir()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
