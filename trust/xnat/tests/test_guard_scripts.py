@@ -344,7 +344,8 @@ def _data_guard(tmp_path: Path, stub_bin: Path, shell: tuple[str, ...], layout: 
     """Run the data guard over a volume laid out as named, with PGDATA at <volume>/pg16.
 
     ``layout`` holds any of: ``old`` (a PostgreSQL 12 cluster at the volume root), ``dump`` (the
-    migration dump beside it), ``initialised`` (a pg16 cluster) and ``restored`` (its marker).
+    migration dump beside it), ``initialised`` (a pg16 cluster), ``restored`` (its marker) and
+    ``old-ran-since`` (the old cluster was started again after the dump and the restore).
     Returns the result and the argv it handed the password guard, None when it did not.
     """
     root = tmp_path / "data"
@@ -359,6 +360,15 @@ def _data_guard(tmp_path: Path, stub_bin: Path, shell: tuple[str, ...], layout: 
         (pgdata / "PG_VERSION").write_text("16\n")
     if "restored" in layout:
         (pgdata / "xnat-restored").touch()
+    if "old-ran-since" in layout:
+        # The old server writes postmaster.opts at each start: here, after everything else was made.
+        (root / "postmaster.opts").touch()
+        for made in (root / "xnat-migrate.dump", pgdata / "xnat-restored"):
+            if made.exists():
+                os.utime(made, (1_000_000_000, 1_000_000_000))
+    elif "old" in layout:
+        (root / "postmaster.opts").touch()
+        os.utime(root / "postmaster.opts", (1_000_000_000, 1_000_000_000))
     record = tmp_path / "argv"
     _install_argv_recorder(stub_bin, "guard-xnat-db-passwords.sh", record)
     env = {"PGDATA": str(pgdata), "PG_MAJOR": "16"}
@@ -392,7 +402,29 @@ def test_xnat_db_data_guard_refuses_an_old_cluster_without_a_dump(shell, stub_bi
 
     assert result.returncode == 1
     assert "holds a PostgreSQL 12 database" in result.stderr
-    assert "make upgrade-trust" in result.stderr
+    # The verbs need the old server running, so the pin back comes first.
+    assert result.stderr.index("Pin XNAT_TAG") < result.stderr.index("make upgrade-trust")
+    assert handed is None
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+@pytest.mark.parametrize(
+    ("layout", "said"),
+    [
+        ({"old", "dump", "initialised", "restored", "old-ran-since"}, "is out of date"),
+        ({"old", "dump", "old-ran-since"}, "would lose what changed"),
+    ],
+    ids=["rolled-back-then-redeployed", "stale-dump"],
+)
+def test_xnat_db_data_guard_refuses_what_the_old_cluster_has_outlived(
+    shell, layout, said, stub_bin: Path, tmp_path: Path
+) -> None:
+    """After a rollback the old database is the live one: a restore or a dump from before it is stale."""
+    result, handed = _data_guard(tmp_path, stub_bin, shell, layout)
+
+    assert result.returncode == 1
+    assert said in result.stderr
+    assert result.stderr.index("Pin XNAT_TAG") < result.stderr.index("make upgrade-trust")
     assert handed is None
 
 

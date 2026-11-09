@@ -226,7 +226,9 @@ site is confirmed.
 mounts (`subPath`) rather than setting `PGDATA`, so `pgdata` on AKS and EKS still finds the old
 cluster where it was. A plain `helm upgrade` takes no dump. The new xnat-db then refuses to start
 beside the old cluster, rather than start XNAT empty: roll back with `xnat.image.pin`, then upgrade
-through `upgrade-trust-k8s`. The first start's restore runs inside the postStart hook's wait, which
+through `upgrade-trust-k8s`. The same holds after a rollback: the old cluster has run again, so
+the earlier dump and `pg16/` are out of date, and xnat-db refuses them until `upgrade-trust-k8s`
+takes a new dump. The first start's restore runs inside the postStart hook's wait, which
 is now an hour.
 
 #### Upgrading: `trustData.version` replaces the two per-store pins (FLIP#1100)

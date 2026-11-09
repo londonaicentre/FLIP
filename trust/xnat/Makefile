@@ -11,7 +11,7 @@
 #
 
 .PHONY: build up down up-xnat down-xnat upgrade-xnat xnat-backup xnat-backup-writable xnat-shell xnat-stack-down clean \
-	xnat-db-migrate-dump xnat-db-remove-old-cluster \
+	xnat-db-migrate-dump xnat-db-drop-unused-dump xnat-db-remove-old-cluster \
 	xnat-war-download xnat-plugins-download xnat-plugins-check xnat-reset xnat-configure \
 	xnat-configure-export-mask xnat-prepare-dirs \
 	create-xnat-network test unit_test local_test
@@ -510,6 +510,7 @@ upgrade-xnat: create-xnat-network
 	PACS_UI_PORT=$(PACS_UI_PORT_EFFECTIVE) \
 	DOCKER_NETWORK_NAME=$(XNAT_NETWORK) \
 	docker stack deploy --with-registry-auth --resolve-image "$(XNAT_RESOLVE_IMAGE)" --detach=false ${STACK_FILES} $(XNAT_STACK)
+	$(MAKE) xnat-db-drop-unused-dump KIT=$(KIT)
 	$(MAKE) xnat-configure XNAT_PROJECT=$(XNAT_STACK)
 
 # pg_dumpall of the running xnat-db into $(XNAT_DATA_DIR)/backups/ — the rollback path for an
@@ -547,6 +548,10 @@ xnat-backup: xnat-backup-writable
 # The PostgreSQL major the xnat-db image runs (16 from PG_VERSION=16-alpine).
 XNAT_DB_PG_MAJOR := $(firstword $(subst ., ,$(subst -, ,$(PG_VERSION))))
 
+# Refuse when either major is not a number: the comparison below would read that as "already moved".
+xnat_db_majors_comparable = case "$(1):$(XNAT_DB_PG_MAJOR)" in *[!0-9:]*|:*|*:) \
+	echo "❌ Cannot compare xnat-db's PostgreSQL major ('$(1)') with the image's ('$(XNAT_DB_PG_MAJOR)', from PG_VERSION in trust/xnat/.env). Nothing was changed."; exit 1 ;; esac
+
 # Before a stack deploy that moves xnat-db to a newer PostgreSQL major (FLIP#1812): stop xnat-web,
 # then dump the xnat database beside the running cluster, where the new image restores it on first
 # start (trust/xnat/postgres/restore-xnat-dump.sh). The old cluster stays for a rollback until
@@ -557,10 +562,21 @@ xnat-db-migrate-dump:
 	db=$$($(call xnat_service_container_ids,$(XNAT_STACK),xnat-db) | head -1); \
 	[ -n "$$db" ] || { echo "❌ No running $(XNAT_STACK)_xnat-db to dump."; exit 1; }; \
 	current=$$(docker exec "$$db" sh -c 'cat "$$PGDATA/PG_VERSION"'); \
+	$(call xnat_db_majors_comparable,$$current); \
 	[ "$$current" -lt $(XNAT_DB_PG_MAJOR) ] || exit 0; \
 	echo "⬆️  xnat-db moves from PostgreSQL $$current to $(XNAT_DB_PG_MAJOR): stopping xnat-web and dumping the xnat database for the new server to restore."; \
 	docker service scale --detach=false $(XNAT_STACK)_xnat-web=0; \
-	docker exec -i "$$db" sh -s $(XNAT_DB_PG_MAJOR) < scripts/xnat_db_migrate_dump.sh
+	docker exec -i "$$db" sh -s $(XNAT_DB_PG_MAJOR) < scripts/xnat_db_migrate_dump.sh || { \
+	  echo "❌ The dump failed, so nothing was upgraded. Starting xnat-web again on PostgreSQL $$current."; \
+	  docker service scale --detach $(XNAT_STACK)_xnat-web=1; exit 1; }
+
+# After the deploy: a dump still inside the live data dir means xnat-db stayed on the old major (the
+# kit's XNAT_TAG pins an older release). The database goes on changing, so the dump must not wait
+# there for a later start of the new image to restore.
+xnat-db-drop-unused-dump:
+	$(require_kit)
+	@db=$$($(call xnat_service_container_ids,$(XNAT_STACK),xnat-db) | head -1); \
+	[ -z "$$db" ] || docker exec -i "$$db" sh -s < scripts/xnat_db_drop_unused_dump.sh
 
 # Once XNAT is confirmed on the new major: list the older cluster an upgrade kept for a rollback,
 # and delete it with YES=1.

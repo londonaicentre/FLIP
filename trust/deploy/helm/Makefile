@@ -328,6 +328,7 @@ _upgrade-trust-k8s-apply:
 	$(MAKE) sync-kit KIT=$(KIT)
 	$(MAKE) xnat-db-migrate-dump
 	$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml TAG=$(shell sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1)
+	$(MAKE) xnat-db-drop-unused-dump
 	@echo "✅ $(KIT) is on $$(sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1). Verify: kubectl -n $(NAMESPACE) get pods; trust-api /health reports the new version."
 
 # The PostgreSQL major the xnat-db image runs, and the release's XNAT pods (FLIP#1812).
@@ -340,17 +341,27 @@ XNAT_POD = -n $(NAMESPACE) -l app.kubernetes.io/instance=$(RELEASE_NAME),app.kub
 # xnat-db-remove-old-cluster. A no-op without an xnat-db pod or once it is on that major.
 xnat-db-migrate-dump:
 	@set -e; \
-	pod=$$($(KUBECTL) get pod $(XNAT_POD)=xnat-db -o name); \
+	pod=$$($(KUBECTL) get pod $(XNAT_POD)=xnat-db --field-selector=status.phase=Running -o name | head -1); \
 	[ -n "$$pod" ] || exit 0; \
 	current=$$($(KUBECTL) exec -n $(NAMESPACE) "$$pod" -c postgres -- sh -c 'cat "$$PGDATA/PG_VERSION"'); \
+	case "$$current:$(XNAT_DB_PG_MAJOR)" in *[!0-9:]*|:*|*:) \
+	  echo "❌ Cannot compare xnat-db's PostgreSQL major ('$$current') with the image's ('$(XNAT_DB_PG_MAJOR)', from PG_VERSION in trust/xnat/.env). Nothing was changed."; exit 1 ;; esac; \
 	[ "$$current" -lt $(XNAT_DB_PG_MAJOR) ] || exit 0; \
 	echo "⬆️  xnat-db moves from PostgreSQL $$current to $(XNAT_DB_PG_MAJOR): stopping xnat-web and dumping the xnat database for the new server to restore."; \
 	$(KUBECTL) scale deployment $(XNAT_POD)=xnat-web --replicas=0; \
-	if $(KUBECTL) get pod $(XNAT_POD)=xnat-web -o name | grep -q .; then \
-	  $(KUBECTL) wait pod $(XNAT_POD)=xnat-web --for=delete --timeout=$(HELM_TIMEOUT); \
-	fi; \
+	$(KUBECTL) wait pod $(XNAT_POD)=xnat-web --for=delete --timeout=$(HELM_TIMEOUT) \
+	  || ! $(KUBECTL) get pod $(XNAT_POD)=xnat-web -o name | grep -q .; \
 	$(KUBECTL) exec -i -n $(NAMESPACE) "$$pod" -c postgres -- sh -s $(XNAT_DB_PG_MAJOR) \
-	  < $(REPO_ROOT)/trust/xnat/scripts/xnat_db_migrate_dump.sh
+	  < $(REPO_ROOT)/trust/xnat/scripts/xnat_db_migrate_dump.sh || { \
+	  echo "❌ The dump failed, so nothing was upgraded. Starting xnat-web again on PostgreSQL $$current."; \
+	  $(KUBECTL) scale deployment $(XNAT_POD)=xnat-web --replicas=1; exit 1; }
+
+# After the helm upgrade: remove a dump the deploy did not use, because xnat-db stayed on the old
+# major (xnat.image.pin or the kit's XNAT_TAG holds an older release).
+xnat-db-drop-unused-dump:
+	@pod=$$($(KUBECTL) get pod $(XNAT_POD)=xnat-db --field-selector=status.phase=Running -o name | head -1); \
+	[ -z "$$pod" ] || $(KUBECTL) exec -i -n $(NAMESPACE) "$$pod" -c postgres -- sh -s \
+	  < $(REPO_ROOT)/trust/xnat/scripts/xnat_db_drop_unused_dump.sh
 
 # Once XNAT is confirmed on the new major: list the older cluster an upgrade kept for a rollback,
 # and delete it with YES=1.

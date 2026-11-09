@@ -59,6 +59,11 @@ class UpgradeXnat(unittest.TestCase):
         assert out.index("xnat-backup KIT=SCR") < out.index("xnat-db-migrate-dump KIT=SCR"), out
         assert out.index("xnat-db-migrate-dump KIT=SCR") < out.index("docker stack deploy"), out
 
+    def test_upgrade_xnat_drops_a_dump_the_deploy_did_not_use(self):
+        """A kit pinning the old release keeps the old database live, and its dump goes stale."""
+        out = self.recipe
+        assert out.index("docker stack deploy") < out.index("xnat-db-drop-unused-dump KIT=SCR"), out
+
 
 # A stand-in for docker, for the xnat-db major-upgrade targets: every call is logged to $CALLS, `ps`
 # finds the db, `exec … cat …PG_VERSION` answers $CURRENT, and `exec -i` logs which script came on stdin.
@@ -70,6 +75,8 @@ case "$1" in
     if [ "$2" = -i ]; then
       script=$(cat)
       [[ "$script" == *"pg_dump -Fc"* ]] && echo "stdin: migrate-dump" >> "$CALLS"
+      [[ "$script" == *"Removed the unused migration dump"* ]] && echo "stdin: drop-unused-dump" >> "$CALLS"
+      [[ "$script" == *"pg_dump -Fc"* && -n "$DUMP_FAILS" ]] && exit 1
       [[ "$script" == *"-exec rm -rf"* ]] && echo "stdin: remove-old-cluster" >> "$CALLS"
       exit 0
     fi
@@ -82,7 +89,7 @@ exit 0
 class XnatDbMajorUpgrade(unittest.TestCase):
     """xnat-db-migrate-dump and xnat-db-remove-old-cluster, run for real against a stub docker (FLIP#1812)."""
 
-    def _run(self, target: str, *extra: str, current: str = "12") -> list[str]:
+    def _run(self, target: str, *extra: str, current: str = "12", fails: bool = False, **env: str) -> list[str]:
         with tempfile.TemporaryDirectory() as tmp:
             bin_dir = Path(tmp) / "bin"
             bin_dir.mkdir()
@@ -93,9 +100,9 @@ class XnatDbMajorUpgrade(unittest.TestCase):
                 target,
                 *extra,
                 subdir="trust/xnat",
-                env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "CALLS": str(calls), "CURRENT": current},
+                env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "CALLS": str(calls), "CURRENT": current, **env},
             )
-            assert result.returncode == 0, result.stdout + result.stderr
+            assert (result.returncode != 0) == fails, result.stdout + result.stderr
             return calls.read_text().splitlines() if calls.exists() else []
 
     def test_an_older_cluster_is_dumped_after_xnat_web_stops(self):
@@ -108,6 +115,20 @@ class XnatDbMajorUpgrade(unittest.TestCase):
     def test_a_cluster_already_on_the_major_is_left_alone(self):
         calls = self._run("xnat-db-migrate-dump", current="16")
         assert not any(c.startswith(("service scale", "exec -i")) for c in calls), calls
+
+    def test_a_failed_dump_starts_xnat_web_again(self):
+        """Nothing was upgraded, so the site must not stay down on a full disk."""
+        calls = self._run("xnat-db-migrate-dump", fails=True, DUMP_FAILS="1")
+        assert calls[-1].startswith("service scale --detach "), calls
+        assert calls[-1].endswith("_xnat-web=1"), calls
+
+    def test_a_major_that_is_not_a_number_is_refused_not_read_as_already_moved(self):
+        calls = self._run("xnat-db-migrate-dump", current="", fails=True)
+        assert not any(c.startswith(("service scale", "exec -i")) for c in calls), calls
+
+    def test_the_unused_dump_check_runs_in_the_db(self):
+        calls = self._run("xnat-db-drop-unused-dump")
+        assert "stdin: drop-unused-dump" in calls, calls
 
     def test_removing_the_old_cluster_needs_yes(self):
         for extra, expected in (
