@@ -191,6 +191,10 @@ different load balancers, so allow both. This is everything a node connects out 
    status) for each one it cannot reach. That output is the evidence to hand your network team. It says only
    "reachable from this host": a firewall that filters one direction answers the probe while blocking nothing.
 
+   When the FL endpoint probe times out, the checklist also asks ``checkip.amazonaws.com`` for the public address
+   this host leaves from and prints it. Nothing depends on that lookup: if it is blocked, the hint appears without
+   the address.
+
 .. list-table::
    :header-rows: 1
    :widths: 26 14 13 35 12
@@ -210,7 +214,8 @@ different load balancers, so allow both. This is everything a node connects out 
      - Always
      - Federated training, over mutual TLS. **Exempt it from TLS inspection**: a proxy that re-signs the traffic
        breaks the client's certificate check. It has a fixed IP, so a firewall that filters by name only in HTTP
-       rules (Azure Firewall Basic, for example) can allow it by address
+       rules (Azure Firewall Basic, for example) can allow it by address. The hub may admit connections here only
+       from registered sites: **give the hub team the public address your node leaves from before going live**
      - Yes, Oct 2026
    * - ``ghcr.io`` **and** ``pkg-containers.githubusercontent.com``
      - 443
