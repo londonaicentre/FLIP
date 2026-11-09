@@ -177,6 +177,12 @@ The UI is served from S3 by the networking account's edge CloudFront at the cano
 
 If the `ui` job fails, re-run it from the apply run once the cause is fixed, or publish from a laptop with `make deploy-ui HUB=stag|prod`, which is also the rollback: run it from the previous release's checkout. There is no invalidation, since the distribution is in another account: `index.html` is served `no-cache` and the hashed assets as immutable. Both paths run `scripts/publish-ui.sh`, which syncs `dist/` to the bucket **root** with `--delete` and always excludes the `demo/*` prefix. The real build's `dist/` has no `demo/` output, so without the exclude every routine UI deploy (including `deploy-centralhub`, which calls `deploy-ui` as its last step) would delete the demo. Publishing the demo bundle itself is a separate target, described below.
 
+`make deploy-ui` builds from your working tree, so it is also how to try a branch's UI on staging: run `make deploy-ui HUB=stag` from the branch checkout. `window.js` takes its values from `.env.stag`, where `make update-env` writes the two Cognito IDs. Three things limit it:
+
+- The next develop apply's `ui` job publishes develop's UI over it.
+- Staging is stopped between deploys (see *Staging is stopped between deploys* below). The UI still loads from the bucket, but every API call fails until you dispatch `Staging Lifecycle` with `start-stag`. Staging then stays up until the 03:30 UTC nightly stop; to stop it sooner, dispatch `hold-then-stop` with a `hold_minutes` that covers the test.
+- It runs against the API that develop deployed. A UI change that needs API changes not yet on develop needs the whole branch deployed.
+
 ### Public demo (`/demo/`, FLIP#1746)
 
 The public demo is a second flip-ui build (`npm run build:demo`) that runs offline on captured,
@@ -267,7 +273,7 @@ make plan
 # 6. Apply infrastructure
 make apply
 
-# 7. Refresh the root env file with Terraform outputs (DB_HOST, the two Cognito IDs)
+# 7. Refresh the root env file with Terraform outputs (the two Cognito IDs)
 make update-env
 
 # 8. Configure SSH access

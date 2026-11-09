@@ -978,7 +978,7 @@ full-deploy: ## Full AWS deployment of the Central Hub; trusts deploy from trust
 	## 1. login + init: auth and Terraform init
 	## 2. generate-internal-service-key: mint the fl-server→hub key (idempotent)
 	## 3. plan+apply: provision the hub's AWS infrastructure (ECS, RDS, bastion, secrets)
-	## 4. update-env: refresh .env with Terraform outputs (bastion ID, DB endpoint, Cognito IDs)
+	## 4. update-env: refresh .env with Terraform outputs (the two Cognito IDs)
 	## 5. ssh-config + ansible-init: configure the SSM bastion
 	## 6. deploy-centralhub: deploy Central Hub ECS services at the env branch tip (new task-def revisions) + publish the UI
 	## 7. register-trusts: register every live trust/.env.*.<env> kit present (none yet is fine)

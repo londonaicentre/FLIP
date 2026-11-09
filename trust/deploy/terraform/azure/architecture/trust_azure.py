@@ -303,7 +303,7 @@ def _draw_vm(drawn: _Drawn) -> None:
 
 def _draw_aks(drawn: _Drawn) -> None:
     """The one-node AKS cluster: Entra-only API server, Cilium, the chart's pods dialling out."""
-    operator = drawn.node("Operator", Users, caption="Operator\n(kubectl via kubelogin,\nmake aks-join / aks-deploy)")
+    operator = drawn.node("Operator", Users, caption="Operator\n(kubectl via kubelogin,\nmake join / deploy)")
     with _cluster("Azure subscription"):
         state = _bootstrap(drawn, with_budget=False)
         with _cluster(drawn.mark("AKS resource group") + " (never alongside the VM node)"):

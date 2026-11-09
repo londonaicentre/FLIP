@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 # A test node's PACS is the chart's mock Orthanc: seed the published mock studies into it, so an
-# imaging pull and the self-test's C-STORE have something to move. make aks-deploy MOCK_PACS=1.
+# imaging pull and the self-test's C-STORE have something to move. make deploy MOCK_PACS=1 (in aks/).
 trustData:
   seed:
     orthanc: true
