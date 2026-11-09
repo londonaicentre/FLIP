@@ -42,7 +42,7 @@ jobs:
       REGISTRY: ghcr.io
       IMAGE_NAME: londonaicentre/xnat-db
       BUILD_ARGS: |
-        --build-arg PG_VERSION=12.2-alpine
+        --build-arg PG_VERSION=16-alpine
     steps:
       # Default checkout on purpose: no workflow_run trigger here (FLIP#882,
       # scripts/tests/test_workflow_trust_guards.py).

@@ -11,6 +11,7 @@
 #
 
 .PHONY: build up down up-xnat down-xnat upgrade-xnat xnat-backup xnat-backup-writable xnat-shell xnat-stack-down clean \
+	xnat-db-migrate-dump xnat-db-remove-old-cluster \
 	xnat-war-download xnat-plugins-download xnat-plugins-check xnat-reset xnat-configure \
 	xnat-configure-export-mask xnat-prepare-dirs \
 	create-xnat-network test unit_test local_test
@@ -179,9 +180,9 @@ export XNAT_CS_CONTAINER_USER := $(if $(FLIP_UID),$(FLIP_UID):$(FLIP_GID))
 # Dockerfile sets no USER and the compose pins none, so the container starts as root
 # and the stock postgres entrypoint re-chowns PGDATA and drops to `postgres` itself.
 # That is what makes a 1001-owned xnat-db-data harmless, and it is what would go away
-# if someone pinned a `user:` on xnat-db. It keeps starting as root under FLIP_UID too: its
-# pinned postgres:12.2-alpine predates nss_wrapper in the Alpine variants (docker-library/postgres#1018),
-# so an unknown uid fails initdb. Its dir is included on stag/prod only, so the whole tree carries
+# if someone pinned a `user:` on xnat-db. It keeps starting as root under FLIP_UID too: every
+# existing site's database is uid 70's (the image's postgres user), so a `user:` would first need
+# that data re-owned. Its dir is included on stag/prod only, so the whole tree carries
 # one owner when root or the operator wipes it; prepare-host-dirs leaves it root-created and
 # Postgres's first boot makes it uid 70's, which is why xnat-prepare-dirs never re-owns it and the
 # check-only reset branch, like upgrade-xnat, judges XNAT_WEB_DATA_DIRS alone.
@@ -501,6 +502,7 @@ upgrade-xnat: create-xnat-network
 		*) $(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_WEB_DATA_DIRS),,$(words $(XNAT_WEB_DATA_DIRS))) ;; \
 	esac
 	$(MAKE) xnat-backup KIT=$(KIT)
+	$(MAKE) xnat-db-migrate-dump KIT=$(KIT)
 	XNAT_PATH=${XNAT_PATH} \
 	XNAT_PORT=$(XNAT_PORT_EFFECTIVE) \
 	XNAT_WEB_PORT=$(XNAT_WEB_PORT_EFFECTIVE) \
@@ -541,6 +543,32 @@ xnat-backup: xnat-backup-writable
 	docker run --rm --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" alpine:3.20 rm -f "/x/$$dump"; \
 	echo "❌ The XNAT database dump failed or is incomplete — no backup was kept, and nothing was upgraded."; \
 	exit 1
+
+# The PostgreSQL major the xnat-db image runs (16 from PG_VERSION=16-alpine).
+XNAT_DB_PG_MAJOR := $(firstword $(subst ., ,$(subst -, ,$(PG_VERSION))))
+
+# Before a stack deploy that moves xnat-db to a newer PostgreSQL major (FLIP#1812): stop xnat-web,
+# then dump the xnat database beside the running cluster, where the new image restores it on first
+# start (trust/xnat/postgres/restore-xnat-dump.sh). The old cluster stays for a rollback until
+# xnat-db-remove-old-cluster. A no-op once the running cluster is on that major.
+xnat-db-migrate-dump:
+	$(require_kit)
+	@set -e; \
+	db=$$($(call xnat_service_container_ids,$(XNAT_STACK),xnat-db) | head -1); \
+	[ -n "$$db" ] || { echo "❌ No running $(XNAT_STACK)_xnat-db to dump."; exit 1; }; \
+	current=$$(docker exec "$$db" sh -c 'cat "$$PGDATA/PG_VERSION"'); \
+	[ "$$current" -lt $(XNAT_DB_PG_MAJOR) ] || exit 0; \
+	echo "⬆️  xnat-db moves from PostgreSQL $$current to $(XNAT_DB_PG_MAJOR): stopping xnat-web and dumping the xnat database for the new server to restore."; \
+	docker service scale --detach=false $(XNAT_STACK)_xnat-web=0; \
+	docker exec -i "$$db" sh -s $(XNAT_DB_PG_MAJOR) < scripts/xnat_db_migrate_dump.sh
+
+# Once XNAT is confirmed on the new major: list the older cluster an upgrade kept for a rollback,
+# and delete it with YES=1.
+xnat-db-remove-old-cluster:
+	$(require_kit)
+	@db=$$($(call xnat_service_container_ids,$(XNAT_STACK),xnat-db) | head -1); \
+	[ -n "$$db" ] || { echo "❌ No running $(XNAT_STACK)_xnat-db."; exit 1; }; \
+	docker exec -i "$$db" sh -s -- $(if $(YES),--delete) < scripts/xnat_db_remove_old_cluster.sh
 
 # Can xnat-backup's uid write $(XNAT_DATA_DIR)/backups (or create it)? Upgrades before FLIP#1731
 # wrote backups/ as root. A refusal names the one-time fix for the case it found. upgrade-trust

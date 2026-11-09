@@ -212,6 +212,23 @@ from `dicom.log` and the container log alike. See
 | `trustData.seed.image.*` | `ghcr.io/londonaicentre/mirror/astral-sh/uv@sha256:…` | The uv image the hook runs in: FLIP's mirror, pinned by digest (`trust/deploy/mirror-images.manifest`) |
 | `trustData.seed.workDirSize` | `8Gi` | Scratch emptyDir for the fetched tables, vocabulary zip and DICOM sets |
 
+#### Upgrading: xnat-db moves from PostgreSQL 12 to 16 (FLIP#1812)
+
+PostgreSQL 16 cannot open a PostgreSQL 12 cluster, so this upgrade has to dump and restore XNAT's
+database. `make upgrade-trust-k8s` does it: before `helm upgrade`, `xnat-db-migrate-dump` scales
+`xnat-web` to zero and writes a dump of the `xnat` database beside the running cluster on the
+`xnat-db` volume. The new image keeps its cluster in `pg16/` below the mount, restores the dump
+there on its first start before it accepts connections, and leaves the PostgreSQL 12 cluster in
+place for a rollback. `make xnat-db-remove-old-cluster` shows it, and `YES=1` deletes it once the
+site is confirmed.
+
+`xnat.db.persistence.pgdataSubdir` keeps its value: it now names the part of the volume xnat-db
+mounts (`subPath`) rather than setting `PGDATA`, so `pgdata` on AKS and EKS still finds the old
+cluster where it was. A plain `helm upgrade` takes no dump. The new xnat-db then refuses to start
+beside the old cluster, rather than start XNAT empty: roll back with `xnat.image.pin`, then upgrade
+through `upgrade-trust-k8s`. The first start's restore runs inside the postStart hook's wait, which
+is now an hour.
+
 #### Upgrading: `trustData.version` replaces the two per-store pins (FLIP#1100)
 
 **This is a breaking change to the chart's values interface.** `omopDb.initJob.dataVersion` and
@@ -950,8 +967,11 @@ and its volume `data-<release>-flip-trust-xnat-db-0`):
    `lifecycle` block**: copy the xnat-db container spec — same image *and* the
    same two password env vars, because the image's entrypoint guard refuses to
    start without them — and mount `data-<release>-flip-trust-xnat-db-0` as a
-   plain `persistentVolumeClaim` volume at `/var/lib/postgresql/data`. A stock
-   `postgres:12-alpine` with no env at all works on the volume too.
+   plain `persistentVolumeClaim` volume at `/var/lib/postgresql/data` (with the
+   same `subPath` when `xnat.db.persistence.pgdataSubdir` is set). A stock
+   `postgres:<major>-alpine` with only `PGDATA=/var/lib/postgresql/data/pg<major>`
+   works on the volume too (`postgres:12-alpine` and no env on a volume not yet
+   moved to PostgreSQL 16, FLIP#1812).
 3. Inside the debug pod, create the superuser role:
    `psql -U xnat -d postgres -c "CREATE ROLE postgres WITH SUPERUSER LOGIN;"`
    (on a pre-split volume `xnat` is the superuser, so this works without a

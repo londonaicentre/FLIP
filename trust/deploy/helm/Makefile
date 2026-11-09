@@ -158,7 +158,7 @@ ifneq ($(strip $(TAG)),)
 	VALUES_OPTS := $(VALUES_OPTS) --set global.image.tag=$(TAG)
 endif
 
-.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init kit-secret stage-kit preflight template-egress-variants smoke-cstore selftest
+.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init kit-secret stage-kit preflight template-egress-variants smoke-cstore selftest xnat-db-migrate-dump xnat-db-remove-old-cluster
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -326,8 +326,39 @@ upgrade-trust-k8s: ## Move a deployed trust to a release tag (data-safe helm upg
 # Secret from the same kit, then a plain `helm upgrade` at that tag.
 _upgrade-trust-k8s-apply:
 	$(MAKE) sync-kit KIT=$(KIT)
+	$(MAKE) xnat-db-migrate-dump
 	$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml TAG=$(shell sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1)
 	@echo "✅ $(KIT) is on $$(sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1). Verify: kubectl -n $(NAMESPACE) get pods; trust-api /health reports the new version."
+
+# The PostgreSQL major the xnat-db image runs, and the release's XNAT pods (FLIP#1812).
+XNAT_DB_PG_MAJOR := $(shell sed -n 's/^PG_VERSION=\([0-9]*\).*/\1/p' $(REPO_ROOT)/trust/xnat/.env)
+XNAT_POD = -n $(NAMESPACE) -l app.kubernetes.io/instance=$(RELEASE_NAME),app.kubernetes.io/component
+
+# Before a helm upgrade that moves xnat-db to a newer PostgreSQL major: stop xnat-web, then dump the
+# xnat database beside the running cluster on its volume, where the new image restores it on first
+# start. The helm upgrade brings xnat-web back. The old cluster stays for a rollback until
+# xnat-db-remove-old-cluster. A no-op without an xnat-db pod or once it is on that major.
+xnat-db-migrate-dump:
+	@set -e; \
+	pod=$$($(KUBECTL) get pod $(XNAT_POD)=xnat-db -o name); \
+	[ -n "$$pod" ] || exit 0; \
+	current=$$($(KUBECTL) exec -n $(NAMESPACE) "$$pod" -c postgres -- sh -c 'cat "$$PGDATA/PG_VERSION"'); \
+	[ "$$current" -lt $(XNAT_DB_PG_MAJOR) ] || exit 0; \
+	echo "⬆️  xnat-db moves from PostgreSQL $$current to $(XNAT_DB_PG_MAJOR): stopping xnat-web and dumping the xnat database for the new server to restore."; \
+	$(KUBECTL) scale deployment $(XNAT_POD)=xnat-web --replicas=0; \
+	if $(KUBECTL) get pod $(XNAT_POD)=xnat-web -o name | grep -q .; then \
+	  $(KUBECTL) wait pod $(XNAT_POD)=xnat-web --for=delete --timeout=$(HELM_TIMEOUT); \
+	fi; \
+	$(KUBECTL) exec -i -n $(NAMESPACE) "$$pod" -c postgres -- sh -s $(XNAT_DB_PG_MAJOR) \
+	  < $(REPO_ROOT)/trust/xnat/scripts/xnat_db_migrate_dump.sh
+
+# Once XNAT is confirmed on the new major: list the older cluster an upgrade kept for a rollback,
+# and delete it with YES=1.
+xnat-db-remove-old-cluster: ## List the PostgreSQL cluster an xnat-db major upgrade kept for a rollback; YES=1 deletes it
+	@pod=$$($(KUBECTL) get pod $(XNAT_POD)=xnat-db -o name); \
+	[ -n "$$pod" ] || { echo "❌ No xnat-db pod in $(NAMESPACE)."; exit 1; }; \
+	$(KUBECTL) exec -i -n $(NAMESPACE) "$$pod" -c postgres -- sh -s -- $(if $(YES),--delete) \
+	  < $(REPO_ROOT)/trust/xnat/scripts/xnat_db_remove_old_cluster.sh
 
 # The node self-test's checklist against a deployed release (FLIP#1390): release ready, FL kit,
 # API health, OMOP/Orthanc seeded, Orthanc auth, a real C-STORE, a dcm2niix conversion (FLIP#1448),

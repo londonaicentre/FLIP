@@ -50,8 +50,11 @@ XNAT has an unauthenticated account-creation flaw, so sites on an older release 
 These came with the move to 1.10 and still apply:
 
 - **JDK 21.** 1.10.0 moves from JDK 8 to JDK 21 (for long-term support), so the image's Tomcat base
-  moved to a `jdk21` variant. Upstream states there is **no change in the Tomcat or PostgreSQL
-  version requirements**, which is why Tomcat stays on 9.x and `PG_VERSION` stays at `12.2-alpine`.
+  moved to a `jdk21` variant. The release notes state no change in the Tomcat version requirement,
+  which is why Tomcat stays on 9.x. PostgreSQL is another matter: XNAT's
+  [prerequisites](https://wiki.xnat.org/documentation/prerequisites-for-installing-xnat) now ask for
+  16 or later, and 1.10 is validated on 16 to 18 only, so `PG_VERSION` is `16-alpine` (FLIP#1812;
+  16 rather than 17 or 18 because XNAT's developers reported a minor incompatibility with 17).
   Most JDK 8-compiled plugins still run — see [Plugin compatibility](#plugin-compatibility) below.
 - **dcm4che2 → dcm4che5.** XNAT's core DICOM processing library was replaced. This is what forces the
   DQR plugin upgrade, and it is the change most likely to alter DICOM import behaviour, so the import
@@ -119,6 +122,20 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
   `siteUrl`, the DICOM receiver, the DQR lockdown, the PACS registration and the Container Service
   backend, and skipping only the first-boot admin password rotation (the service account is
   re-requested and an existing one left as-is).
+- **A PostgreSQL major upgrade rides on `upgrade-xnat` (FLIP#1812).** A newer major cannot open an
+  older cluster, so `xnat-db` keeps its cluster in `pg<major>/` under the data dir (`ENV PGDATA` in
+  `postgres/Dockerfile`). When the running cluster is on an older major than `PG_VERSION`,
+  `upgrade-xnat` runs `xnat-db-migrate-dump` after the backup: it stops `xnat-web`, then
+  `scripts/xnat_db_migrate_dump.sh` writes a `pg_dump -Fc` of the `xnat` database beside the running
+  cluster as `xnat-migrate.dump`. The new image's first start creates `pg16/`, and
+  `postgres/restore-xnat-dump.sh` restores the dump into it before the server listens on TCP, so
+  `xnat-web` never sees an empty database. The roles come from that fresh initialisation, so
+  passwords are SCRAM hashes and a volume on the old single-superuser layout (FLIP#1666) comes out
+  with the two-role one. The old cluster stays where it was: rolling back is pinning `XNAT_TAG` to the
+  previous release. `postgres/guard-xnat-db-data.sh` refuses to start next to an older cluster with
+  no dump (it would start XNAT as an empty site), and after a restore that did not finish. Once the
+  site is confirmed on the new major, `make xnat-db-remove-old-cluster KIT=<CODE> HUB=<env>` lists the
+  old cluster and `YES=1` deletes it. The Helm chart does the same through `upgrade-trust-k8s`.
 
 ## Setup
 
