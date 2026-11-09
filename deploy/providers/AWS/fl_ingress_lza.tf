@@ -81,6 +81,20 @@ locals {
     for id, ip in local.lza_fl_nlb_ip_by_subnet : ip
     if contains(local.lza_tgw_attachment_azs, data.aws_subnet.lza_app[id].availability_zone)
   ]
+
+  web_listener_certificate_arn = var.manage_dns ? one(aws_acm_certificate.flip[*].arn) : one(data.aws_acm_certificate.web_listener[*].arn)
+}
+
+# The web listener's certificate where this stack keeps no zone: the platform
+# issues it into the account and validates it in the zone it keeps
+# (aicentre-lza-iac#99), so it must be ISSUED before the first apply. A missing
+# or pending certificate fails the plan here.
+data "aws_acm_certificate" "web_listener" {
+  count = var.manage_dns ? 0 : 1
+
+  domain      = var.flip_alb_subdomain
+  statuses    = ["ISSUED"]
+  most_recent = true
 }
 
 module "fl_internal_nlb_security_group" {
@@ -143,19 +157,17 @@ module "fl_server_internal_nlb" {
       }
     }
 
-    # Web leg (FLIP#749): CloudFront's relay dials this listener. Protocol
-    # follows DNS availability — an
-    # ISSUED cert is impossible without a hosted zone (var.manage_dns=false),
-    # so the listener is plain TCP until the zone lands, then TLS on the
-    # DNS-validated cert. Same port either way so the relay never changes.
-    # Flipping to TLS is a cross-repo step: the relay is TCP passthrough, so the TLS client becomes CloudFront's VPC
-    # origin in the networking account (aicentre-lza-iac ingress_web.tf), which must switch to https-only with an
-    # origin host matching this cert's SAN at the same time.
+    # Web leg (FLIP#749): CloudFront's relay dials this listener. TLS
+    # (FLIP#1797): the relay passes it through, so the client is CloudFront's
+    # VPC origin, which must be https-only (aicentre-lza-iac ingress_web.tf,
+    # origin_tls). The policy keeps TLS 1.2, which is what that origin is
+    # configured to offer. TLS ends here: the hop to the task stays HTTP, like
+    # the in-VPC callers on the same port.
     "web-listener" = {
       port            = var.ALB_HTTPS_PORT
-      protocol        = var.manage_dns ? "TLS" : "TCP"
-      certificate_arn = var.manage_dns ? aws_acm_certificate.flip[0].arn : null
-      ssl_policy      = var.manage_dns ? "ELBSecurityPolicy-TLS13-1-3-2021-06" : null
+      protocol        = "TLS"
+      certificate_arn = local.web_listener_certificate_arn
+      ssl_policy      = "ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09"
       forward = {
         target_group_arn = aws_lb_target_group.ecs_flip_api.arn
       }
@@ -195,7 +207,7 @@ resource "aws_ssm_parameter" "lza_web_nlb_dns_name" {
 resource "aws_ssm_parameter" "lza_web_port" {
   # checkov:skip=CKV2_AWS_34:non-secret networking value read CROSS-ACCOUNT by the networking account's edge stack (aicentre-lza-iac) — an AWS-managed CMK cannot be decrypted from another account
   name        = "/flip/networking/web_port"
-  description = "Workload-side web ingress port (the internal NLB's web listener; plain TCP on the zone-less bring-up, TLS once manage_dns is true) - the relay NLB's target port on the networking side"
+  description = "Workload-side web ingress port (the internal NLB's TLS web listener) - the relay NLB's target port on the networking side"
   type        = "String"
   value       = tostring(var.ALB_HTTPS_PORT)
 }

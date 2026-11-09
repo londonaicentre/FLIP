@@ -259,18 +259,17 @@ First bring-up without a hosted zone
 ====================================
 
 With ``MANAGE_DNS=false``, Terraform skips the hosted-zone lookup, every Route 53 record and both DNS-validated
-certificates, so the stack applies in an account with no zone yet. Until the zone exists:
+certificates, so the stack applies in an account with no zone. If the zone later moves into the account, set
+``MANAGE_DNS=true`` and apply again.
 
-- The UI is reached on the edge distribution's default ``*.cloudfront.net`` domain
-  (``TF_VAR_lza_web_edge_domain``). Bucket CORS and the Cognito sign-in URLs follow it automatically.
-- Build the UI with ``CENTRAL_HUB_API_URL`` pointing at that domain, and give trusts the same URL.
-- The leg from the edge's relay to the workload's internal load balancer is plain TCP rather than TLS, because a
-  certificate cannot be issued without DNS validation. Viewer traffic is still HTTPS at the edge, and that leg stays
-  on the Transit Gateway and central-firewall path.
+The internal load balancer's web listener terminates TLS either way. With ``MANAGE_DNS=true`` it uses this stack's
+own certificate. Otherwise the platform team issues one for ``ALB_SUBDOMAIN`` into the account, validated in the zone
+they keep, and Terraform finds it by name, so it must be issued **before the first apply**: the plan fails without
+it. The relay passes TLS through, so the edge's origin in the networking account must be HTTPS-only.
 
-Once the zone lands, set ``MANAGE_DNS=true`` and apply again. Switching the web listener to TLS is a **two-sided
-change**: the edge's origin in the networking account must switch to HTTPS, with a host name matching the new
-certificate, at the same time.
+The edge checks that certificate against the host it forwards, so the API answers on ``ALB_SUBDOMAIN`` only, never
+on the distribution's default ``*.cloudfront.net`` domain. Attach the real domain (below) before building the UI or
+giving trusts a URL: ``CENTRAL_HUB_API_URL`` is ``https://<ALB_SUBDOMAIN>/api``.
 
 Attaching the real domain
 -------------------------
@@ -291,21 +290,27 @@ Two-phase edge handoff
 
 The edge is built from the workload stack's outputs, so the two are always applied in this order:
 
-1. **Apply the workload stack.** *Who: FLIP admin (or CI).*
+1. **Issue the web listener's certificate.** *Who: platform team.*
+
+   A certificate for ``ALB_SUBDOMAIN`` in the workload account, validated in the zone they keep. The workload plan
+   fails until it is issued.
+
+2. **Apply the workload stack.** *Who: FLIP admin (or CI).*
 
    The first ``apply`` publishes the handoff parameters under ``/flip/networking/*``: the internal NLB's fixed IP
    addresses, the web and FL ports, and its DNS name. Leave ``TF_VAR_lza_web_edge_domain`` and
    ``TF_VAR_lza_web_edge_distribution_arn`` empty. Until they are set, the UI bucket grants no one access and the UI
    origin is a placeholder.
 
-2. **Apply the edge.** *Who: platform team.*
+3. **Apply the edge.** *Who: platform team.*
 
    The edge stack in the networking account reads the handoff parameters.
 
-3. **Point the workload stack at the edge.** *Who: FLIP admin (or CI).*
+4. **Point the workload stack at the edge.** *Who: FLIP admin (or CI).*
 
-   Set the two variables to the edge distribution's domain and ARN in the env file, then apply again. This grants
-   the edge read access to the UI bucket and points bucket CORS and the Cognito callback URLs at the edge.
+   Set ``TF_VAR_lza_web_edge_domain`` to ``ALB_SUBDOMAIN``, the name the API answers on, and
+   ``TF_VAR_lza_web_edge_distribution_arn`` to the edge distribution's ARN, then apply again. This grants the edge
+   read access to the UI bucket and points bucket CORS and the Cognito callback URLs at the edge.
 
 Later changes to the workload load balancer follow the same order, networking stack first.
 

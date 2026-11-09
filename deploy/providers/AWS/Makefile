@@ -211,9 +211,9 @@ export TF_VAR_flower_kit_date=${FLOWER_KIT_DATE}
 export TF_VAR_POSTGRES_USER=${POSTGRES_USER}
 export TF_VAR_FL_SERVER_PORT=${FL_SERVER_PORT}
 export TF_VAR_AWS_REGION=${AWS_REGION}
-# DNS availability (FLIP#749): an LZA account has no Route53 hosted zone until
-# the platform-side DNS migration lands, so its env file sets MANAGE_DNS=false
-# (no custom certs/records) and flips it to true once the zone exists there.
+# DNS availability (FLIP#749): an LZA account has no Route53 hosted zone (the
+# platform keeps it), so its env file sets MANAGE_DNS=false (no custom
+# certs/records; the web listener's cert comes from the platform, FLIP#1797).
 # Required, no default (the env guards above).
 export TF_VAR_manage_dns=$(MANAGE_DNS)
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}

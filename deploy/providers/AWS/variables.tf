@@ -336,7 +336,7 @@ variable "FL_SERVER_PORT" {
 }
 
 variable "manage_dns" {
-  description = "Whether this account hosts the Route53 zone for flip_alb_subdomain. false (the LZA estates until the zone moves in the platform DNS migration — FLIP#749) skips the zone lookup, every Route53 record and the DNS-validated ACM cert, so the internal NLB's web listener serves plain TCP until a cert can be ISSUED, then TLS."
+  description = "Whether this account hosts the Route53 zone for flip_alb_subdomain. false (the LZA estates, whose zones stay in the networking account — FLIP#749) skips the zone lookup, every Route53 record and the DNS-validated ACM cert."
   type        = bool
   default     = true
 }
