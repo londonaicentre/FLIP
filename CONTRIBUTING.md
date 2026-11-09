@@ -221,8 +221,6 @@ For a genuine same-day patch of an active CVE, the cooldown can be bypassed for 
   - Add a `constraint-dependencies` floor at the fixed version, so the fix stays in place once the override is gone.
   - Open an issue to remove the entry when the 72 hours are up. A fixed timestamp freezes the package at that date
     until someone removes it.
-  - Carry the floor into any install that does not read `[tool.uv]`, such as the `pip install` in
-    `fl-services/flower/fl-base/Dockerfile`.
 
   The certifi and uv fixes in #1612 (removed in #1618) are a worked example.
 - **npm** — run `npm install <package> --min-release-age=0`, which overrides the `.npmrc` setting for that one
@@ -245,9 +243,9 @@ that `uv lock` fails instead. When you fix an alert:
 - **Leave dev and docs tooling lock-only** (`docs/`, `deploy/providers/AWS/`, dev-only groups) unless the first rule
   applies. None of it ships.
 
-`constraint-dependencies` is read only by uv. It guards this repo's lockfiles, not a downstream `pip install
-flip-utils`, so carry the floor by hand into any install that skips `[tool.uv]`, such as the `pip install` in
-`fl-services/flower/fl-base/Dockerfile`.
+`constraint-dependencies` is read only by uv. Every image installs from its lockfile (the Flower `fl-base` through
+`uv export`), so a floor reaches the images through the lock. A downstream `pip install flip-utils` sees only the
+dependency specifiers, which is why a vulnerable direct dependency of `flip-utils` also needs its specifier raised.
 
 ### Environment variables
 

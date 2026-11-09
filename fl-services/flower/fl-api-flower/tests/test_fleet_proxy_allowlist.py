@@ -132,3 +132,12 @@ def test_this_lock_carries_the_superlink_images_flwr():
     assert locked == base.group(1), f"fl-api-flower locks flwr {locked}; the SuperLink image is {base.group(1)}"
     secure = set(re.findall(r"flwr/base:([0-9.]+)-", _read(FLOWER_DIR / "compose.secure.yml")))
     assert secure == {locked}, f"compose.secure.yml runs flwr/base {sorted(secure)}"
+
+
+def test_flip_utils_lock_carries_the_fl_base_images_flwr():
+    # fl-base installs flip-utils' locked packages beside flwr/base's flwr (#1801); they were resolved with this flwr.
+    lock = tomllib.loads(_read(FLOWER_DIR.parents[1] / "flip-utils" / "uv.lock"))
+    locked = next(pkg["version"] for pkg in lock["package"] if pkg["name"] == "flwr")
+    base = re.search(r"flwr/base:\$\{FLWR_VERSION:-([0-9.]+)-", _read(FLOWER_DIR / "fl-base" / "Dockerfile"))
+    assert base, "fl-base/Dockerfile no longer defaults FLWR_VERSION to a flwr/base tag"
+    assert locked == base.group(1), f"flip-utils locks flwr {locked}; fl-base is flwr/base {base.group(1)}"

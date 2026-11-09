@@ -39,8 +39,8 @@ WORKDIR /app
 # "/opt/flip-utils" }` resolves against this copy rather than a PyPI release
 # (#767), and fails without it.
 #
-# --extra-index-url points pip at PyTorch's CUDA-13.0 wheel index. Combined with
-# flip-utils' "torch>=2.13,<2.14" pin, pip picks torch 2.13.x+cu130.
+# --extra-index-url points pip at PyTorch's CUDA-13.0 wheel index, where the lock's
+# torch 2.13.x+cu130 lives.
 # COPY's default root ownership is deliberate: user-submitted apps execute in
 # this container as the same non-root `app` user that flwr/base runs as, so an
 # app-writable copy could be mutated by app code, poisoning anything that later
@@ -48,14 +48,19 @@ WORKDIR /app
 # `app` — enough for the pip install below and any `uv sync` of a template,
 # which only read it (flip-utils' hatchling backend builds in temp dirs, never
 # the source tree).
-COPY flip-utils/pyproject.toml flip-utils/README.md /opt/flip-utils/
+COPY flip-utils/pyproject.toml flip-utils/uv.lock flip-utils/README.md /opt/flip-utils/
 COPY flip-utils/docs/ /opt/flip-utils/docs/
 COPY flip-utils/flip/ /opt/flip-utils/flip/
-# No cryptography pin: flwr>=1.40 requires cryptography>=50.0.0, past GHSA-537c-gmf6-5ccf.
-# No certifi or uv pin either: flwr>=1.42 requires certifi>=2026.10.19 and uv>=0.13.5 (GHSA-6q48-6c7w-9gw2,
-# GHSA-hq85-5cpj-mr62). pip does not apply flip-utils' UV constraints; carry its setuptools and oauthlib floors here.
-RUN python -m pip install -U --no-cache-dir "/opt/flip-utils[full]" "setuptools>=84.1.0" "oauthlib>=4.0.1" \
-      --extra-index-url https://download.pytorch.org/whl/cu130
+# Dependencies come from flip-utils' uv.lock, hash-checked, as in the NVFLARE fl-base (#1801), so its
+# security floors reach this image through the lock. flwr is not in the export (flip-utils' dev group):
+# the image keeps flwr/base's own, and `pip check` fails the build if the locked packages no longer fit it.
+RUN cd /opt/flip-utils \
+ && python -m uv export --frozen --extra full --no-dev --no-emit-project -o /tmp/flip-utils.txt \
+ && python -m pip install --no-cache-dir --require-hashes -r /tmp/flip-utils.txt \
+      --extra-index-url https://download.pytorch.org/whl/cu130 \
+ && python -m pip install --no-cache-dir --no-deps /opt/flip-utils \
+ && python -m pip check \
+ && rm /tmp/flip-utils.txt
 
 # Copy register-supernode-keys.sh (used by the secure / central-hub topology to
 # register SuperNode public keys with the SuperLink).
