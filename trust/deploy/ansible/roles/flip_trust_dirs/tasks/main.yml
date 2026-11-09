@@ -110,6 +110,7 @@
     - "{{ flip_dir }}/xnat/xnat-data/archive"
     - "{{ flip_dir }}/xnat/xnat-data/build"
     - "{{ flip_dir }}/xnat/xnat-data/cache"
+    - "{{ flip_dir }}/xnat/xnat-data/prearchive"
     - "{{ flip_dir }}/xnat/xnat-db-data"
 
 - name: create Loki data directory

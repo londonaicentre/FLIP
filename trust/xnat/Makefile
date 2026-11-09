@@ -12,7 +12,7 @@
 
 .PHONY: build up down up-xnat down-xnat upgrade-xnat xnat-backup xnat-backup-writable xnat-shell xnat-stack-down clean \
 	xnat-war-download xnat-plugins-download xnat-plugins-check xnat-reset xnat-configure \
-	xnat-configure-export-mask xnat-prepare-dirs \
+	xnat-configure-export-mask xnat-prepare-dirs xnat-web-dirs \
 	create-xnat-network test unit_test local_test
 
 # Mirrors trust/Makefile: no hub `.env.*` include. Runtime config (DOCKER_TAG,
@@ -168,8 +168,8 @@ export XNAT_CS_CONTAINER_USER := $(if $(FLIP_UID),$(FLIP_UID):$(FLIP_GID))
 # property of the image, not of the host, so it can neither be derived from $(USER) nor
 # assumed to be the conventional 1000 that the FLIP-built Python services use.
 #
-# XNAT ingests DICOM into archive/, stages it through build/ and cache/, and
-# rotates its logs into tomcat_logs/. If any of those is not writable it accepts
+# XNAT ingests DICOM into prearchive/ and archive/, stages it through build/ and
+# cache/, and rotates its logs into tomcat_logs/. If any of those is not writable it accepts
 # the inbound association, fails the write, and aborts it — so the PACS reports a
 # *network* fault ("Peer aborted Association"), pointing at ports and AE titles
 # rather than at permissions. The same failure stops XNAT writing the application
@@ -198,12 +198,12 @@ XNAT_DIR_OWNER := $(XNAT_CONTAINER_UID):$(XNAT_CONTAINER_GID)
 
 # The bind-mount sources xnat-reset provisions. xnat-db-data is stag/prod-only:
 # the development stack gives xnat-db no persistent bind mount.
-XNAT_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive build cache) \
+XNAT_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive build cache prearchive) \
                   $(if $(IS_DEPLOYED),$(XNAT_DATA_DIR)/xnat-db-data)
 # The subset xnat-web itself writes — what upgrade-xnat checks on a LIVE site. xnat-db-data
 # is excluded there: Postgres's entrypoint re-owns it to its own uid on first boot, so on
 # a running site it is legitimately not 1001 and the reset-time check does not apply.
-XNAT_WEB_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive build cache)
+XNAT_WEB_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive build cache prearchive)
 
 # Verify every bind-mount source is owned by the container uid, and fail naming
 # the exact remedy when it is not. Fatal rather than a warning because the
@@ -491,6 +491,7 @@ upgrade-xnat: create-xnat-network
 	$(require_kit)
 	$(require_xnat_passwords)
 	@echo "⬆️  Upgrading XNAT stack $(XNAT_STACK) to $(XNAT_TAG) (data dir $(XNAT_DATA_DIR) kept)..."
+	$(MAKE) xnat-web-dirs KIT=$(KIT)
 	@# Check the directories where they are: on the trust host over ssh when the swarm is remote
 	@# (an EC2 node's upgrade runs this from the admin workstation), locally otherwise — the same
 	@# split the first-install reset target makes.
@@ -559,6 +560,17 @@ xnat-backup-writable:
 	     echo "   mkdir $(XNAT_DATA_DIR)/backups && chown $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)/backups"; exit 1 ;; \
 	  *) echo "❌ Could not check that uid $(XNAT_DIR_OWNER) can write $(XNAT_DATA_DIR)/backups (docker run failed)."; exit 1 ;; \
 	esac
+
+# Create the xnat-web bind-mount sources a live site lacks, as xnat-web's uid: a Swarm task whose
+# mount source is missing fails to start. prearchive/ is the one sites installed before FLIP#1818
+# lack. A throwaway container, like xnat-backup's, needs no sudo and reaches a remote swarm host too.
+xnat-web-dirs:
+	$(require_kit)
+	@docker run --rm --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" alpine:3.20 \
+	  mkdir -p $(patsubst $(XNAT_DATA_DIR)/%,/x/%,$(XNAT_WEB_DATA_DIRS)) || { \
+	  echo "❌ uid $(XNAT_DIR_OWNER) could not create the XNAT data dirs under $(XNAT_DATA_DIR)/xnat-data, so XNAT"; \
+	  echo "   was not upgraded. As root on the host, once:"; \
+	  echo "   chown $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)/xnat-data"; exit 1; }
 
 # Get a shell in the running xnat-web container for the selected trust.
 xnat-shell:

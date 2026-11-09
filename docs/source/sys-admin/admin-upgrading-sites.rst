@@ -184,6 +184,8 @@ playbook; see :ref:`onprem-operator-access`):
    their bind mounts.
 #. **Upgrade XNAT in place**:
 
+   - create ``$XNAT_DATA_DIR/xnat-data/prearchive/`` as xnat-web's uid if the site lacks it. Before this release XNAT
+     kept its prearchive inside the container, so sessions waiting there at the first upgrade after it are lost;
    - dump ``xnat-db`` with ``pg_dumpall`` into ``$XNAT_DATA_DIR/backups/``, written as xnat-web's uid. Without a complete
      dump the upgrade stops before touching XNAT. An upgrade before this release made ``backups/`` as root; the first
      upgrade after it stops there and prints the one-time ``chown`` to run as root;
