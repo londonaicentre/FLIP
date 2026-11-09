@@ -334,7 +334,8 @@ status: ## Show the status of the Helm release and run smoke tests
 	$(HELM) status $(RELEASE_NAME) --namespace $(NAMESPACE)
 	@echo ""
 	@echo "=== Smoke Tests ==="
-	@python3 $(CHART_DIR)/check_status.py --namespace $(NAMESPACE) --helm-release $(RELEASE_NAME)
+	@python3 $(CHART_DIR)/check_status.py --namespace $(NAMESPACE) --helm-release $(RELEASE_NAME) \
+		$(if $(KUBE_CONTEXT),--context $(KUBE_CONTEXT))
 
 list: ## List all Helm releases in the namespace
 	$(HELM) list --namespace $(NAMESPACE)
