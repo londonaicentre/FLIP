@@ -47,6 +47,8 @@ resource "aws_ecs_task_definition" "flower_register_supernode_keys" {
         { name = "HOME", value = "/tmp" },
       ]
 
+      # The SuperLink image's own user, flwr/base's app.
+      user                   = "49999:49999"
       readonlyRootFilesystem = true
       mountPoints = [
         { sourceVolume = "tmp", containerPath = "/tmp", readOnly = false },

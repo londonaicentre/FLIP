@@ -190,8 +190,11 @@ resource "aws_ecs_task_definition" "efs_provision" {
         SCRIPT
       ]
 
-      # Read-only root filesystem (ECS.5, FLIP#1795): the sync writes only to the EFS
-      # mounts. HOME moves anything the CLI would keep under ~/.aws onto the /tmp volume.
+      # Read-only root filesystem (ECS.5, FLIP#1795) and a non-root user (ECS.20, FLIP#1796).
+      # The sync writes only to the EFS mounts, whose access points act as 1001:1001 (efs.tf)
+      # whatever the caller, so the task runs as that uid. amazon/aws-cli declares no VOLUME, so
+      # /tmp and HOME are root-owned and not writable here; the CLI needs no local write.
+      user                   = "1001:1001"
       readonlyRootFilesystem = true
       environment            = [{ name = "HOME", value = "/tmp" }]
 
