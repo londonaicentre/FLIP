@@ -18,7 +18,7 @@
 - **A trust inside a TRE** (#1732, #1724). An on-prem trust installs and runs without sudo, behind a proxy, as the operator's own uid (`FLIP_UID`/`FLIP_GID`), and pulls every image, third-party ones included, from one registry: GHCR, with Grafana, Loki, Alloy and the socket proxy mirrored there and pinned by digest. This is what the KCL CREATE TRE runs on.
 - **AWS trusts in their own account** (#1632, #1636, #1717; issues #1438, #1439). A trust deploys on AWS from its own Terraform root, as one EC2 node (an existing subnet by default, no trust-owned Elastic IP, SSM only) or on EKS through the `flip-trust` chart. The hub's Terraform no longer creates a trust.
 - **Flower 1.42 behind a Fleet-only proxy** (#1531; issue #1517). Trusts reach the hub's SuperLink only through a new proxy that passes the Fleet API alone, so Flower's unauthenticated Control and Runtime APIs are never exposed to a trust. The Flower images now install flip-utils from its lock file, hash-checked, as the NVFLARE ones do (#1802).
-- **Hardening from the security review** (#1744, #1803, #1804, #1805; tracker #1743). Kits get minted passwords instead of template ones, trust and hub ports bind to loopback by default, the hub's containers run on a read-only root filesystem, its AWS resources pass Security Hub's FSBP baseline, and its web listener is on TLS. Two published advisories are fixed (GHSA-ghjq, GHSA-9fx9).
+- **Hardening from the security review** (#1744, #1803, #1804, #1805, #1809; tracker #1743). Kits get minted passwords instead of template ones, trust and hub ports bind to loopback by default, the hub's containers run as a non-root user on a read-only root filesystem, its AWS resources pass Security Hub's FSBP baseline, and its web listener is on TLS. Two published advisories are fixed (GHSA-ghjq, GHSA-9fx9).
 - **A real trust needs no sample data** (#1689, #1686). A new kit setting, `TRUST_DATA_SEED=false`, makes a first install fetch nothing from Hugging Face or PyPI; one outbound-traffic table now covers every node shape.
 
 ## :warning: Breaking Changes
@@ -55,7 +55,7 @@
 - Flower 1.42, with a Fleet-only proxy in front of the SuperLink (#1531).
 - Trust keys rotate in place: `make rotate-trust-keys KIT=<CODE>` reissues a trust's API and internal service keys without changing its identity or kit slot (#1601).
 - `TRUST_DATA_SEED=false` skips the sample data on every node shape (#1689). The readiness checklist probes the hub, the FL endpoint and the image registries from the trust host (#1727).
-- Hub hardening: minted kit passwords and loopback ports (#1744), read-only root filesystems on ECS (#1803), Security Hub FSBP controls (#1804), the web listener on TLS (#1805).
+- Hub hardening: minted kit passwords and loopback ports (#1744), read-only root filesystems on ECS (#1803), every hub container as a non-root user (#1809), Security Hub FSBP controls (#1804), the web listener on TLS (#1805).
 - FLARE job processes start faster: the images ship their Python bytecode (#1783).
 - MONAI bundle on-ramp in flip-utils: an overlay schema and a skeleton generator (#1389).
 - A browse-only public demo at `/demo/` with five example projects (#1748, #1759). Staging stops after its end-to-end check and a hold window (#1621, #1728).
