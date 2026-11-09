@@ -206,8 +206,7 @@ jobs:
 
             # generate_release_notes lets GitHub choose the previous release itself, which is
             # whatever was published most recently — including a flip-utils release cut seconds
-            # after ours on the same push. Pin the range to the previous *platform* tag instead,
-            # the way release-pypi.yml already does for its own artefact.
+            # after ours on the same push. Pin the range to the previous *platform* tag instead.
             - name: Prepare release notes
               if: steps.release_check.outputs.exists == 'false'
               id: notes
@@ -237,11 +236,13 @@ jobs:
                     "${API_ARGS[@]}" --jq '.body')
 
                   # The curated header (Highlights, Breaking Changes, Site upgrade, …) from the
-                  # release-notes template goes ABOVE the generated changelog, the same way
-                  # release-pypi.yml publishes it — the "Site upgrade" section is what trust
-                  # operators act on, so it belongs on the platform release.
-                  # The licence block is stripped by its whole-line delimiters — see
-                  # release-pypi.yml for why an unanchored range would eat every section.
+                  # release-notes template goes ABOVE the generated changelog — the "Site upgrade"
+                  # section is what trust operators act on, so it belongs on the platform release
+                  # (and only there: the flip-utils release lists its own PRs, release-pypi.yml).
+                  # The licence block is stripped by its whole-line delimiters (`^<!--$` / `^-->$`)
+                  # because only it spans lines that way. The template's other comments are
+                  # single-line, and an unanchored `/^<!--/,/-->/` opens a range on one of those
+                  # that does not close until the NEXT comment, eating every section in between.
                   VERSION="${{ steps.version.outputs.version }}"
                   HEADER=$(sed '/^<!--$/,/^-->$/d' "$GITHUB_WORKSPACE/.github/RELEASE_NOTES_TEMPLATE.md" \
                     | sed "s/{{PROJECT}}/FLIP/g" \
