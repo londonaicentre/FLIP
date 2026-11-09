@@ -274,8 +274,8 @@ path: LOCAL_DEV reads `fl-tutorials/data/` straight from disk and touches no tru
 
 **A real trust turns seeding off (FLIP#1687).** `TRUST_DATA_SEED=false` in the kit (unset = `true`) makes
 `ensure-seeded`, so `up-trust`, `up-onprem-trust` and `restart-trust`, fetch, load and mark nothing whatever the
-markers or the pin say (no Hugging Face or PyPI request either). Not yet the EC2 root's `deploy`, which runs its
-own seed play whatever the kit says. Any other value is refused, since read as true it would seed a real
+markers or the pin say (no Hugging Face or PyPI request either), and the EC2 root's `seed` (so its `deploy`) skips
+its sample-data play, loading only the vocabulary from `KIT_BUCKET`. Any other value is refused, since read as true it would seed a real
 OMOP, and `up-trust` checks it before starting a container. `sync-kit` maps it onto `trustData.seed.enabled:
 false`, below a platform overlay or `--set`. The onboarding checklist's data-dir hints and the
 node self-test (`SELFTEST_TRUST_DATA_SEED=false`: the seed-marker and C-STORE
