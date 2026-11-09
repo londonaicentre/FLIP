@@ -83,7 +83,7 @@ EXPECTED_AWS_PROFILE := $($(_AWS_PROFILE_KNOB_$(ENV)))
 
 ## SETTING VARIABLES FOR TERRAFORM
 # The environment class (prod|stag, from env_mode.mk). Used in main.tf to gate
-# prod-only RDS hardening (deletion protection, final snapshot).
+# the prod-only RDS final snapshot.
 export TF_VAR_environment=$(ENV_CLASS)
 
 # Name tag of the platform-managed VPC. Set LZA_VPC_NAME in the env file to override the variables.tf default (AWSAccelerator-eu-west-2-prod) —
@@ -177,7 +177,8 @@ endif
 ifneq ($(JOB_RESOURCE_SPEC_NUM_GPUS),)
 export TF_VAR_JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS}
 endif
-# Uncomment to enable ECS Exec on Fargate tasks for debugging:
+# Uncomment to enable ECS Exec on Fargate tasks for debugging. It also makes the services' root
+# filesystems writable, which ECS Exec needs, so Security Hub ECS.5 fails until it is off again (FLIP#1795):
 # export TF_VAR_ecs_exec_enabled=true
 
 export TF_VAR_docker_image_tag=${DOCKER_TAG}
@@ -210,9 +211,9 @@ export TF_VAR_flower_kit_date=${FLOWER_KIT_DATE}
 export TF_VAR_POSTGRES_USER=${POSTGRES_USER}
 export TF_VAR_FL_SERVER_PORT=${FL_SERVER_PORT}
 export TF_VAR_AWS_REGION=${AWS_REGION}
-# DNS availability (FLIP#749): an LZA account has no Route53 hosted zone until
-# the platform-side DNS migration lands, so its env file sets MANAGE_DNS=false
-# (no custom certs/records) and flips it to true once the zone exists there.
+# DNS availability (FLIP#749): an LZA account has no Route53 hosted zone (the
+# platform keeps it), so its env file sets MANAGE_DNS=false (no custom
+# certs/records; the web listener's cert comes from the platform, FLIP#1797).
 # Required, no default (the env guards above).
 export TF_VAR_manage_dns=$(MANAGE_DNS)
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
@@ -863,7 +864,7 @@ endif
 	@echo ""
 	@echo "⚠️  REMAINING MANUAL STEPS:"
 	@echo "   1. Deploy the staged FL kit into /opt/flip (run the commands printed above)."
-	@echo "   2. Start the trust stack (sudo: the login user is deliberately not in the docker group):"
+	@echo "   2. Start the trust stack (sudo: this playbook leaves the login user without docker access):"
 	@echo "      cd ../../.. && sudo -E make -C trust up-trust KIT=$(KIT) HUB=$(HUB)"
 
 .PHONY: down
@@ -978,7 +979,7 @@ full-deploy: ## Full AWS deployment of the Central Hub; trusts deploy from trust
 	## 1. login + init: auth and Terraform init
 	## 2. generate-internal-service-key: mint the fl-server→hub key (idempotent)
 	## 3. plan+apply: provision the hub's AWS infrastructure (ECS, RDS, bastion, secrets)
-	## 4. update-env: refresh .env with Terraform outputs (bastion ID, DB endpoint, Cognito IDs)
+	## 4. update-env: refresh .env with Terraform outputs (the two Cognito IDs)
 	## 5. ssh-config + ansible-init: configure the SSM bastion
 	## 6. deploy-centralhub: deploy Central Hub ECS services at the env branch tip (new task-def revisions) + publish the UI
 	## 7. register-trusts: register every live trust/.env.*.<env> kit present (none yet is fine)

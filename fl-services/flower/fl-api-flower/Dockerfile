@@ -47,6 +47,11 @@ USER app
 # within the cooldown window instead of failing, matching nvflare/fl-api-base.
 RUN uv sync --no-dev
 
+# The paths the API writes on ECS's read-only root filesystem (/tmp and the entrypoint's Flower CLI
+# config); must stay VOLUMEs (FLIP#1795, deploy/providers/AWS/AGENTS.md).
+RUN mkdir -p /home/app/.flwr
+VOLUME ["/tmp", "/home/app/.flwr"]
+
 # Add fastapi executable to path
 ENV PATH="/app/.venv/bin:$PATH"
 

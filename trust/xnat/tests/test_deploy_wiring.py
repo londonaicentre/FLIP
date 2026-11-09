@@ -374,6 +374,15 @@ def test_refuses_to_publish_both_services_on_one_port(tmp_path):
     assert "must differ" in result.stdout + result.stderr
 
 
+def test_xnat_dir_owner_follows_the_kits_flip_uid():
+    """xnat-web runs as the kit's FLIP_UID:FLIP_GID when set (the prod stack's `user:`), so that is who must
+    own its bind-mount sources; unset keeps the image's xnat user, and FLIP_GID alone unset follows FLIP_UID
+    (FLIP#1731)."""
+    assert make_vars("XNAT_DIR_OWNER")["XNAT_DIR_OWNER"] == "1001:1001"
+    assert make_vars("XNAT_DIR_OWNER", FLIP_UID="4242", FLIP_GID="4243")["XNAT_DIR_OWNER"] == "4242:4243"
+    assert make_vars("XNAT_DIR_OWNER", FLIP_UID="4242")["XNAT_DIR_OWNER"] == "4242:4242"
+
+
 def test_nginx_update_rides_out_the_xnat_web_restart():
     """An in-place upgrade updates xnat-web and xnat-nginx together (FLIP#1204).
 

@@ -1,4 +1,4 @@
-# EHR Risk Prediction — FLIP tutorial (Flower)
+# Type 2 diabetes risk from health records
 
 Federated training of a small **multi-layer perceptron (MLP)** that predicts **type-2-diabetes
 (T2DM) onset** from OMOP tabular features — patient demographics plus pre-diagnosis condition and
@@ -12,6 +12,17 @@ no PACS pull, no data-enrichment step — and **CPU is enough** to train it. The
 label, preprocessing and network are identical to the FLARE tutorial; see
 [its README](../../../nvflare/tabular_classification/ehr_risk_prediction/README.md) for the full
 treatment of those. This page focuses on the **Flower-specific mechanics** and how to run it.
+
+## At a glance
+
+| Item | Value |
+|---|---|
+| What you upload | everything in `app/` |
+| Job type | standard |
+| Imaging | off |
+| Cohort query | `query.sql` |
+| Dataset | `make -C fl-tutorials download-synthea-data` |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=ehr_risk_prediction FL_BACKEND=flower` (CPU) |
 
 ---
 
@@ -33,9 +44,10 @@ query.sql                # the OMOP cohort query (identical to the FLARE copy)
 
 `server_app.py` and `strategy.py` are copied byte-for-byte from the
 [`fl-apps/flower/standard`](../../../../fl-apps/flower/standard) template (CI enforces this via
-`scripts/check_tutorial_sync.sh`), so all the platform telemetry, best-model selection and
-`min_clients` wiring come from the shared template — this tutorial only supplies `client_app.py`,
-`task.py` and the shared feature/model code.
+`fl-tutorials/tests/test_flower_platform_parity.py`; `scripts/check_tutorial_sync.sh` pins the three
+files shared with the FLARE twin — `feature_engineering.py`, `models.py`, `query.sql`), so all the
+platform telemetry, best-model selection and `min_clients` wiring come from the shared template — this
+tutorial only supplies `client_app.py`, `task.py` and the shared feature/model code.
 
 ## Configuration: two files
 
@@ -94,7 +106,9 @@ rounds only — `@app.evaluate` is untouched.
 | `dp-epsilon`       | `10.0`  | Privacy budget — smaller means more privacy and more noise |
 | `dp-delta`         | `1e-5`  | Probability the guarantee fails outright |
 
-Override per run without editing the app: `flwr run . --run-config "dp-enabled=false"`.
+To override per run without editing the app, pass `--run-config` to `sim-tutorial.sh` (what
+`make run-tutorial` runs); it forwards everything after the tutorial name to `flwr run`:
+`bash fl-tutorials/flower/sim-tutorial.sh ehr_risk_prediction --run-config "dp-enabled=false"`.
 
 > ⚠️ The DP defaults are **demonstration values, not a privacy budget.** `dp-clipping-norm` is
 > sized to this model's update so clipping does not throttle training, but the noise comes from

@@ -91,40 +91,40 @@ class TutorialCopy:
 # listed falls back to a capitalised, de-hyphenated form of the directory name and a generic task.
 TUTORIALS: dict[str, TutorialCopy] = {
     "xray_classification": TutorialCopy(
-        "Chest X-ray classification",
+        "Chest X-ray lesion classification",
         "Detecting pleural effusion and pulmonary oedema on chest X-rays with an image classifier trained "
         "across the participating trusts' radiographs.",
         nifti=False,
     ),
     "3d_spleen_segmentation": TutorialCopy(
-        "3D spleen segmentation",
+        "Spleen segmentation on CT",
         "Outlining the spleen on abdominal CT scans, so its size and shape can be measured automatically, "
         "with a 3D segmentation model trained across the participating trusts.",
     ),
     "3d_spleen_segmentation_evaluation": TutorialCopy(
-        "3D spleen segmentation evaluation",
+        "Evaluating a spleen segmentation model",
         "Checking how accurately an existing spleen-outlining model traces the spleen on each participating "
         "trust's abdominal CT scans, without retraining it.",
     ),
     "arkplus_fine_tuning": TutorialCopy(
-        "Ark+ fine-tuning",
+        "Fine-tuning a chest X-ray foundation model (Ark+)",
         "Adapting the Ark+ chest X-ray foundation model to the participating trusts' own radiographs so it "
         "recognises the chest conditions seen locally.",
         nifti=False,
     ),
     "arkplus_baseline_classification_evaluation": TutorialCopy(
-        "Ark+ baseline classification evaluation",
+        "Evaluating a chest X-ray foundation model (Ark+)",
         "Measuring how well the existing Ark+ chest X-ray model recognises chest conditions on each "
         "participating trust's radiographs, without retraining it.",
         nifti=False,
     ),
     "3d_prostate_segmentation": TutorialCopy(
-        "3D prostate segmentation",
+        "Prostate MRI zonal segmentation",
         "Outlining the prostate gland and its peripheral and transition zones on T2-weighted MRI, with a "
         "3D segmentation model trained across the participating trusts' scans.",
     ),
     "ehr_risk_prediction": TutorialCopy(
-        "EHR risk prediction",
+        "Type 2 diabetes risk from health records",
         "Predicting which patients will go on to develop type 2 diabetes from their routine electronic "
         "health records — demographics plus the conditions and hospital visits recorded before diagnosis — "
         "with a model trained across the participating trusts.",
@@ -138,23 +138,23 @@ TUTORIALS: dict[str, TutorialCopy] = {
         nifti=False,
     ),
     "arkplus_multimodel_classification_evaluation": TutorialCopy(
-        "Ark+ multi-model classification evaluation",
+        "Comparing two chest X-ray models: pretrained vs fine-tuned",
         "Comparing several existing Ark+ chest X-ray models on each participating trust's radiographs to "
         "see which recognises chest conditions best, without retraining them.",
         nifti=False,
     ),
     "brain_mri_ldm_stage1_autoencoder": TutorialCopy(
-        "Brain MRI latent diffusion, stage 1 (autoencoder)",
+        "Brain MRI generation, step 1: autoencoder",
         "Learning to compress brain MRI scans and rebuild them faithfully, across the participating trusts' "
         "scans: the first step towards generating realistic synthetic brain MRI.",
     ),
     "brain_mri_ldm_stage2_diffusion": TutorialCopy(
-        "Brain MRI latent diffusion, stage 2 (diffusion)",
+        "Brain MRI generation, step 2: latent diffusion",
         "Generating realistic synthetic brain MRI scans of a chosen sequence (FLAIR, T1, contrast-enhanced T1 "
         "or T2) with a generative model trained across the participating trusts' scans.",
     ),
     "xray_diffusion": TutorialCopy(
-        "Chest X-ray diffusion",
+        "Generating chest X-rays with diffusion",
         "Generating realistic synthetic chest X-rays with a generative model trained across the participating "
         "trusts' radiographs.",
         nifti=False,

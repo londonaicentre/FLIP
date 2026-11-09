@@ -27,7 +27,7 @@ what a plan would have to see to be a no-op — which is the definition of corre
 for this purpose.
 
 Distinct from ``update_env.py`` next door, which pushes Terraform *outputs*
-(DB endpoint, Cognito IDs) back into an env file after an apply. This recovers
+(the two Cognito IDs) back into an env file after an apply. This recovers
 Terraform *inputs*.
 
 Secret values are written to the output file but never printed: the summary

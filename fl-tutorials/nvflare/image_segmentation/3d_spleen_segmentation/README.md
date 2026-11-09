@@ -1,4 +1,4 @@
-# 3D Spleen Segmentation — FLIP tutorial
+# Spleen segmentation on CT
 
 This tutorial trains a 3D UNet spleen segmentation model on CT scans from the
 [Medical Segmentation Decathlon (MSD)](http://medicaldecathlon.com/) using the **FLARE Client API**
@@ -12,9 +12,17 @@ validation runs server-side via global model evaluation.
 The training code is adapted from the MONAI spleen example:
 <https://github.com/Project-MONAI/tutorials/blob/main/3d_segmentation/spleen_segmentation_3d.ipynb>
 
-## Compatible job type
+## At a glance
 
-This tutorial is designed for `JOB_TYPE=standard`.
+| Item | Value |
+|---|---|
+| What you upload | everything in `app_files/` |
+| Job type | standard |
+| Imaging | on, DICOM to NIfTI on; labels uploaded as [data enrichment](#running-on-a-real-flip-project-data-enrichment) |
+| Cohort query | `query.sql` |
+| Dataset | `make -C fl-tutorials download-spleen-data` |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation` (GPU) |
+| MAP packaging | `export/metadata.json` and `export/inference.json` (not uploaded) |
 
 ## Data requirements
 

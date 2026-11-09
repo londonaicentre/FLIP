@@ -14,7 +14,7 @@
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks \
 		check-aws-access generate-internal-service-key generate-xnat-credentials _check-compose-project-owner \
 		register-trust register-trusts rotate-trust-keys new-trust _wait-for-hub integration_test \
-		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint aws-diagram \
+		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint mirror-images aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
 		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
 		demo-video demo-users seed-demo-projects reset-keycloak \
@@ -341,6 +341,9 @@ down: _check-compose-project-owner
 	@echo "🛑 Stopping all services..."
 	$(MAKE) -C trust down
 
+	@# `down` leaves anonymous volumes behind, and these services' images declare their scratch
+	@# paths as volumes (FLIP#1795): remove those with their containers first.
+	${DOCKER_COMMAND} rm -fsv flip-api fl-api-net-1 fl-api-net-2 $(FL_SERVER_SERVICES)
 	${DOCKER_COMMAND} down --remove-orphans
 	@echo "🛌 All services stopped successfully!"
 
@@ -403,6 +406,10 @@ restart: down up
 #       to NVFLARE a proxy still answering to that alias would take some of the NVFLARE
 #       clients' connections. Orphans are scoped to this compose project, whose files define
 #       every shared service (flip-db, object-store, keycloak), so nothing else is touched.
+# NOTE: each service is removed with `rm -fsv` and then started, not recreated in place. The hub
+#       images declare the paths they write as volumes (FLIP#1795), and a recreate hands the new
+#       container its predecessor's: the FLARE server's job store, or on a backend switch the
+#       other backend's /tmp. `rm -v` takes those anonymous volumes with the container.
 FL_SERVER_SERVICES := fl-server-net-1 fl-server-net-2 \
 	$(if $(filter flower,$(FL_BACKEND)),fl-fleet-proxy-net-1 fl-fleet-proxy-net-2)
 restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir _ensure-object-store-dir
@@ -410,12 +417,15 @@ restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir _ensure-object-stor
 	@echo "🔄 Step 1: Stopping and removing old FL clients..."
 	$(MAKE) -C trust down-fl-clients
 	@echo "🔄 Step 2: Recreating flip-api to re-seed FLNets.fl_backend=$(FL_BACKEND)..."
-	${DOCKER_COMMAND} up -d --force-recreate --no-deps $(UP_PULL_FLAGS) flip-api
+	${DOCKER_COMMAND} rm -fsv flip-api
+	${DOCKER_COMMAND} up -d --no-deps $(UP_PULL_FLAGS) flip-api
 	@echo "🔄 Step 3: Restarting FL APIs and servers..."
-	${DOCKER_COMMAND} up -d --force-recreate --no-deps --remove-orphans $(UP_PULL_FLAGS) fl-api-net-1 fl-api-net-2 $(FL_SERVER_SERVICES)
+	${DOCKER_COMMAND} rm -fsv fl-api-net-1 fl-api-net-2 $(FL_SERVER_SERVICES)
+	${DOCKER_COMMAND} up -d --no-deps --remove-orphans $(UP_PULL_FLAGS) fl-api-net-1 fl-api-net-2 $(FL_SERVER_SERVICES)
 	@if [ "$(FL_BACKEND)" = "flower" ]; then \
 		echo "🔄 Step 4: Registering new client keys with FL servers (Flower only)..."; \
-		${DOCKER_COMMAND} up --force-recreate $(UP_PULL_FLAGS) register-supernode-keys-net-1 register-supernode-keys-net-2; \
+		${DOCKER_COMMAND} rm -fsv register-supernode-keys-net-1 register-supernode-keys-net-2; \
+		${DOCKER_COMMAND} up $(UP_PULL_FLAGS) register-supernode-keys-net-1 register-supernode-keys-net-2; \
 	fi
 	@echo "🔄 Step 5: Starting new FL clients..."
 	$(MAKE) -C trust up-fl-clients
@@ -438,6 +448,12 @@ checkov-lint:
 # ruleset plugin on first run. Runs the script directly, like checkov-lint.
 tflint-lint:
 	bash deploy/providers/AWS/scripts/tflint_lint.sh
+# Copy the third-party images a trust node runs (trust/deploy/mirror-images.manifest) into
+# ghcr.io/londonaicentre/mirror/ by digest (FLIP#1721). CI does this on develop/main
+# (.github/workflows/mirror_images.yml); locally it needs a GHCR login with write:packages.
+# CHECK=1 pushes nothing and fails on a missing or drifted mirror.
+mirror-images:
+	bash scripts/mirror_images.sh $(if $(CHECK),--check)
 # Re-render the two committed Central Hub AWS diagrams under deploy/providers/AWS/docs/
 # (central-hub-aws-lza-{network,data}.png) from deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
 # build time instead). Uses the local graphviz when `dot` is installed; the dev hosts have none,

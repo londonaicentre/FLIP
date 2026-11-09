@@ -1,4 +1,4 @@
-# EHR Risk Prediction — FLIP tutorial (FLARE)
+# Type 2 diabetes risk from health records
 
 Federated training of a small **multi-layer perceptron (MLP)** that predicts **type-2-diabetes
 (T2DM) onset** from OMOP tabular features — patient demographics plus pre-diagnosis condition and
@@ -10,6 +10,17 @@ XNAT, this one fetches its entire cohort through `flip.get_dataframe` — arbitr
 trust's OMOP CDM database — and touches **no imaging at all**: no Orthanc, no XNAT, no PACS pull, no
 data-enrichment step. It is the counterpart to the imaging tutorials, exercising the platform's
 other data path, and **CPU is enough** to train it.
+
+## At a glance
+
+| Item | Value |
+|---|---|
+| What you upload | everything in `app_files/` |
+| Job type | standard |
+| Imaging | off |
+| Cohort query | `query.sql` |
+| Dataset | `make -C fl-tutorials download-synthea-data` |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=ehr_risk_prediction` (CPU) |
 
 ---
 
@@ -160,7 +171,7 @@ make -C fl-tutorials run-tutorial TUTORIAL=ehr_risk_prediction
 Each simulated site resolves its own split via `SITE{N}_DATAFRAME` from `.env.app` (falling back to
 slicing the shared `DEV_DATAFRAME` by `person_id` modulo), so the run stays genuinely federated even
 off a single file. Override the round/client counts inline, e.g.
-`make run-tutorial TUTORIAL=ehr_risk_prediction NUM_ROUNDS=10`.
+`make -C fl-tutorials run-tutorial TUTORIAL=ehr_risk_prediction NUM_ROUNDS=10`.
 
 ### On the platform (or `make e2e_smoke`)
 

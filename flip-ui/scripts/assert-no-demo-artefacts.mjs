@@ -12,7 +12,7 @@
  */
 
 /**
- * Fails a NON-demo build whose output still carries the Ark+ demo register or
+ * Fails a NON-demo build whose output still carries the public demo register or
  * the MirageJS mock stack.
  *
  * scripts/check-build-flags.mjs inspects the *environment* — it proves the

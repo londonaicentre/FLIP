@@ -190,41 +190,52 @@ resource "aws_ecs_task_definition" "efs_provision" {
         SCRIPT
       ]
 
-      mountPoints = var.fl_backend == "flower" ? [
-        {
-          sourceVolume  = "efs-flower-certs"
-          containerPath = "/mnt/flower-certs"
-        },
-        {
-          sourceVolume  = "efs-flower-keys"
-          containerPath = "/mnt/flower-keys"
-        },
-        {
-          sourceVolume  = "efs-flower-jobs"
-          containerPath = "/mnt/flower-jobs"
-        },
-        ] : [
-        {
-          sourceVolume  = "efs-fl-api-local"
-          containerPath = "/mnt/fl-api/local"
-        },
-        {
-          sourceVolume  = "efs-fl-api-startup"
-          containerPath = "/mnt/fl-api/startup"
-        },
-        {
-          sourceVolume  = "efs-fl-server-local"
-          containerPath = "/mnt/fl-server/local"
-        },
-        {
-          sourceVolume  = "efs-fl-server-startup"
-          containerPath = "/mnt/fl-server/startup"
-        },
-        {
-          sourceVolume  = "efs-fl-server-transfer"
-          containerPath = "/mnt/fl-server/transfer"
-        },
-      ]
+      # Read-only root filesystem (ECS.5, FLIP#1795) and a non-root user (ECS.20, FLIP#1796).
+      # The sync writes only to the EFS mounts, whose access points act as 1001:1001 (efs.tf)
+      # whatever the caller, so the task runs as that uid. amazon/aws-cli declares no VOLUME, so
+      # /tmp and HOME are root-owned and not writable here; the CLI needs no local write.
+      user                   = "1001:1001"
+      readonlyRootFilesystem = true
+      environment            = [{ name = "HOME", value = "/tmp" }]
+
+      mountPoints = concat(
+        [{ sourceVolume = "tmp", containerPath = "/tmp" }],
+        var.fl_backend == "flower" ? [
+          {
+            sourceVolume  = "efs-flower-certs"
+            containerPath = "/mnt/flower-certs"
+          },
+          {
+            sourceVolume  = "efs-flower-keys"
+            containerPath = "/mnt/flower-keys"
+          },
+          {
+            sourceVolume  = "efs-flower-jobs"
+            containerPath = "/mnt/flower-jobs"
+          },
+          ] : [
+          {
+            sourceVolume  = "efs-fl-api-local"
+            containerPath = "/mnt/fl-api/local"
+          },
+          {
+            sourceVolume  = "efs-fl-api-startup"
+            containerPath = "/mnt/fl-api/startup"
+          },
+          {
+            sourceVolume  = "efs-fl-server-local"
+            containerPath = "/mnt/fl-server/local"
+          },
+          {
+            sourceVolume  = "efs-fl-server-startup"
+            containerPath = "/mnt/fl-server/startup"
+          },
+          {
+            sourceVolume  = "efs-fl-server-transfer"
+            containerPath = "/mnt/fl-server/transfer"
+          },
+        ],
+      )
 
       logConfiguration = {
         logDriver = "awslogs"
@@ -236,6 +247,10 @@ resource "aws_ecs_task_definition" "efs_provision" {
       }
     }
   ])
+
+  volume {
+    name = "tmp"
+  }
 
   # Mount the same EFS access points as the runtime services. certs/keys
   # access points still exist in efs.tf for state continuity, but the
