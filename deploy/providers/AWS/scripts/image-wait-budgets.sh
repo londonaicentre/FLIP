@@ -23,12 +23,18 @@
 #
 # A queued, running or green run gets the full GHCR_WAIT_SECONDS. No run, or a
 # finished run that is not green, gets 0, which the resolver reads as one probe.
-# All runs for a push are created together, so the build run is already there
-# when the apply asks, and a dispatch of the same commit gets the same answer.
+# GitHub creates a push's runs within a second of each other and the apply asks
+# about a minute later, so the run queried is there by then; a dispatch of the
+# same commit gets the same answer.
 #
-# Fails safe: an API or parse error waits the full budget. So does a release
-# apply (RELEASE_TAG): its images come from builds dispatched at the tag, not
-# from push runs, and the resolver probes them once regardless.
+# Fails safe: an API or parse error waits the full budget. A release apply
+# (RELEASE_TAG) is not asked about: its images come from builds dispatched at
+# the tag, not from push runs, and the resolver probes them once whatever the
+# budget.
+#
+# Not seen: a build started by hand ("Run workflow") after a red push run, or a
+# red run re-run after the apply asked. Either gets one probe, so re-dispatch the
+# apply once that build is green.
 #
 # Reads from the environment:
 #     GITHUB_REPOSITORY, GITHUB_SHA  set by Actions
@@ -56,16 +62,20 @@ RELEASE_TAG="${RELEASE_TAG:-}"
 
 [[ "${GHCR_WAIT_SECONDS}" =~ ^[0-9]+$ ]] ||
     die "GHCR_WAIT_SECONDS must be a whole number of seconds (got '${GHCR_WAIT_SECONDS}')"
+GHCR_WAIT_SECONDS=$((10#${GHCR_WAIT_SECONDS})) # base 10: a leading zero is not octal
 case "${FL_BACKEND}" in
     nvflare | flower) ;;
     *) die "FL_BACKEND must be 'nvflare' or 'flower' (got '${FL_BACKEND}')" ;;
 esac
 
 # building: a run that may still publish the image. none / red: nothing will.
-# Anything that is not a list of runs is an error, which waits the full budget.
+# Anything that is not a list of runs, or a finished run with no conclusion, is
+# an error, which waits the full budget.
 VERDICT='
   .workflow_runs
   | if type != "array" then error("no workflow_runs list")
+    elif any(.[]; .status == "completed" and (.conclusion | type) != "string")
+    then error("completed run without a conclusion")
     elif any(.[]; .status != "completed" or .conclusion == "success") then "building"
     elif length == 0 then "none"
     else "red" end'
@@ -74,13 +84,13 @@ VERDICT='
 budget() {
     local group="$1" workflow="$2" runs verdict
     if [[ -n "${RELEASE_TAG}" ]]; then
-        log "${group}: release ${RELEASE_TAG}, ${GHCR_WAIT_SECONDS}s (the resolver probes the release once)"
+        log "${group}: release ${RELEASE_TAG}, runs not asked (the resolver probes the release once)"
         echo "${GHCR_WAIT_SECONDS}"
         return
     fi
     if ! runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/runs?head_sha=${GITHUB_SHA}&event=push")" ||
         ! verdict="$(jq -er "${VERDICT}" <<<"${runs}" 2>/dev/null)"; then
-        log "${group}: could not read the ${workflow} runs for ${GITHUB_SHA:0:7}, so waiting the full ${GHCR_WAIT_SECONDS}s"
+        log "::warning::${group}: could not read the ${workflow} runs for ${GITHUB_SHA:0:7}, so waiting the full ${GHCR_WAIT_SECONDS}s"
         echo "${GHCR_WAIT_SECONDS}"
         return
     fi
@@ -90,7 +100,7 @@ budget() {
             echo 0
             ;;
         red)
-            log "${group}: the ${workflow} run for ${GITHUB_SHA:0:7} did not succeed, so probing once"
+            log "::warning::${group}: the ${workflow} run for ${GITHUB_SHA:0:7} did not succeed, so probing once: this apply keeps the running image unless that image is published"
             echo 0
             ;;
         *)

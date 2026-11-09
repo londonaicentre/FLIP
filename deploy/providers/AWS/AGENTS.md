@@ -123,8 +123,9 @@ Things worth knowing before touching any of it:
   `GHCR_WAIT_SECONDS_FL` (each defaulting to `GHCR_WAIT_SECONDS`), which
   `terraform_apply.yml` sets with `scripts/image-wait-budgets.sh`: the full budget only
   while the group's build workflow has a queued, running or green push run for the
-  commit, else one probe (FLIP#1811). fl-server and fl-api share the FL budget: once one
-  exhausts it the other probes once.
+  commit, else one probe; an API error waits in full (FLIP#1811). fl-server and fl-api
+  share the FL budget: once one exhausts it the other probes once. A build started by
+  hand after a red push run is not seen: re-dispatch the apply once it is green.
 - **`RELEASE_TAG` (`v<X.Y.Z>`, FLIP#1283) makes the resolver release-aware.** When
   set, every hub/FL image resolves to that release instead of `sha-<short7>` and is
   pinned by **digest** as `v<X.Y.Z>@sha256:…`: `:v<X.Y.Z>` is republished by design

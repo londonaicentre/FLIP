@@ -159,7 +159,7 @@ runs fl-docker-build-nvflare.yml completed:success
 run_budgets "both builds green"
 expect "${FULL}"
 
-# 5. A finished run that is not green publishes nothing.
+# 5. A finished run that is not green is not waited for.
 for conclusion in failure cancelled skipped timed_out startup_failure; do
     fixture
     runs test_flip_api.yml "completed:${conclusion}"
@@ -175,11 +175,14 @@ runs fl-docker-build-nvflare.yml completed:cancelled completed:success
 run_budgets "a red run and a newer one"
 expect "${FULL}"
 
-# 7. Waiting on an environment approval is not finished.
-fixture
-runs test_flip_api.yml waiting
-run_budgets "a run waiting for approval"
-expect $'hub=900\nfl=0'
+# 7. Any status but completed is not finished: just created (requested,
+#    pending) or waiting on an environment approval.
+for status in requested pending waiting; do
+    fixture
+    runs test_flip_api.yml "${status}"
+    run_budgets "a ${status} run"
+    expect $'hub=900\nfl=0'
+done
 
 # 8. The FL group asks the estate's own backend: on a FLARE estate a Flower build
 #    is not this estate's image.
@@ -221,9 +224,16 @@ for body in 'not json' '{"message":"Not Found"}' '{"workflow_runs":null}' ''; do
     expect "${FULL}"
 done
 
+# ...and so does a finished run with no conclusion: not a red run, a bad answer.
+fixture
+runs test_flip_api.yml completed
+runs fl-docker-build-nvflare.yml completed
+run_budgets "a completed run without a conclusion waits the full budget"
+expect "${FULL}"
+
 # 11. RELEASE PATH. A release apply's images come from builds dispatched at the
-#     tag, never from push runs at this sha, so "no push run" must not cut its
-#     budget. Behaviour is unchanged from before FLIP#1811, and gh is not asked.
+#     tag, never from push runs at this sha, so gh is not asked. The resolver
+#     probes a release once whatever the budget.
 fixture
 run_budgets "a release apply keeps the full budget" RELEASE_TAG=v1.2.3
 expect "${FULL}"
@@ -239,6 +249,8 @@ runs test_flip_api.yml in_progress
 run_budgets "a configured budget" GHCR_WAIT_SECONDS=300
 expect $'hub=300\nfl=0'
 run_budgets "the default budget" GHCR_WAIT_SECONDS=
+expect $'hub=900\nfl=0'
+run_budgets "a leading zero is not octal" GHCR_WAIT_SECONDS=0900
 expect $'hub=900\nfl=0'
 
 # 13. Bad inputs stop the step rather than guess.

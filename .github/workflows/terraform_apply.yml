@@ -249,8 +249,9 @@ jobs:
       # The resolver waits per image group: the hub (flip-api) and FL (fl-server,
       # fl-api and Flower's proxy: one workflow, so one budget). A group gets
       # GHCR_WAIT_SECONDS only while its build workflow has a queued, running or
-      # green push run for this commit; otherwise it probes once. A push and a
-      # dispatch get the same answer (FLIP#1811, scripts/image-wait-budgets.sh).
+      # green push run for this commit; otherwise it probes once (an API error
+      # waits in full). A push and a dispatch get the same answer (FLIP#1811,
+      # scripts/image-wait-budgets.sh).
       - name: Decide how long to wait for this commit's images
         id: wait
         env:
@@ -260,11 +261,11 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: deploy/providers/AWS/scripts/image-wait-budgets.sh >> "$GITHUB_OUTPUT"
 
-      # Hazard A. Waits for this commit's `sha-<short7>` images, which
-      # docker_build_*.yml publishes only after the service's tests pass — so an
-      # apply cannot deploy an image that never went green. When no image was
-      # published (an infrastructure-only merge) it reuses what the services are
-      # already running, never the mutable tag.
+      # Hazard A. Waits for this commit's `sha-<short7>` images while their build
+      # runs. docker_build_flip_api.yml publishes only after the service's tests
+      # pass — so an apply cannot deploy a flip-api that never went green. When
+      # no image was published (an infrastructure-only merge) it reuses what the
+      # services are already running, never the mutable tag.
       - name: Resolve the image tags to pin
         env:
           GIT_SHA: ${{ github.sha }}
@@ -275,6 +276,8 @@ jobs:
           FALLBACK_DOCKER_TAG: ${{ vars.DOCKER_TAG }}
           FALLBACK_DOCKER_FL_TAG: ${{ vars.DOCKER_FL_TAG }}
           FL_BACKEND: ${{ vars.FL_BACKEND }}
+          # The fallback for an empty group budget; the groups come from the step above.
+          GHCR_WAIT_SECONDS: ${{ vars.GHCR_WAIT_SECONDS || 900 }}
           GHCR_WAIT_SECONDS_HUB: ${{ steps.wait.outputs.hub }}
           GHCR_WAIT_SECONDS_FL: ${{ steps.wait.outputs.fl }}
         run: deploy/providers/AWS/scripts/resolve-image-tags.sh >> "$GITHUB_ENV"

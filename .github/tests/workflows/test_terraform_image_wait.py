@@ -225,7 +225,8 @@ class TerraformApplyUsesTheBudgets(unittest.TestCase):
         step = step_block(self.text, "Decide how long to wait for this commit's images")
         assert 'run: deploy/providers/AWS/scripts/image-wait-budgets.sh >> "$GITHUB_OUTPUT"' in step
         assert "FL_BACKEND: ${{ vars.FL_BACKEND }}" in step
-        # A release's images come from tag-dispatched builds; the script keeps the full budget for it.
+        assert "GHCR_WAIT_SECONDS: ${{ vars.GHCR_WAIT_SECONDS || 900 }}" in step
+        # A release's images come from tag-dispatched builds; the script does not ask about it.
         assert "RELEASE_TAG: ${{ inputs.release_tag }}" in step
         assert "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}" in step
         assert "git diff" not in step
@@ -235,6 +236,7 @@ class TerraformApplyUsesTheBudgets(unittest.TestCase):
         step = step_block(self.text, "Resolve the image tags to pin")
         assert "GHCR_WAIT_SECONDS_HUB: ${{ steps.wait.outputs.hub }}" in step
         assert "GHCR_WAIT_SECONDS_FL: ${{ steps.wait.outputs.fl }}" in step
+        assert "GHCR_WAIT_SECONDS: ${{ vars.GHCR_WAIT_SECONDS || 900 }}" in step
         assert "FL_BACKEND: ${{ vars.FL_BACKEND }}" in step
 
 

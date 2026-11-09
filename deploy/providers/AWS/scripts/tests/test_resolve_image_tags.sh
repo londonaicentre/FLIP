@@ -909,22 +909,36 @@ expect_tag DOCKER_FL_API_TAG "stag"
 #     builds.
 fixture "" "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
     "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+#     The default budget differs from both, so neither group can be reading it.
 run_resolve "the hub waits its budget, FL probes once" \
-    GHCR_WAIT_SECONDS=0 GHCR_WAIT_SECONDS_HUB=2 GHCR_WAIT_SECONDS_FL=0 GHCR_POLL_SECONDS=2
+    GHCR_WAIT_SECONDS=60 GHCR_WAIT_SECONDS_HUB=2 GHCR_WAIT_SECONDS_FL=0 GHCR_POLL_SECONDS=2
 expect_rc 0 "exits 0"
-if [[ "${STDERR}" == *"not published within 2s"* && "${STDERR}" == *"not published within 0s"* ]]; then
+# The line after each image's "looking for" says how long that image was held.
+hub_wait="$(grep -A1 'hub images: looking for' <<<"${STDERR}" | tail -n 1)"
+fl_wait="$(grep -A1 'FL server image: looking for' <<<"${STDERR}" | tail -n 1)"
+if [[ "${hub_wait}" == *"not published within 2s."* && "${fl_wait}" == *"probed once, no wait"* ]]; then
     ok "each group is held to its own budget"
 else
-    no "each group is held to its own budget" "stderr: ${STDERR}"
+    no "each group is held to its own budget" "hub: ${hub_wait}" "fl: ${fl_wait}" "stderr: ${STDERR}"
 fi
 expect_tag DOCKER_TAG "sha-9999999"
 expect_tag DOCKER_FL_TAG "sha-8888888"
+
+# ...and a leading zero is whole seconds, not octal: `08` used to fail every
+# comparison, so the wait never ended.
+run_resolve "a leading-zero budget still times out" \
+    GHCR_WAIT_SECONDS_HUB=0 GHCR_WAIT_SECONDS_FL=08 GHCR_POLL_SECONDS=8
+if [[ "${RC}" -eq 0 && "${STDERR}" == *"not published within 8s."* ]]; then
+    ok "08 is 8 seconds"
+else
+    no "08 is 8 seconds" "exit ${RC}, stderr: ${STDERR}"
+fi
 
 # ...and an empty group budget (a step output that was never written) is the
 # default budget, never 0.
 run_resolve "an empty group budget is GHCR_WAIT_SECONDS" \
     GHCR_WAIT_SECONDS=2 GHCR_WAIT_SECONDS_HUB= GHCR_WAIT_SECONDS_FL= GHCR_POLL_SECONDS=2
-if [[ "${STDERR}" == *"not published within 2s"* && "${STDERR}" != *"within 0s"* ]]; then
+if [[ "${STDERR}" == *"not published within 2s"* && "${STDERR}" != *"probed once"* ]]; then
     ok "falls back to GHCR_WAIT_SECONDS"
 else
     no "falls back to GHCR_WAIT_SECONDS" "stderr: ${STDERR}"

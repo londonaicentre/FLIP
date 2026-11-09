@@ -114,8 +114,8 @@
 #     RESOLVE_SHA_TAG            true (default) to look for this commit's image;
 #                                false to resolve the live tag only, which needs
 #                                no registry access at all (plan, drift)
-#     GHCR_WAIT_SECONDS          bound on waiting for the image (default 900);
-#                                0 probes once and moves on
+#     GHCR_WAIT_SECONDS          default bound on waiting for an image (default
+#                                900); 0 probes once and moves on
 #     GHCR_WAIT_SECONDS_HUB      per-group bounds, for the hub image and for the
 #     GHCR_WAIT_SECONDS_FL       FL images; each defaults to GHCR_WAIT_SECONDS.
 #                                terraform_apply.yml sets them with
@@ -166,6 +166,9 @@ for seconds in "${GHCR_WAIT_SECONDS}" "${GHCR_WAIT_SECONDS_HUB}" "${GHCR_WAIT_SE
     [[ "${seconds}" =~ ^[0-9]+$ ]] ||
         die "GHCR_WAIT_SECONDS, GHCR_WAIT_SECONDS_HUB and GHCR_WAIT_SECONDS_FL must be whole seconds (got '${seconds}')"
 done
+# Base 10: bash reads a leading zero as octal, and `08` then fails every comparison.
+GHCR_WAIT_SECONDS_HUB=$((10#${GHCR_WAIT_SECONDS_HUB}))
+GHCR_WAIT_SECONDS_FL=$((10#${GHCR_WAIT_SECONDS_FL}))
 # A zero poll interval never advances the elapsed counter, so a non-zero wait
 # budget would spin forever rather than time out.
 [[ "${GHCR_POLL_SECONDS}" -ge 1 ]] || GHCR_POLL_SECONDS=1
@@ -424,18 +427,17 @@ resolve() {
             return 0
         fi
         if [[ " ${WAIT_GROUPS_EXHAUSTED} " == *" ${wait_group} "* ]]; then
-            # One workflow publishes every image in this group, so its sha tags
-            # appear together or not at all. A sibling has already waited the
-            # group's full budget for that workflow and timed out; waiting
-            # again would only add another budget to a run that is already
-            # going to fall back. Probe once instead (FLIP#1283).
+            # One workflow publishes every image in this group. A sibling has
+            # already waited the group's full budget for that workflow and
+            # timed out; waiting again would only add another budget to a run
+            # that is already going to fall back. Probe once instead (FLIP#1283).
             log "🔎 ${label}: single probe for ${ref} — ${wait_group} already waited ${budget}s"
             if image_exists "${ref}"; then
                 log "   pinning ${SHA_TAG}"
                 RESOLVED_TAG="${SHA_TAG}"
                 return 0
             fi
-            log "   not published — this merge probably changed no ${wait_group} code."
+            log "   not published."
         else
             log "🔎 ${label}: looking for ${ref}"
             if wait_for_image "${ref}" "${budget}"; then
@@ -443,8 +445,14 @@ resolve() {
                 RESOLVED_TAG="${SHA_TAG}"
                 return 0
             fi
-            WAIT_GROUPS_EXHAUSTED="${WAIT_GROUPS_EXHAUSTED} ${wait_group}"
-            log "   not published within ${budget}s — this merge probably changed no service code."
+            # Why a group has the budget it has is in the apply's wait step
+            # (image-wait-budgets.sh), so no guess at the reason here.
+            if [[ "${budget}" -gt 0 ]]; then
+                WAIT_GROUPS_EXHAUSTED="${WAIT_GROUPS_EXHAUSTED} ${wait_group}"
+                log "   not published within ${budget}s."
+            else
+                log "   not published (probed once, no wait)."
+            fi
         fi
     else
         # Plan and drift: what matters is agreeing with the deployed task
