@@ -240,9 +240,8 @@ def test_a_drifted_backend_is_registered_again(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_a_drifted_backend_keeps_the_sites_own_settings(tmp_path: Path, backend: str) -> None:
-    """A POST resets each setting it leaves out, so a re-run must not turn a site's build-dir cleanup off."""
+    """A POST resets each setting it leaves out, so a re-run must not reset a site's build-dir retention."""
     site_settings = {
-        "build-dir-cleanup-enabled": True,
         "build-dir-cleanup-time": "03:30",
         "build-dir-retain-days-completed": 30,
         "build-dir-retain-days-failed": 60,
@@ -265,6 +264,22 @@ def test_a_drifted_backend_keeps_the_sites_own_settings(tmp_path: Path, backend:
     assert sent[flip_field] == flip_value
     assert "id" not in sent, "XNAT fails a POST that carries the server's id"
     assert second.state["backend"].items() >= site_settings.items()
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_build_dir_cleanup_is_turned_on(tmp_path: Path, backend: str) -> None:
+    """On a new site, and on one registered with it off: nothing else deletes a conversion's build directory."""
+    first = configure(tmp_path / "one", xnat_state([command(4, 4)]), backend)
+    assert first.code == 0, first.output
+    assert first.state["backend"]["build-dir-cleanup-enabled"] is True
+    switched_off = first.state
+    switched_off["backend"].update({"build-dir-cleanup-enabled": False, "build-dir-retain-days-completed": 30})
+    second = configure(tmp_path / "two", switched_off, backend)
+
+    assert second.code == 0, second.output
+    assert "(drifted on build-dir-cleanup-enabled)" in second.output
+    assert second.state["backend"]["build-dir-cleanup-enabled"] is True
+    assert second.state["backend"]["build-dir-retain-days-completed"] == 30
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
