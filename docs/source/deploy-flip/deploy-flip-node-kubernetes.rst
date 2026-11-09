@@ -364,8 +364,8 @@ neither implies the other.
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm status
-   make -C trust/deploy/helm smoke-cstore
+   make -C trust/deploy/helm status [KUBE_CONTEXT=<ctx>]
+   make -C trust/deploy/helm smoke-cstore [KUBE_CONTEXT=<ctx>]
 
 ``status``
    Shows the Helm release and runs the chart's health checks: pod readiness, volumes, HTTP endpoints, and that XNAT

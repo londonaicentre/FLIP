@@ -645,11 +645,14 @@ def main(
         print_status("INFO", f"Checking context '{context}'")
     else:
         success, current = run_command([*KUBECTL, "config", "current-context"])
-        print_status("INFO", f"Checking kubectl's current context ('{current if success else 'none set'}')")
+        named = f"'{current}'" if success else current.splitlines()[-1]
+        print_status("INFO", f"Checking kubectl's current context ({named})")
 
     success, nodes = run_command([*KUBECTL, "get", "nodes", "-o", "name"])
     if not success or not nodes.strip():
-        print_status("FAIL", "Cannot connect to Kubernetes cluster — check kubeconfig and context")
+        # kubectl's last line says why (unknown context, refused, expired token); the lines above repeat retries.
+        reason = nodes.strip().splitlines()[-1] if nodes.strip() else "no nodes listed"
+        print_status("FAIL", f"Cannot connect to Kubernetes cluster: {reason}")
         sys.exit(1)
 
     node_names = [n.replace("node/", "") for n in nodes.strip().split("\n")]

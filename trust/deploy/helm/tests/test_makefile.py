@@ -82,6 +82,7 @@ def test_status_runs_its_smoke_tests_against_kube_context(make_args, context_arg
         capture_output=True,
         text=True,
         check=True,
+        timeout=60,
     ).stdout.replace("\\\n", " ")
 
     smoke = next(line for line in out.splitlines() if "check_status.py" in line)
