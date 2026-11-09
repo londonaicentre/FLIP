@@ -23,7 +23,7 @@ import shutil
 
 import pandas as pd
 from tqdm import tqdm
-from utils.omop_ids import surrogate_ids
+from utils.omop_ids import person_id, surrogate_ids
 from utils.omop_mappings import (
     EHR_TYPE_CONCEPT_ID,
     INPATIENT_VISIT_CONCEPT_ID,
@@ -121,11 +121,6 @@ DICOM_FOLDER_PATH = "./dicom_output"
 PROJECT = "cxr_project"
 
 
-def nhs_number_to_integer(s: str) -> int:
-    """Converts the PatientID (NHS number e.g. '123 456 789') to an integer"""
-    return int(f"{s.replace(' ', '')[:9]}")
-
-
 def transform_dicom_metadata_to_omop_tables(csv_file_path: str, omop_root: str = "") -> dict[str, pd.DataFrame]:
     """
     Convert a dicom_metadata.csv file to OMOP tables
@@ -148,7 +143,7 @@ def transform_dicom_metadata_to_omop_tables(csv_file_path: str, omop_root: str =
     # ---------------- Person table ----------------
     # ----------------------------------------------
     person = pd.DataFrame()
-    person["person_id"] = df["PatientID"].apply(nhs_number_to_integer)
+    person["person_id"] = df["PatientID"].apply(person_id)
     person["gender_concept_id"] = df["PatientSex"].map(MAPPING_SEX)
     person["birth_datetime"] = pd.to_datetime(df["PatientBirthDate"], format="%Y%m%d")
     person["year_of_birth"] = person["birth_datetime"].dt.year.astype(

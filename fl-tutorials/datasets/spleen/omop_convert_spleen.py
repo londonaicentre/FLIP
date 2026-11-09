@@ -20,7 +20,7 @@ import shutil
 
 import pandas as pd
 from pydicom.datadict import tag_for_keyword
-from utils.omop_ids import surrogate_ids
+from utils.omop_ids import person_id, surrogate_ids
 from utils.omop_mappings import (
     DICOM_ATTRIBUTE_CONCEPT_CLASS_ID,
     EHR_TYPE_CONCEPT_ID,
@@ -50,11 +50,6 @@ ANATOMIC_SITE_CONCEPT_ID = 4302605
 SLICE_THICKNESS_CONCEPT_ID = MAPPING_DICOM[f"{tag_for_keyword('SliceThickness'):08x}"]
 
 
-def nhs_number_to_integer(s: str) -> int:
-    """Converts the PatientID (NHS number e.g. '123 456 789') to an integer"""
-    return int(f"{s.replace(' ', '')[:9]}")
-
-
 def transform_dicom_metadata_to_omop_tables(
     csv_file_path: str,
 ) -> dict[str, pd.DataFrame]:
@@ -76,7 +71,7 @@ def transform_dicom_metadata_to_omop_tables(
     # ---------------- Person table ----------------
     # ----------------------------------------------
     person = pd.DataFrame()
-    person["person_id"] = df["PatientID"].apply(nhs_number_to_integer)  # Could assign internal integer
+    person["person_id"] = df["PatientID"].apply(person_id)  # Could assign internal integer
     person["gender_concept_id"] = df["PatientSex"].map(MAPPING_SEX)
     person["birth_datetime"] = pd.to_datetime(df["PatientBirthDate"], format="%Y%m%d")
     person["year_of_birth"] = person["birth_datetime"].dt.year.astype(
@@ -252,7 +247,7 @@ def transform_dicom_metadata_to_omop_tables(
 
 
 def split_data_into_trusts_and_copy_dicoms(
-    combined_tables: dict,
+    combined_tables: dict[str, pd.DataFrame],
     COPY_DICOM: bool = False,
 ) -> dict[str, dict[str, pd.DataFrame]]:
     """
