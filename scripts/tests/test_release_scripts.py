@@ -236,6 +236,11 @@ class Verify(unittest.TestCase):
             container("rel0130-deploy-flip-api-1", "ghcr.io/londonaicentre/flip-api:rel0130", "/w/flip/deploy"),
             container("rel0130-deploy-flip-ui-1", "rel0130-deploy-flip-ui", "/w/flip/deploy"),
             container("rel0130-deploy-flip-db-1", "postgres:17", "/w/flip/deploy"),
+            container(
+                "rel0130-trust1-grafana-1",
+                "ghcr.io/londonaicentre/mirror/grafana/grafana:11.5.0@sha256:0a28",
+                "/w/flip/trust",
+            ),
             container("rel0130-trust1-fl-client-net-1-1", "flare-fl-client:rel0130", "/w/flip/trust"),
             container(
                 "rel0130-xnat1_xnat-web.1.x", "ghcr.io/londonaicentre/xnat-web:rel0130@sha256:ab", None, stack=True
@@ -256,7 +261,11 @@ class Verify(unittest.TestCase):
 
     def test_services_must_be_replicated_at_the_instance_tag(self):
         ok = {"Name": "rel0130-xnat1_xnat-web", "Replicas": "1/1", "Image": "ghcr.io/londonaicentre/xnat-web:rel0130"}
-        proxy = {"Name": "rel0130-xnat1_proxy", "Replicas": "1/1", "Image": "tecnativa/docker-socket-proxy:v0.4.2"}
+        proxy = {
+            "Name": "rel0130-xnat1_proxy",
+            "Replicas": "1/1",
+            "Image": "ghcr.io/londonaicentre/mirror/tecnativa/docker-socket-proxy:v0.4.2",
+        }
         assert verify.check_services([ok, proxy], "rel0130") == []
         stuck = {**ok, "Replicas": "0/1"}
         pulled = {**ok, "Image": "ghcr.io/londonaicentre/xnat-web:stag"}
