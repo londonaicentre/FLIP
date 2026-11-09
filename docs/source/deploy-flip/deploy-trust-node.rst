@@ -224,12 +224,14 @@ different load balancers, so allow both. This is everything a node connects out 
      - 443
      - First install
      - FLIP's sample trust data, which the first install loads by default. Downloads redirect to ``*.hf.co``, so
-       ``huggingface.co`` alone fails
+       ``huggingface.co`` alone fails. Not needed with ``TRUST_DATA_SEED=false`` in the kit, unless you load the
+       DICOM vocabulary (:ref:`onprem-core-vocabulary`).
      - Not yet
    * - ``pypi.org``, ``files.pythonhosted.org``
      - 443
      - First install
-     - The Python packages the sample-data loaders run
+     - The Python packages the sample-data loaders run. The same exceptions apply as for Hugging Face; a Kubernetes
+       deployment host also fetches PyYAML for ``sync-kit``
      - Not yet
    * - Ubuntu's package mirrors, or your own
      - 80

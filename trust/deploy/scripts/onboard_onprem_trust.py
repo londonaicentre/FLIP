@@ -60,6 +60,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import site_upgrade  # noqa: E402 — resolves a CI-deployed hub's sha build to this checkout's release
+import trust_kit_lib  # noqa: E402 — the one Python reader of TRUST_DATA_SEED
 
 WIDTH = 71
 
@@ -1012,6 +1013,32 @@ def check_unrotated_passwords(
     )
 
 
+def sample_data_off(kit_vars: dict[str, str]) -> bool:
+    """TRUST_DATA_SEED=false, as trust/Makefile reads it; a refused value is not "off" (check_sample_data fails)."""
+    try:
+        return not trust_kit_lib.trust_data_seed(kit_vars)
+    except ValueError:
+        return False
+
+
+def check_sample_data(kit_vars: dict[str, str], kit_present: bool, kit_path: str) -> Check:
+    """TRUST_DATA_SEED (FLIP#1687): on or off, or a FAIL for a value up-trust would refuse."""
+    if not kit_present:
+        return Check("Sample data", Status.PENDING, "pending — needs kit file")
+    try:
+        seeded = trust_kit_lib.trust_data_seed(kit_vars)
+    except ValueError as e:
+        return Check(
+            "Sample data",
+            Status.FAIL,
+            str(e),
+            hints=[f"In {kit_path}: TRUST_DATA_SEED=false for a trust's own data, true or unset for the mock data."],
+        )
+    if seeded:
+        return Check("Sample data", Status.PASS, "on: `make -C trust up-trust` loads the mock projects")
+    return Check("Sample data", Status.PASS, "off (TRUST_DATA_SEED=false): nothing is loaded into OMOP or Orthanc")
+
+
 def check_data_dir(
     label: str,
     var_name: str,
@@ -1025,7 +1052,8 @@ def check_data_dir(
     the dir and seeds it from the canonical mock dataset at bring-up (FLIP#1187),
     so before the first `up` empty is the expected state. It is only wrong for a
     real hospital deployment, where the operator points these at absolute paths
-    backed by real PACS / OMOP data — hence the hint.
+    backed by real PACS / OMOP data — hence the hint. With the kit's
+    TRUST_DATA_SEED=false nothing is seeded, and the hint says so instead.
     """
     if not kit_present:
         return Check(label, Status.PENDING, "pending — needs kit file")
@@ -1037,7 +1065,16 @@ def check_data_dir(
         resolved = Path(raw)
     else:
         resolved = repo_root / "trust" / raw.removeprefix("./")
-    seed_hint = "Mocked test data: `make -C trust up-trust KIT=<CODE>` creates and seeds it, nothing to do."
+    try:
+        seeded = trust_kit_lib.trust_data_seed(kit_vars)
+    except ValueError:
+        seed_hint = "TRUST_DATA_SEED is neither true nor false (see Sample data): `make -C trust up-trust` refuses it."
+    else:
+        seed_hint = (
+            "Mocked test data: `make -C trust up-trust KIT=<CODE>` creates and seeds it, nothing to do."
+            if seeded
+            else "Sample data is off (TRUST_DATA_SEED=false): `make -C trust up-trust` loads nothing into it."
+        )
     if not resolved.is_dir():
         return Check(
             label,
@@ -1128,7 +1165,12 @@ def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: 
             continue
         if nearest != path and not os.access(nearest, os.W_OK):
             blocked.append(f"{var} ({nearest} is not writable)")
-        elif var in SEED_MARKER_DIR_VARS and path.parent.exists() and not os.access(path.parent, os.W_OK):
+        elif (
+            var in SEED_MARKER_DIR_VARS
+            and not sample_data_off(kit_vars)
+            and path.parent.exists()
+            and not os.access(path.parent, os.W_OK)
+        ):
             blocked.append(f"{var} ({path.parent} is not writable, and the seed marker is written there)")
     if kit_vars.get("FLIP_UID", "").strip() == str(invoking_ids()[0]):
         then = "create them yourself with mkdir -p: the containers run as you (FLIP_UID)."
@@ -1220,6 +1262,7 @@ def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None) -> list[
         check_site_privacy_policy(kit_vars, kit_present, kit, repo_root, kit_path),
         check_governance_document(kit_vars, kit_present, kit, repo_root, kit_file),
         check_unrotated_passwords(kit_vars, kit_present, repo_root, kit, kit_path),
+        check_sample_data(kit_vars, kit_present, kit_path),
         check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, kit_present, repo_root),
         check_data_dir("Orthanc storage dir", "ORTHANC_STORAGE_DIR", kit_vars, kit_present, repo_root),
         check_data_dir_paths(kit_vars, kit_present, kit_path),

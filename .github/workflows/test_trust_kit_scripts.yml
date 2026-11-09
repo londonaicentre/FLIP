@@ -27,6 +27,8 @@ on:
       - "scripts/**"
       - "trust/deploy/scripts/**"
       - ".github/workflows/test_trust_kit_scripts.yml"
+      # test_trust_data_seed.py holds its TRUST_DATA_SEED readers to trust_kit_lib's.
+      - "deploy/env_mode.mk"
       # Some guards here assert on files outside scripts/ — test_container_identity.py
       # on the compose files, test_workflow_trust_guards.py on the image-build
       # workflows, test_pr_paths_changed.py on the gated service workflows and the

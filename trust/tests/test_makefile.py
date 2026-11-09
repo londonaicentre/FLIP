@@ -134,6 +134,88 @@ class UpgradeTrust(unittest.TestCase):
         assert "up-xnat" in out, out
 
 
+class SampleDataOff(unittest.TestCase):
+    """TRUST_DATA_SEED=false: a real trust's first install fetches, loads and marks nothing (FLIP#1687)."""
+
+    KIT_OFF = KIT + "TRUST_DATA_SEED=false\n"
+    SEED_STEPS = ("seed-omop", "seed-orthanc", ".seeded", "pg_isready")
+
+    def test_a_first_install_loads_nothing_even_after_a_data_version_bump(self):
+        for extra in ((), ("HF_TRUST_DATA_REVISION=main",)):
+            out = dry_run("up-trust", *extra, kit=self.KIT_OFF)
+            assert "Sample data is off for SCR" in out, out
+            for step in self.SEED_STEPS:
+                assert step not in out, f"{step!r} with the sample data off:\n{out}"
+
+    def test_unset_or_true_still_seeds(self):
+        for kit in (KIT, KIT + "TRUST_DATA_SEED=true\n"):
+            out = dry_run("ensure-seeded", kit=kit)
+            assert "seed-omop" in out, out
+            assert "seed-orthanc" in out, out
+
+    def test_any_other_value_is_refused_rather_than_read_as_true(self):
+        for value in ("no", "False"):
+            result = run_target("ensure-seeded", kit=KIT + f"TRUST_DATA_SEED={value}\n")
+            assert result.returncode != 0, result.stdout
+            assert "TRUST_DATA_SEED must be true or false" in result.stdout, result.stdout + result.stderr
+
+    def test_up_trust_refuses_a_bad_value_before_any_container_starts(self):
+        out = dry_run("up-trust", kit=KIT + "TRUST_DATA_SEED=no\n")
+        assert out.index("TRUST_DATA_SEED must be true or false") < out.index(" up -d"), out
+
+    def test_quotes_and_a_trailing_comment_read_as_sync_kit_reads_them(self):
+        for line in ('TRUST_DATA_SEED="false"', "TRUST_DATA_SEED='false'", "TRUST_DATA_SEED=false  # real trust"):
+            out = dry_run("ensure-seeded", kit=KIT + line + "\n")
+            assert "Sample data is off for SCR" in out, f"{line}:\n{out}"
+
+    def test_the_explicit_seed_verbs_refuse_a_trust_with_the_sample_data_off_unless_forced(self):
+        for target in ("seed", "seed-omop", "seed-orthanc", "unseed-omop", "unseed-orthanc"):
+            result = run_target(target, kit=self.KIT_OFF)
+            assert result.returncode != 0, f"{target} ran with the sample data off:\n{result.stdout}"
+            assert "has TRUST_DATA_SEED=false" in result.stdout, result.stdout + result.stderr
+            assert "TRUST_INDEX" not in result.stdout, result.stdout
+        out = dry_run("seed", "FORCE_SEED=1", kit=self.KIT_OFF)
+        assert "seed-omop TRUST_INDEX" in out, out
+        assert "seed-orthanc TRUST_INDEX" in out, out
+
+    def test_the_seed_verbs_refuse_what_they_cannot_read_as_true_or_false(self):
+        """A mistyped value, or a kit file that is not there, must not read as "sample data on"."""
+        for target in ("seed-omop", "seed-orthanc", "unseed-omop", "unseed-orthanc"):
+            mistyped = run_target(target, kit=KIT + "TRUST_DATA_SEED=False\n")
+            assert mistyped.returncode != 0, f"{target} ran on TRUST_DATA_SEED=False:\n{mistyped.stdout}"
+            assert "TRUST_DATA_SEED must be true or false" in mistyped.stdout, mistyped.stdout + mistyped.stderr
+            no_kit = run_target(target, "KIT=NOPE")
+            assert no_kit.returncode != 0, f"{target} ran without a kit file:\n{no_kit.stdout}"
+            assert "not found" in no_kit.stdout, no_kit.stdout + no_kit.stderr
+            for result in (mistyped, no_kit):
+                assert "TRUST_INDEX" not in result.stdout, result.stdout
+
+    def test_a_plain_force_from_an_outer_make_does_not_open_the_guard(self):
+        """FORCE=1 belongs to upgrade-onprem-trust and release-instance, and make hands it to every sub-make."""
+        result = run_target("outer", "FORCE=1", kit=self.KIT_OFF, probe="outer:\n\t$(MAKE) seed-omop\n")
+        assert result.returncode != 0, result.stdout
+        assert "FORCE_SEED=1 runs it anyway" in result.stdout, result.stdout + result.stderr
+        assert "seed-omop TRUST_INDEX" not in result.stdout, result.stdout
+
+    def test_a_dry_run_passes_only_where_it_writes_nothing(self):
+        """seed-orthanc / unseed-orthanc honour DRY_RUN=1; seed-omop / unseed-omop would ignore it and write."""
+        for target in ("seed-orthanc", "unseed-orthanc"):
+            result = run_target(target, "DRY_RUN=1", kit=self.KIT_OFF)
+            assert "has TRUST_DATA_SEED=false" not in result.stdout, f"{target}:\n{result.stdout}"
+            assert f"{target} TRUST_INDEX" in result.stdout, f"{target} never ran:\n{result.stdout}{result.stderr}"
+        for target in ("seed-omop", "unseed-omop"):
+            result = run_target(target, "DRY_RUN=1", kit=self.KIT_OFF)
+            assert result.returncode != 0, f"{target} ran:\n{result.stdout}"
+            assert "has TRUST_DATA_SEED=false" in result.stdout, f"{target}:\n{result.stdout}"
+
+    def test_the_guard_needs_the_kit_file_not_a_complete_one(self):
+        """A kit still waiting on the hub's values can seed its own stores, as before the guard (needs only KIT)."""
+        kit = KIT + "SOMETHING=<run-make-sync-trust-kit>\n"
+        result = run_target("guard", kit=kit, probe="guard:\n\t$(refuse_seed_when_off)\n\t@echo GUARD-PASSED\n")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "GUARD-PASSED" in result.stdout, result.stdout
+
+
 MONAI_KIT = KIT.replace("NUM_AVAILABLE_GPUS=0", "NUM_AVAILABLE_GPUS=1")
 
 

@@ -129,6 +129,13 @@ PLATFORM_VALUES ?= $(if $(KIT),$(shell sed -n 's/^K8S_PLATFORM_VALUES=//p' $(KIT
 ifneq ($(strip $(PLATFORM_VALUES)),)
 	VALUES_OPTS := $(VALUES_OPTS) $(foreach f,$(PLATFORM_VALUES),-f $(f))
 endif
+# A kit with TRUST_DATA_SEED=false (FLIP#1687) turns the seed hook off on every render and deploy that names its KIT,
+# not only through the sync-kit override, so a missing or stale override cannot seed a real trust's OMOP. As --set it
+# beats every values file. Any other value stops `deploy` at preflight, as sync-kit stops at it.
+KIT_TRUST_DATA_SEED := $(if $(KIT),$(call kit_trust_data_seed,$(KIT_FILE)),true)
+ifeq ($(KIT_TRUST_DATA_SEED),false)
+	VALUES_OPTS := $(VALUES_OPTS) --set trustData.seed.enabled=false
+endif
 
 # The chart requires flClient.kitHostPath whenever flClient is enabled (with the default hostPath kit source), so any
 # render (make test, template-all-backends, a plain `make template`) fails the
@@ -169,6 +176,8 @@ update-deps: ## Update Helm chart dependencies
 	$(HELM) dependency update $(CHART_DIR)
 
 preflight: ## Check all prerequisites before deploying (tools, cluster, files, kit)
+	@case "$(KIT_TRUST_DATA_SEED)" in true|false) ;; *) \
+		echo "❌ TRUST_DATA_SEED must be true or false in $(KIT_FILE), not '$(KIT_TRUST_DATA_SEED)'."; exit 1;; esac
 	@HUB="$(HUB)" \
 	 KIT="$(KIT)" \
 	 KIT_FILE="$(KIT_FILE)" \

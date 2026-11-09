@@ -979,6 +979,47 @@ def test_46_swarm_worker_fails_naming_the_manager() -> None:
     _assert("docker node promote" in row.hints[0], "hint names the promotion", row.hints[0])
 
 
+def test_47_empty_dir_with_sample_data_off_says_nothing_is_seeded() -> None:
+    """TRUST_DATA_SEED=false: an empty store is still a WARN, but the hint no longer promises a seed (FLIP#1687)."""
+    print("\n[47] empty data dir with TRUST_DATA_SEED=false -> WARN, no seed promised")
+    with tempfile.TemporaryDirectory() as td:
+        for value in ("false", '"false"', "false  # real trust"):
+            kit_vars = {"OMOP_DATA_DIR": td, "TRUST_DATA_SEED": value}
+            result = mod.check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, True, SCRIPTS_DIR.parent)
+            _assert(result.status == mod.Status.WARN, f"{value!r}: status is WARN", result.detail)
+            _assert(any("TRUST_DATA_SEED=false" in h for h in result.hints), "hint says the sample data is off")
+            _assert(not any("seeds it" in h for h in result.hints), "and does not say up-trust seeds it", str(result))
+
+
+def test_48_sample_data_off_needs_no_seed_marker_dir() -> None:
+    """TRUST_DATA_SEED=false writes no seed marker, so a data dir's unwritable parent is no FAIL (FLIP#1687)."""
+    print("▶ existing data dir under an unwritable parent, sample data off -> PASS")
+    with tempfile.TemporaryDirectory() as td:
+        locked = Path(td) / "locked"
+        (locked / "pacs").mkdir(parents=True)
+        writable = lambda path, mode: Path(path) != locked  # noqa: E731 — root ignores mode bits, so fake it
+        with mock.patch.object(mod.os, "access", side_effect=writable):
+            check = _paths(OMOP_DATA_DIR=f"{td}/omop", ORTHANC_STORAGE_DIR=f"{locked}/pacs", TRUST_DATA_SEED="false")
+    _assert(check.status == mod.Status.PASS, "PASS", f"{check.status}: {check.detail}")
+
+
+def test_49_a_sample_data_value_up_trust_refuses_fails_the_checklist() -> None:
+    """TRUST_DATA_SEED other than true/false/unset: up-trust refuses it, so the gate fails first (FLIP#1687)."""
+    print("\n[49] TRUST_DATA_SEED=no -> Sample data FAIL, and no data-dir hint promises a seed")
+    with tempfile.TemporaryDirectory() as td:
+        for value, status in (("", mod.Status.PASS), ("true", mod.Status.PASS), ('"false"', mod.Status.PASS)):
+            row = mod.check_sample_data({"TRUST_DATA_SEED": value} if value else {}, True, "trust/.env.SITE.prod")
+            _assert(row.status == status, f"{value or 'unset'!r}: {status.name}", f"{row.status}: {row.detail}")
+        for value in ("no", "False"):
+            row = mod.check_sample_data({"TRUST_DATA_SEED": value}, True, "trust/.env.SITE.prod")
+            _assert(row.status == mod.Status.FAIL and "TRUST_DATA_SEED" in row.detail, f"{value!r}: FAIL", str(row))
+            kit_vars = {"OMOP_DATA_DIR": td, "TRUST_DATA_SEED": value}
+            data_dir = mod.check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, True, SCRIPTS_DIR.parent)
+            _assert(not any("seeds it" in h for h in data_dir.hints), f"{value!r}: no seed promised", str(data_dir))
+        pending = mod.check_sample_data({}, False, "trust/.env.SITE.prod")
+        _assert(pending.status == mod.Status.PENDING, "PENDING without the kit", str(pending))
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -1029,6 +1070,9 @@ def main() -> None:
     test_44_fl_kit_contents_survives_a_non_numeric_flip_uid()
     test_45_fl_kit_contents_warn_when_the_client_cannot_enter_the_mount_root()
     test_46_swarm_worker_fails_naming_the_manager()
+    test_47_empty_dir_with_sample_data_off_says_nothing_is_seeded()
+    test_48_sample_data_off_needs_no_seed_marker_dir()
+    test_49_a_sample_data_value_up_trust_refuses_fails_the_checklist()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
