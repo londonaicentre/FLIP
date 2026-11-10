@@ -155,7 +155,7 @@ them directly when `LOCAL_DEV=true`.
 | Key                  | Default | Meaning |
 |----------------------|---------|---------|
 | `LOCAL_ROUNDS`       | 3       | Local epochs per global round |
-| `LR_START` / `LR_END`| 1e-3 / 1e-4 | ExponentialLR sweep across the local round |
+| `LR_START` / `LR_END`| 1e-3 / 1e-4 | ExponentialLR sweep across the local round, restarted every round (the FLARE twin decays once over the whole job) |
 | `VAL_SPLIT`          | 0.2     | Validation fraction |
 | `TEST_SPLIT`         | 0.2     | Test fraction (used by `@app.evaluate`) |
 | `BATCH_SIZE`         | 8       | DataLoader batch size |
