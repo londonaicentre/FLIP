@@ -100,8 +100,10 @@ def hub(monkeypatch):
     return configure
 
 
-def _registered(number: int = 2, keys: bool = False, code: str | None = "BDMS") -> RegisteredTrust:
-    trust = Trust(id=uuid4(), name="Bangkok Dusit", code=code, region=None)
+def _registered(
+    number: int = 2, keys: bool = False, code: str | None = "BDMS", name: str = "Bangkok Dusit"
+) -> RegisteredTrust:
+    trust = Trust(id=uuid4(), name=name, code=code, region=None)
     return RegisteredTrust(
         trust=trust,
         fl_kit_slot=FLKitSlot(slot_name=f"Trust_{number}", slot_number=number, assigned_to_trust_id=trust.id),
@@ -225,6 +227,7 @@ def test_each_kit_has_its_own_passphrase(flare_kits, hub):
         (lambda hub, kits: hub(None), _registered(), "FL_KITS_URI not set"),
         (lambda hub, kits: hub(str(kits)), _registered(code=None), "code cannot name a kit file"),
         (lambda hub, kits: hub(str(kits)), _registered(code="../etc"), "code cannot name a kit file"),
+        (lambda hub, kits: hub(str(kits)), _registered(name="St $(shell id)"), "cannot carry"),
         (lambda hub, kits: hub(str(kits)), _registered(number=9), "No FL kit was found for slot Trust_9"),
     ],
 )

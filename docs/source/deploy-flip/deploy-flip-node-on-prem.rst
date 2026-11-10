@@ -10,8 +10,9 @@ This page installs a trust node as a Docker Compose stack on an Ubuntu host the 
 .. admonition:: Before you start
    :class: note
 
-   Do steps 1 to 4 of :doc:`onboarding-a-trust` first: you need the kit tarball from the FLIP admin. When the stack
-   is up, continue at step 6 there.
+   Start on :doc:`onboarding-a-trust`: you need the trust's kit, either downloaded from the FLIP UI
+   (:ref:`onboarding-kit-from-ui`) or as a tarball from the FLIP admin (steps 1 to 4 there). When the stack is up,
+   continue at step 6 there.
 
 .. contents:: On this page
    :local:
@@ -204,6 +205,9 @@ Step 2 — Unpack the kit
 The tarball holds the kit file ``.env.<CODE>.prod`` (``.stag`` for the staging hub) and an ``fl-kit/`` folder. Keep ``fl-kit/`` exactly as it is: the
 stack mounts that layout into the FL client.
 
+A kit downloaded from the FLIP UI is not unpacked by hand. ``make -C trust install-kit FILE=<path>`` writes the kit
+file and the FL files for you (:ref:`onboarding-kit-from-ui`).
+
 ***********************************
 Step 3 — Edit the kit for your host
 ***********************************
@@ -221,7 +225,7 @@ the admin manages them.
      - What to set
      - Required?
    * - ``FL_KIT_DIR``
-     - Path to the extracted ``fl-kit/`` folder (the one that contains ``net-1/``).
+     - Path to the extracted ``fl-kit/`` folder (the one that contains ``net-1/``). Already set by ``install-kit``.
      - Yes
    * - ``XNAT_PORT`` and ``XNAT_WEB_PORT``
      - XNAT's DICOM receiver port and its web UI port. Both are published on the host, so they **must differ**
@@ -241,7 +245,7 @@ the admin manages them.
        choice: the upgrade verb refuses a kit that changes it on a live site.
      - If needed
    * - Trust-local passwords
-     - ``make new-trust`` mints a random value for each. A kit scaffolded from an older template still carries
+     - ``make new-trust`` and ``install-kit`` mint a random value for each. A kit scaffolded from an older template still carries
        the mock-stack defaults; replace every one in the *Trust-local credentials* section, or the readiness
        checklist refuses a ``.prod`` / ``.stag`` kit.
      - Yes

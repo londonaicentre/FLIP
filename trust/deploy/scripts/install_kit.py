@@ -178,7 +178,8 @@ def validate(manifest: dict) -> None:
             (not kit["trust_id"] or kit["trust_id"] != trust["id"]) and "trust id",
             # A full kit carries both keys, an update kit neither.
             (all(keys) if manifest["kind"] == "update" else not all(keys)) and "trust keys",
-            any(not isinstance(value, (str, int)) or re.search(r"[\r\n]", str(value)) for value in written)
+            # The kit file is read by make and by compose, which both expand `$`; a value is one line of it.
+            any(not isinstance(value, (str, int)) or re.search(r"[\r\n$`\\]", str(value)) for value in written)
             and "values",
         ]
     except (KeyError, TypeError, AttributeError) as error:

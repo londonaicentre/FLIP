@@ -372,6 +372,13 @@ rewrites the same kit file. The trust keeps its id, its code and its FL kit slot
 the old key as soon as the rotation commits, so the trust is offline until its containers are
 recreated from the new kit.
 
+A trust added with **Add Trust** in the UI has no keys until its kit is first downloaded from its
+card, by its Trust Admin or a hub admin (FLIP#1852). On a stag/prod Docker Compose trust host,
+`make -C trust install-kit FILE=<downloaded file> [HUB=stag] [KIT=<CODE>] [DELETE=1]` decrypts the
+download (it prompts for the passphrase), creates or updates `trust/.env.<CODE>.<env>` and stages
+the FL files under its `FL_KIT_DIR`. flip-api finds the FL kits through `FL_KITS_URI`; the dev
+compose sets it to the mounted `FL_PROVISIONED_DIR`.
+
 For an on-prem trust, `make onboard-onprem-trust KIT=<CODE>` checks the same kit
 that `up-onprem-trust` and `upgrade-onprem-trust` use: `trust/.env.<CODE>.<env>`, resolved by
 `deploy/env_mode.mk`'s `kit_file`. These root wrappers default to

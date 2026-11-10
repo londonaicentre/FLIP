@@ -63,6 +63,9 @@ Onboarding is split between two people. Neither needs access to the other's mach
      - The trust's host or cluster; no AWS access
      - Installs the kit, starts the node, loads the OMOP vocabulary.
 
+On a Docker Compose host the site's Trust Admin downloads the kit from the FLIP UI instead of receiving it from the
+FLIP admin (:ref:`onboarding-kit-from-ui`). Kubernetes, AWS EC2 and Azure nodes still receive it from the FLIP admin.
+
 What is a kit?
 ==============
 
@@ -71,7 +74,8 @@ A trust's **kit** is everything it needs to join one FLIP network:
 - **The kit file**, ``trust/.env.<CODE>.<hub>`` (``<CODE>`` is the trust's short code). It holds four blocks:
 
   - *Hub-shared* settings, the same for every trust on the hub (encryption key, hub URL, FL backend, image tags);
-  - *Kit credentials*, this trust's own keys and FL slot, written when the trust is registered;
+  - *Kit credentials*, this trust's own keys and FL slot, written when the trust is registered from the command line
+    or when its kit is first downloaded from the FLIP UI;
   - *Host-local profile*, ports and directories for this host;
   - *Trust-local credentials*, passwords for the node's own databases and services.
 

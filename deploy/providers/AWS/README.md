@@ -78,7 +78,7 @@ This command executes the following steps in order:
 8. **`ssh-config`**: Update `~/.ssh/config` with SSM-managed EC2 instance IDs
 9. **`ansible-init`**: Patch the Central Hub bastion and install `psql` on it
 10. **`deploy-centralhub`**: Deploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) at the tip of the env's branch via new task-definition revisions (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)) and sync the UI to S3
-11. **`register-trusts`**: Register every locally-present trust kit file (none yet is fine) (`trust/.env.<CODE>.<hub>`) on the running hub and write its credentials back. Only the two hub-shared values the ECS task env carries (`TRUST_API_KEY_HEADER`, `FL_BACKEND`) come back with it — the rest of the block needs `make sync-trust-kit KIT=<CODE> HUB=<hub>` from the repo root afterwards (see [Registering trusts against the ECS hub](#registering-trusts-against-the-ecs-hub))
+11. **`register-trusts`**: Register every locally-present trust kit file (none yet is fine) (`trust/.env.<CODE>.<hub>`) on the running hub and write its credentials back. Only the hub-shared values the ECS task env carries come back with it, never `AES_KEY_BASE64` — the rest of the block needs `make sync-trust-kit KIT=<CODE> HUB=<hub>` from the repo root afterwards (see [Registering trusts against the ECS hub](#registering-trusts-against-the-ecs-hub))
 12. **`status`**: Run comprehensive health checks
 
 To provision only the minimal Central Hub bastion after a targeted Terraform
@@ -129,9 +129,10 @@ A waiter timeout warns and proceeds. Then, per kit, it:
    decryption, deletes it, and deletes the task's log stream.
 3. Writes the kit through `trust/deploy/scripts/distribute_trust_kits.py` (repo root), the same in-place upsert writer the dev
    path and `sync-trust-kit` use: credentials on first registration only, operator host-local edits preserved, and
-   the hub-shared block upserted with whatever the task's environment carried — on ECS only `TRUST_API_KEY_HEADER`
-   and `FL_BACKEND` (`AES_KEY_BASE64` is a Secrets Manager value, never in the task env, and the other hub-shared
-   keys are not in the task definition at all). That gap is why the manual's `sync-trust-kit` step is mandatory.
+   the hub-shared block upserted with whatever the task's environment carried — on ECS every hub-shared key but
+   `AES_KEY_BASE64`, which is a Secrets Manager value, never in the task env (the hub URL, kit dates, image tags,
+   NLB subdomain and FL ports joined the task definition with FLIP#1852, for the kits flip-api issues from the UI;
+   before it only `TRUST_API_KEY_HEADER` and `FL_BACKEND` were there). That gap is why the manual's `sync-trust-kit` step is mandatory.
    It then mints the trust's XNAT stack passwords into the kit (`generate-xnat-credentials`), runtime-only
    trust-side secrets the hub never holds. That step runs locally through flip-api, so it needs flip-api's `uv`
    environment on the admin's machine.
@@ -667,6 +668,10 @@ dial is set separately (FLIP#1365):
 - **Everything else on the trust side:** `FL_EDGE_PORT=8003` in `.env.stag`, which `sync-trust-kit` copies
   into each kit (and refuses to default for a staging kit). It drives the Flower `--superlink`, the Kubernetes
   egress rule and the Helm Flower superlink; unset, it falls back to `FL_SERVER_PORT`, so production needs nothing.
+  The same value is the optional Terraform input `fl_edge_port` (`TF_VAR_fl_edge_port`, exported only when
+  `FL_EDGE_PORT` is set), which reaches nothing but flip-api's task env, for the kits downloaded from the UI
+  (FLIP#1852). CI reads it from the optional `FL_EDGE_PORT` variable on the GitHub environment, so set that to
+  `8003` on the staging environment.
 
 **Fresh-account trap: create a Secrets Manager secret before the first `plan`.** On a never-used account `make plan`
 fails at the very end with `Error: reading KMS Alias (alias/aws/secretsmanager): empty result`

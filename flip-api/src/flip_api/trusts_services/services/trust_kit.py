@@ -61,6 +61,8 @@ _INSTALLED_VERSION_KEYS = frozenset({"DOCKER_TAG", "DOCKER_FL_TAG"})
 
 # A trust code names the kit file on the trust host (``trust/.env.<CODE>.<hub>``).
 _CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+# What install-kit refuses in a value: the kit file is read by make and compose, which both expand `$`.
+_UNSAFE = re.compile(r"[\r\n$`\\]")
 
 
 class TrustKitError(Exception):
@@ -215,11 +217,13 @@ def load_kit_parts(trust: Trust, slot: FLKitSlot) -> KitParts:
         KitParts: The parts ``build_kit`` assembles.
 
     Raises:
-        TrustKitError: The trust's code cannot name a kit file, the hub is not configured to issue
-            kits, or the slot's FL files are missing or incomplete.
+        TrustKitError: The trust's code or name cannot go in a kit file, the hub is not configured
+            to issue kits, or the slot's FL files are missing or incomplete.
     """
     if not trust.code or not _CODE.fullmatch(trust.code):
         raise TrustKitError("This trust's code cannot name a kit file; it must be letters, digits, - or _.")
+    if _UNSAFE.search(f"{trust.name}{trust.region or ''}"):
+        raise TrustKitError("This trust's name or region holds a character a kit file cannot carry: $, ` or \\.")
     settings = get_settings()
     if not settings.FL_KITS_URI:
         raise TrustKitError("This hub is not configured to issue kits: FL_KITS_URI not set.")

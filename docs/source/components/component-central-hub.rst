@@ -59,6 +59,10 @@ A FastAPI application serving everything under ``/api``. Its route groups map on
      - Users, access requests, MFA status and roles; site banner and deployment mode.
    * - ``/trust``, ``/admin/trusts``
      - Trust roster, connection health and registration; a Trust's project decisions, for its Trust Admin.
+       ``POST /admin/trusts`` (Add Trust) registers a Trust and assigns its FL slot but creates no keys. The kit
+       routes, for the Trust's Trust Admin and hub admins: ``GET /trust/{trust_id}/kit`` (download status),
+       ``POST /trust/{trust_id}/kit`` (download; the first one creates the Trust's keys) and
+       ``POST /trust/{trust_id}/kit/rotate`` (issue new keys and download).
    * - ``/step``
      - Multi-step workflows the UI drives: approve a project and start imaging at its Trusts, submit a cohort
        query to them, register a user, and retrieve a model.
@@ -225,7 +229,7 @@ Three other keys each secure one connection:
      - Where it lives
    * - Trust API key
      - Trust → hub
-     - The Trust's kit file; hashed on the hub
+     - The Trust's kit file; hashed on the hub. A kit downloaded from the UI is built on request and not stored
    * - Internal service key
      - FL server → hub
      - The hub only

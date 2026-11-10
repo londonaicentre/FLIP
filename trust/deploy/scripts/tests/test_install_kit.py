@@ -328,6 +328,11 @@ def test_refusals_change_nothing() -> None:
         "unknown schema": ({"schema": 2}, [], "schema"),
         "unknown hub-shared key": ({"kit__hub_shared": {"ORTHANC_PASSWORD": "x"}}, [], "does not know"),
         "multi-line value": ({"kit__trust_api_key": "a\nORTHANC_PASSWORD=x"}, [], "not valid"),
+        "make expansion in a value": (
+            {"kit__hub_shared": {"CENTRAL_HUB_API_URL": "https://hub.example/$(shell id)"}},
+            [],
+            "not valid",
+        ),
         "KIT names another trust": ({}, ["--kit", "OTHER"], "not KIT=OTHER"),
     }
     for label, (changes, args, message) in cases.items():

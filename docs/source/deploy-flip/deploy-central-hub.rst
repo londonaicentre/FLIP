@@ -232,7 +232,8 @@ Generate the internal service key into the active environment file. Existing key
 
    make generate-internal-service-key
 
-The two per-trust keys are minted when you register the trust; see :ref:`deploy-central-hub-register-trusts`.
+The two per-trust keys are minted when you register the trust from the command line (see
+:ref:`deploy-central-hub-register-trusts`), or, for a trust added in the UI, when its kit is first downloaded.
 
 .. _deploy-central-hub-register-trusts:
 
@@ -245,6 +246,11 @@ one-off task inside it.
 
 A trust's **kit file**, ``trust/.env.<CODE>.<hub>``, is its identity and its configuration: ``HUB=prod`` reads
 ``trust/.env.<CODE>.prod``, ``HUB=stag`` ``trust/.env.<CODE>.stag``.
+
+This section is the command-line route. A site on a Docker Compose host can instead be added with **Add Trust** on
+the Connection Status page and download its own kit from the FLIP UI, with no kit file on your workstation:
+:ref:`onboarding-kit-from-ui`. Use the command line for Kubernetes, AWS EC2 and Azure nodes, and for nodes the hub
+team runs.
 
 1. **Create the kit file.** From the repository root:
 
@@ -263,7 +269,7 @@ A trust's **kit file**, ``trust/.env.<CODE>.<hub>``, is its identity and its con
    Leave out ``KIT`` to register every kit file present for the environment. This writes the trust's
    **credentials** (API key, trust-internal service key and FL kit slot) into the kit file, and mints the trust's
    XNAT passwords, trust-side runtime secrets that are not part of the hub's kit. Of the hub-shared
-   settings, only the API key header name and the FL backend are filled in.
+   settings, only those in the hub's task environment are filled in; the encryption key is never among them.
 
 3. **Fill in the hub-shared settings.** From the repository root, with your local ``.env.<hub>`` present:
 
@@ -275,8 +281,8 @@ A trust's **kit file**, ``trust/.env.<CODE>.<hub>``, is its identity and its con
 
    .. important::
 
-      Do not skip this step. Without it the kit's encryption key, hub URL, kit dates and image tags stay unfilled,
-      and the trust can neither reach the hub nor decrypt a task.
+      Do not skip this step. Without it the kit's encryption key stays unfilled, and the trust cannot decrypt a
+      task.
 
 Registration works the same for both FL backends: the kit takes ``FL_BACKEND`` from the hub, and the slot it claims
 maps onto the matching FLARE participant kit or Flower SuperNode key.
@@ -343,8 +349,10 @@ slots without a restart, so the next ``register-trusts`` can claim one.
 Rotating keys
 *************
 
-*Who: FLIP admin, with AWS access to the hub's account.* A trust's API key and internal service key are reissued in
-place, without re-registering it:
+*Who: FLIP admin, with AWS access to the hub's account.* For a site on a Docker Compose host, the trust's Trust Admin
+or a FLIP admin can do this from the trust's card instead, with **Issue new keys** ("Later — issue new keys" on
+:doc:`onboarding-a-trust`); the three points below apply to both routes. From the command line, a trust's API key and
+internal service key are reissued in place, without re-registering it:
 
 .. code-block:: shell
 

@@ -37,8 +37,8 @@ the commented dev form):
 |---------|-------|-----------|
 | Host-local profile | Operator | hand-edit (ports, bind dirs, optional `FLIP_UID`/`FLIP_GID` to run the containers as the operator, optional `FL_SITE_PRIVACY_*` site privacy policy) |
 | Trust-local credentials | Operator | hand-edit (passwords, service URLs) |
-| Hub-shared (managed) | Hub admin | `register-trust KIT=<CODE>` (live in prod, commented in dev) / `sync-trust-kit KIT=<CODE>` (prod refresh) |
-| Kit credentials (managed) | Hub | `register-trust` only — write-once; hub keeps only the hash |
+| Hub-shared (managed) | Hub admin | `register-trust KIT=<CODE>` (live in prod, commented in dev) / `sync-trust-kit KIT=<CODE>` (prod refresh) / `install-kit` (a kit downloaded from the UI) |
+| Kit credentials (managed) | Hub | `register-trust` — write-once; `rotate-trust-keys` or `install-kit` with a full kit replaces them; hub keeps only the hash |
 
 The Hub-shared block is delimited by a sentinel comment
 (`# ── Hub-shared (managed by register-trust / sync-trust-kits — do not edit) ──`)
@@ -150,6 +150,7 @@ make down                      # Stop all trusts
 make up-trust KIT=GSTT         # Start one trust stack (also brings up its XNAT)
 make down-trust KIT=GSTT       # Stop one trust stack
 make onboard-onprem-trust KIT=<CODE> HUB=<env>  # Read-only readiness check using this Makefile's resolved KIT_FILE; root on-prem wrappers default HUB=prod
+make install-kit FILE=<path> [HUB=stag] [KIT=<CODE>] [DELETE=1]  # Install a kit downloaded from the FLIP UI: creates or updates trust/.env.<CODE>.<hub> (CODE from the kit, checked against KIT when given; HUB defaults to prod) and stages the FL files in its FL_KIT_DIR; prompts for the passphrase
 make restart-trust KIT=GSTT    # Restart one trust stack (down + up-trust — first-install semantics, resets XNAT)
 make upgrade-trust KIT=<CODE> HUB=<env> [TAG=vX.Y.Z] [FORCE=1] [YES=1]  # Move a LIVE trust to a release, data intact (FLIP#1204): resolver pins the kit, pull, recreate what changed, upgrade-xnat in place. Never up-trust/restart-trust for this
 make up-trust-ec2 KIT=GSTT     # Start one trust stack on a cloud EC2 host
@@ -228,7 +229,7 @@ make reconvert-nifti KIT=GSTT [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_
 
 **Per-trust scope.** Each trust gets a distinct key. A leak in Trust_1 cannot drive operations on Trust_2's APIs. The hub never sees these keys — they live only in trust-side env: `register_trust` writes `TRUST_INTERNAL_SERVICE_KEY` into the trust's kit file (`trust/.env.<CODE>.<env>`), which `trust/Makefile` `-include`s so every trust-internal container inherits it. This is deliberately distinct from the hub's `INTERNAL_SERVICE_KEY` (which protects fl-server → flip-api on the Central Hub).
 
-**Generating keys.** The key is minted by `register_trust` (`make register-trusts`), which writes `TRUST_INTERNAL_SERVICE_KEY` into the trust's kit file. Re-register to rotate.
+**Generating keys.** The key is minted by `register_trust` (`make register-trusts`), which writes `TRUST_INTERNAL_SERVICE_KEY` into the trust's kit file; for a trust added in the UI it is minted by the first kit download and written by `make install-kit` (FLIP#1852). `make rotate-trust-keys KIT=<CODE>`, or **Issue new keys** on the trust card, rotates it with the API key.
 
 **Cohort-admin gate (write routes, FLIP#857).** The trust-internal key does not distinguish callers, and fl-client legitimately holds it (it reads the frozen cohort via `flip.get_dataframe` and pulls imaging). That is safe for the read routes, but data-access-api's cohort-**defining** writes — `POST /cohort/snapshot` (freeze the approved membership everyone then trains on; a membership already frozen is never replaced) and `POST /cohort/snapshot/delete` — must not be reachable by researcher training code. They therefore carry a **second** router-level gate on top of the trust-internal key: `authenticate_cohort_admin`, proof of possessing `AES_KEY_BASE64`. trust-api (the caller) and data-access-api (the checker) hold that key, as does imaging-api, which never calls these routes; fl-client deliberately does not (it is not in fl-client's compose env). The proof is the **SHA-256 of the key**, not the key itself, so it never travels the wire or lands in a log; receivers compare it with `hmac.compare_digest`. A caller with a valid trust-internal key but no proof gets **403** (authenticated, not authorised); the dependency order (trust-internal first) means a caller with neither still gets 401 first. No new secret is minted or distributed — the gate reuses the existing AES-key possession boundary, so kit files, `register_trust`, and compose are unchanged. Header name: `COHORT_ADMIN_KEY_HEADER` (default `X-Cohort-Admin-Key`), configured on both trust-api and data-access-api.
 

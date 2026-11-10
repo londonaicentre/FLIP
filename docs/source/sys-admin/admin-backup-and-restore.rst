@@ -148,7 +148,8 @@ The hub database
 
    A trust registered after the restore point is unknown to the restored database, so the hub rejects its
    credentials. Register it again (``make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<env>``), which
-   issues new credentials, and send the site its new kit.
+   issues new credentials, and send the site its new kit. Or add it again with **Add Trust** and have the site
+   download its kit (:ref:`onboarding-kit-from-ui`).
 
 A deleted or overwritten S3 object
    Restore the previous version with S3's versioning. In the model files bucket, previous versions last only 30 days.
@@ -306,13 +307,14 @@ FLIP has no restore command for a trust. What it does tell you:
   ``POST /api/projects/{project_id}/cohort-snapshots?include_frozen=true``. Sites that still hold their cohort keep it;
   yours freezes afresh from its live database. Until then your site refuses the project's training and imaging pulls.
 - **Lost OMOP core vocabulary.** Load it again from your own export: :ref:`onprem-core-vocabulary`.
-- **Lost kit file.** The admin can rebuild the hub-shared settings (``make sync-trust-kit KIT=<CODE> HUB=<env>`` from
-  the repo root on the admin workstation), but not the credentials.
+- **Lost kit file.** The hub cannot show a trust's keys again, so the trust is issued new ones, from its card in the
+  FLIP UI or by the admin from the command line: "Later — issue new keys" on :doc:`/deploy-flip/onboarding-a-trust`.
+  The trust-local passwords were only ever in the kit file; the databases on the host still expect them.
 
 .. warning::
 
-   **The only way FLIP gives a trust new credentials is to delete it on the hub and register it again**
-   (``make -C deploy/providers/AWS delete-trust NAME=<trust-name> HUB=<env>``, then ``register-trusts``). Deleting a
+   **Do not delete a trust on the hub and register it again to give it new credentials**
+   (``make -C deploy/providers/AWS delete-trust NAME=<trust-name> HUB=<env>``). Deleting a
    trust also deletes its records on the hub: its task queue, project and model links, FL job participation, metrics
    and logs, cohort results, cohort snapshot and imaging status, and user roles scoped to it.
 
