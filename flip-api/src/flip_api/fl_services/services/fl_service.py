@@ -41,14 +41,20 @@ from flip_api.utils.logger import logger
 from flip_api.utils.s3_client import PresignAudience, S3Client
 
 
-class UnknownJobTypeError(Exception):
+class ResearcherFacingError(Exception):
+    """An error whose message is written for the researcher, so the activity feed may show it (FLIP#1408)."""
+
+
+class UnknownJobTypeError(ResearcherFacingError):
     """Custom exception for unknown job types in FL"""
 
-    pass
+
+class ClientAvailabilityError(ResearcherFacingError, ValueError):
+    """Required FL clients are unavailable."""
 
 
-class ClientAvailabilityError(ValueError):
-    """A researcher-facing refusal when required FL clients are unavailable."""
+class ModelFilesError(ResearcherFacingError, FileNotFoundError):
+    """A problem with the researcher's own uploaded model files, which they can fix."""
 
 
 # Pre-rename aliases: the Client-API templates originally lived under ``*_client_api`` names and
@@ -871,10 +877,11 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
 
     Raises:
         EnvironmentError: If the S3 bucket environment variables are not set.
-        FileNotFoundError: If the base or model files are missing.
-        FileNotFoundError: If no config.json is among the scanned model files — it is required for
+        FileNotFoundError: If the base files are missing.
+        ModelFilesError: If the model files are missing.
+        ModelFilesError: If no config.json is among the scanned model files — it is required for
             every job type, and declares the job_type that selects the base application.
-        FileNotFoundError: If required files for the job type are missing.
+        ModelFilesError: If required files for the job type are missing.
         RuntimeError: If the required-files manifest lookup returns no files for the job type,
             i.e. the manifest under FL_APP_BASE_DIR is missing or malformed, or if the completed
             bundle has missing or unexpected files.
@@ -897,7 +904,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     # List objects in the model bucket
     model_files = s3.list_objects(model_bucket_s3_path)
     if not model_files:
-        raise FileNotFoundError("Model files missing on the S3 bucket")
+        raise ModelFilesError("Model files missing on the S3 bucket")
 
     # Determine job_type from config.json. The file itself is non-negotiable — every nvflare job
     # type requires it — so refuse here rather than logging a doomed job_type=standard guess that
@@ -905,7 +912,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     input_config: dict = {}
     config_file = next((k for k in model_files if k.endswith("/config.json")), None)
     if not config_file:
-        raise FileNotFoundError(
+        raise ModelFilesError(
             "No config.json found in the scanned model files. config.json is a required file for every "
             "nvflare job type — it declares the job_type that selects the base application. Upload it "
             "and let the scan complete, then start training again."
@@ -958,7 +965,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     }  # relative paths of model files (i.e. without the bucket prefix)
     missing_files = [f for f in required_files if f not in model_rel]
     if len(missing_files) > 0:
-        raise FileNotFoundError(f"Missing required files for job type {job_type}: {', '.join(missing_files)}. ")
+        raise ModelFilesError(f"Missing required files for job type {job_type}: {', '.join(missing_files)}. ")
 
     # Upload the base application tree into the destination bucket (1:1 paths under base_dir)
     for rel in base_rel_paths:
@@ -1086,10 +1093,11 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
 
     Raises:
         EnvironmentError: If the S3 bucket environment variables are not set.
-        FileNotFoundError: If the base or model files are missing.
-        FileNotFoundError: If no config.json is among the scanned model files — it is required for
+        FileNotFoundError: If the base files are missing.
+        ModelFilesError: If the model files are missing.
+        ModelFilesError: If no config.json is among the scanned model files — it is required for
             every job type, and declares the job_type that selects the base application.
-        FileNotFoundError: If required files for the job type are missing.
+        ModelFilesError: If required files for the job type are missing.
         RuntimeError: If the required-files manifest lookup returns no files for the job type,
             i.e. the manifest under FL_APP_BASE_DIR is missing or malformed, or if the completed
             bundle has missing or unexpected files.
@@ -1112,14 +1120,14 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
     # List objects in the model bucket
     model_files = s3.list_objects(model_bucket_s3_path)
     if not model_files:
-        raise FileNotFoundError("Model files missing on the S3 bucket")
+        raise ModelFilesError("Model files missing on the S3 bucket")
 
     # Determine job_type from config.json. The file itself is non-negotiable — every flower job
     # type requires it — so refuse here rather than logging a doomed job_type=standard guess that
     # the required-files check below would reject anyway (FLIP#1053).
     config_file = next((k for k in model_files if k.endswith("/config.json")), None)
     if not config_file:
-        raise FileNotFoundError(
+        raise ModelFilesError(
             "No config.json found in the scanned model files. config.json is a required file for every "
             "flower job type — it declares the job_type that selects the base application. Upload it "
             "and let the scan complete, then start training again."
@@ -1186,7 +1194,7 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
     }  # relative paths of model files (i.e. without the bucket prefix)
     missing_files = [f for f in required_files if f not in model_rel]
     if len(missing_files) > 0:
-        raise FileNotFoundError(f"Missing required files for job type {job_type}: {', '.join(missing_files)}. ")
+        raise ModelFilesError(f"Missing required files for job type {job_type}: {', '.join(missing_files)}. ")
 
     # Upload the base application tree into the destination bucket (1:1 paths under base_dir)
     for rel in base_rel_paths:

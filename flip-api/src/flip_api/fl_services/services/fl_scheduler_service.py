@@ -41,8 +41,7 @@ from flip_api.domain.schemas.status import (
 )
 from flip_api.domain.schemas.types import FLBackend, FLLogEvent
 from flip_api.fl_services.services.fl_service import (
-    ClientAvailabilityError,
-    UnknownJobTypeError,
+    ResearcherFacingError,
     _raise_if_job_aborted,
     bundle_flower_application,
     bundle_nvflare_application,
@@ -736,7 +735,7 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         logger.exception("Failed to start training for model %s (job %s)", model_id, fl_job_id)
         if isinstance(e, httpx.HTTPStatusError):
             error_message = fl_api_error_message(e)
-        elif isinstance(e, (ClientAvailabilityError, UnknownJobTypeError)):
+        elif isinstance(e, ResearcherFacingError):
             error_message = str(e)
         else:
             error_message = f"Training could not be started; the platform team has the details (job {fl_job_id})."

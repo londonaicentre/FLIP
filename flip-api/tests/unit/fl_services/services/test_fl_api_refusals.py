@@ -148,8 +148,22 @@ def test_training_refusal_reaches_activity_feed(net, failed_path, body):
         (ValueError("Clients unavailable: private-bucket"), None),
         (fl_service.ClientAvailabilityError("Clients unavailable: Trust_1"), "Clients unavailable: Trust_1"),
         (fl_service.UnknownJobTypeError("Unknown job_type: example"), "Unknown job_type: example"),
+        (FileNotFoundError("Base application files missing at /private/templates"), None),
+        (
+            fl_service.ModelFilesError("Missing required files for job type standard: trainer.py. "),
+            "Missing required files for job type standard: trainer.py. ",
+        ),
     ],
-    ids=["internal-host", "s3", "sql", "unmarked-value-error", "client-availability", "job-type"],
+    ids=[
+        "internal-host",
+        "s3",
+        "sql",
+        "unmarked-value-error",
+        "client-availability",
+        "job-type",
+        "unmarked-file-not-found",
+        "model-files",
+    ],
 )
 def test_scheduler_failure_feed_allowlist(net, caplog, failure, safe_message):
     model_id, job_id = uuid4(), uuid4()

@@ -881,7 +881,7 @@ FAILURES_FILE="${MODEL_OUT_DIR}/failures.tsv"
     while IFS=$'\t' read -r start_ms end_ms _status; do
         [[ -z "$start_ms" ]] && continue
         awk -v s="$start_ms" -v e="$end_ms" '($1+0)>=s && ($1+0)<=e' "$FLIP_API_RECONSTRUCTED" \
-            | grep -E "Failed to start training:|Unsupported FL backend:|Database error|Failed to resolve|could not be resolved to a trust" \
+            | grep -E "Unsupported FL backend:|Database error|Failed to resolve|could not be resolved to a trust" \
             | sed 's/^/flip-api\t/' || true
     done < "$ATTEMPTS_FILE"
 
