@@ -204,6 +204,7 @@ def test_each_backend_registers_its_own_container_service_backend_and_pings_it(t
         assert registered["backend"] == "kubernetes"
         assert registered["combined-pvc-name"] == PVC
         assert registered["combined-path-translation"] == "/data/xnat/", "the trailing slash is load-bearing"
+    assert "WARNING: XNAT did not return its container server (HTTP 404)" in run.output
     assert run.made("GET", r"/xapi/docker/server/ping"), "the backend was never pinged"
 
 
@@ -241,12 +242,16 @@ def test_a_drifted_backend_is_registered_again(tmp_path: Path) -> None:
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_a_drifted_backend_keeps_the_sites_own_settings(tmp_path: Path, backend: str) -> None:
     """A POST resets each setting it leaves out, so a re-run must not reset a site's build-dir retention."""
+    constraint = {"user-settable": False, "attribute": "node.role", "comparator": "==", "values": ["worker"]}
+    toleration = {"key": "gpu", "operator": "Exists", "value": None, "effect": "NoSchedule"}
     site_settings = {
         "build-dir-cleanup-time": "03:30",
         "build-dir-retain-days-completed": 30,
         "build-dir-retain-days-failed": 60,
         "build-dir-retain-days-killed": 2,
         "max-concurrent-finalizing-jobs": 4,
+        "swarm-constraints": [constraint],
+        "kubernetes-tolerations": [toleration],
     }
     flip_field, flip_value = (
         ("path-translation-docker-prefix", DATA_PATH) if backend == "docker" else ("combined-pvc-name", PVC)
@@ -255,14 +260,21 @@ def test_a_drifted_backend_keeps_the_sites_own_settings(tmp_path: Path, backend:
     assert first.code == 0, first.output
     drifted = first.state
     drifted["backend"].update(site_settings, **{flip_field: "/drifted"})
+    # As the GET returns them: each row with its id, and the server with its ping.
+    drifted["backend"].update(
+        {"swarm-constraints": [{"id": 11, **constraint}], "kubernetes-tolerations": [{"id": 5, **toleration}]},
+        ping=True,
+    )
     second = configure(tmp_path / "two", drifted, backend)
 
     assert second.code == 0, second.output
     (post,) = second.made("POST", r"/xapi/docker/server")
     sent = json.loads(post["body"])
-    assert sent.items() >= site_settings.items()
+    assert sent.items() >= site_settings.items(), "the constraint and the toleration go back without their ids"
     assert sent[flip_field] == flip_value
     assert "id" not in sent, "XNAT fails a POST that carries the server's id"
+    assert "ping" not in sent
+    assert "WARNING" not in second.output, "the server was read, so nothing is reset"
     assert second.state["backend"].items() >= site_settings.items()
 
 

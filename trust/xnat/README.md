@@ -30,9 +30,10 @@ XNAT has an unauthenticated account-creation flaw, so sites on an older release 
   [NrgXnat/xnat](https://github.com/NrgXnat/xnat/releases). The Bitbucket downloads stop at 1.10.0.
 - **No platform change.** 1.10.1 and 1.10.2 keep the 1.10.0 Java, Tomcat and PostgreSQL
   requirements, and 1.10.2 makes no database schema change.
-- **Container Service moves to 3.8.2.** The 1.10.2.1 WAR ships snakeyaml 2. Container Service 3.8.1's
+- **Container Service had to leave 3.8.1.** The 1.10.2.1 WAR ships snakeyaml 2. Container Service 3.8.1's
   Kubernetes client calls a constructor snakeyaml 2 removed, so the chart's Kubernetes backend cannot
-  be reached (CS-1058). See [Plugin compatibility](#plugin-compatibility).
+  be reached (CS-1058). FLIP moved to 3.8.2 then and runs 3.9.0 now (FLIP#1817). See
+  [Plugin compatibility](#plugin-compatibility).
 - **DicomEdit 6.10.0.** `anon_script.das` gives the same output on 6.10.0 as on 6.9.0 (see
   [`tests/README.md`](tests/README.md#when-to-update)). The script uses no `alterPixels`, so the new
   pixel-redaction engine does not apply.
@@ -489,6 +490,8 @@ registered only when none exists, and the step refuses to choose between two.
 The Container Service backend is sent again only when a field FLIP sets has drifted, and then as the
 server XNAT holds with only FLIP's fields changed. `POST /xapi/docker/server` resets every setting it
 leaves out, so a site's own settings, such as the retention periods below, survive a re-run (FLIP#1817).
+When XNAT cannot return the server (it pings the backend inside the GET, so an unreachable backend fails
+it, as does a first install), the step sends FLIP's config alone and prints a warning: that resets them.
 
 FLIP turns on the build-directory cleanup Container Service 3.9.0 adds (`build-dir-cleanup-enabled`).
 Each conversion writes its output to a directory under XNAT's build path (`${XNAT_DATA_DIR}/xnat-data/build`

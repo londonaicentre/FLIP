@@ -85,9 +85,13 @@ else
   echo "Adding the $XNAT_CS_BACKEND backend for the container service${backend_drift:+ (drifted on $backend_drift)}..."
   # A POST resets every setting it leaves out, such as the build-directory cleanup a site can turn on
   # (Container Service 3.9.0), so a drifted server goes back whole with only FLIP's fields changed,
-  # less its id: XNAT fails a POST that carries one.
+  # less its ids (its own, and those of its swarm constraints and Kubernetes tolerations): XNAT fails a
+  # POST that carries the server's. ping is the GET's reachability result, not a setting.
   if [[ -n "$backend_drift" ]]; then
-    backend_config=$(jq -c --argjson desired "$backend_config" 'del(.id) + $desired' <<<"$xnat_body")
+    backend_config=$(jq -c --argjson desired "$backend_config" \
+      'del(.id, .ping, .["swarm-constraints"][]?.id, .["kubernetes-tolerations"][]?.id) + $desired' <<<"$xnat_body")
+  else
+    echo "WARNING: XNAT did not return its container server (HTTP $xnat_status), as on a first install: sending FLIP's config alone, which resets any server setting a site had changed." >&2
   fi
   echo "backend_config: $backend_config"
   # A rejected config fails here: the ping below could still pass against the previous backend.
