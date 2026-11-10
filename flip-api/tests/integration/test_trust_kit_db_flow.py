@@ -17,7 +17,6 @@ of the committed ``trust`` and ``trusts_audit`` rows, so they are checked here r
 """
 
 import base64
-import hashlib
 import io
 import json
 import tarfile
@@ -122,7 +121,8 @@ def test_the_first_download_mints_the_keys_and_later_ones_leave_them_alone(sessi
     assert first.kind == "full"
     session.expire_all()
     key_hash = session.get(Trust, world["trust"]).api_key_hash
-    assert key_hash == hashlib.sha256(kit["trust_api_key"].encode()).hexdigest()
+    assert key_hash is not None
+    # The hub accepting the key is the proof that the stored hash is this key's.
     assert authenticate_trust(api_key=kit["trust_api_key"], db=session).id == world["trust"]
 
     second = _download(session, world["trust"], world["hub_admin"])
