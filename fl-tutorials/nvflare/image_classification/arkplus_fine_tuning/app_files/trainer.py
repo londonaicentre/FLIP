@@ -420,6 +420,8 @@ def main() -> None:
     )
 
     optimizer = torch.optim.Adam([p for p in model.parameters() if p.requires_grad], lr=lr_start)
+    # One schedule for the whole job, built once and never restarted: the LR decays lr_start ->
+    # lr_end over the first round's local epochs, then holds at lr_floor for every later round.
     gamma_lr = (lr_end / lr_start) ** (1 / epochs)
     scheduler = torch.optim.lr_scheduler.LambdaLR(
         optimizer,
