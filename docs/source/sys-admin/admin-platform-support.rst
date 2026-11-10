@@ -14,9 +14,6 @@ Networking
 FL clients connect out to the FL server through the hub's network load balancer (NLB). The hub never connects in to a
 trust, so trust hosts need no inbound firewall rules or port forwarding from the internet.
 
-If a site needs it, trust-to-hub traffic can also run over a site-to-site VPN between the trust network and the
-Central Hub VPC. This is set up on request, not by default.
-
 .. seealso::
 
    :ref:`security` explains why FLIP is built this way and the wider controls around it.
@@ -25,6 +22,22 @@ Central Hub VPC. This is set up on request, not by default.
    :align: center
 
    FLIP network architecture.
+
+.. _site-to-site-vpn:
+
+Site-to-site VPN
+================
+
+If a site cannot allow the FL connection over the internet, that leg can run over an IPsec tunnel between the trust's
+network and the hub's networking account instead; trust-api keeps polling the hub over the internet on 443. It answers
+policy, not ports: a site that forbids internet egress for this class of traffic, or whose network team will not write a
+per-port rule. Settle these in one meeting, because each one found later costs weeks: the tunnel ends in a small
+dedicated range on the hub side (a /24 that must not overlap the trust's own ranges, including the NHS network's
+10.0.0.0/8); the routing type, policy-based or BGP, is fixed when the connection is created and cannot be changed in
+place; the pre-shared key is exchanged out of band; and the hub side costs about $140 a month. The FL client then dials
+the tunnel's address rather than the public edge, through a hosts entry, since the kit's name resolves to the public
+edge. The first such tunnel took three months from first configuration to working traffic. It is set up on request, not
+by default.
 
 Firewall rules
 ==============

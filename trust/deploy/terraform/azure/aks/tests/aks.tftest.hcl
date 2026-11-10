@@ -44,7 +44,7 @@ run "api_server_admits_the_operator_and_the_nat_gateway" {
   }
   assert {
     condition     = output.api_server_node_ranges == "198.51.100.9/32"
-    error_message = "make aks-allow-ip reads the nodes' ranges from this output."
+    error_message = "make allow-ip reads the nodes' ranges from this output."
   }
 }
 

@@ -165,23 +165,36 @@ stage-kit: ## Stage the FL kit for the trust's registered slot (from KIT_BUCKET,
 	@[ -z "$(KIT_SRC)" ] || [ -d "$(KIT_SRC)" ] || { echo "❌ KIT_SRC=$(KIT_SRC) is not a directory."; exit 1; }
 	$(call play,--tags flkit)
 
+# A trust with its own data sets TRUST_DATA_SEED=false in its kit (FLIP#1687): seed then loads no sample data,
+# only the vocabulary, so deploy leaves its OMOP and Orthanc as they are. Any other value is refused before deploy
+# stops the stack: read as true, it would seed a real trust's OMOP.
+TRUST_DATA_SEED_EFFECTIVE = $(call kit_trust_data_seed,$(KIT_FILE))
+define require_trust_data_seed
+	@case "$(TRUST_DATA_SEED_EFFECTIVE)" in true|false) ;; *) \
+		echo "❌ TRUST_DATA_SEED must be true or false in $(notdir $(KIT_FILE)), not '$(TRUST_DATA_SEED_EFFECTIVE)'."; exit 1;; esac
+endef
+SAMPLE_DATA_OFF = $(filter false,$(TRUST_DATA_SEED_EFFECTIVE))
+SEED_SKIP_TAGS = $(if $(KIT_BUCKET),$(if $(SAMPLE_DATA_OFF),--skip-tags seed),--skip-tags omop-vocab)
+
 # The vocabulary comes from the kit bucket; without one the seed loads the dataset only, as on the
 # Azure node, and cohort queries need the vocabulary-free form.
-seed: ## Seed OMOP + Orthanc from the canonical dataset, then (with KIT_BUCKET) load the vocabulary (stack stopped)
+seed: ## Seed OMOP + Orthanc from the canonical dataset (not with TRUST_DATA_SEED=false), then (with KIT_BUCKET) load the vocabulary (stack stopped)
 	$(require_kit)
-	$(call play,--tags data $(if $(KIT_BUCKET),,--skip-tags omop-vocab) \
+	$(require_trust_data_seed)
+	$(if $(and $(SAMPLE_DATA_OFF),$(if $(KIT_BUCKET),,off)),@echo "⏭️  Sample data is off for $(KIT) (TRUST_DATA_SEED=false) and there is no KIT_BUCKET for the vocabulary: nothing to load.",$(call play,--tags data $(SEED_SKIP_TAGS) \
 		-e omop_postgres_user=$(call kit_get,OMOP_POSTGRES_USER) -e omop_postgres_password=$(call kit_get,OMOP_POSTGRES_PASSWORD) \
 		-e omop_postgres_db=$(call kit_get,OMOP_POSTGRES_DB) -e data_access_postgres_password=$(call kit_get,DATA_ACCESS_POSTGRES_PASSWORD) \
 		-e orthanc_username=$(call kit_get,ORTHANC_USERNAME) -e orthanc_password=$(call kit_get,ORTHANC_PASSWORD) \
 		-e vocab_s3_bucket=$(KIT_BUCKET) -e omop_db_tag=$(call kit_get,DOCKER_TAG) \
 		$(if $(SEED_PROJECTS),-e seed_projects="$(SEED_PROJECTS)") $(if $(SEED_ORTHANC),-e seed_orthanc=$(SEED_ORTHANC)) \
-		$(if $(SOURCE_TRUST),-e source_trust=$(SOURCE_TRUST)) $(if $(filter 1,$(FORCE_DICOM_VOCAB)),-e force_dicom_vocab=true))
+		$(if $(SOURCE_TRUST),-e source_trust=$(SOURCE_TRUST)) $(if $(filter 1,$(FORCE_DICOM_VOCAB)),-e force_dicom_vocab=true)))
 
 # First install: the stack is stopped before the seed and started after it. The kit is read here, on
 # this workstation, and the node's daemon is driven over the ssh docker context, so the kit never
 # has to exist on the host.
 deploy: ## First install: networks, seed with the stack down, then start the trust stack and XNAT
 	$(require_kit)
+	$(require_trust_data_seed)
 	$(require_node_dirs)
 	@docker context inspect $(NAME) >/dev/null 2>&1 || docker context create $(NAME) --docker "host=ssh://$(NAME)"
 	@out=$$(docker --context $(NAME) swarm init 2>&1) || case "$$out" in \

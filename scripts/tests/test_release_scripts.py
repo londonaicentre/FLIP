@@ -27,6 +27,7 @@ import io
 import json
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -55,6 +56,7 @@ MINTED = {
     "ADMIN_USER_PASSWORD": "admin-SECRET",  # pragma: allowlist secret
     "INTERNAL_SERVICE_KEY": "isk-SECRET",  # pragma: allowlist secret
     "INTERNAL_SERVICE_KEY_HASH": "hash",  # pragma: allowlist secret
+    "FL_API_KEY": "flk-SECRET",  # pragma: allowlist secret
 }
 
 
@@ -99,6 +101,7 @@ class Instance(unittest.TestCase):
 
         assert len(base64.b64decode(env["AES_KEY_BASE64"])) == 32
         assert env["INTERNAL_SERVICE_KEY_HASH"] == hashlib.sha256(env["INTERNAL_SERVICE_KEY"].encode()).hexdigest()
+        assert len(env["FL_API_KEY"]) >= 32
 
     def test_unknown_placeholder_is_refused(self):
         refused(instance.hub_env, HUB_EXAMPLE + "\nNEW_SECRET=<fill-me>\n", "x", 10000, MINTED)
@@ -117,6 +120,16 @@ class Instance(unittest.TestCase):
             for key in TRUST_CONTAINER_PORTS:
                 assert kit[key] == documented_value(text, key), (example, key)
             assert kit["OMOP_DB_TAG"] == "rel0130"
+            assert kit["NUM_AVAILABLE_GPUS"] == "0"
+            assert read_env_text(instance.trust_kit(text, "rel0130", 10000, gpus=1))["NUM_AVAILABLE_GPUS"] == "1"
+
+    def test_host_gpus_counts_nvidia_smi_lines(self):
+        listing = "GPU 0: NVIDIA GeForce RTX 5090 (UUID: GPU-x)\nGPU 1: NVIDIA A100 (UUID: GPU-y)\n"
+        done = subprocess.CompletedProcess([], 0, stdout=listing)
+        with mock.patch.object(instance.subprocess, "run", return_value=done):
+            assert instance.host_gpus() == 2
+        with mock.patch.object(instance.subprocess, "run", side_effect=FileNotFoundError):
+            assert instance.host_gpus() == 0
 
     def test_write_files_refuses_to_overwrite_and_hides_secrets(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -236,6 +249,11 @@ class Verify(unittest.TestCase):
             container("rel0130-deploy-flip-api-1", "ghcr.io/londonaicentre/flip-api:rel0130", "/w/flip/deploy"),
             container("rel0130-deploy-flip-ui-1", "rel0130-deploy-flip-ui", "/w/flip/deploy"),
             container("rel0130-deploy-flip-db-1", "postgres:17", "/w/flip/deploy"),
+            container(
+                "rel0130-trust1-grafana-1",
+                "ghcr.io/londonaicentre/mirror/grafana/grafana:11.5.0@sha256:0a28",
+                "/w/flip/trust",
+            ),
             container("rel0130-trust1-fl-client-net-1-1", "flare-fl-client:rel0130", "/w/flip/trust"),
             container(
                 "rel0130-xnat1_xnat-web.1.x", "ghcr.io/londonaicentre/xnat-web:rel0130@sha256:ab", None, stack=True
@@ -256,7 +274,11 @@ class Verify(unittest.TestCase):
 
     def test_services_must_be_replicated_at_the_instance_tag(self):
         ok = {"Name": "rel0130-xnat1_xnat-web", "Replicas": "1/1", "Image": "ghcr.io/londonaicentre/xnat-web:rel0130"}
-        proxy = {"Name": "rel0130-xnat1_proxy", "Replicas": "1/1", "Image": "tecnativa/docker-socket-proxy:v0.4.2"}
+        proxy = {
+            "Name": "rel0130-xnat1_proxy",
+            "Replicas": "1/1",
+            "Image": "ghcr.io/londonaicentre/mirror/tecnativa/docker-socket-proxy:v0.4.2",
+        }
         assert verify.check_services([ok, proxy], "rel0130") == []
         stuck = {**ok, "Replicas": "0/1"}
         pulled = {**ok, "Image": "ghcr.io/londonaicentre/xnat-web:stag"}

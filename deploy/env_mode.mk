@@ -90,3 +90,12 @@ _skipped_kits = $(if $(1),$(info ⚠️  Skipped, still under an old kit name �
 # $(call kit_hint,<repo-relative kit file>): when KIT= found its kit under an old name, the
 # rename, once per command (sub-makes inherit _KIT_HINTED) and never for a KIT_FILE named outright.
 kit_hint = $(if $(filter %.$(ENV) $(_KIT_HINTED),$(1))$(filter command line environment,$(origin KIT_FILE)),,$(info ⚠️  $(1) is an old kit name — rename (mv) it to $(if $(filter $(addprefix %.,$(OLD_KIT_ENVS)),$(1)),$(basename $(1)),$(1)).$(ENV))$(eval export _KIT_HINTED := $(1)))
+
+# The kit's TRUST_DATA_SEED (FLIP#1687), read alike everywhere: a trailing `# comment` and every
+# quote dropped, unset is true; a caller refuses anything but true or false. trust_data_seed takes
+# the value as an included kit leaves it (make has already dropped the comment); kit_trust_data_seed
+# reads a kit file's last line itself. trust_kit_lib.trust_data_seed is the Python reader, held to
+# the same table by trust/deploy/scripts/tests/test_trust_data_seed.py.
+trust_data_seed = $(or $(strip $(subst ",,$(subst ',,$(1)))),true)
+_HASH := \#
+kit_trust_data_seed = $(call trust_data_seed,$(shell sed -n 's/^TRUST_DATA_SEED=\([^$(_HASH)]*\).*/\1/p' '$(1)' 2>/dev/null | tail -1))

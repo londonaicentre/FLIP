@@ -227,6 +227,9 @@ Before ``deploy``:
   each defaults under ``/opt/flip``.
 - **A trust on slot 3 or above** needs ``SOURCE_TRUST=1`` (or 2): the mock dataset has two partitions,
   and the seed defaults to the slot number.
+- **A trust with its own data** sets ``TRUST_DATA_SEED=false`` in the kit: ``deploy`` and ``seed`` then load
+  none of the sample data into its OMOP or Orthanc, only the vocabulary (with a ``KIT_BUCKET``). Any other
+  value than ``true`` or ``false`` stops them before the stack is touched.
 - **Credentials from** ``aws login`` are not read by Terraform. A ``credential_process`` profile hands
   them over and refreshes them itself, as on the :doc:`EKS page <deploy-flip-node-aws-eks>`:
   ``credential_process = aws configure export-credentials --profile <your aws login profile> --format process``.

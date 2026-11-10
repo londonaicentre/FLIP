@@ -150,12 +150,13 @@ KIT=<CODE>` tarballs `trust/.env.<CODE>.<hub>` (or the kit named by `KIT_FILE=<p
   salvages the `ERROR`/`WARNING` lines from the task's log stream before deleting it, falling back to the log tail
   for an unhandled traceback.
 - **Interactive debugging inside the running service** is still possible with ECS Exec, which is off by default
-  (`var.ecs_exec_enabled`):
+  (`var.ecs_exec_enabled`). It needs a writable root filesystem (the SSM agent it starts in the container writes
+  there), so the variable also lifts the services' read-only one (FLIP#1795). Switching exec on with
+  `aws ecs update-service --enable-execute-command` alone leaves the root read-only and the session fails with
+  `TargetNotConnectedException`. Apply with `TF_VAR_ecs_exec_enabled=true` (the commented line in the Makefile), then:
 
   ```bash
   export AWS_PROFILE=<env> AWS_REGION=eu-west-2
-  aws ecs update-service --cluster flip-cluster --service flip-api \
-    --enable-execute-command --force-new-deployment
   aws ecs wait services-stable --cluster flip-cluster --services flip-api
   TASK=$(aws ecs list-tasks --cluster flip-cluster --service-name flip-api \
     --query 'taskArns[0]' --output text)
@@ -163,8 +164,9 @@ KIT=<CODE>` tarballs `trust/.env.<CODE>.<hub>` (or the kit named by `KIT_FILE=<p
     --container flip-api --interactive --command /bin/bash
   ```
 
-  Prefer `make register-trusts` for the real thing: an interactive session leaves the kit payload in the session
-  output rather than in an encrypted SSM parameter.
+  Security Hub's ECS.5 fails for these task definitions while the variable is on, so apply again without it when
+  the session is over. Prefer `make register-trusts` for the real thing: an interactive session leaves the kit
+  payload in the session output rather than in an encrypted SSM parameter.
 
 ### flip-ui on S3 + CloudFront
 
@@ -550,7 +552,7 @@ account reached as `stag`.
 | --- | --- | --- |
 | Env file / kit suffix | `.env.prod` / `trust/.env.<CODE>.prod` | `.env.stag` / `trust/.env.<CODE>.stag` |
 | Profile guard | `prod` (`PROD_AWS_PROFILE`) | `stag` (`STAG_AWS_PROFILE`) |
-| `TF_VAR_environment` | `prod` — RDS deletion protection + final snapshot on | `stag` — disposable |
+| `TF_VAR_environment` | `prod` — RDS final snapshot on | `stag` — no final snapshot |
 | `deploy-centralhub` git ref | `origin/main` | `origin/develop` |
 | `LZA_VPC_NAME` | optional (defaults to the prod template name) | **required** in the env file — there is no defaultable staging VPC name, so the Makefile refuses to run without it rather than letting the lookup fail opaquely |
 | `MANAGE_DNS` | **required**, `true` or `false` (`false` while the account has no Route 53 zone) | the same |
@@ -569,7 +571,7 @@ fixed per account by design.
 | --- | --- |
 | Env file | root `.env.prod` (gitignored, like the other env files) |
 | Profile guard | `AWS_PROFILE=prod` — a short local alias for the workload account's `FLIPAdminAccess` permission set (override via `PROD_AWS_PROFILE`) |
-| `TF_VAR_environment` | `prod` — all prod-only hardening (RDS deletion protection, final snapshot) stays on |
+| `TF_VAR_environment` | `prod` — the prod-only RDS final snapshot stays on |
 | Trust kit suffix | `trust/.env.<CODE>.prod` |
 | `deploy-centralhub` git ref | `origin/main` |
 | `TF_VAR_iam_permissions_boundary_name` | **`AICentre-WorkloadRoleBoundary`** — the platform's boundary ([londonaicentre/lza#51](https://github.com/londonaicentre/lza/pull/51)), deployed by the accelerator to every workload account. An LZA SCP denies creating a role, or attaching or writing a policy onto one, unless the role carries it, so no other value works there. An env file that sets the variable itself wins — `?=` only supplies the default ([FLIP#1280](https://github.com/londonaicentre/FLIP/issues/1280)) |
@@ -618,7 +620,7 @@ NLB DNS name) that the edge NLB and relay consume, so the workload account neces
 distribution exists. On that first apply `TF_VAR_lza_web_edge_domain` and `TF_VAR_lza_web_edge_distribution_arn`
 are still empty: the UI-bucket policy then grants no principal (fail-closed — the edge simply cannot read the
 bucket yet) and `local.ui_origin` is a placeholder. Once the edge stack is up, set both values in `.env.prod`
-(the edge distribution's default domain and its ARN) and re-apply to grant the cross-account OAC read and point
+(`ALB_SUBDOMAIN`, the only name the API answers on, and the distribution's ARN) and re-apply to grant the cross-account OAC read and point
 bucket CORS + Cognito URLs at the edge domain. This ordering is why the two variables deliberately carry no
 "required-when-LZA" validation — it would hard-fail the legitimate first apply. The operator side of
 the handoff is in the manual's [Two-phase edge handoff](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws-lza.html#two-phase-edge-handoff).
@@ -642,9 +644,12 @@ Maintainer notes the manual leaves out:
   `flip-lza-*` namespace — bucket names are global.
 - With `MANAGE_DNS=false` the zone lookup, every Route 53 record and both DNS-validated ACM certs are skipped. The
   workload CloudFront is gated off on LZA anyway, so `terraform output CloudfrontDistributionDomain` is null there by
-  design. The internal NLB's web listener is plain TCP until the zone lands, then TLS on the DNS-validated cert
-  (`fl_ingress_lza.tf`); flipping it is a cross-repo step, because the relay is TCP passthrough and the edge's VPC
-  origin in `aicentre-lza-iac` must switch to https-only with a matching origin host at the same time.
+  design. The zone stays in the networking account, so `MANAGE_DNS` stays `false`.
+- The internal NLB's web listener is TLS, on the certificate `aicentre-lza-iac` issues into the account for
+  `ALB_SUBDOMAIN` (`fl_ingress_lza.tf`, FLIP#1797); the plan fails until it is ISSUED. The relay passes TLS through,
+  so the environment's edge origin must be https-only (`origin_tls`, aicentre-lza-iac#99). The edge checks the
+  certificate against the host it forwards, so `/api/*` answers on `ALB_SUBDOMAIN` only, never on the
+  distribution's `*.cloudfront.net` name.
 - Secrets (`AES_KEY_BASE64`, `INTERNAL_SERVICE_KEY*`, `ADMIN_USER_PASSWORD`, …) were minted fresh for the account
   during the WP3 bring-up and later replaced by the carried-over legacy **values** in the WP4 data migration (so
   existing trust kits and encrypted data stayed valid) — never reuse the legacy Secrets Manager secret itself.
@@ -721,7 +726,7 @@ deploy/providers/AWS/
 ├── service_discovery.tf        # Cloud Map private DNS namespace (flip.local) for ECS task-to-task resolution
 ├── locals.tf                   # Shared locals
 ├── cloudfront.tf               # flip-ui bucket and its cross-account OAC read for the edge distribution
-├── certificate.tf              # ACM certificate for the internal NLB's web listener (MANAGE_DNS=true)
+├── certificate.tf              # ACM certificate for the web listener where this account keeps the zone (MANAGE_DNS=true)
 ├── modules/
 │   ├── cognito/                # shared: pool, domain, client, seed users
 │   ├── ses/                    # prod/stag only: sender identity, transactional templates
@@ -770,10 +775,10 @@ The RDS instance behaves differently per environment, driven by `TF_VAR_environm
 | Setting                            | `stag` (`HUB=stag`) | `prod` (`HUB=prod`)            |
 | ------------------------------------ | ------------------ | ----------------------------------- |
 | `skip_final_snapshot`              | `true`           | `false`                           |
-| `deletion_protection`              | `false`          | `true`                            |
+| `deletion_protection`              | `true`           | `true`                            |
 | `final_snapshot_identifier_prefix` | `flip-database-final` | `flip-database-final`        |
 
-In production, `terraform destroy` (or any `make destroy` against the prod account) will refuse to delete the RDS instance until deletion protection is removed manually, and a final snapshot named `flip-database-final-<suffix>` is taken before deletion. Staging stays disposable so trees can be torn down and rebuilt without snapshot cleanup.
+In both environments, `terraform destroy` (or `make destroy`) refuses to delete the RDS instance until deletion protection is removed manually (Security Hub RDS.8, FLIP#1796). In production a final snapshot named `flip-database-final-<suffix>` is then taken before deletion; staging skips it, so a torn-down tree needs no snapshot cleanup.
 
 ### Status Checking
 
@@ -1003,7 +1008,7 @@ Each holds `TF_PLAN_ROLE_ARN` and `TF_APPLY_ROLE_ARN` (the roles described in
 `scripts/setup-github-environments.sh`),
 the hub variable `TF_HUB`, and the Terraform inputs. Stored as environment
 *secrets*: `ADMIN_USER_PASSWORD`, `AES_KEY_BASE64`, `INTERNAL_SERVICE_KEY`,
-`INTERNAL_SERVICE_KEY_HASH`. Everything else is a variable, including
+`INTERNAL_SERVICE_KEY_HASH`, `FL_API_KEY`. Everything else is a variable, including
 `POSTGRES_DB` / `POSTGRES_USER` — they are configuration rather than credentials
 and are rendered in the clear into the public plan comment either way
 (`variables.tf` explains the decision). The authoritative lists are
@@ -1235,7 +1240,7 @@ as `EXPECTED_ENV_CLASS` (`main` → `prod`, otherwise `stag`; `stag` in
 `terraform_plan.yml`, which only ever plans staging) and the script refuses to
 compose when the two disagree. That is what keeps a mis-set `TF_HUB` from quietly
 planning the prod estate with staging's shape — the prod RDS then reads
-`deletion_protection = false` and `skip_final_snapshot = true` — in an unattended
+`skip_final_snapshot = true` — in an unattended
 apply on `main`.
 
 Run these in order **per account**, from a laptop authenticated to that account:
@@ -1681,9 +1686,9 @@ commit a re-render whose only change is the graphviz that made it.
 - **Network**: the accelerator-provisioned VPC, discovered by Name tag (`network_lza.tf`): compute in its TGW-routed **app** subnets, RDS in the isolated **data** subnets. No IGW and no NAT — AWS APIs go through the estate's central interface endpoints, images through the in-account ECR pull-through cache.
 - **ECS Fargate cluster**: Runs the Central Hub application services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) as awsvpc tasks in the **app subnets**. Task definitions, services, and per-service security groups live in `ecs*.tf` and `iam_ecs.tf`.
 - **Central Hub SSM bastion**: t3.micro instance with a 10 GB root volume in a **private subnet**. It carries only the SSM managed IAM policy and a PostgreSQL client for ad-hoc RDS operations; application workloads run on ECS Fargate.
-- **Internal NLB** (`module.fl_server_internal_nlb`, `fl_ingress_lza.tf`): one static private IP per app subnet, which the networking account's edge registers once as targets. A `:443` web listener forwards to the `ecs-flip-api-lza` target group (plain TCP until `MANAGE_DNS=true`, then TLS on the ACM certificate) and an `FL_SERVER_PORT` listener to the `fl-server-net-1` target group. Its security group admits the networking ingress CIDRs and the VPC CIDR. **Why an NLB?** FLARE FL traffic is end-to-end mutual-TLS over gRPC, and a Layer 7 load balancer terminates TLS, which breaks FLARE's own certificate handshake. An NLB (Layer 4) does raw TCP pass-through, so the FL client and FL server complete their mTLS handshake untouched.
+- **Internal NLB** (`module.fl_server_internal_nlb`, `fl_ingress_lza.tf`): one static private IP per app subnet, which the networking account's edge registers once as targets. A `:443` web listener forwards to the `ecs-flip-api-lza` target group (TLS on the ACM certificate, ending at the NLB) and an `FL_SERVER_PORT` listener to the `fl-server-net-1` target group. Its security group admits the networking ingress CIDRs and the VPC CIDR. **Why an NLB?** FLARE FL traffic is end-to-end mutual-TLS over gRPC, and a Layer 7 load balancer terminates TLS, which breaks FLARE's own certificate handshake. An NLB (Layer 4) does raw TCP pass-through, so the FL client and FL server complete their mTLS handshake untouched.
 - **Edge (networking account)**: CloudFront with its WAF, serving the UI bucket over cross-account OAC and relaying `/api/*`, and an internet-facing edge NLB for FL traffic — declared in aicentre-lza-iac, not here.
-- **ACM**: one `eu-west-2` certificate for the web listener, created once `MANAGE_DNS=true`.
+- **ACM**: one `eu-west-2` certificate for the web listener, issued into the account by `aicentre-lza-iac`.
 - **Route53**: a private hosted zone resolving the FL server's bare name to the internal NLB for in-VPC callers; the public records live in the networking account.
 - **EFS**: Shared file systems and access points used by the FL services for workspace volumes (configs, certs, transfer dir). Mount targets live in the **app subnets**.
 - **Cloud Map (Service Discovery)**: Private DNS namespace `flip.local` used for ECS task-to-task resolution (e.g. `fl-api-net-1.flip.local`).
@@ -1725,7 +1730,7 @@ Ingress at the internal NLB (not at any EC2 SG — the bastion has no inbound ru
 | Port | Load balancer | Status | Source allow-list | Purpose |
 | ---- | ------------- | ------ | ----------------- | ------- |
 | **22** | — | 🔴 **CLOSED everywhere** | n/a | SSH never exposed — remote access is via SSM Session Manager tunnel |
-| **443** | Internal NLB | 🟢 **OPEN to the edge path** | `networking_ingress_cidrs` + the VPC CIDR | `/api/*` relayed from the edge CloudFront to `flip-api` (TCP until `MANAGE_DNS=true`, then TLS) |
+| **443** | Internal NLB | 🟢 **OPEN to the edge path** | `networking_ingress_cidrs` + the VPC CIDR | `/api/*` relayed from the edge CloudFront to `flip-api` (TLS, ending at the NLB) |
 | **`FL_SERVER_PORT`** | Internal NLB | 🟢 **OPEN to the edge path** | `networking_ingress_cidrs` + the VPC CIDR | TCP/gRPC pass-through from the edge NLB to the `fl-server-net-1` Fargate task |
 
 Ports referenced internally only (no internet-facing ingress; reached only from inside the VPC or from the load balancers):

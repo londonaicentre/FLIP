@@ -26,6 +26,6 @@ output "outbound_ip" {
 }
 
 output "api_server_node_ranges" {
-  description = "The nodes' egress as API server ranges, comma-separated: make aks-allow-ip keeps them beside the operator's IP."
+  description = "The nodes' egress as API server ranges, comma-separated: make allow-ip keeps them beside the operator's IP."
   value       = join(",", local.node_api_ranges)
 }

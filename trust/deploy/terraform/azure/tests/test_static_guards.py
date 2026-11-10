@@ -24,47 +24,51 @@ import pytest
 from conftest import AZURE_DIR
 from tf_blocks import hcl_block
 
-MAKEFILE = AZURE_DIR / "Makefile"
+# One Makefile per root (FLIP#1787), plus the tree's own for what they share.
+MAKEFILES = {".": AZURE_DIR / "Makefile", "vm": AZURE_DIR / "vm" / "Makefile", "aks": AZURE_DIR / "aks" / "Makefile"}
+MAKE_SOURCES = [*MAKEFILES.values(), AZURE_DIR / "common.mk"]
 TESTS_DIR = AZURE_DIR / "tests"
 GUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 ROOTS = ["bootstrap", "vm", "aks"]
-TARGETS = [
-    "bootstrap",
-    "init",
-    "plan",
-    "apply",
-    "destroy",
-    "destroy-bootstrap",
-    "status",
-    "reprovision",
-    "selftest",
-    "kit-upload",
-    "selftest-kit",
-    "join",
-    "aks-init",
-    "aks-plan",
-    "aks-apply",
-    "aks-destroy",
-    "aks-credentials",
-    "aks-stop",
-    "aks-start",
-    "aks-allow-ip",
-    "aks-join",
-    "aks-deploy",
-    "aks-selftest",
-    "aks-clear-jobs",
-    "logs",
-    "report",
-    "stop",
-    "start",
-    "test",
-    "lint",
-    "help",
-]
+TARGETS = {
+    ".": ["bootstrap", "destroy-bootstrap", "test", "lint", "help"],
+    "vm": [
+        "init",
+        "plan",
+        "apply",
+        "destroy",
+        "status",
+        "reprovision",
+        "selftest",
+        "kit-upload",
+        "selftest-kit",
+        "join",
+        "logs",
+        "report",
+        "stop",
+        "start",
+        "help",
+    ],
+    "aks": [
+        "init",
+        "plan",
+        "apply",
+        "destroy",
+        "credentials",
+        "stop",
+        "start",
+        "allow-ip",
+        "join",
+        "deploy",
+        "selftest",
+        "clear-jobs",
+        "help",
+    ],
+}
 
 
 def _tracked_files():
-    suffixes = {".tf", ".hcl", ".tftpl", ".sh", ".md", ".py", ".yml", ""}
+    suffixes = {".tf", ".hcl", ".tftpl", ".sh", ".md", ".py", ".yml", ".mk", ""}
     return sorted(
         p
         for p in AZURE_DIR.rglob("*")
@@ -75,12 +79,17 @@ def _tracked_files():
 def test_discovery_finds_the_roots():
     for root in ROOTS:
         assert (AZURE_DIR / root / "versions.tf").exists(), root
-    assert MAKEFILE in _tracked_files()
+    for path in MAKE_SOURCES:
+        assert path in _tracked_files(), path
 
 
-@pytest.mark.parametrize("target", TARGETS)
-def test_makefile_has_target(target):
-    assert re.search(rf"^{re.escape(target)}:", MAKEFILE.read_text(), re.M), f"missing target {target}"
+ROOT_TARGETS = [(root, target) for root, targets in TARGETS.items() for target in targets]
+
+
+@pytest.mark.parametrize(("root", "target"), ROOT_TARGETS)
+def test_makefile_has_target(root, target):
+    text = MAKEFILES[root].read_text()
+    assert re.search(rf"^{re.escape(target)}:", text, re.M), f"{root}/Makefile is missing target {target}"
 
 
 def test_no_auto_approve_anywhere():
@@ -107,9 +116,12 @@ def test_no_real_guids_in_tracked_files():
 
 def test_every_az_call_names_the_subscription():
     lines = [
-        line for line in MAKEFILE.read_text().splitlines() if re.search(r"\baz (vm|account show|storage|aks)\b", line)
+        line
+        for path in MAKE_SOURCES
+        for line in path.read_text().splitlines()
+        if re.search(r"\baz (vm|account show|storage|aks|group)\b", line)
     ]
-    assert lines, "the Makefile drives az; the guard must see its calls"
+    assert lines, "the Makefiles drive az; the guard must see their calls"
     for line in lines:
         assert "--subscription" in line, f"az call without --subscription: {line.strip()}"
 
@@ -163,14 +175,18 @@ def test_gitignore_hides_state_and_tfvars():
         assert pattern in ignored, pattern
 
 
-def _recipe(target: str) -> str:
-    match = re.search(rf"^{re.escape(target)}:[^\n]*\n((?:\t[^\n]*\n)+)", MAKEFILE.read_text(), re.M)
-    assert match, f"no recipe for {target}"
+def _recipe(root: str, target: str) -> str:
+    match = re.search(rf"^{re.escape(target)}:[^\n]*\n((?:\t[^\n]*\n)+)", MAKEFILES[root].read_text(), re.M)
+    assert match, f"no recipe for {target} in {root}/Makefile"
     return match.group(1)
 
 
+def _target(root: str, name: str) -> str:
+    return MAKEFILES[root].read_text().split(f"\n{name}:", 1)[1].split("\n\n", 1)[0]
+
+
 def test_apply_shows_the_plan_and_asks_before_applying():
-    recipe = _recipe("apply")
+    recipe = _recipe("vm", "apply")
     assert "show vm.tfplan" in recipe, "apply must show the saved plan first"
     assert "read -r" in recipe, "apply must wait for an answer: a saved plan applies without a prompt"
     assert '"yes"' in recipe, "apply must require a typed yes"
@@ -178,20 +194,20 @@ def test_apply_shows_the_plan_and_asks_before_applying():
 
 
 def test_bootstrap_budget_starts_this_month():
-    assert "budget_start_date=$(shell date -u +%Y-%m-01T00:00:00Z)" in _recipe("bootstrap"), (
+    assert "budget_start_date=$(shell date -u +%Y-%m-01T00:00:00Z)" in _recipe(".", "bootstrap"), (
         "a monthly budget's start date must be in the current month, or bootstrap fails"
     )
 
 
 def test_destroy_bootstrap_refuses_while_the_node_exists():
-    recipe = _recipe("destroy-bootstrap")
+    recipe = _recipe(".", "destroy-bootstrap")
     assert "az group exists" in recipe, "destroy-bootstrap must check for the node first"
     assert "--subscription" in recipe, "the check must name the subscription"
     assert recipe.index("az group exists") < recipe.index("destroy"), "the check comes before the destroy"
 
 
 def test_bootstrap_keeps_its_own_region():
-    recipe = _recipe("bootstrap")
+    recipe = _recipe(".", "bootstrap")
     assert "location=$(BOOTSTRAP_LOCATION)" in recipe, "bootstrap's own region must not move with the node"
 
 
@@ -212,20 +228,19 @@ def test_only_the_created_networks_nat_gateway_owns_a_public_ip():
 
 def test_plan_lets_the_operator_through_the_kit_drop_firewall():
     # destroy passes a fixed placeholder instead: test_makefile_operator_ip.py
-    body = MAKEFILE.read_text().split("\nplan:", 1)[1].split("\n\n", 1)[0]
-    assert "operator_ip=$(OPERATOR_IP)" in body, "plan must pass operator_ip"
+    assert "operator_ip=$(OPERATOR_IP)" in _target("vm", "plan"), "plan must pass operator_ip"
 
 
 def test_kit_upload_uses_entra_never_a_key():
-    body = MAKEFILE.read_text().split("\nkit-upload:", 1)[1].split("\n\n", 1)[0]
+    body = _target("vm", "kit-upload")
     assert "--auth-mode login" in body, "kit-upload must authenticate with Entra (the kit drop has shared keys off)"
     assert "az storage blob upload" in body
     assert "--no-progress" in body, "a progress bar floods Run Command and CI logs"
 
 
 def test_selftest_kit_packs_here_and_uploads_under_the_name_the_node_fetches():
-    body = MAKEFILE.read_text().split("\nselftest-kit:", 1)[1].split("\n\n", 1)[0]
-    assert "scripts/pack-selftest-kit.sh $(FL_BACKEND)" in body
+    body = _target("vm", "selftest-kit")
+    assert "../scripts/pack-selftest-kit.sh $(FL_BACKEND)" in body
     assert "NAME=selftest-$(FL_BACKEND).tar.gz" in body, "flip-node run-selftest fetches selftest-<backend>.tar.gz"
 
 
@@ -233,12 +248,8 @@ def test_packed_kits_are_never_committed():
     assert "build/" in (AZURE_DIR / ".gitignore").read_text().splitlines()
 
 
-def _target(name: str) -> str:
-    return MAKEFILE.read_text().split(f"\n{name}:", 1)[1].split("\n\n", 1)[0]
-
-
 def test_aks_apply_asks_first_and_refuses_while_the_vm_exists():
-    body = _target("aks-apply")
+    body = _target("aks", "apply")
     assert "show aks.tfplan" in body
     assert 'read -r -p "Apply this plan?' in body
     assert "az group exists" in body, "the VM holds the trial's vCPUs"
@@ -246,18 +257,23 @@ def test_aks_apply_asks_first_and_refuses_while_the_vm_exists():
 
 
 def test_aks_plan_admits_only_the_operator():
-    # aks-destroy passes a fixed placeholder instead: test_makefile_aks_allowlist.py
-    assert "operator_ip=$(OPERATOR_IP)" in _target("aks-plan")
+    # aks/'s destroy passes a fixed placeholder instead: test_makefile_aks_allowlist.py
+    assert "operator_ip=$(OPERATOR_IP)" in _target("aks", "plan")
 
 
 def test_make_test_covers_the_aks_root():
-    assert " aks;" in _target("test") or " aks " in _target("test")
+    assert " aks;" in _target(".", "test") or " aks " in _target(".", "test")
 
 
 def test_outbound_ip_reports_parse_in_bash():
     # A quote inside ${ip:-...} in a double-quoted echo is a bash syntax error that only shows
     # after a real apply, when the line finally runs.
-    lines = [line.strip().lstrip("@") for line in MAKEFILE.read_text().splitlines() if "Outbound IP" in line]
+    lines = [
+        line.strip().lstrip("@")
+        for root in ("vm", "aks")
+        for line in MAKEFILES[root].read_text().splitlines()
+        if "Outbound IP" in line
+    ]
     assert lines, "the apply targets print the outbound IP"
     for line in lines:
         script = line.replace("$$", "$").replace("$(TF)", "terraform")

@@ -11,9 +11,25 @@
     limitations under the License.
 -->
 
-# Federated Evaluation with MONAI and Flower
+# Evaluating a spleen segmentation model
 
-This example uses a MONAI UNet for 3D spleen segmentation in an evaluation-only mode. It loads a pre-trained model checkpoint and performs federated evaluation across multiple client nodes.
+Flower twin of the FLARE evaluation tutorial at
+`fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation`. It scores a pre-trained
+MONAI UNet (the model the [3D spleen segmentation](../../image_segmentation/3d_spleen_segmentation)
+tutorial trains) on each trust's cohort without training it: the `ServerApp` loads the checkpoint,
+every `ClientApp` evaluates it on its own `input_`/`label_` NIfTI pairs, and the strategy averages the
+metrics.
+
+## At a glance
+
+| Item | Value |
+|---|---|
+| What you upload | everything in `app/`, plus `model.pt` from `make download-checkpoints` |
+| Job type | evaluation |
+| Imaging | on, DICOM to NIfTI on; labels uploaded as data enrichment |
+| Cohort query | the training tutorial's [`query.sql`](../../image_segmentation/3d_spleen_segmentation/query.sql) |
+| Dataset | `make -C fl-tutorials download-spleen-data` |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower` (GPU) |
 
 ## Key Features
 
@@ -32,6 +48,7 @@ This example uses a MONAI UNet for 3D spleen segmentation in an evaluation-only 
 │   ├── __init__.py
 │   ├── client_app.py   # Defines your ClientApp (evaluation-only)
 │   ├── config.json     # Configuration for evaluation job
+│   ├── config.toml     # run-config overrides fl-api applies on a platform submit (the checkpoint name)
 │   ├── data_loading.py # MONAI transforms + datalist (test data only)
 │   ├── models.py       # Defines model creation
 │   ├── server_app.py   # Defines your ServerApp with checkpoint loading
@@ -42,13 +59,12 @@ This example uses a MONAI UNet for 3D spleen segmentation in an evaluation-only 
 └── README.md
 ```
 
-### Install dependencies and project
+### Dependencies
 
-Install the dependencies defined in `pyproject.toml` as well as the `monai` package.
-
-```bash
-pip install -e .
-```
+Nothing to install by hand: the simulator path below runs in the `flip-utils` environment (the
+package set the FL images install) and `flwr run` builds a per-run environment from `pyproject.toml`
+on top of it. `flip-utils` is deliberately not declared there (FLIP#767: a local `flwr run` would
+install a PyPI release over the checkout).
 
 ## Running this tutorial
 

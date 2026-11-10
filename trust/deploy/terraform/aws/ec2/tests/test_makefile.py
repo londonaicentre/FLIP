@@ -35,11 +35,13 @@ def kit(tmp_path: Path) -> Path:
     return path
 
 
-def make(target: str, kit: Path, *extra: str, dry: bool = True) -> subprocess.CompletedProcess[str]:
+def make(
+    target: str, kit: Path, *extra: str, dry: bool = True, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     # GNU make 4 prints "Entering directory '…/terraform/aws/ec2'" for -C; keep stdout to the recipes.
     args = ["make", "--no-print-directory", *(["-n"] if dry else []), "-C", str(ROOT), target]
     args += ["KIT=TEST", "HUB=stag", f"KIT_FILE={kit}"]
-    return subprocess.run([*args, *extra], capture_output=True, text=True, timeout=60)
+    return subprocess.run([*args, *extra], capture_output=True, text=True, timeout=60, env=env)
 
 
 def test_site_plan_reads_no_hub_value(kit):
@@ -102,6 +104,37 @@ def test_seed_without_a_kit_bucket_skips_the_vocabulary(kit):
     with_bucket = make("seed", kit, "KIT_BUCKET=hub-kits").stdout
     assert "--skip-tags omop-vocab" not in with_bucket
     assert "-e vocab_s3_bucket=hub-kits" in with_bucket
+
+
+def test_a_trust_with_its_own_data_gets_the_vocabulary_and_no_sample_data(tmp_path):
+    """TRUST_DATA_SEED=false (FLIP#1687): neither seed nor deploy loads the sample data into the trust's stores."""
+    own = tmp_path / ".env.TEST.stag"
+    own.write_text(KIT + "TRUST_DATA_SEED=false  # our own OMOP and PACS\n")
+    with_bucket = make("seed", own, "KIT_BUCKET=hub-kits").stdout
+    assert "--tags data --skip-tags seed" in with_bucket, with_bucket
+    assert "-e vocab_s3_bucket=hub-kits" in with_bucket
+    for out in (make("seed", own).stdout, make("deploy", own).stdout):
+        assert "ansible-playbook" not in out, out
+        assert "nothing to load" in out, out
+    assert "--skip-tags seed" in make("deploy", own, "KIT_BUCKET=hub-kits").stdout
+
+
+def test_a_mistyped_sample_data_setting_stops_seed_and_deploy_before_they_start(tmp_path):
+    bad = tmp_path / ".env.TEST.stag"
+    bad.write_text(KIT + "TRUST_DATA_SEED=no\n")
+    # A real run: stubs stand in for every tool the recipes would reach, so a guard that lets it through records
+    # the call instead of driving Ansible or a docker context.
+    bin_dir, calls = tmp_path / "bin", tmp_path / "calls"
+    bin_dir.mkdir()
+    for tool in ("uv", "docker", "ssh"):
+        (bin_dir / tool).write_text(f"#!/bin/sh\necho {tool} >> {calls}\nexit 97\n")
+        (bin_dir / tool).chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+    for target in ("seed", "deploy"):
+        result = make(target, bad, dry=False, env=env)
+        assert result.returncode != 0, target
+        assert "TRUST_DATA_SEED must be true or false" in result.stdout + result.stderr, result.stdout
+        assert not calls.exists(), f"{target} reached {calls.read_text()}"
 
 
 def test_deploy_refuses_relative_host_paths(tmp_path):

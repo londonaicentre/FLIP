@@ -83,7 +83,7 @@ EXPECTED_AWS_PROFILE := $($(_AWS_PROFILE_KNOB_$(ENV)))
 
 ## SETTING VARIABLES FOR TERRAFORM
 # The environment class (prod|stag, from env_mode.mk). Used in main.tf to gate
-# prod-only RDS hardening (deletion protection, final snapshot).
+# the prod-only RDS final snapshot.
 export TF_VAR_environment=$(ENV_CLASS)
 
 # Name tag of the platform-managed VPC. Set LZA_VPC_NAME in the env file to override the variables.tf default (AWSAccelerator-eu-west-2-prod) —
@@ -128,6 +128,7 @@ export TF_VAR_POSTGRES_DB=${POSTGRES_DB}
 export TF_VAR_AES_KEY_BASE64=${AES_KEY_BASE64}
 export TF_VAR_INTERNAL_SERVICE_KEY_HASH=${INTERNAL_SERVICE_KEY_HASH}
 export TF_VAR_INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
+export TF_VAR_FL_API_KEY=${FL_API_KEY}
 export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 # ── Fail-fast env guards ────────────────────────────────────────────────────────────────────
 # Parse-time refusals of a deploy env file that cannot work. They stand aside only when every
@@ -166,6 +167,7 @@ $(if $(call unset_or_placeholder,$(AICENTRE_BUCKET_NAME)),$(error 🪶 AICENTRE_
 $(if $(INTERNAL_SERVICE_KEY),,$(error 🔑 INTERNAL_SERVICE_KEY must be set in $(MAIN_ENV_FILE) — generate with `make -C ../../../flip-api generate-internal-service-key`))
 $(if $(INTERNAL_SERVICE_KEY_HASH),,$(error 🔑 INTERNAL_SERVICE_KEY_HASH must be set in $(MAIN_ENV_FILE) — must be sha256 of INTERNAL_SERVICE_KEY))
 $(if $(INTERNAL_SERVICE_KEY_HEADER),,$(error 📨 INTERNAL_SERVICE_KEY_HEADER must be set in $(MAIN_ENV_FILE)))
+$(if $(FL_API_KEY),,$(error 🔑 FL_API_KEY must be set in $(MAIN_ENV_FILE) — generate with `make -C ../../../flip-api generate-fl-api-key ENV_FILE=$(abspath $(MAIN_ENV_FILE))`))
 endif
 
 # The GPUs fl-api on ECS writes into a job that declares none (mirrors compose).
@@ -177,7 +179,8 @@ endif
 ifneq ($(JOB_RESOURCE_SPEC_NUM_GPUS),)
 export TF_VAR_JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS}
 endif
-# Uncomment to enable ECS Exec on Fargate tasks for debugging:
+# Uncomment to enable ECS Exec on Fargate tasks for debugging. It also makes the services' root
+# filesystems writable, which ECS Exec needs, so Security Hub ECS.5 fails until it is off again (FLIP#1795):
 # export TF_VAR_ecs_exec_enabled=true
 
 export TF_VAR_docker_image_tag=${DOCKER_TAG}
@@ -210,9 +213,9 @@ export TF_VAR_flower_kit_date=${FLOWER_KIT_DATE}
 export TF_VAR_POSTGRES_USER=${POSTGRES_USER}
 export TF_VAR_FL_SERVER_PORT=${FL_SERVER_PORT}
 export TF_VAR_AWS_REGION=${AWS_REGION}
-# DNS availability (FLIP#749): an LZA account has no Route53 hosted zone until
-# the platform-side DNS migration lands, so its env file sets MANAGE_DNS=false
-# (no custom certs/records) and flips it to true once the zone exists there.
+# DNS availability (FLIP#749): an LZA account has no Route53 hosted zone (the
+# platform keeps it), so its env file sets MANAGE_DNS=false (no custom
+# certs/records; the web listener's cert comes from the platform, FLIP#1797).
 # Required, no default (the env guards above).
 export TF_VAR_manage_dns=$(MANAGE_DNS)
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
@@ -863,7 +866,7 @@ endif
 	@echo ""
 	@echo "⚠️  REMAINING MANUAL STEPS:"
 	@echo "   1. Deploy the staged FL kit into /opt/flip (run the commands printed above)."
-	@echo "   2. Start the trust stack (sudo: the login user is deliberately not in the docker group):"
+	@echo "   2. Start the trust stack (sudo: this playbook leaves the login user without docker access):"
 	@echo "      cd ../../.. && sudo -E make -C trust up-trust KIT=$(KIT) HUB=$(HUB)"
 
 .PHONY: down

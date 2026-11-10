@@ -41,8 +41,9 @@ Two differences survive that, and they are the actual reasons:
    restrict *which tensors* leave. Flower has no `KeepOnlyVars` / `TrimBroadcastVars` equivalent, so
    "only declared outputs leave" has nothing to bind to.
 
-The dependency model is now the same on both backends: `fl-base/Dockerfile` runs `uv sync --frozen`
-against `flip-utils/uv.lock`, so an NVFLARE job cannot introduce a dependency at submission time,
+The dependency model is now the same on both backends: each `fl-base/Dockerfile` installs from
+`flip-utils/uv.lock` (NVFLARE with `uv sync --frozen`, Flower with a hash-checked `uv export` since
+FLIP#1801), so an NVFLARE job cannot introduce a dependency at submission time,
 and since FLIP#1418 the Flower SuperNodes no longer launch with
 `--allow-runtime-dependency-installation` either (`fl-services/flower/compose.dev.yml`,
 `compose.secure.yml`). The two gaps above, enforcement and data minimisation, are untouched by that

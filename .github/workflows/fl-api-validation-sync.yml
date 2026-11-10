@@ -13,7 +13,8 @@
 # limitations under the License.
 
 # The nvflare and flower fl-api copies of validation.py hold byte-identical security guards
-# (FLIP#893); refusals.py holds the shared researcher-facing error contract. This runs the drift check once, from one place, rather than as a duplicated step in
+# (FLIP#893); refusals.py holds the shared researcher-facing error contract and auth.py the
+# service-key guard. This runs the drift check once, from one place, rather than as a duplicated step in
 # each backend's test workflow — the same shape as fl-apps-check-tutorial-sync.yml. The script is
 # pure bash/awk, so it needs neither Python nor uv.
 
@@ -27,6 +28,8 @@ on:
       - "fl-services/flower/fl-api-flower/fl_api/utils/validation.py"
       - "fl-services/nvflare/fl-api-base/fl_api/utils/refusals.py"
       - "fl-services/flower/fl-api-flower/fl_api/utils/refusals.py"
+      - "fl-services/nvflare/fl-api-base/fl_api/utils/auth.py"
+      - "fl-services/flower/fl-api-flower/fl_api/utils/auth.py"
       - "scripts/check_fl_api_validation_sync.sh"
       - ".github/workflows/fl-api-validation-sync.yml"
   pull_request:
@@ -36,6 +39,8 @@ on:
       - "fl-services/flower/fl-api-flower/fl_api/utils/validation.py"
       - "fl-services/nvflare/fl-api-base/fl_api/utils/refusals.py"
       - "fl-services/flower/fl-api-flower/fl_api/utils/refusals.py"
+      - "fl-services/nvflare/fl-api-base/fl_api/utils/auth.py"
+      - "fl-services/flower/fl-api-flower/fl_api/utils/auth.py"
       - "scripts/check_fl_api_validation_sync.sh"
       - ".github/workflows/fl-api-validation-sync.yml"
 

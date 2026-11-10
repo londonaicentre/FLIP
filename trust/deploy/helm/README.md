@@ -23,7 +23,7 @@ the same **zero inbound trust** architecture as the Docker Compose deployment:
 trust services only make outbound connections to the Central Hub and the FL
 server; no inbound ports are exposed from the K8s cluster.
 
-> **Deployment status.** The chart is validated on single-node k3s and includes
+> **Deployment status.** The chart is validated on single-node k3s, AKS and Amazon EKS, and includes
 > kit staging, default-deny ingress, audited egress rules, least-privilege
 > service accounts, and stateless-workload hardening. Review the
 > [known limitations](#known-limitations), particularly storage and Pod Security
@@ -31,7 +31,7 @@ server; no inbound ports are exposed from the K8s cluster.
 
 > **Deploying a trust?** The operator guide — prerequisites, staging the FL kit, deploying,
 > the `HELM_TIMEOUT` wait budget, verifying, upgrading and uninstalling — is
-> [Deploy a FLIP node on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html).
+> [Deploy on an existing Kubernetes cluster](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html).
 > This README is the chart's reference: values, secrets, internals and development notes.
 
 ## Quickstart
@@ -202,14 +202,14 @@ from `dicom.log` and the container log alike. See
 | `namespace.name` | `""` | Namespace name (defaults to release namespace) |
 | `trustData.version` | `20261019` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
 | `trustData.hfRepo` | `aicentreflip/trust-data` | The dataset the seed fetches from |
-| `trustData.seed.enabled` | `true` | Run the `trust-seed` post-install/post-upgrade hook (FLIP#1187): this trust's slice of `projects` into omop-db and, with `orthanc` on, Orthanc |
+| `trustData.seed.enabled` | `true` | Run the `trust-seed` post-install/post-upgrade hook (FLIP#1187): this trust's slice of `projects` into omop-db and, with `orthanc` on, Orthanc. `sync-kit` sets it `false` from the kit's `TRUST_DATA_SEED=false`, for a trust with real data (FLIP#1687), and any Makefile render or deploy naming that `KIT` passes `--set trustData.seed.enabled=false` |
 | `trustData.seed.omop` / `.orthanc` | `true` / `false` | Which stores to seed. Orthanc is off by default: ~2 GB of DICOM per trust, posted over REST (minutes, once) |
 | `trustData.seed.projects` | `cxr_project` | Published projects to load (`omop-csv/<project>/` + `dicom/<project>.tar.gz`). One list for both halves, so only projects the dataset carries both for; spleen and brain_mri publish tables only since FLIP#1221 and regenerate their DICOMs locally, which no in-cluster hook can do |
 | `trustData.seed.sourceTrust` | `""` (= `trustNumber`) | The dataset partition (`source_trust`) this trust receives |
 | `trustData.seed.sourceRef` | `develop` | FLIP git ref the seed tools are installed from at run time — match the ref your images were built from (`main` for `:prod`) |
 | `trustData.seed.dicomVocabBundle` | `vocab_dicom_paulnagy_20260109` | The Apache-licensed DICOM vocabulary bundle loaded before the rows |
 | `trustData.seed.forceDicomVocab` | `false` | Recovery only: reload the DICOM vocabulary over one that reports itself present. The load skips on a single concept committed before the bulk load, so a Job killed between them leaves a half-loaded vocabulary every later upgrade skips. Set for one upgrade, then put it back |
-| `trustData.seed.image.*` | `ghcr.io/astral-sh/uv@sha256:…` | The uv image the hook runs in (pinned by digest) |
+| `trustData.seed.image.*` | `ghcr.io/londonaicentre/mirror/astral-sh/uv@sha256:…` | The uv image the hook runs in: FLIP's mirror, pinned by digest (`trust/deploy/mirror-images.manifest`) |
 | `trustData.seed.workDirSize` | `8Gi` | Scratch emptyDir for the fetched tables, vocabulary zip and DICOM sets |
 
 #### Upgrading: `trustData.version` replaces the two per-store pins (FLIP#1100)
@@ -1275,11 +1275,12 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
   unwritten and the Job falls through to a full fetch-and-load rather than
   failing, because a needless download is recoverable and a wrongly-skipped load
   is silent. The loader then reports the real error.
-- The Job reaches no host but S3. `fetch-bundle` only downloads the zip; the
-  loader unpacks it with the `unzip` baked into the `omop-db` image, so nothing
-  is installed at run time and no package mirror has to be on the egress
-  allowlist. `unzip: not found` in `load-vocab` means the `omopDb.image.tag` in
-  use predates this — repull a CI-published tag.
+- The Job reaches no host but S3. All three containers run the `omop-db` image,
+  which bakes the AWS CLI and `unzip`, so nothing is installed at run time and no
+  package mirror has to be on the egress allowlist (FLIP#1721 retired the Docker
+  Hub `amazon/aws-cli` image the fetch used before). `aws: not found` in
+  `fetch-bundle`, or `unzip: not found` in `load-vocab`, means the `omopDb.image.tag`
+  in use predates this — repull a CI-published tag.
 
 ### Getting help
 

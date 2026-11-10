@@ -144,7 +144,7 @@ stack, so there is no VITE_-prefixed duplication to keep in sync.
 | `CENTRAL_HUB_API_URL` | Full base URL of the flip-api backend, including `/api` |
 | `BLACKLISTED_MODEL_FILES` | Comma-separated file names to reject in model uploads |
 | `VITE_LOCAL` | Set to `true` for local mock mode (bypasses Cognito). **Local dev only — see warning below.** |
-| `VITE_DEMO` | Selects the public Ark+ demo bundle (bypasses Cognito, offline Mirage API). **Never set this in the environment — see warning below**; it is inlined automatically by `npm run build:demo` / `npm run demo` (`--mode demo`). |
+| `VITE_DEMO` | Selects the public demo bundle (bypasses Cognito, offline Mirage API). **Never set this in the environment — see warning below**; it is inlined automatically by `npm run build:demo` / `npm run demo` (`--mode demo`). |
 
 Authentication sits behind a provider seam ([`src/auth/`](src/auth/), FLIP#919): the store, router guard, axios
 interceptor and auth pages speak only the `AuthProvider` contract in `src/auth/provider.ts`, and `getAuthProvider()`

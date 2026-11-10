@@ -130,6 +130,24 @@ resource "aws_s3_bucket_versioning" "aicentre_bucket" {
   }
 }
 
+# Security Hub S3.13 (FLIP#1796): abort incomplete multipart uploads after 7 days.
+resource "aws_s3_bucket_lifecycle_configuration" "aicentre_bucket" {
+  bucket = aws_s3_bucket.aicentre_bucket.id
+
+  rule {
+    id     = "abort-incomplete-multipart-uploads"
+    status = "Enabled"
+
+    filter {}
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.aicentre_bucket]
+}
+
 resource "aws_s3_bucket_cors_configuration" "aicentre_bucket_cors" {
   bucket = aws_s3_bucket.aicentre_bucket.id
 
