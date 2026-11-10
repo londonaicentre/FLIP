@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# The break-glass tier. This root is applied by a PERSON user holding ACCOUNTADMIN (or
-# SECURITYADMIN where that is enough), with MFA, and only when the account's security objects
+# The break-glass tier. This root is applied by a PERSON user holding ACCOUNTADMIN (or, with
+# account_admin = false, the role that owns objects), with MFA, and only when the account's security objects
 # really have to change.
 #
 # No credential is ever written here or into a variable. The provider reads them from the

@@ -21,8 +21,8 @@
 # MANAGE GRANTS, APPLY <policy>, MONITOR USAGE. A compromised deploy key therefore cannot mint an
 # identity, open an egress path, detach an account policy or re-grant anything it does not own.
 resource "snowflake_grant_privileges_to_account_role" "deploy_account" {
-  account_role_name = snowflake_account_role.deploy.name
-  privileges        = local.deploy_account_privileges
+  account_role_name = local.roles.deploy
+  privileges        = local.deploy_account_grant
   on_account        = true
 }
 
@@ -31,7 +31,7 @@ resource "snowflake_grant_privileges_to_account_role" "deploy_account" {
 resource "snowflake_grant_privileges_to_account_role" "deploy_eai" {
   count = var.enable_hub_egress ? 1 : 0
 
-  account_role_name = snowflake_account_role.deploy.name
+  account_role_name = local.roles.deploy
   privileges        = ["USAGE"]
 
   on_account_object {
@@ -43,7 +43,7 @@ resource "snowflake_grant_privileges_to_account_role" "deploy_eai" {
 resource "snowflake_grant_privileges_to_account_role" "svc_eai" {
   count = var.enable_hub_egress ? 1 : 0
 
-  account_role_name = snowflake_account_role.svc.name
+  account_role_name = local.roles.svc
   privileges        = ["USAGE"]
 
   on_account_object {
@@ -55,7 +55,7 @@ resource "snowflake_grant_privileges_to_account_role" "svc_eai" {
 # The observer role reads the account's logs: the platform database, its OBS schema, and the event
 # table itself. No clinical data lives here.
 resource "snowflake_grant_privileges_to_account_role" "observer_platform_database" {
-  account_role_name = snowflake_account_role.observer.name
+  account_role_name = local.roles.observer
   privileges        = ["USAGE"]
 
   on_account_object {
@@ -65,7 +65,7 @@ resource "snowflake_grant_privileges_to_account_role" "observer_platform_databas
 }
 
 resource "snowflake_grant_privileges_to_account_role" "observer_obs_schema" {
-  account_role_name = snowflake_account_role.observer.name
+  account_role_name = local.roles.observer
   privileges        = ["USAGE"]
 
   on_schema {
@@ -78,8 +78,8 @@ resource "snowflake_grant_privileges_to_account_role" "observer_obs_schema" {
 # The 2.x provider has no event-table resource, so SELECT on it is granted by statement, with a
 # revert that takes it away again. See the open point in README.md.
 resource "snowflake_execute" "observer_event_table" {
-  execute = "GRANT SELECT ON EVENT TABLE ${local.event_table_fqn} TO ROLE ${snowflake_account_role.observer.name}"
-  revert  = "REVOKE SELECT ON EVENT TABLE ${local.event_table_fqn} FROM ROLE ${snowflake_account_role.observer.name}"
+  execute = "GRANT SELECT ON EVENT TABLE ${local.event_table_fqn} TO ROLE ${local.roles.observer}"
+  revert  = "REVOKE SELECT ON EVENT TABLE ${local.event_table_fqn} FROM ROLE ${local.roles.observer}"
   query   = "SHOW GRANTS ON EVENT TABLE ${local.event_table_fqn}"
 
   depends_on = [snowflake_execute.event_table]
@@ -90,7 +90,7 @@ resource "snowflake_execute" "observer_event_table" {
 # through them without holding IMPORTED PRIVILEGES on database SNOWFLAKE or SELECT on anything
 # else. Nothing here grants an account-level privilege to the observer: that is the point.
 resource "snowflake_grant_privileges_to_account_role" "observer_obs_views" {
-  account_role_name = snowflake_account_role.observer.name
+  account_role_name = local.roles.observer
   privileges        = ["SELECT"]
 
   on_schema_object {
@@ -112,7 +112,7 @@ resource "snowflake_grant_privileges_to_account_role" "observer_obs_views" {
 }
 
 resource "snowflake_grant_privileges_to_account_role" "observer_future_obs_views" {
-  account_role_name = snowflake_account_role.observer.name
+  account_role_name = local.roles.observer
   privileges        = ["SELECT"]
 
   on_schema_object {

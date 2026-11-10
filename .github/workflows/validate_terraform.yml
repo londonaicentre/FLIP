@@ -76,11 +76,13 @@ jobs:
           # Never applied by CI, but validating it exercises the module — so a
           # broken trust policy is caught before any caller picks it up.
           - ./deploy/providers/AWS/ci
-          # The Snowflake trust node's two roots (FLIP#1581, epic #1589). Validated with a
+          # The Snowflake trust node's three roots (FLIP#1581, epic #1589). Validated with a
           # backend-free init, so neither the local backend nor any Snowflake credential is
-          # needed. snowflake-platform is the break-glass tier (roles, deploy user, account
-          # grants, EAI, account policies, event table, resource monitor); snowflake is the
-          # least-privilege workload tier applied as FLIP_<CODE>_DEPLOY_USER.
+          # needed. snowflake-identity is the roles and the deploy user; snowflake-platform is
+          # the break-glass tier (account grants, EAI, account policies, event table, resource
+          # monitor); snowflake is the least-privilege workload tier applied as
+          # FLIP_<CODE>_DEPLOY_USER.
+          - ./trust/deploy/terraform/snowflake-identity
           - ./trust/deploy/terraform/snowflake-platform
           - ./trust/deploy/terraform/snowflake
     defaults:
@@ -119,6 +121,7 @@ jobs:
       fail-fast: false
       matrix:
         root:
+          - snowflake-identity
           - snowflake-platform
           - snowflake
     defaults:

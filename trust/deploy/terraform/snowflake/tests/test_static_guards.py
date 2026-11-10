@@ -24,7 +24,7 @@ import re
 import subprocess
 
 import pytest
-from conftest import PLATFORM_DIR, SNOWFLAKE_DIR, TF_FILES, all_terraform, source
+from conftest import IDENTITY_DIR, PLATFORM_DIR, SNOWFLAKE_DIR, TF_FILES, all_terraform, source
 from tf_blocks import hcl_block, resource_blocks
 
 ROOT_FILES = (
@@ -91,9 +91,10 @@ def test_apache_header(path):
     assert "Licensed under the Apache License, Version 2.0" in path.read_text(), path.name
 
 
-def test_the_platform_root_exists_beside_this_one():
-    assert (PLATFORM_DIR / "roles.tf").is_file(), (
-        "the account's roles, user, integration, policies and account grants live in ../snowflake-platform"
+def test_the_other_two_roots_exist_beside_this_one():
+    assert (IDENTITY_DIR / "roles.tf").is_file(), "the roles and the deploy user live in ../snowflake-identity"
+    assert (PLATFORM_DIR / "grants.tf").is_file(), (
+        "the integration, account policies and account grants live in ../snowflake-platform"
     )
 
 

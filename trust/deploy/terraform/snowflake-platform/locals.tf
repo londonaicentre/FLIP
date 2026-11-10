@@ -31,7 +31,6 @@ locals {
     converter   = "${local.prefix}_CONVERTER"
   }
 
-  deploy_user      = "${local.prefix}_DEPLOY_USER"
   hub_eai          = "${local.prefix}_HUB_EAI"
   resource_monitor = "${local.prefix}_RM"
   network_policy   = "${local.prefix}_ADMIN_NP"
@@ -79,6 +78,8 @@ locals {
     "BIND SERVICE ENDPOINT",
     "EXECUTE TASK",
   ]
+  # A role other than ACCOUNTADMIN can pass on only what it holds with the grant option.
+  deploy_account_grant = var.account_admin ? local.deploy_account_privileges : ["CREATE DATABASE", "CREATE COMPUTE POOL"]
 
   warehouse = "${local.prefix}_WH"
 

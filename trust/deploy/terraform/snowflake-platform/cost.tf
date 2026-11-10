@@ -18,6 +18,8 @@
 # Creating a resource monitor needs ACCOUNTADMIN, so it lives here. The workload root attaches it
 # to the warehouse it creates, using the MODIFY grant in grants.tf.
 resource "snowflake_resource_monitor" "trust" {
+  count = var.account_admin ? 1 : 0
+
   name         = local.resource_monitor
   credit_quota = var.credit_quota
 

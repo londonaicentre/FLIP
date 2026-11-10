@@ -19,6 +19,8 @@
 # 2. Compute pools suspend themselves (compute_pools.tf) and this nightly task suspends whatever
 #    is still running, so a forgotten `make up` costs one evening rather than one month.
 resource "snowflake_task" "suspend_pools" {
+  count = var.nightly_pool_suspend ? 1 : 0
+
   database  = snowflake_database.trust.name
   schema    = snowflake_schema.trust["app"].name
   name      = local.suspend_task

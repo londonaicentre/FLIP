@@ -123,6 +123,12 @@ variable "num_fl_nets" {
   }
 }
 
+variable "nightly_pool_suspend" {
+  description = "Create the nightly compute-pool suspend task. It needs EXECUTE TASK on the account, which the platform root grants only with account_admin = true; pool auto-suspend applies either way."
+  type        = bool
+  default     = true
+}
+
 variable "suspend_pools_cron" {
   description = "Cron expression (Snowflake task syntax, without the timezone) for the nightly compute-pool suspend."
   type        = string
