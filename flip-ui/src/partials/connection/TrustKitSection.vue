@@ -1,0 +1,209 @@
+<!--
+    Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+        http://www.apache.org/licenses/LICENSE-2.0
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+-->
+
+<!-- The trust's kit (keys + FL credentials, one encrypted file) on its detail card (FLIP#1852). Only the trust's own
+     admin and hub admins see it; for anyone else it renders nothing and asks the hub nothing. -->
+<template>
+    <div
+        v-if="canManageKit"
+        data-test="trust-kit-section"
+        class="px-[22px] pt-4 pb-[18px] border-b border-gray-200 dark:border-dark-border bg-primary-100/60 dark:bg-dark-canvas"
+    >
+        <div class="flex items-center justify-between gap-2">
+            <p class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                Trust kit
+            </p>
+            <span
+                v-if="status?.update_available"
+                data-test="kit-update-chip"
+                class="px-1.5 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+            >Kit update available</span>
+        </div>
+
+        <p v-if="statusError" data-test="kit-error" class="mt-2 text-[12.5px] text-red-700 dark:text-red-300">
+            The kit status could not be loaded. Reload the page to try again.
+        </p>
+        <p v-else-if="!status" data-test="kit-loading" class="mt-2 text-[12.5px] text-gray-600 dark:text-gray-300">
+            Loading…
+        </p>
+        <template v-else>
+            <div class="flex items-center justify-between gap-3 mt-2">
+                <div class="min-w-0">
+                    <p data-test="kit-status" class="text-[13px] font-semibold text-gray-900 dark:text-gray-100">
+                        {{ statusText }}
+                    </p>
+                    <p class="text-[11.5px] text-gray-600 dark:text-gray-300 mt-0.5">
+                        Keys and FL credentials for this trust's node.
+                    </p>
+                </div>
+                <AiButton
+                    primary
+                    small
+                    class="shrink-0"
+                    data-test="kit-download-btn"
+                    @click="asking = 'download'"
+                >
+                    Download kit
+                </AiButton>
+            </div>
+            <AiButton
+                v-if="status.keys_issued"
+                text
+                text-primary
+                small
+                class="mt-1 -ml-2.5 w-fit"
+                data-test="kit-rotate-btn"
+                :disabled="!trust.code"
+                :tooltip="trust.code ? '' : 'This trust has no code, so new keys cannot be issued from here.'"
+                @click="asking = 'rotate'"
+            >
+                Issue new keys
+            </AiButton>
+        </template>
+
+        <AiConfirmModal
+            :dialog="asking === 'download'"
+            :title="`Download the ${trustLabel} trust kit`"
+            :confirmation-text="downloadText"
+            :continue-action="() => issue(false)"
+            :submitting="submitting"
+            close-button-text="Cancel"
+            continue-button-text="Download"
+            @close-modal="asking = null"
+        />
+
+        <AiConfirmModal
+            :dialog="asking === 'rotate'"
+            :title="`Issue new keys for ${trustLabel}`"
+            :typing-confirmation="trust.code ?? ''"
+            :placeholder="trust.code ?? ''"
+            :continue-action="() => issue(true)"
+            :submitting="submitting"
+            close-button-text="Cancel"
+            continue-button-text="Issue new keys"
+            @close-modal="asking = null"
+        >
+            <template #confirmation>
+                <strong>The kit installed today will stop working.</strong>
+                The trust goes offline until the new kit is installed on the trust host.
+                <span class="block mt-2">Type {{ trust.code }} to confirm.</span>
+            </template>
+        </AiConfirmModal>
+
+        <TrustKitModal :kit="issuedKit" :trust-label="trustLabel" @close-modal="issuedKit = null" />
+    </div>
+</template>
+
+<script setup lang="ts">
+import useSWRV from "swrv";
+import { computed, ref } from "vue";
+
+import AiButton from "@/components/AiButton/AiButton.vue";
+import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
+import { usePermissions } from "@/composables/usePermissions";
+import TrustKitModal from "@/partials/trusts/TrustKitModal.vue";
+import { downloadTrustKit,
+    getTrustKitStatus,
+    ITrustKitDownload,
+    ITrustKitReceipt,
+    ITrustKitStatus,
+    ITrustResponse,
+    rotateTrustKit } from "@/services/trust-service";
+import { useAuthStore } from "@/store/auth";
+import { extractErrorDetail } from "@/utils/api-errors";
+import { Snackbar } from "@/utils/snackbar";
+import { shortDate } from "@/utils/trust-decisions";
+
+const props = defineProps<{ trust: Pick<ITrustResponse, "id" | "name" | "code"> }>();
+
+const authStore = useAuthStore();
+const { isAdmin } = usePermissions();
+const isThisTrustsAdmin = computed(() => authStore.trustAdminOf?.id === props.trust.id);
+const canManageKit = computed(() => isAdmin.value || isThisTrustsAdmin.value);
+
+const trustLabel = computed(() => props.trust.code ?? props.trust.name);
+
+// A null key fetches nothing, so a viewer who may not manage the kit never calls the route.
+const { data: status, error: statusError, mutate: refreshStatus } = useSWRV<ITrustKitStatus>(
+    () => (canManageKit.value ? `/trust/${props.trust.id}/kit` : null),
+    () => getTrustKitStatus(props.trust.id),
+    {
+        dedupingInterval: 5_000,
+        shouldRetryOnError: false
+    }
+);
+
+const statusText = computed(() => {
+    if (!status.value?.keys_issued) return "Not yet downloaded";
+    const last = status.value.last_download;
+    // Keys without a download: the trust was registered from the command line.
+    if (!last) return "Keys issued; not downloaded from here";
+
+    return `Downloaded ${shortDate(last.at)}${last.by ? ` by ${last.by}` : ""}`;
+});
+
+const downloadText = computed(() => {
+    if (status.value?.keys_issued) {
+        return "This kit carries the current hub settings and FL credentials. It does not change the trust's keys. "
+            + "The download is recorded against your account.";
+    }
+    const text = "The kit holds this trust's keys. Download it on a machine you trust, copy it to the trust host, "
+        + "then delete the download. The download is recorded against your account.";
+
+    return isThisTrustsAdmin.value
+        ? text
+        : `${text} This is the only download that carries the keys. After it, the site's admin will only get updates.`;
+});
+
+const asking = ref<"download" | "rotate" | null>(null);
+const submitting = ref(false);
+// The passphrase lives here only, and only while its dialog is open.
+const issuedKit = ref<ITrustKitReceipt | null>(null);
+
+// Same anchor-click approach as the model files zip (ModelUpload.vue).
+const saveFile = ({ file_name, content_base64 }: ITrustKitDownload) => {
+    const bytes = Uint8Array.from(atob(content_base64), c => c.charCodeAt(0));
+    const url = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = file_name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+};
+
+const issue = async (newKeys: boolean) => {
+    submitting.value = true;
+    try {
+        const kit = newKeys
+            ? await rotateTrustKit(props.trust.id, props.trust.code ?? "")
+            : await downloadTrustKit(props.trust.id);
+        saveFile(kit);
+        issuedKit.value = {
+            file_name: kit.file_name,
+            kind: kit.kind,
+            passphrase: kit.passphrase
+        };
+        void refreshStatus();
+    } catch (e) {
+        Snackbar.error({
+            title: newKeys ? "New keys not issued" : "Kit not downloaded",
+            text: extractErrorDetail(e, "The kit could not be built, please try again.")
+        });
+    } finally {
+        submitting.value = false;
+        asking.value = null;
+    }
+};
+</script>

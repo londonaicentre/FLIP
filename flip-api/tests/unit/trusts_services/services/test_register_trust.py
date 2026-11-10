@@ -63,6 +63,21 @@ def test_register_trust_creates_trust_and_claims_slot(mock_gen_key):
 
 
 @patch("flip_api.trusts_services.services.register_trust.generate_trust_key")
+def test_register_trust_without_keys_leaves_the_trust_unable_to_authenticate(mock_gen_key):
+    """The UI path (FLIP#1852): the slot is claimed, no key is minted, and the hash stays NULL."""
+    slot = FLKitSlot(slot_name="Trust_007", slot_number=7)
+    session = _mock_session(existing_trust=None, free_slot=slot)
+
+    result = register_trust(name="GSTT", code="GSTT", region=None, session=session, issue_keys=False)
+
+    mock_gen_key.assert_not_called()
+    assert result.trust.api_key_hash is None
+    assert result.trust_api_key is None
+    assert result.trust_internal_service_key is None
+    assert slot.assigned_to_trust_id == result.trust.id
+
+
+@patch("flip_api.trusts_services.services.register_trust.generate_trust_key")
 def test_register_trust_writes_audit_row_with_user_id(mock_gen_key):
     """The UI path passes ``audit_user_id`` — the audit row's
     ``modified_by_user_id`` matches the authenticated admin's id.

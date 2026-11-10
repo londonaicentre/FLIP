@@ -168,7 +168,7 @@ const submitAction = async () => {
         });
         Snackbar.success({
             title: "Trust created",
-            text: `${created.name} has been registered. Save the keys on the next screen.`
+            text: `${created.name} has been registered. Download its kit from the trust's card.`
         });
         emit("onSuccess", created);
         resetForm();

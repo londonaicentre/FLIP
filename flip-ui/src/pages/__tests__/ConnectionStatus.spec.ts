@@ -12,7 +12,7 @@
  */
 
 import { createTestingPinia } from "@pinia/testing";
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 
@@ -55,12 +55,6 @@ const stubs = {
         props: ["dialog"],
         emits: ["close-modal", "on-success"],
         template: "<div data-test='add-trust-modal' :data-dialog='dialog' />"
-    },
-    TrustKitModal: {
-        name: "TrustKitModal",
-        props: ["dialog", "trust"],
-        emits: ["close-modal"],
-        template: "<div data-test='trust-kit-modal' :data-dialog='dialog' />"
     },
     // Stubbed: the shared swrv mock returns trust fixtures, which the partial
     // (which expects IFLStatus shape) would otherwise misinterpret.
@@ -524,24 +518,25 @@ describe("ConnectionStatus", () => {
         expect(modal.props("dialog")).toBe(true);
     });
 
-    it("closes AddTrustModal and opens TrustKitModal when a trust is created", async () => {
+    it("closes AddTrustModal and opens the new trust's drawer, where its kit is downloaded", async () => {
         mockSwrvData.value = fixture;
         const wrapper = mountPage();
 
         await wrapper.find("[data-test='add-trust-btn']").trigger("click");
         const addModal = wrapper.findComponent({ name: "AddTrustModal" });
-        const kitModal = wrapper.findComponent({ name: "TrustKitModal" });
         expect(addModal.props("dialog")).toBe(true);
 
-        await addModal.vm.$emit("on-success", {
-            id: "new-id",
-            name: "New Trust"
+        addModal.vm.$emit("on-success", {
+            id: fixture[0].id,
+            name: fixture[0].name
         });
-        expect(addModal.props("dialog")).toBe(false);
-        expect(kitModal.props("dialog")).toBe(true);
+        await flushPromises();
 
-        await kitModal.vm.$emit("close-modal");
-        expect(kitModal.props("dialog")).toBe(false);
+        expect(addModal.props("dialog")).toBe(false);
+        expect(wrapper.find("[data-test='trust-kit-modal']").exists()).toBe(false);
+        const drawer = wrapper.find("[data-test='trust-detail-drawer']");
+        expect(drawer.attributes("data-show")).toBe("true");
+        expect(drawer.attributes("data-trust-id")).toBe(fixture[0].id);
     });
 
     it("returns to the table view when the List tab is clicked after switching to radial", async () => {

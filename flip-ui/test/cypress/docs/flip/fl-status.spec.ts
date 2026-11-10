@@ -102,6 +102,23 @@ describe("docs: connection status", () => {
             ]);
         }).as("getTrusts");
 
+        // The drawer's Trust kit section, shown to the admin this spec signs in as (FLIP#1852).
+        cy.intercept("GET", "**/trust/*/kit", {
+            statusCode: 200,
+            body: {
+                keys_issued: true,
+                fl_backend: "nvflare",
+                fl_kit_slot: "Trust_2",
+                download_count: 1,
+                last_download: {
+                    at: "2026-11-10T16:37:02Z",
+                    kind: "full",
+                    by: "site.admin@example.com"
+                },
+                update_available: false
+            }
+        });
+
         // FL nets card: one healthy net whose two clients are both online, so the
         // card renders "The FL nets are Healthy" with green client check marks.
         cy.intercept("GET", "**/fl/status", {

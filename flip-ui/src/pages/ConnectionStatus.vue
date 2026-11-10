@@ -671,12 +671,6 @@
         @on-success="onTrustCreated"
     />
 
-    <TrustKitModal
-        :dialog="!!createdTrust"
-        :trust="createdTrust"
-        @close-modal="onKitModalClose"
-    />
-
     <TrustDetailDrawer
         :trust="selectedTrust"
         :show="!!selectedTrust"
@@ -696,7 +690,6 @@ import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import FLNetsCard from "@/partials/connection/FLNetsCard.vue";
 import TrustDetailDrawer from "@/partials/connection/TrustDetailDrawer.vue";
 import AddTrustModal from "@/partials/trusts/AddTrustModal.vue";
-import TrustKitModal from "@/partials/trusts/TrustKitModal.vue";
 import { ICreatedTrust } from "@/services/admin-trusts-service";
 import { getHubHealth, getTrustStatuses, IHubHealth, ITrustResponse, ServiceStatus } from "@/services/trust-service";
 import { useAuthStore } from "@/store/auth";
@@ -712,7 +705,6 @@ const authStore = useAuthStore();
 const isAdmin = computed(() => authStore.hasPermissions(["CanAccessAdminPanel"]));
 
 const showAddTrustModal = ref(false);
-const createdTrust = ref<ICreatedTrust | null>(null);
 
 type ViewMode = "list" | "radial";
 const viewMode = ref<ViewMode>("list");
@@ -1083,13 +1075,11 @@ const hoveredTrust = computed<IRenderedTrust | null>(
     () => sortedTrusts.value.find(t => t.id === hoverTrustId.value) ?? null
 );
 
-const onTrustCreated = (newTrust: ICreatedTrust) => {
+// The new trust's drawer carries its Trust kit section, where the admin downloads the kit. Wait for the list
+// first: the drawer resolves its trust from it.
+const onTrustCreated = async (newTrust: ICreatedTrust) => {
     showAddTrustModal.value = false;
-    createdTrust.value = newTrust;
-    refresh();
-};
-
-const onKitModalClose = () => {
-    createdTrust.value = null;
+    await refresh();
+    openDrawer(newTrust.id);
 };
 </script>

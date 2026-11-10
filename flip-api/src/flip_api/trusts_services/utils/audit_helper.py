@@ -26,6 +26,7 @@ def audit_trust_action(
     user_id: UUID | None,
     session: Session,
     subject_user_id: UUID | None = None,
+    detail: dict | None = None,
 ) -> TrustsAudit:
     """Insert an audit log row for a trust-registry mutation.
 
@@ -44,6 +45,7 @@ def audit_trust_action(
         session (Session): SQLModel session — the helper does NOT commit.
         subject_user_id (UUID | None): The user the event is about — the new or former Trust Admin on
             ADMIN_ADDED / ADMIN_REMOVED; ``None`` on registry events.
+        detail (dict | None): What a KIT_DOWNLOADED row handed over; never a secret.
 
     Returns:
         TrustsAudit: The newly-flushed audit row.
@@ -58,6 +60,7 @@ def audit_trust_action(
         action=action,
         modified_by_user_id=user_id,
         subject_user_id=subject_user_id,
+        detail=detail,
     )
     session.add(row)
     session.flush()

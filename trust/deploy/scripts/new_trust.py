@@ -60,6 +60,27 @@ def mint_passwords(template: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def scaffold(target: Path, template: Path, name: str, code: str, region: str | None = None) -> None:
+    """Create the kit file: the trust's identity, then the template with its passwords minted.
+
+    Raises:
+        FileExistsError: If ``target`` already exists.
+    """
+    identity = [
+        "# ── Trust identity (sent to the hub by `make register-trust`) ──",
+        f"TRUST_NAME={name}",
+        f"TRUST_CODE={code}",
+    ]
+    if region:
+        identity.append(f"TRUST_REGION={region}")
+    identity.append("")  # blank line before the template body
+
+    # Created 0600 before any content lands, since the file holds credentials from its first byte.
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as kit:
+        kit.write("\n".join(identity) + "\n" + mint_passwords(template.read_text()))
+
+
 def main() -> None:
     """CLI entry point: scaffold trust/.env.<CODE>.<env> from the base template."""
     parser = argparse.ArgumentParser(description="Scaffold a new trust kit file.")
@@ -87,19 +108,7 @@ def main() -> None:
         print(f"❌ Base template {template} not found.", file=sys.stderr)
         sys.exit(1)
 
-    identity = [
-        "# ── Trust identity (sent to the hub by `make register-trust`) ──",
-        f"TRUST_NAME={args.name}",
-        f"TRUST_CODE={args.code}",
-    ]
-    if args.region:
-        identity.append(f"TRUST_REGION={args.region}")
-    identity.append("")  # blank line before the template body
-
-    # Created 0600 before any content lands, since the file holds credentials from its first byte.
-    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w") as kit:
-        kit.write("\n".join(identity) + "\n" + mint_passwords(template.read_text()))
+    scaffold(target, template, args.name, args.code, args.region)
     print(f"✅ Scaffolded {target}")
     if args.env == "development":
         print(f"   Next: make register-trust KIT={args.code}")

@@ -12,7 +12,8 @@
  */
 
 import { mount } from "@vue/test-utils";
-import { describe, expect, it } from "vitest";
+import { createPinia, setActivePinia } from "pinia";
+import { beforeEach, describe, expect, it } from "vitest";
 import { h } from "vue";
 
 import { IServiceHealth, ITrustResponse } from "@/services/trust-service";
@@ -69,12 +70,24 @@ const trust = (xnat: IServiceHealth["status"] = "healthy"): ITrustResponse => ({
 
 // The card is the drawer's body without the Dialog, so it mounts plainly — no teleport, no stubs.
 describe("TrustDetailCard", () => {
+    // The card's Trust kit section reads the auth store; with nobody signed in it renders nothing.
+    beforeEach(() => setActivePinia(createPinia()));
+
     it("titles the card with the trust's name in a heading by default", () => {
         const wrapper = mount(TrustDetailCard, { props: { trust: deriveTrust(trust()) } });
 
         expect(wrapper.find("h2").text()).toBe("Guy's and St Thomas'");
         expect(wrapper.text()).toContain("GSTT · London");
         expect(wrapper.find("[data-test='drawer-heartbeat']").text()).toMatch(/heartbeat \d+s ago/);
+    });
+
+    it("hands the trust to its Trust kit section, which decides who sees it", () => {
+        const wrapper = mount(TrustDetailCard, {
+            props: { trust: deriveTrust(trust()) },
+            global: { stubs: { TrustKitSection: true } }
+        });
+
+        expect(wrapper.findComponent({ name: "TrustKitSection" }).props("trust")).toMatchObject({ id: "t1" });
     });
 
     it("lists one row per container and no banner when every service is healthy", () => {

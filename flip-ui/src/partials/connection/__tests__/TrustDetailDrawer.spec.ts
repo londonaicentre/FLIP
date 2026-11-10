@@ -12,7 +12,8 @@
  */
 
 import { flushPromises, mount, VueWrapper } from "@vue/test-utils";
-import { afterEach, describe, expect, it } from "vitest";
+import { createPinia, setActivePinia } from "pinia";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { IServiceHealth, ITrustResponse } from "@/services/trust-service";
 import { deriveTrust, SERVICE_REGISTRY } from "@/utils/connection-health";
@@ -125,6 +126,9 @@ const mountDrawer = async (trust: ITrustResponse | null, show = true, hubVersion
 
     return wrapper;
 };
+
+// The card's Trust kit section reads the auth store; with nobody signed in it renders nothing.
+beforeEach(() => setActivePinia(createPinia()));
 
 afterEach(() => {
     wrapper?.unmount();
