@@ -12,7 +12,7 @@
  */
 
 import { mount } from "@vue/test-utils";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { h } from "vue";
 
 import { IServiceHealth, ITrustResponse } from "@/services/trust-service";
@@ -22,6 +22,17 @@ import TrustDetailCard from "../TrustDetailCard.vue";
 
 const now = Date.now();
 const seconds = (n: number) => new Date(now - n * 1000).toISOString();
+
+// The code under test reads the clock itself, so hold it at the fixture's `now`: otherwise a
+// slow suite ages the "online" heartbeat past its threshold before the test runs (FLIP#1843).
+// Only Date is faked; timers run as usual.
+beforeAll(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now);
+});
+afterAll(() => {
+    vi.useRealTimers();
+});
 
 const services = (xnat: IServiceHealth["status"]): Record<string, IServiceHealth> => ({
     "trust-api": {
