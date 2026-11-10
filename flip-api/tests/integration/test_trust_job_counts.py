@@ -54,5 +54,6 @@ def test_trust_list_counts_queued_and_in_progress_jobs_per_trust(
     response = client.get("/api/trust")
 
     assert response.status_code == 200, response.text
+    # Other tests' seeded trusts may be listed too; only this test's three are checked.
     counts = {t["code"]: (t["jobs_queued"], t["jobs_in_progress"]) for t in response.json()}
-    assert counts == {"BOTH": (2, 1), "ONE": (0, 1), "NONE": (0, 0)}
+    assert {code: counts[code] for code in ("BOTH", "ONE", "NONE")} == {"BOTH": (2, 1), "ONE": (0, 1), "NONE": (0, 0)}
