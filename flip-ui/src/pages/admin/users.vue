@@ -466,6 +466,7 @@ import { getUsers,
     IUser,
     IUserDisabledStateDto,
     resetUserMfa,
+    resetUserPassword,
     updateUserDisabledState,
     updateUserProfile,
     updateUserRoles } from "@/services/user-service";
@@ -703,21 +704,22 @@ const updateUserState = async (disabled: boolean) => {
     }
 };
 
-// Reset is a Cognito ForgotPassword on the user's behalf; a backend without
-// that (Keycloak) disables the button and says where to go instead. The
-// tooltip sits on AiButton's wrapper, so it still shows on the disabled button.
+// flip-api picks the flow: a user who never finished signing in gets their
+// invite re-sent, anyone else a reset email. A backend without admin resets
+// disables the button and says so. The tooltip
+// sits on AiButton's wrapper, so it still shows on the disabled button.
 const resetPasswordTooltip = authStore.capabilities.adminResetPassword
     ? ""
-    : "Not available with the Keycloak dev backend — use the Keycloak console";
+    : "Not available with this sign-in backend";
 
 const resetPassword = async () => {
     if (!selectedUser.value) return;
     dialogResetPassword.value = false;
 
     try {
-        await authStore.resetPassword(selectedUser.value.email);
+        await resetUserPassword(selectedUser.value.id);
         Snackbar.success({
-            text: "The user's password has been reset.",
+            text: "The user has been emailed a way to set a new password.",
             title: "Password reset"
         });
     } catch {

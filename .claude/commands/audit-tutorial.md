@@ -22,16 +22,22 @@ directory basename, the same on both backends) and optionally one backend; defau
 1. **Guards.** `make -C fl-tutorials test` (ruff + the CPU-only suites — parity, min_clients, import
    paths, sim-tutorial mapping, offline apps, the catalogue guard, make targets) and
    `bash scripts/check_tutorial_sync.sh`. For NVFLARE, `make export` in the tutorial dir builds the
-   full job config without a GPU or data.
+   full job config without a GPU or data, but not always without a download: the evaluation and
+   diffusion tutorials first stage their checkpoint or weights (`download-checkpoints`, `weights`),
+   and the three Ark+ tutorials need the raw Ark+ checkpoint (`download-raw-checkpoint`,
+   then `prepare-checkpoint`) — without it their export is blocked, which is a finding, not a fix.
 2. **Registrations.** Read, do not assume: the Flower `sim-tutorial.sh` `case` entry (+ `RUN_CONFIG`
    for evaluation); `DICOM_APPS` for a 2-D DICOM app; `scripts/check_tutorial_sync.sh` for files
    shared with the twin (the cohort query at least); `docs/source/components/component-fl-nets.rst`,
    `fl-tutorials/README.md`, both `AGENTS.md`; the `e2e_smoke_<name>` target and the demo recorder's
    `APPS` profile when the cohort is seeded on the dev trusts (`references/registration-checklist.md`
    is the full list).
-3. **README.** Walk `references/readme-shape.md`: what to upload, the job type, the imaging toggle,
-   the dataset target and the simulator command (every quoted `make -C fl-tutorials` target must
-   resolve); an input → output figure from a committed `docs/make_<what>_figure.py`; "Expected
+3. **README.** Walk `references/readme-shape.md`: the title (task and data, sentence case, same on
+   both backends); the at-a-glance table — what to upload, the job type, the imaging toggle, the
+   dataset target and the simulator command, one value per cell, replacing any "Compatible job
+   type" section (every quoted `make -C fl-tutorials` target must resolve); code formatting only for
+   what the reader types or opens; a diagram only where the loop needs one, in plain words; an
+   input → output figure from a committed `docs/make_<what>_figure.py`; "Expected
    performance" with a reference curve or table, rounds to plateau, hardware and failure signatures;
    `## References` with BibTeX and what differs from the paper; the demo video link.
 4. **Known drift** (the skill's §6 list): a Flower client reading `SUPERNODE_NAME` directly, a

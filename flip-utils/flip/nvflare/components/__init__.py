@@ -31,7 +31,6 @@ Exports:
     - EvaluationJsonGenerator: Evaluation results JSON generator
     - PersistToS3AndCleanup: S3 persistence and cleanup component
     - PercentilePrivacy: Percentile-based privacy filter
-    - StagePercentilePrivacy: Stage-aware percentile-based privacy filter
     - CleanupImages: Image cleanup executor
     - FlipAnalyticsBridge: Bridges Client API analytics events to FlipEvents.SEND_RESULT
     - ClientExceptionReporter: Reports client task failures to the FLIP hub
@@ -55,7 +54,6 @@ from flip.nvflare.components.pt_model_locator import (
 )
 from flip.nvflare.components.pt_model_persistor import InitialCheckpointPTModelPersistor
 from flip.nvflare.components.reconstruct_model_filter import ReconstructFullModel, ReconstructFullModelForEval
-from flip.nvflare.components.stage_percentile_privacy import StagePercentilePrivacy
 from flip.nvflare.components.validation_json_generator import ValidationJsonGenerator
 
 __all__ = [
@@ -75,7 +73,6 @@ __all__ = [
     "EvaluationJsonGenerator",
     "PersistToS3AndCleanup",
     "PercentilePrivacy",
-    "StagePercentilePrivacy",
     "CleanupImages",
     "FlipAnalyticsBridge",
     "ClientExceptionReporter",

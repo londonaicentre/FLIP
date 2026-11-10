@@ -1,4 +1,4 @@
-# X-Ray Classification — FLIP tutorial
+# Chest X-ray lesion classification
 
 This tutorial trains a DenseNet-121 classifier of X-Ray pathologies (Effusion, Edema) using the
 **FLARE Client API** (`nvflare.client`). The job is defined entirely in Python via
@@ -7,6 +7,17 @@ This tutorial trains a DenseNet-121 classifier of X-Ray pathologies (Effusion, E
 It replaced the retired Executor-API tutorial of the same name (removed along with the other
 legacy-syntax FLARE tutorials); unlike that legacy flow there is no separate `validator.py` —
 validation runs server-side via cross-site model evaluation.
+
+## At a glance
+
+| Item | Value |
+|---|---|
+| What you upload | everything in `app_files/` |
+| Job type | standard |
+| Imaging | on, DICOM to NIfTI off |
+| Cohort query | `query.sql` (`query_novocab.sql` for a trust without the OMOP vocabulary) |
+| Dataset | `make -C fl-tutorials download-xray-data` |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=xray_classification` (GPU) |
 
 ## Data requirements
 
@@ -41,7 +52,7 @@ dense layers' bottleneck `norm2`/`conv2` — matched the ImageNet shapes; the fi
 every growth layer were random either way. On the reference mini dataset (2 clients, 3 rounds ×
 3 local epochs, two runs per setting) the final global-model test F1 was 0.976/0.965 with the
 partial ImageNet init and 0.962/0.966 without, both converging by epoch 5–6. An app that does
-need pretrained weights ships them as an uploaded file; the latent-diffusion tutorial shows the
+need pretrained weights ships them as an uploaded file; the autoencoder tutorial shows the
 pattern (`make weights`).
 
 ## The training logic

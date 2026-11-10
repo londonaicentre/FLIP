@@ -131,7 +131,7 @@ def read_env_vars(env_path: Path) -> dict[str, str]:
 KUBECTL: list[str] = ["kubectl"]
 
 
-#: An immutable, pullable image tag — a release or a CI sha tag (scripts/site_upgrade.py).
+#: An immutable, pullable image tag — a release or a CI sha tag (trust/deploy/scripts/site_upgrade.py).
 IMMUTABLE_IMAGE_TAG = re.compile(r"^(?:v\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)?|sha-[0-9a-f]{7})$")
 
 
@@ -322,6 +322,20 @@ def _generate_values() -> ModuleType:
     spec = importlib.util.spec_from_file_location("_flip_generate_values", path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load the values generator from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@functools.cache
+def _kit_lib() -> ModuleType:
+    """``trust/deploy/scripts/trust_kit_lib.py`` (stdlib only), loaded by path: its ``trust_data_seed`` is the one
+    Python reader of the kit's TRUST_DATA_SEED, shared with the onboarding checklist and the node self-test."""
+    path = REPO_ROOT / "trust" / "deploy" / "scripts" / "trust_kit_lib.py"
+    spec = importlib.util.spec_from_file_location("_flip_trust_kit_lib", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load the kit library from {path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -730,6 +744,7 @@ def render_override(
         GovernanceDocumentError: If the kit's governance configuration cannot be deployed — an
             ``ACCESS_POLICY_FILE`` that cannot be read or is invalid, or a site privacy filter
             that is invalid or would be ignored by this trust's backend.
+        ValueError: If ``TRUST_DATA_SEED`` is neither ``true`` nor ``false``.
     """
     trust_name = kit.get("TRUST_NAME", code)
     slot_number = kit.get("FL_KIT_SLOT_NUMBER", "").strip()
@@ -813,9 +828,15 @@ def render_override(
     # The mock-data partition the seed hook loads (trustData.seed.sourceTrust). The chart falls back
     # to the slot number, and the published data has only two partitions, so a trust on Trust_3 or
     # above names one in its kit (SOURCE_TRUST, as for the Compose stack) — FLIP#1390.
+    # A real trust turns the hook off with the kit's TRUST_DATA_SEED=false, as on Compose (FLIP#1687);
+    # unset or true leaves the chart's value, and anything else is refused.
+    seed = _kit_lib().trust_data_seed(kit)
     source_trust = kit.get("SOURCE_TRUST", "").strip()
-    if source_trust:
-        lines += ["trustData:", "  seed:", f'    sourceTrust: "{source_trust}"', ""]
+    seed_values = ([] if seed else ["    enabled: false"]) + (
+        [f'    sourceTrust: "{source_trust}"'] if source_trust else []
+    )
+    if seed_values:
+        lines += ["trustData:", "  seed:", *seed_values, ""]
 
     if kit_bucket and vocab_load:
         lines += [
@@ -1035,6 +1056,9 @@ def main(
             print("   Nothing was deployed. A relative ACCESS_POLICY_FILE resolves against trust/, as the")
             print("   Compose stack's --project-directory trust does. `make -C trust check-governance")
             print(f"   KIT={code}{hub}` validates the document and the kit's FL_SITE_PRIVACY_* in full.")
+            sys.exit(1)
+        except ValueError as e:
+            print(f"❌ {e} (in {kit_path.name}). Nothing was deployed.")
             sys.exit(1)
         override_path.write_text(override)
         print(f"  ✓ Wrote values override: {override_path}")

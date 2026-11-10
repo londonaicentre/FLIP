@@ -103,13 +103,15 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
 - Two XNAT instances are deployed as separate Swarm stacks (`xnat1`, `xnat2`), one per trust
 - **`up-xnat` is a fresh install; `upgrade-xnat` is the in-place upgrade (FLIP#1204).** `up-xnat`
   blocks on `down-xnat` and then runs `xnat-reset`, which `rm -rf`s `XNAT_DATA_DIR` and recreates
-  it — in development *and* in staging/production (local Docker context or remote-over-ssh alike).
-  In development the reset runs without `sudo` when the invoking user is the container uid (1001)
-  and already owns every directory in the tree; any other developer, or a root-created directory,
-  gets the `sudo` prompt. Never use it to move a live site to a release. `make upgrade-xnat KIT=<CODE> HUB=<env>` (driven
+  it wherever it may: as root, over ssh under sudo on a remote Docker context, or unprivileged when
+  the invoking user is the container uid (1001, or the kit's `FLIP_UID`) and owns every directory in
+  the tree. Any other non-root operator on a deployed host deletes nothing: the reset accepts the
+  empty tree `make -C trust prepare-host-dirs` made and refuses one that holds files, naming the
+  root `rm -rf` (FLIP#1723). In development any other developer, or a root-created directory, gets
+  the `sudo` prompt. Never use it to move a live site to a release. `make upgrade-xnat KIT=<CODE> HUB=<env>` (driven
   by `make -C trust upgrade-trust`) keeps the data dir: it takes a `pg_dumpall` of `xnat-db` into
   `$XNAT_DATA_DIR/backups/`, refuses to proceed unless the `xnat-data/` tree is owned by the
-  container uid (1001 — an archive written by a pre-hardening root `xnat-web` needs one
+  container uid (1001, or the kit's `FLIP_UID` — an archive written by a pre-hardening root `xnat-web` needs one
   `chown -R` first), redeploys the stack onto the kit's `XNAT_TAG` (XNAT migrates its own schema on
   boot; migrations are forward-only, hence the dump), then re-runs `configure-xnat.sh`, which
   *converges* a configured instance — picked by which admin password XNAT accepts, since a
@@ -351,11 +353,8 @@ The XNAT WAR and plugins are third-party, public upstream downloads that FLIP do
   fails there, naming the prep step, and leaves the running stack untouched.
 - **Image builds** (`make build` and the CI workflow `docker_build_xnat_web.yml`) download the WAR and plugins the
   same way and bake them into the image.
-- **Stag, prod, EC2 and on-prem** stacks run the plugins baked into the image, so `make up` neither needs nor checks
-  the host cache there.
-- **Helm** downloads the same plugin URLs at pod start (`trust/deploy/helm/values.yaml` `xnat.web.plugins.urls`).
-  `tests/test_artifacts.py` fails if the chart and the manifest disagree, or if the WAR line is not the `.env`
-  version.
+- **Deployed trusts** (Compose on stag, prod, EC2 or on-prem, and Helm) run the plugins baked into the image, so
+  `make up` neither needs nor checks the host cache there.
 
 [`scripts/xnat_artifacts.sh`](scripts/xnat_artifacts.sh) does the work. `fetch` keeps every file whose checksum
 already matches, downloads the rest to a temporary name, verifies the checksum and only then moves the file into
@@ -435,14 +434,15 @@ account. The DQR Bitbucket repository also carries `2.3.2`/`2.4.0` for the JDK 8
 
 ### Adding or updating a plugin
 
+One change covers every platform: the manifest, then a new `xnat-web` image.
+
 1. Replace the plugin's line in [`artifacts.manifest`](artifacts.manifest) with the new upstream URL and its
    SHA-256 (`sha256sum <file>` on the downloaded jar). Bumping XNAT itself is the same edit on the `war` line,
    plus `XNAT_VERSION` in `.env`.
-2. Change the same URL in `trust/deploy/helm/values.yaml` (`xnat.web.plugins.urls`).
-3. For a new plugin, add its id (the `id=` in the jar's `META-INF/xnat/*-plugin.properties`) to `XNAT_PLUGIN_IDS` in
+2. For a new plugin, add its id (the `id=` in the jar's `META-INF/xnat/*-plugin.properties`) to `XNAT_PLUGIN_IDS` in
    `trust/deploy/helm/check_status.py`; its test fails until you do.
-4. Update the plugin compatibility table above.
-5. Run `make -C trust prepare-artifacts` to refresh your dev cache. Merging rebuilds the image in CI.
+3. Update the plugin compatibility table above.
+4. Run `make -C trust prepare-artifacts` to refresh your dev cache. Merging rebuilds the image in CI.
 
 ## Importing data
 
@@ -490,7 +490,7 @@ registered only when none exists, and the step refuses to choose between two.
 
 A trigger fires on new scans only. `make -C trust reconvert-nifti KIT=<CODE> [PROJECT="<id> ..."]
 [LAUNCH=1]` converts the archived scans that have DICOM and no NIfTI, by Container Service bulk launch
-(report only without `LAUNCH=1`; on-prem prefix `sudo -E`). What it selects, what it leaves alone and
+(report only without `LAUNCH=1`). What it selects, what it leaves alone and
 its exit codes: [`trust/deploy/helm/TROUBLESHOOTING.md` §2.3e](../deploy/helm/TROUBLESHOOTING.md#23e-scans-archived-without-nifti-converting-the-backlog).
 
 ## Resource limits

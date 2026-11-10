@@ -27,7 +27,7 @@
 | `source/components/` | Per-component deep dives: `overview` (component map), `component-central-hub` (hub services, deployment-agnostic), `component-fl-nets` (nets, kit slots, scheduler, GPUs, quiesce), `component-fl-jobs` (job types, required files, config.json, meta.json, `flip.*` calls), `component-fl-privacy` (privacy filters, site policy, governance document), `component-trust-apis` (trust-api / imaging-api / data-access-api), OMOP, XNAT, PACS, logging stack |
 | `source/sys-admin/` | Admin tasks: project/user management, user roles, platform support, upgrading sites, backup and restore |
 | `source/user-guides/` | Researcher guides: `getting-started`, `user-common` (landing) with `user-account` / `user-projects` / `user-models` / `user-training`, data enrichment, trust admin |
-| `source/deploy-flip/` | Deployment guides: `deploy-central-hub` (shared hub operations) with child `deploy-central-hub-aws-lza` (the architecture and the generated diagrams; the old `deploy-central-hub-aws` URL redirects there); `deploy-trust-node` (landing) with `onboarding-a-trust` (the shared runbook) and the per-platform pages `deploy-flip-node-on-prem` (Docker Compose), `deploy-flip-node-azure` (Azure VM), `deploy-flip-node-kubernetes` (Helm), `deploy-flip-node-in-tre`; `deploy-local-dev` (the one-host `make up` walkthrough) |
+| `source/deploy-flip/` | Deployment guides: `deploy-central-hub` (shared hub operations) with child `deploy-central-hub-aws-lza` (the architecture and the generated diagrams; the old `deploy-central-hub-aws` URL redirects there); `deploy-trust-node` (landing) with `trust-readiness-checklist` (the prerequisites for a trust's IG, data, PACS and IT leads: plain language, by owner, in order), `onboarding-a-trust` (the shared runbook) and the per-platform pages `deploy-flip-node-on-prem` (Docker Compose), `deploy-flip-node-kubernetes` (Helm on an existing cluster), `deploy-flip-node-aws-ec2` (AWS EC2), `deploy-flip-node-aws-eks` (Amazon EKS), `deploy-flip-node-azure` (Azure VM), `deploy-flip-node-azure-aks` (Azure AKS), `deploy-flip-node-in-tre`; `deploy-local-dev` (the one-host `make up` walkthrough) |
 | `source/working-with-flip-apps/` | `choosing-an-fl-framework`, the paired FLARE / Flower app-authoring pages, `wrap-model-for-deployment` (MAP tutorial) and `map-toolchain-reference` |
 | `source/troubleshooting/` | Symptom-first troubleshooting: FL training/projects, Central Hub on AWS, trust on Compose, trust on Kubernetes (index: `source/troubleshooting.rst`) |
 
@@ -74,6 +74,7 @@ reaches `develop` and is recorded — `tests/test_docs_gifs_wiring.py` keeps fig
 GIFs that need a live trust (the MONAI Label walkthrough: GPU + the real XNAT OHIF viewer) are listed in
 `scripts/live-recorded-gifs.txt` instead of having a spec; `expected_gifs()` joins them to the spec set, so the
 wiring test and the publisher treat them alike. They are cut by `make -C trust/monailabel-demo demo-gifs` and
-published by hand to dataset branch `pr-<N>` of the PR that re-cuts them (its preview shows them); a CI publish,
-which cannot record them, carries each one forward from the merged PR's `pr-<N>`, else from `main`
-(`--carry-from`, sha256-checked against that ref's manifest).
+published by hand to dataset branch `pr-<N>` of the PR that re-cuts them (its preview shows them). The list pins
+each one's sha256, so a CI publish, which cannot record them, fetches exactly the reviewed bytes from whichever
+dataset branch holds them (`main`, else any `pr-<N>`): a cancelled merge run loses nothing, and a dataset branch
+edited after review changes nothing.

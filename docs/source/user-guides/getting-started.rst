@@ -90,7 +90,7 @@ that one. :ref:`choosing-an-fl-framework` explains how to tell which and how the
 Start from the X-ray classification tutorial for your framework rather than from scratch:
 
 - :gh:`NVIDIA FLARE version <fl-tutorials/nvflare/image_classification/xray_classification/README.md>`
-- :gh:`Flower version <fl-tutorials/flower/xray_classification/README.md>`
+- :gh:`Flower version <fl-tutorials/flower/image_classification/xray_classification/README.md>`
 
 Then adapt it with the matching guide: :doc:`../working-with-flip-apps/create-flip-app-from-flare` or
 :doc:`../working-with-flip-apps/create-flip-app-from-flower`. :doc:`../working-with-flip-apps/flip-utils-package`

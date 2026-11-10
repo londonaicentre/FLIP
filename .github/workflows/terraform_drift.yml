@@ -66,10 +66,18 @@ concurrency:
 jobs:
   drift:
     name: Drift (${{ github.ref_name == 'main' && 'prod' || 'stag' }})
+    # Both jobs skip outside londonaicentre/FLIP unless TF_CI_ON_FORK is `true`;
+    # see terraform_apply.yml. Without it a fork would fail here nightly, and
+    # GitHub mails a scheduled run's failure to whoever last edited this file
+    # upstream.
     # TF_STAG_DISABLED pauses the staging leg only; see terraform_apply.yml.
     # dispatch-prod below does not depend on this job, so production drift still
     # runs from the develop schedule.
-    if: github.ref_name == 'main' || vars.TF_STAG_DISABLED != 'true'
+    #
+    # Staging is planned whether or not it is stopped (FLIP#1596): a refresh only
+    # describes RDS, which works on a stopped instance, and the ECS desired counts
+    # are ignore_changes, so a stopped estate plans clean.
+    if: (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true') && (github.ref_name == 'main' || vars.TF_STAG_DISABLED != 'true')
     runs-on: ubuntu-latest
     # No matrix: a run can only reach the one environment its ref is trusted for,
     # so there is exactly one leg. The same `github.ref_name == 'main'` ternary
@@ -119,8 +127,8 @@ jobs:
       # terraform_apply.yml. A job-level `env:` block would define every key for
       # every step — and, worse, define an *absent* GitHub variable as the empty
       # string. compose-ci-env.sh can tell absent from empty; the Makefile's `?=`
-      # defaults cannot, so `TF_VAR_deploy_trust_ec2=` reaches Terraform and the
-      # run fails on a type error the operator has to decode.
+      # defaults cannot, so an empty `TF_VAR_…=` reaches Terraform and the run
+      # fails on a type error the operator has to decode.
       #
       # DOCKER_TAG / DOCKER_FL_TAG are deliberately absent: they arrive from the
       # resolver above through $GITHUB_ENV.
@@ -145,7 +153,6 @@ jobs:
           FLIP_UI_BUCKET_NAME: ${{ vars.FLIP_UI_BUCKET_NAME }}
           FL_SERVER_PORT: ${{ vars.FL_SERVER_PORT }}
           ENFORCE_MFA: ${{ vars.ENFORCE_MFA }}
-          DEMO_ASSETS_BUCKET_NAME: ${{ vars.DEMO_ASSETS_BUCKET_NAME }}
           FL_ADMIN_DIRECTORY: ${{ vars.FL_ADMIN_DIRECTORY }}
           INTERNAL_SERVICE_KEY_HEADER: ${{ vars.INTERNAL_SERVICE_KEY_HEADER }}
           TRUST_API_KEY_HEADER: ${{ vars.TRUST_API_KEY_HEADER }}
@@ -157,7 +164,6 @@ jobs:
           FL_KIT_SLOT_NAMES: ${{ vars.FL_KIT_SLOT_NAMES }}
           FLARE_KIT_DATE: ${{ vars.FLARE_KIT_DATE }}
           FLOWER_KIT_DATE: ${{ vars.FLOWER_KIT_DATE }}
-          DEPLOY_TRUST_EC2: ${{ vars.DEPLOY_TRUST_EC2 }}
           JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
           # The LZA keys (FLIP#749), required — see compose-ci-env.sh. The last three have no
           # `export TF_VAR_…` line in the Makefile, so the script writes them into
@@ -175,6 +181,7 @@ jobs:
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
           INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
           INTERNAL_SERVICE_KEY_HASH: ${{ secrets.INTERNAL_SERVICE_KEY_HASH }}
+          FL_API_KEY: ${{ secrets.FL_API_KEY }}
           POSTGRES_DB: ${{ vars.POSTGRES_DB }}
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}
         run: deploy/providers/AWS/scripts/compose-ci-env.sh
@@ -344,7 +351,8 @@ jobs:
   # error can never be mistaken for "absent" and skip production silently.
   dispatch-prod:
     name: Dispatch the production drift run on main
-    if: github.ref_name != 'main'
+    # Same fork skip as the drift job.
+    if: (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true') && github.ref_name != 'main'
     runs-on: ubuntu-latest
     permissions:
       contents: read

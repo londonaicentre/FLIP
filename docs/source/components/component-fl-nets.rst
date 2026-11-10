@@ -67,6 +67,8 @@ Hub API and the FL API are not on it, and an FL client has no hub URL or hub cre
 - **FLARE** uses mutual TLS with the per-participant certificates in the provisioned kits.
 - **Flower** checks the SuperLink's certificate, and each SuperNode authenticates with its own key pair. A
   one-shot job registers the SuperNodes' public keys with the SuperLink when the net starts.
+  Trusts reach the SuperLink only through a *fleet proxy* that passes the SuperNodes' own API and nothing
+  else: the SuperLink's run control is unauthenticated in open-source Flower, so it is never exposed to a Trust.
 
 .. warning::
 
@@ -189,6 +191,23 @@ either the Trust adds GPUs or the model goes to Trusts that have them.
 so it cannot start later or report to the model once that model has been queued again.
 
 On Flower, a GPU request is recorded but not enforced: Flower's deployment runtime does not schedule jobs by GPU.
+
+GPU on demand on Kubernetes (NVFLARE job pods)
+==============================================
+
+A Trust running the ``flip-trust`` Helm chart can run each NVFLARE job in its own pod
+(``flClient.nvflare.jobPods.enabled``). The FL client stays a small parent pod that keeps the site
+registered, and NVFLARE's Kubernetes job launcher starts one pod per job. That pod asks Kubernetes for the
+GPUs the job requests, so a Trust can put its GPUs on a node pool that scales from zero and pay for a GPU
+only while a job trains.
+
+From the hub's side nothing changes: a job's GPU request reaches the site in its ``resource_spec``, and a
+site that cannot meet it holds the job in NVFLARE's queue, as on any other trust. The site declares how
+many GPUs it lends at once (``jobPods.maxGpus``). A job that arrives while the pool's node is still booting
+waits for it, up to ``jobPods.pendingTimeout``, and then trains as usual.
+
+Set-up, prerequisites and trade-offs (cold start, the images volume, NetworkPolicy) are in the chart's
+README, under "NVFLARE job pods". Flower Trusts are not covered.
 
 Deployment mode (quiescing the nets)
 ====================================

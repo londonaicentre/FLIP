@@ -62,11 +62,14 @@ from pathlib import Path
 import pytest
 
 XNAT_DIR = Path(__file__).resolve().parents[1]
-REPO_ROOT = XNAT_DIR.parents[1]
 MAKEFILE = XNAT_DIR / "Makefile"
+# Where the container ids live since FLIP#1731: `XNAT_CONTAINER_UID := $(or $(FLIP_UID),1001)` — a kit's
+# FLIP_UID at run time, else the image's own uid. These tests pin that default against the image.
+PORTABLE_MK = XNAT_DIR.parents[1] / "deploy" / "portable.mk"
 DOCKERFILE = XNAT_DIR / "xnat" / "Dockerfile"
 DCM2NIIX_DOCKERFILE = XNAT_DIR / "dcm2niix" / "Dockerfile"
-AWS_PLAYBOOK = REPO_ROOT / "deploy" / "providers" / "AWS" / "site.yml"
+# The EC2 host play, imported by both the hub's site.yml and the standalone aws-ec2.yml.
+AWS_PLAYBOOK = XNAT_DIR.parent / "deploy" / "ansible" / "aws-ec2-host.yml"
 LOCAL_PLAYBOOK = XNAT_DIR.parent / "deploy" / "ansible" / "onprem.yml"
 # Both plays compose this role; it is the one place the XNAT bind-mount dirs are provisioned.
 DIRS_ROLE = "flip_trust_dirs"
@@ -78,10 +81,20 @@ TIMEOUT_SECONDS = 60
 
 
 def _make_var(name: str) -> str:
-    """Return the literal a `NAME := value` assignment in trust/xnat/Makefile binds."""
-    match = re.search(rf"^{re.escape(name)}\s*:?=\s*(\S+)\s*$", MAKEFILE.read_text(), re.MULTILINE)
-    assert match, f"{name} is not assigned in {MAKEFILE}"
-    return match.group(1)
+    """Return the literal a `NAME := value` assignment binds, in trust/xnat/Makefile or deploy/portable.mk.
+
+    `NAME := $(or $(FLIP_UID),value)` (and FLIP_GID) binds `value` when the kit sets none, which is the
+    image's own id and what these tests compare against.
+    """
+    for makefile in (MAKEFILE, PORTABLE_MK):
+        match = re.search(
+            rf"^{re.escape(name)}\s*:?=\s*(?:\$\(or \$\(FLIP_[UG]ID\),)?([^\s$()]+)\)?\s*$",
+            makefile.read_text(),
+            re.MULTILINE,
+        )
+        if match:
+            return match.group(1)
+    raise AssertionError(f"{name} is not assigned in {MAKEFILE} or {PORTABLE_MK}")
 
 
 def _reset_recipe() -> str:
@@ -225,6 +238,7 @@ class TestOwnershipGuardFires:
         result = subprocess.run(["sh", "-c", guard], capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
         assert result.returncode == 1
         assert "Fix: sudo chown -R" in result.stdout, "the guard must name the remedy, not just fail"
+        assert "prepare-host-dirs" in result.stdout, "and the host-owner one, for a non-root operator (FLIP#1723)"
 
     def test_rejects_a_missing_directory(self, tmp_path: Path) -> None:
         """A dir absent entirely must fail too — `stat` prints nothing rather than erroring out."""

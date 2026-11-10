@@ -84,7 +84,7 @@ RELEASE_NAME ?= trust-release
 CHART_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 VALUES_FILE ?= $(CHART_DIR)/values.yaml
 
-# REPO_ROOT is where scripts/site_upgrade.py and the shared make fragments live.
+# REPO_ROOT is where trust/deploy/scripts/site_upgrade.py and the shared make fragments live.
 REPO_ROOT := $(abspath $(CHART_DIR)/../../..)
 # Kit-file env token (ENV) from HUB, derived once for every Makefile that reads HUB.
 include $(REPO_ROOT)/deploy/env_mode.mk
@@ -129,6 +129,13 @@ PLATFORM_VALUES ?= $(if $(KIT),$(shell sed -n 's/^K8S_PLATFORM_VALUES=//p' $(KIT
 ifneq ($(strip $(PLATFORM_VALUES)),)
 	VALUES_OPTS := $(VALUES_OPTS) $(foreach f,$(PLATFORM_VALUES),-f $(f))
 endif
+# A kit with TRUST_DATA_SEED=false (FLIP#1687) turns the seed hook off on every render and deploy that names its KIT,
+# not only through the sync-kit override, so a missing or stale override cannot seed a real trust's OMOP. As --set it
+# beats every values file. Any other value stops `deploy` at preflight, as sync-kit stops at it.
+KIT_TRUST_DATA_SEED := $(if $(KIT),$(call kit_trust_data_seed,$(KIT_FILE)),true)
+ifeq ($(KIT_TRUST_DATA_SEED),false)
+	VALUES_OPTS := $(VALUES_OPTS) --set trustData.seed.enabled=false
+endif
 
 # The chart requires flClient.kitHostPath whenever flClient is enabled (with the default hostPath kit source), so any
 # render (make test, template-all-backends, a plain `make template`) fails the
@@ -169,6 +176,8 @@ update-deps: ## Update Helm chart dependencies
 	$(HELM) dependency update $(CHART_DIR)
 
 preflight: ## Check all prerequisites before deploying (tools, cluster, files, kit)
+	@case "$(KIT_TRUST_DATA_SEED)" in true|false) ;; *) \
+		echo "❌ TRUST_DATA_SEED must be true or false in $(KIT_FILE), not '$(KIT_TRUST_DATA_SEED)'."; exit 1;; esac
 	@HUB="$(HUB)" \
 	 KIT="$(KIT)" \
 	 KIT_FILE="$(KIT_FILE)" \
@@ -275,9 +284,9 @@ undeploy-trust-k8s: undeploy ## Remove trust services from K8s (alias for undepl
 	@true
 
 smoke-cstore: ## Send a real C-STORE through the PACS and verify XNAT received it (FLIP#1228)
-	## `make status` compares the pod's plugin jars against the values; this drives the
-	## path those jars are on. Both are needed: a roster can match while the importer is
-	## broken for some other reason, and a C-ECHO can pass while every store aborts.
+	## `make status` checks XNAT lists every plugin and answers its DQR route; this drives
+	## the path those plugins are on. Both are needed: every plugin can load while the
+	## importer is broken, and a C-ECHO can pass while every store aborts.
 	## Requires a seeded Orthanc (it stores an instance the PACS already holds).
 	## Exit 2 from the script is INCONCLUSIVE — the only evidence was a prearchive object's
 	## arrival time while received.log exists and gained no line. Not a pass, and not enough
@@ -308,7 +317,7 @@ smoke-cstore: ## Send a real C-STORE through the PACS and verify XNAT received i
 upgrade-trust-k8s: ## Move a deployed trust to a release tag (data-safe helm upgrade)
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> is required"; exit 1; }
 	@[ -f "$(CHART_DIR)/k8s-trust-$(KIT).yaml" ] || { echo "❌ $(CHART_DIR)/k8s-trust-$(KIT).yaml not found — run make sync-kit KIT=$(KIT) first"; exit 1; }
-	uv run --no-config $(REPO_ROOT)/scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
+	uv run --no-config $(REPO_ROOT)/trust/deploy/scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
 	$(MAKE) _upgrade-trust-k8s-apply KIT=$(KIT) HUB=$(HUB)
 
 # Phase 2: regenerate the override from the kit the resolver just pinned — that is how

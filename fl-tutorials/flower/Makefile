@@ -28,15 +28,20 @@
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 
-# Tutorials = immediate subdirs carrying an app/ (xray_classification, 3d_spleen_segmentation,
-# 3d_spleen_segmentation_evaluation, 3d_prostate_segmentation, ehr_risk_prediction).
-TUTORIAL_DIRS := $(sort $(patsubst %/app/,%,$(dir $(wildcard */app/.))))
+# Tutorials = <category>/<name> dirs carrying an app/ — the same two-level layout as
+# fl-tutorials/nvflare/ (#1500): image_classification/xray_classification,
+# image_segmentation/{3d_spleen_segmentation,3d_prostate_segmentation},
+# image_evaluation/3d_spleen_segmentation_evaluation, tabular_classification/ehr_risk_prediction.
+# Depth two ONLY: a checkout that pulled the move keeps ignored leftovers (__pycache__, .ruff_cache,
+# .venv, a downloaded model.pt) at the old flat fl-tutorials/flower/<name>/app, and a depth-one
+# wildcard would resurrect those as tutorials. sim-tutorial.sh resolves TUTORIAL=<name> by basename.
+TUTORIAL_DIRS := $(sort $(patsubst %/app/,%,$(dir $(wildcard */*/app/.))))
 
 .PHONY: list-tutorials run-tutorial run-all-tutorials sim-tutorial
 
 list-tutorials:
 	@echo "Available Flower tutorials (pass the name to 'make run-tutorial TUTORIAL=…'):"
-	@for d in $(TUTORIAL_DIRS); do echo "  - $$d"; done
+	@for d in $(TUTORIAL_DIRS); do echo "  - $$(basename $$d)  ($$d)"; done
 
 # Run one tutorial on the flwr simulator. Same app code as a platform run (identity comes from
 # node_config; see flip.flower.identity), and the exit status is the run's terminal status.
@@ -48,6 +53,6 @@ sim-tutorial: run-tutorial
 
 run-all-tutorials:
 	@for d in $(TUTORIAL_DIRS); do \
-		echo "🚀 Running Flower tutorial $$d"; \
-		bash $(REPO_ROOT)/fl-tutorials/flower/sim-tutorial.sh "$$d" || { echo "❌ tutorial $$d failed"; exit 1; }; \
+		n=$$(basename $$d); echo "🚀 Running Flower tutorial $$n ($$d)"; \
+		bash $(REPO_ROOT)/fl-tutorials/flower/sim-tutorial.sh "$$n" || { echo "❌ tutorial $$n failed"; exit 1; }; \
 	done

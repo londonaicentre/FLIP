@@ -12,7 +12,7 @@
 -->
 
 <!--
-    Persistent (non-dismissible) label for the public Ark+ demo build. The
+    Persistent (non-dismissible) label for the public demo build. The
     demo renders as an ordinary signed-in session — this is the only visible
     signal to an anonymous visitor that they are looking at a read-only
     snapshot rather than a live platform. Unlike AiBanner (the site-wide
@@ -26,21 +26,18 @@
         class="w-full py-1.5 px-3 text-sm font-medium text-center text-white bg-amber-600 dark:bg-amber-700"
         data-test="demo-banner"
     >
-        Read-only demo — snapshot of the Ark+ federated experiments: fine-tuning captured
-        {{ capturedOn }}, evaluation {{ evaluationCapturedOn }}.
+        Read-only demo of FLIP on example data — {{ projectCount }} federated projects,
+        snapshots captured {{ captureWindow }}.
     </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from "vue";
 
-import { DEMO_CAPTURE_DATE, DEMO_EVALUATION_CAPTURE_DATE } from "../../mocks/demo/ark-plus-register";
+import { EARLIEST_CAPTURE_DATE, LATEST_CAPTURE_DATE, PROJECT_COUNT } from "../../mocks/demo/capture-window";
 
-// Two dates, not one: the fine-tuning project was re-captured on its own after
-// the FLIP#821 image-orientation fix while the evaluation project was left on
-// its earlier capture. Naming a single date would misdate half the exhibit —
-// see the note on DEMO_EVALUATION_CAPTURE_DATE. Collapse this back to one date
-// only once both projects are captured together again.
+// capture-window.ts only — never the registry (every fixture JSON) nor Mirage —
+// so this component can sit in the main bundle; see that file's note.
 const asDate = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", {
     day: "2-digit",
     month: "short",
@@ -48,6 +45,10 @@ const asDate = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString(
     timeZone: "UTC"
 });
 
-const capturedOn = computed(() => asDate(DEMO_CAPTURE_DATE));
-const evaluationCapturedOn = computed(() => asDate(DEMO_EVALUATION_CAPTURE_DATE));
+const projectCount = PROJECT_COUNT;
+// One date when every project was captured together; a window otherwise, so
+// no half of the exhibit is misdated (the provenance discipline of FLIP#794).
+const captureWindow = computed(() => EARLIEST_CAPTURE_DATE === LATEST_CAPTURE_DATE
+    ? asDate(LATEST_CAPTURE_DATE)
+    : `between ${asDate(EARLIEST_CAPTURE_DATE)} and ${asDate(LATEST_CAPTURE_DATE)}`);
 </script>

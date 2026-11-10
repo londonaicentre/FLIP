@@ -100,7 +100,7 @@ class Instance:
 class Source:
     """A ``.zip`` or a directory, read the same way: iterate ``*.dcm`` members, open one by name."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path) -> None:
         self.path = path
         self._zip = zipfile.ZipFile(path) if path.is_file() else None
 

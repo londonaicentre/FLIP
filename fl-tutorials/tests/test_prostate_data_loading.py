@@ -29,7 +29,7 @@ import pytest
 import requests
 from tutorial_apps import TUTORIALS_ROOT
 
-PROSTATE_DIR = TUTORIALS_ROOT / "flower" / "3d_prostate_segmentation"
+PROSTATE_DIR = TUTORIALS_ROOT / "flower" / "image_segmentation" / "3d_prostate_segmentation"
 # XNAT's export tree for one pulled accession: one scan folder per series, named <scan id>-<description>
 # where the scan id is the DICOM SeriesNumber convert_mha_to_dicom.py stamps (t2w 1, adc 2, hbv 3).
 PLATFORM_SCANS = {"t2w": "1-T2_Weighted", "adc": "2-ADC_Map", "hbv": "3-High_B-Value_DWI"}

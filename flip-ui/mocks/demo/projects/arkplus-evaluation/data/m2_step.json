@@ -1,0 +1,103 @@
+{
+  "modelId": "70afa3f5-7537-85c4-ab62-bc95dde5036f",
+  "modelName": "Ark+ Multimodel Eval client_api (finetune 24985ec3) ",
+  "modelDescription": "Multi-model run of the federated evaluation application, comparing the pretrained Ark+ baseline against the federated fine-tuned checkpoint produced by the companion training project (model 24985ec3). Both models are packaged behind the shared inference interface; the evaluator broadcasts each checkpoint as a named validation task, computes per-class AUROC on each site's holdout cohort, and reports pairwise two-sided DeLong tests with Benjamini-Hochberg FDR correction to determine the best model per class-site pairing. Results are written to a structured evaluation_results.json per site; per-sample predictions never leave the trust.",
+  "projectId": "a1d6391c-dbc0-8912-9c71-b923db77d735",
+  "status": "RESULTS_UPLOADED",
+  "query": {
+    "id": "fdbc575a-0a9f-86d8-b921-25e5cb32b92a",
+    "name": "Ark+ Baseline Eval (2-trust): Cohort Query",
+    "query": "WITH project_images AS (\n    SELECT io.image_occurrence_id, io.accession_id, io.image_occurrence_date, io.modality_concept_id\n    FROM omop.image_occurrence io\n    JOIN omop.procedure_occurrence pr ON pr.procedure_occurrence_id = io.procedure_occurrence_id\n    WHERE pr.procedure_source_value = 'Chest X-ray (holdout)'\n),\nfeature_observation AS (\n    -- image_feature rows that link to the observation table (carry the Yes/No labels)\n    SELECT ife.image_occurrence_id, ife.image_feature_concept_id, ife.image_feature_event_id\n    FROM omop.image_feature ife\n),\nobservation_value AS (\n    -- pivot the per-label observations to one row per image occurrence\n    SELECT fo.image_occurrence_id,\n        MAX(CASE WHEN image_feature_concept_id = 4215818  THEN vc.concept_name END) AS effusion,\n        MAX(CASE WHEN image_feature_concept_id = 4196943  THEN vc.concept_name END) AS edema,\n        MAX(CASE WHEN image_feature_concept_id = 4319884  THEN vc.concept_name END) AS consolidation,\n        MAX(CASE WHEN image_feature_concept_id = 4264333  THEN vc.concept_name END) AS infiltration,\n        MAX(CASE WHEN image_feature_concept_id = 4214641  THEN vc.concept_name END) AS lung_nodule_or_mass,\n        MAX(CASE WHEN image_feature_concept_id = 253796   THEN vc.concept_name END) AS pneumothorax,\n        MAX(CASE WHEN image_feature_concept_id = 40481136 THEN vc.concept_name END) AS normal_lungs\n    FROM feature_observation fo\n    JOIN omop.observation o ON o.observation_id = fo.image_feature_event_id\n    JOIN omop.concept vc ON vc.concept_id = o.value_as_concept_id\n    GROUP BY fo.image_occurrence_id\n)\nSELECT\n    pi.accession_id,\n    pi.image_occurrence_date AS \"Image date\",\n    modality.concept_name    AS \"Modality\",\n    ov.effusion              AS \"Effusion\",\n    ov.edema                 AS \"Edema\",\n    ov.consolidation         AS \"Consolidation\",\n    ov.infiltration          AS \"Infiltration\",\n    ov.lung_nodule_or_mass   AS \"Lung Nodule or Mass\",\n    ov.pneumothorax          AS \"Pneumothorax\",\n    ov.normal_lungs          AS \"Lungs in normal arrangement\"\nFROM project_images pi\nJOIN observation_value ov ON ov.image_occurrence_id = pi.image_occurrence_id\nJOIN omop.concept modality ON modality.concept_id = pi.modality_concept_id\nORDER BY pi.accession_id\n",
+    "results": null
+  },
+  "files": [
+    {
+      "id": "0f12dfc4-dae5-872b-87c5-6cf3b6985815",
+      "name": "arkplus_finetuned_weights.pt",
+      "status": "COMPLETED",
+      "size": 795539335,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "70afa3f5-7537-85c4-ab62-bc95dde5036f"
+    },
+    {
+      "id": "3d851646-9b54-8150-af07-cf29f3fd9795",
+      "name": "arkplus_flat_models.py",
+      "status": "COMPLETED",
+      "size": 3285,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "70afa3f5-7537-85c4-ab62-bc95dde5036f"
+    },
+    {
+      "id": "5e04b072-5ae6-8541-b1c8-731031bc09b9",
+      "name": "arkplus_pretrained_weights.pt",
+      "status": "COMPLETED",
+      "size": 795823544,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "70afa3f5-7537-85c4-ab62-bc95dde5036f"
+    },
+    {
+      "id": "31716ae3-5f78-8241-8a65-330951f2262b",
+      "name": "config.json",
+      "status": "COMPLETED",
+      "size": 1425,
+      "type": "application/json",
+      "tag": null,
+      "model_id": "70afa3f5-7537-85c4-ab62-bc95dde5036f"
+    },
+    {
+      "id": "3313ea53-235c-8bdc-be51-013f4fdf5d44",
+      "name": "data_utils.py",
+      "status": "COMPLETED",
+      "size": 15460,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "70afa3f5-7537-85c4-ab62-bc95dde5036f"
+    },
+    {
+      "id": "37b650e8-711d-8ebb-99f0-065de1c84809",
+      "name": "evaluator.py",
+      "status": "COMPLETED",
+      "size": 19384,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "70afa3f5-7537-85c4-ab62-bc95dde5036f"
+    },
+    {
+      "id": "1f1d935e-87d8-8883-9580-471091599b12",
+      "name": "metrics_utils.py",
+      "status": "COMPLETED",
+      "size": 13615,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "70afa3f5-7537-85c4-ab62-bc95dde5036f"
+    },
+    {
+      "id": "5a18c987-5384-80d3-8251-393bbc42c616",
+      "name": "models.py",
+      "status": "COMPLETED",
+      "size": 4886,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "70afa3f5-7537-85c4-ab62-bc95dde5036f"
+    }
+  ],
+  "creationTimestamp": "2026-07-17T18:09:24.475",
+  "preparedAt": null,
+  "trainingStartedAt": null,
+  "resultsUploadedAt": "2026-07-17T18:35:59.625",
+  "trusts": [
+    {
+      "id": "00000000-0000-4000-8000-00000000a001",
+      "name": "Guy's and St Thomas' Trust",
+      "code": "GSTT"
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000a002",
+      "name": "King's College Hospital",
+      "code": "KCH"
+    }
+  ]
+}

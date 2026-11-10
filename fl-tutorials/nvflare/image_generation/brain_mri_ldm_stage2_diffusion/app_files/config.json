@@ -1,0 +1,56 @@
+{
+    "job_type": "standard",
+    "SERVER_CHECKPOINT": "pretrained_autoencoder.pt",
+    "AGGREGATE_ONLY_REGEX": "^diffusion_model\\.",
+    "GLOBAL_ROUNDS": 2,
+    "LOCAL_ROUNDS": 3,
+    "VALIDATE_EVERY": 3,
+    "LR_START": 0.0001,
+    "LR_END": 1e-06,
+    "LR_DECAY_EPOCHS": 6,
+    "GRAD_CLIP_NORM": 1.0,
+    "VAL_SPLIT": 0.2,
+    "BATCH_SIZE": 2,
+    "SAVE_DEBUG_SAMPLES": false,
+    "MODALITIES": [
+        "FLAIR",
+        "T1w",
+        "T1Gd",
+        "T2w"
+    ],
+    "LATENT_SCALE_FACTOR": null,
+    "spatial_shape": [
+        96,
+        112,
+        80
+    ],
+    "voxel_spacing": [
+        2.0,
+        2.0,
+        2.0
+    ],
+    "net_config": {
+        "spatial_dims": 3,
+        "diffusion_model": {
+            "in_channels": 8,
+            "out_channels": 8,
+            "with_conditioning": true,
+            "cross_attention_dim": 4,
+            "channels": [
+                64,
+                128,
+                256
+            ],
+            "num_res_blocks": [
+                2,
+                2,
+                2
+            ],
+            "attention_levels": [
+                false,
+                true,
+                true
+            ]
+        }
+    }
+}

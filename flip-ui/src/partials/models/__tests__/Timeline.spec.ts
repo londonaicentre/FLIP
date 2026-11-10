@@ -16,6 +16,8 @@
 import { mount } from "@vue/test-utils";
 import { describe, expect, test, vi } from "vitest";
 
+import type { ILog } from "@/services/model-service";
+
 import Timeline from "../Timeline.vue";
 
 // Two logs (Hub + a trust) so the log list renders, including the connector
@@ -38,7 +40,7 @@ const mockLogs = vi.hoisted(() => ({
             trustName: "Trust A",
             log: "Round failed"
         }
-    ]
+    ] as ILog[]
 }));
 
 vi.mock("swrv", async () => {

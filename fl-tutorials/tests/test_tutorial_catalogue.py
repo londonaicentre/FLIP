@@ -43,11 +43,12 @@ def _relative(path: Path) -> str:
 
 
 # A tutorial root is what each harness discovers: nvflare/<category>/<name>/.env.app, and a Flower
-# pyproject.toml directly under flower/ (FLIP#1500 moves Flower to <category>/<name>/ — bump the depth
-# with it).
+# pyproject.toml at flower/<category>/<name>/ (FLIP#1500 — the two trees share the layout).
 NVFLARE_ROOTS = sorted(p.parent for p in _tracked("fl-tutorials/nvflare") if p.name == ".env.app")
 FLOWER_ROOTS = sorted(
-    p.parent for p in _tracked("fl-tutorials/flower") if p.name == "pyproject.toml" and p.parent.parent.name == "flower"
+    p.parent
+    for p in _tracked("fl-tutorials/flower")
+    if p.name == "pyproject.toml" and p.parent.parent.parent.name == "flower"
 )
 assert NVFLARE_ROOTS, "no NVFLARE tutorial roots found — has the tutorial layout changed?"
 assert FLOWER_ROOTS, "no Flower tutorial roots found — has the tutorial layout changed?"
@@ -67,6 +68,15 @@ def _twins() -> list[tuple[Path, Path]]:
     """Every tutorial present on both backends under the same name, as (nvflare root, flower root)."""
     flower_by_name = {root.name: root for root in FLOWER_ROOTS}
     return [(root, flower_by_name[root.name]) for root in NVFLARE_ROOTS if root.name in flower_by_name]
+
+
+@pytest.mark.parametrize(("nvflare_root", "flower_root"), _twins(), ids=lambda p: p.name)
+def test_twin_pair_shares_the_category(nvflare_root: Path, flower_root: Path):
+    """Both trees are <backend>/<category>/<name> (FLIP#1500): a reader comparing the two copies finds them
+    at the same relative path, and the category names the task family on both."""
+    assert nvflare_root.parent.name == flower_root.parent.name, (
+        f"{_relative(nvflare_root)} and {_relative(flower_root)} sit in different categories"
+    )
 
 
 @pytest.mark.parametrize(("nvflare_root", "flower_root"), _twins(), ids=lambda p: p.name)

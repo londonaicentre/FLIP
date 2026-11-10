@@ -18,7 +18,7 @@ looks up the account's GitHub OIDC provider, and keeps its own state.
 | `AICentre-FLIPTerraformPlanRole` | Assumed by PR plans (staging only) and the nightly drift run. `ReadOnlyAccess` for configuration, explicit Denies on reading the account's data (S3 objects outside the state bucket, other parameters' values, log contents, messages, items) and on every write to the state bucket, plus a read grant on the one secret a plan refreshes |
 | `AICentre-FLIPTerraformApplyRole` | Assumed only by `terraform_apply.yml` pushed to the environment's branch. The AWS services the FLIP root uses and no others (`apply_service_prefixes`), in this region and `us-east-1`; IAM write only on the FLIP root's own named roles and instance profiles, under the boundary below and a managed-policy allowlist; Denies on the CI roles and the boundary itself |
 | `AICentre-FLIPTerraformBoundary` | The permissions boundary every role the FLIP root creates carries (`iam_permissions_boundary_name` in `../variables.tf`). Set `create_permissions_boundary = false` to use one your platform already deploys instead |
-| The state bucket | Versioned, public access blocked, SSE-S3 by default (`state_bucket_sse_algorithm = "aws:kms"` for the AWS-managed key), a TLS-only bucket policy, bounded version history, `prevent_destroy` |
+| The state bucket | Versioned, public access blocked, SSE-S3 by default (`state_bucket_sse_algorithm = "aws:kms"` for the AWS-managed key), a TLS-only bucket policy, bounded version history, `prevent_destroy`, and server access logging when `state_access_log_bucket` names a target |
 
 The names are inputs; the defaults are the ones the FLIP workflows and scripts expect. The module
 [README](../modules/terraform_ci_bootstrap/README.md) and its `iam_*.tf` files explain each grant and Deny.
@@ -60,6 +60,10 @@ created for.
 (`aws-stag` / `aws-prod`) set `TF_PLAN_ROLE_ARN` and `TF_APPLY_ROLE_ARN` to the two ARNs, and point the FLIP root's
 `FLIP_TFSTATE_BUCKET_NAME` at the state bucket. `../scripts/setup-github-environments.sh` seeds the environments and
 verifies the roles' trust policies against the mode before it writes anything.
+
+The Terraform workflows (`terraform_plan.yml`, `terraform_apply.yml`, `terraform_drift.yml`) only run in
+`londonaicentre/FLIP` unless you opt in: set the repository variable `TF_CI_ON_FORK` to `true` in your fork or copy
+(`gh variable set TF_CI_ON_FORK --body true`).
 
 ## Changing it
 

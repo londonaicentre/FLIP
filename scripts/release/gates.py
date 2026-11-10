@@ -46,6 +46,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TextIO
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import instance as instance_mod  # noqa: E402
@@ -95,6 +96,8 @@ class Gate:
     steps: list[Step]
     metrics: Callable[[list[tuple[float, str]]], dict] = field(default=lambda _lines: {})
     cleanup: Callable[[], list[str]] | None = None  # runs even when a step failed; returns what it did
+    # Fails a gate whose steps passed, from what its metrics say: returns the reason, or None.
+    verdict: Callable[[dict], str | None] | None = None
 
 
 SIMULATOR = re.compile(r"flower-superlink|flwr-simulation|flwr-serverapp")
@@ -128,8 +131,21 @@ def stop_own_simulators() -> list[str]:
     return stopped
 
 
+# The starts of flip.flower.privacy's per-round report and over-clipping WARNING (stdlib only here, so they
+# cannot be imported).
+DP_REPORTED = "FLIP local DP: update pre-clip L2 norm"
+DP_OVER_CLIPPED = "FLIP local DP: clipping scaled this update by"
+
+
+def dp_tutorials() -> set[str]:
+    """The Flower tutorials whose ClientApp registers the local-DP mod, so must report every round."""
+    apps = (REPO / "fl-tutorials" / "flower").glob("*/*/app/client_app.py")
+    return {app.parents[1].name for app in apps if "flip_local_dp_mod" in app.read_text()}
+
+
 def tutorial_metrics(lines: list[tuple[float, str]]) -> dict:
-    """Per-tutorial pass/fail and seconds from ``run-all-tutorials`` output (one ``🚀 Running`` line each)."""
+    """Per tutorial from ``run-all-tutorials`` output (one ``🚀 Running`` line each): pass/fail, seconds, and how
+    many updates the DP mod reported and how many of those clipping shrank more than tenfold (#1754)."""
     runs: list[dict] = []
     for t, line in lines:
         start = re.search(r"🚀 Running (?:FLARE|Flower) tutorial (\S+)", line)
@@ -137,11 +153,38 @@ def tutorial_metrics(lines: list[tuple[float, str]]) -> dict:
             if runs:
                 runs[-1].setdefault("seconds", round(t - runs[-1].pop("_t")))
             runs.append({"name": Path(start[1]).name, "passed": True, "_t": t})
-        elif re.search(r"❌ tutorial \S+ failed", line) and runs:
+        elif not runs:
+            continue
+        elif re.search(r"❌ tutorial \S+ failed", line):
             runs[-1]["passed"] = False
+        elif DP_REPORTED in line:
+            runs[-1]["dp_reports"] = runs[-1].get("dp_reports", 0) + 1
+        elif DP_OVER_CLIPPED in line:
+            runs[-1]["dp_over_clipped"] = runs[-1].get("dp_over_clipped", 0) + 1
     if runs and "_t" in runs[-1]:
         runs[-1]["seconds"] = round(lines[-1][0] - runs[-1].pop("_t"))
     return {"tutorials": runs, "passed": sum(r["passed"] for r in runs), "total": len(runs)}
+
+
+def dp_clipping_verdict(metrics: dict, dp: set[str] | None = None) -> str | None:
+    """Fail a run in which DP clipping shrank updates more than tenfold (it trains, and learns nothing), or in
+    which a DP tutorial reported nothing or did not run (logs lost or the mod unwired: no WARNING would not mean
+    clean)."""
+    dp = dp_tutorials() if dp is None else dp
+    runs = metrics.get("tutorials", [])
+    if not runs:
+        return "no tutorial was reported at all: the gate cannot vouch for any of them (FLIP#1754)"
+    silent = sorted(dp - {r["name"] for r in runs if r.get("dp_reports")})
+    clipped = [f"{r['name']} ({r['dp_over_clipped']}x)" for r in runs if r.get("dp_over_clipped")]
+    reasons = []
+    if silent:
+        reasons.append(f"no DP report from {', '.join(silent)}: the gate cannot see whether clipping throttled them")
+    if clipped:
+        reasons.append(
+            f"DP clipping shrank updates more than tenfold in {', '.join(clipped)}: raise that tutorial's "
+            "dp-clipping-norm towards its typical update norm"
+        )
+    return f"{'; '.join(reasons)} (FLIP#1754)" if reasons else None
 
 
 def smoke_metrics(lines: list[tuple[float, str]]) -> dict:
@@ -172,7 +215,7 @@ def collect_logs(instance: str, logs: Path) -> list[str]:
     return names
 
 
-def _run_command(cmd: list[str], log, env: dict[str, str], lines: list[tuple[float, str]]) -> int:
+def _run_command(cmd: list[str], log: TextIO, env: dict[str, str], lines: list[tuple[float, str]]) -> int:
     """Run one command, streaming output to the log and keeping timed lines for the metric parsers."""
     log.write(f"▶ {' '.join(cmd)}\n")
     log.flush()
@@ -185,7 +228,7 @@ def _run_command(cmd: list[str], log, env: dict[str, str], lines: list[tuple[flo
     return proc.returncode
 
 
-def _run_check(check: Check, log) -> int:
+def _run_check(check: Check, log: TextIO) -> int:
     with contextlib.redirect_stdout(log):
         try:
             return 1 if check.fn() else 0
@@ -200,20 +243,27 @@ def run_gate(gate: Gate, out_dir: Path, base: dict, env: dict[str, str]) -> dict
     lines: list[tuple[float, str]] = []
     start, t0, code = datetime.now(timezone.utc), time.monotonic(), 0
     with log_path.open("w") as log:
-        for step in gate.steps:
-            try:
-                if isinstance(step, Check):
-                    code = _run_check(step, log)
-                else:
-                    code = _run_command(step() if callable(step) else step, log, env, lines)
-            except ReleaseError as e:
-                log.write(f"❌ {e}\n")
+        try:
+            for step in gate.steps:
+                try:
+                    if isinstance(step, Check):
+                        code = _run_check(step, log)
+                    else:
+                        code = _run_command(step() if callable(step) else step, log, env, lines)
+                except ReleaseError as e:
+                    log.write(f"❌ {e}\n")
+                    code = 1
+                if code:
+                    break
+            metrics = gate.metrics(lines) if lines else {}
+            reason = gate.verdict(metrics) if gate.verdict and code == 0 else None
+            if reason:
+                log.write(f"❌ {reason}\n")
                 code = 1
-            if code:
-                break
-        if gate.cleanup:
-            for done in gate.cleanup():
-                log.write(f"🧹 {done}\n")
+        finally:
+            if gate.cleanup:
+                for done in gate.cleanup():
+                    log.write(f"🧹 {done}\n")
     result = {
         **base,
         "gate": gate.name,
@@ -223,7 +273,7 @@ def run_gate(gate: Gate, out_dir: Path, base: dict, env: dict[str, str]) -> dict
         "end": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "seconds": round(time.monotonic() - t0),
         "log": str(log_path),
-        "metrics": gate.metrics(lines) if lines else {},
+        "metrics": metrics,
     }
     (out_dir / f"{gate.name}.json").write_text(json.dumps(result, indent=2) + "\n")
     print(f"{'✅' if code == 0 else '❌'} {gate.name} ({result['seconds']} s) → {log_path}", flush=True)
@@ -270,6 +320,7 @@ def build_gates(tag: str, instance: str, project_id: Callable[[], str], port_off
             [["make", "-C", "fl-tutorials", "run-all-tutorials", "FL_BACKEND=flower"]],
             tutorial_metrics,
             cleanup=stop_own_simulators,
+            verdict=dp_clipping_verdict,
         ),
         # flip-ui's tests run in a container on the instance's hub network; create-networks is idempotent.
         Gate("unit", [["make", "create-networks", *args], ["make", "unit_test", *args]]),

@@ -32,6 +32,10 @@ from flip_api.scripts.env_utils import read_env_value, update_or_append, write_e
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
+# The value .env.development.example shipped before it shipped the key empty (FLIP#1501). A checkout
+# copied from it would otherwise keep this published string as its key; treat it as unset instead.
+PLACEHOLDER_KEY = "<run-make-generate-internal-service-key>"
+
 
 def main() -> None:
     """Generate the internal service key and update the environment file.
@@ -62,7 +66,7 @@ def main() -> None:
     existing_key = read_env_value(lines, "INTERNAL_SERVICE_KEY")
     existing_hash = read_env_value(lines, "INTERNAL_SERVICE_KEY_HASH")
 
-    if existing_key and not args.force:
+    if existing_key and existing_key != PLACEHOLDER_KEY and not args.force:
         expected_hash = hashlib.sha256(existing_key.encode()).hexdigest()
         if existing_hash == expected_hash:
             print(f"Internal service key already in sync in {env_file.name}")

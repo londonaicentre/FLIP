@@ -16,13 +16,13 @@
 
 Applies CONTRIBUTING § Cutting a release mechanically, after two checks that refuse to start:
 
-- every PR merged into ``develop`` since the previous ``v*`` tag carries a label (``.github/release.yml`` sorts
-  the generated notes by label, so an unlabelled PR is missing from them);
+- every PR merged into ``develop`` whose merge commit is not in the previous ``v*`` tag carries a label
+  (``.github/release.yml`` sorts the generated notes by label, so an unlabelled PR is missing from them);
 - the previous tag is older than ``TAG``.
 
-Then it bumps the root version to ``TAG``; each service whose code changed since the previous tag by the same
-SemVer step (CONTRIBUTING § Versioning; tests and Markdown do not count); flip-utils only if ``flip-utils/**``
-changed, strictly above its last ``flip-utils-v*`` tag; runs ``make lock``; and empties the *Release checks*
+Then it sets the root version and every service's version to ``TAG`` (CONTRIBUTING § Versioning); bumps
+flip-utils only if ``flip-utils/**`` changed (tests and Markdown do not count), strictly above its last
+``flip-utils-v*`` tag; runs ``make lock``; and empties the *Release checks*
 section. It prints the open Dependabot alert count. It commits, pushes and opens nothing: the agent reviews
 the diff, curates the notes and opens the draft ``Release v<X.Y.Z>`` PR.
 """
@@ -34,23 +34,26 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import record  # noqa: E402
 from release_lib import REPO, TEMPLATE, ReleaseError, assert_clean, git, parse_tag  # noqa: E402
 
 # CONTRIBUTING § Versioning: each service's directory and the file carrying its version.
-SERVICES = {
-    "flip-api": "flip-api/pyproject.toml",
-    "flip-ui": "flip-ui/package.json",
-    "trust/trust-api": "trust/trust-api/pyproject.toml",
-    "trust/imaging-api": "trust/imaging-api/pyproject.toml",
-    "trust/data-access-api": "trust/data-access-api/pyproject.toml",
-    "fl-services/nvflare/fl-api-base": "fl-services/nvflare/fl-api-base/pyproject.toml",
-    "fl-services/flower/fl-api-flower": "fl-services/flower/fl-api-flower/pyproject.toml",
-}
+SERVICES = (
+    "flip-api/pyproject.toml",
+    "flip-ui/package.json",
+    "trust/trust-api/pyproject.toml",
+    "trust/imaging-api/pyproject.toml",
+    "trust/data-access-api/pyproject.toml",
+    "fl-services/nvflare/fl-api-base/pyproject.toml",
+    "fl-services/flower/fl-api-flower/pyproject.toml",
+)
 FLIP_UTILS = "flip-utils/flip/__init__.py"
+PR_LIMIT = 1000  # merged PRs the label check reads in one search
 VERSION_PATTERNS = {
     ".toml": r'^(version = ")([^"]+)(")',
     ".json": r'^(\s*"version": ")([^"]+)(")',
@@ -77,7 +80,7 @@ def bump(version: str, part: str) -> str:
 
 
 def counts_as_change(path: str, directory: str) -> bool:
-    """A path under a service that ships: tests and Markdown change no released behaviour."""
+    """A path under a package that ships: tests and Markdown change no released behaviour."""
     if not path.startswith(directory.rstrip("/") + "/"):
         return False
     rest = path[len(directory) + 1 :]
@@ -116,10 +119,8 @@ def set_package_lock(text: str, version: str) -> str:
 def plan(tag: str, previous: str, utils_tag: str | None, changed: list[str], repo: Path = REPO) -> dict[str, str]:
     """Every file → new version this release sets (relative paths), from the rules in the module docstring."""
     part = step(previous, tag)
-    out = {"pyproject.toml": ".".join(map(str, parse_tag(tag)))}
-    for directory, file in SERVICES.items():
-        if any(counts_as_change(p, directory) for p in changed):
-            out[file] = bump(read_version(repo / file), part)
+    version = ".".join(map(str, parse_tag(tag)))
+    out = {"pyproject.toml": version} | dict.fromkeys(SERVICES, version)
     if any(counts_as_change(p, "flip-utils") for p in changed):
         current = read_version(repo / FLIP_UTILS)
         floor = utils_tag.removeprefix("flip-utils-v") if utils_tag else "0.0.0"
@@ -138,18 +139,33 @@ def apply(versions: dict[str, str], repo: Path = REPO) -> None:
             lock.write_text(set_package_lock(lock.read_text(), version))
 
 
-def _gh_json(*args: str):
+def _gh_json(*args: str) -> Any:
     out = subprocess.run(["gh", *args], cwd=REPO, check=True, capture_output=True, text=True).stdout
     return json.loads(out) if out.strip() else []
 
 
-def unlabelled_prs(since: str) -> list[dict]:
-    """PRs merged into develop after ``since`` (the previous tag's ISO commit time) that carry no label at all."""
+def unlabelled_prs(previous: str) -> list[dict]:
+    """PRs merged into develop whose merge commit is in ``previous..HEAD`` and that carry no label at all.
+
+    A commit range, not the tag's date: a hotfix tag is cut on main after develop has moved on, so PRs merged
+    into develop before it was tagged still ship in this release (v0.13.2 hid a week of them).
+    """
+    times = dict(line.split() for line in git("log", "--format=%H %ct", f"{previous}..HEAD").splitlines())
+    if not times:
+        return []
+    # Each candidate's own merge commit is in the range, so none merged before its oldest commit; the day
+    # only absorbs clock skew between git and GitHub and the cut to a UTC date.
+    since = datetime.fromtimestamp(min(map(int, times.values())) - 86400, timezone.utc).date().isoformat()
     prs = _gh_json(
-        "pr", "list", "--base", "develop", "--state", "merged", "--limit", "500",
-        "--search", f"merged:>{since}", "--json", "number,title,labels",
+        "pr", "list", "--base", "develop", "--state", "merged", "--limit", str(PR_LIMIT),
+        "--search", f"merged:>={since}", "--json", "number,title,labels,mergeCommit",
     )  # fmt: skip
-    return [p for p in prs if not p["labels"]]
+    if len(prs) >= PR_LIMIT:
+        raise ReleaseError(f"{len(prs)} PRs merged since {since}: the label check would be truncated")
+    unknown = [f"#{p['number']}" for p in prs if not (p.get("mergeCommit") or {}).get("oid")]
+    if unknown:
+        raise ReleaseError(f"GitHub reports no merge commit for {', '.join(unknown)}: cannot tell if they ship")
+    return [p for p in prs if p["mergeCommit"]["oid"] in times and not p["labels"]]
 
 
 def dependabot_open() -> int:
@@ -178,12 +194,10 @@ def main(argv: list[str] | None = None) -> int:
             raise ReleaseError("no previous v*.*.* tag")
         prev = previous[0]
         utils = (git("tag", "--list", "flip-utils-v*", "--sort=-v:refname").splitlines() or [None])[0]
-        # A timestamp, not a date: PRs merged earlier on the tag's day already shipped in it.
-        since = git("log", "-1", "--format=%cI", prev)
-        missing = unlabelled_prs(since)
+        missing = unlabelled_prs(prev)
         if missing:
             listing = "\n".join(f"  #{p['number']} {p['title']}" for p in missing)
-            raise ReleaseError(f"{len(missing)} PR(s) merged since {prev} carry no label:\n{listing}")
+            raise ReleaseError(f"{len(missing)} new PR(s) since {prev} carry no label:\n{listing}")
         versions = plan(a.tag, prev, utils, git("diff", "--name-only", prev, "HEAD").splitlines())
         print(f"🏷  {prev} → {a.tag}")
         for rel, version in versions.items():

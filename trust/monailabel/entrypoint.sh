@@ -15,7 +15,7 @@
 # Starts the MONAI Label server against this trust's XNAT and registers it with the XNAT
 # OHIF viewer so the Masks panel offers AI-assisted annotation.
 #
-# Required environment (supplied by trust/deploy/compose_trust.*.monailabel.yml):
+# Required environment (supplied by trust/deploy/compose/compose_trust.*.monailabel.yml):
 #   MONAI_LABEL_PORT               - port the server listens on
 #   MONAI_LABEL_DATASTORE_URL      - XNAT base URL, reachable inside the trust network
 #   MONAI_LABEL_DATASTORE_USERNAME - XNAT service account

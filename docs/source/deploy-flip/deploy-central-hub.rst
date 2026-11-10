@@ -67,9 +67,8 @@ users.
 .. note::
 
    **Trust hosts are not included.** A trust's cost depends on its GPU instance and how long that instance is busy,
-   which depends on the projects it joins. The mock trust EC2 Terraform can provision (a ``t3.xlarge`` with no
-   GPU) is a test fixture, not a sizing recommendation. For always-on versus on-demand GPUs, see *GPU Resource
-   Management* in :doc:`deploy-flip-node-in-tre`.
+   which depends on the projects it joins; see :doc:`deploy-flip-node-aws-ec2` for an AWS node's cost. For
+   always-on versus on-demand GPUs, see *GPU Resource Management* in :doc:`deploy-flip-node-in-tre`.
 
 *************
 Prerequisites
@@ -102,7 +101,7 @@ Prerequisites
 
    If your profile names differ, set ``STAG_AWS_PROFILE`` or ``PROD_AWS_PROFILE`` to them, in the env file or on the
    ``make`` command line.
-7. For the hub's SSM bastion and the optional mock trust EC2:
+7. For the hub's SSM bastion:
 
    - an **SSH key pair** at ``~/.ssh/host-aws``. Terraform uploads the public key as the EC2 key pair, and you use
      it for SSH over SSM:
@@ -111,7 +110,7 @@ Prerequisites
 
         ssh-keygen -t ed25519 -f ~/.ssh/host-aws -C "<your email>"
 
-   - the **AWS Session Manager plugin**, needed for ``ssh flip`` and ``make forward-trust``. See
+   - the **AWS Session Manager plugin**, needed for ``ssh flip``. See
      "Remote Access via SSM Session Manager" in :gh:`deploy/providers/AWS/README.md`.
 
 **Choose the hub with** ``HUB``, which every target in ``deploy/providers/AWS`` requires:
@@ -133,7 +132,7 @@ Prerequisites
      - ``prod``
      - production
 
-Production gets the production-only database safeguards (RDS deletion protection and a final snapshot).
+Production gets the production-only database safeguard: a final snapshot when the instance is deleted.
 
 ************************
 Required IAM permissions
@@ -178,7 +177,8 @@ the same ground:
        networking account's)
      - ``CloudFrontFullAccess``
    * - Certificate Manager
-     - The ``eu-west-2`` certificate for the internal load balancer's web listener, once ``MANAGE_DNS=true``
+     - The ``eu-west-2`` certificate for the internal load balancer's web listener: this stack's own when
+       ``MANAGE_DNS=true``, otherwise the platform's, read by name
      - ``AWSCertificateManagerFullAccess``
    * - Route 53
      - The private hosted zone for the FL server's name, and the certificate's validation records once
@@ -197,8 +197,6 @@ the same ground:
 The deployed hosts and services do not get these broad permissions; each runs with a scoped role:
 
 - **Central Hub bastion:** Session Manager access only. It cannot read FLIP secrets or buckets.
-- **Cloud trust EC2:** Session Manager and CloudWatch, plus read-only access to the bucket holding the FL participant
-  kits. No access to Cognito, SES, Secrets Manager or the FLIP application buckets.
 - **ECS tasks:** each service has its own task role with the application permissions it needs.
 
 The workload account's Identity Center permission set replaces this list, bounded by the estate's service control
@@ -263,7 +261,8 @@ A trust's **kit file**, ``trust/.env.<CODE>.<hub>``, is its identity and its con
       make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<hub>
 
    Leave out ``KIT`` to register every kit file present for the environment. This writes the trust's
-   **credentials** (API key, trust-internal service key and FL kit slot) into the kit file. Of the hub-shared
+   **credentials** (API key, trust-internal service key and FL kit slot) into the kit file, and mints the trust's
+   XNAT passwords, trust-side runtime secrets that are not part of the hub's kit. Of the hub-shared
    settings, only the API key header name and the FL backend are filled in.
 
 3. **Fill in the hub-shared settings.** From the repository root, with your local ``.env.<hub>`` present:
@@ -279,12 +278,6 @@ A trust's **kit file**, ``trust/.env.<CODE>.<hub>``, is its identity and its con
       Do not skip this step. Without it the kit's encryption key, hub URL, kit dates and image tags stay unfilled,
       and the trust can neither reach the hub nor decrypt a task.
 
-4. **Mint the XNAT passwords.** These are trust-side runtime secrets and are not part of the hub's kit:
-
-   .. code-block:: shell
-
-      make generate-xnat-credentials KIT=<CODE> HUB=<hub>
-
 Registration works the same for both FL backends: the kit takes ``FL_BACKEND`` from the hub, and the slot it claims
 maps onto the matching FLARE participant kit or Flower SuperNode key.
 
@@ -295,15 +288,14 @@ file are kept.
 
 **Getting the kit to the trust host** is a separate, explicit step; nothing copies the kit file anywhere.
 
-- For the cloud trust EC2, ``make -C deploy/providers/AWS deploy-trust KIT=<CODE> HUB=<hub>`` reads the kit
-  locally and passes its values to the containers on the host.
-- For an on-prem trust, see step 4 of :doc:`onboarding-a-trust`. The packaging is keyed on the slot, not the code:
-  pass ``KIT=<slot>`` (for example ``Trust_2``) and the kit above by path; it refuses to run unless the kit's
-  ``FL_KIT_SLOT`` equals ``KIT``, and ships it as ``.env.<slot>.<hub>``:
+- For a node from ``trust/deploy/terraform/aws/ec2``, that root's ``make deploy KIT=<CODE> HUB=<hub>`` reads the kit
+  locally and passes its values to the containers on the host (:doc:`deploy-flip-node-aws-ec2`).
+- For an on-prem trust, see step 4 of :doc:`onboarding-a-trust`. The packaging takes the trust's code, packs the FL
+  kit share of the kit's ``FL_KIT_SLOT``, and ships the kit as ``.env.<CODE>.<hub>``:
 
   .. code-block:: shell
 
-     make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> KIT_FILE=$PWD/trust/.env.<CODE>.<hub> HUB=<hub>
+     make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=<hub>
 
 If registration fails
 =====================
@@ -344,6 +336,47 @@ slots without a restart, so the next ``register-trusts`` can claim one.
 .. seealso::
 
    :gh:`fl-services/nvflare/README.md` — minting kits by hand, and onboarding a new client onto an existing network.
+
+.. _deploy-central-hub-rotate-trust-keys:
+
+*************
+Rotating keys
+*************
+
+*Who: FLIP admin, with AWS access to the hub's account.* A trust's API key and internal service key are reissued in
+place, without re-registering it:
+
+.. code-block:: shell
+
+   make -C deploy/providers/AWS rotate-trust-keys KIT=<CODE> HUB=<env>
+
+``KIT`` is required, and exactly one trust rotates per run. The trust keeps its id, its code and its FL kit slot;
+only ``api_key_hash`` changes, in one transaction with a ``ROTATED`` entry in the trust audit log. The new
+credentials are written into ``trust/.env.<CODE>.<suffix>``.
+
+Three things to plan for:
+
+- **The trust goes offline the moment the rotation commits.** The hub re-checks the live hash on every request, so
+  the old key is refused straight away; the trust comes back only once its containers are recreated from the new
+  kit. Plan the rotation as a short outage for that site, not as an overlap window.
+- **The internal service key rotates with it**, so every trust-internal container has to restart together, not only
+  ``trust-api``. Deliver the kit and recreate them in one step:
+
+  - AWS EC2 node: ``make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env>``.
+  - On-prem: package the rotated kit and have the operator run their upgrade command:
+
+    .. code-block:: shell
+
+       make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=<env>
+
+  Do **not** use that root's ``deploy``: it is a first-install command that re-seeds the trust's data and resets XNAT.
+- **XNAT credentials do not rotate with it.** Their passwords live in the same kit, but changing them has its own
+  caveat: Postgres applies ``XNAT_DATASOURCE_*`` only at the first initdb of the ``xnat-db`` volume, so a rotated value
+  must also be applied to the live database. See ``make generate-xnat-credentials FORCE=1`` and the
+  ``ALTER ROLE`` commands it prints.
+
+Rotating a trust that has no FL kit slot fails rather than minting keys the trust could not use: reclaiming a slot
+is a separate operation.
 
 .. _deploy-central-hub-deploys:
 
@@ -426,8 +459,9 @@ one maintenance window.
    reports ``deployment_mode: true`` and ``fl_quiesced: true``.
 2. **Redeploy the hub and every trust** in the same window: ``deploy-centralhub`` for the hub (see
    :ref:`deploy-central-hub-deploys`), and the upgrade command for each trust's platform (``upgrade-onprem-trust``,
-   ``upgrade-trust-k8s`` or ``upgrade-trust-ec2``; see :ref:`admin-upgrading-sites`). Do not use ``deploy-trust``
-   here: it is a first-install command that re-seeds the trust's data and resets XNAT.
+   ``upgrade-trust-k8s``, or an EC2 node's ``make upgrade``; see :ref:`admin-upgrading-sites`). Do not use a
+   first-install command (``up-onprem-trust``, an EC2 node's ``make deploy``) here: it re-seeds the trust's data and
+   resets XNAT.
 3. **Resume.** Disable Deployment Mode.
 
 .. warning::
@@ -607,6 +641,6 @@ old state would destroy it. Move the hub instead:
    FL kit all change. On a trust host that is already running, install the new kit and FL kit and upgrade the trust;
    do not use the first-install commands, which re-seed its data and reset XNAT.
 5. **Destroy the old account's stack** once no trust points at it, from a checkout of a release that still has that mode
-   (``v0.13.1`` or earlier) with its ``PROD=`` setting and the old account's AWS profile. ``make destroy`` keeps
+   (``v0.13.2`` or earlier) with its ``PROD=`` setting and the old account's AWS profile. ``make destroy`` keeps
    the Cognito pool, the ``FLIP_API`` secret and the S3 buckets: delete them by hand, or close the account.
 

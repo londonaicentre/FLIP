@@ -47,7 +47,17 @@ from pathlib import Path
 
 import torch
 from monai.bundle import ConfigParser
-from monai.deploy.core import AppContext, ConditionType, Fragment, Image, Operator, OperatorSpec
+from monai.deploy.core import (
+    AppContext,
+    ConditionType,
+    ExecutionContext,
+    Fragment,
+    Image,
+    InputContext,
+    Operator,
+    OperatorSpec,
+    OutputContext,
+)
 from monai.transforms import Activations, Compose, EnsureType, Resize, ScaleIntensity
 
 # Label semantics come from the training app's config.json LESIONS block. The trainer optimises a
@@ -85,7 +95,7 @@ class FlipXrayClassifierOperator(Operator):
         model_path: Path = MODEL_LOCAL_PATH,
         output_folder: Path = DEFAULT_OUTPUT_FOLDER,
         **kwargs,
-    ):
+    ) -> None:
         self.input_name_image = "image"
         self.output_name_result = "result_text"
         self.output_folder = output_folder
@@ -96,7 +106,7 @@ class FlipXrayClassifierOperator(Operator):
         self.model = self._get_model(app_context, model_path, self._model_name)
         super().__init__(fragment, *args, **kwargs)
 
-    def _get_model(self, app_context: AppContext, model_path: Path, model_name: str):
+    def _get_model(self, app_context: AppContext, model_path: Path, model_name: str) -> torch.nn.Module:
         """Take the network from the application context, else load the bundle at ``model_path``.
 
         Args:
@@ -158,7 +168,7 @@ class FlipXrayClassifierOperator(Operator):
         self._logger.info(f"Found the bundle one level down, at {found[0]}")
         return found[0]
 
-    def _load_directory_bundle(self, model_path: Path, device: torch.device, model_name: str = ""):
+    def _load_directory_bundle(self, model_path: Path, device: torch.device, model_name: str = "") -> torch.nn.Module:
         """Load a directory bundle without TorchScript, the way MONAI Deploy's own loader does.
 
         The architecture comes from the bundle's ``network``/``network_def`` config entry, which for
@@ -205,11 +215,11 @@ class FlipXrayClassifierOperator(Operator):
         network.load_state_dict(torch.load(str(weights), map_location="cpu", weights_only=True), strict=True)
         return network.to(device).eval()
 
-    def setup(self, spec: OperatorSpec):
+    def setup(self, spec: OperatorSpec) -> None:
         spec.input(self.input_name_image)
         spec.output(self.output_name_result).condition(ConditionType.NONE)
 
-    def compute(self, op_input, op_output, context):
+    def compute(self, op_input: InputContext, op_output: OutputContext, context: ExecutionContext) -> None:
         input_image = op_input.receive(self.input_name_image)
         if not isinstance(input_image, Image):
             raise ValueError(f"Expected an Image on '{self.input_name_image}', got {type(input_image)!r}")

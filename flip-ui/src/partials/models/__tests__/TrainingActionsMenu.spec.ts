@@ -15,6 +15,7 @@
 import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
+import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
 import TrainingActionsMenu from "@/partials/models/TrainingActionsMenu.vue";
 import { ModelStatusEnum, stopTraining } from "@/services/model-service";
 
@@ -137,7 +138,7 @@ describe("TrainingActionsMenu abort vs stop affordance", () => {
     it("uses abort copy in the confirm modal at INITIATED", () => {
         const wrapper = mountMenu(ModelStatusEnum.INITIATED);
 
-        const modal = wrapper.findComponent("[data-test=confirm-modal-stub]");
+        const modal = wrapper.findComponent(AiConfirmModal);
         expect(modal.props("confirmationText")).toContain("abort");
         expect(modal.props("continueButtonText")).toBe("Abort job");
     });
@@ -153,7 +154,7 @@ describe("TrainingActionsMenu abort vs stop affordance", () => {
         expect(btn.attributes("title")).toBe("Stop Training");
         expect(btn.find(labelSelector).text()).toBe("Stop Training");
 
-        const modal = wrapper.findComponent("[data-test=confirm-modal-stub]");
+        const modal = wrapper.findComponent(AiConfirmModal);
         expect(modal.props("confirmationText")).toBe("Are you sure you want to stop training this model?");
         expect(modal.props("continueButtonText")).toBe("Stop Training");
     });
@@ -171,7 +172,7 @@ describe("TrainingActionsMenu abort vs stop affordance", () => {
     it("aborts via the confirm modal at INITIATED", async () => {
         vi.mocked(stopTraining).mockResolvedValueOnce(undefined);
         const wrapper = mountMenu(ModelStatusEnum.INITIATED);
-        const modal = () => wrapper.findComponent("[data-test=confirm-modal-stub]");
+        const modal = () => wrapper.findComponent(AiConfirmModal);
 
         expect(modal().props("dialog")).toBe(false);
         await wrapper.find("[data-test=stop-training-btn]").trigger("click");
@@ -185,7 +186,7 @@ describe("TrainingActionsMenu abort vs stop affordance", () => {
     it("reports 'Failed to abort job' when the pre-running abort fails", async () => {
         vi.mocked(stopTraining).mockRejectedValueOnce(new Error("network error"));
         const wrapper = mountMenu(ModelStatusEnum.INITIATED);
-        const modal = () => wrapper.findComponent("[data-test=confirm-modal-stub]");
+        const modal = () => wrapper.findComponent(AiConfirmModal);
 
         await wrapper.find("[data-test=stop-training-btn]").trigger("click");
         await (modal().props("continueAction") as () => Promise<void>)();
@@ -200,7 +201,7 @@ describe("TrainingActionsMenu abort vs stop affordance", () => {
     it("reports 'Failed to stop training' when stopping a running model fails", async () => {
         vi.mocked(stopTraining).mockRejectedValueOnce(new Error("network error"));
         const wrapper = mountMenu(ModelStatusEnum.RUNNING);
-        const modal = () => wrapper.findComponent("[data-test=confirm-modal-stub]");
+        const modal = () => wrapper.findComponent(AiConfirmModal);
 
         await wrapper.find("[data-test=stop-training-btn]").trigger("click");
         await (modal().props("continueAction") as () => Promise<void>)();

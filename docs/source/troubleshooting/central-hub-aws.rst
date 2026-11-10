@@ -70,8 +70,8 @@ Credentials are correct (they work from the AWS CLI) and ``status`` is green. In
    x-amzn-ErrorMessage: USER_PASSWORD_AUTH flow not enabled for this client
 
 **Cause.** The Cognito app client and the UI bundle are out of step. The app client accepts only SRP sign-in, which
-the current UI uses, but the bundle served from S3 is older. Terraform updates Cognito straight away, while the UI is
-deployed separately and ``full-deploy`` does not rebuild it.
+the current UI uses, but the bundle served from S3 is older. Terraform updates Cognito straight away. CI publishes the
+UI only after its apply succeeds, and a laptop ``apply`` or ``full-deploy`` does not rebuild it at all.
 
 **Fix.** Rebuild and deploy the UI:
 
@@ -137,11 +137,11 @@ older ``rootCA.pem``).
    .. code-block:: shell
 
       make -C deploy/providers/AWS apply HUB=<env>                     # hub: FL server and FL API storage
-      make -C deploy/providers/AWS stage-fl-kit KIT=<CODE> HUB=<env>   # the AWS-hosted trust
+      make -C trust/deploy/terraform/aws/ec2 stage-kit KIT=<CODE> KIT_BUCKET=<bucket>   # an AWS EC2 node
 
 .. warning::
 
-   Do not use ``deploy-trust`` or ``full-deploy`` to recopy a kit on a live trust. They are first-install commands
+   Do not use a node's ``make deploy`` or ``full-deploy`` to recopy a kit on a live trust. They are first-install commands
    that re-seed the trust's data and wipe its XNAT archive (see :ref:`admin-upgrading-sites`).
 
 .. _ts-hub-fl-clients-lost:

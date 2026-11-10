@@ -11,7 +11,7 @@
 
 """The chart Makefile's release upgrade reads the kit the site was synced from, for every HUB (FLIP#1204).
 
-``upgrade-trust-k8s`` hands scripts/site_upgrade.py ``trust/.env.<KIT>.<env>``; the env token comes
+``upgrade-trust-k8s`` hands trust/deploy/scripts/site_upgrade.py ``trust/.env.<KIT>.<env>``; the env token comes
 from ``deploy/env_mode.mk`` like every other Makefile that reads HUB, so a deployed site's kit is
 ``.stag`` / ``.prod`` rather than a development kit that does not exist.
 """
@@ -57,6 +57,40 @@ def test_deploy_trust_k8s_regenerates_the_override_from_the_kit_first():
     regenerate = out.index("--no-apply-secret")
     deploy = out.index("helm upgrade --install")
     assert regenerate < deploy, out
+
+
+def _kit(tmp_path: Path, line: str) -> Path:
+    kit = tmp_path / ".env.ABC.stag"
+    kit.write_text(f"FL_BACKEND=nvflare\n{line}\n")
+    return kit
+
+
+@pytest.mark.parametrize(
+    ("line", "off"), [("TRUST_DATA_SEED=false  # our own data", True), ("TRUST_DATA_SEED=true", False), ("", False)]
+)
+def test_a_kit_with_its_own_data_turns_the_seed_hook_off_without_the_override(tmp_path, line, off):
+    """TRUST_DATA_SEED=false (FLIP#1687) holds on a deploy that names the KIT but no override, where a missing or
+    stale one would leave the chart's default and seed a real trust's OMOP."""
+    out = subprocess.run(
+        ["make", "-n", "-C", str(CHART_DIR), "deploy", "KIT=ABC", "HUB=stag", f"KIT_FILE={_kit(tmp_path, line)}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.replace("\\\n", " ")
+    install = next(row for row in out.splitlines() if "upgrade --install" in row)
+    assert ("--set trustData.seed.enabled=false" in install) is off, install
+
+
+def test_a_mistyped_sample_data_setting_stops_preflight_before_it_reaches_the_cluster(tmp_path):
+    kit = _kit(tmp_path, "TRUST_DATA_SEED=no")
+    result = subprocess.run(
+        ["make", "-C", str(CHART_DIR), "preflight", "KIT=ABC", "HUB=stag", f"KIT_FILE={kit}"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    lines = [row for row in result.stdout.splitlines() if not row.startswith("make")]
+    assert lines == [f"❌ TRUST_DATA_SEED must be true or false in {tmp_path}/.env.ABC.stag, not 'no'."], result.stdout
 
 
 def test_xnat_init_deletes_the_previous_init_job_before_applying_it():
