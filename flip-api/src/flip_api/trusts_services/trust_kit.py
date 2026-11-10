@@ -102,7 +102,7 @@ def _issue(
         registered = RegisteredTrust(trust=trust, fl_kit_slot=slot, trust_api_key=None, trust_internal_service_key=None)
 
     kit: BuiltKit = build_kit(registered, parts)
-    logger.info(f"User {user_id} downloaded a {kind} kit for trust {trust.id} ({trust.name})")
+    logger.info(f"User {user_id} downloaded the {kind} kit of trust {trust.id} ({trust.name})")
     return ITrustKitDownload(
         file_name=kit.file_name,
         kind=kit.kind,
