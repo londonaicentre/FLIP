@@ -30,7 +30,7 @@ or any ``s3.amazonaws.com/...?...`` URL.
 """
 
 import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 from botocore.exceptions import ClientError
@@ -68,6 +68,106 @@ def _settings(**overrides):
     values = {"AWS_REGION": "us-east-1", "S3_PUBLIC_ENDPOINT_URL": None}
     values.update(overrides)
     return MagicMock(**values)
+
+
+def test_list_objects_follows_all_pages_and_preserves_request_options(s3_client_with_mock_boto):
+    s3, boto = s3_client_with_mock_boto
+    boto.list_objects_v2.side_effect = [
+        {
+            "Contents": [{"Key": "model/"}, {"Key": "model/first.py"}],
+            "IsTruncated": True,
+            "NextContinuationToken": "page-2",
+        },
+        {"IsTruncated": True, "NextContinuationToken": "page-3"},
+        {"Contents": [{"Key": "model/last.py"}], "IsTruncated": False},
+    ]
+
+    assert s3.list_objects("s3://bucket/model/", delimiter="/") == [
+        "s3://bucket/model/first.py",
+        "s3://bucket/model/last.py",
+    ]
+    assert boto.list_objects_v2.call_args_list == [
+        call(Bucket="bucket", Prefix="model/", Delimiter="/"),
+        call(Bucket="bucket", Prefix="model/", Delimiter="/", ContinuationToken="page-2"),
+        call(Bucket="bucket", Prefix="model/", Delimiter="/", ContinuationToken="page-3"),
+    ]
+
+
+@pytest.mark.parametrize("token", [None, "", 123])
+def test_list_objects_rejects_invalid_continuation_token(s3_client_with_mock_boto, token):
+    s3, boto = s3_client_with_mock_boto
+    boto.list_objects_v2.return_value = {"IsTruncated": True, "NextContinuationToken": token}
+
+    with pytest.raises(RuntimeError, match="Incomplete S3 listing"):
+        s3.list_objects("s3://bucket/model/")
+
+    boto.list_objects_v2.assert_called_once()
+
+
+def test_list_objects_rejects_repeated_continuation_token(s3_client_with_mock_boto):
+    s3, boto = s3_client_with_mock_boto
+    boto.list_objects_v2.side_effect = [
+        {"IsTruncated": True, "NextContinuationToken": token} for token in ("page-2", "page-3", "page-2")
+    ]
+
+    with pytest.raises(RuntimeError, match="Incomplete S3 listing"):
+        s3.list_objects("s3://bucket/model/")
+
+    assert boto.list_objects_v2.call_count == 3
+
+
+def test_list_objects_does_not_return_partial_listing_on_later_page_error(s3_client_with_mock_boto):
+    s3, boto = s3_client_with_mock_boto
+    boto.list_objects_v2.side_effect = [
+        {"Contents": [{"Key": "model/first.py"}], "IsTruncated": True, "NextContinuationToken": "page-2"},
+        ClientError({"Error": {"Code": "AccessDenied", "Message": "denied"}}, "ListObjectsV2"),
+    ]
+
+    with pytest.raises(Exception, match="Error listing objects"):
+        s3.list_objects("s3://bucket/model/")
+
+
+@pytest.mark.parametrize("count", [0, 1, 1000, 1001, 2001])
+def test_delete_objects_batches_at_s3_limit(s3_client_with_mock_boto, count):
+    s3, boto = s3_client_with_mock_boto
+    paths = [f"s3://bucket/model/file{i}.py" for i in range(count)]
+    metadata = {"RequestId": "request-id"}
+    boto.delete_objects.side_effect = lambda **kwargs: {
+        "Deleted": list(kwargs["Delete"]["Objects"]),
+        "ResponseMetadata": metadata,
+    }
+
+    result = s3.delete_objects(paths)
+
+    assert boto.delete_objects.call_count == (count + 999) // 1000
+    batches = [request.kwargs["Delete"]["Objects"] for request in boto.delete_objects.call_args_list]
+    assert all(0 < len(batch) <= 1000 for batch in batches)
+    if count:
+        expected = [{"Key": f"model/file{i}.py"} for i in range(count)]
+        assert result["bucket"]["Deleted"] == expected
+        assert result["bucket"]["ResponseMetadata"] == metadata
+        if count <= 1000:
+            assert result["bucket"] == {"Deleted": expected, "ResponseMetadata": metadata}
+    else:
+        assert result == {}
+
+
+def test_delete_objects_keeps_errors_from_earlier_batches(s3_client_with_mock_boto, caplog):
+    s3, boto = s3_client_with_mock_boto
+    paths = [f"s3://bucket/model/file{i}.py" for i in range(1001)] + ["s3://other-bucket/file.py"]
+    failure = {"Key": "model/file0.py", "Code": "AccessDenied", "Message": "denied"}
+    boto.delete_objects.side_effect = [
+        {"Deleted": [{"Key": f"model/file{i}.py"} for i in range(1, 1000)], "Errors": [failure]},
+        {"Deleted": [{"Key": "model/file1000.py"}]},
+        {"Deleted": [{"Key": "file.py"}]},
+    ]
+
+    result = s3.delete_objects(paths)
+
+    assert result["bucket"]["Errors"] == [failure]
+    assert len(result["bucket"]["Deleted"]) == 1000
+    assert result["other-bucket"] == {"Deleted": [{"Key": "file.py"}]}
+    assert "Partial success deleting objects" in caplog.text
 
 
 def test_client_is_a_vanilla_boto3_client(s3_client_with_mock_boto):

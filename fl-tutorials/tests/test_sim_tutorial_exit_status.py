@@ -321,7 +321,7 @@ def test_every_flower_tutorial_has_a_simulator_data_mapping():
     start = text.index('case "$TUTORIAL" in')
     block = text[start : text.index("esac", start)]
     mapped = {label for line in block.splitlines() for label in _case_labels(line)}
-    tutorials = {p.parent.name for p in FLOWER.glob("*/app") if p.is_dir()}
+    tutorials = {p.parent.name for p in FLOWER.glob("*/*/app") if p.is_dir()}  # <category>/<name>/app, #1500
     assert tutorials, "no Flower tutorials found — has the layout changed?"
     assert tutorials <= mapped, f"tutorials without a data mapping in sim-tutorial.sh: {sorted(tutorials - mapped)}"
 

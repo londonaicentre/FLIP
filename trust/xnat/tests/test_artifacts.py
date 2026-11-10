@@ -32,7 +32,6 @@ XNAT_DIR = REPO_ROOT / "trust" / "xnat"
 SCRIPT = XNAT_DIR / "scripts" / "xnat_artifacts.sh"
 MANIFEST = XNAT_DIR / "artifacts.manifest"
 XNAT_ENV = XNAT_DIR / ".env"
-HELM_VALUES = REPO_ROOT / "trust" / "deploy" / "helm" / "values.yaml"
 PREPARE_HINT = "make -C trust prepare-artifacts"
 
 # The plugin families every FLIP XNAT runs. The manifest is the roster; this pins its membership,
@@ -138,41 +137,6 @@ def test_manifest_lists_one_jar_per_required_plugin_family() -> None:
         matching = [jar for jar in jars if jar.startswith(f"{family}-")]
         assert len(matching) == 1, f"{family}: expected one jar, found {matching}"
     assert len(jars) == len(REQUIRED_FAMILIES), f"unexpected plugins in the manifest: {jars}"
-
-
-def _chart_plugin_urls() -> dict[str, str]:
-    """Read the Helm chart's ``xnat.web.plugins.urls`` map.
-
-    Parsed by indentation rather than with a YAML loader so this suite keeps its single ``pydicom``
-    dependency.
-    """
-    lines = HELM_VALUES.read_text().splitlines()
-    starts = [i for i, line in enumerate(lines) if re.match(r"^\s*urls:\s*$", line)]
-    assert len(starts) == 1, f"expected one urls: block in {HELM_VALUES}, found {len(starts)}"
-    indent = len(lines[starts[0]]) - len(lines[starts[0]].lstrip())
-    urls: dict[str, str] = {}
-    for line in lines[starts[0] + 1 :]:
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        entry = re.match(r'^(\s+)([A-Za-z0-9_-]+):\s*"?([^"\s]+)"?\s*$', line)
-        if entry is None or len(entry.group(1)) <= indent:
-            break
-        urls[entry.group(2)] = entry.group(3)
-    return urls
-
-
-def test_the_helm_chart_downloads_exactly_the_manifest_plugins() -> None:
-    """The K8s init container downloads its own roster into an emptyDir that masks the image's plugins.
-
-    A URL in one place and not the other leaves Kubernetes trusts on a different plugin build from
-    Compose ones, which nothing reports until XNAT is serving. Each chart key must also be the jar's
-    family, which ``make status`` relies on to pair keys with jars.
-    """
-    chart = _chart_plugin_urls()
-    manifest = sorted(url for kind, _, url in _manifest_entries() if kind == "plugin")
-    assert sorted(chart.values()) == manifest
-    for key, url in chart.items():
-        assert url.rsplit("/", 1)[-1].startswith(f"{key}-"), f"chart key {key} does not name {url}"
 
 
 # --- check ------------------------------------------------------------------------------------

@@ -173,8 +173,8 @@ FL_BACKEND ?= nvflare
 # the same rows. A deployed hub (HUB set) smokes query.sql.
 XRAY_QUERY_NAME := $(if $(strip $(HUB)),query.sql,query_novocab.sql)
 ifeq ($(FL_BACKEND),flower)
-MODEL_FILES_DIR ?= ../fl-tutorials/flower/xray_classification/app
-QUERY_FILE ?= ../fl-tutorials/flower/xray_classification/$(XRAY_QUERY_NAME)
+MODEL_FILES_DIR ?= ../fl-tutorials/flower/image_classification/xray_classification/app
+QUERY_FILE ?= ../fl-tutorials/flower/image_classification/xray_classification/$(XRAY_QUERY_NAME)
 else
 MODEL_FILES_DIR ?= ../fl-tutorials/nvflare/image_classification/xray_classification/app_files
 QUERY_FILE ?= $(MODEL_FILES_DIR)/../$(XRAY_QUERY_NAME)
@@ -182,6 +182,13 @@ endif
 e2e_smoke:
 	@echo "🚀 Running e2e smoke (model files: $(MODEL_FILES_DIR), query: $(QUERY_FILE))..."
 	env DB_HOST=localhost uv run python -m tests.e2e_smoke --model-files-dir "$(MODEL_FILES_DIR)" --query-file "$(QUERY_FILE)" $(ENRICHMENT_ARGS) $(TARGET_ARGS) $(EXTRA_ARGS)
+
+# Capture one project's API responses as fixtures for the public demo (FLIP#1746):
+#   make capture_demo_project EXTRA_ARGS="--project-id <uuid> --slug ehr-risk"
+# Writes ../flip-ui/mocks/demo/projects/<slug>/data/*.json and prints the trusts to map in its register.
+capture_demo_project:
+	@echo "📸 Capturing demo fixtures ($(EXTRA_ARGS))..."
+	env DB_HOST=localhost uv run python -m tests.capture_demo_project $(EXTRA_ARGS)
 
 # Spleen-segmentation variant of e2e_smoke: same recipe, with the spleen tutorial
 # defaults plus a data-enrichment step that uploads segmentation labels into every
@@ -215,8 +222,8 @@ SPLEEN_LABELS_DIR ?= $(abspath ../fl-tutorials/data/spleen/images)
 SPLEEN_ENRICHMENT_CMD := uv run --no-project --with $(abspath ../flip-utils) python upload_spleen_labels_to_xnat.py --flip-project-id $$FLIP_PROJECT_ID --labels-dir $(SPLEEN_LABELS_DIR) $(foreach url,$(SPLEEN_XNAT_URLS),--xnat-url $(url))
 SPLEEN_ENRICHMENT_ARGS := --data-enrichment-cwd $(SPLEEN_ENRICHMENT_CWD) --data-enrichment-cmd '$(SPLEEN_ENRICHMENT_CMD)'
 
-e2e_smoke_spleen: MODEL_FILES_DIR := ../fl-tutorials/flower/3d_spleen_segmentation/app
-e2e_smoke_spleen: QUERY_FILE := ../fl-tutorials/flower/3d_spleen_segmentation/query.sql
+e2e_smoke_spleen: MODEL_FILES_DIR := ../fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/app
+e2e_smoke_spleen: QUERY_FILE := ../fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/query.sql
 e2e_smoke_spleen: ENRICHMENT_ARGS := $(SPLEEN_ENRICHMENT_ARGS)
 e2e_smoke_spleen: e2e_smoke
 
@@ -226,8 +233,8 @@ e2e_smoke_spleen: e2e_smoke
 # alongside the code -- the e2e smoke uploads it as part of the model files;
 # the fl-api writes it into /app/src/<model_id>/app/ on the shared FL_JOBS_DIR
 # mount; the evaluation ServerApp reads it via flip-job-dir at submit time.
-e2e_smoke_spleen_evaluation: MODEL_FILES_DIR := ../fl-tutorials/flower/3d_spleen_segmentation_evaluation/app
-e2e_smoke_spleen_evaluation: QUERY_FILE := ../fl-tutorials/flower/3d_spleen_segmentation/query.sql
+e2e_smoke_spleen_evaluation: MODEL_FILES_DIR := ../fl-tutorials/flower/image_evaluation/3d_spleen_segmentation_evaluation/app
+e2e_smoke_spleen_evaluation: QUERY_FILE := ../fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/query.sql
 e2e_smoke_spleen_evaluation: ENRICHMENT_ARGS := $(SPLEEN_ENRICHMENT_ARGS)
 e2e_smoke_spleen_evaluation: e2e_smoke
 
@@ -236,7 +243,7 @@ e2e_smoke_spleen_evaluation: e2e_smoke
 # image-pull wait (FLIP#1071). TARGET_ARGS rather than EXTRA_ARGS so a command-line EXTRA_ARGS
 # (e.g. --project-id) cannot clobber the flag. Prereq: `make -C trust load-synthea-ehr` on every trust and,
 # if the EHR query was already submitted before that load, a data-access-api restart (results are cached by query text).
-EHR_FLOWER_DIR := ../fl-tutorials/flower/ehr_risk_prediction
+EHR_FLOWER_DIR := ../fl-tutorials/flower/tabular_classification/ehr_risk_prediction
 EHR_NVFLARE_DIR := ../fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction
 e2e_smoke_ehr: MODEL_FILES_DIR := $(if $(filter flower,$(FL_BACKEND)),$(EHR_FLOWER_DIR)/app,$(EHR_NVFLARE_DIR)/app_files)
 e2e_smoke_ehr: QUERY_FILE := $(if $(filter flower,$(FL_BACKEND)),$(EHR_FLOWER_DIR)/query.sql,$(EHR_NVFLARE_DIR)/query.sql)
@@ -258,8 +265,8 @@ PROSTATE_ZONAL_LABELS_DIR ?= $(abspath ../fl-tutorials/data/prostate/zonal_label
 PROSTATE_ENRICHMENT_CMD := uv run --no-project --with $(abspath ../flip-utils) python upload_prostate_labels_to_xnat.py --flip-project-id $$FLIP_PROJECT_ID --labels-dir $(PROSTATE_LABELS_DIR) --zonal-labels-dir $(PROSTATE_ZONAL_LABELS_DIR) $(foreach url,$(PROSTATE_XNAT_URLS),--xnat-url $(url)) --require-full-coverage
 PROSTATE_ENRICHMENT_ARGS := --data-enrichment-cwd $(PROSTATE_ENRICHMENT_CWD) --data-enrichment-cmd '$(PROSTATE_ENRICHMENT_CMD)'
 
-e2e_smoke_prostate: MODEL_FILES_DIR := ../fl-tutorials/flower/3d_prostate_segmentation/app
-e2e_smoke_prostate: QUERY_FILE := ../fl-tutorials/flower/3d_prostate_segmentation/query.sql
+e2e_smoke_prostate: MODEL_FILES_DIR := ../fl-tutorials/flower/image_segmentation/3d_prostate_segmentation/app
+e2e_smoke_prostate: QUERY_FILE := ../fl-tutorials/flower/image_segmentation/3d_prostate_segmentation/query.sql
 e2e_smoke_prostate: ENRICHMENT_ARGS := $(PROSTATE_ENRICHMENT_ARGS)
 e2e_smoke_prostate: _require_flower_backend e2e_smoke
 
@@ -270,5 +277,7 @@ _require_flower_backend:
 
 generate-internal-service-key:
 	uv run python -m flip_api.scripts.generate_internal_service_key $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)
+generate-fl-api-key:
+	uv run python -m flip_api.scripts.generate_fl_api_key $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)
 generate-xnat-credentials:
 	uv run python -m flip_api.scripts.generate_xnat_credentials $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)

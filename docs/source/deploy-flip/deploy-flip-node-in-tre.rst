@@ -57,26 +57,17 @@ operator. The TRE operator is responsible for:
 
 **Container images**
 
-FLIP's own images are published to the GitHub Container Registry
-(``ghcr.io/londonaicentre/*``). The observability stack and XNAT's Docker socket proxy come
-from Docker Hub: ``grafana/loki``, ``grafana/alloy``, ``grafana/grafana`` and
-``tecnativa/docker-socket-proxy``, at the tags ``trust/deploy/compose_trust.prod.yml``
-and ``trust/xnat/docker-compose-stack.yml`` pin.
+Everything a trust node runs comes from one registry, the GitHub Container Registry, under
+``ghcr.io/londonaicentre/``: FLIP's own images, and byte-identical copies of the third-party ones
+(Grafana, Loki, Alloy, XNAT's Docker socket proxy, the chart's ``uv`` and ``busybox`` helpers) under
+``ghcr.io/londonaicentre/mirror/``, pinned by digest in the compose files and the Helm chart
+(:gh:`trust/deploy/mirror-images.manifest`). Nothing is pulled from Docker Hub.
 
-Where the TRE lets the FLIP host pull directly (CREATE does this for GHCR), allow both hosts of
-each registry: each serves its image layers from a second host, so allowing the registry name
-alone makes every pull fail.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - Registry
-     - Hosts to allow (HTTPS, port 443)
-   * - GHCR
-     - ``ghcr.io`` and ``pkg-containers.githubusercontent.com``
-   * - Docker Hub
-     - ``registry-1.docker.io``, ``auth.docker.io`` and ``production.cloudfront.docker.com``
+Where the TRE lets the FLIP host pull directly (CREATE does this), its proxy needs the two GHCR
+hosts in :ref:`deploy-trust-node-network`. A proxy allowlist works by host name: it cannot be
+narrowed to FLIP's packages and admits every public image on GHCR. The control over what the node
+runs is the image references themselves, release tags for FLIP's images and digests for the
+mirrored ones, not the allowlist.
 
 Otherwise, TREs typically block direct pulls from public registries,
 so images have to come in through the TRE's normal file-ingress process, for example as
@@ -91,20 +82,14 @@ so images have to come in through the TRE's normal file-ingress process, for exa
    air-gapped TRE therefore needs site-specific adaptation; agree it with the FLIP team
    before the TRE build starts.
 
-The Compose stack's XNAT image carries its plugins, so the FLIP host downloads none at start.
-(The Kubernetes chart is different: it fetches them from ``xnat.org``, ``api.bitbucket.org``
-and GitHub at every start, see :doc:`deploy-flip-node-azure`.)
+The XNAT image carries its plugins, so a trust downloads none at start, on Compose or Kubernetes.
 
 **Network policy**
 
-- Allow the outbound connections in :ref:`deploy-trust-node-network`: the Central Hub API
-  and the FL server are **separate** hosts, and allowlisting the API host alone is not
-  sufficient.
-- If the TRE's firewall filters by hostname only in HTTP rules (Azure Firewall Basic, for
-  example, has no DNS proxy for its network rules), allow the FL Server by its IP address:
-  the hub's FL endpoint has a fixed one.
-- Do not let a TLS-inspecting proxy re-sign traffic to the FL Server: the FL client checks
-  the server's certificate against its kit, and a re-signed connection fails.
+- Allow the outbound connections in :ref:`deploy-trust-node-network`. The Central Hub API
+  and the FL server are **separate** hosts, and the FL server must be exempt from TLS
+  inspection. Once the kit file is on the host, ``make onboard-onprem-trust KIT=<CODE>`` probes
+  them from there and prints what it cannot reach: run it before and after the firewall change.
 - No inbound ports need to be opened on the TRE perimeter.
 
 **Output review**
@@ -153,11 +138,12 @@ back. The FL server never initiates inbound connections to client sites:
 - In NVIDIA FLARE, the FL client sends ``GET_TASK`` requests to the FL server and receives
   tasks in the response, then returns results via ``SUBMIT_RESULT``.
 
-- In Flower, each SuperNode acts as a gRPC client connecting outbound to the SuperLink.
-  SuperNodes initiate all requests and do not accept incoming connections.
+- In Flower (flwr 1.40 and later), each SuperNode is an HTTPS client (HTTP/1.1 over TLS)
+  that calls the Fleet API outbound, through the Central Hub's fleet proxy. SuperNodes
+  initiate all requests and do not accept incoming connections.
 
-The TRE need only whitelist outbound gRPC (or HTTP, if using an HTTP/REST transport
-fallback) to the FL server endpoint.
+The TRE need only allow outbound TLS to the FL server endpoint: gRPC for NVIDIA FLARE,
+HTTPS (HTTP/1.1) for Flower.
 
 **Central Hub FLIP API <-> Trust API**
 
@@ -264,10 +250,16 @@ memory requirements depend on the model architecture.
 Networking
 ----------
 
-The outbound connections in :ref:`deploy-trust-node-network`, and no inbound ones. If the
-TRE's network inspection appliances block HTTP/2 (required for gRPC), most FL frameworks
-offer HTTP/REST transport fallbacks that work over standard HTTP/1.1 (e.g. NVIDIA FLARE's
-HTTP driver, Flower's REST transport).
+The outbound connections in :ref:`deploy-trust-node-network`, and no inbound ones, with the
+questions on :ref:`readiness-network` settled first. The two frameworks differ at the wire:
+Flower's SuperNode speaks plain HTTPS (HTTP/1.1), while NVIDIA FLARE's client speaks gRPC
+(HTTP/2) under mutual TLS. An appliance that classifies by port and protocol sees both as TLS
+on a non-default port; one that understands only HTTP/1.1 can tell them apart only by
+decrypting the traffic, which breaks mutual TLS on any port. NVIDIA FLARE also ships a
+websocket transport, its ``http`` driver, chosen at provisioning time, which starts as an
+ordinary HTTP/1.1 request before upgrading. FLIP provisions gRPC only and has not tested that
+transport on the platform, so raise it with the FLIP team as an option to evaluate for a
+site, not a setting to rely on.
 
 Data
 ----
@@ -290,6 +282,35 @@ APIs. Alloy scrapes container stdout via the Docker socket, Loki stores logs wit
 retention, and Grafana provides a pre-provisioned dashboard. **The stack runs entirely
 inside the TRE boundary**: no log data is sent to the Central Hub. See
 :doc:`/components/component-logging-stack` for configuration, ports, and persistent volumes.
+
+On AzureTRE
+-----------
+
+FLIP has not yet been deployed on an `AzureTRE <https://github.com/microsoft/AzureTRE>`_. These notes come from
+reading AzureTRE v0.29.1 (September 2026) and cover what differs from the requirements above.
+
+- **The host comes from a template you register.** A workspace runs only what a registered template deploys, and
+  FLIP does not ship one. The nearest starting point is AzureTRE's Guacamole Linux VM user resource
+  (``templates/workspace_services/guacamole/user_resources/guacamole-azure-linuxvm``), which already installs
+  Docker from cloud-init on Ubuntu 22.04; a workspace service of its own is the longer-lived option. FLIP's Azure
+  VM Terraform (:doc:`deploy-flip-node-azure`) does not drop in, because it creates its own network and kit drop.
+- **Open the FL port at both layers.** A workspace's network security group allows outbound internet traffic on
+  443 only, so the kit's FL port (8002 on production, 8003 on staging) needs an outbound NSG rule as well as a
+  firewall rule. The firewall runs no DNS proxy, so that rule names the FL endpoint's fixed IP addresses, not its
+  hostname.
+- **Allow the HTTPS hosts in the firewall.** Add the 443 hosts from :ref:`deploy-trust-node-network` as rules in
+  the template's ``pipeline`` section (AzureTRE's
+  `firewall rules guide <https://github.com/microsoft/AzureTRE/blob/main/docs/tre-workspace-authors/firewall-rules.md>`_).
+  The shared Nexus mirror proxies Docker Hub but not GHCR, so ``ghcr.io`` and
+  ``pkg-containers.githubusercontent.com`` need rules of their own.
+- **Agree the FL channel alongside the airlock.** The airlock is AzureTRE's route for data in and out, with human
+  approval. Model updates over the FL port do not pass through it, so agree the egress policy first (see
+  `What leaves the TRE, and under what policy`_). Federated evaluation, which returns metrics only, is the easier
+  start.
+- **Bring FLIP's own data services.** AzureTRE's OHDSI service runs ATLAS against Azure Synapse, and its health
+  services deploy the Azure DICOM service, which speaks DICOMweb. FLIP needs PostgreSQL with an ``omop`` schema
+  and a PACS it can query with C-FIND and C-MOVE (`Data`_ above), so load the project extract into the node's own
+  OMOP database and Orthanc.
 
 Use case 1: federated evaluation
 ================================
@@ -359,6 +380,9 @@ are what a TRE's output-checking policy has to account for:
   way they can read a table or a chart.
 - A training run produces one update per round (tens to hundreds of them) rather than one
   output per project.
+
+How an output checker should assess a trained model before it leaves a TRE is still being agreed across UK TREs:
+`UK TRE federation landscape`_ summarises the consensus work under way.
 
 `SATRE v2.0.1 <https://satre-specification.readthedocs.io/en/v2.0.1/specification.html#satre-3-3-07>`_
 addresses this case directly. Requirement **3.3.07** (Mandatory) asks a TRE for a documented
@@ -552,6 +576,15 @@ Related projects include
 around workflow outputs) and
 `SACRO <https://github.com/AI-SDC/ACRO>`_ (which provides semi-automated output checking
 tools, including an ML extension for attack simulation against trained models).
+
+HDR UK's webinar `Can the Model Leave the Room? <https://youtu.be/Y39EWYesWeY>`_ (3 Nov 2026, by the SACRO and
+SDC-Reboot teams) launched a Delphi consensus on when a trained model may leave a TRE. Its draft, still under
+consultation, keeps in models that store training data (such as k-nearest neighbours) and generative models, and lets
+models that predict each input independently (regression, classification, segmentation) leave after checks: from
+metrics only, through an access-controlled server, to open release with
+`SACRO-ML <https://github.com/AI-SDC/SACRO-ML>`_ attack checks and differentially private training. For FLIP,
+federated evaluation is the metrics-only case; per-round federated training is not yet covered, and FLARE's update
+reduction is not differential privacy (`What these controls do not do`_).
 
 FLIP's TRE deployment model aligns with this direction. As TREvolution matures, its Patterns
 framework could formalise different egress rules for different federated workflows (for

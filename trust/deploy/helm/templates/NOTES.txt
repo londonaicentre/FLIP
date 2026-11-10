@@ -53,8 +53,8 @@ Check the stack is up:
 
     For a functional FL trust, set sharedImagesPvc.enabled=true and re-run
     `helm upgrade`. The shipped default is ReadWriteOnce, which every storage
-    class this chart is validated on provides; the fl-client is pinned to
-    imaging-api's node (flClient.affinity) so the single-node mount that RWO
-    implies is satisfied. Only move to an RWX-capable class if you need the two
-    pods on different nodes, and relax that affinity if you do.
+    class this chart is validated on provides; the chart then pins the fl-client
+    and imaging-api to one node so the single-node mount that RWO implies is
+    satisfied. Only move to an RWX-capable class if you need the two pods on
+    different nodes; the chart drops that pin on ReadWriteMany.
 {{- end }}

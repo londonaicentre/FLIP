@@ -108,7 +108,7 @@ def _normalised_body(source: str, func_name: str, renames: dict[str, str]) -> st
 
 
 def test_write_env_file_stays_in_lockstep_with_trust_kit_lib_write_secure():
-    """``write_env_file`` and ``scripts/trust_kit_lib.write_secure`` must stay byte-equivalent.
+    """``write_env_file`` and ``trust/deploy/scripts/trust_kit_lib.write_secure`` must stay byte-equivalent.
 
     Both docstrings declare the two to be the same routine, and both write live credentials, but
     nothing enforced it — the pair had already drifted twice (one caught the empty-list case, the
@@ -123,7 +123,7 @@ def test_write_env_file_stays_in_lockstep_with_trust_kit_lib_write_secure():
         repo_root = repo_root.parent
     assert repo_root.name, "Could not locate FLIP repo root from test file"
 
-    lib_path = repo_root / "scripts" / "trust_kit_lib.py"
+    lib_path = repo_root / "trust" / "deploy" / "scripts" / "trust_kit_lib.py"
     theirs = _normalised_body(lib_path.read_text(), "write_secure", {"target": "path", "handle": "env_file"})
     ours = _normalised_body(inspect.getsource(env_utils), "write_env_file", {})
 

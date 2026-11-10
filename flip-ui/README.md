@@ -45,7 +45,7 @@ local Keycloak realm registers as a browser origin works — take one from 44350
 ### Staging and production (AWS)
 
 The UI is served as **static assets from S3 behind CloudFront** at the canonical subdomain
-(`stag.flip.aicentre.co.uk` / `app.flip.aicentre.co.uk`). CloudFront forwards `/api/*` to the ALB, so users and
+(`stag.flip.aicentre.co.uk` / `app.flip.aicentre.co.uk`). CloudFront relays `/api/*` to the internal NLB's web listener, so users and
 trusts keep hitting the same URLs. There is no flip-ui Docker container on stag/prod EC2 — only flip-api and the
 FL services. See [deploy/providers/AWS/README.md](../deploy/providers/AWS/README.md#flip-ui-on-s3--cloudfront)
 for the full rollout.
@@ -57,42 +57,62 @@ cd deploy/providers/AWS
 make deploy-ui HUB=stag     # or HUB=prod for prod
 ```
 
-This runs `npm ci && npm run build:deploy`, regenerates `public/js/window.js` with the target environment's values,
-syncs the build to S3, and invalidates CloudFront.
+This runs `npm ci && npm run build:deploy` (whose `postbuild:deploy` writes `dist/js/window.js` from the target
+environment's values) and publishes `dist/` to the UI bucket with `scripts/publish-ui.sh`. Nothing is invalidated:
+`index.html` and `window.js` are served `no-cache`. CI runs the same script after every successful apply
+(`publish_ui.yml`, FLIP#1186); `make deploy-ui` is the manual fallback and rollback.
 
-### Public Ark+ demo build (`/ark_demo`)
+### Public demo build (`/demo/`)
 
-A read-only, fully-offline demo of the Ark+ chest X-ray experiment register, safe to host
-unauthenticated. It is the real SPA built with `--mode demo` (`VITE_DEMO` inlined to `true`): the
-auth guard is bypassed, no Amplify/Cognito call is ever made, and every API request is answered by
-an in-browser MirageJS server ([`mocks/demo-server.ts`](mocks/demo-server.ts)) with **no
-passthrough** — a published demo bundle cannot reach a real backend. The replayed payloads live
-under [`mocks/demo/data/`](mocks/demo/data/); capture provenance and sanitisation rules are
-documented in [`mocks/demo/ark-plus-register.ts`](mocks/demo/ark-plus-register.ts).
+A read-only, fully-offline demo of FLIP on example data, safe to host unauthenticated: five
+federated projects (Ark+ fine-tuning and evaluation, EHR risk prediction, spleen 3D segmentation
+and its evaluation), one per workflow the platform supports. It is the real SPA built with
+`--mode demo` (`VITE_DEMO` inlined to `true`): the auth guard is bypassed, no Amplify/Cognito call
+is ever made, and every API request is answered by an in-browser MirageJS server
+([`mocks/demo-server.ts`](mocks/demo-server.ts)) with **no passthrough** — a published demo bundle
+cannot reach a real backend — and nothing it serves can be downloaded.
+
+The projects are registered in [`mocks/demo/registry.ts`](mocks/demo/registry.ts), one directory
+each under [`mocks/demo/projects/`](mocks/demo/projects/): a `register.ts` that wires up the
+fixtures, the fixtures in `data/`, and a `capture.json` with the run they came from and a map from
+each captured trust to a site of the demo roster ([`mocks/demo/roster.json`](mocks/demo/roster.json):
+two sites named after the partner institutions, with demo-only identities). The fixtures on disk are
+already on that demo world, because the bundle ships them as they are: nothing is scrubbed in the
+browser. To add or re-capture a project:
+
+```bash
+make capture-demo-project EXTRA_ARGS="--project-id <uuid> --slug <name>"  # writes projects/<name>/data/, lists its trusts
+# write projects/<name>/capture.json (trustMap: every listed trust -> a roster site id, or null to drop it)
+npm run demo-fixtures -- scrub <name>   # rewrites data/ onto the demo world, refusing an unmapped trust
+npm run demo-fixtures -- check          # every fixture file is clean (also run by the unit tests)
+```
+
+[`scripts/demo-fixtures.mjs`](scripts/demo-fixtures.mjs) maps trusts, recomputes counts, replaces
+every identity with the demo user, re-keys captured ids, drops the SQL licence header, and refuses a
+production name, a URL, an IP address or a foreign e-mail. `npm run build:demo` runs the same check
+over the built bundle.
 
 ```bash
 npm run demo          # dev server at http://localhost:4174/ (base "/")
-npm run build:demo    # production bundle under dist/ with base "/ark_demo/"
-npm run serve:demo    # preview the built bundle at /ark_demo/
+npm run build:demo    # production bundle under dist/ with base "/demo/"
+npm run serve:demo    # preview the built bundle at http://127.0.0.1:4174/demo/
 ```
+
+With `serve:demo` running, `npm run test:public-demo` walks the built bundle as a visitor would
+([`test/cypress/public-demo/walk.cy.ts`](test/cypress/public-demo/walk.cy.ts): every project opens,
+a cold deep link renders, Connection Status names the two demo sites, no download control shows).
+It is a local check, not part of CI.
 
 The build regenerates `dist/js/window.js` from
 [`scripts/generate-demo-window-js.sh`](scripts/generate-demo-window-js.sh), which reads no
 environment and points at no real backend. Host the bundle as a CloudFront behaviour (or any
-static prefix) at `/ark_demo/` next to the real app.
+static prefix) at `/demo/` next to the real app.
 
 The demo is a point-in-time capture, not a live system, and says so twice: `window.RELEASE_VERSION`
-is stamped `ark-demo/<capture-date>+<git-short-sha>` (the date is grepped out of
-`DEMO_CAPTURE_DATE` in `ark-plus-register.ts` so it can't drift from the provenance note there),
-and every page renders a small, non-dismissible banner
+is stamped `demo/<latest-capture-date>+<git-short-sha>` (the date is grepped out of the registers
+so it can't drift from them), and every page renders a small, non-dismissible banner
 ([`src/demo/DemoBanner.vue`](src/demo/DemoBanner.vue), mounted in `App.vue` outside
-`<router-view>` so it survives every route) reading the same capture date in human form.
-
-The large download bundles (results + model files, several hundred MB each) are not part of the
-bundle: they are served by the production CloudFront distribution at `/ark_demo/assets/*` from a
-private, OAC-locked S3 bucket with the WAF in the request path (Terraform:
-`deploy/providers/AWS/cloudfront.tf`, "Public Ark+ demo download assets"; bucket name via
-`DEMO_ASSETS_BUCKET_NAME`). Nothing in the demo is fetched from a public S3 URL.
+`<router-view>` so it survives every route) naming the capture window.
 
 ## Configuration
 
@@ -124,7 +144,7 @@ stack, so there is no VITE_-prefixed duplication to keep in sync.
 | `CENTRAL_HUB_API_URL` | Full base URL of the flip-api backend, including `/api` |
 | `BLACKLISTED_MODEL_FILES` | Comma-separated file names to reject in model uploads |
 | `VITE_LOCAL` | Set to `true` for local mock mode (bypasses Cognito). **Local dev only — see warning below.** |
-| `VITE_DEMO` | Selects the public Ark+ demo bundle (bypasses Cognito, offline Mirage API). **Never set this in the environment — see warning below**; it is inlined automatically by `npm run build:demo` / `npm run demo` (`--mode demo`). |
+| `VITE_DEMO` | Selects the public demo bundle (bypasses Cognito, offline Mirage API). **Never set this in the environment — see warning below**; it is inlined automatically by `npm run build:demo` / `npm run demo` (`--mode demo`). |
 
 Authentication sits behind a provider seam ([`src/auth/`](src/auth/), FLIP#919): the store, router guard, axios
 interceptor and auth pages speak only the `AuthProvider` contract in `src/auth/provider.ts`, and `getAuthProvider()`
@@ -137,12 +157,12 @@ picks the implementation once at boot from `window.AUTH_BACKEND`.
   sign-out.
 - **Keycloak** (`src/auth/keycloak-provider.ts`, the dev stack) — the OIDC Resource Owner Password grant against the
   realm's token endpoint, no SDK and no redirect, so the same username/password form works. Tokens live in
-  `localStorage["flip.auth.keycloak.<clientId>"]` and refresh 30 s ahead of expiry. Its capabilities are all off by
-  design: the password grant cannot run Keycloak's required actions (forced password update, TOTP enrolment are
-  browser flows in Keycloak's own UI), and Keycloak answers a wrong password and a missing OTP with the same
-  `invalid_grant`, so an in-app TOTP step cannot be offered honestly. The pages link out to the Keycloak console
-  instead ("Forgot password?" on the login page, the admin "Reset Password" tooltip), and an account with a pending
-  required action gets a "Finish setting up your account in Keycloak" notice with a link.
+  `localStorage["flip.auth.keycloak.<clientId>"]` and refresh 30 s ahead of expiry. Its capabilities are off by
+  design, except the admin "Reset Password" (flip-api re-sends the user's invite): the password grant cannot run
+  Keycloak's required actions (forced password update, TOTP enrolment are browser flows in Keycloak's own UI), and
+  Keycloak answers a wrong password and a missing OTP with the same `invalid_grant`, so an in-app TOTP step cannot be
+  offered honestly. The pages link out to the Keycloak console instead ("Forgot password?" on the login page), and an
+  account with a pending required action gets a "Finish setting up your account in Keycloak" notice with a link.
 
 > **`VITE_LOCAL=true` and `VITE_DEMO=true` must never reach a production build.** Both flags are inlined by Vite at
 > build time and short-circuit the Cognito session check in [`src/utils/auth.ts`](src/utils/auth.ts) plus enable a
@@ -157,7 +177,7 @@ picks the implementation once at boot from `window.AUTH_BACKEND`.
 **Production source may not import a package that is only declared in `devDependencies`, nor one that is
 declared nowhere and resolves through npm's hoisting of a parent's tree.** "Production source" is everything
 the deployed bundles reach: `src/`, minus its test files, plus `mocks/` — which `build:demo` pulls into the
-public `/ark_demo` bundle.
+public `/demo/` bundle.
 
 This is enforced, not just documented: the `flip-ui/dependency-scoping` block in
 [`eslint.config.mjs`](eslint.config.mjs) runs `import-x/no-extraneous-dependencies` over exactly that file

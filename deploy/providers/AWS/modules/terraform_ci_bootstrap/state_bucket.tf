@@ -192,3 +192,13 @@ resource "aws_s3_bucket_policy" "state" {
   # A policy on a bucket whose public-access block is still being set races it.
   depends_on = [aws_s3_bucket_public_access_block.state]
 }
+
+# Server access logs (S3.9), off unless state_access_log_bucket names a
+# target; the variable says which bucket that should be, and which never.
+resource "aws_s3_bucket_logging" "state" {
+  count = var.manage_state_bucket && var.state_access_log_bucket != "" ? 1 : 0
+
+  bucket        = aws_s3_bucket.state[0].id
+  target_bucket = var.state_access_log_bucket
+  target_prefix = "${var.state_bucket_name}/"
+}

@@ -37,10 +37,14 @@ The FLIP touchpoints your app needs are:
 
    - ``fl-apps/flower/standard/app/`` — the platform's base bundle: the ``ServerApp`` and the
      ``FedAvgWithClientMetrics`` strategy. You supply ``client_app.py`` and ``models.py``.
-   - ``fl-tutorials/flower/xray_classification/`` — chest X-ray classification, with both ``ServerApp`` and
+   - ``fl-tutorials/flower/image_classification/xray_classification/`` — chest X-ray classification, with both ``ServerApp`` and
      ``ClientApp``.
-   - ``fl-tutorials/flower/3d_spleen_segmentation/`` — MONAI spleen segmentation. Exercises every touchpoint below,
+   - ``fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/`` — MONAI spleen segmentation. Exercises every touchpoint below,
      including best-model selection.
+
+.. contents:: On this page
+   :local:
+   :depth: 1
 
 *****************
 Starting point
@@ -413,7 +417,8 @@ differential-privacy mod on your training handler:
 On each SuperNode, the mod clips the local update to ``dp-clipping-norm`` and adds Gaussian noise scaled by
 ``dp-sensitivity``, ``dp-epsilon`` and ``dp-delta``, so the FL server only ever receives a privatised update.
 ``dp-enabled`` turns it on or off. The template declares all five keys, so you can override them per run in
-``config.toml``.
+``config.toml``. The template's ``dp-clipping-norm = 1.0`` is a placeholder: set it near the pre-clip norm the mod
+logs each round, or clipping shrinks every update and the run learns next to nothing.
 
 Integer buffers, such as BatchNorm's ``num_batches_tracked`` counters, pass through untouched. See *Privacy filters
 on shared model updates* on :ref:`fl-update-privacy` for how it works and its caveats.
@@ -525,7 +530,7 @@ Two files carry a Flower app's configuration, and they play different roles loca
 Beyond a normal Flower project, your ``pyproject.toml`` needs a ``[tool.flwr.app.config]`` block that declares the
 FLIP run-config keys (placeholder values are fine) and your training hyperparameters (``num-server-rounds``,
 ``local-epochs``, …), so you can override them locally. Abridged from
-``fl-tutorials/flower/3d_spleen_segmentation/pyproject.toml``:
+``fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/pyproject.toml``:
 
 .. code-block:: toml
 
@@ -534,7 +539,7 @@ FLIP run-config keys (placeholder values are fine) and your training hyperparame
    version = "1.0.0"
    dependencies = [
        # flip-utils is deliberately NOT declared — see the note under "Starting point"
-       "flwr[simulation]>=1.38.0",
+       "flwr[simulation]>=1.42.0",
        # ... your model-framework deps (monai, torch, nibabel, ...)
    ]
 
@@ -552,7 +557,7 @@ FLIP run-config keys (placeholder values are fine) and your training hyperparame
    batch-size = 2
    # Client-side DP knobs read by flip_local_dp_mod
    dp-enabled = true
-   dp-clipping-norm = 1.0
+   dp-clipping-norm = 1.0   # placeholder: size it to your model (see "privatising the update" above)
    dp-sensitivity = 1e-4
    dp-epsilon = 10.0
    dp-delta = 1e-5
@@ -585,7 +590,7 @@ FLIP run-config keys (placeholder values are fine) and your training hyperparame
 Because the template's ``pyproject.toml`` governs a platform run, set rounds, epochs, learning rate or the DP knobs
 in a ``config.toml`` uploaded next to your code. FLIP passes it to ``flwr run`` when you submit, so every top-level
 key in it overrides the template's ``[tool.flwr.app.config]``. From
-``fl-tutorials/flower/3d_spleen_segmentation/app/config.toml``:
+``fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/app/config.toml``:
 
 .. code-block:: toml
 
@@ -695,7 +700,7 @@ A tutorial submitted this way runs with its ``pyproject.toml`` values, not its `
 
 .. seealso::
 
-   ``fl-tutorials/flower/3d_spleen_segmentation/README.md`` has the full local-run instructions and remaining
+   ``fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/README.md`` has the full local-run instructions and remaining
    caveats, including the data-enrichment (label upload) step the segmentation tutorials need before they can train
    on a real FLIP project. ``flip-api/AGENTS.md`` documents the end-to-end smoke tests.
 

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import ast
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -47,8 +48,8 @@ TEMPLATES_DIR = REPO_ROOT / "fl-apps" / "flower"
 
 
 def _tutorial_apps() -> list[Path]:
-    """Every fl-tutorials/flower/<name>/app directory, sorted for stable test ids."""
-    return sorted(p for p in TUTORIALS_DIR.glob("*/app") if p.is_dir())
+    """Every fl-tutorials/flower/<category>/<name>/app directory, sorted for stable test ids (#1500)."""
+    return sorted(p for p in TUTORIALS_DIR.glob("*/*/app") if p.is_dir())
 
 
 TUTORIAL_APPS = _tutorial_apps()
@@ -153,3 +154,30 @@ def test_platform_owned_files_are_identical_in_the_tutorial(app_dir: Path):
             f"runs — the tutorial's copy is discarded at bundle time, so the tutorial deploys as "
             f"something other than what it shows. Resync by copying the fl-apps file over it."
         )
+
+
+def _run_config(pyproject: Path) -> dict:
+    return tomllib.loads(pyproject.read_text(encoding="utf-8"))["tool"]["flwr"]["app"]["config"]
+
+
+@pytest.mark.parametrize("app_dir", TUTORIAL_APPS, ids=_tutorial_id)
+def test_the_platform_run_config_keeps_every_tutorial_value(app_dir: Path):
+    """The platform runs the template's pyproject.toml with only app/config.toml on top (bundle_flower_application).
+
+    So a value set in the tutorial's pyproject.toml alone runs on the simulator and is silently dropped on a
+    trust: spleen's dp-clipping-norm = 20 would have run at the template's 1.0 (#1754). Rounds, epochs and the
+    learning rate may differ (the simulator runs short), but the DP keys must match, since the release gate
+    judges the simulator's. flwr rejects a config.toml key the template does not declare.
+    """
+    template = _run_config(TEMPLATES_DIR / _job_type(app_dir) / "pyproject.toml")
+    tutorial = _run_config(app_dir.parent / "pyproject.toml")
+    overrides = tomllib.loads((app_dir / "config.toml").read_text(encoding="utf-8"))
+    platform = {**template, **overrides}
+    name = _tutorial_id(app_dir)
+
+    dropped = sorted(k for k, v in tutorial.items() if template.get(k) != v and k not in overrides)
+    assert not dropped, f"{name}: set {dropped} in app/config.toml, or the platform drops them"
+    undeclared = sorted(set(overrides) - set(template))
+    assert not undeclared, f"{name}: app/config.toml sets {undeclared}, which the template lacks"
+    dp_drift = sorted(k for k, v in tutorial.items() if k.startswith("dp-") and platform.get(k) != v)
+    assert not dp_drift, f"{name}: {dp_drift} differ between pyproject.toml and the platform's app/config.toml"

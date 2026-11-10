@@ -169,7 +169,8 @@ services:
   # the services API that dcm2niix launches require can itself create services
   # with host bind mounts (FLIP#485).
   xnat-socket-proxy:
-    image: tecnativa/docker-socket-proxy:v0.4.2
+    # FLIP's GHCR mirror of the upstream image, pinned by digest (trust/deploy/mirror-images.manifest).
+    image: ghcr.io/londonaicentre/mirror/tecnativa/docker-socket-proxy:v0.4.2@sha256:1f3a6f303320723d199d2316a3e82b2e2685d86c275d5e3deeaf182573b47476
     deploy:
       replicas: 1
       restart_policy:

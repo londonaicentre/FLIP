@@ -19,7 +19,7 @@ model is built (``pretrained=True``, ``torch.hub.load``, ``from_pretrained("org/
 internet, and neither does a Trust's training host behind an NHS firewall, so an app cannot
 assume one anywhere: such a call hangs the job there; and a file fetched after the upload was
 inspected is not the file that was inspected. The *Model files* section of the
-:ref:`user guide <model-files>` spells out the failure modes; the latent-diffusion
+:ref:`user guide <model-files>` spells out the failure modes; the autoencoder
 tutorial shows how to ship a network a library would otherwise download.
 
 .. toctree::

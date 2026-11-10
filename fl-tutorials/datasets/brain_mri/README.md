@@ -57,12 +57,13 @@ Driving the platform end to end (cohort query → Orthanc → XNAT → dcm2niix)
 as the cohort and any FLARE app as the model files:
 
 ```bash
-make e2e_smoke MODEL_FILES_DIR=../fl-tutorials/nvflare/image_synthesis/latent_diffusion_model/app_files \
+make e2e_smoke MODEL_FILES_DIR=../fl-tutorials/nvflare/image_generation/brain_mri_ldm_stage1_autoencoder/app_files \
   QUERY_FILE=../fl-tutorials/datasets/brain_mri/query.sql EXTRA_ARGS="--trusts GSTT --abort-midway --image-pull-timeout 3600"
 ```
 
-Each pulled session ends with four scans, each carrying one `input_<FLAIR|T1w|T1Gd|T2w>_…nii.gz` in its
-`NIFTI` resource — `ProtocolName` is the channel label, which dcm2niix puts in the filename.
+Each pulled session ends with four scans, `scans/<1–4>-unknown/`, each carrying one `input_…nii.gz` in its
+`NIFTI` resource. The file name carries no channel label: the scan id is the DICOM `SeriesNumber`, 1–4 in
+channel order (FLAIR, T1w, T1Gd, T2w), and that is what the tutorials select by.
 
 ## The DICOM studies
 

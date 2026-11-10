@@ -52,8 +52,8 @@ Three checks narrow most problems down to one component:
 
    .. code-block:: shell
 
-      sudo docker ps                         # Compose: every service should be Up
-      make -C trust/deploy/helm status       # Kubernetes: release status, plugin roster and smoke tests
+      docker ps                              # Compose: every service should be Up
+      make -C trust/deploy/helm status       # Kubernetes: release status, XNAT plugins and smoke tests
 
 .. seealso::
 

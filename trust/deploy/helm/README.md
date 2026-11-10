@@ -23,7 +23,7 @@ the same **zero inbound trust** architecture as the Docker Compose deployment:
 trust services only make outbound connections to the Central Hub and the FL
 server; no inbound ports are exposed from the K8s cluster.
 
-> **Deployment status.** The chart is validated on single-node k3s and includes
+> **Deployment status.** The chart is validated on single-node k3s, AKS and Amazon EKS, and includes
 > kit staging, default-deny ingress, audited egress rules, least-privilege
 > service accounts, and stateless-workload hardening. Review the
 > [known limitations](#known-limitations), particularly storage and Pod Security
@@ -31,7 +31,7 @@ server; no inbound ports are exposed from the K8s cluster.
 
 > **Deploying a trust?** The operator guide — prerequisites, staging the FL kit, deploying,
 > the `HELM_TIMEOUT` wait budget, verifying, upgrading and uninstalling — is
-> [Deploy a FLIP node on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html).
+> [Deploy on an existing Kubernetes cluster](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html).
 > This README is the chart's reference: values, secrets, internals and development notes.
 
 ## Quickstart
@@ -152,21 +152,18 @@ unaffected either way; the chart needs no version switch.
 How `make status` and `make smoke-cstore` decide. Polling green does not mean imaging works: the two
 share no code, so the operator guide has operators run both.
 
-`status` lists `/data/xnat/home/plugins` in the running `xnat-web` pod and compares it
-against the release's own `xnat.web.plugins.urls`, failing with both versions named when
-they disagree. They disagree when the **pod spec** is older than the values — the plugins
-live in an emptyDir refilled by an init container on every pod creation, so a mismatch
-means no upgrade has rolled `xnat-web` since the roster changed. It then asks XNAT which plugins
-it **loaded** (`GET /xapi/plugins`, inside the pod as the service account, the credential on
-curl's stdin) and fails a jar that is **present on disk but not loaded** — unreadable, typically
-a truncated download; see the `tomcat` container's startup log. XNAT lists plugins by id, not by
-these keys (`container-service` is `containers`), hence `XNAT_PLUGIN_IDS` in `check_status.py`;
-when XNAT cannot be asked, `status` warns and checks the jars alone. This is the chart's only
-check of what XNAT loaded: the `xnat-init` readiness wait runs in its own pod, whose jars are the
-image's rather than this pod's, so it waits for the DQR route alone. A plugin built for a
-different XNAT core loads and then aborts every C-STORE in the importer, which is why
-`smoke-cstore` stores a real object through the PACS rather than trusting `status` or a C-ECHO:
-C-ECHO never reaches the importer and passes throughout.
+`status` asks XNAT in every running `xnat-web` pod, as the service account (the credential on
+curl's stdin), which plugins it lists (`GET /xapi/plugins`) and whether its DQR route answers
+(`GET /xapi/dqr/settings`). It fails each plugin in `XNAT_PLUGIN_IDS` (`check_status.py`) that
+XNAT does not list, a DQR route that answers 404 (XNAT lists a plugin whose configuration failed
+to load), and an XNAT that answers wrongly (not 200, or not a JSON object); see the `tomcat`
+container's startup log. XNAT lists plugins by id, not by file name (`container-service` is
+`containers`), hence the map; a test keeps it in step with the manifest the image is built from.
+A pod nothing answers on is a warning, which does not fail `status`. A pass names each plugin's
+version as XNAT reports it. A plugin can load and still abort every C-STORE in the importer (a
+manifest that pairs it with the wrong XNAT core), which is why `smoke-cstore` stores a real
+object through the PACS rather than trusting `status` or a C-ECHO: C-ECHO never reaches the
+importer and passes throughout.
 
 `smoke-cstore` passes when Orthanc reports 0 failed instances **and** XNAT shows receiver-side
 evidence that the object landed — polled, strongest first: a new prearchive object carrying the
@@ -205,14 +202,14 @@ from `dicom.log` and the container log alike. See
 | `namespace.name` | `""` | Namespace name (defaults to release namespace) |
 | `trustData.version` | `20261019` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
 | `trustData.hfRepo` | `aicentreflip/trust-data` | The dataset the seed fetches from |
-| `trustData.seed.enabled` | `true` | Run the `trust-seed` post-install/post-upgrade hook (FLIP#1187): this trust's slice of `projects` into omop-db and, with `orthanc` on, Orthanc |
+| `trustData.seed.enabled` | `true` | Run the `trust-seed` post-install/post-upgrade hook (FLIP#1187): this trust's slice of `projects` into omop-db and, with `orthanc` on, Orthanc. `sync-kit` sets it `false` from the kit's `TRUST_DATA_SEED=false`, for a trust with real data (FLIP#1687), and any Makefile render or deploy naming that `KIT` passes `--set trustData.seed.enabled=false` |
 | `trustData.seed.omop` / `.orthanc` | `true` / `false` | Which stores to seed. Orthanc is off by default: ~2 GB of DICOM per trust, posted over REST (minutes, once) |
 | `trustData.seed.projects` | `cxr_project` | Published projects to load (`omop-csv/<project>/` + `dicom/<project>.tar.gz`). One list for both halves, so only projects the dataset carries both for; spleen and brain_mri publish tables only since FLIP#1221 and regenerate their DICOMs locally, which no in-cluster hook can do |
 | `trustData.seed.sourceTrust` | `""` (= `trustNumber`) | The dataset partition (`source_trust`) this trust receives |
 | `trustData.seed.sourceRef` | `develop` | FLIP git ref the seed tools are installed from at run time — match the ref your images were built from (`main` for `:prod`) |
 | `trustData.seed.dicomVocabBundle` | `vocab_dicom_paulnagy_20260109` | The Apache-licensed DICOM vocabulary bundle loaded before the rows |
 | `trustData.seed.forceDicomVocab` | `false` | Recovery only: reload the DICOM vocabulary over one that reports itself present. The load skips on a single concept committed before the bulk load, so a Job killed between them leaves a half-loaded vocabulary every later upgrade skips. Set for one upgrade, then put it back |
-| `trustData.seed.image.*` | `ghcr.io/astral-sh/uv@sha256:…` | The uv image the hook runs in (pinned by digest) |
+| `trustData.seed.image.*` | `ghcr.io/londonaicentre/mirror/astral-sh/uv@sha256:…` | The uv image the hook runs in: FLIP's mirror, pinned by digest (`trust/deploy/mirror-images.manifest`) |
 | `trustData.seed.workDirSize` | `8Gi` | Scratch emptyDir for the fetched tables, vocabulary zip and DICOM sets |
 
 #### Upgrading: `trustData.version` replaces the two per-store pins (FLIP#1100)
@@ -282,6 +279,16 @@ version fails to render. Delete the removed values from your overrides:
 The failure mode if you miss one is loud rather than silent: an unknown value is ignored by
 Helm, but a missing `flClient.kitHostPath` fails the render by name, and a kit that never
 reached the node leaves the pod `Pending` on a `hostPath type check failed` event.
+
+#### Upgrading: the chart no longer downloads XNAT plugins
+
+`xnat.web.plugins` (`enabled`, `image`, `urls`) is gone with the `download-plugins` init container
+and the `emptyDir` it filled. XNAT runs the plugins built into the `xnat-web` image, from the same
+manifest the chart's list matched, so the upgrade replaces the pod once and changes no plugin
+version. A release that pins an older `xnat-web` image (`xnat.image.pin`) now runs that image's
+own plugins, which match its core. Helm ignores the retired keys, so delete them
+from your overrides; a plugin version now changes only with the image (`trust/xnat/README.md`,
+"Adding or updating a plugin").
 
 ### Secrets
 
@@ -422,8 +429,8 @@ Chart-specific notes (the full operational guide, including the stock-viewer qui
 - Pretrained weights (incl. the ~900 MB SAM checkpoint) persist in the
   `<release>-monailabel-models` PVC; first start on a cold volume takes minutes (the startup
   probe allows 30).
-- The chart's XNAT already ships the `ohif-viewer` plugin in its roster (`xnat.web.plugins`),
-  as every FLIP XNAT does, so there is no extra plugin step.
+- The chart's XNAT image already carries the `ohif-viewer` plugin, as every FLIP XNAT does, so
+  there is no extra plugin step.
 - **No `export_mask` converter here.** The compose trust registers a container-service command
   that turns saved DICOM-SEG assessors into the NIfTI that FL training consumes
   (`trust/xnat/xnat/config/configure-export-mask.sh`, run from `xnat-configure`); the chart's
@@ -614,6 +621,7 @@ flClient:
   gpu:
     enabled: true
     count: 1
+    allocation: devicePlugin   # or runtime, see below
     memoryPerGpuInGiB: 7
 ```
 
@@ -622,6 +630,16 @@ installed in the cluster, with an NVIDIA driver of **580 or newer** on the GPU n
 images ship PyTorch built for CUDA 13. The operator installs the driver itself, so pin its
 `driver.version` to a 580+ release (or, with `driver.enabled=false`, pre-install one on the
 node).
+
+`flClient.gpu.allocation` says how the pod gets its GPU (FLIP#1766):
+
+- `devicePlugin` (default): the fl-client container requests `nvidia.com/gpu: 1`, merged into
+  `flClient.resources.limits`. The device plugin reserves a GPU, Kubernetes places the pod on a node with a free
+  one, and the plugin sets `NVIDIA_VISIBLE_DEVICES` to the device it allocated. Use it on any cluster whose nodes
+  list `nvidia.com/gpu` in their allocatable.
+- `runtime`: no request. The pod gets `NVIDIA_VISIBLE_DEVICES=0` and relies on the node's default container
+  runtime being `nvidia` (k3s: `default-runtime: nvidia`), so it takes that node's GPU 0 and nothing reserves it.
+  Only for a single node with no device plugin; on a shared cluster it can run on a GPU another workload holds.
 
 `flClient.gpu.memoryPerGpuInGiB` defaults to 7 GiB and controls the memory offered per GPU to the NVFLARE
 scheduler. Set it to the memory available for jobs on the site's GPU.
@@ -637,6 +655,65 @@ With a count of 1, the client stops at start unless
 The NVFLARE client renders the kit's `log_config.template.json` using `logLevel` (default `INFO`).
 Older kits without that template use `log_config.json.default` unchanged. Missing or unwritable log
 configuration stops the client with an explicit error.
+
+### NVFLARE job pods: a GPU only while a job runs (FLIP#1428)
+
+By default the fl-client runs every job inside its own pod, so a GPU trust holds its GPU around the clock.
+With job pods the fl-client becomes a small parent that keeps the site registered, and NVFLARE's
+`ClientK8sJobLauncher` starts **one pod per job**. The job pod asks Kubernetes for the GPUs in the job's
+`resource_spec` (`nvidia.com/gpu`), so with the job pods on a GPU node pool that scales from zero, a GPU
+node exists only while a job needs it.
+
+```yaml
+flClient:
+  gpu:
+    enabled: false          # the parent holds no GPU; the chart refuses both
+  nvflare:
+    jobPods:
+      enabled: true
+      maxGpus: 1            # GPUs lent to jobs at once; NVFLARE queues beyond it and the hub says why
+      pendingTimeout: 900   # seconds a job pod may wait for its node; size it to a cold scale-up
+      tolerations:          # the GPU pool's taint
+        - {key: sku, operator: Equal, value: gpu, effect: NoSchedule}
+```
+
+What the chart adds: a Role and RoleBinding for the launcher (job pods, their events, and the Secrets it
+mounts into them), a `<release>-fl-client-<net>-parent` Service that job pods connect back through, and the
+job pod template (ConfigMap `<release>-fl-job-pod-<net>`): the client's env and trust-internal key, this
+net's images slice, `/dev/shm` and the FL server's host aliases, since a job pod talks to the FL server
+itself. At start the client runs `python -m flip.nvflare.k8s_job_mode`, which switches the kit's launcher and
+declares the GPU pool. Each job runs in the fl-client image.
+
+Prerequisites and trade-offs:
+
+- **GPU nodes** carry the NVIDIA device plugin (or the GPU Operator), with a 580+ driver as above.
+- **Prefer a toleration to a `nodeSelector`.** NVFLARE waits only while Kubernetes reports the pod
+  `Insufficient` CPU, memory or GPU (what an autoscaler adding a node looks like). A pod no node could ever
+  take is `Unschedulable` and fails at once, which is what a `nodeSelector` aimed at a pool at zero reports.
+- **The images volume must reach the GPU node.** Job pods mount `sharedImagesPvc` and follow
+  `flClient.affinity`. With a separate GPU pool, give the PVC a ReadWriteMany class and set
+  `flClient.affinity: null` (an RWO disk attaches to one node only).
+- **API server egress.** The launcher calls the Kubernetes API from the parent. The default egress allows
+  port 443, which covers AKS and EKS. NetworkPolicy matches the API server's real endpoint, so where it
+  listens elsewhere (minikube 8443, kind 6443) set `flClient.nvflare.jobPods.apiServer.cidrs` and `.port`,
+  or the first launch hangs and no job pod appears. Only the parent gets that rule.
+- **Cold start.** The first job waits for a node to boot and pull the FL image, and an idle GPU node lingers
+  for the autoscaler's scale-down delay (around 10 minutes on AKS by default). The FL server's 20-second
+  wait for a client to start a job does not sink a late pod: tested with a job pod held 3.5 minutes for its
+  GPU, which then joined and completed. The server logs `Started run … for clients:` without a late site, which
+  is expected. If a late pod crashes, the server notices through its dead-client check, not at once: about a
+  minute later (67 s in a test) the run ends as `FINISHED:EXECUTION_EXCEPTION`. Never set NVFLARE's
+  `strict_start_job_reply_check` on a server with job-pod sites: with FLIP's `min_clients` (every selected
+  Trust), it fails each job whose pod starts late.
+- **Finished job pods are not deleted** by NVFLARE; clear them with
+  `kubectl delete pod -l app.kubernetes.io/component=fl-job --field-selector=status.phase!=Running`.
+- **NVFLARE only.** Flower has no equivalent wired into this chart.
+- **EKS:** the VPC CNI enforces NetworkPolicy only with `enableNetworkPolicy` set, and GPU scale-from-zero
+  needs Karpenter or the cluster autoscaler's node-template tags.
+
+The fl-client Deployment uses `strategy: Recreate` whatever the mode: a trust is one FL identity, and under
+RollingUpdate the old and new pods evict each other's connection to the server until the old one exits.
+`make deploy` moves a release installed before this change across once (`scripts/migrate-strategy.sh`, FLIP#1524).
 
 ### Container Service jobs (dcm2niix)
 
@@ -741,7 +818,8 @@ not deploy. `sync-kit` patches the per-trust keys on top without touching the ot
 | `omop-postgres-password` | omop-db | PostgreSQL password |
 | `data-access-postgres-password` | data-access-api | Data reader DB password |
 | `orthanc-registered-users` | orthanc | Orthanc registered users, JSON user map e.g. `{"admin": "<password>"}`. Required when `orthanc.enabled` — the env ref is non-optional (asserted on every chart render by the `Helm Template` CI job) and the image refuses to start without users (FLIP-PT-091). Populated by `scripts/generate_values.py` from `ORTHANC_REGISTERED_USERS`, else from the kit's `ORTHANC_USERNAME` / `ORTHANC_PASSWORD` |
-| `xnat-admin-password` | xnat-web | XNAT admin password |
+| `xnat-admin-initial-password` | xnat-web, xnat-init | XNAT's factory admin password, from the kit's `XNAT_ADMIN_INITIAL_PASSWORD`. Optional: absent, the chart uses `admin` (see [XNAT admin password](#xnat-admin-password)) |
+| `xnat-admin-password` | xnat-web, xnat-init | This trust's XNAT admin password, from the kit's `XNAT_ADMIN_PASSWORD` |
 | `xnat-service-user` | xnat-web, imaging-api | XNAT service account username |
 | `xnat-service-password` | xnat-web, imaging-api | XNAT service account password |
 | `xnat-datasource-password` | xnat-web, xnat-db | Password of the `xnat` **application role** — mint via `make generate-xnat-credentials KIT=<CODE>` and fill from the kit with `scripts/generate_values.py`; xnat-web and xnat-db refuse to start on the shipped placeholder or weak values (FLIP-PT-056). imaging-api does not hold it: it reads import status through XNAT's REST API (FLIP#1456) |
@@ -750,6 +828,22 @@ not deploy. `sync-kit` patches the per-trust keys on top without touching the ot
 
 For production, use [External Secrets Operator](https://external-secrets.io/) to
 sync secrets from AWS Secrets Manager or HashiCorp Vault.
+
+### XNAT admin password
+
+XNAT installs with the login `admin` / `admin`. The `xnat-init` hook runs `configure-xnat.sh` on
+every install and upgrade: while XNAT still accepts `xnat-admin-initial-password` it signs in with
+it and changes it to `xnat-admin-password`, and once XNAT refuses it, it signs in with
+`xnat-admin-password` and leaves the password as it is (FLIP#1692). So every later run has
+`admin` refused at least twice first; that is expected. Kits keep `XNAT_ADMIN_INITIAL_PASSWORD=admin`.
+
+- **A trust still on `admin`** (installed by an earlier chart, which fed one key to both): set a new
+  `XNAT_ADMIN_PASSWORD` in the kit, rerun `scripts/generate_values.py`, then
+  `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>`. XNAT still accepts `admin`, so
+  the hook changes it with no refused login.
+- **Changing it later:** change it in XNAT first, then put the same value in the kit, rerun
+  `scripts/generate_values.py` and deploy. A kit-only change fails the hook and counts towards
+  XNAT's lockout.
 
 ### xnat-db roles and credential rotation
 
@@ -792,12 +886,18 @@ kubectl rollout restart deployment/<release>-flip-trust-xnat-web
 during a rotation still leaves those two on the old password — restart
 `xnat-db` and `xnat-web` yourself, in that order, around it.
 
-The hook connects as `postgres` over the local socket rather than as `xnat`
-itself — PG12 does not redact `ALTER ROLE ... PASSWORD` on a server-side
-error, so authenticating as `xnat` would let a holder of the *current*
-credential force an error (no `CREATEROLE` needed) that logs the *new*
-password on the next rotation; connecting as the superuser instead, with
-statement logging suppressed for the `ALTER`, closes that. It reports its
+The hook connects over the local socket as `postgres` when that role exists,
+and otherwise as the app role — a volume first initialised with
+`POSTGRES_USER=xnat` has its superuser under that name and no `postgres` role.
+If neither connects, the hook fails. PG12 does not redact
+`ALTER ROLE ... PASSWORD` on a server-side error, so before the `ALTER` the
+hook pins `log_statement=none`, `log_min_error_statement=panic`,
+`log_min_duration_statement=-1` and `log_transaction_sample_rate=0` for its
+session, which closes every route by which the new password could reach the
+log (FLIP#1658). All four are superuser-only, so if the hook ever falls back
+to an app role that is not a superuser, it fails at the first `SET` and the
+`ALTER` never runs. On a current layout it connects as `postgres` and the
+rotation succeeds. It reports its
 outcome through the Postgres server log — the container's own log stream —
 because `postStart` stdout is not surfaced anywhere on success:
 
@@ -1096,9 +1196,10 @@ The chart is validated in CI via:
    A kit that IS on the node but was staged with the wrong owner (a Flower SuperNode logging `Permission denied` on `/certs` or `/keys`) means `stage-kit` chowned it for the other backend — it reads the backend off the kit's shape, so re-stage from the slot's own kit directory (or pass `FL_BACKEND=flower` explicitly).
 2. **Kit path mismatch**: Verify `flClient.kitHostPath` points at the directory ON THE NODE holding this trust's provisioned kit, and that it contains the slot's contents (FLARE: `local/`, `startup/`, `transfer/`; Flower: `certificates/` and `keys/` with this slot's credential). The chart never fetches the kit — it is delivered out-of-band and placed on the node before the workload starts. A missing path fails scheduling with the path named.
 3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.
-4. **GPU not visible**: Verify `nvidia.com/gpu` annotation on the fl-client pod. Check CUDA env vars (`CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES`) are set via `flClient.gpu.enabled: true`.
-5. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.
-6. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (FLARE 1000, Flower 49999). On FLARE its `local/` must also be writable.
+4. **GPU not visible**: Check the fl-client container requests `nvidia.com/gpu` (`flClient.gpu.allocation: devicePlugin`) and the node lists it in its allocatable, or, with `allocation: runtime`, that `NVIDIA_VISIBLE_DEVICES=0` is set and the node's default runtime is `nvidia`. `CUDA_VISIBLE_DEVICES=0` is set in both modes by `flClient.gpu.enabled: true`.
+5. **Jobs never start ("waiting for resources")**: the FL server logs `sites without the requested resources: {'<slot>': {'num_of_gpus': 1}}`. The trust offers fewer GPUs than the job asks for: `grep num_of_gpus` in the client's `local/resources.json` shows 0 while `flClient.gpu.enabled` is false. Enable the GPU, or use job pods (`flClient.nvflare.jobPods`) on a GPU pool.
+6. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.
+7. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (FLARE 1000, Flower 49999). On FLARE its `local/` must also be writable.
 
 ### Network policy blocking intra-service traffic
 
@@ -1174,11 +1275,12 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
   unwritten and the Job falls through to a full fetch-and-load rather than
   failing, because a needless download is recoverable and a wrongly-skipped load
   is silent. The loader then reports the real error.
-- The Job reaches no host but S3. `fetch-bundle` only downloads the zip; the
-  loader unpacks it with the `unzip` baked into the `omop-db` image, so nothing
-  is installed at run time and no package mirror has to be on the egress
-  allowlist. `unzip: not found` in `load-vocab` means the `omopDb.image.tag` in
-  use predates this — repull a CI-published tag.
+- The Job reaches no host but S3. All three containers run the `omop-db` image,
+  which bakes the AWS CLI and `unzip`, so nothing is installed at run time and no
+  package mirror has to be on the egress allowlist (FLIP#1721 retired the Docker
+  Hub `amazon/aws-cli` image the fetch used before). `aws: not found` in
+  `fetch-bundle`, or `unzip: not found` in `load-vocab`, means the `omopDb.image.tag`
+  in use predates this — repull a CI-published tag.
 
 ### Getting help
 

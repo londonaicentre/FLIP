@@ -1,10 +1,4 @@
 {
-  "diffusion_model": [
-    "trainer.py",
-    "validator.py",
-    "config.json",
-    "models.py"
-  ],
   "evaluation": [
     "evaluator.py",
     "config.json",

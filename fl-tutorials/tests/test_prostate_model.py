@@ -34,7 +34,7 @@ import torch
 from monai.data import DataLoader, list_data_collate
 from tutorial_apps import TUTORIALS_ROOT
 
-PROSTATE_DIR = TUTORIALS_ROOT / "flower" / "3d_prostate_segmentation"
+PROSTATE_DIR = TUTORIALS_ROOT / "flower" / "image_segmentation" / "3d_prostate_segmentation"
 SHIPPED_PLAN = PROSTATE_DIR / "app" / "nnUNetPlans_segmentation.json"
 
 # A toy plan in exactly the shape the planner writes: three stages, tiny feature widths, the first

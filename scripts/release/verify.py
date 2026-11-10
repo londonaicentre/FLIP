@@ -16,8 +16,8 @@
 
 - the checkout is clean and, with ``PR``, at the PR's head;
 - every ``<INSTANCE>-`` compose container was started from this checkout;
-- every repo-built image (``ghcr.io/londonaicentre/*``, ``flare-*``, ``flower-*``, the local flip-ui build) of a
-  container or XNAT swarm service is at ``:<INSTANCE>`` — never a pulled ``:stag`` / ``:dev``;
+- every repo-built image (``ghcr.io/londonaicentre/*`` except its ``mirror/`` copies, ``flare-*``, ``flower-*``, the
+  local flip-ui build) of a container or XNAT swarm service is at ``:<INSTANCE>`` — never a pulled ``:stag`` / ``:dev``;
 - every XNAT swarm service is fully replicated;
 - the hub's ``/api/health`` is ok and reports the release version;
 - flip-api and every trust API container hold the env file's ``AES_KEY_BASE64`` (compared by digest, never shown);
@@ -48,6 +48,8 @@ from release_lib import (  # noqa: E402
 )
 
 REPO_IMAGE_PREFIXES = ("ghcr.io/londonaicentre/", "flare-", "flower-")
+# Third-party images copied to GHCR and pinned by digest (#1724): published, not built from the checkout.
+MIRROR_PREFIX = "ghcr.io/londonaicentre/mirror/"
 AES_SERVICES = ("flip-api", "trust-api", "imaging-api", "data-access-api")
 
 
@@ -69,6 +71,8 @@ def services(instance: str) -> list[dict]:
 
 def is_repo_built(image: str, instance: str) -> bool:
     """Whether an image is one this repo builds, so its tag must be the instance's."""
+    if image.startswith(MIRROR_PREFIX):
+        return False
     return image.startswith(REPO_IMAGE_PREFIXES) or image.startswith(f"{instance}-")
 
 

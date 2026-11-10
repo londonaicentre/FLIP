@@ -92,7 +92,7 @@ overridden per run via `config.toml`):
 ## Local test
 
 There is no server-side simulator run for this template on its own — it needs a real checkpoint and
-connected clients. The shipped consumer, `fl-tutorials/flower/3d_spleen_segmentation_evaluation`,
+connected clients. The shipped consumer, `fl-tutorials/flower/image_evaluation/3d_spleen_segmentation_evaluation`,
 runs on the flwr simulator via
 `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower`
 (`fl-tutorials/flower/sim-tutorial.sh`, which wraps `flwr run`). What its README discourages is a
@@ -104,13 +104,13 @@ images, fl-api submit, SuperNode registration) is exercised by
 Flower containers by hand:
 
 ```bash
-make -C fl-tutorials/flower/3d_spleen_segmentation_evaluation download-checkpoints  # fetch model.pt
+make -C fl-tutorials/flower/image_evaluation/3d_spleen_segmentation_evaluation download-checkpoints  # fetch model.pt
 make -C fl-services/flower build   # build the fl-base / superlink / supernode images
 make -C fl-services/flower up      # start fl-api, superlink, supernode-1, supernode-2
 make -C fl-services/flower submit APP=3d_spleen_segmentation_evaluation
 ```
 
-See [`fl-tutorials/flower/3d_spleen_segmentation_evaluation/README.md`](../../../fl-tutorials/flower/3d_spleen_segmentation_evaluation/README.md)
+See [`fl-tutorials/flower/image_evaluation/3d_spleen_segmentation_evaluation/README.md`](../../../fl-tutorials/flower/image_evaluation/3d_spleen_segmentation_evaluation/README.md)
 for the full walkthrough, including how to change which metrics are reported (edit the client's own
 metric registry — nothing here needs to change) and how `fl-services/flower/compose.dev.yml` wires
 `DEV_DATAFRAME` / `DEV_IMAGES_DIR` / `WORKING_DIR` into the containers.

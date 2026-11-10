@@ -23,7 +23,7 @@ TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials sim-tutorial
 # Dataset targets are backend-agnostic: one download per dataset under the shared data root,
 # read by both harnesses (single copy in datasets/), so FL_BACKEND plays no part in them.
 DATASET_TARGETS := download-xray-data download-weights \
-	download-spleen-data download-spleen-checkpoint \
+	download-spleen-data download-spleen-checkpoint download-spleen-msd-data \
 	download-synthea-data upload-spleen-labels download-arkplus-finetuning-data \
 	download-arkplus-eval-data \
 	fetch-spleen-metadata-table download-spleen-msd-raw convert-spleen-to-dicom \
@@ -76,7 +76,7 @@ format:
 # these apps at runtime, rather than in a per-tutorial venv — arkplus_fine_tuning/pyproject.toml
 # does not even declare monai, so that env cannot import its own data_utils.py. See
 # tests/README.md.
-PYTEST ?= uv run --project ../flip-utils --extra full --group dev pytest
+PYTEST ?= uv run --project ../flip-utils --extra full --group dev --group diffusion pytest
 
 # Dataset-tooling tests (tests/datasets/) exercise datasets/**, which is workstation tooling,
 # not FL-runtime code — flip-utils has no use for pandera/sqlglot — so each dataset's tests run
