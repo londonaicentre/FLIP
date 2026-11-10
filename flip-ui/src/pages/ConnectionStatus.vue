@@ -252,7 +252,14 @@
                              table chrome (ring, shadow, dark:bg-gray-800 tbody, gray-700
                              dividers) so dark mode shows the card canvas through the rows,
                              matching the stacked mobile list. -->
-                        <table class="w-full ring-0 shadow-none">
+                        <!-- table-fixed: each pinned column gets exactly its width and Trust takes what is
+                             left. Under the automatic layout a w-full Trust column took nearly everything and
+                             squeezed the others to their longest word. The minimum width keeps Trust readable
+                             on a narrow screen, where the wrapper scrolls instead. -->
+                        <table
+                            class="w-full table-fixed ring-0 shadow-none"
+                            :class="showKitColumn ? 'min-w-[1080px]' : 'min-w-[880px]'"
+                        >
                             <thead>
                                 <tr class="bg-gray-50 dark:bg-dark-surface border-b border-gray-200 dark:border-dark-border">
                                     <th
@@ -310,7 +317,7 @@
                                             </span>
                                         </div>
                                     </td>
-                                    <td class="px-4 py-4 align-middle w-full max-w-0">
+                                    <td class="px-4 py-4 align-middle max-w-0">
                                         <div class="flex flex-col min-w-0">
                                             <span
                                                 class="font-semibold font-heading text-base text-gray-900 dark:text-gray-100 truncate"
@@ -340,6 +347,16 @@
                                     <td class="px-4 py-4 align-middle text-base text-gray-600 dark:text-gray-300 whitespace-nowrap">
                                         {{ t.region ?? "—" }}
                                     </td>
+                                    <td class="px-4 py-4 align-middle text-right font-mono text-base text-gray-900 dark:text-gray-100">
+                                        {{ t.project_count }}
+                                    </td>
+                                    <td
+                                        class="px-4 py-4 align-middle font-mono text-sm"
+                                        :class="t._state === 'offline' ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-300'"
+                                        data-test="trust-heartbeat"
+                                    >
+                                        {{ heartbeatText(t.last_heartbeat) }}
+                                    </td>
                                     <td class="px-4 py-4 align-middle" data-test="trust-services">
                                         <div class="flex items-center gap-[5px]">
                                             <span
@@ -351,20 +368,10 @@
                                             />
                                         </div>
                                     </td>
-                                    <td
-                                        class="px-4 py-4 align-middle font-mono text-sm"
-                                        :class="t._state === 'offline' ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-300'"
-                                        data-test="trust-heartbeat"
-                                    >
-                                        {{ heartbeatText(t.last_heartbeat) }}
-                                    </td>
-                                    <td class="px-4 py-4 align-middle text-right font-mono text-base text-gray-900 dark:text-gray-100">
-                                        {{ t.project_count }}
-                                    </td>
                                     <td v-if="showKitColumn" class="px-4 py-4 align-middle" data-test="trust-kit">
                                         <TrustKitSection compact :trust="t" />
                                     </td>
-                                    <td class="px-4 py-4 align-middle w-10">
+                                    <td class="px-4 py-4 align-middle">
                                         <icon-ph-caret-right
                                             class="w-4 h-4 opacity-50 text-gray-600 dark:text-gray-300
                                             transition-transform group-hover:translate-x-1"
@@ -800,22 +807,22 @@ const BASE_COLUMNS: IColumn[] = [
     },
     {
         key: "name",
-        label: "Trust",
-        // Absorbs the leftover width; the cell's max-w-0 lets it squash and
-        // truncate instead of pinning the table wider than the viewport.
-        width: "w-full"
+        label: "Trust"
+        // No width: under table-fixed it takes what the pinned columns leave, and the
+        // cell truncates.
     },
     {
         key: "region",
         label: "Region",
         // Region/Services/Heartbeat are pinned (144/144/112px, approximating the
-        // design grid) so the w-full Trust column can't squeeze them to their
-        // longest word.
+        // design grid).
         width: "w-36"
     },
     {
-        label: "Services",
-        width: "w-36"
+        key: "projects",
+        label: "Projects",
+        align: "right",
+        width: "w-28"
     },
     {
         key: "heartbeat",
@@ -823,14 +830,12 @@ const BASE_COLUMNS: IColumn[] = [
         width: "w-28"
     },
     {
-        key: "projects",
-        label: "Projects",
-        align: "right",
-        width: "w-20"
+        label: "Services",
+        width: "w-36"
     },
     {
         label: "",
-        width: "w-10"
+        width: "w-12"
     }
 ];
 
@@ -838,7 +843,10 @@ const BASE_COLUMNS: IColumn[] = [
 // every row, and a Trust Admin, on their own trust's row. It sits before the drawer chevron.
 const showKitColumn = computed(() => isAdmin.value || !!authStore.trustAdminOf);
 const columns = computed<IColumn[]>(() => (showKitColumn.value
-    ? [...BASE_COLUMNS.slice(0, -1), { label: "Download" }, ...BASE_COLUMNS.slice(-1)]
+    ? [...BASE_COLUMNS.slice(0, -1), {
+        label: "Download",
+        width: "w-52"
+    }, ...BASE_COLUMNS.slice(-1)]
     : BASE_COLUMNS));
 
 // Severity-first is the default (design 1b): failing trusts surface on load;

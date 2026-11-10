@@ -597,17 +597,19 @@ describe("ConnectionStatus", () => {
         expect(detail().exists()).toBe(false);
     });
 
-    it("lets the Trust column squash and truncate instead of locking at 18rem", async () => {
+    it("pins every column but Trust, which takes what is left and truncates", async () => {
         mockSwrvData.value = fixture;
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        // The column absorbs the leftover width instead of pinning a 288px floor…
+        // Fixed layout: a pinned column gets exactly its width. Under the automatic layout a
+        // w-full Trust column took nearly everything and squeezed the others (FLIP#1852).
+        expect(wrapper.find("table").classes()).toContain("table-fixed");
         const th = wrapper.find("[data-test='sort-header-name']");
-        expect(th.classes()).toContain("w-full");
-        expect(th.classes()).not.toContain("min-w-[18rem]");
-        // …and max-w-0 gives the cell zero min-content, so the truncate spans
-        // actually clip when the table is squashed rather than forcing overflow.
+        expect(th.classes().filter(c => /^(w-|min-w-)/.test(c))).toEqual([]);
+        const pinned = wrapper.findAll("th").filter(h => h.classes().some(c => c.startsWith("w-")));
+        expect(pinned).toHaveLength(wrapper.findAll("th").length - 1);
+        // max-w-0 gives the cell zero min-content, so the truncate spans clip.
         const nameCell = wrapper.find("[data-test='trust-name']").element.closest("td");
         expect(nameCell?.className).toContain("max-w-0");
     });
@@ -618,8 +620,7 @@ describe("ConnectionStatus", () => {
         await wrapper.vm.$nextTick();
 
         expect(wrapper.findAll("th")).toHaveLength(7);
-        // Pinned column widths keep Region/Services/Heartbeat from being squeezed
-        // by the w-full Trust column (~ design grid 148/150/104px).
+        // Region/Services/Heartbeat keep their design-grid widths (~148/150/104px).
         expect(wrapper.find("[data-test='sort-header-region']").classes()).toContain("w-36");
         expect(wrapper.find("[data-test='sort-header-heartbeat']").classes()).toContain("w-28");
         const row = wrapper.find("[data-test='trust-row']");
