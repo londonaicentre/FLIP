@@ -81,6 +81,7 @@ services:
       - FL_ADMIN_DIRECTORY=/app/admin
       - DEBUG=${DEBUG}
       - LOG_LEVEL=${LOG_LEVEL}
+      - FL_API_KEY=${FL_API_KEY}
       # No BUNDLE_URL_ALLOWED_ORIGINS here on purpose: this harness has no hub, so nothing presigns
       # bundle URLs for it (jobs are submitted by folder name) and the fl-api logs the documented
       # empty-allow-list warning at startup. Every hub deployment sets it — see deploy/compose.*.yml.

@@ -95,6 +95,7 @@ def _mint() -> dict[str, str]:
         "ADMIN_USER_PASSWORD": secrets.token_urlsafe(18),
         "INTERNAL_SERVICE_KEY": internal_key,
         "INTERNAL_SERVICE_KEY_HASH": hashlib.sha256(internal_key.encode()).hexdigest(),
+        "FL_API_KEY": secrets.token_urlsafe(32),
     }
 
 
