@@ -361,6 +361,9 @@
                                     <td class="px-4 py-4 align-middle text-right font-mono text-base text-gray-900 dark:text-gray-100">
                                         {{ t.project_count }}
                                     </td>
+                                    <td v-if="showKitColumn" class="px-4 py-4 align-middle" data-test="trust-kit">
+                                        <TrustKitSection compact :trust="t" />
+                                    </td>
                                     <td class="px-4 py-4 align-middle w-10">
                                         <icon-ph-caret-right
                                             class="w-4 h-4 opacity-50 text-gray-600 dark:text-gray-300
@@ -369,7 +372,7 @@
                                     </td>
                                 </tr>
                                 <tr v-if="!displayedTrusts.length">
-                                    <td colspan="7" class="text-center py-6 text-gray-500 dark:text-gray-300">
+                                    <td :colspan="columns.length" class="text-center py-6 text-gray-500 dark:text-gray-300">
                                         {{ activeTile ? "No trusts match this filter." : "No trusts registered yet." }}
                                     </td>
                                 </tr>
@@ -689,6 +692,7 @@ import AiCard from "@/components/AiCard/AiCard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import FLNetsCard from "@/partials/connection/FLNetsCard.vue";
 import TrustDetailDrawer from "@/partials/connection/TrustDetailDrawer.vue";
+import TrustKitSection from "@/partials/connection/TrustKitSection.vue";
 import AddTrustModal from "@/partials/trusts/AddTrustModal.vue";
 import { ICreatedTrust } from "@/services/admin-trusts-service";
 import { getHubHealth, getTrustStatuses, IHubHealth, ITrustResponse, ServiceStatus } from "@/services/trust-service";
@@ -788,7 +792,7 @@ interface IColumn {
 // Header config drives both the rendered <th>s and the per-column sort handler.
 // Keys correspond to entries in `SORT_COMPARATORS`; columns without a key
 // (Services dots, drawer chevron) render as inert headers.
-const columns: IColumn[] = [
+const BASE_COLUMNS: IColumn[] = [
     {
         key: "severity",
         label: "Status",
@@ -829,6 +833,13 @@ const columns: IColumn[] = [
         width: "w-10"
     }
 ];
+
+// The kit column (FLIP#1852) exists only for viewers who can download some trust's kit: hub admins, on
+// every row, and a Trust Admin, on their own trust's row. It sits before the drawer chevron.
+const showKitColumn = computed(() => isAdmin.value || !!authStore.trustAdminOf);
+const columns = computed<IColumn[]>(() => (showKitColumn.value
+    ? [...BASE_COLUMNS.slice(0, -1), { label: "Download" }, ...BASE_COLUMNS.slice(-1)]
+    : BASE_COLUMNS));
 
 // Severity-first is the default (design 1b): failing trusts surface on load;
 // admins can re-sort via the column headers when triaging.

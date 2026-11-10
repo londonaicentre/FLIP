@@ -12,10 +12,29 @@
 -->
 
 <!-- The trust's kit (keys + FL credentials, one encrypted file) on its detail card (FLIP#1852). Only the trust's own
-     admin and hub admins see it; for anyone else it renders nothing and asks the hub nothing. -->
+     admin and hub admins see it; for anyone else it renders nothing and asks the hub nothing.
+     `compact` is the Connection Status table's cell: the download button alone, which asks the hub for the kit's
+     status only once it is clicked, so a table of trusts costs no request per row. -->
 <template>
+    <!-- Clicks and keys stop here: the table row behind the button opens the trust's drawer. -->
+    <span
+        v-if="canManageKit && compact"
+        data-test="trust-kit-cell"
+        @click.stop
+        @keydown.stop
+    >
+        <AiButton
+            primary
+            small
+            class="whitespace-nowrap"
+            data-test="kit-download-btn"
+            @click="askDownload"
+        >
+            Download trust kit
+        </AiButton>
+    </span>
     <div
-        v-if="canManageKit"
+        v-else-if="canManageKit"
         data-test="trust-kit-section"
         class="px-[22px] pt-4 pb-[18px] border-b border-gray-200 dark:border-dark-border bg-primary-100/60 dark:bg-dark-canvas"
     >
@@ -51,7 +70,7 @@
                     small
                     class="shrink-0"
                     data-test="kit-download-btn"
-                    @click="asking = 'download'"
+                    @click="askDownload"
                 >
                     Download kit
                 </AiButton>
@@ -70,13 +89,16 @@
                 Issue new keys
             </AiButton>
         </template>
+    </div>
 
+    <!-- Shared by both forms. -->
+    <template v-if="canManageKit">
         <AiConfirmModal
             :dialog="asking === 'download'"
             :title="`Download the ${trustLabel} trust kit`"
             :confirmation-text="downloadText"
             :continue-action="() => issue(false)"
-            :submitting="submitting"
+            :submitting="submitting || !status"
             close-button-text="Cancel"
             continue-button-text="Download"
             @close-modal="asking = null"
@@ -101,7 +123,7 @@
         </AiConfirmModal>
 
         <TrustKitModal :kit="issuedKit" :trust-label="trustLabel" @close-modal="issuedKit = null" />
-    </div>
+    </template>
 </template>
 
 <script setup lang="ts">
@@ -124,7 +146,7 @@ import { extractErrorDetail } from "@/utils/api-errors";
 import { Snackbar } from "@/utils/snackbar";
 import { shortDate } from "@/utils/trust-decisions";
 
-const props = defineProps<{ trust: Pick<ITrustResponse, "id" | "name" | "code"> }>();
+const props = defineProps<{ trust: Pick<ITrustResponse, "id" | "name" | "code">; compact?: boolean }>();
 
 const authStore = useAuthStore();
 const { isAdmin } = usePermissions();
@@ -133,9 +155,11 @@ const canManageKit = computed(() => isAdmin.value || isThisTrustsAdmin.value);
 
 const trustLabel = computed(() => props.trust.code ?? props.trust.name);
 
-// A null key fetches nothing, so a viewer who may not manage the kit never calls the route.
+// A null key fetches nothing, so a viewer who may not manage the kit never calls the route, and the
+// compact form calls it only once its button is clicked.
+const wanted = ref(!props.compact);
 const { data: status, error: statusError, mutate: refreshStatus } = useSWRV<ITrustKitStatus>(
-    () => (canManageKit.value ? `/trust/${props.trust.id}/kit` : null),
+    () => (canManageKit.value && wanted.value ? `/trust/${props.trust.id}/kit` : null),
     () => getTrustKitStatus(props.trust.id),
     {
         dedupingInterval: 5_000,
@@ -153,7 +177,8 @@ const statusText = computed(() => {
 });
 
 const downloadText = computed(() => {
-    if (status.value?.keys_issued) {
+    if (!status.value) return statusError.value ? "The kit status could not be loaded." : "Checking this trust's kit…";
+    if (status.value.keys_issued) {
         return "This kit carries the current hub settings and FL credentials. It does not change the trust's keys. "
             + "The download is recorded against your account.";
     }
@@ -166,6 +191,10 @@ const downloadText = computed(() => {
 });
 
 const asking = ref<"download" | "rotate" | null>(null);
+const askDownload = () => {
+    wanted.value = true;
+    asking.value = "download";
+};
 const submitting = ref(false);
 // The passphrase lives here only, and only while its dialog is open.
 const issuedKit = ref<ITrustKitReceipt | null>(null);

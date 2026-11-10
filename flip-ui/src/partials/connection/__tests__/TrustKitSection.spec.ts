@@ -20,7 +20,10 @@ import { ITrustKitDownload, ITrustKitStatus } from "@/services/trust-service";
 
 import TrustKitSection from "../TrustKitSection.vue";
 
-const { swrvKeys } = vi.hoisted(() => ({ swrvKeys: [] as (string | null)[] }));
+const { swrvKeys, swrvKeyFns } = vi.hoisted(() => ({
+    swrvKeys: [] as (string | null)[],
+    swrvKeyFns: [] as (() => string | null)[]
+}));
 const statusRef = ref<ITrustKitStatus | undefined>(undefined);
 const statusError = ref<unknown>(null);
 const mutateStatus = vi.fn();
@@ -28,6 +31,7 @@ const mutateStatus = vi.fn();
 vi.mock("swrv", () => ({
     default: (keyFn: () => string | null) => {
         swrvKeys.push(keyFn());
+        swrvKeyFns.push(keyFn);
 
         return {
             data: statusRef,
@@ -119,8 +123,11 @@ const SITE_ADMIN: IViewer = {
 };
 const HUB_ADMIN: IViewer = { permissions: ["CanAccessAdminPanel"] };
 
-const mountSection = (viewer: IViewer = SITE_ADMIN, trust = TRUST) => mount(TrustKitSection, {
-    props: { trust },
+const mountSection = (viewer: IViewer = SITE_ADMIN, trust = TRUST, compact = false) => mount(TrustKitSection, {
+    props: {
+        trust,
+        compact
+    },
     global: {
         plugins: [createTestingPinia({
             createSpy: vi.fn,
@@ -152,6 +159,7 @@ describe("TrustKitSection", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         swrvKeys.length = 0;
+        swrvKeyFns.length = 0;
         statusRef.value = status();
         statusError.value = null;
         Object.assign(URL, {
@@ -367,6 +375,76 @@ describe("TrustKitSection", () => {
             expect(anchorClick).toHaveBeenCalledTimes(1);
             expect(wrapper.findComponent({ name: "TrustKitModal" }).props("kit")).toMatchObject({ kind: "full" });
             expect(mutateStatus).toHaveBeenCalled();
+        });
+    });
+    describe("compact (the Connection Status table cell)", () => {
+        it("is the download button alone, and asks the hub nothing until it is clicked", async () => {
+            const wrapper = mountSection(HUB_ADMIN, TRUST, true);
+
+            expect(wrapper.find("[data-test='trust-kit-cell']").exists()).toBe(true);
+            expect(wrapper.find("[data-test='trust-kit-section']").exists()).toBe(false);
+            expect(wrapper.find("[data-test='kit-rotate-btn']").exists()).toBe(false);
+            expect(wrapper.find("[data-test='kit-download-btn']").text()).toBe("Download trust kit");
+            expect(swrvKeys).toEqual([null]);
+
+            await wrapper.find("[data-test='kit-download-btn']").trigger("click");
+
+            expect(swrvKeyFns[0]()).toBe("/trust/t1/kit");
+            expect(wrapper.find("[data-test='confirm-modal']").exists()).toBe(true);
+        });
+
+        it("renders nothing on a row the viewer may not manage", () => {
+            const wrapper = mountSection({
+                trustAdminOf: {
+                    id: "another-trust",
+                    name: "Another",
+                    code: "OTH"
+                }
+            }, TRUST, true);
+
+            expect(wrapper.find("[data-test='trust-kit-cell']").exists()).toBe(false);
+            expect(swrvKeys).toEqual([null]);
+        });
+
+        it("keeps its clicks and keys from the row behind it", async () => {
+            const rowClick = vi.fn();
+            const rowKey = vi.fn();
+            const wrapper = mount({
+                components: { TrustKitSection },
+                setup: () => ({
+                    trust: TRUST,
+                    rowClick,
+                    rowKey
+                }),
+                template: "<div @click=\"rowClick\" @keydown=\"rowKey\"><TrustKitSection compact :trust=\"trust\" /></div>"
+            }, {
+                global: {
+                    plugins: [createTestingPinia({
+                        createSpy: vi.fn,
+                        stubActions: false,
+                        initialState: { auth: { user: { permissions: ["CanAccessAdminPanel"] } } }
+                    })],
+                    stubs
+                }
+            });
+
+            await wrapper.find("[data-test='kit-download-btn']").trigger("click");
+            await wrapper.find("[data-test='kit-download-btn']").trigger("keydown", { key: "Enter" });
+
+            expect(rowClick).not.toHaveBeenCalled();
+            expect(rowKey).not.toHaveBeenCalled();
+        });
+
+        it("downloads and shows the passphrase like the card does", async () => {
+            mockDownload.mockResolvedValue(download("update"));
+            statusRef.value = issued();
+            const wrapper = mountSection(HUB_ADMIN, TRUST, true);
+
+            await confirm(wrapper, "kit-download-btn");
+
+            expect(mockDownload).toHaveBeenCalledWith("t1");
+            expect(anchorClick).toHaveBeenCalledTimes(1);
+            expect(wrapper.findComponent({ name: "TrustKitModal" }).props("kit")).toMatchObject({ kind: "update" });
         });
     });
 });

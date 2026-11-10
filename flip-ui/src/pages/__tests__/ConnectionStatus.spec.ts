@@ -68,6 +68,15 @@ const stubs = {
         template: "<div data-test='trust-detail-drawer' :data-show='show' :data-trust-id='trust?.id ?? \"\"'"
             + " :data-hub-version='hubVersion ?? \"\"' />"
     },
+    // Stubbed: who sees the button on which row is the partial's own rule (TrustKitSection.spec.ts).
+    TrustKitSection: {
+        name: "TrustKitSection",
+        props: {
+            trust: Object,
+            compact: Boolean
+        },
+        template: "<span data-test='kit-cell-stub' :data-trust-id='trust.id' :data-compact='compact' />"
+    },
     "icon-ph-list-bullets-duotone": { template: "<span />" },
     "icon-ph-share-network-duotone": { template: "<span />" }
 };
@@ -145,15 +154,23 @@ const fixture: ITrustResponse[] = [
 
 interface MountOptions {
     permissions?: string[];
+    trustAdminOf?: { id: string; name: string; code: string } | null;
 }
 
-function mountPage({ permissions = ["CanAccessAdminPanel"] }: MountOptions = {}) {
+function mountPage({ permissions = ["CanAccessAdminPanel"], trustAdminOf = null }: MountOptions = {}) {
     return mount(ConnectionStatus, {
         global: {
             plugins: [createTestingPinia({
                 createSpy: vi.fn,
                 stubActions: false,
-                initialState: { auth: { user: { permissions } } }
+                initialState: {
+                    auth: {
+                        user: {
+                            permissions,
+                            trustAdminOf
+                        }
+                    }
+                }
             })],
             stubs
         }
@@ -597,7 +614,7 @@ describe("ConnectionStatus", () => {
 
     it("renders seven columns — Services dots + drawer chevron, no sparkline", async () => {
         mockSwrvData.value = fixture;
-        const wrapper = mountPage();
+        const wrapper = mountPage({ permissions: [] });
         await wrapper.vm.$nextTick();
 
         expect(wrapper.findAll("th")).toHaveLength(7);
@@ -612,6 +629,48 @@ describe("ConnectionStatus", () => {
         expect(row.find("polyline").exists()).toBe(false);
         // The trailing cell carries the drawer-affordance chevron.
         expect(row.find("svg[data-icon='ph:caret-right']").exists()).toBe(true);
+    });
+
+    describe("download column (FLIP#1852)", () => {
+        it("gives a hub admin a Download column with the kit button on every row", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const headers = wrapper.findAll("th").map(th => th.text());
+            expect(headers).toHaveLength(8);
+            // Before the drawer chevron's empty header.
+            expect(headers.slice(-2)).toEqual(["Download", ""]);
+            const cells = wrapper.findAll("[data-test='kit-cell-stub']");
+            expect(cells).toHaveLength(wrapper.findAll("[data-test='trust-row']").length);
+            expect(cells[0].attributes("data-compact")).toBe("true");
+            const rowIds = wrapper.findAllComponents({ name: "TrustKitSection" }).map(c => c.props("trust").id);
+            expect(rowIds.sort()).toEqual(fixture.map(t => t.id).sort());
+        });
+
+        it("shows the column to a Trust Admin too", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage({
+                permissions: [],
+                trustAdminOf: {
+                    id: fixture[0].id,
+                    name: fixture[0].name,
+                    code: "T"
+                }
+            });
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.findAll("th").map(th => th.text())).toContain("Download");
+        });
+
+        it("hides the column from everyone else", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage({ permissions: [] });
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.findAll("th").map(th => th.text())).not.toContain("Download");
+            expect(wrapper.find("[data-test='kit-cell-stub']").exists()).toBe(false);
+        });
     });
 
     describe("services column", () => {
