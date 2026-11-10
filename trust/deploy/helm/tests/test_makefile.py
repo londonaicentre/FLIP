@@ -108,6 +108,21 @@ def test_xnat_init_deletes_the_previous_init_job_before_applying_it():
     assert out.index(" delete job ") < out.index(" apply -n ") < out.index(" wait job"), out
 
 
+@pytest.mark.parametrize(("make_args", "context_arg"), [(["KUBE_CONTEXT=test"], ["--context", "test"]), ([], [])])
+def test_status_runs_its_smoke_tests_against_kube_context(make_args, context_arg):
+    """Without it they judged kubectl's current context under another cluster's Helm status (FLIP#1807)."""
+    out = subprocess.run(
+        ["make", "-n", "-C", str(CHART_DIR), "status", *make_args],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    ).stdout.replace("\\\n", " ")
+
+    smoke = next(line for line in out.splitlines() if "check_status.py" in line)
+    assert smoke.split("--helm-release ", 1)[1].split()[1:] == context_arg
+
+
 def test_sync_k8s_kit_runs_with_the_dependencies_it_declares():
     """A host python3 without PyYAML stopped every sync-kit and upgrade-trust-k8s after the Secret
     patch: the values-secrets realign refuses to write a file it cannot parse. uv installs it."""
