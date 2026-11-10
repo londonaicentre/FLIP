@@ -470,6 +470,8 @@ def test_xnat_db_data_guard_refuses_a_cluster_in_another_major_dir(shell, stub_b
 def test_xnat_db_data_guard_opens_only_a_fresh_volume_root_to_postgres(
     shell, layout, mode, stub_bin: Path, tmp_path: Path
 ) -> None:
+    if len(shell) > 1 and mode == 0o711:
+        pytest.skip("busybox sh runs its own id applet, not the stub, so the guard cannot be made to see root here")
     result, handed = _data_guard(tmp_path, stub_bin, shell, layout)
 
     assert result.returncode == 0, result.stderr
