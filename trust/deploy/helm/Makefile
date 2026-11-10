@@ -327,7 +327,8 @@ upgrade-trust-k8s: ## Move a deployed trust to a release tag (data-safe helm upg
 _upgrade-trust-k8s-apply:
 	$(MAKE) sync-kit KIT=$(KIT)
 	$(MAKE) xnat-db-migrate-dump
-	$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml TAG=$(shell sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1)
+	$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml TAG=$(shell sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1) \
+	  || { $(MAKE) xnat-db-drop-unused-dump AFTER_FAILED_DEPLOY=1; exit 1; }
 	$(MAKE) xnat-db-drop-unused-dump
 	@echo "✅ $(KIT) is on $$(sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1). Verify: kubectl -n $(NAMESPACE) get pods; trust-api /health reports the new version."
 
@@ -357,9 +358,16 @@ xnat-db-migrate-dump:
 	  $(KUBECTL) scale deployment $(XNAT_POD)=xnat-web --replicas=1; exit 1; }
 
 # After the helm upgrade: remove a dump the deploy did not use, because xnat-db stayed on the old
-# major (xnat.image.pin or the kit's XNAT_TAG holds an older release).
+# major (xnat.image.pin or the kit's XNAT_TAG holds an older release). helm upgrade does not wait
+# for the StatefulSet, and the pod it is replacing still answers with the dump the new one needs, so
+# the rollout comes first. After a failed deploy the old server may be the one that stays, and the
+# dump goes all the same.
 xnat-db-drop-unused-dump:
-	@pod=$$($(KUBECTL) get pod $(XNAT_POD)=xnat-db --field-selector=status.phase=Running -o name | head -1); \
+	@set -e; \
+	sts=$$($(KUBECTL) get statefulset $(XNAT_POD)=xnat-db -o name | head -1); \
+	[ -n "$$sts" ] || exit 0; \
+	$(KUBECTL) rollout status -n $(NAMESPACE) "$$sts" --timeout=$(HELM_TIMEOUT)$(if $(AFTER_FAILED_DEPLOY), || true); \
+	pod=$$($(KUBECTL) get pod $(XNAT_POD)=xnat-db --field-selector=status.phase=Running -o name | head -1); \
 	[ -z "$$pod" ] || $(KUBECTL) exec -i -n $(NAMESPACE) "$$pod" -c postgres -- sh -s \
 	  < $(REPO_ROOT)/trust/xnat/scripts/xnat_db_drop_unused_dump.sh
 

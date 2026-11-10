@@ -231,8 +231,10 @@ so Kubernetes does not replace a crash-looping pod with the pinned image on its 
 on the old release, remove the pin and upgrade through `upgrade-trust-k8s`; with the pin left in, the
 upgrade keeps xnat-db on 12. The same holds after a rollback: the old cluster has run again, so
 the earlier dump and `pg16/` are out of date, and xnat-db refuses them until `upgrade-trust-k8s`
-takes a new dump. The first start's restore runs inside the postStart hook's wait, which
-is now an hour.
+takes a new dump, moving that `pg16/` aside as `pg16.replaced-<timestamp>/` for
+`xnat-db-remove-old-cluster` to delete. Resume an upgrade that failed or was interrupted with
+`upgrade-trust-k8s` too, never a plain `helm upgrade`: xnat-db may have run on since the dump was
+taken. The first start's restore runs inside the postStart hook's wait, which is now an hour.
 
 #### Upgrading: `trustData.version` replaces the two per-store pins (FLIP#1100)
 

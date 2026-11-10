@@ -209,6 +209,9 @@ The upgrade never re-seeds data and never resets XNAT.
    ``xnat-db`` refuses to start beside an older database it has no dump of, rather than starting XNAT empty. That
    happens when the new image is deployed by anything other than ``make upgrade-onprem-trust`` or
    ``make -C trust upgrade-trust``. Pin ``XNAT_TAG`` back to the previous release, then upgrade with one of those.
+   Resume an upgrade that failed or was interrupted the same way, never with a plain deploy. An upgrade after a
+   rollback keeps the newer database the site rolled back from as ``pg16.replaced-<timestamp>/``, until the command
+   above removes it.
 
 .. note::
 
@@ -311,7 +314,8 @@ the new ``xnat-db`` refuses to start beside the old cluster. To recover, pin ``x
 ``XNAT_TAG``) to the previous release and redeploy, then delete the ``xnat-db`` pod, because Kubernetes does not replace a
 crash-looping StatefulSet pod on its own. When it is up on the old release, remove the pin and use ``upgrade-trust-k8s``.
 It refuses in the same way after a rollback, when the old cluster has run again since the dump was taken: upgrade with
-the command again, which takes a new dump.
+the command again, which takes a new dump. Resume an upgrade that failed or was interrupted with the command too, never
+a plain ``helm upgrade``.
 
 .. warning::
 

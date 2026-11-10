@@ -17,12 +17,19 @@
 set -eu
 
 target=$1
+# The newer image looks for the dump one level above its pg<major>/, so only a cluster at the
+# volume root can be moved: from inside a pg<major>/ the dump would land where nothing reads it.
+case $(basename "$PGDATA") in pg[0-9]*)
+  >&2 echo "ERROR: xnat-db runs from $PGDATA, and moving on from a pg<major>/ data dir is not implemented."
+  exit 1 ;;
+esac
 # A volume first initialised with POSTGRES_USER=xnat has no postgres role (FLIP#1666).
 role=postgres
 psql -XqAt -U postgres -d postgres -c 'select 1' >/dev/null 2>&1 || role=${XNAT_DATASOURCE_USERNAME:-xnat}
 
-# Left by an earlier move this site rolled back from: this cluster has changed since.
-rm -rf "${PGDATA:?}/pg$target"
+# Left by an earlier move this site rolled back from: this cluster has changed since. Moved aside,
+# as the only copy of what was written on it, until xnat-db-remove-old-cluster deletes it.
+[ ! -e "$PGDATA/pg$target" ] || mv "$PGDATA/pg$target" "$PGDATA/pg$target.replaced-$(date +%Y%m%d%H%M%S)"
 tmp="$PGDATA/xnat-migrate.dump.tmp"
 trap 'rm -f "$tmp"' EXIT
 pg_dump -Fc -U "$role" -f "$tmp" "$POSTGRES_DB"

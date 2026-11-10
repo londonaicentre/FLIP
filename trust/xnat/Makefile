@@ -509,7 +509,8 @@ upgrade-xnat: create-xnat-network
 	XNAT_AETITLE=$(XNAT_AETITLE_EFFECTIVE) \
 	PACS_UI_PORT=$(PACS_UI_PORT_EFFECTIVE) \
 	DOCKER_NETWORK_NAME=$(XNAT_NETWORK) \
-	docker stack deploy --with-registry-auth --resolve-image "$(XNAT_RESOLVE_IMAGE)" --detach=false ${STACK_FILES} $(XNAT_STACK)
+	docker stack deploy --with-registry-auth --resolve-image "$(XNAT_RESOLVE_IMAGE)" --detach=false ${STACK_FILES} $(XNAT_STACK) \
+	  || { $(xnat_db_drop_unused_dump); exit 1; }
 	$(MAKE) xnat-db-drop-unused-dump KIT=$(KIT)
 	$(MAKE) xnat-configure XNAT_PROJECT=$(XNAT_STACK)
 
@@ -572,11 +573,13 @@ xnat-db-migrate-dump:
 
 # After the deploy: a dump still inside the live data dir means xnat-db stayed on the old major (the
 # kit's XNAT_TAG pins an older release). The database goes on changing, so the dump must not wait
-# there for a later start of the new image to restore.
+# there for a later start of the new image to restore. upgrade-xnat runs it after a deploy that
+# failed too, which can leave the old server running.
+xnat_db_drop_unused_dump = db=$$($(call xnat_service_container_ids,$(XNAT_STACK),xnat-db) | head -1); \
+	[ -z "$$db" ] || docker exec -i "$$db" sh -s < scripts/xnat_db_drop_unused_dump.sh
 xnat-db-drop-unused-dump:
 	$(require_kit)
-	@db=$$($(call xnat_service_container_ids,$(XNAT_STACK),xnat-db) | head -1); \
-	[ -z "$$db" ] || docker exec -i "$$db" sh -s < scripts/xnat_db_drop_unused_dump.sh
+	@$(xnat_db_drop_unused_dump)
 
 # Once XNAT is confirmed on the new major: list the older cluster an upgrade kept for a rollback,
 # and delete it with YES=1.

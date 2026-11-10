@@ -345,7 +345,9 @@ def _data_guard(tmp_path: Path, stub_bin: Path, shell: tuple[str, ...], layout: 
 
     ``layout`` holds any of: ``old`` (a PostgreSQL 12 cluster at the volume root), ``dump`` (the
     migration dump beside it), ``initialised`` (a pg16 cluster), ``restored`` (its marker) and
-    ``old-ran-since`` (the old cluster was started again after the dump and the restore).
+    ``old-ran-since`` (the old cluster was started again after the dump and the restore),
+    ``sibling`` (a PostgreSQL 15 cluster in pg15/) and ``as-root`` (the guard runs as uid 0, over a
+    volume root of mode 0700).
     Returns the result and the argv it handed the password guard, None when it did not.
     """
     root = tmp_path / "data"
@@ -369,6 +371,12 @@ def _data_guard(tmp_path: Path, stub_bin: Path, shell: tuple[str, ...], layout: 
     elif "old" in layout:
         (root / "postmaster.opts").touch()
         os.utime(root / "postmaster.opts", (1_000_000_000, 1_000_000_000))
+    if "sibling" in layout:
+        (root / "pg15").mkdir()
+        (root / "pg15" / "PG_VERSION").write_text("15\n")
+    if "as-root" in layout:
+        _write_stub(stub_bin, "id", "echo 0")
+        root.chmod(0o700)
     record = tmp_path / "argv"
     _install_argv_recorder(stub_bin, "guard-xnat-db-passwords.sh", record)
     env = {"PGDATA": str(pgdata), "PG_MAJOR": "16"}
@@ -436,6 +444,170 @@ def test_xnat_db_data_guard_refuses_a_restore_that_did_not_finish(shell, stub_bi
     assert result.returncode == 1
     assert "did not finish" in result.stderr
     assert handed is None
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+def test_xnat_db_data_guard_refuses_a_cluster_in_another_major_dir(shell, stub_bin: Path, tmp_path: Path) -> None:
+    """The verbs move a cluster at the volume root only: beside pg15/, initdb would start XNAT empty."""
+    result, handed = _data_guard(tmp_path, stub_bin, shell, {"sibling"})
+
+    assert result.returncode == 1
+    assert "pg15 holds a PostgreSQL 15 database" in result.stderr
+    assert "not implemented" in result.stderr
+    assert handed is None
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+@pytest.mark.parametrize(
+    ("layout", "mode"),
+    [
+        ({"as-root"}, 0o711),  # a fresh volume made under umask 077: postgres could not reach pg16/
+        ({"as-root", "old", "dump"}, 0o700),  # the old server refuses a data dir wider than 0750
+        ({"as-root", "old", "dump", "initialised", "restored"}, 0o700),
+    ],
+    ids=["fresh", "old-cluster", "old-cluster-restored"],
+)
+def test_xnat_db_data_guard_opens_only_a_fresh_volume_root_to_postgres(
+    shell, layout, mode, stub_bin: Path, tmp_path: Path
+) -> None:
+    result, handed = _data_guard(tmp_path, stub_bin, shell, layout)
+
+    assert result.returncode == 0, result.stderr
+    assert handed is not None
+    assert (tmp_path / "data").stat().st_mode & 0o777 == mode
+
+
+#
+# xnat-db — restore-xnat-dump.sh and xnat_db_migrate_dump.sh (FLIP#1812), over stub PostgreSQL tools
+#
+
+RESTORE_XNAT_DUMP = GUARD_XNAT_DB.with_name("restore-xnat-dump.sh")
+XNAT_DB_MIGRATE_DUMP = GUARD_XNAT_DB.parents[1] / "scripts" / "xnat_db_migrate_dump.sh"
+
+
+def _restore(tmp_path: Path, stub_bin: Path, shell: tuple[str, ...], *, dump: bool, pg_restore: str = "exit 0"):
+    """Run the restore over <volume>/pg16. Returns the result, pg_restore's argv (None: not called) and PGDATA."""
+    pgdata = tmp_path / "data" / "pg16"
+    pgdata.mkdir(parents=True)
+    if dump:
+        (tmp_path / "data" / "xnat-migrate.dump").write_text("dump")
+    record = tmp_path / "argv"
+    _write_stub(stub_bin, "pg_restore", f'printf "%s\\n" "$@" > {shlex.quote(str(record))}\n{pg_restore}')
+    env = {"PGDATA": str(pgdata), "POSTGRES_USER": "postgres", "POSTGRES_DB": "xnat"}
+    result = _run(RESTORE_XNAT_DUMP, env, shell=shell, stub_bin=stub_bin)
+    return result, record.read_text().splitlines() if record.exists() else None, pgdata
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+def test_xnat_db_restore_does_nothing_without_a_dump(shell, stub_bin: Path, tmp_path: Path) -> None:
+    """A fresh install: no dump, so the init leaves the empty database and no marker."""
+    result, called, pgdata = _restore(tmp_path, stub_bin, shell, dump=False)
+
+    assert result.returncode == 0, result.stderr
+    assert called is None
+    assert not (pgdata / "xnat-restored").exists()
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+def test_xnat_db_restore_marks_a_finished_restore(shell, stub_bin: Path, tmp_path: Path) -> None:
+    result, called, pgdata = _restore(tmp_path, stub_bin, shell, dump=True)
+
+    assert result.returncode == 0, result.stderr
+    dump = str(tmp_path / "data" / "xnat-migrate.dump")
+    assert called == ["--exit-on-error", "--no-password", "-U", "postgres", "-d", "xnat", dump]
+    assert (pgdata / "xnat-restored").exists()
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+def test_xnat_db_restore_that_fails_leaves_no_marker(shell, stub_bin: Path, tmp_path: Path) -> None:
+    """The marker is what lets the data guard tell half a database from a whole one."""
+    result, called, pgdata = _restore(tmp_path, stub_bin, shell, dump=True, pg_restore="exit 1")
+
+    assert result.returncode != 0
+    assert called is not None
+    assert not (pgdata / "xnat-restored").exists()
+
+
+def _migrate_dump(
+    pgdata: Path,
+    stub_bin: Path,
+    shell: tuple[str, ...],
+    *,
+    psql: str = "exit 0",
+    pg_dump: str = "exit 0",
+    pg_restore: str = "exit 0",
+):
+    """Run the dump script in ``pgdata``, moving to 16. Returns the result and pg_dump's argv (None: not called).
+
+    The pg_dump stub writes the file ``-f`` names before it runs ``pg_dump``, so a failing one leaves a partial dump.
+    """
+    pgdata.mkdir(parents=True, exist_ok=True)
+    record = stub_bin / "pg_dump.argv"
+    _write_stub(stub_bin, "psql", psql)
+    _write_stub(stub_bin, "pg_restore", pg_restore)
+    _write_stub(
+        stub_bin,
+        "pg_dump",
+        f'printf "%s\\n" "$@" > {shlex.quote(str(record))}\n'
+        'while [ $# -gt 0 ]; do [ "$1" != -f ] || echo dump > "$2"; shift; done\n'
+        f"{pg_dump}",
+    )
+    env = {"PGDATA": str(pgdata), "POSTGRES_DB": "xnat"}
+    result = _run(XNAT_DB_MIGRATE_DUMP, env, shell=shell, stub_bin=stub_bin, argv=("16",))
+    return result, record.read_text().splitlines() if record.exists() else None
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+@pytest.mark.parametrize(("psql", "role"), [("exit 0", "postgres"), ("exit 1", "xnat")], ids=["two-roles", "pre-split"])
+def test_xnat_db_migrate_dump_leaves_the_dump_beside_the_cluster(
+    shell, psql, role, stub_bin: Path, tmp_path: Path
+) -> None:
+    """As the postgres role, or as xnat on a volume that has no postgres role (FLIP#1666)."""
+    pgdata = tmp_path / "data"
+    result, called = _migrate_dump(pgdata, stub_bin, shell, psql=psql)
+
+    assert result.returncode == 0, result.stderr
+    assert called == ["-Fc", "-U", role, "-f", str(pgdata / "xnat-migrate.dump.tmp"), "xnat"]
+    assert sorted(p.name for p in pgdata.iterdir()) == ["xnat-migrate.dump"]
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+@pytest.mark.parametrize(
+    "failing", [{"pg_dump": "exit 1"}, {"pg_restore": "exit 1"}], ids=["dump-fails", "dump-unreadable"]
+)
+def test_xnat_db_migrate_dump_that_fails_leaves_no_file(shell, failing, stub_bin: Path, tmp_path: Path) -> None:
+    """A partial dump left behind is one the new image would restore."""
+    pgdata = tmp_path / "data"
+    result, _ = _migrate_dump(pgdata, stub_bin, shell, **failing)
+
+    assert result.returncode != 0
+    assert list(pgdata.iterdir()) == []
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+def test_xnat_db_migrate_dump_moves_an_earlier_new_cluster_aside(shell, stub_bin: Path, tmp_path: Path) -> None:
+    """After a rollback pg16/ is stale, but it is the only copy of what the site wrote while on 16."""
+    pgdata = tmp_path / "data"
+    (pgdata / "pg16").mkdir(parents=True)
+    (pgdata / "pg16" / "written-on-16").write_text("kept")
+    result, _ = _migrate_dump(pgdata, stub_bin, shell)
+
+    assert result.returncode == 0, result.stderr
+    assert not (pgdata / "pg16").exists()
+    (aside,) = pgdata.glob("pg16.replaced-*")
+    assert (aside / "written-on-16").read_text() == "kept"
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+def test_xnat_db_migrate_dump_refuses_a_cluster_already_in_a_major_dir(shell, stub_bin: Path, tmp_path: Path) -> None:
+    """From pg16/ the dump would land inside it, where the next major's image does not look."""
+    pgdata = tmp_path / "data" / "pg16"
+    result, called = _migrate_dump(pgdata, stub_bin, shell)
+
+    assert result.returncode == 1
+    assert "not implemented" in result.stderr
+    assert called is None
+    assert list(pgdata.iterdir()) == []
 
 
 #

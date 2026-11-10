@@ -121,8 +121,8 @@ def test_sync_k8s_kit_runs_with_the_dependencies_it_declares():
 
 
 # A stand-in for kubectl, for xnat-db-migrate-dump (FLIP#1812): every call is logged to $CALLS,
-# `get pod` finds the xnat-db pod unless $NO_DB, `exec … cat …PG_VERSION` answers $CURRENT, and
-# `exec -i` logs which script came on stdin.
+# `get` finds the xnat-db pod (or StatefulSet) unless $NO_DB, `exec … cat …PG_VERSION` answers
+# $CURRENT, `exec -i` logs which script came on stdin, and `rollout` times out under $ROLLOUT_FAILS.
 STUB_KUBECTL = r"""#!/bin/bash
 echo "$*" >> "$CALLS"
 case "$1" in
@@ -133,19 +133,20 @@ case "$1" in
       [ -z "$DUMP_FAILS" ]; exit
     fi
     echo "$CURRENT"; exit 0 ;;
+  rollout) [ -z "$ROLLOUT_FAILS" ]; exit ;;
 esac
 exit 0
 """
 
 
-def _migrate_dump(tmp_path: Path, fails: bool = False, **env: str) -> list[str]:
+def _migrate_dump(tmp_path: Path, fails: bool = False, target: str = "xnat-db-migrate-dump", **env: str) -> list[str]:
     stub = tmp_path / "bin" / "kubectl"
     stub.parent.mkdir()
     stub.write_text(STUB_KUBECTL)
     stub.chmod(0o755)
     calls = tmp_path / "calls"
     result = subprocess.run(
-        ["make", "-C", str(CHART_DIR), "xnat-db-migrate-dump"],
+        ["make", "-C", str(CHART_DIR), target],
         capture_output=True,
         text=True,
         env={**os.environ, "PATH": f"{stub.parent}:{os.environ['PATH']}", "CALLS": str(calls), **env},
@@ -187,3 +188,32 @@ def test_upgrade_trust_k8s_takes_the_migration_dump_before_the_helm_upgrade():
     assert apply.index("sync-kit") < apply.index("xnat-db-migrate-dump") < apply.index("$(MAKE) deploy"), apply
     # A release pinning the old xnat-db keeps it live, so the dump it did not use is dropped.
     assert apply.index("$(MAKE) deploy") < apply.index("xnat-db-drop-unused-dump"), apply
+    # A failed deploy can leave it live too.
+    deploy = next(line for line in apply.replace("\\\n", "").splitlines() if "$(MAKE) deploy" in line)
+    assert deploy.endswith("|| { $(MAKE) xnat-db-drop-unused-dump AFTER_FAILED_DEPLOY=1; exit 1; }"), deploy
+
+
+def _drop_unused_dump(tmp_path: Path, fails: bool = False, **env: str) -> list[str]:
+    return _migrate_dump(tmp_path, fails=fails, target="xnat-db-drop-unused-dump", **env)
+
+
+def test_the_unused_dump_is_dropped_only_once_xnat_db_has_rolled_out(tmp_path):
+    """helm upgrade does not wait: the pod being replaced still holds the dump the new one restores."""
+    calls = _drop_unused_dump(tmp_path)
+    rollout = next(i for i, c in enumerate(calls) if c.startswith("rollout status"))
+    assert rollout < next(i for i, c in enumerate(calls) if c.startswith("exec -i")), calls
+
+
+def test_a_rollout_that_times_out_drops_nothing(tmp_path):
+    calls = _drop_unused_dump(tmp_path, fails=True, ROLLOUT_FAILS="1")
+    assert not any(c.startswith("exec -i") for c in calls), calls
+
+
+def test_after_a_failed_deploy_the_dump_is_dropped_whatever_the_rollout_did(tmp_path):
+    calls = _drop_unused_dump(tmp_path, ROLLOUT_FAILS="1", AFTER_FAILED_DEPLOY="1")
+    assert any(c.startswith("exec -i") for c in calls), calls
+
+
+def test_no_xnat_db_means_no_rollout_wait_and_no_drop(tmp_path):
+    calls = _drop_unused_dump(tmp_path, NO_DB="1")
+    assert not any(c.startswith(("rollout", "exec")) for c in calls), calls

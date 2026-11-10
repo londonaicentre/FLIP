@@ -47,6 +47,17 @@ elif [ -s "$root/PG_VERSION" ]; then
   if old_started_since "$dump"; then
     fail "$old and it has run again since $dump was taken, so restoring that would lose what changed." "$how"
   fi
+else
+  # The upgrade verbs only move a cluster at the volume root: beside another pg<major>/ they leave
+  # no dump here, and initdb would start XNAT as an empty site.
+  for other in "$root"/pg*/PG_VERSION; do
+    [ ! -s "$other" ] || fail \
+      "$(dirname "$other") holds a PostgreSQL $(cat "$other") database: moving on from a pg<major>/ data dir is not implemented." \
+      "Pin XNAT_TAG (Helm: xnat.image.pin) to the previous release so xnat-db starts on it again."
+  done
+  # A fresh volume: postgres reaches PGDATA through the mount root, whose mode is the host's.
+  # Never beside an old cluster, which its own server refuses to start once it is wider than 0750.
+  [ "$(id -u)" != 0 ] || chmod a+x "$root" || :
 fi
 
 exec guard-xnat-db-passwords.sh "$@"

@@ -64,6 +64,11 @@ class UpgradeXnat(unittest.TestCase):
         out = self.recipe
         assert out.index("docker stack deploy") < out.index("xnat-db-drop-unused-dump KIT=SCR"), out
 
+    def test_upgrade_xnat_drops_the_dump_when_the_deploy_fails(self):
+        """The old server may stay up after a failed deploy, and a later one would restore that dump."""
+        deploy = next(line for line in self.recipe.replace("\\\n", "").splitlines() if "docker stack deploy" in line)
+        assert deploy.rstrip().endswith("xnat_db_drop_unused_dump.sh; exit 1; }"), deploy
+
 
 # A stand-in for docker, for the xnat-db major-upgrade targets: every call is logged to $CALLS, `ps`
 # finds the db, `exec … cat …PG_VERSION` answers $CURRENT, and `exec -i` logs which script came on stdin.

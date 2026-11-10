@@ -103,6 +103,7 @@ class XnatBuildTriggers(unittest.TestCase):
             (["trust/xnat/postgres/Dockerfile"], {"db", "web"}),
             (["trust/xnat/postgres/XNAT.sql"], {"db", "web"}),
             (["trust/xnat/postgres/guard-xnat-db-passwords.sh"], {"db", "web"}),
+            (["trust/xnat/scripts/xnat_db_migrate_dump.sh"], {"db", "web"}),
             (["trust/xnat/nginx/custom-nginx.conf"], {"nginx", "web"}),
             (["trust/xnat/xnat/Dockerfile"], {"web"}),
             (["trust/xnat/xnat/config/anon_script.das"], {"web"}),
