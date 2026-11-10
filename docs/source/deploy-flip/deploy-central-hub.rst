@@ -323,13 +323,15 @@ slot left. One command adds more (FLARE only):
 FLARE provisioning tools, then makes and uploads the kits. Existing kits are never touched and no CA is rotated.
 
 It pauses for you to confirm the plan it prints (``YES=1`` skips the prompt). The hub reads its slots straight from
-the kits in S3, so the next ``register-trusts`` can claim one: no Terraform apply and no restart. Every complete kit
-in S3 can be claimed, so delete a kit there rather than keep one that should not be handed out.
+the kits in S3 at every registration, so the next ``register-trusts`` can claim one: no Terraform apply and no
+restart. Every complete kit in S3 can be claimed, so delete a kit there rather than keep one that should not be handed
+out; a trust that already holds that slot keeps it.
 
 .. warning::
 
    If a run stops part-way, it prints which kits it uploaded. A kit that is not complete on every net is never
-   claimed. Re-run ``add-fl-kits`` with the number of kits still needed: it numbers past every kit already in S3.
+   claimed, and the hub's log names it with the files it lacks. Re-run ``add-fl-kits`` with the number of kits still
+   needed: it numbers past every kit already in S3.
 
 .. seealso::
 

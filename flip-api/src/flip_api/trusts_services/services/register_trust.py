@@ -76,21 +76,22 @@ class RegisteredTrust:
     trust_internal_service_key: str
 
 
-def _claim_free_slot(session: Session) -> FLKitSlot | None:
-    """Lock and return the lowest-numbered unassigned FL kit slot, if any.
+def _claim_free_slot(session: Session, slot_names: list[str]) -> FLKitSlot | None:
+    """Lock and return the lowest-numbered unassigned FL kit slot among ``slot_names``, if any.
 
     SKIP LOCKED so two concurrent registrations never collide on the same row.
 
     Args:
         session (Session): The registration transaction's SQLModel session.
+        slot_names (list[str]): The slots the slot source names now.
 
     Returns:
-        FLKitSlot | None: The claimed (row-locked) slot, or ``None`` when the pool
-        has no unassigned rows.
+        FLKitSlot | None: The claimed (row-locked) slot, or ``None`` when none of
+        ``slot_names`` is unassigned.
     """
     return session.exec(
         select(FLKitSlot)
-        .where(col(FLKitSlot.assigned_to_trust_id).is_(None))
+        .where(col(FLKitSlot.assigned_to_trust_id).is_(None), col(FLKitSlot.slot_name).in_(slot_names))
         .order_by(col(FLKitSlot.slot_number).asc())
         .limit(1)
         .with_for_update(skip_locked=True)
@@ -127,8 +128,7 @@ def register_trust(
         EmptyTrustNameError: ``name.strip()`` is empty.
         EmptyTrustCodeError: ``code`` is missing or empty after strip.
         DuplicateTrustError: A trust with this name already exists.
-        NoFreeKitSlotError: The ``fl_kit_slot`` pool has no unassigned rows, even
-            after the on-miss reconcile from the configured slot names.
+        NoFreeKitSlotError: None of the slots the slot source names is unassigned.
     """
     name = name.strip()
     if not name:
@@ -156,34 +156,33 @@ def register_trust(
         created_at=datetime.now(timezone.utc),
     )
 
-    # Claim the next free FL kit slot in the same transaction as the insert.
+    # The pool is what the slot source names right now (resolve_fl_kit_slot_names): a
+    # slot added since boot gets its row here, and one withdrawn since is not claimed.
+    slot_names = resolve_fl_kit_slot_names()
+    try:
+        with session.begin_nested():
+            inserted = insert_missing_slots(session, slot_names)
+        if inserted:
+            logger.info(f"FL kit slot pool grew at registration: added {inserted}")
+    except IntegrityError as e:
+        # A concurrent registration inserted the same slot rows between our
+        # existence check and the savepoint flush (slot_name is the PK). Fine —
+        # the rows exist either way; the claim below sees them. Only the
+        # new FLKitSlot rows are pending inside this savepoint (the trust insert
+        # comes later), so nothing else can be the flush that raised here.
+        logger.info(f"Concurrent registration added the FL kit slot rows first ({e.orig!r})")
+    # Claim the next free slot in the same transaction as the trust insert.
     # SKIP LOCKED so two concurrent registrations don't collide on the same row.
-    slot = _claim_free_slot(session)
-    if slot is None:
-        # Pool exhausted, but kits may have been added since boot: reconcile additively
-        # from resolve_fl_kit_slot_names and retry the claim once.
-        try:
-            with session.begin_nested():
-                inserted = insert_missing_slots(session, resolve_fl_kit_slot_names())
-            if inserted:
-                logger.info(f"FL kit slot pool reconciled at registration: added {inserted}")
-        except IntegrityError as e:
-            # A concurrent registration inserted the same slot rows between our
-            # existence check and the savepoint flush (slot_name is the PK). Fine —
-            # the rows exist either way; the retried claim below sees them. Only the
-            # new FLKitSlot rows are pending inside this savepoint (the trust insert
-            # comes later), so nothing else can be the flush that raised here.
-            logger.info(f"Concurrent registration reconciled the FL kit slot pool first ({e.orig!r}); retrying claim")
-        slot = _claim_free_slot(session)
+    slot = _claim_free_slot(session, slot_names)
     if slot is None:
         # The raised message is user-facing (UI snackbar / CLI); the operator
         # remediation lives here in the logs.
         logger.error(
-            "FL kit slot pool exhausted even after reconcile. Development: add slots to FL_KIT_SLOT_NAMES and "
+            "No free FL kit slot among those the slot source names. Development: add slots to FL_KIT_SLOT_NAMES and "
             "restart flip-api. Stag/prod NVFLARE: `make -C deploy/providers/AWS add-fl-kits N=<n> HUB=<stag|prod>`. "
             "Stag/prod Flower: provision SuperNode keys for the new slots, add them to FL_KIT_SLOT_NAMES and run a "
             "Terraform apply (it replaces the SuperLink, so quiesce first). If kits already exist and still don't "
-            "appear, check earlier logs for errors reading the slot source."
+            "appear, check earlier logs for a kit left out as incomplete or an unreadable slot source."
         )
         raise NoFreeKitSlotError("No FL kit slots available. Pre-provision more FL kits and try again.")
 

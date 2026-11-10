@@ -22,8 +22,8 @@
 #      refresh the net's mirrored state/cert.json CA registry
 #
 # flip-api's pool is every slot whose kit is complete on every net (FLIP#1720), and it
-# re-reads S3 when the pool runs dry, so the slots are claimable at the next trust
-# registration — no Terraform, no restart.
+# reads S3 at every trust registration, so the slots are claimable at the next one —
+# no Terraform, no restart.
 #
 # Invoked by `make -C deploy/providers/AWS add-fl-kits N=<n> HUB=<stag|prod> [YES=1]`
 # (the Makefile hands this script the environment CLASS as ENV_NAME=prod|stag),
@@ -38,6 +38,7 @@
 #     (the kit's rootCA.pem stands in for the CA in state/cert.json — normal
 #     provisioning always writes them together)
 #   - uploads a kit's required startup files last, so a half-uploaded kit never counts
+#   - refuses to upload a minted kit that lacks one of them: flip-api would never count it
 #   - a mid-run failure prints exactly what was uploaded and how to recover
 
 set -euo pipefail
@@ -101,7 +102,7 @@ on_error() {
         echo "   A kit is claimable only once it is complete on every net. Re-run add-fl-kits" >&2
         echo "   with the number of slots still needed: it numbers past every kit in S3." >&2
     else
-        echo "   Nothing was minted or uploaded; re-run once the underlying error is fixed." >&2
+        echo "   Nothing was uploaded; re-run once the underlying error is fixed." >&2
     fi
 }
 trap on_error ERR
@@ -227,6 +228,12 @@ for net in "${NETS[@]}"; do
 
         log "${net}: minting ${name} against the existing root CA..."
         make -C "${NVFLARE_DIR}" "provision-add-client-${ENV_NAME}" NET_NUMBER="${net_number}" CLIENT_NAME="${name}"
+        for f in "${REQUIRED_STARTUP_FILES[@]}"; do
+            [[ -f "${workspace}/services/${name}/startup/${f}" ]] ||
+                die "❌ ${net}: the minted ${name} kit has no startup/${f}, so flip-api would never count it complete." \
+                    "   If nvflare's kit layout changed, update REQUIRED_STARTUP_FILES here and" \
+                    "   FLARE_KIT_REQUIRED_FILES in flip-api together."
+        done
 
         # Required startup files last: until they are all there, flip-api skips the kit.
         log "${net}: uploading ${name} (additive)..."

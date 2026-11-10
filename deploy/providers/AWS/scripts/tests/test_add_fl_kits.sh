@@ -84,15 +84,32 @@ echo "mock aws: unexpected call: $*" >&2
 exit 1
 MOCK_AWS
 
-# Mock make (the provision-add-client-<env> mint) and openssl (fingerprints always match —
-# the mismatch path is a pure string compare, not worth real certs).
-printf '#!/usr/bin/env bash\nexit 0\n' > "${MOCKBIN}/make"
+# Mock make (the provision-add-client-<env> mint): writes the kit's required startup
+# files, minus any named in the case's `unminted` fixture. Mock openssl: fingerprints
+# always match — the mismatch path is a pure string compare, not worth real certs.
+cat > "${MOCKBIN}/make" <<'MOCK_MAKE'
+#!/usr/bin/env bash
+for a in "$@"; do
+    case "$a" in
+    provision-add-client-*) env="${a#provision-add-client-}" ;;
+    NET_NUMBER=*) net="net-${a#NET_NUMBER=}" ;;
+    CLIENT_NAME=*) name="${a#CLIENT_NAME=}" ;;
+    esac
+done
+startup="$2/provision/workspace-${env}/${net}/services/${name}/startup"
+rm -rf "${startup}"
+mkdir -p "${startup}"
+for f in client.crt client.key rootCA.pem fed_client.json sub_start.sh; do
+    grep -qx "$f" "${FIXTURE_DIR}/unminted" 2>/dev/null || : > "${startup}/${f}"
+done
+MOCK_MAKE
 printf '#!/usr/bin/env bash\necho "SHA256 Fingerprint=MO:CK"\nexit 0\n' > "${MOCKBIN}/openssl"
 chmod +x "${MOCKBIN}/aws" "${MOCKBIN}/make" "${MOCKBIN}/openssl"
 
 PASS=0
 FAIL=0
 KEYCOUNT_OVERRIDES=()  # "net Trust_X <count>" lines, reset per case
+UNMINTED=""  # startup files the mock mint leaves out of each kit, reset per case
 YES_MODE=""
 ENV_MODE=""  # ENV_NAME for the next run_case (default stag; the Makefile passes it from HUB via deploy/env_mode.mk)
 
@@ -108,6 +125,7 @@ run_case() {
     for ov in "${KEYCOUNT_OVERRIDES[@]:-}"; do
         [[ -n "${ov}" ]] && echo "${ov##* }" > "${FX}/$(echo "${ov}" | awk '{print $1"."$2}').keycount"
     done
+    printf '%s\n' ${UNMINTED} > "${FX}/unminted"
     LAST_OUT="$(printf 'n\n' | env PATH="${MOCKBIN}:${PATH}" \
         N="${N}" ENV_NAME="${ENV_MODE:-stag}" AICENTRE_BUCKET_NAME=testbucket FLARE_KIT_DATE=2026-01-01 \
         FL_BACKEND=nvflare FIXTURE_DIR="${FX}" YES="${YES_MODE}" \
@@ -115,6 +133,7 @@ run_case() {
     LAST_RC=$?
     echo "── ${name}"
     KEYCOUNT_OVERRIDES=()
+    UNMINTED=""
     YES_MODE=""
     ENV_MODE=""
 }
@@ -211,6 +230,17 @@ run_case "guard abort after upload keeps recovery guidance (N=1)" 1 "net-1 net-2
 check_contains "refuses net-2 overwrite" 1 "already has objects — refusing to overwrite"
 check_contains "reports the net-1 upload" 1 "Kits uploaded this run (the last may be partial): net-1/Trust_3"
 check_contains "says how to recover" 1 "with the number of slots still needed"
+
+# A minted kit without one of the required startup files (nvflare changed its kit layout,
+# say) would never count as complete in flip-api: the run stops before uploading it.
+seed_workspace net-1
+seed_workspace net-2
+UNMINTED="sub_start.sh"
+YES_MODE=1
+run_case "kit missing a required startup file is not uploaded (N=1)" 1 "net-1 net-2" \
+    "net-1=Trust_1 Trust_2 fl-server-net-1" "net-2=Trust_1 Trust_2 fl-server-net-2"
+check_contains "names the missing file" 1 "the minted Trust_3 kit has no startup/sub_start.sh"
+check_contains "nothing reached S3" 1 "Nothing was uploaded"
 
 # --- ENV_NAME (FLIP#749): the environment CLASS the Makefile derives from HUB (deploy/env_mode.mk's
 # --- ENV_CLASS); anything else is refused ---

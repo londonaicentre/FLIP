@@ -25,6 +25,17 @@ from flip_api.trusts_services.services.register_trust import (
 )
 
 
+@pytest.fixture(autouse=True)
+def mock_resolve():
+    """The slot source. It names nothing unless a test says so, which keeps the per-name
+    row lookups of ``insert_missing_slots`` out of ``session.exec``.
+    """
+    with patch(
+        "flip_api.trusts_services.services.register_trust.resolve_fl_kit_slot_names", return_value=[]
+    ) as resolve:
+        yield resolve
+
+
 def _mock_session(*, existing_trust: Trust | None, free_slot: FLKitSlot | None) -> MagicMock:
     """``session.exec`` is hit twice: the duplicate-name lookup, then the slot claim."""
     session = MagicMock()
@@ -146,18 +157,11 @@ def test_register_trust_409_on_duplicate_name():
     session.commit.assert_not_called()
 
 
-@patch("flip_api.trusts_services.services.register_trust.resolve_fl_kit_slot_names")
 @patch("flip_api.trusts_services.services.register_trust.generate_trust_key")
-def test_register_trust_409_when_pool_exhausted(mock_gen_key, mock_resolve):
-    """Empty pool + no new configured names → reconcile finds nothing, claim retried once, then 409."""
+def test_register_trust_409_when_the_source_names_no_slot(mock_gen_key, mock_resolve):
+    """An empty or unreadable slot source: nothing to claim, so 409 and no trust row."""
     mock_gen_key.side_effect = [("k", "h"), ("k", "h")]
-    mock_resolve.return_value = []
-    session = MagicMock()
-    session.exec.side_effect = [
-        MagicMock(first=MagicMock(return_value=None)),  # duplicate-name lookup
-        MagicMock(first=MagicMock(return_value=None)),  # first slot claim
-        MagicMock(first=MagicMock(return_value=None)),  # claim retry after reconcile
-    ]
+    session = _mock_session(existing_trust=None, free_slot=None)
 
     with pytest.raises(NoFreeKitSlotError, match="No FL kit slots available"):
         register_trust(name="GSTT", code="GSTT", region=None, session=session)
@@ -168,11 +172,10 @@ def test_register_trust_409_when_pool_exhausted(mock_gen_key, mock_resolve):
     session.add.assert_not_called()
 
 
-@patch("flip_api.trusts_services.services.register_trust.resolve_fl_kit_slot_names")
 @patch("flip_api.trusts_services.services.register_trust.generate_trust_key")
-def test_register_trust_409_when_all_configured_slots_are_assigned(mock_gen_key, mock_resolve):
-    """The realistic prod exhaustion: the resolver returns the same names as ever, all
-    rows already exist (and are assigned) — reconcile inserts nothing, retry misses, 409.
+def test_register_trust_409_when_all_named_slots_are_assigned(mock_gen_key, mock_resolve):
+    """The realistic prod exhaustion: every slot the source names already has a row, and
+    every row is assigned.
     """
     mock_gen_key.side_effect = [("k", "h"), ("k", "h")]
     mock_resolve.return_value = ["Trust_1"]
@@ -181,9 +184,8 @@ def test_register_trust_409_when_all_configured_slots_are_assigned(mock_gen_key,
     session = MagicMock()
     session.exec.side_effect = [
         MagicMock(first=MagicMock(return_value=None)),  # duplicate-name lookup
-        MagicMock(first=MagicMock(return_value=None)),  # first slot claim
         MagicMock(first=MagicMock(return_value=assigned)),  # insert_missing_slots: row exists
-        MagicMock(first=MagicMock(return_value=None)),  # claim retry still misses
+        MagicMock(first=MagicMock(return_value=None)),  # slot claim misses
     ]
 
     with pytest.raises(NoFreeKitSlotError, match="No FL kit slots available"):
@@ -193,11 +195,10 @@ def test_register_trust_409_when_all_configured_slots_are_assigned(mock_gen_key,
     session.add.assert_not_called()
 
 
-@patch("flip_api.trusts_services.services.register_trust.resolve_fl_kit_slot_names")
 @patch("flip_api.trusts_services.services.register_trust.generate_trust_key")
-def test_register_trust_reconciles_grown_pool_without_restart(mock_gen_key, mock_resolve):
-    """Config grew since boot (e.g. secret updated): the miss triggers an additive
-    reconcile and the retried claim succeeds — no restart needed.
+def test_register_trust_claims_a_slot_added_since_boot(mock_gen_key, mock_resolve):
+    """The source grew since boot (e.g. a kit was minted): the registration inserts the
+    new row and claims it, with no restart.
     """
     mock_gen_key.side_effect = [("plain-api", "hash-api"), ("plain-internal", "hash-internal")]
     mock_resolve.return_value = ["Trust_1", "Trust_2", "Trust_3"]
@@ -205,12 +206,11 @@ def test_register_trust_reconciles_grown_pool_without_restart(mock_gen_key, mock
     session = MagicMock()
     session.exec.side_effect = [
         MagicMock(first=MagicMock(return_value=None)),  # duplicate-name lookup
-        MagicMock(first=MagicMock(return_value=None)),  # first slot claim — pool exhausted
         # insert_missing_slots existence checks: Trust_1/Trust_2 exist, Trust_3 doesn't
         MagicMock(first=MagicMock(return_value=FLKitSlot(slot_name="Trust_1", slot_number=1))),
         MagicMock(first=MagicMock(return_value=FLKitSlot(slot_name="Trust_2", slot_number=2))),
         MagicMock(first=MagicMock(return_value=None)),
-        MagicMock(first=MagicMock(return_value=new_slot)),  # claim retry succeeds
+        MagicMock(first=MagicMock(return_value=new_slot)),  # slot claim
     ]
 
     result = register_trust(name="BDMS", code="BDMS", region=None, session=session)
@@ -222,11 +222,10 @@ def test_register_trust_reconciles_grown_pool_without_restart(mock_gen_key, mock
     session.commit.assert_called_once()
 
 
-@patch("flip_api.trusts_services.services.register_trust.resolve_fl_kit_slot_names")
 @patch("flip_api.trusts_services.services.register_trust.generate_trust_key")
-def test_register_trust_tolerates_concurrent_reconcile_insert(mock_gen_key, mock_resolve):
-    """Two registrations reconcile at once: the loser's savepoint hits the slot_name
-    PK (IntegrityError) — swallowed, and the retried claim still proceeds.
+def test_register_trust_tolerates_concurrent_slot_insert(mock_gen_key, mock_resolve):
+    """Two registrations insert the same new slot row at once: the loser's savepoint hits
+    the slot_name PK (IntegrityError) — swallowed, and the claim still proceeds.
     """
     from sqlalchemy.exc import IntegrityError
 
@@ -238,9 +237,8 @@ def test_register_trust_tolerates_concurrent_reconcile_insert(mock_gen_key, mock
     session.begin_nested.return_value.__exit__.side_effect = IntegrityError("stmt", {}, Exception("duplicate pk"))
     session.exec.side_effect = [
         MagicMock(first=MagicMock(return_value=None)),  # duplicate-name lookup
-        MagicMock(first=MagicMock(return_value=None)),  # first slot claim
         MagicMock(first=MagicMock(return_value=None)),  # insert_missing_slots existence check
-        MagicMock(first=MagicMock(return_value=won_slot)),  # claim retry sees the winner's row
+        MagicMock(first=MagicMock(return_value=won_slot)),  # slot claim sees the winner's row
     ]
 
     result = register_trust(name="BDMS", code="BDMS", region=None, session=session)

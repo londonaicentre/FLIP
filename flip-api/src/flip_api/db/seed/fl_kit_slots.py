@@ -62,13 +62,16 @@ def resolve_fl_kit_slot_names() -> list[str]:
 
     - Development: the ``FL_KIT_SLOT_NAMES`` env var (a ``DevSettings``-only field).
     - Production, NVFLARE: the kits themselves — every slot with a complete kit on every
-      net under ``FLARE_KITS_S3_URI``. A kit minted by ``make add-fl-kits`` is claimable
-      at once; register_trust re-reads this when the pool runs dry, so no restart.
+      net under ``FLARE_KITS_S3_URI``.
     - Production, Flower: the ``/flip/fl_kit_slot_names`` SSM parameter.
 
-    Deliberately no fallback: an unreadable source returns an empty list, logged. The
-    boot seed and the registration reconcile are additive, so existing pool rows and
-    assignments are untouched; the pool simply cannot grow until the source is fixed.
+    register_trust reads this at every registration and claims only from the names it
+    returns: a slot added since boot is claimable with no restart, and one withdrawn
+    since is never handed out.
+
+    Deliberately no fallback: an unreadable source returns an empty list, logged, and no
+    slot can be claimed until it is fixed. Rows and assignments already in the pool are
+    untouched.
 
     Returns:
         list[str]: The slot names; empty when none are configured or the source is unreadable.
@@ -87,7 +90,7 @@ def _complete_flare_kit_names(kits_uri: str) -> list[str]:
     """List the slots whose FLARE kit is complete on every net under ``kits_uri``.
 
     A trust needs a working kit for every net, so a kit incomplete or missing on any net
-    is left out. That only keeps a slot from being added: a row already in the pool stays.
+    is left out, with a warning naming what is missing.
 
     Args:
         kits_uri (str): ``s3://<bucket>/fl-flare-participant-kits/<FLARE_KIT_DATE>``.
@@ -96,32 +99,36 @@ def _complete_flare_kit_names(kits_uri: str) -> list[str]:
         list[str]: The complete slot names; empty when there are none or the listing fails.
     """
     if not kits_uri:
-        logger.error("FLARE_KITS_S3_URI is not set. The kit-slot pool cannot grow.")
+        logger.error("FLARE_KITS_S3_URI is not set. No kit slot can be claimed until it is.")
         return []
     prefix = f"{kits_uri.rstrip('/')}/"
     try:
         paths = S3Client().list_objects(prefix)
     except Exception:
-        logger.exception(f"Could not list the FLARE kits under '{prefix}'. The kit-slot pool cannot grow.")
+        logger.exception(f"Could not list the FLARE kits under '{prefix}'. No kit slot can be claimed until fixed.")
         return []
 
     nets: set[str] = set()
-    startup_files: defaultdict[tuple[str, str], set[str]] = defaultdict(set)  # (slot, net) -> file names
+    kits: defaultdict[str, dict[str, set[str]]] = defaultdict(dict)  # slot -> net -> startup file names
     for path in paths:
         if match := _KIT_KEY_RE.match(path.removeprefix(prefix)):
             net, slot_name, file_name = match.groups()
             nets.add(net)
             if slot_name:
-                startup_files[slot_name, net].add(file_name)
+                kits[slot_name].setdefault(net, set()).add(file_name)
 
     if not nets:
-        logger.error(f"No FLARE kits under '{prefix}' — is FLARE_KIT_DATE right? The kit-slot pool cannot grow.")
+        logger.error(f"No FLARE kits under '{prefix}' — is FLARE_KIT_DATE right? No kit slot can be claimed.")
         return []
-    complete = {
-        slot
-        for slot, _ in startup_files
-        if all(FLARE_KIT_REQUIRED_FILES <= startup_files.get((slot, net), set()) for net in nets)
-    }
+    complete = []
+    for slot, files_by_net in kits.items():
+        missing = {net: FLARE_KIT_REQUIRED_FILES - files_by_net.get(net, set()) for net in sorted(nets)}
+        if not any(missing.values()):
+            complete.append(slot)
+        elif any("fed_client.json" in files for files in files_by_net.values()):
+            # A client kit, unlike the hub's own server and admin kits: say why it is left out.
+            gaps = "; ".join(f"{net} lacks {', '.join(sorted(files))}" for net, files in missing.items() if files)
+            logger.warning(f"FLARE kit '{slot}' is not claimable: {gaps}.")
     return sorted(complete, key=lambda name: (_slot_number(name), name))
 
 
@@ -143,12 +150,12 @@ def _slot_names_from_parameter() -> list[str]:
         if isinstance(e, ClientError) and e.response.get("Error", {}).get("Code") == "ParameterNotFound":
             logger.warning(
                 f"SSM parameter '{_FL_KIT_SLOT_NAMES_PARAMETER}' does not exist yet — a Terraform apply creates it. "
-                "The kit-slot pool cannot grow until then (existing slots and assignments are unaffected)."
+                "No kit slot can be claimed until then (existing assignments are unaffected)."
             )
             return []
         logger.error(
-            f"Could not read SSM parameter '{_FL_KIT_SLOT_NAMES_PARAMETER}' ({e!r}). The kit-slot pool "
-            "cannot grow until this is fixed (existing slots and assignments are unaffected)."
+            f"Could not read SSM parameter '{_FL_KIT_SLOT_NAMES_PARAMETER}' ({e!r}). No kit slot can be "
+            "claimed until this is fixed (existing assignments are unaffected)."
         )
         return []
 

@@ -204,7 +204,7 @@ class TestCompleteFlareKitNames:
         mock_get_settings.return_value = SimpleNamespace(ENV="production", FL_BACKEND="nvflare", FLARE_KITS_S3_URI=uri)
 
     @patch("flip_api.db.seed.fl_kit_slots.get_parameter")
-    def test_kit_complete_on_every_net_is_claimable(self, mock_get_parameter, mock_get_settings, mock_s3):
+    def test_kit_complete_on_every_net_is_claimable(self, mock_get_parameter, mock_get_settings, mock_s3, caplog):
         self._settings(mock_get_settings)
         mock_s3.return_value.list_objects.return_value = [
             *_SERVER_AND_ADMIN_KITS,
@@ -219,9 +219,11 @@ class TestCompleteFlareKitNames:
         assert resolve_fl_kit_slot_names() == ["Trust_2", "Trust_10"]
         mock_s3.return_value.list_objects.assert_called_once_with(f"{_KITS}/")
         mock_get_parameter.assert_not_called()
+        # The hub's own kits are expected to fall short: no warning for them.
+        assert not caplog.records
 
-    def test_kit_incomplete_or_missing_on_a_net_is_not_claimable(self, mock_get_settings, mock_s3):
-        """An interrupted upload, or a net added after the kit was minted."""
+    def test_kit_incomplete_or_missing_on_a_net_is_not_claimable(self, mock_get_settings, mock_s3, caplog):
+        """An interrupted upload, or a net added after the kit was minted: left out, and the log says why."""
         self._settings(mock_get_settings)
         mock_s3.return_value.list_objects.return_value = [
             *_kit("net-1", "Trust_1"),
@@ -232,7 +234,14 @@ class TestCompleteFlareKitNames:
             f"{_KITS}/net-2/services/fl-server-net-2/startup/rootCA.pem",
         ]
 
-        assert resolve_fl_kit_slot_names() == ["Trust_1"]
+        with caplog.at_level(logging.WARNING, logger="flip_api.seed"):
+            assert resolve_fl_kit_slot_names() == ["Trust_1"]
+
+        assert [record.getMessage() for record in caplog.records] == [
+            "FLARE kit 'Trust_2' is not claimable: net-2 lacks client.key.",
+            "FLARE kit 'Trust_3' is not claimable: net-2 lacks "
+            "client.crt, client.key, fed_client.json, rootCA.pem, sub_start.sh.",
+        ]
 
     def test_listing_failure_returns_empty_and_logs_error(self, mock_get_settings, mock_s3, caplog):
         self._settings(mock_get_settings)

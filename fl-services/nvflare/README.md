@@ -254,23 +254,24 @@ aws s3 cp provision/workspace-<env>/net-<N>/state/cert.json \
 
 ### Activating the new slot on the hub
 
-A kit in S3 is not yet claimable. `register_trust` claims rows from the hub's
-`fl_kit_slot` DB pool (`flip_api/db/seed/fl_kit_slots.py` — additive; it never deletes or
-re-assigns rows, so existing trust↔slot bindings are safe). One pool row covers **all**
-nets — every net carries a kit per slot name, which is why the minting steps above run
-per net. The pool is seeded at flip-api boot and **reconciled on demand**: when a
-registration finds the pool exhausted, flip-api re-reads its slot source,
-additively inserts any new names, and retries the claim; only if the pool is still empty
-does it fail with `NoFreeKitSlotError: "No FL kit slots available…"`. The slot list has a
+`register_trust` claims rows from the hub's `fl_kit_slot` DB pool
+(`flip_api/db/seed/fl_kit_slots.py` — additive; it never deletes or re-assigns rows, so
+existing trust↔slot bindings are safe). One pool row covers **all** nets — every net
+carries a kit per slot name, which is why the minting steps above run per net. The pool
+is seeded at flip-api boot and **read again at every registration**: flip-api inserts
+any new names and claims the lowest free slot among those its source names at that
+moment, so a slot withdrawn from the source is no longer handed out. If none is free it
+fails with `NoFreeKitSlotError: "No FL kit slots available…"`. The slot list has a
 single source per environment (`resolve_fl_kit_slot_names`):
 
 - **Dev**: the `FL_KIT_SLOT_NAMES` env var (a `DevSettings`-only field). Add the name to
   `.env.development` and restart flip-api (settings load once per process).
 - **Stag/prod NVFLARE (ECS)**: the kits themselves — every slot complete on every net under
   `s3://<AICENTRE_BUCKET_NAME>/fl-flare-participant-kits/<FLARE_KIT_DATE>/` (flip-api's
-  `FLARE_KITS_S3_URI`). There is deliberately no fallback: if the listing fails the pool
-  can't grow, loudly. **No restart, no Terraform**: the next registration reconciles the
-  pool from S3. (A Flower hub reads the `/flip/fl_kit_slot_names` SSM parameter, rendered
+  `FLARE_KITS_S3_URI`). There is deliberately no fallback: if the listing fails no slot
+  can be claimed, loudly, and a kit left out as incomplete is named in a warning with the
+  files it lacks. **No restart, no Terraform**: the next registration reads the kits
+  from S3. (A Flower hub reads the `/flip/fl_kit_slot_names` SSM parameter, rendered
   from `FL_KIT_SLOT_NAMES` by Terraform.)
 
 Then `make register-trust KIT=<CODE>` (see

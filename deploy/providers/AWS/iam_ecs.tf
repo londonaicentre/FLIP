@@ -259,7 +259,7 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
   }
 
   # Flower's FL kit-slot pool names (resolve_fl_kit_slot_names): read at boot seeding
-  # and re-read when a registration finds the pool exhausted. NVFLARE hubs read the
+  # and at every trust registration. NVFLARE hubs read the
   # kits in the aicentre bucket instead (S3FlipBuckets above). Scoped to the single
   # parameter — flip-api needs no other /flip/* reads at runtime.
   statement {

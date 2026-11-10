@@ -409,10 +409,12 @@ This section is the mechanism.
 
 **The kits are the pool (FLIP#1720).** On an NVFLARE hub flip-api's slot pool is every slot whose kit is complete on
 **every** net under `fl-flare-participant-kits/<FLARE_KIT_DATE>/` (task env `FLARE_KITS_S3_URI`): its
-`startup/{client.crt,client.key,rootCA.pem,fed_client.json,sub_start.sh}` all present. flip-api re-reads S3 when its
-pool runs dry (reconcile-on-miss), so a new kit is claimable by the next `register-trusts` with **no Terraform apply
-and no restart**. Every complete kit under the kit date is claimable, so delete a kit from S3 rather than keep one
-that should not be handed out. (A Flower hub still reads `FL_KIT_SLOT_NAMES` through the `/flip/fl_kit_slot_names`
+`startup/{client.crt,client.key,rootCA.pem,fed_client.json,sub_start.sh}` all present. flip-api reads S3 at every
+registration and claims only from the kits complete at that moment, so a new kit is claimable by the next
+`register-trusts` with **no Terraform apply and no restart**, and a kit deleted from S3 is no longer handed out
+(a trust that already holds the slot keeps it). Every complete kit under the kit date is claimable, so delete one
+that should not be. A kit left out as incomplete is named in a flip-api warning, with the files it lacks.
+(A Flower hub still reads `FL_KIT_SLOT_NAMES` through the `/flip/fl_kit_slot_names`
 SSM parameter: its SuperLink labels SuperNodes from the same list at startup.)
 
 `make add-fl-kits N=<n>` runs `scripts/add_fl_kits.sh`: discovers the deployment's nets from S3, restores +
