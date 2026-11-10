@@ -387,8 +387,9 @@ hand: delete the top-level timestamp folders and re-pull them (:ref:`ts-k8s-forc
 
 .. note::
 
-   With direct archiving on, the ``Cannot build session`` warning still appears on every pull and is harmless:
-   sessions skip the prearchive. Count the project's sessions with
+   With direct archiving on, DQR marks every request ``FAILED`` and logs the
+   ``Received zero files for study ... in project ...`` warning on every pull. Both are harmless: sessions skip the
+   prearchive, the only place DQR looks. Count the project's sessions with
    ``ls /data/xnat/archive/<imaging-project-id>/arc001 | wc -l`` in the pod.
 
 .. _ts-k8s-xnat-401:

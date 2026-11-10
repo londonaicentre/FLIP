@@ -190,11 +190,12 @@ query: SELECT * FROM omop.image_occurrence
 
 Each cohort accession gets one status, the first that applies: `successful` when it is an experiment in
 the project; `failed` when DQR executed its request and the request `FAILED` while no direct-archive
-session is receiving the study (DQR 3.1.0 marks every C-MOVE into the direct archive `FAILED`, files or
-not, FLIP#1816), or its direct-archive or prearchive session is in `ERROR` (XNAT moves a failed
-direct-archive into the prearchive and deletes its row, FLIP#1511); `processing` for any other executed
-request or direct-archive session (DQR's `RECEIVED` means the study was transferred, not archived);
-`queued` while its request waits in DQR's queue; `queue_failed` when none of these exists.
+or prearchive session is receiving the study (DQR 3.1.0 marks every C-MOVE into the direct archive
+`FAILED`, files or not, FLIP#1816), or its direct-archive or prearchive session is in `ERROR` (XNAT
+moves a failed direct-archive into the prearchive and deletes its row, FLIP#1511); `processing` for any
+other executed request, or a direct-archive or prearchive session in another status (DQR's `RECEIVED`
+means the study was transferred, not archived); `queued` while its request waits in DQR's queue;
+`queue_failed` when none of these exists.
 
 The DQR records come from XNAT's REST API, not its database (`services/import_requests.py`): DQR's
 `GET /xapi/dqr/import/queue` and `/import/history`, which take no project filter, so they are read with

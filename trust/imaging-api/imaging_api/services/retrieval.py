@@ -297,12 +297,13 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
     are reported as `Failed`. A study wedged in a non-terminal state with no further transition — e.g.
     executed `ISSUED` (a C-MOVE that never returns; one that returns with no objects is `FAILED`) or a
     directArchive stuck at `RECEIVING`/`BUILDING` (a hung build that neither errors nor deletes its row) —
-    stays `Processing` indefinitely and is therefore never retried. Detecting "stuck" would need a staleness
-    window (the rows carry `timestamp`); not implemented here.
+    stays `Processing` indefinitely and is therefore never retried. Such a row also masks an executed `FAILED`
+    for the same study, since a `FAILED` counts only when no session row in another status exists (FLIP#1816).
+    Detecting "stuck" would need a staleness window (the rows carry `timestamp`); not implemented here.
 
     1. Fetch the cohort's accession IDs from the data access API
     2. Get project experiments
-    3. Get project import status
+    3. Get project import status, reading the experiments again before an executed `FAILED` is called failed
 
     Args:
         project_id (str): The imaging project ID to retrieve the data about.
@@ -390,16 +391,31 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
     # A directArchive session's accession label is `name` (set for DQR imports); fall back to
     # `folder_name` (which carries the same label) when `name` is NULL, so a NULL-named archive
     # failure is still attributed to its accession rather than silently dropped. A prearchive ERROR is the
-    # same failure after XNAT has moved the session out of the direct archive, its DQR request still
-    # RECEIVED, so it is `failed` too (FLIP#1511).
+    # same failure after XNAT has moved the session out of the direct archive, so it is `failed` too
+    # (FLIP#1511).
+    # A session in any other status is the study still arriving. That includes a prearchive one: XNAT moves a
+    # direct-archive session whose build failed there as RECEIVING and rebuilds it.
     receiving = {
         (session.name or session.folder_name)
         for session in direct_archive_sessions
         if session.status != _DIRECT_ARCHIVE_FAILED_STATUS
+    } | {
+        (session.name or session.folder_name)
+        for session in prearchive_sessions
+        if session.status != _DIRECT_ARCHIVE_FAILED_STATUS
     }
-    # An executed FAILED is a failure only when no direct-archive session is receiving the study: DQR 3.1.0
-    # looks for the received files in the prearchive alone, so it marks every request that reaches FLIP's
-    # direct-archive receiver FAILED ("Received zero files ...") as soon as its C-MOVE ends (FLIP#1816).
+    # An executed FAILED is a failure only when no session is receiving the study: DQR 3.1.0 looks for the
+    # received files in the prearchive alone, so it marks every request that reaches FLIP's direct-archive
+    # receiver FAILED ("Received zero files ...") as soon as its C-MOVE ends (FLIP#1816).
+    executed_failed = {
+        req.accession_number
+        for req in executed_pacs_requests
+        if req.status == _PACS_REQUEST_FAILED_STATUS and req.accession_number not in receiving
+    }
+    # A study that finished archiving after the experiments were read has that FAILED and no session left.
+    # XNAT saves the experiment before it deletes the direct-archive session, so one more read finds it.
+    if not executed_failed.isdisjoint(set(accession_ids) - archived):
+        archived |= {exp.label for exp in await run_in_threadpool(get_experiments, project_id, headers)}
     failed_accessions = (
         {
             (session.name or session.folder_name)
@@ -411,14 +427,8 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
             for session in prearchive_sessions
             if session.status == _DIRECT_ARCHIVE_FAILED_STATUS
         }
-        | {
-            req.accession_number
-            for req in executed_pacs_requests
-            if req.status == _PACS_REQUEST_FAILED_STATUS and req.accession_number not in receiving
-        }
+        | executed_failed
     )
-    # The prearchive read only adds failures: a session in any other prearchive status is in flight
-    # because its DQR request is, so it is counted below through `executed_pacs_requests`.
     in_progress_accessions = receiving | {
         req.accession_number for req in executed_pacs_requests if req.status != _PACS_REQUEST_FAILED_STATUS
     }
