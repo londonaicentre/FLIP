@@ -21,6 +21,7 @@
     1. [Where does my test go?](#where-does-my-test-go)
     1. [Signing your work](#signing-your-work)
   - [Submitting pull requests](#submitting-pull-requests)
+  - [Reviewing pull requests](#reviewing-pull-requests)
 
 ## Introduction
 
@@ -862,10 +863,37 @@ The new branch should be based on the latest `develop` branch.
 1. Run linting and type checking before pushing (see [Checking the coding style](#checking-the-coding-style)).
 1. [Create a new pull request](https://help.github.com/en/desktop/contributing-to-projects/creating-a-pull-request) from the task branch to the `develop` branch, with a detailed description of the purpose of this pull request.
 1. Check [the CI/CD status of the pull request](https://github.com/londonaicentre/FLIP/actions), make sure all CI/CD tests pass.
-1. Wait for reviews; if there are reviews, make point-to-point responses, make further code changes if needed.
+1. Hand the pull request to a reviewer: assign them and unassign yourself (see [Reviewing pull requests](#reviewing-pull-requests)).
+1. When it comes back with comments, make point-to-point responses and further code changes if needed, then hand it over again the same way.
 1. If there are conflicts between the pull request branch and the `develop` branch, pull the changes from `develop` and resolve the conflicts locally.
 1. Reviewer and contributor may have discussions back and forth until all comments are addressed.
-1. Wait for the pull request to be merged.
+1. Once it is approved and assigned back to you, merge it.
+
+### Reviewing pull requests
+
+**The assignee is whoever has to act next.** A pull request's assignee says whose turn it is, so the list of pull
+requests assigned to you is your queue. Every hand-over moves it: assign the other person and unassign yourself.
+
+1. The author assigns the reviewer and unassigns themselves.
+1. The reviewer either approves, or leaves their comments as a **Request changes** review, so the pull request shows
+   that it is waiting on the author and not on a review. Inline comments posted without a review state leave it
+   reading as still unreviewed.
+1. Either way, the reviewer then assigns the author and unassigns themselves: the author addresses the comments and
+   hands it back, or merges an approved pull request.
+
+**Suggestion pull requests.** When a change is easier to show than to describe, or the line it concerns is outside the
+diff (GitHub accepts inline comments only on lines the pull request changes), open a pull request **into the author's
+branch** rather than a comment:
+
+- Branch from the author's branch, usually named `<author-branch>-suggestions`, and set that branch as the base, not
+  `develop`.
+- Title it `Suggestions for #<N>: <what it changes>`, and say in the description that it is stacked on the author's
+  branch.
+- Assign it to the author, who merges it if they agree (the original pull request then picks the commits up) and
+  closes it if not.
+
+Its commits are signed off like any other. A suggestion pull request goes alongside the review, not in place of it:
+the review still says whether the original is approved or needs changes.
 
 ## Cutting a release
 
