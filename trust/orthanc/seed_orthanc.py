@@ -65,7 +65,7 @@ import requests
 
 HF_TRUST_DATA_REPO = os.environ.get("HF_TRUST_DATA_REPO", "aicentreflip/trust-data")
 
-DEFAULT_PROJECTS = ["cxr_project", "spleen_project"]
+DEFAULT_PROJECTS = ["cxr_project"]
 # The one pin for the whole trust dataset — a git tag on the HF dataset. The OMOP side reads the
 # same file, so the CSVs and the DICOM set are always the same version.
 DATA_VERSION_FILE = Path(__file__).resolve().parents[1] / ".data_version"
