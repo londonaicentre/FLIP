@@ -863,7 +863,7 @@ The new branch should be based on the latest `develop` branch.
 1. Run linting and type checking before pushing (see [Checking the coding style](#checking-the-coding-style)).
 1. [Create a new pull request](https://help.github.com/en/desktop/contributing-to-projects/creating-a-pull-request) from the task branch to the `develop` branch, with a detailed description of the purpose of this pull request.
 1. Check [the CI/CD status of the pull request](https://github.com/londonaicentre/FLIP/actions), make sure all CI/CD tests pass.
-1. Hand the pull request to a reviewer: assign them and unassign yourself (see [Reviewing pull requests](#reviewing-pull-requests)).
+1. Hand the pull request to a reviewer: request their review, assign them and unassign yourself (see [Reviewing pull requests](#reviewing-pull-requests)).
 1. When it comes back with comments, make point-to-point responses and further code changes if needed, then hand it over again the same way.
 1. If there are conflicts between the pull request branch and the `develop` branch, pull the changes from `develop` and resolve the conflicts locally.
 1. Reviewer and contributor may have discussions back and forth until all comments are addressed.
@@ -874,7 +874,9 @@ The new branch should be based on the latest `develop` branch.
 **The assignee is whoever has to act next.** A pull request's assignee says whose turn it is, so the list of pull
 requests assigned to you is your queue. Every hand-over moves it: assign the other person and unassign yourself.
 
-1. The author assigns the reviewer and unassigns themselves.
+1. The author requests the reviewer's review, assigns them and unassigns themselves. The review request is what
+   notifies the reviewer and lists the pull request under their "Review requested"; the assignee marks whose turn it
+   is. After addressing comments, re-request the review as well as moving the assignee.
 1. The reviewer either approves, or leaves their comments as a **Request changes** review, so the pull request shows
    that it is waiting on the author and not on a review. Inline comments posted without a review state leave it
    reading as still unreviewed.
