@@ -21,7 +21,7 @@
 | `ecs_efs_provision.tf` | ECS provisioning task that pre-populates the FL EFS workspace (FLARE kit or Flower creds, by `fl_backend`) |
 | `ecs_flower.tf` | Flower-only register-supernode-keys one-shot task + run-task trigger (FLIP#566) |
 | `ecs_sg.tf` | ECS security groups |
-| `certificate.tf` | ACM certificate for the internal NLB's web listener (`MANAGE_DNS=true`) |
+| `certificate.tf` | ACM certificate for the web listener where this account keeps the zone (`MANAGE_DNS=true`); on LZA the TLS web listener uses the one `aicentre-lza-iac` issues into the account (FLIP#1797) |
 | `cloudfront.tf` | flip-ui bucket and the edge distribution's cross-account OAC read (plus unused in-account CloudFront policies, kept for a separate cleanup) |
 | `iam_ecs.tf` | IAM roles, instance profiles, SSM policies |
 | `parameter_store.tf` | SSM Parameter Store entries |
@@ -56,8 +56,8 @@ make init/plan/apply                          # Terraform workflow
 make deploy-centralhub                        # ECS deploy at env branch tip via sha-<short7> task-def revisions + the UI to S3 (FLIP#751; TAG= to pin). Prints an FL quiesce reminder (FLIP#770): enable Deployment Mode (pauses FL job pickup) + wait for the running job before deploying; GET /fl/quiesce reports deployment_mode + fl_quiesced. HUB=prod additionally asks "Are you sure you want to continue?" (stag stays non-interactive)
 make rollback-centralhub                      # Repoint ECS services at the previous ACTIVE task-def revision + deregister the rolled-away one; on FLARE, resets the fl-server's EFS local/ first (FLIP#1390; SKIP_FL_LOCAL_RESET=1 skips)
 make register-trusts KIT=<CODE> HUB=<stag|prod>  # Register CODE-named trust kit(s) on the hub + write trust/.env.<CODE>.<hub> — runs `scripts/register-trusts.sh` (a one-off ECS task + SSM SecureString handoff, mirroring the dev `make register-trusts` contract)
-make deploy-ui                                # Manual fallback: build + publish UI via scripts/publish-ui.sh (excludes ark_demo/*; no invalidation, the edge distribution is the networking account's). CI publishes after every apply (FLIP#1186)
-make deploy-ark-demo                          # Build the public Ark+ demo SPA + sync to S3 under ark_demo/
+make deploy-ui                                # Manual fallback: build + publish UI via scripts/publish-ui.sh (excludes demo/*; no invalidation, the edge distribution is the networking account's). CI publishes after every apply (FLIP#1186)
+make deploy-demo                              # Build the public demo + sync to S3 under demo/ (refused unless PUBLIC_DEMO=true, FLIP#1746)
 make status                                   # Health checks
 make ssh-config                               # Generate SSH config with SSM ProxyCommand
 make provision-local-trust                     # Provision an on-prem trust host (run ON the host)
@@ -221,7 +221,7 @@ Things worth knowing before touching any of it:
   `TF_UI_PUBLISH_ROLE_ARN`, the module's optional `AICentre-FLIPUiPublishRole` (created
   when the caller sets `ui_bucket_name`). That role trusts `publish_ui.yml@refs/heads/<branch>`
   — for a reusable workflow, `job_workflow_ref` names the called file — and can list the
-  bucket and write its objects, never `ark_demo/*`. `scripts/publish-ui.sh` is the one
+  bucket and write its objects, never `demo/*`. `scripts/publish-ui.sh` is the one
   sync recipe, shared with `make deploy-ui`; `.github/tests/workflows/test_publish_ui.py`
   and `scripts/tests/test_publish_ui.sh` pin both halves.
 - **The pytest suite under `tests/` runs in CI** as the `AWS deploy tests` job in
@@ -249,13 +249,7 @@ Things worth knowing before touching any of it:
   inputs from deployed state and reports drift (secrets shown as digests, never
   values). Staging's checked-out file was a batch of values stale, including a
   renamed UI bucket that plans as a `prevent_destroy` violation. Its `--out` writes
-  only the Terraform inputs, so it refuses to overwrite a real operator env file,
-  and on `--env prod` it treats an empty `DEMO_ASSETS_BUCKET_NAME` as a failed
-  recovery rather than a value — empty there plans the Ark+ demo bucket's destroy,
-  which `prevent_destroy` turns into a failed apply. The key recovers from
-  `module.flip_demo_assets_bucket`'s `aws_s3_bucket.this` (FLIP#1199); the module has
-  to be matched by name, since every `flip_s3_bucket` caller contributes an
-  `aws_s3_bucket.this`.
+  only the Terraform inputs, so it refuses to overwrite a real operator env file.
 
 Full flow, one-time setup and break-glass: [README.md](README.md#terraform-ci-plan-on-pr-apply-on-merge).
 
@@ -267,6 +261,8 @@ Every publish also pushes an immutable **`sha-<short7>`** tag (first 7 chars of 
 
 - **Network**: the accelerator-provisioned VPC, looked up by Name tag (`network_lza.tf`) — app subnets for compute, data subnets for RDS; no IGW, no NAT
 - **ECS Fargate**: Central Hub services (flip-api, fl-api-net-1, fl-server-net-1). The FL task families serve **both FL backends** (FLIP#566): `FL_BACKEND` switches image/ports/command/env/mounts — FLARE (single port `FL_SERVER_PORT`, EFS kit from `fl-flare-participant-kits/<FLARE_KIT_DATE>`) vs Flower (SuperLink 8000 HTTP — Control, Fleet and Runtime on one listener since flwr 1.40 — and 9097 health, with a `fleet-proxy` sidecar on the NLB's 9092 forwarding the Fleet routes alone (FLIP#1517; image `flower-fleet-proxy`, tag = the server's tag minus any digest), and the VPC-wide 8000 ingress rule FLARE-only, TLS + SuperNode auth, creds from `fl-flower-participant-kits/<FLOWER_KIT_DATE>`, shared `fl_jobs` EFS volume, register-supernode-keys one-shot). The internal NLB's FL listener stays on `FL_SERVER_PORT` for both; only the target-side port changes.
+- **Read-only root filesystems** (Security Hub ECS.5, FLIP#1795): every container definition sets `readonlyRootFilesystem`, and a container writes only to its EFS mounts and to empty task volumes — `/tmp` on every one, the rest in `local.fl_api_scratch_volumes` / `local.fl_server_scratch_volumes` (`ecs_tasks.tf`). **A new writable path needs both halves**: the task volume with its mount point, and a `VOLUME` for that path in the image. Fargate mounts an empty volume root-owned 0755 unless the image declares it, and the service containers are not root, so a missing `VOLUME` shows only on Fargate, as `Permission denied`. The FLARE server's kit is mounted under `/workspace` (`FL_WORKSPACE`), not `/app` as in the composes. `tests/test_readonly_root_filesystem.py` pins both halves. **ECS Exec does not work on a read-only root filesystem** (the SSM agent it starts in the container has to write there), so `var.ecs_exec_enabled` also lifts it on the three services (`local.service_readonly_root`); ECS.5 fails for them while a debugging apply has it on. The two one-shot tasks are always read-only.
+- **Non-root users** (Security Hub ECS.20, FLIP#1796): every container definition sets `user` to the uid:gid its image already runs as, the owner of the image's `VOLUME`s, so **an image's uid and its task definition's `user` change together**: 1000:1000 for flip-api, both backends' fl-api and FLARE's server; 49999:49999 (flwr/base's `app`) for the SuperLink, the fleet proxy and the key-registration one-shot. The EFS provisioning task's amazon/aws-cli has no user of its own, so it runs as the access points' 1001:1001 and writes nothing outside EFS. `tests/test_non_root_user.py` checks each `user` against its image's Dockerfile.
 - **EC2**: Trust host (t3.xlarge, private subnet, SSM-only access)
 - **RDS**: PostgreSQL in the data subnets. In production flip-api connects through **RDS Proxy** using **IAM auth** (short-lived per-connection tokens); the proxy uses the RDS-managed master secret to reach the DB, so secret rotation no longer takes flip-api down (FLIP#556). No `rds_iam` Postgres grant is needed.
 - **Internal NLB**: static per-subnet IPs; a `:443` web listener for `/api/*` relayed from the networking account's edge, and the FL listener (TCP pass-through)
@@ -284,6 +280,7 @@ An FL redeploy is `make deploy-centralhub` (branch-tip resolution, or `TAG=sha-<
 - The GuardDuty agent image lives in an AWS-internal ECR, **never GHCR**, so its digest returns **HTTP 404** when looked up in `ghcr.io`. A 404 digest is the sidecar — not a stale FL image. (This burned a full investigation on 2026-06-24: `66446df3…` was the GuardDuty agent; the real `fl-server-net-1` digest `29b10362…` matched `:stag` exactly. Both `flare-fl-server:stag` and `flare-fl-api:stag` were rebuilt by the #624 FL-deps merge, configs created `15:54–15:55Z`.)
 - Always query `tasks[0].containers[?name=='fl-server-net-1'].imageDigest`. Full verification recipe (GHCR token, manifest digest, config `created` timestamp) is in [`TROUBLESHOOTING.md` §1.8](TROUBLESHOOTING.md).
 - The same applies to exit codes. The two one-shot tasks `terraform apply` runs (`provision_efs_certs`, `flower_register_supernode_keys`) read `containers[?name=='<container>'].exitCode`, where the name comes from the task definition. They treat a missing code as a failure (FLIP#1447). `tests/test_ecs_task_exit_code.py` fails on any `containers[0]` in a `.tf` file.
+- A kit-date change (`FLARE_KIT_DATE` / `FLOWER_KIT_DATE`) is one apply: the EFS re-sync, then new `fl-server-net-1` / `fl-api-net-1` revisions (their environment carries the kit's S3 prefix as `FL_KIT_SOURCE`, so the services roll and read the new kit), then on Flower the key registration, which waits for that rollout. The EFS task refuses a prefix with no kit in it, and the registration one-shot refuses a `server.pem` that does not name the SuperLink's Cloud Map host before it waits on the Control API (FLIP#1738; `tests/test_fl_kit_rollout.py`). The kit a hub's variable names must be the one its trusts were staged from: two Flower kits in the bucket mean two CAs, and a SuperNode holding the other one exits 305.
 
 ## State Management
 

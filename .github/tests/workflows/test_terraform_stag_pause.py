@@ -80,7 +80,7 @@ class TerraformStagPause(unittest.TestCase):
             ("terraform_drift.yml", "drift"),
             ("terraform_drift.yml", "dispatch-prod"),
             ("terraform_apply.yml", "start-staging"),
-            ("terraform_drift.yml", "staging-state"),
+            ("terraform_apply.yml", "supersede-hold"),
             ("staging_lifecycle.yml", "nightly-guard"),
             ("staging_lifecycle.yml", "hold"),
             ("staging_lifecycle.yml", "power"),

@@ -74,6 +74,7 @@ _INHERITED = ("OPERATOR_IP", "AZ_SUBSCRIPTION", "SUB_ID", "MAKEFLAGS", "MFLAGS",
 def run_make(
     tmp_path: Path,
     *goals: str,
+    root: str = ".",
     ipify: list[str] | None = None,
     az_fail: str | None = None,
     account_id: str | None = None,
@@ -85,6 +86,8 @@ def run_make(
     **variables: str,
 ) -> tuple[subprocess.CompletedProcess, list[str]]:
     """Run real Makefile goals with `az` stubbed on PATH; return the result and every stubbed call.
+
+    `root` is the Makefile's directory under the Azure tree: "." (bootstrap, test, lint), "vm" or "aks".
 
     `terraform`, `git` and `kubectl` are always stubbed. With `ipify`, `curl` is stubbed too and answers the IP
     lookups in that order. az calls are logged bare, the others as `terraform ...`, `git ...` and
@@ -119,7 +122,7 @@ def run_make(
     files = [arg for f in ("Makefile", *map(str, makefiles)) for arg in ("-f", f)] if makefiles else []
     args = [f"{k}={v}" for k, v in {"AZ_SUBSCRIPTION": "trial", **variables}.items()]
     result = subprocess.run(
-        ["make", "-s", "-C", str(AZURE_DIR), *files, *goals, *args],
+        ["make", "-s", "-C", str(AZURE_DIR / root), *files, *goals, *args],
         env=env,
         cwd=tmp_path,
         input=stdin,

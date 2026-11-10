@@ -35,7 +35,7 @@ the commented dev form):
 
 | Section | Owner | Touched by |
 |---------|-------|-----------|
-| Host-local profile | Operator | hand-edit (ports, bind dirs, optional `FL_SITE_PRIVACY_*` site privacy policy) |
+| Host-local profile | Operator | hand-edit (ports, bind dirs, optional `FLIP_UID`/`FLIP_GID` to run the containers as the operator, optional `FL_SITE_PRIVACY_*` site privacy policy) |
 | Trust-local credentials | Operator | hand-edit (passwords, service URLs) |
 | Hub-shared (managed) | Hub admin | `register-trust KIT=<CODE>` (live in prod, commented in dev) / `sync-trust-kit KIT=<CODE>` (prod refresh) |
 | Kit credentials (managed) | Hub | `register-trust` only — write-once; hub keeps only the hash |
@@ -83,15 +83,36 @@ The packager does NOT edit the kit file.
 
 The operator extracts, copies `.env.<CODE>.prod` into their checkout,
 edits only the Host-local profile (sets `FL_KIT_DIR`, ports/dirs) and rotates
-the Trust-local passwords, runs `sudo -E make onboard-onprem-trust KIT=<CODE>`
+the Trust-local passwords, runs `make onboard-onprem-trust KIT=<CODE>`
 for the readiness checklist (kit present, swarm active — the swarm check queries
-the docker daemon, hence sudo; Hub-shared + Kit credentials populated; the hub API, the
+the docker daemon; Hub-shared + Kit credentials populated; the hub API, the
 FL endpoint and the image registries reachable from the host (FLIP#1726: probed before
 anything starts, FAIL / FAIL / WARN, wording is "reachable from this host" only); FL_KIT_DIR
-exists + has the expected files), then `sudo -E make up-onprem-trust KIT=<CODE>` (both default to `HUB=prod`).
-Sudo because the provisioned login user is deliberately not in the docker group
-(root-equivalent); `-E` preserves `$HOME` so root's docker reuses the operator's
-GHCR login from `~/.docker/config.json`.
+exists + has the expected files), then `make up-onprem-trust KIT=<CODE>` (both default to `HUB=prod`).
+Both need only Docker socket access plus bind-mount dirs owned by the container uids (the
+on-prem guide's "Access the operator needs", FLIP#1723); nothing in the Makefiles calls sudo. A
+host provisioned by the on-prem playbook deliberately leaves the login user out of the docker
+group (root-equivalent), so there the operator prefixes `sudo -E` (`-E` preserves `$HOME` so
+root's docker reuses the operator's GHCR login); the checklist then prints the same prefix for
+the next step (`SUDO_USER` set). Setting a bind mount's owner to a container's uid needs root,
+so bring-up only checks it: a non-root operator needs `make -C trust prepare-host-dirs KIT=<CODE>`
+run once, as root, by whoever prepares the host (it creates every mount source with its owner and
+deletes nothing), and `xnat-reset` then deletes nothing either, refusing a tree that holds files.
+Only development keeps a throwaway-container fallback, on the developer's own machine; a remote
+DOCKER_CONTEXT (EC2) still prepares the membership store through the remote daemon. A kit that sets
+`FLIP_UID`/`FLIP_GID` to the operator's own ids needs neither step (FLIP#1731): every bind-mount
+writer runs as them (prod compose `user: "${FLIP_UID:-<image uid>}:${FLIP_GID:-<image gid>}"`,
+the same defaults as `deploy/portable.mk`'s `API_UID`/`ORTHANC_UID`/`XNAT_CONTAINER_UID`, which
+the ownership guards read), so the operator's own `mkdir` is enough and `xnat-reset` provisions the
+XNAT tree itself, as in development. xnat-db alone keeps its
+root entrypoint (its pinned `postgres:12.2-alpine` predates nss_wrapper in the Alpine variants), so
+`xnat-prepare-dirs` creates but never re-owns `xnat-db-data`, and XNAT's Container Service jobs run as
+`FLIP_UID` too (`XNAT_CS_CONTAINER_USER`, written into the Docker backend by `configure-dcm2niix.sh`), or
+dcm2niix could not read the 640 files xnat-web archives. `FLIP_UID` is a first-install choice:
+`_upgrade-trust-apply` refuses a kit whose `FLIP_UID` differs from the owner of the data dirs (unset, the Orthanc dir's 999, so clearing it is caught too). A second
+install on the same tree needs one root `rm -rf` of `XNAT_DATA_DIR` (xnat-db's data is uid 70's). The images' runtime-written paths are
+world-writable with the sticky bit for that uid (`scripts/tests/test_container_identity.py`
+pins both the defaults and those lines).
 
 ## Key Files
 
@@ -104,6 +125,7 @@ GHCR login from `~/.docker/config.json`.
 | `deploy/ansible/roles/` | The trust-host roles themselves, one per concern, with a README of what each varies by host type. `flip_fl_kit/tasks/s3.yml` carries the FLIP#965 kit-staging guards that `deploy/providers/AWS/tests/test_trust_kit_staging.py` pins |
 | `deploy/compose/compose_trust.development.yml` | Dev Docker Compose (pulls repo-built services from GHCR by default via `pull_policy: always`; `BUILD=true` rebuilds from the `build:` block instead; `trust/xnat` then builds the XNAT images and deploys them at `:dev`, or a command-line `XNAT_TAG`) |
 | `deploy/compose/compose_trust.prod.yml` | Prod Docker Compose (GHCR images; declares the `trust-local-{loki,grafana}-data` named volumes as defaults) |
+| `deploy/mirror-images.manifest` | The third-party images a trust runs (Grafana, Loki, Alloy, XNAT's socket proxy, the chart's uv and busybox helpers) and their digests; `scripts/mirror_images.sh` copies them into `ghcr.io/londonaicentre/mirror/` and the compose files, the chart and the seed role pin them from it (FLIP#1721) |
 | `deploy/compose/compose_trust.{env}.{flower\|nvflare}.yml` | FL backend variants |
 | `deploy/compose/compose_trust.{env}.gpu.yml` | GPU passthrough overlay — added by `up-trust` / `up-fl-clients-kit` via `GPU_OVERRIDE` only when the kit's `NUM_AVAILABLE_GPUS > 0`; reserves host NVIDIA GPU(s) for the fl-client. `up-trust-ec2` never applies it (the EC2 t3.xlarge is GPU-less, so the fl-client is CPU-only there regardless of the kit) |
 | `deploy/compose/compose_trust.{env}.monailabel.yml` | Optional MONAI Label server (AI-assisted annotation in the XNAT OHIF viewer) — added by `up-trust` / `build` via `MONAILABEL_OVERRIDE` only when the kit (or CLI) sets `MONAI_LABEL=true`. Requires `NUM_AVAILABLE_GPUS > 0`; `up-trust` refuses otherwise. Dev builds from `trust/monailabel/`; production pulls `ghcr.io/londonaicentre/monailabel:${DOCKER_TAG}` (published by `docker_build_monailabel.yml`) (the OHIF viewer plugin it registers through ships by default in every mode). Bind-mounts the trust's XNAT archive read-only at the path `MONAI_LABEL_XNAT_ARCHIVE_DIR` resolves to — anchored at `xnat/` because the kit's `XNAT_DATA_DIR` is written relative to `trust/xnat/`. Published on `MONAI_LABEL_BIND_HOST` (default `127.0.0.1`) — the API is unauthenticated and holds the XNAT service account, so it is loopback-only until an operator fronts it through the XNAT nginx or firewalls an interface. `MONAI_LABEL=true` **also** gates `configure-export-mask.sh` in `xnat/Makefile`'s `xnat-configure` (the DICOM-SEG → NIfTI converter command + its site-wide subscription); enabling MONAI Label on an already-running trust needs a `make -C trust/xnat xnat-configure KIT=<CODE>` re-run. `up-trust-ec2` refuses `MONAI_LABEL=true` outright (no GPU on the t3.xlarge). See [README.md](README.md#monai-label-optional) |
@@ -131,7 +153,7 @@ make onboard-onprem-trust KIT=<CODE> HUB=<env>  # Read-only readiness check usin
 make restart-trust KIT=GSTT    # Restart one trust stack (down + up-trust — first-install semantics, resets XNAT)
 make upgrade-trust KIT=<CODE> HUB=<env> [TAG=vX.Y.Z] [FORCE=1] [YES=1]  # Move a LIVE trust to a release, data intact (FLIP#1204): resolver pins the kit, pull, recreate what changed, upgrade-xnat in place. Never up-trust/restart-trust for this
 make up-trust-ec2 KIT=GSTT     # Start one trust stack on a cloud EC2 host
-make up-trust KIT=<CODE> HUB=prod  # Start a trust pointing at a remote hub (on-prem hosts: prefix sudo -E — login user is not in the docker group)
+make up-trust KIT=<CODE> HUB=prod  # Start a trust pointing at a remote hub (needs Docker socket access; playbook-provisioned hosts: prefix sudo -E)
 make debug                     # Trust-1 in debug mode
 make debug-trust-api           # Debug trust-api only
 make debug-imaging-api         # Debug imaging-api only
@@ -139,7 +161,7 @@ make debug-data-access-api     # Debug data-access-api only
 make tests                     # Run tests on all 3 API services
 make build                     # Build all trust Docker images
 make create-networks           # Create Docker overlay networks
-make ensure-seeded KIT=GSTT [PROJECTS="…"]  # What up-trust runs after compose up: seed unless the markers already say so (#1187)
+make ensure-seeded KIT=GSTT [PROJECTS="…"]  # What up-trust runs after compose up: seed unless the markers already say so (#1187), or the kit says TRUST_DATA_SEED=false
 make seed KIT=GSTT PROJECTS="cxr_project"  # Seed a RUNNING trust unconditionally: OMOP rows + DICOMs by source_trust (#1100), from the published tag
 make seed-trusts PROJECTS="…"  # Both dev trusts; seed-omop / seed-orthanc for one half; CLEAR=1, DRY_RUN=1 on the PACS half
 make seed-omop KIT=GSTT PROJECTS=brain_mri_project CANONICAL_DIR=/abs/canonical   # local tables instead of the tag (#1221); CLEAN=all = wipe every project first
@@ -159,6 +181,7 @@ make reconvert-nifti KIT=GSTT [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_
 - In production all runtime config comes from the kit file (`trust/.env.<CODE>.<env>`): neither `trust/Makefile` nor `trust/xnat/Makefile` includes a hub `.env.*`. In dev, `trust/Makefile` also `-include`s `../$(MAIN_ENV_FILE)` for the Hub-shared values (see *Kit file structure*). `HUB` also selects the compose-file suffix (`development` / `prod`: `stag` and `prod` both run the prod compose).
 - Trust identity: `TRUST_API_KEY` (per-trust, from the kit file `trust/.env.<CODE>.<env>`); optional `EXPECTED_TRUST_ID` self-check. The hub identifies the trust by API key alone.
 - Encryption: `AES_KEY_BASE64` for trust-to-hub payload encryption (hub-shared; synced into the kit file).
+- `TRUST_BIND_ADDRESS` (kit file, optional): the address the trust composes publish their host ports on — Orthanc, Grafana, Loki, omop-db and the three trust APIs. Default `127.0.0.1`: a trust host promises no inbound and Loki has no authentication, so operators reach these over an SSH tunnel. `make new-trust` mints every Trust-local password (`TRUST_LOCAL_PASSWORD_KEYS`, one list in `new_trust.py` and `onboard_onprem_trust.py`) and the readiness checklist refuses a `.stag`/`.prod` kit that still carries a template value.
 - `DEBUG`: `make debug` / `make debug-off` set it explicitly; `make up-trust` without an explicit `DEBUG=true` runs services in non-debug mode.
 - Site-enforced FL privacy policy (FLARE only, FLIP#851): `FL_SITE_PRIVACY_POLICY=percentile` (+ optional `FL_SITE_PRIVACY_*` params, see `trust/.env.example`) in the kit's Host-local profile. Rendered into the fl-client's FLARE `local/privacy.json` at container start by `python -m flip.nvflare.site_policy` — composes on top of (runs before) any app-level filter, a job's configuration can't opt out or pick a weaker scope, invalid values fail the fl-client closed. Job code is not isolated from it: every FLARE template runs `"execution_mode": "in_process"`, so job code shares the client process with the filter (FLIP#1572 tracks the fix). Unset = no site policy. Apply with `make -C trust up-fl-clients-kit KIT=<CODE>`.
 - Trust governance document (FLIP#1259): one optional TOML file per trust (`trust/governance.<CODE>.toml`, gitignored; worked example `trust/governance.example.toml`), named by `ACCESS_POLICY_FILE` in the kit as a **host** path relative to `trust/` (the bind-mount source; there is no inline form). `[disclosure]`/`[access]` are data-access-api's: `min_cohort_size` may raise `COHORT_QUERY_THRESHOLD`, never lower it; rules are decided order-independently (any matching deny denies, else the strictest matching permit, else — for an action the document mentions — deny); project ids must be UUIDs and `effect` is required. `cohort.dataframe` is the FL client's own training fetch, so denying it stops FL for that project. `[fl_privacy.nvflare]` is the FLARE site policy above as an **alternative** to `FL_SITE_PRIVACY_*` — both set is a FATAL; `[fl_privacy.flower]` is refused (nothing enforces it, FLIP#852) and `check-governance` fails a site privacy section on a Flower trust. The fl-client never mounts the document: the one-shot `fl-governance-init` service (Compose; `governance-extract` init container on Helm) runs `site_policy --extract` into the client's kit `local/` dir, and every `--no-deps` start of the clients must name it. data-access-api logs one `[governance] … sha256=…` line at startup, which `reload-governance` checks. Validate and apply to a live trust with `make -C trust check-governance` then `make -C trust reload-governance` — **never** `up-trust`/`restart-trust`, which are first-install verbs that can wipe XNAT and re-seed the data volumes. Remotely driven trusts (DOCKER_HOST / DOCKER_CONTEXT at ssh:// or tcp://, i.e. EC2) refuse a document. On Kubernetes `sync-kit` validates and embeds it as `governance.document` (`trust/deploy/helm/README.md`).
@@ -248,6 +271,24 @@ with `make -C trust seed-trusts PROJECTS=prostate_project`; its masks reach a pr
 `make -C flip-api e2e_smoke_prostate FL_BACKEND=flower` drives cohort → pull → enrichment → training of the
 `flower/image_segmentation/3d_prostate_segmentation` app (`EXTRA_ARGS="--stop-after-enrichment"` checks the data path alone). The FL simulator (`make -C fl-tutorials run-tutorial`) is a separate
 path: LOCAL_DEV reads `fl-tutorials/data/` straight from disk and touches no trust service.
+
+**A real trust turns seeding off (FLIP#1687).** `TRUST_DATA_SEED=false` in the kit (unset = `true`) makes
+`ensure-seeded`, so `up-trust`, `up-onprem-trust` and `restart-trust`, fetch, load and mark nothing whatever the
+markers or the pin say (no Hugging Face or PyPI request either), and the EC2 root's `seed` (so its `deploy`) skips
+its sample-data play, loading only the vocabulary from `KIT_BUCKET`. Any other value is refused, since read as true it would seed a real
+OMOP, and `up-trust` checks it before starting a container. `sync-kit` maps it onto `trustData.seed.enabled:
+false`, and every Helm Makefile render or deploy that names the `KIT` passes it as `--set` too, so a
+missing or stale override cannot seed. The onboarding checklist's data-dir hints and the
+node self-test (`SELFTEST_TRUST_DATA_SEED=false`: the seed-marker checks are skipped with the reason) follow it, as
+does the Kubernetes self-test (`selftest_k8s.py`, from the release's `trustData.seed` values, so the chart default
+`seed.orthanc: false` counts too). Both skip the C-STORE (and, on Kubernetes, `orthanc seeded` and the dcm2niix
+conversion) only while Orthanc also reports no instance: an Orthanc holding studies is stored into XNAT whatever
+the setting says. The
+explicit `seed*` / `unseed*` verbs refuse such a trust unless `FORCE_SEED=1`, and refuse a missing kit file or a
+mistyped value outright. The DICOM vocabulary
+then loads on its own (`make -C trust/omop-db load-dicom-vocab` with the kit's `OMOP_*` values); no trust
+service needs it at run time (data-access-api's modality chart LEFT JOINs `omop.concept`), only OMOP rows that
+reference DICOM attribute concepts.
 
 **One copy of every artefact; a data version is a git tag.** `aicentreflip/trust-data` holds each
 file once, at an unversioned path on `main` (`omop-csv/<project>/`, `dicom/<project>.tar.gz`). A data

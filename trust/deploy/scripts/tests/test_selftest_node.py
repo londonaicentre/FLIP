@@ -84,6 +84,10 @@ def _run(
     no_kit: bool = False,
     abort_in_sleep: bool = False,
     keep_up: bool = False,
+    seed: str = "",
+    xnat_up: bool = True,
+    instances: str = '["abc123"]',
+    template_line: str = "",
 ) -> tuple[subprocess.CompletedProcess, dict | None, Path, Path]:
     tmp = Path(tempfile.mkdtemp(prefix=f"selftest-{case}-"))
     bin_dir, out, data = tmp / "bin", tmp / "out", tmp / "data"
@@ -110,7 +114,7 @@ def _run(
         f'if [ -n "{failing_port}" ]; then case "$*" in *":{failing_port}/health"*) exit 22;; esac; fi\n'
         'case "$*" in\n'
         '  *"%{http_code}"*) echo 401;;\n'
-        '  *"/instances?"*) echo \'["abc123"]\';;\n'
+        f"  *\"/instances?\"*) echo '{instances}';;\n"
         f"  *\"/modalities/XNAT/store\"*) echo '{store_reply}';;\n"
         '  *) echo \'{"status":"ok"}\';;\n'
         "esac\nexit 0",
@@ -134,7 +138,7 @@ def _run(
         bin_dir,
         "docker",
         f'echo "docker $*" >> "{calls}"\n'
-        'if [ "$1" = ps ]; then echo trust1_xnat-web.1; echo trust1-fl-client-net-1-1; fi\n'
+        f'if [ "$1" = ps ]; then {"echo trust1_xnat-web.1; " if xnat_up else ""}echo trust1-fl-client-net-1-1; fi\n'
         f'if [ "$1" = inspect ]; then head -1 "{states}"; '
         f'tail -n +2 "{states}" > "{states}.n"; mv "{states}.n" "{states}"; fi\n'
         'if [ "$1" = logs ]; then echo "fl-client log line"; fi\n'
@@ -159,9 +163,15 @@ def _run(
     }
     if keep_up:
         env["SELFTEST_KEEP_UP"] = "1"
+    if seed:
+        env["SELFTEST_TRUST_DATA_SEED"] = seed
     if bad_template:
         template = tmp / "template"
         template.write_text("SOMETHING_NEW=<run-make-register-trust>\n")
+        env["SELFTEST_KIT_TEMPLATE"] = str(template)
+    if template_line:
+        template = tmp / "template"
+        template.write_text((SCRIPT.parents[2] / ".env.example").read_text() + template_line + "\n")
         env["SELFTEST_KIT_TEMPLATE"] = str(template)
     result = subprocess.run(["bash", str(SCRIPT), backend], env=env, capture_output=True, text=True, timeout=120)
     reports = sorted(out.glob(f"selftest-{backend}-*.json")) if out.exists() else []
@@ -271,6 +281,36 @@ def main() -> int:
     )
     _assert("up-trust" not in calls.read_text(), "and the stack is not started")
     _assert("down-trust" not in calls.read_text(), "so there is nothing to tear down")
+
+    print("sample_data_off_skips_what_needs_it")
+    result, report, calls, tmp = _run("noseed", seed="false", write_markers=False, instances="[]")
+    _assert(result.returncode == 0 and report is not None and report["ok"] is True, "passes", result.stdout)
+    _assert("TRUST_DATA_SEED=false" in (tmp / ".env.SELFTEST.prod").read_text(), "the kit turns the seed off")
+    for name in ("omop seeded", "orthanc seeded", "xnat c-store"):
+        detail = _check(report, name).get("detail", "")
+        _assert(detail.startswith("skipped: TRUST_DATA_SEED=false"), f"'{name}' says why it is skipped", detail)
+    _assert(_check(report, "orthanc requires auth").get("ok") is True, "orthanc auth is still checked")
+    _assert("/modalities/XNAT/store" not in calls.read_text(), "no store is attempted")
+
+    print("sample_data_off_still_stores_an_instance_orthanc_holds")
+    # Orthanc's answer decides, not the setting: a broken DICOM import must not hide behind a skip.
+    result, report, calls, _ = _run("noseed-held", seed="false", write_markers=False)
+    cstore = _check(report, "xnat c-store")
+    stored = cstore.get("ok") is True and "1 instance received" in cstore.get("detail", "")
+    _assert(stored, "the store runs", str(cstore))
+    _assert("/modalities/XNAT/store" in calls.read_text(), "and is attempted")
+    _assert(_check(report, "omop seeded").get("detail", "").startswith("skipped:"), "the seed markers stay skipped")
+
+    print("sample_data_off_in_the_template_reads_as_make_reads_it")
+    # up-trust (make) reads both spellings as false and seeds nothing, so no seed marker is the expected state.
+    for line in ('TRUST_DATA_SEED="false"', "TRUST_DATA_SEED=false  # real trust"):
+        result, report, _, _ = _run("spelt", write_markers=False, instances="[]", template_line=line)
+        marker = _check(report, "omop seeded").get("detail", "")
+        _assert(result.returncode == 0 and marker.startswith("skipped:"), f"{line!r}: markers skipped", marker)
+
+    print("sample_data_off_still_needs_xnat_running")
+    result, report, _, _ = _run("noseed-noxnat", seed="false", write_markers=False, xnat_up=False)
+    _assert(result.returncode != 0 and _check(report, "xnat c-store").get("ok") is False, "no xnat-web is a failure")
 
     print("health_failure_fails_run")
     result, report, _, _ = _run("health", failing_port="8010")

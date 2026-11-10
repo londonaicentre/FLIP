@@ -14,6 +14,10 @@ A **Trust Admin** approves or declines, on their Trust's behalf, the projects th
 While your Trust has a Trust Admin, nobody at the hub can decide for it: a project uses your Trust's patients' data
 only once you approve it. Apart from that, you have the same access as a ``researcher`` (see :ref:`rbac-roles`).
 
+.. contents:: On this page
+   :local:
+   :depth: 1
+
 The My Trust page
 =================
 

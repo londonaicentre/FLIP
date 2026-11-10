@@ -1,0 +1,122 @@
+[
+  {
+    "globalRound": null,
+    "id": "899f04e7-d346-86f0-8b94-4532b0cc8406",
+    "log": "Model training assigned to 'net-1'",
+    "logDate": "2026-11-02T13:13:57.128959",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": 1,
+    "id": "3ec1844a-4d7a-8915-a53a-8dba1439995d",
+    "log": "Round 1 aggregated · 2 of 2 trusts returned",
+    "logDate": "2026-11-02T13:26:00.739625",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": null,
+    "id": "2087009d-82d9-8314-a1d1-c217eca5d543",
+    "log": "Model Queued (1)",
+    "logDate": "2026-11-02T13:12:55.778637",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": null,
+    "id": "df2cdbfa-632a-8700-ad41-4b6765d2f040",
+    "log": "The job for this model is now running.",
+    "logDate": "2026-11-02T13:14:03.751933",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": null,
+    "id": "82775373-0579-8fec-9bc4-5f897b11d7b7",
+    "log": "Selected trusts for training: Guy's and St Thomas' Trust, King's College Hospital",
+    "logDate": "2026-11-02T13:12:55.780848",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": null,
+    "id": "954e502d-4e53-854a-938f-20199a8e34c5",
+    "log": "This model has been selected from the queue and will be prepared to run.",
+    "logDate": "2026-11-02T13:14:03.537365",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": null,
+    "id": "77c41673-1c09-8e21-912b-565f73fba0c6",
+    "log": "This model has been prepared and its job will begin shortly.",
+    "logDate": "2026-11-02T13:14:03.731411",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": null,
+    "id": "d2a9a288-6959-8a37-82e5-c0a0a9ede58a",
+    "log": "The job for this model is now running.",
+    "logDate": "2026-11-02T13:14:03.757860",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": 1,
+    "id": "84e0a612-4e8e-8f4c-a90a-8f64b64ba626",
+    "log": "Round 1 initiated · global model dispatched",
+    "logDate": "2026-11-02T13:14:03.770050",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  },
+  {
+    "globalRound": 1,
+    "id": "521afe92-9564-8b64-8205-a2aa1df84182",
+    "log": "Round 1 results returned",
+    "logDate": "2026-11-02T13:26:00.674087",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "success": true,
+    "trustCode": "GSTT",
+    "trustName": "Guy's and St Thomas' Trust"
+  },
+  {
+    "globalRound": 1,
+    "id": "c12307cc-0317-88da-a4ab-a3a6a36d0345",
+    "log": "Round 1 results returned",
+    "logDate": "2026-11-02T13:26:00.727108",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "success": true,
+    "trustCode": "KCH",
+    "trustName": "King's College Hospital"
+  },
+  {
+    "globalRound": null,
+    "id": "94676dc9-ea73-8e4d-ae9d-362693d24382",
+    "log": "The results of this model have been uploaded and can now be downloaded.",
+    "logDate": "2026-11-02T13:26:00.889794",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "success": true,
+    "trustCode": null,
+    "trustName": null
+  }
+]

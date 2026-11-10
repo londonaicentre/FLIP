@@ -132,7 +132,7 @@ Prerequisites
      - ``prod``
      - production
 
-Production gets the production-only database safeguards (RDS deletion protection and a final snapshot).
+Production gets the production-only database safeguard: a final snapshot when the instance is deleted.
 
 ************************
 Required IAM permissions
@@ -177,7 +177,8 @@ the same ground:
        networking account's)
      - ``CloudFrontFullAccess``
    * - Certificate Manager
-     - The ``eu-west-2`` certificate for the internal load balancer's web listener, once ``MANAGE_DNS=true``
+     - The ``eu-west-2`` certificate for the internal load balancer's web listener: this stack's own when
+       ``MANAGE_DNS=true``, otherwise the platform's, read by name
      - ``AWSCertificateManagerFullAccess``
    * - Route 53
      - The private hosted zone for the FL server's name, and the certificate's validation records once
