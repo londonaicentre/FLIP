@@ -333,8 +333,8 @@ def install(args: argparse.Namespace) -> None:
 
     after = read_kit_vars(kit_file)
     managed = (*tkl.CREDENTIAL_KEYS, *tkl.METADATA_KEYS, *tkl.HUB_SHARED_KEYS)
-    changed = [key for key in managed if after.get(key) != before.get(key)]
     unfilled = [key for key, value in after.items() if "<run-make-" in value]
+    changed = [key for key in managed if after.get(key) != before.get(key) and key not in unfilled]
     hub = "" if args.env == "prod" else f" HUB={args.env}"
 
     print(f"✅ Installed the {manifest['kind']} kit for {code} in {kit_file}")
