@@ -116,6 +116,16 @@
                     </p>
                 </div>
             </div>
+            <!-- The FL client reports a version but no status trust-api can probe, so it is not a container row. -->
+            <p class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300 pt-4 pb-1">
+                FL client
+            </p>
+            <p
+                data-test="fl-client-version"
+                class="font-mono text-[11px] text-gray-500 dark:text-gray-300 py-[13px] border-t border-gray-200 dark:border-dark-border"
+            >
+                {{ flClientText }}
+            </p>
         </div>
     </div>
 </template>
@@ -128,6 +138,7 @@ import { heartbeatText,
     IDerivedService,
     IDerivedTrust,
     isFailing,
+    jobModeLabel,
     PILL_CLASSES,
     ServiceKey,
     STATE_LABELS } from "@/utils/connection-health";
@@ -200,5 +211,12 @@ const bannerText = computed(() => {
     const affected = services.value.filter(isFailing).length;
 
     return `${affected} ${affected === 1 ? "container" : "containers"} affecting service.`;
+});
+
+// "v0.15.0 · a pod per job", from the heartbeat's fl-client entry (FLIP#1739); a dash until the trust reports one.
+const flClientText = computed(() => {
+    const client = props.trust.services?.["fl-client"];
+
+    return [client?.version, jobModeLabel(client?.job_mode)].filter(Boolean).join(" · ") || "—";
 });
 </script>

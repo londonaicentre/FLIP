@@ -236,6 +236,21 @@ export const deriveTrust = (t: ITrustResponse, nowMs: number = Date.now()): IDer
     };
 };
 
+// The Jobs column (FLIP#1739): a trust's in-progress and queued FL jobs, one line each, zeros left out.
+export const jobLines = (t: ITrustResponse): string[] => [
+    ...(t.jobs_in_progress ? [`${t.jobs_in_progress} in progress`] : []),
+    ...(t.jobs_queued ? [`${t.jobs_queued} queued`] : [])
+];
+
+const JOB_MODE_LABELS = new Map([
+    ["process", "jobs run in the client container"],
+    ["pods", "a pod per job"]
+]);
+
+// How a trust runs an FL job, from its fl-client heartbeat entry. A mode this build does not know is shown as sent.
+export const jobModeLabel = (mode: string | null | undefined): string | null =>
+    mode ? JOB_MODE_LABELS.get(mode) ?? mode : null;
+
 // "6s ago"-style heartbeat age; "never" when absent or unparseable.
 export const heartbeatText = (iso: string | null, nowMs: number = Date.now()): string => {
     const beatMs = apiTimestampMs(iso);

@@ -18,6 +18,8 @@ import { deriveServices,
     deriveTrustState,
     failingFromServices,
     heartbeatText,
+    jobLines,
+    jobModeLabel,
     SERVICE_REGISTRY,
     SERVICES_STALE_S,
     trustApiStatus } from "@/utils/connection-health";
@@ -363,5 +365,41 @@ describe("heartbeatText", () => {
 
     it("renders never for an unparseable timestamp instead of NaN", () => {
         expect(heartbeatText("not-a-timestamp", NOW)).toBe("never");
+    });
+});
+
+describe("jobLines", () => {
+    it("lists a trust's in-progress and queued job counts, leaving out a zero", () => {
+        expect(jobLines(makeTrust({
+            jobs_in_progress: 1,
+            jobs_queued: 2
+        }))).toEqual(["1 in progress", "2 queued"]);
+        expect(jobLines(makeTrust({
+            jobs_in_progress: 0,
+            jobs_queued: 3
+        }))).toEqual(["3 queued"]);
+    });
+
+    it("is empty for a trust with no jobs, or a hub that sends no counts", () => {
+        expect(jobLines(makeTrust({
+            jobs_in_progress: 0,
+            jobs_queued: 0
+        }))).toEqual([]);
+        expect(jobLines(makeTrust())).toEqual([]);
+    });
+});
+
+describe("jobModeLabel", () => {
+    it("words the two modes a trust reports, and shows an unknown one as sent", () => {
+        expect(jobModeLabel("pods")).toBe("a pod per job");
+        expect(jobModeLabel("process")).toBe("jobs run in the client container");
+        expect(jobModeLabel("vm")).toBe("vm");
+        // A well-formed mode that is also an Object.prototype key must not resolve to it.
+        expect(jobModeLabel("constructor")).toBe("constructor");
+    });
+
+    it("is null when the trust reports no mode", () => {
+        expect(jobModeLabel(undefined)).toBeNull();
+        expect(jobModeLabel(null)).toBeNull();
     });
 });

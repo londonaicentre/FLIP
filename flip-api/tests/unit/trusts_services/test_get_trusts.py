@@ -32,6 +32,7 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Trust
 from flip_api.domain.schemas.private import ServiceHealthEntry, ServiceHealthStatus
+from flip_api.domain.schemas.status import JobStatus
 from flip_api.main import app
 from flip_api.trusts_services.get_trusts import _as_utc_iso, get_trusts
 
@@ -65,16 +66,18 @@ class TestAsUtcIso:
         assert out == "2026-05-27T12:34:56.789Z"
 
 
-def _db_with_trusts_and_counts(trusts, count_rows):
-    """Return a session mock whose two `.exec(...).all()` calls drive the
-    endpoint's two queries (trust list, then per-trust project counts).
+def _db_with_trusts_and_counts(trusts, count_rows, job_rows=()):
+    """Return a session mock whose three `.exec(...).all()` calls drive the
+    endpoint's three queries (trust list, per-trust project counts, per-trust job counts).
     """
     db = MagicMock()
     trust_exec = MagicMock()
     trust_exec.all.return_value = trusts
     count_exec = MagicMock()
     count_exec.all.return_value = count_rows
-    db.exec.side_effect = [trust_exec, count_exec]
+    job_exec = MagicMock()
+    job_exec.all.return_value = list(job_rows)
+    db.exec.side_effect = [trust_exec, count_exec, job_exec]
     return db
 
 
@@ -97,6 +100,22 @@ def test_get_trusts_returns_serialised_trusts_with_project_counts():
     assert by_id[trust_a.id].last_heartbeat is None
     # Trust B was absent from the count rows → defaults to 0.
     assert by_id[trust_b.id].project_count == 0
+
+
+def test_get_trusts_counts_each_trusts_queued_and_in_progress_jobs():
+    """The Jobs column (FLIP#1739): counts only, so every signed-in user may read them."""
+    busy = _make_trust("Busy", "BSY", "London")
+    idle = _make_trust("Idle", "IDL", "London")
+    db = _db_with_trusts_and_counts(
+        trusts=[busy, idle],
+        count_rows=[],
+        job_rows=[(busy.id, JobStatus.QUEUED, 2), (busy.id, JobStatus.IN_PROGRESS, 1)],
+    )
+
+    by_id = {r.id: r for r in get_trusts(db=db, user_id=uuid.uuid4())}
+
+    assert (by_id[busy.id].jobs_queued, by_id[busy.id].jobs_in_progress) == (2, 1)
+    assert (by_id[idle.id].jobs_queued, by_id[idle.id].jobs_in_progress) == (0, 0)
 
 
 def test_get_trusts_tags_heartbeat_as_utc():
@@ -249,6 +268,8 @@ def test_endpoint_is_accessible_to_authenticated_non_admin():
     assert body[0]["code"] == "RV"
     assert body[0]["region"] == "London"
     assert body[0]["project_count"] == 2
+    assert body[0]["jobs_queued"] == 0
+    assert body[0]["jobs_in_progress"] == 0
 
 
 def test_endpoint_returns_generic_500_detail_on_database_error():

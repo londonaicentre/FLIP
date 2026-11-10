@@ -227,6 +227,15 @@
                                     <span class="font-mono text-[11px] text-gray-600 dark:text-gray-300">
                                         {{ t.project_count }} {{ t.project_count === 1 ? "project" : "projects" }}
                                     </span>
+                                    <template v-if="jobCount(t)">
+                                        <span class="text-gray-300 dark:text-gray-600">·</span>
+                                        <span
+                                            data-test="trust-jobs-mobile"
+                                            class="font-mono text-[11px] text-gray-600 dark:text-gray-300"
+                                        >
+                                            {{ jobCount(t) }} {{ jobCount(t) === 1 ? "job" : "jobs" }}
+                                        </span>
+                                    </template>
                                     <span class="flex-1" />
                                     <span
                                         data-test="trust-services-mobile"
@@ -352,6 +361,13 @@
                                         </div>
                                     </td>
                                     <td
+                                        class="px-4 py-4 align-middle font-mono text-xs text-gray-600 dark:text-gray-300 whitespace-nowrap"
+                                        data-test="trust-jobs"
+                                    >
+                                        <span v-for="line in jobLines(t)" :key="line" class="block">{{ line }}</span>
+                                        <span v-if="!jobCount(t)">—</span>
+                                    </td>
+                                    <td
                                         class="px-4 py-4 align-middle font-mono text-sm"
                                         :class="t._state === 'offline' ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-300'"
                                         data-test="trust-heartbeat"
@@ -369,7 +385,7 @@
                                     </td>
                                 </tr>
                                 <tr v-if="!displayedTrusts.length">
-                                    <td colspan="7" class="text-center py-6 text-gray-500 dark:text-gray-300">
+                                    <td colspan="8" class="text-center py-6 text-gray-500 dark:text-gray-300">
                                         {{ activeTile ? "No trusts match this filter." : "No trusts registered yet." }}
                                     </td>
                                 </tr>
@@ -660,7 +676,7 @@
 
             <!-- FL nets status — relocated from the standalone Connection Status (FL nets) page -->
             <div class="mt-6">
-                <FLNetsCard />
+                <FLNetsCard :trusts="trusts" />
             </div>
         </div>
     </div>
@@ -704,6 +720,7 @@ import { deriveTrust,
     deriveTrustState,
     heartbeatText,
     IDerivedTrust,
+    jobLines,
     PILL_CLASSES,
     STATE_LABELS,
     TrustState } from "@/utils/connection-health";
@@ -795,7 +812,7 @@ interface IColumn {
 
 // Header config drives both the rendered <th>s and the per-column sort handler.
 // Keys correspond to entries in `SORT_COMPARATORS`; columns without a key
-// (Services dots, drawer chevron) render as inert headers.
+// (Services dots, Jobs, drawer chevron) render as inert headers.
 const columns: IColumn[] = [
     {
         key: "severity",
@@ -822,6 +839,10 @@ const columns: IColumn[] = [
         width: "w-36"
     },
     {
+        label: "Jobs",
+        width: "w-32"
+    },
+    {
         key: "heartbeat",
         label: "Heartbeat",
         width: "w-28"
@@ -842,6 +863,8 @@ const columns: IColumn[] = [
 // admins can re-sort via the column headers when triaging.
 const sortKey = ref<SortKey>("severity");
 const sortDir = ref<SortDir>("asc");
+
+const jobCount = (t: ITrustResponse): number => (t.jobs_in_progress ?? 0) + (t.jobs_queued ?? 0);
 
 // Heartbeat age in seconds; null heartbeat = oldest (Infinity).
 const heartbeatAge = (t: ITrustResponse): number =>

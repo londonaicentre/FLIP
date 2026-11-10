@@ -160,9 +160,11 @@ PACS/DICOM link. Its state follows from those reports:
    * - Online
      - Everything else.
 
-The list can also be shown as a radial topology. The **Services** column has one status dot per container. Click a
+The list can also be shown as a radial topology. The **Services** column has one status dot per container. The **Jobs**
+column counts the training jobs each Trust is taking part in: those in progress and those queued behind them. Click a
 Trust's row to open a drawer listing each container's status, running version and probe response time, which tells you
-*why* a Trust is degraded without access to its network.
+*why* a Trust is degraded without access to its network. Under the containers the drawer gives the version of the
+Trust's FL client.
 
 .. figure:: ../assets/flip/connection-status-drawer.png
    :width: 600
@@ -177,7 +179,8 @@ Trust's row to open a drawer listing each container's status, running version an
    - The PACS/DICOM link is checked every five minutes, so a PACS outage can take that long to appear.
 
 The **FL nets** card shows, for each net, whether each Trust's FL client is connected to the server. Training requests
-cannot reach a Trust whose FL client is offline.
+cannot reach a Trust whose FL client is offline. Beside each Trust the card says how that Trust runs a job: inside the
+FL client's own container, or in a pod of its own for each job.
 
 .. figure:: ../assets/generated/gifs/flip/fl-status.gif
    :width: 600

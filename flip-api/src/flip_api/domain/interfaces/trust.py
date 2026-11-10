@@ -43,6 +43,10 @@ class ITrustStatus(BaseModel):
     # we just need to tag it on the wire.
     last_heartbeat: str | None = None
     project_count: int = 0
+    # FL jobs this trust takes part in that are waiting or running (FLIP#1739). Counts only: this
+    # list is readable by every signed-in user, so it names no job or project.
+    jobs_queued: int = 0
+    jobs_in_progress: int = 0
     # Latest per-service health snapshot from the trust's health collector (issue
     # #901). None for trusts on pre-collector trust-api builds. The entries reuse
     # the same ServiceHealthEntry model the heartbeat validated them with on the

@@ -84,6 +84,24 @@ describe("TrustDetailCard", () => {
         expect(wrapper.find("[data-test='drawer-banner']").exists()).toBe(false);
     });
 
+    it("shows the FL client's version and job mode under the containers, without a status of its own", () => {
+        // FLIP#1739: trust-api cannot probe the FL client, so it gets a version line, not a seventh container row.
+        const reported = trust();
+        reported.services!["fl-client"] = {
+            status: "unknown",
+            version: "v0.15.0",
+            response_ms: null,
+            job_mode: "pods"
+        };
+        const wrapper = mount(TrustDetailCard, { props: { trust: deriveTrust(reported) } });
+
+        expect(wrapper.find("[data-test='fl-client-version']").text()).toBe("v0.15.0 · a pod per job");
+        expect(wrapper.findAll("[data-test='container-row']")).toHaveLength(6);
+
+        const silent = mount(TrustDetailCard, { props: { trust: deriveTrust(trust()) } });
+        expect(silent.find("[data-test='fl-client-version']").text()).toBe("—");
+    });
+
     it("shows the issue banner when a service is down", () => {
         const wrapper = mount(TrustDetailCard, { props: { trust: deriveTrust(trust("down")) } });
 
