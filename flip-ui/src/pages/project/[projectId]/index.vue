@@ -288,7 +288,7 @@ const unstageProjectPermissions: UserPermissions[] = ["CanUnstageProjects"];
 const { isViewer, canCreateProjects, readsOnlyAsTrustAdmin } = usePermissions();
 
 // Creation-time flag (FLIP#1071). Absent on a hub predating it, which means imaging.
-const hasImaging = computed(() => projectHasImaging(project.value));
+const hasImaging = computed(() => projectHasImaging(project?.value));
 
 const projectApproved = computed(() => {
     return project?.value?.status === "APPROVED";

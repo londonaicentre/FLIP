@@ -242,8 +242,6 @@ expect_mentions "optional key(s) absent" "optional absences are grouped separate
 expect_mentions "JOB_RESOURCE_SPEC_NUM_GPUS" "an optional absent key is named there"
 expect_silent_about "- JOB_RESOURCE_SPEC_NUM_GPUS" "and not in the required list"
 expect_mentions "skip ENFORCE_MFA" "ENFORCE_MFA is skipped, not reported"
-# ...and the demo bucket is optional on stag, where no public Ark+ demo is hosted.
-expect_silent_about "- DEMO_ASSETS_BUCKET_NAME" "an absent demo bucket is not required on stag"
 
 # 3. The header's promise: key names only. Values arrive on stdin, so neither the
 #    env file's values nor the ARNs read from IAM may reach the output.
@@ -264,17 +262,13 @@ else
     no "TF_HUB is not listed as an absent key" "${STDOUT}"
 fi
 
-# 5. Prod-only asymmetry: an empty demo bucket on prod is a gap, not an omission
-#    (cloudfront.tf gates four objects on it being non-empty). The env file is the
-#    same one case 1 used, where the same key was optional — the difference is the
-#    hub alone.
-run_case "prod treats an absent demo bucket as required" \
+# 5. Prod is held to main.
+run_case "prod states its branch policy" \
     STUB_SUB="repo:acme/flip:environment:aws-prod" \
     STUB_APPLY_REF="acme/flip/.github/workflows/terraform_apply.yml@refs/heads/main" -- \
     --hub prod --env-file "${ENV_FILE}" --repo acme/flip --dry-run
 expect_rc 0 "dry run succeeds"
-expect_mentions "- DEMO_ASSETS_BUCKET_NAME" "the demo bucket is required on prod"
-expect_mentions "branch policy: main only" "and prod's branch policy is stated"
+expect_mentions "branch policy: main only" "prod's branch policy is main only"
 
 # 6. Every estate requires the LZA keys, appended to the same array — the
 #    classification has to survive the append, not just the base list.

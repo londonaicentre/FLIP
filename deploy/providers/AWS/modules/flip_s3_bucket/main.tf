@@ -144,33 +144,50 @@ resource "aws_s3_bucket_logging" "this" {
   target_prefix = "${var.bucket_name}/"
 }
 
-# Noncurrent-version expiry — only created when the caller opts in with a
+# Every bucket aborts incomplete multipart uploads after 7 days (Security Hub
+# S3.13, FLIP#1796).
+#
+# Noncurrent-version expiry — only added when the caller opts in with a
 # positive day count. Versioning is unconditional above, so without this every
 # deleted or overwritten object keeps its previous version (and its storage
 # cost) indefinitely. The retention window doubles as the forensic window for
 # quarantined uploads: the scan pipeline deletes a rejected file, and its
 # noncurrent version remains recoverable for this many days.
 resource "aws_s3_bucket_lifecycle_configuration" "this" {
-  count = var.noncurrent_version_expiration_days > 0 ? 1 : 0
-
   bucket = aws_s3_bucket.this.id
 
   rule {
-    id     = "expire-noncurrent-versions"
+    id     = "abort-incomplete-multipart-uploads"
     status = "Enabled"
 
     filter {}
-
-    noncurrent_version_expiration {
-      noncurrent_days = var.noncurrent_version_expiration_days
-    }
 
     abort_incomplete_multipart_upload {
       days_after_initiation = 7
     }
   }
 
+  dynamic "rule" {
+    for_each = var.noncurrent_version_expiration_days > 0 ? [var.noncurrent_version_expiration_days] : []
+
+    content {
+      id     = "expire-noncurrent-versions"
+      status = "Enabled"
+
+      filter {}
+
+      noncurrent_version_expiration {
+        noncurrent_days = rule.value
+      }
+    }
+  }
+
   depends_on = [aws_s3_bucket_versioning.this]
+}
+
+moved {
+  from = aws_s3_bucket_lifecycle_configuration.this[0]
+  to   = aws_s3_bucket_lifecycle_configuration.this
 }
 
 # CORS is only created when cors_methods is non-empty. Server-only buckets

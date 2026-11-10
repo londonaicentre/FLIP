@@ -51,7 +51,7 @@ variable "lza_web_edge_domain" {
 }
 
 variable "lza_web_edge_distribution_arn" {
-  description = "ARN of the networking account's edge CloudFront distribution, granted s3:GetObject on the flip-ui (and demo-assets) buckets via cross-account OAC."
+  description = "ARN of the networking account's edge CloudFront distribution, granted s3:GetObject on the flip-ui bucket via cross-account OAC."
   type        = string
   default     = ""
 }
@@ -304,23 +304,6 @@ variable "FLIP_UI_BUCKET_NAME" {
   type        = string
 }
 
-variable "DEMO_ASSETS_BUCKET_NAME" {
-  description = <<-EOT
-    S3 bucket holding the public Ark+ demo download bundles (results + model
-    files zips), served through CloudFront at /ark_demo/assets/* via OAC.
-    Created and owned by module.flip_demo_assets_bucket (services.tf), with the
-    cross-account OAC grant to the networking account's edge distribution in its
-    policy. Serving it needs a /ark_demo/assets/* behaviour on that edge
-    distribution, which lives in aicentre-lza-iac, not here.
-    Leave empty (the default) to disable all demo-assets resources — e.g. on
-    stag, which hosts no public demo. Clearing it on an estate that already
-    has the bucket proposes a destroy, which prevent_destroy turns into an
-    apply failure rather than silent data loss.
-  EOT
-  type        = string
-  default     = ""
-}
-
 variable "flip_user_pool_name" {
   description = "Cognito User Pool name for FLIP"
   type        = string
@@ -359,7 +342,7 @@ variable "FL_SERVER_PORT" {
 }
 
 variable "manage_dns" {
-  description = "Whether this account hosts the Route53 zone for flip_alb_subdomain. false (the LZA estates until the zone moves in the platform DNS migration — FLIP#749) skips the zone lookup, every Route53 record and the DNS-validated ACM cert, so the internal NLB's web listener serves plain TCP until a cert can be ISSUED, then TLS."
+  description = "Whether this account hosts the Route53 zone for flip_alb_subdomain. false (the LZA estates, whose zones stay in the networking account — FLIP#749) skips the zone lookup, every Route53 record and the DNS-validated ACM cert."
   type        = bool
   default     = true
 }
@@ -412,7 +395,7 @@ variable "ENFORCE_MFA" {
 }
 
 variable "ecs_exec_enabled" {
-  description = "Enable ECS Exec (execute-command) on Fargate tasks. Default false; set to true for debugging sessions via 'aws ecs execute-command'."
+  description = "Enable ECS Exec (execute-command) on the Fargate services, for debugging sessions via 'aws ecs execute-command'. Default false. ECS Exec needs a writable root filesystem, so this also lifts the services' read-only one and Security Hub ECS.5 fails while it is on (FLIP#1795)."
   type        = bool
   default     = false
 }

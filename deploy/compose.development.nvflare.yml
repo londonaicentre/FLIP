@@ -37,7 +37,7 @@ services:
       # Default 0 => empty resource_spec => FLARE hides the GPU from the training worker (CPU).
       - JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS:-0}
     ports:
-      - "${FL_API_PORT}:8000"
+      - "${HUB_BIND_ADDRESS:-127.0.0.1}:${FL_API_PORT}:8000"
       # Loopback-only — an exposed debugpy port is arbitrary code execution for anyone
       # who can reach it; see compose.development.yml's flip-api ports (FLIP#959).
       - "127.0.0.1:${FL_API_DEBUG_PORT:-5679}:5679"

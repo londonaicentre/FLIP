@@ -48,7 +48,7 @@ services:
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
       - FLOWER_SRC_ROOT=/app/src
     ports:
-      - "${FL_API_PORT}:8000"
+      - "${HUB_BIND_ADDRESS:-127.0.0.1}:${FL_API_PORT}:8000"
     depends_on:
       - fl-server-net-1
     security_opt:

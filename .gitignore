@@ -42,8 +42,10 @@ MANIFEST
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
-# ...but the XNAT artifact roster (trust/xnat/README.md "Plugins") is source.
+# ...but the XNAT artifact roster (trust/xnat/README.md "Plugins") and the mirrored-image
+# roster (FLIP#1721) are source.
 !trust/xnat/artifacts.manifest
+!trust/deploy/mirror-images.manifest
 *.spec
 
 # Installer logs

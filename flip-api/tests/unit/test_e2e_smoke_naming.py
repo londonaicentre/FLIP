@@ -33,27 +33,39 @@ from tests.e2e_smoke import (
 @pytest.mark.parametrize(
     ("path", "label"),
     [
-        ("../fl-tutorials/flower/tabular_classification/ehr_risk_prediction/app", "EHR risk prediction"),
-        ("../fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files", "EHR risk prediction"),
-        ("../fl-tutorials/nvflare/image_classification/xray_classification/app_files", "Chest X-ray classification"),
+        (
+            "../fl-tutorials/flower/tabular_classification/ehr_risk_prediction/app",
+            "Type 2 diabetes risk from health records",
+        ),
+        (
+            "../fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files",
+            "Type 2 diabetes risk from health records",
+        ),
+        (
+            "../fl-tutorials/nvflare/image_classification/xray_classification/app_files",
+            "Chest X-ray lesion classification",
+        ),
         (
             "../fl-tutorials/nvflare/image_generation/brain_mri_ldm_stage2_diffusion/app_files",
-            "Brain MRI latent diffusion, stage 2 (diffusion)",
+            "Brain MRI generation, step 2: latent diffusion",
         ),
-        ("../fl-tutorials/nvflare/image_generation/xray_diffusion/app_files", "Chest X-ray diffusion"),
+        ("../fl-tutorials/nvflare/image_generation/xray_diffusion/app_files", "Generating chest X-rays with diffusion"),
         (
             "../fl-tutorials/flower/image_evaluation/3d_spleen_segmentation_evaluation/app",
-            "3D spleen segmentation evaluation",
+            "Evaluating a spleen segmentation model",
         ),
         # An unknown app: sentence-cased, de-hyphenated directory name.
         ("/srv/my_custom-app/app", "My custom app"),
         # An unknown app whose directory name carries an acronym: it survives unchanged.
         ("/srv/MRI_segmentation/app", "MRI segmentation"),
         # The tutorial directory itself, without its app/ leaf.
-        ("../fl-tutorials/flower/tabular_classification/ehr_risk_prediction", "EHR risk prediction"),
+        (
+            "../fl-tutorials/flower/tabular_classification/ehr_risk_prediction",
+            "Type 2 diabetes risk from health records",
+        ),
         (
             "../fl-tutorials/flower/image_evaluation/3d_spleen_segmentation_evaluation",
-            "3D spleen segmentation evaluation",
+            "Evaluating a spleen segmentation model",
         ),
     ],
 )
@@ -62,8 +74,8 @@ def test_describe_tutorial_reads_the_tutorial_off_the_app_path(path, label):
 
 
 def test_defaults_name_the_tutorial_not_xrays():
-    assert default_project_name("3D spleen segmentation").startswith("3D spleen segmentation E2E smoke ")
-    assert default_model_name("3D spleen segmentation") == "3D spleen segmentation E2E smoke model"
+    assert default_project_name("Spleen segmentation on CT").startswith("Spleen segmentation on CT E2E smoke ")
+    assert default_model_name("Spleen segmentation on CT") == "Spleen segmentation on CT E2E smoke model"
 
 
 def test_task_states_the_clinical_task_not_the_harness():

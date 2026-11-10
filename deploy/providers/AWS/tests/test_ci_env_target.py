@@ -129,7 +129,7 @@ def test_a_class_mismatch_is_refused(hub: str, expected: str) -> None:
     """``TF_HUB`` alone chooses the estate, so the caller's class is asserted.
 
     TF_HUB=stag on aws-prod composes a prod-sized plan whose RDS is refreshed as
-    ``deletion_protection = false``, ``skip_final_snapshot = true`` — and the apply
+    ``skip_final_snapshot = true`` — and the apply
     job then applies it unattended. The compose step is the last place that can stop
     it cheaply.
     """

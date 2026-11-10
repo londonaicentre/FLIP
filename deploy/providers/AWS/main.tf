@@ -139,11 +139,26 @@ module "flip_db" {
   vpc_security_group_ids           = [module.rds_security_group.security_group.id]
   backup_retention_period          = 7
   skip_final_snapshot              = var.environment != "prod"
-  deletion_protection              = var.environment == "prod"
+  deletion_protection              = true
   final_snapshot_identifier_prefix = "flip-database-final"
   # Explicit, not the module default (FLIP#1576); kms_key_id would force replacement, see the test.
   storage_encrypted = true
   family            = "postgres${split(".", var.postgres_version)[0]}"
+
+  # Security Hub FSBP controls (FLIP#1796): RDS.17, RDS.10, RDS.9/RDS.36, RDS.6.
+  copy_tags_to_snapshot = true
+  # IAM tokens to the instance itself; the proxy still logs in with the master secret (rds_proxy.tf).
+  iam_database_authentication_enabled    = true
+  enabled_cloudwatch_logs_exports        = ["postgresql", "upgrade"]
+  create_cloudwatch_log_group            = true
+  cloudwatch_log_group_retention_in_days = local.log_retention_days
+  monitoring_interval                    = 60
+  create_monitoring_role                 = true
+  monitoring_role_name                   = "flip-rds-monitoring-role"
+  monitoring_role_permissions_boundary   = local.iam_permissions_boundary_arn
+  # Modifications land at apply, not the weekly window: IAM auth would otherwise wait for a window in
+  # which staging's instance is usually stopped. Also applies to future class or engine changes.
+  apply_immediately = true
 }
 
 ############################
