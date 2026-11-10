@@ -516,10 +516,62 @@ def test_a_site_that_failed_round_two_makes_the_average_refused_not_rounded(ff, 
         / (n_a + n_b)
         for key in ff.STATE_KEYS
     }
-    with pytest.raises(ValueError, match="not whole endpoint marks") as refused:
+    with pytest.raises(ValueError, match="a site failed a round") as refused:
         ff.evaluate_state(ff.decode(mixed), config)
     assert_no_digits(str(refused.value))
     ff.evaluate_state(ff.decode(ff.encode(good)), config)  # a whole PAG passes
+
+
+def test_a_failed_site_is_caught_when_the_average_lands_on_whole_marks(ff, config, two_sites, monkeypatch):
+    """Two equal sites, every mark a circle: the failed site halves each 2 to a 1, a whole arrowhead.
+
+    Without the diagonal mark ``a o-o b`` came out as ``a <-> b`` and was accepted (review, 10 Nov).
+    """
+    (name_a, rows_a), (name_b, rows_b) = two_sites.items()
+    assert len(rows_a) == len(rows_b)
+    pooled = ff.encode(_pooled_state(ff, config, two_sites))
+    good, n_a, _ = ff.client_round(ff.decode(pooled), 1, 2, rows_a, name_a, config)
+    good["pag"][:] = 0.0
+    good["pag"][:, 0, 1] = good["pag"][:, 1, 0] = ff.MARK_CIRCLE
+    monkeypatch.setattr(ff, "fci_from_correlation", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    with pytest.raises(ff.RoundFailed) as err:
+        ff.client_round(ff.decode(pooled), 1, 2, rows_b, name_b, config)
+    failed, n_b = err.value.target, err.value.weight
+    mixed = ff.decode(
+        {key: (n_a * ff.encode(good)[key] + n_b * ff.encode(failed)[key]) / (n_a + n_b) for key in ff.STATE_KEYS}
+    )
+    off_diagonal = ~np.eye(len(VARIABLES), dtype=bool)
+    marks = mixed["pag"][:, off_diagonal]
+    assert np.allclose(marks, np.rint(marks), atol=ff.PAG_INTEGRALITY_TOLERANCE)  # whole marks, the old blind spot
+    with pytest.raises(ValueError, match="a site failed a round"):
+        ff.evaluate_state(mixed, config)
+
+
+def test_a_three_round_job_whose_round_two_failed_everywhere_says_a_site_failed(
+    ff, config, two_sites, summarise, tmp_path, capsys, monkeypatch
+):
+    """No PAG and no statistics is the safe outcome; the summariser has to name the failure, not a short run."""
+    monkeypatch.setattr(ff, "fci_from_correlation", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    encoded = ff.encode(ff.empty_state(config))
+    for round_index in range(3):
+        targets, weights = [], []
+        for site_name, matrix in two_sites.items():
+            try:
+                target, weight, _ = ff.client_round(ff.decode(encoded), round_index, 3, matrix, site_name, config)
+            except ff.RoundFailed as failed:
+                target, weight = failed.target, failed.weight
+            targets.append(ff.encode(target))
+            weights.append(float(weight))
+        encoded = {
+            key: (
+                sum(w * t[key].astype(np.float64) for w, t in zip(weights, targets, strict=True)) / sum(weights)
+            ).astype(np.float32)
+            for key in ff.STATE_KEYS
+        }
+    assert ff.statistics_residual(ff.decode(encoded)) == 0.0
+    with pytest.raises(SystemExit, match="a site failed a round") as refused:
+        _summarise_model(summarise, tmp_path, config, encoded, capsys)
+    assert "orientation round" not in str(refused.value)
 
 
 def test_a_failure_after_the_release_still_sends_the_zeroing_payload(ff, config, two_sites, monkeypatch):
@@ -534,7 +586,9 @@ def test_a_failure_after_the_release_still_sends_the_zeroing_payload(ff, config,
     assert isinstance(failed.cause, RuntimeError)
     assert not np.any(failed.target["stats_mean"])
     assert not np.any(failed.target["stats_moment"])
-    assert not np.any(failed.target["pag"])
+    diagonal = np.eye(len(VARIABLES), dtype=bool)
+    assert not np.any(failed.target["pag"][:, ~diagonal])
+    assert np.all(failed.target["pag"][:, diagonal] == ff.FAILED_ROUND_MARK)
     assert failed.metrics["round_failed"] == 1.0
     assert failed.weight == len(next(iter(two_sites.values())))
 
@@ -906,7 +960,8 @@ def test_a_round_two_failure_sends_the_zeroing_payload_then_ends_the_client_in_e
     assert trains[1]["metrics"]["round_failed"] == 1.0
     final = ff.decode(fake.state)
     assert ff.statistics_residual(final) < ff.STATISTICS_RESIDUAL_TOLERANCE  # the statistics left the global state
-    assert not np.any(ff.as_pags(final["pag"]))
+    with pytest.raises(ValueError, match="a site failed a round"):  # and the model says why it has no graph
+        ff.integral_pags(final["pag"])
 
 
 # --- the downloaded model: statistics and PAG checks -------------------------------------------

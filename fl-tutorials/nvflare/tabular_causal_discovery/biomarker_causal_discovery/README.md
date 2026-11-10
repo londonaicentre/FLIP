@@ -215,7 +215,9 @@ each site's DIFF in float32, to within a few ulps of the round-1 values (about 1
 `STATISTICS_RESIDUAL_TOLERANCE`) — so only `pag` and `site_counts` carry anything. `summarise_results.py`
 says when a model holds the statistics (a job stopped or failed after round 1, see Privacy), and
 refuses PAGs whose average is not whole endpoint marks: every site computes the same PAGs, so a
-mixture means the sites disagree or one failed its orientation round.
+mixture means the sites disagree or one failed its orientation round. A failed site's payload also
+marks the PAGs' diagonal, which no real PAG has, so a mixture that happens to average to whole marks
+(two equal sites, a circle and nothing) and a job in which every site failed are refused too.
 Per-round metrics streamed to the hub are `site_rows`, `pooled_rows`, `sites_seen`, `stable_edges`,
 `mean_edges_per_pag`, `stable_adjacencies` (and `mean_edges_kept` per voting layer); the final
 evaluation reports the same for the aggregated PAGs. There is no best-model selection — "best" has

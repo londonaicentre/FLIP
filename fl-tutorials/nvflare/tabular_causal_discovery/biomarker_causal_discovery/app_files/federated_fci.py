@@ -205,7 +205,8 @@ class RoundFailed(RuntimeError):
     Round 2 of pooled mode consumes the pooled statistics and zeroes them. A failure in that round
     must not leave them in the global state — the model the server persists, uploads and the
     researcher downloads — so :func:`client_round` raises this instead of the cause: the transport
-    sends ``target`` (statistics zeroed, graphs empty) with ``weight`` and ``metrics``, and raises
+    sends ``target`` (statistics zeroed, graphs empty but for :data:`FAILED_ROUND_MARK` on the
+    diagonal) with ``weight`` and ``metrics``, and raises
     ``cause`` on its next task so the job still ends in error.
     """
 
@@ -319,6 +320,11 @@ def statistics_residual(state: dict[str, np.ndarray]) -> float:
 
 #: How far an averaged endpoint mark may sit from an integer and still be a float32 round trip.
 PAG_INTEGRALITY_TOLERANCE = 1e-3
+#: What a site that fails a round after the release writes on its PAGs' diagonal. A PAG has no
+#: self-edges, so every real PAG's diagonal is exactly zero and no average of real PAGs moves it;
+#: this value at any positive weight does, whatever the other sites' marks and sizes. An all-zero
+#: payload was not enough: two equal sites averaging a circle with nothing give a whole arrowhead.
+FAILED_ROUND_MARK = 1.0
 
 
 def integral_pags(pag_array: np.ndarray) -> np.ndarray:
@@ -328,9 +334,16 @@ def integral_pags(pag_array: np.ndarray) -> np.ndarray:
     skeleton), so their weighted mean is that PAG again. A mark between integers means the
     sites' PAGs differed: one site failed its orientation round and sent the empty PAG of its
     zeroing payload, or the sites computed different graphs. Rounding would turn the mixture into
-    a wrong mark (a circle averaged with nothing reads as an arrowhead) without any error.
+    a wrong mark (a circle averaged with nothing reads as an arrowhead) without any error. A failed
+    site's payload also marks the diagonal (:data:`FAILED_ROUND_MARK`), which catches the mixtures
+    that do land on whole marks, and a job in which every site failed.
     """
     pags = np.asarray(pag_array, dtype=np.float64)
+    if pags.size and np.any(np.diagonal(pags, axis1=-2, axis2=-1) != 0):
+        raise ValueError(
+            "a site failed a round after the statistics were released (its payload marks the PAG diagonal) "
+            "— the graph is not usable"
+        )
     if pags.size and float(np.max(np.abs(pags - np.rint(pags)))) > PAG_INTEGRALITY_TOLERANCE:
         raise ValueError(
             "the averaged PAGs are not whole endpoint marks: the sites disagree, or a site failed its "
@@ -1016,6 +1029,8 @@ def client_round(
         except Exception as cause:
             logger.error("site %s: round %d failed after the release: %s", site_name, round_index + 1, cause)
             target["pag"][:] = 0.0
+            diagonal = np.arange(len(variables))
+            target["pag"][:, diagonal, diagonal] = FAILED_ROUND_MARK
             raise RoundFailed(target, n, {**metrics, "round_failed": 1.0}, cause) from cause
         return target, n, metrics
 
