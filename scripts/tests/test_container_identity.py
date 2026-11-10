@@ -450,12 +450,12 @@ def check_host_gid_is_required(failures: list[str]) -> None:
             for number, line in enumerate(path.read_text().splitlines(), 1):
                 if line.lstrip().startswith("#"):
                     continue
-                for expression in re.findall(r"\$\{DOCKER_GID\b[^}]*\}", line):
-                    if not expression.startswith("${DOCKER_GID:?"):
-                        failures.append(
-                            f"{path.relative_to(REPO_ROOT)}:{number}: {expression} must require a non-empty "
-                            "DOCKER_GID with ${DOCKER_GID:?...}; the Makefile exports the host gid (FLIP#1404)."
-                        )
+                # Any DOCKER_GID left once the required form is removed is a default, a bare or an unbraced use.
+                if "DOCKER_GID" in re.sub(r"\$\{DOCKER_GID:\?[^}]*\}", "", line):
+                    failures.append(
+                        f"{path.relative_to(REPO_ROOT)}:{number}: `{line.strip()}` must require a non-empty "
+                        "DOCKER_GID with ${DOCKER_GID:?...}; the Makefile exports the host gid (FLIP#1404)."
+                    )
 
 
 def main() -> int:
