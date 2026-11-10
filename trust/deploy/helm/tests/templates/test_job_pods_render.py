@@ -118,7 +118,10 @@ def test_job_pods_reach_the_parent_through_a_service_that_selects_only_the_paren
 
 
 def test_the_client_switches_its_kit_before_nvflare_starts():
-    docs = _enabled("--set", f"{JOB_PODS}.maxGpus=2", "--set", f"{JOB_PODS}.pendingTimeout=1200")
+    docs = _enabled(
+        "--set", f"{JOB_PODS}.maxGpus=2", "--set", f"{JOB_PODS}.pendingTimeout=1200",
+        "--set", f"{JOB_PODS}.ephemeralStorage=40Gi",
+    )  # fmt: skip
     container = _client_container(docs)
 
     script = container["command"][-1]
@@ -133,6 +136,7 @@ def test_the_client_switches_its_kit_before_nvflare_starts():
     assert env["FL_K8S_JOB_IMAGE"]["value"] == container["image"], "jobs run the image the client runs"
     assert env["FL_K8S_MAX_GPUS"]["value"] == "2"
     assert env["FL_K8S_PENDING_TIMEOUT"]["value"] == "1200"
+    assert env["FL_K8S_EPHEMERAL_STORAGE"]["value"] == "40Gi"
     assert env["FL_K8S_POD_TEMPLATE"]["value"] == "/app/k8s/job-pod.yaml"
     mount = next(m for m in container["volumeMounts"] if m["mountPath"] == "/app/k8s")
     volume = next(v for v in _client(docs)["spec"]["template"]["spec"]["volumes"] if v["name"] == mount["name"])

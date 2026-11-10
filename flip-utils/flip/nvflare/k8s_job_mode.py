@@ -28,11 +28,12 @@ Three files in ``local/`` change:
   scheduling reporter tells the hub. The kit's GPU resource consumer becomes NVFLARE's passthrough one:
   NVFLARE will not start a job without a consumer once GPUs are allocated, and the GPU consumer would
   probe the parent's (absent) GPUs and set ``CUDA_VISIBLE_DEVICES`` in the parent's own process. The job
-  pod gets its GPU from its ``nvidia.com/gpu`` request.
+  pod gets its GPU from its ``nvidia.com/gpu`` request. The launcher is also told how much local storage
+  a job pod may use (``FL_K8S_EPHEMERAL_STORAGE``), which is where a job's streamed studies land.
 - ``comm_config.json``: job pods reach the parent through its Service (``FL_K8S_PARENT_SERVICE``).
 - ``study_runtime.yaml``: the default study, which every FLIP job lands in (FLIP jobs carry no study),
   gets the job image and the site's pod template. The template is where the chart puts what a job
-  pod needs from the trust: its labels, the images volume, the trust-internal key and the FL server's
+  pod needs from the trust: its labels, the trust-internal key and the FL server's
   host aliases. It is copied into ``local/pod_specs/``, the path NVFLARE resolves it from.
 
 NVFLARE hands each job pod the parent's workspace path, and the launcher mounts the job's (empty)
@@ -51,6 +52,7 @@ import argparse
 import copy
 import json
 import os
+import re
 import shutil
 import sys
 from collections.abc import Mapping
@@ -75,6 +77,8 @@ _REPLACED_COMPONENT_IDS = {
 }
 DEFAULT_PARENT_PORT = 8102
 DEFAULT_PENDING_TIMEOUT = 900
+# NVFLARE's own default is 1Gi, and a job pod's streamed studies count against it (FLIP#1049).
+DEFAULT_EPHEMERAL_STORAGE = "10Gi"
 DEFAULT_MEMORY_PER_GPU_IN_GIB = 16
 DEFAULT_EXPIRATION_PERIOD = 300
 POD_TEMPLATE = "pod_specs/job-pod.yaml"
@@ -92,6 +96,7 @@ class K8sJobMode:
     max_gpus: int
     mem_per_gpu_gib: float
     pending_timeout: int
+    ephemeral_storage: str
     pod_template: Path | None
 
 
@@ -130,6 +135,13 @@ def _float(env: Mapping[str, str], name: str, default: float) -> float:
     return value
 
 
+def _storage(env: Mapping[str, str], name: str, default: str) -> str:
+    raw = env.get(name, "").strip() or default
+    if not re.fullmatch(r"[1-9][0-9]*(Mi|Gi|Ti)", raw):
+        raise ValueError(f"{name} must be a size such as 10Gi, got {raw!r}")
+    return raw
+
+
 def config_from_env(env: Mapping[str, str]) -> K8sJobMode:
     """Read the switch's settings from the environment the chart gives the fl-client.
 
@@ -145,6 +157,7 @@ def config_from_env(env: Mapping[str, str]) -> K8sJobMode:
         max_gpus=_int(env, "FL_K8S_MAX_GPUS"),
         mem_per_gpu_gib=_float(env, "MEMORY_PER_GPU_IN_GIB", DEFAULT_MEMORY_PER_GPU_IN_GIB),
         pending_timeout=_int(env, "FL_K8S_PENDING_TIMEOUT", DEFAULT_PENDING_TIMEOUT),
+        ephemeral_storage=_storage(env, "FL_K8S_EPHEMERAL_STORAGE", DEFAULT_EPHEMERAL_STORAGE),
         pod_template=Path(template) if template else None,
     )
 
@@ -184,6 +197,7 @@ def patch_resources(resources: Mapping[str, Any], mode: K8sJobMode, workspace: s
                 "config_file_path": None,
                 "namespace": mode.namespace,
                 "pending_timeout": mode.pending_timeout,
+                "ephemeral_storage": mode.ephemeral_storage,
                 "default_python_path": sys.executable,
                 "workspace_mount_path": workspace,
             },

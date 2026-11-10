@@ -513,6 +513,10 @@ flClient:
       # why (FLIP#1423); 0 keeps every job on CPU. Set it to the GPU pool's maximum node count x GPUs
       # per node.
       maxGpus: 1
+      # Local disk each job pod may use, as both its request and its limit. A job's streamed studies land
+      # here (FLIP#1049) and Kubernetes evicts a pod that writes past it, so size it to the largest cohort
+      # a job trains on at this site, and keep that much free on the nodes job pods run on.
+      ephemeralStorage: 10Gi
       # Seconds a job pod may wait for its node while Kubernetes reports "Insufficient" CPU, memory or
       # GPU (an autoscaler adding a node) before NVFLARE fails the job. Size it to a cold scale-up.
       # A pod that can never be scheduled (no matching node at all) fails at once whatever this is.
