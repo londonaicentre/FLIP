@@ -292,7 +292,9 @@ def test_full_kit_over_an_installed_one_replaces_the_keys() -> None:
         before = s.values()
         result = s.install(
             s.kit(
-                "flower", kit__trust_api_key="reissued-api-key", kit__trust_internal_service_key="reissued-internal-key"
+                "flower",
+                kit__trust_api_key="reissued-api-key",  # pragma: allowlist secret
+                kit__trust_internal_service_key="reissued-internal-key",  # pragma: allowlist secret
             ),
             "--delete-file",
         )
@@ -327,7 +329,11 @@ def test_refusals_change_nothing() -> None:
         ),
         "unknown schema": ({"schema": 2}, [], "schema"),
         "unknown hub-shared key": ({"kit__hub_shared": {"ORTHANC_PASSWORD": "x"}}, [], "does not know"),
-        "multi-line value": ({"kit__trust_api_key": "a\nORTHANC_PASSWORD=x"}, [], "not valid"),
+        "multi-line value": (
+            {"kit__trust_api_key": "a\nORTHANC_PASSWORD=x"},  # pragma: allowlist secret
+            [],
+            "not valid",
+        ),
         "make expansion in a value": (
             {"kit__hub_shared": {"CENTRAL_HUB_API_URL": "https://hub.example/$(shell id)"}},
             [],

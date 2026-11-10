@@ -179,7 +179,10 @@ def test_flower_kit_holds_the_ca_cert_and_this_supernodes_key_only(flower_kits, 
 
 
 @mock_aws
-def test_kits_are_read_from_an_s3_prefix(flower_kits, hub):
+def test_kits_are_read_from_an_s3_prefix(flower_kits, hub, monkeypatch):
+    # The env file a test run loads may name a profile or a dev endpoint; moto needs a vanilla client.
+    for variable in ("AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_ENDPOINT_URL", "AWS_ENDPOINT_URL_S3"):
+        monkeypatch.delenv(variable, raising=False)
     s3 = boto3.client("s3", region_name="us-east-1")
     s3.create_bucket(Bucket="kits")
     for path in flower_kits.rglob("*"):
