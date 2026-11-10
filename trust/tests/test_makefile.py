@@ -286,7 +286,9 @@ class Governance(unittest.TestCase):
     def test_up_fl_clients_kit_runs_the_extract_first(self):
         """--no-deps skips dependencies, so the init must be named or the clients start on a stale extract."""
         out = dry_run("up-fl-clients-kit", kit=GOVERNED_KIT)
-        assert "fl-governance-init fl-client-net-1 fl-client-net-2" in out, out
+        # The clients are whichever the compose in use defines (FLIP#1852), listed after the init.
+        assert "fl-governance-init $(" in out, out
+        assert "config --services | grep '^fl-client-net-'" in out, out
 
     def test_a_governance_document_is_refused_over_a_remote_daemon(self):
         """Compose resolves the document on this machine and the trust host would mount a path it
