@@ -47,8 +47,11 @@ run-tutorial:
 # path. Having both on both backends means `sim-tutorial` always means "no containers".
 sim-tutorial: run-tutorial
 
+# An access-controlled tutorial (biomarker_causal_discovery, ADNI) whose data is absent reports
+# "⏭️ tutorial <name> skipped" and exits 0 under TUTORIAL_SKIP_RESTRICTED_IF_ABSENT, so the release
+# loop goes on; run alone (run-tutorial), a missing dataset still fails.
 run-all-tutorials:
-	@for d in $(TUTORIAL_DIRS); do \
+	@export TUTORIAL_SKIP_RESTRICTED_IF_ABSENT=1; for d in $(TUTORIAL_DIRS); do \
 		echo "🚀 Running FLARE tutorial $$(basename $$d)"; \
 		$(MAKE) -C "$$d" run || { echo "❌ tutorial $$(basename $$d) failed"; exit 1; }; \
 	done

@@ -303,6 +303,18 @@ class Gates(unittest.TestCase):
         )
         assert flower["tutorials"][0]["name"] == "xray_classification"
 
+    def test_tutorial_metrics_count_an_access_controlled_skip_as_skipped(self):
+        lines = [
+            (0.0, "🚀 Running Flower tutorial fl-tutorials/flower/tabular_causal_discovery/biomarker_causal_discovery"),
+            (1.0, "⏭️ tutorial biomarker_causal_discovery skipped: access-controlled dataset absent (/x.csv)"),
+            (2.0, "🚀 Running Flower tutorial fl-tutorials/flower/tabular_classification/ehr_risk_prediction"),
+        ]
+        m = gates.tutorial_metrics(lines + [(30.0, "done")])
+        assert (m["total"], m["passed"], m["skipped"]) == (2, 1, 1)
+        skipped = {"name": "biomarker_causal_discovery", "passed": False, "skipped": True, "seconds": 2}
+        assert m["tutorials"][0] == skipped
+        assert m["tutorials"][1]["passed"] is True
+
     def test_tutorial_metrics_count_dp_reports_and_heavy_clipping(self):
         report = "INFO :      FLIP local DP: update pre-clip L2 norm 50.0000 clipped to 1.0000 (scaled by 0.0200) ..."
         warn = "WARNING :   FLIP local DP: clipping scaled this update by 0.0200; raise dp-clipping-norm ..."
@@ -397,6 +409,19 @@ class Gates(unittest.TestCase):
             else:
                 raise AssertionError("the verdict's exception was swallowed")
         assert "🧹 stopped 42" in (tmp / "x.log").read_text()
+
+    def test_a_tutorial_with_dp_off_is_not_expected_to_report(self):
+        # biomarker_causal_discovery registers the mod but sets dp-enabled = false: the mod logs no per-round report.
+        assert "biomarker_causal_discovery" not in gates.dp_tutorials()
+
+    def test_a_skipped_tutorial_owes_no_dp_report(self):
+        runs = {
+            "tutorials": [
+                {"name": "restricted", "passed": False, "skipped": True},
+                {"name": "ehr_risk_prediction", "dp_reports": 4},
+            ]
+        }
+        assert gates.dp_clipping_verdict(runs, {"restricted", "ehr_risk_prediction"}) is None
 
     def test_smoke_metrics(self):
         lines = [
@@ -529,6 +554,15 @@ class Record(unittest.TestCase):
         assert "gpu-box" not in text  # the public notes never name the host
         assert "xray 53 s" in text
         assert "`aaaaaaaaa`" in text
+
+    def test_a_skipped_tutorial_is_named_not_counted_as_passed(self):
+        tutorials = [{"name": "xray", "seconds": 53}, {"name": "biomarker_causal_discovery", "skipped": True}]
+        text = record.render(
+            {"tutorials-flower": result("tutorials-flower", tutorials=tutorials, passed=1, skipped=1, total=2)}
+        )
+        assert "Flower: 1 of 2 tutorials passed" in text
+        assert "skipped (access-controlled data absent): biomarker_causal_discovery" in text
+        assert "all 2 tutorials passed" not in text
 
     def test_failed_or_missing_gates_stay_unticked(self):
         text = record.render({"tutorials-nvflare": result("tutorials-nvflare", "failed")})

@@ -13,7 +13,7 @@
 .PHONY: build up down prepare-artifacts up-trust down-trust create-trust-network selftest-node restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit onboard-onprem-trust \
 	create-networks remove-networks recreate-networks tests \
-	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
+	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr load-adni-cohort \
 	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance prepare-host-dirs \
 	reconvert-nifti
 # HUB selects the compose-file suffix (__DCKR_SUFFIX: every deployed environment
@@ -1020,6 +1020,18 @@ endif
 #   make -C trust load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH
 load-synthea-ehr:
 	$(OMOP_DB_CMD) load-synthea-ehr TRUST_INDEX=$(TRUST_INDEX) OMOP_DB_PORT=$(OMOP_DB_PORT)
+
+# Load a licence holder's converted ADNI biomarker cohort into a running trust omop-db — the populate
+# step for the biomarker causal-discovery tutorial on a LOCAL dev stack (nothing ADNI-derived may be
+# published). ADNI_COHORT defaults to fl-tutorials/data/ad_biomarkers/dataframe.csv, what
+# `make -C fl-tutorials convert-adni-cohort` writes. Run once per trust:
+#   make -C trust load-adni-cohort TRUST_INDEX=1 OMOP_DB_PORT=5434   # GSTT
+#   make -C trust load-adni-cohort TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH
+# A relative ADNI_COHORT is read from trust/ (make -C changes directory first); the loader names
+# the absolute path when it is missing.
+load-adni-cohort:
+	$(OMOP_DB_CMD) load-adni-cohort TRUST_INDEX=$(TRUST_INDEX) OMOP_DB_PORT=$(OMOP_DB_PORT) \
+		$(if $(ADNI_COHORT),ADNI_COHORT="$(abspath $(ADNI_COHORT))")
 
 # Seed a running trust with the listed projects (FLIP#1100) — OMOP rows into its
 # omop-db, keyed by `source_trust`, the same column the per-project DICOM sets
