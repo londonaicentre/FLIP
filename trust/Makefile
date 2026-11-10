@@ -930,6 +930,9 @@ down:
 # the sub-make's `-include ../.env.<KIT>` re-resolves TRUST_VARS / TRUST_PROJECT /
 # TRUST_OVERRIDE for that kit alone, so Trust_1 picks up its host-port override
 # and Trust_2 stays on the network ports from its kit file.
+# The services are read from the compose in use: the production composes define a client for
+# net-1 alone, and naming one that is not there fails the whole command (FLIP#1852).
+FL_CLIENT_SERVICES = $$($(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) config --services | grep '^fl-client-net-')
 up-fl-clients:
 	@echo "🚢 Starting FL clients..."
 	@$(call old_kits_hint,)rc=0; for kit in $(call kit_codes,); do $(MAKE) up-fl-clients-kit KIT=$$kit || rc=1; done; exit $$rc
@@ -939,7 +942,7 @@ up-fl-clients-kit:
 	$(check_slot_not_taken)
 	@echo "$(GPU_STATUS_MSG)"
 	$(ensure_net_dirs)
-	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d --no-deps $(UP_PULL_FLAGS) $(GOVERNANCE_INIT) fl-client-net-1 fl-client-net-2
+	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d --no-deps $(UP_PULL_FLAGS) $(GOVERNANCE_INIT) $(FL_CLIENT_SERVICES)
 
 down-fl-clients:
 	@echo "🛑 Stopping and removing FL clients..."
@@ -948,7 +951,7 @@ down-fl-clients:
 down-fl-clients-kit:
 	$(require_kit)
 	$(check_slot_not_taken)
-	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) rm -fs fl-client-net-1 fl-client-net-2
+	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) rm -fs $(FL_CLIENT_SERVICES)
 
 # The two data bind sources, resolved to what the compose file mounts, as absolute paths:
 # the sub-makes in omop-db/ and orthanc/ run from their own directories, so a relative
