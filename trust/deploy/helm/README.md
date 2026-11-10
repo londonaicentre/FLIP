@@ -697,7 +697,8 @@ Prerequisites and trade-offs:
 - **Finished job pods** are not deleted by NVFLARE: its launcher deletes a job pod only on abort or timeout, and a
   retention policy is listed as future work in its job-launcher design ("Unified cleanup"). Until NVFLARE ships one,
   a `job-pod-pruner` container beside the parent deletes this net's finished job pods once they are
-  `keepFinishedHours` old (default 24), so a day of their logs stays.
+  `keepFinishedHours` old (default 24), so a day of their logs stays. A job pod still Pending after that long goes
+  too: an upgrade restarts the parent, and a pod that was waiting for its node then has nobody left to time it out.
 - **Each job pod reserves `jobPods.requests`** (default 250m CPU, 512Mi). NVFLARE 2.9 replaces the job container's
   resources with the job's own `launcher_spec`, which FLIP refuses, so the request sits on a no-op `reserve` init
   container; Kubernetes reserves the larger of a pod's init containers and containers. It also keeps job pods out of

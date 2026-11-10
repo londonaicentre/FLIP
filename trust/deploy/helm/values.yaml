@@ -523,6 +523,7 @@ flClient:
         cpu: 250m
         memory: 512Mi
       # Finished job pods (and their logs) are kept this long, then deleted; NVFLARE itself never deletes them.
+      # A pod still Pending after this long is deleted too, so keep it well above pendingTimeout.
       keepFinishedHours: 24
       # Placement of job pods only, e.g. a GPU pool's taint (key: sku, value: gpu, effect:
       # NoSchedule). Prefer the nvidia.com/gpu request plus a toleration over a nodeSelector aimed at

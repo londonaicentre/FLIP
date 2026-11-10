@@ -21,7 +21,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from flip.nvflare.prune_job_pods import INTERVAL_SECONDS, finished_at, prune
+from flip.nvflare.prune_job_pods import INTERVAL_SECONDS, REQUEST_TIMEOUT_SECONDS, finished_at, keep_period, prune
 
 NOW = datetime(2026, 11, 2, 12, tzinfo=timezone.utc)
 KEEP = timedelta(hours=24)
@@ -42,7 +42,7 @@ def test_prune_deletes_only_finished_pods_past_the_keep_period():
         _pod("old-failure", "Failed", 50, finished_hours_ago=25),
         _pod("recent-success", "Succeeded", 50, finished_hours_ago=2),
         _pod("long-running", "Running", 50),
-        _pod("pending", "Pending", 50),
+        _pod("just-pending", "Pending", 0.1),
     ]
     api = Mock()
     api.list_namespaced_pod.return_value = NS(items=pods)
@@ -50,11 +50,43 @@ def test_prune_deletes_only_finished_pods_past_the_keep_period():
     removed = prune(api, "flip-trust", "app.kubernetes.io/component=fl-job", KEEP, NOW)
 
     assert removed == ["old-success", "old-failure"]
-    api.list_namespaced_pod.assert_called_once_with("flip-trust", label_selector="app.kubernetes.io/component=fl-job")
+    api.list_namespaced_pod.assert_called_once_with(
+        "flip-trust", label_selector="app.kubernetes.io/component=fl-job", _request_timeout=REQUEST_TIMEOUT_SECONDS
+    )
     assert [c.args for c in api.delete_namespaced_pod.call_args_list] == [
         ("old-success", "flip-trust"),
         ("old-failure", "flip-trust"),
     ]
+    assert all(
+        c.kwargs == {"_request_timeout": REQUEST_TIMEOUT_SECONDS} for c in api.delete_namespaced_pod.call_args_list
+    )
+
+
+def test_a_pod_that_never_ran_goes_once_it_is_older_than_the_keep_period():
+    """A parent restart leaves a waiting job pod with nobody to time it out."""
+    pods = [_pod("orphan-pending", "Pending", 30), _pod("orphan-unknown", "Unknown", 30)]
+    for pod in pods:
+        pod.status.container_statuses = None
+    api = Mock()
+    api.list_namespaced_pod.return_value = NS(items=pods)
+
+    assert prune(api, "flip-trust", "sel", KEEP, NOW) == ["orphan-pending", "orphan-unknown"]
+
+
+def test_a_delete_that_fails_is_named_and_the_rest_of_the_pass_goes_on(capsys):
+    pods = [_pod("already-gone", "Succeeded", 50, 30), _pod("old-failure", "Failed", 50, 30)]
+    api = Mock()
+    api.list_namespaced_pod.return_value = NS(items=pods)
+    api.delete_namespaced_pod.side_effect = [RuntimeError("404 Not Found"), None]
+
+    assert prune(api, "flip-trust", "sel", KEEP, NOW) == ["old-failure"]
+    assert "Could not delete job pod already-gone: RuntimeError('404 Not Found')" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("raw", "hours"), [(None, 24), ("36", 36), ("0", 0), ("soon", 24), ("-1", 24), ("inf", 24)])
+def test_the_keep_period_falls_back_to_a_day_when_the_setting_is_unusable(raw, hours):
+    """A bad value must not crash-loop the container, and a negative one must not delete every pod at once."""
+    assert keep_period(raw) == timedelta(hours=hours)
 
 
 def test_a_long_job_that_just_finished_is_kept():
@@ -100,9 +132,13 @@ def test_the_module_prunes_with_its_own_service_account_hourly_and_survives_a_fa
         runpy.run_module("flip.nvflare.prune_job_pods", run_name="__main__")
 
     config.load_incluster_config.assert_called_once_with()
-    api.list_namespaced_pod.assert_called_with("flip-trust", label_selector="app.kubernetes.io/component=fl-job")
-    api.delete_namespaced_pod.assert_called_once_with("old-success", "flip-trust")
+    api.list_namespaced_pod.assert_called_with(
+        "flip-trust", label_selector="app.kubernetes.io/component=fl-job", _request_timeout=REQUEST_TIMEOUT_SECONDS
+    )
+    api.delete_namespaced_pod.assert_called_once_with(
+        "old-success", "flip-trust", _request_timeout=REQUEST_TIMEOUT_SECONDS
+    )
     assert sleeps == [INTERVAL_SECONDS, INTERVAL_SECONDS]
     out = capsys.readouterr()
-    assert "Deleted 1 finished job pod(s): old-success" in out.out
+    assert "Deleted 1 job pod(s): old-success" in out.out
     assert "Job pod pruning failed: RuntimeError('API server unreachable')" in out.err
