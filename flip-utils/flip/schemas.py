@@ -75,10 +75,20 @@ class FLLogEvent(StrEnum):
     # for example because the trust could not start its job pod. Attributed to the trust; global_round is
     # the round in progress, None before the first one (FLIP#1428).
     CLIENT_LOST = "CLIENT_LOST"
+    # Sent by the same handler when FLARE hears from that client again and the run carries on. Same
+    # attribution and global_round as CLIENT_LOST.
+    CLIENT_RETURNED = "CLIENT_RETURNED"
 
 
-# Events that describe a job before any round exists, so they carry no global_round.
-ROUND_LESS_EVENTS = frozenset({FLLogEvent.JOB_WAITING_FOR_RESOURCES.value, FLLogEvent.CLIENT_LOST.value})
+# Events that may carry no global_round: JOB_WAITING_FOR_RESOURCES describes a job before any round exists,
+# and CLIENT_LOST / CLIENT_RETURNED are round-less only before the first round.
+ROUND_LESS_EVENTS = frozenset(
+    {
+        FLLogEvent.JOB_WAITING_FOR_RESOURCES.value,
+        FLLogEvent.CLIENT_LOST.value,
+        FLLogEvent.CLIENT_RETURNED.value,
+    }
+)
 
 
 class TrainingMetrics(BaseModel):

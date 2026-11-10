@@ -124,6 +124,9 @@ def render_log(row: FLLogs) -> str:
             "the pod may not have got the CPU, memory or GPU it asked for in time"
         )
 
+    if row.event_type == FLLogEvent.CLIENT_RETURNED:
+        return "Contact with this trust was restored"
+
     if row.event_type is not None:
         return f"Round {row.global_round} · {row.event_type}"
 
