@@ -225,17 +225,40 @@ class XnatWebDirs(unittest.TestCase):
             assert self.users.read_text().split() == ["1001:1001"], "made as xnat-web's uid, not root"
 
     def test_an_xnat_data_dir_the_uid_cannot_write_names_the_chown(self):
+        """Recursive: a tree a root xnat-web wrote would otherwise pass here and fail upgrade-xnat's check."""
         if os.getuid() == 0:
             self.skipTest("root writes a 0555 directory anyway")
         with tempfile.TemporaryDirectory() as tmp:
             data = Path(tmp) / "xnat"
-            (data / "xnat-data").mkdir(parents=True, mode=0o555)
+            (data / "xnat-data" / "archive").mkdir(parents=True)
+            (data / "xnat-data").chmod(0o555)
             try:
                 result = self._run(data, tmp)
             finally:
                 (data / "xnat-data").chmod(0o755)
             assert result.returncode != 0, result.stdout
-            assert f"chown 1001:1001 {data}/xnat-data" in result.stdout, result.stdout
+            assert f"chown -R 1001:1001 {data}/xnat-data" in result.stdout, result.stdout
+
+    def test_a_tree_without_an_archive_is_refused_and_left_alone(self):
+        """A kit whose XNAT_DATA_DIR is not the site's tree must not get empty dirs the ownership check accepts."""
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp) / "xnat"
+            data.mkdir()
+            result = self._run(data, tmp)
+            assert result.returncode != 0, result.stdout
+            assert f"{data}/xnat-data/archive does not exist" in result.stdout, result.stdout
+            assert not (data / "xnat-data").exists(), "nothing is created in a tree that is not the site's"
+
+    def test_a_docker_failure_is_not_reported_as_an_ownership_problem(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "bin"
+            bin_dir.mkdir()
+            (bin_dir / "docker").write_text("#!/bin/sh\nexit 125\n")
+            (bin_dir / "docker").chmod(0o755)
+            result = run_target("xnat-web-dirs", subdir="trust/xnat", env={"PATH": f"{bin_dir}:{os.environ['PATH']}"})
+            assert result.returncode != 0, result.stdout
+            assert "docker run failed" in result.stdout, result.stdout
+            assert "chown" not in result.stdout, result.stdout
 
 
 class XnatImageRegistry(unittest.TestCase):

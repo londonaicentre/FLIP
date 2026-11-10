@@ -196,14 +196,13 @@ export XNAT_CS_CONTAINER_USER := $(if $(FLIP_UID),$(FLIP_UID):$(FLIP_GID))
 # ownership change made there would look right and reach nothing.
 XNAT_DIR_OWNER := $(XNAT_CONTAINER_UID):$(XNAT_CONTAINER_GID)
 
-# The bind-mount sources xnat-reset provisions. xnat-db-data is stag/prod-only:
-# the development stack gives xnat-db no persistent bind mount.
-XNAT_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive build cache prearchive) \
-                  $(if $(IS_DEPLOYED),$(XNAT_DATA_DIR)/xnat-db-data)
-# The subset xnat-web itself writes — what upgrade-xnat checks on a LIVE site. xnat-db-data
+# The bind-mount sources xnat-web itself writes — what upgrade-xnat checks on a LIVE site. xnat-db-data
 # is excluded there: Postgres's entrypoint re-owns it to its own uid on first boot, so on
 # a running site it is legitimately not 1001 and the reset-time check does not apply.
 XNAT_WEB_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive build cache prearchive)
+# The bind-mount sources xnat-reset provisions: those, plus xnat-db-data. That one is stag/prod-only:
+# the development stack gives xnat-db no persistent bind mount.
+XNAT_DATA_DIRS := $(XNAT_WEB_DATA_DIRS) $(if $(IS_DEPLOYED),$(XNAT_DATA_DIR)/xnat-db-data)
 
 # Verify every bind-mount source is owned by the container uid, and fail naming
 # the exact remedy when it is not. Fatal rather than a warning because the
@@ -565,13 +564,22 @@ xnat-backup-writable:
 # mount source is missing fails to start. prearchive/ is the one sites installed before FLIP#1818
 # lack. A throwaway container, like xnat-backup's, needs no sudo and reaches a remote swarm host too.
 # upgrade-trust runs this before it pulls anything, like xnat-backup-writable.
+# A tree with no archive/ is not a live site's (every install makes it): refused, or the dirs made
+# here would pass upgrade-xnat's ownership check and XNAT would be redeployed onto an empty tree.
 xnat-web-dirs:
 	$(require_kit)
-	@docker run --rm --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" alpine:3.20 \
-	  mkdir -p $(patsubst $(XNAT_DATA_DIR)/%,/x/%,$(XNAT_WEB_DATA_DIRS)) || { \
-	  echo "❌ uid $(XNAT_DIR_OWNER) could not create the XNAT data dirs under $(XNAT_DATA_DIR)/xnat-data."; \
-	  echo "   Nothing was upgraded. As root on the host, once:"; \
-	  echo "   chown $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)/xnat-data"; exit 1; }
+	@rc=0; docker run --rm --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" alpine:3.20 \
+	  sh -c '[ -d /x/xnat-data/archive ] || exit 3; \
+	         mkdir -p $(patsubst $(XNAT_DATA_DIR)/%,/x/%,$(XNAT_WEB_DATA_DIRS)) || exit 4' || rc=$$?; \
+	case $$rc in \
+	  0) ;; \
+	  3) echo "❌ $(XNAT_DATA_DIR)/xnat-data/archive does not exist: the kit's XNAT_DATA_DIR is not this site's XNAT"; \
+	     echo "   tree. Nothing was upgraded. Point XNAT_DATA_DIR at the tree the site was installed with."; exit 1 ;; \
+	  4) echo "❌ uid $(XNAT_DIR_OWNER) could not create the XNAT data dirs under $(XNAT_DATA_DIR)/xnat-data."; \
+	     echo "   Nothing was upgraded. As root on the host, once:"; \
+	     echo "   chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)/xnat-data"; exit 1 ;; \
+	  *) echo "❌ Could not create the XNAT data dirs under $(XNAT_DATA_DIR)/xnat-data (docker run failed)."; exit 1 ;; \
+	esac
 
 # Get a shell in the running xnat-web container for the selected trust.
 xnat-shell:

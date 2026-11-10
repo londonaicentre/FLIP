@@ -111,7 +111,9 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
   the `sudo` prompt. Never use it to move a live site to a release. `make upgrade-xnat KIT=<CODE> HUB=<env>` (driven
   by `make -C trust upgrade-trust`) keeps the data dir: it takes a `pg_dumpall` of `xnat-db` into
   `$XNAT_DATA_DIR/backups/`, creates `xnat-data/prearchive/` as the container uid on a site installed
-  before FLIP#1818, refuses to proceed unless the `xnat-data/` tree is owned by the
+  before FLIP#1818 (`make xnat-web-dirs KIT=<CODE> HUB=<env>`, which `upgrade-trust` also runs before it pulls
+  anything; it refuses a kit whose `XNAT_DATA_DIR` holds no `xnat-data/archive/`),
+  refuses to proceed unless the `xnat-data/` tree is owned by the
   container uid (1001, or the kit's `FLIP_UID` — an archive written by a pre-hardening root `xnat-web` needs one
   `chown -R` first), redeploys the stack onto the kit's `XNAT_TAG` (XNAT migrates its own schema on
   boot; migrations are forward-only, hence the dump), then re-runs `configure-xnat.sh`, which

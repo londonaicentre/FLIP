@@ -98,12 +98,14 @@ def _make_var(name: str) -> str:
     raise AssertionError(f"{name} is not assigned in {MAKEFILE} or {PORTABLE_MK}")
 
 
-def _xnat_data_subdirs(name: str = "XNAT_WEB_DATA_DIRS") -> list[str]:
-    """Return the ``xnat-data/`` subdirs a ``NAME := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,…)`` assignment lists."""
+def _xnat_data_subdirs() -> list[str]:
+    """Return the ``xnat-data/`` subdirs ``XNAT_WEB_DATA_DIRS`` lists (``XNAT_DATA_DIRS`` is derived from it)."""
     match = re.search(
-        rf"^{name} := \$\(addprefix \$\(XNAT_DATA_DIR\)/xnat-data/,([^)]+)\)", MAKEFILE.read_text(), re.MULTILINE
+        r"^XNAT_WEB_DATA_DIRS := \$\(addprefix \$\(XNAT_DATA_DIR\)/xnat-data/,([^)]+)\)",
+        MAKEFILE.read_text(),
+        re.MULTILINE,
     )
-    assert match, f"{name} no longer lists the xnat-data/ subdirs in {MAKEFILE}"
+    assert match, f"XNAT_WEB_DATA_DIRS no longer lists the xnat-data/ subdirs in {MAKEFILE}"
     return match.group(1).split()
 
 
@@ -178,9 +180,6 @@ class TestEveryPathHasTheSameDirs:
     A mount source that is missing fails the Swarm task; a dir left unmounted lives in the container and is lost
     whenever Swarm replaces it, as the prearchive was.
     """
-
-    def test_reset_provisions_what_upgrade_checks(self) -> None:
-        assert _xnat_data_subdirs("XNAT_DATA_DIRS") == _xnat_data_subdirs()
 
     @pytest.mark.parametrize("overlay", COMPOSE_OVERLAYS, ids=["prod", "development"])
     def test_compose_mounts_every_dir(self, overlay: Path) -> None:
