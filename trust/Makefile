@@ -871,7 +871,9 @@ _upgrade-trust-apply:
 # Deliberately no $(ensure_net_dirs) here: this recipe runs on the operator's
 # workstation against a remote docker context, so a local mkdir cannot touch the
 # EC2 host — the per-net images dirs there are pre-created (ubuntu-owned) by the
-# AWS provisioning playbook (trust/deploy/ansible/aws-ec2.yml).
+# AWS provisioning playbook (trust/deploy/ansible/aws-ec2.yml). The networks, unlike
+# those dirs, do reach the host (docker goes through the context); they are made after
+# the guards, not as prerequisites, so a missing kit or a refused slot changes nothing there.
 up-trust-ec2: require-xnat-aetitle
 	$(require_kit_file)
 	$(check_slot_not_taken)
@@ -891,6 +893,7 @@ up-trust-ec2: require-xnat-aetitle
 		exit 1; \
 	fi
 	$(ensure_snapshot_dir)
+	$(MAKE) create-networks create-trust-network KIT=$(KIT) HUB=$(HUB)
 	$(TRUST_VARS) NUM_AVAILABLE_GPUS=0 DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) up -d --pull always
 	@echo "🩻 Starting XNAT for $(KIT)..."
 	$(MAKE) -C xnat up-xnat KIT=$(KIT) HUB=$(HUB)
