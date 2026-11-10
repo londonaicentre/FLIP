@@ -241,6 +241,11 @@ class UpXnatBuild(unittest.TestCase):
         # Built before the running stack is torn down, so a failed build leaves it up.
         assert out.index("docker build") < out.index("down-xnat"), out
 
+    def test_xnat_web_pulls_its_base_unless_told_not_to(self):
+        """The Tomcat base tag moves; XNAT_BUILD_PULL= is the build on a host with no registry route."""
+        assert "docker build --pull " in dry_run("up-xnat", "BUILD=true", subdir="trust/xnat")
+        assert "--pull" not in dry_run("up-xnat", "BUILD=true", "XNAT_BUILD_PULL=", subdir="trust/xnat")
+
     def test_a_command_line_xnat_tag_names_the_build(self):
         """Tags are daemon-wide: a second stack on the host (a release check) keeps off the shared :dev."""
         out = dry_run("up-xnat", "BUILD=true", "XNAT_TAG=rel0130", subdir="trust/xnat")

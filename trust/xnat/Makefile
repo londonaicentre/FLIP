@@ -336,12 +336,14 @@ endef
 # Build XNAT Docker images locally (mirrors CI workflow). Downloads the WAR and plugins from
 # upstream on first use (or copies them from ARTIFACTS_DIR=<dir>), verifying the pinned checksums.
 # xnat-web builds with --pull: its Tomcat base tag moves, and a stale local copy would differ from CI's.
+# XNAT_BUILD_PULL= builds on the local copy instead (a host with no registry route).
+XNAT_BUILD_PULL ?= --pull
 build:
 	@echo "🔧 Building XNAT Docker images..."
 	$(MAKE) xnat-war-download
 	$(MAKE) xnat-plugins-download
 	@echo "🐳 Building xnat-web image..."
-	docker build --pull \
+	docker build $(XNAT_BUILD_PULL) \
 		--build-arg XNAT_VERSION=${XNAT_VERSION} \
 		--build-arg TOMCAT_XNAT_FOLDER=${TOMCAT_XNAT_FOLDER} \
 		--build-arg XNAT_ROOT=${XNAT_ROOT} \

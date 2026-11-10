@@ -35,6 +35,7 @@ from image_workflows import (  # noqa: E402
     WORKFLOWS,
     ReleaseTagContract,
     code_text,
+    step_block,
 )
 from pr_paths_changed import glob_to_regex  # noqa: E402
 
@@ -151,6 +152,11 @@ class XnatBuildTriggers(unittest.TestCase):
             with self.subTest(image=image):
                 assert "workflow_run" not in text, image
                 assert "GH_WR_" not in text, image
+
+    def test_xnat_web_pulls_its_moving_base(self) -> None:
+        """The Tomcat base tag moves: without --pull a runner holding an old copy would build on it."""
+        build = step_block(code_text(WORKFLOWS / "docker_build_xnat_web.yml"), "Build Docker image")
+        assert "docker build --pull " in build, build
 
 
 if __name__ == "__main__":
