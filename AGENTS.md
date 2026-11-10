@@ -435,6 +435,7 @@ After changes, evaluate if docs need updating:
 - All files include Apache 2.0 copyright header.
 - Commits must be signed off (DCO): `git commit -s`
 - PRs target `develop`. Branch naming: `[ticket_id]-[task_name]`.
+- A PR's assignee is whoever acts next: a review that leaves comments is a **Request changes** review, and each hand-over assigns the other person and unassigns yourself. Changes for someone else's PR go in a suggestion PR into their branch (`Suggestions for #<N>: …`). See `CONTRIBUTING.md` ("Reviewing pull requests").
 
 ## Environment Setup
 
