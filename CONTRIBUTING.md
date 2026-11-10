@@ -494,16 +494,17 @@ run by the same workflow's `Deploy script tests` job.
 
 ### Snowflake trust roots (Terraform)
 
-The trust's Snowflake infrastructure is **two** roots with **separate state** (FLIP#1581, epic
+The trust's Snowflake infrastructure is **three** roots with **separate state** (FLIP#1581, epic
 FLIP#1589), neither holding hub credentials:
 
 | Root | Tier | Applied by | When |
 | --- | --- | --- | --- |
-| `trust/deploy/terraform/snowflake-platform` | break glass | a **person** user with **MFA**, `ACCOUNTADMIN` or `SECURITYADMIN` | rarely, by hand, never in CI |
+| `trust/deploy/terraform/snowflake-identity` | identity | the account's user administrator (`USERADMIN` or `ACCOUNTADMIN`) | once, before the other two |
+| `trust/deploy/terraform/snowflake-platform` | break glass | a **person** user with **MFA**, `ACCOUNTADMIN`, or the role that owns objects with `account_admin = false` | rarely, by hand, never in CI |
 | `trust/deploy/terraform/snowflake` | workload | `FLIP_<CODE>_DEPLOY_USER` (`TYPE = SERVICE`, key pair) | every deploy |
 
-The platform root creates the account's security objects: the five `FLIP_<CODE>_*` roles and the
-role hierarchy, the deploy `SERVICE` user, the egress integration, the account
+The identity root creates the six `FLIP_<CODE>_*` roles, the role hierarchy and the deploy
+`SERVICE` user. The platform root creates the account's security objects: the egress integration, the account
 network/password/session policies, the event table and `EVENT_TABLE` parameter, the resource
 monitor and the trust warehouse it is attached to (assigning a monitor needs `ACCOUNTADMIN`), and
 the single account-level grant in the whole design, exactly `CREATE DATABASE`,
@@ -512,13 +513,14 @@ trust database and schemas, the compute pools, the image repository, the SSE
 stages, the nightly pool-suspend task and the grants on those objects. `FLIP_<CODE>_ADMIN` is
 retired; the platform README carries the migration for an account bootstrapped with it.
 
-Targets are the same in both directories:
+Targets are the same in all three directories:
 
 ```bash
 make -C trust/deploy/terraform/snowflake lint              # tofu fmt, tofu validate, tflint, checkov
 make -C trust/deploy/terraform/snowflake test              # the credential-free pytest guards
 make -C trust/deploy/terraform/snowflake plan              # needs terraform.<env>.tfvars and Snowflake credentials
 make -C trust/deploy/terraform/snowflake apply             # shows the plan and asks before applying
+make -C trust/deploy/terraform/snowflake-identity plan apply   # once, first: shows the plan and asks
 make -C trust/deploy/terraform/snowflake-platform lint
 make -C trust/deploy/terraform/snowflake-platform test
 make -C trust/deploy/terraform/snowflake-platform apply    # prints a BREAK GLASS banner and asks twice

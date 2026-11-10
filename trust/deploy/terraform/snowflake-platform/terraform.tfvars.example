@@ -20,17 +20,17 @@ account_name      = "MYACCOUNT"
 platform_role      = "ACCOUNTADMIN"
 platform_warehouse = "COMPUTE_WH"
 
+# Without ACCOUNTADMIN (README "Applying without ACCOUNTADMIN"): platform_role is the role that
+# owns objects, and nothing account-wide is applied.
+# account_admin = false
+
 # SNOWFLAKE_JWT (default): the just-in-time operator, key pair from SNOWFLAKE_PRIVATE_KEY (PEM contents) + SNOWFLAKE_PRIVATE_KEY_PASSPHRASE.
+# PROGRAMMATIC_ACCESS_TOKEN reads a token the user generated in Snowsight from SNOWFLAKE_TOKEN.
 # USERNAMEPASSWORDMFA reads SNOWFLAKE_PASSWORD and the current TOTP code from SNOWFLAKE_PASSCODE.
 # EXTERNALBROWSER delegates to the account's IdP and needs no password in the environment.
 authenticator = "SNOWFLAKE_JWT"
 
 trust_code = "GSTT"
-
-# The deploy SERVICE user's RSA public key: the base64 body only, no PEM header, footer or
-# newlines. Generate with `openssl genrsa 2048 | openssl rsa -pubout`, keep the private half out
-# of this repository.
-deploy_user_public_key = "REPLACE_WITH_THE_PUBLIC_KEY_BODY"
 
 # Warehouse credit cap. Compute pools are capped in the workload root instead.
 credit_quota = 50
