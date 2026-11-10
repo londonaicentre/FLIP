@@ -11,7 +11,7 @@
     limitations under the License.
 -->
 
-# Multi-model Ark+ Chest X-ray Evaluation (FLARE Client API) — FLIP tutorial
+# Comparing two chest X-ray models: pretrained vs fine-tuned
 
 FLIP tutorial for federated evaluation of **multiple** Ark+ models (a zero-shot foundation model and a
 fine-tuned model) on chest X-ray classification, using the **FLARE Client API**. The same hold-out data
@@ -40,9 +40,20 @@ legacy tutorial.
 > enough to name its evaluation broadcasts (`EvaluationModelLocator` stamping `flip_eval_model_name`);
 > the evaluator fails with that remedy if the meta is absent.
 
-## Compatible job type
+## At a glance
 
-This tutorial is designed for `JOB_TYPE=evaluation`.
+| Item | Value |
+|---|---|
+| What you upload | everything in `app_files/`, plus the two checkpoints from `make prepare-checkpoint` |
+| Job type | evaluation, one validate task per model |
+| Imaging | on, DICOM to NIfTI off |
+| Cohort query | `query.sql` (the hold-out set) |
+| Dataset | `make -C fl-tutorials download-arkplus-eval-data`, plus the raw Ark+ checkpoint (`make download-raw-checkpoint`) |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=arkplus_multimodel_classification_evaluation` (GPU; `MAX_SAMPLES=128` by default) |
+
+Example radiographs, one per target lesion, are in the fine-tuning tutorial's
+[`docs/dataset_examples.png`](../../image_classification/arkplus_fine_tuning/docs/dataset_examples.png)
+(same dataset family; this tutorial scores the hold-out splits).
 
 ## Prerequisites
 
@@ -104,7 +115,8 @@ both models are scored against.
 
 The app evaluates two models, so it needs two clean `.pt` checkpoints in `app_files/`: the foundation
 model `arkplus_pretrained_weights.pt` and the fine-tuned model `arkplus_finetuned_weights.pt`. Both are
-loaded by every client's evaluator. `make run`/`make export` prepare both automatically (they run
+loaded **server-side** by `EvaluationModelLocator` and broadcast as weights; no client ever opens a
+`.pt` (see *Scope* above). `make run`/`make export` prepare both automatically (they run
 `prepare-checkpoint` first).
 
 ### Foundation model (arkplus_pretrained)

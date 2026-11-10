@@ -30,6 +30,9 @@ services:
   # starts on the previous extract: reload-governance and up-fl-clients-kit do.
   fl-governance-init:
     image: ghcr.io/londonaicentre/${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
+    # The kit's FLIP_UID:FLIP_GID when set, else the image's flip user (FLIP#1731): it writes the
+    # kit's local/, which under FLIP_UID the operator owns.
+    user: "${FLIP_UID:-1000}:${FLIP_GID:-1000}"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -69,6 +72,9 @@ services:
     # fl-client did not, which is how AICP sat half-dead for weeks (FLIP#1204).
     # unless-stopped rather than always so an explicit `docker stop` is still honoured.
     restart: unless-stopped
+    # As fl-governance-init above. HOME and USER for a uid the image does not know are set by the
+    # entrypoint (FLIP#1731).
+    user: "${FLIP_UID:-1000}:${FLIP_GID:-1000}"
     security_opt:
       - no-new-privileges:true
     cap_drop:

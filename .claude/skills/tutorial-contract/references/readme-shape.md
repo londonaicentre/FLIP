@@ -22,6 +22,21 @@ project has imaging on or off, the dataset download target, and the simulator co
 in `registration-checklist.md`, and mention a new tutorial in `fl-tutorials/README.md`'s backend
 table.
 
+Those five facts go in one **"At a glance" table** (`| Item | Value |`) right after the intro, and it
+replaces any "Compatible job type" section rather than sitting on top of one. A cell holds a value
+plus at most a link — the *why* belongs in the body, not the table. Three house rules keep the first
+screen readable (the #1693 review):
+
+- **Title**: the task and the data in plain words, sentence case, no "FLIP tutorial" or "Client API"
+  suffix and no backend suffix; a tutorial's two backend copies carry the same title. The current
+  set is the reference ("Chest X-ray lesion classification", "Spleen segmentation on CT",
+  "Evaluating a spleen segmentation model", "Prostate MRI zonal segmentation", "Type 2 diabetes
+  risk from health records", "Fine-tuning a chest X-ray foundation model (Ark+)", …), and the
+  e2e smoke's `TUTORIALS` labels use the same strings.
+- **Code formatting** only for what the reader types, opens or uploads (a command, a file, a config
+  key they edit). Class names, recipe names and filter names used to explain the flow are prose.
+- **No file lists** in prose that repeat the folder tree.
+
 ## Show what the app does before explaining how
 
 A reader should get the task from a picture near the top of the README: what goes in, what comes
@@ -40,9 +55,12 @@ out. Concretely:
   chain, say so in the script docstring and the README: it is a picture of the data, not of what
   the model sees (FLIP#821 — the figure stayed upright while the model trained on transposed
   images). The `fl-tutorials/tests/` transform suite is the evidence for that, not the figure.
-- A **flow diagram** of the federated loop for this app when it is not plain FedAvg (two-stage
-  diffusion, evaluation-only, fine-tuning a frozen backbone, statistics through FedAvg): a Mermaid
-  block renders on GitHub without an asset; the generic job-type figure already lives in the docs
+- A **flow diagram** of the federated loop is optional: only when the loop cannot be said in two
+  sentences (the Ark+ fine-tune's "full model at round 0, then only the head is averaged"). Labels in
+  plain words, never class names,
+  which mean nothing to a researcher and go stale at the next rename. An evaluation-only job gets
+  none — "the server sends the model, each trust scores it" is a sentence. A Mermaid block renders
+  on GitHub without an asset; the generic job-type figure already lives in the docs
   (`docs/source/assets/fl/job_types.jpg`), so do not redraw that.
 - Link the **demo video** (below) once it has a published home.
 
@@ -95,7 +113,8 @@ adding a profile there — `project_name`, `model_name`, `model_description`, `h
 for tabular cohorts (skips the XNAT/OHIF segment), and per-backend `app_dir` / `query_file`
 pointing at the tutorial. `flip-api/tests/unit/test_demo_video_helpers.py` parametrises over
 `APPS`, so the new profile's paths are checked by `make -C flip-api unit_test`.
-`platform.demo_profile` names the profile;  checks it points at this tutorial.
+The `APPS` entry is the only registration there is (no tutorial file names its profile);
+`test_demo_video_helpers.py` checks every profile's `app_dir` / `query_file` points at an existing tutorial.
 
 ```bash
 make demo-video DEMO_ARGS="--app <name>"                      # NVFLARE, ~30–45 min, needs the dev stack up + cohort seeded

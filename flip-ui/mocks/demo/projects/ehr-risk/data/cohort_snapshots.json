@@ -1,0 +1,24 @@
+[
+  {
+    "approvedRecordCount": 553,
+    "error": null,
+    "hasAccessions": false,
+    "queryId": "8c54f8d4-f81f-89c9-b957-32eaf0cbe3ef",
+    "rowCount": 553,
+    "snapshotAt": "2026-11-02T11:57:40.032291",
+    "status": "frozen",
+    "trustId": "00000000-0000-4000-8000-00000000a001",
+    "trustName": "Guy's and St Thomas' Trust"
+  },
+  {
+    "approvedRecordCount": 544,
+    "error": null,
+    "hasAccessions": false,
+    "queryId": "8c54f8d4-f81f-89c9-b957-32eaf0cbe3ef",
+    "rowCount": 544,
+    "snapshotAt": "2026-11-02T11:57:39.589266",
+    "status": "frozen",
+    "trustId": "00000000-0000-4000-8000-00000000a002",
+    "trustName": "King's College Hospital"
+  }
+]

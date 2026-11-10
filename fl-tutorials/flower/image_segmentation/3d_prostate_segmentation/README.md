@@ -11,10 +11,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-# Federated 3D prostate zonal segmentation with nnU-Net planning, MONAI and Flower
+# Prostate MRI zonal segmentation
 
-This tutorial trains a 3D U-Net to outline the **prostate gland and its two zones** (peripheral
-zone, PZ, and transition zone, TZ) on T2-weighted MRI from the public
+This tutorial trains a 3D U-Net, planned with nnU-Net and built with MONAI, to outline the
+**prostate gland and its two zones** (peripheral zone, PZ, and transition zone, TZ) on T2-weighted MRI from the public
 [PI-CAI](https://pi-cai.grand-challenge.org/) dataset, across several FLIP trusts. It differs from
 the [spleen tutorial](../3d_spleen_segmentation/README.md) in two ways worth learning from:
 
@@ -33,6 +33,17 @@ the [spleen tutorial](../3d_spleen_segmentation/README.md) in two ways worth lea
 The training recipe is nnU-Net's (deep-supervised Dice + binary cross-entropy, SGD with polynomial decay,
 patch-based training with nnU-Net's augmentations), ported from the standalone trainer this tutorial
 grew out of — see [Where the reference trainer went](#where-the-reference-trainer-went).
+
+## At a glance
+
+| Item | Value |
+|---|---|
+| What you upload | everything in `app/`, the committed plan included |
+| Job type | standard |
+| Imaging | on, DICOM to NIfTI on; masks uploaded as data enrichment |
+| Cohort query | `query.sql` |
+| Dataset | `make -C fl-tutorials prepare-prostate-local-data NUM_CASES=12` (simulator); `download-prostate-data FOLDS=0` (platform) |
+| Simulator | `make -C fl-tutorials sim-tutorial TUTORIAL=3d_prostate_segmentation FL_BACKEND=flower` (GPU; Flower only) |
 
 ## Folder structure
 

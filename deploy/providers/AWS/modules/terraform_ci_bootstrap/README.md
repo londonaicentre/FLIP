@@ -84,11 +84,12 @@ Least privilege, with each grant explained where it is declared:
 - **Apply role** ([`iam_apply.tf`](iam_apply.tf)): no managed policy. `<service>:*` for the AWS services the FLIP root
   uses (`apply_service_prefixes`), in the account's region and `us-east-1` only; IAM write only on the FLIP root's
   roles and instance profiles, by name (`managed_role_names`, `managed_instance_profile_names`), under the boundary and
-  a three-policy attach allowlist; Denies on the CI roles and the boundary; the state object and its lock.
+  a managed-policy attach allowlist (`attachable_managed_policies`); Denies on the CI roles and the boundary; the state
+  object and its lock.
 - **UI-publish role** ([`iam_ui_publish.tf`](iam_ui_publish.tf), FLIP#1186): created only when `ui_bucket_name` is
   set. Trusts the reusable `publish_ui.yml` at `apply_branch` (a reusable workflow's jobs present the called file as
   `job_workflow_ref`). `s3:ListBucket` on the UI bucket, `Get`/`Put`/`DeleteObject` on its objects, a Deny on writes
-  and deletes under `ark_demo/*`, and nothing else. Its ARN, the `ui_publish_role_arn` output, goes in the environment
+  and deletes under `demo/*` (the public demo, FLIP#1746), and nothing else. Its ARN, the `ui_publish_role_arn` output, goes in the environment
   variable `TF_UI_PUBLISH_ROLE_ARN`.
 - **Boundary** ([`boundary.tf`](boundary.tf)): allow everything, deny identity management, Organizations and Account.
 
@@ -112,6 +113,11 @@ block, encryption (`AES256`, or `aws:kms` with the AWS-managed key), lifecycle (
 `state_noncurrent_versions_retained` previous versions, each for `state_noncurrent_version_days`) and a TLS-only
 bucket policy. `prevent_destroy` protects it; removing a caller's module block needs
 `removed { from = … lifecycle { destroy = false } }`.
+
+`state_access_log_bucket` (empty by default, so off) turns on S3 server access logging (Security Hub S3.9) into a bucket
+in the same account and region, under a `<state_bucket_name>/` prefix. On an AWS Landing Zone Accelerator estate name
+the accelerator's `aws-accelerator-s3-access-logs-<account>-<region>`, whose bucket policy accepts deliveries from any
+bucket in the account. Never the FLIP root's `flip-access-logs-*`: that bucket's state lives in this one.
 
 `restrict_state_writes` (off by default) adds a Deny on state-object writes for every principal except the apply role
 and `state_writer_principal_arns`. Staging typically lists the engineers' SSO role there so laptop applies used to test

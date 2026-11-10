@@ -58,6 +58,7 @@ from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.utils import constants
 from tests import e2e_smoke
 from tests.e2e_smoke import SmokeFailure, _ensure_ok, _get, _log, _post
+from tests.query_files import read_query_file
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RECORD_FILE = Path(__file__).parent / "seed_demo_projects.json"
@@ -248,7 +249,7 @@ def existing_projects(client: requests.Session, headers: dict[str, str], names: 
 
 
 def submit_query(client: requests.Session, headers: dict[str, str], project_id: str, query_file: Path) -> None:
-    query = query_file.read_text()
+    query = read_query_file(query_file)
     save_resp = _ensure_ok(
         _post(
             client,

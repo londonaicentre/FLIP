@@ -17,8 +17,8 @@
 1. Refuses a dirty checkout, or one that is not the release PR's head when ``PR`` is given.
 2. Writes the hub env file ``.env.<INSTANCE>.development`` and each dev trust kit from the shipped examples:
    every host port moved by ``PORT_OFFSET``, the instance's own hub URLs, every image tag set to the instance
-   name (never the shared ``:dev`` / ``:stag``), and the example's placeholder secrets minted. Secret values
-   are never printed.
+   name (never the shared ``:dev`` / ``:stag``), the kits' ``NUM_AVAILABLE_GPUS`` set to the host's GPU count, and
+   the example's placeholder secrets minted. Secret values are never printed.
 3. Provisions both FL backends, builds the FL images at the instance tag, fetches the XNAT plugins, and runs
    ``make up BUILD=true`` so every repo-built image (hub, trusts, omop-db, XNAT, FL) comes from this commit.
 
@@ -95,6 +95,7 @@ def _mint() -> dict[str, str]:
         "ADMIN_USER_PASSWORD": secrets.token_urlsafe(18),
         "INTERNAL_SERVICE_KEY": internal_key,
         "INTERNAL_SERVICE_KEY_HASH": hashlib.sha256(internal_key.encode()).hexdigest(),
+        "FL_API_KEY": secrets.token_urlsafe(32),
     }
 
 
@@ -134,12 +135,24 @@ def hub_env(example: str, instance: str, offset: int, minted: dict[str, str] | N
     return text
 
 
-def trust_kit(example: str, instance: str, offset: int) -> str:
-    """A dev trust kit with its host ports moved and omop-db at the instance tag.
+def host_gpus() -> int:
+    """The host's NVIDIA GPU count (``nvidia-smi -L``), 0 without a driver."""
+    try:
+        out = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True, check=True).stdout
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return 0
+    return sum(line.startswith("GPU ") for line in out.splitlines())
 
-    The kit's ``<run-make-...>`` placeholders stay: ``make up`` → ``register-trusts`` fills them on the running hub.
+
+def trust_kit(example: str, instance: str, offset: int, gpus: int = 0) -> str:
+    """A dev trust kit with its host ports moved, omop-db at the instance tag and the host's GPU count.
+
+    The examples say ``NUM_AVAILABLE_GPUS=0``, which starts the FL clients CPU-only, so on a GPU host the smokes
+    would train on the CPU. The kit's ``<run-make-...>`` placeholders stay: ``make up`` → ``register-trusts`` fills
+    them on the running hub.
     """
-    return set_env(shift_ports(example, TRUST_HOST_PORTS, offset), "OMOP_DB_TAG", instance)
+    kit = set_env(shift_ports(example, TRUST_HOST_PORTS, offset), "OMOP_DB_TAG", instance)
+    return set_env(kit, "NUM_AVAILABLE_GPUS", str(gpus))
 
 
 def kit_examples(repo: Path = REPO) -> dict[Path, Path]:
@@ -164,8 +177,9 @@ def write_files(instance: str, offset: int, force: bool, repo: Path = REPO) -> l
     targets = {
         repo / env_file_name(instance): hub_env((repo / ".env.development.example").read_text(), instance, offset)
     }
+    gpus = host_gpus()
     for kit, example in kit_examples(repo).items():
-        targets[kit] = trust_kit(example.read_text(), instance, offset)
+        targets[kit] = trust_kit(example.read_text(), instance, offset, gpus)
     existing = [p for p in targets if p.exists()]
     if existing and not force:
         names = ", ".join(str(p.relative_to(repo)) for p in existing)
