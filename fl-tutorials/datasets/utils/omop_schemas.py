@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 import pandera.pandas as pa
 import requests
@@ -67,7 +68,7 @@ ALTER TABLE @cdmDatabaseSchema.PERSON ADD CONSTRAINT xpk_PERSON PRIMARY KEY (per
 debug = False
 
 
-def _debug_print(*args, **kwargs):
+def _debug_print(*args: Any, **kwargs: Any) -> None:
     """Print debug messages if debugging is enabled."""
     if debug:
         print(*args, **kwargs)
@@ -101,7 +102,7 @@ def _load_primary_keys(sql_text: str) -> dict[str, set[str]]:
     return pk_map
 
 
-def _sql_type_to_pandera(sql_type: str):
+def _sql_type_to_pandera(sql_type: str) -> type | str:
     """Map PostgreSQL types used in OMOP to Pandera / pandas dtypes."""
     sql_type = sql_type.lower()
     if sql_type.startswith(("integer", "int4", "int", "bigint", "int8", "smallint")):

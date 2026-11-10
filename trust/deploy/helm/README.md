@@ -23,7 +23,7 @@ the same **zero inbound trust** architecture as the Docker Compose deployment:
 trust services only make outbound connections to the Central Hub and the FL
 server; no inbound ports are exposed from the K8s cluster.
 
-> **Deployment status.** The chart is validated on single-node k3s and includes
+> **Deployment status.** The chart is validated on single-node k3s, AKS and Amazon EKS, and includes
 > kit staging, default-deny ingress, audited egress rules, least-privilege
 > service accounts, and stateless-workload hardening. Review the
 > [known limitations](#known-limitations), particularly storage and Pod Security
@@ -31,7 +31,7 @@ server; no inbound ports are exposed from the K8s cluster.
 
 > **Deploying a trust?** The operator guide — prerequisites, staging the FL kit, deploying,
 > the `HELM_TIMEOUT` wait budget, verifying, upgrading and uninstalling — is
-> [Deploy a FLIP node on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html).
+> [Deploy on an existing Kubernetes cluster](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html).
 > This README is the chart's reference: values, secrets, internals and development notes.
 
 ## Quickstart
@@ -202,14 +202,14 @@ from `dicom.log` and the container log alike. See
 | `namespace.name` | `""` | Namespace name (defaults to release namespace) |
 | `trustData.version` | `20261019` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
 | `trustData.hfRepo` | `aicentreflip/trust-data` | The dataset the seed fetches from |
-| `trustData.seed.enabled` | `true` | Run the `trust-seed` post-install/post-upgrade hook (FLIP#1187): this trust's slice of `projects` into omop-db and, with `orthanc` on, Orthanc |
+| `trustData.seed.enabled` | `true` | Run the `trust-seed` post-install/post-upgrade hook (FLIP#1187): this trust's slice of `projects` into omop-db and, with `orthanc` on, Orthanc. `sync-kit` sets it `false` from the kit's `TRUST_DATA_SEED=false`, for a trust with real data (FLIP#1687), and any Makefile render or deploy naming that `KIT` passes `--set trustData.seed.enabled=false` |
 | `trustData.seed.omop` / `.orthanc` | `true` / `false` | Which stores to seed. Orthanc is off by default: ~2 GB of DICOM per trust, posted over REST (minutes, once) |
 | `trustData.seed.projects` | `cxr_project` | Published projects to load (`omop-csv/<project>/` + `dicom/<project>.tar.gz`). One list for both halves, so only projects the dataset carries both for; spleen and brain_mri publish tables only since FLIP#1221 and regenerate their DICOMs locally, which no in-cluster hook can do |
 | `trustData.seed.sourceTrust` | `""` (= `trustNumber`) | The dataset partition (`source_trust`) this trust receives |
 | `trustData.seed.sourceRef` | `develop` | FLIP git ref the seed tools are installed from at run time — match the ref your images were built from (`main` for `:prod`) |
 | `trustData.seed.dicomVocabBundle` | `vocab_dicom_paulnagy_20260109` | The Apache-licensed DICOM vocabulary bundle loaded before the rows |
 | `trustData.seed.forceDicomVocab` | `false` | Recovery only: reload the DICOM vocabulary over one that reports itself present. The load skips on a single concept committed before the bulk load, so a Job killed between them leaves a half-loaded vocabulary every later upgrade skips. Set for one upgrade, then put it back |
-| `trustData.seed.image.*` | `ghcr.io/astral-sh/uv@sha256:…` | The uv image the hook runs in (pinned by digest) |
+| `trustData.seed.image.*` | `ghcr.io/londonaicentre/mirror/astral-sh/uv@sha256:…` | The uv image the hook runs in: FLIP's mirror, pinned by digest (`trust/deploy/mirror-images.manifest`) |
 | `trustData.seed.workDirSize` | `8Gi` | Scratch emptyDir for the fetched tables, vocabulary zip and DICOM sets |
 
 #### Upgrading: `trustData.version` replaces the two per-store pins (FLIP#1100)
@@ -621,6 +621,7 @@ flClient:
   gpu:
     enabled: true
     count: 1
+    allocation: devicePlugin   # or runtime, see below
     memoryPerGpuInGiB: 7
 ```
 
@@ -629,6 +630,16 @@ installed in the cluster, with an NVIDIA driver of **580 or newer** on the GPU n
 images ship PyTorch built for CUDA 13. The operator installs the driver itself, so pin its
 `driver.version` to a 580+ release (or, with `driver.enabled=false`, pre-install one on the
 node).
+
+`flClient.gpu.allocation` says how the pod gets its GPU (FLIP#1766):
+
+- `devicePlugin` (default): the fl-client container requests `nvidia.com/gpu: 1`, merged into
+  `flClient.resources.limits`. The device plugin reserves a GPU, Kubernetes places the pod on a node with a free
+  one, and the plugin sets `NVIDIA_VISIBLE_DEVICES` to the device it allocated. Use it on any cluster whose nodes
+  list `nvidia.com/gpu` in their allocatable.
+- `runtime`: no request. The pod gets `NVIDIA_VISIBLE_DEVICES=0` and relies on the node's default container
+  runtime being `nvidia` (k3s: `default-runtime: nvidia`), so it takes that node's GPU 0 and nothing reserves it.
+  Only for a single node with no device plugin; on a shared cluster it can run on a GPU another workload holds.
 
 `flClient.gpu.memoryPerGpuInGiB` defaults to 7 GiB and controls the memory offered per GPU to the NVFLARE
 scheduler. Set it to the memory available for jobs on the site's GPU.
@@ -1192,9 +1203,10 @@ The chart is validated in CI via:
    A kit that IS on the node but was staged with the wrong owner (a Flower SuperNode logging `Permission denied` on `/certs` or `/keys`) means `stage-kit` chowned it for the other backend — it reads the backend off the kit's shape, so re-stage from the slot's own kit directory (or pass `FL_BACKEND=flower` explicitly).
 2. **Kit path mismatch**: Verify `flClient.kitHostPath` points at the directory ON THE NODE holding this trust's provisioned kit, and that it contains the slot's contents (FLARE: `local/`, `startup/`, `transfer/`; Flower: `certificates/` and `keys/` with this slot's credential). The chart never fetches the kit — it is delivered out-of-band and placed on the node before the workload starts. A missing path fails scheduling with the path named.
 3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.
-4. **GPU not visible**: Verify `nvidia.com/gpu` annotation on the fl-client pod. Check CUDA env vars (`CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES`) are set via `flClient.gpu.enabled: true`.
-5. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.
-6. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (FLARE 1000, Flower 49999). On FLARE its `local/` must also be writable.
+4. **GPU not visible**: Check the fl-client container requests `nvidia.com/gpu` (`flClient.gpu.allocation: devicePlugin`) and the node lists it in its allocatable, or, with `allocation: runtime`, that `NVIDIA_VISIBLE_DEVICES=0` is set and the node's default runtime is `nvidia`. `CUDA_VISIBLE_DEVICES=0` is set in both modes by `flClient.gpu.enabled: true`.
+5. **Jobs never start ("waiting for resources")**: the FL server logs `sites without the requested resources: {'<slot>': {'num_of_gpus': 1}}`. The trust offers fewer GPUs than the job asks for: `grep num_of_gpus` in the client's `local/resources.json` shows 0 while `flClient.gpu.enabled` is false. Enable the GPU, or use job pods (`flClient.nvflare.jobPods`) on a GPU pool.
+6. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.
+7. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (FLARE 1000, Flower 49999). On FLARE its `local/` must also be writable.
 
 ### Network policy blocking intra-service traffic
 
@@ -1270,11 +1282,12 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
   unwritten and the Job falls through to a full fetch-and-load rather than
   failing, because a needless download is recoverable and a wrongly-skipped load
   is silent. The loader then reports the real error.
-- The Job reaches no host but S3. `fetch-bundle` only downloads the zip; the
-  loader unpacks it with the `unzip` baked into the `omop-db` image, so nothing
-  is installed at run time and no package mirror has to be on the egress
-  allowlist. `unzip: not found` in `load-vocab` means the `omopDb.image.tag` in
-  use predates this — repull a CI-published tag.
+- The Job reaches no host but S3. All three containers run the `omop-db` image,
+  which bakes the AWS CLI and `unzip`, so nothing is installed at run time and no
+  package mirror has to be on the egress allowlist (FLIP#1721 retired the Docker
+  Hub `amazon/aws-cli` image the fetch used before). `aws: not found` in
+  `fetch-bundle`, or `unzip: not found` in `load-vocab`, means the `omopDb.image.tag`
+  in use predates this — repull a CI-published tag.
 
 ### Getting help
 

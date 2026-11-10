@@ -116,7 +116,7 @@ def _write_metadata_csv(path: Path, count: int) -> Path:
 
 
 def test_nhs_number_becomes_a_nine_digit_integer(converter: ModuleType) -> None:
-    assert converter.nhs_number_to_integer("123 456 789") == 123456789
+    assert converter.person_id("123 456 789") == 123456789
 
 
 def test_transform_produces_the_expected_tables(converter: ModuleType, tmp_path: Path) -> None:

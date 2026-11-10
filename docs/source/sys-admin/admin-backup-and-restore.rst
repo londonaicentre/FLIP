@@ -50,8 +50,8 @@ What holds state
    * - Hub database (RDS PostgreSQL, ``flip-database``)
      - Projects, cohort queries, models, FL jobs with their metrics and logs, registered trusts (hashes of their
        credentials) and FL kit-slot assignments, user roles and profiles, access requests, audit records.
-     - Automated backups kept for **7 days**, on every estate. Production-grade estates only: deletion protection,
-       and a final snapshot (``flip-database-final-…``) when Terraform deletes the instance.
+     - Automated backups kept for **7 days** and deletion protection, on every estate. Production-grade estates
+       only: a final snapshot (``flip-database-final-…``) when Terraform deletes the instance.
      - No.
    * - Model files bucket (``…-model-files-uploads``)
      - Model files uploaded by researchers, before and after the malware scan.
@@ -92,8 +92,8 @@ What holds state
      - None. Both are gitignored.
      - Partly: Terraform inputs can be recovered from AWS (see `Restoring the hub`_). Trust kit credentials cannot.
 
-**Production-grade** means ``HUB=prod``. Staging (``HUB=stag``) keeps the 7-day backups but
-has no deletion protection and no final snapshot, so the database can be torn down freely.
+**Production-grade** means ``HUB=prod``. Staging (``HUB=stag``) keeps the 7-day backups and deletion protection
+but takes no final snapshot.
 
 .. note::
 
@@ -108,16 +108,16 @@ What ``make destroy`` keeps
 
 It lists what it will remove and asks you to type ``yes``. It **keeps** the Cognito user pool, the ``FLIP_API``
 secret, every S3 bucket, the ACM certificates and Route 53 records, and the platform's VPC, which is never this
-stack's. It removes only what it targets: the database (unless deletion protection stops it) with its parameter and
+stack's. It removes only what it targets: the database (once you have lifted its deletion protection) with its parameter and
 subnet groups, the bastion, the security groups, the EC2 IAM role, the key pairs and the SES email templates, plus any resources Terraform
 finds depend on them. Everything else, including the CloudWatch logs, stays.
 
 .. warning::
 
    **The destroy command never takes a final snapshot of the database.** It deletes the instance directly with
-   ``--skip-final-snapshot`` rather than through Terraform, and does not ask AWS to keep its automated backups. On
-   staging the database is gone at once. On production, deletion protection makes the delete fail; if you remove the
-   protection first, take a manual snapshot (below) before you run ``make destroy``.
+   ``--skip-final-snapshot`` rather than through Terraform, and does not ask AWS to keep its automated backups.
+   Deletion protection stops it on every estate; if you remove the protection, take a manual snapshot (below) before
+   you run ``make destroy``.
 
 Recommended backups
 ===================
@@ -234,7 +234,7 @@ containers on the trust host:
 .. code-block:: shell
 
    for c in omop-db orthanc data-access-api imaging-api; do
-     sudo docker inspect --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}' trust<N>-$c-1
+     docker inspect --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}' trust<N>-$c-1
    done
 
 **Mock data is re-seedable; site data is not.** The mock OMOP rows and Orthanc studies come from the published trust
@@ -260,7 +260,7 @@ FLIP schedules none of these. Take them with the site running (see the warning u
 
    .. code-block:: shell
 
-      sudo -E make -C trust/xnat xnat-backup KIT=<CODE> HUB=prod
+      make -C trust/xnat xnat-backup KIT=<CODE> HUB=prod
 
    It writes ``$XNAT_DATA_DIR/backups/xnat-db-<timestamp>.sql.gz`` and keeps it only if the dump is complete. Copy it
    off the host: the first-install commands delete the whole ``XNAT_DATA_DIR``, dumps included.
@@ -383,7 +383,7 @@ Restoring a Kubernetes node
   re-applied at every pod start, but the ``postgres`` superuser's is set only when the database is first created. See
   the :gh:`Helm chart README <trust/deploy/helm/README.md>` for rotating it by hand.
 - **Mock-data seeding runs on every upgrade** while ``trustData.seed.enabled`` is on, replacing the listed mock
-  projects' rows. Turn it off for a site whose stores hold real data only.
+  projects' rows. A site whose stores hold real data only turns it off with ``TRUST_DATA_SEED=false`` in the kit.
 
 ***********************
 Local development stack

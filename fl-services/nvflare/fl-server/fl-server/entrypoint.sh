@@ -13,10 +13,19 @@
 #
 
 
+# The FLARE workspace: the kit's start scripts take it to be the directory above startup/, and
+# FLARE writes its pid files, logs and per-job run directories there. /app unless the kit is
+# mounted elsewhere, as on ECS, where /app is on the read-only root filesystem (FLIP#1795).
+WORKSPACE="${FL_WORKSPACE:-/app}"
+if [ ! -f "$WORKSPACE/startup/start.sh" ] || [ ! -w "$WORKSPACE" ]; then
+    echo "❌ no FLARE kit in $WORKSPACE (FL_WORKSPACE), or the directory is not writable"
+    exit 1
+fi
+
 # Make scripts executable
-chmod +x /app/startup/start.sh
-chmod +x /app/startup/sub_start.sh
-chmod +x /app/startup/stop_fl.sh
+chmod +x "$WORKSPACE/startup/start.sh"
+chmod +x "$WORKSPACE/startup/sub_start.sh"
+chmod +x "$WORKSPACE/startup/stop_fl.sh"
 
 #################################################################
 ###### Log config ###############################################
@@ -24,8 +33,8 @@ chmod +x /app/startup/stop_fl.sh
 # Define default log level if not set
 export LOG_LEVEL=${LOG_LEVEL:-INFO}
 
-LOG_TEMPLATE="/app/local/log_config.template.json"
-LOG_CFG="/app/local/log_config.json"
+LOG_TEMPLATE="$WORKSPACE/local/log_config.template.json"
+LOG_CFG="$WORKSPACE/local/log_config.json"
 
 # Use envsubst to replace environment variables in the template
 echo "🔧 Generating log_config.json from template..."
@@ -39,24 +48,24 @@ source /app/.venv/bin/activate
 # FLIP's server site components (FLIP#1390): FLARE loads local/*__p_resources.json into the
 # server's parent process, where its job scheduler runs. Without it a job FLARE cannot schedule
 # never reaches the hub, so refuse to start rather than run blind.
-if ! python -m flip.nvflare.server_site_config /app/local; then
-    echo "❌ cannot register FLIP's server components in /app/local"
+if ! python -m flip.nvflare.server_site_config "$WORKSPACE/local"; then
+    echo "❌ cannot register FLIP's server components in $WORKSPACE/local"
     exit 1
 fi
 
 # Clean up stale daemon PID before starting
-rm -f /app/pid.fl /app/daemon_pid.fl
+rm -f "$WORKSPACE/pid.fl" "$WORKSPACE/daemon_pid.fl"
 
 # Start FL server
 echo "[entrypoint] Starting FL server with:"
 echo "  LOG_LEVEL=${LOG_LEVEL}"
-cd /app/startup
+cd "$WORKSPACE/startup"
 
 # Call the startup script with the provided parameters
 ./start.sh
 
 # Handle graceful shutdown
-trap "echo '[entrypoint] Caught SIGTERM, stopping ...'; /app/startup/stop_fl.sh && rm -f /app/pid.fl /app/daemon_pid.fl" SIGTERM
+trap "echo '[entrypoint] Caught SIGTERM, stopping ...'; $WORKSPACE/startup/stop_fl.sh && rm -f $WORKSPACE/pid.fl $WORKSPACE/daemon_pid.fl" SIGTERM
 
 # Wait for background processes
 wait

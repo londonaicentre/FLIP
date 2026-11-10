@@ -32,13 +32,15 @@ import pydicom
 import pytest
 import SimpleITK as sitk
 
-PROSTATE_DIR = Path(__file__).resolve().parents[3] / "datasets" / "prostate"
+DATASETS_DIR = Path(__file__).resolve().parents[3] / "datasets"
+PROSTATE_DIR = DATASETS_DIR / "prostate"
 
 
 def load_script(name: str) -> ModuleType:
-    """A loose script from ``datasets/prostate/`` loaded from its path, siblings importable."""
-    if str(PROSTATE_DIR) not in sys.path:
-        sys.path.insert(0, str(PROSTATE_DIR))
+    """A loose script from ``datasets/prostate/`` loaded from its path, siblings and ``utils`` importable."""
+    for path in (PROSTATE_DIR, DATASETS_DIR):
+        if str(path) not in sys.path:
+            sys.path.insert(0, str(path))
     spec = importlib.util.spec_from_file_location(f"{name}_under_test", PROSTATE_DIR / f"{name}.py")
     assert spec is not None
     assert spec.loader is not None

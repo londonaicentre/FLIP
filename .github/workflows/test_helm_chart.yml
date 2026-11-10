@@ -39,6 +39,8 @@ on:
       - ".github/workflows/test_helm_chart.yml"
       # The Makefile derives the kit env token from HUB through it.
       - "deploy/env_mode.mk"
+      # sync_k8s_kit.py reads the kit's TRUST_DATA_SEED through it.
+      - "trust/deploy/scripts/trust_kit_lib.py"
   push:
     branches: [develop, main]
     paths:
@@ -55,6 +57,8 @@ on:
       - ".github/workflows/test_helm_chart.yml"
       # The Makefile derives the kit env token from HUB through it.
       - "deploy/env_mode.mk"
+      # sync_k8s_kit.py reads the kit's TRUST_DATA_SEED through it.
+      - "trust/deploy/scripts/trust_kit_lib.py"
   workflow_dispatch:
 
 jobs:

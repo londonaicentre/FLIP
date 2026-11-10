@@ -84,6 +84,7 @@ STATE_BUCKET_TYPES = {
     "aws_s3_bucket_server_side_encryption_configuration",
     "aws_s3_bucket_lifecycle_configuration",
     "aws_s3_bucket_policy",
+    "aws_s3_bucket_logging",
 }
 
 REQUIRED_MODULE_INPUTS = {
@@ -410,6 +411,19 @@ def test_the_state_bucket_blocks_all_public_access() -> None:
     }
 
 
+def test_the_state_bucket_logs_access_only_when_a_target_is_named() -> None:
+    """S3.9 (FLIP#1796). Off by default, so a re-pin changes nothing for a caller that names no target."""
+    logging = _arguments(_module_block('resource "aws_s3_bucket_logging" "state"'))
+    assert logging == {
+        "count": _normalise('var.manage_state_bucket && var.state_access_log_bucket != "" ? 1 : 0'),
+        "bucket": "aws_s3_bucket.state[0].id",
+        "target_bucket": "var.state_access_log_bucket",
+        "target_prefix": '"${var.state_bucket_name}/"',
+    }
+    variable = _arguments(_module_block('variable "state_access_log_bucket"'))
+    assert (variable["type"], variable["default"]) == ("string", '""')
+
+
 def test_the_state_bucket_refuses_plaintext_transport() -> None:
     """State holds credentials in clear; every request without TLS is denied, to everyone."""
     statement = _statement('data "aws_iam_policy_document" "state_bucket"', "DenyInsecureTransport")
@@ -632,6 +646,7 @@ RESOURCE_SERVICES = [
     (r"aws_(security_group|vpc|subnet|instance$|key_pair|ec2_|availability_zones)", "ec2"),
     (r"aws_lb", "elasticloadbalancing"),
     (r"aws_ecs_", "ecs"),
+    (r"aws_ecr_", "ecr"),
     (r"aws_db_", "rds"),
     (r"aws_secretsmanager_", "secretsmanager"),
     (r"aws_kms_", "kms"),
@@ -718,6 +733,21 @@ def test_the_service_allowlist_is_exactly_what_the_flip_root_uses() -> None:
 # once stag and prod have applied the removal.
 RETIRING_ROLES = {"trust-ec2-role"}
 RETIRING_PROFILES = {"trust-ec2-role-profile"}
+RETIRING_POLICIES = {"CloudWatchAgentServerPolicy"}
+
+RDS_MONITORING_POLICY = "service-role/AmazonRDSEnhancedMonitoringRole"
+
+
+def _rds_monitoring_role(header: str, arguments: dict[str, str]) -> str | None:
+    """The enhanced-monitoring role an RDS registry module creates (RDS.6, FLIP#1796), or None if it creates none."""
+    if not header.startswith("module ") or arguments.get("source") != '"terraform-aws-modules/rds/aws"':
+        return None
+    if arguments.get("create_monitoring_role") != "true":
+        return None
+    # A generated name could not be listed in managed_role_names, nor the module's generic default kept apart.
+    assert arguments.get("monitoring_role_use_name_prefix", "false") == "false", header
+    assert "monitoring_role_name" in arguments, f"{header}: name the monitoring role"
+    return arguments["monitoring_role_name"].strip('"')
 
 
 def test_the_named_roles_and_profiles_are_the_ones_the_flip_root_declares() -> None:
@@ -734,8 +764,21 @@ def test_the_named_roles_and_profiles_are_the_ones_the_flip_root_declares() -> N
                 '"terraform-aws-modules/iam/aws//modules/iam-assumable-role'
             ):
                 roles.add(arguments["role_name"].strip('"'))
+            elif monitoring_role := _rds_monitoring_role(header, arguments):
+                roles.add(monitoring_role)
     assert set(_string_list_default("managed_role_names")) == roles | RETIRING_ROLES
     assert set(_string_list_default("managed_instance_profile_names")) == profiles | RETIRING_PROFILES
+
+
+def test_the_attachable_policies_are_the_ones_the_flip_root_attaches() -> None:
+    """The same rule for AWS-managed policies, the RDS module's monitoring policy included."""
+    policies = set()
+    for _, source in _flip_root_sources():
+        policies.update(re.findall(r':iam::aws:policy/([^"]+)"', source))
+        for header, body in _parse(source)[1]:
+            if _rds_monitoring_role(header, _arguments(body)):
+                policies.add(RDS_MONITORING_POLICY)
+    assert set(_string_list_default("attachable_managed_policies")) == policies | RETIRING_POLICIES
 
 
 def test_the_plan_role_cannot_read_the_accounts_data() -> None:
@@ -839,7 +882,7 @@ def test_the_ui_publish_role_trusts_the_reusable_workflow_at_the_apply_branch() 
 
 
 def test_the_ui_publish_role_reaches_the_ui_bucket_and_nothing_else() -> None:
-    """List the bucket, sync its objects, never write ark_demo/; no KMS, no other service."""
+    """List the bucket, sync its objects, never write demo/; no KMS, no other service."""
     document = 'data "aws_iam_policy_document" "ui_publish"'
     assert _module_locals()["ui_bucket_arn"] == (
         '"arn:${data.aws_partition.current.partition}:s3:::${var.ui_bucket_name}"'
@@ -854,10 +897,10 @@ def test_the_ui_publish_role_reaches_the_ui_bucket_and_nothing_else() -> None:
     assert sync["effect"] == '"Allow"'
     assert set(_list(sync["actions"])) == {'"s3:DeleteObject"', '"s3:GetObject"', '"s3:PutObject"'}
     assert sync["resources"] == '["${local.ui_bucket_arn}/*"]'
-    demo = _arguments(_statement(document, "NeverTouchTheArkDemo"))
+    demo = _arguments(_statement(document, "NeverTouchThePublicDemo"))
     assert demo["effect"] == '"Deny"'
     assert set(_list(demo["actions"])) == {'"s3:DeleteObject"', '"s3:PutObject"'}
-    assert demo["resources"] == '["${local.ui_bucket_arn}/ark_demo/*"]'
+    assert demo["resources"] == '["${local.ui_bucket_arn}/demo/*"]'
 
     body = _normalise(_module_block(document))
     actions = set(re.findall(r'"((?:[a-z0-9-]+):[A-Za-z*]+)"', body))

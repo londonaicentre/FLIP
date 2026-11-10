@@ -23,7 +23,7 @@ TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials sim-tutorial
 # Dataset targets are backend-agnostic: one download per dataset under the shared data root,
 # read by both harnesses (single copy in datasets/), so FL_BACKEND plays no part in them.
 DATASET_TARGETS := download-xray-data download-weights \
-	download-spleen-data download-spleen-checkpoint \
+	download-spleen-data download-spleen-checkpoint download-spleen-msd-data \
 	download-synthea-data upload-spleen-labels download-arkplus-finetuning-data \
 	download-arkplus-eval-data \
 	fetch-spleen-metadata-table download-spleen-msd-raw convert-spleen-to-dicom \

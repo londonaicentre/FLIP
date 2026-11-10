@@ -163,6 +163,19 @@ uv add <package-name> --group <group>  # dependency in a named group
 The `pyproject.toml` file is the source of truth for dependencies. The Python version in `.python-version` must match
 the version used in the service's Dockerfile.
 
+### Third-party container images (one registry per trust node)
+
+Every image a trust node runs comes from `ghcr.io/londonaicentre/`: FLIP's own, and byte-identical copies of the
+third-party ones (Grafana, Loki, Alloy, XNAT's Docker socket proxy, the chart's `uv` and `busybox` helpers) under
+`ghcr.io/londonaicentre/mirror/`, listed with their digests in `trust/deploy/mirror-images.manifest` and pinned
+`<name>:<tag>@<digest>` in the compose files, the Helm chart and the Ansible seed role
+(`scripts/tests/test_mirror_images.py` fails on drift). A site's proxy allowlist is by host name and cannot be
+narrowed to FLIP's packages, so one registry is the smallest ask and the digest is the control. Never add a
+`docker.io` image to anything a trust runs. To bump one: `docker buildx imagetools inspect <upstream>` for the new
+digest, update the manifest line and every pin, then `gh workflow run mirror_images.yml --ref <branch>` (or
+`make mirror-images` with a `write:packages` GHCR login) before the PR merges; CI checks the mirror on the PR and
+copies on develop/main. Loki and Grafana are AGPL-3.0: each mirror package's description links to its upstream source.
+
 ### Dependency cooldown (supply-chain protection)
 
 Recent npm and PyPI supply-chain attacks follow a consistent pattern: a maintainer's credentials are compromised, a
@@ -208,8 +221,6 @@ For a genuine same-day patch of an active CVE, the cooldown can be bypassed for 
   - Add a `constraint-dependencies` floor at the fixed version, so the fix stays in place once the override is gone.
   - Open an issue to remove the entry when the 72 hours are up. A fixed timestamp freezes the package at that date
     until someone removes it.
-  - Carry the floor into any install that does not read `[tool.uv]`, such as the `pip install` in
-    `fl-services/flower/fl-base/Dockerfile`.
 
   The certifi and uv fixes in #1612 (removed in #1618) are a worked example.
 - **npm** — run `npm install <package> --min-release-age=0`, which overrides the `.npmrc` setting for that one
@@ -232,9 +243,10 @@ that `uv lock` fails instead. When you fix an alert:
 - **Leave dev and docs tooling lock-only** (`docs/`, `deploy/providers/AWS/`, dev-only groups) unless the first rule
   applies. None of it ships.
 
-`constraint-dependencies` is read only by uv. It guards this repo's lockfiles, not a downstream `pip install
-flip-utils`, so carry the floor by hand into any install that skips `[tool.uv]`, such as the `pip install` in
-`fl-services/flower/fl-base/Dockerfile`.
+`constraint-dependencies` is read only by uv. Every service and FL image installs from its uv lockfile (the Flower
+`fl-base` through `uv export`), so a floor reaches those images through the lock. `trust/monailabel` is not a uv
+project: it pins with `trust/monailabel/constraints.txt`, so a fix there goes into that file. A downstream `pip install flip-utils` sees only the
+dependency specifiers, which is why a vulnerable direct dependency of `flip-utils` also needs its specifier raised.
 
 ### Environment variables
 
@@ -254,7 +266,8 @@ make generate-internal-service-key
 ```
 
 This writes `INTERNAL_SERVICE_KEY` with `INTERNAL_SERVICE_KEY_HASH` into the active env file
-(`MAIN_ENV_FILE`, default `.env.development`) for fl-server-to-hub authentication.
+(`MAIN_ENV_FILE`, default `.env.development`) for fl-server-to-hub authentication. `make up` also runs
+`make generate-fl-api-key`, which writes `FL_API_KEY` there — the key flip-api presents to the FL APIs.
 
 #### Updating an existing checkout
 
@@ -265,6 +278,7 @@ These changes affect checkouts created before them. None is picked up automatica
 | --- | --- |
 | `NLB_SUBDOMAIN`, `AICENTRE_BUCKET_NAME` and `DEMO_*_PASSWORD` are commented out in `.env.development.example` | Nothing to do: the `scripts/check_env_vars.py` pre-commit hook no longer requires them, and a leftover line is harmless. A dev stack never reads the first two; set the demo passwords only to run `make demo-users`. |
 | `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` ship empty in `.env.development.example` (FLIP#1501) | Nothing to do: the next `make up` replaces a key still set to the old `<run-make-generate-internal-service-key>` placeholder with a random matching pair. |
+| `FL_API_KEY` is new in `.env.development.example` | Nothing to do: the next `make up` mints it. Add an empty `FL_API_KEY=` line if `scripts/check_env_vars.py` asks for it. The FL APIs refuse every call without it, so a stack brought up by hand needs `make generate-fl-api-key` first. |
 | uv floor raised to **>= 0.10.0** | `uv self update` (or reinstall). Below the floor, `make lock` and the FLARE provisioning script refuse to run rather than silently re-resolving `uv.lock` without the cooldown. |
 | `NUM_AVAILABLE_GPUS` defaults to `0` in the two shipped dev kit examples (`trust/.env.GSTT.development.example`, `trust/.env.KCH.development.example`) | Only those two pre-populated example kits were changed; the base template (`trust/.env.example`) that `make new-trust` scaffolds from still defaults to `1`, and an existing `trust/.env.<CODE>.<env>` keeps its own value regardless. On a GPU dev host, set `NUM_AVAILABLE_GPUS=1` in the kit to restore passthrough — `make up-trust` prints a warning naming the variable when it is zero, so this is not silent. |
 | `MIN_CLIENTS` is removed everywhere (FLIP#1230) | Nothing to add. Delete the `MIN_CLIENTS=` line from your `.env.development` and from any `trust/.env.<CODE>.<env>` kit if you like — a leftover is ignored. The FL images no longer read it: the per-job quorum is the participating-trust count, which fl-api writes into every job (`min_clients = len(trusts)` on FLARE, `flip-min-clients` on Flower), so a hub-wide value could only ever veto a legitimate project (set to 3, a 2-trust project never starts) and never lowered anything. On stag/prod the `MIN_CLIENTS` GitHub environment variable is now unread and can be deleted. |
@@ -342,7 +356,7 @@ Keycloak, because the browser uses the OIDC password grant, which has no equival
 and forgot-password; use the Keycloak console for those. The admin "Reset password" button works (FLIP#1705): flip-api
 re-sends the invitation, and with no mail server in dev sets the shared `ADMIN_USER_PASSWORD` as a temporary password. Everything else —
 register, roles, enable/disable, MFA reset from the admin screen, projects, cohorts, uploads — works the same. Scripts
-that sign in (`make e2e_smoke`, `make -C flip-api create_testing_projects`, `make seed-demo-projects`, `make demo-users`,
+that sign in (`make e2e_smoke`, `make -C flip-api create_testing_projects`, `make seed-demo-projects`, `make demo-users`, `make capture-demo-project`,
 the demo recorder) go through the configured provider, so they need no AWS session either. Details:
 [`deploy/keycloak/README.md`](deploy/keycloak/README.md).
 
@@ -375,6 +389,9 @@ compose file — avoid hardcoding values in Dockerfiles or compose files directl
 - `INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for fl-server-to-hub authentication.
 - `INTERNAL_SERVICE_KEY` — internal service key used by the fl-server on the Central Hub.
 - `INTERNAL_SERVICE_KEY_HASH` — hub-side SHA-256 hash of the internal service key.
+- `FL_API_KEY` — the key flip-api sends to every FL API (`fl-api-net-N`) in the `FL_API_KEY_HEADER` header
+  (default `X-FL-API-Key`); every FL API route but `/health` requires it. Minted by `make up`; on ECS a
+  Secrets Manager field. Distinct from `INTERNAL_SERVICE_KEY`, which the FL API never holds.
 - `TRUST_INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for trust-internal service auth (default
   `X-Trust-Internal-Service-Key`). Sent by every caller (trust-api, imaging-api, fl-client) on every
   call to imaging-api or data-access-api.
@@ -1119,10 +1136,11 @@ run was 95% of a clone). Instead:
   contains as `vX.Y.Z` on the dataset (`docs/scripts/freeze_docs_gifs.py`) before it pushes the git tag, so
   that release's docs, and git `main`'s, keep showing them. Release tags are never moved or deleted.
 - **GIFs CI cannot record** (the MONAI Label walkthrough needs a live trust) are listed in
-  `docs/scripts/live-recorded-gifs.txt` instead of having a spec. Recorded by hand, they go to the dataset
-  branch of the PR that carries them, which that PR's ReadTheDocs preview then shows (see "Publishing by
-  hand"). When that PR merges, the CI publish takes them from its `pr-<N>`; every later CI publish carries
-  them forward unchanged from `main`. Only CI writes the dataset's `main`; delete `pr-<N>` once the PR merges.
+  `docs/scripts/live-recorded-gifs.txt`, with each one's sha256, instead of having a spec. Recorded by hand,
+  they go to the dataset branch of the PR that pins them, which that PR's ReadTheDocs preview then shows (see
+  "Publishing by hand"). The next CI publish after that PR merges fetches the pinned bytes from its `pr-<N>`;
+  every later one carries them forward unchanged from `main`. Only CI writes the dataset's `main`; delete
+  the dataset branch `pr-<N>` (not the git branch) once `main`'s manifest lists the pinned sha256.
 
 ### Adding a new GIF
 
@@ -1153,7 +1171,7 @@ Without the skip flag the build restores the published bytes over any file that 
 Only for GIFs CI cannot record, and only to the dataset branch of your PR (the script refuses `main`). From a
 laptop with an account that can write to the dataset, with the full set under
 `docs/source/assets/generated/gifs/` (fetch the rest with `uv run docs/scripts/fetch_docs_gifs.py`, then add
-yours):
+yours) and each of yours pinned by its sha256 in `docs/scripts/live-recorded-gifs.txt`:
 
 ```bash
 uvx --from 'huggingface_hub>=1.6' hf auth login

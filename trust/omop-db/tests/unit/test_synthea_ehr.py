@@ -81,7 +81,7 @@ def visit() -> pd.DataFrame:
 
 
 def test_offset_clears_the_imaging_ceiling():
-    # >= 1_000_000_000 → clear of the imaging cohorts' person_id ceiling: nhs_number_to_integer takes
+    # >= 1_000_000_000 → clear of the imaging cohorts' person_id ceiling: person_id takes
     # only the first 9 digits of a real NHS number, so an imaging person_id can be anywhere up to
     # 999_999_999 (NOT merely "small" — it scatters across the whole 9-digit range, which is exactly
     # what made the old id-band *delete* unsafe; that safety now comes from clean_reserved_band's
@@ -185,7 +185,7 @@ def test_visit_end_date_defaults_to_start_when_column_absent():
 class TestCleanReservedBandProvenance:
     """Regression test for the id-band delete bug.
 
-    The imaging cohorts' person_id is nhs_number_to_integer(PatientID) — the first 9 digits of a
+    The imaging cohorts' person_id is person_id(PatientID) — the first 9 digits of a
     real, effectively random NHS number — so it is not "small"; it scatters across the whole 9-digit
     range. 923226025 is a real person_id from the public spleen export, and it sits in the *old*
     reserved band (>= the retired 900_000_000 threshold): the previous "DELETE WHERE person_id >=

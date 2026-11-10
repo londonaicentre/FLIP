@@ -27,6 +27,7 @@ import io
 import json
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -55,6 +56,7 @@ MINTED = {
     "ADMIN_USER_PASSWORD": "admin-SECRET",  # pragma: allowlist secret
     "INTERNAL_SERVICE_KEY": "isk-SECRET",  # pragma: allowlist secret
     "INTERNAL_SERVICE_KEY_HASH": "hash",  # pragma: allowlist secret
+    "FL_API_KEY": "flk-SECRET",  # pragma: allowlist secret
 }
 
 
@@ -99,6 +101,7 @@ class Instance(unittest.TestCase):
 
         assert len(base64.b64decode(env["AES_KEY_BASE64"])) == 32
         assert env["INTERNAL_SERVICE_KEY_HASH"] == hashlib.sha256(env["INTERNAL_SERVICE_KEY"].encode()).hexdigest()
+        assert len(env["FL_API_KEY"]) >= 32
 
     def test_unknown_placeholder_is_refused(self):
         refused(instance.hub_env, HUB_EXAMPLE + "\nNEW_SECRET=<fill-me>\n", "x", 10000, MINTED)
@@ -117,6 +120,16 @@ class Instance(unittest.TestCase):
             for key in TRUST_CONTAINER_PORTS:
                 assert kit[key] == documented_value(text, key), (example, key)
             assert kit["OMOP_DB_TAG"] == "rel0130"
+            assert kit["NUM_AVAILABLE_GPUS"] == "0"
+            assert read_env_text(instance.trust_kit(text, "rel0130", 10000, gpus=1))["NUM_AVAILABLE_GPUS"] == "1"
+
+    def test_host_gpus_counts_nvidia_smi_lines(self):
+        listing = "GPU 0: NVIDIA GeForce RTX 5090 (UUID: GPU-x)\nGPU 1: NVIDIA A100 (UUID: GPU-y)\n"
+        done = subprocess.CompletedProcess([], 0, stdout=listing)
+        with mock.patch.object(instance.subprocess, "run", return_value=done):
+            assert instance.host_gpus() == 2
+        with mock.patch.object(instance.subprocess, "run", side_effect=FileNotFoundError):
+            assert instance.host_gpus() == 0
 
     def test_write_files_refuses_to_overwrite_and_hides_secrets(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -236,6 +249,11 @@ class Verify(unittest.TestCase):
             container("rel0130-deploy-flip-api-1", "ghcr.io/londonaicentre/flip-api:rel0130", "/w/flip/deploy"),
             container("rel0130-deploy-flip-ui-1", "rel0130-deploy-flip-ui", "/w/flip/deploy"),
             container("rel0130-deploy-flip-db-1", "postgres:17", "/w/flip/deploy"),
+            container(
+                "rel0130-trust1-grafana-1",
+                "ghcr.io/londonaicentre/mirror/grafana/grafana:11.5.0@sha256:0a28",
+                "/w/flip/trust",
+            ),
             container("rel0130-trust1-fl-client-net-1-1", "flare-fl-client:rel0130", "/w/flip/trust"),
             container(
                 "rel0130-xnat1_xnat-web.1.x", "ghcr.io/londonaicentre/xnat-web:rel0130@sha256:ab", None, stack=True
@@ -256,7 +274,11 @@ class Verify(unittest.TestCase):
 
     def test_services_must_be_replicated_at_the_instance_tag(self):
         ok = {"Name": "rel0130-xnat1_xnat-web", "Replicas": "1/1", "Image": "ghcr.io/londonaicentre/xnat-web:rel0130"}
-        proxy = {"Name": "rel0130-xnat1_proxy", "Replicas": "1/1", "Image": "tecnativa/docker-socket-proxy:v0.4.2"}
+        proxy = {
+            "Name": "rel0130-xnat1_proxy",
+            "Replicas": "1/1",
+            "Image": "ghcr.io/londonaicentre/mirror/tecnativa/docker-socket-proxy:v0.4.2",
+        }
         assert verify.check_services([ok, proxy], "rel0130") == []
         stuck = {**ok, "Replicas": "0/1"}
         pulled = {**ok, "Image": "ghcr.io/londonaicentre/xnat-web:stag"}
@@ -280,6 +302,101 @@ class Gates(unittest.TestCase):
             [(0.0, "🚀 Running Flower tutorial fl-tutorials/flower/image_classification/xray_classification")]
         )
         assert flower["tutorials"][0]["name"] == "xray_classification"
+
+    def test_tutorial_metrics_count_dp_reports_and_heavy_clipping(self):
+        report = "INFO :      FLIP local DP: update pre-clip L2 norm 50.0000 clipped to 1.0000 (scaled by 0.0200) ..."
+        warn = "WARNING :   FLIP local DP: clipping scaled this update by 0.0200; raise dp-clipping-norm ..."
+        lines = [
+            (0.0, "🚀 Running Flower tutorial ehr_risk_prediction"),
+            (1.0, "🚀 Running Flower tutorial 3d_spleen_segmentation"),
+            (2.0, report),
+            (3.0, warn),
+            (4.0, report),
+        ]
+        ehr, spleen = gates.tutorial_metrics(lines)["tutorials"]
+        assert (spleen["dp_reports"], spleen["dp_over_clipped"]) == (2, 1)
+        assert "dp_reports" not in ehr
+        assert "dp_over_clipped" not in ehr
+
+    def test_the_dp_markers_are_the_mods_own_log_lines(self):
+        # Reworded in flip-utils alone, the gate would silently stop catching over-clipping.
+        privacy = (ROOT / "flip-utils" / "flip" / "flower" / "privacy.py").read_text()
+        assert gates.DP_OVER_CLIPPED in privacy
+        assert gates.DP_REPORTED in privacy
+
+    def test_the_dp_tutorials_are_those_that_register_the_mod(self):
+        assert {"3d_spleen_segmentation", "ehr_risk_prediction", "xray_classification"} <= gates.dp_tutorials()
+        assert "3d_spleen_segmentation_evaluation" not in gates.dp_tutorials()
+
+    def test_flower_tutorial_verdict_fails_on_heavy_dp_clipping(self):
+        dp = {"ehr_risk_prediction", "3d_spleen_segmentation"}
+        clean = {
+            "tutorials": [
+                {"name": "ehr_risk_prediction", "dp_reports": 4},
+                {"name": "3d_spleen_segmentation", "dp_reports": 4},
+                {"name": "eval"},
+            ]
+        }
+        clipped = {"tutorials": [{"name": "3d_spleen_segmentation", "dp_reports": 4, "dp_over_clipped": 1}]}
+        assert gates.dp_clipping_verdict(clean, dp) is None
+        reason = gates.dp_clipping_verdict(clipped, dp)
+        assert "3d_spleen_segmentation (1x)" in reason
+        assert "dp-clipping-norm" in reason
+
+    def test_flower_tutorial_verdict_fails_when_a_dp_tutorial_reports_nothing(self):
+        # No WARNING because no DP line arrived at all (logs lost, mod unwired) must not read as clean.
+        silent = {"tutorials": [{"name": "ehr_risk_prediction"}]}
+        reason = gates.dp_clipping_verdict(silent, {"ehr_risk_prediction"})
+        assert "ehr_risk_prediction" in reason
+        assert "no DP report" in reason
+        flower = gates.build_gates("v0.0.1", "rel0001", lambda: "")["tutorials-flower"]
+        assert flower.verdict is gates.dp_clipping_verdict
+
+    def test_flower_tutorial_verdict_fails_when_a_dp_tutorial_did_not_run(self):
+        ran = {"tutorials": [{"name": "ehr_risk_prediction", "dp_reports": 4}]}
+        reason = gates.dp_clipping_verdict(ran, {"ehr_risk_prediction", "xray_classification"})
+        assert "xray_classification" in reason
+        assert "ehr_risk_prediction" not in reason
+
+    def test_flower_tutorial_verdict_fails_when_no_tutorial_ran(self):
+        # An empty run-all-tutorials that still exits 0 must not pass vacuously.
+        reason = gates.dp_clipping_verdict({"tutorials": []}, set())
+        assert "no tutorial was reported" in reason
+        assert gates.dp_clipping_verdict({}, set()) == reason
+
+    def test_a_verdict_fails_a_gate_whose_steps_passed(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        gate = gates.Gate(
+            "x",
+            [[sys.executable, "-c", "print('🚀 Running Flower tutorial a')"]],
+            gates.tutorial_metrics,
+            verdict=lambda metrics: "tutorial a learned nothing" if metrics["total"] else None,
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = gates.run_gate(gate, tmp, {}, {})
+        assert result["status"] == "failed"
+        assert result["exit_code"] == 1
+        assert "❌ tutorial a learned nothing" in (tmp / "x.log").read_text()
+
+    def test_cleanup_runs_when_the_verdict_raises(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+
+        def broken(_metrics):
+            raise KeyError("name")
+
+        gate = gates.Gate(
+            "x", [[sys.executable, "-c", "print(1)"]], gates.tutorial_metrics, lambda: ["stopped 42"], broken
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            try:
+                gates.run_gate(gate, tmp, {}, {})
+            except KeyError:
+                pass
+            else:
+                raise AssertionError("the verdict's exception was swallowed")
+        assert "🧹 stopped 42" in (tmp / "x.log").read_text()
 
     def test_smoke_metrics(self):
         lines = [

@@ -17,6 +17,9 @@
 {{- if and $jobPods .Values.flClient.gpu.enabled }}
 {{- fail "flClient.nvflare.jobPods.enabled gives GPUs to the job pods, not to the fl-client: set flClient.gpu.enabled=false and size the site's GPU pool with flClient.nvflare.jobPods.maxGpus." }}
 {{- end }}
+{{- if not (has .Values.flClient.gpu.allocation (list "devicePlugin" "runtime")) }}
+{{- fail (printf "flClient.gpu.allocation is %q: use devicePlugin (the pod requests nvidia.com/gpu, for a cluster whose GPUs the NVIDIA device plugin or GPU Operator hands out) or runtime (no request; the node's default runtime is nvidia and the pod takes its GPU 0)." (toString .Values.flClient.gpu.allocation)) }}
+{{- end }}
 {{- if and (eq .Values.flBackend "nvflare") .Values.flClient.gpu.enabled (ne (int .Values.flClient.gpu.count) 1) }}
 {{- fail "flClient.gpu.count must be 1 when GPU mode is enabled on NVFLARE: the pod sees GPU 0 only (CUDA_VISIBLE_DEVICES and NVIDIA_VISIBLE_DEVICES are 0). Set flClient.gpu.count to 1, or disable flClient.gpu.enabled for CPU-only mode." }}
 {{- end }}
@@ -405,10 +408,15 @@ spec:
               value: {{ .Values.flClient.nvflare.sitePrivacy.gamma | quote }}
             {{- end }}
             {{- if .Values.flClient.gpu.enabled }}
+            # The pod's one GPU is index 0 inside the container either way.
             - name: CUDA_VISIBLE_DEVICES
               value: "0"
+            {{- if eq .Values.flClient.gpu.allocation "runtime" }}
+            # No device plugin: the node's nvidia runtime exposes what this names, the node's GPU 0. Under
+            # devicePlugin the plugin sets it to the device it allocated, and a value here would override that.
             - name: NVIDIA_VISIBLE_DEVICES
               value: "0"
+            {{- end }}
             {{- end }}
             - name: TRUST_INTERNAL_SERVICE_KEY_HEADER
               valueFrom:
@@ -483,8 +491,18 @@ spec:
               mountPath: /app/k8s
               readOnly: true
           {{- end }}
+          {{- /*
+            Merge the GPU request into the operator's resources, as monailabel does: a second `limits:` block
+            would be a duplicate key, and YAML's last-wins would drop one of them. merge's dest wins, so an
+            explicit operator nvidia.com/gpu overrides gpu.count.
+          */}}
+          {{- $resources := deepCopy (.Values.flClient.resources | default dict) }}
+          {{- if and .Values.flClient.gpu.enabled (eq .Values.flClient.gpu.allocation "devicePlugin") }}
+          {{- $gpuLimit := dict "nvidia.com/gpu" (.Values.flClient.gpu.count | toString) }}
+          {{- $_ := set $resources "limits" (merge ($resources.limits | default dict) $gpuLimit) }}
+          {{- end }}
           resources:
-            {{- toYaml .Values.flClient.resources | nindent 12 }}
+            {{- toYaml $resources | nindent 12 }}
           livenessProbe:
 {{- if .Values.flClient.probes.liveness.exec }}
             exec:

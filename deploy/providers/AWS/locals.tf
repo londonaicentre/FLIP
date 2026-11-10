@@ -19,7 +19,7 @@
 #
 # These maps mirror compose.prod.yml + compose.prod.nvflare.yml so
 # the running container sees the same env whether it runs on EC2+compose or
-# ECS Fargate.
+# ECS Fargate, plus what the read-only root filesystem there takes (FLIP#1795).
 
 locals {
   flip_local_domain = "flip.local"
@@ -161,6 +161,9 @@ locals {
       # 1800s (MAX_PUT_PRESIGNED_URL_TTL_SECONDS), so multi-GB uploads must
       # complete within 30 minutes or they time out at the edge.
       MAX_MODEL_FILE_BYTES = "5000000000"
+      # uv's cache on the task's /tmp volume: its default, under HOME, is on the
+      # read-only root filesystem (FLIP#1795).
+      UV_CACHE_DIR = "/tmp/uv-cache"
       # FL_KIT_SLOT_NAMES is deliberately NOT in the task env: in production the
       # kit-slot pool's single source is the /flip/fl_kit_slot_names SSM parameter
       # (parameter_store.tf), read at runtime by resolve_fl_kit_slot_names — an env
@@ -179,6 +182,8 @@ locals {
       # <root>/<model_id>/ here (FLIP#695). Matches the default in
       # flip-utils FlipConstants + compose.prod.nvflare.yml.
       SERVER_CHECKPOINT_ROOT = "/app/server-checkpoints"
+      # Where ecs_tasks.tf mounts the kit (FLIP#1795).
+      FL_WORKSPACE = "/workspace"
       # The kit this task runs on (ecs_efs_provision.tf syncs it to EFS). The image
       # ignores it; it is here so a kit-date change registers a new revision and
       # rolls the service, which reads the kit only at start. The Flower one-shot
@@ -202,6 +207,10 @@ locals {
       # Requests GPUs on the fl-CLIENTS (trust hosts) — the hub Fargate tasks are
       # CPU-only. Default 0; jobs declare their own in their meta.json (FLIP#70).
       JOB_RESOURCE_SPEC_NUM_GPUS = tostring(var.JOB_RESOURCE_SPEC_NUM_GPUS)
+      # The entrypoint's `uv run` must not sync the baked .venv, which is on the
+      # read-only root filesystem, and its cache goes to the /tmp volume (FLIP#1795).
+      UV_NO_SYNC   = "1"
+      UV_CACHE_DIR = "/tmp/uv-cache"
       # Rolls the service on a kit-date change; see fl_server's (FLIP#1738).
       FL_KIT_SOURCE = local.fl_provision_base_s3
       # The only origin the server-side bundle fetch may download from: the
@@ -227,6 +236,11 @@ locals {
       # cold sync outlives Flower's task heartbeat, so the run never starts (FLIP#1418).
       # Researcher package additions ship via image rebuild, not pyproject.
       FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION = "1"
+      # Everything the SuperLink and its ServerApp write goes to the /tmp volume, as in
+      # the dev compose: the image's HOME (/app) and the apps' default WORKING_DIR
+      # (/app/runs) are on the read-only root filesystem (FLIP#1795).
+      HOME        = "/tmp"
+      WORKING_DIR = "/tmp/runs"
       # Rolls the service on a kit-date change; see fl_server's (FLIP#1738).
       FL_KIT_SOURCE = local.flower_creds_base_s3
     })

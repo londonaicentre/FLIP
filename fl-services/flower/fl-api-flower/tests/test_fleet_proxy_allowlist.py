@@ -16,8 +16,9 @@ SuperLink: it forwards the routes in fleet-routes.map and answers everything els
 tests read the routes from the flwr this service locks, so a Flower bump that adds, renames
 or drops a Fleet route fails here rather than 404ing SuperNodes mid-round, and a Control or
 Runtime route can never be allowlisted by accident. That only holds while this lock and the
-SuperLink image carry the same flwr, which the last test pins; the rest pin the nginx details
-the allowlist depends on.
+SuperLink image carry the same flwr, which test_this_lock_carries_the_superlink_images_flwr pins;
+the rest pin the nginx details the allowlist depends on, and the last test holds flip-utils' lock
+to the same flwr, since fl-base installs that lock beside flwr/base's own flwr (FLIP#1801).
 """
 
 import os
@@ -124,11 +125,25 @@ def test_every_template_variable_is_one_the_image_defines(template):
     assert "NGINX_ENVSUBST_FILTER=^FLEET_PROXY_" in dockerfile
 
 
-def test_this_lock_carries_the_superlink_images_flwr():
-    lock = tomllib.loads(_read(FLOWER_DIR / "fl-api-flower" / "uv.lock"))
-    locked = next(pkg["version"] for pkg in lock["package"] if pkg["name"] == "flwr")
+def _locked_flwr(lock_path: Path) -> str:
+    lock = tomllib.loads(_read(lock_path))
+    return next(pkg["version"] for pkg in lock["package"] if pkg["name"] == "flwr")
+
+
+def _fl_base_flwr() -> str:
     base = re.search(r"flwr/base:\$\{FLWR_VERSION:-([0-9.]+)-", _read(FLOWER_DIR / "fl-base" / "Dockerfile"))
     assert base, "fl-base/Dockerfile no longer defaults FLWR_VERSION to a flwr/base tag"
-    assert locked == base.group(1), f"fl-api-flower locks flwr {locked}; the SuperLink image is {base.group(1)}"
+    return base.group(1)
+
+
+def test_this_lock_carries_the_superlink_images_flwr():
+    locked, base = _locked_flwr(FLOWER_DIR / "fl-api-flower" / "uv.lock"), _fl_base_flwr()
+    assert locked == base, f"fl-api-flower locks flwr {locked}; the SuperLink image is {base}"
     secure = set(re.findall(r"flwr/base:([0-9.]+)-", _read(FLOWER_DIR / "compose.secure.yml")))
     assert secure == {locked}, f"compose.secure.yml runs flwr/base {sorted(secure)}"
+
+
+def test_flip_utils_lock_carries_the_fl_base_images_flwr():
+    # fl-base installs flip-utils' locked packages beside flwr/base's flwr (#1801); they were resolved with this flwr.
+    locked, base = _locked_flwr(FLOWER_DIR.parents[1] / "flip-utils" / "uv.lock"), _fl_base_flwr()
+    assert locked == base, f"flip-utils locks flwr {locked}; fl-base is flwr/base {base}"

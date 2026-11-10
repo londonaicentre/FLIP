@@ -41,6 +41,8 @@ from typing import TypeVar
 
 import names
 
+from utils.omop_ids import person_id as person_id  # re-exported: synthetic_identity.person_id is public API
+
 T = TypeVar("T")
 
 # Institution and department labels as spleen's original `dicom_utils.py` used them — deliberately
@@ -93,7 +95,7 @@ def _rng(namespace: str, case_id: str) -> random.Random:
     return random.Random(f"{_SEED_ROOT}/{namespace}/{case_id}")
 
 
-def _with_seeded_global_rng(seed: str, draw: Callable[[], T]) -> T:
+def with_seeded_global_rng(seed: str, draw: Callable[[], T]) -> T:
     """Run ``draw()`` with the global RNG seeded from ``seed``, then put the global RNG back as it was."""
     state = random.getstate()
     try:
@@ -122,11 +124,6 @@ def nhs_number(case_id: str) -> str:
         return f"{body[0:3]} {body[3:6]} {body[6:]}"
 
 
-def person_id(nhs: str) -> int:
-    """The OMOP ``person_id`` the converters derive from a PatientID: the first nine digits of the NHS number."""
-    return int(nhs.replace(" ", "")[:9])
-
-
 def sex(case_id: str) -> str:
     """DICOM PatientSex, ``M`` or ``F``."""
     return _rng("sex", case_id).choice("MF")
@@ -135,7 +132,7 @@ def sex(case_id: str) -> str:
 def patient_name(case_id: str, patient_sex: str) -> str:
     """``LAST^FIRST`` (a DICOM person name) for the patient, fixed by the case id and consistent with its sex."""
     gender = "male" if patient_sex == "M" else "female"
-    return _with_seeded_global_rng(
+    return with_seeded_global_rng(
         f"{_SEED_ROOT}/patient-name/{case_id}",
         lambda: f"{names.get_last_name()}^{names.get_first_name(gender=gender)}",
     )
@@ -143,7 +140,7 @@ def patient_name(case_id: str, patient_sex: str) -> str:
 
 def referring_physician(case_id: str) -> str:
     """``LAST^FIRST`` for the referring physician of the case's study."""
-    return _with_seeded_global_rng(
+    return with_seeded_global_rng(
         f"{_SEED_ROOT}/referring-physician/{case_id}",
         lambda: f"{names.get_last_name()}^{names.get_first_name()}",
     )

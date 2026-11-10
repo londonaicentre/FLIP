@@ -43,6 +43,7 @@ services:
       - SUPERLINK_ROOT_CERTIFICATES=${SUPERLINK_ROOT_CERTIFICATES:-/certs/ca.crt}
       - SUPERLINK_HEALTH_ADDRESS=${SUPERLINK_HEALTH_ADDRESS:-superlink:9097}
       - FLOWER_SRC_ROOT=/app/src
+      - FL_API_KEY=${FL_API_KEY}
       # No BUNDLE_URL_ALLOWED_ORIGINS here on purpose: this harness has no hub, so nothing presigns
       # bundle URLs for it (jobs are submitted by folder name) and the fl-api logs the documented
       # empty-allow-list warning at startup. Every hub deployment sets it — see deploy/compose.*.yml.
@@ -133,6 +134,7 @@ services:
     image: flwr/base:1.42.0-py3.12-ubuntu24.04
     environment:
       - FL_API_ADDRESS=${FL_API_ADDRESS:-http://fl-api:8000}
+      - FL_API_KEY=${FL_API_KEY}
       - TRUST_NAMES=${TRUST_NAMES:-Trust_1,Trust_2}
     volumes:
       - ${FLOWER_TLS_CERTS_DIR:-./provision/creds/net-1/certificates}:/certs:ro
