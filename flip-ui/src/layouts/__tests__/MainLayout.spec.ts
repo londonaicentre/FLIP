@@ -85,6 +85,7 @@ vi.mock("@/utils/snackbar", () => ({
 
 function mountMainLayout(options: {
     permissions?: string[];
+    trustAdminOf?: { id: string; name: string; code: string } | null;
     email?: string;
     userId?: string;
     bannerEnabled?: boolean;
@@ -97,6 +98,7 @@ function mountMainLayout(options: {
 } = {}) {
     const {
         permissions = [],
+        trustAdminOf = null,
         email = "test@example.com",
         userId = "1",
         bannerEnabled,
@@ -136,7 +138,8 @@ function mountMainLayout(options: {
                                     sub: userId,
                                     email
                                 },
-                                permissions
+                                permissions,
+                                trustAdminOf
                             },
                             signInStep: "DONE"
                         },
@@ -238,6 +241,20 @@ describe("MainLayout", () => {
             const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper;
 
             expect((dropdown.props() as Record<string, unknown>).role).toBe("Researcher");
+        });
+
+        it("returns Trust Admin for a Trust Admin, who also holds the Researcher grant", () => {
+            const wrapper = mountMainLayout({
+                permissions: ["CanCreateProjects"],
+                trustAdminOf: {
+                    id: "t1",
+                    name: "Guy's and St Thomas'",
+                    code: "GSTT"
+                }
+            });
+            const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper;
+
+            expect((dropdown.props() as Record<string, unknown>).role).toBe("Trust Admin");
         });
 
         it("returns Viewer when user has no management permissions", () => {

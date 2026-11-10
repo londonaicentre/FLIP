@@ -115,6 +115,8 @@ const displayName = computed(() => currentUserProfile.value?.name || emailAddres
 const { isAdmin, canCreateProjects } = usePermissions();
 const userRole = computed(() => {
     if (isAdmin.value) return "Admin";
+    // A Trust Admin also holds the Researcher grant; name the role that sets them apart.
+    if (authStore.trustAdminOf) return "Trust Admin";
     if (canCreateProjects.value) return "Researcher";
 
     return "Viewer";
