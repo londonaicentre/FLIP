@@ -130,6 +130,11 @@ resource "aws_ecs_task_definition" "efs_provision" {
         S3_BASE=${local.flower_creds_base_s3}
         echo "Syncing Flower creds from $S3_BASE to EFS..."
 
+        # `aws s3 sync` of a prefix that does not exist copies nothing and exits 0, and
+        # the SuperLink then starts without certificates. Fail here instead (FLIP#1738).
+        aws s3 ls "$S3_BASE/certificates/server.pem" > /dev/null \
+          || { echo "ERROR: no Flower kit at $S3_BASE (certificates/server.pem missing): check FLOWER_KIT_DATE"; exit 1; }
+
         # Same wipe-first rationale as the NVFLARE branch below: `aws s3 sync`
         # skips size+mtime-equivalent files, which can leave rotated creds
         # stale. certificates/ carries ca.crt + server.pem/server.key for the
@@ -148,6 +153,10 @@ resource "aws_ecs_task_definition" "efs_provision" {
         set -e
         S3_BASE=${local.fl_provision_base_s3}
         echo "Syncing NVFLARE participant kit from $S3_BASE to EFS..."
+
+        # Same guard as the Flower branch: a missing prefix must not sync silently (FLIP#1738).
+        aws s3 ls "$S3_BASE/fl-server-net-1/startup/" | grep -q . \
+          || { echo "ERROR: no FLARE kit at $S3_BASE (fl-server-net-1/startup/ missing): check FLARE_KIT_DATE"; exit 1; }
 
         # fl-api-net-1: kit dir on S3 keeps the docker-prefix `flip-fl-api-net-1`.
         # NVFLARE participant kits are signed at provision time (signature.json
@@ -184,41 +193,52 @@ resource "aws_ecs_task_definition" "efs_provision" {
         SCRIPT
       ]
 
-      mountPoints = var.fl_backend == "flower" ? [
-        {
-          sourceVolume  = "efs-flower-certs"
-          containerPath = "/mnt/flower-certs"
-        },
-        {
-          sourceVolume  = "efs-flower-keys"
-          containerPath = "/mnt/flower-keys"
-        },
-        {
-          sourceVolume  = "efs-flower-jobs"
-          containerPath = "/mnt/flower-jobs"
-        },
-        ] : [
-        {
-          sourceVolume  = "efs-fl-api-local"
-          containerPath = "/mnt/fl-api/local"
-        },
-        {
-          sourceVolume  = "efs-fl-api-startup"
-          containerPath = "/mnt/fl-api/startup"
-        },
-        {
-          sourceVolume  = "efs-fl-server-local"
-          containerPath = "/mnt/fl-server/local"
-        },
-        {
-          sourceVolume  = "efs-fl-server-startup"
-          containerPath = "/mnt/fl-server/startup"
-        },
-        {
-          sourceVolume  = "efs-fl-server-transfer"
-          containerPath = "/mnt/fl-server/transfer"
-        },
-      ]
+      # Read-only root filesystem (ECS.5, FLIP#1795) and a non-root user (ECS.20, FLIP#1796).
+      # The sync writes only to the EFS mounts, whose access points act as 1001:1001 (efs.tf)
+      # whatever the caller, so the task runs as that uid. amazon/aws-cli declares no VOLUME, so
+      # /tmp and HOME are root-owned and not writable here; the CLI needs no local write.
+      user                   = "1001:1001"
+      readonlyRootFilesystem = true
+      environment            = [{ name = "HOME", value = "/tmp" }]
+
+      mountPoints = concat(
+        [{ sourceVolume = "tmp", containerPath = "/tmp" }],
+        var.fl_backend == "flower" ? [
+          {
+            sourceVolume  = "efs-flower-certs"
+            containerPath = "/mnt/flower-certs"
+          },
+          {
+            sourceVolume  = "efs-flower-keys"
+            containerPath = "/mnt/flower-keys"
+          },
+          {
+            sourceVolume  = "efs-flower-jobs"
+            containerPath = "/mnt/flower-jobs"
+          },
+          ] : [
+          {
+            sourceVolume  = "efs-fl-api-local"
+            containerPath = "/mnt/fl-api/local"
+          },
+          {
+            sourceVolume  = "efs-fl-api-startup"
+            containerPath = "/mnt/fl-api/startup"
+          },
+          {
+            sourceVolume  = "efs-fl-server-local"
+            containerPath = "/mnt/fl-server/local"
+          },
+          {
+            sourceVolume  = "efs-fl-server-startup"
+            containerPath = "/mnt/fl-server/startup"
+          },
+          {
+            sourceVolume  = "efs-fl-server-transfer"
+            containerPath = "/mnt/fl-server/transfer"
+          },
+        ],
+      )
 
       logConfiguration = {
         logDriver = "awslogs"
@@ -230,6 +250,10 @@ resource "aws_ecs_task_definition" "efs_provision" {
       }
     }
   ])
+
+  volume {
+    name = "tmp"
+  }
 
   # Mount the same EFS access points as the runtime services. certs/keys
   # access points still exist in efs.tf for state continuity, but the

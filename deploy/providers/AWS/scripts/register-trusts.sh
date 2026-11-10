@@ -22,8 +22,8 @@
 #   3. Write the kit back into trust/.env.<CODE>.<env> via
 #      trust/deploy/scripts/distribute_trust_kits.py (whatever credentials the kit carries,
 #      hub-shared refreshed every run; operator host-local edits preserved).
-# Delivery to a host is command-driven, NOT done here: `make upgrade-trust-ec2
-# KIT=<CODE> HUB=<env>` recreates the EC2 host's containers on the new kit;
+# Delivery to a host is command-driven, NOT done here: `make -C trust/deploy/terraform/aws/ec2
+# upgrade KIT=<CODE> HUB=<env>` recreates an EC2 node's containers on the new kit;
 # `make package-onprem-trust-kit` tarballs it for an on-prem operator.
 #
 # ROTATE_KEYS=1 (set by `make rotate-trust-keys KIT=<CODE>`) runs the same CLI with
@@ -57,16 +57,10 @@ ECS_SERVICE="${ECS_SERVICE:-flip-api}"
 TASK_FAMILY="${TASK_FAMILY:-flip-api}"
 LOG_GROUP="${LOG_GROUP:-/ecs/flip-api}"
 
-# No kits: an error, since the next deploy step has a trust to deploy — except on a hub-only
-# deploy (DEPLOY_TRUST_EC2=false), whose on-prem trusts may register later.
+# No kits: a warning, not an error. full-deploy runs this on a new hub, whose trusts register later.
 if [ -z "${KIT_FILES:-}" ]; then
-    msg="No trust/.env.<CODE>.${HUB:-<env>} kits found — scaffold one with 'make new-trust TRUST_CODE=<CODE> TRUST_NAME=... HUB=${HUB:-<env>}' first."
-    if [ "${DEPLOY_TRUST_EC2:-true}" = false ]; then
-        log_warn "$msg"
-        exit 0
-    fi
-    log_error "$msg"
-    exit 1
+    log_warn "No trust/.env.<CODE>.${HUB:-<env>} kits found — scaffold one with 'make new-trust TRUST_CODE=<CODE> TRUST_NAME=... HUB=${HUB:-<env>}' first."
+    exit 0
 fi
 
 log_info "Discovering live $ECS_SERVICE service network config..."

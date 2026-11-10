@@ -50,9 +50,9 @@ class UpgradeTrust(unittest.TestCase):
         assert_data_safe(out, "_upgrade-trust-apply")
 
     def test_apply_phase_honours_a_cpu_only_override(self):
-        """upgrade-trust-ec2 passes NUM_AVAILABLE_GPUS=0: it must beat a template kit's 1 (FLIP#1204).
+        """The EC2 root's upgrade passes NUM_AVAILABLE_GPUS=0: it must beat a template kit's 1 (FLIP#1204).
 
-        The EC2 trust is GPU-less; with the kit's value the apply phase adds the GPU overlay and the
+        The EC2 node is GPU-less; with the kit's value the apply phase adds the GPU overlay and the
         recreated fl-client fails with "could not select device driver nvidia".
         """
         gpu_kit = kit_with("NUM_AVAILABLE_GPUS=0", "NUM_AVAILABLE_GPUS=1")
@@ -83,11 +83,137 @@ class UpgradeTrust(unittest.TestCase):
         assert "alpine:3.20" in out, out
         assert " alpine " not in out.replace("alpine:3.20", ""), out
 
+    def test_a_local_deployed_store_is_checked_not_escalated(self):
+        """Only a remote DOCKER_CONTEXT prepares the store through a container; locally a non-root operator
+        gets the check and the prepare-host-dirs remedy (FLIP#1723)."""
+        out = dry_run("_upgrade-trust-apply")
+        assert '[ -n "$DOCKER_CONTEXT" ]' in out, out
+        assert "alpine:3.20 chown" not in out, out
+        assert "prepare-host-dirs KIT=SCR HUB=prod" in out, out
+
+    def test_the_store_owner_follows_the_kits_flip_uid(self):
+        """data-access-api runs as the kit's FLIP_UID when set, so that is who must own the store (FLIP#1731)."""
+        out = dry_run("_upgrade-trust-apply", kit=KIT + "FLIP_UID=4242\nFLIP_GID=4243\n")
+        assert 'owner="4242:4243"' in out, out
+        assert 'owner="1000:1000"' not in out, out
+
+    def test_apply_phase_refuses_a_flip_uid_the_data_dirs_do_not_carry(self):
+        """FLIP_UID is a first-install choice: turned on, changed or cleared afterwards, the recreated Orthanc and
+        APIs would own none of their files. The apply phase checks the data dirs' owner before pulling anything
+        (FLIP#1731): all three under FLIP_UID, and the Orthanc dir (999 on the image-uid route) either way."""
+        out = dry_run("_upgrade-trust-apply", kit=KIT + "FLIP_UID=4242\nFLIP_GID=4243\n")
+        assert '[ "$owner" = "4242" ]' in out, out
+        assert '"/nonexistent/omop"' in out, out
+        assert out.index("FLIP_UID is a first-install choice") < out.index(" pull"), out
+        assert out.index("which writes the XNAT backup") < out.index(" pull"), "the backup dir is checked first too"
+        unset = dry_run("_upgrade-trust-apply")
+        assert '[ "$owner" = "999" ]' in unset, unset
+        assert '"/nonexistent/omop"' not in unset, unset
+        with tempfile.TemporaryDirectory() as td:
+            for d in ("omop", "pacs", "images/net-1"):
+                Path(td, d).mkdir(parents=True)
+            kit = KIT.replace("/nonexistent/omop", f"{td}/omop").replace("/nonexistent/orthanc", f"{td}/pacs")
+            kit = kit.replace("/nonexistent/images", f"{td}/images")
+            assert kit.count(td) == 3, kit
+            other_uid = f"FLIP_UID={os.getuid() + 1}\nFLIP_GID={os.getgid()}\n"
+            changed = run_target("_upgrade-trust-apply", kit=kit + other_uid)
+            cleared = run_target("_upgrade-trust-apply", kit=kit)  # installed as this user, FLIP_UID since removed
+            remote = run_target("_upgrade-trust-apply", kit=kit, env={"DOCKER_CONTEXT": "ec2-node"})
+        assert changed.returncode != 0, changed.stdout
+        assert f"{td}/omop is owned by uid {os.getuid()}" in changed.stdout, changed.stdout
+        assert " pull" not in changed.stdout, "refused before anything was pulled"
+        assert cleared.returncode != 0, cleared.stdout
+        assert f"leaves FLIP_UID unset (the image uids), but {td}/pacs is owned by uid {os.getuid()}" in cleared.stdout
+        assert " pull" not in cleared.stdout, "refused before anything was pulled"
+        assert "FLIP_UID is a first-install choice" not in remote.stdout, "a remote host's dirs are not here"
+
     def test_up_trust_is_still_the_first_install_verb(self):
         """The guard would be meaningless if up-trust had quietly stopped seeding and resetting."""
         out = dry_run("up-trust")
         assert "ensure-seeded" in out, out
         assert "up-xnat" in out, out
+
+
+class SampleDataOff(unittest.TestCase):
+    """TRUST_DATA_SEED=false: a real trust's first install fetches, loads and marks nothing (FLIP#1687)."""
+
+    KIT_OFF = KIT + "TRUST_DATA_SEED=false\n"
+    SEED_STEPS = ("seed-omop", "seed-orthanc", ".seeded", "pg_isready")
+
+    def test_a_first_install_loads_nothing_even_after_a_data_version_bump(self):
+        for extra in ((), ("HF_TRUST_DATA_REVISION=main",)):
+            out = dry_run("up-trust", *extra, kit=self.KIT_OFF)
+            assert "Sample data is off for SCR" in out, out
+            for step in self.SEED_STEPS:
+                assert step not in out, f"{step!r} with the sample data off:\n{out}"
+
+    def test_unset_or_true_still_seeds(self):
+        for kit in (KIT, KIT + "TRUST_DATA_SEED=true\n"):
+            out = dry_run("ensure-seeded", kit=kit)
+            assert "seed-omop" in out, out
+            assert "seed-orthanc" in out, out
+
+    def test_any_other_value_is_refused_rather_than_read_as_true(self):
+        for value in ("no", "False"):
+            result = run_target("ensure-seeded", kit=KIT + f"TRUST_DATA_SEED={value}\n")
+            assert result.returncode != 0, result.stdout
+            assert "TRUST_DATA_SEED must be true or false" in result.stdout, result.stdout + result.stderr
+
+    def test_up_trust_refuses_a_bad_value_before_any_container_starts(self):
+        out = dry_run("up-trust", kit=KIT + "TRUST_DATA_SEED=no\n")
+        assert out.index("TRUST_DATA_SEED must be true or false") < out.index(" up -d"), out
+
+    def test_quotes_and_a_trailing_comment_read_as_sync_kit_reads_them(self):
+        for line in ('TRUST_DATA_SEED="false"', "TRUST_DATA_SEED='false'", "TRUST_DATA_SEED=false  # real trust"):
+            out = dry_run("ensure-seeded", kit=KIT + line + "\n")
+            assert "Sample data is off for SCR" in out, f"{line}:\n{out}"
+
+    def test_the_explicit_seed_verbs_refuse_a_trust_with_the_sample_data_off_unless_forced(self):
+        for target in ("seed", "seed-omop", "seed-orthanc", "unseed-omop", "unseed-orthanc"):
+            result = run_target(target, kit=self.KIT_OFF)
+            assert result.returncode != 0, f"{target} ran with the sample data off:\n{result.stdout}"
+            assert "has TRUST_DATA_SEED=false" in result.stdout, result.stdout + result.stderr
+            assert "TRUST_INDEX" not in result.stdout, result.stdout
+        out = dry_run("seed", "FORCE_SEED=1", kit=self.KIT_OFF)
+        assert "seed-omop TRUST_INDEX" in out, out
+        assert "seed-orthanc TRUST_INDEX" in out, out
+
+    def test_the_seed_verbs_refuse_what_they_cannot_read_as_true_or_false(self):
+        """A mistyped value, or a kit file that is not there, must not read as "sample data on"."""
+        for target in ("seed-omop", "seed-orthanc", "unseed-omop", "unseed-orthanc"):
+            mistyped = run_target(target, kit=KIT + "TRUST_DATA_SEED=False\n")
+            assert mistyped.returncode != 0, f"{target} ran on TRUST_DATA_SEED=False:\n{mistyped.stdout}"
+            assert "TRUST_DATA_SEED must be true or false" in mistyped.stdout, mistyped.stdout + mistyped.stderr
+            no_kit = run_target(target, "KIT=NOPE")
+            assert no_kit.returncode != 0, f"{target} ran without a kit file:\n{no_kit.stdout}"
+            assert "not found" in no_kit.stdout, no_kit.stdout + no_kit.stderr
+            for result in (mistyped, no_kit):
+                assert "TRUST_INDEX" not in result.stdout, result.stdout
+
+    def test_a_plain_force_from_an_outer_make_does_not_open_the_guard(self):
+        """FORCE=1 belongs to upgrade-onprem-trust and release-instance, and make hands it to every sub-make."""
+        result = run_target("outer", "FORCE=1", kit=self.KIT_OFF, probe="outer:\n\t$(MAKE) seed-omop\n")
+        assert result.returncode != 0, result.stdout
+        assert "FORCE_SEED=1 runs it anyway" in result.stdout, result.stdout + result.stderr
+        assert "seed-omop TRUST_INDEX" not in result.stdout, result.stdout
+
+    def test_a_dry_run_passes_only_where_it_writes_nothing(self):
+        """seed-orthanc / unseed-orthanc honour DRY_RUN=1; seed-omop / unseed-omop would ignore it and write."""
+        for target in ("seed-orthanc", "unseed-orthanc"):
+            result = run_target(target, "DRY_RUN=1", kit=self.KIT_OFF)
+            assert "has TRUST_DATA_SEED=false" not in result.stdout, f"{target}:\n{result.stdout}"
+            assert f"{target} TRUST_INDEX" in result.stdout, f"{target} never ran:\n{result.stdout}{result.stderr}"
+        for target in ("seed-omop", "unseed-omop"):
+            result = run_target(target, "DRY_RUN=1", kit=self.KIT_OFF)
+            assert result.returncode != 0, f"{target} ran:\n{result.stdout}"
+            assert "has TRUST_DATA_SEED=false" in result.stdout, f"{target}:\n{result.stdout}"
+
+    def test_the_guard_needs_the_kit_file_not_a_complete_one(self):
+        """A kit still waiting on the hub's values can seed its own stores, as before the guard (needs only KIT)."""
+        kit = KIT + "SOMETHING=<run-make-sync-trust-kit>\n"
+        result = run_target("guard", kit=kit, probe="guard:\n\t$(refuse_seed_when_off)\n\t@echo GUARD-PASSED\n")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "GUARD-PASSED" in result.stdout, result.stdout
 
 
 MONAI_KIT = KIT.replace("NUM_AVAILABLE_GPUS=0", "NUM_AVAILABLE_GPUS=1")

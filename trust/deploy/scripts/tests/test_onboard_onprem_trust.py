@@ -35,11 +35,14 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 import os
 import shlex
+import socket
 import subprocess
 import sys
 import tempfile
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -491,6 +494,7 @@ def test_27_selected_kit_controls_values_and_filename_hints() -> None:
         with (
             mock.patch.object(mod, "check_swarm", return_value=passed),
             mock.patch.object(mod, "check_hub_shared_current", return_value=passed),
+            mock.patch.object(mod, "check_registries_reachable", return_value=passed),
             mock.patch.object(mod.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "invalid")),
         ):
             checks = mod.run_checks("SITE", root, selected)
@@ -535,11 +539,12 @@ def test_29_ready_command_preserves_and_quotes_the_selected_kit() -> None:
         Path('/opt/operator kits/$HOME `echo unsafe` "file"'),
     )
     for selected in selected_paths:
-        for hub in (None, "prod", "stag"):
+        for hub, sudo_user in ((None, None), ("prod", None), ("stag", None), ("prod", "operator")):
+            env = {k: v for k, v in (("HUB", hub), ("SUDO_USER", sudo_user)) if v is not None}
             out = io.StringIO()
             exit_code = None
             with (
-                mock.patch.dict(os.environ, {} if hub is None else {"HUB": hub}, clear=True),
+                mock.patch.dict(os.environ, env, clear=True),
                 mock.patch.object(sys, "argv", ["prog", "SITE", "--kit-file", str(selected)]),
                 mock.patch.object(sys, "stdout", out),
                 mock.patch.object(mod, "run_checks", return_value=[mod.Check("x", mod.Status.PASS, "mocked")]),
@@ -549,9 +554,11 @@ def test_29_ready_command_preserves_and_quotes_the_selected_kit() -> None:
                 except SystemExit as error:
                     exit_code = error.code
             text = out.getvalue().replace(mod.BOLD, "").replace(mod.RESET, "")
-            command = next(line.strip() for line in text.splitlines() if "sudo -E make up-onprem-trust" in line)
+            command = next(line.strip() for line in text.splitlines() if "make up-onprem-trust" in line)
             _assert(exit_code == 0, f"{selected.name}: READY exits 0")
-            expected = ["sudo", "-E", "make", "up-onprem-trust", "KIT=SITE", f"KIT_FILE={selected}".replace("$", "$$")]
+            # Docker socket access is the requirement; sudo appears only when the checklist ran under it.
+            expected = ["sudo", "-E"] if sudo_user else []
+            expected += ["make", "up-onprem-trust", "KIT=SITE", f"KIT_FILE={selected}".replace("$", "$$")]
             if hub and hub != "prod":
                 expected.append(f"HUB={hub}")
             _assert(
@@ -575,6 +582,7 @@ def test_30_governance_action_preserves_and_quotes_the_selected_kit() -> None:
                 mock.patch.dict(os.environ, {} if hub is None else {"HUB": hub}, clear=True),
                 mock.patch.object(mod, "check_swarm", return_value=passed),
                 mock.patch.object(mod, "check_hub_shared_current", return_value=passed),
+                mock.patch.object(mod, "check_registries_reachable", return_value=passed),
                 mock.patch.object(
                     mod.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "❌ bad policy\n", "")
                 ),
@@ -607,13 +615,447 @@ def test_31_unrotated_passwords_compare_against_the_kit_template() -> None:
     repo_root = SCRIPTS_DIR.parents[2]
     defaults = mod.read_kit_vars(repo_root / "trust" / ".env.example")
     rotated = {key: "rotated-secret" for key in mod.TRUST_LOCAL_PASSWORD_KEYS}  # pragma: allowlist secret
-    for kit_vars, root, status in (
-        ({"ORTHANC_PASSWORD": defaults["ORTHANC_PASSWORD"]}, repo_root, mod.Status.WARN),
-        (rotated, repo_root, mod.Status.PASS),
-        (rotated, Path(tempfile.mkdtemp()), mod.Status.WARN),  # no template: say so, never PASS
+    unrotated = {"ORTHANC_PASSWORD": defaults["ORTHANC_PASSWORD"]}
+    for kit_vars, root, kit_path, status in (
+        (unrotated, repo_root, "trust/.env.SITE.development", mod.Status.WARN),
+        (unrotated, repo_root, "trust/.env.SITE.stag", mod.Status.FAIL),  # a deployed kit: refuse
+        (unrotated, repo_root, "trust/.env.SITE.prod", mod.Status.FAIL),
+        (rotated, repo_root, "trust/.env.SITE.prod", mod.Status.PASS),
+        (rotated, Path(tempfile.mkdtemp()), "trust/.env.SITE.prod", mod.Status.WARN),  # no template: say so, never PASS
     ):
-        check = mod.check_unrotated_passwords(kit_vars, True, root, "SITE")
-        _assert(check.status == status, f"{status.name}: {check.detail}", str(check))
+        check = mod.check_unrotated_passwords(kit_vars, True, root, "SITE", kit_path)
+        _assert(check.status == status, f"{kit_path} -> {status.name}: {check.detail}", str(check))
+
+
+def test_32_hub_reachable_reports_the_release_or_the_failure() -> None:
+    """GET <hub>/health from this host: PASS names the release; FAIL names why, in firewall-request words."""
+    print("\n[32] Hub API reachable: release on PASS, reason on FAIL, PENDING without the URL")
+    kit = {"CENTRAL_HUB_API_URL": "https://hub.example/api"}
+    with mock.patch.object(mod.site_upgrade, "fetch_hub_version", return_value="v0.14.0"):
+        ok = mod.check_hub_reachable(kit, True)
+    _assert(ok.status == mod.Status.PASS, "answers -> PASS", str(ok))
+    _assert("v0.14.0" in ok.detail, "PASS names the hub's release", ok.detail)
+    failures = (
+        (urllib.error.URLError(socket.gaierror(8, "nodename nor servname provided")), "DNS lookup failed"),
+        (urllib.error.URLError(TimeoutError()), "timed out"),
+        (urllib.error.URLError(ConnectionRefusedError()), "connection refused"),
+        (urllib.error.HTTPError("https://hub.example/api/health", 503, "unavailable", {}, None), "HTTP 503"),
+        (json.JSONDecodeError("Expecting value", "<html>", 0), "not with the health JSON"),  # UI page: URL lacks /api
+    )
+    for error, reason in failures:
+        with mock.patch.object(mod.site_upgrade, "fetch_hub_version", side_effect=error):
+            bad = mod.check_hub_reachable(kit, True)
+        _assert(bad.status == mod.Status.FAIL, f"{reason}: FAIL", str(bad))
+        _assert(reason in bad.detail, f"detail names the reason: {reason}", bad.detail)
+        _assert("hub.example" in bad.detail, "detail names the host", bad.detail)
+        _assert(any("Network requirements" in h for h in bad.hints), "hint points at the egress list")
+    pending = mod.check_hub_reachable({}, True)
+    _assert(pending.status == mod.Status.PENDING, "no CENTRAL_HUB_API_URL -> PENDING", str(pending))
+    _assert(mod.check_hub_reachable(kit, False).status == mod.Status.PENDING, "no kit file -> PENDING")
+
+
+def test_33_fl_endpoint_comes_from_what_the_client_dials() -> None:
+    """FLARE: the kit slice's fed_client.json target when on disk, else the kit's NLB_SUBDOMAIN;
+    Flower: the kit's NLB_SUBDOMAIN with FL_EDGE_PORT over FL_SERVER_PORT. Probed by a plain TCP connect."""
+    print("\n[33] FL endpoint reachable: source per backend, TCP probe, TLS-inspection hint on FAIL")
+    with tempfile.TemporaryDirectory() as tmp:
+        kit_dir = Path(tmp)
+        startup = kit_dir / "net-1" / "services" / "Trust_5" / "startup"
+        startup.mkdir(parents=True)
+        (startup / "fed_client.json").write_text(
+            json.dumps({"servers": [{"service": {"target": "fl.hub.example:8002"}}]})
+        )
+        flare = {
+            "FL_BACKEND": "nvflare",
+            "FL_KIT_DIR": str(kit_dir),
+            "FL_KIT_SLOT": "Trust_5",
+            "NLB_SUBDOMAIN": "kit.hub.example",
+            "FL_SERVER_PORT": "8002",
+            "FL_EDGE_PORT": "8012",
+        }
+        from_slice = mod.fl_endpoint(flare)
+        _assert(
+            from_slice == ("fl.hub.example", 8002, "startup/fed_client.json"),
+            "FLARE with the slice on disk dials fed_client.json's target",
+            str(from_slice),
+        )
+        no_slice = mod.fl_endpoint({**flare, "FL_KIT_SLOT": "Trust_6"})
+        _assert(
+            no_slice == ("kit.hub.example", 8012, "the kit's NLB_SUBDOMAIN"),
+            "FLARE without the slice falls back to the kit",
+            str(no_slice),
+        )
+        flower = {**flare, "FL_BACKEND": "flower"}
+        _assert(
+            mod.fl_endpoint(flower) == ("kit.hub.example", 8012, "the kit's NLB_SUBDOMAIN"), "Flower: kit, edge port"
+        )
+        del flower["FL_EDGE_PORT"]
+        _assert(mod.fl_endpoint(flower)[1] == 8002, "Flower pre-FLIP#1365 kit: FL_SERVER_PORT")
+        _assert(mod.fl_endpoint({"FL_BACKEND": "flower"}) is None, "no host yet -> None")
+
+        with mock.patch.object(mod, "probe_tcp", return_value=None) as probe:
+            ok = mod.check_fl_endpoint_reachable(flare, True)
+        _assert(ok.status == mod.Status.PASS, "connects -> PASS", str(ok))
+        _assert(probe.call_args.args == ("fl.hub.example", 8002), "probed the dialled host:port", str(probe.call_args))
+        with (
+            mock.patch.object(mod, "probe_tcp", return_value="timed out (blackholed or filtered)"),
+            mock.patch.object(mod, "lookup_egress_ip", return_value="203.0.113.7"),
+        ):
+            bad = mod.check_fl_endpoint_reachable(flare, True)
+        _assert(bad.status == mod.Status.FAIL, "cannot connect -> FAIL", str(bad))
+        _assert("fl.hub.example:8002" in bad.detail, "FAIL names host:port", bad.detail)
+        _assert(any("TLS-inspection" in h for h in bad.hints), "hint covers the TLS-inspection proxy case")
+        _assert("leaves from: 203.0.113.7." in bad.hints[-1], "timeout hint names this host's egress address")
+        pending = mod.check_fl_endpoint_reachable({"FL_BACKEND": "flower"}, True)
+        _assert(pending.status == mod.Status.PENDING, "no endpoint yet -> PENDING", str(pending))
+
+
+def test_34_registries_warn_and_name_the_mirror() -> None:
+    """Both hosts of each registry on 443; unreachable ones WARN (an offline mirror is supported, FLIP#1721)."""
+    print("\n[34] Image registries reachable: PASS, else WARN naming the hosts and the mirror")
+    with mock.patch.object(mod, "probe_tcp", return_value=None):
+        ok = mod.check_registries_reachable()
+    _assert(ok.status == mod.Status.PASS, "all connect -> PASS", str(ok))
+
+    def layers_blocked(host: str, port: int, timeout: float = 0) -> str | None:
+        return "DNS lookup failed" if host == "pkg-containers.githubusercontent.com" else None
+
+    with mock.patch.object(mod, "probe_tcp", side_effect=layers_blocked):
+        warn = mod.check_registries_reachable()
+    _assert(warn.status == mod.Status.WARN, "a blocked host -> WARN, never FAIL", str(warn))
+    _assert(
+        "pkg-containers.githubusercontent.com: DNS lookup failed" in warn.detail, "names host and reason", warn.detail
+    )
+    _assert(any("FLIP#1721" in h for h in warn.hints), "hint names the mirror alternative")
+
+
+def test_35_the_checklist_carries_the_three_rows_and_gates_on_the_hub() -> None:
+    """run_checks includes the rows; an unreachable hub is a FAIL, so --gate refuses to start."""
+    print("\n[35] run_checks: the reachability rows are present; hub FAIL makes the checklist NOT READY")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "trust").mkdir()
+        kit_file = root / "trust" / ".env.SITE.prod"
+        kit_file.write_text("CENTRAL_HUB_API_URL=https://hub.example/api\n")
+        passed = mod.Check("external probe", mod.Status.PASS, "mocked")
+        with (
+            mock.patch.object(mod, "check_swarm", return_value=passed),
+            mock.patch.object(mod, "check_hub_shared_current", return_value=passed),
+            mock.patch.object(mod, "probe_hub_health", return_value=(None, "timed out (blackholed or filtered)")),
+            mock.patch.object(mod, "probe_tcp", return_value=None),
+            mock.patch.object(mod.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")),
+        ):
+            checks = mod.run_checks("SITE", root, kit_file)
+    labels = [check.label for check in checks]
+    for label in ("Hub API reachable", "FL endpoint reachable", "Image registries reachable"):
+        _assert(label in labels, f"row present: {label}")
+    hub = next(check for check in checks if check.label == "Hub API reachable")
+    _assert(hub.status == mod.Status.FAIL, "unreachable hub is a FAIL (blocks --gate)", str(hub))
+    registries = next(check for check in checks if check.label == "Image registries reachable")
+    _assert(registries.status == mod.Status.PASS, "registries probed through probe_tcp", str(registries))
+
+
+def _paths(**kit: str):
+    return mod.check_data_dir_paths(kit, True, "trust/.env.SITE.prod")
+
+
+def test_36_relative_data_dirs_warn() -> None:
+    """The kit template's development paths resolve inside the checkout on a deployed trust (FLIP#1723)."""
+    print("▶ relative data dir paths -> WARN naming them")
+    with tempfile.TemporaryDirectory() as td:
+        check = _paths(
+            OMOP_DATA_DIR=f"{td}/omop",
+            ORTHANC_STORAGE_DIR="./orthanc/orthanc-storage-trust1",
+            BASE_IMAGES_DOWNLOAD_DIR="./data/trust",
+            COHORT_SNAPSHOT_STORAGE_DIR=f"{td}/snapshots",
+            XNAT_DATA_DIR=f"{td}/xnat",
+        )
+    _assert(check.status == mod.Status.WARN, "WARN", f"{check.status}: {check.detail}")
+    _assert("ORTHANC_STORAGE_DIR, BASE_IMAGES_DOWNLOAD_DIR" in check.detail, "names both", check.detail)
+    _assert("trust/.env.SITE.prod" in check.hints[0], "hint names the kit", check.hints[0])
+
+
+def test_37_uncreatable_data_dir_fails() -> None:
+    """A dir the bring-up's mkdir cannot create fails here, not halfway through `up` (FLIP#1723).
+
+    Every dir counts, the membership store and XNAT's tree included: on an on-prem host they are
+    plain mkdirs as this user too. An unset one is judged at its /opt/flip default for the kit's slot."""
+    print("▶ data dir under an unwritable parent -> FAIL, store and XNAT included; unset -> the slot default")
+    with tempfile.TemporaryDirectory() as td:
+        locked = Path(td) / "locked"
+        locked.mkdir()
+        (locked / "pacs").mkdir()  # exists, but its parent (where the seed marker goes) is not writable
+        writable = lambda path, mode: Path(path) != locked  # noqa: E731 — root ignores mode bits, so fake it
+        with mock.patch.object(mod.os, "access", side_effect=writable):
+            marker = _paths(OMOP_DATA_DIR=f"{td}/omop", ORTHANC_STORAGE_DIR=f"{locked}/pacs")
+            check = _paths(
+                OMOP_DATA_DIR=f"{locked}/omop",
+                ORTHANC_STORAGE_DIR=f"{td}/orthanc",
+                BASE_IMAGES_DOWNLOAD_DIR=f"{td}/images",
+                COHORT_SNAPSHOT_STORAGE_DIR=f"{locked}/snapshots",
+                XNAT_DATA_DIR=f"{td}/xnat",
+            )
+            unset = _paths(OMOP_DATA_DIR=f"{td}/omop", ORTHANC_STORAGE_DIR=f"{td}/orthanc", FL_KIT_SLOT_NUMBER="3")
+    _assert(check.status == mod.Status.FAIL, "FAIL", f"{check.status}: {check.detail}")
+    _assert(f"OMOP_DATA_DIR ({locked} is not writable)" in check.detail, "names the var and parent", check.detail)
+    _assert(f"COHORT_SNAPSHOT_STORAGE_DIR ({locked} is not writable)" in check.detail, "store counted", check.detail)
+    _assert(marker.status == mod.Status.FAIL and "seed marker" in marker.detail, "marker parent checked", str(marker))
+    _assert(unset.status == mod.Status.PASS, "unset dirs judged at their /opt/flip defaults", str(unset))
+
+
+def test_38_absolute_creatable_data_dirs_pass() -> None:
+    print("▶ absolute, creatable data dirs -> PASS")
+    with tempfile.TemporaryDirectory() as td:
+        check = _paths(**{var: f"{td}/{var.lower()}" for var in mod.DATA_DIR_VARS})
+    _assert(check.status == mod.Status.PASS, "PASS", f"{check.status}: {check.detail}")
+
+
+def test_41_untraversable_parent_is_a_fail_not_a_crash() -> None:
+    """Path.exists re-raises EACCES; a kit path under a 700 mount of another uid must not kill the checklist."""
+    print("▶ data dir under a parent this user cannot traverse -> FAIL naming it")
+    if os.getuid() == 0:
+        print("  (skipped as root: every directory is traversable)")
+        return
+    with tempfile.TemporaryDirectory() as td:
+        locked = Path(td) / "locked"
+        locked.mkdir(mode=0o000)
+        try:
+            check = _paths(
+                OMOP_DATA_DIR=f"{locked}/opt/flip/omop",
+                ORTHANC_STORAGE_DIR=f"{td}/orthanc",
+                BASE_IMAGES_DOWNLOAD_DIR=f"{td}/images",
+                COHORT_SNAPSHOT_STORAGE_DIR=f"{td}/snapshots",
+                XNAT_DATA_DIR=f"{td}/xnat",
+            )
+        finally:
+            locked.chmod(0o755)
+    _assert(check.status == mod.Status.FAIL, "FAIL", f"{check.status}: {check.detail}")
+    _assert("OMOP_DATA_DIR" in check.detail and "not traversable" in check.detail, "names the var", check.detail)
+
+
+def test_42_rows_judge_the_sudo_user_not_root() -> None:
+    """Under `sudo -E` the operator's own ids come from SUDO_UID/SUDO_GID, as the next-step prefix already does."""
+    print("▶ container uid and data-dir rows judge SUDO_UID under sudo")
+    with mock.patch.dict(os.environ, {"SUDO_UID": "4242", "SUDO_GID": "4243", "SUDO_USER": "op"}):
+        check = mod.check_container_uid({"FLIP_UID": "4242", "FLIP_GID": "4243"}, True, "trust/.env.SITE.prod")
+        hint = mod.check_data_dir_paths({"FLIP_UID": "4242", "ORTHANC_STORAGE_DIR": "./p"}, True, "k").hints[0]
+    _assert(check.status == mod.Status.PASS and "this user" in check.detail, "sudo user's ids PASS", str(check))
+    _assert("mkdir -p" in hint, "data-dir hint says mkdir for the sudo user", hint)
+
+
+def test_39_trust_health_probe_ignores_the_proxy() -> None:
+    """Behind a TRE proxy with NO_PROXY unset, urllib would send 127.0.0.1 to the proxy (FLIP#1723)."""
+    print("▶ local trust-api probe bypasses http_proxy")
+    import http.server
+    import threading
+
+    class Health(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 — http.server's name
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"status": "ok"}')
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Health)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with mock.patch.dict(os.environ, {"http_proxy": "http://127.0.0.1:9", "no_proxy": ""}):
+            try:
+                body = mod.fetch_local_trust_health(str(server.server_address[1]))
+            except OSError as error:
+                body = {"error": str(error)}
+    finally:
+        server.shutdown()
+    _assert(body == {"status": "ok"}, "answers directly", str(body))
+
+
+def test_40_container_uid_row() -> None:
+    """FLIP_UID/FLIP_GID: unset keeps the image users, this user's ids PASS, another's WARN, FLIP_GID alone
+    or a non-number FAIL, and FLIP_UID alone takes FLIP_GID=FLIP_UID as deploy/portable.mk does."""
+    print("▶ container uid row")
+    me = {"FLIP_UID": str(os.getuid()), "FLIP_GID": str(os.getgid())}
+    cases = (
+        ({}, mod.Status.PASS, "each image's own user"),
+        (me, mod.Status.PASS, "this user"),
+        ({"FLIP_UID": str(os.getuid() + 1), "FLIP_GID": str(os.getgid())}, mod.Status.WARN, "is not this user"),
+        ({"FLIP_GID": str(os.getgid())}, mod.Status.FAIL, "FLIP_UID must be set"),
+        ({"FLIP_UID": "alex", "FLIP_GID": "1"}, mod.Status.FAIL, "FLIP_UID must be set"),
+    )
+    for kit, status, words in cases:
+        check = mod.check_container_uid(kit, True, "trust/.env.SITE.prod")
+        _assert(check.status == status and words in check.detail, f"{status.name}: {check.detail}", str(check))
+    uid_only = mod.check_container_uid({"FLIP_UID": "4242"}, True, "trust/.env.SITE.prod")
+    _assert(uid_only.status == mod.Status.WARN and "4242:4242" in uid_only.detail, "gid follows uid", str(uid_only))
+    pending = mod.check_container_uid({}, False, "trust/.env.SITE.prod")
+    _assert(pending.status == mod.Status.PENDING, "PENDING without the kit")
+    hint = mod.check_data_dir_paths({**me, "ORTHANC_STORAGE_DIR": "./pacs"}, True, "trust/.env.SITE.prod").hints[0]
+    _assert("mkdir -p" in hint and "prepare-host-dirs" not in hint, "data-dir hint says mkdir when run as me", hint)
+
+
+def test_43_fl_kit_contents_warn_when_the_client_uid_cannot_read_its_key() -> None:
+    """The kit's private key is 600/660 to whoever extracted it; the client runs as FLIP_UID (FLIP#1731)."""
+    print("▶ FL kit contents: a key the client's uid cannot read -> WARN naming the chown")
+    me, other = str(os.getuid()), str(os.getuid() + 1)
+    with tempfile.TemporaryDirectory() as td:
+        slot = Path(td) / "net-1" / "services" / "Trust_1"
+        for d in ("local", "startup", "transfer"):
+            (slot / d).mkdir(parents=True)
+        key = slot / "startup" / "client.key"
+        key.write_text("secret")
+        key.chmod(0o600)
+        base = {"FL_KIT_DIR": td, "FL_BACKEND": "nvflare", "FL_KIT_SLOT": "Trust_1", "FL_KIT_SLOT_NUMBER": "1"}
+        mine = mod.check_fl_kit_contents({**base, "FLIP_UID": me, "FLIP_GID": str(os.getgid())}, True)
+        theirs = mod.check_fl_kit_contents({**base, "FLIP_UID": other, "FLIP_GID": other}, True)
+        image = mod.check_fl_kit_contents(base, True)  # the image's uid 1000 is not this user either
+        (Path(td) / "net-1" / "certificates").mkdir()
+        cred = Path(td) / "net-1" / "keys" / "supernode_credentials_1"
+        cred.parent.mkdir()
+        cred.write_text("secret")
+        cred.chmod(0o600)
+        flower = mod.check_fl_kit_contents({**base, "FL_BACKEND": "flower", "FLIP_UID": other}, True)
+    _assert(mine.status == mod.Status.PASS, "my key, my uid: PASS", str(mine))
+    _assert(theirs.status == mod.Status.WARN, "other uid: WARN", str(theirs))
+    _assert(f"runs as uid {other}" in theirs.detail, "names the client uid", theirs.detail)
+    _assert(f"chown -R <that uid> {slot}" in theirs.hints[0], "hint names the slot dir", theirs.hints[0])
+    expected = mod.Status.PASS if os.getuid() == 1000 else mod.Status.WARN
+    _assert(image.status == expected, "the image's uid 1000 is judged the same way", str(image))
+    _assert(flower.status == mod.Status.WARN and "supernode_credentials_1" in flower.detail, "flower too", str(flower))
+
+
+def test_44_fl_kit_contents_survives_a_non_numeric_flip_uid() -> None:
+    """The Container uid row reports a non-numeric FLIP_UID; the kit row, run first, must not raise on it."""
+    print("▶ FL kit contents: FLIP_UID=alice -> no traceback, the Container uid row FAILs it")
+    with tempfile.TemporaryDirectory() as td:
+        slot = Path(td) / "net-1" / "services" / "Trust_1"
+        for d in ("local", "startup", "transfer"):
+            (slot / d).mkdir(parents=True)
+        (slot / "startup" / "client.key").write_text("secret")
+        kit = {"FL_KIT_DIR": td, "FL_BACKEND": "nvflare", "FL_KIT_SLOT": "Trust_1", "FLIP_UID": "alice"}
+        try:
+            row = mod.check_fl_kit_contents(kit, True)
+        except ValueError as exc:
+            _assert(False, "no traceback", repr(exc))
+            return
+    _assert(row.status == mod.Status.PASS, "the kit row judges the layout only", str(row))
+    uid_row = mod.check_container_uid(kit, True, "trust/.env.SITE.prod")
+    _assert(uid_row.status == mod.Status.FAIL, "the Container uid row FAILs it", str(uid_row))
+
+
+def test_45_fl_kit_contents_warn_when_the_client_cannot_enter_the_mount_root() -> None:
+    """startup/ is the bind-mount root, so the client must enter it; it never walks the dirs above it."""
+    print("▶ FL kit contents: a world-readable key in a 0700 startup/ -> WARN naming the dir")
+    with tempfile.TemporaryDirectory() as td:
+        slot = Path(td) / "net-1" / "services" / "Trust_1"
+        for d in ("local", "startup", "transfer"):
+            (slot / d).mkdir(parents=True)
+        key = slot / "startup" / "client.key"
+        key.write_text("secret")
+        key.chmod(0o644)
+        (slot / "startup").chmod(0o755)
+        base = {"FL_KIT_DIR": td, "FL_BACKEND": "nvflare", "FL_KIT_SLOT": "Trust_1", "FLIP_UID": str(os.getuid() + 1)}
+        Path(td).chmod(0o700)  # above the mount root: never walked by the client
+        open_root = mod.check_fl_kit_contents(base, True)
+        (slot / "startup").chmod(0o700)
+        closed_root = mod.check_fl_kit_contents(base, True)
+        (slot / "startup").chmod(0o755)
+    _assert(open_root.status == mod.Status.PASS, "0700 above the mount root: PASS", str(open_root))
+    _assert(closed_root.status == mod.Status.WARN, "0700 mount root: WARN", str(closed_root))
+    _assert(f"{slot / 'startup'} (mode 700) cannot be entered" in closed_root.detail, "names it", closed_root.detail)
+
+
+def test_46_swarm_worker_fails_naming_the_manager() -> None:
+    """`docker stack deploy` (up-xnat) needs a swarm manager, so an active worker is not a PASS."""
+    print("▶ Docker swarm: active manager PASS, active worker FAIL naming the manager")
+
+    def state(stdout: str) -> str:
+        done = subprocess.CompletedProcess([], 0, stdout=stdout, stderr="")
+        with mock.patch.object(mod.subprocess, "run", return_value=done):
+            return mod.docker_swarm_state()
+
+    _assert(state("active true\n") == "active", "manager: active")
+    _assert(state("active false\n") == "worker", "worker: worker")
+    _assert(state("inactive false\n") == "inactive", "inactive stays inactive")
+    with mock.patch.object(mod, "docker_swarm_state", return_value="worker"):
+        row = mod.check_swarm()
+    _assert(row.status == mod.Status.FAIL and "needs a manager" in row.detail, "worker FAILs", str(row))
+    _assert("docker node promote" in row.hints[0], "hint names the promotion", row.hints[0])
+
+
+def test_47_empty_dir_with_sample_data_off_says_nothing_is_seeded() -> None:
+    """TRUST_DATA_SEED=false: an empty store is still a WARN, but the hint no longer promises a seed (FLIP#1687)."""
+    print("\n[47] empty data dir with TRUST_DATA_SEED=false -> WARN, no seed promised")
+    with tempfile.TemporaryDirectory() as td:
+        for value in ("false", '"false"', "false  # real trust"):
+            kit_vars = {"OMOP_DATA_DIR": td, "TRUST_DATA_SEED": value}
+            result = mod.check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, True, SCRIPTS_DIR.parent)
+            _assert(result.status == mod.Status.WARN, f"{value!r}: status is WARN", result.detail)
+            _assert(any("TRUST_DATA_SEED=false" in h for h in result.hints), "hint says the sample data is off")
+            _assert(not any("seeds it" in h for h in result.hints), "and does not say up-trust seeds it", str(result))
+
+
+def test_48_sample_data_off_needs_no_seed_marker_dir() -> None:
+    """TRUST_DATA_SEED=false writes no seed marker, so a data dir's unwritable parent is no FAIL (FLIP#1687)."""
+    print("▶ existing data dir under an unwritable parent, sample data off -> PASS")
+    with tempfile.TemporaryDirectory() as td:
+        locked = Path(td) / "locked"
+        (locked / "pacs").mkdir(parents=True)
+        writable = lambda path, mode: Path(path) != locked  # noqa: E731 — root ignores mode bits, so fake it
+        with mock.patch.object(mod.os, "access", side_effect=writable):
+            check = _paths(OMOP_DATA_DIR=f"{td}/omop", ORTHANC_STORAGE_DIR=f"{locked}/pacs", TRUST_DATA_SEED="false")
+    _assert(check.status == mod.Status.PASS, "PASS", f"{check.status}: {check.detail}")
+
+
+def test_49_a_sample_data_value_up_trust_refuses_fails_the_checklist() -> None:
+    """TRUST_DATA_SEED other than true/false/unset: up-trust refuses it, so the gate fails first (FLIP#1687)."""
+    print("\n[49] TRUST_DATA_SEED=no -> Sample data FAIL, and no data-dir hint promises a seed")
+    with tempfile.TemporaryDirectory() as td:
+        for value, status in (("", mod.Status.PASS), ("true", mod.Status.PASS), ('"false"', mod.Status.PASS)):
+            row = mod.check_sample_data({"TRUST_DATA_SEED": value} if value else {}, True, "trust/.env.SITE.prod")
+            _assert(row.status == status, f"{value or 'unset'!r}: {status.name}", f"{row.status}: {row.detail}")
+        for value in ("no", "False"):
+            row = mod.check_sample_data({"TRUST_DATA_SEED": value}, True, "trust/.env.SITE.prod")
+            _assert(row.status == mod.Status.FAIL and "TRUST_DATA_SEED" in row.detail, f"{value!r}: FAIL", str(row))
+            kit_vars = {"OMOP_DATA_DIR": td, "TRUST_DATA_SEED": value}
+            data_dir = mod.check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, True, SCRIPTS_DIR.parent)
+            _assert(not any("seeds it" in h for h in data_dir.hints), f"{value!r}: no seed promised", str(data_dir))
+        pending = mod.check_sample_data({}, False, "trust/.env.SITE.prod")
+        _assert(pending.status == mod.Status.PENDING, "PENDING without the kit", str(pending))
+
+
+def test_50_fl_endpoint_timeout_hints_at_the_hub_source_address_list() -> None:
+    print("\n[50] FL endpoint: a timeout asks for the site's egress address; the lookup never fails the row")
+    kit = {"FL_BACKEND": "flower", "NLB_SUBDOMAIN": "fl.hub.example", "FL_EDGE_PORT": "8002"}
+    timed_out = mock.patch.object(mod, "probe_tcp", return_value="timed out (blackholed or filtered)")
+
+    with timed_out, mock.patch.object(mod, "lookup_egress_ip", return_value=None):
+        unknown = mod.check_fl_endpoint_reachable(kit, True)
+    _assert(unknown.status == mod.Status.FAIL, "lookup failed -> still the same FAIL", str(unknown))
+    _assert("your network team knows it" in unknown.hints[-1], "hint survives without the address", unknown.hints[-1])
+
+    for failure in (None, "connection refused"):
+        with (
+            mock.patch.object(mod, "probe_tcp", return_value=failure),
+            mock.patch.object(mod, "lookup_egress_ip") as lookup,
+        ):
+            row = mod.check_fl_endpoint_reachable(kit, True)
+        _assert(not lookup.called, f"no lookup when the probe says {failure or 'connected'}")
+        _assert(not any("leaves from" in h for h in row.hints), f"no address hint on {failure or 'PASS'}")
+
+    def answer(body: bytes) -> mock.MagicMock:
+        opened = mock.MagicMock()
+        opened.__enter__.return_value.read.return_value = body
+        return opened
+
+    with mock.patch.object(mod.urllib.request, "urlopen", return_value=answer(b"203.0.113.7\n")) as urlopen:
+        _assert(mod.lookup_egress_ip() == "203.0.113.7", "lookup returns the address")
+    _assert(urlopen.call_args.kwargs["timeout"] == mod.PROBE_TIMEOUT_SECONDS, "lookup is bounded by the probe timeout")
+    with mock.patch.object(mod.urllib.request, "urlopen", return_value=answer(b"<html>Blocked by proxy</html>")):
+        _assert(mod.lookup_egress_ip() is None, "an intercepted answer is not printed as an address")
+    for error in (urllib.error.URLError("blocked"), TimeoutError(), RuntimeError("anything")):
+        with mock.patch.object(mod.urllib.request, "urlopen", side_effect=error):
+            _assert(mod.lookup_egress_ip() is None, f"{type(error).__name__} -> None, not a crash")
 
 
 def main() -> None:
@@ -651,6 +1093,25 @@ def main() -> None:
     test_29_ready_command_preserves_and_quotes_the_selected_kit()
     test_30_governance_action_preserves_and_quotes_the_selected_kit()
     test_31_unrotated_passwords_compare_against_the_kit_template()
+    test_32_hub_reachable_reports_the_release_or_the_failure()
+    test_33_fl_endpoint_comes_from_what_the_client_dials()
+    test_34_registries_warn_and_name_the_mirror()
+    test_35_the_checklist_carries_the_three_rows_and_gates_on_the_hub()
+    test_36_relative_data_dirs_warn()
+    test_37_uncreatable_data_dir_fails()
+    test_38_absolute_creatable_data_dirs_pass()
+    test_39_trust_health_probe_ignores_the_proxy()
+    test_40_container_uid_row()
+    test_41_untraversable_parent_is_a_fail_not_a_crash()
+    test_42_rows_judge_the_sudo_user_not_root()
+    test_43_fl_kit_contents_warn_when_the_client_uid_cannot_read_its_key()
+    test_44_fl_kit_contents_survives_a_non_numeric_flip_uid()
+    test_45_fl_kit_contents_warn_when_the_client_cannot_enter_the_mount_root()
+    test_46_swarm_worker_fails_naming_the_manager()
+    test_47_empty_dir_with_sample_data_off_says_nothing_is_seeded()
+    test_48_sample_data_off_needs_no_seed_marker_dir()
+    test_49_a_sample_data_value_up_trust_refuses_fails_the_checklist()
+    test_50_fl_endpoint_timeout_hints_at_the_hub_source_address_list()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

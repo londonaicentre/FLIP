@@ -192,7 +192,7 @@ run_selftest() {
     refuse_if_joined
     if ! (fetch_kit "selftest-${backend}.tar.gz"); then
         echo "ERROR: no ${backend} self-test kit could be fetched. From the operator's machine:" >&2
-        echo "       make -C trust/deploy/terraform/azure selftest-kit FL_BACKEND=${backend}" >&2
+        echo "       make -C trust/deploy/terraform/azure/vm selftest-kit FL_BACKEND=${backend}" >&2
         exit 1
     fi
     SELFTEST_SKIP_PROVISION=1 SELFTEST_DEV_KIT_DIR="${FLIP_DIR}/kits/selftest-${backend}/fl-kit" \

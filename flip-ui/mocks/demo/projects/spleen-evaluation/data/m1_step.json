@@ -1,0 +1,132 @@
+{
+  "creationTimestamp": "2026-11-02T13:10:56.905",
+  "files": [
+    {
+      "bandit_findings": null,
+      "id": "d6e7fc61-1c15-804b-88b4-546b0fd89ed1",
+      "model_id": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+      "name": "config.json",
+      "size": 31,
+      "status": "COMPLETED",
+      "tag": null,
+      "type": "application/json",
+      "updated_at": null
+    },
+    {
+      "bandit_findings": null,
+      "id": "0cf206c9-b963-832f-beaf-18be174ee8eb",
+      "model_id": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+      "name": "config.toml",
+      "size": 729,
+      "status": "COMPLETED",
+      "tag": null,
+      "type": "application/octet-stream",
+      "updated_at": null
+    },
+    {
+      "bandit_findings": null,
+      "id": "b9fde691-0412-826b-9828-74a2168d71d9",
+      "model_id": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+      "name": "model.pt",
+      "size": 19299235,
+      "status": "COMPLETED",
+      "tag": null,
+      "type": "application/vnd.snesdev-page-table",
+      "updated_at": null
+    },
+    {
+      "bandit_findings": [],
+      "id": "f7c5c1eb-e64b-883a-b54c-cbbd8f82da28",
+      "model_id": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+      "name": "__init__.py",
+      "size": 685,
+      "status": "COMPLETED",
+      "tag": null,
+      "type": "text/x-python",
+      "updated_at": null
+    },
+    {
+      "bandit_findings": [],
+      "id": "875768a5-0bff-82aa-8ea5-86a5c9f52e7e",
+      "model_id": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+      "name": "client_app.py",
+      "size": 5001,
+      "status": "COMPLETED",
+      "tag": null,
+      "type": "text/x-python",
+      "updated_at": null
+    },
+    {
+      "bandit_findings": [],
+      "id": "f427e63e-9a50-8ce8-84da-41525dc69a46",
+      "model_id": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+      "name": "data_loading.py",
+      "size": 4544,
+      "status": "COMPLETED",
+      "tag": null,
+      "type": "text/x-python",
+      "updated_at": null
+    },
+    {
+      "bandit_findings": [],
+      "id": "533bdac1-d3f2-8580-902a-aa13b54a6493",
+      "model_id": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+      "name": "task.py",
+      "size": 8925,
+      "status": "COMPLETED",
+      "tag": null,
+      "type": "text/x-python",
+      "updated_at": null
+    },
+    {
+      "bandit_findings": [],
+      "id": "90d4381a-37ff-8f0f-9e25-268fb5ec73ea",
+      "model_id": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+      "name": "transforms.py",
+      "size": 3447,
+      "status": "COMPLETED",
+      "tag": null,
+      "type": "text/x-python",
+      "updated_at": null
+    },
+    {
+      "bandit_findings": [],
+      "id": "0b48af54-237d-80fc-904f-f31f46fe63ce",
+      "model_id": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+      "name": "models.py",
+      "size": 1869,
+      "status": "COMPLETED",
+      "tag": null,
+      "type": "text/x-python",
+      "updated_at": null
+    }
+  ],
+  "modelDescription": "E2E smoke model",
+  "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+  "modelName": "Spleen evaluation",
+  "preparedAt": "2026-11-02T13:14:03.729",
+  "projectId": "6f98c2ef-c38b-887d-8f43-9748587995d0",
+  "query": {
+    "id": "82279255-daaf-85b6-b853-5937e9135fd9",
+    "name": "E2E smoke query",
+    "query": "SELECT *\nFROM omop.image_occurrence\nWHERE modality_concept_id = 4300757\n-- Load-bearing, not cosmetic: without it the LIMIT below picks an unspecified 50 studies in an\n-- unspecified order, so the same cohort can disagree with itself between approval, the imaging\n-- pull and training -- the app can then be handed a study whose DICOM was never fetched. Ordered\n-- on the primary key rather than accession_id, which carries no unique constraint and so is not a\n-- total order.\nORDER BY\n    image_occurrence_id\nLIMIT 50\n",
+    "results": null
+  },
+  "queuePosition": null,
+  "resources": null,
+  "resultsUploadedAt": "2026-11-02T13:26:00.870",
+  "runningAt": "2026-11-02T13:14:03.750",
+  "status": "RESULTS_UPLOADED",
+  "trusts": [
+    {
+      "code": "GSTT",
+      "id": "00000000-0000-4000-8000-00000000a001",
+      "name": "Guy's and St Thomas' Trust"
+    },
+    {
+      "code": "KCH",
+      "id": "00000000-0000-4000-8000-00000000a002",
+      "name": "King's College Hospital"
+    }
+  ]
+}

@@ -51,7 +51,7 @@
 # required when this runs in CI and ignored on a laptop. One freely settable
 # variable chooses the estate, and the dangerous direction is silent: TF_HUB=stag on
 # aws-prod composes a prod-sized plan whose RDS is refreshed as
-# `deletion_protection = false`, `skip_final_snapshot = true` — in an unattended
+# `skip_final_snapshot = true` — in an unattended
 # apply on main. So a mis-set TF_HUB is a red compose step instead of a plan someone
 # has to read closely. tests/test_ci_env_target.py pins the class against
 # env_mode.mk's ENV_CLASS.
@@ -122,7 +122,7 @@ if [[ -n "${EXPECTED_ENV_CLASS:-}" ]]; then
    this is TF_HUB naming the wrong estate on the GitHub environment — not a reason
    to change the branch. Refusing to compose, because the dangerous direction is
    silent: HUB=stag on prod plans the prod RDS with
-   deletion_protection = false and skip_final_snapshot = true, unattended.
+   skip_final_snapshot = true, unattended.
    Fix TF_HUB (${GH_ENV} expects ${EXPECTED_ENV_CLASS})."
     fi
 elif [[ -n "${GITHUB_ACTIONS:-}" ]]; then
@@ -174,6 +174,7 @@ REQUIRED_KEYS=(
     AES_KEY_BASE64
     INTERNAL_SERVICE_KEY
     INTERNAL_SERVICE_KEY_HASH
+    FL_API_KEY
 
     # Database identifiers — configuration, stored as GitHub environment
     # *variables*. They are rendered in the clear into the public plan comment
@@ -201,13 +202,6 @@ REQUIRED_KEYS=(
     # FL
     FL_BACKEND
     FL_KIT_SLOT_NAMES
-
-    # The key whose Makefile default is DESTRUCTIVE rather than inert:
-    # DEPLOY_TRUST_EC2 ?= true means "create a t3.xlarge cloud trust host", which
-    # neither estate runs. It is not on check-fl-plan-impact.sh's watch list, so an
-    # unattended apply would make it silently; required with an explicit literal —
-    # `false` written down is a decision, an absent key an accident.
-    DEPLOY_TRUST_EC2
 )
 
 # Keys the Makefile exports only when set, or supplies a `?=` default for. Passed
@@ -224,17 +218,6 @@ OPTIONAL_KEYS=(
     # same for Flower's fleet proxy (TF_VAR_fl_fleet_proxy_image_tag, FLIP#1517).
     DOCKER_FL_API_TAG
     DOCKER_FL_PROXY_TAG
-
-    # Empty is meaningful and NOT symmetric with the rest of this list: it is the
-    # correct value on stag, which hosts no public Ark+ demo, and a destructive
-    # one on prod, where `demo_assets_enabled = var.DEMO_ASSETS_BUCKET_NAME != ""`
-    # (cloudfront.tf) gates the demo-assets BUCKET itself (module.flip_demo_assets_bucket,
-    # FLIP#1199). Emptying it there plans a destroy of a bucket carrying
-    # prevent_destroy, so the apply fails loudly instead.
-    # Optional here (this script has no prod/stag axis) so stag composes, recovered
-    # from state by reconcile_ci_env.py so prod's GitHub environment cannot be
-    # seeded without it.
-    DEMO_ASSETS_BUCKET_NAME
 
     # ENFORCE_MFA is optional because *empty is the intended production value*,
     # not an oversight: locals.tf omits the variable from the flip-api task env

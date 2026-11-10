@@ -65,7 +65,10 @@ fi
 # The backend: Docker through the xnat-socket-proxy sidecar with path translation, or the
 # Container Service's Kubernetes backend mounting the xnat-web data PVC into each Job (FLIP#565).
 if [[ "$XNAT_CS_BACKEND" == docker ]]; then
-  backend_config=$(jq --arg data_path "$DATA_PATH" '.["path-translation-docker-prefix"] = $data_path' container-service-backend-configuration.json)
+  # container-user: the uid:gid the jobs run as — xnat-web's own when the kit sets FLIP_UID, since
+  # the archive it writes is 640 to that uid (FLIP#1731); empty keeps each job image's user.
+  backend_config=$(jq --arg data_path "$DATA_PATH" --arg user "${XNAT_CS_CONTAINER_USER:-}" \
+    '.["path-translation-docker-prefix"] = $data_path | .["container-user"] = $user' container-service-backend-configuration.json)
 else
   backend_config=$(jq --arg pvc "$XNAT_CS_PVC_NAME" '.["combined-pvc-name"] = $pvc' container-service-backend-configuration.kubernetes.json)
 fi

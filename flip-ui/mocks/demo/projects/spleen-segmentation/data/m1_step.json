@@ -1,0 +1,121 @@
+{
+  "creationTimestamp": "2026-11-02T15:34:30.348",
+  "files": [
+    {
+      "bandit_findings": null,
+      "id": "ec13331b-bfc2-8c8b-a880-38fac23aba4e",
+      "model_id": "5069e9f1-6932-8b7e-bb51-56786c12da88",
+      "name": "config.json",
+      "size": 31,
+      "status": "COMPLETED",
+      "tag": null,
+      "type": "application/json",
+      "updated_at": null
+    },
+    {
+      "bandit_findings": null,
+      "id": "d55335a4-35e2-8a30-9116-89518522c946",
+      "model_id": "5069e9f1-6932-8b7e-bb51-56786c12da88",
+      "name": "config.toml",
+      "size": 1789,
+      "status": "COMPLETED",
+      "tag": null,
+      "type": "application/octet-stream",
+      "updated_at": null
+    },
+    {
+      "bandit_findings": [],
+      "id": "a7442885-4f93-87ce-9b53-0ff5abeabbd3",
+      "model_id": "5069e9f1-6932-8b7e-bb51-56786c12da88",
+      "name": "data_loading.py",
+      "size": 5780,
+      "status": "COMPLETED",
+      "tag": null,
+      "type": "text/x-python",
+      "updated_at": null
+    },
+    {
+      "bandit_findings": [],
+      "id": "93f1626b-3ed7-8945-a37e-c600304061ec",
+      "model_id": "5069e9f1-6932-8b7e-bb51-56786c12da88",
+      "name": "__init__.py",
+      "size": 660,
+      "status": "COMPLETED",
+      "tag": null,
+      "type": "text/x-python",
+      "updated_at": null
+    },
+    {
+      "bandit_findings": [],
+      "id": "e49b4fa5-2601-8551-9550-7ba972d9e97e",
+      "model_id": "5069e9f1-6932-8b7e-bb51-56786c12da88",
+      "name": "task.py",
+      "size": 6954,
+      "status": "COMPLETED",
+      "tag": null,
+      "type": "text/x-python",
+      "updated_at": null
+    },
+    {
+      "bandit_findings": [],
+      "id": "aa74baec-53aa-8182-a992-14d0f22f3f8e",
+      "model_id": "5069e9f1-6932-8b7e-bb51-56786c12da88",
+      "name": "client_app.py",
+      "size": 12628,
+      "status": "COMPLETED",
+      "tag": null,
+      "type": "text/x-python",
+      "updated_at": null
+    },
+    {
+      "bandit_findings": [],
+      "id": "37e8f5f7-8631-86a7-954f-2e8822557d86",
+      "model_id": "5069e9f1-6932-8b7e-bb51-56786c12da88",
+      "name": "models.py",
+      "size": 2097,
+      "status": "COMPLETED",
+      "tag": null,
+      "type": "text/x-python",
+      "updated_at": null
+    },
+    {
+      "bandit_findings": [],
+      "id": "3e53da78-3921-83dd-8ba3-4974b7d494f7",
+      "model_id": "5069e9f1-6932-8b7e-bb51-56786c12da88",
+      "name": "transforms.py",
+      "size": 3447,
+      "status": "COMPLETED",
+      "tag": null,
+      "type": "text/x-python",
+      "updated_at": null
+    }
+  ],
+  "modelDescription": "E2E smoke model",
+  "modelId": "5069e9f1-6932-8b7e-bb51-56786c12da88",
+  "modelName": "Spleen 3D U-Net",
+  "preparedAt": "2026-11-02T15:38:02.741",
+  "projectId": "7eebee18-d236-8101-ab85-0dfdc0b6d026",
+  "query": {
+    "id": "cf2a2432-9385-831e-8753-ecad454e04c3",
+    "name": "E2E smoke query",
+    "query": "SELECT *\nFROM omop.image_occurrence\nWHERE modality_concept_id = 4300757\n-- Load-bearing, not cosmetic: without it the LIMIT below picks an unspecified 50 studies in an\n-- unspecified order, so the same cohort can disagree with itself between approval, the imaging\n-- pull and training -- the app can then be handed a study whose DICOM was never fetched. Ordered\n-- on the primary key rather than accession_id, which carries no unique constraint and so is not a\n-- total order.\nORDER BY\n    image_occurrence_id\nLIMIT 50\n",
+    "results": null
+  },
+  "queuePosition": null,
+  "resources": null,
+  "resultsUploadedAt": "2026-11-02T16:51:14.356",
+  "runningAt": "2026-11-02T15:38:02.797",
+  "status": "RESULTS_UPLOADED",
+  "trusts": [
+    {
+      "code": "GSTT",
+      "id": "00000000-0000-4000-8000-00000000a001",
+      "name": "Guy's and St Thomas' Trust"
+    },
+    {
+      "code": "KCH",
+      "id": "00000000-0000-4000-8000-00000000a002",
+      "name": "King's College Hospital"
+    }
+  ]
+}

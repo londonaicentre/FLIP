@@ -23,7 +23,9 @@
 #
 # The validation files are NOT compared -- they legitimately differ (copyright header, and the Flower
 # copy carries a flower-only validate_tutorial_folder_name plus its _SAFE_NAME constant). Only the
-# shared function bodies are compared. The refusal modules are wholly shared and compared byte-for-byte.
+# shared function bodies are compared. The refusal and auth modules are wholly shared and compared
+# byte-for-byte: refusals.py is the researcher-facing error contract, auth.py the service-key guard
+# in front of every route but /health.
 #
 # Paths are relative to the repo root (this script lives in scripts/, so cd up one).
 cd "$(dirname "$0")/.." || exit 1
@@ -44,6 +46,13 @@ status=0
 if ! cmp -s "fl-services/nvflare/fl-api-base/fl_api/utils/refusals.py" \
     "fl-services/flower/fl-api-flower/fl_api/utils/refusals.py"; then
     echo "ERROR: researcher refusal contract has drifted between the two fl-api copies."
+    status=1
+fi
+
+# One guard in front of every route but /health; a fix to one copy must reach the other.
+if ! cmp -s "fl-services/nvflare/fl-api-base/fl_api/utils/auth.py" \
+    "fl-services/flower/fl-api-flower/fl_api/utils/auth.py"; then
+    echo "ERROR: FL API service-key guard has drifted between the two fl-api copies."
     status=1
 fi
 
@@ -112,7 +121,7 @@ for func in "${SHARED_FUNCTIONS[@]}"; do
 done
 
 if [ "$status" -eq 0 ]; then
-    echo "fl-api validation guards and researcher refusals are in sync (${SHARED_FUNCTIONS[*]})."
+    echo "fl-api validation guards, researcher refusals and service-key guard are in sync (${SHARED_FUNCTIONS[*]})."
 fi
 
 exit "$status"

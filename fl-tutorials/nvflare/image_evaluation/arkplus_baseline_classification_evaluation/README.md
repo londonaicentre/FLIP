@@ -11,7 +11,7 @@
     limitations under the License.
 -->
 
-# Baseline Ark+ Chest X-ray Evaluation (FLARE Client API) — FLIP tutorial
+# Evaluating a chest X-ray foundation model (Ark+)
 
 FLIP tutorial for federated evaluation of a single zero-shot Ark+ foundation model on chest X-ray
 classification, using the **FLARE Client API**. The hold-out data at each site is scored against the
@@ -30,9 +30,20 @@ per-lesion AUROC. The numerical pipeline (model, transforms, head inference, lab
 identical to the previous implementation's, so the reported metrics match — only the FL transport
 differs. The `evaluation_results.json` output contract is unchanged.
 
-## Compatible job type
+## At a glance
 
-This tutorial is designed for `JOB_TYPE=evaluation`.
+| Item | Value |
+|---|---|
+| What you upload | everything in `app_files/`, plus the checkpoint from `make prepare-checkpoint` |
+| Job type | evaluation |
+| Imaging | on, DICOM to NIfTI off |
+| Cohort query | `query.sql` (the hold-out set) |
+| Dataset | `make -C fl-tutorials download-arkplus-eval-data`, plus the raw Ark+ checkpoint (`make download-raw-checkpoint`) |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=arkplus_baseline_classification_evaluation` (GPU; `MAX_SAMPLES=128` by default) |
+
+Example radiographs, one per target lesion, are in the fine-tuning tutorial's
+[`docs/dataset_examples.png`](../../image_classification/arkplus_fine_tuning/docs/dataset_examples.png)
+(same dataset family; this tutorial scores the hold-out splits).
 
 ## Prerequisites
 
@@ -190,7 +201,9 @@ only) is left out:
 ```
 
 (Values above are **real measured scores**, not a fabricated example: the pretrained checkpoint over one
-hold-out cohort. Treat them as one cohort's result, not a target to reproduce.)
+hold-out cohort. Treat them as one cohort's result, not a target to reproduce. With the default
+`MAX_SAMPLES=128` cap a simulator run is a smoke test of the round-trip, not a measurement; `MAX_SAMPLES=0`
+scores the full ~470 studies per site.)
 
 ### Fields
 

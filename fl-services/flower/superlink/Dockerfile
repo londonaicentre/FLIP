@@ -13,4 +13,8 @@
 
 ARG BASE_REF=flower-fl-base:dev
 FROM ${BASE_REF}
+
+# The path the SuperLink writes on ECS's read-only root filesystem, where HOME and WORKING_DIR point
+# at it; must stay a VOLUME (FLIP#1795, deploy/providers/AWS/AGENTS.md).
+VOLUME ["/tmp"]
 ENTRYPOINT ["flower-superlink"]

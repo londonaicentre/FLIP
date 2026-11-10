@@ -24,6 +24,10 @@ described below exists to keep that boundary intact.
 FLIP is open source under Apache 2.0. The code, its full change history, and the
 automated checks that run against every change are publicly inspectable.
 
+.. contents:: On this page
+   :local:
+   :depth: 1
+
 *********************
 Network and perimeter
 *********************
@@ -140,6 +144,9 @@ therefore never becomes an implicit route into the trust's wider imaging estate.
 - Services within a trust authenticate to one another with a per-trust
   ``TRUST_INTERNAL_SERVICE_KEY``. It never reaches the Central Hub and is compared in
   constant time.
+- On the hub, the FL API that drives each federated network accepts calls only from the
+  hub's own services, which present a dedicated ``FL_API_KEY``; every route but its health
+  check refuses a missing or wrong key, and on AWS the network rules admit only those callers.
 
 Credentials compromised at one trust cannot be replayed against another.
 
@@ -276,10 +283,11 @@ a server-side request forgery surface:
 cannot, on its own, close a DNS-rebinding race between the check and the fetch. An FL API
 started without the allow-list logs a warning naming what that leaves open.
 
-**FL traffic is mutually authenticated.** Both supported backends, NVIDIA FLARE and
-Flower, run over TLS with per-participant certificates issued during network
-provisioning. So the FL server and each client authenticate *each other*, rather than one
-side trusting the network. A client cannot join a training network without a valid
+**FL traffic is mutually authenticated.** NVIDIA FLARE uses mutual TLS with
+per-participant certificates issued during network provisioning. Flower uses TLS to the
+SuperLink's certificate, and each SuperNode authenticates with its own provisioned key
+pair, registered with the SuperLink. Either way the FL server and each client
+authenticate *each other*, rather than one side trusting the network. A client cannot join a training network without a valid
 provisioned identity.
 
 **Privacy filtering of model updates differs by FL backend** (see

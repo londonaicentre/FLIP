@@ -27,6 +27,8 @@ preserving the operator's host-local edits:
 Replaces the bash upsert in scripts/distribute-trust-kits.sh and
 deploy/providers/AWS/scripts/register-trusts.sh::write_kit_file(), and the
 in-place upsert in trust/deploy/scripts/sync_trust_kit.py.
+
+Also the one Python reader of the kit's TRUST_DATA_SEED (:func:`trust_data_seed`).
 """
 
 from __future__ import annotations
@@ -82,6 +84,22 @@ _FIELD_BY_ENV_KEY: dict[str, str] = {
     "FL_KIT_SLOT": "fl_kit_slot",
     "FL_KIT_SLOT_NUMBER": "fl_kit_slot_number",
 }
+
+
+def trust_data_seed(kit: dict[str, str]) -> bool:
+    """Whether the kit seeds the sample data: its TRUST_DATA_SEED (FLIP#1687), read as make reads it.
+
+    A trailing ``# comment`` and every quote are dropped and unset is true (deploy/env_mode.mk's
+    trust_data_seed). Anything but true or false is refused: read as true, it would seed a real
+    trust's OMOP.
+
+    Raises:
+        ValueError: If the value is neither true nor false.
+    """
+    value = kit.get("TRUST_DATA_SEED", "").split("#", 1)[0].replace('"', "").replace("'", "").strip()
+    if value not in ("", "true", "false"):
+        raise ValueError(f"TRUST_DATA_SEED must be true or false, not {value!r}")
+    return value != "false"
 
 
 def upsert(lines: list[str], key: str, value: str) -> list[str]:

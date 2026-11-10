@@ -117,7 +117,6 @@ TERRAFORM_ADDRESSES: dict[str, tuple[str, ...]] = {
     "EFS": ("aws_efs_file_system.flip_fl",),
     "SSM bastion": ("aws_instance.ec2_instance",),
     "Cloud Map": ("aws_service_discovery_private_dns_namespace.flip_local",),
-    "AWS-hosted mock trust": ("module.trust_ec2",),
     # ---- regional services outside the VPC ----------------------------------------------------------
     "Cognito": ("module.cognito",),
     "SES": ("module.ses",),
@@ -134,14 +133,12 @@ TERRAFORM_ADDRESSES: dict[str, tuple[str, ...]] = {
     "Model files bucket": ("module.flip_model_files_uploads_bucket",),
     "FL results bucket": ("module.flip_fl_results_bucket",),
     "App bundles bucket": ("module.flip_app_bundles_bucket",),
-    "Demo assets bucket": ("module.flip_demo_assets_bucket",),
     "Participant kits bucket": ("aws_s3_bucket.aicentre_bucket",),
     "Access logs buckets": ("aws_s3_bucket.flip_access_logs",),
     "CloudWatch Logs": (
         "aws_cloudwatch_log_group.ecs_flip_api",
         "aws_cloudwatch_log_group.ecs_fl_api_net_1",
         "aws_cloudwatch_log_group.ecs_fl_server_net_1",
-        "aws_cloudwatch_log_group.flip_trust_log_group",
     ),
 }
 
@@ -168,12 +165,10 @@ DRAWN_RESOURCE_TYPES: frozenset[str] = frozenset(
 UNDRAWN_MODULES: frozenset[str] = frozenset(
     {
         "ec2_security_group",  # SG of the SSM bastion
-        "trust_security_group",  # SG of the AWS-hosted mock trust
         "rds_security_group",  # SG of RDS
         "alb_security_group",  # SG of the ALB that went with the self-contained mode (unused, FLIP#1479)
         "fl_internal_nlb_security_group",  # SG of the internal NLB
         "ec2_role",  # IAM role of the SSM bastion
-        "trust_ec2_role",  # IAM role of the AWS-hosted mock trust
     }
 )
 
@@ -266,7 +261,7 @@ def _hub_internal_edges(flip_api: Node, fl_api: Node, fl_server: Node, cloud_map
 def _draw_network(drawn: _Drawn) -> None:
     """Request and FL paths: the networking account's edge, the Transit Gateway, one internal NLB."""
     users = drawn.node("Users", Users)
-    with _cluster("Trust node (on-prem or AWS-hosted)"):
+    with _cluster("Trust node (any site, any platform)"):
         trust_api = drawn.node("trust-api", Server)
         fl_client = drawn.node("fl-client-net-1", Server)
 
@@ -291,9 +286,6 @@ def _draw_network(drawn: _Drawn) -> None:
                 drawn.node(
                     "SSM bastion", EC2, caption="SSM bastion\n(Session Manager over the\ncentral endpoints, no inbound)"
                 )
-                mock_trust = drawn.node(
-                    "AWS-hosted mock trust", EC2, caption="AWS-hosted mock trust\n(optional)", style="dashed"
-                )
             zone = drawn.node(
                 "Private zone fl-server-net-1", Route53HostedZone, caption="Private zone\nfl-server-net-1 → NLB IPs"
             )
@@ -317,7 +309,6 @@ def _draw_network(drawn: _Drawn) -> None:
     firewall >> tgw >> Edge(label=":443 web · :8002 FL") >> internal_nlb
     internal_nlb >> Edge(label=":443 → ecs-flip-api-lza") >> flip_api
     internal_nlb >> Edge(label=":8002 → ecs-fl-server-lza\n(mTLS pass-through)") >> fl_server
-    mock_trust >> Edge(style="dashed") >> internal_nlb
     zone - Edge(style="dotted", label="A → NLB IPs") - internal_nlb
     _hub_internal_edges(flip_api, fl_api, fl_server, cloud_map)
 
@@ -355,9 +346,6 @@ def _draw_data(drawn: _Drawn) -> None:
         model_files = drawn.node("Model files bucket", S3, caption="Model files bucket\nuploaded → scanned")
         fl_results = drawn.node("FL results bucket", S3, caption="FL results\nbucket")
         drawn.node("Access logs buckets", S3, caption="Access logs\nbucket")
-        # Read by the networking account's edge over cross-account OAC, which is why it carries no edge of its own
-        # in this picture — the edge is in another repository.
-        drawn.node("Demo assets bucket", S3, caption="Ark+ demo bucket\n(public downloads)")
 
     with _cluster("Regional services"):
         cognito = drawn.node("Cognito", Cognito, caption="Cognito user pool\n(TOTP MFA)")

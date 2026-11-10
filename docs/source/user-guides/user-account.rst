@@ -17,6 +17,10 @@ Account and sign-in
 
 How to get a FLIP account, sign in for the first time and look after your password.
 
+.. contents:: On this page
+   :local:
+   :depth: 1
+
 .. _request-access:
 
 **************
