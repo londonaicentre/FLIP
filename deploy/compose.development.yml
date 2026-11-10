@@ -252,8 +252,6 @@ services:
       # Bind-mount the base FL app templates over the baked-in copy so template edits take effect
       # without a rebuild (the bundler reads them from FL_APP_BASE_DIR=/app/fl-apps). FLIP#724.
       - ../fl-apps/:/app/fl-apps/
-      # The provisioned FL kits, read-only, so a trust's kit can be downloaded from the UI (FLIP#1852).
-      - ${FL_PROVISIONED_DIR}:/fl-kits:ro
       # No ~/.aws anywhere in the dev stack: it reaches no AWS service (FLIP#919/#1291).
     # Deliberately NOT on `fl-net-*`: flip-api fronts the database and holds the hub's
     # credentials, and nothing on the FL data plane calls it. The traffic that looks like
@@ -360,7 +358,6 @@ services:
       - FL_BACKEND=${FL_BACKEND}
       - ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
       - FL_KIT_SLOT_NAMES=${FL_KIT_SLOT_NAMES}
-      - FL_KITS_URI=/fl-kits
       # Hub-shared kit values — must be readable inside the container by
       # flip-api/src/flip_api/scripts/register_trust.py::_hub_shared_from_env() so that
       # `make register-trusts` populates the per-trust kit file's managed
