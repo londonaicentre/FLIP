@@ -16,6 +16,7 @@ response and are kept nowhere on the hub; what stays is a ``trusts_audit`` row p
 
 import base64
 import hmac
+from datetime import timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
@@ -151,7 +152,9 @@ def get_trust_kit_status(
     if last is not None:
         row, name = last
         detail = row.detail or {}
-        last_download = ITrustKitLastDownload(at=row.audit_date, kind=detail.get("kind", "update"), by=name or None)
+        # audit_date is stored as naive UTC; say so, or a browser reads it as local time.
+        at = row.audit_date.replace(tzinfo=timezone.utc)
+        last_download = ITrustKitLastDownload(at=at, kind=detail.get("kind", "update"), by=name or None)
         try:
             update_available = detail.get("digest") != hub_shared_digest(hub_shared_values())
         except TrustKitError:

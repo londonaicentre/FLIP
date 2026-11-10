@@ -150,6 +150,7 @@ def test_status_reports_the_last_download_and_a_moved_hub_value(session, world, 
     assert status.update_available is False
     assert status.last_download.kind == "full"
     assert status.last_download.by == "Art Admin"
+    assert status.last_download.at.utcoffset() is not None
 
     monkeypatch.setenv("FLARE_KIT_DATE", "20270101")
     assert get_trust_kit_status(trust_id=world["trust"], db=session, user_id=world["hub_admin"]).update_available
