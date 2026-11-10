@@ -12,18 +12,23 @@
 #
 
 import ipaddress
+import os
 import subprocess
 
 import pytest
 from fastapi.testclient import TestClient
 
-from fl_api import app as app_module
-from fl_api.utils import validation
+# The key every route but /health requires; the client fixture presents it (fl_api/utils/auth.py).
+os.environ.setdefault("FL_API_KEY", "test-fl-api-key")  # pragma: allowlist secret
+
+from fl_api import app as app_module  # noqa: E402
+from fl_api.utils import validation  # noqa: E402
 
 
 @pytest.fixture
 def client():
     with TestClient(app_module.app) as test_client:
+        test_client.headers["X-FL-API-Key"] = os.environ["FL_API_KEY"]
         yield test_client
 
 

@@ -156,6 +156,8 @@ variable "managed_role_names" {
     "flip-rds-proxy-role",
     # main.tf, via terraform-aws-modules/iam//modules/iam-assumable-role
     "ec2-role",
+    # main.tf, flip_db enhanced monitoring (RDS.6, FLIP#1796)
+    "flip-rds-monitoring-role",
     # Retiring (FLIP#1438): the root no longer declares it. Kept so the apply that deletes it is
     # allowed; remove once stag and prod have applied that change.
     "trust-ec2-role",
@@ -183,6 +185,7 @@ variable "attachable_managed_policies" {
   default = [
     "service-role/AmazonECSTaskExecutionRolePolicy", # iam_ecs.tf, execution role
     "AmazonSSMManagedInstanceCore",                  # main.tf, the bastion role
+    "service-role/AmazonRDSEnhancedMonitoringRole",  # main.tf, flip_db enhanced monitoring (RDS.6, FLIP#1796)
     "CloudWatchAgentServerPolicy",                   # retiring with trust-ec2-role (FLIP#1438)
   ]
 }
@@ -224,6 +227,7 @@ variable "apply_service_prefixes" {
     "cloudfront",
     "cognito-idp",
     "ec2",
+    "ecr",
     "ecs",
     "elasticfilesystem",
     "elasticloadbalancing",
@@ -338,6 +342,16 @@ variable "state_noncurrent_version_days" {
   description = "How many days a previous state version is kept before it may expire."
   type        = number
   default     = 90
+}
+
+# S3.9. On an AWS Landing Zone Accelerator estate, the accelerator's own
+# aws-accelerator-s3-access-logs-<account>-<region> bucket, whose policy admits
+# S3 log delivery from any bucket in the account. Never a bucket the FLIP root
+# declares (flip-access-logs-*): that bucket's own state is kept in this one.
+variable "state_access_log_bucket" {
+  description = "Bucket, in the same account and region, that receives the state bucket's S3 server access logs under a <state_bucket_name>/ prefix. Empty turns access logging off."
+  type        = string
+  default     = ""
 }
 
 variable "restrict_state_writes" {

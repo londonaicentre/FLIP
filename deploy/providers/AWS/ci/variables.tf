@@ -114,6 +114,7 @@ variable "managed_role_names" {
     "ecs-fl-server-task-role",
     "flip-rds-proxy-role",
     "ec2-role",
+    "flip-rds-monitoring-role",
     # Retiring (FLIP#1438): the root no longer declares it. Kept so the apply that deletes it is
     # allowed; remove once stag and prod have applied that change.
     "trust-ec2-role",
@@ -126,6 +127,7 @@ variable "attachable_managed_policies" {
   default = [
     "service-role/AmazonECSTaskExecutionRolePolicy",
     "AmazonSSMManagedInstanceCore",
+    "service-role/AmazonRDSEnhancedMonitoringRole",
     "CloudWatchAgentServerPolicy",
   ]
 }
@@ -161,6 +163,7 @@ variable "apply_service_prefixes" {
     "cloudfront",
     "cognito-idp",
     "ec2",
+    "ecr",
     "ecs",
     "elasticfilesystem",
     "elasticloadbalancing",
@@ -248,6 +251,12 @@ variable "state_noncurrent_version_days" {
   description = "How many days a previous state version is kept before it may expire."
   type        = number
   default     = 90
+}
+
+variable "state_access_log_bucket" {
+  description = "Bucket, in the same account and region, that receives the state bucket's S3 server access logs. Empty turns access logging off."
+  type        = string
+  default     = ""
 }
 
 variable "restrict_state_writes" {

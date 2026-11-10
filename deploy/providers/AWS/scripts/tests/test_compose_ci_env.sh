@@ -71,6 +71,7 @@ BASE_ENV=(
     AES_KEY_BASE64=bm90LWEtcmVhbC1rZXk=
     INTERNAL_SERVICE_KEY=not-a-real-service-key
     INTERNAL_SERVICE_KEY_HASH=0000000000000000000000000000000000000000000000000000000000000000
+    FL_API_KEY=not-a-real-fl-api-key
     POSTGRES_DB=flip
     POSTGRES_USER=flipuser
     ENFORCE_MFA=true
@@ -538,7 +539,7 @@ expect_rc 0 "exits 0"
 #     variable between a run and the account it shapes, and getting it wrong is not
 #     a wrong-looking plan: TF_HUB=stag on aws-prod composes a prod estate with
 #     staging's destructive defaults — the RDS comes out with
-#     deletion_protection = false, skip_final_snapshot = true — inside an apply job
+#     skip_final_snapshot = true — inside an apply job
 #     nobody is watching. The compose step is the last cheap place to stop it.
 #
 #     The value is per workflow, not per file: terraform_plan.yml declares

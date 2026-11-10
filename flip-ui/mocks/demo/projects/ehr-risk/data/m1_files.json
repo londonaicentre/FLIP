@@ -1,0 +1,79 @@
+[
+  {
+    "bandit_findings": [],
+    "created": null,
+    "id": "b9901f17-cd27-85c0-80f9-215beaed8c91",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "modified": null,
+    "name": "feature_engineering.py",
+    "size": 10176,
+    "status": "COMPLETED",
+    "type": "text/x-python"
+  },
+  {
+    "bandit_findings": [],
+    "created": null,
+    "id": "ce6463b7-3369-8e15-88b7-68ad4859c89f",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "modified": null,
+    "name": "models.py",
+    "size": 2506,
+    "status": "COMPLETED",
+    "type": "text/x-python"
+  },
+  {
+    "bandit_findings": [],
+    "created": null,
+    "id": "75f2e87f-2540-8ab4-bcc1-7d02c9fccc6d",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "modified": null,
+    "name": "task.py",
+    "size": 4012,
+    "status": "COMPLETED",
+    "type": "text/x-python"
+  },
+  {
+    "bandit_findings": null,
+    "created": null,
+    "id": "5502efb0-d9af-8a55-aee5-f84ad1258035",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "modified": null,
+    "name": "config.json",
+    "size": 410,
+    "status": "COMPLETED",
+    "type": "application/json"
+  },
+  {
+    "bandit_findings": null,
+    "created": null,
+    "id": "917e1b35-e8ab-8e66-a40a-4e5e734aa3fd",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "modified": null,
+    "name": "config.toml",
+    "size": 1115,
+    "status": "COMPLETED",
+    "type": "application/octet-stream"
+  },
+  {
+    "bandit_findings": [],
+    "created": null,
+    "id": "43044c69-0569-8eaa-a3c1-72881ab0a66e",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "modified": null,
+    "name": "__init__.py",
+    "size": 754,
+    "status": "COMPLETED",
+    "type": "text/x-python"
+  },
+  {
+    "bandit_findings": [],
+    "created": null,
+    "id": "4d121011-af8c-8ecb-bfc9-a12e43a45d27",
+    "modelId": "1799708d-af4b-8eb1-9eff-76a8ccd93941",
+    "modified": null,
+    "name": "client_app.py",
+    "size": 9469,
+    "status": "COMPLETED",
+    "type": "text/x-python"
+  }
+]

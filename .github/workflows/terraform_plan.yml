@@ -130,7 +130,6 @@ jobs:
           FLIP_UI_BUCKET_NAME: ${{ vars.FLIP_UI_BUCKET_NAME }}
           FL_SERVER_PORT: ${{ vars.FL_SERVER_PORT }}
           ENFORCE_MFA: ${{ vars.ENFORCE_MFA }}
-          DEMO_ASSETS_BUCKET_NAME: ${{ vars.DEMO_ASSETS_BUCKET_NAME }}
           FL_ADMIN_DIRECTORY: ${{ vars.FL_ADMIN_DIRECTORY }}
           INTERNAL_SERVICE_KEY_HEADER: ${{ vars.INTERNAL_SERVICE_KEY_HEADER }}
           TRUST_API_KEY_HEADER: ${{ vars.TRUST_API_KEY_HEADER }}
@@ -159,6 +158,7 @@ jobs:
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
           INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
           INTERNAL_SERVICE_KEY_HASH: ${{ secrets.INTERNAL_SERVICE_KEY_HASH }}
+          FL_API_KEY: ${{ secrets.FL_API_KEY }}
           POSTGRES_DB: ${{ vars.POSTGRES_DB }}
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}
         run: deploy/providers/AWS/scripts/compose-ci-env.sh

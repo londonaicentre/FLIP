@@ -9,8 +9,16 @@
 # Make creates and the dirs compose mounts match.
 services:
   xnat-web:
+    # The kit's FLIP_UID:FLIP_GID when set, else the image's xnat user (FLIP#1731). xnat-db keeps
+    # the stack file's root entrypoint: its pinned postgres:12.2-alpine predates nss_wrapper, so it
+    # cannot run as a uid it does not know.
+    user: "${FLIP_UID:-1001}:${FLIP_GID:-1001}"
     environment:
       - DATA_PATH=${XNAT_DATA_DIR}/xnat-data
+      # Who the Container Service runs its jobs (dcm2niix, export-mask) as: the same uid as
+      # xnat-web, or they cannot read the 640 files it archives. trust/xnat/Makefile derives it
+      # from FLIP_UID; empty keeps each job image's own user, 1001 (FLIP#1731).
+      - XNAT_CS_CONTAINER_USER=${XNAT_CS_CONTAINER_USER:-}
     volumes:
       - ${XNAT_DATA_DIR}/xnat-data/tomcat_logs:${XNAT_HOME}/logs
       - ${XNAT_DATA_DIR}/xnat-data/archive:${XNAT_ROOT}/archive

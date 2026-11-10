@@ -6,6 +6,10 @@ The Federated Learning Interoperability Platform (FLIP) trains and evaluates med
 Trusts without moving patient data. The model goes to each Trust and trains on that Trust's data locally. Only the
 model's updates come back, and FLIP combines them into one shared model.
 
+.. contents:: On this page
+   :local:
+   :depth: 1
+
 *************
 How it works
 *************
@@ -103,7 +107,8 @@ Who does what
      - Has read-only access to the projects they are added to.
    * - Trust operator
      - Site IT staff who install and run the FLIP node and connect it to the Trust's PACS and OMOP data. This is not
-       a FLIP account role. See :doc:`deploy-flip`.
+       a FLIP account role. See :doc:`deploy-flip`; what a Trust needs in place before it can join is on
+       :doc:`deploy-flip/trust-readiness-checklist`.
 
 The full permission matrix is on :ref:`rbac-roles`.
 

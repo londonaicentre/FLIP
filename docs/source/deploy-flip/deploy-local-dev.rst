@@ -132,8 +132,8 @@ placeholders:
      - A new 32-byte key:
        ``python3 -c "import base64, os; print(base64.b64encode(os.urandom(32)).decode())"``
 
-Leave these alone: ``INTERNAL_SERVICE_KEY`` and ``INTERNAL_SERVICE_KEY_HASH``
-(``make up`` generates them), the Cognito and SES settings (staging and
+Leave these alone: ``INTERNAL_SERVICE_KEY``, ``INTERNAL_SERVICE_KEY_HASH`` and
+``FL_API_KEY`` (``make up`` generates them), the Cognito and SES settings (staging and
 production only) and the object-store keys (defaults are in
 ``deploy/compose.development.yml``).
 
