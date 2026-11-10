@@ -205,7 +205,7 @@ services:
   # address and port the kits already dial. No capabilities: the host group reads the key.
   fl-fleet-proxy-net-1:
     image: ${DOCKER_FL_REGISTRY}flower-fleet-proxy:${DOCKER_FL_TAG}
-    group_add: ["${DOCKER_GID:-1000}"]
+    group_add: ["${DOCKER_GID:?DOCKER_GID must be the host user's gid; make up exports it}"]
     volumes:
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
     environment:
@@ -331,7 +331,7 @@ services:
   # The trusts' only route to the net-2 SuperLink — see fl-fleet-proxy-net-1 above.
   fl-fleet-proxy-net-2:
     image: ${DOCKER_FL_REGISTRY}flower-fleet-proxy:${DOCKER_FL_TAG}
-    group_add: ["${DOCKER_GID:-1000}"]
+    group_add: ["${DOCKER_GID:?DOCKER_GID must be the host user's gid; make up exports it}"]
     volumes:
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
     environment:

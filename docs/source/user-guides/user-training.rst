@@ -71,6 +71,9 @@ The model page has two tabs. Once training starts it opens **Run**, where the **
 with a timestamp (queuing, net assignment, training in progress, training complete) and the stop and download buttons
 sit at the top. The **Prepare** tab keeps a progress bar of the stages.
 
+If **Live activity** says the platform team has the details, send them the job reference from that message.
+An administrator can use it to find the matching error in the Central Hub logs.
+
 .. figure:: ../assets/generated/gifs/flip/initiate-training.gif
    :width: 600
    :align: center

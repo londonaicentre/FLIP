@@ -26,6 +26,8 @@ failure that actually happened rather than a hypothetical:
   uid is absent from the image's ``/etc/passwd``: ``pwd.getpwuid()`` raises, ``HOME``
   falls back to ``/``, and the symptom surfaces three layers away as torch's
   "Artifact of type=precompile already registered in mega-cache artifact factory".
+- Host supplementary groups must require ``DOCKER_GID``: guessing 1000 can leave
+  provisioned keys unreadable or grant a different host group's access (FLIP#1404).
 - A prod service that writes a host bind mount runs as ``${FLIP_UID:-<image uid>}``: a kit's
   FLIP_UID re-points it to the operator's own ids, unset leaves the image's baked user
   (FLIP#1731). The defaults are pinned here so a compose edit cannot move a default site, and
@@ -438,6 +440,24 @@ def check_no_uname_runtime_paths(failures: list[str]) -> None:
                 )
 
 
+def check_host_gid_is_required(failures: list[str]) -> None:
+    """Never guess the host group that reads provisioned keys and writes shared dev directories."""
+    for glob in ("deploy/**/compose*.yml", "trust/deploy/**/compose*.yml", "fl-services/*/compose*.yml"):
+        paths = sorted(REPO_ROOT.glob(glob))
+        if not paths:
+            failures.append(f"{glob}: matched no compose files")
+        for path in paths:
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                # Any DOCKER_GID left once the required form is removed is a default, a bare or an unbraced use.
+                if "DOCKER_GID" in re.sub(r"\$\{DOCKER_GID:\?[^}]*\}", "", line):
+                    failures.append(
+                        f"{path.relative_to(REPO_ROOT)}:{number}: `{line.strip()}` must require a non-empty "
+                        "DOCKER_GID with ${DOCKER_GID:?...}; the Makefile exports the host gid (FLIP#1404)."
+                    )
+
+
 def main() -> int:
     failures: list[str] = []
     try:
@@ -449,6 +469,7 @@ def main() -> int:
         check_images_hand_back_to_their_user(failures)
         check_container_service_jobs_follow_flip_uid(failures)
         check_no_uname_runtime_paths(failures)
+        check_host_gid_is_required(failures)
     except ValueError as exc:
         failures.append(str(exc))
 
