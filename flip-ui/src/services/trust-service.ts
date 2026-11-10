@@ -43,9 +43,9 @@ export interface ITrustResponse {
     region: string | null;
     last_heartbeat: string | null;
     project_count: number;
-    // FL jobs this trust takes part in that are waiting or running (FLIP#1739).
-    jobs_queued?: number;
-    jobs_in_progress?: number;
+    // FL jobs this trust takes part in that are waiting or running (FLIP#1739). Hub admins only: null for others.
+    jobs_queued?: number | null;
+    jobs_in_progress?: number | null;
     services?: Record<string, IServiceHealth> | null;
     services_updated_at?: string | null;
 }

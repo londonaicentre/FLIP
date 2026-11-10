@@ -265,7 +265,7 @@
                             <thead>
                                 <tr class="bg-gray-50 dark:bg-dark-surface border-b border-gray-200 dark:border-dark-border">
                                     <th
-                                        v-for="col in columns"
+                                        v-for="col in visibleColumns"
                                         :key="col.key ?? col.label"
                                         :data-test="col.key ? `sort-header-${col.key}` : undefined"
                                         class="px-4 py-3 text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300 font-medium select-none"
@@ -361,6 +361,7 @@
                                         </div>
                                     </td>
                                     <td
+                                        v-if="isAdmin"
                                         class="px-4 py-4 align-middle font-mono text-xs text-gray-600 dark:text-gray-300 whitespace-nowrap"
                                         data-test="trust-jobs"
                                     >
@@ -385,7 +386,10 @@
                                     </td>
                                 </tr>
                                 <tr v-if="!displayedTrusts.length">
-                                    <td colspan="8" class="text-center py-6 text-gray-500 dark:text-gray-300">
+                                    <td
+                                        :colspan="visibleColumns.length"
+                                        class="text-center py-6 text-gray-500 dark:text-gray-300"
+                                    >
                                         {{ activeTile ? "No trusts match this filter." : "No trusts registered yet." }}
                                     </td>
                                 </tr>
@@ -858,6 +862,9 @@ const columns: IColumn[] = [
         width: "w-10"
     }
 ];
+
+// The Jobs counts span every project, so the hub sends them to hub admins only (FLIP#1739).
+const visibleColumns = computed(() => columns.filter(col => col.label !== "Jobs" || isAdmin.value));
 
 // Severity-first is the default (design 1b): failing trusts surface on load;
 // admins can re-sort via the column headers when triaging.

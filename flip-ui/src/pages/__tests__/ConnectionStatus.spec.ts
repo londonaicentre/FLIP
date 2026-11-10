@@ -267,7 +267,7 @@ describe("ConnectionStatus", () => {
         expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
     });
 
-    it("shows each trust's in-progress and queued jobs in the Jobs column, and a dash for none", () => {
+    it("shows a hub admin each trust's in-progress and queued jobs in the Jobs column, and a dash for none", () => {
         // FLIP#1739: counts only, from the trust list the page already fetches.
         mockSwrvData.value = [
             {
@@ -286,6 +286,23 @@ describe("ConnectionStatus", () => {
         expect(cells).toContain("—");
         // The stacked mobile row has no room for both lines, so it carries the total.
         expect(wrapper.findAll("[data-test='trust-jobs-mobile']").map(c => c.text())).toEqual(["3 jobs"]);
+    });
+
+    it("shows no Jobs column to a user who is not a hub admin", () => {
+        // The counts span every project, so the hub sends them to hub admins only (null for everyone else).
+        mockSwrvData.value = [
+            {
+                ...fixture[0],
+                jobs_in_progress: null,
+                jobs_queued: null
+            },
+            fixture[1]
+        ];
+        const wrapper = mountPage({ permissions: [] });
+
+        expect(wrapper.findAll("thead th").map(th => th.text())).not.toContain("Jobs");
+        expect(wrapper.findAll("[data-test='trust-jobs']")).toHaveLength(0);
+        expect(wrapper.findAll("[data-test='trust-jobs-mobile']")).toHaveLength(0);
     });
 
     it("shows an up arrow on the active ascending column and a down arrow on descending", async () => {

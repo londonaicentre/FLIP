@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 
 from flip_api.db.models.main_models import FLJob
 from flip_api.domain.schemas.status import JobStatus, ProjectStatus
-from tests.integration.conftest import override_verify_token_as
+from tests.integration.conftest import admin_user, override_verify_token_as
 
 
 def test_trust_list_counts_queued_and_in_progress_jobs_per_trust(
@@ -50,10 +50,14 @@ def test_trust_list_counts_queued_and_in_progress_jobs_per_trust(
     add_job(JobStatus.COMPLETED, [both, one, none])
     add_job(JobStatus.DELETED, [both, one, none])
 
-    override_verify_token_as(uuid4())
-    response = client.get("/api/trust")
+    def counts_seen_by(user_id) -> dict:
+        override_verify_token_as(user_id)
+        response = client.get("/api/trust")
+        assert response.status_code == 200, response.text
+        # Other tests' seeded trusts may be listed too; only this test's three are checked.
+        counts = {t["code"]: (t["jobs_queued"], t["jobs_in_progress"]) for t in response.json()}
+        return {code: counts[code] for code in ("BOTH", "ONE", "NONE")}
 
-    assert response.status_code == 200, response.text
-    # Other tests' seeded trusts may be listed too; only this test's three are checked.
-    counts = {t["code"]: (t["jobs_queued"], t["jobs_in_progress"]) for t in response.json()}
-    assert {code: counts[code] for code in ("BOTH", "ONE", "NONE")} == {"BOTH": (2, 1), "ONE": (0, 1), "NONE": (0, 0)}
+    assert counts_seen_by(admin_user(session)) == {"BOTH": (2, 1), "ONE": (0, 1), "NONE": (0, 0)}
+    # The counts span every project, so a caller who is not a hub admin gets none of them.
+    assert counts_seen_by(uuid4()) == dict.fromkeys(("BOTH", "ONE", "NONE"), (None, None))

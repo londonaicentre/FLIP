@@ -22,7 +22,7 @@ admin-only.
 import json
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException, status
@@ -37,6 +37,13 @@ from flip_api.main import app
 from flip_api.trusts_services.get_trusts import _as_utc_iso, get_trusts
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def is_hub_admin():
+    """The caller's admin check, mocked: False unless a test sets ``is_hub_admin.return_value``."""
+    with patch("flip_api.trusts_services.get_trusts.has_permissions", return_value=False) as check:
+        yield check
 
 
 def _make_trust(name: str = "GSTT", code: str = "GST", region: str = "London") -> Trust:
@@ -102,8 +109,9 @@ def test_get_trusts_returns_serialised_trusts_with_project_counts():
     assert by_id[trust_b.id].project_count == 0
 
 
-def test_get_trusts_counts_each_trusts_queued_and_in_progress_jobs():
-    """The Jobs column (FLIP#1739): counts only, so every signed-in user may read them."""
+def test_get_trusts_counts_each_trusts_queued_and_in_progress_jobs_for_a_hub_admin(is_hub_admin):
+    """The Jobs column (FLIP#1739): counts across every project, so for hub admins only."""
+    is_hub_admin.return_value = True
     busy = _make_trust("Busy", "BSY", "London")
     idle = _make_trust("Idle", "IDL", "London")
     db = _db_with_trusts_and_counts(
@@ -116,6 +124,19 @@ def test_get_trusts_counts_each_trusts_queued_and_in_progress_jobs():
 
     assert (by_id[busy.id].jobs_queued, by_id[busy.id].jobs_in_progress) == (2, 1)
     assert (by_id[idle.id].jobs_queued, by_id[idle.id].jobs_in_progress) == (0, 0)
+
+
+def test_get_trusts_keeps_job_counts_from_a_caller_who_is_not_a_hub_admin():
+    """A researcher or viewer must not learn how many jobs other people's projects run on a trust."""
+    busy = _make_trust("Busy", "BSY", "London")
+    db = _db_with_trusts_and_counts(
+        trusts=[busy], count_rows=[], job_rows=[(busy.id, JobStatus.QUEUED, 2), (busy.id, JobStatus.IN_PROGRESS, 1)]
+    )
+
+    (result,) = get_trusts(db=db, user_id=uuid.uuid4())
+
+    assert (result.jobs_queued, result.jobs_in_progress) == (None, None)
+    assert db.exec.call_count == 2, "the job counts are not even queried"
 
 
 def test_get_trusts_tags_heartbeat_as_utc():
@@ -268,8 +289,8 @@ def test_endpoint_is_accessible_to_authenticated_non_admin():
     assert body[0]["code"] == "RV"
     assert body[0]["region"] == "London"
     assert body[0]["project_count"] == 2
-    assert body[0]["jobs_queued"] == 0
-    assert body[0]["jobs_in_progress"] == 0
+    assert body[0]["jobs_queued"] is None
+    assert body[0]["jobs_in_progress"] is None
 
 
 def test_endpoint_returns_generic_500_detail_on_database_error():

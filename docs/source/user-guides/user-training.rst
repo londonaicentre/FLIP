@@ -160,11 +160,11 @@ PACS/DICOM link. Its state follows from those reports:
    * - Online
      - Everything else.
 
-The list can also be shown as a radial topology. The **Services** column has one status dot per container. The **Jobs**
-column counts the training jobs each Trust is taking part in: those in progress and those queued behind them. Click a
-Trust's row to open a drawer listing each container's status, running version and probe response time, which tells you
-*why* a Trust is degraded without access to its network. Under the containers the drawer gives the version of the
-Trust's FL client.
+The list can also be shown as a radial topology. The **Services** column has one status dot per container. Hub
+administrators also see a **Jobs** column, which counts the training jobs each Trust is taking part in across every
+project: those in progress and those queued behind them. Click a Trust's row to open a drawer listing each container's
+status, running version and probe response time, which tells you *why* a Trust is degraded without access to its
+network. Under the containers the drawer gives the version of the Trust's FL client.
 
 .. figure:: ../assets/flip/connection-status-drawer.png
    :width: 600
