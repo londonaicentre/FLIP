@@ -20,6 +20,7 @@ from imaging_api.routers.schemas import (
     DownloadImagesResponse,
     ResourceType,
 )
+from imaging_api.services.approved_cohort import is_served
 from imaging_api.services.download import download_and_unzip_images
 from imaging_api.utils.auth import get_xnat_auth_headers
 from imaging_api.utils.encryption import PROJECT_ID_CONTEXT, decrypt
@@ -30,6 +31,27 @@ from imaging_api.utils.logger import logger
 router = APIRouter(prefix="/download", tags=["Download"], dependencies=[Depends(authenticate_internal_service)])
 
 XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
+
+
+async def require_served(central_hub_project_id: str, accession_id: str) -> None:
+    """Refuses an accession the project's approved cohort does not hold now (FLIP#1860).
+
+    Every route of this router calls it before it reads a study. The answer is the 404 of a study XNAT does not hold,
+    so a caller cannot tell a patient who left the cohort from a study that was never imported.
+
+    Raises:
+        HTTPException: 404 if the accession is not served, 503 if data-access-api cannot say what is.
+    """
+    try:
+        served = await is_served(central_hub_project_id, accession_id)
+    except RuntimeError:
+        logger.error(f"The approved cohort of project {central_hub_project_id} could not be read; refusing the study")
+        raise HTTPException(status_code=503, detail="The project's approved cohort could not be read; try again.")
+    if not served:
+        logger.warning(f"Refusing accession {accession_id}: not in the approved cohort of {central_hub_project_id}")
+        raise HTTPException(
+            status_code=404, detail=f"Resource not found: Experiment with ID or label {accession_id} not found"
+        )
 
 
 @router.post("/images/{net_id}", summary="Download XNAT Data", response_model=DownloadImagesResponse)
@@ -65,8 +87,8 @@ async def download_images_by_accession_number(
         DownloadImagesResponse: The path where the downloaded and unzipped images are stored.
 
     Raises:
-        HTTPException: If there is an error during decryption, if the resource is not found, or if there is an error
-                       during download/unzipping.
+        HTTPException: If there is an error during decryption, if the resource is not found or has left the project's
+                       approved cohort, or if there is an error during download/unzipping.
     """
     # Decrypt project ID
     logger.info("Trying to decrypt Central Hub Project ID")
@@ -85,6 +107,8 @@ async def download_images_by_accession_number(
         # Name the type so an empty exception message never yields a blank reason.
         logger.exception(f"Failed to decrypt Central Hub project id ({type(e).__name__}): {e}")
         raise HTTPException(status_code=500, detail=f"Failed to decrypt Central Hub project id ({type(e).__name__})")
+
+    await require_served(central_hub_project_id, request_data.accession_id)
 
     try:
         downloaded_folder = await download_and_unzip_images(

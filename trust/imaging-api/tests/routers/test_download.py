@@ -12,8 +12,10 @@
 
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from cryptography.exceptions import InvalidTag
 
+from imaging_api.routers.download import router
 from imaging_api.utils.encryption import PROJECT_ID_CONTEXT
 from imaging_api.utils.exceptions import LocalStorageError, NotFoundError
 
@@ -21,6 +23,41 @@ _REQUEST_BODY = {
     "encrypted_central_hub_project_id": "encrypted-id",
     "accession_id": "ACC123",
 }
+
+
+@pytest.fixture(autouse=True)
+def is_served():
+    """The accession is in the project's approved cohort unless a test says otherwise."""
+    with patch("imaging_api.routers.download.is_served", new_callable=AsyncMock, return_value=True) as is_served:
+        yield is_served
+
+
+@pytest.mark.parametrize("path", [route.path for route in router.routes])  # type: ignore[attr-defined]
+def test_every_download_route_refuses_an_accession_that_left_the_approved_cohort(client, is_served, path):
+    """The 404 of a study XNAT does not hold, before anything is read (FLIP#1860)."""
+    is_served.return_value = False
+    with (
+        patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),
+        patch("imaging_api.routers.download.download_and_unzip_images", new_callable=AsyncMock) as download,
+    ):
+        response = client.post(path.format(net_id="net1"), json=_REQUEST_BODY)
+
+    assert response.status_code == 404
+    assert response.json()["detail"].startswith("Resource not found")
+    is_served.assert_awaited_once_with("decrypted-project-id", "ACC123")
+    download.assert_not_called()
+
+
+def test_download_images_is_refused_while_the_approved_cohort_cannot_be_read(client, is_served):
+    is_served.side_effect = RuntimeError("data-access-api is down")
+    with (
+        patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),
+        patch("imaging_api.routers.download.download_and_unzip_images", new_callable=AsyncMock) as download,
+    ):
+        response = client.post("/download/images/net1", json=_REQUEST_BODY)
+
+    assert response.status_code == 503
+    download.assert_not_called()
 
 
 def test_download_images_success(client):

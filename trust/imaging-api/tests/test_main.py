@@ -10,14 +10,43 @@
 # limitations under the License.
 #
 
-"""Tests for imaging_api.main app construction (currently: docs gating)."""
+"""Tests for imaging_api.main app construction (docs gating, the lifespan's approved-cohort reconcile)."""
 
+import asyncio
 import importlib
+import threading
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
 from imaging_api import config, main
+
+
+class TestLifespan:
+    """The lifespan runs the approved-cohort reconcile (FLIP#1860) unless its interval is 0."""
+
+    def test_reconcile_runs_for_the_app_lifetime(self, monkeypatch):
+        started = threading.Event()
+
+        async def fake_reconcile():
+            started.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(main, "run_reconcile", fake_reconcile)
+        with TestClient(main.app):
+            assert started.wait(timeout=5)
+
+    def test_zero_minutes_turns_the_reconcile_off(self, monkeypatch):
+        started = threading.Event()
+
+        async def fake_reconcile():
+            started.set()
+
+        monkeypatch.setattr(main, "run_reconcile", fake_reconcile)
+        monkeypatch.setattr(config.get_settings(), "COHORT_RECONCILE_MINUTES", 0)
+        with TestClient(main.app):
+            pass
+        assert not started.is_set()
 
 
 class TestDocsGating:

@@ -207,6 +207,27 @@ def test_accession_ids_cohort_with_no_accession_values_is_served_like_a_tabular_
     mock_get_records.assert_not_called()
 
 
+@pytest.mark.parametrize(("query", "warned"), [("", False), ("SELECT 1", True)])
+@patch("data_access_api.routers.cohort.logger")
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_snapshot")
+def test_accession_ids_warns_of_a_different_query_but_not_of_none(
+    mock_get_snapshot, mock_decrypt, mock_get_settings, mock_logger, query, warned
+):
+    """imaging-api sends no SQL when it keeps a project's imaging to its cohort (FLIP#1860)."""
+    mock_decrypt.return_value = "my_project"
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 2
+    mock_get_snapshot.return_value = _snapshot(person_ids=["1", "2"], accession_ids=[], subject_count=2)
+
+    response = client.post(
+        "/cohort/accession-ids", json={**sample_dataframe_query, "query": query}, headers=AUTH_HEADERS
+    )
+
+    assert response.status_code == 200
+    assert mock_logger.warning.called is warned
+
+
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_snapshot")

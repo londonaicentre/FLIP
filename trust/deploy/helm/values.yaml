@@ -338,6 +338,11 @@ imagingApi:
     # DQR use its default query/retrieve PACS, and each import reads that PACS's id from XNAT.
     DATA_ACCESS_API_URL: "http://data-access-api:8000"
     BASE_IMAGES_DOWNLOAD_DIR: "/app/data/images"
+    # Imaging follows the approved cohort (FLIP#1860): every COHORT_RECONCILE_MINUTES the cached studies of an
+    # accession that left a project's cohort are removed, and its XNAT session once it has been off the cohort for
+    # COHORT_REMOVAL_GRACE_HOURS. "0" minutes turns the removal off; downloads of it are refused either way.
+    COHORT_RECONCILE_MINUTES: "15"
+    COHORT_REMOVAL_GRACE_HOURS: "24"
 
 # ---------------------------------------------------------------------------
 # data-access-api — OMOP database queries for cohort analysis

@@ -30,6 +30,7 @@ import glob
 import json
 import os
 import shutil
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -229,3 +230,44 @@ def invalidate_accession(base_dir: str, central_hub_project_id: str, accession_i
         except FileNotFoundError:
             continue
     return removed
+
+
+def remove_accessions_except(base_dir: str, central_hub_project_id: str, keep: Collection[str]) -> list[str]:
+    """
+    Removes a project's cached studies, in every net directory, whose accession is not in ``keep``.
+
+    Called when accessions leave the project's approved cohort (FLIP#1860). Symlinks are never followed: an
+    fl-client that mounts its net directory can write there.
+
+    Args:
+        base_dir (str): The base images download directory holding one subdirectory per net.
+        central_hub_project_id (str): Plaintext Central Hub project ID (the per-project cache path segment).
+        keep (Collection[str]): The accessions whose cached studies stay.
+
+    Returns:
+        list[str]: The accessions removed, once each, sorted.
+
+    Raises:
+        ValueError: If the project id is empty, a dot directory, or contains a path separator.
+        OSError: If a study cannot be removed for a reason other than already being gone.
+    """
+    _validate_component("central hub project ID", central_hub_project_id)
+    removed: set[str] = set()
+    for net_dir in _subdirs(base_dir):
+        project_dir = os.path.join(net_dir, central_hub_project_id)
+        if os.path.islink(project_dir):
+            continue
+        for accession_dir in _subdirs(project_dir):
+            if (accession := os.path.basename(accession_dir)) not in keep:
+                shutil.rmtree(accession_dir, onexc=_ignore_missing)
+                removed.add(accession)
+    return sorted(removed)
+
+
+def _subdirs(path: str) -> list[str]:
+    """The directories directly inside ``path`` (none when it is missing), symlinks left out."""
+    try:
+        with os.scandir(path) as entries:
+            return [entry.path for entry in entries if entry.is_dir(follow_symlinks=False)]
+    except (FileNotFoundError, NotADirectoryError):
+        return []
