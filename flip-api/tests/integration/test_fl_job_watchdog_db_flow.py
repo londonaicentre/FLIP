@@ -78,6 +78,10 @@ def test_find_watched_jobs_returns_the_running_job_with_its_net(session, running
     ]
 
 
+def test_find_watched_jobs_carries_the_models_project_as_its_study(session, running_job):
+    assert [w.study for w in find_watched_jobs(session)] == [str(running_job["project"].id)]
+
+
 @pytest.mark.parametrize("model_status", [ModelStatus.RESULTS_UPLOADED, ModelStatus.ERROR, ModelStatus.STOPPED])
 def test_find_watched_jobs_skips_a_model_that_has_ended(session, running_job, model_status):
     running_job["model"].status = model_status

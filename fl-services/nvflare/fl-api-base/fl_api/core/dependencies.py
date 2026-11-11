@@ -13,6 +13,7 @@
 from fastapi import Request
 
 from fl_api.utils.flip_session import FLIP_Session
+from fl_api.utils.study_sessions import StudySessions
 
 
 def get_session(request: Request) -> FLIP_Session:
@@ -26,3 +27,15 @@ def get_session(request: Request) -> FLIP_Session:
         FLIP_Session: The FLARE session instance.
     """
     return request.app.state.session
+
+
+def get_studies(request: Request) -> StudySessions:
+    """Return the per-study FLARE sessions stored in app.state (FLIP#1678).
+
+    Args:
+        request (Request): The incoming HTTP request.
+
+    Returns:
+        StudySessions: The default session plus one per study.
+    """
+    return request.app.state.studies
