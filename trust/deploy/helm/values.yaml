@@ -894,7 +894,9 @@ xnat:
       storageClassName: ""
       size: 20Gi
       accessMode: ReadWriteOnce
-      # As omopDb.persistence.pgdataSubdir: "pgdata" on a fresh cloud disk, empty on an existing volume.
+      # The directory of the volume xnat-db mounts: "pgdata" on a fresh cloud disk, empty on an
+      # existing volume whose cluster is at its root. Keep it as the volume was first deployed: the
+      # image keeps its cluster in pg<major>/ below it, beside an older major's (FLIP#1812).
       pgdataSubdir: ""
     resources:
       requests:

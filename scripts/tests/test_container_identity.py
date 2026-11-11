@@ -82,8 +82,8 @@ PROD_COMPOSE_GLOBS = (
 )
 # The prod services that write a host bind mount, and each image's own uid:gid — what the service
 # runs as when the kit sets no FLIP_UID (FLIP#1731). omop-db's is root: its entrypoint re-owns the
-# data dir, then drops to postgres. xnat-db is absent on purpose: its pinned postgres:12.2-alpine
-# predates nss_wrapper in the Alpine variants, so it keeps the root entrypoint under FLIP_UID too.
+# data dir, then drops to postgres. xnat-db is absent on purpose: every existing site's database is
+# uid 70's, so it keeps the root entrypoint, which re-owns it, under FLIP_UID too.
 PROD_BIND_MOUNT_WRITERS = {
     ("compose_trust.prod.yml", "omop-db"): "0:0",
     ("compose_trust.prod.yml", "orthanc"): "999:999",
