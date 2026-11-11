@@ -89,7 +89,7 @@ def test_a_projects_job_pods_mount_only_that_projects_images_folder(tmp_path):
     [job] = entry["pod_template"]["spec"]["containers"]
     assert job["volumeMounts"] == [
         {"name": "dshm", "mountPath": "/dev/shm"},
-        {"name": "images", "mountPath": f"{net_dir}/{PROJECT}", "subPath": f"net-1/{PROJECT}"},
+        {"name": "images", "mountPath": f"{net_dir}/{PROJECT}", "subPath": f"net-1/{PROJECT}", "readOnly": True},
     ]
     # It reads its studies by path, where the template alone would stream them.
     assert job["env"] == [{"name": "NET_ID", "value": "net-1"}, {"name": "IMAGES_TRANSPORT", "value": "project"}]

@@ -211,7 +211,7 @@ The first time an FL client asks for an accession's resources, ``imaging-api`` p
 the Trust host, under that net's own images directory. Later requests are served from disk: the next FL round
 and, on Flower, the next job. On a Kubernetes Trust running NVFLARE job pods, a job pod holds only its own
 project's studies. Each project is an NVFLARE study whose job pods mount that project's folder of the images
-directory and nothing else; where job pods cannot attach that volume, they mount none and stream each study
+directory, read-only, and nothing else; where job pods cannot attach that volume, they mount none and stream each study
 from ``imaging-api`` into their own directory.
 
 What this means for training code:

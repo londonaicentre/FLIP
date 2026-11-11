@@ -64,8 +64,9 @@ def mount_project_images(pod: dict[str, Any], project: str) -> None:
     path = Path(FlipConstants.IMAGES_DIR, folder)
     path.mkdir(exist_ok=True)
     for container in pod["spec"]["containers"]:
+        # Read-only: imaging-api writes the cache, and a job never changes what it trains on.
         container.setdefault("volumeMounts", []).append(
-            {"name": IMAGES_VOLUME, "mountPath": str(path), "subPath": folder}
+            {"name": IMAGES_VOLUME, "mountPath": str(path), "subPath": folder, "readOnly": True}
         )
         # Read the studies by path, not by stream: flip.constants.FlipConstants.IMAGES_TRANSPORT.
         env = [e for e in container.get("env", []) if e["name"] != IMAGES_TRANSPORT]
