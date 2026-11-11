@@ -161,6 +161,21 @@ async def test_the_cached_copy_of_an_accession_that_left_goes_at_once_in_every_n
 
 
 @pytest.mark.asyncio
+async def test_a_cached_copy_that_cannot_be_removed_does_not_stop_the_xnat_removal(trust):
+    trust.served = []
+    trust.experiments = [_session("A1", "S1")]
+
+    with (
+        patch.object(approved_cohort, "remove_accessions_except", return_value=([], ["net-1/p/A1"])),
+        patch.object(approved_cohort, "logger") as logger,
+    ):
+        await trust.reconcile(grace_seconds=0)
+
+    assert "net-1/p/A1" in logger.warning.call_args.args[0]
+    assert len(trust.deleted) == 2
+
+
+@pytest.mark.asyncio
 async def test_a_session_stays_in_xnat_until_its_accession_has_been_off_the_list_for_the_grace_period(trust):
     trust.served = ["A1"]
     trust.experiments = [_session("A1", "S1"), _session("A2", "S2")]

@@ -188,8 +188,11 @@ async def _reconcile_project(project: Project, headers: dict[str, str], grace_se
         return
 
     # No download can put one back meanwhile: the routes check the list this pass has just read.
-    for accession in await run_in_threadpool(remove_accessions_except, BASE_IMAGES_DOWNLOAD_DIR, hub_id, served):
+    removed, failed = await run_in_threadpool(remove_accessions_except, BASE_IMAGES_DOWNLOAD_DIR, hub_id, served)
+    for accession in removed:
         logger.info(f"Removed the cached copy of accession {accession} of project {hub_id}: it left the cohort")
+    for folder in failed:
+        logger.warning(f"Could not remove the cached copy in {folder}, which left the cohort; trying again next pass")
 
     experiments = await run_in_threadpool(_experiments, project.ID, headers)
     sessions = {row["label"]: row for row in experiments if _is_session(row)}

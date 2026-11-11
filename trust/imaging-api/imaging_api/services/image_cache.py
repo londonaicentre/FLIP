@@ -234,7 +234,9 @@ def invalidate_accession(base_dir: str, central_hub_project_id: str, accession_i
     return removed
 
 
-def remove_accessions_except(base_dir: str, central_hub_project_id: str, keep: Collection[str]) -> list[str]:
+def remove_accessions_except(
+    base_dir: str, central_hub_project_id: str, keep: Collection[str]
+) -> tuple[list[str], list[str]]:
     """
     Removes a project's cached studies, in every net directory, whose accession is not in ``keep``.
 
@@ -248,22 +250,32 @@ def remove_accessions_except(base_dir: str, central_hub_project_id: str, keep: C
         keep (Collection[str]): The accessions whose cached studies stay.
 
     Returns:
-        list[str]: The accessions removed, once each, sorted.
+        tuple[list[str], list[str]]: The accessions removed, and the folders (``<net>/<project>[/<accession>]``)
+        that could not be read or removed. One that fails does not stop the others; the caller reports it and the
+        next call tries again.
 
     Raises:
         ValueError: If the project id is empty, a dot directory, or contains a path separator.
-        OSError: If a study cannot be removed for a reason other than already being gone.
     """
     _validate_component("central hub project ID", central_hub_project_id)
     removed: set[str] = set()
+    failed: list[str] = []
     with _dir_fd(os.path.realpath(base_dir), None) as base_fd:
         for net in _subdir_names(base_fd):
-            with _dir_fd(net, base_fd) as net_fd, _dir_fd(central_hub_project_id, net_fd) as project_fd:
-                for accession in _subdir_names(project_fd):
-                    if accession not in keep:
-                        shutil.rmtree(accession, dir_fd=project_fd, onexc=_ignore_missing)
-                        removed.add(accession)
-    return sorted(removed)
+            project = f"{net}/{central_hub_project_id}"
+            try:
+                with _dir_fd(net, base_fd) as net_fd, _dir_fd(central_hub_project_id, net_fd) as project_fd:
+                    for accession in _subdir_names(project_fd):
+                        if accession in keep:
+                            continue
+                        try:
+                            shutil.rmtree(accession, dir_fd=project_fd, onexc=_ignore_missing)
+                            removed.add(accession)
+                        except OSError:
+                            failed.append(f"{project}/{accession}")
+            except OSError:
+                failed.append(project)
+    return sorted(removed), sorted(failed)
 
 
 @contextmanager

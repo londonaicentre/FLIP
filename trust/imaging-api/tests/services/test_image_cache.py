@@ -241,7 +241,7 @@ class TestRemoveAccessionsExcept:
         for net, accession in (("net-1", "A1"), ("net-1", "A2"), ("net-2", "A2"), ("net-2", "A3")):
             _seed_sentinel(tmp_path, net, "proj", accession)
 
-        assert remove_accessions_except(str(tmp_path), "proj", {"A1"}) == ["A2", "A3"]
+        assert remove_accessions_except(str(tmp_path), "proj", {"A1"}) == (["A2", "A3"], [])
 
         assert (tmp_path / "net-1" / "proj" / "A1").is_dir()
         assert not (tmp_path / "net-1" / "proj" / "A2").exists()
@@ -253,7 +253,7 @@ class TestRemoveAccessionsExcept:
         archive = tmp_path / "net-1" / "proj" / "A2-scans-NIFTI.zip"  # a download in progress
         archive.write_bytes(b"")
 
-        assert remove_accessions_except(str(tmp_path), "proj", {"A1"}) == []
+        assert remove_accessions_except(str(tmp_path), "proj", {"A1"}) == ([], [])
 
         assert (tmp_path / "net-1" / "other" / "A2").is_dir()
         assert archive.exists()
@@ -266,7 +266,7 @@ class TestRemoveAccessionsExcept:
         (tmp_path / "net-2").mkdir()
         (tmp_path / "net-2" / "proj").symlink_to(victim.parent, target_is_directory=True)
 
-        assert remove_accessions_except(str(tmp_path), "proj", set()) == []
+        assert remove_accessions_except(str(tmp_path), "proj", set()) == ([], [])
 
         assert victim.is_dir()
 
@@ -285,14 +285,31 @@ class TestRemoveAccessionsExcept:
 
         monkeypatch.setattr(image_cache, "_subdir_names", swap_after_listing)
 
-        with pytest.raises(OSError):  # rmtree refuses a symbolic link
-            remove_accessions_except(str(tmp_path), "proj", set())
+        assert remove_accessions_except(str(tmp_path), "proj", set()) == ([], ["net-1/proj/A2"])
 
         assert list(victim.iterdir())
 
+    def test_a_study_that_cannot_be_removed_does_not_keep_the_others(self, tmp_path, monkeypatch):
+        """Else one folder a client made unremovable would keep every study that left the cohort on disk."""
+        for accession in ("A1", "A2", "A3"):
+            _seed_sentinel(tmp_path, "net-1", "proj", accession)
+        rmtree = shutil.rmtree
+
+        def refuse_a2(path, **kwargs):
+            if path == "A2":
+                raise PermissionError(path)
+            rmtree(path, **kwargs)
+
+        monkeypatch.setattr(image_cache.shutil, "rmtree", refuse_a2)
+
+        removed, failed = remove_accessions_except(str(tmp_path), "proj", set())
+
+        assert (removed, failed) == (["A1", "A3"], ["net-1/proj/A2"])
+        assert [p.name for p in (tmp_path / "net-1" / "proj").iterdir()] == ["A2"]
+
     def test_a_project_with_nothing_cached_removes_nothing(self, tmp_path):
-        assert remove_accessions_except(str(tmp_path), "proj", set()) == []
-        assert remove_accessions_except(str(tmp_path / "missing"), "proj", set()) == []
+        assert remove_accessions_except(str(tmp_path), "proj", set()) == ([], [])
+        assert remove_accessions_except(str(tmp_path / "missing"), "proj", set()) == ([], [])
 
     @pytest.mark.parametrize("project", ["", "..", "a/b"])
     def test_rejects_a_project_id_that_is_a_path(self, tmp_path, project):
