@@ -118,7 +118,10 @@ def test_job_pods_reach_the_parent_through_a_service_that_selects_only_the_paren
 
 
 def test_the_client_switches_its_kit_before_nvflare_starts():
-    docs = _enabled("--set", f"{JOB_PODS}.maxGpus=2", "--set", f"{JOB_PODS}.pendingTimeout=1200")
+    docs = _enabled(
+        "--set", f"{JOB_PODS}.maxGpus=2", "--set", f"{JOB_PODS}.pendingTimeout=1200",
+        "--set", f"{JOB_PODS}.ephemeralStorage=40Gi",
+    )  # fmt: skip
     container = _client_container(docs)
 
     script = container["command"][-1]
@@ -133,6 +136,7 @@ def test_the_client_switches_its_kit_before_nvflare_starts():
     assert env["FL_K8S_JOB_IMAGE"]["value"] == container["image"], "jobs run the image the client runs"
     assert env["FL_K8S_MAX_GPUS"]["value"] == "2"
     assert env["FL_K8S_PENDING_TIMEOUT"]["value"] == "1200"
+    assert env["FL_K8S_EPHEMERAL_STORAGE"]["value"] == "40Gi"
     assert env["FL_K8S_POD_TEMPLATE"]["value"] == "/app/k8s/job-pod.yaml"
     mount = next(m for m in container["volumeMounts"] if m["mountPath"] == "/app/k8s")
     volume = next(v for v in _client(docs)["spec"]["template"]["spec"]["volumes"] if v["name"] == mount["name"])
@@ -155,13 +159,15 @@ def test_a_job_pod_gets_what_the_client_container_has():
     env = _env(job)
     for name in ("TRUST_INTERNAL_SERVICE_KEY_HEADER", "TRUST_INTERNAL_SERVICE_KEY"):
         assert env[name] == _env(client)[name]
-    images = next(m for m in client["volumeMounts"] if m["name"] == "images")
-    assert images in job["volumeMounts"], "only this net's slice, at the path imaging-api returns"
-    assert {"name": "dshm", "mountPath": "/dev/shm"} in job["volumeMounts"]
+    # No images volume: a job pod streams its studies into its own run directory (FLIP#1049).
+    assert env["IMAGES_TRANSPORT"]["value"] == "stream"
+    assert job["volumeMounts"] == [{"name": "dshm", "mountPath": "/dev/shm"}]
     client_spec = _client(docs)["spec"]["template"]["spec"]
     volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
-    assert volumes["images"] == next(v for v in client_spec["volumes"] if v["name"] == "images")
+    assert "images" not in volumes
     assert volumes["dshm"]["emptyDir"]["medium"] == "Memory"
+    assert "affinity" not in pod["spec"]
+    assert pod["spec"]["automountServiceAccountToken"] is False
     # A job pod talks to the FL server directly, by the same name the client does.
     assert pod["spec"]["hostAliases"] == client_spec["hostAliases"]
     assert pod["spec"]["enableServiceLinks"] is False

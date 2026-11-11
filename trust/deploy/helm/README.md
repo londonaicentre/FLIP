@@ -672,6 +672,7 @@ flClient:
     jobPods:
       enabled: true
       maxGpus: 1            # GPUs lent to jobs at once; NVFLARE queues beyond it and the hub says why
+      ephemeralStorage: 10Gi  # local disk per job pod; size it to the largest cohort a job streams
       pendingTimeout: 900   # seconds a job pod may wait for its node; size it to a cold scale-up
       tolerations:          # the GPU pool's taint
         - {key: sku, operator: Equal, value: gpu, effect: NoSchedule}
@@ -679,10 +680,10 @@ flClient:
 
 What the chart adds: a Role and RoleBinding for the launcher (job pods, their events, and the Secrets it
 mounts into them), a `<release>-fl-client-<net>-parent` Service that job pods connect back through, and the
-job pod template (ConfigMap `<release>-fl-job-pod-<net>`): the client's env and trust-internal key, this
-net's images slice, `/dev/shm` and the FL server's host aliases, since a job pod talks to the FL server
-itself. At start the client runs `python -m flip.nvflare.k8s_job_mode`, which switches the kit's launcher and
-declares the GPU pool. Each job runs in the fl-client image.
+job pod template (ConfigMap `<release>-fl-job-pod-<net>`): the client's env and trust-internal key,
+`/dev/shm` and the FL server's host aliases, since a job pod talks to the FL server itself. At start the
+client runs `python -m flip.nvflare.k8s_job_mode`, which switches the kit's launcher and declares the GPU
+pool. Each job runs in the fl-client image.
 
 Prerequisites and trade-offs:
 
@@ -690,9 +691,14 @@ Prerequisites and trade-offs:
 - **Prefer a toleration to a `nodeSelector`.** NVFLARE waits only while Kubernetes reports the pod
   `Insufficient` CPU, memory or GPU (what an autoscaler adding a node looks like). A pod no node could ever
   take is `Unschedulable` and fails at once, which is what a `nodeSelector` aimed at a pool at zero reports.
-- **The images volume must reach the GPU node.** Job pods mount `sharedImagesPvc` and follow
-  `flClient.affinity`. With a separate GPU pool, give the PVC a ReadWriteMany class and set
-  `flClient.affinity: null` (an RWO disk attaches to one node only).
+- **No images volume.** A job pod streams each study from imaging-api into its own run directory
+  (`IMAGES_TRANSPORT=stream`, FLIP#1049) and uploads results the same way, so it holds only its project's
+  studies, a separate GPU pool needs no ReadWriteMany class, and job pods ignore `flClient.affinity`.
+  imaging-api keeps the whole cache, bounded by `IMAGE_CACHE_RETENTION_HOURS`.
+- **Size `ephemeralStorage` to the cohort.** The streamed studies sit on the job pod's own disk, and
+  Kubernetes evicts a pod that writes past `jobPods.ephemeralStorage`, which fails the job. It is the
+  pod's request as well as its limit, so the node must have that much free. For scale: 21 spleen CT
+  studies as NIfTI took 435 MB, and 300 chest X-rays about 80 MB.
 - **API server egress.** The launcher calls the Kubernetes API from the parent. The default egress allows
   port 443, which covers AKS and EKS. NetworkPolicy matches the API server's real endpoint, so where it
   listens elsewhere (minikube 8443, kind 6443) set `flClient.nvflare.jobPods.apiServer.cidrs` and `.port`,

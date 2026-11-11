@@ -19,6 +19,7 @@ This module provides:
 """
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import HttpUrl, field_validator
 from pydantic_settings import BaseSettings
@@ -85,6 +86,10 @@ class ProdSettings(_Common):
 
     # -- Shared --
     IMAGES_DIR: str = ""
+    # How a study reaches the job (FLIP#1049): "mount", a path on the net's images volume shared with
+    # imaging-api, or "stream", a tar from imaging-api extracted into this process's own directory, for
+    # a job pod that mounts no images volume.
+    IMAGES_TRANSPORT: Literal["mount", "stream"] = "mount"
     NET_ID: str = "default"
     UPLOADED_FEDERATED_DATA_BUCKET: str = "s3://default-bucket"
 
@@ -139,6 +144,7 @@ class _FlipConstantsProxy:
     TRUST_INTERNAL_SERVICE_KEY_HEADER: str
     TRUST_INTERNAL_SERVICE_KEY: str
     IMAGES_DIR: str
+    IMAGES_TRANSPORT: Literal["mount", "stream"]
     NET_ID: str
     UPLOADED_FEDERATED_DATA_BUCKET: str
 

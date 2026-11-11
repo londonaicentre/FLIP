@@ -13,6 +13,7 @@ FastAPI service for DICOM image retrieval via XNAT. Receives requests from trust
 - DICOM-to-NIfTI conversion support
 - Never reads XNAT's database: import status comes from DQR's and XNAT's REST listings (`services/import_requests.py`, FLIP#1456 B1)
 - Downloads are cached on disk per (net, project, accession): extraction lands in `<BASE_IMAGES_DOWNLOAD_DIR>/<net_id>/<central_hub_project_id>/<accession_id>/` with a `.flip_complete-<assessor>-<resource>` sentinel written after successful extraction (`services/image_cache.py`); a hit is checked with one XNAT resource-stats call and a changed resource re-downloaded (FLIP#953 — FL apps fetch the cohort per round; README, "Download"). Invalidated by uploads to the same (project, accession), by `force_refresh=true`, and wiped with the net dir by FLARE's `CleanupImages`
+- A client with no mount of the net folder (an NVFLARE job pod on Kubernetes, FLIP#1049) uses the stream twins: `POST /download/images/{net}/stream` answers with the cached study as a tar (`services/download.py::tar_study`), `PUT /upload/images/{net}/files` takes the files as multipart and stages them under `<net>/upload/<request id>/` for the upload. flip-utils switches on `IMAGES_TRANSPORT=stream`; the cache fill and the sealed project id are the same as the mount routes'
 - The download URL pins `structure=default` (`<accession>/scans/<scan id>-<desc>/resources/<R>/files/…`), the layout FL apps read; never change it (README, "Download")
 
 ## Commands

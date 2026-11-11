@@ -442,6 +442,8 @@ spec:
               value: {{ include "flip-trust.flClientImage" . | quote }}
             - name: FL_K8S_MAX_GPUS
               value: {{ .Values.flClient.nvflare.jobPods.maxGpus | quote }}
+            - name: FL_K8S_EPHEMERAL_STORAGE
+              value: {{ .Values.flClient.nvflare.jobPods.ephemeralStorage | quote }}
             - name: FL_K8S_PENDING_TIMEOUT
               value: {{ .Values.flClient.nvflare.jobPods.pendingTimeout | quote }}
             - name: FL_K8S_POD_TEMPLATE
