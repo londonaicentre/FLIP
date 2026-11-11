@@ -12,9 +12,10 @@
 """The role that runs FL job code holds no participant credentials, and no ECS role reads the FLARE CA state.
 
 The fl-server task runs researcher-supplied job code, so its role must not reach the kit prefixes of the
-AICENTRE bucket (every participant's FL credentials). The one-shot EFS provisioning task reads the hub's
-side of the kit under its own role, and the FLARE CA state lives under a prefix of its own that operators
-read with their own credentials.
+AICENTRE bucket (every participant's FL credentials), nor the results bucket, where it would reach every
+project's results: a job uploads its own through URLs flip-api presigns. The one-shot EFS provisioning task
+reads the hub's side of the kit under its own role, and the FLARE CA state lives under a prefix of its own that
+operators read with their own credentials.
 """
 
 import re
@@ -26,6 +27,7 @@ AWS_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = AWS_DIR.parents[2]
 IAM_ECS = strip_comments((AWS_DIR / "iam_ecs.tf").read_text())
 EFS_PROVISION = strip_comments((AWS_DIR / "ecs_efs_provision.tf").read_text())
+LOCALS = strip_comments((AWS_DIR / "locals.tf").read_text())
 TASK_DEFINITIONS = {
     name: strip_comments((AWS_DIR / name).read_text())
     for name in ("ecs_tasks.tf", "ecs_flower.tf", "ecs_efs_provision.tf")
@@ -49,8 +51,26 @@ def test_the_fl_server_role_reaches_nothing_in_the_kit_bucket():
     assert "participant-kits" not in policy
 
 
-def test_the_fl_server_role_cannot_delete_results():
-    assert "s3:Delete" not in _policy("ecs_fl_server_task")
+def test_the_fl_server_role_reaches_no_bucket_and_no_key():
+    """A job uploads its results through URLs flip-api presigns, so the role that runs it needs neither."""
+    policy = _policy("ecs_fl_server_task")
+    assert not re.search(r'"(s3|kms):', policy)
+    assert re.findall(r'sid\s*=\s*"(\w+)"', policy) == ["EcsExecSsmMessages"]
+
+
+def test_the_fl_server_tasks_are_not_told_a_bucket():
+    task_env = hcl_block(LOCALS, "ecs_task_env = {")
+    for name in ("fl_server = {", "fl_server_flower = merge({"):
+        assert not re.search(r"BUCKET|AWS_", hcl_block(task_env, name)), name
+
+
+def test_flip_api_can_write_the_results_it_presigns_uploads_for():
+    """s3:PutObject covers the multipart calls; the bucket's SSE-KMS key needs Decrypt and GenerateDataKey."""
+    policy = _policy("ecs_flip_api_task")
+    buckets = _statement(policy, "S3FlipBuckets")
+    assert '"s3:PutObject"' in buckets
+    assert "${module.flip_fl_results_bucket.bucket_arn}/*" in buckets
+    assert {"kms:Decrypt", "kms:GenerateDataKey"} <= set(re.findall(r'"(kms:\w+)"', policy))
 
 
 def test_only_the_provisioning_task_runs_under_the_kit_role():

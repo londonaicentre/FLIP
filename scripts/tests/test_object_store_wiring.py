@@ -15,9 +15,10 @@
 Two things nothing else pins. ``make clean-object-store`` runs ``rm -rf`` on ``OBJECT_STORE_DIR``, so the
 Makefile must refuse a value that resolves to the checkout (an empty or ``.`` value would, through
 ``abs_or_relative_to``). And the origin flip-api presigns bundle URLs against (its ``AWS_ENDPOINT_URL_S3``)
-must be exactly the origin every fl-api admits (``BUNDLE_URL_ALLOWED_ORIGINS``, scheme-and-port exact) and
-the endpoint every fl-server uploads to — a change to one file alone 400s every bundle download, which only
-a live training run would show. The Terraform side has the same guard in
+must be exactly the origin every fl-api admits (``BUNDLE_URL_ALLOWED_ORIGINS``, scheme-and-port exact) — a
+change to one file alone 400s every bundle download, which only a live training run would show. No
+fl-server holds store credentials or a bucket name: it runs job code, and uploads through URLs flip-api
+presigns. The Terraform side has the same guard in
 ``deploy/providers/AWS/tests/test_fl_api_bundle_allow_list.py``. Last, the store's image must stay a pinned
 RustFS release no older than the first one whose presigned-POST uploads work (FLIP#1534).
 
@@ -134,16 +135,21 @@ def test_every_bring_up_target_prepares_the_store_dir() -> None:
             )
 
 
-def _compose_env(path: Path, service: str, key: str) -> list[str]:
-    """Values of ``- KEY=value`` lines inside one service block of a compose file (comments skipped)."""
+def _service_block(path: Path, service: str) -> str:
+    """The body of one service block of a compose file."""
     text = path.read_text()
     match = re.search(rf"^  {re.escape(service)}:\n(.*?)(?=^  [a-z][a-z0-9-]*:\n|^[a-z]|\Z)", text, re.M | re.S)
     assert match, (path, service)
-    return re.findall(rf"^\s+- {re.escape(key)}=(.+?)\s*(?:#.*)?$", match.group(1), re.M)
+    return match.group(1)
 
 
-def test_dev_presign_origin_matches_every_fl_api_and_fl_server() -> None:
-    print("test_dev_presign_origin_matches_every_fl_api_and_fl_server")
+def _compose_env(path: Path, service: str, key: str) -> list[str]:
+    """Values of ``- KEY=value`` lines inside one service block of a compose file (comments skipped)."""
+    return re.findall(rf"^\s+- {re.escape(key)}=(.+?)\s*(?:#.*)?$", _service_block(path, service), re.M)
+
+
+def test_dev_presign_origin_matches_every_fl_api() -> None:
+    print("test_dev_presign_origin_matches_every_fl_api")
     hub = _compose_env(REPO_ROOT / "deploy/compose.development.yml", "flip-api", "AWS_ENDPOINT_URL_S3")
     _assert(
         len(hub) == 1, "flip-api sets AWS_ENDPOINT_URL_S3 exactly once (a second line silently wins)", detail=str(hub)
@@ -158,12 +164,15 @@ def test_dev_presign_origin_matches_every_fl_api_and_fl_server() -> None:
                 f"{backend} fl-api-net-{net} admits exactly the presign origin",
                 detail=str(allowed),
             )
-            endpoint = _compose_env(path, f"fl-server-net-{net}", "AWS_ENDPOINT_URL_S3")
-            _assert(
-                endpoint == [origin],
-                f"{backend} fl-server-net-{net} uploads to the same endpoint",
-                detail=str(endpoint),
-            )
+
+
+def test_no_fl_server_holds_object_store_access() -> None:
+    print("test_no_fl_server_holds_object_store_access")
+    for path in sorted((REPO_ROOT / "deploy").glob("compose.*.yml")):
+        for service in re.findall(r"^  (fl-server-net-\d+):\n", path.read_text(), re.M):
+            names = re.findall(r"^\s+- (\w+)=", _service_block(path, service), re.M)
+            held = [name for name in names if name.startswith(("AWS_", "OBJECT_STORE_")) or "BUCKET" in name]
+            _assert(held == [], f"{path.name} {service} holds no object-store env", detail=str(held))
 
 
 def test_prod_presign_origin_matches_every_fl_api() -> None:
@@ -206,7 +215,8 @@ def main() -> None:
     test_clean_object_store_never_targets_the_checkout()
     test_ensure_object_store_dir_guards_the_bucket_names()
     test_every_bring_up_target_prepares_the_store_dir()
-    test_dev_presign_origin_matches_every_fl_api_and_fl_server()
+    test_dev_presign_origin_matches_every_fl_api()
+    test_no_fl_server_holds_object_store_access()
     test_prod_presign_origin_matches_every_fl_api()
     test_object_store_image_is_a_fixed_rustfs_release()
     print("—")

@@ -400,10 +400,10 @@ Used for task polling, cohort result submission, and heartbeat endpoints.
 
 The fl-server on the Central Hub authenticates to flip-api using `INTERNAL_SERVICE_KEY` (a plain string) sent
 in the `INTERNAL_SERVICE_KEY_HEADER` header. The hub validates it against `INTERNAL_SERVICE_KEY_HASH` (the
-SHA-256 hash of the key). Used for model status updates, training metrics, and training log endpoints. This
-is a **single, hub-internal** secret and is separate from the per-trust internal keys below.
+SHA-256 hash of the key). Used for model status updates, training metrics, training log and results-upload
+endpoints. This is a **single, hub-internal** secret and is separate from the per-trust internal keys below.
 
-Those three endpoints also require a **per-job credential** in the `X-Job-Credential` header. flip-api mints it
+Those endpoints also require a **per-job credential** in the `X-Job-Credential` header. flip-api mints it
 when it dispatches a job, stores its SHA-256 hash on the `fl_job` row and sends the plaintext to the FL API
 with the app; the FL API writes it to `JOB_CREDENTIAL_DIR`, a directory on the volume it shares with the
 fl-server, and flip-utils reads it there for every callback. A callback is accepted only with the credential

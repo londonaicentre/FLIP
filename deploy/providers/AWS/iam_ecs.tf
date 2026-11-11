@@ -354,15 +354,10 @@ resource "aws_iam_role_policy" "ecs_fl_api_task" {
 # fl-server task role
 ############################
 #
-# fl-server is reachable from untrusted FL clients via the NLB. Its role is
-# minimal: read its INTERNAL_SERVICE_KEY from the FLIP_API secret (so it can
-# call back to flip-api on /api/model/{id}/status) and write training results
-# to the dedicated flip-fl-results bucket. Crucially, it has NO access to
-# AES_KEY_BASE64, the model-files-uploads or app-bundles
-# buckets, or any flip-api-only data. The secret is shared today (single
-# FLIP_API secret) so the execution role's GetSecretValue covers fetch; the
-# task role here only needs to expose ListSecretVersionIds for runtime
-# introspection if needed — kept empty until PR 2 wires actual runtime calls.
+# fl-server is reachable from untrusted FL clients via the NLB and runs FL job
+# code, so its role grants ECS Exec and nothing else: no bucket, no KMS key, no
+# secret. INTERNAL_SERVICE_KEY reaches it through the execution role's
+# GetSecretValue (the task definition's `secrets` block).
 
 resource "aws_iam_role" "ecs_fl_server_task" {
   name               = "ecs-fl-server-task-role"
@@ -387,39 +382,10 @@ data "aws_iam_policy_document" "ecs_fl_server_task" {
     resources = ["*"]
   }
 
-  # The whole flip-fl-results bucket is dedicated to FL training output, so the
-  # prefix-scoped condition that used to constrain access to
-  # `${flip_bucket}/uploaded_federated_data/*` is no longer needed — bucket-wide
-  # scope is now the same least-privilege boundary. No s3:DeleteObject: the
-  # server only uploads results.
-  statement {
-    sid     = "S3FlResults"
-    actions = ["s3:PutObject", "s3:GetObject", "s3:HeadObject"]
-    resources = [
-      "${module.flip_fl_results_bucket.bucket_arn}/*",
-    ]
-  }
-
-  statement {
-    sid       = "S3ListFlResultsBucket"
-    actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
-    resources = [module.flip_fl_results_bucket.bucket_arn]
-  }
-
-  # No grant on the AICENTRE bucket: this role runs FL job code, and the kit
-  # prefixes hold every participant's credentials. The server's own kit reaches
-  # it on EFS, synced by the efs-provision-certs task under its own role below.
-
-  statement {
-    sid = "KmsDecryptFlipKey"
-    actions = [
-      "kms:Decrypt",
-      "kms:GenerateDataKey",
-      "kms:GenerateDataKeyWithoutPlaintext",
-      "kms:DescribeKey",
-    ]
-    resources = [aws_kms_key.flip_app_key.arn]
-  }
+  # No S3 or KMS grant: this role runs FL job code. A job uploads its results
+  # through URLs flip-api presigns for that job's own object, and the server's
+  # kit reaches it on EFS, synced by the efs-provision-certs task under its own
+  # role below.
 }
 
 resource "aws_iam_role_policy" "ecs_fl_server_task" {
