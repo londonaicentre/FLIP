@@ -15,7 +15,6 @@ import tempfile
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from nvflare.apis.fl_constant import ReturnCode
 
 from flip.constants import FlipTasks
