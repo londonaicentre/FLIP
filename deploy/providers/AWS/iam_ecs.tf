@@ -230,6 +230,22 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
     ]
   }
 
+  # An FL job uploads its results as a multipart upload flip-api starts and
+  # presigns (s3:PutObject above covers create, part and complete). flip-api
+  # aborts a model's unfinished upload before starting another, and one that
+  # fails.
+  statement {
+    sid       = "S3AbortFlResultsUploads"
+    actions   = ["s3:AbortMultipartUpload"]
+    resources = ["${module.flip_fl_results_bucket.bucket_arn}/*"]
+  }
+
+  statement {
+    sid       = "S3ListFlResultsUploads"
+    actions   = ["s3:ListBucketMultipartUploads"]
+    resources = [module.flip_fl_results_bucket.bucket_arn]
+  }
+
   # The FL participant kits, read-only: operators write them, and flip-api only
   # lists kit slots and reads a trust's own kit to hand it out.
   statement {

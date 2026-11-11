@@ -277,7 +277,14 @@ class S3Client:
         return self.client.create_multipart_upload(Bucket=bucket, Key=key)["UploadId"]
 
     def get_upload_part_presigned_url(
-        self, s3_path: str, upload_id: str, part_number: int, *, audience: PresignAudience, expiration: int
+        self,
+        s3_path: str,
+        upload_id: str,
+        part_number: int,
+        content_length: int,
+        *,
+        audience: PresignAudience,
+        expiration: int,
     ) -> str:
         """
         Generate a pre-signed URL for uploading one part of a multipart upload.
@@ -288,6 +295,7 @@ class S3Client:
             s3_path (str): Full S3 path of the object being uploaded.
             upload_id (str): The upload id from ``create_multipart_upload``.
             part_number (int): The part the URL uploads (1-based).
+            content_length (int): The part's size in bytes. Signed, so the URL takes a body of that size only.
             audience (PresignAudience): Who opens the URL, see ``get_presigned_url``.
             expiration (int): URL lifetime in seconds, clamped to ``MAX_PRESIGNED_URL_TTL_SECONDS``.
 
@@ -297,7 +305,13 @@ class S3Client:
         bucket, key = parse_s3_path(s3_path)
         return self._presigner(audience).generate_presigned_url(
             "upload_part",
-            Params={"Bucket": bucket, "Key": key, "UploadId": upload_id, "PartNumber": part_number},
+            Params={
+                "Bucket": bucket,
+                "Key": key,
+                "UploadId": upload_id,
+                "PartNumber": part_number,
+                "ContentLength": content_length,
+            },
             ExpiresIn=min(expiration, MAX_PRESIGNED_URL_TTL_SECONDS),
         )
 
@@ -318,6 +332,43 @@ class S3Client:
         self.client.complete_multipart_upload(
             Bucket=bucket, Key=key, UploadId=upload_id, MultipartUpload={"Parts": parts}
         )
+
+    def abort_multipart_upload(self, s3_path: str, upload_id: str) -> None:
+        """
+        Abort a multipart upload, discarding the parts uploaded so far.
+
+        Args:
+            s3_path (str): Full S3 path of the object being uploaded.
+            upload_id (str): The upload id from ``create_multipart_upload``.
+
+        Raises:
+            ClientError: If S3 refuses the request, e.g. an upload already completed or aborted.
+        """
+        bucket, key = parse_s3_path(s3_path)
+        self.client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+
+    def abort_multipart_uploads(self, s3_prefix: str) -> int:
+        """
+        Abort every multipart upload in progress under a prefix.
+
+        Args:
+            s3_prefix (str): Full S3 path of the prefix (e.g., ``s3://bucket-name/model/``).
+
+        Returns:
+            int: How many uploads were aborted.
+
+        Raises:
+            ClientError: If S3 refuses a request.
+        """
+        bucket, prefix = parse_s3_path(s3_prefix)
+        uploads = [
+            upload
+            for page in self.client.get_paginator("list_multipart_uploads").paginate(Bucket=bucket, Prefix=prefix)
+            for upload in page.get("Uploads", [])
+        ]
+        for upload in uploads:
+            self.client.abort_multipart_upload(Bucket=bucket, Key=upload["Key"], UploadId=upload["UploadId"])
+        return len(uploads)
 
     def delete_object(self, s3_path: str) -> None:
         """

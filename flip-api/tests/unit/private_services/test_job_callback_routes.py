@@ -32,16 +32,9 @@ CALLBACKS = [
         {"fl_client_name": "Trust_1", "global_round": 1, "label": "loss", "value": 0.5},
     ),
     ("POST", "/api/model/{model_id}/results-upload", {"file_name": "results.zip", "size": 1}),
-    (
-        "POST",
-        "/api/model/{model_id}/results-upload/part",
-        {"file_name": "results.zip", "upload_id": "u", "part_number": 1},
-    ),
-    (
-        "POST",
-        "/api/model/{model_id}/results-upload/complete",
-        {"file_name": "results.zip", "upload_id": "u", "etags": ["e"]},
-    ),
+    ("POST", "/api/model/{model_id}/results-upload/part", {"upload": "u", "part_number": 1}),
+    ("POST", "/api/model/{model_id}/results-upload/complete", {"upload": "u", "etags": ["e"]}),
+    ("POST", "/api/model/{model_id}/results-upload/abort", {"upload": "u"}),
 ]
 
 

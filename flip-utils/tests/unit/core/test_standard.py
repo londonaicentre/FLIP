@@ -827,7 +827,7 @@ class TestFLIPStandardProdUploadResultsToS3:
 
         def post(url, json, headers, timeout):
             sent.setdefault("posts", []).append((url, json, headers))
-            body = {"upload_id": "upload-1", "part_size": 100}
+            body = {"upload": "handle-1", "part_size": 100}
             if url.endswith("/part"):
                 body = {"url": f"https://store.test/part-{json['part_number']}?X-Amz-Signature=secret"}
             return Mock(json=Mock(return_value=body))
@@ -868,9 +868,9 @@ class TestFLIPStandardProdUploadResultsToS3:
         assert zipfile.ZipFile(io.BytesIO(b"".join(body for _, _, body in hub["parts"]))).namelist() == ["metrics.json"]
 
         assert complete_url == f"{base}/complete"
+        assert all(body["upload"] == "handle-1" for _, body, _ in parts)
         assert complete == {
-            "file_name": start["file_name"],
-            "upload_id": "upload-1",
+            "upload": "handle-1",
             "etags": [f'"etag-{number}"' for number in range(1, len(parts) + 1)],
         }
 
@@ -906,6 +906,8 @@ class TestFLIPStandardProdUploadResultsToS3:
             flip_prod.upload_results_to_s3(results_folder, "model-123")
 
         assert hub["put"].call_count == 3
+        last_url, last_body, _ = hub["posts"][-1]
+        assert (last_url.rsplit("/", 1)[1], last_body) == ("abort", {"upload": "handle-1"})
         assert not any(url.endswith("/complete") for url, _, _ in hub["posts"])
         assert "X-Amz-Signature" not in caplog.text
 

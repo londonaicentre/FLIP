@@ -60,26 +60,27 @@ class JobCredentialContract(unittest.TestCase):
             assert re.search(r"^    job_credential: str \| None\b", schema.read_text(), re.M), schema
 
     def test_flip_utils_uploads_results_through_the_routes_the_hub_serves(self):
-        """Paths and body fields of the three results-upload calls, which no suite sees both ends of."""
+        """Paths and body fields of the results-upload calls, which no suite sees both ends of."""
         hub, sender = HUB_RESULTS_UPLOAD.read_text(), FLIP_UTILS.read_text()
         routes = re.findall(r'@router\.post\("/model/\{model_id\}/results-upload([^"]*)"', hub)
-        assert routes == ["", "/part", "/complete"]
+        assert routes == ["", "/part", "/complete", "/abort"]
         assert 'f"model/{model_id}/results-upload"' in sender
         assert re.findall(r'hub\("([^"]*)", (\{[^}]*\})', sender) == [
-            ("", '{"size": size}'),
-            ("/part", '{"upload_id": upload_id, "part_number": part_number}'),
-            ("/complete", '{"upload_id": upload_id, "etags": etags}'),
+            ("", '{"file_name": file_path.name, "size": size}'),
+            ("/part", '{"upload": upload, "part_number": part_number}'),
+            ("/abort", '{"upload": upload}'),
+            ("/complete", '{"upload": upload, "etags": etags}'),
         ]
-        assert 'json={"file_name": file_path.name, **payload}' in sender
-        assert 'upload["upload_id"], upload["part_size"]' in sender
+        assert 'started["upload"], started["part_size"]' in sender
 
         schemas = HUB_SCHEMAS.read_text()
         for model, fields in {
             "ResultsUploadRequest": ["file_name", "size"],
-            "ResultsUpload": ["upload_id", "part_size"],
-            "ResultsUploadPartRequest": ["file_name", "upload_id", "part_number"],
+            "ResultsUpload": ["upload", "part_size"],
+            "ResultsUploadPartRequest": ["upload", "part_number"],
             "ResultsUploadPart": ["url"],
-            "ResultsUploadCompletion": ["file_name", "upload_id", "etags"],
+            "ResultsUploadCompletion": ["upload", "etags"],
+            "ResultsUploadAbort": ["upload"],
         }.items():
             body = re.search(rf"^class {model}\(BaseModel\):\n(.*?)(?=^\S)", schemas, re.M | re.S)
             assert body, model

@@ -73,6 +73,24 @@ def test_flip_api_can_write_the_results_it_presigns_uploads_for():
     assert {"kms:Decrypt", "kms:GenerateDataKey"} <= set(re.findall(r'"(kms:\w+)"', policy))
 
 
+def test_flip_api_aborts_multipart_uploads_on_the_results_bucket_only():
+    policy = _policy("ecs_flip_api_task")
+    abort = re.sub(r"\s+", " ", _statement(policy, "S3AbortFlResultsUploads"))
+    assert 'resources = ["${module.flip_fl_results_bucket.bucket_arn}/*"]' in abort
+    uploads = re.sub(r"\s+", " ", _statement(policy, "S3ListFlResultsUploads"))
+    assert "resources = [module.flip_fl_results_bucket.bucket_arn]" in uploads
+    assert policy.count("s3:AbortMultipartUpload") == policy.count("s3:ListBucketMultipartUploads") == 1
+
+
+def test_every_bucket_aborts_incomplete_multipart_uploads():
+    """The backstop for an upload nobody aborts: the shared bucket module's lifecycle rule."""
+    module = strip_comments((AWS_DIR / "modules/flip_s3_bucket/main.tf").read_text())
+    assert re.search(r"abort_incomplete_multipart_upload \{\s*days_after_initiation = 7\s*\}", module)
+    assert 'source = "./modules/flip_s3_bucket"' in re.sub(
+        r" +", " ", hcl_block(strip_comments((AWS_DIR / "services.tf").read_text()), 'module "flip_fl_results_bucket"')
+    )
+
+
 def test_only_the_provisioning_task_runs_under_the_kit_role():
     task_roles = {
         (name, family): role

@@ -193,11 +193,15 @@ During training the FL server reports to the hub through three endpoints:
 
 When a job finishes it uploads its results the same way. The FL server holds no object-store credentials: it
 asks the hub to start the upload of the model's results file, then for a short-lived URL for each part, then
-to complete it.
+to complete it, or to abort it if a part cannot be sent. The hub signs only for an upload it started for that
+model, for the parts the declared size has and for each part's exact size. The size is capped
+(``MAX_RESULTS_FILE_BYTES``, 50 GiB by default), and a model has one upload in progress at a time: starting
+another discards the unfinished one.
 
 - ``POST /api/model/{id}/results-upload``
 - ``POST /api/model/{id}/results-upload/part``
 - ``POST /api/model/{id}/results-upload/complete``
+- ``POST /api/model/{id}/results-upload/abort``
 
 These calls carry the hub's **internal service key**, not a Trust key. They must use the hub's internal URL
 (``FLIP_API_INTERNAL_URL``), never the public address, because the public edge strips that key's header.

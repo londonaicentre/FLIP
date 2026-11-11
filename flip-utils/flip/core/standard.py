@@ -17,6 +17,7 @@ This module contains the production and development implementations of FLIP
 for the standard, evaluation, and fed_opt job types.
 """
 
+import contextlib
 import json
 import logging
 import math
@@ -158,7 +159,7 @@ def _upload_file_via_hub(file_path: Path, model_id: str) -> None:
     """Upload a results file as a multipart upload the hub starts, presigns part by part and completes.
 
     The hub routes are ``flip_api.private_services.results_upload``; each call presents the job's
-    credential, so the hub only signs for this model's own file.
+    credential, so the hub only signs for this model's own file, and only for the size declared here.
 
     Args:
         file_path (Path): The file to upload; it keeps its name.
@@ -173,40 +174,43 @@ def _upload_file_via_hub(file_path: Path, model_id: str) -> None:
 
     def hub(path: str, payload: dict[str, Any]) -> dict[str, Any]:
         response = requests.post(
-            endpoint + path,
-            json={"file_name": file_path.name, **payload},
-            headers=_hub_internal_headers(model_id),
-            timeout=_HUB_POST_TIMEOUT_SECONDS,
+            endpoint + path, json=payload, headers=_hub_internal_headers(model_id), timeout=_HUB_POST_TIMEOUT_SECONDS
         )
         response.raise_for_status()
         body: dict[str, Any] = response.json()
         return body
 
-    upload = hub("", {"size": size})
-    upload_id, part_size = upload["upload_id"], upload["part_size"]
+    started = hub("", {"file_name": file_path.name, "size": size})
+    upload, part_size = started["upload"], started["part_size"]
 
     etags = []
-    with file_path.open("rb") as file:
-        for part_number in range(1, math.ceil(size / part_size) + 1):
-            offset = (part_number - 1) * part_size
-            for _ in range(_PART_PUT_ATTEMPTS):
-                # A fresh URL per attempt: each is short-lived.
-                url = hub("/part", {"upload_id": upload_id, "part_number": part_number})["url"]
-                file.seek(offset)
-                try:
-                    response = requests.put(
-                        url, data=_FilePart(file, min(part_size, size - offset)), timeout=_PART_PUT_TIMEOUT_SECONDS
-                    )
-                    response.raise_for_status()
-                    break
-                except requests.RequestException as e:
-                    failure = type(e).__name__
-            else:
-                # Named by type only: the exception's message carries the signed URL.
-                raise ResultsUploadError(f"Uploading part {part_number} failed: {failure}")
-            etags.append(response.headers["ETag"])
+    try:
+        with file_path.open("rb") as file:
+            for part_number in range(1, math.ceil(size / part_size) + 1):
+                offset = (part_number - 1) * part_size
+                for _ in range(_PART_PUT_ATTEMPTS):
+                    # A fresh URL per attempt: each is short-lived.
+                    url = hub("/part", {"upload": upload, "part_number": part_number})["url"]
+                    file.seek(offset)
+                    try:
+                        response = requests.put(
+                            url, data=_FilePart(file, min(part_size, size - offset)), timeout=_PART_PUT_TIMEOUT_SECONDS
+                        )
+                        response.raise_for_status()
+                        break
+                    except requests.RequestException as e:
+                        failure = type(e).__name__
+                else:
+                    # Named by type only: the exception's message carries the signed URL.
+                    raise ResultsUploadError(f"Uploading part {part_number} failed: {failure}")
+                etags.append(response.headers["ETag"])
+    except Exception:
+        # Have the hub discard the parts sent so far. It does so itself when completing fails.
+        with contextlib.suppress(requests.RequestException):
+            hub("/abort", {"upload": upload})
+        raise
 
-    hub("/complete", {"upload_id": upload_id, "etags": etags})
+    hub("/complete", {"upload": upload, "etags": etags})
 
 
 class FLIPStandardProd(FLIPBase):
