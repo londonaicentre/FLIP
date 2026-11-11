@@ -20,7 +20,7 @@ This module provides:
 
 from enum import StrEnum
 
-from pydantic import HttpUrl, field_validator
+from pydantic import HttpUrl
 from pydantic_settings import BaseSettings
 
 
@@ -51,7 +51,7 @@ class ProdSettings(_Common):
       JOB_CREDENTIAL_DIR
     - **Client-only** (fl-client on trust side): DATA_ACCESS_API_URL, IMAGING_API_URL,
       TRUST_INTERNAL_SERVICE_KEY*
-    - **Shared**: IMAGES_DIR, NET_ID, UPLOADED_FEDERATED_DATA_BUCKET
+    - **Shared**: IMAGES_DIR, NET_ID
     """
 
     LOCAL_DEV: bool = False
@@ -92,14 +92,6 @@ class ProdSettings(_Common):
     # -- Shared --
     IMAGES_DIR: str = ""
     NET_ID: str = "default"
-    UPLOADED_FEDERATED_DATA_BUCKET: str = "s3://default-bucket"
-
-    @field_validator("UPLOADED_FEDERATED_DATA_BUCKET")
-    @classmethod
-    def _validate_s3_url(cls, v: str) -> str:
-        if not v.startswith("s3://"):
-            raise ValueError(f"Invalid S3 URL: {v}")
-        return v
 
 
 _flip_constants_instance: DevSettings | ProdSettings | None = None
@@ -147,7 +139,6 @@ class _FlipConstantsProxy:
     TRUST_INTERNAL_SERVICE_KEY: str
     IMAGES_DIR: str
     NET_ID: str
-    UPLOADED_FEDERATED_DATA_BUCKET: str
 
     def __getattribute__(self, name: str) -> object:
         if name.startswith("_"):

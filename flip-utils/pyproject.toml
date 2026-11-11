@@ -48,7 +48,6 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
 dependencies = [
-    "boto3>=1.38.31",
     "nvflare==2.9.0",
     "pandas>=2.3.0",
     "pydantic>=2.11.7",

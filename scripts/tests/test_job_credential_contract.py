@@ -13,7 +13,8 @@
 """The per-job hub credential keeps one wire contract across four packages.
 
 flip-api mints it and names the request field and the callback header; each FL API reads the field and
-writes the credential to ``JOB_CREDENTIAL_DIR``; flip-utils reads it there and sends the header. No suite
+writes the credential to ``JOB_CREDENTIAL_DIR``; flip-utils reads it there and sends the header, on the
+callbacks and on the results upload, whose routes and fields are held here too. No suite
 imports more than one of them, so a rename on one side would pass every test and leave each job's
 callbacks refused. Every hub FL service must also be told the directory, the same one on both sides of a
 net.
@@ -30,6 +31,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 HUB_AUTH = REPO / "flip-api/src/flip_api/auth/job_callback.py"
 HUB_BODY = REPO / "flip-api/src/flip_api/domain/interfaces/fl.py"
+HUB_RESULTS_UPLOAD = REPO / "flip-api/src/flip_api/private_services/results_upload.py"
+HUB_SCHEMAS = REPO / "flip-api/src/flip_api/domain/schemas/private.py"
 FLIP_UTILS = REPO / "flip-utils/flip/core/standard.py"
 FL_API_SCHEMAS = (
     REPO / "fl-services/nvflare/fl-api-base/fl_api/utils/schemas.py",
@@ -55,6 +58,32 @@ class JobCredentialContract(unittest.TestCase):
         assert re.search(r"^    job_credential: str\b", HUB_BODY.read_text(), re.M)
         for schema in FL_API_SCHEMAS:
             assert re.search(r"^    job_credential: str \| None\b", schema.read_text(), re.M), schema
+
+    def test_flip_utils_uploads_results_through_the_routes_the_hub_serves(self):
+        """Paths and body fields of the three results-upload calls, which no suite sees both ends of."""
+        hub, sender = HUB_RESULTS_UPLOAD.read_text(), FLIP_UTILS.read_text()
+        routes = re.findall(r'@router\.post\("/model/\{model_id\}/results-upload([^"]*)"', hub)
+        assert routes == ["", "/part", "/complete"]
+        assert 'f"model/{model_id}/results-upload"' in sender
+        assert re.findall(r'hub\("([^"]*)", (\{[^}]*\})', sender) == [
+            ("", '{"size": size}'),
+            ("/part", '{"upload_id": upload_id, "part_number": part_number}'),
+            ("/complete", '{"upload_id": upload_id, "etags": etags}'),
+        ]
+        assert 'json={"file_name": file_path.name, **payload}' in sender
+        assert 'upload["upload_id"], upload["part_size"]' in sender
+
+        schemas = HUB_SCHEMAS.read_text()
+        for model, fields in {
+            "ResultsUploadRequest": ["file_name", "size"],
+            "ResultsUpload": ["upload_id", "part_size"],
+            "ResultsUploadPartRequest": ["file_name", "upload_id", "part_number"],
+            "ResultsUploadPart": ["url"],
+            "ResultsUploadCompletion": ["file_name", "upload_id", "etags"],
+        }.items():
+            body = re.search(rf"^class {model}\(BaseModel\):\n(.*?)(?=^\S)", schemas, re.M | re.S)
+            assert body, model
+            assert re.findall(r"^    (\w+):", body.group(1), re.M) == fields, model
 
     def test_every_hub_fl_service_is_given_the_same_directory(self):
         for backend, directory in COMPOSES.items():

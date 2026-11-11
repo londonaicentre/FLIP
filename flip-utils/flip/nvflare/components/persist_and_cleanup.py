@@ -43,9 +43,6 @@ class PersistToS3AndCleanup(FLComponent):
             persistor_id (str, optional): ID of the persistor component. Defaults to "persistor".
             flip (FLIPBase, optional): FLIP client used for status updates and exception reporting to the hub.
                 Defaults to ``FLIP()``.
-
-        Raises:
-            FileNotFoundError: boto3 error for when the zip file does not exist.
         """
 
         super().__init__()
