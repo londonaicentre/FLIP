@@ -94,8 +94,9 @@ compares them:
   XNAT answers the lookups, and never served unchecked.
 
 `force_refresh=true` takes the same delete-then-download step. The cache is also invalidated when an upload through
-imaging-api changes the accession (see Upload), and — on the FLARE backend — by `CleanupImages`, which empties the
-whole net directory at job start and end.
+imaging-api changes the accession (see Upload), and — on the FLARE backend, where a job mounts the net's whole
+folder — by `CleanupImages`, which empties that folder at job start and end. A Kubernetes job pod mounts only its
+project's folder, read-only, or none, and deletes nothing: there the retention sweep bounds the cache.
 
 The download URL pins `structure=default`, XNAT's own default. Every zip member then sits under the session label,
 which FLIP sets to the accession id at import, so a study extracts as

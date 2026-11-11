@@ -58,6 +58,12 @@ def is_project(study: object) -> bool:
         return False
 
 
+def _read_studies_by(container: dict[str, Any], transport: str) -> None:
+    """Set how the job reads its studies, where the template alone would stream them (``IMAGES_TRANSPORT``)."""
+    env = [e for e in container.get("env", []) if e["name"] != IMAGES_TRANSPORT]
+    container["env"] = [*env, {"name": IMAGES_TRANSPORT, "value": transport}]
+
+
 def mount_project_images(pod: dict[str, Any], project: str) -> None:
     """Mount the project's folder of the shared images volume in a pod that declares the volume.
 
@@ -70,12 +76,11 @@ def mount_project_images(pod: dict[str, Any], project: str) -> None:
     path = Path(FlipConstants.IMAGES_DIR, folder)
     path.mkdir(exist_ok=True)
     for container in pod["spec"]["containers"]:
+        # Read-only: imaging-api writes the cache, and a job never changes what it trains on.
         container.setdefault("volumeMounts", []).append(
-            {"name": IMAGES_VOLUME, "mountPath": str(path), "subPath": folder}
+            {"name": IMAGES_VOLUME, "mountPath": str(path), "subPath": folder, "readOnly": True}
         )
-        # Read the studies by path, not by stream: flip.constants.FlipConstants.IMAGES_TRANSPORT.
-        env = [e for e in container.get("env", []) if e["name"] != IMAGES_TRANSPORT]
-        container["env"] = [*env, {"name": IMAGES_TRANSPORT, "value": "project"}]
+        _read_studies_by(container, "project")
 
 
 def xnat_project(project: str) -> str | None:
@@ -116,8 +121,7 @@ def mount_project_archive(pod: dict[str, Any], project: str) -> None:
     }
     for container in pod["spec"]["containers"]:
         container.setdefault("volumeMounts", []).append(mount)
-        env = [e for e in container.get("env", []) if e["name"] != IMAGES_TRANSPORT]
-        container["env"] = [*env, {"name": IMAGES_TRANSPORT, "value": "archive"}]
+        _read_studies_by(container, "archive")
 
 
 def project_entry(local_dir: Path, default: dict[str, Any], project: str) -> dict[str, Any]:

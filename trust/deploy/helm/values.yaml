@@ -509,7 +509,8 @@ flClient:
       enabled: false
       # How a job pod gets its studies. Either way it holds only its own project's.
       # - project: each FLIP project is an NVFLARE study, and its job pods mount that project's own
-      #   folder of the shared images volume (FLIP#1678). Nothing is copied into the pod. The job pods
+      #   folder of the shared images volume, read-only (FLIP#1678). Nothing is copied into the pod, and
+      #   a job never deletes from the cache: IMAGE_CACHE_RETENTION_HOURS bounds it. The job pods
       #   attach sharedImagesPvc, so on a ReadWriteOnce volume they run on the fl-client's node; a
       #   separate GPU pool needs a ReadWriteMany one. A job outside a project's study (from a hub that
       #   predates studies) mounts nothing and streams.

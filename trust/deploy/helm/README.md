@@ -701,10 +701,12 @@ Prerequisites and trade-offs:
 - **A job pod holds only its own project's studies**, by `jobPods.images`. Either way imaging-api keeps the
   whole cache, bounded by `IMAGE_CACHE_RETENTION_HOURS`, and results are uploaded in the request.
   - `project` (the default) is NVFLARE's own way to give a job pod its data, a mount set by its study: the
-    project's entry mounts `<net>/<project>`, the project's folder of imaging-api's cache, at the path
-    imaging-api returns. Nothing is copied into the pod. It needs `sharedImagesPvc` (the chart refuses
-    without it), and the job pods attach it: on a ReadWriteOnce volume they follow the fl-client's node,
-    and a separate GPU pool needs a ReadWriteMany class.
+    project's entry mounts `<net>/<project>`, the project's folder of imaging-api's cache, read-only, at
+    the path imaging-api returns. Nothing is copied into the pod, and the job cannot change or delete what
+    is cached: `CleanupImages` wipes only where a job mounts the net's whole folder, so a project's studies
+    stay cached between its jobs until the retention sweep removes them. It needs `sharedImagesPvc` (the
+    chart refuses without it), and the job pods attach it: on a ReadWriteOnce volume they follow the
+    fl-client's node, and a separate GPU pool needs a ReadWriteMany class.
   - `archive` uses the same study mount for the project's own directory of XNAT's archive
     (`archive/<XNAT project>` of XNAT's volume), read-only, so a job reads its studies in place with no copy
     in imaging-api's cache or in the pod (FLIP#1857). imaging-api's `/layout` route names each file's place in

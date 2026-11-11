@@ -14,6 +14,7 @@ import os
 import tempfile
 from unittest.mock import MagicMock, patch
 
+import pytest
 from nvflare.apis.fl_constant import ReturnCode
 
 from flip.constants import FlipTasks
@@ -29,6 +30,7 @@ class TestCleanupImages:
     @patch("flip.nvflare.components.cleanup.FlipConstants")
     def test_execute_post_validation_dev_mode(self, mock_constants):
         """Test POST_VALIDATION task in dev mode"""
+        mock_constants.IMAGES_TRANSPORT = "mount"
         mock_constants.LOCAL_DEV = True
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -53,6 +55,7 @@ class TestCleanupImages:
     @patch("flip.nvflare.components.cleanup.FlipConstants")
     def test_execute_init_training_dev_mode(self, mock_constants):
         """Test INIT_TRAINING task in dev mode"""
+        mock_constants.IMAGES_TRANSPORT = "mount"
         mock_constants.LOCAL_DEV = True
 
         cleanup = CleanupImages()
@@ -85,6 +88,7 @@ class TestCleanupImages:
     @patch("shutil.rmtree")
     def test_execute_post_validation_production_mode(self, mock_rmtree, mock_constants):
         """Test POST_VALIDATION task in production mode deletes job directory"""
+        mock_constants.IMAGES_TRANSPORT = "mount"
         mock_constants.LOCAL_DEV = False
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -110,6 +114,7 @@ class TestCleanupImages:
     @patch("flip.nvflare.components.cleanup.FlipConstants")
     def test_execute_init_training_production_mode_no_directory(self, mock_constants):
         """Test INIT_TRAINING in production mode when net_directory doesn't exist"""
+        mock_constants.IMAGES_TRANSPORT = "mount"
         mock_constants.LOCAL_DEV = False
         mock_constants.IMAGES_DIR = "/images"
         mock_constants.NET_ID = "net-1"
@@ -132,6 +137,7 @@ class TestCleanupImages:
     @patch("os.unlink")
     def test_execute_init_training_production_mode_with_files(self, mock_unlink, mock_rmtree, mock_constants):
         """Test INIT_TRAINING in production mode with files and directories to clean"""
+        mock_constants.IMAGES_TRANSPORT = "mount"
         mock_constants.LOCAL_DEV = False
         mock_constants.IMAGES_DIR = "/images"
         mock_constants.NET_ID = "net-1"
@@ -179,6 +185,7 @@ class TestCleanupImages:
     @patch("os.unlink")
     def test_execute_post_validation_production_mode_with_files(self, mock_unlink, mock_rmtree, mock_constants):
         """Test POST_VALIDATION in production mode with files and directories to clean"""
+        mock_constants.IMAGES_TRANSPORT = "mount"
         mock_constants.LOCAL_DEV = False
         mock_constants.IMAGES_DIR = "/images"
         mock_constants.NET_ID = "net-1"
@@ -213,6 +220,7 @@ class TestCleanupImages:
     @patch("flip.nvflare.components.cleanup.FlipConstants")
     def test_execute_exception_handling(self, mock_constants):
         """Test exception handling in execute method"""
+        mock_constants.IMAGES_TRANSPORT = "mount"
         mock_constants.LOCAL_DEV = False
 
         cleanup = CleanupImages()
@@ -231,23 +239,23 @@ class TestCleanupImages:
         assert result.get_header("exception") is not None
 
 
+@pytest.mark.parametrize("transport", ["project", "stream"])
 @patch("flip.nvflare.components.cleanup.FlipConstants")
-def test_a_mounted_project_folder_is_emptied_not_removed(mock_constants, tmp_path):
-    """A job pod mounts only its project's folder (FLIP#1678), and a mount point cannot be removed."""
+def test_a_job_that_does_not_mount_the_net_folder_deletes_no_images(mock_constants, transport, tmp_path):
+    """Its images, if any, are a read-only mount of imaging-api's cache (FLIP#1678), or none at all (FLIP#1049)."""
     mock_constants.LOCAL_DEV = False
+    mock_constants.IMAGES_TRANSPORT = transport
     mock_constants.IMAGES_DIR = str(tmp_path)
     mock_constants.NET_ID = "net-1"
-    project_dir = tmp_path / "net-1" / "project"
-    (project_dir / "ACC001" / "scans").mkdir(parents=True)
-    (project_dir / "ACC001" / "scans" / "a.nii.gz").write_bytes(b"nifti")
-    (project_dir / "ACC002-scans-NIFTI.zip").write_bytes(b"zip")
+    study = tmp_path / "net-1" / "project" / "ACC001" / "a.nii.gz"
+    study.parent.mkdir(parents=True)
+    study.write_bytes(b"nifti")
     fl_ctx = MagicMock()
     fl_ctx.get_peer_context.return_value = None
     fl_ctx.get_job_id.return_value = "test_job"
 
-    with patch("os.path.ismount", side_effect=lambda path: path == str(project_dir)):
-        result = CleanupImages().execute(FlipTasks.INIT_TRAINING, MagicMock(), fl_ctx, MagicMock())
+    for task in (FlipTasks.INIT_TRAINING, FlipTasks.POST_VALIDATION):
+        result = CleanupImages().execute(task, MagicMock(), fl_ctx, MagicMock())
+        assert result.get_return_code() == ReturnCode.OK
 
-    assert result.get_return_code() == ReturnCode.OK
-    assert project_dir.is_dir()
-    assert list(project_dir.iterdir()) == []
+    assert study.read_bytes() == b"nifti"
