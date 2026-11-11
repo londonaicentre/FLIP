@@ -16,6 +16,8 @@ import { createTestingPinia } from "@pinia/testing";
 import { mount, VueWrapper } from "@vue/test-utils";
 import { reactive, ref } from "vue";
 
+import { issuedKit } from "@/utils/issued-trust-kit";
+
 import MainLayout from "../MainLayout.vue";
 
 const mockRoute = reactive({
@@ -168,6 +170,12 @@ function mountMainLayout(options: {
                 AiLoader: { template: "<div data-test='loader' />" },
                 DeploymentMode: { template: "<div data-test='deployment-mode' />" },
                 CreateModelModal: true,
+                TrustKitModal: {
+                    name: "TrustKitModal",
+                    props: ["kit", "trustLabel"],
+                    emits: ["close-modal"],
+                    template: "<div data-test='trust-kit-modal'>{{ kit?.passphrase }}</div>"
+                },
                 "router-view": {
                     template: "<div><slot :Component=\"comp\" /></div>",
                     data() { return { comp: { template: "<div>stub</div>" } }; }
@@ -189,6 +197,30 @@ describe("MainLayout", () => {
             const wrapper = mountMainLayout();
 
             expect(wrapper.exists()).toBe(true);
+        });
+    });
+
+    describe("trust kit passphrase dialog", () => {
+        it("shows the kit a trust card or table row just issued, and forgets it on close", async () => {
+            const wrapper = mountMainLayout();
+            const modal = wrapper.findComponent({ name: "TrustKitModal" });
+            expect(modal.props("kit")).toBeNull();
+
+            issuedKit.value = {
+                file_name: "flip-trust-kit-GSTT.tar.gz.enc",
+                kind: "full",
+                passphrase: "amber-otter-quartz",  // pragma: allowlist secret
+                content_base64: btoa("kit"),
+                trustLabel: "GSTT"
+            };
+            await wrapper.vm.$nextTick();
+            expect(modal.props("trustLabel")).toBe("GSTT");
+            expect(wrapper.html()).toContain("amber-otter-quartz");
+
+            await modal.vm.$emit("close-modal");
+
+            expect(issuedKit.value).toBeNull();
+            expect(wrapper.html()).not.toContain("amber-otter-quartz");
         });
     });
 

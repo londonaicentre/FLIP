@@ -59,8 +59,18 @@
                                 </div>
 
                                 <div>
-                                    <div class="text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-300 mb-1">
-                                        Downloaded file
+                                    <div class="flex items-center justify-between mb-1">
+                                        <span class="text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                                            Downloaded file
+                                        </span>
+                                        <button
+                                            type="button"
+                                            class="text-xs font-semibold text-primary-600 hover:underline"
+                                            data-test="kit-save-again-btn"
+                                            @click="kit && saveKitFile(kit)"
+                                        >
+                                            Download again
+                                        </button>
                                     </div>
                                     <div
                                         class="font-mono text-sm bg-gray-50 dark:bg-dark-canvas p-2 rounded break-all"
@@ -153,12 +163,13 @@ import { ref, watch } from "vue";
 
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiDialogOverlay from "@/components/AiDialogOverlay/AiDialogOverlay.vue";
-import { ITrustKitReceipt } from "@/services/trust-service";
+import { ITrustKitDownload } from "@/services/trust-service";
+import { saveKitFile } from "@/utils/issued-trust-kit";
 import { Snackbar } from "@/utils/snackbar";
 
-// The dialog is open while `kit` is set. The host holds the passphrase in its own state and nulls it on close.
+// The dialog is open while `kit` is set. The host holds the kit and nulls it on close.
 const props = defineProps<{
-    kit: ITrustKitReceipt | null;
+    kit: ITrustKitDownload | null;
     trustLabel: string;
 }>();
 

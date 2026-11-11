@@ -146,3 +146,12 @@ class TestFleetProxyTag:
     def test_the_tf_var_is_exported_only_when_set(self):
         assert "ifneq ($(DOCKER_FL_PROXY_TAG),)" in MAKEFILE
         assert "export TF_VAR_fl_fleet_proxy_image_tag=${DOCKER_FL_PROXY_TAG}" in MAKEFILE
+
+
+class TestKitImageTags:
+    """The tags flip-api writes into a trust kit (FLIP#1852) name a release, never one repository's digest."""
+
+    def test_the_kit_tags_drop_the_digest_of_a_release_pin(self):
+        locals_tf = (AWS_DIR / "locals.tf").read_text()
+        assert re.search(r'^\s+DOCKER_TAG\s+= split\("@", var\.docker_image_tag\)\[0\]$', locals_tf, re.M)
+        assert re.search(r'^\s+DOCKER_FL_TAG\s+= split\("@", var\.flip_fl_image_tag\)\[0\]$', locals_tf, re.M)

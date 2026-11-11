@@ -15,7 +15,10 @@ import { mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import TrustKitModal from "@/partials/trusts/TrustKitModal.vue";
-import { ITrustKitReceipt } from "@/services/trust-service";
+import { ITrustKitDownload } from "@/services/trust-service";
+
+const mockSaveKitFile = vi.fn();
+vi.mock("@/utils/issued-trust-kit", () => ({ saveKitFile: (...args: unknown[]) => mockSaveKitFile(...args) }));
 
 vi.mock("@/utils/snackbar", () => ({
     Snackbar: {
@@ -24,10 +27,11 @@ vi.mock("@/utils/snackbar", () => ({
     }
 }));
 
-const kit = (kind: ITrustKitReceipt["kind"] = "full"): ITrustKitReceipt => ({
+const kit = (kind: ITrustKitDownload["kind"] = "full"): ITrustKitDownload => ({
     file_name: "flip-trust-kit-DEMO.tar.gz.enc",
     kind,
-    passphrase: "amber-otter-quartz"  // pragma: allowlist secret
+    passphrase: "amber-otter-quartz",  // pragma: allowlist secret
+    content_base64: btoa("kit")
 });
 
 const stubs = {
@@ -44,7 +48,7 @@ const stubs = {
     }
 };
 
-const mountModal = (issued: ITrustKitReceipt | null = kit()) => mount(TrustKitModal, {
+const mountModal = (issued: ITrustKitDownload | null = kit()) => mount(TrustKitModal, {
     props: {
         kit: issued,
         trustLabel: "DEMO"
@@ -77,6 +81,14 @@ describe("TrustKitModal", () => {
         await wrapper.find("[data-test='copy-passphrase-btn']").trigger("click");
 
         expect(writeText).toHaveBeenCalledWith("amber-otter-quartz");
+    });
+
+    it("saves the file again, for a browser that blocked or lost the first save", async () => {
+        const wrapper = mountModal();
+
+        await wrapper.find("[data-test='kit-save-again-btn']").trigger("click");
+
+        expect(mockSaveKitFile).toHaveBeenCalledWith(kit());
     });
 
     it("tells a new site to send its public IP, on a full kit only", () => {

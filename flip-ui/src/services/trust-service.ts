@@ -117,9 +117,6 @@ export interface ITrustKitDownload {
     content_base64: string;
 }
 
-/** What is left to show once the file itself has been saved. */
-export type ITrustKitReceipt = Omit<ITrustKitDownload, "content_base64">;
-
 export async function getTrustKitStatus(trustId: string): Promise<ITrustKitStatus> {
     const response = await _http.get<ITrustKitStatus>(`/trust/${trustId}/kit`);
 

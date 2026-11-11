@@ -356,6 +356,9 @@ def install(args: argparse.Namespace) -> None:
         print("   The trust's keys were replaced: the hub refuses the old ones until the containers are recreated.")
     if unfilled:
         print(f"   ⚠️  Still unfilled, so the stack will not start: {', '.join(unfilled)}. Ask the FLIP hub team.")
+    if first and any(after.get(key, "").startswith("sha-") for key in TAG_KEYS):
+        print("   ⚠️  The hub runs a build between releases (a sha- image tag); not every trust image has one.")
+        print(f"      Set DOCKER_TAG / DOCKER_FL_TAG in {kit_file} to the release the FLIP hub team names.")
     print(f"   FL kit ({backend}, {kit['fl_kit_slot']}) staged in {fl_kit_dir}, owned by uid {uid}:{gid}:")
     for unit in units:
         print(f"     {unit}")

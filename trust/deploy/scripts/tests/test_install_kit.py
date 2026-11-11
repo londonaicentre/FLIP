@@ -245,6 +245,16 @@ def test_first_install_flower() -> None:
         _assert_owned(net / "keys")
 
 
+def test_first_install_from_a_hub_between_releases_says_the_tags_need_setting() -> None:
+    with site() as s:
+        shared = {**HUB_SHARED, "FL_BACKEND": "nvflare", "DOCKER_TAG": "sha-0123abc"}
+        result = s.install(s.kit("nvflare", kit__hub_shared=shared))
+        assert result.returncode == 0, result.stderr
+        assert "Set DOCKER_TAG / DOCKER_FL_TAG" in result.stdout, result.stdout
+    with site() as s:
+        assert "Set DOCKER_TAG" not in s.install(s.kit("nvflare")).stdout
+
+
 def test_update_keeps_keys_tags_and_site_lines() -> None:
     with site() as s:
         assert s.install(s.kit("nvflare")).returncode == 0

@@ -122,8 +122,6 @@
                 <span class="block mt-2">Type {{ trust.code }} to confirm.</span>
             </template>
         </AiConfirmModal>
-
-        <TrustKitModal :kit="issuedKit" :trust-label="trustLabel" @close-modal="issuedKit = null" />
     </template>
 </template>
 
@@ -135,16 +133,14 @@ import { computed, ref } from "vue";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
 import { usePermissions } from "@/composables/usePermissions";
-import TrustKitModal from "@/partials/trusts/TrustKitModal.vue";
 import { downloadTrustKit,
     getTrustKitStatus,
-    ITrustKitDownload,
-    ITrustKitReceipt,
     ITrustKitStatus,
     ITrustResponse,
     rotateTrustKit } from "@/services/trust-service";
 import { useAuthStore } from "@/store/auth";
 import { extractErrorDetail } from "@/utils/api-errors";
+import { issuedKit, saveKitFile } from "@/utils/issued-trust-kit";
 import { Snackbar } from "@/utils/snackbar";
 import { shortDate } from "@/utils/trust-decisions";
 
@@ -198,33 +194,16 @@ const askDownload = () => {
     asking.value = "download";
 };
 const submitting = ref(false);
-// The passphrase lives here only, and only while its dialog is open.
-const issuedKit = ref<ITrustKitReceipt | null>(null);
-
-// Same anchor-click approach as the model files zip (ModelUpload.vue).
-const saveFile = ({ file_name, content_base64 }: ITrustKitDownload) => {
-    const bytes = Uint8Array.from(atob(content_base64), c => c.charCodeAt(0));
-    const url = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = file_name;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-};
-
 const issue = async (newKeys: boolean) => {
     submitting.value = true;
     try {
         const kit = newKeys
             ? await rotateTrustKit(props.trust.id, props.trust.code ?? "")
             : await downloadTrustKit(props.trust.id);
-        saveFile(kit);
+        saveKitFile(kit);
         issuedKit.value = {
-            file_name: kit.file_name,
-            kind: kit.kind,
-            passphrase: kit.passphrase
+            ...kit,
+            trustLabel: trustLabel.value
         };
     } catch (e) {
         // No reply is not a refusal: the hub issues the keys before it answers, so they may exist now.

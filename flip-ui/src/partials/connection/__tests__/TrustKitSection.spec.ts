@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 
 import { ITrustKitDownload, ITrustKitStatus } from "@/services/trust-service";
+import { issuedKit } from "@/utils/issued-trust-kit";
 
 import TrustKitSection from "../TrustKitSection.vue";
 
@@ -100,12 +101,6 @@ const stubs = {
             <p data-test="confirm-text"><slot name="confirmation">{{ confirmationText }}</slot></p>
             <button data-test="confirm-modal-btn" @click="continueAction">{{ continueButtonText }}</button>
         </div>`
-    },
-    TrustKitModal: {
-        name: "TrustKitModal",
-        props: ["kit", "trustLabel"],
-        emits: ["close-modal"],
-        template: "<div data-test='trust-kit-modal' />"
     }
 };
 
@@ -162,6 +157,7 @@ describe("TrustKitSection", () => {
         swrvKeyFns.length = 0;
         statusRef.value = status();
         statusError.value = null;
+        issuedKit.value = null;
         Object.assign(URL, {
             createObjectURL,
             revokeObjectURL
@@ -313,27 +309,13 @@ describe("TrustKitSection", () => {
             expect((anchorClick.mock.contexts[0] as HTMLAnchorElement).download).toBe("flip-trust-kit-GSTT.tar.gz.enc");
             expect(revokeObjectURL).toHaveBeenCalledWith("blob:kit");
 
-            const modal = wrapper.findComponent({ name: "TrustKitModal" });
-            expect(modal.props("kit")).toEqual({
-                file_name: "flip-trust-kit-GSTT.tar.gz.enc",
-                kind: "full",
-                passphrase: "amber-otter-quartz"  // pragma: allowlist secret
+            // MainLayout shows it, so the dialog outlives a table row that leaves the page.
+            expect(issuedKit.value).toEqual({
+                ...download(),
+                trustLabel: "GSTT"
             });
-            expect(modal.props("trustLabel")).toBe("GSTT");
             expect(mutateStatus).toHaveBeenCalled();
             expect(wrapper.find("[data-test='confirm-modal']").exists()).toBe(false);
-        });
-
-        it("forgets the passphrase when the dialog closes", async () => {
-            mockDownload.mockResolvedValue(download());
-            const wrapper = mountSection();
-            await confirm(wrapper, "kit-download-btn");
-
-            const modal = wrapper.findComponent({ name: "TrustKitModal" });
-            await modal.vm.$emit("close-modal");
-
-            expect(modal.props("kit")).toBeNull();
-            expect(wrapper.html()).not.toContain("amber-otter-quartz");
         });
 
         it("shows the hub's reason when the kit cannot be built", async () => {
@@ -347,7 +329,7 @@ describe("TrustKitSection", () => {
 
             expect(mockSnackbarError).toHaveBeenCalledWith(expect.objectContaining({ text: "This trust has no FL kit slot." }));
             expect(anchorClick).not.toHaveBeenCalled();
-            expect(wrapper.findComponent({ name: "TrustKitModal" }).props("kit")).toBeNull();
+            expect(issuedKit.value).toBeNull();
         });
 
         it("says the keys may exist when a first download gets no answer, and re-reads the status", async () => {
@@ -402,7 +384,7 @@ describe("TrustKitSection", () => {
             expect(mockRotate).toHaveBeenCalledWith("t1", "GSTT");
             expect(mockDownload).not.toHaveBeenCalled();
             expect(anchorClick).toHaveBeenCalledTimes(1);
-            expect(wrapper.findComponent({ name: "TrustKitModal" }).props("kit")).toMatchObject({ kind: "full" });
+            expect(issuedKit.value).toMatchObject({ kind: "full" });
             expect(mutateStatus).toHaveBeenCalled();
         });
     });
@@ -474,7 +456,7 @@ describe("TrustKitSection", () => {
 
             expect(mockDownload).toHaveBeenCalledWith("t1");
             expect(anchorClick).toHaveBeenCalledTimes(1);
-            expect(wrapper.findComponent({ name: "TrustKitModal" }).props("kit")).toMatchObject({ kind: "update" });
+            expect(issuedKit.value).toMatchObject({ kind: "update" });
         });
     });
 });

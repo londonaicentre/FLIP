@@ -167,12 +167,13 @@ locals {
       # What flip-api puts in a trust kit downloaded from the UI (FLIP#1852): where the
       # pre-provisioned FL kits of the running backend live, and the hub-shared values a
       # trust is configured with. AES_KEY_BASE64 is not here; flip-api reads the key it
-      # decrypts with from Secrets Manager.
+      # decrypts with from Secrets Manager. The tags go without their digest: a release
+      # pins `v<X.Y.Z>@sha256:…` of one repository, and a trust pulls others.
       FL_KITS_URI         = var.fl_backend == "flower" ? "s3://${aws_s3_bucket.aicentre_bucket.id}/fl-flower-participant-kits/${var.flower_kit_date}" : "s3://${aws_s3_bucket.aicentre_bucket.id}/fl-flare-participant-kits/${var.flare_kit_date}"
       CENTRAL_HUB_API_URL = "https://${var.flip_alb_subdomain}/api"
       FLARE_KIT_DATE      = var.flare_kit_date
       FLOWER_KIT_DATE     = var.flower_kit_date
-      DOCKER_TAG          = var.docker_image_tag
+      DOCKER_TAG          = split("@", var.docker_image_tag)[0]
       DOCKER_FL_TAG       = split("@", var.flip_fl_image_tag)[0]
       NLB_SUBDOMAIN       = var.flip_nlb_subdomain
       FL_SERVER_PORT      = tostring(var.FL_SERVER_PORT)

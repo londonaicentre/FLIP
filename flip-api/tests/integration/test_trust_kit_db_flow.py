@@ -21,6 +21,8 @@ import io
 import json
 import logging
 import tarfile
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from pathlib import Path
 from unittest.mock import patch
 from uuid import UUID, uuid4
@@ -30,7 +32,7 @@ from cryptography.hazmat.primitives import hashes, padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from fastapi import HTTPException, Response
-from sqlmodel import select
+from sqlmodel import Session, create_engine, select
 
 from flip_api.auth.access_manager import authenticate_trust
 from flip_api.config import get_settings
@@ -179,6 +181,32 @@ def test_issuing_new_keys_refuses_the_old_one(session, world):
     session.expire_all()
     rotation = session.exec(select(TrustsAudit).where(TrustsAudit.action == TrustAuditAction.ROTATED)).one()
     assert rotation.modified_by_user_id == world["trust_admin"]
+
+
+def test_a_first_download_waits_for_one_already_under_way(session, world):
+    """Two first downloads must not both mint keys: the second waits on the trust's row, then finds them issued."""
+    # A first download part-way: the row locked and the new hash written, not yet committed.
+    trust = session.exec(select(Trust).where(Trust.id == world["trust"]).with_for_update()).one()
+    trust.api_key_hash = "the-first-download's"
+    session.add(trust)
+    session.flush()
+    # The suite's engine has one connection for every session; a lock needs a second to wait on it.
+    other = create_engine(session.get_bind().url)
+
+    def download() -> ITrustKitDownload:
+        with Session(other) as own:
+            return _download(own, world["trust"], world["hub_admin"])
+
+    with ThreadPoolExecutor(1) as pool:
+        waiting = pool.submit(download)
+        with pytest.raises(FutureTimeout):
+            waiting.result(timeout=1)
+        session.commit()
+        assert waiting.result(timeout=30).kind == "update"
+    other.dispose()
+
+    session.expire_all()
+    assert session.get(Trust, world["trust"]).api_key_hash == "the-first-download's"
 
 
 def test_no_secret_reaches_the_audit_log_or_the_hub_log(session, world, caplog):
