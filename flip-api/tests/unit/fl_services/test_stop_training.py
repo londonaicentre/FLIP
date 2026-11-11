@@ -58,14 +58,22 @@ def mock_update_status():
         yield mock
 
 
+@pytest.fixture(autouse=True)
+def mock_add_log():
+    with patch("flip_api.fl_services.stop_training.add_log") as mock:
+        yield mock
+
+
 def test_stop_training_success(
-    model_id, mock_db, mock_can_modify_model, user_id, mock_abort_model_training, mock_update_status
+    model_id, mock_db, mock_can_modify_model, user_id, mock_abort_model_training, mock_update_status, mock_add_log
 ):
     result = stop_training(model_id, mock_db, user_id)
 
     assert result is None
     mock_abort_model_training.assert_called_once_with(model_id, mock_db)
     mock_update_status.assert_called_once_with(model_id, ModelStatus.STOPPED, mock_db)
+    # The hub writes the stop line itself: the FL server's late STOPPED report is refused.
+    mock_add_log.assert_called_once_with(model_id, "The job for this model has been stopped.", mock_db, success=False)
 
 
 def test_stop_training_forbidden(model_id, mock_db, mock_can_modify_model, user_id):

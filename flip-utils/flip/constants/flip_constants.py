@@ -47,7 +47,8 @@ class ProdSettings(_Common):
 
     Used when LOCAL_DEV=false. Settings are grouped by which FL role uses them:
 
-    - **Server-only** (fl-server on Central Hub): FLIP_API_INTERNAL_URL, INTERNAL_SERVICE_KEY*
+    - **Server-only** (fl-server on Central Hub): FLIP_API_INTERNAL_URL, INTERNAL_SERVICE_KEY*,
+      JOB_CREDENTIAL_DIR
     - **Client-only** (fl-client on trust side): DATA_ACCESS_API_URL, IMAGING_API_URL,
       TRUST_INTERNAL_SERVICE_KEY*
     - **Shared**: IMAGES_DIR, NET_ID, UPLOADED_FEDERATED_DATA_BUCKET
@@ -70,6 +71,11 @@ class ProdSettings(_Common):
     # never bundled into the FLARE app, so it is never deployed to clients. The
     # fl-server mounts this path; clients do not.
     SERVER_CHECKPOINT_ROOT: str = "/app/server-checkpoints"
+
+    # Where the FL API leaves each job's hub credential, one file named after the model id: a directory
+    # on the hub-local volume it shares with the fl-server, so it never reaches a client. Every hub call
+    # about a model presents that model's credential (flip.core.standard._hub_internal_headers).
+    JOB_CREDENTIAL_DIR: str = ""
 
     # -- Client-only: fl-client on trust side calls local APIs using these --
     DATA_ACCESS_API_URL: HttpUrl = "http://localhost:8001"  # type: ignore[assignment]
@@ -134,6 +140,7 @@ class _FlipConstantsProxy:
     INTERNAL_SERVICE_KEY_HEADER: str
     INTERNAL_SERVICE_KEY: str
     SERVER_CHECKPOINT_ROOT: str
+    JOB_CREDENTIAL_DIR: str
     DATA_ACCESS_API_URL: HttpUrl
     IMAGING_API_URL: HttpUrl
     TRUST_INTERNAL_SERVICE_KEY_HEADER: str

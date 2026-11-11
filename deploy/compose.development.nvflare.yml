@@ -33,6 +33,8 @@ services:
       - BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000
       # Shared volume where the FL API stages a de-bundled eval checkpoint (mirrors Flower's /app/src).
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
+      # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
+      - JOB_CREDENTIAL_DIR=/app/server-checkpoints/.job-credentials
       # GPUs written into the meta.json resource_spec of a job that declares none (configure_meta).
       # Default 0 => empty resource_spec => FLARE hides the GPU from the training worker (CPU).
       - JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS:-0}
@@ -75,6 +77,8 @@ services:
       - BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000
       # Shared volume where the FL API stages a de-bundled eval checkpoint (mirrors Flower's /app/src).
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
+      # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
+      - JOB_CREDENTIAL_DIR=/app/server-checkpoints/.job-credentials
       # Per-job GPU request (see fl-api-net-1). Default 0 => CPU; set >0 to train on the GPU.
       - JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS:-0}
     # The 640 admin client.key, through the host group (see fl-api-net-1).
@@ -125,6 +129,8 @@ services:
       - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
       - AWS_DEFAULT_REGION=${AWS_REGION:?AWS_REGION must be set in the env file}
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
+      # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
+      - JOB_CREDENTIAL_DIR=/app/server-checkpoints/.job-credentials
       - HOME=/home/flip
       # The overridden uid has no /etc/passwd entry, so pwd.getpwuid() raises
       # KeyError: 'getpwuid(): uid not found'. getpass.getuser() consults these first
@@ -191,6 +197,8 @@ services:
       - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
       - AWS_DEFAULT_REGION=${AWS_REGION:?AWS_REGION must be set in the env file}
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
+      # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
+      - JOB_CREDENTIAL_DIR=/app/server-checkpoints/.job-credentials
       - HOME=/home/flip
       # The overridden uid has no /etc/passwd entry, so pwd.getpwuid() raises
       # KeyError: 'getpwuid(): uid not found'. getpass.getuser() consults these first

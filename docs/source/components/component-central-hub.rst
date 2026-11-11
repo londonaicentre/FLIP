@@ -194,6 +194,11 @@ During training the FL server reports to the hub through three endpoints:
 These calls carry the hub's **internal service key**, not a Trust key. They must use the hub's internal URL
 (``FLIP_API_INTERNAL_URL``), never the public address, because the public edge strips that key's header.
 
+Each call also carries a **job credential**. The hub mints one for every job it dispatches and keeps only its
+hash; the FL API leaves it where the FL server reads it and no Trust does. The hub accepts a callback about a
+model only with the credential of that model's own job, and only while that job is still reporting, so one job
+cannot change another model's status, logs or metrics.
+
 FL clients hold no hub credential. Anything a client needs the hub to know goes through the FL server.
 
 ********************************
@@ -214,7 +219,7 @@ through the same provider.
 Authorisation is **role-based**. A user's roles are tied to their identity-provider account, and per-resource
 checks decide who may see or change a project, model or cohort query. The role matrix is on :ref:`rbac-roles`.
 
-Three other keys each secure one connection:
+Four other keys each secure one connection:
 
 .. list-table::
    :header-rows: 1
@@ -229,6 +234,9 @@ Three other keys each secure one connection:
    * - Internal service key
      - FL server → hub
      - The hub only
+   * - Job credential
+     - One job's FL server → hub, for that job's model
+     - The hub only, minted per job; hashed in the database
    * - Trust-internal service key
      - Between services inside a Trust
      - The Trust only; never reaches the hub

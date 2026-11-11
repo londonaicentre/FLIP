@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session
 
-from flip_api.auth.access_manager import authenticate_internal_service
+from flip_api.auth.job_callback import authorise_job_callback
 from flip_api.db.database import get_session
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.model_services.services.model_service import add_log, update_model_status
@@ -34,13 +34,14 @@ def invoke_model_status_update_endpoint(
     model_id: UUID,
     model_status: ModelStatus = Path(..., title="New model status"),
     db: Session = Depends(get_session),
-    _: None = Depends(authenticate_internal_service),
+    _: None = Depends(authorise_job_callback),
 ) -> dict[str, str]:
     """
     Update a model's status. Restricted to internal FL services via internal service key authentication.
 
     This endpoint is internal-only: it accepts requests from the fl-server on the
-    Central Hub (authenticated via INTERNAL_SERVICE_KEY_HEADER).
+    Central Hub (authenticated via INTERNAL_SERVICE_KEY_HEADER), and only for a model
+    that has a job still reporting (``authorise_job_callback``).
 
     Args:
         model_id (UUID): The ID of the model whose status is to be updated.

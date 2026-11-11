@@ -21,7 +21,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.private_services.invoke_model_status_update import (
-    authenticate_internal_service,
+    authorise_job_callback,
     get_session,
 )
 from flip_api.private_services.invoke_model_status_update import router as invoke_model_status_update_router
@@ -36,7 +36,7 @@ MOCKED_ADD_LOG_PATH = "flip_api.private_services.invoke_model_status_update.add_
 @pytest.fixture
 def client(mock_db_session: MagicMock):
     test_app.dependency_overrides[get_session] = lambda: mock_db_session
-    test_app.dependency_overrides[authenticate_internal_service] = lambda: None
+    test_app.dependency_overrides[authorise_job_callback] = lambda: None
     return TestClient(test_app)
 
 
@@ -218,7 +218,7 @@ class TestInvokeModelStatusUpdateEndpoint:
         def mock_auth():
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
-        test_app.dependency_overrides[authenticate_internal_service] = mock_auth
+        test_app.dependency_overrides[authorise_job_callback] = mock_auth
         unauth_client = TestClient(test_app)
 
         response = unauth_client.put(f"/api/model/{model_id}/status/{ModelStatus.INITIATED.value}")
@@ -227,4 +227,4 @@ class TestInvokeModelStatusUpdateEndpoint:
         assert response.json() == {"detail": "Not authenticated"}
 
         # Clean up dependency override
-        test_app.dependency_overrides.pop(authenticate_internal_service)
+        test_app.dependency_overrides.pop(authorise_job_callback)

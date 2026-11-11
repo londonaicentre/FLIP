@@ -948,3 +948,50 @@ class TestFLIPStandardDevUploadAndCleanup:
         flip_dev.cleanup(cleanup_dir)
 
         assert cleanup_dir.exists()
+
+
+class TestJobCredential:
+    """Every hub call about a model presents the credential of that model's job."""
+
+    MODEL_ID = "550e8400-e29b-41d4-a716-446655440000"
+    OTHER_MODEL_ID = "650e8400-e29b-41d4-a716-446655440000"
+    CREDENTIAL = "job-credential-sentinel"  # pragma: allowlist secret (synthetic sentinel)
+
+    @pytest.fixture
+    def credential_dir(self, hub_constants, tmp_path):
+        hub_constants.JOB_CREDENTIAL_DIR = str(tmp_path)
+        (tmp_path / self.MODEL_ID).write_text(self.CREDENTIAL)
+        return tmp_path
+
+    @pytest.mark.parametrize(
+        ("method", "call"),
+        [
+            ("put", lambda flip, model_id: flip.update_status(model_id, ModelStatus.RUNNING)),
+            ("post", lambda flip, model_id: flip.send_metrics("Trust_1", model_id, "loss", 0.5, 1)),
+            ("post", lambda flip, model_id: flip.send_handled_exception("boom", "Trust_1", model_id)),
+            ("post", lambda flip, model_id: flip.send_event(model_id, FLLogEvent.ROUND_STARTED, 1)),
+        ],
+    )
+    def test_hub_calls_present_the_models_job_credential(self, credential_dir, method, call):
+        with patch(f"flip.core.standard.requests.{method}", return_value=Mock(status_code=200, text="OK")) as sent:
+            call(FLIPStandardProd(), self.MODEL_ID)
+
+        assert sent.call_args.kwargs["headers"] == {
+            "x-internal-service-key": "test-internal-key",  # pragma: allowlist secret
+            "X-Job-Credential": self.CREDENTIAL,
+        }
+
+    def test_another_models_credential_is_never_sent(self, credential_dir):
+        with patch("flip.core.standard.requests.put", return_value=Mock(status_code=200, text="OK")) as sent:
+            FLIPStandardProd().update_status(self.OTHER_MODEL_ID, ModelStatus.RUNNING)
+
+        assert "X-Job-Credential" not in sent.call_args.kwargs["headers"]
+
+    def test_no_credential_directory_sends_the_internal_key_alone(self, hub_constants):
+        hub_constants.JOB_CREDENTIAL_DIR = ""
+        with patch("flip.core.standard.requests.put", return_value=Mock(status_code=200, text="OK")) as sent:
+            FLIPStandardProd().update_status(self.MODEL_ID, ModelStatus.RUNNING)
+
+        assert sent.call_args.kwargs["headers"] == {
+            "x-internal-service-key": "test-internal-key"  # pragma: allowlist secret
+        }

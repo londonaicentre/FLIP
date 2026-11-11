@@ -182,6 +182,9 @@ locals {
       # <root>/<model_id>/ here (FLIP#695). Matches the default in
       # flip-utils FlipConstants + compose.prod.nvflare.yml.
       SERVER_CHECKPOINT_ROOT = "/app/server-checkpoints"
+      # Per-job hub credentials: the fl-api writes each job's here, the fl-server's job presents it on
+      # its callbacks to flip-api. On the volume the two tasks share, so never deployed to a trust.
+      JOB_CREDENTIAL_DIR = "/app/server-checkpoints/.job-credentials"
       # Where ecs_tasks.tf mounts the kit (FLIP#1795).
       FL_WORKSPACE = "/workspace"
       # The kit this task runs on (ecs_efs_provision.tf syncs it to EFS). The image
@@ -203,6 +206,9 @@ locals {
       # <root>/<model_id>/ for the fl-server to load (FLIP#695). Same path the
       # fl-server reads. Mounted from the fl_checkpoints EFS access point.
       SERVER_CHECKPOINT_ROOT = "/app/server-checkpoints"
+      # Per-job hub credentials: the fl-api writes each job's here, the fl-server's job presents it on
+      # its callbacks to flip-api. On the volume the two tasks share, so never deployed to a trust.
+      JOB_CREDENTIAL_DIR = "/app/server-checkpoints/.job-credentials"
       # GPUs the fl-api writes into a FLARE job's meta when the job declares none.
       # Requests GPUs on the fl-CLIENTS (trust hosts) — the hub Fargate tasks are
       # CPU-only. Default 0; jobs declare their own in their meta.json (FLIP#70).
@@ -230,6 +236,8 @@ locals {
       UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
       FLIP_API_INTERNAL_URL          = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
       INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
+      # Per-job hub credentials, written by the fl-api on the shared jobs volume (see the FLARE maps).
+      JOB_CREDENTIAL_DIR = "/app/src/.job-credentials"
       # The ServerApp runs in the image's preinstalled environment on every estate:
       # Flower's documented restricted-network mode (exit-code 608 docs). Sealed egress
       # (FLIP#749) leaves the per-run `uv sync` no package index to reach, and elsewhere a
@@ -254,6 +262,7 @@ locals {
       SUPERLINK_HEALTH_ADDRESS    = "${local.service_discovery_names.fl_server}:9097"
       SUPERLINK_ROOT_CERTIFICATES = "/certs/ca.crt"
       FLOWER_SRC_ROOT             = "/app/src"
+      JOB_CREDENTIAL_DIR          = "/app/src/.job-credentials"
       # Rolls the service on a kit-date change; see fl_server's (FLIP#1738).
       FL_KIT_SOURCE = local.flower_creds_base_s3
       # Same bundle-fetch allow-list as the FLARE map (FLIP#905), and the same inert old name.

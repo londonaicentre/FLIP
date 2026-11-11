@@ -43,6 +43,8 @@ services:
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
       - FLOWER_SRC_ROOT=/app/src
+      # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
+      - JOB_CREDENTIAL_DIR=/app/src/.job-credentials
     ports:
       - "${HUB_BIND_ADDRESS:-127.0.0.1}:${FL_API_PORT}:8000"
       # Loopback-only — an exposed debugpy port is arbitrary code execution for anyone
@@ -80,6 +82,8 @@ services:
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-2:9097
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
       - FLOWER_SRC_ROOT=/app/src
+      # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
+      - JOB_CREDENTIAL_DIR=/app/src/.job-credentials
     depends_on:
       - fl-server-net-2
     security_opt:
@@ -153,6 +157,8 @@ services:
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
+      # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
+      - JOB_CREDENTIAL_DIR=/app/src/.job-credentials
       # Results go to the dev object store (FLIP#1291) with its static keys — generic AWS
       # env is right here, the fl-server has no other AWS use. Same variables as the store.
       - AWS_ENDPOINT_URL_S3=http://object-store:9000
@@ -289,6 +295,8 @@ services:
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
+      # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
+      - JOB_CREDENTIAL_DIR=/app/src/.job-credentials
       # Results go to the dev object store (FLIP#1291) with its static keys — generic AWS
       # env is right here, the fl-server has no other AWS use. Same variables as the store.
       - AWS_ENDPOINT_URL_S3=http://object-store:9000
