@@ -180,6 +180,9 @@ playbook; see :ref:`onprem-operator-access`):
    tag, or at the kit's own ``OMOP_DB_TAG`` / ``ORTHANC_TAG`` / ``XNAT_TAG`` pin.
 #. **Confirm**, then write the tag into the kit's ``DOCKER_TAG`` and ``DOCKER_FL_TAG``, so the kit records what is
    installed.
+#. **Create XNAT's prearchive folder** (``$XNAT_DATA_DIR/xnat-data/prearchive/``) as xnat-web's uid if the site
+   lacks it. Before this release XNAT kept its prearchive inside the container, so sessions waiting there at the first
+   upgrade after it are lost.
 #. **Pull and recreate** only the containers whose image or configuration changed. OMOP, Orthanc and XNAT data stay on
    their bind mounts.
 #. **Upgrade XNAT in place**:

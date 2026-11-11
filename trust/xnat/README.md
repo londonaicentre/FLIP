@@ -113,7 +113,10 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
   root `rm -rf` (FLIP#1723). In development any other developer, or a root-created directory, gets
   the `sudo` prompt. Never use it to move a live site to a release. `make upgrade-xnat KIT=<CODE> HUB=<env>` (driven
   by `make -C trust upgrade-trust`) keeps the data dir: it takes a `pg_dumpall` of `xnat-db` into
-  `$XNAT_DATA_DIR/backups/`, refuses to proceed unless the `xnat-data/` tree is owned by the
+  `$XNAT_DATA_DIR/backups/`, creates `xnat-data/prearchive/` as the container uid on a site installed
+  before FLIP#1818 (`make xnat-web-dirs KIT=<CODE> HUB=<env>`, which `upgrade-trust` also runs before it pulls
+  anything; it refuses a kit whose `XNAT_DATA_DIR` holds no `xnat-data/archive/`),
+  refuses to proceed unless the `xnat-data/` tree is owned by the
   container uid (1001, or the kit's `FLIP_UID` — an archive written by a pre-hardening root `xnat-web` needs one
   `chown -R` first), redeploys the stack onto the kit's `XNAT_TAG` (XNAT migrates its own schema on
   boot; migrations are forward-only, hence the dump), then re-runs `configure-xnat.sh`, which
@@ -269,7 +272,7 @@ In development (when `HUB` is not set), `make up` also mounts the local `xnat/pl
 > `xnat/config/container-service-backend-configuration.json`), and only the `xnat-socket-proxy`
 > sidecar mounts `/var/run/docker.sock:ro`, on a stack-scoped internal network no other trust service
 > can reach. Either way the containers it spawns run on the *host*, so they need XNAT's data through
-> host paths — the data directories (`archive`, `build`, `cache`, `tomcat_logs`) must therefore be
+> host paths — the data directories (`archive`, `build`, `cache`, `prearchive`, `tomcat_logs`) must therefore be
 > bind-mounted rather than using named volumes. Per-instance isolation comes from `XNAT_DATA_DIR`,
 > which the kit file's Host-local profile sets and every shipped kit carries (`./xnat-data` in
 > `trust/.env.example`, hence in anything `make new-trust` scaffolds; `./xnat-data-GSTT` /

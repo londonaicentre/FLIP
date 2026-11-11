@@ -843,6 +843,7 @@ _upgrade-trust-apply:
 	$(check_slot_not_taken)
 	$(refuse_flip_uid_change)
 	$(MAKE) --no-print-directory -C xnat xnat-backup-writable KIT=$(KIT) HUB=$(HUB)
+	$(MAKE) --no-print-directory -C xnat xnat-web-dirs KIT=$(KIT) HUB=$(HUB)
 	@echo "⬆️  Upgrading trust services (KIT=$(KIT)) to $(DOCKER_TAG) (FL client $(DOCKER_FL_TAG))..."
 	@echo "$(GPU_STATUS_MSG)"
 	# A site upgrading from before the membership store (FLIP#857) has no directory for it yet.
