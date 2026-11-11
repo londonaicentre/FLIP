@@ -13,6 +13,7 @@
 """Unit tests for ``flip.nvflare.k8s_job_mode``: the fl-client's switch to one Kubernetes pod per job (FLIP#1428)."""
 
 import ast
+import importlib
 import json
 import sys
 from pathlib import Path
@@ -128,6 +129,18 @@ def test_components_the_switch_does_not_own_are_kept_untouched():
     assert _by_id(patched)["site_log_streamer"] == _by_id(KIT_RESOURCES)["site_log_streamer"]
     assert patched["client"] == {"retry_timeout": 30}
     assert "process_launcher" in _by_id(KIT_RESOURCES), "the input is not mutated"
+
+
+def test_each_projects_study_entry_is_written_by_a_flip_component():
+    component = _by_id(patch_resources(KIT_RESOURCES, config_from_env(ENV), WORKSPACE))["project_study"]
+
+    assert component == {
+        "id": "project_study",
+        "path": "flip.nvflare.components.project_study.ProjectStudy",
+        "args": {},
+    }
+    module, _, name = component["path"].rpartition(".")
+    assert hasattr(importlib.import_module(module), name)
 
 
 def test_patching_twice_gives_the_same_resources():

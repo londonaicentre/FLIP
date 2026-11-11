@@ -31,10 +31,11 @@ Three files in ``local/`` change:
   pod gets its GPU from its ``nvidia.com/gpu`` request. The launcher is also told how much local storage
   a job pod may use (``FL_K8S_EPHEMERAL_STORAGE``), which is where a job's streamed studies land.
 - ``comm_config.json``: job pods reach the parent through its Service (``FL_K8S_PARENT_SERVICE``).
-- ``study_runtime.yaml``: the default study, which every FLIP job lands in (FLIP jobs carry no study),
-  gets the job image and the site's pod template. The template is where the chart puts what a job
-  pod needs from the trust: its labels, the trust-internal key and the FL server's
-  host aliases. It is copied into ``local/pod_specs/``, the path NVFLARE resolves it from.
+- ``study_runtime.yaml``: the default study gets the job image and the site's pod template. The template is
+  where the chart puts what a job pod needs from the trust: its labels, the trust-internal key and the FL
+  server's host aliases. It is copied into ``local/pod_specs/``, the path NVFLARE resolves it from. A FLIP job
+  runs in its project's study (FLIP#1678), whose entry ``flip.nvflare.components.project_study`` derives from
+  the default one when the job launches; only a job from a hub older than that lands in the default study.
 
 NVFLARE hands each job pod the parent's workspace path, and the launcher mounts the job's (empty)
 workspace at that same path. The parent's workspace therefore cannot be a directory the job image needs:
@@ -66,8 +67,11 @@ GPU_RESOURCE_MANAGER = "nvflare.app_common.resource_managers.gpu_resource_manage
 PASSTHROUGH_RESOURCE_CONSUMER = (
     "nvflare.app_common.resource_consumers.passthrough_resource_consumer.PassthroughResourceConsumer"
 )
+PROJECT_STUDY_ID = "project_study"
+PROJECT_STUDY_PATH = "flip.nvflare.components.project_study.ProjectStudy"
 # Every launcher id NVFLARE knows, so a kit prepared for another runtime cannot keep a second launcher.
 _REPLACED_COMPONENT_IDS = {
+    PROJECT_STUDY_ID,
     "process_launcher",
     "docker_launcher",
     "k8s_launcher",
@@ -203,6 +207,8 @@ def patch_resources(resources: Mapping[str, Any], mode: K8sJobMode, workspace: s
             },
         }
     )
+    # Writes each project's study entry when its job launches (FLIP#1678).
+    kept.append({"id": PROJECT_STUDY_ID, "path": PROJECT_STUDY_PATH, "args": {}})
     patched["components"] = kept
     return patched
 

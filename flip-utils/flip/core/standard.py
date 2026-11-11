@@ -313,7 +313,7 @@ class FLIPStandardProd(FLIPBase):
 
         endpoint = _join_url(FlipConstants.IMAGING_API_URL, f"upload/images/{FlipConstants.NET_ID}")
 
-        if FlipConstants.IMAGES_TRANSPORT == "stream":
+        if FlipConstants.IMAGES_TRANSPORT != "mount":
             # No mount of the net's upload folder: the files travel in the request (FLIP#1049).
             with ExitStack() as stack:
                 parts = [("files", (Path(f).name, stack.enter_context(open(f, "rb")))) for f in files]

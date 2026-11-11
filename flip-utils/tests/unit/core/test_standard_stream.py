@@ -94,3 +94,30 @@ def test_add_resource_sends_the_files_themselves(stream_constants, tmp_path):
     [(field, (name, handle))] = put.call_args.kwargs["files"]
     assert (field, name) == ("files", "seg.nii.gz")
     assert handle.closed  # the ExitStack closed it after the request
+
+
+@pytest.fixture
+def project_constants(stream_constants):
+    """Only the project's own images folder is mounted (an NVFLARE study mount, FLIP#1678)."""
+    stream_constants.IMAGES_TRANSPORT = "project"
+    return stream_constants
+
+
+def test_a_mounted_project_folder_is_read_by_path(project_constants):
+    response = Mock(status_code=200, text="ok", json=lambda: {"path": "/app/data/images/net-1/proj-1/ACC001"})
+
+    with patch("flip.core.standard.requests.post", return_value=response) as post:
+        result = FLIPStandardProd().get_by_accession_number("proj-1", "ACC001", ResourceType.NIFTI)
+
+    assert str(result) == "/app/data/images/net-1/proj-1/ACC001"
+    assert post.call_args.args[0] == "https://imaging.example.com/download/images/net-1"
+
+
+def test_a_mounted_project_folder_still_uploads_the_files_themselves(project_constants, tmp_path):
+    segmentation = tmp_path / "seg.nii.gz"
+    segmentation.write_bytes(b"seg")
+
+    with patch("flip.core.standard.requests.put", return_value=Mock(status_code=200)) as put:
+        FLIPStandardProd().add_resource("proj-1", "ACC001", "scan-1", "SEG", [str(segmentation)])
+
+    assert put.call_args.args[0] == "https://imaging.example.com/upload/images/net-1/files"

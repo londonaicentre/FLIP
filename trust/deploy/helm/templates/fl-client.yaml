@@ -14,6 +14,12 @@
 {{- if and .Values.flClient.nvflare.jobPods.enabled (ne .Values.flBackend "nvflare") }}
 {{- fail "flClient.nvflare.jobPods.enabled starts each job in its own pod through NVFLARE's Kubernetes job launcher, so it needs flBackend: nvflare." }}
 {{- end }}
+{{- if and $jobPods (not (has .Values.flClient.nvflare.jobPods.images (list "project" "stream"))) }}
+{{- fail "flClient.nvflare.jobPods.images is how a job pod gets its project's studies: project (a mount of the project's folder of the shared images volume) or stream (no volume)." }}
+{{- end }}
+{{- if and $jobPods (eq .Values.flClient.nvflare.jobPods.images "project") (not .Values.sharedImagesPvc.enabled) }}
+{{- fail "flClient.nvflare.jobPods.images: project mounts each project's folder of the shared images volume into its job pods, so it needs sharedImagesPvc.enabled. Without that volume, set images: stream." }}
+{{- end }}
 {{- if and $jobPods .Values.flClient.gpu.enabled }}
 {{- fail "flClient.nvflare.jobPods.enabled gives GPUs to the job pods, not to the fl-client: set flClient.gpu.enabled=false and size the site's GPU pool with flClient.nvflare.jobPods.maxGpus." }}
 {{- end }}

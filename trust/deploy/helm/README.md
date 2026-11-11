@@ -672,7 +672,8 @@ flClient:
     jobPods:
       enabled: true
       maxGpus: 1            # GPUs lent to jobs at once; NVFLARE queues beyond it and the hub says why
-      ephemeralStorage: 10Gi  # local disk per job pod; size it to the largest cohort a job streams
+      images: project       # how a job pod gets its studies: project (a study mount) or stream
+      ephemeralStorage: 10Gi  # local disk per job pod; with images: stream, size it to the largest cohort
       pendingTimeout: 900   # seconds a job pod may wait for its node; size it to a cold scale-up
       tolerations:          # the GPU pool's taint
         - {key: sku, operator: Equal, value: gpu, effect: NoSchedule}
@@ -685,20 +686,34 @@ job pod template (ConfigMap `<release>-fl-job-pod-<net>`): the client's env and 
 client runs `python -m flip.nvflare.k8s_job_mode`, which switches the kit's launcher and declares the GPU
 pool. Each job runs in the fl-client image.
 
+Each FLIP project is an NVFLARE study (FLIP#1678), and NVFLARE takes a study's job image and pod template
+from the site's `local/study_runtime.yaml`, which its launcher re-reads at every launch. The fl-client writes
+a project's entry when one of its jobs is about to launch (`flip.nvflare.components.project_study`, on
+NVFLARE's `BEFORE_JOB_LAUNCH` event), from the template above. The template itself mounts no images, so a
+job from a hub that predates studies, which lands in the default study, streams its studies.
+
 Prerequisites and trade-offs:
 
 - **GPU nodes** carry the NVIDIA device plugin (or the GPU Operator), with a 580+ driver as above.
 - **Prefer a toleration to a `nodeSelector`.** NVFLARE waits only while Kubernetes reports the pod
   `Insufficient` CPU, memory or GPU (what an autoscaler adding a node looks like). A pod no node could ever
   take is `Unschedulable` and fails at once, which is what a `nodeSelector` aimed at a pool at zero reports.
-- **No images volume.** A job pod streams each study from imaging-api into its own run directory
-  (`IMAGES_TRANSPORT=stream`, FLIP#1049) and uploads results the same way, so it holds only its project's
-  studies, a separate GPU pool needs no ReadWriteMany class, and job pods ignore `flClient.affinity`.
-  imaging-api keeps the whole cache, bounded by `IMAGE_CACHE_RETENTION_HOURS`.
-- **Size `ephemeralStorage` to the cohort.** The streamed studies sit on the job pod's own disk, and
-  Kubernetes evicts a pod that writes past `jobPods.ephemeralStorage`, which fails the job. It is the
-  pod's request as well as its limit, so the node must have that much free. For scale: 21 spleen CT
-  studies as NIfTI took 435 MB, and 300 chest X-rays about 80 MB.
+- **A job pod holds only its own project's studies**, by `jobPods.images`. Either way imaging-api keeps the
+  whole cache, bounded by `IMAGE_CACHE_RETENTION_HOURS`, and results are uploaded in the request.
+  - `project` (the default) is NVFLARE's own way to give a job pod its data, a mount set by its study: the
+    project's entry mounts `<net>/<project>`, the project's folder of imaging-api's cache, read-only, at
+    the path imaging-api returns. Nothing is copied into the pod, and the job cannot change or delete what
+    is cached: `CleanupImages` wipes only where a job mounts the net's whole folder, so a project's studies
+    stay cached between its jobs until the retention sweep removes them. It needs `sharedImagesPvc` (the
+    chart refuses without it), and the job pods attach it: on a ReadWriteOnce volume they follow the
+    fl-client's node, and a separate GPU pool needs a ReadWriteMany class.
+  - `stream` mounts no images volume: a job streams each study from imaging-api into its own run directory
+    (`IMAGES_TRANSPORT=stream`, FLIP#1049). Job pods then run on any node and ignore `flClient.affinity`, so
+    a separate GPU pool needs no ReadWriteMany class.
+- **With `images: stream`, size `ephemeralStorage` to the cohort.** The streamed studies sit on the job
+  pod's own disk, and Kubernetes evicts a pod that writes past `jobPods.ephemeralStorage`, which fails the
+  job. It is the pod's request as well as its limit, so the node must have that much free. For scale: 21
+  spleen CT studies as NIfTI took 435 MB, and 300 chest X-rays about 80 MB.
 - **API server egress.** The launcher calls the Kubernetes API from the parent. The default egress allows
   port 443, which covers AKS and EKS. NetworkPolicy matches the API server's real endpoint, so where it
   listens elsewhere (minikube 8443, kind 6443) set `flClient.nvflare.jobPods.apiServer.cidrs` and `.port`,

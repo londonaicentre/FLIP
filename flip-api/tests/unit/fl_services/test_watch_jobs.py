@@ -27,7 +27,11 @@ NOW = datetime(2026, 10, 14, 12, 0, 0)
 PREPARE_TIMEOUT = timedelta(minutes=30)
 
 
-def _job(fl_backend_job_id: str | None = "run-1", started: datetime | None = NOW - timedelta(hours=1)) -> WatchedJob:
+def _job(
+    fl_backend_job_id: str | None = "run-1",
+    started: datetime | None = NOW - timedelta(hours=1),
+    study: str | None = "study-a",
+) -> WatchedJob:
     return WatchedJob(
         job_id=uuid4(),
         model_id=uuid4(),
@@ -35,6 +39,7 @@ def _job(fl_backend_job_id: str | None = "run-1", started: datetime | None = NOW
         started=started,
         net_name="net-1",
         net_endpoint="http://fl-api-net-1:8000",
+        study=study,
     )
 
 
@@ -133,14 +138,15 @@ def test_an_unreachable_fl_api_never_fails_a_job(watched):
     watched["fail"].assert_not_called()
 
 
-def test_each_net_is_listed_once_per_tick(watched):
-    second = _job(fl_backend_job_id="run-2")
-    watched["find"].return_value = [watched["job"], second]
+def test_each_net_is_listed_once_per_tick_with_its_jobs_studies(watched):
+    # Each NVFLARE study only shows its own jobs, so the net is asked for every study it runs, once each.
+    jobs = [_job(study="study-b"), _job(fl_backend_job_id="run-2", study="study-a"), _job(fl_backend_job_id="run-3")]
+    watched["find"].return_value = jobs
     watched["list_jobs"].return_value = _listed(FLJobStatus.RUNNING) + _listed(FLJobStatus.RUNNING, job_id="run-2")
 
     JobWatchdog(strikes=3, prepare_timeout=PREPARE_TIMEOUT).tick(MagicMock(), NOW)
 
-    watched["list_jobs"].assert_called_once_with("http://fl-api-net-1:8000")
+    watched["list_jobs"].assert_called_once_with("http://fl-api-net-1:8000", ["study-a", "study-b"])
 
 
 def test_a_net_with_only_unsubmitted_jobs_is_not_listed(watched):
@@ -201,7 +207,7 @@ def test_one_net_that_cannot_be_listed_does_not_stop_the_others(watched):
     other = _on_net_2(_job(fl_backend_job_id="run-2"))
     watched["find"].return_value = [watched["job"], other]
 
-    def list_jobs(endpoint: str) -> list[IJobMetaData]:
+    def list_jobs(endpoint: str, studies: list[str]) -> list[IJobMetaData]:
         if endpoint == "http://fl-api-net-1:8000":
             raise httpx.InvalidURL("bad endpoint")
         return _listed(FLJobStatus.FAILED, job_id="run-2")

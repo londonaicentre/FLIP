@@ -624,3 +624,20 @@ def test_a_run_override_still_uploads_when_the_default_is_misconfigured(tmp_path
     response, _, _ = _assemble(tmp_path, monkeypatch, resources=JobResources(num_gpus=1), default_gpus=99)
 
     assert response["resources_source"] == "submission"
+
+
+def test_job_sites_are_the_uploaded_jobs_mandatory_clients(tmp_path, monkeypatch):
+    # FLIP#1678: the NVFLARE study a job runs in is registered with exactly the sites the job was uploaded for.
+    from fl_api.utils.upload import job_sites
+
+    monkeypatch.chdir(tmp_path)
+    model_id = "c7f72374-0752-473f-a28f-592e4d8b7a47"
+    job_dir = tmp_path / "upload" / model_id
+    job_dir.mkdir(parents=True)
+    (job_dir / "meta.json").write_text(
+        json.dumps(
+            {"deploy_map": {"app": ["server", "Trust_1", "Trust_2"]}, "mandatory_clients": ["Trust_1", "Trust_2"]}
+        )
+    )
+
+    assert job_sites("upload", model_id) == ["Trust_1", "Trust_2"]
