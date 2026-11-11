@@ -12,8 +12,9 @@
 
 """Integration coverage of the guard on the FL server's callback routes, against the throwaway Postgres.
 
-Which job may report on a model is decided from the model's ``fl_job`` rows and its status, and a status
-callback then rewrites those rows (``update_fl_scheduler``), so the sequence is only meaningful on real rows.
+Which job may report on a model is decided from the model's ``fl_job`` rows, their credential hashes and the
+model's status, and a status callback then rewrites those rows (``update_fl_scheduler``), so the sequence is
+only meaningful on real rows.
 """
 
 from collections.abc import Generator
@@ -25,17 +26,20 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, col, select
 
 from flip_api.auth.access_manager import authenticate_internal_service
+from flip_api.auth.job_callback import JOB_CREDENTIAL_HEADER, hash_job_credential
 from flip_api.db.models.main_models import FLJob, FLLogs, FLNets, FLScheduler, Model
 from flip_api.domain.schemas.status import JobStatus, ModelStatus, NetStatus, ProjectStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.main import app
 
 REFUSAL = {"detail": "Not authorised for this model."}
+CREDENTIAL = "this-job"  # pragma: allowlist secret
+AUTH = {JOB_CREDENTIAL_HEADER: CREDENTIAL}
 
 
 @pytest.fixture
 def fl_server() -> Generator[TestClient, None, None]:
-    """A caller holding the internal service key, as every job's server-side process does."""
+    """A caller holding the internal service key, as every job's server-side process does today."""
     app.dependency_overrides[authenticate_internal_service] = lambda: None
     with TestClient(app) as client:
         yield client
@@ -44,9 +48,12 @@ def fl_server() -> Generator[TestClient, None, None]:
 
 @pytest.fixture
 def make_model(session, user_factory, project_factory, model_factory):
-    """Create a model in ``status`` with one job per entry of ``job_statuses``, oldest first."""
+    """Create a model in ``status`` with one job per entry of ``job_statuses``, oldest first.
 
-    def _make(status: ModelStatus, job_statuses: list[JobStatus]) -> Model:
+    Every job is given ``credential``, so a refusal in these tests is never for want of one.
+    """
+
+    def _make(status: ModelStatus, job_statuses: list[JobStatus], credential: str = CREDENTIAL) -> Model:
         user = user_factory()
         project = project_factory.build(owner_id=user.id, status=ProjectStatus.APPROVED, deleted=False)
         session.add(project)
@@ -56,19 +63,29 @@ def make_model(session, user_factory, project_factory, model_factory):
         session.flush()
         oldest = datetime.utcnow() - timedelta(hours=len(job_statuses))
         for age, job_status in enumerate(job_statuses):
-            session.add(FLJob(model_id=model.id, status=job_status, created=oldest + timedelta(hours=age)))
+            session.add(
+                FLJob(
+                    model_id=model.id,
+                    status=job_status,
+                    created=oldest + timedelta(hours=age),
+                    credential_hash=hash_job_credential(credential),
+                )
+            )
         session.commit()
         return model
 
     return _make
 
 
-def _status(fl_server: TestClient, model_id: UUID, status: ModelStatus) -> int:
-    return fl_server.put(f"/api/model/{model_id}/status/{status.value}").status_code
+def _status(fl_server: TestClient, model_id: UUID, status: ModelStatus, credential: str = CREDENTIAL) -> int:
+    headers = {JOB_CREDENTIAL_HEADER: credential}
+    return fl_server.put(f"/api/model/{model_id}/status/{status.value}", headers=headers).status_code
 
 
-def _log(fl_server: TestClient, model_id: UUID) -> int:
-    return fl_server.post(f"/api/model/{model_id}/logs", json={"log": "line", "success": False}).status_code
+def _log(fl_server: TestClient, model_id: UUID, credential: str = CREDENTIAL) -> int:
+    headers = {JOB_CREDENTIAL_HEADER: credential}
+    body = {"log": "line", "success": False}
+    return fl_server.post(f"/api/model/{model_id}/logs", json=body, headers=headers).status_code
 
 
 def _job_statuses(session: Session, model_id: UUID) -> list[JobStatus]:
@@ -96,11 +113,11 @@ def test_model_with_no_reporting_job_is_left_untouched(fl_server, session, make_
     model = make_model(model_status, job_statuses)
 
     for new_status in (ModelStatus.ERROR, ModelStatus.STOPPED, ModelStatus.RESULTS_UPLOADED, ModelStatus.RUNNING):
-        response = fl_server.put(f"/api/model/{model.id}/status/{new_status.value}")
+        response = fl_server.put(f"/api/model/{model.id}/status/{new_status.value}", headers=AUTH)
         assert (response.status_code, response.json()) == (403, REFUSAL)
-    assert fl_server.post(f"/api/model/{model.id}/logs", json={"log": "line"}).json() == REFUSAL
+    assert fl_server.post(f"/api/model/{model.id}/logs", json={"log": "line"}, headers=AUTH).json() == REFUSAL
     metric = {"fl_client_name": "Trust_1", "global_round": 1, "label": "loss", "value": 0.5}
-    assert fl_server.post(f"/api/model/{model.id}/metrics", json=metric).json() == REFUSAL
+    assert fl_server.post(f"/api/model/{model.id}/metrics", json=metric, headers=AUTH).json() == REFUSAL
 
     session.expire_all()
     assert session.get(Model, model.id).status == model_status
@@ -109,9 +126,42 @@ def test_model_with_no_reporting_job_is_left_untouched(fl_server, session, make_
 
 
 def test_unknown_model_gets_the_same_refusal(fl_server):
-    response = fl_server.put(f"/api/model/{uuid4()}/status/{ModelStatus.ERROR.value}")
+    response = fl_server.put(f"/api/model/{uuid4()}/status/{ModelStatus.ERROR.value}", headers=AUTH)
 
     assert (response.status_code, response.json()) == (403, REFUSAL)
+
+
+def test_job_reports_on_its_own_model_and_no_other(fl_server, session, make_model):
+    """Two jobs running at once, each on its own net: neither can write to the other's model."""
+    mine = make_model(ModelStatus.RUNNING, [JobStatus.IN_PROGRESS], credential="mine")
+    theirs = make_model(ModelStatus.RUNNING, [JobStatus.IN_PROGRESS], credential="theirs")
+
+    for new_status in (ModelStatus.ERROR, ModelStatus.STOPPED, ModelStatus.RESULTS_UPLOADED):
+        assert _status(fl_server, theirs.id, new_status, credential="mine") == 403
+    assert _log(fl_server, theirs.id, credential="mine") == 403
+    metric = {"fl_client_name": "Trust_1", "global_round": 1, "label": "loss", "value": 0.5}
+    headers = {JOB_CREDENTIAL_HEADER: "mine"}
+    assert fl_server.post(f"/api/model/{theirs.id}/metrics", json=metric, headers=headers).status_code == 403
+    # The internal service key alone, which every job's process holds, is not enough either.
+    assert fl_server.put(f"/api/model/{theirs.id}/status/{ModelStatus.ERROR.value}").status_code == 403
+
+    session.expire_all()
+    assert session.get(Model, theirs.id).status == ModelStatus.RUNNING
+    assert _job_statuses(session, theirs.id) == [JobStatus.IN_PROGRESS]
+    assert _log_count(session, theirs.id) == 0
+
+    assert _log(fl_server, mine.id, credential="mine") == 200
+    assert _status(fl_server, mine.id, ModelStatus.ERROR, credential="mine") == 200
+
+
+def test_job_dispatched_without_a_credential_cannot_report(fl_server, session, make_model):
+    model = make_model(ModelStatus.RUNNING, [JobStatus.IN_PROGRESS])
+    job = session.exec(select(FLJob).where(FLJob.model_id == model.id)).one()
+    job.credential_hash = None
+    session.commit()
+
+    assert _status(fl_server, model.id, ModelStatus.ERROR) == 403
+    assert fl_server.put(f"/api/model/{model.id}/status/{ModelStatus.ERROR.value}").status_code == 403
 
 
 def test_running_job_reports_through_to_its_results(fl_server, session, make_model):

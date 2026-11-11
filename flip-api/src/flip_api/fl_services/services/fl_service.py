@@ -12,6 +12,7 @@
 
 import json
 import os
+import secrets
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
@@ -20,6 +21,7 @@ import httpx
 from sqlalchemy import Column
 from sqlmodel import Session, col, select
 
+from flip_api.auth.job_callback import hash_job_credential
 from flip_api.config import get_settings
 from flip_api.db.database import get_engine
 from flip_api.db.models.main_models import FLJob, Trust
@@ -708,6 +710,23 @@ def _job_gpu_override(fl_job_id: UUID, session: Session) -> IJobResources | None
     return IJobResources(num_gpus=job.num_gpus)
 
 
+def _mint_job_credential(fl_job_id: UUID, session: Session) -> str:
+    """Mint the credential the job's FL server presents on its callbacks, keeping only its hash.
+
+    Args:
+        fl_job_id (UUID): The FL job.
+        session (Session): SQLModel session.
+
+    Returns:
+        str: the plaintext, which goes to the FL API with the app and nowhere else.
+    """
+    credential = secrets.token_urlsafe(32)
+    job = session.exec(select(FLJob).where(FLJob.id == fl_job_id)).one()
+    job.credential_hash = hash_job_credential(credential)
+    session.commit()
+    return credential
+
+
 _RESOURCE_SOURCES = {
     "submission": "set for this run",
     "meta.json": "from the job's meta.json",
@@ -797,6 +816,7 @@ def start_training(
         trusts=clients,
         bundle_urls=bundle_urls,
         resources=_job_gpu_override(fl_job_id, session),
+        job_credential=_mint_job_credential(fl_job_id, session),
     )
 
     # Gate before the (up to 900s) app transfer, and again right before submission: submit_job

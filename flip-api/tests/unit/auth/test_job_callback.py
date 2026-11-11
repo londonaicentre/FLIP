@@ -18,7 +18,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from flip_api.auth.job_callback import authorise_job_callback, reporting_jobs
+from flip_api.auth.job_callback import authorise_job_callback, hash_job_credential, reporting_jobs
 from flip_api.db.models.main_models import FLJob, Model
 from flip_api.domain.schemas.status import JobStatus, ModelStatus
 
@@ -64,15 +64,35 @@ def test_reporting_jobs(job_statuses: list[JobStatus], model_status: ModelStatus
     assert reporting_jobs(uuid4(), session) == [jobs[index] for index in reporting]
 
 
-def test_callback_is_accepted_for_a_reporting_job() -> None:
-    with patch("flip_api.auth.job_callback.reporting_jobs", return_value=[MagicMock()]):
-        authorise_job_callback(uuid4(), MagicMock(), None)
+def _job(credential: str | None) -> FLJob:
+    return FLJob(model_id=uuid4(), credential_hash=hash_job_credential(credential) if credential else None)
 
 
-def test_callback_is_refused_without_a_reporting_job() -> None:
-    with patch("flip_api.auth.job_callback.reporting_jobs", return_value=[]):
-        with pytest.raises(HTTPException) as refused:
-            authorise_job_callback(uuid4(), MagicMock(), None)
+def _authorise(presented: str | None, jobs: list[FLJob]) -> None:
+    with patch("flip_api.auth.job_callback.reporting_jobs", return_value=jobs):
+        authorise_job_callback(uuid4(), presented, MagicMock(), None)
+
+
+def test_callback_with_the_credential_of_a_reporting_job_is_accepted() -> None:
+    _authorise("mine", [_job("other"), _job("mine")])
+
+
+@pytest.mark.parametrize(
+    ("presented", "jobs"),
+    [
+        ("mine", []),  # the model has no reporting job
+        ("mine", [_job("other")]),  # another job's credential
+        (None, [_job("other")]),  # no credential
+        ("", [_job("other")]),
+        # A job dispatched before credentials existed has none, and nothing stands in for it.
+        (None, [_job(None)]),
+        ("", [_job(None)]),
+        ("mine", [_job(None)]),
+    ],
+)
+def test_callback_is_refused(presented: str | None, jobs: list[FLJob]) -> None:
+    with pytest.raises(HTTPException) as refused:
+        _authorise(presented, jobs)
 
     assert refused.value.status_code == 403
     assert refused.value.detail == "Not authorised for this model."

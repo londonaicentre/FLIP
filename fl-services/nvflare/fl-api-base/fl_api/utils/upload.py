@@ -27,6 +27,7 @@ from fl_api.utils.constants import (
     SERVER_CHECKPOINTS_PREFIX,
 )
 from fl_api.utils.io_utils import read_config
+from fl_api.utils.job_credential import deliver_job_credential
 from fl_api.utils.job_resources import JobMeta, default_job_resources, parse_job_meta, resolve_job_resources
 from fl_api.utils.logger import logger
 from fl_api.utils.prepare_config import (
@@ -383,6 +384,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
 
     # The job's meta.json, with the run's sites and GPU count: job-level, so written once.
     configure_meta(job_dir, model_id, body.trusts, job_meta, resources)
+
+    deliver_job_credential(model_id, body.job_credential)
 
     response = {
         "message": f"Application uploaded successfully to: {job_dir}",

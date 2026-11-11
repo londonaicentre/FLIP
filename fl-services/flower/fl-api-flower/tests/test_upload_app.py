@@ -543,6 +543,28 @@ def _minimal_upload(model_id, mock_requests_get, **extra):
     }
 
 
+def test_upload_app_delivers_the_job_credential_outside_the_app(
+    client, upload_dir, mock_requests_get, monkeypatch, caplog
+):
+    """The app directory is built into the FAB every trust receives, so the credential must not be in it."""
+    caplog.set_level(logging.INFO)
+    credential = "job-credential-sentinel"  # pragma: allowlist secret (synthetic sentinel)
+    credential_dir = upload_dir / ".job-credentials"
+    monkeypatch.setenv("JOB_CREDENTIAL_DIR", str(credential_dir))
+    model_id = str(uuid4())
+    body = _minimal_upload(model_id, mock_requests_get, job_credential=credential)
+
+    response = client.post(f"/upload_app/{model_id}", json=body)
+
+    assert response.status_code == 200
+    assert (credential_dir / model_id).read_text() == credential
+    in_app = [path for path in (upload_dir / model_id).rglob("*") if path.is_file()]
+    assert in_app
+    assert all(credential not in path.read_text() for path in in_app)
+    assert credential not in response.text
+    assert credential not in caplog.text
+
+
 def test_upload_app_records_a_gpu_request_and_says_flower_does_not_enforce_it(client, upload_dir, mock_requests_get):
     """Flower's deployment runtime places no job by GPU, so the request is echoed as recorded, not applied."""
     model_id = str(uuid4())

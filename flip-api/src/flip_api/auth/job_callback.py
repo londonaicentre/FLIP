@@ -10,12 +10,19 @@
 # limitations under the License.
 #
 
-"""Authorisation of the FL server's callbacks about one model (status, logs, metrics)."""
+"""Authorisation of the FL server's callbacks about one model (status, logs, metrics).
 
+Each job is dispatched with its own credential (``fl_service.start_training``), of which the hub keeps the
+hash. The job's FL server presents it on every callback, so a job can report on its own model and no other.
+"""
+
+import hashlib
+import hmac
 from typing import cast
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Security, status
+from fastapi.security.api_key import APIKeyHeader
 from sqlalchemy import Column
 from sqlmodel import Session, select
 
@@ -24,8 +31,17 @@ from flip_api.db.database import get_session
 from flip_api.db.models.main_models import FLJob, Model
 from flip_api.domain.schemas.status import JobStatus, ModelStatus
 
+# Fixed on both sides: flip-utils sends it (flip.core.standard.JOB_CREDENTIAL_HEADER).
+JOB_CREDENTIAL_HEADER = "X-Job-Credential"
+_job_credential_header = APIKeyHeader(name=JOB_CREDENTIAL_HEADER, scheme_name="jobCredential", auto_error=False)
+
 # One answer for every refusal, so a caller cannot tell a model that does not exist from one it may not report on.
 _REFUSAL = "Not authorised for this model."
+
+
+def hash_job_credential(credential: str) -> str:
+    """SHA-256 hex digest of a job credential: a 256-bit random token, so a slow hash would add nothing."""
+    return hashlib.sha256(credential.encode()).hexdigest()
 
 
 def reporting_jobs(model_id: UUID, session: Session) -> list[FLJob]:
@@ -58,17 +74,22 @@ def reporting_jobs(model_id: UUID, session: Session) -> list[FLJob]:
 
 def authorise_job_callback(
     model_id: UUID,
+    credential: str | None = Security(_job_credential_header),
     db: Session = Depends(get_session),
     _: None = Depends(authenticate_internal_service),
 ) -> None:
-    """Refuse a callback about a model that has no job left to report on it.
+    """Refuse a callback unless it carries the credential of a job still reporting on the model.
 
     Args:
         model_id (UUID): The model named in the route's path.
+        credential (str | None): The job credential from the request header.
         db (Session): The database session.
 
     Raises:
-        HTTPException: 403 when the model has no reporting job.
+        HTTPException: 403 when the credential is missing or is not that of a reporting job of this model.
     """
-    if not reporting_jobs(model_id, db):
+    presented = hash_job_credential(credential or "")
+    # Every candidate is compared, so timing does not say which job matched.
+    matches = [hmac.compare_digest(presented, job.credential_hash or "") for job in reporting_jobs(model_id, db)]
+    if not any(matches):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_REFUSAL)

@@ -82,20 +82,50 @@ def _join_url(base: object, path: str) -> str:
     return f"{str(base).rstrip('/')}/{path.lstrip('/')}"
 
 
-def _hub_internal_headers() -> dict[str, str]:
-    """Return the auth header sent on every hub-internal call.
+# The header the hub reads a job's credential from (flip_api.auth.job_callback.JOB_CREDENTIAL_HEADER).
+JOB_CREDENTIAL_HEADER = "X-Job-Credential"
 
-    Used by fl-server on the Central Hub for outbound calls to flip-api
-    (update_status, send_metrics, send_handled_exception). The receiver
-    (flip-api) compares the value with a constant-time compare against its
-    own copy. Distinct boundary from the trust-internal key — a leak in one
-    trust never affects this hub-side path and vice versa.
+
+def _job_credential(model_id: str) -> str | None:
+    """Read the hub credential of the model's job, left by the FL API in ``JOB_CREDENTIAL_DIR``.
+
+    Args:
+        model_id (str): The hub's model id, which names the file.
 
     Returns:
-        dict[str, str]: Single-entry dict mapping the configured header name to
-        the hub internal-service key.
+        str | None: The credential, or None when there is none to read: a run submitted outside the
+        hub, or by a hub that mints none.
     """
-    return {FlipConstants.INTERNAL_SERVICE_KEY_HEADER: FlipConstants.INTERNAL_SERVICE_KEY}
+    if not FlipConstants.JOB_CREDENTIAL_DIR:
+        return None
+    try:
+        return Path(FlipConstants.JOB_CREDENTIAL_DIR, model_id).read_text()
+    except OSError:
+        return None
+
+
+def _hub_internal_headers(model_id: str) -> dict[str, str]:
+    """Return the auth headers sent on every hub-internal call about a model.
+
+    Used by fl-server on the Central Hub for outbound calls to flip-api
+    (update_status, send_metrics, send_handled_exception, send_event). The hub
+    checks the internal-service key against its own copy, and the job credential
+    against the one it minted for this model's job, so a job can report on its
+    own model only. Distinct boundary from the trust-internal key — a leak in one
+    trust never affects this hub-side path and vice versa.
+
+    Args:
+        model_id (str): The model the call is about.
+
+    Returns:
+        dict[str, str]: The hub internal-service key under its configured header name, plus
+        the model's job credential when there is one.
+    """
+    headers = {FlipConstants.INTERNAL_SERVICE_KEY_HEADER: FlipConstants.INTERNAL_SERVICE_KEY}
+    credential = _job_credential(model_id)
+    if credential:
+        headers[JOB_CREDENTIAL_HEADER] = credential
+    return headers
 
 
 class FLIPStandardProd(FLIPBase):
@@ -311,7 +341,7 @@ class FLIPStandardProd(FLIPBase):
             )
             response = requests.put(
                 endpoint,
-                headers=_hub_internal_headers(),
+                headers=_hub_internal_headers(model_id),
                 timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
@@ -379,7 +409,7 @@ class FLIPStandardProd(FLIPBase):
             response = requests.post(
                 endpoint,
                 json=payload,
-                headers=_hub_internal_headers(),
+                headers=_hub_internal_headers(model_id),
                 timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
@@ -438,7 +468,7 @@ class FLIPStandardProd(FLIPBase):
             response = requests.post(
                 endpoint,
                 json=payload,
-                headers=_hub_internal_headers(),
+                headers=_hub_internal_headers(model_id),
                 timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
@@ -504,7 +534,7 @@ class FLIPStandardProd(FLIPBase):
             response = requests.post(
                 endpoint,
                 json=payload,
-                headers=_hub_internal_headers(),
+                headers=_hub_internal_headers(model_id),
                 # The except arms cannot catch a hang: a hub that accepts TCP
                 # and then stalls would freeze result acceptance mid-round.
                 timeout=_HUB_POST_TIMEOUT_SECONDS,
