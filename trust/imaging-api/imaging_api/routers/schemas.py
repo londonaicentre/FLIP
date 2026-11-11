@@ -409,6 +409,17 @@ class DownloadImagesResponse(BaseModel):
     path: str
 
 
+class StudyFile(BaseModel):
+    """One file of a study: its place in a download, and in the project's directory of XNAT's archive."""
+
+    path: str
+    archive: str
+
+
+class StudyLayoutResponse(BaseModel):
+    files: list[StudyFile]
+
+
 # ##########################
 # Upload
 # ##########################
