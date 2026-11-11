@@ -26,6 +26,7 @@ study streams its studies, and a study that is not a project id gets no entry, s
 does not start the job.
 """
 
+import logging
 import threading
 import uuid
 from pathlib import Path
@@ -42,12 +43,14 @@ from nvflare.apis.job_def import JobMetaKey
 from flip.constants import FlipConstants
 from flip.nvflare.k8s_job_mode import STUDY_RUNTIME, _write_json
 
+logger = logging.getLogger(__name__)
+
 # The chart's name for the shared images volume in the job-pod template.
 IMAGES_VOLUME = "images"
 # ...and for XNAT's own volume, whose archive/<XNAT project> is the project's directory.
 ARCHIVE_VOLUME = "xnat-archive"
 IMAGES_TRANSPORT = "IMAGES_TRANSPORT"
-_REQUEST_TIMEOUT = 10
+_REQUEST_TIMEOUT = 30
 
 
 def is_project(study: object) -> bool:
@@ -86,20 +89,24 @@ def mount_project_images(pod: dict[str, Any], project: str) -> None:
 def xnat_project(project: str) -> str | None:
     """The XNAT project holding the hub project's sessions, from imaging-api; None until it has archived one.
 
-    Raises:
-        requests.RequestException: if imaging-api cannot answer.
+    None as well when imaging-api cannot say: a job of a project with no imaging must still start while XNAT is
+    down, and a pod with no mount streams, which keeps it to its own project.
     """
     url = str(FlipConstants.IMAGING_API_URL).rstrip("/")
     headers = {FlipConstants.TRUST_INTERNAL_SERVICE_KEY_HEADER: FlipConstants.TRUST_INTERNAL_SERVICE_KEY}
-    projects = requests.get(f"{url}/projects/", headers=headers, timeout=_REQUEST_TIMEOUT)
-    projects.raise_for_status()
-    ids = [p["ID"] for p in projects.json() if p.get("secondary_ID") == project]
-    # FLIP names its XNAT projects with a UUID; anything else is not used as a folder name here.
-    if len(ids) != 1 or not is_project(ids[0]):
+    try:
+        projects = requests.get(f"{url}/projects/", headers=headers, timeout=_REQUEST_TIMEOUT)
+        projects.raise_for_status()
+        ids = [p["ID"] for p in projects.json() if p.get("secondary_ID") == project]
+        # FLIP names its XNAT projects with a UUID; anything else is not used as a folder name here.
+        if len(ids) != 1 or not is_project(ids[0]):
+            return None
+        experiments = requests.get(f"{url}/projects/{ids[0]}/experiments", headers=headers, timeout=_REQUEST_TIMEOUT)
+        experiments.raise_for_status()
+        return ids[0] if experiments.json() else None
+    except requests.RequestException as e:
+        logger.warning(f"imaging-api could not name project {project}'s XNAT archive ({e}); its job pods will stream")
         return None
-    experiments = requests.get(f"{url}/projects/{ids[0]}/experiments", headers=headers, timeout=_REQUEST_TIMEOUT)
-    experiments.raise_for_status()
-    return ids[0] if experiments.json() else None
 
 
 def mount_project_archive(pod: dict[str, Any], project: str) -> None:

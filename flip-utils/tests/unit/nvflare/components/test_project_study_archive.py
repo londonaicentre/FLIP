@@ -128,12 +128,11 @@ def test_without_one_archived_xnat_project_the_pod_mounts_nothing_and_streams(
     assert job["env"] == [STREAM]
 
 
-def test_the_study_gets_no_entry_when_imaging_api_cannot_answer(local, imaging_api):
-    """NVFLARE then has no image for the study and does not start the job."""
-    with (
-        patch("flip.nvflare.components.project_study.requests.get", side_effect=requests.ConnectionError("down")),
-        pytest.raises(requests.ConnectionError),
-    ):
+def test_the_pod_streams_when_imaging_api_cannot_answer(local, imaging_api):
+    """A job of a project with no imaging must start while XNAT is down; a pod with no mount stays in its project."""
+    with patch("flip.nvflare.components.project_study.requests.get", side_effect=requests.ReadTimeout("slow")):
         add_project_study(local, PROJECT)
 
-    assert set(json.loads((local / STUDY_RUNTIME).read_text())["studies"]) == {"default"}
+    job = _job(local)
+    assert job["volumeMounts"] == [{"name": "dshm", "mountPath": "/dev/shm"}]
+    assert job["env"] == [STREAM]
