@@ -34,6 +34,7 @@ services:
     environment:
       - DEBUG=${DEBUG}
       - SUPERLINK_ADDRESS=fl-server-net-1:8000
+      - FL_API_KEY=${FL_API_KEY}
       # Origin allow-list for the server-side bundle fetch (FLIP#905, #1291): the only origin the
       # FL API may download an app bundle from — the dev object store flip-api presigns bundle
       # URLs against (AWS_ENDPOINT_URL_S3 in its service block; path-style URLs, host exactly
@@ -73,6 +74,7 @@ services:
     environment:
       - DEBUG=${DEBUG}
       - SUPERLINK_ADDRESS=fl-server-net-2:8000
+      - FL_API_KEY=${FL_API_KEY}
       # Bundle-fetch origin allow-list: the dev object store, like fl-api-net-1 (FLIP#905, #1291).
       - BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-2:9097
@@ -203,7 +205,7 @@ services:
   # address and port the kits already dial. No capabilities: the host group reads the key.
   fl-fleet-proxy-net-1:
     image: ${DOCKER_FL_REGISTRY}flower-fleet-proxy:${DOCKER_FL_TAG}
-    group_add: ["${DOCKER_GID:-1000}"]
+    group_add: ["${DOCKER_GID:?DOCKER_GID must be the host user's gid; make up exports it}"]
     volumes:
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
     environment:
@@ -235,6 +237,7 @@ services:
       # 0, leaving SuperNode keys unlabelled and FL metrics attributed to unknown_client
       # (FLIP#957).
       - FL_API_ADDRESS=http://fl-api-net-1:8000
+      - FL_API_KEY=${FL_API_KEY}
       # The script reads ${TRUST_NAMES} as a label list, but the underlying identity it's
       # labelling is the per-slot SuperNode key — one entry per provisioned slot. Feed
       # FL_KIT_SLOT_NAMES through so trusts admin-created later (and bound to a slot via
@@ -328,7 +331,7 @@ services:
   # The trusts' only route to the net-2 SuperLink — see fl-fleet-proxy-net-1 above.
   fl-fleet-proxy-net-2:
     image: ${DOCKER_FL_REGISTRY}flower-fleet-proxy:${DOCKER_FL_TAG}
-    group_add: ["${DOCKER_GID:-1000}"]
+    group_add: ["${DOCKER_GID:?DOCKER_GID must be the host user's gid; make up exports it}"]
     volumes:
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
     environment:
@@ -355,6 +358,7 @@ services:
       - SUPERLINK_ADDRESS=fl-server-net-2:8000
       # Service name — see net-1 above.
       - FL_API_ADDRESS=http://fl-api-net-2:8000
+      - FL_API_KEY=${FL_API_KEY}
       # See net-1 above — feed FL_KIT_SLOT_NAMES so all provisioned slots get labelled.
       - TRUST_NAMES=${FL_KIT_SLOT_NAMES}
     volumes:

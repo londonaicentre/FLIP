@@ -26,6 +26,8 @@ failure that actually happened rather than a hypothetical:
   uid is absent from the image's ``/etc/passwd``: ``pwd.getpwuid()`` raises, ``HOME``
   falls back to ``/``, and the symptom surfaces three layers away as torch's
   "Artifact of type=precompile already registered in mega-cache artifact factory".
+- Host supplementary groups must require ``DOCKER_GID``: guessing 1000 can leave
+  provisioned keys unreadable or grant a different host group's access (FLIP#1404).
 - A prod service that writes a host bind mount runs as ``${FLIP_UID:-<image uid>}``: a kit's
   FLIP_UID re-points it to the operator's own ids, unset leaves the image's baked user
   (FLIP#1731). The defaults are pinned here so a compose edit cannot move a default site, and
@@ -80,8 +82,8 @@ PROD_COMPOSE_GLOBS = (
 )
 # The prod services that write a host bind mount, and each image's own uid:gid — what the service
 # runs as when the kit sets no FLIP_UID (FLIP#1731). omop-db's is root: its entrypoint re-owns the
-# data dir, then drops to postgres. xnat-db is absent on purpose: its pinned postgres:12.2-alpine
-# predates nss_wrapper in the Alpine variants, so it keeps the root entrypoint under FLIP_UID too.
+# data dir, then drops to postgres. xnat-db is absent on purpose: every existing site's database is
+# uid 70's, so it keeps the root entrypoint, which re-owns it, under FLIP_UID too.
 PROD_BIND_MOUNT_WRITERS = {
     ("compose_trust.prod.yml", "omop-db"): "0:0",
     ("compose_trust.prod.yml", "orthanc"): "999:999",
@@ -438,6 +440,24 @@ def check_no_uname_runtime_paths(failures: list[str]) -> None:
                 )
 
 
+def check_host_gid_is_required(failures: list[str]) -> None:
+    """Never guess the host group that reads provisioned keys and writes shared dev directories."""
+    for glob in ("deploy/**/compose*.yml", "trust/deploy/**/compose*.yml", "fl-services/*/compose*.yml"):
+        paths = sorted(REPO_ROOT.glob(glob))
+        if not paths:
+            failures.append(f"{glob}: matched no compose files")
+        for path in paths:
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                # Any DOCKER_GID left once the required form is removed is a default, a bare or an unbraced use.
+                if "DOCKER_GID" in re.sub(r"\$\{DOCKER_GID:\?[^}]*\}", "", line):
+                    failures.append(
+                        f"{path.relative_to(REPO_ROOT)}:{number}: `{line.strip()}` must require a non-empty "
+                        "DOCKER_GID with ${DOCKER_GID:?...}; the Makefile exports the host gid (FLIP#1404)."
+                    )
+
+
 def main() -> int:
     failures: list[str] = []
     try:
@@ -449,6 +469,7 @@ def main() -> int:
         check_images_hand_back_to_their_user(failures)
         check_container_service_jobs_follow_flip_uid(failures)
         check_no_uname_runtime_paths(failures)
+        check_host_gid_is_required(failures)
     except ValueError as exc:
         failures.append(str(exc))
 

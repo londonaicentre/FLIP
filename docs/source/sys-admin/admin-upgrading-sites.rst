@@ -187,6 +187,9 @@ playbook; see :ref:`onprem-operator-access`):
    - dump ``xnat-db`` with ``pg_dumpall`` into ``$XNAT_DATA_DIR/backups/``, written as xnat-web's uid. Without a complete
      dump the upgrade stops before touching XNAT. An upgrade before this release made ``backups/`` as root; the first
      upgrade after it stops there and prints the one-time ``chown`` to run as root;
+   - when the release moves ``xnat-db`` to a newer PostgreSQL major (12 to 16 with FLIP#1812), stop ``xnat-web`` and
+     dump the ``xnat`` database beside the running cluster. The new ``xnat-db`` restores it into a fresh cluster on its
+     first start, before XNAT can connect, and leaves the old cluster where it was;
    - redeploy the XNAT stack on the new image (XNAT migrates its own schema on boot);
    - re-apply XNAT's configuration: DICOM receiver, DQR lockdown, PACS registration, PACS availability schedule (from
      the kit, see step 2), Container Service backend and the dcm2niix command.
@@ -195,12 +198,30 @@ The upgrade never re-seeds data and never resets XNAT.
 
 .. note::
 
+   **After a PostgreSQL major upgrade** the old XNAT database stays on disk, so going back to the previous release
+   (pin ``XNAT_TAG`` to it) still finds it. Once XNAT is confirmed on the new release, remove it:
+
+   .. code-block:: shell
+
+      make -C trust/xnat xnat-db-remove-old-cluster KIT=<CODE> HUB=<env>          # shows what would go
+      make -C trust/xnat xnat-db-remove-old-cluster KIT=<CODE> HUB=<env> YES=1    # deletes it
+
+   ``xnat-db`` refuses to start beside an older database it has no dump of, rather than starting XNAT empty. That
+   happens when the new image is deployed by anything other than ``make upgrade-onprem-trust`` or
+   ``make -C trust upgrade-trust``. Pin ``XNAT_TAG`` back to the previous release, then upgrade with one of those.
+   Resume an upgrade that failed or was interrupted the same way, never with a plain deploy. An upgrade after a
+   rollback keeps the newer database the site rolled back from as ``pg16.replaced-<timestamp>/``, until the command
+   above removes it.
+
+.. note::
+
    **Release tags versus** ``sha-`` **tags.** A release tag is built for every image. A ``sha-`` tag only exists for
    the images that commit changed, so ``TAG=sha-…`` is refused when any image was never built at it. To move to a
    ``sha-`` tag anyway, hold the missing images at their own build: ``FL_TAG=sha-…`` for the FL client, and
    ``OMOP_DB_TAG`` / ``ORTHANC_TAG`` in the kit for those data services. ``XNAT_TAG`` pins all three XNAT images
    together, whose builds no longer share ``sha-`` tags. Set it to a release tag (or ``stag``/``prod``) published
-   for all three images.
+   for all three images. Never pin XNAT ahead of the trust APIs: from the release that ships DQR 3.1.0, xnat-web
+   needs imaging-api from the same release or later (see the Kubernetes note on ``xnat.image.pin`` below).
 
 .. list-table:: Exit codes
    :header-rows: 1
@@ -285,6 +306,18 @@ populated data, and the API deployments roll onto the new images.
 
 ``KUBE_CONTEXT`` defaults to kubectl's current context; name it on a workstation with several clusters.
 
+When the release moves ``xnat-db`` to a newer PostgreSQL major (12 to 16 with FLIP#1812), the command first scales
+``xnat-web`` to zero and dumps the ``xnat`` database onto the ``xnat-db`` volume; ``helm upgrade`` then starts the new
+``xnat-db``, which restores the dump into a fresh cluster before XNAT can connect, and brings ``xnat-web`` back. The old
+cluster stays on the volume for a rollback until
+``make -C trust/deploy/helm xnat-db-remove-old-cluster [YES=1]`` removes it. A plain ``helm upgrade`` takes no dump, so
+the new ``xnat-db`` refuses to start beside the old cluster. To recover, pin ``xnat.image.pin`` (or the kit's
+``XNAT_TAG``) to the previous release and redeploy, then delete the ``xnat-db`` pod, because Kubernetes does not replace a
+crash-looping StatefulSet pod on its own. When it is up on the old release, remove the pin and use ``upgrade-trust-k8s``.
+It refuses in the same way after a rollback, when the old cluster has run again since the dump was taken: upgrade with
+the command again, which takes a new dump. Resume an upgrade that failed or was interrupted with the command too, never
+a plain ``helm upgrade``.
+
 .. warning::
 
    Unlike Compose, the chart's mock-data seed also runs on upgrade. While ``trustData.seed.enabled`` is on, every
@@ -295,7 +328,8 @@ populated data, and the API deployments roll onto the new images.
 older than the xnat-db role split holds a single superuser named ``xnat`` and no ``postgres`` role. Releases
 that carry FLIP#1658 connect as whichever of the two roles the volume has, so the upgrade completes and the
 application role's password is re-synced; on such a site the application role stays the database superuser
-until it is converged (see :ref:`ts-k8s-xnat-db-roles`). One related pre-flight check: a release from the
+until it is converged (see :ref:`ts-k8s-xnat-db-roles`). The move to PostgreSQL 16 converges it: the database is
+restored into a cluster that carries the current two roles. One related pre-flight check: a release from the
 ``guard-xnat-db-passwords.sh`` era refuses to start xnat-db when the two XNAT passwords are equal
 (``XNAT_DATASOURCE_PASSWORD`` and ``XNAT_DATASOURCE_ADMIN_PASSWORD`` in the kit, ``xnat-datasource-password``
 and ``xnat-datasource-admin-password`` in ``values-secrets.yaml``; ``xnat-admin-password`` is a different
@@ -329,6 +363,10 @@ three.
    ``xnat.image.pin`` also selects the XNAT configure script, which the ``xnat-init`` Job runs from the xnat-web image.
    Older xnat-web images (v0.12.0, for example) carry a Docker-only script, and the Job refuses them by name. Hold
    XNAT back only to an xnat-web image from the release that ships your chart, or later.
+
+   Do not pin XNAT ahead of the trust APIs either. An xnat-web image that carries DQR 3.1.0 needs imaging-api from
+   the same release or later: DQR 3.1.0 marks every import ``FAILED`` as its C-MOVE ends, and an older imaging-api
+   reports the studies still arriving as failed, so the hub pulls them from the PACS again.
 
 AWS EC2 node
 ============

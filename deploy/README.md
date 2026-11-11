@@ -403,6 +403,13 @@ in the `INTERNAL_SERVICE_KEY_HEADER` header. The hub validates it against `INTER
 SHA-256 hash of the key). Used for model status updates, training metrics, and training log endpoints. This
 is a **single, hub-internal** secret and is separate from the per-trust internal keys below.
 
+### FL API Key (flip-api → fl-api-net-N)
+
+Every FL API route except `/health` requires `FL_API_KEY`, sent by flip-api in the `FL_API_KEY_HEADER` header
+(default `X-FL-API-Key`) and compared in constant time. On Flower the key-registration one-shot sends it on
+`/register_node` too. It is dedicated to this hop — the FL API never holds `INTERNAL_SERVICE_KEY`. `make up`
+mints it into the hub env file; on ECS it is the `fl_api_key` field of the `FLIP_API` secret.
+
 ### Trust-Internal Service Keys (trust-api / imaging-api / fl-client → imaging-api / data-access-api)
 
 Inside each trust, every call from trust-api / imaging-api / fl-client to imaging-api or data-access-api
@@ -465,6 +472,7 @@ outside the hub's Docker network.
 | `INTERNAL_SERVICE_KEY_HEADER` | flip-api, fl-server | Header name for internal service auth |
 | `INTERNAL_SERVICE_KEY` | fl-server | Internal service plaintext key (plain string) |
 | `INTERNAL_SERVICE_KEY_HASH` | flip-api | SHA-256 hash of internal service key (plain string) |
+| `FL_API_KEY` | flip-api, fl-api-net-N, Flower `register-supernode-keys-net-N` | Key every FL API route but `/health` requires (header `FL_API_KEY_HEADER`, default `X-FL-API-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | trust-api, imaging-api, data-access-api, fl-client | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | trust-side kit file | Per-trust plaintext key, minted by `register_trust`. The hub never sees it. |
 | `CENTRAL_HUB_API_URL` | flip-ui, trust-api | Public base URL of flip-api (in prod: CloudFront URL) |

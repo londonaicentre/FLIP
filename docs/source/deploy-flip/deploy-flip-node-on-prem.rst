@@ -53,7 +53,7 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
     ``id -g``). Every container that writes a bind mount then runs as you, so the directories you create with
     ``mkdir -p`` are already right and nothing needs root. This is the route for a host where you have Docker but
     no ``sudo``. The one exception is ``xnat-db``, which still starts as root and re-owns its own data directory
-    (its pinned Alpine Postgres predates ``nss_wrapper``, so it cannot run as a uid it does not know): deleting that
+    to the image's ``postgres`` user (uid 70), as every existing site's database already is: deleting that
     directory later needs root, so a second install on the same tree does too. Decide before the first install:
     a live site's data carries the ids it was installed with, and ``make upgrade-onprem-trust`` refuses a kit that
     turns ``FLIP_UID`` on, changes it or clears it afterwards.

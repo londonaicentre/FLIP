@@ -27,6 +27,7 @@ import io
 import json
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -55,6 +56,7 @@ MINTED = {
     "ADMIN_USER_PASSWORD": "admin-SECRET",  # pragma: allowlist secret
     "INTERNAL_SERVICE_KEY": "isk-SECRET",  # pragma: allowlist secret
     "INTERNAL_SERVICE_KEY_HASH": "hash",  # pragma: allowlist secret
+    "FL_API_KEY": "flk-SECRET",  # pragma: allowlist secret
 }
 
 
@@ -99,6 +101,7 @@ class Instance(unittest.TestCase):
 
         assert len(base64.b64decode(env["AES_KEY_BASE64"])) == 32
         assert env["INTERNAL_SERVICE_KEY_HASH"] == hashlib.sha256(env["INTERNAL_SERVICE_KEY"].encode()).hexdigest()
+        assert len(env["FL_API_KEY"]) >= 32
 
     def test_unknown_placeholder_is_refused(self):
         refused(instance.hub_env, HUB_EXAMPLE + "\nNEW_SECRET=<fill-me>\n", "x", 10000, MINTED)
@@ -117,6 +120,16 @@ class Instance(unittest.TestCase):
             for key in TRUST_CONTAINER_PORTS:
                 assert kit[key] == documented_value(text, key), (example, key)
             assert kit["OMOP_DB_TAG"] == "rel0130"
+            assert kit["NUM_AVAILABLE_GPUS"] == "0"
+            assert read_env_text(instance.trust_kit(text, "rel0130", 10000, gpus=1))["NUM_AVAILABLE_GPUS"] == "1"
+
+    def test_host_gpus_counts_nvidia_smi_lines(self):
+        listing = "GPU 0: NVIDIA GeForce RTX 5090 (UUID: GPU-x)\nGPU 1: NVIDIA A100 (UUID: GPU-y)\n"
+        done = subprocess.CompletedProcess([], 0, stdout=listing)
+        with mock.patch.object(instance.subprocess, "run", return_value=done):
+            assert instance.host_gpus() == 2
+        with mock.patch.object(instance.subprocess, "run", side_effect=FileNotFoundError):
+            assert instance.host_gpus() == 0
 
     def test_write_files_refuses_to_overwrite_and_hides_secrets(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -236,6 +249,11 @@ class Verify(unittest.TestCase):
             container("rel0130-deploy-flip-api-1", "ghcr.io/londonaicentre/flip-api:rel0130", "/w/flip/deploy"),
             container("rel0130-deploy-flip-ui-1", "rel0130-deploy-flip-ui", "/w/flip/deploy"),
             container("rel0130-deploy-flip-db-1", "postgres:17", "/w/flip/deploy"),
+            container(
+                "rel0130-trust1-grafana-1",
+                "ghcr.io/londonaicentre/mirror/grafana/grafana:11.5.0@sha256:0a28",
+                "/w/flip/trust",
+            ),
             container("rel0130-trust1-fl-client-net-1-1", "flare-fl-client:rel0130", "/w/flip/trust"),
             container(
                 "rel0130-xnat1_xnat-web.1.x", "ghcr.io/londonaicentre/xnat-web:rel0130@sha256:ab", None, stack=True
@@ -256,7 +274,11 @@ class Verify(unittest.TestCase):
 
     def test_services_must_be_replicated_at_the_instance_tag(self):
         ok = {"Name": "rel0130-xnat1_xnat-web", "Replicas": "1/1", "Image": "ghcr.io/londonaicentre/xnat-web:rel0130"}
-        proxy = {"Name": "rel0130-xnat1_proxy", "Replicas": "1/1", "Image": "tecnativa/docker-socket-proxy:v0.4.2"}
+        proxy = {
+            "Name": "rel0130-xnat1_proxy",
+            "Replicas": "1/1",
+            "Image": "ghcr.io/londonaicentre/mirror/tecnativa/docker-socket-proxy:v0.4.2",
+        }
         assert verify.check_services([ok, proxy], "rel0130") == []
         stuck = {**ok, "Replicas": "0/1"}
         pulled = {**ok, "Image": "ghcr.io/londonaicentre/xnat-web:stag"}
@@ -280,6 +302,18 @@ class Gates(unittest.TestCase):
             [(0.0, "🚀 Running Flower tutorial fl-tutorials/flower/image_classification/xray_classification")]
         )
         assert flower["tutorials"][0]["name"] == "xray_classification"
+
+    def test_tutorial_metrics_count_an_access_controlled_skip_as_skipped(self):
+        lines = [
+            (0.0, "🚀 Running Flower tutorial fl-tutorials/flower/tabular_causal_discovery/biomarker_causal_discovery"),
+            (1.0, "⏭️ tutorial biomarker_causal_discovery skipped: access-controlled dataset absent (/x.csv)"),
+            (2.0, "🚀 Running Flower tutorial fl-tutorials/flower/tabular_classification/ehr_risk_prediction"),
+        ]
+        m = gates.tutorial_metrics(lines + [(30.0, "done")])
+        assert (m["total"], m["passed"], m["skipped"]) == (2, 1, 1)
+        skipped = {"name": "biomarker_causal_discovery", "passed": False, "skipped": True, "seconds": 2}
+        assert m["tutorials"][0] == skipped
+        assert m["tutorials"][1]["passed"] is True
 
     def test_tutorial_metrics_count_dp_reports_and_heavy_clipping(self):
         report = "INFO :      FLIP local DP: update pre-clip L2 norm 50.0000 clipped to 1.0000 (scaled by 0.0200) ..."
@@ -375,6 +409,19 @@ class Gates(unittest.TestCase):
             else:
                 raise AssertionError("the verdict's exception was swallowed")
         assert "🧹 stopped 42" in (tmp / "x.log").read_text()
+
+    def test_a_tutorial_with_dp_off_is_not_expected_to_report(self):
+        # biomarker_causal_discovery registers the mod but sets dp-enabled = false: the mod logs no per-round report.
+        assert "biomarker_causal_discovery" not in gates.dp_tutorials()
+
+    def test_a_skipped_tutorial_owes_no_dp_report(self):
+        runs = {
+            "tutorials": [
+                {"name": "restricted", "passed": False, "skipped": True},
+                {"name": "ehr_risk_prediction", "dp_reports": 4},
+            ]
+        }
+        assert gates.dp_clipping_verdict(runs, {"restricted", "ehr_risk_prediction"}) is None
 
     def test_smoke_metrics(self):
         lines = [
@@ -507,6 +554,15 @@ class Record(unittest.TestCase):
         assert "gpu-box" not in text  # the public notes never name the host
         assert "xray 53 s" in text
         assert "`aaaaaaaaa`" in text
+
+    def test_a_skipped_tutorial_is_named_not_counted_as_passed(self):
+        tutorials = [{"name": "xray", "seconds": 53}, {"name": "biomarker_causal_discovery", "skipped": True}]
+        text = record.render(
+            {"tutorials-flower": result("tutorials-flower", tutorials=tutorials, passed=1, skipped=1, total=2)}
+        )
+        assert "Flower: 1 of 2 tutorials passed" in text
+        assert "skipped (access-controlled data absent): biomarker_causal_discovery" in text
+        assert "all 2 tutorials passed" not in text
 
     def test_failed_or_missing_gates_stay_unticked(self):
         text = record.render({"tutorials-nvflare": result("tutorials-nvflare", "failed")})

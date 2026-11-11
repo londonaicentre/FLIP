@@ -124,7 +124,7 @@ edit() {  # edit <state-file> <jq-filter> [args...]
   jq "$@" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
 }
 
-# DQR 3.0.0's availability API over $AVAIL_STATE (one JSON array of intervals): times stored as DQR
+# DQR 3.1.0's availability API over $AVAIL_STATE (one JSON array of intervals): times stored as DQR
 # stores them (24:00 as 00:00, H:MM zero-padded), overlap judged per day, a create refused with 400
 # on overlap, and a PUT that copies the day, times, threads, utilisation and pacsId from the body and
 # answers 304 when none of them differ.
@@ -1195,7 +1195,7 @@ def test_non_boolean_extended_negotiation_is_refused(tmp_path, value):
 def test_availability_window_is_written_enabled(tmp_path):
     """A window is never written disabled.
 
-    DQR 3.0.0 does not read an interval's ``enabled`` flag (only ``isAvailableNow``, which it computes
+    DQR 3.1.0 does not read an interval's ``enabled`` flag (only ``isAvailableNow``, which it computes
     from the clock and which has no setter, so the script no longer sends ``availableNow``), but a
     disabled write would be a trap the day a later DQR starts honouring it.
     """

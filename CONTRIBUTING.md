@@ -21,6 +21,7 @@
     1. [Where does my test go?](#where-does-my-test-go)
     1. [Signing your work](#signing-your-work)
   - [Submitting pull requests](#submitting-pull-requests)
+  - [Reviewing pull requests](#reviewing-pull-requests)
 
 ## Introduction
 
@@ -266,7 +267,8 @@ make generate-internal-service-key
 ```
 
 This writes `INTERNAL_SERVICE_KEY` with `INTERNAL_SERVICE_KEY_HASH` into the active env file
-(`MAIN_ENV_FILE`, default `.env.development`) for fl-server-to-hub authentication.
+(`MAIN_ENV_FILE`, default `.env.development`) for fl-server-to-hub authentication. `make up` also runs
+`make generate-fl-api-key`, which writes `FL_API_KEY` there — the key flip-api presents to the FL APIs.
 
 #### Updating an existing checkout
 
@@ -277,6 +279,7 @@ These changes affect checkouts created before them. None is picked up automatica
 | --- | --- |
 | `NLB_SUBDOMAIN`, `AICENTRE_BUCKET_NAME` and `DEMO_*_PASSWORD` are commented out in `.env.development.example` | Nothing to do: the `scripts/check_env_vars.py` pre-commit hook no longer requires them, and a leftover line is harmless. A dev stack never reads the first two; set the demo passwords only to run `make demo-users`. |
 | `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` ship empty in `.env.development.example` (FLIP#1501) | Nothing to do: the next `make up` replaces a key still set to the old `<run-make-generate-internal-service-key>` placeholder with a random matching pair. |
+| `FL_API_KEY` is new in `.env.development.example` | Nothing to do: the next `make up` mints it. Add an empty `FL_API_KEY=` line if `scripts/check_env_vars.py` asks for it. The FL APIs refuse every call without it, so a stack brought up by hand needs `make generate-fl-api-key` first. |
 | uv floor raised to **>= 0.10.0** | `uv self update` (or reinstall). Below the floor, `make lock` and the FLARE provisioning script refuse to run rather than silently re-resolving `uv.lock` without the cooldown. |
 | `NUM_AVAILABLE_GPUS` defaults to `0` in the two shipped dev kit examples (`trust/.env.GSTT.development.example`, `trust/.env.KCH.development.example`) | Only those two pre-populated example kits were changed; the base template (`trust/.env.example`) that `make new-trust` scaffolds from still defaults to `1`, and an existing `trust/.env.<CODE>.<env>` keeps its own value regardless. On a GPU dev host, set `NUM_AVAILABLE_GPUS=1` in the kit to restore passthrough — `make up-trust` prints a warning naming the variable when it is zero, so this is not silent. |
 | `MIN_CLIENTS` is removed everywhere (FLIP#1230) | Nothing to add. Delete the `MIN_CLIENTS=` line from your `.env.development` and from any `trust/.env.<CODE>.<env>` kit if you like — a leftover is ignored. The FL images no longer read it: the per-job quorum is the participating-trust count, which fl-api writes into every job (`min_clients = len(trusts)` on FLARE, `flip-min-clients` on Flower), so a hub-wide value could only ever veto a legitimate project (set to 3, a 2-trust project never starts) and never lowered anything. On stag/prod the `MIN_CLIENTS` GitHub environment variable is now unread and can be deleted. |
@@ -387,6 +390,9 @@ compose file — avoid hardcoding values in Dockerfiles or compose files directl
 - `INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for fl-server-to-hub authentication.
 - `INTERNAL_SERVICE_KEY` — internal service key used by the fl-server on the Central Hub.
 - `INTERNAL_SERVICE_KEY_HASH` — hub-side SHA-256 hash of the internal service key.
+- `FL_API_KEY` — the key flip-api sends to every FL API (`fl-api-net-N`) in the `FL_API_KEY_HEADER` header
+  (default `X-FL-API-Key`); every FL API route but `/health` requires it. Minted by `make up`; on ECS a
+  Secrets Manager field. Distinct from `INTERNAL_SERVICE_KEY`, which the FL API never holds.
 - `TRUST_INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for trust-internal service auth (default
   `X-Trust-Internal-Service-Key`). Sent by every caller (trust-api, imaging-api, fl-client) on every
   call to imaging-api or data-access-api.
@@ -857,10 +863,39 @@ The new branch should be based on the latest `develop` branch.
 1. Run linting and type checking before pushing (see [Checking the coding style](#checking-the-coding-style)).
 1. [Create a new pull request](https://help.github.com/en/desktop/contributing-to-projects/creating-a-pull-request) from the task branch to the `develop` branch, with a detailed description of the purpose of this pull request.
 1. Check [the CI/CD status of the pull request](https://github.com/londonaicentre/FLIP/actions), make sure all CI/CD tests pass.
-1. Wait for reviews; if there are reviews, make point-to-point responses, make further code changes if needed.
+1. Hand the pull request to a reviewer: request their review, assign them and unassign yourself (see [Reviewing pull requests](#reviewing-pull-requests)).
+1. When it comes back with comments, make point-to-point responses and further code changes if needed, then hand it over again the same way.
 1. If there are conflicts between the pull request branch and the `develop` branch, pull the changes from `develop` and resolve the conflicts locally.
 1. Reviewer and contributor may have discussions back and forth until all comments are addressed.
-1. Wait for the pull request to be merged.
+1. Once it is approved and assigned back to you, merge it.
+
+### Reviewing pull requests
+
+**The assignee is whoever has to act next.** A pull request's assignee says whose turn it is, so the list of pull
+requests assigned to you is your queue. Every hand-over moves it: assign the other person and unassign yourself.
+
+1. The author requests the reviewer's review, assigns them and unassigns themselves. The review request is what
+   notifies the reviewer and lists the pull request under their "Review requested"; the assignee marks whose turn it
+   is. After addressing comments, re-request the review as well as moving the assignee.
+1. The reviewer either approves, or leaves their comments as a **Request changes** review, so the pull request shows
+   that it is waiting on the author and not on a review. Inline comments posted without a review state leave it
+   reading as still unreviewed.
+1. Either way, the reviewer then assigns the author and unassigns themselves: the author addresses the comments and
+   hands it back, or merges an approved pull request.
+
+**Suggestion pull requests.** When a change is easier to show than to describe, or the line it concerns is outside the
+diff (GitHub accepts inline comments only on lines the pull request changes), open a pull request **into the author's
+branch** rather than a comment:
+
+- Branch from the author's branch, usually named `<author-branch>-suggestions`, and set that branch as the base, not
+  `develop`.
+- Title it `Suggestions for #<N>: <what it changes>`, and say in the description that it is stacked on the author's
+  branch.
+- Assign it to the author, who merges it if they agree (the original pull request then picks the commits up) and
+  closes it if not.
+
+Its commits are signed off like any other. A suggestion pull request goes alongside the review, not in place of it:
+the review still says whether the original is approved or needs changes.
 
 ## Cutting a release
 
@@ -930,7 +965,7 @@ The list below is what they check and do, and what stays manual (the notes' pros
 - If `flip-utils/**` changed in this release, bump `__version__` in [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) — [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) fails the `develop` → `main` PR unless it is valid semver and strictly higher than the latest `flip-utils-v*.*.*` tag. It need not match — or differ from — the root version; the two trains tag in separate namespaces (see [flip-utils and the PyPI release path](#flip-utils-and-the-pypi-release-path)).
 - Curate the release-notes header in [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) — Highlights, Breaking Changes, **Site upgrade**, New Features, Bug Fixes. Editing the file is the only way to change those sections; the preview comment on the PR is regenerated from it on every push. The *Site upgrade* section is the prompt trust operators act on (FLIP#1204): say whether the upgrade is required, the ordering (hub first / sites first / one Deployment-Mode window — a flag-day such as FLIP#1179's cipher change or an FL-framework bump is the latter), and whether a **refreshed kit** is needed because the Hub-shared block changed.
 - Run **`/audit-tutorial <name>` over the catalogue** (Claude Code; the `tutorial-contract` skill under `.claude/skills/` reads as Markdown for a manual pass): the guards, the GPU-free NVFLARE export, the registrations and the README checklist (figure, Expected performance, References, demo video) per tutorial. `make -C fl-tutorials test` already carries the catalogue guard (`tests/test_tutorial_catalogue.py`); the audit is for what a test cannot judge.
-- Run the **full tutorial suite, for both backends, on a GPU host**: `make -C fl-tutorials run-all-tutorials`, then `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`. Each target stops on the first failure, so a green pair means every example in the catalogue ran end to end. This is the only check that exercises the tutorials' training behaviour — CI is CPU-only by design ([`fl-tutorials-tests.yml`](.github/workflows/fl-tutorials-tests.yml)) and no GitHub-hosted runner has a GPU — so a release that skips it ships published examples nobody has run. Both run the simulator in the `flip-utils` environment, so no FL image is needed; the FL images are exercised by the smoke test below. Fetch every input first, since a missing one fails its tutorial at once: each dataset (`make -C fl-tutorials download-<dataset>-data`, and `prepare-prostate-local-data NUM_CASES=12` for prostate; see [`fl-tutorials/README.md`](fl-tutorials/README.md)) and the Ark+ checkpoint the three Ark+ tutorials load (`make download-raw-checkpoint` in each, or request access through the Ark+ form; it is not in any dataset download).
+- Run the **full tutorial suite, for both backends, on a GPU host**: `make -C fl-tutorials run-all-tutorials`, then `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`. Each target stops on the first failure, so a green pair means every example in the catalogue ran end to end, except an access-controlled one: `biomarker_causal_discovery` needs a cohort built from the reader's own ADNI download, which no release host may hold, so when it is absent the loop prints `⏭️ tutorial … skipped` and carries on, and `make release-record` names it as skipped rather than passed. This is the only check that exercises the tutorials' training behaviour — CI is CPU-only by design ([`fl-tutorials-tests.yml`](.github/workflows/fl-tutorials-tests.yml)) and no GitHub-hosted runner has a GPU — so a release that skips it ships published examples nobody has run. Both run the simulator in the `flip-utils` environment, so no FL image is needed; the FL images are exercised by the smoke test below. Fetch every input first, since a missing one fails its tutorial at once: each dataset (`make -C fl-tutorials download-<dataset>-data`, and `prepare-prostate-local-data NUM_CASES=12` for prostate; see [`fl-tutorials/README.md`](fl-tutorials/README.md)) and the Ark+ checkpoint the three Ark+ tutorials load (`make download-raw-checkpoint` in each, or request access through the Ark+ form; it is not in any dataset download).
 - Run the **full-platform smoke test, for both backends, against a running deployment**: `make e2e_smoke`, then `make e2e_smoke FL_BACKEND=flower`. It drives the whole path a user sees — create project, trust approval, training, download results — and is likewise out of CI, being heavy and long-running. [`flip-api/AGENTS.md`](flip-api/AGENTS.md#end-to-end-smoke-test) carries the flags, the spleen, prostate and EHR variants, and how to smoke a remote hub.
 - Record both runs in the *Release checks* section of [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md). That section is published with the release, so an unticked box is visible on the PR and on the release page.
 - Run `make unit_test` and `make integration_test` locally.
@@ -955,7 +990,7 @@ The list below is what they check and do, and what stays manual (the notes' pros
 The release is not deployed by merging. Two steps, in this order:
 
 1. **Hub.** Enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, then `make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=v<X.Y.Z>` (the guard accepts `sha-<short7>` or `v<X.Y.Z>`), then disable Deployment Mode. The UI ships with the release apply: the `ui` job of `terraform_apply.yml` publishes it from the tagged commit once that apply succeeds, so a held apply holds the UI too (FLIP#1186). The user menu then shows `v<X.Y.Z>`. If the `ui` job fails, re-run it from the apply run, or run `make -C deploy/providers/AWS deploy-ui HUB=prod` from a checkout at the tag. If the apply that accompanied the merge rotated any Hub-shared value — the AES key, the FL kit date — reconcile the operator env from deployed state and re-issue kits **before** telling sites to upgrade: `deploy/providers/AWS/scripts/reconcile_ci_env.py --env prod --compare .env.prod` → `make sync-trust-kits HUB=prod` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod`.
-1. **Sites, operator-triggered.** Each site's operator moves their FLIP checkout to the tag (`git fetch --tags origin && git checkout v<X.Y.Z>` — the compose files, Makefiles and the verb itself come from the checkout, and the verb refuses a release tag from any other checkout) and runs `make upgrade-onprem-trust KIT=<CODE>` (Kubernetes: `upgrade-trust-k8s`; an EC2 node: `make -C trust/deploy/terraform/aws/ec2 upgrade`, both from a checkout at the tag), which defaults to the release the hub now reports. Nothing pushes upgrades to sites; the release notes' *Site upgrade* section is the prompt, and the Connection Status drawer shows which containers are still on another build. The full operator runbook is `docs/source/sys-admin/admin-upgrading-sites.rst`.
+1. **Sites, operator-triggered.** Each site's operator moves their FLIP checkout to the tag (`git fetch --tags origin && git checkout v<X.Y.Z>` — the compose files, Makefiles and the verb itself come from the checkout, and the verb refuses a release tag from any other checkout) and runs `make upgrade-onprem-trust KIT=<CODE>` (Kubernetes: `upgrade-trust-k8s`; an EC2 node: `make -C trust/deploy/terraform/aws/ec2 upgrade`, both from a checkout at the tag), which defaults to the release the hub now reports. Nothing pushes upgrades to sites; the release notes' *Site upgrade* section is the prompt, and the Connection Status drawer shows which containers are still on another build. The full operator runbook is `docs/source/sys-admin/admin-upgrading-sites.rst`. A release that moves `xnat-db` to a newer PostgreSQL major (12 to 16, FLIP#1812) dumps and restores XNAT's database inside that same upgrade and keeps the old cluster for a rollback; say so in the *Site upgrade* section, since `make -C trust/xnat xnat-db-remove-old-cluster KIT=<CODE> HUB=<env> YES=1` (Helm: `make -C trust/deploy/helm xnat-db-remove-old-cluster YES=1`) is the operator's last step once the site is confirmed.
 
 ### Release notes
 
