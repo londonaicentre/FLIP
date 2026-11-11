@@ -206,6 +206,11 @@ site that cannot meet it holds the job in NVFLARE's queue, as on any other trust
 many GPUs it lends at once (``jobPods.maxGpus``). A job that arrives while the pool's node is still booting
 waits for it, up to ``jobPods.pendingTimeout``, and then trains as usual.
 
+Every NVFLARE job runs in its project's own NVFLARE *study*: the hub registers the study with the job's
+sites when it submits, and lists, aborts and watches the job through that study. A study is where NVFLARE lets
+a site decide what a job pod may mount, and a job-pod Trust uses it to give each job pod its own project's
+images and no other project's. A Trust that runs jobs inside the FL client ignores the study.
+
 Set-up, prerequisites and trade-offs (cold start, the images volume, NetworkPolicy) are in the chart's
 README, under "NVFLARE job pods". Flower Trusts are not covered.
 

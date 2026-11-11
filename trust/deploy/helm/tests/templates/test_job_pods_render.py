@@ -159,18 +159,55 @@ def test_a_job_pod_gets_what_the_client_container_has():
     env = _env(job)
     for name in ("TRUST_INTERNAL_SERVICE_KEY_HEADER", "TRUST_INTERNAL_SERVICE_KEY"):
         assert env[name] == _env(client)[name]
-    # No images volume: a job pod streams its studies into its own run directory (FLIP#1049).
-    assert env["IMAGES_TRANSPORT"]["value"] == "stream"
-    assert job["volumeMounts"] == [{"name": "dshm", "mountPath": "/dev/shm"}]
     client_spec = _client(docs)["spec"]["template"]["spec"]
     volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
-    assert "images" not in volumes
     assert volumes["dshm"]["emptyDir"]["medium"] == "Memory"
-    assert "affinity" not in pod["spec"]
     assert pod["spec"]["automountServiceAccountToken"] is False
     # A job pod talks to the FL server directly, by the same name the client does.
     assert pod["spec"]["hostAliases"] == client_spec["hostAliases"]
     assert pod["spec"]["enableServiceLinks"] is False
+
+
+def test_by_default_a_job_pod_mounts_the_nets_images_folder_for_its_study_to_narrow():
+    """The fl-client narrows this mount to the project's folder in the job's NVFLARE study (FLIP#1678)."""
+    docs = _enabled()
+    pod = _job_pod(docs)
+    [job] = pod["spec"]["containers"]
+    client_spec = _client(docs)["spec"]["template"]["spec"]
+
+    assert _env(job)["IMAGES_TRANSPORT"]["value"] == "project"
+    images = next(m for m in job["volumeMounts"] if m["name"] == "images")
+    assert images == next(m for m in _client_container(docs)["volumeMounts"] if m["name"] == "images")
+    assert images == {"name": "images", "mountPath": "/app/data/images/net-1", "subPath": "net-1"}
+    volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
+    assert volumes["images"] == next(v for v in client_spec["volumes"] if v["name"] == "images")
+    # The job pod attaches the fl-client's volume, so it is placed by the fl-client's rule.
+    assert pod["spec"]["affinity"] == client_spec["affinity"]
+
+
+def test_a_streaming_job_pod_mounts_no_images_volume_and_runs_anywhere():
+    """It streams its studies into its own run directory (FLIP#1049)."""
+    pod = _job_pod(_enabled("--set", f"{JOB_PODS}.images=stream"))
+    [job] = pod["spec"]["containers"]
+
+    assert _env(job)["IMAGES_TRANSPORT"]["value"] == "stream"
+    assert job["volumeMounts"] == [{"name": "dshm", "mountPath": "/dev/shm"}]
+    assert [v["name"] for v in pod["spec"]["volumes"]] == ["dshm"]
+    assert "affinity" not in pod["spec"]
+
+
+def test_a_project_mount_is_refused_without_the_shared_images_volume():
+    result = _helm("--set", f"{JOB_PODS}.enabled=true", "--set", "sharedImagesPvc.enabled=false")
+
+    assert result.returncode != 0
+    assert "images: stream" in result.stderr
+
+
+def test_an_unknown_way_to_get_images_is_refused():
+    result = _helm("--set", f"{JOB_PODS}.enabled=true", "--set", f"{JOB_PODS}.images=mount")
+
+    assert result.returncode != 0
+    assert "project (a mount" in result.stderr
 
 
 def test_job_pods_take_the_gpu_pool_placement_settings():

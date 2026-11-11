@@ -22,12 +22,18 @@ The job pod template. The launcher fills in the container NVFLARE names nvflare_
 the job workspace and startup-kit volumes, and resources (ephemeral storage plus nvidia.com/gpu from
 the job's resource_spec). Everything else a FLIP job needs from the trust comes from here, mirroring
 the fl-client container: its env, the trust-internal key, /dev/shm and the FL server's host aliases (a
-job pod connects to the FL server itself, not only through the parent). A job pod mounts no images
-volume: it streams each study from imaging-api into its own run directory (IMAGES_TRANSPORT=stream,
-FLIP#1049), so it holds only its project's studies and can run on any node. Volumes, volumeMounts and
-env merge with the launcher's by name.
+job pod connects to the FL server itself, not only through the parent). Volumes, volumeMounts and env
+merge with the launcher's by name.
+
+A job pod holds only its own project's studies, one of two ways (flClient.nvflare.jobPods.images):
+- project: the template mounts this net's folder of the shared images volume, and the fl-client narrows
+  that mount to the project's own folder in the job's NVFLARE study (flip.nvflare.components.project_study,
+  FLIP#1678). The job pod attaches the volume, so it follows the fl-client's placement rule.
+- stream: no images volume. The job streams each study from imaging-api into its own run directory
+  (FLIP#1049), so it can run on any node.
 */}}
 {{- define "flip-trust.flJobPod" -}}
+{{- $projectImages := eq .Values.flClient.nvflare.jobPods.images "project" -}}
 apiVersion: v1
 kind: Pod
 metadata:
@@ -55,6 +61,12 @@ spec:
   tolerations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+  {{- if $projectImages }}
+  {{- with include "flip-trust.sharedImagesAffinity" (dict "affinity" .Values.flClient.affinity "root" $) }}
+  affinity:
+    {{- . | nindent 4 }}
+  {{- end }}
+  {{- end }}
   containers:
     - name: nvflare_job
       imagePullPolicy: {{ .Values.flClient.image.pullPolicy }}
@@ -81,11 +93,21 @@ spec:
               name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
               key: trust-internal-service-key
         - name: IMAGES_TRANSPORT
-          value: stream
+          value: {{ .Values.flClient.nvflare.jobPods.images }}
       volumeMounts:
+        {{- if $projectImages }}
+        - name: images
+          mountPath: {{ .Values.flClient.imagesDir }}/{{ .Values.flClient.netId }}
+          subPath: {{ .Values.flClient.netId }}
+        {{- end }}
         - name: dshm
           mountPath: /dev/shm
   volumes:
+    {{- if $projectImages }}
+    - name: images
+      persistentVolumeClaim:
+        claimName: {{ include "flip-trust.fullname" . }}-shared-images
+    {{- end }}
     - name: dshm
       emptyDir:
         medium: Memory
