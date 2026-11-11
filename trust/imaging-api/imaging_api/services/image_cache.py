@@ -26,11 +26,13 @@ arguments so callers keep patching their own module-level ``BASE_IMAGES_DOWNLOAD
 The sentinel holds a ``CachedDownload`` record that a hit checks against XNAT (README, "Download").
 """
 
+import errno
 import glob
 import json
 import os
 import shutil
-from collections.abc import Collection
+from collections.abc import Collection, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -236,8 +238,9 @@ def remove_accessions_except(base_dir: str, central_hub_project_id: str, keep: C
     """
     Removes a project's cached studies, in every net directory, whose accession is not in ``keep``.
 
-    Called when accessions leave the project's approved cohort (FLIP#1860). Symlinks are never followed: an
-    fl-client that mounts its net directory can write there.
+    Called when accessions leave the project's approved cohort (FLIP#1860). An fl-client that mounts its net
+    directory can write there, so each level is opened by name under its parent's descriptor and never through a
+    symlink: a folder swapped for a link during the walk cannot point the removal elsewhere.
 
     Args:
         base_dir (str): The base images download directory holding one subdirectory per net.
@@ -253,21 +256,43 @@ def remove_accessions_except(base_dir: str, central_hub_project_id: str, keep: C
     """
     _validate_component("central hub project ID", central_hub_project_id)
     removed: set[str] = set()
-    for net_dir in _subdirs(base_dir):
-        project_dir = os.path.join(net_dir, central_hub_project_id)
-        if os.path.islink(project_dir):
-            continue
-        for accession_dir in _subdirs(project_dir):
-            if (accession := os.path.basename(accession_dir)) not in keep:
-                shutil.rmtree(accession_dir, onexc=_ignore_missing)
-                removed.add(accession)
+    with _dir_fd(os.path.realpath(base_dir), None) as base_fd:
+        for net in _subdir_names(base_fd):
+            with _dir_fd(net, base_fd) as net_fd, _dir_fd(central_hub_project_id, net_fd) as project_fd:
+                for accession in _subdir_names(project_fd):
+                    if accession not in keep:
+                        shutil.rmtree(accession, dir_fd=project_fd, onexc=_ignore_missing)
+                        removed.add(accession)
     return sorted(removed)
 
 
-def _subdirs(path: str) -> list[str]:
-    """The directories directly inside ``path`` (none when it is missing), symlinks left out."""
+@contextmanager
+def _dir_fd(name: str, parent_fd: int | None) -> Iterator[int | None]:
+    """
+    Opens the directory ``name`` under ``parent_fd`` (an absolute ``name`` needs none), never through a symlink.
+
+    Yields:
+        int | None: Its descriptor; None when the parent is missing, or it is missing, a file or a symlink.
+    """
+    if parent_fd is None and not os.path.isabs(name):
+        yield None
+        return
     try:
-        with os.scandir(path) as entries:
-            return [entry.path for entry in entries if entry.is_dir(follow_symlinks=False)]
-    except (FileNotFoundError, NotADirectoryError):
+        fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+    except OSError as e:
+        if e.errno not in (errno.ENOENT, errno.ENOTDIR, errno.ELOOP):
+            raise
+        yield None
+        return
+    try:
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def _subdir_names(dir_fd: int | None) -> list[str]:
+    """The names of the directories directly inside an open directory (none for None), symlinks left out."""
+    if dir_fd is None:
         return []
+    with os.scandir(dir_fd) as entries:
+        return [entry.name for entry in entries if entry.is_dir(follow_symlinks=False)]

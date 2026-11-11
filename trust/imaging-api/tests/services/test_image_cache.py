@@ -11,10 +11,12 @@
 #
 
 import os
+import shutil
 from pathlib import Path
 
 import pytest
 
+from imaging_api.services import image_cache
 from imaging_api.services.image_cache import (
     SENTINEL_PREFIX,
     CachedDownload,
@@ -267,6 +269,26 @@ class TestRemoveAccessionsExcept:
         assert remove_accessions_except(str(tmp_path), "proj", set()) == []
 
         assert victim.is_dir()
+
+    def test_a_study_swapped_for_a_link_during_the_walk_is_not_followed(self, tmp_path, monkeypatch):
+        """The window between listing a folder and removing a study in it."""
+        victim = Path(_seed_sentinel(tmp_path, "net-1", "other", "A9")).parent
+        study = Path(_seed_sentinel(tmp_path, "net-1", "proj", "A2")).parent
+        listed = image_cache._subdir_names
+
+        def swap_after_listing(dir_fd):
+            names = listed(dir_fd)
+            if names == ["A2"]:
+                shutil.rmtree(study)
+                study.symlink_to(victim, target_is_directory=True)
+            return names
+
+        monkeypatch.setattr(image_cache, "_subdir_names", swap_after_listing)
+
+        with pytest.raises(OSError):  # rmtree refuses a symbolic link
+            remove_accessions_except(str(tmp_path), "proj", set())
+
+        assert list(victim.iterdir())
 
     def test_a_project_with_nothing_cached_removes_nothing(self, tmp_path):
         assert remove_accessions_except(str(tmp_path), "proj", set()) == []
