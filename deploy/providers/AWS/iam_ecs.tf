@@ -202,9 +202,19 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
   }
 
   statement {
-    sid       = "SesSend"
-    actions   = ["ses:SendEmail", "ses:SendRawEmail", "ses:SendTemplatedEmail"]
-    resources = [module.ses.sender_identity_arn, module.ses.sender_domain_identity_arn]
+    sid     = "SesSend"
+    actions = ["ses:SendEmail", "ses:SendRawEmail", "ses:SendTemplatedEmail"]
+    # A domain identity authorises every address on the domain, so it is granted
+    # only once the sender is on it, and the From address is pinned either way.
+    resources = concat(
+      [module.ses.sender_identity_arn],
+      var.SES_SENDER_EMAIL != "" ? [module.ses.sender_domain_identity_arn] : [],
+    )
+    condition {
+      test     = "StringEquals"
+      variable = "ses:FromAddress"
+      values   = [local.ses_sender_email]
+    }
   }
 
   statement {

@@ -44,11 +44,10 @@ def test_defaults_keep_the_current_senders() -> None:
 
 
 def test_flip_api_sender_falls_back_to_the_verified_address() -> None:
-    assert (
-        'AWS_SES_SENDER_EMAIL_ADDRESS = var.SES_SENDER_EMAIL != "" ? var.SES_SENDER_EMAIL : var.SES_VERIFIED_EMAIL'
-        in " ".join(_source("locals.tf").split())
-    )
-    assert "AWS_SES_ADMIN_EMAIL_ADDRESS = var.SES_VERIFIED_EMAIL" in " ".join(_source("locals.tf").split())
+    locals = " ".join(_source("locals.tf").split())
+    assert 'ses_sender_email = var.SES_SENDER_EMAIL != "" ? var.SES_SENDER_EMAIL : var.SES_VERIFIED_EMAIL' in locals
+    assert "AWS_SES_SENDER_EMAIL_ADDRESS = local.ses_sender_email" in locals
+    assert "AWS_SES_ADMIN_EMAIL_ADDRESS = var.SES_VERIFIED_EMAIL" in locals
 
 
 def test_cognito_uses_ses_only_behind_the_flag() -> None:
@@ -59,10 +58,17 @@ def test_cognito_uses_ses_only_behind_the_flag() -> None:
     assert 'var.ses_identity_arn == "" ? "COGNITO_DEFAULT" : "DEVELOPER"' in email
 
 
-def test_flip_api_may_send_from_the_domain_identity() -> None:
+def test_flip_api_sends_as_the_one_sender_address_only() -> None:
+    """A domain identity authorises any address on the domain; the role may use one."""
     policy = hcl_block(_source("iam_ecs.tf"), 'data "aws_iam_policy_document" "ecs_flip_api_task"')
-    ses_send = next(block for block in policy.split("statement {") if '"SesSend"' in block)
-    assert "module.ses.sender_domain_identity_arn" in ses_send
+    ses_send = " ".join(next(block for block in policy.split("statement {") if '"SesSend"' in block).split())
+    assert 'var.SES_SENDER_EMAIL != "" ? [module.ses.sender_domain_identity_arn] : []' in ses_send, (
+        "the domain identity is granted only once the sender is on the domain"
+    )
+    condition = " ".join(hcl_block(ses_send, "condition").split())
+    assert 'test = "StringEquals"' in condition
+    assert 'variable = "ses:FromAddress"' in condition
+    assert "values = [local.ses_sender_email]" in condition
 
 
 def test_makefile_exports_the_switches_only_when_set() -> None:
