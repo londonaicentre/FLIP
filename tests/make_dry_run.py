@@ -123,6 +123,9 @@ def run_target(
             "fl-services/nvflare/Makefile",
             "trust/Makefile",
             "trust/xnat/Makefile",
+            "trust/xnat/scripts/xnat_db_drop_unused_dump.sh",
+            "trust/xnat/scripts/xnat_db_migrate_dump.sh",
+            "trust/xnat/scripts/xnat_db_remove_old_cluster.sh",
         ):
             dst = root / rel
             dst.parent.mkdir(parents=True, exist_ok=True)

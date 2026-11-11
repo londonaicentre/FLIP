@@ -31,6 +31,7 @@ services:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     environment:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
+      - FL_API_KEY=${FL_API_KEY}
       # Origin allow-list for the server-side bundle fetch (FLIP#905, #1291): the only origin the FL API
       # may download an app bundle from. flip-api pins AWS_ENDPOINT_URL_S3 to the regional
       # endpoint (see its service block), which makes boto3 presign PATH-STYLE URLs — host

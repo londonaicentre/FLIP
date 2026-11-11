@@ -105,7 +105,7 @@ writer runs as them (prod compose `user: "${FLIP_UID:-<image uid>}:${FLIP_GID:-<
 the same defaults as `deploy/portable.mk`'s `API_UID`/`ORTHANC_UID`/`XNAT_CONTAINER_UID`, which
 the ownership guards read), so the operator's own `mkdir` is enough and `xnat-reset` provisions the
 XNAT tree itself, as in development. xnat-db alone keeps its
-root entrypoint (its pinned `postgres:12.2-alpine` predates nss_wrapper in the Alpine variants), so
+root entrypoint (every existing site's database is uid 70's, the image's `postgres`, and it re-owns its data dir to it), so
 `xnat-prepare-dirs` creates but never re-owns `xnat-db-data` (on a live site `xnat-web-dirs`, run by
 `upgrade-trust` and `upgrade-xnat`, creates the xnat-web mount sources an older install lacks), and XNAT's Container Service jobs run as
 `FLIP_UID` too (`XNAT_CS_CONTAINER_USER`, written into the Docker backend by `configure-dcm2niix.sh`), or

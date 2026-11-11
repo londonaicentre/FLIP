@@ -376,6 +376,12 @@ Run it once per Trust, with the stack up:
 - The loader is safe to re-run: it tags its rows in ``person_source_value`` and replaces only those, leaving the
   imaging cohorts untouched.
 
+The biomarker causal-discovery tutorial's cohort is ADNI, which is access-controlled, so its seed step
+downloads nothing: ``make -C trust load-adni-cohort TRUST_INDEX=<1|2> OMOP_DB_PORT=<5434|5436>`` reads the
+cohort the licence holder built from their own ADNI download (``make -C fl-tutorials convert-adni-cohort``)
+and appends this Trust's slice the same way — for a local development stack only; nothing derived from
+ADNI may be loaded into a shared Trust.
+
 .. tip::
 
    A Trust on Kubernetes publishes no host port. Port-forward ``svc/omop-db``, pass the connection as ``make``

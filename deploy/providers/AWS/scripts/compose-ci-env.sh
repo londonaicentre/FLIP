@@ -174,6 +174,7 @@ REQUIRED_KEYS=(
     AES_KEY_BASE64
     INTERNAL_SERVICE_KEY
     INTERNAL_SERVICE_KEY_HASH
+    FL_API_KEY
 
     # Database identifiers — configuration, stored as GitHub environment
     # *variables*. They are rendered in the clear into the public plan comment

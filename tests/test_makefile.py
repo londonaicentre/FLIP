@@ -262,6 +262,7 @@ AWS_STUB_ENV = {
     "INTERNAL_SERVICE_KEY": "probe",  # pragma: allowlist secret
     "INTERNAL_SERVICE_KEY_HASH": "probe",  # pragma: allowlist secret
     "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
+    "FL_API_KEY": "probe",  # pragma: allowlist secret
     "MANAGE_DNS": "false",
 }
 AWS = "deploy/providers/AWS"

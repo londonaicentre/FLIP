@@ -131,6 +131,17 @@ make -C trust/omop-db load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434   # Trust
 make -C trust/omop-db load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # Trust_2 (KCH)
 ```
 
+The biomarker causal-discovery tutorial's cohort is **ADNI**, which is access-controlled, so there is
+no download: `load-adni-cohort` reads the cohort the licence holder built from their own IDA download
+(`make -C fl-tutorials convert-adni-cohort`, gitignored) and appends each trust's `person_id`-modulo
+slice as `person` / `measurement` / `observation` rows — for a **local** dev stack only, nothing
+ADNI-derived may reach a shared trust:
+
+```sh
+make -C trust/omop-db load-adni-cohort TRUST_INDEX=1 OMOP_DB_PORT=5434   # Trust_1 (GSTT)
+make -C trust/omop-db load-adni-cohort TRUST_INDEX=2 OMOP_DB_PORT=5436   # Trust_2 (KCH)
+```
+
 A Kubernetes trust publishes no host port: port-forward `svc/omop-db` and pass the connection as
 `make` variables instead — recipe in
 [`trust/deploy/helm/README.md`](../deploy/helm/README.md), "Local clusters (kind)".

@@ -42,6 +42,7 @@ import socket
 import subprocess
 import sys
 import time
+import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -138,14 +139,32 @@ DP_OVER_CLIPPED = "FLIP local DP: clipping scaled this update by"
 
 
 def dp_tutorials() -> set[str]:
-    """The Flower tutorials whose ClientApp registers the local-DP mod, so must report every round."""
+    """The Flower tutorials whose ClientApp registers the local-DP mod with DP on, so must report every round.
+
+    A tutorial whose ``app/config.toml`` sets ``dp-enabled = false`` (biomarker_causal_discovery: clip-and-noise
+    would corrupt its pooled statistics) keeps the mod registered, but the mod then logs only that the update is
+    unprivatised, never a per-round report.
+    """
     apps = (REPO / "fl-tutorials" / "flower").glob("*/*/app/client_app.py")
-    return {app.parents[1].name for app in apps if "flip_local_dp_mod" in app.read_text()}
+    return {app.parents[1].name for app in apps if "flip_local_dp_mod" in app.read_text() and _dp_enabled(app.parent)}
+
+
+def _dp_enabled(app_dir: Path) -> bool:
+    """``dp-enabled`` from the app's run-config overrides (``config.toml``); absent means on, as the mod reads it."""
+    config = app_dir / "config.toml"
+    if not config.exists():
+        return True
+    with config.open("rb") as fh:
+        return bool(tomllib.load(fh).get("dp-enabled", True))
 
 
 def tutorial_metrics(lines: list[tuple[float, str]]) -> dict:
-    """Per tutorial from ``run-all-tutorials`` output (one ``🚀 Running`` line each): pass/fail, seconds, and how
-    many updates the DP mod reported and how many of those clipping shrank more than tenfold (#1754)."""
+    """Per tutorial from ``run-all-tutorials`` output (one ``🚀 Running`` line each): pass/fail/skip, seconds, and
+    how many updates the DP mod reported and how many of those clipping shrank more than tenfold (#1754).
+
+    An access-controlled tutorial whose data the host does not hold prints ``⏭️ tutorial <name> skipped``
+    and exits 0; it is counted as skipped, not passed, so the record never claims it ran.
+    """
     runs: list[dict] = []
     for t, line in lines:
         start = re.search(r"🚀 Running (?:FLARE|Flower) tutorial (\S+)", line)
@@ -157,13 +176,16 @@ def tutorial_metrics(lines: list[tuple[float, str]]) -> dict:
             continue
         elif re.search(r"❌ tutorial \S+ failed", line):
             runs[-1]["passed"] = False
+        elif re.search(r"⏭️ tutorial \S+ skipped", line):
+            runs[-1].update(passed=False, skipped=True)
         elif DP_REPORTED in line:
             runs[-1]["dp_reports"] = runs[-1].get("dp_reports", 0) + 1
         elif DP_OVER_CLIPPED in line:
             runs[-1]["dp_over_clipped"] = runs[-1].get("dp_over_clipped", 0) + 1
     if runs and "_t" in runs[-1]:
         runs[-1]["seconds"] = round(lines[-1][0] - runs[-1].pop("_t"))
-    return {"tutorials": runs, "passed": sum(r["passed"] for r in runs), "total": len(runs)}
+    skipped = sum(bool(r.get("skipped")) for r in runs)
+    return {"tutorials": runs, "passed": sum(r["passed"] for r in runs), "skipped": skipped, "total": len(runs)}
 
 
 def dp_clipping_verdict(metrics: dict, dp: set[str] | None = None) -> str | None:
@@ -174,7 +196,9 @@ def dp_clipping_verdict(metrics: dict, dp: set[str] | None = None) -> str | None
     runs = metrics.get("tutorials", [])
     if not runs:
         return "no tutorial was reported at all: the gate cannot vouch for any of them (FLIP#1754)"
-    silent = sorted(dp - {r["name"] for r in runs if r.get("dp_reports")})
+    # A skipped tutorial (access-controlled data absent) did not run, so it owes no report.
+    skipped = {r["name"] for r in runs if r.get("skipped")}
+    silent = sorted(dp - skipped - {r["name"] for r in runs if r.get("dp_reports")})
     clipped = [f"{r['name']} ({r['dp_over_clipped']}x)" for r in runs if r.get("dp_over_clipped")]
     reasons = []
     if silent:

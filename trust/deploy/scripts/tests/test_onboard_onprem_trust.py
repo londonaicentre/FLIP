@@ -697,11 +697,15 @@ def test_33_fl_endpoint_comes_from_what_the_client_dials() -> None:
             ok = mod.check_fl_endpoint_reachable(flare, True)
         _assert(ok.status == mod.Status.PASS, "connects -> PASS", str(ok))
         _assert(probe.call_args.args == ("fl.hub.example", 8002), "probed the dialled host:port", str(probe.call_args))
-        with mock.patch.object(mod, "probe_tcp", return_value="timed out (blackholed or filtered)"):
+        with (
+            mock.patch.object(mod, "probe_tcp", return_value="timed out (blackholed or filtered)"),
+            mock.patch.object(mod, "lookup_egress_ip", return_value="203.0.113.7"),
+        ):
             bad = mod.check_fl_endpoint_reachable(flare, True)
         _assert(bad.status == mod.Status.FAIL, "cannot connect -> FAIL", str(bad))
         _assert("fl.hub.example:8002" in bad.detail, "FAIL names host:port", bad.detail)
         _assert(any("TLS-inspection" in h for h in bad.hints), "hint covers the TLS-inspection proxy case")
+        _assert("leaves from: 203.0.113.7." in bad.hints[-1], "timeout hint names this host's egress address")
         pending = mod.check_fl_endpoint_reachable({"FL_BACKEND": "flower"}, True)
         _assert(pending.status == mod.Status.PENDING, "no endpoint yet -> PENDING", str(pending))
 
@@ -1020,6 +1024,40 @@ def test_49_a_sample_data_value_up_trust_refuses_fails_the_checklist() -> None:
         _assert(pending.status == mod.Status.PENDING, "PENDING without the kit", str(pending))
 
 
+def test_50_fl_endpoint_timeout_hints_at_the_hub_source_address_list() -> None:
+    print("\n[50] FL endpoint: a timeout asks for the site's egress address; the lookup never fails the row")
+    kit = {"FL_BACKEND": "flower", "NLB_SUBDOMAIN": "fl.hub.example", "FL_EDGE_PORT": "8002"}
+    timed_out = mock.patch.object(mod, "probe_tcp", return_value="timed out (blackholed or filtered)")
+
+    with timed_out, mock.patch.object(mod, "lookup_egress_ip", return_value=None):
+        unknown = mod.check_fl_endpoint_reachable(kit, True)
+    _assert(unknown.status == mod.Status.FAIL, "lookup failed -> still the same FAIL", str(unknown))
+    _assert("your network team knows it" in unknown.hints[-1], "hint survives without the address", unknown.hints[-1])
+
+    for failure in (None, "connection refused"):
+        with (
+            mock.patch.object(mod, "probe_tcp", return_value=failure),
+            mock.patch.object(mod, "lookup_egress_ip") as lookup,
+        ):
+            row = mod.check_fl_endpoint_reachable(kit, True)
+        _assert(not lookup.called, f"no lookup when the probe says {failure or 'connected'}")
+        _assert(not any("leaves from" in h for h in row.hints), f"no address hint on {failure or 'PASS'}")
+
+    def answer(body: bytes) -> mock.MagicMock:
+        opened = mock.MagicMock()
+        opened.__enter__.return_value.read.return_value = body
+        return opened
+
+    with mock.patch.object(mod.urllib.request, "urlopen", return_value=answer(b"203.0.113.7\n")) as urlopen:
+        _assert(mod.lookup_egress_ip() == "203.0.113.7", "lookup returns the address")
+    _assert(urlopen.call_args.kwargs["timeout"] == mod.PROBE_TIMEOUT_SECONDS, "lookup is bounded by the probe timeout")
+    with mock.patch.object(mod.urllib.request, "urlopen", return_value=answer(b"<html>Blocked by proxy</html>")):
+        _assert(mod.lookup_egress_ip() is None, "an intercepted answer is not printed as an address")
+    for error in (urllib.error.URLError("blocked"), TimeoutError(), RuntimeError("anything")):
+        with mock.patch.object(mod.urllib.request, "urlopen", side_effect=error):
+            _assert(mod.lookup_egress_ip() is None, f"{type(error).__name__} -> None, not a crash")
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -1073,6 +1111,7 @@ def main() -> None:
     test_47_empty_dir_with_sample_data_off_says_nothing_is_seeded()
     test_48_sample_data_off_needs_no_seed_marker_dir()
     test_49_a_sample_data_value_up_trust_refuses_fails_the_checklist()
+    test_50_fl_endpoint_timeout_hints_at_the_hub_source_address_list()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

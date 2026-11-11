@@ -20,6 +20,7 @@ on:
     tags: ['v*.*.*']
     paths:
       - "trust/xnat/postgres/**"
+      - "trust/xnat/scripts/xnat_db_migrate_dump.sh"
       - ".github/workflows/docker_build_xnat_db.yml"
 
 permissions:
@@ -42,7 +43,7 @@ jobs:
       REGISTRY: ghcr.io
       IMAGE_NAME: londonaicentre/xnat-db
       BUILD_ARGS: |
-        --build-arg PG_VERSION=12.2-alpine
+        --build-arg PG_VERSION=16-alpine
     steps:
       # Default checkout on purpose: no workflow_run trigger here (FLIP#882,
       # scripts/tests/test_workflow_trust_guards.py).
@@ -124,6 +125,35 @@ jobs:
           done
           # shellcheck disable=SC2086
           docker build $BUILD_ARGS "${TAG_FLAGS[@]}" .
+
+      # FLIP#1812: a red migration smoke never publishes. The upgrade verbs' script dumps a
+      # PostgreSQL 12.2 xnat-db, then this image starts on the same volume and has to restore it.
+      - name: Smoke test — a PostgreSQL 12 volume is restored on first start (FLIP#1812)
+        env:
+          DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
+        run: |
+          TAG="${DOCKER_TAGS%%,*}"
+          RUN=(docker run -d -v xnat-db-smoke:/var/lib/postgresql/data -e POSTGRES_DB=xnat
+               -e POSTGRES_PASSWORD="$(openssl rand -hex 16)"
+               -e XNAT_DATASOURCE_USERNAME=xnat -e XNAT_DATASOURCE_PASSWORD="$(openssl rand -hex 16)")
+          # TCP, not the socket: the server initdb runs its scripts against does not listen on it.
+          ready() {
+            for _ in $(seq 1 60); do docker exec "$1" pg_isready -q -h 127.0.0.1 && return; sleep 2; done
+            docker logs "$1"; return 1
+          }
+          "${RUN[@]}" --name xnat-db-smoke-12 \
+            -v "$PWD/XNAT.sql:/docker-entrypoint-initdb.d/XNAT.sql:ro" postgres:12.2-alpine
+          ready xnat-db-smoke-12
+          docker exec xnat-db-smoke-12 psql -X -U xnat -d xnat -c 'create table smoke as select 42 as answer'
+          docker exec -i xnat-db-smoke-12 sh -s 16 < ../scripts/xnat_db_migrate_dump.sh
+          docker stop xnat-db-smoke-12
+          "${RUN[@]}" --name xnat-db-smoke-16 "$TAG"
+          ready xnat-db-smoke-16
+          test "$(docker exec xnat-db-smoke-16 psql -XAt -U xnat -d xnat -c 'select answer from smoke')" = 42
+          test "$(docker exec xnat-db-smoke-16 psql -XAt -U postgres -c 'show server_version_num' | cut -c1-2)" = 16
+          docker exec xnat-db-smoke-16 test -f /var/lib/postgresql/data/pg16/xnat-restored
+          docker rm -f xnat-db-smoke-12 xnat-db-smoke-16
+          docker volume rm xnat-db-smoke
 
       - name: Push Docker image
         env:

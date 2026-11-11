@@ -84,7 +84,7 @@ esac
 
 # The availability schedule is validated before XNAT is touched: the converge at the end removes
 # intervals before it writes, so a value DQR refused part-way would leave days with no window. The
-# accepted forms are DQR 3.0.0's: DayOfWeek names in capitals, HH:MM / H:MM / 24:00, and threads and
+# accepted forms are DQR 3.1.0's: DayOfWeek names in capitals, HH:MM / H:MM / 24:00, and threads and
 # utilisation of at least 1 (DQR stores 0 for both if either is 0, and 0% never runs). Commas and
 # spaces both separate days.
 read -r -a avail_day_list <<< "${PACS_AVAILABILITY_DAYS//,/ }"
@@ -678,7 +678,7 @@ PACS_ID=$(xnat_curl -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$XNAT_URL/xa
 # it: one window per listed day. Removals come first (days no longer listed, extra intervals on a
 # listed day), then in-place updates of drifted intervals, then creations, so a run that fails
 # part-way leaves less retrieval scheduled, never more. A day that matches is not written, and the
-# schedule is read back whenever something was. DQR 3.0.0 behaviour this relies on (DqrPacsApi):
+# schedule is read back whenever something was. DQR 3.1.0 behaviour this relies on (DqrPacsApi):
 #   - PUT {pacsId}/availability/{id} answers 304 when nothing it copies has changed;
 #   - PUT takes the day and pacsId from the body, so both are sent (without pacsId the interval would
 #     move to PACS 0);

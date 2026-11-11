@@ -43,6 +43,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import ipaddress
 import json
 import os
 import shlex
@@ -358,6 +359,7 @@ REGISTRY_HOSTS: tuple[str, ...] = (
     "production.cloudfront.docker.com",
 )
 EGRESS_DOC = "the egress list on docs → Deploy a trust node → Network requirements"
+EGRESS_IP_URL = "https://checkip.amazonaws.com"
 
 
 def _failure_reason(error: BaseException) -> str:
@@ -384,6 +386,15 @@ def probe_tcp(host: str, port: int, timeout: float = PROBE_TIMEOUT_SECONDS) -> s
             return None
     except OSError as error:
         return _failure_reason(error)
+
+
+def lookup_egress_ip(timeout: float = PROBE_TIMEOUT_SECONDS) -> str | None:
+    """The public address this host leaves from, or None when it cannot be looked up."""
+    try:
+        with urllib.request.urlopen(EGRESS_IP_URL, timeout=timeout) as response:
+            return str(ipaddress.ip_address(response.read(64).decode("ascii").strip()))
+    except Exception:  # only feeds a hint: a blocked or intercepted lookup must not fail the checklist
+        return None
 
 
 def probe_hub_health(hub_url: str, timeout: float = PROBE_TIMEOUT_SECONDS) -> tuple[str | None, str | None]:
@@ -456,16 +467,20 @@ def check_fl_endpoint_reachable(kit_vars: dict[str, str], kit_present: bool) -> 
     failure = probe_tcp(host, port)
     if failure is None:
         return Check(label, Status.PASS, f"tcp {host}:{port} connects (from {source})")
-    return Check(
-        label,
-        Status.FAIL,
-        f"tcp {host}:{port}: {failure} (from {source})",
-        hints=[
-            "The FL client connects out to this host:port over mutual TLS; a connection that opens"
-            " here but fails in the client log is a TLS-inspection proxy re-signing it — exempt the host.",
-            f"Ask the network team to allow it outbound from this host — {EGRESS_DOC}.",
-        ],
-    )
+    hints = [
+        "The FL client connects out to this host:port over mutual TLS; a connection that opens"
+        " here but fails in the client log is a TLS-inspection proxy re-signing it — exempt the host.",
+        f"Ask the network team to allow it outbound from this host — {EGRESS_DOC}.",
+    ]
+    if "timed out" in failure:
+        # A hub that filters by source address drops an unlisted site without an answer.
+        egress_ip = lookup_egress_ip()
+        leaves_from = f": {egress_ip}" if egress_ip else " (not found from here; your network team knows it)"
+        hints.append(
+            "If outbound is already allowed, the hub may admit FL connections only from registered site"
+            f" addresses — send the FLIP hub team the public address this host leaves from{leaves_from}."
+        )
+    return Check(label, Status.FAIL, f"tcp {host}:{port}: {failure} (from {source})", hints=hints)
 
 
 def check_registries_reachable() -> Check:

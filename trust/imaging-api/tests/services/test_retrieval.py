@@ -710,7 +710,8 @@ async def test_get_import_status_prearchive_error_is_failed_not_processing(
 
 @patch("imaging_api.services.retrieval.get_project")
 @pytest.mark.asyncio
-@pytest.mark.parametrize("prearchive_status", ["RECEIVING", "BUILDING", "READY"])
+@pytest.mark.parametrize("executed_status", ["RECEIVED", "FAILED"])
+@pytest.mark.parametrize("prearchive_status", ["RECEIVING", "BUILDING", "READY", "CONFLICT"])
 @patch("imaging_api.services.retrieval.get_experiments")
 @patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
 @patch("imaging_api.services.retrieval.encrypt")
@@ -720,15 +721,19 @@ async def test_get_import_status_prearchive_session_not_in_error_is_not_failed(
     mock_get_experiments,
     mock_get_project,
     prearchive_status,
+    executed_status,
     headers,
 ):
-    """Only an ERROR prearchive session is a failure; one still receiving or building stays in flight."""
+    """Only an ERROR prearchive session is a failure; one still receiving or building stays in flight.
+
+    DQR 3.1.0 has already marked its request FAILED by then (FLIP#1816), so the session is what says so.
+    """
     mock_encrypt.return_value = "encrypted_id"
     mock_get_accession_ids.return_value = ["ACC_P"]
     mock_get_experiments.return_value = []
 
     with _import_records(
-        executed=[_executed("ACC_P", "RECEIVED")], prearchive=[_prearchived("ACC_P", prearchive_status)]
+        executed=[_executed("ACC_P", executed_status)], prearchive=[_prearchived("ACC_P", prearchive_status)]
     ):
         status = await get_import_status("proj1", "SELECT *", headers)
 
@@ -792,6 +797,66 @@ async def test_get_import_status_direct_archive_receiving_is_processing(
     assert status.processing == ["ACC_RECV"]
     assert status.failed == []
     assert status.queue_failed == []
+
+
+@patch("imaging_api.services.retrieval.get_project")
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.get_experiments")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+async def test_get_import_status_executed_failed_while_direct_archive_receives_is_processing(
+    mock_encrypt,
+    mock_get_accession_ids,
+    mock_get_experiments,
+    mock_get_project,
+    headers,
+):
+    """FLIP#1816: DQR 3.1.0 marks a C-MOVE into the direct archive FAILED ("Received zero files"), files or not.
+
+    A direct-archive session still receiving the study is the files arriving, so it is `processing`; with no
+    such session the same FAILED is a C-MOVE that delivered nothing, and is `failed`.
+    """
+    mock_encrypt.return_value = "encrypted_id"
+    mock_get_accession_ids.return_value = ["ACC_RECV", "ACC_NONE"]
+    mock_get_experiments.return_value = []
+
+    with _import_records(
+        direct_archive=[_direct_archive("ACC_RECV", "RECEIVING")],
+        executed=[_executed("ACC_RECV", "FAILED"), _executed("ACC_NONE", "FAILED")],
+    ):
+        status = await get_import_status("proj1", "SELECT *", headers)
+
+    assert status.processing == ["ACC_RECV"]
+    assert status.failed == ["ACC_NONE"]
+
+
+@patch("imaging_api.services.retrieval.get_project")
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.get_experiments")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+async def test_get_import_status_reads_experiments_again_before_calling_an_executed_failed_failed(
+    mock_encrypt,
+    mock_get_accession_ids,
+    mock_get_experiments,
+    mock_get_project,
+    headers,
+):
+    """A study that finishes archiving between the experiment read and the record reads is `successful`.
+
+    Its direct-archive session is gone and DQR 3.1.0 left its request FAILED, so only a second experiment
+    read tells it apart from a C-MOVE that delivered nothing.
+    """
+    mock_encrypt.return_value = "encrypted_id"
+    mock_get_accession_ids.return_value = ["ACC_DONE", "ACC_NONE"]
+    mock_get_experiments.side_effect = [[], [_experiment("ACC_DONE")]]
+
+    with _import_records(executed=[_executed("ACC_DONE", "FAILED"), _executed("ACC_NONE", "FAILED")]):
+        status = await get_import_status("proj1", "SELECT *", headers)
+
+    assert status.successful == ["ACC_DONE"]
+    assert status.failed == ["ACC_NONE"]
+    assert mock_get_experiments.call_count == 2
 
 
 @patch("imaging_api.services.retrieval.get_project")
@@ -887,7 +952,7 @@ def _xnat_json(body) -> MagicMock:
 
 
 def _fake_xnat(method: str, url: str, **kwargs) -> MagicMock:
-    """XNAT's answers to the REST reads, shaped as DQR 3.0.0 and xnat-web 1.10.0 serve them."""
+    """XNAT's answers to the REST reads, shaped as DQR 3.1.0 and xnat-web 1.10.0 serve them."""
     if "/xapi/dqr/import/queue" in url:
         return _xnat_json(
             [
@@ -908,7 +973,8 @@ def _fake_xnat(method: str, url: str, **kwargs) -> MagicMock:
         # An archive failure with no name: attributed by its folder name.
         return _xnat_json([{"id": 5, "project": "proj1", "folderName": "ACC_D", "status": "ERROR"}])
     if "/data/prearchive/projects/proj1" in url:
-        # Where XNAT moved a session whose direct-archive failed; its DQR request above is still RECEIVED.
+        # Where XNAT moved a session whose direct-archive failed; its DQR request above is RECEIVED, as
+        # DQR 3.0.0 left it (3.1.0 leaves FAILED).
         return _xnat_json(
             {
                 "ResultSet": {

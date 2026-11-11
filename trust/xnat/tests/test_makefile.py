@@ -58,6 +58,98 @@ class UpgradeXnat(unittest.TestCase):
         assert "xnat-backup KIT=SCR" in out, out
         assert out.index("xnat-backup KIT=SCR") < out.index("docker stack deploy"), out
 
+    def test_upgrade_xnat_takes_the_migration_dump_while_the_old_db_still_runs(self):
+        """The new image cannot read the old cluster, so its dump has to exist before the deploy (FLIP#1812)."""
+        out = self.recipe
+        assert out.index("xnat-backup KIT=SCR") < out.index("xnat-db-migrate-dump KIT=SCR"), out
+        assert out.index("xnat-db-migrate-dump KIT=SCR") < out.index("docker stack deploy"), out
+
+    def test_upgrade_xnat_drops_a_dump_the_deploy_did_not_use(self):
+        """A kit pinning the old release keeps the old database live, and its dump goes stale."""
+        out = self.recipe
+        assert out.index("docker stack deploy") < out.index("xnat-db-drop-unused-dump KIT=SCR"), out
+
+    def test_upgrade_xnat_drops_the_dump_when_the_deploy_fails(self):
+        """The old server may stay up after a failed deploy, and a later one would restore that dump."""
+        deploy = next(line for line in self.recipe.replace("\\\n", "").splitlines() if "docker stack deploy" in line)
+        assert deploy.rstrip().endswith("xnat_db_drop_unused_dump.sh; exit 1; }"), deploy
+
+
+# A stand-in for docker, for the xnat-db major-upgrade targets: every call is logged to $CALLS, `ps`
+# finds the db, `exec … cat …PG_VERSION` answers $CURRENT, and `exec -i` logs which script came on stdin.
+STUB_DOCKER_DB = r"""#!/bin/bash
+echo "$*" >> "$CALLS"
+case "$1" in
+  ps) [[ "$*" == *"service.name="*"_xnat-db"* ]] && echo stub-xnat-db; exit 0 ;;
+  exec)
+    if [ "$2" = -i ]; then
+      script=$(cat)
+      [[ "$script" == *"pg_dump -Fc"* ]] && echo "stdin: migrate-dump" >> "$CALLS"
+      [[ "$script" == *"Removed the unused migration dump"* ]] && echo "stdin: drop-unused-dump" >> "$CALLS"
+      [[ "$script" == *"pg_dump -Fc"* && -n "$DUMP_FAILS" ]] && exit 1
+      [[ "$script" == *"-exec rm -rf"* ]] && echo "stdin: remove-old-cluster" >> "$CALLS"
+      exit 0
+    fi
+    echo "$CURRENT"; exit 0 ;;
+esac
+exit 0
+"""
+
+
+class XnatDbMajorUpgrade(unittest.TestCase):
+    """xnat-db-migrate-dump and xnat-db-remove-old-cluster, run for real against a stub docker (FLIP#1812)."""
+
+    def _run(self, target: str, *extra: str, current: str = "12", fails: bool = False, **env: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "bin"
+            bin_dir.mkdir()
+            (bin_dir / "docker").write_text(STUB_DOCKER_DB)
+            (bin_dir / "docker").chmod(0o755)
+            calls = Path(tmp) / "calls"
+            result = run_target(
+                target,
+                *extra,
+                subdir="trust/xnat",
+                env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "CALLS": str(calls), "CURRENT": current, **env},
+            )
+            assert (result.returncode != 0) == fails, result.stdout + result.stderr
+            return calls.read_text().splitlines() if calls.exists() else []
+
+    def test_an_older_cluster_is_dumped_after_xnat_web_stops(self):
+        calls = self._run("xnat-db-migrate-dump", current="12")
+        scale = next(i for i, c in enumerate(calls) if c.startswith("service scale") and c.endswith("_xnat-web=0"))
+        dump = next(i for i, c in enumerate(calls) if c.startswith("exec -i stub-xnat-db sh -s 16"))
+        assert scale < dump, calls
+        assert calls[dump + 1] == "stdin: migrate-dump", calls
+
+    def test_a_cluster_already_on_the_major_is_left_alone(self):
+        calls = self._run("xnat-db-migrate-dump", current="16")
+        assert not any(c.startswith(("service scale", "exec -i")) for c in calls), calls
+
+    def test_a_failed_dump_starts_xnat_web_again(self):
+        """Nothing was upgraded, so the site must not stay down on a full disk."""
+        calls = self._run("xnat-db-migrate-dump", fails=True, DUMP_FAILS="1")
+        assert calls[-1].startswith("service scale --detach "), calls
+        assert calls[-1].endswith("_xnat-web=1"), calls
+
+    def test_a_major_that_is_not_a_number_is_refused_not_read_as_already_moved(self):
+        calls = self._run("xnat-db-migrate-dump", current="", fails=True)
+        assert not any(c.startswith(("service scale", "exec -i")) for c in calls), calls
+
+    def test_the_unused_dump_check_runs_in_the_db(self):
+        calls = self._run("xnat-db-drop-unused-dump")
+        assert "stdin: drop-unused-dump" in calls, calls
+
+    def test_removing_the_old_cluster_needs_yes(self):
+        for extra, expected in (
+            ((), "exec -i stub-xnat-db sh -s --"),
+            (("YES=1",), "exec -i stub-xnat-db sh -s -- --delete"),
+        ):
+            with self.subTest(extra=extra):
+                calls = self._run("xnat-db-remove-old-cluster", *extra)
+                assert expected in [c.strip() for c in calls], calls
+                assert "stdin: remove-old-cluster" in calls, calls
+
 
 # A stand-in for the docker CLI, just enough of it for xnat-backup: `ps` finds the db by its service
 # label (NO_DB hides it), `exec` is the db container's `pg_dumpall | gzip` (DUMP=ok|fail|truncated),
@@ -310,6 +402,11 @@ class UpXnatBuild(unittest.TestCase):
         assert '--resolve-image "never"' in out, out
         # Built before the running stack is torn down, so a failed build leaves it up.
         assert out.index("docker build") < out.index("down-xnat"), out
+
+    def test_xnat_web_pulls_its_base_unless_told_not_to(self):
+        """The Tomcat base tag moves; XNAT_BUILD_PULL= is the build on a host with no registry route."""
+        assert "docker build --pull " in dry_run("up-xnat", "BUILD=true", subdir="trust/xnat")
+        assert "--pull" not in dry_run("up-xnat", "BUILD=true", "XNAT_BUILD_PULL=", subdir="trust/xnat")
 
     def test_a_command_line_xnat_tag_names_the_build(self):
         """Tags are daemon-wide: a second stack on the host (a release check) keeps off the shared :dev."""
