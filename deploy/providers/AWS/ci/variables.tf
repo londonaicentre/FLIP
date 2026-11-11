@@ -112,6 +112,7 @@ variable "managed_role_names" {
     "ecs-flip-api-task-role",
     "ecs-fl-api-task-role",
     "ecs-fl-server-task-role",
+    "ecs-fl-kit-provision-task-role",
     "flip-rds-proxy-role",
     "ec2-role",
     "flip-rds-monitoring-role",

@@ -107,7 +107,8 @@ resource "aws_ecs_task_definition" "efs_provision" {
   cpu                      = "256"
   memory                   = "512"
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
-  task_role_arn            = aws_iam_role.ecs_fl_server_task.arn
+  # Its own role: the fl-server role runs FL job code and must not read the kits.
+  task_role_arn = aws_iam_role.ecs_fl_kit_provision_task.arn
 
   container_definitions = jsonencode([
     {
@@ -136,12 +137,13 @@ resource "aws_ecs_task_definition" "efs_provision" {
         # skips size+mtime-equivalent files, which can leave rotated creds
         # stale. certificates/ carries ca.crt + server.pem/server.key for the
         # SuperLink; keys/ the per-slot SuperNode public keys the
-        # register-supernode-keys one-shot (ecs_flower.tf) feeds to it.
+        # register-supernode-keys one-shot (ecs_flower.tf) feeds to it. Only
+        # the *.pub files: a SuperNode's private key belongs to its trust.
         mkdir -p /mnt/flower-certs /mnt/flower-keys /mnt/flower-jobs
         find /mnt/flower-certs -mindepth 1 -delete 2>/dev/null || true
         find /mnt/flower-keys -mindepth 1 -delete 2>/dev/null || true
         aws s3 sync "$S3_BASE/certificates/" /mnt/flower-certs/
-        aws s3 sync "$S3_BASE/keys/" /mnt/flower-keys/
+        aws s3 sync "$S3_BASE/keys/" /mnt/flower-keys/ --exclude "*" --include "*.pub"
 
         echo "EFS provisioning complete."
         SCRIPT

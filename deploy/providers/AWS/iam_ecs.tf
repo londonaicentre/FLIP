@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Three task roles + one execution role. Per-service task roles enforce least
+# Four task roles + one execution role. Per-service task roles enforce least
 # privilege at the IAM layer: even if fl-server is compromised via an untrusted
 # FL client connection, its role cannot read AES_KEY_BASE64, trust API key
 # hashes, or any other flip-api-only secret because those ARNs are absent
@@ -243,6 +243,18 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
     resources = [aws_kms_key.flip_app_key.arn]
   }
 
+  # The FLARE CA state is for operators only: no ECS task role reads it, under its
+  # own prefix or where it sat among the kits before the move.
+  statement {
+    sid     = "DenyFlCaState"
+    effect  = "Deny"
+    actions = ["s3:*"]
+    resources = [
+      "${aws_s3_bucket.aicentre_bucket.arn}/fl-flare-ca-state/*",
+      "${aws_s3_bucket.aicentre_bucket.arn}/fl-flare-participant-kits/*/state/*",
+    ]
+  }
+
   # Ephemeral SSM parameter handoff for register_trust (S-1 fix).
   # `register-trusts.sh` mints a one-off parameter under this prefix before
   # spawning the ECS task; the task writes the kit JSON here as a
@@ -355,10 +367,11 @@ data "aws_iam_policy_document" "ecs_fl_server_task" {
   # The whole flip-fl-results bucket is dedicated to FL training output, so the
   # prefix-scoped condition that used to constrain access to
   # `${flip_bucket}/uploaded_federated_data/*` is no longer needed — bucket-wide
-  # scope is now the same least-privilege boundary.
+  # scope is now the same least-privilege boundary. No s3:DeleteObject: the
+  # server only uploads results.
   statement {
     sid     = "S3FlResults"
-    actions = ["s3:PutObject", "s3:GetObject", "s3:HeadObject", "s3:DeleteObject"]
+    actions = ["s3:PutObject", "s3:GetObject", "s3:HeadObject"]
     resources = [
       "${module.flip_fl_results_bucket.bucket_arn}/*",
     ]
@@ -370,38 +383,9 @@ data "aws_iam_policy_document" "ecs_fl_server_task" {
     resources = [module.flip_fl_results_bucket.bucket_arn]
   }
 
-  # Read access to the FL participant kits on the AICENTRE bucket — the
-  # FLARE kit prefix and the Flower creds prefix (#566). Used by the
-  # one-shot efs-provision-certs task (which runs under this role and syncs
-  # the backend's kit/creds into EFS at boot). Runtime fl-server never reads
-  # from these prefixes - the data lives on EFS by the time the service
-  # starts.
-  statement {
-    sid     = "S3ReadFlKit"
-    actions = ["s3:GetObject", "s3:HeadObject"]
-    resources = [
-      "${aws_s3_bucket.aicentre_bucket.arn}/fl-flare-participant-kits/*",
-      "${aws_s3_bucket.aicentre_bucket.arn}/fl-flower-participant-kits/*",
-    ]
-  }
-
-  # Deliberately no s3:GetBucketLocation here (unlike S3ListFlResultsBucket above, which
-  # is unconditioned): a GetBucketLocation request carries no s3:prefix context key, so
-  # under the prefix condition below the grant can never authorize anything. Dropping it
-  # is a no-op on the effective permissions and stops it reading as a working allowance.
-  statement {
-    sid       = "S3ListAicentreBucketForKit"
-    actions   = ["s3:ListBucket"]
-    resources = [aws_s3_bucket.aicentre_bucket.arn]
-    condition {
-      test     = "StringLike"
-      variable = "s3:prefix"
-      values = [
-        "fl-flare-participant-kits/*", "fl-flare-participant-kits",
-        "fl-flower-participant-kits/*", "fl-flower-participant-kits",
-      ]
-    }
-  }
+  # No grant on the AICENTRE bucket: this role runs FL job code, and the kit
+  # prefixes hold every participant's credentials. The server's own kit reaches
+  # it on EFS, synced by the efs-provision-certs task under its own role below.
 
   statement {
     sid = "KmsDecryptFlipKey"
@@ -419,4 +403,63 @@ resource "aws_iam_role_policy" "ecs_fl_server_task" {
   name   = "fl-server-task-policy"
   role   = aws_iam_role.ecs_fl_server_task.id
   policy = data.aws_iam_policy_document.ecs_fl_server_task.json
+}
+
+############################
+# FL kit provisioning task role
+############################
+#
+# The one-shot efs-provision-certs task (ecs_efs_provision.tf) syncs the hub's
+# side of the FL kit from the AICENTRE bucket onto EFS. It reads only the
+# objects it syncs: the FLARE server and FL API kits, or the Flower SuperLink
+# certificates and SuperNode public keys, never a trust's kit or private key.
+
+resource "aws_iam_role" "ecs_fl_kit_provision_task" {
+  name               = "ecs-fl-kit-provision-task-role"
+  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+  # FLIP#962: the CI apply role may only create or grant to a boundary-carrying
+  # role. See locals.tf and ci/main.tf.
+  permissions_boundary = local.iam_permissions_boundary_arn
+}
+
+data "aws_iam_policy_document" "ecs_fl_kit_provision_task" {
+  statement {
+    sid     = "S3ReadFlKit"
+    actions = ["s3:GetObject", "s3:HeadObject"]
+    resources = [
+      "${aws_s3_bucket.aicentre_bucket.arn}/fl-flare-participant-kits/*/net-1/services/fl-server-net-1/*",
+      "${aws_s3_bucket.aicentre_bucket.arn}/fl-flare-participant-kits/*/net-1/services/flip-fl-api-net-1/*",
+      "${aws_s3_bucket.aicentre_bucket.arn}/fl-flower-participant-kits/*/net-1/certificates/*",
+      "${aws_s3_bucket.aicentre_bucket.arn}/fl-flower-participant-kits/*/net-1/keys/*.pub",
+    ]
+  }
+
+  # No s3:GetBucketLocation: a GetBucketLocation request carries no s3:prefix
+  # context key, so under the prefix condition the grant could never authorize.
+  statement {
+    sid       = "S3ListAicentreBucketForKit"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.aicentre_bucket.arn]
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values = [
+        "fl-flare-participant-kits/*", "fl-flare-participant-kits",
+        "fl-flower-participant-kits/*", "fl-flower-participant-kits",
+      ]
+    }
+  }
+
+  # The bucket is SSE-KMS under the FLIP key; reading needs Decrypt only.
+  statement {
+    sid       = "KmsDecryptFlipKey"
+    actions   = ["kms:Decrypt"]
+    resources = [aws_kms_key.flip_app_key.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "ecs_fl_kit_provision_task" {
+  name   = "fl-kit-provision-task-policy"
+  role   = aws_iam_role.ecs_fl_kit_provision_task.id
+  policy = data.aws_iam_policy_document.ecs_fl_kit_provision_task.json
 }
