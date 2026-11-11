@@ -609,3 +609,39 @@ def test_delete_object_if_match_wraps_other_failures(s3_client_with_mock_boto):
     )
     with pytest.raises(Exception, match="Unable to delete object"):
         s3.delete_object_if_match("s3://bucket/uploaded/k", '"etag"')
+
+
+def test_multipart_upload_is_created_signed_per_part_and_completed_in_part_order(s3_client_with_mock_boto):
+    s3, boto = s3_client_with_mock_boto
+    boto.create_multipart_upload.return_value = {"UploadId": "upload-1"}
+    boto.generate_presigned_url.return_value = _FAKE_SIGNED_URL
+
+    assert s3.create_multipart_upload("s3://bucket/results/model/a.zip") == "upload-1"
+    url = s3.get_upload_part_presigned_url(
+        "s3://bucket/results/model/a.zip", "upload-1", 2, audience=PresignAudience.INTERNAL, expiration=600
+    )
+    s3.complete_multipart_upload("s3://bucket/results/model/a.zip", "upload-1", ['"one"', '"two"'])
+
+    assert url == _FAKE_SIGNED_URL
+    boto.create_multipart_upload.assert_called_once_with(Bucket="bucket", Key="results/model/a.zip")
+    boto.generate_presigned_url.assert_called_once_with(
+        "upload_part",
+        Params={"Bucket": "bucket", "Key": "results/model/a.zip", "UploadId": "upload-1", "PartNumber": 2},
+        ExpiresIn=600,
+    )
+    boto.complete_multipart_upload.assert_called_once_with(
+        Bucket="bucket",
+        Key="results/model/a.zip",
+        UploadId="upload-1",
+        MultipartUpload={"Parts": [{"ETag": '"one"', "PartNumber": 1}, {"ETag": '"two"', "PartNumber": 2}]},
+    )
+
+
+def test_upload_part_url_ttl_is_clamped_to_the_ceiling(s3_client_with_mock_boto):
+    s3, boto = s3_client_with_mock_boto
+
+    s3.get_upload_part_presigned_url(
+        "s3://bucket/a.zip", "upload-1", 1, audience=PresignAudience.INTERNAL, expiration=10**6
+    )
+
+    assert boto.generate_presigned_url.call_args.kwargs["ExpiresIn"] == MAX_PRESIGNED_URL_TTL_SECONDS

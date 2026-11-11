@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-"""The three FL-server callback routes share one guard: no reporting job, no write."""
+"""The FL-server callback routes share one guard: no reporting job, no write."""
 
 from collections.abc import Generator
 from unittest.mock import MagicMock, patch
@@ -30,6 +30,17 @@ CALLBACKS = [
         "POST",
         "/api/model/{model_id}/metrics",
         {"fl_client_name": "Trust_1", "global_round": 1, "label": "loss", "value": 0.5},
+    ),
+    ("POST", "/api/model/{model_id}/results-upload", {"file_name": "results.zip", "size": 1}),
+    (
+        "POST",
+        "/api/model/{model_id}/results-upload/part",
+        {"file_name": "results.zip", "upload_id": "u", "part_number": 1},
+    ),
+    (
+        "POST",
+        "/api/model/{model_id}/results-upload/complete",
+        {"file_name": "results.zip", "upload_id": "u", "etags": ["e"]},
     ),
 ]
 
@@ -51,6 +62,7 @@ def test_callback_without_a_reporting_job_changes_nothing(
         patch("flip_api.private_services.invoke_model_status_update.update_model_status") as update_status,
         patch("flip_api.private_services.add_log.add_log") as add_log,
         patch("flip_api.private_services.save_training_metrics.save_training_metrics") as save_metrics,
+        patch("flip_api.private_services.results_upload.S3Client") as s3_client,
     ):
         response = client.request(method, path.format(model_id=uuid4()), json=body)
 
@@ -59,3 +71,4 @@ def test_callback_without_a_reporting_job_changes_nothing(
     update_status.assert_not_called()
     add_log.assert_not_called()
     save_metrics.assert_not_called()
+    s3_client.assert_not_called()

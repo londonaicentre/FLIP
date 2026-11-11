@@ -93,6 +93,53 @@ class TrainingMetrics(BaseModel):
         return data
 
 
+# S3's multipart limits: at most 10,000 parts, each at least 5 MiB except the last.
+RESULTS_UPLOAD_MAX_PARTS = 10_000
+RESULTS_UPLOAD_PART_BYTES = 64 * 1024 * 1024
+
+# A plain zip name: no separator and no second dot, so the object key stays under the model's own prefix.
+_ResultsFileName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,64}\.zip$")]
+_UploadId = Annotated[str, StringConstraints(min_length=1, max_length=1024)]
+
+
+class ResultsUploadRequest(BaseModel):
+    """Body of ``POST /model/{id}/results-upload``. Mirrored by the sender, flip-utils' ``flip/core/standard.py``."""
+
+    file_name: _ResultsFileName
+    size: int = Field(gt=0, le=RESULTS_UPLOAD_MAX_PARTS * RESULTS_UPLOAD_PART_BYTES)
+
+
+class ResultsUpload(BaseModel):
+    """A started results upload: the caller sends the file in ``part_size`` pieces, the last one shorter."""
+
+    upload_id: str
+    part_size: int
+
+
+class ResultsUploadPartRequest(BaseModel):
+    """Body of ``POST /model/{id}/results-upload/part``."""
+
+    file_name: _ResultsFileName
+    upload_id: _UploadId
+    part_number: int = Field(ge=1, le=RESULTS_UPLOAD_MAX_PARTS)
+
+
+class ResultsUploadPart(BaseModel):
+    """Where to PUT one part."""
+
+    url: str
+
+
+class ResultsUploadCompletion(BaseModel):
+    """Body of ``POST /model/{id}/results-upload/complete``: the ETag S3 returned for each part, in part order."""
+
+    file_name: _ResultsFileName
+    upload_id: _UploadId
+    etags: list[Annotated[str, StringConstraints(min_length=1, max_length=128)]] = Field(
+        min_length=1, max_length=RESULTS_UPLOAD_MAX_PARTS
+    )
+
+
 class TrainingLog(BaseModel):
     """One row for ``POST /model/{id}/logs``: free text XOR a typed round event.
 

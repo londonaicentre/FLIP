@@ -260,6 +260,65 @@ class S3Client:
             )
             raise Exception("Unable to create a pre-signed POST policy") from e
 
+    def create_multipart_upload(self, s3_path: str) -> str:
+        """
+        Start a multipart upload, whose parts the caller hands out as presigned URLs.
+
+        Args:
+            s3_path (str): Full S3 path of the object to create (e.g., ``s3://bucket-name/key``).
+
+        Returns:
+            str: The upload id.
+
+        Raises:
+            ClientError: If S3 refuses the request.
+        """
+        bucket, key = parse_s3_path(s3_path)
+        return self.client.create_multipart_upload(Bucket=bucket, Key=key)["UploadId"]
+
+    def get_upload_part_presigned_url(
+        self, s3_path: str, upload_id: str, part_number: int, *, audience: PresignAudience, expiration: int
+    ) -> str:
+        """
+        Generate a pre-signed URL for uploading one part of a multipart upload.
+
+        The URL is a write capability on that part alone, so it must never be logged.
+
+        Args:
+            s3_path (str): Full S3 path of the object being uploaded.
+            upload_id (str): The upload id from ``create_multipart_upload``.
+            part_number (int): The part the URL uploads (1-based).
+            audience (PresignAudience): Who opens the URL, see ``get_presigned_url``.
+            expiration (int): URL lifetime in seconds, clamped to ``MAX_PRESIGNED_URL_TTL_SECONDS``.
+
+        Returns:
+            str: Pre-signed URL string.
+        """
+        bucket, key = parse_s3_path(s3_path)
+        return self._presigner(audience).generate_presigned_url(
+            "upload_part",
+            Params={"Bucket": bucket, "Key": key, "UploadId": upload_id, "PartNumber": part_number},
+            ExpiresIn=min(expiration, MAX_PRESIGNED_URL_TTL_SECONDS),
+        )
+
+    def complete_multipart_upload(self, s3_path: str, upload_id: str, etags: list[str]) -> None:
+        """
+        Assemble the uploaded parts of a multipart upload into the object.
+
+        Args:
+            s3_path (str): Full S3 path of the object being uploaded.
+            upload_id (str): The upload id from ``create_multipart_upload``.
+            etags (list[str]): The ETag S3 returned for each part, in part order.
+
+        Raises:
+            ClientError: If S3 refuses the request, e.g. an unknown upload id or a part that does not match.
+        """
+        bucket, key = parse_s3_path(s3_path)
+        parts = [{"ETag": etag, "PartNumber": number} for number, etag in enumerate(etags, start=1)]
+        self.client.complete_multipart_upload(
+            Bucket=bucket, Key=key, UploadId=upload_id, MultipartUpload={"Parts": parts}
+        )
+
     def delete_object(self, s3_path: str) -> None:
         """
         Delete an object from S3 bucket.
