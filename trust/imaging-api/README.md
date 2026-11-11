@@ -112,6 +112,18 @@ out) instead of a path. It is for a client with no mount of the net's images fol
 Kubernetes (FLIP#1049): flip-utils uses it when `IMAGES_TRANSPORT=stream` and extracts the tar into the job's own
 directory.
 
+`POST /download/images/{net_id}/layout` takes the same body and `resource_type`, and copies nothing: it answers
+with `{"files": [{"path", "archive"}]}`, one entry per scan file a download would hold. `path` is the file's place
+in the download layout above and `archive` its place in the project's own directory of XNAT's archive
+(`arc001/<accession_id>/SCANS/<scan id>/<resource>/…`). It is for a client that mounts that directory read-only, an
+NVFLARE job pod with `flClient.nvflare.jobPods.images: archive` (FLIP#1857): flip-utils uses it when
+`IMAGES_TRANSPORT=archive` and lays the study out as links into the mount. The scan's folder is named as XNAT
+names it in the zip, `<scan id>-<type>` with every character outside `[A-Za-z0-9_]` of the type replaced by `_`
+(XNAT's `RestFileUtils.getReMaps`), or the bare scan id when the scan has no type; the type is in XNAT's database
+only, which is why the client cannot work the layout out from the mount. A file XNAT lists outside this session's
+`SCANS` in this project's archive is refused (HTTP 500). Assessor resources are not listed: XNAT keeps them
+elsewhere, and such a client streams them.
+
 ### Imaging
 
 Interfaces with XNAT's DICOM Query-Retrieve (DQR) plugin. Full DQR API docs available at

@@ -88,9 +88,12 @@ class ProdSettings(_Common):
     IMAGES_DIR: str = ""
     # How a study reaches the job: "mount", a path on the net's images folder shared with imaging-api;
     # "project", the same path where only the project's own folder is mounted, read-only (an NVFLARE
-    # study mount, FLIP#1678), so uploads travel in the request; or "stream", a tar from imaging-api
-    # extracted into this process's own directory, for a job pod that mounts no images volume (FLIP#1049).
-    IMAGES_TRANSPORT: Literal["mount", "project", "stream"] = "mount"
+    # study mount, FLIP#1678), so uploads travel in the request; "stream", a tar from imaging-api
+    # extracted into this process's own directory, for a job pod that mounts no images volume
+    # (FLIP#1049); or "archive", links into the project's own directory of XNAT's archive, mounted
+    # read-only at XNAT_ARCHIVE_DIR by the same study mount (FLIP#1857), so nothing is copied.
+    IMAGES_TRANSPORT: Literal["mount", "project", "stream", "archive"] = "mount"
+    XNAT_ARCHIVE_DIR: str = "/app/data/xnat-archive"
     NET_ID: str = "default"
     UPLOADED_FEDERATED_DATA_BUCKET: str = "s3://default-bucket"
 
@@ -145,7 +148,8 @@ class _FlipConstantsProxy:
     TRUST_INTERNAL_SERVICE_KEY_HEADER: str
     TRUST_INTERNAL_SERVICE_KEY: str
     IMAGES_DIR: str
-    IMAGES_TRANSPORT: Literal["mount", "project", "stream"]
+    IMAGES_TRANSPORT: Literal["mount", "project", "stream", "archive"]
+    XNAT_ARCHIVE_DIR: str
     NET_ID: str
     UPLOADED_FEDERATED_DATA_BUCKET: str
 

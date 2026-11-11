@@ -20,7 +20,9 @@ from imaging_api.routers.schemas import (
     DownloadImagesRequestData,
     DownloadImagesResponse,
     ResourceType,
+    StudyLayoutResponse,
 )
+from imaging_api.services.archive_layout import study_layout
 from imaging_api.services.download import download_and_unzip_images, tar_study
 from imaging_api.utils.auth import get_xnat_auth_headers
 from imaging_api.utils.encryption import PROJECT_ID_CONTEXT, decrypt
@@ -162,3 +164,44 @@ async def stream_images_by_accession_number(
     """
     folder = await _cached_study(net_id, request_data, assessor_type, resource_type, force_refresh, headers)
     return StreamingResponse(tar_study(folder), media_type="application/x-tar")
+
+
+@router.post(
+    "/images/{net_id}/layout",
+    summary="List where a study's files sit in XNAT's archive",
+    response_model=StudyLayoutResponse,
+)
+def study_layout_by_accession_number(
+    net_id: str,
+    request_data: DownloadImagesRequestData,
+    *,
+    resource_type: ResourceType = "NIFTI",
+    headers: XNATAuthHeaders,
+) -> StudyLayoutResponse:
+    """
+    For a client that mounts its project's directory of XNAT's archive (FLIP#1857): names each scan file's place in
+    that directory and in the layout a download has, so the client can read the study in place. No file content,
+    and nothing is cached. Assessor resources are not listed; such a client streams them.
+
+    Args:
+        net_id (str): The ID of the FL net that will run the training.
+        request_data (DownloadImagesRequestData): Contains encrypted central hub project ID and accession ID.
+        resource_type (ResourceType): XNAT resource type, one of DICOM, NIFTI, SEG or ALL.
+        headers (XNATAuthHeaders): XNAT authentication headers.
+
+    Returns:
+        StudyLayoutResponse: The study's files.
+
+    Raises:
+        HTTPException: 404 if the project, the study or its files are not in XNAT, 500 for any other failure.
+    """
+    central_hub_project_id = open_project_id(request_data.encrypted_central_hub_project_id)
+    try:
+        return StudyLayoutResponse.model_validate(
+            {"files": study_layout(central_hub_project_id, request_data.accession_id, resource_type, headers)}
+        )
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"Resource not found: {e}")
+    except Exception as e:
+        logger.error(f"Failed to list the study's files: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to list the study's files: {e}")

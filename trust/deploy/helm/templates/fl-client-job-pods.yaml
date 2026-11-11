@@ -31,9 +31,14 @@ flClient.nvflare.jobPods.images: project it also declares the shared images volu
 fl-client mounts the project's own folder of it in the job's NVFLARE study, where the job then reads by
 path (flip.nvflare.components.project_study, FLIP#1678). A job outside a project's study therefore never
 sees the cache. Declaring the volume makes the pod attach it, so it follows the fl-client's placement rule.
+
+With images: archive the volume it declares is XNAT's own, read-only, and the study mounts the project's
+directory of XNAT's archive instead (FLIP#1857): the job reads its studies in place, through XNAT's group,
+and nothing is copied. A ReadWriteOnce XNAT volume keeps the pod on xnat-web's node.
 */}}
 {{- define "flip-trust.flJobPod" -}}
 {{- $projectImages := eq .Values.flClient.nvflare.jobPods.images "project" -}}
+{{- $archive := eq .Values.flClient.nvflare.jobPods.images "archive" -}}
 apiVersion: v1
 kind: Pod
 metadata:
@@ -65,6 +70,21 @@ spec:
   {{- with include "flip-trust.sharedImagesAffinity" (dict "affinity" .Values.flClient.affinity "root" $) }}
   affinity:
     {{- . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+  {{- if $archive }}
+  securityContext:
+    # XNAT's group: its archive is 0750/0640, owned by 1001:1001. Never fsGroup, which would re-own it.
+    supplementalGroups: [1001]
+  {{- if eq .Values.xnat.web.persistence.accessMode "ReadWriteOnce" }}
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              {{- include "flip-trust.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: xnat-web
+          topologyKey: kubernetes.io/hostname
   {{- end }}
   {{- end }}
   containers:
@@ -102,6 +122,12 @@ spec:
     - name: images
       persistentVolumeClaim:
         claimName: {{ include "flip-trust.fullname" . }}-shared-images
+    {{- end }}
+    {{- if $archive }}
+    - name: xnat-archive
+      persistentVolumeClaim:
+        claimName: {{ include "flip-trust.fullname" . }}-xnat-web
+        readOnly: true
     {{- end }}
     - name: dshm
       emptyDir:

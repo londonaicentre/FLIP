@@ -14,8 +14,11 @@
 {{- if and .Values.flClient.nvflare.jobPods.enabled (ne .Values.flBackend "nvflare") }}
 {{- fail "flClient.nvflare.jobPods.enabled starts each job in its own pod through NVFLARE's Kubernetes job launcher, so it needs flBackend: nvflare." }}
 {{- end }}
-{{- if and $jobPods (not (has .Values.flClient.nvflare.jobPods.images (list "project" "stream"))) }}
-{{- fail "flClient.nvflare.jobPods.images is how a job pod gets its project's studies: project (a mount of the project's folder of the shared images volume) or stream (no volume)." }}
+{{- if and $jobPods (not (has .Values.flClient.nvflare.jobPods.images (list "project" "stream" "archive"))) }}
+{{- fail "flClient.nvflare.jobPods.images is how a job pod gets its project's studies: project (a mount of the project's folder of the shared images volume), archive (a read-only mount of the project's directory of XNAT's archive) or stream (no volume)." }}
+{{- end }}
+{{- if and $jobPods (eq .Values.flClient.nvflare.jobPods.images "archive") (not (and .Values.xnat.enabled .Values.xnat.web.persistence.enabled)) }}
+{{- fail "flClient.nvflare.jobPods.images: archive mounts each project's directory of XNAT's archive into its job pods, so it needs this chart's XNAT on a persistent volume (xnat.enabled and xnat.web.persistence.enabled). With an external XNAT, set images: project or stream." }}
 {{- end }}
 {{- if and $jobPods (eq .Values.flClient.nvflare.jobPods.images "project") (not .Values.sharedImagesPvc.enabled) }}
 {{- fail "flClient.nvflare.jobPods.images: project mounts each project's folder of the shared images volume into its job pods, so it needs sharedImagesPvc.enabled. Without that volume, set images: stream." }}

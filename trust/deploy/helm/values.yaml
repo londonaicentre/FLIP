@@ -514,6 +514,12 @@ flClient:
       #   attach sharedImagesPvc, so on a ReadWriteOnce volume they run on the fl-client's node; a
       #   separate GPU pool needs a ReadWriteMany one. A job outside a project's study (from a hub that
       #   predates studies) mounts nothing and streams.
+      # - archive: its job pods mount that project's own directory of XNAT's archive, read-only, and
+      #   read the studies in place (FLIP#1857): no copy in imaging-api's cache or in the pod. Needs this
+      #   chart's XNAT. The job pods attach XNAT's volume, so on a ReadWriteOnce one they run on
+      #   xnat-web's node; a separate GPU pool needs a ReadWriteMany one. Opt-in, and not for real
+      #   patient data until FLIP#1860 is in: the mount lists every study archived for the project,
+      #   including those of patients who have since left its approved cohort.
       # - stream: no images volume. Each job streams its studies from imaging-api into its own run
       #   directory (FLIP#1049), so job pods run on any node; size ephemeralStorage for them.
       images: project
