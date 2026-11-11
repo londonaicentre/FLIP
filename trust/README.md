@@ -80,7 +80,7 @@ The kit also carries **XNAT's own AE title** and the **upstream PACS** block (se
 [`xnat/README.md`](xnat/README.md#pacs-configuration) for what each one does):
 
 ```sh
-XNAT_AETITLE=XNAT
+XNAT_AETITLE=FLIP_XNAT
 PACS_HOST=orthanc
 PACS_AETITLE=ORTHANC
 PACS_QR_PORT=4242
@@ -89,7 +89,7 @@ PACS_QR_PORT=4242
 `XNAT_AETITLE` is applied to XNAT's SCP receiver, its DQR calling AE and the C-MOVE destination it
 hands the PACS, so all three agree and the PACS's return-leg association is addressed correctly.
 `up-trust` / `up-trust-ec2` run a `require-xnat-aetitle` guard first: the variable may be absent
-(the default `XNAT` applies) but **must not be present-and-empty** — that fails the bring-up naming
+(the default `FLIP_XNAT` applies) but **must not be present-and-empty** — that fails the bring-up naming
 the kit file, before any data fixture is fetched. The remaining `PACS_*` and `DQR_*` variables
 (`PACS_LABEL`, `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS`, `PACS_AVAILABILITY_DAYS`/`_START`/`_END`,
 `PACS_THREADS`, `PACS_UTILIZATION_PERCENT`, `DQR_MAX_PACS_REQUEST_ATTEMPTS`,

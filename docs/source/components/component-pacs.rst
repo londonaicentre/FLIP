@@ -217,7 +217,7 @@ above), not the settings themselves.
    * - ``XNAT_AETITLE``
      - ``xnat.web.dicomAet``
      - XNAT's own AE title, used for the DICOM receiver, the DQR calling AE and the C-MOVE destination
-     - ``XNAT`` on a Compose deployment, ``FLIP_XNAT`` on Kubernetes (the two defaults differ)
+     - ``FLIP_XNAT``
    * - ``XNAT_PORT``
      - ``xnat.web.dicomPort``
      - DICOM receiver port
