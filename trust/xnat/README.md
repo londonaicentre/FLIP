@@ -30,9 +30,10 @@ XNAT has an unauthenticated account-creation flaw, so sites on an older release 
   [NrgXnat/xnat](https://github.com/NrgXnat/xnat/releases). The Bitbucket downloads stop at 1.10.0.
 - **No platform change.** 1.10.1 and 1.10.2 keep the 1.10.0 Java, Tomcat and PostgreSQL
   requirements, and 1.10.2 makes no database schema change.
-- **Container Service moves to 3.8.2.** The 1.10.2.1 WAR ships snakeyaml 2. Container Service 3.8.1's
+- **Container Service had to leave 3.8.1.** The 1.10.2.1 WAR ships snakeyaml 2. Container Service 3.8.1's
   Kubernetes client calls a constructor snakeyaml 2 removed, so the chart's Kubernetes backend cannot
-  be reached (CS-1058). See [Plugin compatibility](#plugin-compatibility).
+  be reached (CS-1058). FLIP moved to 3.8.2 then and runs 3.9.0 now (FLIP#1817). See
+  [Plugin compatibility](#plugin-compatibility).
 - **DicomEdit 6.10.0.** `anon_script.das` gives the same output on 6.10.0 as on 6.9.0 (see
   [`tests/README.md`](tests/README.md#when-to-update)). The script uses no `alterPixels`, so the new
   pixel-redaction engine does not apply.
@@ -431,7 +432,7 @@ applied.
 | Plugin                          | Version for XNAT 1.10.2.1   | Installed | Action for 1.10.2.1 |
 | ------------------------------- | --------------------------- | --------- | ------------------- |
 | DICOM Query-Retrieve Plugin     | 3.1.0                       | Yes       | Upgraded from 3.0.0 (FLIP#1816) — 3.1.0 requires XNAT 1.10.1 or newer, and marks a C-MOVE that leaves nothing in the prearchive `FAILED` instead of leaving it `ISSUED`. On FLIP's direct-archive receiver that is every C-MOVE: see the note below |
-| Container Service Plugin        | 3.8.2 (JDK 8 build)         | Yes       | **Must upgrade** from 3.8.1 — its Kubernetes client cannot load on the 1.10.2.1 WAR (CS-1058). 3.8.2 changes only that client. 3.9.0, built for 1.10.1, is not needed |
+| Container Service Plugin        | 3.9.0 (JDK 21 build)        | Yes       | Upgraded from 3.8.2 (FLIP#1817); needs XNAT 1.10.1 or newer. Docker Swarm status polling loads the database less, and on Kubernetes an XNAT restart no longer marks finished containers failed. FLIP turns on its daily build-directory cleanup (see [DICOM to NIfTI Conversion](#dicom-to-nifti-conversion)) |
 | Batch Launch Plugin             | 0.9.0 (JDK 8 build)         | Yes       | None — the matrix keeps BLP 0.9.0 for 1.10, and there is no later release |
 | OHIF Viewer Plugin              | 3.8.0 (`-fat` build)        | Yes       | None — 3.8.0 is the plugin's XNAT 1.10 release, and there is no later release; the optional MONAI Label server registers through it — see [MONAI Label](../README.md#monai-label-optional) |
 
@@ -471,7 +472,7 @@ use XNAT-side MFA; hub auth is Cognito and imaging-api authenticates as a servic
 **Staying on 1.9 instead?** The 1.9 line's security hotfix is **XNAT 1.9.3.9**; earlier 1.9
 releases carry the vulnerability 1.10.2.1 fixes. **DQR 2.3.2** is the thread-leak fix alone (JDK 8).
 
-The 1.10.2.1 artifact set (WAR + DQR 3.1.0 + Container Service 3.8.2 + Batch Launch 0.9.0 + OHIF viewer
+The 1.10.2.1 artifact set (WAR + DQR 3.1.0 + Container Service 3.9.0 + Batch Launch 0.9.0 + OHIF viewer
 3.8.0) is pinned in [`artifacts.manifest`](artifacts.manifest). Every file is a public download that needs no
 account. The DQR Bitbucket repository also carries `2.3.2`/`2.4.0` for the JDK 8 fallback.
 
@@ -528,6 +529,21 @@ XNAT's own action listing (`GET /xapi/events/allactions`). So the id must surviv
 matches wrappers by name) while taking every field from `dcm2niix_command.json`, the image included;
 on Kubernetes without the resource keys, so conversion pods stay BestEffort (FLIP#1448). A command is
 registered only when none exists, and the step refuses to choose between two.
+
+The Container Service backend is sent again only when a field FLIP sets has drifted, and then as the
+server XNAT holds with only FLIP's fields changed. `POST /xapi/docker/server` resets every setting it
+leaves out, so a site's own settings, such as the retention periods below, survive a re-run (FLIP#1817).
+When XNAT cannot return the server (it pings the backend inside the GET, so an unreachable backend fails
+it, as does a first install), the step sends FLIP's config alone and prints a warning: that resets them.
+
+FLIP turns on the build-directory cleanup Container Service 3.9.0 adds (`build-dir-cleanup-enabled`).
+Each conversion writes its output to a directory under XNAT's build path (`${XNAT_DATA_DIR}/xnat-data/build`
+on Compose, the `build` subPath of xnat-web's data volume on Helm), XNAT copies it into the scan's
+`NIFTI` resource, and before 3.9.0 nothing deleted the first copy. The daily job (02:00 UTC) deletes a
+build directory once every container of its launch has finished and its retention has passed: 7 days
+after a completed run, 14 after a failed one, 1 after a killed one. A site can change the time and the
+retention periods in XNAT; the switch itself is FLIP's, and a re-run turns it back on. Container logs are
+kept in the archive, and imaging-api reads NIfTI from the archive only.
 
 ### Converting scans archived without NIfTI
 

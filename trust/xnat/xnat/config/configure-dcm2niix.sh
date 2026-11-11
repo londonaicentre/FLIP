@@ -74,7 +74,8 @@ else
 fi
 
 # Registered again only when a field the config sets has drifted: each POST stores a new server
-# under a new id. A GET that fails (no server yet) counts as drift.
+# under a new id. A GET that fails counts as drift: XNAT pings the backend inside it, so it fails
+# with no server yet and with one it cannot reach.
 xnat_request 10 60 -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$XNAT_URL/xapi/docker/server"
 backend_drift=""
 if [[ "$xnat_status" == 200 ]] && backend_drift=$(jq -r --argjson desired "$backend_config" \
@@ -82,6 +83,16 @@ if [[ "$xnat_status" == 200 ]] && backend_drift=$(jq -r --argjson desired "$back
   echo "The $XNAT_CS_BACKEND backend already matches the configuration — leaving it as-is."
 else
   echo "Adding the $XNAT_CS_BACKEND backend for the container service${backend_drift:+ (drifted on $backend_drift)}..."
+  # A POST resets every setting it leaves out, such as the build-directory cleanup a site can turn on
+  # (Container Service 3.9.0), so a drifted server goes back whole with only FLIP's fields changed,
+  # less its ids (its own, and those of its swarm constraints and Kubernetes tolerations): XNAT fails a
+  # POST that carries the server's. ping is the GET's reachability result, not a setting.
+  if [[ -n "$backend_drift" ]]; then
+    backend_config=$(jq -c --argjson desired "$backend_config" \
+      'del(.id, .ping, .["swarm-constraints"][]?.id, .["kubernetes-tolerations"][]?.id) + $desired' <<<"$xnat_body")
+  else
+    echo "WARNING: XNAT did not return its container server (HTTP $xnat_status), as on a first install: sending FLIP's config alone, which resets any server setting a site had changed." >&2
+  fi
   echo "backend_config: $backend_config"
   # A rejected config fails here: the ping below could still pass against the previous backend.
   admin_curl -X POST "$XNAT_URL/xapi/docker/server" -H "Content-Type: application/json" -d "$backend_config" >/dev/null
