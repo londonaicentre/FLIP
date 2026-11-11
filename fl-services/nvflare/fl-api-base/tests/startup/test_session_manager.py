@@ -45,11 +45,13 @@ def test_create_fl_session_success(fake_settings):
 
     with (
         patch("fl_api.startup.session_manager.get_settings", return_value=fake_settings),
-        patch("fl_api.startup.session_manager.FLIP_Session", return_value=mock_session),
+        patch("fl_api.startup.session_manager.FLIP_Session", return_value=mock_session) as session_cls,
     ):
         session = create_fl_session()
 
     assert session == mock_session
+    # NVFLARE's Session asserts the study is a string: the boot session names the default study, never None.
+    assert session_cls.call_args.kwargs["study"] == "default"
     assert session.upload_dir == "/tmp/upload"
     assert session.download_dir == "/tmp/download"
 

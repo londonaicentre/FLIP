@@ -14,6 +14,7 @@ import contextlib
 import time
 
 from nvflare.apis.fl_exception import FLCommunicationError
+from nvflare.apis.job_def import DEFAULT_STUDY
 from nvflare.fuel.flare_api.api_spec import NoConnection
 
 from fl_api.config import get_settings
@@ -63,7 +64,7 @@ def _connect(study: str | None = None) -> FLIP_Session:
         startup_path=settings.FL_ADMIN_DIRECTORY,
         secure_mode=settings.SECURE_MODE,
         debug=settings.LOG_LEVEL == "DEBUG",
-        study=study,
+        study=study or DEFAULT_STUDY,  # NVFLARE takes a name, never None
     )
     try:
         session.try_connect(settings.TIMEOUT_SESSION_CONNECT)
