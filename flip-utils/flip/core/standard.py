@@ -26,7 +26,7 @@ import tarfile
 import tempfile
 from contextlib import ExitStack
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, override
 from urllib.parse import urlparse
 
@@ -107,11 +107,19 @@ def _resource_params(resource: ResourceType) -> dict[str, str]:
     return {"assessor_type": assessor_type, "resource_type": resource.value}
 
 
+def _under(root: Path, relative: str) -> Path:
+    """A path imaging-api named, which must stay inside ``root``."""
+    path = PurePosixPath(relative)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"{relative!r} leaves {root}")
+    return root / path
+
+
 _study_dir_path: Path | None = None
 
 
 def _study_dir() -> Path:
-    """This process's directory for streamed studies: created on first use, removed at exit."""
+    """This process's directory for streamed or linked studies: created on first use, removed at exit."""
     global _study_dir_path
     if _study_dir_path is None:
         _study_dir_path = Path(tempfile.mkdtemp(prefix="flip-studies-"))
@@ -222,6 +230,8 @@ class FLIPStandardProd(FLIPBase):
 
         if FlipConstants.IMAGES_TRANSPORT == "stream":
             return self._stream_study(payload, resources, accession_id)
+        if FlipConstants.IMAGES_TRANSPORT == "archive":
+            return self._link_study(payload, resources, accession_id)
 
         endpoint = _join_url(FlipConstants.IMAGING_API_URL, f"download/images/{FlipConstants.NET_ID}")
 
@@ -262,6 +272,38 @@ class FLIPStandardProd(FLIPBase):
             with tarfile.open(fileobj=response.raw, mode="r|") as tar:
                 tar.extractall(_study_dir(), filter="data")
             self.logger.info(f"Streamed {resource} images for {accession_id}")
+        return _study_dir() / accession_id
+
+    def _link_study(self, payload: dict[str, str], resources: list[ResourceType], accession_id: str) -> Path:
+        """Lay the study out, in this process's own study directory, as links into XNAT's archive.
+
+        For a job pod that mounts its project's directory of XNAT's archive read-only (FLIP#1857): imaging-api
+        names each file's place in the archive and in the layout a download has, and nothing is copied. XNAT keeps
+        assessor resources elsewhere, so those are streamed.
+        """
+        endpoint = _join_url(FlipConstants.IMAGING_API_URL, f"download/images/{FlipConstants.NET_ID}/layout")
+        assessors = [r for r in resources if _resource_params(r)["assessor_type"] == "assessor"]
+        for resource in resources:
+            if resource in assessors:
+                continue
+            response = requests.post(
+                endpoint,
+                json=payload,
+                params={"resource_type": resource.value},
+                headers=_trust_internal_headers(),
+            )
+            response.raise_for_status()
+            for file in response.json()["files"]:
+                link = _under(_study_dir(), file["path"])
+                target = _under(Path(FlipConstants.XNAT_ARCHIVE_DIR), file["archive"])
+                if not target.is_file():
+                    raise FileNotFoundError(f"{target} is not in the mounted XNAT archive")
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.unlink(missing_ok=True)  # a later round links the study again
+                link.symlink_to(target)
+            self.logger.info(f"Linked {resource} images for {accession_id}")
+        if assessors:
+            self._stream_study(payload, assessors, accession_id)
         return _study_dir() / accession_id
 
     @override

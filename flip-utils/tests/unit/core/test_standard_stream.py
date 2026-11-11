@@ -121,3 +121,96 @@ def test_a_mounted_project_folder_still_uploads_the_files_themselves(project_con
         FLIPStandardProd().add_resource("proj-1", "ACC001", "scan-1", "SEG", [str(segmentation)])
 
     assert put.call_args.args[0] == "https://imaging.example.com/upload/images/net-1/files"
+
+
+@pytest.fixture
+def archive_constants(stream_constants, tmp_path, monkeypatch):
+    """The project's directory of XNAT's archive is mounted read-only (an NVFLARE study mount, FLIP#1857)."""
+    stream_constants.IMAGES_TRANSPORT = "archive"
+    stream_constants.XNAT_ARCHIVE_DIR = str(tmp_path / "archive")
+    monkeypatch.setattr(standard, "_study_dir_path", tmp_path / "studies")
+    nifti = tmp_path / "archive" / "arc001" / "ACC001" / "SCANS" / "1" / "NIFTI"
+    nifti.mkdir(parents=True)
+    (nifti / "a.nii.gz").write_bytes(b"nifti")
+    (tmp_path / "studies").mkdir()
+    return stream_constants
+
+
+def _layout(*files: tuple[str, str]) -> Mock:
+    return Mock(status_code=200, json=lambda: {"files": [{"path": p, "archive": a} for p, a in files]})
+
+
+_NIFTI = ("ACC001/scans/1-unknown/resources/NIFTI/files/a.nii.gz", "arc001/ACC001/SCANS/1/NIFTI/a.nii.gz")
+
+
+def test_an_archived_study_is_laid_out_as_links_into_the_mount(archive_constants, tmp_path):
+    with patch("flip.core.standard.requests.post", return_value=_layout(_NIFTI)) as post:
+        result = FLIPStandardProd().get_by_accession_number("proj-1", "ACC001", ResourceType.NIFTI)
+
+    assert result == tmp_path / "studies" / "ACC001"
+    link = result / "scans/1-unknown/resources/NIFTI/files/a.nii.gz"
+    assert link.is_symlink()
+    assert link.resolve() == (tmp_path / "archive/arc001/ACC001/SCANS/1/NIFTI/a.nii.gz").resolve()
+    assert link.read_bytes() == b"nifti"
+    assert [p.name for p in result.rglob("*.nii.gz")] == ["a.nii.gz"]
+    assert post.call_args.args[0] == "https://imaging.example.com/download/images/net-1/layout"
+    assert post.call_args.kwargs["params"] == {"resource_type": "NIFTI"}
+    assert post.call_args.kwargs["headers"]["x-trust-internal-service-key"] == "test-trust-internal-key"
+
+
+def test_an_archived_study_can_be_linked_again_the_next_round(archive_constants):
+    with patch("flip.core.standard.requests.post", return_value=_layout(_NIFTI)):
+        FLIPStandardProd().get_by_accession_number("proj-1", "ACC001", ResourceType.NIFTI)
+        result = FLIPStandardProd().get_by_accession_number("proj-1", "ACC001", ResourceType.NIFTI)
+
+    assert (result / "scans/1-unknown/resources/NIFTI/files/a.nii.gz").read_bytes() == b"nifti"
+
+
+def test_assessor_resources_of_an_archived_study_are_streamed(archive_constants, tmp_path):
+    """XNAT keeps assessors outside the session's scans, and has no listing for them."""
+    tar = Mock(status_code=200, raw=_Raw(_tar("ACC001/assessors/seg/resources/SEG/files/s.dcm", b"seg")))
+
+    with patch("flip.core.standard.requests.post", side_effect=[_layout(_NIFTI), tar]) as post:
+        result = FLIPStandardProd().get_by_accession_number(
+            "proj-1", "ACC001", [ResourceType.NIFTI, ResourceType.SEGMENTATION]
+        )
+
+    assert [call.args[0].rsplit("/", 1)[1] for call in post.call_args_list] == ["layout", "stream"]
+    assert (result / "assessors/seg/resources/SEG/files/s.dcm").read_bytes() == b"seg"
+    assert (result / "scans/1-unknown/resources/NIFTI/files/a.nii.gz").is_symlink()
+
+
+@pytest.mark.parametrize(
+    "file",
+    [
+        ("../outside/a.nii.gz", _NIFTI[1]),
+        ("/etc/a.nii.gz", _NIFTI[1]),
+        (_NIFTI[0], "arc001/../../other-project/a.nii.gz"),
+        (_NIFTI[0], "/etc/passwd"),
+    ],
+)
+def test_a_listed_path_that_leaves_its_directory_is_refused(archive_constants, tmp_path, file):
+    with (
+        patch("flip.core.standard.requests.post", return_value=_layout(file)),
+        pytest.raises(ValueError, match="leaves"),
+    ):
+        FLIPStandardProd().get_by_accession_number("proj-1", "ACC001", ResourceType.NIFTI)
+
+    assert not list((tmp_path / "studies").rglob("*.nii.gz"))
+
+
+def test_a_listed_file_missing_from_the_mount_fails_the_fetch(archive_constants):
+    missing = (_NIFTI[0], "arc001/ACC001/SCANS/1/NIFTI/gone.nii.gz")
+
+    with patch("flip.core.standard.requests.post", return_value=_layout(missing)), pytest.raises(FileNotFoundError):
+        FLIPStandardProd().get_by_accession_number("proj-1", "ACC001", ResourceType.NIFTI)
+
+
+def test_an_archived_study_still_uploads_the_files_themselves(archive_constants, tmp_path):
+    segmentation = tmp_path / "seg.nii.gz"
+    segmentation.write_bytes(b"seg")
+
+    with patch("flip.core.standard.requests.put", return_value=Mock(status_code=200)) as put:
+        FLIPStandardProd().add_resource("proj-1", "ACC001", "scan-1", "SEG", [str(segmentation)])
+
+    assert put.call_args.args[0] == "https://imaging.example.com/upload/images/net-1/files"
