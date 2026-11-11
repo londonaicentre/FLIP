@@ -732,6 +732,9 @@ def test_the_service_allowlist_is_exactly_what_the_flip_root_uses() -> None:
 # Granted only so the apply that deletes them is allowed (FLIP#1438). Drop with the bootstrap entries
 # once stag and prod have applied the removal.
 RETIRING_ROLES = {"trust-ec2-role"}
+# Listed ahead of the root declaring them: the platform repo applies this list from a pinned commit, so a
+# role must be on it before the apply that creates the role. Remove once the root declares it (FLIP#1866).
+ARRIVING_ROLES = {"ecs-fl-kit-provision-task-role"}
 RETIRING_PROFILES = {"trust-ec2-role-profile"}
 RETIRING_POLICIES = {"CloudWatchAgentServerPolicy"}
 
@@ -766,7 +769,8 @@ def test_the_named_roles_and_profiles_are_the_ones_the_flip_root_declares() -> N
                 roles.add(arguments["role_name"].strip('"'))
             elif monitoring_role := _rds_monitoring_role(header, arguments):
                 roles.add(monitoring_role)
-    assert set(_string_list_default("managed_role_names")) == roles | RETIRING_ROLES
+    assert not ARRIVING_ROLES & roles, "declared now: drop it from ARRIVING_ROLES"
+    assert set(_string_list_default("managed_role_names")) == roles | RETIRING_ROLES | ARRIVING_ROLES
     assert set(_string_list_default("managed_instance_profile_names")) == profiles | RETIRING_PROFILES
 
 
