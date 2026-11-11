@@ -34,7 +34,7 @@ def is_served():
 
 @pytest.mark.parametrize("path", [route.path for route in router.routes])  # type: ignore[attr-defined]
 def test_every_download_route_refuses_an_accession_that_left_the_approved_cohort(client, is_served, path):
-    """The 404 of a study XNAT does not hold, before anything is read (FLIP#1860)."""
+    """A 404 before anything is read (FLIP#1860)."""
     is_served.return_value = False
     with (
         patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),
@@ -43,7 +43,7 @@ def test_every_download_route_refuses_an_accession_that_left_the_approved_cohort
         response = client.post(path.format(net_id="net1"), json=_REQUEST_BODY)
 
     assert response.status_code == 404
-    assert response.json()["detail"].startswith("Resource not found")
+    assert response.json()["detail"] == "Resource not found: accession ACC123 is not in the project's approved cohort"
     is_served.assert_awaited_once_with("decrypted-project-id", "ACC123")
     download.assert_not_called()
 

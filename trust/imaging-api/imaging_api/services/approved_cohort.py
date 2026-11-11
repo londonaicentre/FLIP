@@ -15,7 +15,7 @@
 data-access-api serves a project's frozen membership that still resolves in OMOP (FLIP#857), so a patient who leaves
 the cohort stops being served at once. Their imaging follows here, from the same list:
 
-- a download is refused for an accession the list does not hold (``is_served``);
+- a download is refused (404) for an accession the list does not hold (``is_served``);
 - ``reconcile`` removes such an accession's cached copies at once, and its XNAT session once it has been off the list
   for ``COHORT_REMOVAL_GRACE_HOURS``. A cached copy is downloaded again on demand, but only a new pull from the PACS
   refills XNAT, and the list is short for a while whenever the trust reloads its OMOP tables: hence the wait.

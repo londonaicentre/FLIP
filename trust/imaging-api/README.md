@@ -246,7 +246,7 @@ data-access-api serves for the project now (`/cohort/accession-ids`).
 
 | What | When | How |
 | --- | --- | --- |
-| Downloads | Within a minute | The route answers `404`, as for a study XNAT does not hold, for an accession that is not on the list. The list is read at most once a minute per project. |
+| Downloads | Within a minute | The route answers `404` for an accession that is not on the list. The list is read at most once a minute per project. |
 | The cached copy | Within `COHORT_RECONCILE_MINUTES` (15) | `<net_id>/<central_hub_project_id>/<accession_id>/` is removed in every net's folder. |
 | XNAT | After `COHORT_REMOVAL_GRACE_HOURS` (24) off the list | The session is deleted from the project's archive and prearchive with its files, then the subject when none of their studies is left. The log names the project and the accession when it is first seen off the list, and again at each removal. |
 
@@ -258,7 +258,7 @@ data-access-api serves for the project now (`/cohort/accession-ids`).
   not say whether the cohort fell below the trust's threshold or its lookup failed. Downloads are refused in both
   cases (`503` and `404`). An empty list is an answer, not a refusal: the approved cohort has no imaging, and the
   project's sessions are removed like any other that is off the list.
-- **What is removed.** Imaging sessions the project owns whose label is not a served accession. An assessor (a
+- **What is removed.** Imaging sessions the project owns whose label is not a served accession, with their files. XNAT keeps no copy of them while its `backupDeletedToCache` site setting is off, its default (FLIP does not set it). An assessor (a
   segmentation) goes with its session, never on its own; a session shared in from another project is left to that
   project.
 - **Not pulled again.** A study removed this way is not imported again if the patient returns to OMOP. Their rows are

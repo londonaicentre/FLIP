@@ -224,8 +224,7 @@ Imaging follows the approved cohort
 A patient who leaves a project's approved cohort after approval, for example through the national data opt-out,
 stops being served by ``data-access-api`` at once. ``imaging-api`` keeps the project's imaging to the same list:
 
-- **Downloads** of that patient's studies are refused within a minute, with the answer given for a study XNAT
-  does not hold.
+- **Downloads** of that patient's studies are refused within a minute.
 - **The cached copy** on the Trust host is removed within 15 minutes.
 - **The study in XNAT** is deleted once it has been off the list for 24 hours, and the patient's XNAT subject
   with it when none of their studies is left. The wait is there because a Trust that reloads its OMOP tables

@@ -36,8 +36,8 @@ XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 async def require_served(central_hub_project_id: str, accession_id: str) -> None:
     """Refuses an accession the project's approved cohort does not hold now (FLIP#1860).
 
-    Every route of this router calls it before it reads a study. The answer is the 404 of a study XNAT does not hold,
-    so a caller cannot tell a patient who left the cohort from a study that was never imported.
+    Every route of this router calls it before it reads a study. A 404, the status of a study XNAT does not hold:
+    the study is not there for this project to read.
 
     Raises:
         HTTPException: 404 if the accession is not served, 503 if data-access-api cannot say what is.
@@ -50,7 +50,8 @@ async def require_served(central_hub_project_id: str, accession_id: str) -> None
     if not served:
         logger.warning(f"Refusing accession {accession_id}: not in the approved cohort of {central_hub_project_id}")
         raise HTTPException(
-            status_code=404, detail=f"Resource not found: Experiment with ID or label {accession_id} not found"
+            status_code=404,
+            detail=f"Resource not found: accession {accession_id} is not in the project's approved cohort",
         )
 
 
