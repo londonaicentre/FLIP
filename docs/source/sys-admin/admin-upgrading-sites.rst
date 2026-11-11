@@ -220,7 +220,8 @@ The upgrade never re-seeds data and never resets XNAT.
    ``sha-`` tag anyway, hold the missing images at their own build: ``FL_TAG=sha-…`` for the FL client, and
    ``OMOP_DB_TAG`` / ``ORTHANC_TAG`` in the kit for those data services. ``XNAT_TAG`` pins all three XNAT images
    together, whose builds no longer share ``sha-`` tags. Set it to a release tag (or ``stag``/``prod``) published
-   for all three images.
+   for all three images. Never pin XNAT ahead of the trust APIs: from the release that ships DQR 3.1.0, xnat-web
+   needs imaging-api from the same release or later (see the Kubernetes note on ``xnat.image.pin`` below).
 
 .. list-table:: Exit codes
    :header-rows: 1
@@ -362,6 +363,10 @@ three.
    ``xnat.image.pin`` also selects the XNAT configure script, which the ``xnat-init`` Job runs from the xnat-web image.
    Older xnat-web images (v0.12.0, for example) carry a Docker-only script, and the Job refuses them by name. Hold
    XNAT back only to an xnat-web image from the release that ships your chart, or later.
+
+   Do not pin XNAT ahead of the trust APIs either. An xnat-web image that carries DQR 3.1.0 needs imaging-api from
+   the same release or later: DQR 3.1.0 marks every import ``FAILED`` as its C-MOVE ends, and an older imaging-api
+   reports the studies still arriving as failed, so the hub pulls them from the PACS again.
 
 AWS EC2 node
 ============

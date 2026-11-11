@@ -427,7 +427,7 @@ applied.
 
 | Plugin                          | Version for XNAT 1.10.2.1   | Installed | Action for 1.10.2.1 |
 | ------------------------------- | --------------------------- | --------- | ------------------- |
-| DICOM Query-Retrieve Plugin     | 3.0.0                       | Yes       | None — 3.0.0 requires XNAT 1.10.0 or newer (DQR changelog). 3.1.0, built for 1.10.1, marks a C-MOVE that delivers no files `FAILED` instead of leaving it `ISSUED`, a change imaging-api reads, so it is not part of this fix |
+| DICOM Query-Retrieve Plugin     | 3.1.0                       | Yes       | Upgraded from 3.0.0 (FLIP#1816) — 3.1.0 requires XNAT 1.10.1 or newer, and marks a C-MOVE that leaves nothing in the prearchive `FAILED` instead of leaving it `ISSUED`. On FLIP's direct-archive receiver that is every C-MOVE: see the note below |
 | Container Service Plugin        | 3.8.2 (JDK 8 build)         | Yes       | **Must upgrade** from 3.8.1 — its Kubernetes client cannot load on the 1.10.2.1 WAR (CS-1058). 3.8.2 changes only that client. 3.9.0, built for 1.10.1, is not needed |
 | Batch Launch Plugin             | 0.9.0 (JDK 8 build)         | Yes       | None — the matrix keeps BLP 0.9.0 for 1.10, and there is no later release |
 | OHIF Viewer Plugin              | 3.8.0 (`-fat` build)        | Yes       | None — 3.8.0 is the plugin's XNAT 1.10 release, and there is no later release; the optional MONAI Label server registers through it — see [MONAI Label](../README.md#monai-label-optional) |
@@ -451,16 +451,24 @@ use XNAT-side MFA; hub auth is Cognito and imaging-api authenticates as a servic
 > QUEUED/PROCESSING/ISSUED/RECEIVED/FAILED). On 2026-10-14 the REST reads returned the same rows as
 > the table reads they replaced, for every project on a live 3.0.0 instance (FLIP#1456).
 >
+> **DQR 3.1.0 marks every FLIP import `FAILED` when its C-MOVE ends.** It now fails a request that
+> left nothing in the prearchive (PLUGINS-323), and FLIP's SCP receiver archives directly, so the request
+> ends `FAILED` with `Received zero files for study <uid> in project <project>` even when the study
+> arrived. imaging-api therefore counts an executed `FAILED` as a failure only when no direct-archive
+> session is receiving the study (FLIP#1816). DQR's own import history shows every import as failed.
+> Verified against 3.1.0 and Orthanc (2026-11-09): the status vocabulary and the REST answers are
+> unchanged, apart from two optional request fields (`subjectLabel`, `experimentLabel`) FLIP leaves unset.
+>
 > The DQR thread-leakage fix is also worth attention: it is plausibly related to the bulk-import
 > wedging investigated in FLIP#662. What holds that wedge at bay is the directArchive JMS
 > build-concurrency cap baked in by `make-xnat-config.sh` plus the raised heap in `.env`; both stay
-> in place on 1.10. Re-test a large cohort pull (thousands of studies) on 1.10 + DQR 3.0.0 before
+> in place on 1.10. Re-test a large cohort pull (thousands of studies) on 1.10 + DQR 3.x before
 > assuming either is no longer needed.
 
 **Staying on 1.9 instead?** The 1.9 line's security hotfix is **XNAT 1.9.3.9**; earlier 1.9
 releases carry the vulnerability 1.10.2.1 fixes. **DQR 2.3.2** is the thread-leak fix alone (JDK 8).
 
-The 1.10.2.1 artifact set (WAR + DQR 3.0.0 + Container Service 3.8.2 + Batch Launch 0.9.0 + OHIF viewer
+The 1.10.2.1 artifact set (WAR + DQR 3.1.0 + Container Service 3.8.2 + Batch Launch 0.9.0 + OHIF viewer
 3.8.0) is pinned in [`artifacts.manifest`](artifacts.manifest). Every file is a public download that needs no
 account. The DQR Bitbucket repository also carries `2.3.2`/`2.4.0` for the JDK 8 fallback.
 
