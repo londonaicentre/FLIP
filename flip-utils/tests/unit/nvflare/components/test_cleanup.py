@@ -229,3 +229,25 @@ class TestCleanupImages:
 
         assert result.get_return_code() == ReturnCode.EXECUTION_EXCEPTION
         assert result.get_header("exception") is not None
+
+
+@patch("flip.nvflare.components.cleanup.FlipConstants")
+def test_a_mounted_project_folder_is_emptied_not_removed(mock_constants, tmp_path):
+    """A job pod mounts only its project's folder (FLIP#1678), and a mount point cannot be removed."""
+    mock_constants.LOCAL_DEV = False
+    mock_constants.IMAGES_DIR = str(tmp_path)
+    mock_constants.NET_ID = "net-1"
+    project_dir = tmp_path / "net-1" / "project"
+    (project_dir / "ACC001" / "scans").mkdir(parents=True)
+    (project_dir / "ACC001" / "scans" / "a.nii.gz").write_bytes(b"nifti")
+    (project_dir / "ACC002-scans-NIFTI.zip").write_bytes(b"zip")
+    fl_ctx = MagicMock()
+    fl_ctx.get_peer_context.return_value = None
+    fl_ctx.get_job_id.return_value = "test_job"
+
+    with patch("os.path.ismount", side_effect=lambda path: path == str(project_dir)):
+        result = CleanupImages().execute(FlipTasks.INIT_TRAINING, MagicMock(), fl_ctx, MagicMock())
+
+    assert result.get_return_code() == ReturnCode.OK
+    assert project_dir.is_dir()
+    assert list(project_dir.iterdir()) == []

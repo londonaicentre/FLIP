@@ -82,6 +82,15 @@ class CleanupImages(Executor):
                         if os.path.isfile(file_path) or os.path.islink(file_path):
                             self.log_info(fl_ctx, f"Deleting file {file_path}")
                             os.unlink(file_path)
+                        elif os.path.ismount(file_path):
+                            # A job pod mounts only its project's folder (FLIP#1678): emptied, since a mount
+                            # point cannot be removed.
+                            self.log_info(fl_ctx, f"Emptying directory {file_path}")
+                            for entry in os.scandir(file_path):
+                                if entry.is_dir(follow_symlinks=False):
+                                    shutil.rmtree(entry.path)
+                                else:
+                                    os.unlink(entry.path)
                         elif os.path.isdir(file_path):
                             self.log_info(fl_ctx, f"Deleting directory {file_path}")
                             shutil.rmtree(file_path)

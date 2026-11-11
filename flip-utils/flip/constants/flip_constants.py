@@ -86,10 +86,11 @@ class ProdSettings(_Common):
 
     # -- Shared --
     IMAGES_DIR: str = ""
-    # How a study reaches the job (FLIP#1049): "mount", a path on the net's images volume shared with
-    # imaging-api, or "stream", a tar from imaging-api extracted into this process's own directory, for
-    # a job pod that mounts no images volume.
-    IMAGES_TRANSPORT: Literal["mount", "stream"] = "mount"
+    # How a study reaches the job: "mount", a path on the net's images folder shared with imaging-api;
+    # "project", the same path where only the project's own folder is mounted (an NVFLARE study mount,
+    # FLIP#1678), so uploads travel in the request; or "stream", a tar from imaging-api extracted into
+    # this process's own directory, for a job pod that mounts no images volume (FLIP#1049).
+    IMAGES_TRANSPORT: Literal["mount", "project", "stream"] = "mount"
     NET_ID: str = "default"
     UPLOADED_FEDERATED_DATA_BUCKET: str = "s3://default-bucket"
 
@@ -144,7 +145,7 @@ class _FlipConstantsProxy:
     TRUST_INTERNAL_SERVICE_KEY_HEADER: str
     TRUST_INTERNAL_SERVICE_KEY: str
     IMAGES_DIR: str
-    IMAGES_TRANSPORT: Literal["mount", "stream"]
+    IMAGES_TRANSPORT: Literal["mount", "project", "stream"]
     NET_ID: str
     UPLOADED_FEDERATED_DATA_BUCKET: str
 
