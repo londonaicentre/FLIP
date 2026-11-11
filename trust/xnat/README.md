@@ -162,6 +162,13 @@ This downloads the XNAT WAR and plugins from their upstream URLs in `artifacts.m
 `ARTIFACTS_DIR=<dir>`) and checks their SHA-256, then builds all three images (`xnat-web`, `xnat-db`, `xnat-nginx`) tagged as `${DOCKER_REGISTRY}xnat-<service>:${XNAT_TAG}`
 (`XNAT_TAG` defaults to `DOCKER_TAG`).
 
+`xnat-web` builds on the moving `tomcat:9.0-jdk21-temurin-noble` tag, so every build, in CI or `make build`
+(both pull it), takes the current Tomcat 9 and JDK 21, including Temurin's JVM trust store, which as of Temurin 21.0.13
+no longer holds the `emSign ECC Root CA - G3` anchor upstream removes
+([NrgXnat/xnat 0ec100fee1](https://github.com/NrgXnat/xnat/commit/0ec100fee1), CVE-2026-91403). A published image
+keeps the base of the day it was built, until the next `trust/xnat/**` change or release rebuilds it. On a host with no
+registry route, `make build XNAT_BUILD_PULL=` builds on the local copy of the base.
+
 `make up BUILD=true` (from the repo root) runs this build before deploying each trust's stack, at `XNAT_TAG=dev`. The tag
 must be one the registry does not have: the swarm agent re-pulls a tag on every deploy and keeps the local image only
 when that pull fails, so a local `:stag` build would be replaced by the registry's `:stag`. Tags are daemon-wide, so a
