@@ -689,8 +689,8 @@ pool. Each job runs in the fl-client image.
 Each FLIP project is an NVFLARE study (FLIP#1678), and NVFLARE takes a study's job image and pod template
 from the site's `local/study_runtime.yaml`, which its launcher re-reads at every launch. The fl-client writes
 a project's entry when one of its jobs is about to launch (`flip.nvflare.components.project_study`, on
-NVFLARE's `BEFORE_JOB_LAUNCH` event), from the template above. A job from a hub that predates studies lands
-in the default study and gets the template as it is.
+NVFLARE's `BEFORE_JOB_LAUNCH` event), from the template above. The template itself mounts no images, so a
+job from a hub that predates studies, which lands in the default study, streams its studies.
 
 Prerequisites and trade-offs:
 
@@ -701,11 +701,10 @@ Prerequisites and trade-offs:
 - **A job pod holds only its own project's studies**, by `jobPods.images`. Either way imaging-api keeps the
   whole cache, bounded by `IMAGE_CACHE_RETENTION_HOURS`, and results are uploaded in the request.
   - `project` (the default) is NVFLARE's own way to give a job pod its data, a mount set by its study: the
-    project's entry narrows the template's mount of the net's images folder to `<net>/<project>`, the
-    project's folder of imaging-api's cache, at the path imaging-api returns. Nothing is copied into the
-    pod. It needs `sharedImagesPvc` (the chart refuses without it), and the job pods attach it: on a
-    ReadWriteOnce volume they follow the fl-client's node, and a separate GPU pool needs a ReadWriteMany
-    class.
+    project's entry mounts `<net>/<project>`, the project's folder of imaging-api's cache, at the path
+    imaging-api returns. Nothing is copied into the pod. It needs `sharedImagesPvc` (the chart refuses
+    without it), and the job pods attach it: on a ReadWriteOnce volume they follow the fl-client's node,
+    and a separate GPU pool needs a ReadWriteMany class.
   - `stream` mounts no images volume: a job streams each study from imaging-api into its own run directory
     (`IMAGES_TRANSPORT=stream`, FLIP#1049). Job pods then run on any node and ignore `flClient.affinity`, so
     a separate GPU pool needs no ReadWriteMany class.

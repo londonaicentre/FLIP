@@ -14,7 +14,7 @@
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -31,19 +31,33 @@ OTHER = "0d3c6f8a-1b2c-4d5e-8f90-a1b2c3d4e5f6"
 IMAGE = "ghcr.io/londonaicentre/flare-fl-client:stag"
 
 
-def _kit(tmp_path: Path, images_mount: bool = True) -> tuple[Path, Path]:
-    """A switched kit's ``local/`` and the net's images folder, as the fl-client mounts it."""
+@pytest.fixture(autouse=True)
+def constants(tmp_path):
+    """What the fl-client knows of the images folder it shares with imaging-api."""
+    with patch("flip.nvflare.components.project_study.FlipConstants") as constants:
+        constants.IMAGES_DIR = str(tmp_path / "images")
+        constants.NET_ID = "net-1"
+        yield constants
+
+
+def _kit(tmp_path: Path, images_volume: bool = True) -> tuple[Path, Path]:
+    """A switched kit's ``local/`` and the net's images folder, as the fl-client mounts it.
+
+    The template is the chart's: it mounts no images and streams, and declares the shared images volume only where
+    the site's job pods can attach it.
+    """
     local, net_dir = tmp_path / "local", tmp_path / "images" / "net-1"
     (local / "pod_specs").mkdir(parents=True)
     net_dir.mkdir(parents=True)
-    mounts = [{"name": "dshm", "mountPath": "/dev/shm"}]
-    if images_mount:
-        mounts.insert(0, {"name": "images", "mountPath": str(net_dir), "subPath": "net-1"})
-    pod = {
-        "apiVersion": "v1",
-        "kind": "Pod",
-        "spec": {"containers": [{"name": "nvflare_job", "volumeMounts": mounts}], "volumes": [{"name": "images"}]},
+    job = {
+        "name": "nvflare_job",
+        "env": [{"name": "NET_ID", "value": "net-1"}, {"name": "IMAGES_TRANSPORT", "value": "stream"}],
+        "volumeMounts": [{"name": "dshm", "mountPath": "/dev/shm"}],
     }
+    volumes = [{"name": "dshm", "emptyDir": {"medium": "Memory"}}]
+    if images_volume:
+        volumes.append({"name": "images", "persistentVolumeClaim": {"claimName": "shared-images"}})
+    pod = {"apiVersion": "v1", "kind": "Pod", "spec": {"containers": [job], "volumes": volumes}}
     (local / POD_TEMPLATE).write_text(yaml.safe_dump(pod))
     default = {"container": {"image": IMAGE}, "pod_template": POD_TEMPLATE}
     (local / STUDY_RUNTIME).write_text(json.dumps({"format_version": 2, "studies": {"default": default}}))
@@ -72,9 +86,24 @@ def test_a_projects_job_pods_mount_only_that_projects_images_folder(tmp_path):
 
     entry = _studies(local)[PROJECT]
     assert entry["container"] == {"image": IMAGE}
-    [images, dshm] = entry["pod_template"]["spec"]["containers"][0]["volumeMounts"]
-    assert images == {"name": "images", "mountPath": f"{net_dir}/{PROJECT}", "subPath": f"net-1/{PROJECT}"}
-    assert dshm == {"name": "dshm", "mountPath": "/dev/shm"}
+    [job] = entry["pod_template"]["spec"]["containers"]
+    assert job["volumeMounts"] == [
+        {"name": "dshm", "mountPath": "/dev/shm"},
+        {"name": "images", "mountPath": f"{net_dir}/{PROJECT}", "subPath": f"net-1/{PROJECT}"},
+    ]
+    # It reads its studies by path, where the template alone would stream them.
+    assert job["env"] == [{"name": "NET_ID", "value": "net-1"}, {"name": "IMAGES_TRANSPORT", "value": "project"}]
+
+
+def test_the_template_itself_never_mounts_images(tmp_path):
+    """A job in the default study, or in a study with no entry, cannot see the cache."""
+    local, _ = _kit(tmp_path)
+
+    _launch(local, PROJECT)
+
+    [job] = yaml.safe_load((local / POD_TEMPLATE).read_text())["spec"]["containers"]
+    assert [m["name"] for m in job["volumeMounts"]] == ["dshm"]
+    assert _studies(local)["default"] == {"container": {"image": IMAGE}, "pod_template": POD_TEMPLATE}
 
 
 def test_the_projects_folder_exists_before_the_job_pod_mounts_it(tmp_path):
@@ -93,7 +122,7 @@ def test_nvflare_reads_the_entry_as_that_studys_runtime(tmp_path):
     runtime = resolve_study_runtime(load_study_runtime_file(runtime_file, launcher_mode="k8s"), PROJECT, runtime_file)
 
     assert runtime.container_image == IMAGE
-    assert runtime.pod_template["spec"]["containers"][0]["volumeMounts"][0]["subPath"] == f"net-1/{PROJECT}"
+    assert runtime.pod_template["spec"]["containers"][0]["volumeMounts"][-1]["subPath"] == f"net-1/{PROJECT}"
 
 
 def test_each_project_keeps_its_own_entry_beside_the_default(tmp_path):
@@ -117,8 +146,9 @@ def test_a_second_job_of_the_project_leaves_the_file_alone(tmp_path):
     assert (local / STUDY_RUNTIME).stat().st_mtime_ns == before
 
 
-def test_a_template_with_no_images_mount_is_used_as_it_is(tmp_path):
-    local, net_dir = _kit(tmp_path, images_mount=False)
+def test_a_template_without_the_images_volume_is_used_as_it_is(tmp_path):
+    """Job pods that cannot attach the shared volume stream their studies in every study."""
+    local, net_dir = _kit(tmp_path, images_volume=False)
 
     _launch(local, PROJECT)
 

@@ -15,11 +15,13 @@
 Each FLIP project is an NVFLARE study. NVFLARE leaves the study-to-data mapping to the site, in
 ``local/study_runtime.yaml``, which its Kubernetes launcher re-reads at every launch, and it fires
 ``BEFORE_JOB_LAUNCH`` with the job's study before that read. This component, which ``flip.nvflare.k8s_job_mode`` adds
-to the fl-client's ``resources.json``, writes the study's entry then: the default study's job image and pod template,
-with the template's mount of the net's images folder narrowed to the project's own folder. A job pod therefore sees
-only its own project's studies, at the paths imaging-api returns.
+to the fl-client's ``resources.json``, writes the study's entry then: the default study's job image and pod template
+and, where the template declares the shared images volume, a mount of the project's own folder of it. A job pod
+therefore sees only its own project's studies, at the paths imaging-api returns.
 
-A study that is not a project id gets no entry, so NVFLARE has no image for it and does not start the job.
+The template itself mounts no images, so a job outside a project's study never sees the cache: one in the default
+study streams its studies, and a study that is not a project id gets no entry, so NVFLARE has no image for it and
+does not start the job.
 """
 
 import threading
@@ -34,10 +36,12 @@ from nvflare.apis.fl_constant import FLContextKey
 from nvflare.apis.fl_context import FLContext
 from nvflare.apis.job_def import JobMetaKey
 
+from flip.constants import FlipConstants
 from flip.nvflare.k8s_job_mode import STUDY_RUNTIME, _write_json
 
 # The chart's name for the shared images volume in the job-pod template.
 IMAGES_VOLUME = "images"
+IMAGES_TRANSPORT = "IMAGES_TRANSPORT"
 
 
 def is_project(study: object) -> bool:
@@ -48,11 +52,28 @@ def is_project(study: object) -> bool:
         return False
 
 
-def project_entry(local_dir: Path, default: dict[str, Any], project: str) -> dict[str, Any]:
-    """One project's study entry: the default study's, with the images mount narrowed to the project's folder.
+def mount_project_images(pod: dict[str, Any], project: str) -> None:
+    """Mount the project's folder of the shared images volume in a pod that declares the volume.
 
     The folder is created here, by the fl-client, which shares the net's images folder with imaging-api: the kubelet
     would otherwise create the missing ``subPath`` as root, and imaging-api could not write the project's studies.
+    """
+    if not any(volume["name"] == IMAGES_VOLUME for volume in pod["spec"].get("volumes", [])):
+        return
+    folder = f"{FlipConstants.NET_ID}/{project}"
+    path = Path(FlipConstants.IMAGES_DIR, folder)
+    path.mkdir(exist_ok=True)
+    for container in pod["spec"]["containers"]:
+        container.setdefault("volumeMounts", []).append(
+            {"name": IMAGES_VOLUME, "mountPath": str(path), "subPath": folder}
+        )
+        # Read the studies by path, not by stream: flip.constants.FlipConstants.IMAGES_TRANSPORT.
+        env = [e for e in container.get("env", []) if e["name"] != IMAGES_TRANSPORT]
+        container["env"] = [*env, {"name": IMAGES_TRANSPORT, "value": "project"}]
+
+
+def project_entry(local_dir: Path, default: dict[str, Any], project: str) -> dict[str, Any]:
+    """One project's study entry: the default study's, plus the project's own images folder.
 
     Args:
         local_dir (Path): The client kit's ``local/`` directory, which the default study's template path is relative to.
@@ -65,12 +86,7 @@ def project_entry(local_dir: Path, default: dict[str, Any], project: str) -> dic
     entry: dict[str, Any] = {"container": default["container"]}
     if "pod_template" in default:
         pod = yaml.safe_load((local_dir / default["pod_template"]).read_text(encoding="utf-8"))
-        for container in pod["spec"]["containers"]:
-            for mount in container.get("volumeMounts", []):
-                if mount["name"] == IMAGES_VOLUME:
-                    mount["mountPath"] = f"{mount['mountPath']}/{project}"
-                    mount["subPath"] = f"{mount['subPath']}/{project}"
-                    Path(mount["mountPath"]).mkdir(exist_ok=True)
+        mount_project_images(pod, project)
         entry["pod_template"] = pod
     return entry
 

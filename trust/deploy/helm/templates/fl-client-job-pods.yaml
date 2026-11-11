@@ -25,12 +25,12 @@ the fl-client container: its env, the trust-internal key, /dev/shm and the FL se
 job pod connects to the FL server itself, not only through the parent). Volumes, volumeMounts and env
 merge with the launcher's by name.
 
-A job pod holds only its own project's studies, one of two ways (flClient.nvflare.jobPods.images):
-- project: the template mounts this net's folder of the shared images volume, and the fl-client narrows
-  that mount to the project's own folder in the job's NVFLARE study (flip.nvflare.components.project_study,
-  FLIP#1678). The job pod attaches the volume, so it follows the fl-client's placement rule.
-- stream: no images volume. The job streams each study from imaging-api into its own run directory
-  (FLIP#1049), so it can run on any node.
+A job pod holds only its own project's studies. The template mounts no images and streams each study
+from imaging-api into the job's own run directory (IMAGES_TRANSPORT=stream, FLIP#1049). With
+flClient.nvflare.jobPods.images: project it also declares the shared images volume, unmounted, and the
+fl-client mounts the project's own folder of it in the job's NVFLARE study, where the job then reads by
+path (flip.nvflare.components.project_study, FLIP#1678). A job outside a project's study therefore never
+sees the cache. Declaring the volume makes the pod attach it, so it follows the fl-client's placement rule.
 */}}
 {{- define "flip-trust.flJobPod" -}}
 {{- $projectImages := eq .Values.flClient.nvflare.jobPods.images "project" -}}
@@ -93,13 +93,8 @@ spec:
               name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
               key: trust-internal-service-key
         - name: IMAGES_TRANSPORT
-          value: {{ .Values.flClient.nvflare.jobPods.images }}
+          value: stream
       volumeMounts:
-        {{- if $projectImages }}
-        - name: images
-          mountPath: {{ .Values.flClient.imagesDir }}/{{ .Values.flClient.netId }}
-          subPath: {{ .Values.flClient.netId }}
-        {{- end }}
         - name: dshm
           mountPath: /dev/shm
   volumes:

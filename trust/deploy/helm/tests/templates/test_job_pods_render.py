@@ -168,17 +168,21 @@ def test_a_job_pod_gets_what_the_client_container_has():
     assert pod["spec"]["enableServiceLinks"] is False
 
 
-def test_by_default_a_job_pod_mounts_the_nets_images_folder_for_its_study_to_narrow():
-    """The fl-client narrows this mount to the project's folder in the job's NVFLARE study (FLIP#1678)."""
+def test_the_template_never_mounts_images_and_streams():
+    """Only a project's own NVFLARE study adds an images mount, so a job outside one cannot see the cache."""
+    for extra in ((), ("--set", f"{JOB_PODS}.images=stream")):
+        [job] = _job_pod(_enabled(*extra))["spec"]["containers"]
+
+        assert _env(job)["IMAGES_TRANSPORT"]["value"] == "stream"
+        assert job["volumeMounts"] == [{"name": "dshm", "mountPath": "/dev/shm"}]
+
+
+def test_by_default_a_job_pod_declares_the_shared_images_volume_for_its_study_to_mount():
+    """The fl-client mounts the project's folder of it in the job's NVFLARE study (FLIP#1678)."""
     docs = _enabled()
     pod = _job_pod(docs)
-    [job] = pod["spec"]["containers"]
     client_spec = _client(docs)["spec"]["template"]["spec"]
 
-    assert _env(job)["IMAGES_TRANSPORT"]["value"] == "project"
-    images = next(m for m in job["volumeMounts"] if m["name"] == "images")
-    assert images == next(m for m in _client_container(docs)["volumeMounts"] if m["name"] == "images")
-    assert images == {"name": "images", "mountPath": "/app/data/images/net-1", "subPath": "net-1"}
     volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
     assert volumes["images"] == next(v for v in client_spec["volumes"] if v["name"] == "images")
     # The job pod attaches the fl-client's volume, so it is placed by the fl-client's rule.
@@ -188,10 +192,7 @@ def test_by_default_a_job_pod_mounts_the_nets_images_folder_for_its_study_to_nar
 def test_a_streaming_job_pod_mounts_no_images_volume_and_runs_anywhere():
     """It streams its studies into its own run directory (FLIP#1049)."""
     pod = _job_pod(_enabled("--set", f"{JOB_PODS}.images=stream"))
-    [job] = pod["spec"]["containers"]
 
-    assert _env(job)["IMAGES_TRANSPORT"]["value"] == "stream"
-    assert job["volumeMounts"] == [{"name": "dshm", "mountPath": "/dev/shm"}]
     assert [v["name"] for v in pod["spec"]["volumes"]] == ["dshm"]
     assert "affinity" not in pod["spec"]
 
