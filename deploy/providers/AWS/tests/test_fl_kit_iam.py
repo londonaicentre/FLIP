@@ -82,7 +82,7 @@ def test_the_flower_sync_copies_public_supernode_keys_only():
 
 
 def test_no_ecs_role_is_granted_the_ca_state():
-    """flip-api holds the whole bucket, so it carries the deny; every other grant is on a path that excludes it."""
+    """flip-api reads the kit prefix, where the state sat before the move, so it carries the deny."""
     deny = _statement(_policy("ecs_flip_api_task"), "DenyFlCaState")
     assert re.search(r'effect\s*=\s*"Deny"', deny)
     assert '"s3:*"' in deny
@@ -90,9 +90,18 @@ def test_no_ecs_role_is_granted_the_ca_state():
     assert "${aws_s3_bucket.aicentre_bucket.arn}/fl-flare-participant-kits/*/state/*" in deny
 
     for name in re.findall(r'data "aws_iam_policy_document" "(\w+)"', IAM_ECS):
+        assert not re.search(r'aicentre_bucket\.arn\}/\*?"', _policy(name)), name
         if name != "ecs_flip_api_task":
-            assert not re.search(r'aicentre_bucket\.arn\}/\*?"', _policy(name)), name
             assert CA_STATE_PREFIX not in _policy(name), name
+
+
+def test_flip_api_only_reads_the_kits():
+    """Operators write the kits; flip-api lists slots and reads a trust's kit to hand it out."""
+    policy = _policy("ecs_flip_api_task")
+    read = _statement(policy, "S3ReadFlKits")
+    assert set(re.findall(r'"(s3:\w+)"', read)) == {"s3:GetObject", "s3:HeadObject"}
+    assert 'actions = ["s3:ListBucket"]' in re.sub(r" +", " ", _statement(policy, "S3ListFlKits"))
+    assert "aicentre_bucket" not in _statement(policy, "S3FlipBuckets")
 
 
 def test_the_flare_upload_keeps_the_ca_state_out_of_the_kit_prefix():

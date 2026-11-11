@@ -227,9 +227,32 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
       "${module.flip_fl_results_bucket.bucket_arn}/*",
       module.flip_app_bundles_bucket.bucket_arn,
       "${module.flip_app_bundles_bucket.bucket_arn}/*",
-      aws_s3_bucket.aicentre_bucket.arn,
-      "${aws_s3_bucket.aicentre_bucket.arn}/*",
     ]
+  }
+
+  # The FL participant kits, read-only: operators write them, and flip-api only
+  # lists kit slots and reads a trust's own kit to hand it out.
+  statement {
+    sid     = "S3ReadFlKits"
+    actions = ["s3:GetObject", "s3:HeadObject"]
+    resources = [
+      "${aws_s3_bucket.aicentre_bucket.arn}/fl-flare-participant-kits/*",
+      "${aws_s3_bucket.aicentre_bucket.arn}/fl-flower-participant-kits/*",
+    ]
+  }
+
+  statement {
+    sid       = "S3ListFlKits"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.aicentre_bucket.arn]
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values = [
+        "fl-flare-participant-kits/*", "fl-flare-participant-kits",
+        "fl-flower-participant-kits/*", "fl-flower-participant-kits",
+      ]
+    }
   }
 
   statement {
