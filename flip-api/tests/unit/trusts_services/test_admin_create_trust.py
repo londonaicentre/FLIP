@@ -115,6 +115,17 @@ def test_admin_create_trust_400_on_empty_code(mock_register, mock_perms, admin_i
     db.rollback.assert_called_once()
 
 
+@patch("flip_api.trusts_services.admin_create_trust.has_permissions", return_value=True)
+def test_admin_create_trust_400_on_a_code_no_kit_file_could_be_named_after(mock_perms, admin_id):
+    db = MagicMock()
+
+    with pytest.raises(HTTPException) as exc_info:
+        admin_create_trust(body=ICreateTrust(name="St Thomas", code="ST T"), db=db, token_id=admin_id)
+
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    db.add.assert_not_called()
+
+
 def test_create_trust_schema_requires_code():
     # The request body must carry a non-empty code — FastAPI returns 422 for these
     # before the handler runs, so the UI cannot register a trust without a code.

@@ -20,6 +20,7 @@ from flip_api.trusts_services.services.register_trust import (
     DuplicateTrustError,
     EmptyTrustCodeError,
     EmptyTrustNameError,
+    InvalidTrustError,
     NoFreeKitSlotError,
     register_trust,
 )
@@ -136,6 +137,18 @@ def test_register_trust_rejects_blank_name():
     with pytest.raises(EmptyTrustNameError):
         register_trust(name="   ", code="GSTT", region=None, session=session)
     # Validation fires before any DB work.
+    session.exec.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("name", "code", "region"),
+    [("St Thomas", "ST T", None), ("St Thomas", "../etc", None), ("St $(id)", "STT", None), ("St Thomas", "STT", "`")],
+)
+def test_register_trust_rejects_what_a_kit_file_could_not_carry(name, code, region):
+    # Such a trust could never be given a kit, so never keys (FLIP#1852).
+    session = MagicMock()
+    with pytest.raises(InvalidTrustError):
+        register_trust(name=name, code=code, region=region, session=session)
     session.exec.assert_not_called()
 
 

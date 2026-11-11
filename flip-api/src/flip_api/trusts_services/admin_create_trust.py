@@ -25,6 +25,7 @@ from flip_api.trusts_services.services.register_trust import (
     DuplicateTrustError,
     EmptyTrustCodeError,
     EmptyTrustNameError,
+    InvalidTrustError,
     NoFreeKitSlotError,
     register_trust,
 )
@@ -55,7 +56,7 @@ def admin_create_trust(
 
     Raises:
         HTTPException: 403 if the caller lacks ``CAN_ACCESS_ADMIN_PANEL``;
-            400 if the name or code is empty; 409 if a trust with the given name
+            400 if the name or code is empty or cannot go in a kit file; 409 if a trust with the given name
             exists or no FL kit slot is available; 500 on database error.
     """
     if not has_permissions(token_id, [PermissionRef.CAN_ACCESS_ADMIN_PANEL], db):
@@ -76,7 +77,7 @@ def admin_create_trust(
         )
     # Deliberately user-facing (#906): these are the hub's own domain exceptions, each carrying a
     # message register_trust composes for the admin UI — not wrapped library/driver text.
-    except (EmptyTrustNameError, EmptyTrustCodeError) as e:
+    except (EmptyTrustNameError, EmptyTrustCodeError, InvalidTrustError) as e:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except (DuplicateTrustError, NoFreeKitSlotError) as e:

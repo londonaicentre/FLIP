@@ -67,7 +67,7 @@ def scaffold(target: Path, template: Path, name: str, code: str, region: str | N
         FileExistsError: If ``target`` already exists.
     """
     identity = [
-        "# ── Trust identity (sent to the hub by `make register-trust`) ──",
+        "# ── Trust identity (as registered on the hub) ──",
         f"TRUST_NAME={name}",
         f"TRUST_CODE={code}",
     ]

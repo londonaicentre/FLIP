@@ -349,6 +349,35 @@ describe("TrustKitSection", () => {
             expect(anchorClick).not.toHaveBeenCalled();
             expect(wrapper.findComponent({ name: "TrustKitModal" }).props("kit")).toBeNull();
         });
+
+        it("says the keys may exist when a first download gets no answer, and re-reads the status", async () => {
+            mockDownload.mockRejectedValue({
+                isAxiosError: true,
+                code: "ECONNABORTED"
+            });
+            const wrapper = mountSection();
+
+            await confirm(wrapper, "kit-download-btn");
+
+            expect(mockSnackbarError).toHaveBeenCalledWith(expect.objectContaining({
+                title: "No answer from the hub",
+                text: expect.stringContaining("may have issued this trust's keys")
+            }));
+            expect(mutateStatus).toHaveBeenCalled();
+        });
+
+        it("does not say so for an update, which issues no keys", async () => {
+            statusRef.value = issued();
+            mockDownload.mockRejectedValue({
+                isAxiosError: true,
+                code: "ECONNABORTED"
+            });
+            const wrapper = mountSection();
+
+            await confirm(wrapper, "kit-download-btn");
+
+            expect(mockSnackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "Kit not downloaded" }));
+        });
     });
 
     describe("issue new keys", () => {
@@ -385,6 +414,7 @@ describe("TrustKitSection", () => {
             expect(wrapper.find("[data-test='trust-kit-section']").exists()).toBe(false);
             expect(wrapper.find("[data-test='kit-rotate-btn']").exists()).toBe(false);
             expect(wrapper.find("[data-test='kit-download-btn']").text()).toBe("Download trust kit");
+            expect(wrapper.find("[data-test='kit-download-btn']").attributes("aria-label")).toBe("Download the GSTT trust kit");
             expect(swrvKeys).toEqual([null]);
 
             await wrapper.find("[data-test='kit-download-btn']").trigger("click");

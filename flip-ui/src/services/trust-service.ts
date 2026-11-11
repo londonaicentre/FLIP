@@ -104,7 +104,7 @@ export interface ITrustKitStatus {
     fl_backend: "nvflare" | "flower";
     fl_kit_slot: string | null;
     download_count: number;
-    // `by` is the downloader's email, when the hub knows it.
+    // `by` is the downloader's profile name, when they have one.
     last_download: { at: string; kind: "full" | "update"; by: string | null } | null;
     update_available: boolean;
 }

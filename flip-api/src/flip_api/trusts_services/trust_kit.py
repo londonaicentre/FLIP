@@ -75,6 +75,7 @@ def _kit_parts(trust: Trust, db: Session) -> tuple[FLKitSlot, KitParts]:
         return slot, load_kit_parts(trust, slot)
     except TrustKitError as e:
         db.rollback()
+        logger.warning(f"No kit for trust {trust.id} ({trust.name}): {e}")
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
 
 

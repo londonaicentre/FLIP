@@ -207,10 +207,7 @@ The trust-api container authenticates with its `TRUST_API_KEY` and posts a heart
 
 ### Cleanup / lost kit
 
-The plaintext keys aren't recoverable — only the hash is on disk. If you didn't save the kit, the only options are:
-
-* delete the row (`DELETE FROM trust WHERE name='<name>';` against `flip-db`, after freeing the slot: `UPDATE fl_kit_slot SET assigned_to_trust_id = NULL, assigned_at = NULL WHERE assigned_to_trust_id = '<trust-id>';`) and re-register, or
-* re-register with `make register-trust KIT=<CODE>`, which mints fresh keys and rewrites the kit file — this also rotates the keys.
+The plaintext keys aren't recoverable — only the hash is on disk. If you didn't save the kit, issue the trust new keys: **Issue new keys** on its card in the FLIP UI, or `make rotate-trust-keys KIT=<CODE>`. Both keep the trust's id and its FL kit slot. Deleting the trust and registering it again is not a way to get new keys: it gives the trust a new id.
 
 ## Data versions
 

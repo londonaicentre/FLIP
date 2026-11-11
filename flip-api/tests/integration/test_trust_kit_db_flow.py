@@ -19,6 +19,7 @@ of the committed ``trust`` and ``trusts_audit`` rows, so they are checked here r
 import base64
 import io
 import json
+import logging
 import tarfile
 from pathlib import Path
 from unittest.mock import patch
@@ -54,6 +55,7 @@ def kits(tmp_path: Path, monkeypatch) -> Path:
         path.write_text(name)
     monkeypatch.setattr(get_settings(), "FL_KITS_URI", str(tmp_path))
     monkeypatch.setattr(get_settings(), "FL_BACKEND", FLBackend.NVFLARE)
+    monkeypatch.setattr(get_settings(), "NET_ENDPOINTS", {"net-1": "http://fl-api-net-1:8000"})
     monkeypatch.setenv("CENTRAL_HUB_API_URL", "https://hub.example/api")
     monkeypatch.setenv("FLARE_KIT_DATE", "20261101")
     return tmp_path
@@ -177,6 +179,28 @@ def test_issuing_new_keys_refuses_the_old_one(session, world):
     session.expire_all()
     rotation = session.exec(select(TrustsAudit).where(TrustsAudit.action == TrustAuditAction.ROTATED)).one()
     assert rotation.modified_by_user_id == world["trust_admin"]
+
+
+def test_no_secret_reaches_the_audit_log_or_the_hub_log(session, world, caplog):
+    with caplog.at_level(logging.DEBUG):
+        first = _download(session, world["trust"], world["trust_admin"])
+        rotated = rotate_trust_kit(
+            IRotateTrustKit(confirm_code="KIT"),
+            response=Response(),
+            trust_id=world["trust"],
+            db=session,
+            user_id=world["trust_admin"],
+        )
+
+    secrets = {first.passphrase, rotated.passphrase}
+    for download in (first, rotated):
+        kit = _kit_json(download)["kit"]
+        secrets |= {kit["trust_api_key"], kit["trust_internal_service_key"], kit["hub_shared"]["AES_KEY_BASE64"]}
+    session.expire_all()
+    rows = session.exec(select(TrustsAudit).where(TrustsAudit.trust_id == world["trust"])).all()
+    recorded = json.dumps([row.detail for row in rows]) + caplog.text
+    assert "downloaded the full kit" in caplog.text, "the hub's log was not captured"
+    assert not [secret for secret in secrets if secret in recorded]
 
 
 def test_issuing_new_keys_needs_the_trust_code_typed_back(session, world):

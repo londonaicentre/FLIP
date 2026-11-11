@@ -327,6 +327,9 @@ def test_refusals_change_nothing() -> None:
             [],
             "not an FL file",
         ),
+        "a file where a directory is": ({"files": {"fl-kit": b"x", **fl}}, [], "also holds a directory"),
+        "update kit carrying keys": ({"kind": "update"}, [], "trust keys"),
+        "full kit missing a key": ({"kit__trust_internal_service_key": None}, [], "trust keys"),
         "unknown schema": ({"schema": 2}, [], "schema"),
         "unknown hub-shared key": ({"kit__hub_shared": {"ORTHANC_PASSWORD": "x"}}, [], "does not know"),
         "multi-line value": (
@@ -353,6 +356,20 @@ def test_refusals_change_nothing() -> None:
             assert not s.kit_file.exists(), f"{label}: a kit file was written"
             assert not s.fl_kit.exists(), f"{label}: FL files were staged"
             assert not list(s.tmp.iterdir()), f"{label}: temp dir left behind"
+
+
+def test_an_openssl_failure_that_is_the_hosts_is_not_called_a_wrong_passphrase() -> None:
+    import install_kit
+
+    with site() as s:
+        message = ""
+        try:
+            install_kit.decrypt(s.kit("nvflare"), s.tmp / "no-such-dir" / "kit.tar.gz", PASSPHRASE)
+        except install_kit.KitError as error:
+            message = str(error)
+        assert "openssl could not decrypt" in message, message
+        assert "no-such-dir" in message, message
+        assert PASSPHRASE not in message
 
 
 def test_refusals_against_an_installed_kit() -> None:

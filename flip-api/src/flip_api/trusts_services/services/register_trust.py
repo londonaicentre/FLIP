@@ -26,6 +26,7 @@ returned once (then unrecoverable). The UI path does not (FLIP#1852): its keys a
 minted by ``issue_trust_keys`` when the trust's kit is first downloaded.
 """
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
@@ -41,6 +42,11 @@ from flip_api.scripts.generate_trust_key import generate_trust_key
 from flip_api.trusts_services.utils.audit_helper import audit_trust_action
 from flip_api.utils.logger import logger
 
+# A trust code names the kit file on the trust host (``trust/.env.<CODE>.<hub>``).
+TRUST_CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+# What install-kit refuses in a value: the kit file is read by make and compose, which both expand `$`.
+KIT_UNSAFE = re.compile(r"[\r\n$`\\]")
+
 
 class TrustRegistrationError(Exception):
     """Base for trust registration failures."""
@@ -52,6 +58,10 @@ class EmptyTrustNameError(TrustRegistrationError):
 
 class EmptyTrustCodeError(TrustRegistrationError):
     """Caller supplied a blank (or missing) trust code — code is required."""
+
+
+class InvalidTrustError(TrustRegistrationError):
+    """The code, name or region could not go in the trust's kit file."""
 
 
 class DuplicateTrustError(TrustRegistrationError):
@@ -107,7 +117,7 @@ def register_trust(
     audit_user_id: UUID | None = None,
     issue_keys: bool = True,
 ) -> RegisteredTrust:
-    """Atomically register a trust: mint keys, claim an FL kit slot, insert the row.
+    """Atomically register a trust: claim an FL kit slot, insert the row and, unless told not to, mint its keys.
 
     Args:
         name (str): Friendly display name (any non-empty string after strip).
@@ -126,11 +136,13 @@ def register_trust(
     Returns:
         RegisteredTrust: The persisted trust, its assigned FL kit slot, and the
         plaintext api / internal-service keys (returned once — discard from memory
-        immediately after handing them to the operator).
+        immediately after handing them to the operator), or ``None`` for both
+        with ``issue_keys=False``.
 
     Raises:
         EmptyTrustNameError: ``name.strip()`` is empty.
         EmptyTrustCodeError: ``code`` is missing or empty after strip.
+        InvalidTrustError: The code, name or region could not go in a kit file.
         DuplicateTrustError: A trust with this name already exists.
         NoFreeKitSlotError: The ``fl_kit_slot`` pool has no unassigned rows, even
             after the on-miss reconcile from the configured slot names.
@@ -142,6 +154,11 @@ def register_trust(
     if not code:
         raise EmptyTrustCodeError("Trust code is required.")
     region = region.strip() if region else None
+    # Checked here because a trust that fails it could never be given a kit, and so never keys.
+    if not TRUST_CODE.fullmatch(code):
+        raise InvalidTrustError("Trust code must be letters, digits, - or _, starting with a letter or digit.")
+    if KIT_UNSAFE.search(f"{name}{region or ''}"):
+        raise InvalidTrustError("Trust name and region cannot hold $, `, \\ or a line break.")
 
     if session.exec(select(Trust).where(Trust.name == name)).first() is not None:
         raise DuplicateTrustError(f"A trust named {name!r} already exists.")

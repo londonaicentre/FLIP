@@ -28,7 +28,6 @@ import hashlib
 import io
 import json
 import os
-import re
 import secrets
 import tarfile
 from dataclasses import dataclass
@@ -44,7 +43,7 @@ from flip_api.config import get_settings
 from flip_api.db.models.main_models import FLKitSlot, Trust
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.scripts.register_trust import HUB_SHARED_ENV_KEYS
-from flip_api.trusts_services.services.register_trust import RegisteredTrust
+from flip_api.trusts_services.services.register_trust import KIT_UNSAFE, TRUST_CODE, RegisteredTrust
 from flip_api.utils.encryption import get_aes_key
 from flip_api.utils.s3_client import S3Client, parse_s3_path
 
@@ -57,12 +56,6 @@ _FLARE_REQUIRED = ("client.crt", "client.key", "rootCA.pem", "fed_client.json", 
 # Hub-shared keys that record what a site has installed. install-kit never overwrites them on a live
 # site (the upgrade verb owns them), so a new hub build alone is not a kit update.
 _INSTALLED_VERSION_KEYS = frozenset({"DOCKER_TAG", "DOCKER_FL_TAG"})
-
-
-# A trust code names the kit file on the trust host (``trust/.env.<CODE>.<hub>``).
-_CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
-# What install-kit refuses in a value: the kit file is read by make and compose, which both expand `$`.
-_UNSAFE = re.compile(r"[\r\n$`\\]")
 
 
 class TrustKitError(Exception):
@@ -86,6 +79,11 @@ class BuiltKit:
     kind: Literal["full", "update"]
     passphrase: str
     content: bytes
+
+
+def _unused_kit_date(backend: str) -> str:
+    """The kit date of the backend this hub does not run: no trust of it reads that one."""
+    return "FLARE_KIT_DATE" if backend == FLBackend.FLOWER else "FLOWER_KIT_DATE"
 
 
 class _KitSource:
@@ -127,7 +125,7 @@ def hub_shared_values() -> dict[str, str]:
     if "FL_SERVER_PORT" in shared:
         shared.setdefault("FL_EDGE_PORT", shared["FL_SERVER_PORT"])
 
-    missing = sorted(set(HUB_SHARED_ENV_KEYS) - set(shared))
+    missing = sorted(set(HUB_SHARED_ENV_KEYS) - set(shared) - {_unused_kit_date(shared["FL_BACKEND"])})
     if missing and get_settings().ENV == "production":
         raise TrustKitError(f"This hub is not configured to issue kits: {', '.join(missing)} not set.")
     return shared
@@ -136,44 +134,42 @@ def hub_shared_values() -> dict[str, str]:
 def hub_shared_digest(shared: dict[str, str]) -> str:
     """A digest that changes when a site needs a new kit: a hub-shared value moved, or the FL kits did.
 
-    The FL credentials are covered by their kit date. The AES key enters as its hash, and the two
-    installed-version keys are left out.
+    The FL credentials are covered by their kit date. The AES key enters as its hash; the two
+    installed-version keys and the other backend's kit date are left out.
     """
-    visible = {key: value for key, value in shared.items() if key not in _INSTALLED_VERSION_KEYS}
+    left_out = _INSTALLED_VERSION_KEYS | {_unused_kit_date(shared["FL_BACKEND"])}
+    visible = {key: value for key, value in shared.items() if key not in left_out}
     visible["AES_KEY_BASE64"] = hashlib.sha256(visible["AES_KEY_BASE64"].encode()).hexdigest()
     return hashlib.sha256(json.dumps(visible, sort_keys=True).encode()).hexdigest()
 
 
-def _fl_files(source: _KitSource, backend: FLBackend, slot_name: str, slot_number: int) -> dict[str, bytes]:
-    """This slot's FL files on every net the source holds, keyed by their path inside the kit.
+def _fl_files(
+    source: _KitSource, backend: FLBackend, slot_name: str, slot_number: int, nets: list[str]
+) -> dict[str, bytes]:
+    """This slot's FL files on every net the hub runs, keyed by their path inside the kit.
 
     Flower's are picked by name, never by folder: the same tree holds the SuperLink's private key and
     every other trust's.
+
+    Raises:
+        TrustKitError: The slot lacks a file on one of the nets, so its client could not join that net.
     """
     files: dict[str, bytes] = {}
-    net = 1
-    while True:
+    for net in nets:
         if backend is FLBackend.NVFLARE:
-            slot_dir = f"net-{net}/services/{slot_name}"
+            slot_dir = f"{net}/services/{slot_name}"
             paths = [p for p in source.list(slot_dir) if p.startswith((f"{slot_dir}/startup/", f"{slot_dir}/local/"))]
             missing = [name for name in _FLARE_REQUIRED if f"{slot_dir}/startup/{name}" not in paths]
-            if paths and missing:
-                raise TrustKitError(
-                    f"FL kit slot {slot_name} is incomplete on net-{net}: {', '.join(missing)} missing."
-                )
         else:
-            wanted = [f"net-{net}/certificates/ca.crt", f"net-{net}/keys/supernode_credentials_{slot_number}"]
-            present = set(source.list(f"net-{net}/certificates")) | set(source.list(f"net-{net}/keys"))
+            wanted = [f"{net}/certificates/ca.crt", f"{net}/keys/supernode_credentials_{slot_number}"]
+            present = set(source.list(f"{net}/certificates")) | set(source.list(f"{net}/keys"))
             paths = [p for p in wanted if p in present]
-            if paths and len(paths) != len(wanted):
-                raise TrustKitError(f"FL kit slot {slot_name} is incomplete on net-{net}.")
-        if not paths:
-            break
+            missing = [p.rsplit("/", 1)[1] for p in wanted if p not in present]
+        if missing:
+            raise TrustKitError(f"FL kit slot {slot_name} is incomplete on {net}: {', '.join(missing)} missing.")
         files.update({f"fl-kit/{path}": source.read(path) for path in paths})
-        net += 1
-
     if not files:
-        raise TrustKitError(f"No FL kit was found for slot {slot_name}.")
+        raise TrustKitError("This hub runs no FL net, so there is no FL kit to hand out.")
     return files
 
 
@@ -217,18 +213,27 @@ def load_kit_parts(trust: Trust, slot: FLKitSlot) -> KitParts:
         KitParts: The parts ``build_kit`` assembles.
 
     Raises:
-        TrustKitError: The trust's code or name cannot go in a kit file, the hub is not configured
-            to issue kits, or the slot's FL files are missing or incomplete.
+        TrustKitError: The trust's code, name or region cannot go in a kit file, the hub is not
+            configured to issue kits, or the slot's FL files are incomplete on a net the hub runs.
     """
-    if not trust.code or not _CODE.fullmatch(trust.code):
+    if not trust.code or not TRUST_CODE.fullmatch(trust.code):
         raise TrustKitError("This trust's code cannot name a kit file; it must be letters, digits, - or _.")
-    if _UNSAFE.search(f"{trust.name}{trust.region or ''}"):
+    if KIT_UNSAFE.search(f"{trust.name}{trust.region or ''}"):
         raise TrustKitError("This trust's name or region holds a character a kit file cannot carry: $, ` or \\.")
     settings = get_settings()
     if not settings.FL_KITS_URI:
         raise TrustKitError("This hub is not configured to issue kits: FL_KITS_URI not set.")
     shared = hub_shared_values()
-    files = _fl_files(_KitSource(settings.FL_KITS_URI), settings.FL_BACKEND, slot.slot_name, slot.slot_number)
+    unsafe = sorted(key for key, value in shared.items() if KIT_UNSAFE.search(value))
+    if unsafe:
+        raise TrustKitError(f"This hub is not configured to issue kits: {', '.join(unsafe)} holds $, ` or \\.")
+    files = _fl_files(
+        _KitSource(settings.FL_KITS_URI),
+        settings.FL_BACKEND,
+        slot.slot_name,
+        slot.slot_number,
+        sorted(settings.NET_ENDPOINTS),
+    )
     return KitParts(backend=settings.FL_BACKEND, shared=shared, files=files)
 
 

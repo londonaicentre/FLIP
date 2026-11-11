@@ -20,9 +20,9 @@ files under ``fl-kit/``. This decrypts it, checks it, creates or updates ``trust
 and stages the FL files under the kit file's ``FL_KIT_DIR``. Driven by ``make -C trust install-kit``.
 
 A *full* kit carries the trust's two keys: it is the first install, or the keys were re-issued. An
-*update* kit carries none and leaves the installed ones alone. Site-local lines are never touched,
-and on an installed trust neither are ``DOCKER_TAG`` / ``DOCKER_FL_TAG``, which record what runs
-and belong to the upgrade verb (site_upgrade.py).
+*update* kit carries none and leaves the installed ones alone. Site-local lines are never changed
+(``FL_KIT_DIR`` is added when absent), and on an installed trust neither are ``DOCKER_TAG`` /
+``DOCKER_FL_TAG``, which record what runs and belong to the upgrade verb (site_upgrade.py).
 
 The passphrase is prompted for, or read as one line of stdin, and reaches openssl through a pipe:
 never an argument or an environment variable, which ``ps`` and the shell history would show.
@@ -50,7 +50,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import new_trust  # noqa: E402
 import trust_kit_lib as tkl  # noqa: E402
-from onboard_onprem_trust import is_filled, read_kit_vars  # noqa: E402
+from onboard_onprem_trust import invoking_ids, is_filled, read_kit_vars  # noqa: E402
 
 SCHEMA = 1
 # The inverse of the hub's encryption; the passphrase is the first line of stdin.
@@ -92,7 +92,11 @@ def decrypt(source: Path, dest: Path, passphrase: str) -> None:
         capture_output=True,
     )
     if result.returncode != 0:
-        raise KitError(NOT_A_KIT)
+        stderr = result.stderr.decode(errors="replace").strip()
+        # Anything else is the host's fault (no room, no write access, an openssl without -pbkdf2), not the kit's.
+        if "bad decrypt" in stderr or "bad magic number" in stderr:
+            raise KitError(NOT_A_KIT)
+        raise KitError(f"openssl could not decrypt the kit:\n{stderr}")
 
 
 def unpack(archive: Path, dest: Path) -> dict:
@@ -120,6 +124,8 @@ def unpack(archive: Path, dest: Path) -> dict:
     # A wrong passphrase that happens to leave valid padding decrypts to noise.
     except (tarfile.TarError, EOFError, zlib.error, gzip.BadGzipFile) as error:
         raise KitError(NOT_A_KIT) from error
+    except (FileExistsError, NotADirectoryError) as error:
+        raise KitError(f"the kit holds a file where it also holds a directory: {error.filename!r}") from error
 
     try:
         manifest = json.loads((dest / "kit.json").read_text())
@@ -300,6 +306,9 @@ def install(args: argparse.Namespace) -> None:
             for key in XNAT_PASSWORD_KEYS:
                 lines = tkl.upsert(lines, key, secrets.token_urlsafe(32))
             tkl.write_secure(kit_file, lines)
+            if os.geteuid() == 0:
+                # Under sudo the file would be root's, and make skips a kit file it cannot read without a word.
+                os.chown(kit_file, *invoking_ids())
 
         settings = read_kit_vars(kit_file)
         if not settings.get("FL_KIT_DIR"):
@@ -310,7 +319,7 @@ def install(args: argparse.Namespace) -> None:
         if not (uid.isdigit() and gid.isdigit()):
             raise KitError(f"FLIP_UID / FLIP_GID in {kit_file} must be numbers.")
 
-        # Stage first, so a host that cannot hold the FL files leaves the installed kit as it was.
+        # Stage first, so a host that cannot hold the FL files leaves an installed kit's values as they were.
         kept = [
             key for key in TAG_KEYS if not first and is_filled(before.get(key)) and key in kit.get("hub_shared", {})
         ]

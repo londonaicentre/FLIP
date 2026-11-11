@@ -15,8 +15,10 @@
 import base64
 import io
 import json
+import os
 import shutil
 import subprocess
+import sys
 import tarfile
 from pathlib import Path
 from uuid import uuid4
@@ -44,6 +46,7 @@ from flip_api.trusts_services.services.trust_kit import (
 
 FLARE_STARTUP = ("client.crt", "client.key", "rootCA.pem", "fed_client.json", "sub_start.sh", "start.sh")
 AES_KEY = base64.b64encode(b"k" * 32).decode()
+INSTALL_KIT = Path(__file__).resolve().parents[5] / "trust" / "deploy" / "scripts" / "install_kit.py"
 
 
 def _write(root: Path, files: dict[str, str]) -> None:
@@ -96,6 +99,9 @@ def hub(monkeypatch):
     def configure(uri: str | None, backend: FLBackend = FLBackend.NVFLARE) -> None:
         monkeypatch.setattr(get_settings(), "FL_KITS_URI", uri)
         monkeypatch.setattr(get_settings(), "FL_BACKEND", backend)
+        # As many nets as the fixture of that backend holds.
+        nets = ("net-1", "net-2") if backend is FLBackend.NVFLARE else ("net-1",)
+        monkeypatch.setattr(get_settings(), "NET_ENDPOINTS", {net: f"http://{net}" for net in nets})
 
     return configure
 
@@ -231,7 +237,7 @@ def test_each_kit_has_its_own_passphrase(flare_kits, hub):
         (lambda hub, kits: hub(str(kits)), _registered(code=None), "code cannot name a kit file"),
         (lambda hub, kits: hub(str(kits)), _registered(code="../etc"), "code cannot name a kit file"),
         (lambda hub, kits: hub(str(kits)), _registered(name="St $(shell id)"), "cannot carry"),
-        (lambda hub, kits: hub(str(kits)), _registered(number=9), "No FL kit was found for slot Trust_9"),
+        (lambda hub, kits: hub(str(kits)), _registered(number=9), "Trust_9 is incomplete on net-1"),
     ],
 )
 def test_a_kit_that_cannot_be_built_says_why(flare_kits, hub, configure, registered, message):
@@ -249,6 +255,23 @@ def test_an_incomplete_flare_slot_is_not_handed_out(flare_kits, hub):
         _build(_registered(number=2))
 
 
+def test_a_slot_missing_from_a_net_the_hub_runs_is_not_handed_out(flare_kits, hub):
+    """Its client could never join that net, and nothing at install time would say so."""
+    shutil.rmtree(flare_kits / "net-2/services/Trust_2")
+    hub(str(flare_kits))
+
+    with pytest.raises(TrustKitError, match="Trust_2 is incomplete on net-2"):
+        _build(_registered(number=2))
+
+
+def test_a_hub_shared_value_the_installer_would_refuse_is_not_handed_out(flare_kits, hub, monkeypatch):
+    hub(str(flare_kits))
+    monkeypatch.setenv("NLB_SUBDOMAIN", "fl.example/$(id)")
+
+    with pytest.raises(TrustKitError, match="NLB_SUBDOMAIN holds"):
+        _build(_registered())
+
+
 def test_a_flower_slot_without_its_key_is_not_handed_out(flower_kits, hub):
     hub(str(flower_kits), FLBackend.FLOWER)
 
@@ -262,6 +285,18 @@ def test_a_deployed_hub_refuses_to_issue_a_kit_with_a_hub_shared_value_missing(h
     monkeypatch.setattr(get_settings(), "ENV", "production")
 
     with pytest.raises(TrustKitError, match="NLB_SUBDOMAIN not set"):
+        hub_shared_values()
+
+
+def test_a_deployed_hub_needs_only_the_kit_date_of_the_backend_it_runs(hub, monkeypatch):
+    hub("unused")
+    monkeypatch.setenv("FLOWER_KIT_DATE", "")
+    monkeypatch.setattr(get_settings(), "ENV", "production")
+
+    assert "FLOWER_KIT_DATE" not in hub_shared_values()
+
+    hub("unused", FLBackend.FLOWER)
+    with pytest.raises(TrustKitError, match="FLOWER_KIT_DATE not set"):
         hub_shared_values()
 
 
@@ -283,5 +318,43 @@ def test_digest_moves_with_a_hub_shared_value_but_not_with_the_image_tags(hub):
 
     assert hub_shared_digest({**shared, "DOCKER_TAG": "v9.9.9", "DOCKER_FL_TAG": "v9.9.9"}) == digest
     assert hub_shared_digest({**shared, "FLARE_KIT_DATE": "20991231"}) != digest
+    assert hub_shared_digest({**shared, "FLOWER_KIT_DATE": "20991231"}) == digest, "this hub runs NVFLARE"
     assert hub_shared_digest({**shared, "AES_KEY_BASE64": base64.b64encode(b"n" * 32).decode()}) != digest
     assert AES_KEY not in digest
+
+
+@pytest.mark.skipif(shutil.which("openssl") is None or not INSTALL_KIT.is_file(), reason="needs openssl and trust/")
+@pytest.mark.parametrize(
+    ("backend", "kits", "staged"),
+    [
+        (FLBackend.NVFLARE, "flare_kits", "net-2/services/Trust_2/startup/client.key"),
+        (FLBackend.FLOWER, "flower_kits", "net-1/keys/supernode_credentials_2"),
+    ],
+)
+def test_the_trust_hosts_installer_installs_what_the_hub_builds(backend, kits, staged, hub, tmp_path, request):
+    """The builder and install_kit.py are otherwise each tested against a manifest written by hand."""
+    hub(str(request.getfixturevalue(kits)), backend)
+    kit = _build(_registered(keys=True))
+    site = tmp_path / "site"
+    (site / "trust").mkdir(parents=True)
+    template = (INSTALL_KIT.parents[2] / ".env.example").read_text()
+    assert "FL_KIT_DIR=/opt/flip/fl-kit" in template
+    (site / "trust" / ".env.example").write_text(
+        template.replace("FL_KIT_DIR=/opt/flip/fl-kit", f"FL_KIT_DIR={site / 'fl-kit'}")
+        + f"FLIP_UID={os.getuid()}\nFLIP_GID={os.getgid()}\n"
+    )
+    (site / "kit.enc").write_bytes(kit.content)
+
+    result = subprocess.run(
+        [sys.executable, str(INSTALL_KIT), str(site / "kit.enc"), "--trust-dir", str(site / "trust")],
+        input=kit.passphrase + "\n",
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    installed = (site / "trust" / ".env.BDMS.prod").read_text().splitlines()
+    assert "TRUST_API_KEY=api-key" in installed  # pragma: allowlist secret
+    assert f"AES_KEY_BASE64={AES_KEY}" in installed
+    assert f"FL_BACKEND={backend.value}" in installed
+    assert (site / "fl-kit" / staged).is_file()

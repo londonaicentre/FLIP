@@ -28,6 +28,7 @@
             small
             class="whitespace-nowrap"
             data-test="kit-download-btn"
+            :aria-label="`Download the ${trustLabel} trust kit`"
             @click="askDownload"
         >
             Download trust kit
@@ -127,6 +128,7 @@
 </template>
 
 <script setup lang="ts">
+import { isAxiosError } from "axios";
 import useSWRV from "swrv";
 import { computed, ref } from "vue";
 
@@ -224,13 +226,18 @@ const issue = async (newKeys: boolean) => {
             kind: kit.kind,
             passphrase: kit.passphrase
         };
-        void refreshStatus();
     } catch (e) {
+        // No reply is not a refusal: the hub issues the keys before it answers, so they may exist now.
+        const maybeIssued = (newKeys || !status.value?.keys_issued) && isAxiosError(e) && !e.response;
         Snackbar.error({
-            title: newKeys ? "New keys not issued" : "Kit not downloaded",
-            text: extractErrorDetail(e, "The kit could not be built, please try again.")
+            title: maybeIssued ? "No answer from the hub" : newKeys ? "New keys not issued" : "Kit not downloaded",
+            text: maybeIssued
+                ? "The hub did not answer, and may have issued this trust's keys all the same. If the kit status now "
+                    + "shows them issued, use Issue new keys to get a kit that carries them."
+                : extractErrorDetail(e, "The kit could not be built, please try again.")
         });
     } finally {
+        void refreshStatus();
         submitting.value = false;
         asking.value = null;
     }

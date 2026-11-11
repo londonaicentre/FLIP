@@ -88,7 +88,8 @@ Docker Compose host — download the kit from the FLIP UI
 
 .. warning::
 
-   The downloaded file holds the trust's API key, the platform encryption key and an FL TLS private key. Download it
+   The downloaded file holds the platform encryption key and an FL TLS private key and, in a full kit, the trust's
+   API key. Download it
    on a machine you trust and delete it once it is installed. Each download is recorded in the trust's audit log
    against the account that made it.
 
@@ -338,8 +339,9 @@ Later — rotate hub-shared settings
 When the admin changes a hub-shared value (the encryption key, image tags or FL backend), the credentials do not need
 to be re-issued.
 
-**Docker Compose host, from the FLIP UI.** The trust's card shows *Kit update available* when the hub-shared settings
-or the FL credentials have changed since the last download.
+**Docker Compose host, from the FLIP UI.** The trust's card shows *Kit update available* when a hub-shared setting
+or the date of the FL kits has changed since the kit was last downloaded from the UI. A trust whose kit was never
+downloaded there shows no such label.
 
 #. *Trust Admin:* click **Download kit** on the card and save the passphrase. This is an update kit: it carries no
    keys and leaves the trust's own untouched.
@@ -396,7 +398,8 @@ On a host whose kit file is lost as well, ``install-kit`` writes a new one with 
 databases already on the host keep the passwords they were created with, so copy those into the new kit file before
 starting anything.
 
-A trust registered from the command line gets update kits and new keys from its card in the same way. For a node the
+A trust registered from the command line gets update kits and new keys from its card in the same way; its card
+shows *Kit update available* only after a first download from the UI. For a node the
 UI route does not cover (Kubernetes, AWS EC2, Azure), the FLIP admin rotates from the command line instead:
 :ref:`deploy-central-hub-rotate-trust-keys`.
 
