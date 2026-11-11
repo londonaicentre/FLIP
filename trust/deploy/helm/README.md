@@ -672,7 +672,7 @@ flClient:
     jobPods:
       enabled: true
       maxGpus: 1            # GPUs lent to jobs at once; NVFLARE queues beyond it and the hub says why
-      images: project       # how a job pod gets its studies: project (a study mount) or stream
+      images: project       # how a job pod gets its studies: project or archive (study mounts), or stream
       ephemeralStorage: 10Gi  # local disk per job pod; with images: stream, size it to the largest cohort
       pendingTimeout: 900   # seconds a job pod may wait for its node; size it to a cold scale-up
       tolerations:          # the GPU pool's taint
@@ -705,6 +705,14 @@ Prerequisites and trade-offs:
     imaging-api returns. Nothing is copied into the pod. It needs `sharedImagesPvc` (the chart refuses
     without it), and the job pods attach it: on a ReadWriteOnce volume they follow the fl-client's node,
     and a separate GPU pool needs a ReadWriteMany class.
+  - `archive` uses the same study mount for the project's own directory of XNAT's archive
+    (`archive/<XNAT project>` of XNAT's volume), read-only, so a job reads its studies in place with no copy
+    in imaging-api's cache or in the pod (FLIP#1857). imaging-api's `/layout` route names each file's place in
+    the archive and in the layout a download has, and `flip.get_by_accession_number` builds that layout as
+    links into the mount. It needs this chart's XNAT on a persistent volume (the chart refuses otherwise), and
+    the job pods join XNAT's group (1001) to read it. On a ReadWriteOnce XNAT volume they run on xnat-web's
+    node, and a separate GPU pool needs a ReadWriteMany class. A project with nothing archived yet, and any
+    assessor resource, is streamed.
   - `stream` mounts no images volume: a job streams each study from imaging-api into its own run directory
     (`IMAGES_TRANSPORT=stream`, FLIP#1049). Job pods then run on any node and ignore `flClient.affinity`, so
     a separate GPU pool needs no ReadWriteMany class.

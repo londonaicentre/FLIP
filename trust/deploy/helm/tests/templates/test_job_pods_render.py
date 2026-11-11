@@ -197,6 +197,41 @@ def test_a_streaming_job_pod_mounts_no_images_volume_and_runs_anywhere():
     assert "affinity" not in pod["spec"]
 
 
+def test_an_archive_job_pod_declares_xnats_volume_read_only_for_its_study_to_mount():
+    """The fl-client mounts the project's directory of XNAT's archive in the job's NVFLARE study (FLIP#1857)."""
+    pod = _job_pod(_enabled("--set", f"{JOB_PODS}.images=archive"))
+    [job] = pod["spec"]["containers"]
+
+    assert _env(job)["IMAGES_TRANSPORT"]["value"] == "stream"
+    assert job["volumeMounts"] == [{"name": "dshm", "mountPath": "/dev/shm"}]
+    volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
+    assert set(volumes) == {"xnat-archive", "dshm"}
+    claim = volumes["xnat-archive"]["persistentVolumeClaim"]
+    assert claim["readOnly"] is True
+    assert claim["claimName"].endswith("-xnat-web")
+    # XNAT's group reads the archive; fsGroup would re-own it.
+    assert pod["spec"]["securityContext"] == {"supplementalGroups": [1001]}
+    # XNAT's volume is ReadWriteOnce by default, so the pod lands on xnat-web's node.
+    [term] = pod["spec"]["affinity"]["podAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]
+    assert term["labelSelector"]["matchLabels"]["app.kubernetes.io/component"] == "xnat-web"
+
+
+def test_an_archive_job_pod_runs_anywhere_on_a_shared_xnat_volume():
+    pod = _job_pod(
+        _enabled("--set", f"{JOB_PODS}.images=archive", "--set", "xnat.web.persistence.accessMode=ReadWriteMany")
+    )
+
+    assert "affinity" not in pod["spec"]
+
+
+@pytest.mark.parametrize("off", ["xnat.enabled=false", "xnat.web.persistence.enabled=false"])
+def test_an_archive_mount_is_refused_without_the_charts_own_xnat_volume(off):
+    result = _helm("--set", f"{JOB_PODS}.enabled=true", "--set", f"{JOB_PODS}.images=archive", "--set", off)
+
+    assert result.returncode != 0
+    assert "images: project or stream" in result.stderr
+
+
 def test_a_project_mount_is_refused_without_the_shared_images_volume():
     result = _helm("--set", f"{JOB_PODS}.enabled=true", "--set", "sharedImagesPvc.enabled=false")
 
