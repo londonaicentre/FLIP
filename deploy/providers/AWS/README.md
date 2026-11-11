@@ -420,7 +420,9 @@ It runs `scripts/add_fl_kits.sh`: discovers the deployment's nets from S3, activ
 the remaining shortfall restores + fingerprint-verifies each net's CA workspace
 (`fl-services/nvflare/provision/workspace-<env>/`) and mints the next `Trust_<n>` names on **every** net via
 `nvflare provision --add_client` (existing kits untouched — no CA rotation), uploads **only** the new kits
-additively (never `aws s3 sync --delete`) plus a refresh of each net's mirrored `state/cert.json`, and appends the
+additively (never `aws s3 sync --delete`) plus a refresh of each net's mirrored CA state (`cert.json` under
+`fl-flare-ca-state/`, a prefix no ECS task role can read; see the nvflare README for estates that still hold it
+among the kits), and appends the
 activated + minted names to `FL_KIT_SLOT_NAMES` in the env file. The make target then re-invokes make for
 `apply-fl-kit-slots` (so the sub-make re-reads the edited env file) — a targeted plan/apply of only the
 `/flip/fl_kit_slot_names` SSM parameter, plus the flip-api task-role policy that grants its read so the first
