@@ -48,6 +48,11 @@ class UpgradeXnat(unittest.TestCase):
         assert 'ssh "$xnat_ctx" "stat -c' in out, f"the remote branch must stat over ssh:\n{out}"
         assert "Fix: ssh $xnat_ctx sudo chown" in out, f"the remote remedy must be runnable on the host:\n{out}"
 
+    def test_upgrade_xnat_creates_the_mount_sources_before_checking_them(self):
+        """A site installed before FLIP#1818 has no prearchive dir; Swarm fails a task whose mount source is missing."""
+        out = self.recipe
+        assert out.index("xnat-web-dirs KIT=SCR") < out.index("owned="), out
+
     def test_upgrade_xnat_backs_up_before_redeploying(self):
         out = self.recipe
         assert "xnat-backup KIT=SCR" in out, out
@@ -283,6 +288,71 @@ class XnatBackup(unittest.TestCase):
         assert "refusing to upgrade XNAT without a dump" in out, out
 
 
+class XnatWebDirs(unittest.TestCase):
+    """xnat-web-dirs, run for real against a stub docker: a live site gets the mount sources it lacks (FLIP#1818)."""
+
+    def _run(self, data: Path, tmp: str) -> subprocess.CompletedProcess[str]:
+        bin_dir = Path(tmp) / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "docker").write_text(STUB_DOCKER)
+        (bin_dir / "docker").chmod(0o755)
+        self.users = Path(tmp) / "run-users"
+        return run_target(
+            "xnat-web-dirs",
+            subdir="trust/xnat",
+            kit=kit_with("XNAT_DATA_DIR=/nonexistent/xnat", f"XNAT_DATA_DIR={data}"),
+            env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "RUN_USERS": str(self.users)},
+        )
+
+    def test_a_site_without_a_prearchive_gets_one_as_the_xnat_uid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp) / "xnat"
+            study = data / "xnat-data" / "archive" / "study.dcm"
+            study.parent.mkdir(parents=True)
+            study.write_text("x")
+            result = self._run(data, tmp)
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert (data / "xnat-data" / "prearchive").is_dir()
+            assert study.exists(), "an upgrade keeps the data"
+            assert self.users.read_text().split() == ["1001:1001"], "made as xnat-web's uid, not root"
+
+    def test_an_xnat_data_dir_the_uid_cannot_write_names_the_chown(self):
+        """Recursive: a tree a root xnat-web wrote would otherwise pass here and fail upgrade-xnat's check."""
+        if os.getuid() == 0:
+            self.skipTest("root writes a 0555 directory anyway")
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp) / "xnat"
+            (data / "xnat-data" / "archive").mkdir(parents=True)
+            (data / "xnat-data").chmod(0o555)
+            try:
+                result = self._run(data, tmp)
+            finally:
+                (data / "xnat-data").chmod(0o755)
+            assert result.returncode != 0, result.stdout
+            assert f"chown -R 1001:1001 {data}/xnat-data" in result.stdout, result.stdout
+
+    def test_a_tree_without_an_archive_is_refused_and_left_alone(self):
+        """A kit whose XNAT_DATA_DIR is not the site's tree must not get empty dirs the ownership check accepts."""
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp) / "xnat"
+            data.mkdir()
+            result = self._run(data, tmp)
+            assert result.returncode != 0, result.stdout
+            assert f"{data}/xnat-data/archive does not exist" in result.stdout, result.stdout
+            assert not (data / "xnat-data").exists(), "nothing is created in a tree that is not the site's"
+
+    def test_a_docker_failure_is_not_reported_as_an_ownership_problem(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "bin"
+            bin_dir.mkdir()
+            (bin_dir / "docker").write_text("#!/bin/sh\nexit 125\n")
+            (bin_dir / "docker").chmod(0o755)
+            result = run_target("xnat-web-dirs", subdir="trust/xnat", env={"PATH": f"{bin_dir}:{os.environ['PATH']}"})
+            assert result.returncode != 0, result.stdout
+            assert "docker run failed" in result.stdout, result.stdout
+            assert "chown" not in result.stdout, result.stdout
+
+
 class XnatImageRegistry(unittest.TestCase):
     """The registry `docker stack deploy` substitutes into the XNAT images, from make's environment (FLIP#1480)."""
 
@@ -373,7 +443,7 @@ REFUSING = {
 }
 
 
-XNAT_SUBDIRS = ("tomcat_logs", "archive", "build", "cache", "../xnat-db-data")
+XNAT_SUBDIRS = ("tomcat_logs", "archive", "build", "cache", "prearchive", "../xnat-db-data")
 
 
 class XnatDirsWithoutRoot(unittest.TestCase):

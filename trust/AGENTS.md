@@ -106,7 +106,8 @@ the same defaults as `deploy/portable.mk`'s `API_UID`/`ORTHANC_UID`/`XNAT_CONTAI
 the ownership guards read), so the operator's own `mkdir` is enough and `xnat-reset` provisions the
 XNAT tree itself, as in development. xnat-db alone keeps its
 root entrypoint (every existing site's database is uid 70's, the image's `postgres`, and it re-owns its data dir to it), so
-`xnat-prepare-dirs` creates but never re-owns `xnat-db-data`, and XNAT's Container Service jobs run as
+`xnat-prepare-dirs` creates but never re-owns `xnat-db-data` (on a live site `xnat-web-dirs`, run by
+`upgrade-trust` and `upgrade-xnat`, creates the xnat-web mount sources an older install lacks), and XNAT's Container Service jobs run as
 `FLIP_UID` too (`XNAT_CS_CONTAINER_USER`, written into the Docker backend by `configure-dcm2niix.sh`), or
 dcm2niix could not read the 640 files xnat-web archives. `FLIP_UID` is a first-install choice:
 `_upgrade-trust-apply` refuses a kit whose `FLIP_UID` differs from the owner of the data dirs (unset, the Orthanc dir's 999, so clearing it is caught too). A second
