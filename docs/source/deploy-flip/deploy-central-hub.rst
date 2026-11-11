@@ -536,15 +536,61 @@ verified addresses.
 **If the verification link has expired**, delete the FLIP identity in the SES console (*Configuration → Identities*),
 then run ``make -C deploy/providers/AWS plan apply HUB=<hub>`` to create it again and send a new link.
 
+Sending from your own domain
+============================
+
+Mail sent from an address on a domain you do not control (a webmail address, say) fails the receiving server's DMARC
+check and is often junked or dropped. So FLIP also creates an SES identity for the hub's own domain
+(``ALB_SUBDOMAIN``), and you move the sender onto it in steps. Until you do, nothing changes: FLIP sends from
+``SES_VERIFIED_EMAIL``, and access-request notifications go to that same address.
+
+1. **Publish the DNS records** in the zone that serves ``ALB_SUBDOMAIN``. The three DKIM tokens are the
+   ``SesDkimTokens`` Terraform output, available after the first apply:
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 45 10 45
+
+      * - Name
+        - Type
+        - Value
+      * - ``<token>._domainkey.<ALB_SUBDOMAIN>`` (one per token)
+        - CNAME
+        - ``<token>.dkim.amazonses.com``
+      * - ``mail.<ALB_SUBDOMAIN>``
+        - MX
+        - ``10 feedback-smtp.<region>.amazonses.com``
+      * - ``mail.<ALB_SUBDOMAIN>``
+        - TXT
+        - ``v=spf1 include:amazonses.com ~all``
+      * - ``_dmarc.<ALB_SUBDOMAIN>``
+        - TXT
+        - ``v=DMARC1; p=quarantine``
+
+2. **Wait for the domain identity to show Verified** in the SES console.
+3. **Set** ``SES_SENDER_EMAIL=no-reply@<ALB_SUBDOMAIN>`` in the hub env file and apply. FLIP's own emails now come from
+   that address. ``SES_VERIFIED_EMAIL`` stays the address access-request notifications are sent to, so keep it a
+   mailbox somebody reads.
+4. **Request SES production access** for the account, if it is still in the sandbox.
+5. **Set** ``COGNITO_EMAIL_VIA_SES=true`` and apply, so invitations and password-reset codes come from the same
+   address through SES.
+
+.. warning::
+
+   Keep the order. A sender address set before the domain is verified stops FLIP's own emails. Cognito switched to SES
+   while the account is in the sandbox delivers only to verified addresses, so users stop receiving invitations and
+   reset codes that Cognito's built-in sender delivers today.
+
 **To check email works end to end**, register a new user in FLIP. The invitation email with the temporary password
 comes from Cognito, so this tests the invitation templates in a real mail client.
 
 .. note::
 
    SES carries only the emails FLIP itself sends: access-request notifications and XNAT credential emails.
-   **Cognito sends user invitations and password-reset codes itself**, not through SES. So a broken or sandboxed SES
-   identity does not stop invitations or password resets, and fixing SES does not fix them. Cognito's built-in sender
-   has its own delivery limits.
+   **Cognito sends user invitations and password-reset codes itself**, not through SES, unless
+   ``COGNITO_EMAIL_VIA_SES=true`` (above). So with the default, a broken or sandboxed SES identity does not stop
+   invitations or password resets, and fixing SES does not fix them. Cognito's built-in sender has its own delivery
+   limits.
 
 .. note::
 

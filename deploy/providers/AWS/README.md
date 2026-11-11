@@ -1978,6 +1978,12 @@ Verifying the sender identity, re-verifying an expired one and leaving the SES s
 [Deploy the Central Hub → Email setup](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#email-setup). To check sending is enabled for
 the account: `aws ses get-account-sending-enabled --region <aws-region>`.
 
+The same page covers moving the sender onto the hub's own domain (`SES_SENDER_EMAIL`, then `COGNITO_EMAIL_VIA_SES`;
+both optional, unset = today's senders). On the AI Centre estates the zone for `flip.aicentre.co.uk` is in the
+networking account, so the DKIM, MAIL FROM and DMARC records are a change in `aicentre-lza-iac`, fed the
+`SesDkimTokens` output of this stack. The two keys are GitHub environment variables like every other Terraform input
+(`aws-stag`, `aws-prod`), set per environment only once its step's precondition holds.
+
 ### Troubleshooting Email Issues
 
 | Issue | Solution |

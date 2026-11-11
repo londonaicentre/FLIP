@@ -18,6 +18,26 @@ resource "aws_ses_email_identity" "flip_sender" {
   email = var.sender_email
 }
 
+# The domain FLIP sends from (FLIP#592). Mail from an address on a domain we do
+# not control fails DMARC alignment, so the sender is an address on this one.
+# SES signs for it once the three DKIM CNAMEs (the dkim_tokens output) are
+# published; until then the identity is pending and nothing sends from it.
+resource "aws_sesv2_email_identity" "flip_domain" {
+  email_identity = var.sender_domain
+
+  dkim_signing_attributes {
+    next_signing_key_length = "RSA_2048_BIT"
+  }
+}
+
+# A MAIL FROM on the same domain aligns SPF as well as DKIM. Without its MX
+# record SES falls back to amazonses.com rather than refusing the send.
+resource "aws_sesv2_email_identity_mail_from_attributes" "flip_domain" {
+  email_identity         = aws_sesv2_email_identity.flip_domain.email_identity
+  mail_from_domain       = "mail.${var.sender_domain}"
+  behavior_on_mx_failure = "USE_DEFAULT_VALUE"
+}
+
 resource "aws_ses_template" "flip_access_request" {
   name    = var.template_name_prefix == "" ? "flip-access-request" : "${var.template_name_prefix}-flip-access-request"
   subject = "Access Request from {{name}} on FLIP"

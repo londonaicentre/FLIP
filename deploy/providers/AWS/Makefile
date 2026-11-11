@@ -220,6 +220,14 @@ export TF_VAR_AWS_REGION=${AWS_REGION}
 export TF_VAR_manage_dns=$(MANAGE_DNS)
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
 export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
+# Email delivery (FLIP#592), both optional and exported only when set so
+# variables.tf's defaults (send from SES_VERIFIED_EMAIL; Cognito's own sender) hold.
+ifneq ($(SES_SENDER_EMAIL),)
+export TF_VAR_SES_SENDER_EMAIL=${SES_SENDER_EMAIL}
+endif
+ifneq ($(COGNITO_EMAIL_VIA_SES),)
+export TF_VAR_cognito_email_via_ses=${COGNITO_EMAIL_VIA_SES}
+endif
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
 export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
 export TF_VAR_FLIP_UI_BUCKET_NAME=${FLIP_UI_BUCKET_NAME}

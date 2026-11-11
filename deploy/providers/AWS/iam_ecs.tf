@@ -204,7 +204,7 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
   statement {
     sid       = "SesSend"
     actions   = ["ses:SendEmail", "ses:SendRawEmail", "ses:SendTemplatedEmail"]
-    resources = [module.ses.sender_identity_arn]
+    resources = [module.ses.sender_identity_arn, module.ses.sender_domain_identity_arn]
   }
 
   statement {

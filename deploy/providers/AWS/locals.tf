@@ -143,7 +143,7 @@ locals {
       INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
       AWS_SECRET_NAME                = "FLIP_API" # pragma: allowlist secret
       AWS_SES_ADMIN_EMAIL_ADDRESS    = var.SES_VERIFIED_EMAIL
-      AWS_SES_SENDER_EMAIL_ADDRESS   = var.SES_VERIFIED_EMAIL
+      AWS_SES_SENDER_EMAIL_ADDRESS   = var.SES_SENDER_EMAIL != "" ? var.SES_SENDER_EMAIL : var.SES_VERIFIED_EMAIL
       UPLOADED_MODEL_FILES_BUCKET    = local.uploaded_model_files_uri
       SCANNED_MODEL_FILES_BUCKET     = local.scanned_model_files_uri
       UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
