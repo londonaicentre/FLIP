@@ -714,7 +714,9 @@ Prerequisites and trade-offs:
     links into the mount. It needs this chart's XNAT on a persistent volume (the chart refuses otherwise), and
     the job pods join XNAT's group (1001) to read it. On a ReadWriteOnce XNAT volume they run on xnat-web's
     node, and a separate GPU pool needs a ReadWriteMany class. A project with nothing archived yet, and any
-    assessor resource, is streamed.
+    assessor resource, is streamed. **Do not enable it for real patient data until FLIP#1860 is in:** the
+    mount lists every study archived for the project, including those of patients who have since left its
+    approved cohort, which nothing removes from XNAT today.
   - `stream` mounts no images volume: a job streams each study from imaging-api into its own run directory
     (`IMAGES_TRANSPORT=stream`, FLIP#1049). Job pods then run on any node and ignore `flClient.affinity`, so
     a separate GPU pool needs no ReadWriteMany class.
