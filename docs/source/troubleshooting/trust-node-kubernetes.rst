@@ -328,7 +328,7 @@ Every retrieval cycle, a few minutes apart, logs this exception, and the PACS se
 
 **Cause.** The name is misleading: it is not about the PACS. Each queued retrieval names XNAT's receiver as
 ``<AE title>:<port>``, and XNAT stores it only if a registered DICOM receiver matches that string exactly. The AE
-title and port come from ``xnat.web.dicomAet`` and ``xnat.web.dicomPort`` (defaults ``XNAT`` and ``8104``).
+title and port come from ``xnat.web.dicomAet`` and ``xnat.web.dicomPort`` (defaults ``FLIP_XNAT`` and ``8104``).
 Releases before the DICOM and web ports were split could send ``XNAT:8080``, the web port, which matches nothing.
 
 **Check.** Compare the destination the requests carry with the receivers XNAT has:
@@ -349,7 +349,7 @@ Releases before the DICOM and web ports were split could send ``XNAT:8080``, the
    .. code-block:: shell
 
       kubectl exec -n flip-trust trust-release-flip-trust-xnat-db-0 -- psql -U xnat -d xnat -c \
-        "UPDATE xhbm_queued_pacs_request SET destination_ae_title = 'XNAT:8104'
+        "UPDATE xhbm_queued_pacs_request SET destination_ae_title = 'FLIP_XNAT:8104'
          WHERE destination_ae_title = 'XNAT:8080';"
 
 .. _ts-k8s-unassigned:
@@ -376,7 +376,7 @@ stock receiver and create this one:
    kubectl exec -n flip-trust "$XNAT_POD" -- \
      curl -s -X POST -u admin:<admin-pass> -H "Content-Type: application/json" \
      http://localhost:8080/xapi/dicomscp -d '{
-       "aeTitle": "XNAT", "port": 8104, "enabled": true,
+       "aeTitle": "FLIP_XNAT", "port": 8104, "enabled": true,
        "customProcessing": true, "directArchive": true,
        "identifier": "dqrObjectIdentifier", "anonymizationEnabled": true,
        "whitelistEnabled": false, "routingExpressionsEnabled": false
@@ -898,7 +898,7 @@ Defaults for the mocked Orthanc; a real PACS overrides them through the values n
      - Port
      - Role
    * - XNAT receiver
-     - ``XNAT`` (``xnat.web.dicomAet``)
+     - ``FLIP_XNAT`` (``xnat.web.dicomAet``)
      - ``xnat-web-dicom``
      - 8104 (``xnat.web.dicomPort``)
      - Receives the studies the PACS sends after a C-MOVE
