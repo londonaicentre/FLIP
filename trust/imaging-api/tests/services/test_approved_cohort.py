@@ -165,10 +165,16 @@ async def test_a_session_stays_in_xnat_until_its_accession_has_been_off_the_list
     trust.served = ["A1"]
     trust.experiments = [_session("A1", "S1"), _session("A2", "S2")]
 
-    await trust.reconcile()
-    trust.now += DAY - 1
-    await trust.reconcile()
+    with patch.object(approved_cohort, "logger") as logger:
+        await trust.reconcile()
+        trust.now += DAY - 1
+        await trust.reconcile()
     assert trust.deleted == []
+    # The trust is told once, a day ahead.
+    assert [call.args[0] for call in logger.info.call_args_list] == [
+        f"Accession A2 of project {HUB_ID} is off the approved cohort; "
+        "its XNAT session is removed if it stays off for 24 h"
+    ]
 
     trust.now += 1
     await trust.reconcile()

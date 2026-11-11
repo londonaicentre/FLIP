@@ -199,7 +199,13 @@ async def _reconcile_project(project: Project, headers: dict[str, str], grace_se
 
     for key in [key for key in _left_at if key[0] == project.ID and key[1] not in left]:
         del _left_at[key]  # back on the list, or gone from XNAT
-    due = [accession for accession in left if now - _left_at.setdefault((project.ID, accession), now) >= grace_seconds]
+    for accession in left:
+        if _left_at.setdefault((project.ID, accession), now) == now and grace_seconds > 0:
+            logger.info(
+                f"Accession {accession} of project {hub_id} is off the approved cohort; "
+                f"its XNAT session is removed if it stays off for {grace_seconds / 3600:g} h"
+            )
+    due = [accession for accession in left if now - _left_at[project.ID, accession] >= grace_seconds]
     if due:
         await run_in_threadpool(_remove_from_xnat, project, due, sessions, prearchive, headers)
 

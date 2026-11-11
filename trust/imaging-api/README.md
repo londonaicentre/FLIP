@@ -248,7 +248,7 @@ data-access-api serves for the project now (`/cohort/accession-ids`).
 | --- | --- | --- |
 | Downloads | Within a minute | The route answers `404`, as for a study XNAT does not hold, for an accession that is not on the list. The list is read at most once a minute per project. |
 | The cached copy | Within `COHORT_RECONCILE_MINUTES` (15) | `<net_id>/<central_hub_project_id>/<accession_id>/` is removed in every net's folder. |
-| XNAT | After `COHORT_REMOVAL_GRACE_HOURS` (24) off the list | The session is deleted from the project's archive and prearchive with its files, then the subject when none of their studies is left. Each removal is logged with the project and the accession. |
+| XNAT | After `COHORT_REMOVAL_GRACE_HOURS` (24) off the list | The session is deleted from the project's archive and prearchive with its files, then the subject when none of their studies is left. The log names the project and the accession when it is first seen off the list, and again at each removal. |
 
 - **Why XNAT waits.** A cached copy is downloaded again on demand, but only a new pull from the PACS refills XNAT,
   and the list is short for a while whenever a trust reloads its OMOP tables. An accession that is back on the list
