@@ -204,7 +204,7 @@
       "additionalProperties": true,
       "properties": {
         "enabled": { "type": "boolean" },
-        "cohortQueryThreshold": { "type": "integer", "minimum": 1 },
+        "cohortQueryThreshold": { "type": "integer", "minimum": 10 },
         "replicas": { "type": "integer", "minimum": 1 },
         "resources": {
           "type": "object",

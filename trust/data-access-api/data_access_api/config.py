@@ -13,7 +13,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import PositiveInt, SecretStr, field_validator
+from pydantic import Field, PositiveInt, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
@@ -55,11 +55,10 @@ class Settings(BaseSettings):
     # Minimum cohort size below which no row-level data or statistics are released. The
     # trust's own disclosure floor: operators may raise it in their kit file, and both
     # row-level routes (/cohort/dataframe, /cohort/accession-ids) enforce it alongside the
-    # statistics suppression on /cohort. ``PositiveInt`` because a threshold of 0 or less
-    # silently disables every one of those checks (``len(df) < 0`` is never true) — a
-    # disclosure control that can be turned off by a typo is worse than one that refuses to
-    # boot. Flooring it at the shipped 10 rather than 1 is FLIP#870.
-    COHORT_QUERY_THRESHOLD: PositiveInt = DEFAULT_COHORT_QUERY_THRESHOLD
+    # statistics suppression on /cohort. Raise only: a value below the shipped 10 is rejected
+    # and the service refuses to boot (FLIP#870), since 0 would disable every one of those
+    # checks and 1 would release a cohort of one patient.
+    COHORT_QUERY_THRESHOLD: int = Field(default=DEFAULT_COHORT_QUERY_THRESHOLD, ge=DEFAULT_COHORT_QUERY_THRESHOLD)
 
     @field_validator("COHORT_QUERY_THRESHOLD", mode="before")
     @classmethod
