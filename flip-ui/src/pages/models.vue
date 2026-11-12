@@ -371,6 +371,7 @@ import AiSearch from "@/components/AiSearch/AiSearch.vue";
 import useErrorHandler from "@/composables/useErrorHandler";
 import { usePermissions } from "@/composables/usePermissions";
 import CreateModelModal from "@/partials/models/CreateModelModal.vue";
+// Status pill/dot classes, shared with the mobile project-models list; imported under their historical local names.
 import { getAllModels,
     getModelProjectOptions,
     IModelProjectOption,
@@ -468,18 +469,18 @@ const TILES: ITile[] = [
 // and the list shows the union. An empty selection means no status filter (all
 // models). The page opens on the active work: Running + Queued.
 const DEFAULT_TILES: GroupKey[] = ["running", "queued"];
-const activeTiles = ref<Set<GroupKey>>(new Set(DEFAULT_TILES));
+// Arriving already scoped — via "View All Models" or a bookmark — means "show everything in
+// this project", so the estate default of Running + Queued would hide most of what was asked
+// for. Used for the initial value (before syncStatusFilter() seeds the first SWRV key) and by the
+// arrival watcher below, so the two cannot drift.
+const tilesFor = (project: string | null): Set<GroupKey> => new Set<GroupKey>(project ? [] : DEFAULT_TILES);
+const activeTiles = ref<Set<GroupKey>>(tilesFor(projectFilter.value));
 
 const syncStatusFilter = (): void => {
     const statuses = TILES.filter(t => activeTiles.value.has(t.key)).flatMap(t => t.statuses);
     statusQueryParam.value = statuses.length ? `&status=${statuses.join(",")}` : "";
     pageNumber.value = 1;
 };
-
-// Arriving already scoped — via "View All Models" or a bookmark — means "show everything in
-// this project", so the estate default of Running + Queued would hide most of what was asked
-// for. Seeded before syncStatusFilter() so the very first key is already the right one.
-if (projectFilter.value) activeTiles.value = new Set();
 
 // Seed the query param before SWRV builds its first key, so the default
 // selection doesn't cost an extra unfiltered fetch.
@@ -512,7 +513,7 @@ const applyProject = (id: string | null): void => {
 watch(projectFilter, next => {
     if (next === claimedProject.value) return;
     claimedProject.value = next;
-    activeTiles.value = next ? new Set() : new Set<GroupKey>(DEFAULT_TILES);
+    activeTiles.value = tilesFor(next);
     if (!next) {
         // Both, deliberately: the debouncedWatch on `search` fires 500ms later, far too late
         // for the key this reset is about to rebuild.
@@ -780,14 +781,7 @@ const updateModelList = (pageNumberInt: number): void => {
     getSearchQuery();
 };
 
-
 // Owner display name (UserProfile.name from the backend). Falls back to an
 // em-dash when the owner has no profile row — the endpoint carries no email.
 const ownerLabel = (model: IModelSummary): string => model.ownerName || "—";
-
-// The created half of the owner sub-line ("owner · created 2h ago") comes from
-// relativeCreatedLabel in utils/helpers — shared with the Projects list.
-
-// Status pill/dot classes come from model-service (shared with the mobile
-// project-models list), imported under their historical local names.
 </script>
