@@ -67,20 +67,18 @@ def retrieve_model_files_list(
         # List objects in bucket with model_id prefix
         try:
             list_objects = s3.list_objects(s3_path)
-            if not list_objects:
-                error_message = f"No objects found in S3 path: {s3_path}"
-                logger.error(error_message)
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=error_message,
-                )
-        except HTTPException:
-            raise
         except Exception as e:
             logger.error(f"An error occurred when finding the result data: {s3_path}. Error: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="An error occurred when finding the result data",
+            )
+        if not list_objects:
+            error_message = f"No objects found in S3 path: {s3_path}"
+            logger.error(error_message)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=error_message,
             )
 
         logger.debug(f"List of files returned: {list_objects}")
