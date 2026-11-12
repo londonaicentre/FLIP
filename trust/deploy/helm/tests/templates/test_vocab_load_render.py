@@ -56,9 +56,14 @@ def test_the_job_loads_the_staged_folder_read_only_with_nothing_aws():
     pod = job["spec"]["template"]["spec"]
     assert "initContainers" not in pod
     (container,) = pod["containers"]
-    assert "/flip/omop/load_core_vocab.sh /vocab /flip/omop/constraints.sql" in container["command"][2]
+    script = container["command"][2]
+    assert "/flip/omop/load_core_vocab.sh /vocab /flip/omop/constraints.sql" in script
+    # Loaded already: the folder is not read, so an upgrade passes once it is removed.
+    assert script.index("load_core_vocab.sh --check") < script.index("load_core_vocab.sh /vocab")
+    assert "nodeSelector" not in pod
     assert container["volumeMounts"] == [{"name": "vocab", "mountPath": "/vocab", "readOnly": True}]
-    assert pod["volumes"] == [{"name": "vocab", "hostPath": {"path": "/opt/flip/omop-vocab", "type": "Directory"}}]
+    host_path = {"path": "/opt/flip/omop-vocab", "type": "DirectoryOrCreate"}
+    assert pod["volumes"] == [{"name": "vocab", "hostPath": host_path}]
 
     text = yaml.safe_dump(job)
     for aws in ("s3://", "aws ", "AWS_", ".aws"):
@@ -74,15 +79,21 @@ def test_the_job_loads_the_staged_folder_read_only_with_nothing_aws():
         "hostAwsMount.enabled=false",
         "fetchResources.requests.cpu=1",
         "workDirSize=10Gi",
+        "bundleName=vocab_aicentre_core_20240916",
     ],
 )
-def test_a_removed_s3_key_fails_with_the_new_route(removed):
+def test_a_removed_key_fails_with_the_new_route(removed):
     result = _helm(f"omopDb.vocabLoad.{removed}")
     assert result.returncode != 0
     key = removed.split("=")[0].split(".")[0]
     assert f"omopDb.vocabLoad.{key} was removed" in result.stderr
     for hint in ("omopDb.vocabLoad.hostPath", "download-vocab", "stage-vocab"):
         assert hint in result.stderr
+
+
+def test_the_node_selector_pins_the_job_to_the_node_holding_the_folder():
+    job = _job(STAGED, "omopDb.vocabLoad.nodeSelector.kubernetes\\.io/hostname=trust-node-1")
+    assert job["spec"]["template"]["spec"]["nodeSelector"] == {"kubernetes.io/hostname": "trust-node-1"}
 
 
 def test_a_relative_host_path_is_refused_by_the_schema():
@@ -95,5 +106,5 @@ def test_the_schema_and_defaults_carry_only_the_staged_route():
     schema = json.loads((CHART_DIR / "values.schema.json").read_text())
     vocab_schema = schema["properties"]["omopDb"]["properties"]["vocabLoad"]["properties"]
     defaults = yaml.safe_load((CHART_DIR / "values.yaml").read_text())["omopDb"]["vocabLoad"]
-    assert set(vocab_schema) == set(defaults) == {"enabled", "hostPath", "loadResources"}
+    assert set(vocab_schema) == set(defaults) == {"enabled", "hostPath", "nodeSelector", "loadResources"}
     assert defaults["hostPath"] == ""

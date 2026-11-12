@@ -328,6 +328,7 @@
           "properties": {
             "enabled": { "type": "boolean" },
             "hostPath": { "type": "string", "pattern": "^(/.*)?$" },
+            "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } },
             "loadResources": { "type": "object", "minProperties": 1 }
           }
         },

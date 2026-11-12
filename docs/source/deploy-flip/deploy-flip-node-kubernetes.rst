@@ -447,15 +447,18 @@ onto the node; it fetches nothing and needs no cloud credentials, so this works 
    ``make -C trust/deploy/helm download-vocab`` on your own machine (it uses your AWS CLI profile). Otherwise export
    it from OHDSI Athena as step 7 of :doc:`onboarding-a-trust` describes, and unzip the export into a folder.
 2. Stage it onto the node: ``make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<kube-context>``
-   on kind; on any other single-node cluster, copy the folder to ``/opt/flip/omop-vocab`` on the node yourself. Leave
-   it there, as every upgrade reads it.
+   on kind; on any other cluster, copy the folder to ``/opt/flip/omop-vocab`` on the node yourself. With more than
+   one node, pin the load job to that node with ``omopDb.vocabLoad.nodeSelector`` (for example
+   ``kubernetes.io/hostname: <node>``). The folder is read only for the first load: once the database holds the
+   vocabulary, later upgrades skip it, so you may remove it.
 3. Set ``OMOP_VOCAB_DIR=/opt/flip/omop-vocab`` in the kit and re-run Step 4. ``sync-kit`` writes it into
    ``omopDb.vocabLoad.hostPath`` and a load job runs after each install or upgrade, loading only what is missing.
 
 .. warning::
 
-   The load runs as a Helm hook. If nothing is staged at that path, the hook fails and **the whole release is marked
-   failed**, not just the vocabulary load. The deploy does not roll it back.
+   The load runs as a Helm hook. If the vocabulary is not loaded yet and nothing is staged at that path on the node
+   the job runs on, the hook fails and **the whole release is marked failed**, not just the vocabulary load. The
+   deploy does not roll it back.
 
 ``values-aks.yaml`` and ``values-eks.yaml`` keep the load off, because a managed node pool keeps nothing staged on a
 node; ``NO_VOCAB_LOAD=1`` does the same for ``sync-kit`` on any other cluster. Load the vocabulary there with the loader
@@ -469,8 +472,9 @@ With ``HUB`` set, pass it by hand:
 .. note::
 
    Charts before FLIP#923 fetched the bundle from S3 inside the cluster. A values file that still sets
-   ``omopDb.vocabLoad.s3Bucket``, ``awsProfile`` or ``hostAwsMount`` now fails to render; the chart README, "Upgrading:
-   the chart no longer fetches the vocabulary from S3", has the steps.
+   ``omopDb.vocabLoad.s3Bucket``, ``bundleName``, ``awsProfile``, ``hostAwsMount``, ``fetchResources`` or
+   ``workDirSize`` now fails to render; the chart README, "Upgrading: the chart no longer fetches the vocabulary from
+   S3", has the steps.
 
 .. seealso::
 
@@ -519,6 +523,9 @@ chart defaults, and the generated override still wins for the keys it sets. Do n
    * - ``omopDb.vocabLoad.hostPath``
      - ``""``
      - Node folder holding the staged OMOP vocabulary; empty skips the load (see above).
+   * - ``omopDb.vocabLoad.nodeSelector``
+     - ``{}``
+     - Pins the vocabulary load job to the node holding that folder, on a cluster with more than one node.
    * - ``omopDb.enabled`` / ``omopDb.external.host``
      - ``true`` / ``""``
      - Use an external OMOP database instead of the in-cluster one.
@@ -537,7 +544,9 @@ chart defaults, and the generated override still wins for the keys it sets. Do n
    * - ``namespace.create``
      - ``false``
      - Let the chart create the namespace with Pod Security labels. ``make deploy`` creates the namespace itself,
-       without those labels.
+       without those labels. The ``baseline`` profile the labels enforce does not admit ``hostPath`` volumes, which
+       the FL kit (``flClient.kitHostPath``) and the vocabulary load (``omopDb.vocabLoad.hostPath``) both use: with
+       either, set ``podSecurity.enforce`` to ``privileged``.
 
 **Governance policy.** A trust's optional governance document is set through the kit, not as a value: point
 ``ACCESS_POLICY_FILE`` at it in the kit file, validate it with ``make -C trust check-governance KIT=<CODE>
@@ -654,6 +663,7 @@ Known limitations
 - **Pod Security.** The API services and FL client run hardened, but ``xnat-web``, ``xnat-db``, ``omop-db`` and
   ``orthanc`` cannot yet run under the ``restricted`` Pod Security profile.
 - **Multi-node clusters.** Volumes are ``ReadWriteOnce``. The FL client is pinned to imaging-api's node, and XNAT's
-  conversion jobs must land on the ``xnat-web`` node. Across several nodes, give the XNAT volume a ``ReadWriteMany``
+  conversion jobs must land on the ``xnat-web`` node, and the vocabulary load job on the node holding the staged
+  folder (``omopDb.vocabLoad.nodeSelector``). Across several nodes, give the XNAT volume a ``ReadWriteMany``
   storage class (``xnat.web.persistence.accessMode: ReadWriteMany``, for example NFS or EFS).
 - **Orthanc** runs a single replica on an embedded SQLite database.

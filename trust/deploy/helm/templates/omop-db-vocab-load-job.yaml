@@ -20,11 +20,19 @@
 # constraints each run, which is how a previous run that loaded every table and then died
 # before applying them heals on the next upgrade.
 #
+# So the staged folder is needed only for the first load, and the hostPath is
+# DirectoryOrCreate rather than Directory. The kubelet mounts every volume before any
+# container (init containers included) starts, so nothing in the pod can skip the mount, and
+# whether the database is loaded is unknowable at render time. With `Directory`, a folder
+# removed after the first load (or a rebuilt node) would hold the pod in ContainerCreating
+# until HELM_TIMEOUT and fail the upgrade; with DirectoryOrCreate the kubelet leaves an empty
+# folder there, the probe below finds the vocabulary loaded, and nothing is read from it.
+#
 # Gated on hostPath as well as enabled: the licensed bundle has no public mirror, so with
 # nothing staged there is nothing this Job could do — no hostPath ⇒ no Job ⇒ the release
 # installs cleanly. NOTES.txt announces the skip so it is not silent.
 {{- $vocab := .Values.omopDb.vocabLoad }}
-{{- range $key := list "s3Bucket" "awsProfile" "hostAwsMount" "fetchResources" "workDirSize" }}
+{{- range $key := list "s3Bucket" "awsProfile" "hostAwsMount" "fetchResources" "workDirSize" "bundleName" }}
 {{- if hasKey $vocab $key }}
 {{- fail (printf "omopDb.vocabLoad.%s was removed (FLIP#923): the chart no longer fetches the vocabulary from S3. Unpack the bundle into a folder (make -C trust/deploy/helm download-vocab with S3 access, or an OHDSI Athena export), stage it with make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<ctx>, set omopDb.vocabLoad.hostPath to where it was staged, and drop %s from your values (re-run sync-kit for a generated override)." $key $key) }}
 {{- end }}
@@ -61,6 +69,10 @@ spec:
       imagePullSecrets:
 {{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
       {{- end }}
+      {{- with $vocab.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: load-vocab
           image: "{{ .Values.omopDb.image.repository }}:{{ include "flip-trust.imageTag" (dict "pin" .Values.omopDb.image.pin "global" .Values.global.image.tag "own" .Values.omopDb.image.tag) }}"
@@ -83,6 +95,15 @@ spec:
                 fi
                 sleep 5
               done
+              # Already loaded (every upgrade after the first): the loader below reads nothing
+              # from /vocab and only re-applies the constraints, so the folder may be gone.
+              # Otherwise fail with the cause, rather than on the first missing CSV.
+              if /flip/omop/load_core_vocab.sh --check; then
+                echo "Core vocabulary already loaded: the staged folder is not read."
+              elif [ ! -f /vocab/CONCEPT.csv ]; then
+                echo "Core vocabulary not loaded and the staged folder (omopDb.vocabLoad.hostPath) on this node holds no CONCEPT.csv: stage it with make -C trust/deploy/helm stage-vocab, on the node this Job runs on (omopDb.vocabLoad.nodeSelector)." >&2
+                exit 1
+              fi
               /flip/omop/load_core_vocab.sh /vocab /flip/omop/constraints.sql
           env:
             {{- include "flip-trust.omopVocabDbEnv" . | nindent 12 }}
@@ -96,5 +117,5 @@ spec:
         - name: vocab
           hostPath:
             path: {{ $vocab.hostPath | quote }}
-            type: Directory
+            type: DirectoryOrCreate
 {{- end }}

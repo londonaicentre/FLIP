@@ -11,8 +11,8 @@
 
 """Unit tests for sync_k8s_kit.py's generated Helm override — the values whose
 absence or misplacement installs a release that looks healthy and is not: the
-FL-server port-only egress rule (FLIP#593 pt.3), the OMOP vocab-load bucket
-(FLIP#842/843), and flClient.kitHostPath (FLIP#965/#1009).
+FL-server port-only egress rule (FLIP#593 pt.3), the staged OMOP vocabulary's
+node path (FLIP#842/843, #923), and flClient.kitHostPath (FLIP#965/#1009).
 
 The egress rule is PORT-ONLY (FL_SERVER_PORT added to ``allowedEgressPorts``),
 not a resolved-/32 CIDR pin: the FL server's internet-facing NLB has AWS-managed
@@ -26,6 +26,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "sync_k8s_kit.py"
 _spec = importlib.util.spec_from_file_location("sync_k8s_kit", _SCRIPT)
@@ -137,6 +138,12 @@ def test_render_override_sets_the_staged_vocabulary_from_kit():
     # fragment would still match, and `trustApi` is additionalProperties:true in
     # values.schema.json — so Helm would silently accept the misplaced key.
     assert "\nomopDb:\n  vocabLoad:\n    hostPath: /opt/flip/omop-vocab\n" in out
+
+
+def test_render_override_quotes_a_vocabulary_path_yaml_would_cut_short():
+    """A free-form path is quoted: unquoted, ``#`` would start a comment and the hook mount another folder."""
+    out = sync_k8s_kit.render_override({**_FL_KIT, "OMOP_VOCAB_DIR": "/data/vocab #2024"}, "Trust_K8s", "eu-west-2")
+    assert yaml.safe_load(out)["omopDb"]["vocabLoad"]["hostPath"] == "/data/vocab #2024"
 
 
 def test_render_override_omits_vocab_load_without_a_staged_vocabulary():
@@ -530,7 +537,7 @@ def test_an_interpreter_without_tomllib_is_a_clear_refusal(tmp_path, monkeypatch
 
 @pytest.mark.parametrize("target", ["sync-kit", "sync-kit-override", "patch-kit-secrets"])
 def test_make_passes_no_vocab_load_through_to_every_sync(target):
-    """NO_VOCAB_LOAD=1 is how an AKS operator keeps the S3 hook out (FLIP#1390); dry-run each target."""
+    """NO_VOCAB_LOAD=1 is how an AKS operator keeps the vocab-load hook out (FLIP#1390); dry-run each target."""
     if shutil.which("make") is None:
         pytest.skip("make is not installed")
     chart = Path(__file__).resolve().parents[1]

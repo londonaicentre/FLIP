@@ -739,7 +739,9 @@ make -C trust/deploy/helm validate
 make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
 
 # The OMOP core vocabulary (FLIP#923): download it on this host (AI Centre bucket access, your
-# AWS CLI profile; otherwise an OHDSI Athena export), then place the folder onto the node
+# AWS CLI profile; otherwise an OHDSI Athena export), then place the folder onto the node and set
+# OMOP_VOCAB_DIR=/opt/flip/omop-vocab in the kit (sync-kit turns it into omopDb.vocabLoad.hostPath;
+# without it no load runs)
 make -C trust/deploy/helm download-vocab
 make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<ctx>
 

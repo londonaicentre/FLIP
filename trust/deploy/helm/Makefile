@@ -71,11 +71,17 @@ endif
 endif
 KIT_UID ?= $(if $(filter flower,$(KIT_BACKEND)),49999,1000)
 # The OMOP core vocabulary (FLIP#923): VOCAB_DIR is a folder of Athena CSVs (CONCEPT.csv, ...) and
-# VOCAB_DEST the node directory omopDb.vocabLoad.hostPath names (the kit's OMOP_VOCAB_DIR). The
-# loader reads one fixed file name per table, so a re-stage overwrites every file it reads.
+# VOCAB_DEST the node directory omopDb.vocabLoad.hostPath names (the kit's OMOP_VOCAB_DIR).
+# stage-vocab empties VOCAB_DEST first, as stage-kit does KIT_DEST and with the same guards.
 VOCAB_DEST ?= /opt/flip/omop-vocab
 VOCAB_BUNDLE ?= vocab_aicentre_core_20240916
 ifneq ($(filter stage-vocab,$(MAKECMDGOALS)),)
+ifeq ($(strip $(VOCAB_DEST)),)
+$(error ❌  VOCAB_DEST must not be empty — stage-vocab clears it before copying)
+endif
+ifeq ($(strip $(VOCAB_DEST)),/)
+$(error ❌  VOCAB_DEST must not be / — stage-vocab clears it before copying)
+endif
 ifeq ($(wildcard $(VOCAB_DIR)/CONCEPT.csv),)
 $(error ❌  VOCAB_DIR=<folder holding the unpacked bundle: CONCEPT.csv, ...> is required — make download-vocab, or an OHDSI Athena export)
 endif
@@ -251,13 +257,18 @@ stage-vocab: ## Place the unpacked OMOP core vocabulary onto the node (omopDb.vo
 	##
 	##   make stage-vocab VOCAB_DIR=<folder with CONCEPT.csv, ...> KUBE_CONTEXT=kind-flip-kch
 	##
-	## On any other single-node cluster copy the folder to VOCAB_DEST on the node yourself.
-	## Keep it there: every upgrade mounts it. World-readable, as the loader runs as the image user.
+	## On any other cluster copy the folder to VOCAB_DEST on the node yourself (with several
+	## nodes, pin the Job there: omopDb.vocabLoad.nodeSelector). It is read only for the first
+	## load. World-readable, as the loader runs as the image user.
+	##
+	## VOCAB_DEST is emptied first: `docker cp` merges, so a narrower re-stage would otherwise
+	## leave the previous bundle's table files beside the new ones for the loader to read.
 	@[ -n "$(KUBE_CONTEXT)" ] || (echo "❌  KUBE_CONTEXT is required — this writes to a node's filesystem. e.g. KUBE_CONTEXT=kind-flip-kch"; exit 1)
 	@node=$$(kubectl --context $(KUBE_CONTEXT) get nodes -o jsonpath='{.items[0].metadata.name}') && \
 	  [ -n "$$node" ] || { echo "❌  no node found in context $(KUBE_CONTEXT) — is the cluster reachable?"; exit 1; }; \
 	  echo "📦 Staging $(VOCAB_DIR) → [$(KUBE_CONTEXT)] $$node:$(VOCAB_DEST)"; \
 	  docker exec "$$node" mkdir -p "$(VOCAB_DEST)" && \
+	  docker exec "$$node" find "$(VOCAB_DEST)" -mindepth 1 -delete && \
 	  docker cp "$(VOCAB_DIR)/." "$$node:$(VOCAB_DEST)/" && \
 	  docker exec "$$node" chmod -R a+rX "$(VOCAB_DEST)" && \
 	  echo "✅ Vocabulary staged. Deploy with --set omopDb.vocabLoad.hostPath=$(VOCAB_DEST) (or OMOP_VOCAB_DIR=$(VOCAB_DEST) in the kit)"

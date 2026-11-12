@@ -514,31 +514,37 @@ loaded** (`helm install` prints a warning).
    make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<ctx>
    ```
 
-   On any other single-node cluster (k3s, a VM) copy the folder there yourself, readable by
-   every user. Leave it in place: every upgrade mounts it, and the Job pod stays in
-   `ContainerCreating` (`hostPath type check failed`) when it is missing.
+   On any other cluster (k3s, a VM) copy the folder there yourself, readable by every user.
+   `stage-vocab` empties the destination first, so a re-stage leaves no file of the previous
+   bundle behind.
 3. **Point the chart at it**: `OMOP_VOCAB_DIR=/opt/flip/omop-vocab` in the kit file
    (`sync-kit` writes `omopDb.vocabLoad.hostPath` from it), or
    `--set omopDb.vocabLoad.hostPath=/opt/flip/omop-vocab`, then deploy as usual.
 
-`hostPath` resolves on whichever node runs the Job, so this suits single-node clusters.
+`hostPath` resolves on whichever node runs the Job: with more than one node, pin the Job to the
+node holding the folder with `omopDb.vocabLoad.nodeSelector` (e.g. `kubernetes.io/hostname: <node>`).
+The folder is needed only for the first load. The Job first asks the database whether the vocabulary
+is already there and, if so, reads nothing from the folder, so upgrades pass once it is removed or the
+node is rebuilt. The volume is `DirectoryOrCreate` for that reason: the kubelet mounts volumes before
+any container runs, so with `Directory` a missing folder would hold the pod in `ContainerCreating`
+until `HELM_TIMEOUT`; instead it leaves an empty folder at the path. With the vocabulary not yet
+loaded and no `CONCEPT.csv` there, the Job fails with that message.
 `values-aks.yaml` and `values-eks.yaml` turn the load off (a managed node pool keeps nothing
 staged on a node), as does `NO_VOCAB_LOAD=1` on `sync-kit`; load the vocabulary by hand there
 (below), or run the trust without it.
 
 #### Upgrading: the chart no longer fetches the vocabulary from S3
 
-`omopDb.vocabLoad.s3Bucket`, `awsProfile`, `hostAwsMount`, `fetchResources` and `workDirSize`
-are gone (FLIP#923). A values file that still sets any of them — even to an empty value —
+`omopDb.vocabLoad.s3Bucket`, `bundleName`, `awsProfile`, `hostAwsMount`, `fetchResources` and
+`workDirSize` are gone (FLIP#923). A values file that still sets any of them — even to an empty value —
 **fails to render** with an error naming the new route, rather than installing without a
 vocabulary. To move a trust across:
 
 1. Delete those keys from your overrides. A `sync-kit` override regenerates without them; the
    kit's `AICENTRE_BUCKET_NAME` no longer feeds the chart.
 2. Do steps 1–3 above (`download-vocab` or Athena, `stage-vocab`, `OMOP_VOCAB_DIR`).
-3. Upgrade. A trust whose database already holds the vocabulary loads nothing: the loader skips
-   every table that is present and only re-applies the constraints, so the staged folder is
-   read only when something is missing.
+3. Upgrade. A trust whose database already holds the vocabulary loads nothing: the Job finds it
+   present, reads nothing from the staged folder and only re-applies the constraints.
 
 **Or load it by hand and leave the hook off.** Keep `omopDb.vocabLoad.hostPath`
 empty (the Job is then not rendered at all) and run the loader the hook would
@@ -590,8 +596,9 @@ replayed to every later project that submits it.
 
 The hook is on the critical path of *every* `helm upgrade`, and a failed hook fails
 the whole release. A routine upgrade costs two queries per vocabulary table (the
-loader's guards) plus a pass over the constraint catalogue; the loader streams the
-CSVs from the read-only mount, so the Job needs no scratch volume.
+probe's and the loader's guards) plus a pass over the constraint catalogue, and reads
+nothing from the staged folder; on a first load the loader streams the CSVs from the
+read-only mount, so the Job needs no scratch volume.
 
 An external OMOP database (`omopDb.enabled: false`) already skips this Job. Set
 `omopDb.vocabLoad.enabled: false` only to keep an in-cluster `omop-db` while
@@ -1097,7 +1104,9 @@ there; the omop-db image CI asserts every published image carries it.
   privilege by default).
 - **Pod Security & container hardening**: the chart-created namespace
   carries Pod Security Standards labels (`enforce=baseline`, `warn`/`audit=restricted`
-  by default — tune via `podSecurity.*`), and the stateless services
+  by default — tune via `podSecurity.*`; `baseline` does not admit `hostPath` volumes, which
+  `flClient.kitHostPath` and `omopDb.vocabLoad.hostPath` both use, so with either set
+  `podSecurity.enforce: privileged`), and the stateless services
   (trust-api, imaging-api, data-access-api, fl-client) plus `monailabel`
   apply a container `securityContext` (`allowPrivilegeEscalation: false`, drop
   `ALL` capabilities, `seccompProfile: RuntimeDefault`) from `.Values.securityContext`.
@@ -1249,14 +1258,16 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
   by design — see "OMOP core vocabulary" above.
 - Render fails with `omopDb.vocabLoad.<key> was removed` → a values file still sets one of
   the S3 keys; see "Upgrading: the chart no longer fetches the vocabulary from S3".
-- Job pod stuck in `ContainerCreating` with `hostPath type check failed` → nothing is staged
-  at `hostPath` on the node the Job landed on. `make stage-vocab`, then re-run the upgrade.
+- `Core vocabulary not loaded and the staged folder … holds no CONCEPT.csv` → nothing is staged
+  at `hostPath` on the node the Job landed on. `make stage-vocab` (with several nodes, pin the
+  Job with `omopDb.vocabLoad.nodeSelector`), then re-run the upgrade.
 - `… CONCEPT.csv missing — is this a complete vocabulary bundle?` in `load-vocab` → the
   folder is staged but is not the unpacked bundle (a zip, or one level too high or low).
 - `/flip/omop/load_core_vocab.sh: No such file or directory` → the `omopDb.image.tag`
   in use predates FLIP#842; repull a CI-published tag.
-- Re-running `helm upgrade` is safe *and* cheap: the loader skips every table that already
-  holds the vocabulary and still re-applies the FK constraints, so a previous run that died
+- Re-running `helm upgrade` is safe *and* cheap, and needs no staged folder once the vocabulary
+  is loaded: the loader skips every table that already holds it and still re-applies the FK
+  constraints, so a previous run that died
   between the load and the constraints heals here.
 - `omop-db not reachable after 60 attempts` → the database never became ready within five
   minutes. This is a hard failure: the Pod fails, and after `backoffLimit` so does the

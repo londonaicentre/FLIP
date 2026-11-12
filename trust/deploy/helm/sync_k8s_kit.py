@@ -41,7 +41,8 @@ This script reads that kit file and:
   2. Writes a Helm values override (``k8s-trust-<CODE>.yaml``) carrying the
      non-secret, deployment-specific settings the chart needs: the hub URL,
      FL backend, AWS region, trust number, where the FL kit sits on the node,
-     the release image pins, the OMOP vocabulary bucket, the FL-server
+     the release image pins, where the OMOP vocabulary is staged on the node
+     (``OMOP_VOCAB_DIR``, FLIP#923), the FL-server
      egress port and — when the kit names one — the trust's governance
      document (FLIP#1259), read from its ``ACCESS_POLICY_FILE`` and embedded
      whole (a path on the deploy host means nothing inside a pod).
@@ -822,7 +823,7 @@ def render_override(
         lines += [
             "omopDb:",
             "  vocabLoad:",
-            f"    hostPath: {vocab_dir}",
+            f"    hostPath: {yaml_quote(vocab_dir)}",
             "",
         ]
 

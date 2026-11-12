@@ -12,9 +12,12 @@
 """``make download-vocab`` and ``make stage-vocab`` (FLIP#923), driven with ``make -n``.
 
 download-vocab runs on the operator's host with their own AWS CLI profile; stage-vocab puts the
-folder where the chart's omopDb.vocabLoad.hostPath mounts it. Nothing touches a cluster or AWS.
+folder where the chart's omopDb.vocabLoad.hostPath mounts it. ``make -n`` prints recipes but runs
+``$(MAKE)`` lines, so download-vocab's dry run also parses trust/omop-db's Makefile; nothing here
+touches a cluster or AWS. Skipped without make.
 """
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -22,6 +25,8 @@ import pytest
 
 CHART_DIR = Path(__file__).resolve().parents[1]
 DEST = "/opt/flip/omop-vocab"
+
+pytestmark = pytest.mark.skipif(shutil.which("make") is None, reason="make is not installed")
 
 
 def make_n(target: str, *args: str) -> subprocess.CompletedProcess:
@@ -37,16 +42,30 @@ def bundle(tmp_path: Path) -> Path:
 def test_stage_vocab_copies_the_folder_where_the_chart_mounts_it(bundle):
     result = make_n("stage-vocab", f"VOCAB_DIR={bundle}", "KUBE_CONTEXT=test")
     assert result.returncode == 0, result.stderr
+    # Emptied first, so a narrower re-stage leaves no table file of the previous bundle behind.
+    assert f'find "{DEST}" -mindepth 1 -delete' in result.stdout
+    assert result.stdout.index("-mindepth 1 -delete") < result.stdout.index('docker cp "')
     assert f'docker cp "{bundle}/." "$node:{DEST}/"' in result.stdout
     assert f'chmod -R a+rX "{DEST}"' in result.stdout
     assert f"omopDb.vocabLoad.hostPath={DEST}" in result.stdout
 
 
-@pytest.mark.parametrize("vocab_dir", ["", "/nonexistent"])
-def test_stage_vocab_refuses_a_folder_without_the_bundle(vocab_dir):
+@pytest.mark.parametrize("vocab_dir", ["", "/nonexistent", "EMPTY"])
+def test_stage_vocab_refuses_a_folder_without_the_bundle(vocab_dir, tmp_path):
+    # EMPTY: an existing folder with no CONCEPT.csv (the still-zipped bundle, or its parent).
+    if vocab_dir == "EMPTY":
+        (tmp_path / "bundle.zip").write_text("")
+        vocab_dir = str(tmp_path)
     result = make_n("stage-vocab", f"VOCAB_DIR={vocab_dir}", "KUBE_CONTEXT=test")
     assert result.returncode != 0
     assert "VOCAB_DIR" in result.stderr
+
+
+@pytest.mark.parametrize("dest", ["", "/"])
+def test_stage_vocab_refuses_a_destination_the_wipe_would_overreach(bundle, dest):
+    result = make_n("stage-vocab", f"VOCAB_DIR={bundle}", f"VOCAB_DEST={dest}", "KUBE_CONTEXT=test")
+    assert result.returncode != 0
+    assert "VOCAB_DEST must not be" in result.stderr
 
 
 def test_download_vocab_runs_the_host_side_fetch():

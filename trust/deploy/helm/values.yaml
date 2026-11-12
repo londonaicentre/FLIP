@@ -662,19 +662,23 @@ omopDb:
   # ⚠️  With no vocabulary the stack looks healthy but cohort queries that join
   # omop.concept return nothing (chart README → "OMOP core vocabulary").
   #
-  # hostPath is resolved on the node the Job lands on, so it suits a single-node cluster
-  # (kind, k3s, a VM) and must stay staged: every upgrade mounts it. A managed node pool
-  # (values-aks.yaml / values-eks.yaml) turns the load off and loads by hand instead.
+  # hostPath is resolved on the node the Job lands on: on a cluster with more than one node,
+  # pin the Job to the node holding the folder with nodeSelector (e.g.
+  # kubernetes.io/hostname: <node>). The folder is read only for the first load; once the
+  # database holds the vocabulary, upgrades skip it, so it may be removed. A managed node
+  # pool (values-aks.yaml / values-eks.yaml) turns the load off and loads by hand instead.
   #
   # enabled: false is only for keeping an in-cluster omop-db while loading the
   # vocabulary by hand — an external database (omopDb.enabled: false) already
   # skips this Job.
   #
-  # s3Bucket, awsProfile, hostAwsMount, fetchResources and workDirSize were removed with
-  # the in-cluster S3 fetch (FLIP#923); a values file still setting one fails the render.
+  # s3Bucket, bundleName, awsProfile, hostAwsMount, fetchResources and workDirSize were
+  # removed with the in-cluster S3 fetch (FLIP#923); a values file still setting one fails
+  # the render.
   vocabLoad:
     enabled: true
     hostPath: ""
+    nodeSelector: {}
     # The loader streams the CSVs from the read-only mount over COPY, so it needs no
     # scratch space beyond its own logs.
     loadResources:
