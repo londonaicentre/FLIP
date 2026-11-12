@@ -333,6 +333,18 @@ def test_render_override_refuses_a_document_data_access_api_would_refuse(tmp_pat
         _override(tmp_path, "[disclosure]\nmin_cohort_size = 20\n", COHORT_QUERY_THRESHOLD="25")
 
 
+@pytest.mark.parametrize("threshold", ["9", "1", "0", "ten"])
+def test_render_override_refuses_a_threshold_below_the_platform_floor(threshold):
+    """data-access-api refuses to start below 10 (FLIP#870); the deploy must refuse first."""
+    with pytest.raises(sync_k8s_kit.GovernanceDocumentError, match="at least 10"):
+        sync_k8s_kit.render_override({**_FL_KIT, "COHORT_QUERY_THRESHOLD": threshold}, "Trust_K8s", "eu-west-2")
+
+
+def test_render_override_accepts_the_platform_floor():
+    out = sync_k8s_kit.render_override({**_FL_KIT, "COHORT_QUERY_THRESHOLD": "10"}, "Trust_K8s", "eu-west-2")
+    assert "cohortQueryThreshold: 10" in out
+
+
 def test_render_override_refuses_a_site_privacy_section_on_flower(tmp_path):
     """Nothing on Flower enforces [fl_privacy.nvflare]; deploying it would read as active."""
     with pytest.raises(sync_k8s_kit.GovernanceDocumentError, match="nothing on flower enforces it"):
