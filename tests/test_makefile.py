@@ -410,7 +410,10 @@ class MakeKitSelection(unittest.TestCase):
         (self.root / "trust/.env.OTHER.prod").write_text(KIT.replace("SLOT_NUMBER=9", "SLOT_NUMBER=8"))
         (self.root / "trust/.env.SITE.prod").write_text(KIT)
         docker = self.root / "bin/docker"
-        docker.write_text('#!/bin/sh\ncase "$*" in compose*trust8*) exit 1;; esac\n')
+        docker.write_text(
+            '#!/bin/sh\ncase "$*" in compose*trust8*) exit 1;; *config*) echo fl-client-net-1;;'
+            ' compose*) echo "$*";; esac\n'
+        )
         docker.chmod(0o755)
         result = self.make("down-fl-clients", "HUB=prod", subdir="trust")
         assert result.returncode != 0, result.stdout + result.stderr
@@ -464,7 +467,10 @@ class MakeKitSelection(unittest.TestCase):
         """A stack started before the FLIP#1479 rename still carries the old kit name in its label."""
         self.write_kits(".env.SITE.prod")
         docker = self.root / "bin/docker"
-        docker.write_text('#!/bin/sh\ncase "$*" in *" -q") echo occupied;; *environment_file*) echo "$OWNER";; esac\n')
+        docker.write_text(
+            '#!/bin/sh\ncase "$*" in *" -q") echo occupied;; *environment_file*) echo "$OWNER";;'
+            " *config*) echo fl-client-net-1;; esac\n"
+        )
         docker.chmod(0o755)
         for owner, allowed in (
             ("/srv/flip/trust/.env.SITE.production", True),
@@ -593,6 +599,7 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
             "    elif 'environment_file' in args[-1]: print(os.environ['SLOT_OWNER'])\n"
             "    elif 'working_dir' in args[-1]: print('/previous/checkout/trust')\n"
             "elif args[0] != 'compose': sys.exit('Unexpected Docker command')\n"
+            "elif 'config' in args: print('fl-client-net-1')\n"
         )
         docker.chmod(0o755)
         self.env["DOCKER_CALLS"] = str(calls_file)

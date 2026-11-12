@@ -718,14 +718,7 @@ reload-governance: check-governance
 	@echo "♻️  Re-applying the governance document to $(KIT)'s enforcing services (no data is touched)..."
 	@services="data-access-api"; \
 	  if [ -n "$(GOVERNANCE_INIT)" ]; then \
-	    clients=$$(${DOCKER_COMPOSE_CMD} config --services 2>/dev/null | grep -x 'fl-client-net-[0-9]*' | tr '\n' ' '); \
-	    if [ -z "$$clients" ]; then \
-	      echo "❌ Could not resolve this deployment's fl-client services from the composed config,"; \
-	      echo "   so the [fl_privacy] half would not be re-applied — refusing to half-apply a policy."; \
-	      echo "   Check the stack resolves: docker compose --env-file $(KIT_FILE) --project-directory . \\"; \
-	      echo "       -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) config --services"; \
-	      exit 1; \
-	    fi; \
+	    $(resolve_fl_clients); \
 	    services="$$services $(GOVERNANCE_INIT) $$clients"; \
 	  fi; \
 	  if [ -n "$(GOVERNANCE_INIT)" ] && [ -n "$(strip $(ACCESS_POLICY_FILE))" ] \
@@ -916,9 +909,23 @@ up: create-networks
 down:
 	@$(call old_kits_hint,)rc=0; for kit in $(call kit_codes,); do $(MAKE) down-trust KIT=$$kit || rc=1; done; exit $$rc
 
+# Sets the shell variable `clients` to the fl-client-net-N services the composed stack
+# defines: one per FL net in development, net-1 only in production (FLIP#1677). Same files
+# and overlays as the compose call it feeds; an empty list fails rather than act on every service.
+define resolve_fl_clients
+clients=$$($(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) \
+	  config --services | grep -x 'fl-client-net-[0-9]*' | tr '\n' ' '); \
+	if [ -z "$$clients" ]; then \
+	  echo "❌ No fl-client-net-N service in the composed config. Check it renders:"; \
+	  echo "   docker compose --env-file $(KIT_FILE) --project-directory . \\"; \
+	  echo "       -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) config --services"; \
+	  exit 1; \
+	fi
+endef
+
 # Start / stop only the FL client containers, leaving the rest of each trust stack up.
-# Each dev trust project (trust1, trust2) runs a client per FL net, hence both
-# net-1 and net-2. Per-trust delegation uses the same KIT machinery as up-trust:
+# Each dev trust project (trust1, trust2) runs a client per FL net, a deployed trust net-1
+# only, hence resolve_fl_clients. Per-trust delegation uses the same KIT machinery as up-trust:
 # the sub-make's `-include ../.env.<KIT>` re-resolves TRUST_VARS / TRUST_PROJECT /
 # TRUST_OVERRIDE for that kit alone, so Trust_1 picks up its host-port override
 # and Trust_2 stays on the network ports from its kit file.
@@ -931,7 +938,9 @@ up-fl-clients-kit:
 	$(check_slot_not_taken)
 	@echo "$(GPU_STATUS_MSG)"
 	$(ensure_net_dirs)
-	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d --no-deps $(UP_PULL_FLAGS) $(GOVERNANCE_INIT) fl-client-net-1 fl-client-net-2
+	@$(resolve_fl_clients); \
+	  $(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) \
+	    up -d --no-deps $(UP_PULL_FLAGS) $(GOVERNANCE_INIT) $$clients
 
 down-fl-clients:
 	@echo "🛑 Stopping and removing FL clients..."
@@ -940,7 +949,8 @@ down-fl-clients:
 down-fl-clients-kit:
 	$(require_kit)
 	$(check_slot_not_taken)
-	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) rm -fs fl-client-net-1 fl-client-net-2
+	@$(resolve_fl_clients); \
+	  $(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) rm -fs $$clients
 
 # The two data bind sources, resolved to what the compose file mounts, as absolute paths:
 # the sub-makes in omop-db/ and orthanc/ run from their own directories, so a relative
