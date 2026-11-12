@@ -57,7 +57,6 @@
 <script setup lang="ts">
 import { useDark, useToggle, whenever } from "@vueuse/core";
 import useSWRV from "swrv";
-import { fetcherFn, revalidateOptions } from "swrv/dist/types";
 import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
@@ -69,7 +68,7 @@ import AiUserDropdown from "@/components/AiUserDropdown/AiUserDropdown.vue";
 import { usePermissions } from "@/composables/usePermissions";
 import DeploymentMode from "@/pages/DeploymentMode.vue";
 import CreateModelModal from "@/partials/models/CreateModelModal.vue";
-import { getProject, IProject } from "@/services/project-service";
+import { getProject } from "@/services/project-service";
 import { getCurrentUser } from "@/services/user-service";
 import { useAuthStore } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
@@ -88,8 +87,6 @@ const authStore = useAuthStore();
 const details = useSiteDetailsStore();
 const siteSettings = useSiteSettings();
 
-const headerTitle = ref(route.name?.toString() ?? "");
-const pageRoute = ref(route.fullPath?.toString() ?? "");
 const emailAddress = authStore.user?.attributes?.email ?? "";
 
 // The cache key is scoped to the caller's Cognito `sub`, not left as a constant "/users/me".
@@ -130,10 +127,8 @@ watch(isDark, () => {
     siteSettings.toggleDarkMode(isDark.value);
 }, { immediate: true });
 
-const mutate = ref<(data?: fetcherFn<IProject> | undefined, opts?: revalidateOptions | undefined) => Promise<void>>();
-
 // if route.params.projectId is falsy, don't fetch
-const { data, mutate: update, error } = useSWRV(
+const { data, mutate, error } = useSWRV(
     () => route.params.projectId && `/projects/${route.params.projectId}`,
     getProject,
     {
@@ -144,8 +139,6 @@ const { data, mutate: update, error } = useSWRV(
         errorRetryCount: 3
     }
 );
-
-mutate.value = update;
 
 whenever(data, () => {
     projectStore.setProject(data.value);
@@ -163,23 +156,15 @@ whenever(error, () => {
     router.push({ path: "/" });
 });
 
-watch(() => route, () => {
-
-    headerTitle.value = route.name?.toString() ?? "";
-    pageRoute.value = route.fullPath.toString();
-
-    if(route.fullPath.startsWith("/project/")) {
+watch(() => route.fullPath, (path) => {
+    if (path.startsWith("/project/")) {
         isProjectPage.value = true;
-    }
-    else {
+    } else {
         hasProject.value = false;
         isProjectPage.value = false;
         projectStore.clearProject();
     }
-}, {
-    immediate: true,
-    deep: true
-});
+}, { immediate: true });
 
 const signOut = async () => {
     await authStore.signOut();

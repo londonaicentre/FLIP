@@ -69,17 +69,7 @@ export interface IChartChrome {
 }
 
 /**
- * Plot chrome mapped onto the FLIP palette tokens (tailwind.config.js) so the
- * chart sits on the card surface instead of painting its own off-token panel.
- *
- * Args:
- *     darkMode (boolean): whether the dark tokens apply.
- *
- * Returns:
- *     IChartChrome: background, line and ink colours for the mode.
- */
-/**
- * Shared toolbox config (Data View / line-bar toggle / reset) for every FLIP
+ * Shared toolbox config (Data View / line-bar toggle / reset / on-demand zoom) for every FLIP
  * chart. ECharts' dataView overlay has standalone colour options that ignore
  * the chart theme — left unset it renders a white panel with black text even
  * in dark mode — so the panel, textarea, ink and button are themed here.
@@ -112,10 +102,30 @@ export const chartToolbox = (darkMode: boolean) => ({
             show: true,
             type: ["line", "bar"] as ("line" | "bar")[]
         },
-        restore: { title: "Reset View" }
+        restore: { title: "Reset View" },
+        dataZoom: {
+            show: true,
+            // "none" keeps the drawn box as the exact view instead of
+            // filtering points outside it (which re-clips the lines).
+            filterMode: "none" as const,
+            title: {
+                zoom: "Zoom",
+                back: "Undo Zoom"
+            }
+        }
     }
 });
 
+/**
+ * Plot chrome mapped onto the FLIP palette tokens (tailwind.config.js) so the
+ * chart sits on the card surface instead of painting its own off-token panel.
+ *
+ * Args:
+ *     darkMode (boolean): whether the dark tokens apply.
+ *
+ * Returns:
+ *     IChartChrome: background, line and ink colours for the mode.
+ */
 export const chartChrome = (darkMode: boolean): IChartChrome => darkMode
     ? {
         background: "transparent",
