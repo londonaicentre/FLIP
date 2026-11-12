@@ -25,8 +25,6 @@ Coverage:
   expected key.
 * ``POST /files/process-scanned-file/{model_id}/{file_name}`` — pre-seeded
   S3 object's metadata makes its way into the ``uploaded_files`` row.
-* ``GET /files/model/{model_id}/files/list`` — listing reflects the keys
-  actually present in the scanned bucket.
 * ``GET /files/model/{model_id}/{file_name}`` — download returns a presigned URL
   that itself serves the object's bytes byte-for-byte.
 * ``DELETE /files/model/{model_id}/{file_name}`` — endpoint removes the S3
@@ -397,7 +395,7 @@ def test_presigned_url_endpoint_rejects_disallowed_extension(client: TestClient,
 
 
 # ---------------------------------------------------------------------------
-# /files/model/{model_id}/files/list
+# /files/model/{model_id}/{file_name}  (download)
 # ---------------------------------------------------------------------------
 
 

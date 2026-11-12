@@ -68,6 +68,7 @@ def save_training_metrics_endpoint(
         # The FL client name the FL server reports differs per FL_BACKEND (FLARE: the FL kit slot;
         # Flower: SUPERNODE_NAME). resolve_trust_from_fl_client_name hides that discrepancy and
         # returns the trust to validate against the model's approved trusts — see issue #538.
+        # A plain name lookup used to work only because trust names matched the FL kit slots (Trust_1, Trust_2).
         trust = resolve_trust_from_fl_client_name(fl_client_name, db)
         if trust is None:
             error_msg = f"FL client '{fl_client_name}' could not be resolved to a trust (model: {model_id})"
