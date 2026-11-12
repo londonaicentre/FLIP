@@ -301,6 +301,48 @@ def test_11_prod_maps_a_sha_tag_to_its_release() -> None:
         _assert("DOCKER_TAG=v1.2.3" in kit.read_text(), "the kit gets the release tag", kit.read_text())
 
 
+def test_12_only_the_running_backends_kit_date_is_required() -> None:
+    """An NVFLARE hub has no FLOWER_KIT_DATE, and a Flower hub no FLARE_KIT_DATE (FLIP#1476)."""
+    print("▶ sync needs only the running backend's kit date")
+    for backend, absent, needed in (
+        ("nvflare", "FLOWER_KIT_DATE", "FLARE_KIT_DATE"),
+        ("flower", "FLARE_KIT_DATE", "FLOWER_KIT_DATE"),
+    ):
+        result, content = _sync_one("Trust_1", {"FL_BACKEND": backend, absent: ""})
+        _assert(result.returncode == 0, f"{backend}: empty {absent} syncs", result.stderr)
+        _assert(f"{absent}=\n" in content, f"{backend}: {absent} written empty", content)
+        result, _ = _sync_one("Trust_1", {"FL_BACKEND": backend, needed: ""})
+        _assert(result.returncode != 0 and needed in result.stderr, f"{backend}: empty {needed} refused", result.stderr)
+
+
+def test_13_a_placeholder_value_is_refused_naming_the_env_file() -> None:
+    """A `<...>` value is unfilled, not a value: refused, naming the key and the env file to set it in."""
+    print("▶ sync refuses a placeholder value and names where to set it")
+    result, content = _sync_one(
+        "Trust_1", {"NLB_SUBDOMAIN": "<run-make-register-trust>", "MAIN_ENV_FILE": "/hub/.env.prod"}
+    )
+    _assert(result.returncode != 0, "exit non-zero")
+    _assert("NLB_SUBDOMAIN" in result.stderr and "/hub/.env.prod" in result.stderr, "names key + source", result.stderr)
+    _assert("NLB_SUBDOMAIN" not in content, "kit file not mutated")
+
+
+def test_14_target_names_the_kit_file() -> None:
+    """--target writes the named kit file wherever it lives (register-trusts.sh passes its path)."""
+    print("▶ sync --target writes the named file")
+    with tempfile.TemporaryDirectory() as td:
+        kit = Path(td) / ".env.Trust_1.prod"
+        kit.write_text("TRUST_API_KEY=k\n")
+        env = {**HUB_SHARED_DEFAULTS, "PATH": os.environ.get("PATH", "")}
+        result = subprocess.run(
+            ["uv", "run", "--no-config", str(SYNC_SCRIPT), "--env-class", "prod", "--target", str(kit)],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        _assert(result.returncode == 0, "exit 0", result.stderr)
+        _assert("CENTRAL_HUB_API_URL=http://localhost:8080/api" in kit.read_text(), "block written", kit.read_text())
+
+
 def main() -> None:
     if not SYNC_SCRIPT.is_file():
         sys.exit(f"❌ {SYNC_SCRIPT} not found")
@@ -318,6 +360,9 @@ def main() -> None:
     test_9_sha_tag_becomes_a_site_tag()
     test_10_prod_refuses_a_sha_tag_without_its_release()
     test_11_prod_maps_a_sha_tag_to_its_release()
+    test_12_only_the_running_backends_kit_date_is_required()
+    test_13_a_placeholder_value_is_refused_naming_the_env_file()
+    test_14_target_names_the_kit_file()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

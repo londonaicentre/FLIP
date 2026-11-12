@@ -20,8 +20,9 @@
 #      an already-registered trust returns a metadata-only kit (no credentials;
 #      the hub stores only the SHA-256 hash), so re-running is safe.
 #   3. Write the kit back into trust/.env.<CODE>.<env> via
-#      trust/deploy/scripts/distribute_trust_kits.py (whatever credentials the kit carries,
-#      hub-shared refreshed every run; operator host-local edits preserved).
+#      trust/deploy/scripts/distribute_trust_kits.py (whatever credentials the kit carries;
+#      operator host-local edits preserved), then refresh the hub-shared block from the
+#      operator env file with trust/deploy/scripts/sync_trust_kit.py.
 # Delivery to a host is command-driven, NOT done here: `make -C trust/deploy/terraform/aws/ec2
 # upgrade KIT=<CODE> HUB=<env>` recreates an EC2 node's containers on the new kit;
 # `make package-onprem-trust-kit` tarballs it for an on-prem operator.
@@ -61,6 +62,12 @@ LOG_GROUP="${LOG_GROUP:-/ecs/flip-api}"
 if [ -z "${KIT_FILES:-}" ]; then
     log_warn "No trust/.env.<CODE>.${HUB:-<env>} kits found — scaffold one with 'make new-trust TRUST_CODE=<CODE> TRUST_NAME=... HUB=${HUB:-<env>}' first."
     exit 0
+fi
+
+# The sync step below needs it; the Makefile passes env_mode.mk's ENV_CLASS.
+if [ "${ENV_CLASS:-}" != stag ] && [ "${ENV_CLASS:-}" != prod ]; then
+    log_error "ENV_CLASS must be stag or prod (run this through 'make register-trusts HUB=<env>')."
+    exit 1
 fi
 
 log_info "Discovering live $ECS_SERVICE service network config..."
@@ -257,6 +264,15 @@ register_one_kit() {
         return 1
     fi
     aws_cmd ssm delete-parameter --name "$ssm_param" >/dev/null 2>&1 || true
+
+    # The task's env carries only some hub-shared keys (FLIP#1476), so refresh the block from the
+    # operator env file the Makefile exported, as sync-trust-kit does. It fails naming any key
+    # still unresolved, so a placeholder is never left behind as success.
+    if ! uv run --no-config "$REPO_ROOT/trust/deploy/scripts/sync_trust_kit.py" \
+        --env-class "$ENV_CLASS" --target "$kit_file"; then
+        log_error "Trust '$name': the hub-shared block of $kit_file is incomplete — $verb FAILED."
+        return 1
+    fi
     log_success "Wrote kit for '$name' → $kit_file"
 }
 

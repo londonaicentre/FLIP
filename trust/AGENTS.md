@@ -37,7 +37,7 @@ the commented dev form):
 |---------|-------|-----------|
 | Host-local profile | Operator | hand-edit (ports, bind dirs, optional `FLIP_UID`/`FLIP_GID` to run the containers as the operator, optional `FL_SITE_PRIVACY_*` site privacy policy) |
 | Trust-local credentials | Operator | hand-edit (passwords, service URLs) |
-| Hub-shared (managed) | Hub admin | `register-trust KIT=<CODE>` (live in prod, commented in dev) / `sync-trust-kit KIT=<CODE>` (prod refresh) |
+| Hub-shared (managed) | Hub admin | `register-trust KIT=<CODE>` (live in prod, commented in dev; on a deployed hub `register-trusts` fills it from `.env.<hub>`) / `sync-trust-kit KIT=<CODE>` (prod refresh) |
 | Kit credentials (managed) | Hub | `register-trust` only — write-once; hub keeps only the hash |
 
 The Hub-shared block is delimited by a sentinel comment
