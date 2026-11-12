@@ -9,6 +9,42 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+{{- define "flip-trust.xnatNginxConf" }}
+worker_processes auto;
+events {
+  worker_connections 1024;
+}
+http {
+  sendfile on;
+  tcp_nopush on;
+  tcp_nodelay on;
+  keepalive_timeout 65;
+  types_hash_max_size 2048;
+  include /etc/nginx/mime.types;
+  default_type application/octet-stream;
+  access_log /var/log/nginx/access.log;
+  error_log /var/log/nginx/error.log;
+  gzip on;
+  add_header X-Frame-Options "DENY" always;
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+  add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+  server {
+    listen 80;
+    server_name _;
+    location / {
+      proxy_pass http://xnat-web:8080;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_read_timeout 300s;
+      proxy_send_timeout 300s;
+      client_max_body_size 0;
+    }
+  }
+}
+{{- end }}
 {{- if and .Values.xnat.enabled .Values.xnat.nginx.enabled }}
 ---
 apiVersion: v1
@@ -20,22 +56,11 @@ metadata:
     {{- include "flip-trust.labels" . | nindent 4 }}
     app.kubernetes.io/component: xnat-nginx
 data:
-  # Default nginx configuration for XNAT reverse proxy
-  # Can be overridden by mounting a custom config
+  # The whole nginx.conf, mounted over the image's (trust/xnat/nginx/custom-nginx.conf), which
+  # includes nothing from conf.d: a server block there was never read (FLIP#1880). Same settings as
+  # the image's, less its /orthanc/ route, with longer proxy timeouts.
   nginx.conf: |
-    server {
-        listen 80;
-        server_name _;
-        location / {
-            proxy_pass http://xnat-web:8080;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_read_timeout 300s;
-            proxy_send_timeout 300s;
-        }
-    }
+    {{- include "flip-trust.xnatNginxConf" . | trim | nindent 4 }}
 ---
 apiVersion: v1
 kind: Service
@@ -75,6 +100,9 @@ spec:
       labels:
         {{- include "flip-trust.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: xnat-nginx
+      annotations:
+        # A subPath mount never sees a ConfigMap edit, so a changed config restarts the pod.
+        checksum/config: {{ include "flip-trust.xnatNginxConf" . | sha256sum }}
     spec:
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -90,7 +118,8 @@ spec:
               protocol: TCP
           volumeMounts:
             - name: config
-              mountPath: /etc/nginx/conf.d
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
           livenessProbe:
             httpGet:
               path: /
