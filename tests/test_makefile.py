@@ -410,7 +410,10 @@ class MakeKitSelection(unittest.TestCase):
         (self.root / "trust/.env.OTHER.prod").write_text(KIT.replace("SLOT_NUMBER=9", "SLOT_NUMBER=8"))
         (self.root / "trust/.env.SITE.prod").write_text(KIT)
         docker = self.root / "bin/docker"
-        docker.write_text('#!/bin/sh\ncase "$*" in compose*trust8*) exit 1;; *config*) echo fl-client-net-1;; esac\n')
+        docker.write_text(
+            '#!/bin/sh\ncase "$*" in compose*trust8*) exit 1;; *config*) echo fl-client-net-1;;'
+            ' compose*) echo "$*";; esac\n'
+        )
         docker.chmod(0o755)
         result = self.make("down-fl-clients", "HUB=prod", subdir="trust")
         assert result.returncode != 0, result.stdout + result.stderr

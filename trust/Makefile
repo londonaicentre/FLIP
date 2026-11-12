@@ -938,7 +938,7 @@ up-fl-clients-kit:
 	$(check_slot_not_taken)
 	@echo "$(GPU_STATUS_MSG)"
 	$(ensure_net_dirs)
-	$(resolve_fl_clients); \
+	@$(resolve_fl_clients); \
 	  $(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) \
 	    up -d --no-deps $(UP_PULL_FLAGS) $(GOVERNANCE_INIT) $$clients
 
@@ -949,7 +949,7 @@ down-fl-clients:
 down-fl-clients-kit:
 	$(require_kit)
 	$(check_slot_not_taken)
-	$(resolve_fl_clients); \
+	@$(resolve_fl_clients); \
 	  $(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) rm -fs $$clients
 
 # The two data bind sources, resolved to what the compose file mounts, as absolute paths:

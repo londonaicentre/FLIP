@@ -711,6 +711,8 @@ def _docker_stub(
         f"  printf '%s\\n' '{networks}'\n"
         "  exit 0\n"
         "fi\n"
+        # down-fl-clients-kit lists its clients from the composed config (FLIP#1677).
+        'case "$*" in *" config --services"*) echo fl-client-net-1 ;; esac\n'
         "exit 0\n",
     )
     return _make_env({**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "FLIP_INSTANCE": ""})

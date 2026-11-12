@@ -439,7 +439,8 @@ class FlClientList(unittest.TestCase):
         )
         result = run_target("fl-clients", hub=hub, kit=kit, probe=self.PROBE)
         assert result.returncode == 0, result.stdout + result.stderr
-        return sorted(result.stdout.strip().splitlines()[-1].strip("[ ]").split())
+        listed = next(line for line in result.stdout.splitlines() if line.startswith("["))
+        return sorted(listed.strip("[ ]").split())
 
     def test_development_runs_a_client_per_net_and_production_one(self):
         for backend in ("nvflare", "flower"):
