@@ -13,8 +13,10 @@
 
 # wait-for-postgres.sh <port> — block until Postgres answers on localhost:<port>.
 # Bounded (default 180 x 5s = 15 min: a FIRST container boot runs the image's
-# init scripts before the server accepts TCP connections, and slow hosts need
-# headroom; override via WAIT_FOR_POSTGRES_ATTEMPTS). Strict about its
+# init scripts (OMOP DDL, keys, indices, read-only users) before the server
+# accepts TCP connections. Sized (#834) when that chain also loaded the multi-GB
+# vocabulary, which is now a separate step after this wait (load_core_vocab.sh);
+# override via WAIT_FOR_POSTGRES_ATTEMPTS). Strict about its
 # argument: an empty port would make pg_isready fall back to 5432 and report
 # readiness of an unrelated server.
 
