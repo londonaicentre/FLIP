@@ -460,10 +460,9 @@ Per-trust keys — a distinct key per trust, so a compromised trust can neither 
 are the follow-up in FLIP#845; they add keyring entries without changing the wire format.
 
 The fl-server must reach flip-api via `FLIP_API_INTERNAL_URL` — a Docker-network URL such as
-`http://flip-api:8000/api`. It must **not** go through the public `CENTRAL_HUB_API_URL` because the
-CloudFront distribution in front of flip-api whitelists only `Authorization`, `Content-Type`, and
-`Origin` and strips `X-Job-Credential` at the edge, which would break this handshake. The
-public `CENTRAL_HUB_API_URL` is reserved for flip-ui and trust-side (trust-api) consumers that live
+`http://flip-api:8000/api`. It must **not** go through the public `CENTRAL_HUB_API_URL`: the FL
+server's callbacks stay on the hub's own network, and on a platform-managed estate the FL server has
+no route to the public edge at all. The public `CENTRAL_HUB_API_URL` is reserved for flip-ui and trust-side (trust-api) consumers that live
 outside the hub's Docker network.
 
 | Variable | Where used | Purpose |
@@ -484,9 +483,8 @@ mechanism: on ECS, Terraform sets it to the Cloud Map private-DNS name
 (`http://flip-api.flip.local:8000/api`, built in `locals.tf`); on the local compose harness it is the
 Docker-network URL (`http://flip-api:8000/api`).
 
-What it must not be: the public CloudFront URL. That's orthogonal to compute — CloudFront strips
-`X-Job-Credential` at the edge. Internal ALBs preserve all request headers by default, so an
-internal-ALB value would also work; CloudFront doesn't.
+What it must not be: the public CloudFront URL. The callbacks never leave the hub's network; an
+internal-ALB value would also work.
 
 > **Note on troubleshooting**: AWS-deployment-specific failure modes (Terraform state drift, ECS
 > service stuck in `PENDING`, CloudFront cache invalidation, RDS connectivity) are documented in

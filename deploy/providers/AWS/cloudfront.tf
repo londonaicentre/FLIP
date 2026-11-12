@@ -141,7 +141,8 @@ locals {
   ui_origin = var.manage_dns ? "https://${var.flip_alb_subdomain}" : "https://${var.lza_web_edge_domain}"
 }
 
-# Custom origin-request policy for /api/*. The managed AllViewer policy
+# Custom origin-request policy for /api/*, attached to no distribution (see the
+# header of this file). The managed AllViewer policy
 # forwards everything (all headers, cookies, query strings); this narrows
 # to the minimum the API actually needs.
 #
@@ -154,11 +155,6 @@ locals {
 # - Authorization: always forwarded to custom origins. Carries both
 #   Cognito access tokens (user → API) and trust API keys
 #   (TRUST_API_KEY_HEADER=Authorization).
-#
-# Deliberately excluded:
-# - X-Job-Credential: fl-server → flip-api traffic is
-#   docker-network-internal on the Central Hub and never crosses
-#   CloudFront.
 #
 # Cookies are dropped (API is JWT/stateless). Query strings pass through
 # untouched because endpoints use them for filters/pagination and there's

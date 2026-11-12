@@ -203,8 +203,8 @@ another discards the unfinished one.
 - ``POST /api/model/{id}/results-upload/complete``
 - ``POST /api/model/{id}/results-upload/abort``
 
-These calls carry a **job credential**, not a Trust key. They must use the hub's internal URL
-(``FLIP_API_INTERNAL_URL``), never the public address, because the public edge strips the credential's header.
+These calls carry a **job credential**, not a Trust key. They use the hub's internal URL
+(``FLIP_API_INTERNAL_URL``), never the public address: the FL server's callbacks stay on the hub's own network.
 
 The hub mints one for every job it dispatches and keeps only its
 hash; the FL API leaves it where the FL server reads it and no Trust does. The hub accepts a callback about a

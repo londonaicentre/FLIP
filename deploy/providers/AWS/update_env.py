@@ -89,8 +89,7 @@ def main() -> None:
         # CENTRAL_HUB_API_URL is the public CloudFront URL consumed by flip-ui and trust-api;
         # in staging/production it should be the canonical Route53 domain (e.g. https://stag.flip.aicentre.co.uk/api).
         # FLIP_API_INTERNAL_URL is the Docker-network URL consumed only by fl-server on the hub
-        # (e.g. http://flip-api:8000/api) — it must not cross CloudFront because that strips
-        # X-Job-Credential at the edge.
+        # (e.g. http://flip-api:8000/api) — the FL server's callbacks stay on the hub's own network.
         # Set both values manually in the env file.
         "AWS_COGNITO_USER_POOL_ID": cognito_user_pool_id,
         "AWS_COGNITO_APP_CLIENT_ID": cognito_app_client_id,

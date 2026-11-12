@@ -24,8 +24,7 @@
 #
 #   Hazard B — replacing fl-server-net-1 kills an in-flight training run (FLIP#770).
 #     A runner cannot ask the hub whether a run is in flight (GET /fl/quiesce is
-#     Cognito-gated, CloudFront strips the internal key, and the scheduler state
-#     is in a private subnet), so the gate asks the plan instead: if nothing on
+#     Cognito-gated and the scheduler state is in a private subnet), so the gate asks the plan instead: if nothing on
 #     the FL watch list changes, apply; otherwise hold for an operator. See
 #     scripts/check-fl-plan-impact.sh.
 #

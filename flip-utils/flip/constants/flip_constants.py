@@ -57,9 +57,9 @@ class ProdSettings(_Common):
 
     # -- Server-only: fl-server on Central Hub calls flip-api using these.
     # FLIP_API_INTERNAL_URL must point at flip-api over the shared Docker network
-    # (e.g. http://flip-api:8000/api), never at the public CloudFront URL — the
-    # CloudFront distribution whitelists only Authorization/Content-Type/Origin
-    # and strips X-Job-Credential at the edge, which would break auth.
+    # (e.g. http://flip-api:8000/api), never at the public CloudFront URL: these
+    # callbacks stay on the hub's own network, and on a platform-managed estate the
+    # FL server has no route to the public edge.
     FLIP_API_INTERNAL_URL: HttpUrl = "http://localhost:8000"  # type: ignore[assignment]
 
     # Hub-local shared volume where the FL API stages a de-bundled evaluation
