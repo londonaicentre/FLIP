@@ -55,7 +55,6 @@ jobs:
           echo "version=${VERSION}"           >> "$GITHUB_OUTPUT"
           echo "tag=v${VERSION}"              >> "$GITHUB_OUTPUT"
           echo "prev_tag=${PREV_TAG}"         >> "$GITHUB_OUTPUT"
-          echo "head_sha=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
 
       - name: Post or update release notes preview comment
         uses: actions/github-script@v8
@@ -63,7 +62,7 @@ jobs:
           VERSION: ${{ steps.meta.outputs.version }}
           TAG: ${{ steps.meta.outputs.tag }}
           PREV_TAG: ${{ steps.meta.outputs.prev_tag }}
-          HEAD_SHA: ${{ steps.meta.outputs.head_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |

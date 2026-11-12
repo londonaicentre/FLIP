@@ -35,7 +35,7 @@ shows a truncated SHA-256 so two copies can be compared without either being
 disclosed.
 
 ``--env prod|stag`` is required. ``--profile`` and ``--bucket`` default to AI Centre's
-LZA estates (profile ``lza-<env>``, state bucket ``flip-terraform-state-lza`` /
+LZA estates (profile ``<env>``, the hub name, state bucket ``flip-terraform-state-lza`` /
 ``flip-terraform-state-lza-stag``); another estate passes its own.
 
 Usage:
@@ -406,7 +406,7 @@ def read_env_file(path: str) -> dict[str, str]:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--env", required=True, choices=["stag", "prod"], help="the hub, as HUB=stag|prod")
-    ap.add_argument("--profile", help="AWS profile (default: lza-<env>)")
+    ap.add_argument("--profile", help="AWS profile (default: <env>, the hub name)")
     ap.add_argument("--region", default="eu-west-2")
     ap.add_argument(
         "--bucket",
@@ -450,7 +450,7 @@ def main() -> None:
         for k, was, now in drift:
             print(f"  {k}")
             print(f"      file    {shown(k, was or '')}")
-            print(f"      deployed{'':<0} {shown(k, now)}")
+            print(f"      deployed {shown(k, now)}")
 
     if args.out:
         # This writes ONLY the Terraform inputs. A real operator .env file also

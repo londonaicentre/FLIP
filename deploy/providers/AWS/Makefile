@@ -129,7 +129,6 @@ export TF_VAR_AES_KEY_BASE64=${AES_KEY_BASE64}
 export TF_VAR_INTERNAL_SERVICE_KEY_HASH=${INTERNAL_SERVICE_KEY_HASH}
 export TF_VAR_INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
 export TF_VAR_FL_API_KEY=${FL_API_KEY}
-export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 # ── Fail-fast env guards ────────────────────────────────────────────────────────────────────
 # Parse-time refusals of a deploy env file that cannot work. They stand aside only when every
 # goal is static (STATIC_ONLY, at the top); any other goal keeps all of them.

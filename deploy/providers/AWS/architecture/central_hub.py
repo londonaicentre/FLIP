@@ -251,13 +251,6 @@ def _fargate_services(drawn: _Drawn) -> tuple[Node, Node, Node]:
     return flip_api, fl_api, fl_server
 
 
-def _hub_internal_edges(flip_api: Node, fl_api: Node, fl_server: Node, cloud_map: Node) -> None:
-    """The hub-internal control edges, shared by both pictures."""
-    fl_server >> Edge(label="logs, metrics, status\nINTERNAL_SERVICE_KEY", style="dashed") >> flip_api
-    flip_api >> Edge(label="submit job") >> fl_api >> Edge(label="admin API") >> fl_server
-    cloud_map - Edge(style="dotted", label="service discovery") - fl_api
-
-
 def _draw_network(drawn: _Drawn) -> None:
     """Request and FL paths: the networking account's edge, the Transit Gateway, one internal NLB."""
     users = drawn.node("Users", Users)
@@ -310,7 +303,10 @@ def _draw_network(drawn: _Drawn) -> None:
     internal_nlb >> Edge(label=":443 → ecs-flip-api-lza") >> flip_api
     internal_nlb >> Edge(label=":8002 → ecs-fl-server-lza\n(mTLS pass-through)") >> fl_server
     zone - Edge(style="dotted", label="A → NLB IPs") - internal_nlb
-    _hub_internal_edges(flip_api, fl_api, fl_server, cloud_map)
+    # Hub-internal control edges.
+    fl_server >> Edge(label="logs, metrics, status\nINTERNAL_SERVICE_KEY", style="dashed") >> flip_api
+    flip_api >> Edge(label="submit job") >> fl_api >> Edge(label="admin API") >> fl_server
+    cloud_map - Edge(style="dotted", label="service discovery") - fl_api
 
     # The two-phase handoff: this root publishes the NLB's static IPs and ports, the edge stack registers them once.
     # The read-back edge points against the flow, so it is left out of the ranking to keep the layout left-to-right.

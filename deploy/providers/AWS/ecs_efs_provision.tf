@@ -12,16 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# One-shot provisioning task that syncs FL certificates and keys from S3
-# onto the EFS file system before the fl-api and fl-server ECS services
-# start. On EC2 this was done by Ansible (site.yml copying to
-# /opt/flip/services/...). On Fargate the EFS access points start empty,
-# so we need a bootstrap run that creates the required directory layout.
+# One-shot provisioning task that syncs the FL kit (FLARE) or creds (Flower)
+# from S3 onto the EFS access points before the fl-api and fl-server ECS
+# services start. The access points start empty, so this run creates the
+# directory layout and fills it.
 
 locals {
   # FLARE participant kits are produced by `nvflare provision` and uploaded
-  # to the AI Centre bucket - NOT the FLIP bucket. The path mirrors the
-  # source-of-truth used by site.yml's central-hub kit sync (lines 168-169).
+  # to the AI Centre bucket - NOT the FLIP bucket.
   # Bucket: aicentre_bucket; layout:
   #   fl-flare-participant-kits/{date}/net-1/services/fl-server-net-1/{startup,local}/...
   #   fl-flare-participant-kits/{date}/net-1/services/flip-fl-api-net-1/{startup,local}/...
@@ -254,10 +252,9 @@ resource "aws_ecs_task_definition" "efs_provision" {
     name = "tmp"
   }
 
-  # Mount the same EFS access points as the runtime services. certs/keys
-  # access points still exist in efs.tf for state continuity, but the
-  # provisioning task no longer touches them (kit puts SSL files under
-  # local/site-1/ssl-*).
+  # Mount the same EFS access points as the runtime services. The FLARE
+  # branch does not mount the certs/keys access points (its kit carries the
+  # SSL files under local/site-1/ssl-*); the Flower branch syncs them.
   dynamic "volume" {
     for_each = var.fl_backend == "flower" ? {
       "efs-flower-certs" = "fl_server_certs"
