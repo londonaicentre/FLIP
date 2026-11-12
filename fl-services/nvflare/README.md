@@ -96,7 +96,8 @@ Ansible pre-creates these paths with the right owner.
 
 **Upgrading an existing environment:** hosts that already ran the previous (root) images may have
 root-owned files under the kit's `local/` directory (e.g. `resources.json`, `log_config.json`), written by
-the old containers. The non-root entrypoint can't overwrite those in place — a one-time `chown -R` of the
+the old containers. The non-root `fl-client-init` step (which does every write into the kit; the client mounts
+`local/` and `startup/` read-only, FLIP#1570) can't overwrite those in place — a one-time `chown -R` of the
 provisioned kit directories to the new container uid is needed before the first non-root run.
 
 ### Container capability hardening

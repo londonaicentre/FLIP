@@ -634,6 +634,8 @@ SITE_PRIVACY_KIT_ENV = $(foreach v,$(sort $(filter FL_SITE_PRIVACY_%,$(.VARIABLE
 # FLARE's fl-clients read their section through the one-shot fl-governance-init service
 # (compose_trust.*.nvflare.yml). Flower has no such service and nothing that reads the file.
 GOVERNANCE_INIT = $(if $(filter nvflare,$(FL_BACKEND)),fl-governance-init)
+# Then fl-client-init does every write into their kits, which they mount read-only (FLIP#1570).
+FL_CLIENT_INIT = $(if $(filter nvflare,$(FL_BACKEND)),fl-client-init)
 
 # Hubless self-test of this host's trust stack (FLIP#1390): a kit that needs no hub, the
 # production stack as slot 1, health/seed/auth/C-STORE/FL-client checks, a report under
@@ -698,7 +700,7 @@ endef
 # dirs of a live trust already exist (as in _upgrade-trust-apply).
 #
 # Only the services that read the document are recreated: data-access-api, plus on FLARE
-# fl-governance-init and the fl-clients it extracts for. On Flower nothing else reads it, so
+# fl-governance-init, fl-client-init and the fl-clients they write for. On Flower nothing else reads it, so
 # its clients — and their running jobs — are left alone. Each reads it at container start.
 #
 # --force-recreate, not a plain `up -d`: compose decides whether to recreate from the
@@ -719,7 +721,7 @@ reload-governance: check-governance
 	@services="data-access-api"; \
 	  if [ -n "$(GOVERNANCE_INIT)" ]; then \
 	    $(resolve_fl_clients); \
-	    services="$$services $(GOVERNANCE_INIT) $$clients"; \
+	    services="$$services $(GOVERNANCE_INIT) $(FL_CLIENT_INIT) $$clients"; \
 	  fi; \
 	  if [ -n "$(GOVERNANCE_INIT)" ] && [ -n "$(strip $(ACCESS_POLICY_FILE))" ] \
 	      && grep -q fl_privacy "$(abspath $(ACCESS_POLICY_FILE))" \
@@ -940,7 +942,7 @@ up-fl-clients-kit:
 	$(ensure_net_dirs)
 	@$(resolve_fl_clients); \
 	  $(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) \
-	    up -d --no-deps $(UP_PULL_FLAGS) $(GOVERNANCE_INIT) $$clients
+	    up -d --no-deps $(UP_PULL_FLAGS) $(GOVERNANCE_INIT) $(FL_CLIENT_INIT) $$clients
 
 down-fl-clients:
 	@echo "🛑 Stopping and removing FL clients..."

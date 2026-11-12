@@ -17,9 +17,9 @@ is what made published FL images unrunnable for any developer whose host uid was
 1000. Each assertion here pins one half of that separation, and each corresponds to a
 failure that actually happened rather than a hypothetical:
 
-- A dev service that mounts the host-provisioned FLARE kit must run as the host uid,
-  or the entrypoint's ``envsubst`` into the bind-mounted ``local/`` fails and the
-  container crash-loops. This was missed once already, in the standalone harness
+- A dev service that writes the host-provisioned FLARE kit must run as the host uid,
+  or ``fl-client-init``'s ``envsubst`` into the bind-mounted ``local/`` fails and the
+  client never starts. This was missed once already, in the standalone harness
   (``fl-services/nvflare/compose.dev.yml``), which the deploy composes' fix did not
   reach.
 - A service that overrides ``user:`` must also name that user, because the overridden
@@ -33,6 +33,8 @@ failure that actually happened rather than a hypothetical:
   (FLIP#1731). The defaults are pinned here so a compose edit cannot move a default site, and
   the images those services run must tolerate a uid they do not know. Hub composes and
   services with no host mount still set no ``user:``.
+- An NVFLARE fl-client mounts its kit's ``local/`` and ``startup/`` read-only and waits for
+  ``fl-client-init``, which does every write into them (FLIP#1570).
 
 Deliberately stdlib-only and executable as a plain script — ``test_trust_kit_scripts.yml``
 runs these with ``python <file>``, not pytest, and PyYAML is not installed there. The
@@ -54,12 +56,21 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PROVISIONED_KIT_MARKERS = ("workspace-dev/", "${FL_PROVISIONED_DIR}")
 
 # ...and specifically by the container path they mount it AT, because only some of the
-# kit is written. The entrypoints envsubst their generated config into `local/`, and
+# kit is written. The entrypoints (fl-client-init for the client) envsubst their generated config into `local/`, and
 # FLARE stages job payloads through `transfer/`; `startup/` holds the certs and is
 # only read. fl-api in the deploy composes mounts just `admin/local` and
 # `admin/startup`, writes neither, and so legitimately runs as the image's own uid —
 # whereas the standalone harness also gives it `admin/transfer`, which it does write.
 KIT_WRITE_TARGETS = ("/app/local", "/app/transfer", "/app/admin/transfer")
+# fl-client-init writes each client's local/ and startup/, mounted at /kit/<net>/ (FLIP#1570).
+KIT_INIT_TARGET = re.compile(r"^/kit/[^/]+/(local|startup)$")
+
+# The NVFLARE fl-clients mount local/ and startup/ read-only, written by fl-client-init (FLIP#1570).
+NVFLARE_CLIENT_COMPOSE_FILES = (
+    "trust/deploy/compose/compose_trust.prod.nvflare.yml",
+    "trust/deploy/compose/compose_trust.development.nvflare.yml",
+    "fl-services/nvflare/compose.dev.yml",
+)
 
 DEV_COMPOSE_FILES = (
     "deploy/compose.development.nvflare.yml",
@@ -90,6 +101,7 @@ PROD_BIND_MOUNT_WRITERS = {
     ("compose_trust.prod.yml", "imaging-api"): "1000:1000",
     ("compose_trust.prod.yml", "data-access-api"): "1000:1000",
     ("compose_trust.prod.nvflare.yml", "fl-governance-init"): "1000:1000",
+    ("compose_trust.prod.nvflare.yml", "fl-client-init"): "1000:1000",
     ("compose_trust.prod.nvflare.yml", "fl-client-net-1"): "1000:1000",
     ("compose_trust.prod.flower.yml", "fl-client-net-1"): "49999:49999",
     ("docker-compose-stack.prod.yml", "xnat-web"): "1001:1001",
@@ -145,9 +157,21 @@ class Service:
             parts = stripped[1:].strip().split(":")
             if len(parts) >= 3 and parts[-1] in {"ro", "rw", "z", "Z", "cached", "delegated"}:
                 parts = parts[:-1]
-            if len(parts) >= 2 and parts[-1] in KIT_WRITE_TARGETS:
+            if len(parts) >= 2 and (parts[-1] in KIT_WRITE_TARGETS or KIT_INIT_TARGET.match(parts[-1])):
                 return True
         return False
+
+    def mount_modes(self) -> dict[str, str]:
+        """Each `- <source>:<target>[:<mode>]` volume's container path and mode ("rw" when none is given)."""
+        modes: dict[str, str] = {}
+        for line in self.lines:
+            stripped = line.lstrip()
+            if not stripped.startswith("- ") or ":/" not in stripped:
+                continue
+            parts = stripped[2:].strip().strip("\"'").split(":")
+            mode = parts.pop() if len(parts) >= 3 and parts[-1] in {"ro", "rw"} else "rw"
+            modes[parts[-1]] = mode
+        return modes
 
     def group_add_entries(self) -> list[str]:
         """The inline `group_add: ["a", "b"]` entries, or [] when the key is absent.
@@ -420,6 +444,41 @@ def check_container_service_jobs_follow_flip_uid(failures: list[str]) -> None:
             )
 
 
+def check_nvflare_client_kit_is_read_only(failures: list[str]) -> None:
+    """Every NVFLARE fl-client mounts the kit's local/ and startup/ read-only and waits for fl-client-init.
+
+    fl-client-init does every write into them before the client starts (FLIP#1570): the kit and the
+    rendered site config are read-only to the running client.
+    """
+    for rel in NVFLARE_CLIENT_COMPOSE_FILES:
+        services = {svc.name: svc for svc in parse_services(REPO_ROOT / rel)}
+        init = services.get("fl-client-init")
+        if init is None:
+            failures.append(f"{rel}: no fl-client-init service to write the fl-clients' kits (FLIP#1570).")
+            continue
+        clients = [svc for name, svc in services.items() if name.startswith("fl-client-") and svc is not init]
+        if not clients:
+            failures.append(f"{rel}: no fl-client service found, so the read-only guard asserts over nothing.")
+        for svc in clients:
+            modes = svc.mount_modes()
+            for target in ("/app/local", "/app/startup"):
+                if modes.get(target) != "ro":
+                    failures.append(
+                        f"{svc.where}: mounts {target} as {modes.get(target, 'nothing')}; it must be `:ro`, "
+                        f"with fl-client-init doing every write (FLIP#1570)."
+                    )
+            block = "\n".join(svc.lines)
+            waits = r"depends_on:\s*\n\s+fl-client-init:\s*\n\s+condition: service_completed_successfully"
+            if not re.search(waits, block):
+                failures.append(
+                    f"{svc.where}: does not wait for fl-client-init (service_completed_successfully), so it "
+                    f"could start on a kit nothing rendered (FLIP#1570)."
+                )
+        init_targets = {t for t, mode in init.mount_modes().items() if KIT_INIT_TARGET.match(t) and mode == "rw"}
+        if not {t.rsplit("/", 1)[-1] for t in init_targets} >= {"local", "startup"}:
+            failures.append(f"{init.where}: must mount each kit's local/ and startup/ writable at /kit/<net>/.")
+
+
 def check_no_uname_runtime_paths(failures: list[str]) -> None:
     """`/home/${UNAME}` as a runtime path is the build/runtime conflation itself.
 
@@ -468,6 +527,7 @@ def main() -> int:
         check_images_tolerate_a_foreign_uid(failures)
         check_images_hand_back_to_their_user(failures)
         check_container_service_jobs_follow_flip_uid(failures)
+        check_nvflare_client_kit_is_read_only(failures)
         check_no_uname_runtime_paths(failures)
         check_host_gid_is_required(failures)
     except ValueError as exc:

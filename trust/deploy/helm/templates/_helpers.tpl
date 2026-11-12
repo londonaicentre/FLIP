@@ -250,3 +250,17 @@ carry it, so whichever restarts follows the one still running; at install the fi
 {{- end }}
 {{- with $affinity }}{{ toYaml . }}{{ end }}
 {{- end }}
+
+{{/*
+The NVFLARE site privacy policy (FLIP#851): fl-client-init renders it and the fl-client checks that render
+at start (FLIP#1570). In the pod template rather than only the ConfigMap, so a Helm value change rolls the
+Deployment.
+*/}}
+{{- define "flip-trust.flSitePrivacyEnv" -}}
+- name: FL_SITE_PRIVACY_POLICY
+  value: {{ .Values.flClient.nvflare.sitePrivacy.policy | quote }}
+- name: FL_SITE_PRIVACY_PERCENTILE
+  value: {{ .Values.flClient.nvflare.sitePrivacy.percentile | quote }}
+- name: FL_SITE_PRIVACY_GAMMA
+  value: {{ .Values.flClient.nvflare.sitePrivacy.gamma | quote }}
+{{- end }}

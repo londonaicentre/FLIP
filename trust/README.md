@@ -107,8 +107,9 @@ This is the minimum cohort size the trust will release anything about. Cohort st
 #### Site-enforced FL privacy policy (optional, FLARE only)
 
 The kit file's Host-local profile can set `FL_SITE_PRIVACY_POLICY=percentile` (plus optional
-`FL_SITE_PRIVACY_*` parameters — see the commented block in `trust/.env.example`). The fl-client entrypoint
-renders these into the client's FLARE `local/privacy.json` at container start, so THIS trust's
+`FL_SITE_PRIVACY_*` parameters — see the commented block in `trust/.env.example`). A one-shot `fl-client-init`
+step renders these into the client's FLARE `local/privacy.json` before the client starts (the client mounts its
+kit's `local/` and `startup/` read-only and refuses a missing or stale render, FLIP#1570), so THIS trust's
 update-privacy filter is applied to every outgoing model update regardless of the researcher's app config
 (site filters run before app filters and a job's configuration cannot opt out or pick a weaker scope). The
 bound object is the job's *configuration*: every FLARE app template runs the Client API `in_process`, so job

@@ -24,4 +24,7 @@ backend. The Flower SuperNodes do the same: the ClientApp runs in the image's en
 
 The resources allocated to the FL client are configured in a resources.json file.
 
-They can be changed using environment variables when starting the FL client container.
+They can be changed using environment variables when starting the FL client container. The one-shot
+`fl-client-init` step (`fl-client/init.sh`, baked in as `/app/fl-client-init.sh`) renders `resources.json`,
+`log_config.json` and the site privacy policy into the kit's `local/` before the client starts; the client mounts
+`local/` and `startup/` read-only and refuses to start on a missing or stale render (FLIP#1570).

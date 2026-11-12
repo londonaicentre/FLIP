@@ -267,7 +267,7 @@ class Governance(unittest.TestCase):
 
     def test_reload_governance_on_nvflare_re_extracts_for_the_clients(self):
         out = dry_run("reload-governance", kit=GOVERNED_KIT)
-        assert "fl-governance-init" in out, out
+        assert "fl-governance-init fl-client-init $clients" in out, out
         assert "--force-recreate --pull never" in out, out
         assert "[governance]" in out, out  # waits for the startup line
         assert_data_safe(out, "reload-governance")
@@ -276,6 +276,7 @@ class Governance(unittest.TestCase):
         """Nothing on Flower reads the document, so recreating its clients only killed their jobs."""
         out = dry_run("reload-governance", ON_FLOWER, kit=FLOWER_GOVERNED_KIT)
         assert "fl-governance-init" not in out, out
+        assert "fl-client-init" not in out, out
         assert 'services="data-access-api"' in out, out
         assert 'if [ -n "" ]' in out, out  # the client branch is compiled out
 
@@ -288,7 +289,7 @@ class Governance(unittest.TestCase):
     def test_up_fl_clients_kit_runs_the_extract_first(self):
         """--no-deps skips dependencies, so the init must be named or the clients start on a stale extract."""
         out = dry_run("up-fl-clients-kit", kit=GOVERNED_KIT)
-        assert "fl-governance-init $clients" in out, out
+        assert "fl-governance-init fl-client-init $clients" in out, out
 
     def test_a_governance_document_is_refused_over_a_remote_daemon(self):
         """Compose resolves the document on this machine and the trust host would mount a path it

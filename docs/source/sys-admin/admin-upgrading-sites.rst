@@ -527,9 +527,10 @@ What can go wrong
    Sites installed before XNAT ran as non-root have a root-owned archive that the new image cannot read. Run the
    printed ``chown -R`` once and re-run the upgrade.
 
-``cannot write /app/local/resources.json`` in the FL client's logs after an upgrade
+The ``fl-client-init`` step cannot write ``resources.json`` (``Permission denied`` under ``local/``) after an upgrade
    The old root-running FL client left root-owned files in the kit's ``local/`` directory. ``chown`` them to the kit
-   directory's owner (uid 1000) and restart the client.
+   directory's owner (uid 1000) and restart the client. ``fl-client-init`` does every write into the kit; the client
+   itself mounts ``local/`` and ``startup/`` read-only (FLIP#1570).
 
 .. seealso::
 

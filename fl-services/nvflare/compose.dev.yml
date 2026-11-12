@@ -101,6 +101,31 @@ services:
       - ../../fl-services/nvflare/fl-api-base/.vscode:/app/.vscode
     command: ["/bin/bash", "/app/entrypoint.sh"]
 
+  # Every write into the clients' kits, once, before they start (FLIP#1570), so the clients mount local/
+  # and startup/ read-only. Same image and uid as the clients; see fl-client/init.sh.
+  fl-client-init:
+    image: flare-fl-client:${DOCKER_FL_TAG:-dev}
+    user: "${UID:-1000}:1000"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        for kit in /kit/*/; do /app/fl-client-init.sh "$$kit"; done
+    environment:
+      - HOME=/home/flip
+      - USER=flip
+      - LOGNAME=flip
+      - LOG_LEVEL=${LOG_LEVEL}
+      - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
+      - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
+      - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
+    volumes:
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_1/local:/kit/Trust_1/local
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_1/startup:/kit/Trust_1/startup
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_2/local:/kit/Trust_2/local
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_2/startup:/kit/Trust_2/startup
+    restart: "no"
+
   fl-client-1:
     container_name: fl-client-1-net-${NET_NUMBER}
     image: flare-fl-client:${DOCKER_FL_TAG:-dev}
@@ -123,16 +148,19 @@ services:
       # - MEMORY_PER_GPU_IN_GIB=16
       - LOG_LEVEL=${LOG_LEVEL}
       # Site-enforced FLARE privacy policy (FLIP#851) — rendered into
-      # /app/local/privacy.json by the entrypoint. Unset/empty = no site policy.
+      # /app/local/privacy.json by fl-client-init. Unset/empty = no site policy.
       - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
       - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
       - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
     volumes:
       # Provisioned secrets from provision/workspace-dev/ (gitignored)
-      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_1/local:/app/local
-      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_1/startup:/app/startup
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_1/local:/app/local:ro
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_1/startup:/app/startup:ro
       - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_1/transfer:/app/transfer
     command: ["/bin/bash", "/app/entrypoint.sh"]
+    depends_on:
+      fl-client-init:
+        condition: service_completed_successfully
     shm_size: "32gb"
     gpus: all
 
@@ -158,15 +186,18 @@ services:
       # - MEMORY_PER_GPU_IN_GIB=16
       - LOG_LEVEL=${LOG_LEVEL}
       # Site-enforced FLARE privacy policy (FLIP#851) — rendered into
-      # /app/local/privacy.json by the entrypoint. Unset/empty = no site policy.
+      # /app/local/privacy.json by fl-client-init. Unset/empty = no site policy.
       - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
       - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
       - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
     volumes:
       # Provisioned secrets from provision/workspace-dev/ (gitignored)
-      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_2/local:/app/local
-      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_2/startup:/app/startup
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_2/local:/app/local:ro
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_2/startup:/app/startup:ro
       - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_2/transfer:/app/transfer
     command: ["/bin/bash", "/app/entrypoint.sh"]
+    depends_on:
+      fl-client-init:
+        condition: service_completed_successfully
     shm_size: "32gb"
     gpus: all
