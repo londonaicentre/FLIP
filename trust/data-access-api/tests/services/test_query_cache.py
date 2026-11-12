@@ -40,15 +40,22 @@ class TestMakeCacheKey:
         key2 = _make_cache_key("SELECT * FROM table")
         assert key1 == key2
 
-    def test_normalizes_whitespace(self):
-        key1 = _make_cache_key("SELECT  *   FROM   table")
-        key2 = _make_cache_key("SELECT * FROM table")
-        assert key1 == key2
-
-    def test_case_insensitive(self):
-        key1 = _make_cache_key("SELECT * FROM table")
-        key2 = _make_cache_key("select * from table")
-        assert key1 == key2
+    @pytest.mark.parametrize(
+        ("query_a", "query_b"),
+        [
+            (
+                "SELECT person_id FROM omop.person WHERE gender_source_value = 'F'",
+                "SELECT person_id FROM omop.person WHERE gender_source_value = 'f'",
+            ),
+            (
+                "SELECT person_id FROM omop.person WHERE gender_source_value = 'A  B'",
+                "SELECT person_id FROM omop.person WHERE gender_source_value = 'A B'",
+            ),
+        ],
+    )
+    def test_queries_differing_only_inside_a_literal_get_different_keys(self, query_a, query_b):
+        """A literal's case and internal whitespace are part of the question asked (FLIP#859)."""
+        assert _make_cache_key(query_a) != _make_cache_key(query_b)
 
     def test_different_queries_different_keys(self):
         key1 = _make_cache_key("SELECT * FROM table_a")
@@ -125,6 +132,24 @@ class TestGetCachedResult:
         result = get_cached_result(query)
         assert result is None
         assert key not in _cache  # Expired entry should be removed
+
+    @patch("data_access_api.services.query_cache.get_settings")
+    def test_literal_case_does_not_share_a_cached_result(self, mock_settings):
+        """Caching the 'F' cohort must not answer the 'f' query with it (FLIP#859)."""
+        mock_settings.return_value.CACHE_TTL_DAYS = 60
+        mock_settings.return_value.CACHE_MAX_RESULT_ROWS = 50_000
+        mock_settings.return_value.CACHE_MAX_ENTRIES = 64
+        upper = "SELECT person_id FROM omop.person WHERE gender_source_value = 'F'"
+        lower = "SELECT person_id FROM omop.person WHERE gender_source_value = 'f'"
+        upper_df = pd.DataFrame({"person_id": [1, 2]})
+        lower_df = pd.DataFrame({"person_id": [3]})
+
+        set_cached_result(upper, upper_df)
+        assert get_cached_result(lower) is None
+
+        set_cached_result(lower, lower_df)
+        pd.testing.assert_frame_equal(get_cached_result(upper), upper_df)
+        pd.testing.assert_frame_equal(get_cached_result(lower), lower_df)
 
 
 class TestSetCachedResult:
