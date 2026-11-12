@@ -39,7 +39,7 @@
                                     class="text-xs font-semibold truncate text-primary-600 dark:text-primary-200"
                                     :title="trust.name"
                                 >
-                                    {{ trust.code || trust.name }}
+                                    {{ label(trust) }}
                                 </p>
                                 <p
                                     class="mt-0.5 text-[11px] truncate text-gray-500 dark:text-gray-300"
@@ -188,8 +188,10 @@ const props = defineProps<IProjectApprovalProps>();
 
 const emits = defineEmits<{ approveProject: [decisions: ITrustDecisions] }>();
 
+const label = (trust: IProjectTrust) => trust.code || trust.name;
+
 const sortedTrusts = computed(() =>
-    [...props.approvedTrusts].sort((a, b) => (a.code || a.name).localeCompare(b.code || b.name))
+    [...props.approvedTrusts].sort((a, b) => label(a).localeCompare(label(b)))
 );
 
 // The card is taller than its content on small rosters; the eyebrow answers
@@ -218,8 +220,6 @@ const rowCanDecide = (trust: IProjectTrust): boolean => {
 
 const decidableTrusts = computed(() => sortedTrusts.value.filter(rowCanDecide));
 const anyDecidable = computed(() => decidableTrusts.value.length > 0);
-
-const label = (trust: IProjectTrust) => trust.code || trust.name;
 
 // The approver's unsaved choice per trust, starting from what is already recorded — so after every trust
 // declined, the approver changes one decision rather than re-entering them all.
