@@ -30,6 +30,8 @@ on:
       - "fl-services/flower/fl-api-flower/fl_api/utils/refusals.py"
       - "fl-services/nvflare/fl-api-base/fl_api/utils/auth.py"
       - "fl-services/flower/fl-api-flower/fl_api/utils/auth.py"
+      - "fl-services/nvflare/fl-api-base/fl_api/utils/job_credential.py"
+      - "fl-services/flower/fl-api-flower/fl_api/utils/job_credential.py"
       - "scripts/check_fl_api_validation_sync.sh"
       - ".github/workflows/fl-api-validation-sync.yml"
   pull_request:
@@ -41,6 +43,8 @@ on:
       - "fl-services/flower/fl-api-flower/fl_api/utils/refusals.py"
       - "fl-services/nvflare/fl-api-base/fl_api/utils/auth.py"
       - "fl-services/flower/fl-api-flower/fl_api/utils/auth.py"
+      - "fl-services/nvflare/fl-api-base/fl_api/utils/job_credential.py"
+      - "fl-services/flower/fl-api-flower/fl_api/utils/job_credential.py"
       - "scripts/check_fl_api_validation_sync.sh"
       - ".github/workflows/fl-api-validation-sync.yml"
 

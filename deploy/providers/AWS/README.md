@@ -236,9 +236,9 @@ The Central Hub uses four S3 buckets, each with a distinct purpose, access patte
 | Bucket (per env) | Env-var (`.env.{stag,prod}`) | Consumer | Browser CORS | Holds |
 |---|---|---|---|---|
 | `flip{env}-model-files-uploads` | `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME` | researcher browser (presigned **POST** upload, presigned **GET** download), flip-api reads | `POST`, `GET` from `https://<flip_alb_subdomain>` | researcher-uploaded model artefacts in two prefixes: `uploaded/` (staging — where the browser POSTs) and `scanned/` (promoted by flip-api's malware scan, FLIP#52). Every consumer reads `scanned/` only, so an unscanned or rejected file can never be bundled to a trust. Noncurrent versions expire after 30 days (the scan deletes rejected uploads and moves promoted ones, so this bucket accumulates tombstones). |
-| `flip{env}-fl-results` | `FLIP_FL_RESULTS_BUCKET_NAME` | fl-server writes, researcher browser (presigned **GET**) | `GET` from `https://<flip_alb_subdomain>` | FL training output / aggregated weights — the whole bucket is dedicated to this tenant so no prefix is needed |
+| `flip{env}-fl-results` | `FLIP_FL_RESULTS_BUCKET_NAME` | flip-api (an FL job uploads its own results through presigned part URLs), researcher browser (presigned **GET**) | `GET` from `https://<flip_alb_subdomain>` | FL training output / aggregated weights — the whole bucket is dedicated to this tenant so no prefix is needed |
 | `flip{env}-app-bundles` | `FLIP_APP_BUNDLES_BUCKET_NAME` | flip-api (boto3 only) | **none** (server-only — no `aws_s3_bucket_cors_configuration` resource is emitted at all) | `app_destinations/<model_id>/` (per-bundle FL apps: base templates + user model files, assembled by flip-api). The base FL application templates themselves are baked into the flip-api image (FLIP#724), not stored here. |
-| `flip{env}-aicentre` | `AICENTRE_BUCKET_NAME` | AWS trust nodes (the EC2 root's kit staging), AI Centre operators | `PUT`, `GET` | FL participant kits |
+| `flip{env}-aicentre` | `AICENTRE_BUCKET_NAME` | AWS trust nodes (the EC2 root's kit staging), the EFS provisioning task, flip-api (read-only), AI Centre operators | **none** (no browser reads or writes it) | FL participant kits |
 
 All four share standard configs: public access blocked, SSE-KMS server-side encryption with bucket keys enabled, versioning enabled. The three FLIP application buckets are rendered by the shared **`modules/flip_s3_bucket`** module, which `main.tf` consumes for every deployed environment, so a CORS or bucket-policy change plans identically across them. (Development uses no AWS buckets: the dev stack's object store is a local RustFS container, FLIP#1291.)
 
@@ -420,7 +420,9 @@ It runs `scripts/add_fl_kits.sh`: discovers the deployment's nets from S3, activ
 the remaining shortfall restores + fingerprint-verifies each net's CA workspace
 (`fl-services/nvflare/provision/workspace-<env>/`) and mints the next `Trust_<n>` names on **every** net via
 `nvflare provision --add_client` (existing kits untouched — no CA rotation), uploads **only** the new kits
-additively (never `aws s3 sync --delete`) plus a refresh of each net's mirrored `state/cert.json`, and appends the
+additively (never `aws s3 sync --delete`) plus a refresh of each net's mirrored CA state (`cert.json` under
+`fl-flare-ca-state/`, a prefix no ECS task role can read; see the nvflare README for estates that still hold it
+among the kits), and appends the
 activated + minted names to `FL_KIT_SLOT_NAMES` in the env file. The make target then re-invokes make for
 `apply-fl-kit-slots` (so the sub-make re-reads the edited env file) — a targeted plan/apply of only the
 `/flip/fl_kit_slot_names` SSM parameter, plus the flip-api task-role policy that grants its read so the first

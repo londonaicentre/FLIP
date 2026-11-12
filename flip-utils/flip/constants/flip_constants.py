@@ -20,7 +20,7 @@ This module provides:
 
 from enum import StrEnum
 
-from pydantic import HttpUrl, field_validator
+from pydantic import HttpUrl
 from pydantic_settings import BaseSettings
 
 
@@ -47,10 +47,11 @@ class ProdSettings(_Common):
 
     Used when LOCAL_DEV=false. Settings are grouped by which FL role uses them:
 
-    - **Server-only** (fl-server on Central Hub): FLIP_API_INTERNAL_URL, INTERNAL_SERVICE_KEY*
+    - **Server-only** (fl-server on Central Hub): FLIP_API_INTERNAL_URL, INTERNAL_SERVICE_KEY*,
+      JOB_CREDENTIAL_DIR
     - **Client-only** (fl-client on trust side): DATA_ACCESS_API_URL, IMAGING_API_URL,
       TRUST_INTERNAL_SERVICE_KEY*
-    - **Shared**: IMAGES_DIR, NET_ID, UPLOADED_FEDERATED_DATA_BUCKET
+    - **Shared**: IMAGES_DIR, NET_ID
     """
 
     LOCAL_DEV: bool = False
@@ -71,6 +72,11 @@ class ProdSettings(_Common):
     # fl-server mounts this path; clients do not.
     SERVER_CHECKPOINT_ROOT: str = "/app/server-checkpoints"
 
+    # Where the FL API leaves each job's hub credential, one file named after the model id: a directory
+    # on the hub-local volume it shares with the fl-server, so it never reaches a client. Every hub call
+    # about a model presents that model's credential (flip.core.standard._hub_internal_headers).
+    JOB_CREDENTIAL_DIR: str = ""
+
     # -- Client-only: fl-client on trust side calls local APIs using these --
     DATA_ACCESS_API_URL: HttpUrl = "http://localhost:8001"  # type: ignore[assignment]
     IMAGING_API_URL: HttpUrl = "http://localhost:8002"  # type: ignore[assignment]
@@ -86,14 +92,6 @@ class ProdSettings(_Common):
     # -- Shared --
     IMAGES_DIR: str = ""
     NET_ID: str = "default"
-    UPLOADED_FEDERATED_DATA_BUCKET: str = "s3://default-bucket"
-
-    @field_validator("UPLOADED_FEDERATED_DATA_BUCKET")
-    @classmethod
-    def _validate_s3_url(cls, v: str) -> str:
-        if not v.startswith("s3://"):
-            raise ValueError(f"Invalid S3 URL: {v}")
-        return v
 
 
 _flip_constants_instance: DevSettings | ProdSettings | None = None
@@ -134,13 +132,13 @@ class _FlipConstantsProxy:
     INTERNAL_SERVICE_KEY_HEADER: str
     INTERNAL_SERVICE_KEY: str
     SERVER_CHECKPOINT_ROOT: str
+    JOB_CREDENTIAL_DIR: str
     DATA_ACCESS_API_URL: HttpUrl
     IMAGING_API_URL: HttpUrl
     TRUST_INTERNAL_SERVICE_KEY_HEADER: str
     TRUST_INTERNAL_SERVICE_KEY: str
     IMAGES_DIR: str
     NET_ID: str
-    UPLOADED_FEDERATED_DATA_BUCKET: str
 
     def __getattribute__(self, name: str) -> object:
         if name.startswith("_"):

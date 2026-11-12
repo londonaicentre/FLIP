@@ -23,7 +23,8 @@
 #      fingerprint-verify each net's CA workspace (state/ holds the root CA),
 #      `nvflare provision --add_client` (via make), upload ONLY the new kits to S3
 #      (additive `aws s3 cp`; never `sync --delete`) + refresh each net's mirrored
-#      state/cert.json CA registry. Skipped entirely when spares cover N (M = 0), so
+#      cert.json CA registry under fl-flare-ca-state/ (operator-only: no ECS task
+#      role reads that prefix). Skipped entirely when spares cover N (M = 0), so
 #      pure activation needs no CA workspace and no provisioning toolchain at all.
 #   4. append the activated + minted names to FL_KIT_SLOT_NAMES in the env file
 #
@@ -92,6 +93,7 @@ NVFLARE_DIR="${REPO_ROOT}/fl-services/nvflare"
 WORKSPACE_PARENT="${NVFLARE_DIR}/provision/workspace-${ENV_NAME}"
 KEY_PREFIX="fl-flare-participant-kits/${FLARE_KIT_DATE}"
 BASE_S3="s3://${AICENTRE_BUCKET_NAME}/${KEY_PREFIX}"
+CA_STATE_S3="s3://${AICENTRE_BUCKET_NAME}/fl-flare-ca-state/${FLARE_KIT_DATE}"
 
 log() { echo "🧩 $*"; }
 
@@ -314,10 +316,15 @@ for net in "${NETS[@]}"; do
     # Restore the CA state + server kit from the S3 mirror if this checkout has
     # never provisioned (or added to) this net — the two things add-client.sh needs.
     if [[ ! -f "${workspace}/state/cert.json" ]]; then
-        log "${net}: no local CA state — restoring workspace from ${BASE_S3}/${net}/"
-        aws s3 cp "${BASE_S3}/${net}/state/" "${workspace}/state/" --recursive --only-show-errors
+        log "${net}: no local CA state — restoring it from ${CA_STATE_S3}/${net}/"
+        aws s3 cp "${CA_STATE_S3}/${net}/" "${workspace}/state/" --recursive --only-show-errors
         if [[ ! -f "${workspace}/state/cert.json" ]]; then
-            die "❌ ${net}: the S3 mirror has no state/cert.json — this net's CA state was never" \
+            # Uploaded before the CA state had its own prefix: still among the kits.
+            log "${net}: none there — reading ${BASE_S3}/${net}/state/ (move it: fl-services/nvflare/README.md)"
+            aws s3 cp "${BASE_S3}/${net}/state/" "${workspace}/state/" --recursive --only-show-errors
+        fi
+        if [[ ! -f "${workspace}/state/cert.json" ]]; then
+            die "❌ ${net}: the S3 mirror has no cert.json — this net's CA state was never" \
                 "   uploaded, so kits can only be minted from the checkout that provisioned it." \
                 "   (Do NOT re-provision: that rotates the CA and forces a fleet-wide redeploy.)"
         fi
@@ -362,8 +369,8 @@ for net in "${NETS[@]}"; do
 
     # Refresh the mirrored CA registry so the next add from a fresh checkout signs
     # with a registry that knows these identities.
-    aws s3 cp "${workspace}/state/cert.json" "${BASE_S3}/${net}/state/cert.json" --only-show-errors
-    log "${net}: done (${#MINT_NAMES[@]} kits minted + uploaded, state/cert.json refreshed)."
+    aws s3 cp "${workspace}/state/cert.json" "${CA_STATE_S3}/${net}/cert.json" --only-show-errors
+    log "${net}: done (${#MINT_NAMES[@]} kits minted + uploaded, CA state cert.json refreshed)."
 done
 fi
 

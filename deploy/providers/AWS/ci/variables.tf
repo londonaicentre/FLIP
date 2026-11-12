@@ -112,7 +112,6 @@ variable "managed_role_names" {
     "ecs-flip-api-task-role",
     "ecs-fl-api-task-role",
     "ecs-fl-server-task-role",
-    # Arriving (FLIP#1866): listed before the root declares it, so the apply that creates it is allowed.
     "ecs-fl-kit-provision-task-role",
     "flip-rds-proxy-role",
     "ec2-role",

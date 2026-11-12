@@ -57,15 +57,10 @@ locals {
   # only has to land in one place.
   #
   # After the split, FL results live in their own purpose-built bucket. The
-  # ECS task env below pins fl-server / flip-api to the `${bucket}/results`
-  # path, not the bucket root, as a workaround for a leading-slash bug in
-  # the FL package's S3 upload path-construction
-  # (flip-utils/flip/core/standard.py:415-427: when `urlparse(bucket).path`
-  # is empty, the concatenation `f"{prefix}/{key}"` produces `/<key>` with
-  # a literal leading slash, so flip-api's `list_objects_v2(Prefix=<model_id>)`
-  # never matches the keys fl-server actually uploads). Removing this
-  # workaround requires patching flip-utils/flip, rebuilding fl-server, and
-  # redeploying — see PR description on FLIP#465 for the long-term fix path.
+  # ECS task env below pins flip-api to the `${bucket}/results` path, not the
+  # bucket root: a workaround from when the fl-server built the key itself
+  # (FLIP#465), kept because the results uploaded so far live under it. Only
+  # flip-api names the bucket now; a job uploads through URLs it presigns.
   flip_model_files_uploads_bucket_uri = "s3://${module.flip_model_files_uploads_bucket.bucket_id}"
   flip_fl_results_bucket_uri          = "s3://${module.flip_fl_results_bucket.bucket_id}"
   flip_app_bundles_bucket_uri         = "s3://${module.flip_app_bundles_bucket.bucket_id}"
@@ -170,18 +165,20 @@ locals {
       # copy here would be dead config that apply-fl-kit-slots never updates.
     })
     fl_server = {
-      LOCAL_DEV                      = "false"
-      NET_ID                         = "net-1"
-      IMAGES_DIR                     = "/app/data/images"
-      UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
-      FLIP_API_INTERNAL_URL          = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
-      INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
+      LOCAL_DEV                   = "false"
+      NET_ID                      = "net-1"
+      IMAGES_DIR                  = "/app/data/images"
+      FLIP_API_INTERNAL_URL       = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
+      INTERNAL_SERVICE_KEY_HEADER = var.INTERNAL_SERVICE_KEY_HEADER
       # Root of the shared checkpoint-staging volume (mounted from the
       # fl_checkpoints EFS access point in ecs_tasks.tf). The fl-server's
       # EvaluationModelLocator reads a staged checkpoint from
       # <root>/<model_id>/ here (FLIP#695). Matches the default in
       # flip-utils FlipConstants + compose.prod.nvflare.yml.
       SERVER_CHECKPOINT_ROOT = "/app/server-checkpoints"
+      # Per-job hub credentials: the fl-api writes each job's here, the fl-server's job presents it on
+      # its callbacks to flip-api. On the volume the two tasks share, so never deployed to a trust.
+      JOB_CREDENTIAL_DIR = "/app/server-checkpoints/.job-credentials"
       # Where ecs_tasks.tf mounts the kit (FLIP#1795).
       FL_WORKSPACE = "/workspace"
       # The kit this task runs on (ecs_efs_provision.tf syncs it to EFS). The image
@@ -203,6 +200,9 @@ locals {
       # <root>/<model_id>/ for the fl-server to load (FLIP#695). Same path the
       # fl-server reads. Mounted from the fl_checkpoints EFS access point.
       SERVER_CHECKPOINT_ROOT = "/app/server-checkpoints"
+      # Per-job hub credentials: the fl-api writes each job's here, the fl-server's job presents it on
+      # its callbacks to flip-api. On the volume the two tasks share, so never deployed to a trust.
+      JOB_CREDENTIAL_DIR = "/app/server-checkpoints/.job-credentials"
       # GPUs the fl-api writes into a FLARE job's meta when the job declares none.
       # Requests GPUs on the fl-CLIENTS (trust hosts) — the hub Fargate tasks are
       # CPU-only. Default 0; jobs declare their own in their meta.json (FLIP#70).
@@ -224,12 +224,13 @@ locals {
     # SuperNode-auth flags travel as the container command (ecs_tasks.tf), not
     # env. INTERNAL_SERVICE_KEY is injected via the secrets block.
     fl_server_flower = merge({
-      LOCAL_DEV                      = "false"
-      NET_ID                         = "net-1"
-      IMAGES_DIR                     = "/app/data/images"
-      UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
-      FLIP_API_INTERNAL_URL          = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
-      INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
+      LOCAL_DEV                   = "false"
+      NET_ID                      = "net-1"
+      IMAGES_DIR                  = "/app/data/images"
+      FLIP_API_INTERNAL_URL       = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
+      INTERNAL_SERVICE_KEY_HEADER = var.INTERNAL_SERVICE_KEY_HEADER
+      # Per-job hub credentials, written by the fl-api on the shared jobs volume (see the FLARE maps).
+      JOB_CREDENTIAL_DIR = "/app/src/.job-credentials"
       # The ServerApp runs in the image's preinstalled environment on every estate:
       # Flower's documented restricted-network mode (exit-code 608 docs). Sealed egress
       # (FLIP#749) leaves the per-run `uv sync` no package index to reach, and elsewhere a
@@ -254,6 +255,7 @@ locals {
       SUPERLINK_HEALTH_ADDRESS    = "${local.service_discovery_names.fl_server}:9097"
       SUPERLINK_ROOT_CERTIFICATES = "/certs/ca.crt"
       FLOWER_SRC_ROOT             = "/app/src"
+      JOB_CREDENTIAL_DIR          = "/app/src/.job-credentials"
       # Rolls the service on a kit-date change; see fl_server's (FLIP#1738).
       FL_KIT_SOURCE = local.flower_creds_base_s3
       # Same bundle-fetch allow-list as the FLARE map (FLIP#905), and the same inert old name.

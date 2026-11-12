@@ -58,6 +58,7 @@ from flip_api.private_services import (
     add_log,
     invoke_model_status_update,
     receive_cohort_results,
+    results_upload,
     save_training_metrics,
     trust_tasks,
 )
@@ -215,6 +216,7 @@ ROUTERS: tuple[APIRouter, ...] = (
     add_log.router,
     invoke_model_status_update.router,
     receive_cohort_results.router,
+    results_upload.router,
     save_training_metrics.router,
     trust_tasks.router,
     # Project services

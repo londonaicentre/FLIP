@@ -213,26 +213,39 @@ at all.
 
 **CA-state custody.** The preserved `state/` is the hard prerequisite: it holds the root
 CA that signs the new kit. The workspace is gitignored, so it exists only in the checkout
-that provisioned (or last added to) the net. `upload-kits-to-s3` mirrors it to S3
-alongside the kits, so to add a client from a fresh checkout, restore the CA state and
+that provisioned (or last added to) the net. `upload-kits-to-s3` mirrors it to S3 under
+its own prefix, `fl-flare-ca-state/<FLARE_KIT_DATE>/net-<N>/`, never among the kits: it
+holds the root CA's private key, and no ECS task role can read that prefix (operators use
+their own credentials). To add a client from a fresh checkout, restore the CA state and
 the server kit (the two things `add-client.sh` checks for) first:
 
 ```sh
-aws s3 cp s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}/net-<N>/state/ \
+aws s3 cp s3://${AICENTRE_BUCKET_NAME}/fl-flare-ca-state/${FLARE_KIT_DATE}/net-<N>/ \
   provision/workspace-<env>/net-<N>/state/ --recursive
 aws s3 cp s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}/net-<N>/services/fl-server-net-<N>/ \
   provision/workspace-<env>/net-<N>/services/fl-server-net-<N>/ --recursive
 ```
 
+An estate uploaded before the CA state had its own prefix still holds it at
+`fl-flare-participant-kits/<FLARE_KIT_DATE>/net-<N>/state/`. `add-fl-kits` reads it from
+there, with a notice, while the new prefix is empty. Move it once per net, then remove the
+old copy and its earlier versions (the bucket is versioned, so `aws s3 mv` alone leaves
+them behind):
+
+```sh
+aws s3 mv s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}/net-<N>/state/ \
+  s3://${AICENTRE_BUCKET_NAME}/fl-flare-ca-state/${FLARE_KIT_DATE}/net-<N>/ --recursive
+```
+
 **Pushing the new kit to S3 (stag/prod).** Upload **additively** — only the new kit, plus
-a refresh of `state/cert.json` so the mirrored CA registry records the new identity for
+a refresh of the mirrored `cert.json` so the CA registry records the new identity for
 the next add-from-a-fresh-checkout:
 
 ```sh
 aws s3 cp provision/workspace-<env>/net-<N>/services/<CLIENT_NAME>/ \
   s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}/net-<N>/services/<CLIENT_NAME>/ --recursive
 aws s3 cp provision/workspace-<env>/net-<N>/state/cert.json \
-  s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}/net-<N>/state/cert.json
+  s3://${AICENTRE_BUCKET_NAME}/fl-flare-ca-state/${FLARE_KIT_DATE}/net-<N>/cert.json
 ```
 
 > ⚠️ Do **not** push a single added kit with `upload-kits-to-s3`. That target runs

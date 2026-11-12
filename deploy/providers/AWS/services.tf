@@ -148,17 +148,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "aicentre_bucket" {
   depends_on = [aws_s3_bucket_versioning.aicentre_bucket]
 }
 
-resource "aws_s3_bucket_cors_configuration" "aicentre_bucket_cors" {
-  bucket = aws_s3_bucket.aicentre_bucket.id
-
-  cors_rule {
-    allowed_headers = ["*"]
-    allowed_methods = ["PUT", "GET"]
-    allowed_origins = [local.ui_origin]
-    expose_headers  = []
-  }
-}
-
 # Enforce HTTPS-only access to the AI Centre bucket. Denies any S3
 # action over plain HTTP — covers reads, writes, deletes, and bucket-
 # level operations like ListBucket. Matches the defense-in-depth
