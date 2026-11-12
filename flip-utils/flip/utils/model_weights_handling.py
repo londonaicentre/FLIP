@@ -14,13 +14,9 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import TYPE_CHECKING
 
 import torch
 from nvflare.apis.dxo import DXO, DataKind, MetaKey
-
-if TYPE_CHECKING:
-    pass
 
 
 def get_model_weights_diff(original_weights: OrderedDict, new_weights: OrderedDict, iterations: int) -> DXO:
