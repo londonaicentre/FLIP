@@ -139,6 +139,7 @@ TERRAFORM_ADDRESSES: dict[str, tuple[str, ...]] = {
         "aws_cloudwatch_log_group.ecs_flip_api",
         "aws_cloudwatch_log_group.ecs_fl_api_net_1",
         "aws_cloudwatch_log_group.ecs_fl_server_net_1",
+        "aws_cloudwatch_log_group.rds_proxy",
     ),
 }
 
