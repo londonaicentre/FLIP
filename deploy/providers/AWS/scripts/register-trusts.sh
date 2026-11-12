@@ -268,9 +268,18 @@ register_one_kit() {
     # The task's env carries only some hub-shared keys (FLIP#1476), so refresh the block from the
     # operator env file the Makefile exported, as sync-trust-kit does. It fails naming any key
     # still unresolved, so a placeholder is never left behind as success.
+    # By now the hub has committed and the kit holds any new credentials, so the failure says so:
+    # re-running the verb (or re-scaffolding the kit) would throw them away. stdin is closed so a
+    # sync can never wait on the terminal.
     if ! uv run --no-config "$REPO_ROOT/trust/deploy/scripts/sync_trust_kit.py" \
-        --env-class "$ENV_CLASS" --target "$kit_file"; then
+        --env-class "$ENV_CLASS" --target "$kit_file" </dev/null; then
         log_error "Trust '$name': the hub-shared block of $kit_file is incomplete — $verb FAILED."
+        if [ "${ROTATE_KEYS:-0}" = "1" ]; then
+            log_error "The rotation itself succeeded: the hub refuses the old key, and $kit_file holds the new keys. Do not re-run rotate-trust-keys."
+        elif echo "$kit" | jq -e '.trust_api_key' >/dev/null 2>&1; then
+            log_error "The trust IS registered: $kit_file holds its write-once credentials (the hub keeps only their hash). Do not re-scaffold it."
+        fi
+        log_error "Set the keys named above in ${MAIN_ENV_FILE:-the hub env file .env.<hub>}, then run 'make sync-trust-kit KIT=${code:-${KIT:-<CODE>}} HUB=${HUB:-$ENV_CLASS}'."
         return 1
     fi
     log_success "Wrote kit for '$name' → $kit_file"

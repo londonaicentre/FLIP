@@ -72,8 +72,9 @@ workstation (prod AWS creds required):
    — scaffolds `trust/.env.<CODE>.prod` from the base template
    (`trust/.env.example`).
 2. `make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=prod` — registers
-   on the prod hub and fills the Kit credentials; then
-   `make sync-trust-kit KIT=<CODE> HUB=prod` fills the rest of the Hub-shared block.
+   on the prod hub, fills the Kit credentials and fills the Hub-shared block from
+   `.env.prod`. `make sync-trust-kit KIT=<CODE> HUB=prod` is only for a later refresh,
+   or to finish a run whose sync step failed after registering.
 
 Then `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod`
 tarballs the populated kit file as-is, as `.env.<CODE>.prod`, + the operator's

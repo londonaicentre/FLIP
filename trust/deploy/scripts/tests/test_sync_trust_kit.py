@@ -313,6 +313,8 @@ def test_12_only_the_running_backends_kit_date_is_required() -> None:
         _assert(f"{absent}=\n" in content, f"{backend}: {absent} written empty", content)
         result, _ = _sync_one("Trust_1", {"FL_BACKEND": backend, needed: ""})
         _assert(result.returncode != 0 and needed in result.stderr, f"{backend}: empty {needed} refused", result.stderr)
+        result, content = _sync_one("Trust_1", {"FL_BACKEND": backend, absent: "<set-me>"})
+        _assert(result.returncode != 0 and absent in result.stderr, f"{backend}: placeholder {absent} refused", content)
 
 
 def test_13_a_placeholder_value_is_refused_naming_the_env_file() -> None:
@@ -341,6 +343,7 @@ def test_14_target_names_the_kit_file() -> None:
         )
         _assert(result.returncode == 0, "exit 0", result.stderr)
         _assert("CENTRAL_HUB_API_URL=http://localhost:8080/api" in kit.read_text(), "block written", kit.read_text())
+        _assert(f"for {kit} from" in result.stdout, "progress line names the kit file", result.stdout)
 
 
 def main() -> None:

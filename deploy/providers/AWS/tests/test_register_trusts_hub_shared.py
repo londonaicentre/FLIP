@@ -56,7 +56,7 @@ HUB_ENV = {
 # What the task's env yields: only these two hub-shared keys.
 TASK_HUB_SHARED = {"TRUST_API_KEY_HEADER": "X-Trust-Api-Key", "FL_BACKEND": "nvflare"}  # pragma: allowlist secret
 METADATA = {"trust_id": "id-1", "trust_name": "Scratch Trust", "fl_kit_slot": "site-1", "fl_kit_slot_number": 1}
-CREDENTIALS = {"trust_api_key": "k1", "trust_internal_service_key": "k2"}  # pragma: allowlist secret
+CREDENTIALS = {"trust_api_key": "api-key-k1", "trust_internal_service_key": "int-key-k2"}  # pragma: allowlist secret
 
 STUB_AWS = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >>"$CALLS"
@@ -128,6 +128,18 @@ def test_an_unresolved_key_fails_naming_it_and_its_source(tmp_path: Path) -> Non
     assert "/hub/.env.prod" in out
     assert "register-trusts complete" not in out
     assert HUB_ENV["AES_KEY_BASE64"] not in out
+
+
+@pytest.mark.parametrize("kit", [METADATA, {**METADATA, **CREDENTIALS}], ids=["already-registered", "first"])
+def test_a_failed_sync_names_the_recovery_without_printing_values(tmp_path: Path, kit: dict) -> None:
+    code, out, content, _ = _register(tmp_path, kit, NLB_SUBDOMAIN="", HUB="prod")
+    assert code == 1, out
+    assert "make sync-trust-kit KIT=T0 HUB=prod" in out
+    assert ("The trust IS registered" in out) == ("trust_api_key" in kit), out
+    for value in (*CREDENTIALS.values(), HUB_ENV["AES_KEY_BASE64"]):
+        assert value not in out
+    if "trust_api_key" in kit:
+        assert f"TRUST_API_KEY={CREDENTIALS['trust_api_key']}" in content, "the credentials stay in the kit"
 
 
 def test_the_aes_key_never_travels_in_the_run_task_overrides(tmp_path: Path) -> None:

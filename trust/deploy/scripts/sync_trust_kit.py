@@ -86,12 +86,12 @@ def main() -> None:
 
     # Require every hub-shared key: forgetting to source the env file leaves them unset. Only the
     # running backend's kit date is required (an NVFLARE hub has no FLOWER_KIT_DATE, and the reverse).
-    # A `<...>` value is an unfilled placeholder, never a value.
+    # A `<...>` value is an unfilled placeholder, never a value, the other kit date's included.
     other_kit_date = {"nvflare": "FLOWER_KIT_DATE", "flower": "FLARE_KIT_DATE"}.get(os.environ.get("FL_BACKEND", ""))
     missing = [
         k
         for k in tkl.HUB_SHARED_KEYS
-        if k != other_kit_date and (not os.environ.get(k) or os.environ[k].startswith("<"))
+        if os.environ.get(k, "").startswith("<") or (k != other_kit_date and not os.environ.get(k))
     ]
     if missing:
         source = os.environ.get("MAIN_ENV_FILE", "the matching .env.<env> file")
@@ -122,7 +122,7 @@ def main() -> None:
     # would silently get the dev hub URL.
     source = os.environ.get("MAIN_ENV_FILE", "<environment>")
     hub_url = new_values["CENTRAL_HUB_API_URL"]
-    print(f"🔄 Syncing hub-shared block for trust/.env.{args.kit} from {source}")
+    print(f"🔄 Syncing hub-shared block for {target} from {source}")
     print(f"   CENTRAL_HUB_API_URL → {hub_url}")
     if "localhost" in hub_url or "127.0.0.1" in hub_url:
         print("   ⚠️  Hub URL points at localhost — this is the dev hub.")
