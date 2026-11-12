@@ -110,7 +110,7 @@ FL workflow runs it. That separation means:
 * **You can re-package a checkpoint at any time**, for example with corrected preprocessing, without retraining.
 
 The cost is that you reunite the weights with their architecture and transforms by hand. The ``export/`` configs
-committed beside each tutorial make that reliable: the person who knows the preprocessing writes them once, when
+committed beside a tutorial make that reliable: the person who knows the preprocessing writes them once, when
 authoring the app.
 
 
@@ -695,7 +695,8 @@ and independent of any deployment target.
 **The input specification uses MONAI's schema.** A bundle needs input shape, voxel spacing, intensity window,
 channel meanings and output labels. FLIP uses the ``network_data_format`` block that MONAI already defines in a
 bundle's ``metadata.json`` rather than inventing its own: it covers exactly this, and it is what the MONAI tooling
-reads. Worked examples sit beside each tutorial in ``fl-tutorials/<backend>/<tutorial>/export/``.
+reads. Worked examples sit beside the NVFLARE ``3d_spleen_segmentation`` and ``xray_classification`` tutorials, in
+``fl-tutorials/nvflare/<category>/<tutorial>/export/``.
 
 **Inference transforms are declared by convention, in** ``transforms.py``. A free-form Python module can build its
 transforms however it likes, so the inference chain cannot be derived automatically, and any rule strict enough to

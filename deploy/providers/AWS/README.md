@@ -729,11 +729,20 @@ deploy/providers/AWS/
 ├── locals.tf                   # Shared locals
 ├── cloudfront.tf               # flip-ui bucket and its cross-account OAC read for the edge distribution
 ├── certificate.tf              # ACM certificate for the web listener where this account keeps the zone (MANAGE_DNS=true)
+├── ecs_flower.tf               # Flower-only register-supernode-keys one-shot task + run-task trigger
+├── rds_proxy.tf                # RDS Proxy + IAM DB auth
+├── kms.tf                      # FLIP application KMS key (S3 SSE-KMS, Secrets Manager)
+├── ecr.tf                      # Lifecycle policy for the ECR pull-through cache repositories
+├── s3_logging.tf               # S3 server-access-log bucket for every FLIP application bucket
+├── data.tf                     # Shared data sources
+├── backend.tf                  # S3 backend with S3 native locking
+├── variables.tf                # Terraform variables
 ├── modules/
 │   ├── cognito/                # shared: pool, domain, client, seed users
 │   ├── ses/                    # prod/stag only: sender identity, transactional templates
 │   ├── secgroup/               # shared: security-group wrapper
-│   └── flip_s3_bucket/         # shared: opinionated FLIP application S3 bucket
+│   ├── flip_s3_bucket/         # shared: opinionated FLIP application S3 bucket
+│   └── terraform_ci_bootstrap/ # CI plan/apply roles, permissions boundary, state bucket (not applied by this root)
 ```
 
 The Central Hub application services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) run on **ECS

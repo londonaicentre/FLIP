@@ -130,7 +130,8 @@ both layouts.
 ## 6. Debug Scripts
 
 A collection of diagnostic scripts is available in `/tmp/` on the development
-machine and in `trust/deploy/helm/scripts/`. Key scripts:
+machine and in the chart: `sync_k8s_kit.py` and `check_status.py` at `trust/deploy/helm/`,
+the rest in `trust/deploy/helm/scripts/`. Key scripts:
 
 | Script | Purpose |
 |--------|---------|

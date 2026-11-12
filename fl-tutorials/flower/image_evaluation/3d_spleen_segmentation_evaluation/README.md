@@ -55,6 +55,8 @@ metrics.
 │   ├── strategy.py     # EvaluationStrategy: native FedAvg aggregation + FLIP forwarding
 │   ├── task.py         # Defines evaluation functions
 │   └── transforms.py   # MONAI transforms for preprocessing
+├── .env.app            # Checkpoint URL (and tutorial discovery marker)
+├── Makefile            # download-checkpoints
 ├── pyproject.toml      # Project metadata like dependencies and configs
 └── README.md
 ```

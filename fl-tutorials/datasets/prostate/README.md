@@ -38,6 +38,9 @@ prostate
 ├── create_prostate_metadata_table.py  # DICOM tree -> source/dicom_metadata.csv (+ marksheet); decides source_trust
 ├── omop_convert_prostate.py           # source/ -> the prostate_project OMOP tables (the seed pipeline's input)
 ├── upload_prostate_labels_to_xnat.py  # Data enrichment: both masks into every trust's XNAT
+├── prepare_prostate_local_data.py     # The simulator layout (what the tutorial reads under LOCAL_DEV)
+├── synthetic_identity.py              # A synthetic patient identity per PI-CAI study, stable across runs
+├── pyproject.toml
 └── README.md
 ```
 

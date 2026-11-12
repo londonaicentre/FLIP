@@ -168,7 +168,7 @@ the authoritative list):
 - **prettier**: Formats YAML under `deploy/providers/AWS/`
 - **end-of-file-fixer**: Ensures files end with a newline
 - **detect-private-key**: Detects private SSH/SSL keys
-- **uv-lock** (one entry per uv project — root, flip-api, docs, trust-api, imaging-api, data-access-api, omop-db, xnat-tests, aws-deploy, flip-utils, fl-api-flower, fl-api-base): verifies each project's `uv.lock` is in sync with its `pyproject.toml` (`--check`, so it fails on drift instead of silently regenerating). Use `make lock` to regenerate when a `pyproject.toml` legitimately changes.
+- **uv-lock** (one entry per uv project — root, flip-api, docs, trust-api, imaging-api, data-access-api, omop-db, xnat-tests, xnat-export-mask, aws-deploy, flip-utils, fl-api-flower, fl-api-base): verifies each project's `uv.lock` is in sync with its `pyproject.toml` (`--check`, so it fails on drift instead of silently regenerating). Use `make lock` to regenerate when a `pyproject.toml` legitimately changes.
 
 #### Component-Specific Scans
 

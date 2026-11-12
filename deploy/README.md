@@ -189,7 +189,7 @@ FLIP supports three trust deployment models:
 
 | Model | Location | Documentation |
 | ------- | ---------- | --------------- |
-| **Cloud (EC2)** | AWS EC2 (same account as Central Hub) | [`providers/AWS/README.md`](providers/AWS/README.md) |
+| **Cloud (EC2)** | AWS EC2, in any account | [`trust/deploy/terraform/aws/ec2/README.md`](../trust/deploy/terraform/aws/ec2/README.md) |
 | **Hybrid / On-Premises** | Any Ubuntu host (home lab, hospital server) | [Deploy a trust on-prem](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-on-prem.html) ([`trust/deploy/ansible/README.md`](../trust/deploy/ansible/README.md)) |
 | **Kubernetes** | Any K8s cluster 1.28+ (EKS, AKS, on-prem) | [Deploy a trust on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html) ([`trust/deploy/helm/README.md`](../trust/deploy/helm/README.md)) |
 

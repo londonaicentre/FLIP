@@ -31,6 +31,6 @@ min-clients / import-path / offline-apps / catalogue guards, ruff. Hand-maintain
 | `docs/source/components/component-omop-database.rst` "Sample cohort queries" | New `query.sql` worth showing |
 | `flip-api/Makefile` `e2e_smoke_<name>` target (+ `flip-api/AGENTS.md`, root `AGENTS.md` smoke section); `flip-api/tests/e2e_smoke.py` `TUTORIALS` label map | When the tutorial should be drivable end to end against the dev stack (needs its cohort seeded on the trusts) |
 | `trust/Makefile` `load-<cohort>` target + a `trust/omop-db/src/omop_db_tools/` loader (+ `trust/omop-db` README / AGENTS) | Access-controlled cohort a licence holder loads into their local dev trusts (`load-adni-cohort`); the e2e target depends on it |
-| `flip-api/tests/demo_video.py` `APPS` profile (+ `flip-ui/test/cypress/demo/README.md` example when enrichment flags are needed) | Every tutorial that gets a demo video (`make demo-video DEMO_ARGS="--app <name>"`); same seeded-cohort prerequisite as e2e |
+| `flip-api/tests/demo_video.py` `APPS` profile (+ the spleen invocation in `flip-api/AGENTS.md` "Demo Video Recorder" when enrichment flags are needed) | Every tutorial that gets a demo video (`make demo-video DEMO_ARGS="--app <name>"`); same seeded-cohort prerequisite as e2e |
 | `CONTRIBUTING.md` pre-release checklist | Only if the tutorial needs an extra input before `run-all-tutorials` (a checkpoint, `NUM_CASES`, a prepare step) |
 | `.secrets.baseline` | If detect-secrets flags a placeholder (e.g. a UUID or URL) in the new files |
