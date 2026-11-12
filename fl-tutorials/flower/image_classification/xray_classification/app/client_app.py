@@ -216,8 +216,8 @@ def evaluate(msg: Message, context: Context) -> Message:
     }
     # Macro F1 across lesions — the one interpretable number this app is meant to be judged
     # on, and what best-model selection scores (best-model-metric = "test_f1-score"). The
-    # per-lesion F1s below stay for the breakdown; the server weight-averages whichever key
-    # it was configured with across clients by num-examples.
+    # per-lesion breakdown rides along as the "test_f1-score-<name>" keys flattened above; the
+    # server weight-averages whichever key it was configured with across clients by num-examples.
     macro_f1 = macro_mean(test_metrics, "f1-score", lesions)
     metrics["test_f1-score"] = macro_f1
 
