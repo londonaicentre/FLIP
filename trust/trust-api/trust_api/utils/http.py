@@ -49,7 +49,17 @@ async def make_request(
     params = params or {}
     headers = dict(headers or {})  # copy so we don't mutate callers
 
-    logger.debug(f"Making {method} request to {url} with json_body={json_body}, params={params}, headers={headers}")
+    # Log names only, never values: the headers carry the trust-internal key, the hub API key and
+    # the cohort-admin proof, and at DEBUG this line reaches Loki, which the FL client can read
+    # (FLIP-SR-050). The body can carry the same proof, so it is logged by shape, not content.
+    logger.debug(
+        "Making %s request to %s (header names: %s, param names: %s, body keys: %s)",
+        method,
+        url,
+        sorted(headers),
+        sorted(params),
+        sorted(json_body) if isinstance(json_body, dict) else type(json_body).__name__,
+    )
 
     try:
         async with httpx.AsyncClient(
