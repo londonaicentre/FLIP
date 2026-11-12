@@ -224,7 +224,7 @@ make -C trust/deploy/terraform/azure/vm destroy AZ_SUBSCRIPTION="<name>"
 make -C trust/deploy/terraform/azure/aks init plan apply AZ_SUBSCRIPTION="<name>"  # AKS instead of the VM (refused while the VM exists)
 make -C trust/deploy/terraform/azure/aks start AZ_SUBSCRIPTION="<name>"     # start, then admit your current IP to the API server (allow-ip after an IP change; stop, destroy)
 make -C trust/deploy/terraform/azure/aks join TARBALL=<kit tarball> KIT=<CODE> HUB=<env> [MOCK_PACS=1]  # kit file + values-secrets + kit Secret, then deploy (the chart with values-aks/-small-node, no vocab load); selftest, clear-jobs
-make -C trust/deploy/terraform/azure test lint                              # credential-free checks (CI: validate_terraform.yml "Azure node checks")
+make -C trust/deploy/terraform/azure test lint                              # credential-free checks: lint = fmt + tflint + checkov (CI: validate_terraform.yml "Azure node checks")
 make -C trust selftest-node FL_BACKEND=nvflare                        # on the node itself: hubless self-test + report
 ```
 

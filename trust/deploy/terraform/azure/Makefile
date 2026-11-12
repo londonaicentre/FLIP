@@ -16,8 +16,11 @@
 include common.mk
 
 BOOTSTRAP_LOCATION ?= uksouth
+# The pin deploy/providers/AWS/scripts/checkov_lint.sh asserts; tests/test_static_guards.py keeps them equal.
+CHECKOV_VERSION := 3.3.14
+CHECKOV ?= uvx checkov==$(CHECKOV_VERSION)
 
-.PHONY: help bootstrap destroy-bootstrap test lint
+.PHONY: help bootstrap destroy-bootstrap test lint checkov
 
 help: ## Show this help message
 	$(call list_targets,FLIP Azure trust node (the VM: make -C vm help; AKS: make -C aks help):)
@@ -46,9 +49,17 @@ test: ## Credential-free checks: terraform test in every root and module, plus p
 	done
 	uv run --no-project --with pytest --with diagrams pytest tests/ -q
 
-lint: ## terraform fmt check and tflint over the Azure tree
+lint: ## terraform fmt check, tflint and checkov over the Azure tree
 	$(TF) fmt -check -recursive
 	tflint --init --config "$(CURDIR)/.tflint.hcl" && tflint --recursive --config "$(CURDIR)/.tflint.hcl"
+	@$(MAKE) --no-print-directory checkov
+
+# Every Azure check runs: deliberate posture is a `# checkov:skip=<ID>:<why>` in the resource, never
+# a narrower check list. Checkov accepts a skip with no reason, so the grep refuses one first.
+checkov: ## checkov's Azure checks over the tree (static, no credentials); a skip must say why
+	@! grep -rEn '(#|//)[[:space:]]*checkov:skip=[A-Za-z0-9_]+[[:space:]]*(:[[:space:]]*)?$$' \
+		--include='*.tf' --exclude-dir=.terraform . || { echo "❌ checkov:skip needs a reason: # checkov:skip=<ID>:<why>"; exit 1; }
+	$(CHECKOV) -d . --framework terraform --skip-download --compact --quiet
 
 # The node's and the cluster's targets moved to vm/ and aks/ in FLIP#1787. Their old names here
 # say where, for one release, rather than doing nothing.
