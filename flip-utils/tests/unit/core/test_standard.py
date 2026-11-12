@@ -14,6 +14,7 @@
 
 import io
 import json
+import logging
 import math
 import re
 import zipfile
@@ -467,6 +468,48 @@ class TestFLIPStandardProdGetDataframe:
             headers = mock_post.call_args.kwargs["headers"]
             assert "x-trust-internal-service-key" in headers
             assert headers["x-trust-internal-service-key"] == ""
+
+    def test_get_dataframe_does_not_log_cohort_rows(self, flip_prod):
+        """FLIP-SR-051: the response body is the cohort's patient rows. These INFO lines are shipped to
+        the trust's shared log store, where a later job at the same trust could read an earlier project's
+        cohort. get_dataframe must log only the status code and the row count, never the body.
+        """
+        rows = [
+            {"accession_id": "ACC-SECRET-001", "label": 1},
+            {"accession_id": "ACC-SECRET-002", "label": 0},
+        ]
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = json.dumps(rows)
+
+        # The prod logger sets propagate = False, so caplog (which captures via the root logger) never
+        # sees these records — attach a capture handler directly to the instance logger instead.
+        captured: list[str] = []
+        handler = logging.Handler()
+        handler.emit = lambda record: captured.append(record.getMessage())
+        flip_prod.logger.addHandler(handler)
+        try:
+            with (
+                patch("flip.core.standard.FlipConstants") as mock_constants,
+                patch("flip.core.standard.requests.post", return_value=mock_response),
+            ):
+                mock_constants.DATA_ACCESS_API_URL = "https://data.example.com"
+                # pragma: allowlist nextline secret
+                mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
+                mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"  # pragma: allowlist secret
+
+                df = flip_prod.get_dataframe(project_id="proj-1", query="SELECT * FROM table")
+        finally:
+            flip_prod.logger.removeHandler(handler)
+
+        logged = "\n".join(captured)
+        # No cohort content, in any field, reaches the log.
+        assert "ACC-SECRET-001" not in logged
+        assert "ACC-SECRET-002" not in logged
+        assert mock_response.text not in logged
+        # The useful operational signal is still logged: the status and the row count.
+        assert "Received response status code: 200" in logged
+        assert f"Successfully fetched dataframe ({len(df)} rows)" in logged
 
 
 class TestFLIPStandardProdGetByAccessionNumber:
