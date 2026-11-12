@@ -42,11 +42,8 @@ class Settings(BaseSettings):
     # Per-trust API key header name (for authenticating requests from trusts to the FLIP API)
     TRUST_API_KEY_HEADER: str
 
-    # Internal service auth (fl-server on the Central Hub)
-    INTERNAL_SERVICE_KEY_HEADER: str
-
     # FL API auth (flip-api → fl-api-net-N): sent on every FL API call, required by every FL API
-    # route but /health. Dedicated to that hop — never INTERNAL_SERVICE_KEY. Dev: minted into the
+    # route but /health. Dedicated to that hop. Dev: minted into the
     # env file by `make up`; prod: a `secrets` entry of the ECS task (FLIP_API secret, `fl_api_key`).
     FL_API_KEY_HEADER: str = "X-FL-API-Key"
     FL_API_KEY: str
@@ -496,8 +493,6 @@ class DevSettings(Settings):
     AWS_SES_SENDER_EMAIL_ADDRESS: EmailStr = "flip-no-reply@example.com"
 
     AES_KEY_BASE64: str  # in dev, get AES key from env variable
-
-    INTERNAL_SERVICE_KEY_HASH: str  # in dev, get internal service auth key hash from env variable
 
     # FL kit slot pool names — one per pre-provisioned FL kit (workspace/net-N/services/<slot>).
     # Seeded into `fl_kit_slot` so POST /admin/trusts can hand each joining trust the next

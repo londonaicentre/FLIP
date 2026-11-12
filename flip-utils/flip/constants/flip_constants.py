@@ -47,8 +47,7 @@ class ProdSettings(_Common):
 
     Used when LOCAL_DEV=false. Settings are grouped by which FL role uses them:
 
-    - **Server-only** (fl-server on Central Hub): FLIP_API_INTERNAL_URL, INTERNAL_SERVICE_KEY*,
-      JOB_CREDENTIAL_DIR
+    - **Server-only** (fl-server on Central Hub): FLIP_API_INTERNAL_URL, JOB_CREDENTIAL_DIR
     - **Client-only** (fl-client on trust side): DATA_ACCESS_API_URL, IMAGING_API_URL,
       TRUST_INTERNAL_SERVICE_KEY*
     - **Shared**: IMAGES_DIR, NET_ID
@@ -60,10 +59,8 @@ class ProdSettings(_Common):
     # FLIP_API_INTERNAL_URL must point at flip-api over the shared Docker network
     # (e.g. http://flip-api:8000/api), never at the public CloudFront URL — the
     # CloudFront distribution whitelists only Authorization/Content-Type/Origin
-    # and strips X-Internal-Service-Key at the edge, which would break auth.
+    # and strips X-Job-Credential at the edge, which would break auth.
     FLIP_API_INTERNAL_URL: HttpUrl = "http://localhost:8000"  # type: ignore[assignment]
-    INTERNAL_SERVICE_KEY_HEADER: str = "X-Internal-Service-Key"
-    INTERNAL_SERVICE_KEY: str = ""
 
     # Hub-local shared volume where the FL API stages a de-bundled evaluation
     # checkpoint (keyed by <model_id>/<checkpoint>) for the fl-server to read from
@@ -129,8 +126,6 @@ class _FlipConstantsProxy:
     DEV_IMAGES_DIR: str
     # ProdSettings
     FLIP_API_INTERNAL_URL: HttpUrl
-    INTERNAL_SERVICE_KEY_HEADER: str
-    INTERNAL_SERVICE_KEY: str
     SERVER_CHECKPOINT_ROOT: str
     JOB_CREDENTIAL_DIR: str
     DATA_ACCESS_API_URL: HttpUrl
