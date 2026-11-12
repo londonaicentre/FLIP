@@ -738,6 +738,11 @@ make -C trust/deploy/helm validate
 # Place this trust's FL participant kit onto the node, BEFORE deploying
 make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
 
+# The OMOP core vocabulary (FLIP#923): download it on this host (AI Centre bucket access, your
+# AWS CLI profile; otherwise an OHDSI Athena export), then place the folder onto the node
+make -C trust/deploy/helm download-vocab
+make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<ctx>
+
 # Regenerate k8s-trust-<KIT>.yaml from the kit (validates its governance document, FLIP#1259)
 # without patching the cluster Secret; deploy-trust-k8s KIT= runs it first
 make -C trust/deploy/helm sync-kit-override KIT=<CODE> HUB=<env>

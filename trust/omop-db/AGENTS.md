@@ -35,10 +35,9 @@ tolerate the DICOM vocab the seed has already loaded):
 - **EC2**: the `flip_omop_vocab` Ansible role (part of the EC2 root's `make seed`; throwaway container on
   loopback port 15499; kit credentials passed by that root's Makefile).
 - **Kubernetes**: the chart's `omop-vocab-load` post-install/post-upgrade hook Job
-  (`omopDb.vocabLoad` values; bundle from S3, loader + constraints from the image). Its first
-  stage runs `load_core_vocab.sh --check` and skips the multi-GB fetch when the database is
-  already loaded — the hook sits on the critical path of every `helm upgrade`, so the fetch
-  must stay conditional. The loader still runs (constraints).
+  (`omopDb.vocabLoad.hostPath`: the unpacked bundle staged onto the node with the chart's
+  `stage-vocab`, loader + constraints from the image; no S3 fetch since FLIP#923). The loader
+  skips tables already loaded and still applies the constraints on every upgrade.
 
 ## Load-bearing facts
 

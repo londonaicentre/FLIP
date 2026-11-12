@@ -59,17 +59,14 @@ make -C trust/omop-db load-omop-vocab OMOP_DB_PORT=5436  # Trust_2 (KCH)
 
 Cohort queries that join `omop.concept` return nothing until this step has
 run. On EC2 trusts the equivalent load is part of the EC2 root's `make seed` (Ansible);
-on Kubernetes it is the chart's `omop-vocab-load` post-install job — when
-`omopDb.vocabLoad.s3Bucket` is set and the Job can reach AWS credentials, which
-on a local `kind` cluster it cannot without extra setup (the node is a container
-that does not see your `~/.aws`). The chart README's "Local clusters (kind)"
-covers both routes: an `extraMounts` mapping, or pre-seeding over a port-forward
-with this script directly.
+on Kubernetes it is the chart's `omop-vocab-load` post-install job, which loads
+the unpacked bundle the operator staged onto the node (`make -C trust/deploy/helm
+download-vocab` or an Athena export, then `stage-vocab`; FLIP#923) — the chart
+README's "OMOP core vocabulary".
 
 To ask a database whether it has been loaded — without a bundle, and without
 loading anything — run the script's probe mode. It exits 0 only when every
-vocabulary table already holds core rows, which is how the Kubernetes hook
-decides whether it needs to download the bundle at all:
+vocabulary table already holds core rows:
 
 ```sh
 cd trust/omop-db && OMOP_DB_PORT=5434 OMOP_POSTGRES_USER=… OMOP_POSTGRES_PASSWORD=… \
@@ -222,6 +219,10 @@ starts cleanly but returns nothing from cohort queries that join
    [NHS TRUD](https://isd.digital.nhs.uk/)), then place the export's CSV files
    at `data/vocab_aicentre_core_20240916/`. Concept coverage may differ
    slightly from the org snapshot depending on release dates.
+
+Either folder is what the Helm chart loads too: `make -C trust/deploy/helm download-vocab` runs
+route 1 for you, and `make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder>` puts the folder
+on the node (chart README, "OMOP core vocabulary").
 
 ### The DICOM vocabulary bundle
 
