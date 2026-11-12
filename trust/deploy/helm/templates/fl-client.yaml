@@ -295,10 +295,9 @@ spec:
         - name: fl-client-init
           image: {{ include "flip-trust.flClientImage" . }}
           imagePullPolicy: {{ .Values.flClient.image.pullPolicy }}
-          {{- with .Values.securityContext }}
+          # The image's flip user, the client's, stated so it is enforced: this container writes the kit.
           securityContext:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- toYaml (merge (dict "runAsUser" 1000 "runAsGroup" 1000 "runAsNonRoot" true) (deepCopy (.Values.securityContext | default dict))) | nindent 12 }}
           command:
             - /bin/bash
             - -c
@@ -441,6 +440,8 @@ spec:
               value: /app/governance/governance.fl_privacy.toml
             {{- end }}
             {{- if eq .Values.flBackend "nvflare" }}
+            - name: LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
             # The policy fl-client-init rendered, which the client checks that render against.
             {{- include "flip-trust.flSitePrivacyEnv" . | nindent 12 }}
             {{- end }}

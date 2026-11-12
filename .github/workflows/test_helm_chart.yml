@@ -705,14 +705,16 @@ jobs:
           # staged kit: that is what the removed kit-init did to a node directory, as root.
           # The one exception is fl-client-init (FLIP#1570): the client's own renders into
           # local/ and startup/, moved out of the client so it can mount them read-only,
-          # as the client's user.
+          # as the client's user: non-root enforced, the container's settings over the pod's.
           for init in pod.get("initContainers", []):
               mounts = [m for m in init.get("volumeMounts", []) if m.get("name") == KIT]
               if not mounts:
                   continue
+              sc = {**(pod.get("securityContext") or {}), **(init.get("securityContext") or {})}
               if (
                   init["name"] != "fl-client-init"
-                  or (init.get("securityContext") or {}).get("runAsUser") == 0
+                  or sc.get("runAsUser") == 0
+                  or sc.get("runAsNonRoot") is not True
                   or {m.get("subPath") for m in mounts} - {"local", "startup"}
               ):
                   die(f"initContainer {init['name']!r} mounts {KIT} — it would write over the staged kit")

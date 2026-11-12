@@ -106,15 +106,33 @@ services:
   fl-client-init:
     image: flare-fl-client:${DOCKER_FL_TAG:-dev}
     user: "${UID:-1000}:1000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    network_mode: none
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        set -eu
-        for kit in /kit/*/; do /app/fl-client-init.sh "$$kit"; done
+        set -u
+        ok=
+        for kit in /kit/*/; do
+          if /app/fl-client-init.sh "$$kit"; then
+            ok=1
+          else
+            # Only this kit's client is stopped: it refuses the missing or stale render (fail closed).
+            echo "[fl-client-init] $$kit FAILED: its fl-client will refuse to start" >&2
+          fi
+        done
+        [ -n "$$ok" ]
     environment:
       - HOME=/home/flip
       - USER=flip
       - LOGNAME=flip
+      # What resources.json advertises to FLARE's scheduler for both clients (default 1 GPU, 16 GiB).
+      # - NUM_AVAILABLE_GPUS=1
+      # - MEMORY_PER_GPU_IN_GIB=16
       - LOG_LEVEL=${LOG_LEVEL}
       - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
       - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
@@ -144,8 +162,6 @@ services:
       - NET_ID=net-${NET_NUMBER}
       - LOCAL_DEV=false
       - IMAGES_DIR=/app/data/images
-      # - NUM_AVAILABLE_GPUS=1
-      # - MEMORY_PER_GPU_IN_GIB=16
       - LOG_LEVEL=${LOG_LEVEL}
       # Site-enforced FLARE privacy policy (FLIP#851) — rendered into
       # /app/local/privacy.json by fl-client-init. Unset/empty = no site policy.
@@ -182,8 +198,6 @@ services:
       - NET_ID=net-${NET_NUMBER}
       - LOCAL_DEV=false
       - IMAGES_DIR=/app/data/images
-      # - NUM_AVAILABLE_GPUS=1
-      # - MEMORY_PER_GPU_IN_GIB=16
       - LOG_LEVEL=${LOG_LEVEL}
       # Site-enforced FLARE privacy policy (FLIP#851) — rendered into
       # /app/local/privacy.json by fl-client-init. Unset/empty = no site policy.

@@ -488,8 +488,10 @@ flClient:
     pin: ""
     pullPolicy: Always
   nvflare:
-    # Site-enforced privacy policy (FLIP#851): rendered into /app/local/privacy.json
-    # at container start by `python -m flip.nvflare.site_policy`. Empty string = unset
+    # Site-enforced privacy policy (FLIP#851): rendered into the kit's local/privacy.json
+    # by the fl-client-init init container (`python -m flip.nvflare.site_policy`, whose
+    # errors are in that container's log) and checked, without writing, by the client's
+    # `site_policy --assert-rendered` (FLIP#1570). Empty string = unset
     # = no site policy (previous behavior). policy: "percentile"; the params
     # mirror the FL_SITE_PRIVACY_* env vars documented in trust/README.md. An invalid
     # combination fails the pod (fail closed) rather than running unfiltered.

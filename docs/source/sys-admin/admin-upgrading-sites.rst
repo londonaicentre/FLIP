@@ -161,7 +161,8 @@ playbook; see :ref:`onprem-operator-access`):
    * - ``YES=1``
      - Skip the prompts, for a scripted run.
    * - ``FL_TAG=<tag>``
-     - Pin the FL client apart from the rest (``sha-`` targets only).
+     - Pin the FL client apart from the rest (``sha-`` targets only). On NVFLARE, never to a build older than your
+       checkout's compose files (see the note below).
    * - ``ALLOW_CHECKOUT_DRIFT=1``
      - Skip the checkout-at-tag check. Only for testing a branch that is not a release.
 
@@ -225,6 +226,12 @@ The upgrade never re-seeds data and never resets XNAT.
    together, whose builds no longer share ``sha-`` tags. Set it to a release tag (or ``stag``/``prod``) published
    for all three images. Never pin XNAT ahead of the trust APIs: from the release that ships DQR 3.1.0, xnat-web
    needs imaging-api from the same release or later (see the Kubernetes note on ``xnat.image.pin`` below).
+
+   Never hold the NVFLARE FL client behind the compose files or chart either. From FLIP#1570 on they mount the
+   client's kit read-only and render it in a one-shot ``fl-client-init`` step that runs ``/app/fl-client-init.sh``
+   from the fl-client image, so ``FL_TAG`` (or ``flClient.image.pin``) must name an fl-client image from that change
+   or later. An older one stops the FL client: ``fl-client-init`` finds no script, and an older client entrypoint
+   cannot write its read-only kit.
 
 .. list-table:: Exit codes
    :header-rows: 1
@@ -354,7 +361,8 @@ rotate one of them before the upgrade, or the pod stops for that reason instead.
    * - ``XNAT_TAG``
      - ``xnat.image.pin``
    * - ``DOCKER_FL_TAG`` (when it names a release or ``sha-`` tag)
-     - ``flClient.image.pin``
+     - ``flClient.image.pin`` (on NVFLARE, an image from FLIP#1570 or later; see the note on release versus
+       ``sha-`` tags)
 
 A release tag never needs a pin. They are the only way to move a Kubernetes site to a ``sha-`` tag that some images
 were never built at: a StatefulSet rolled onto a tag that does not exist stays down. The three XNAT builds no longer
@@ -415,7 +423,8 @@ that release's commit:
 
 A ``sha-`` tag has no release order, so the command does not see this as a downgrade and needs no ``FORCE=1``: check the
 printed ``site <current> → target sha-…`` yourself. The old images then run under the newer checkout's compose files, a
-pairing no release was tested in. Use it to get back, not to stay.
+pairing no release was tested in. Use it to get back, not to stay. On NVFLARE the FL client does not start in that
+pairing at all: those images predate the read-only client kit (FLIP#1570) that the newer compose files expect.
 
 .. warning::
 
@@ -527,10 +536,13 @@ What can go wrong
    Sites installed before XNAT ran as non-root have a root-owned archive that the new image cannot read. Run the
    printed ``chown -R`` once and re-run the upgrade.
 
-The ``fl-client-init`` step cannot write ``resources.json`` (``Permission denied`` under ``local/``) after an upgrade
-   The old root-running FL client left root-owned files in the kit's ``local/`` directory. ``chown`` them to the kit
-   directory's owner (uid 1000) and restart the client. ``fl-client-init`` does every write into the kit; the client
-   itself mounts ``local/`` and ``startup/`` read-only (FLIP#1570).
+``[fl-client-init] cannot write …/local`` after an upgrade
+   The kit's ``local/`` directory, or files the old root-running FL client left in it, are owned by root. ``chown``
+   them to the kit directory's owner (uid 1000), then re-run the step with ``make -C trust up-fl-clients-kit
+   KIT=<CODE>``, which starts ``fl-client-init`` before the clients. A plain restart of the client does not re-run
+   it, and the client refuses to start on a missing render. ``fl-client-init`` does every write into the kit; the
+   client itself mounts ``local/`` and ``startup/`` read-only (FLIP#1570). On Kubernetes the message is in
+   ``kubectl logs <fl-client pod> -c fl-client-init``, and the pod retries the step itself.
 
 .. seealso::
 

@@ -112,6 +112,7 @@ FOREIGN_UID_IMAGE_FIXES = {
     "trust/xnat/xnat/Dockerfile": ("chmod 1777", "${XNAT_HOME}/config", "${XNAT_ROOT}/prearchive"),
     "fl-services/nvflare/fl-base/Dockerfile": ("chmod 1777 /app",),
     "fl-services/nvflare/fl-client/fl-client/entrypoint.sh": ("id -un", "export HOME=/tmp USER=flip LOGNAME=flip"),
+    "fl-services/nvflare/fl-client/fl-client/init.sh": ("id -un", "export HOME=/tmp USER=flip LOGNAME=flip"),
     "fl-services/flower/fl-base/Dockerfile": ("chmod 1777 /app /app/.cache",),
 }
 
@@ -161,17 +162,21 @@ class Service:
                 return True
         return False
 
-    def mount_modes(self) -> dict[str, str]:
-        """Each `- <source>:<target>[:<mode>]` volume's container path and mode ("rw" when none is given)."""
-        modes: dict[str, str] = {}
+    def mounts(self) -> dict[str, tuple[str, str]]:
+        """Each `- <source>:<target>[:<mode>]` volume's container path -> (source, mode), "rw" when none is given."""
+        mounts: dict[str, tuple[str, str]] = {}
         for line in self.lines:
             stripped = line.lstrip()
             if not stripped.startswith("- ") or ":/" not in stripped:
                 continue
             parts = stripped[2:].strip().strip("\"'").split(":")
             mode = parts.pop() if len(parts) >= 3 and parts[-1] in {"ro", "rw"} else "rw"
-            modes[parts[-1]] = mode
-        return modes
+            mounts[parts[-1]] = (":".join(parts[:-1]), mode)
+        return mounts
+
+    def mount_modes(self) -> dict[str, str]:
+        """Each volume's container path and mode ("rw" when none is given)."""
+        return {target: mode for target, (_, mode) in self.mounts().items()}
 
     def group_add_entries(self) -> list[str]:
         """The inline `group_add: ["a", "b"]` entries, or [] when the key is absent.
@@ -474,9 +479,21 @@ def check_nvflare_client_kit_is_read_only(failures: list[str]) -> None:
                     f"{svc.where}: does not wait for fl-client-init (service_completed_successfully), so it "
                     f"could start on a kit nothing rendered (FLIP#1570)."
                 )
-        init_targets = {t for t, mode in init.mount_modes().items() if KIT_INIT_TARGET.match(t) and mode == "rw"}
-        if not {t.rsplit("/", 1)[-1] for t in init_targets} >= {"local", "startup"}:
-            failures.append(f"{init.where}: must mount each kit's local/ and startup/ writable at /kit/<net>/.")
+        # Each client's own kit, by host source: the union of every kit's subdirs is not enough.
+        init_written = {
+            (src, t.rsplit("/", 1)[-1])
+            for t, (src, mode) in init.mounts().items()
+            if KIT_INIT_TARGET.match(t) and mode == "rw"
+        }
+        for svc in clients:
+            client_mounts = svc.mounts()
+            for sub in ("local", "startup"):
+                src = client_mounts.get(f"/app/{sub}", ("", ""))[0]
+                if (src, sub) not in init_written:
+                    failures.append(
+                        f"{init.where}: does not mount {svc.name}'s {sub}/ ({src or 'none'}) writable at "
+                        f"/kit/<net>/{sub}, so nothing renders that client's kit (FLIP#1570)."
+                    )
 
 
 def check_no_uname_runtime_paths(failures: list[str]) -> None:

@@ -88,16 +88,17 @@ are two different things and conflating them was FLIP#1171.
 Previously the build args carried the developer's own uid, so images worked for whoever built them and
 crash-looped for everyone else — including on every published image, for any developer not on uid 1000.
 Anywhere one of these containers bind-mounts a host path, that path must still be owned by the uid the
-container runs as, or the entrypoint fails (loudly, since the entrypoint scripts exit non-zero when they
-can't write their generated config). Letting Docker auto-create the bind source leaves it root-owned and
+container runs as, or the container fails (loudly: `fl-client-init`, which renders the client's generated
+config, exits non-zero when it can't write it, and the client refuses to start without it). Letting Docker auto-create the bind source leaves it root-owned and
 silently breaks the container. See the [trust troubleshooting page](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/trust-node-compose.html#ts-compose-images-permission) for the failure mode and
 `trust/deploy/ansible/aws-ec2-host.yml` / `trust/deploy/ansible/onprem.yml` for how the provisioning
 Ansible pre-creates these paths with the right owner.
 
 **Upgrading an existing environment:** hosts that already ran the previous (root) images may have
 root-owned files under the kit's `local/` directory (e.g. `resources.json`, `log_config.json`), written by
-the old containers. The non-root `fl-client-init` step (which does every write into the kit; the client mounts
-`local/` and `startup/` read-only, FLIP#1570) can't overwrite those in place — a one-time `chown -R` of the
+the old containers. The non-root `fl-client-init` step (which does every write into the kit's `local/` and `startup/`, which
+the client mounts read-only, FLIP#1570; `transfer/` stays writable, as NVFLARE stages job payloads through
+it) can't overwrite those in place — a one-time `chown -R` of the
 provisioned kit directories to the new container uid is needed before the first non-root run.
 
 ### Container capability hardening
@@ -109,10 +110,11 @@ for root, so a grant there would sit unused in the bounding set (`CapEff` stays 
 kit whose ownership doesn't match is not fixed by a capability either — it is fixed by the `user:` override
 above, which runs the container as the host user that already owns the kit. Production adds nothing back
 either: the provisioning Ansible pre-chowns its kit directory to the container's uid (see
-[`deploy/README.md`](../../deploy/README.md#linux-capability-restrictions)). None of
-this covers the standalone `fl-services/nvflare/compose.dev.yml` dev harness (`make -C fl-services/nvflare up`),
-which remains unhardened — it runs the same non-root image and kit dirs, so it can be hardened the same way
-whenever someone picks it up.
+[`deploy/README.md`](../../deploy/README.md#linux-capability-restrictions)). In the
+standalone `fl-services/nvflare/compose.dev.yml` dev harness (`make -C fl-services/nvflare up`) only
+`fl-client-init` carries these settings (plus `read_only` and no network); the rest of the harness remains
+unhardened — it runs the same non-root image and kit dirs, so it can be hardened the same way whenever someone
+picks it up.
 
 ## Step-by-step provisioning
 

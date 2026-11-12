@@ -116,6 +116,9 @@ def test_the_init_container_renders_the_kit_before_the_client_starts():
     assert "/app/fl-client-init.sh /app" in init["command"][-1]
     assert init["envFrom"] == _client(rendered)["envFrom"], "the GPU count and memory come from the fl-client ConfigMap"
     assert {"name": "LOG_LEVEL", "value": "DEBUG"} in init["env"]
+    assert {"name": "LOG_LEVEL", "value": "DEBUG"} in _client(rendered)["env"], "the running client keeps LOG_LEVEL"
+    assert init["securityContext"]["runAsNonRoot"] is True, "the init writes the kit, so non-root must be enforced"
+    assert init["securityContext"]["runAsUser"] == 1000, "the client's user, so the client can read what it wrote"
     dockerfile = (INIT_SCRIPT.parents[1] / "Dockerfile").read_text()
     assert "fl-client/init.sh /app/fl-client-init.sh" in dockerfile, "the image no longer ships the script"
 
@@ -172,9 +175,20 @@ def test_a_kit_without_the_template_keeps_the_shipped_default(tmp_path, local):
     # Kits staged before restructure-lib.sh wrote the template still start.
     (local / "resources.json.default").write_text('{"shipped": true}')
 
-    assert _run_init(tmp_path).returncode == 0
+    result = _run_init(tmp_path)
+    assert result.returncode == 0
 
     assert json.loads((local / "resources.json").read_text()) == {"shipped": True}
+    # The GPU values cannot reach the shipped default, and the log must not claim they did.
+    assert "NOT applied" in result.stderr
+    assert "NUM_AVAILABLE_GPUS=1" not in result.stdout
+
+
+def test_the_shipped_default_needs_no_warning_when_no_gpu_values_are_set(tmp_path, local):
+    (local / "resources.json.default").write_text("{}")
+    result = _run_init(tmp_path, NUM_AVAILABLE_GPUS="", MEMORY_PER_GPU_IN_GIB="")
+    assert result.returncode == 0
+    assert "NOT applied" not in result.stderr
 
 
 @needs_envsubst
@@ -184,9 +198,12 @@ def test_an_unwritable_local_dir_stops_the_client(tmp_path, local):
     (local / "resources.template.json").write_text(TEMPLATE)
     local.chmod(0o555)
     try:
-        assert _run_init(tmp_path).returncode != 0
+        result = _run_init(tmp_path)
     finally:
         local.chmod(0o755)
+    assert result.returncode != 0
+    # The message the upgrade runbook names (admin-upgrading-sites.rst).
+    assert f"cannot write {local}" in result.stderr
     assert not (local / "resources.json").exists()
 
 
@@ -194,6 +211,15 @@ def test_a_kit_with_neither_file_stops_the_client(tmp_path, local):
     result = _run_init(tmp_path)
     assert result.returncode != 0
     assert "resources.json.default" in result.stderr
+
+
+def test_a_failed_render_leaves_no_stale_render_for_the_client(tmp_path, local):
+    # The client starts only on files present, so a failure must not leave the previous run's.
+    (local / "resources.json").write_text('{"stale": true}')
+    (local / "log_config.json").write_text('{"stale": true}')
+    assert _run_init(tmp_path).returncode != 0
+    assert not (local / "resources.json").exists()
+    assert not (local / "log_config.json").exists()
 
 
 @needs_envsubst

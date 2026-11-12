@@ -68,10 +68,10 @@ services:
   # Every write into the fl-clients' kits, once, before they start (FLIP#1570), so each client mounts its
   # kit's local/ and startup/ read-only: the kit and the rendered site config are read-only to the running
   # client. /app/fl-client-init.sh renders local/resources.json, log_config.json and the site privacy
-  # policy (from FL_SITE_PRIVACY_* or the extract above) into each kit; an invalid configuration fails it
-  # and the clients, which wait for it, do not start (fail closed). Same image, uid and settings as the
-  # clients. Any target that starts the fl-clients with --no-deps must name it too: up-fl-clients-kit and
-  # reload-governance do.
+  # policy (from FL_SITE_PRIVACY_* or the extract above) into each kit. A kit it cannot render, an invalid
+  # configuration included, keeps only its own client from starting (fail closed); the step itself fails
+  # only when no kit rendered. Same image, uid and settings as the clients. Any target that starts the
+  # fl-clients with --no-deps must name it too: up-fl-clients-kit and reload-governance do.
   fl-client-init:
     image: ghcr.io/londonaicentre/${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
     user: "${FLIP_UID:-1000}:${FLIP_GID:-1000}"
@@ -84,11 +84,18 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        set -eu
+        set -u
+        ok=
         for kit in /kit/*/; do
           # This kit's own extract, at the path its client reads it from.
-          ACCESS_POLICY_FILE="$${ACCESS_POLICY_FILE:+$${kit}local/governance.fl_privacy.toml}" /app/fl-client-init.sh "$$kit"
+          if ACCESS_POLICY_FILE="$${ACCESS_POLICY_FILE:+$${kit}local/governance.fl_privacy.toml}" /app/fl-client-init.sh "$$kit"; then
+            ok=1
+          else
+            # Only this kit's client is stopped: it refuses the missing or stale render (fail closed).
+            echo "[fl-client-init] $$kit FAILED: its fl-client will refuse to start" >&2
+          fi
         done
+        [ -n "$$ok" ]
     environment:
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
       - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}

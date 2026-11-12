@@ -548,7 +548,9 @@ and upgrades XNAT in place (database dump first, no reset); it never runs
 `ensure-seeded`, so the OMOP / Orthanc stores are left as they are. Before the kit is touched
 it asks the registry for every image at the target and refuses a tag any of them was
 never built at (each `sha-` build is path-filtered; a release tag builds them all —
-for a `sha-` move, `FL_TAG=` holds the FL client at its own build and `OMOP_DB_TAG` /
+for a `sha-` move, `FL_TAG=` holds the FL client at its own build — on NVFLARE never one older than
+this checkout's compose files, which from FLIP#1570 on need the fl-client image's `/app/fl-client-init.sh`
+and stop an older client — and `OMOP_DB_TAG` /
 `ORTHANC_TAG` in the kit do the same for those data services). `XNAT_TAG` pins all three
 XNAT images together; their builds no longer share `sha-` tags. Set it to a release tag
 (or `stag`/`prod`) published for all three images when moving a site to a `sha-` tag.
