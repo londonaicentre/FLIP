@@ -784,4 +784,5 @@ const updateModelList = (pageNumberInt: number): void => {
 // Owner display name (UserProfile.name from the backend). Falls back to an
 // em-dash when the owner has no profile row — the endpoint carries no email.
 const ownerLabel = (model: IModelSummary): string => model.ownerName || "—";
+// The sub-line's "created …" half is relativeCreatedLabel (utils/helpers), shared with the Projects list.
 </script>
