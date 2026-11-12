@@ -216,44 +216,6 @@ def check_http_endpoint(url: str, name: str, expected_status: int | list[int] = 
         return False
 
 
-def check_https_loopback_insecure(url: str, name: str, expected_status: int = 200) -> bool:
-    """Check HTTPS endpoint with certificate verification disabled (--insecure, -k).
-
-    DIAGNOSTIC EXCEPTION: This function uses insecure (-k) mode ONLY for localhost/loopback
-    checks where the certificate SAN does not cover 'localhost' (e.g. it was issued for the
-    machine's public IP). This is acceptable for local health diagnostics.
-
-    WARNING: Do NOT use this pattern for general HTTPS checks or non-loopback endpoints.
-    See CONTRIBUTING.md for guidance on secure transport validation.
-
-    Args:
-        url: The URL to check (should be localhost/127.0.0.1)
-        name: Descriptive name of the endpoint
-        expected_status: Expected HTTP status code (default 200)
-
-    Returns:
-        True if endpoint responds with expected status, False otherwise
-    """
-    print_status("INFO", f"Checking {name} (HTTPS insecure) at {url}...")
-
-    success, output = run_command(
-        ["curl", "-sk", "-o", "/dev/null", "-w", "%{http_code}", url],
-        timeout=15,
-    )
-
-    if not success:
-        print_status("FAIL", f"{name} HTTPS check failed: {output}")
-        return False
-
-    status = output.strip()
-    if status == str(expected_status):
-        print_status("PASS", f"{name} is responding over HTTPS (HTTP {status})")
-        return True
-    else:
-        print_status("FAIL", f"{name} returned HTTP {status} over HTTPS (expected {expected_status})")
-        return False
-
-
 def check_endpoint_rejects_insecure(url: str, name: str) -> bool:
     """Verify that an HTTP endpoint properly rejects insecure connections.
 
