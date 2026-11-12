@@ -266,6 +266,45 @@ class TestRoundTelemetry:
 
         assert flip.send_handled_exception.call_args.kwargs["client_name"] is None
 
+    @staticmethod
+    def _result_rows(flip: Mock) -> list:
+        return [
+            c for c in flip.send_event.call_args_list if c.kwargs["event_type"] == FLLogEvent.CLIENT_RESULT_RECEIVED
+        ]
+
+    def test_evaluate_after_train_adds_no_feed_rows(self):
+        """Best-model selection evaluates every round: one result row per client per round (FLIP#928)."""
+        flip = Mock()
+        telemetry = self._telemetry_after_healthy_train_round(flip)
+        telemetry.record_dispatch("evaluate", {10, 20})
+
+        returned = telemetry.forward_replies(
+            [_reply(site="GSTT", src_node_id=10), _reply(site="KCH", src_node_id=20)],
+            phase="evaluate",
+            server_round=1,
+            model_id=VALID_MODEL_ID,
+            flip=flip,
+        )
+
+        assert returned == 2  # still counted for the round's returned/expected
+        assert [c.kwargs["client_name"] for c in self._result_rows(flip)] == ["GSTT", "KCH"]  # train's only
+
+    def test_evaluation_only_round_still_reports_results(self):
+        """An evaluation job never trains, so the evaluate replies are the round's feed rows."""
+        flip = Mock()
+        telemetry = RoundTelemetry()
+        telemetry.record_dispatch("evaluate", {10})
+
+        telemetry.forward_replies(
+            [_reply(site="GSTT", src_node_id=10)],
+            phase="evaluate",
+            server_round=1,
+            model_id=VALID_MODEL_ID,
+            flip=flip,
+        )
+
+        assert [c.kwargs["client_name"] for c in self._result_rows(flip)] == ["GSTT"]
+
     def test_dispatched_count_is_per_phase(self):
         telemetry = RoundTelemetry()
         telemetry.record_dispatch("train", {10, 20})

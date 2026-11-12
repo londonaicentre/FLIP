@@ -271,13 +271,11 @@ def evaluate(msg: Message, context: Context) -> Message:
         test_dice,
     )
 
-    # Test metrics are a single point, plotted at x=0 by convention using the
-    # label.x_0 suffix understood by handle_client_metrics server-side.
+    # Bare keys plot at the server round evaluated, so per-round evaluation (best-model
+    # selection) draws a curve and a last-round-only evaluation a single point.
     metrics = {
         "test_loss": test_loss,
         "test_dice": test_dice,
-        "test_loss.x_0": float(test_loss),
-        "test_dice.x_0": float(test_dice),
         "num-examples": len(test_loader.dataset),
     }
 
