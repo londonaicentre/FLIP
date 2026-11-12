@@ -245,8 +245,9 @@ services:
     volumes:
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-1/keys:/keys:ro
-      # Dev overlay: edits to fl-services/flower/register-supernode-keys.sh apply without a rebuild (also baked into the image).
-      # Anchored on FL_JOBS_DIR (<repo>/jobs), whose parent is the repo root; FL_PROVISIONED_DIR may be relative, so not that.
+      # Dev overlay: edits to fl-services/flower/register-supernode-keys.sh (in-tree since #622) apply without a rebuild
+      # (also baked into the image). Pathed off FL_JOBS_DIR (<repo>/jobs), not FL_PROVISIONED_DIR, which no longer sits
+      # one level below the repo root.
       - ${FL_JOBS_DIR}/../fl-services/flower/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
     entrypoint: ["/bin/bash", "/scripts/register-supernode-keys.sh"]
     depends_on:
