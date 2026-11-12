@@ -13,7 +13,7 @@
 
 import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 
 import { IServiceHealth, ITrustResponse } from "@/services/trust-service";
@@ -177,9 +177,18 @@ const codesInOrder = (wrapper: ReturnType<typeof mountPage>): string[] =>
     });
 
 beforeEach(() => {
+    // Pin the clock to the fixtures' `now`, so heartbeat ages are exact however long the
+    // run takes (a slow full suite aged Zebra's 10 s heartbeat past "fresh"). Only Date
+    // is faked, so promise flushing and timers stay real.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now);
     mockSwrvData.value = undefined;
     mockHubHealth.value = undefined;
     swrvCalls.length = 0;
+});
+
+afterEach(() => {
+    vi.useRealTimers();
 });
 
 describe("ConnectionStatus", () => {
