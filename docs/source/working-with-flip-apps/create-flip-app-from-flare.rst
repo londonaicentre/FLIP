@@ -123,8 +123,8 @@ template and your uploaded files; an uploaded ``job.py`` is ignored.
    ``nvflare``, ``torch`` and ``monai``. Nothing is installed per run, so your app can import only what the image
    already carries. If you need another dependency, ask the platform operators.
 
-   For local runs, use the ``flip-utils`` project environment with its ``full`` extra, which installs the same
-   packages as the FL image (see :ref:`flare-local-testing`).
+   For local runs, use the ``flip-utils`` project environment with its ``nvflare`` and ``full`` extras, which
+   install the same packages as the FL image (see :ref:`flare-local-testing`).
 
 .. _flare-server-side:
 

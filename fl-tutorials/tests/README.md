@@ -75,7 +75,7 @@ also preserve the existing empty-metric behavior when every batch is skipped.
 
 **Two kinds of environment, split at `tests/datasets/`.** Everything else under `tests/` covers
 the tutorial apps themselves and runs in flip-utils' environment (`flip-utils[nvflare,flower,full]` — monai,
-pydicom, torch, timm, sklearn), which is what the FL images give those apps at runtime — see
+pydicom, torch, timm, sklearn), a superset of either FL image's runtime environment — see
 "What it runs" below (`make -C fl-tutorials pytest`, which passes `--ignore=tests/datasets`).
 `tests/datasets/` instead covers `fl-tutorials/datasets/**`, which is workstation tooling that
 never runs on an FL image — it has no business pulling `pandera`/`sqlglot` (needed to validate
@@ -120,11 +120,14 @@ radiographs while the model was being fed the transpose.
 ## What it runs
 
 The environment is **flip-utils'** (`flip-utils[nvflare,flower,full]` — monai, pydicom, torch, timm, sklearn),
-which is what the FL images give these apps at runtime, plus its `diffusion` group (matplotlib) for
-the image-generation tutorials' local plotting helpers, which no FL image carries. There is deliberately no `pyproject.toml`
+plus its `diffusion` group (matplotlib) for the image-generation tutorials' local plotting helpers,
+which no FL image carries. It is a superset of either FL image: each installs only its own backend
+(`flip-utils[nvflare,full]` or `flip-utils[flower,full]`), so this suite does not catch a tutorial
+app importing the other backend; `flip-utils/tests/unit/test_backend_extras.py` checks per backend
+that `flip` itself does not. There is deliberately no `pyproject.toml`
 here: the per-tutorial `uv` environments are the wrong target (`arkplus_fine_tuning/pyproject.toml`
 does not even declare `monai`, so that environment cannot import its own `data_utils.py`), and one
-shared environment matching the runtime is both cheaper and more faithful.
+shared environment close to the runtime is cheaper.
 
 Every app on the MONAI `LoadImaged` DICOM path is covered, both backends — the five entries in
 `DICOM_APPS` (`tutorial_apps.py`). Each app's chain is fetched from the app's own factory, not

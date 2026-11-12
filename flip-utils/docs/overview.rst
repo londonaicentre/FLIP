@@ -35,9 +35,9 @@ To use the latest development version, clone the monorepo and install from sourc
 
    git clone https://github.com/londonaicentre/FLIP.git
    cd FLIP/flip-utils
-   uv sync
+   uv sync                           # dev group: both backends + the test tools
    # or
-   pip install .
+   pip install ".[nvflare,full]"     # or ".[flower,full]"
 
 To build a distributable wheel for development:
 

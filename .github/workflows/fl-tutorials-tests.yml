@@ -76,8 +76,10 @@ jobs:
       - name: Lint fl-tutorials
         run: make lint
 
-      # Tutorial-app tests run in flip-utils' environment (`flip-utils[nvflare,flower,full]`),
-      # which is what the FL images give these apps at runtime, plus the `diffusion` group for the
+      # Tutorial-app tests run in flip-utils' environment (`flip-utils[nvflare,flower,full]`), a
+      # superset of either FL image (each installs only its own backend, so this does not catch an
+      # app importing the other one; flip-utils' test_backend_extras.py checks that for flip
+      # itself), plus the `diffusion` group for the
       # image-generation tutorials' local plotting helpers. Synced as its own step so an environment
       # failure is distinguishable from a test failure in the log.
       - name: Sync the flip-utils environment
