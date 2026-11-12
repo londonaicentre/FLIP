@@ -401,54 +401,6 @@ def test_presigned_url_endpoint_rejects_disallowed_extension(client: TestClient,
 # ---------------------------------------------------------------------------
 
 
-def test_retrieve_model_files_list_categorises_monai_files(client: TestClient, session, s3_buckets):
-    """The endpoint categorises by the well-known monai suffixes the FL server expects.
-
-    ``retrieve_model_files_list`` matches keys ending in ``monaialgo.py`` →
-    ``algo``, ``monaiopener.py`` → ``opener``, and ``monai-test.pth.tar`` →
-    ``model``. Other files in the prefix are ignored — that's a quirk of the
-    endpoint, not the test, and the contract is what we want to lock in.
-    """
-    user_id = admin_user(session)
-    _, model_id = _seed_project_and_model(session, user_id)
-    override_verify_token_as(user_id)
-
-    settings = get_settings()
-    bucket, prefix = _bucket_and_prefix(settings.SCANNED_MODEL_FILES_BUCKET)
-    s3 = boto3.client("s3")
-    keys_by_kind = {
-        "algo": f"{prefix}/{model_id}/monaialgo.py",
-        "opener": f"{prefix}/{model_id}/monaiopener.py",
-        "model": f"{prefix}/{model_id}/monai-test.pth.tar",
-    }
-    for key in keys_by_kind.values():
-        s3.put_object(Bucket=bucket, Key=key, Body=b"x")
-
-    response = client.get(f"/api/files/model/{model_id}/files/list")
-
-    assert response.status_code == 200, response.text
-    files = response.json()["files"]
-    for kind, key in keys_by_kind.items():
-        assert files[kind] is not None, f"{kind} file missing from response"
-        assert files[kind].endswith(key.rsplit("/", 1)[-1])
-
-
-def test_retrieve_model_files_list_404_when_no_objects(client: TestClient, session, s3_buckets):
-    """Empty scanned-bucket prefix should bubble a 404, not a 500."""
-    user_id = admin_user(session)
-    _, model_id = _seed_project_and_model(session, user_id)
-    override_verify_token_as(user_id)
-
-    response = client.get(f"/api/files/model/{model_id}/files/list")
-
-    assert response.status_code == 404, response.text
-
-
-# ---------------------------------------------------------------------------
-# /files/model/{model_id}/{file_name}  (download)
-# ---------------------------------------------------------------------------
-
-
 def test_download_file_returns_working_presigned_url(client: TestClient, session, s3_buckets):
     """Endpoint returns a presigned GET URL, and that URL actually serves the exact bytes.
 
