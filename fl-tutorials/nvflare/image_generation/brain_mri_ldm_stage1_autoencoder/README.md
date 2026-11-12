@@ -207,11 +207,11 @@ Produces a complete FLARE job directory under `./fl_job/flip_fedavg/` including:
 make export
 ```
 
-or equivalently, after `make weights` (the **flip-utils** environment with the `full` extra the
+or equivalently, after `make weights` (the **flip-utils** environment with the `nvflare` and `full` extras the
 `flare-fl-base` FL image installs, plus the `diffusion` group for the local plotting helper):
 
 ```bash
-uv run --project ../../../../flip-utils --extra full --group diffusion python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 1
+uv run --project ../../../../flip-utils --extra nvflare --extra full --group diffusion python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 1
 ```
 
 > **Note:** `make run` (invoked by the tutorial runner `run-tutorial`/`run-all-tutorials`)

@@ -245,7 +245,7 @@ make export
 Writes a complete FLARE job to `./fl_job/flip_fedavg/` (`meta.json`, `app/config/`, `app/custom/`
 with the bundled `flip/` package and the app files). It does not need the autoencoder checkpoint,
 which is staged only when present. The Makefile runs `job.py` in the **flip-utils** environment with
-the `full` ML extra, the same package set as the FL image.
+the `nvflare` and `full` extras, the same package set as the FL image.
 
 ### Local simulation (requires a GPU, the data and the autoencoder)
 

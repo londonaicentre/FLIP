@@ -13,3 +13,8 @@
 # limitations under the License.
 
 """FLARE-specific platform components for federated learning workflows."""
+
+try:
+    import nvflare  # noqa: F401
+except ImportError as error:
+    raise ImportError("flip.nvflare needs NVFLARE: install flip-utils[nvflare] (FLIP#1047)") from error

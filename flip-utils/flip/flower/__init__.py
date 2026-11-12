@@ -9,3 +9,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
+"""Flower-specific platform components for federated learning workflows."""
+
+try:
+    import flwr  # noqa: F401
+except ImportError as error:
+    raise ImportError("flip.flower needs Flower: install flip-utils[flower] (FLIP#1047)") from error

@@ -43,7 +43,7 @@ import pandas as pd
 
 from flip.constants.flip_constants import FlipConstants
 
-if TYPE_CHECKING:  # pragma: no cover - typing only, flwr is not a runtime dependency
+if TYPE_CHECKING:  # pragma: no cover - typing only
     from flwr.common import Context
 
 PARTITION_ID_KEY = "partition-id"

@@ -74,7 +74,7 @@ updates weights and contributes metrics. These tests call the real shared batch 
 also preserve the existing empty-metric behavior when every batch is skipped.
 
 **Two kinds of environment, split at `tests/datasets/`.** Everything else under `tests/` covers
-the tutorial apps themselves and runs in flip-utils' environment (`flip-utils[full]` — monai,
+the tutorial apps themselves and runs in flip-utils' environment (`flip-utils[nvflare,flower,full]` — monai,
 pydicom, torch, timm, sklearn), which is what the FL images give those apps at runtime — see
 "What it runs" below (`make -C fl-tutorials pytest`, which passes `--ignore=tests/datasets`).
 `tests/datasets/` instead covers `fl-tutorials/datasets/**`, which is workstation tooling that
@@ -119,7 +119,7 @@ radiographs while the model was being fed the transpose.
 
 ## What it runs
 
-The environment is **flip-utils'** (`flip-utils[full]` — monai, pydicom, torch, timm, sklearn),
+The environment is **flip-utils'** (`flip-utils[nvflare,flower,full]` — monai, pydicom, torch, timm, sklearn),
 which is what the FL images give these apps at runtime, plus its `diffusion` group (matplotlib) for
 the image-generation tutorials' local plotting helpers, which no FL image carries. There is deliberately no `pyproject.toml`
 here: the per-tutorial `uv` environments are the wrong target (`arkplus_fine_tuning/pyproject.toml`

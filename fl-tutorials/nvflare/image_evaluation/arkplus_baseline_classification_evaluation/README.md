@@ -141,7 +141,7 @@ The model is defined in `app_files/arkplus_flat_models.py`, built by `app_files/
 and registered in `config.json["models"]`. The mapping from the model's NIH-14 head outputs to the target
 DECAF lesions lives in `app_files/data_utils.py` (`MAPPING_REGISTRY`).
 
-`make export`/`make run` run `job.py` in the **flip-utils** environment with the `full` ML extra (the same
+`make export`/`make run` run `job.py` in the **flip-utils** environment with the `nvflare` and `full` extras (the same
 package set the `flare-fl-base` FL image installs) so a local run matches the deployed image.
 
 ## Run the tutorial

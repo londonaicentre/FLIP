@@ -72,11 +72,11 @@ format:
 # halves of that tree need different dependencies.
 #
 # Tutorial-app tests (everything under tests/ except tests/datasets/) run in flip-utils'
-# environment (`flip-utils[full]`: monai, pydicom, torch), which is what the FL images give
-# these apps at runtime, rather than in a per-tutorial venv — arkplus_fine_tuning/pyproject.toml
-# does not even declare monai, so that env cannot import its own data_utils.py. See
-# tests/README.md.
-PYTEST ?= uv run --project ../flip-utils --extra full --group dev --group diffusion pytest
+# environment (`flip-utils[nvflare,flower,full]`: both FL backends, monai, pydicom, torch), which
+# is what the FL images give these apps at runtime, rather than in a per-tutorial venv —
+# arkplus_fine_tuning/pyproject.toml does not even declare monai, so that env cannot import its
+# own data_utils.py. See tests/README.md.
+PYTEST ?= uv run --project ../flip-utils --extra nvflare --extra flower --extra full --group dev --group diffusion pytest
 
 # Dataset-tooling tests (tests/datasets/) exercise datasets/**, which is workstation tooling,
 # not FL-runtime code — flip-utils has no use for pandera/sqlglot — so each dataset's tests run
