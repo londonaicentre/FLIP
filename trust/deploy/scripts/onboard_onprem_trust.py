@@ -196,6 +196,15 @@ def is_filled(value: str | None) -> bool:
     return bool(value) and "<run-make-" not in value
 
 
+def is_deployed_kit(kit_path: str) -> bool:
+    """Whether a kit path names a deployed site (``.stag`` / ``.prod``) rather than a dev kit.
+
+    A deployed kit publishes real services and holds real credentials, so some checks escalate
+    from WARN to FAIL for it.
+    """
+    return kit_path.rsplit(".", 1)[-1] in ("stag", "prod")
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Environment probes (independent of kit file)
 # ─────────────────────────────────────────────────────────────────────
@@ -1015,7 +1024,7 @@ def check_unrotated_passwords(
     ]
     if not unchanged:
         return Check("Trust-local passwords", Status.PASS, "all rotated from template defaults")
-    deployed = kit_path.rsplit(".", 1)[-1] in ("stag", "prod")
+    deployed = is_deployed_kit(kit_path)
     return Check(
         "Trust-local passwords",
         Status.FAIL if deployed else Status.WARN,
@@ -1046,7 +1055,7 @@ def check_log_level(kit_vars: dict[str, str], kit_present: bool, kit_path: str) 
     if not level:
         # Unset falls back to each service's own default; name it rather than assume.
         return Check(label, Status.WARN, "TRUST_LOG_LEVEL unset — set it to INFO explicitly")
-    deployed = kit_path.rsplit(".", 1)[-1] in ("stag", "prod")
+    deployed = is_deployed_kit(kit_path)
     return Check(
         label,
         Status.FAIL if deployed else Status.WARN,
