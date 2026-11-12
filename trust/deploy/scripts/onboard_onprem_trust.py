@@ -1028,6 +1028,36 @@ def check_unrotated_passwords(
     )
 
 
+def check_log_level(kit_vars: dict[str, str], kit_present: bool, kit_path: str) -> Check:
+    """Refuse a deployed kit left at ``TRUST_LOG_LEVEL=DEBUG`` (FLIP-SR-050).
+
+    At DEBUG the trust APIs log request headers and bodies into Loki, which runs with auth
+    disabled, shares the trust network with the FL client, and keeps 30 days of history — so the
+    trust's hub API key, internal key and cohort-admin proof land where researcher FL code can read
+    them. On a `.stag` / `.prod` kit that is a FAIL; on a development kit it is a WARN (mock data,
+    throwaway credentials).
+    """
+    label = "Trust log level"
+    if not kit_present:
+        return Check(label, Status.PENDING, "pending — needs kit file")
+    level = (kit_vars.get("TRUST_LOG_LEVEL") or "").strip().upper()
+    if level and level != "DEBUG":
+        return Check(label, Status.PASS, f"TRUST_LOG_LEVEL={level}")
+    if not level:
+        # Unset falls back to each service's own default; name it rather than assume.
+        return Check(label, Status.WARN, "TRUST_LOG_LEVEL unset — set it to INFO explicitly")
+    deployed = kit_path.rsplit(".", 1)[-1] in ("stag", "prod")
+    return Check(
+        label,
+        Status.FAIL if deployed else Status.WARN,
+        "TRUST_LOG_LEVEL=DEBUG logs trust credentials into Loki (FLIP-SR-050)",
+        hints=[
+            f"Edit {kit_path} → set TRUST_LOG_LEVEL=INFO, then recreate the trust APIs.",
+            "A site that already ran at DEBUG should rotate both trust keys.",
+        ],
+    )
+
+
 def sample_data_off(kit_vars: dict[str, str]) -> bool:
     """TRUST_DATA_SEED=false, as trust/Makefile reads it; a refused value is not "off" (check_sample_data fails)."""
     try:
@@ -1277,6 +1307,7 @@ def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None) -> list[
         check_site_privacy_policy(kit_vars, kit_present, kit, repo_root, kit_path),
         check_governance_document(kit_vars, kit_present, kit, repo_root, kit_file),
         check_unrotated_passwords(kit_vars, kit_present, repo_root, kit, kit_path),
+        check_log_level(kit_vars, kit_present, kit_path),
         check_sample_data(kit_vars, kit_present, kit_path),
         check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, kit_present, repo_root),
         check_data_dir("Orthanc storage dir", "ORTHANC_STORAGE_DIR", kit_vars, kit_present, repo_root),
