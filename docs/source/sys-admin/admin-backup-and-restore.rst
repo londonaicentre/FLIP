@@ -75,7 +75,7 @@ What holds state
      - Versioning. Terraform refuses to destroy the bucket.
      - Yes: ``make -C deploy/providers/AWS deploy-ui`` rebuilds and uploads it.
    * - Secrets Manager secret ``FLIP_API``
-     - The AES key shared with every trust, and the FL server's internal service key and its hash.
+     - The AES key shared with every trust, and the FL API key.
      - A deleted secret can be restored for 30 days.
      - Its values also live in the admin's env file and, for CI, in the GitHub environment (see
        `Restoring the hub`_).

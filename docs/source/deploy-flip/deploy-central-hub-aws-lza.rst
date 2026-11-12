@@ -94,7 +94,7 @@ outage. The database sits in the accelerator's isolated **data subnets**, which 
 share **EFS** access points for their workspaces, certificates and job directories; the provisioning task copies each
 net's participant kits there from the kits bucket. The **S3** buckets separate the model-file staging and scanned
 prefixes, FL results, bundled apps and participant kits, all encrypted with the hub's KMS key. **Cognito** is the user
-pool (with TOTP MFA); **Secrets Manager** holds the ``FLIP_API`` secret (AES key and internal service key);
+pool (with TOTP MFA); **Secrets Manager** holds the ``FLIP_API`` secret (AES key and FL API key);
 **Parameter Store** carries the plain configuration tasks read at start-up; **SES** sends the application's own
 emails. The interface endpoints are the estate's central ones, not resources in FLIP's account.
 
@@ -252,7 +252,7 @@ specific to the estate:
   8002. Keep ``FL_SERVER_PORT=8002`` and set ``FL_EDGE_PORT=8003`` in ``.env.stag``; ``sync-trust-kit`` copies
   it into each kit and refuses to run on ``HUB=stag`` without it. FLARE kits take the port from the staging
   provisioning file instead (``connect_to`` in ``fl-services/nvflare/provision/net-1_project_stag.yml``).
-- Mint the secrets (``AES_KEY_BASE64``, the internal service key, ``ADMIN_USER_PASSWORD``) for the account. Do not
+- Mint the secrets (``AES_KEY_BASE64``, ``FL_API_KEY``, ``ADMIN_USER_PASSWORD``) for the account. Do not
   reuse another account's Secrets Manager secret.
 
 First bring-up without a hosted zone

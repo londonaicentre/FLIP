@@ -206,7 +206,7 @@ policies. Creating network resources is denied there by design.
 Service authentication
 ***********************
 
-The hub uses three separate keys. See :doc:`/sys-admin` for full details.
+The hub uses two kinds of key and a per-job credential. See :doc:`/sys-admin` for full details.
 
 .. list-table::
    :header-rows: 1
@@ -219,18 +219,12 @@ The hub uses three separate keys. See :doc:`/sys-admin` for full details.
      - Each trust's calls to the hub. One key per trust.
      - Minted when you register the trust and written once into its kit file
        (``trust/.env.<CODE>.<hub>``). The hub keeps only a hash.
-   * - **Internal service key**
-     - Calls from the FL server to the hub API. One key per hub.
-     - ``make generate-internal-service-key``
+   * - **Job credential**
+     - Calls from the FL server to the hub API about one model. One per FL job.
+     - Minted by the hub when it dispatches the job. Nothing to configure.
    * - **Trust-internal service key**
      - Calls between services inside one trust. One key per trust; the hub never sees it.
      - Minted alongside the trust API key and written into the trust's kit file.
-
-Generate the internal service key into the active environment file. Existing keys are kept:
-
-.. code-block:: shell
-
-   make generate-internal-service-key
 
 The two per-trust keys are minted when you register the trust; see :ref:`deploy-central-hub-register-trusts`.
 

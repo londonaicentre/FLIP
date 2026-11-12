@@ -260,15 +260,8 @@ To get started, copy the example file:
 cp .env.development.example .env.development
 ```
 
-Then generate the internal service key (also generated automatically by `make up`):
-
-```bash
-make generate-internal-service-key
-```
-
-This writes `INTERNAL_SERVICE_KEY` with `INTERNAL_SERVICE_KEY_HASH` into the active env file
-(`MAIN_ENV_FILE`, default `.env.development`) for fl-server-to-hub authentication. `make up` also runs
-`make generate-fl-api-key`, which writes `FL_API_KEY` there — the key flip-api presents to the FL APIs.
+`make up` runs `make generate-fl-api-key`, which writes `FL_API_KEY` — the key flip-api presents to the FL
+APIs — into the active env file (`MAIN_ENV_FILE`, default `.env.development`).
 
 #### Updating an existing checkout
 
@@ -278,7 +271,6 @@ These changes affect checkouts created before them. None is picked up automatica
 | What changed | What to do |
 | --- | --- |
 | `NLB_SUBDOMAIN`, `AICENTRE_BUCKET_NAME` and `DEMO_*_PASSWORD` are commented out in `.env.development.example` | Nothing to do: the `scripts/check_env_vars.py` pre-commit hook no longer requires them, and a leftover line is harmless. A dev stack never reads the first two; set the demo passwords only to run `make demo-users`. |
-| `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` ship empty in `.env.development.example` (FLIP#1501) | Nothing to do: the next `make up` replaces a key still set to the old `<run-make-generate-internal-service-key>` placeholder with a random matching pair. |
 | `FL_API_KEY` is new in `.env.development.example` | Nothing to do: the next `make up` mints it. Add an empty `FL_API_KEY=` line if `scripts/check_env_vars.py` asks for it. The FL APIs refuse every call without it, so a stack brought up by hand needs `make generate-fl-api-key` first. |
 | uv floor raised to **>= 0.10.0** | `uv self update` (or reinstall). Below the floor, `make lock` and the FLARE provisioning script refuse to run rather than silently re-resolving `uv.lock` without the cooldown. |
 | `NUM_AVAILABLE_GPUS` defaults to `0` in the two shipped dev kit examples (`trust/.env.GSTT.development.example`, `trust/.env.KCH.development.example`) | Only those two pre-populated example kits were changed; the base template (`trust/.env.example`) that `make new-trust` scaffolds from still defaults to `1`, and an existing `trust/.env.<CODE>.<env>` keeps its own value regardless. On a GPU dev host, set `NUM_AVAILABLE_GPUS=1` in the kit to restore passthrough — `make up-trust` prints a warning naming the variable when it is zero, so this is not silent. |
@@ -387,19 +379,16 @@ compose file — avoid hardcoding values in Dockerfiles or compose files directl
 - `TRUST_API_KEY_HEADER` — HTTP header name for trust-to-hub authentication.
 - `TRUST_API_KEY` — single per-trust plaintext API key. Lives only in that trust's kit file
   (`trust/.env.<CODE>.<env>`), written by `make register-trusts`; never on the hub.
-- `INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for fl-server-to-hub authentication.
-- `INTERNAL_SERVICE_KEY` — internal service key used by the fl-server on the Central Hub.
-- `INTERNAL_SERVICE_KEY_HASH` — hub-side SHA-256 hash of the internal service key.
 - `FL_API_KEY` — the key flip-api sends to every FL API (`fl-api-net-N`) in the `FL_API_KEY_HEADER` header
   (default `X-FL-API-Key`); every FL API route but `/health` requires it. Minted by `make up`; on ECS a
-  Secrets Manager field. Distinct from `INTERNAL_SERVICE_KEY`, which the FL API never holds.
+  Secrets Manager field.
 - `TRUST_INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for trust-internal service auth (default
   `X-Trust-Internal-Service-Key`). Sent by every caller (trust-api, imaging-api, fl-client) on every
   call to imaging-api or data-access-api.
 - `TRUST_INTERNAL_SERVICE_KEY` — single per-trust plaintext key, in that trust's kit file
   (`trust/.env.<CODE>.<env>`), minted by `register_trust`. Read by every trust-internal container. The hub
-  never sees it. Distinct from `INTERNAL_SERVICE_KEY*` (which protects fl-server → flip-api on the
-  Central Hub). See the [public security model](docs/source/security.rst#trust-internal-service-authentication).
+  never sees it. Distinct from the per-job credential that protects fl-server → flip-api on the
+  Central Hub. See the [public security model](docs/source/security.rst#trust-internal-service-authentication).
 
 FL clients (trust side) intentionally do **not** receive Central Hub API credentials. Only the fl-server (on the Central
 Hub) communicates with flip-api. FL clients relay metrics and exceptions to the fl-server, which forwards them.

@@ -35,7 +35,7 @@ Every route except the health one requires the hub's FL API key: the caller send
 ([`fl_api/utils/auth.py`](./fl_api/utils/auth.py), byte-identical in both backends). Missing or wrong key
 is a 401; an API started without `FL_API_KEY` answers 401 on every protected route and says so in its boot
 log. The key is dedicated to this hop — flip-api holds it (`make up` mints it into the hub env file;
-on ECS it is a `secrets` entry of every task that calls the API) and it is never `INTERNAL_SERVICE_KEY`.
+on ECS it is a `secrets` entry of every task that calls the API) and it opens nothing on the hub.
 
 ## Endpoints
 
