@@ -51,6 +51,7 @@ PROCESSORS: dict[str, dict] = {
         },
         "extract": lambda ckpt: ckpt["teacher"],
     },
+    # No fine-tuned entry: the training app produces clean checkpoints directly.
 }
 
 

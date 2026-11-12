@@ -96,6 +96,8 @@ def _delong_covariance(
 
     # ── V10 covariance (2×2) — sample covariance (÷ n_pos-1); zero when a single positive cannot estimate it ──
     s10 = np.cov(v10_a, v10_b, ddof=1) if n_pos > 1 else np.zeros((2, 2))
+    if np.isnan(s10).any():  # an empty opposite class (a label outside 0/1) leaves NaN means
+        raise AssertionError("V10 covariance is NaN")
 
     # ── V01 (negative compartment) ──────────────────────────────────
     # For each negative sample k, compute its mean ψ against all positives:
@@ -108,6 +110,8 @@ def _delong_covariance(
 
     # ── V01 covariance (2×2) — sample covariance (÷ n_neg-1); zero when a single negative cannot estimate it ──
     s01 = np.cov(v01_a, v01_b, ddof=1) if n_neg > 1 else np.zeros((2, 2))
+    if np.isnan(s01).any():  # an empty opposite class (a label outside 0/1) leaves NaN means
+        raise AssertionError("V01 covariance is NaN")
 
     # ── ψ-based AUC ────────────────────────────────────────────────
     # v10_a[j] is already  mean_k ψ(a_pos[j], a_neg[k])  —
