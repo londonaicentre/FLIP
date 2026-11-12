@@ -399,3 +399,12 @@ def test_nginx_update_rides_out_the_xnat_web_restart():
     assert re.search(update_policy, block.group(1), re.M), (
         "xnat-nginx must set deploy.update_config.failure_action: continue"
     )
+
+
+def test_xnat_runs_in_uk_local_time():
+    """DQR reads the PACS availability window with LocalTime.now(), the JVM's zone (FLIP#1880).
+
+    Without TZ, xnat-web runs in UTC and a UK trust's agreed window is an hour off during BST.
+    """
+    assert compose_environment()["TZ"] == "${XNAT_TZ}"
+    assert make_vars("XNAT_TZ")["XNAT_TZ"] == "Europe/London"

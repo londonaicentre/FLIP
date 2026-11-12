@@ -877,6 +877,9 @@ xnat:
         timeoutSeconds: 5
     env:
       XNAT_EMAIL: ""
+      # XNAT's time zone (TZ). DQR reads pacs.availability's window in it, so the window is UK
+      # local time, BST included (FLIP#1880).
+      XNAT_TZ: "Europe/London"
       XNAT_MIN_HEAP: "1024m"
       XNAT_MAX_HEAP: "3072m"
   db:
@@ -1101,6 +1104,7 @@ pacs:
   # may want retrieval confined to out-of-hours. Agree the window with the PACS manager.
   # Every helm upgrade sets XNAT's schedule from these, reverting edits made in XNAT's UI. The window
   # must not cross midnight (FLIP#1465): for out-of-hours use 19:00-24:00, 00:00-07:00 or whole days.
+  # Times are in xnat.web.env.XNAT_TZ (Europe/London), BST included.
   availability:
     days: MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY,SUNDAY
     start: "00:00"

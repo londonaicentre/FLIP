@@ -317,6 +317,7 @@ rather than silently falling back.
 | `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS` | `true` | Whether the PACS supports relational queries / extended negotiation. A capability of the PACS, not a preference — one that does not support it rejects the association outright. Validated as literally `true` or `false` before it reaches `jq`. |
 | `PACS_AVAILABILITY_DAYS` | all seven days | Retrieval window: which days retrieval may run. Comma-separated `MONDAY` … `SUNDAY`, in capitals. |
 | `PACS_AVAILABILITY_START` / `_END` | `00:00` / `24:00` | Retrieval window start/end, `HH:MM` from `00:00` to `23:59`, or `24:00` for the end of the day. The start must come before the end, so the window cannot cross midnight (see below). |
+| `XNAT_TZ` | `Europe/London` (in `.env`) | XNAT's time zone (`TZ`). DQR reads the window in it (`LocalTime.now()`), so it is UK local time, BST included. |
 | `PACS_THREADS` | `1` | Concurrent retrieval threads, from 1. |
 | `PACS_UTILIZATION_PERCENT` | `100` | Share of the window/threads DQR may use, from 1 to 100. |
 | `DQR_MAX_PACS_REQUEST_ATTEMPTS` | `100` | Retries before DQR gives up on a request. |

@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""xnat-nginx's config and xnat-db's Postgres settings, rendered (FLIP#1880).
+"""xnat-nginx's config, xnat-db's Postgres settings and xnat-web's time zone, rendered (FLIP#1880).
 
 The xnat-nginx image's nginx.conf includes nothing from conf.d, so the chart's config only takes
 effect mounted over /etc/nginx/nginx.conf. xnat-db carries Compose's max_connections and
@@ -79,3 +79,11 @@ def test_xnat_db_runs_with_compose_postgres_settings(sets: tuple[str, ...], expe
     # args, not command: the image's guard entrypoint must still run.
     assert "command" not in postgres
     assert postgres["args"] == expected
+
+
+def test_xnat_web_runs_in_uk_local_time():
+    """DQR reads pacs.availability with LocalTime.now(), the JVM's zone (FLIP#1880)."""
+    docs = _render("templates/xnat-web.yaml")
+    (configmap,) = [d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"].endswith("-xnat-web")]
+
+    assert configmap["data"]["TZ"] == "Europe/London"
