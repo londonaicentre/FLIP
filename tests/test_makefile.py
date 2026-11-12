@@ -981,6 +981,24 @@ class E2eSmokeQuery(unittest.TestCase):
         assert self.query_file("HUB=", "QUERY_FILE=/tmp/mine.sql") == "/tmp/mine.sql"
 
 
+class E2eSmokeSpleenBackend(unittest.TestCase):
+    """The spleen smokes upload the tutorial matching FL_BACKEND and keep the label enrichment (FLIP#1695)."""
+
+    def test_each_backend_uploads_its_own_app(self):
+        apps = {"nvflare": "app_files", "flower": "app"}
+        for target in ("e2e_smoke_spleen", "e2e_smoke_spleen_evaluation"):
+            for backend, app in apps.items():
+                out = dry_run(target, f"FL_BACKEND={backend}", subdir="flip-api")
+                model_dir = re.search(r'--model-files-dir "([^"]+)"', out)[1]
+                query = re.search(r'--query-file "([^"]+)"', out)[1]
+                assert f"/fl-tutorials/{backend}/" in model_dir, (target, out)
+                assert model_dir.endswith(f"/{app}"), (target, out)
+                assert query.endswith(f"/fl-tutorials/{backend}/image_segmentation/3d_spleen_segmentation/query.sql")
+                assert "upload_spleen_labels_to_xnat.py" in out, (target, backend)
+                for rel in (model_dir, query):
+                    assert (REPO / "flip-api" / rel).exists(), (target, backend, rel)
+
+
 HUB_MAKEFILES = ("Makefile", "deploy/env_mode.mk", "deploy/fl_backend.mk", "deploy/instance.mk")
 KEY_PAIR = ("INTERNAL_SERVICE_KEY", "INTERNAL_SERVICE_KEY_HASH")
 

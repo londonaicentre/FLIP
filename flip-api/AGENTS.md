@@ -171,10 +171,10 @@ cd flip-api && uv run python -m tests.e2e_smoke \
 (The `$`-escaping trap still applies to any hand-written `EXTRA_ARGS`: `make -C flip-api …` expands once, so
 `$$FLIP_PROJECT_ID` survives; the **root** `make e2e_smoke` re-expands through a second make and shell, so no
 `$`-escape survives it — `$$` lands empty and `$$$$` injects the recipe shell's PID. Pass the id literally
-there. The in-Makefile targets handle this for you. Note that `e2e_smoke_spleen` uploads the **Flower**
-tutorial (`../fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/{app,query.sql}`), not the FLARE paths shown in the
-direct-invocation example above — pair it with `FL_BACKEND=flower`, or invoke `tests.e2e_smoke` directly with
-the FLARE paths for the FLARE tutorial. The enrichment step itself is backend-agnostic and runs out of the
+there. The in-Makefile targets handle this for you. `e2e_smoke_spleen` and `e2e_smoke_spleen_evaluation`
+upload the tutorial matching `FL_BACKEND` (FLARE's `app_files/` by default, Flower's `app/` with
+`FL_BACKEND=flower`, FLIP#1695); the evaluation app dir must hold `model.pt` from that tutorial's
+`make download-checkpoints`. The enrichment step itself is backend-agnostic and runs out of the
 shared `fl-tutorials/datasets/spleen/` tree either way.)
 
 **Prostate.** `make -C flip-api e2e_smoke_prostate FL_BACKEND=flower` does the same for the PI-CAI

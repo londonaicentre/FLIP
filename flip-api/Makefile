@@ -216,25 +216,31 @@ capture_demo_project:
 # resolve there.
 SPLEEN_ENRICHMENT_CWD := ../fl-tutorials/datasets/spleen
 SPLEEN_XNAT_URLS ?= http://127.0.0.1:8105 http://127.0.0.1:8107
-# The MSD build by default even though the uploaded app is Flower's: enrichment is
+# The MSD build by default whichever backend's app is uploaded: enrichment is
 # backend-agnostic, and only the MSD download can reach all 41 mapped cases.
 SPLEEN_LABELS_DIR ?= $(abspath ../fl-tutorials/data/spleen/images)
 SPLEEN_ENRICHMENT_CMD := uv run --no-project --with $(abspath ../flip-utils) python upload_spleen_labels_to_xnat.py --flip-project-id $$FLIP_PROJECT_ID --labels-dir $(SPLEEN_LABELS_DIR) $(foreach url,$(SPLEEN_XNAT_URLS),--xnat-url $(url))
 SPLEEN_ENRICHMENT_ARGS := --data-enrichment-cwd $(SPLEEN_ENRICHMENT_CWD) --data-enrichment-cmd '$(SPLEEN_ENRICHMENT_CMD)'
 
-e2e_smoke_spleen: MODEL_FILES_DIR := ../fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/app
-e2e_smoke_spleen: QUERY_FILE := ../fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/query.sql
+# The tutorial matching FL_BACKEND, as for e2e_smoke_ehr. Both backends share one cohort query.
+SPLEEN_FLOWER_DIR := ../fl-tutorials/flower/image_segmentation/3d_spleen_segmentation
+SPLEEN_NVFLARE_DIR := ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation
+SPLEEN_EVAL_FLOWER_DIR := ../fl-tutorials/flower/image_evaluation/3d_spleen_segmentation_evaluation
+SPLEEN_EVAL_NVFLARE_DIR := ../fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation
+SPLEEN_QUERY_FILE := $(if $(filter flower,$(FL_BACKEND)),$(SPLEEN_FLOWER_DIR),$(SPLEEN_NVFLARE_DIR))/query.sql
+
+e2e_smoke_spleen: MODEL_FILES_DIR := $(if $(filter flower,$(FL_BACKEND)),$(SPLEEN_FLOWER_DIR)/app,$(SPLEEN_NVFLARE_DIR)/app_files)
+e2e_smoke_spleen: QUERY_FILE := $(SPLEEN_QUERY_FILE)
 e2e_smoke_spleen: ENRICHMENT_ARGS := $(SPLEEN_ENRICHMENT_ARGS)
 e2e_smoke_spleen: e2e_smoke
 
 # Spleen-segmentation evaluation variant of e2e_smoke_spleen: same cohort query
 # and same data-enrichment step, but uploads the evaluation tutorial's app dir
-# instead of the training one. That dir bundles a pre-trained model.pt
-# alongside the code -- the e2e smoke uploads it as part of the model files;
-# the fl-api writes it into /app/src/<model_id>/app/ on the shared FL_JOBS_DIR
-# mount; the evaluation ServerApp reads it via flip-job-dir at submit time.
-e2e_smoke_spleen_evaluation: MODEL_FILES_DIR := ../fl-tutorials/flower/image_evaluation/3d_spleen_segmentation_evaluation/app
-e2e_smoke_spleen_evaluation: QUERY_FILE := ../fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/query.sql
+# instead of the training one. That dir must hold the pre-trained model.pt
+# (the tutorial's `make download-checkpoints`) -- the e2e smoke uploads it as
+# part of the model files, and the evaluation server loads it at submit time.
+e2e_smoke_spleen_evaluation: MODEL_FILES_DIR := $(if $(filter flower,$(FL_BACKEND)),$(SPLEEN_EVAL_FLOWER_DIR)/app,$(SPLEEN_EVAL_NVFLARE_DIR)/app_files)
+e2e_smoke_spleen_evaluation: QUERY_FILE := $(SPLEEN_QUERY_FILE)
 e2e_smoke_spleen_evaluation: ENRICHMENT_ARGS := $(SPLEEN_ENRICHMENT_ARGS)
 e2e_smoke_spleen_evaluation: e2e_smoke
 
