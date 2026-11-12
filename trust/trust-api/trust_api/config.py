@@ -31,9 +31,10 @@ class Settings(BaseSettings):
             return "development"
         return v
 
-    # Repo-root .env.development (ENV here is the class default, not the runtime value).
+    # Repo-root .env.development (ENV here is the class default, not the runtime value). A .parent
+    # chain, not parents[3]: in the image (/app/<pkg>/config.py) the path is too shallow for the index.
     model_config = SettingsConfigDict(
-        env_file=str(Path(__file__).parents[3] / ".env.development"),
+        env_file=str(Path(__file__).parent.parent.parent.parent / ".env.development"),
         env_file_encoding="utf-8",
         extra="allow",
     )
