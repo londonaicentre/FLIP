@@ -388,7 +388,7 @@ Deploying and rolling back the hub
 and publishes the UI. Every deploy pins an immutable image tag.
 
 1. **Pause FL activity.** Replacing the FL server kills any training run in progress and leaves its model stuck at
-   ``TRAINING_STARTED``. Enable Deployment Mode (*Admin → Deployments*): queued jobs hold, and only a running job
+   ``RUNNING``. Enable Deployment Mode (*Admin → Deployments*): queued jobs hold, and only a running job
    needs to finish. Wait until ``GET /fl/quiesce`` reports ``deployment_mode: true`` and ``fl_quiesced: true``.
 
 2. **Deploy.** From a clean checkout of the branch you are deploying:
