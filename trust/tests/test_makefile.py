@@ -20,6 +20,7 @@ fails here rather than on a live site.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -287,7 +288,7 @@ class Governance(unittest.TestCase):
     def test_up_fl_clients_kit_runs_the_extract_first(self):
         """--no-deps skips dependencies, so the init must be named or the clients start on a stale extract."""
         out = dry_run("up-fl-clients-kit", kit=GOVERNED_KIT)
-        assert "fl-governance-init fl-client-net-1 fl-client-net-2" in out, out
+        assert "fl-governance-init $clients" in out, out
 
     def test_a_governance_document_is_refused_over_a_remote_daemon(self):
         """Compose resolves the document on this machine and the trust host would mount a path it
@@ -420,6 +421,47 @@ class ReconvertNifti(unittest.TestCase):
         """PROJECTS is the datasets to seed (default cxr_project), not XNAT projects."""
         out = dry_run("reconvert-nifti", "PROJECTS=cxr_project prostate_project")
         assert "--project" not in out, out
+
+
+@unittest.skipUnless(shutil.which("docker"), "docker CLI not installed")
+class FlClientList(unittest.TestCase):
+    """up/down-fl-clients-kit act on the fl-clients the composed stack defines (FLIP#1677).
+
+    Development runs one per FL net, a deployed trust only net-1: a hardcoded net-2 made both
+    targets fail on every deployed Compose trust. Renders the real compose files (config only).
+    """
+
+    PROBE = 'fl-clients: ; @$(resolve_fl_clients); echo "[$$clients]"\n'
+
+    def clients(self, hub: str, backend: str, gpus: str = "0") -> list[str]:
+        kit = KIT.replace("FL_BACKEND=nvflare", f"FL_BACKEND={backend}").replace(
+            "NUM_AVAILABLE_GPUS=0", f"NUM_AVAILABLE_GPUS={gpus}"
+        )
+        result = run_target("fl-clients", hub=hub, kit=kit, probe=self.PROBE)
+        assert result.returncode == 0, result.stdout + result.stderr
+        return sorted(result.stdout.strip().splitlines()[-1].strip("[ ]").split())
+
+    def test_development_runs_a_client_per_net_and_production_one(self):
+        for backend in ("nvflare", "flower"):
+            for gpus in ("0", "1"):
+                with self.subTest(backend=backend, gpus=gpus):
+                    assert self.clients("", backend, gpus) == ["fl-client-net-1", "fl-client-net-2"]
+                    assert self.clients("prod", backend, gpus) == ["fl-client-net-1"]
+
+    def test_no_client_in_the_config_fails_instead_of_acting_on_every_service(self):
+        with tempfile.TemporaryDirectory() as stub_dir:
+            stub = Path(stub_dir) / "docker"
+            stub.write_text("#!/bin/sh\necho trust-api\n")
+            stub.chmod(0o755)
+            result = run_target("fl-clients", probe=self.PROBE, env={"PATH": f"{stub_dir}:{os.environ['PATH']}"})
+        assert result.returncode != 0, result.stdout
+        assert "No fl-client-net-N service" in result.stdout, result.stdout
+
+    def test_the_targets_take_the_list_from_the_config(self):
+        for target in ("up-fl-clients-kit", "down-fl-clients-kit"):
+            out = dry_run(target)
+            assert "config --services" in out, out
+            assert "fl-client-net-2" not in out.replace('"$base/net-2"', ""), out
 
 
 class DeployedPull(unittest.TestCase):
