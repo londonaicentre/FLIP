@@ -71,23 +71,13 @@ def quote_make_assignment(key: str, value: str | Path) -> str:
     return shlex.quote(f"{key}={value}".replace("$", "$$"))
 
 
-# Hub-shared keys — MUST stay in lockstep with HUB_SHARED_KEYS in
-# trust/deploy/scripts/sync_trust_kit.py and HUB_SHARED_ENV_KEYS in
-# flip-api/src/flip_api/scripts/register_trust.py, except FL_EDGE_PORT: a kit synced before
-# FLIP#1365 lacks it and every reader falls back to FL_SERVER_PORT, so requiring it would fail
-# every existing site's upgrade checklist.
-HUB_SHARED_KEYS: tuple[str, ...] = (
-    "AES_KEY_BASE64",
-    "CENTRAL_HUB_API_URL",
-    "TRUST_API_KEY_HEADER",
-    "FL_BACKEND",
-    "FLOWER_KIT_DATE",
-    "FLARE_KIT_DATE",
-    "DOCKER_TAG",
-    "DOCKER_FL_TAG",
-    "NLB_SUBDOMAIN",
-    "FL_SERVER_PORT",
-)
+# Keys a kit may lack because every reader falls back: FL_EDGE_PORT (kits synced before FLIP#1365 lack it;
+# readers fall back to FL_SERVER_PORT). Requiring such a key would FAIL every existing site's upgrade checklist.
+_HUB_SHARED_OPTIONAL: frozenset[str] = frozenset({"FL_EDGE_PORT"})
+# Derived from trust_kit_lib (the one list, held to register_trust.HUB_SHARED_ENV_KEYS by flip-api's lockstep
+# test). A key added there becomes REQUIRED here for every existing kit; if older kits can lack it and readers
+# fall back, add it to _HUB_SHARED_OPTIONAL in the same change.
+HUB_SHARED_KEYS: tuple[str, ...] = tuple(k for k in trust_kit_lib.HUB_SHARED_KEYS if k not in _HUB_SHARED_OPTIONAL)
 KIT_CRED_KEYS: tuple[str, ...] = (
     "TRUST_API_KEY",
     "TRUST_INTERNAL_SERVICE_KEY",
@@ -319,19 +309,20 @@ def check_kit_file(kit: str, kit_file: Path, kit_path: str | None = None) -> Che
 
 
 def check_hub_shared(kit_vars: dict[str, str], kit_present: bool) -> Check:
+    label = f"Hub-shared block ({len(HUB_SHARED_KEYS)} keys)"
     if not kit_present:
-        return Check("Hub-shared block (10 keys)", Status.PENDING, "pending — needs kit file")
+        return Check(label, Status.PENDING, "pending — needs kit file")
     missing = [k for k in HUB_SHARED_KEYS if not is_filled(kit_vars.get(k))]
     if not missing:
         hub_url = kit_vars.get("CENTRAL_HUB_API_URL", "").removesuffix("/api")
         return Check(
-            "Hub-shared block (10 keys)",
+            label,
             Status.PASS,
             "populated",
             hints=[f"UI URL: {hub_url or '<unset>'}"],
         )
     return Check(
-        "Hub-shared block (10 keys)",
+        label,
         Status.FAIL,
         f"{len(missing)} unfilled: {', '.join(missing)}",
         hints=["Ask the FLIP admin to run 'make sync-trust-kit KIT=<CODE>' and re-send the kit."],

@@ -462,14 +462,6 @@ def _run_git(repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return result
 
 
-def _git(repo_root: Path, *args: str) -> str | None:
-    """stdout of ``git -C repo_root <args>``, or None when the call fails (for display-only reads)."""
-    try:
-        return _run_git(repo_root, *args).stdout
-    except CheckoutUnknown:
-        return None
-
-
 def checkout_tags(repo_root: Path = _REPO_ROOT) -> list[str] | None:
     """Every git tag on the checkout's HEAD (``[]`` when untagged), or None outside a git checkout.
 
@@ -514,7 +506,10 @@ def describe_checkout(repo_root: Path = _REPO_ROOT) -> str:
     picks whichever is nearest — telling an operator their tree is at "flip-utils-v0.5.0"
     when the release it is being compared against is a platform v0.6.0.
     """
-    described = (_git(repo_root, "describe", "--tags", "--always", "--match", "v[0-9]*") or "").strip()
+    try:
+        described = _run_git(repo_root, "describe", "--tags", "--always", "--match", "v[0-9]*").stdout.strip()
+    except CheckoutUnknown:
+        described = ""
     return described or "<unknown>"
 
 

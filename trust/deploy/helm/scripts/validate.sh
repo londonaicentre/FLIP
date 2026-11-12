@@ -64,18 +64,21 @@ else
     failures=$((failures + 1))
 fi
 
-# Step 4: helm template (flower backend)
-echo -n "Rendering templates (flower backend)... "
-if $HELM template trust-release "$CHART_DIR" --set flBackend=flower > /dev/null 2>&1; then
-    echo -e "${GREEN}PASS${NC}"
-else
-    echo -e "${RED}FAIL${NC}"
-    failures=$((failures + 1))
-fi
+# Steps 4-6: render variants (step 3 above also prints the error output)
+render() {
+    local label="$1"
+    shift
+    echo -n "Rendering templates (${label})... "
+    if $HELM template trust-release "$CHART_DIR" "$@" > /dev/null 2>&1; then
+        echo -e "${GREEN}PASS${NC}"
+    else
+        echo -e "${RED}FAIL${NC}"
+        failures=$((failures + 1))
+    fi
+}
 
-# Step 5: helm template (all services disabled)
-echo -n "Rendering templates (all services disabled)... "
-if $HELM template trust-release "$CHART_DIR" \
+render "flower backend" --set flBackend=flower
+render "all services disabled" \
     --set trustApi.enabled=false \
     --set imagingApi.enabled=false \
     --set dataAccessApi.enabled=false \
@@ -85,25 +88,10 @@ if $HELM template trust-release "$CHART_DIR" \
     --set xnat.enabled=false \
     --set observability.loki.enabled=false \
     --set observability.alloy.enabled=false \
-    --set observability.grafana.enabled=false \
-    > /dev/null 2>&1; then
-    echo -e "${GREEN}PASS${NC}"
-else
-    echo -e "${RED}FAIL${NC}"
-    failures=$((failures + 1))
-fi
-
-# Step 6: helm template with external service override
-echo -n "Rendering templates (external omop-db override)... "
-if $HELM template trust-release "$CHART_DIR" \
+    --set observability.grafana.enabled=false
+render "external omop-db override" \
     --set omopDb.enabled=false \
-    --set omopDb.external.host=test.example.com \
-    > /dev/null 2>&1; then
-    echo -e "${GREEN}PASS${NC}"
-else
-    echo -e "${RED}FAIL${NC}"
-    failures=$((failures + 1))
-fi
+    --set omopDb.external.host=test.example.com
 
 # Step 7: kubeconform validation (if available)
 echo -n "Running kubeconform schema validation... "
