@@ -466,7 +466,8 @@ def test_the_results_carry_the_whole_app(mock_constants, tmp_path):
         (custom / rel).write_text(rel)
     (custom / "__pycache__").mkdir()
     (custom / "__pycache__" / "models.cpython-312.pyc").write_bytes(b"")
-    (custom / "pretrained.pt").write_bytes(b"weights")
+    for weights in ("pretrained.pt", "model.pkl"):
+        (custom / weights).write_bytes(b"weights")
     (run_dir / "app_server" / "config").mkdir()
     (run_dir / "app_server" / "config" / "config_fed_client.json").write_text("{}")
     flip = MagicMock()

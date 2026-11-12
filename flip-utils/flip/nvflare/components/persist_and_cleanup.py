@@ -26,7 +26,9 @@ from flip.nvflare.runtime import get_flip_model_id
 
 # Where the app's files land in the results zip, and what of them is left behind (FLIP#634).
 RESULTS_APP_DIR = "app"
-RESULTS_APP_IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pt", "*.pth", "*.safetensors", "*.ckpt")
+RESULTS_APP_IGNORE = shutil.ignore_patterns(
+    "__pycache__", "*.pyc", "*.pt", "*.pth", "*.safetensors", "*.ckpt", "*.pkl", "*.pickle"
+)
 
 
 class PersistToS3AndCleanup(FLComponent):

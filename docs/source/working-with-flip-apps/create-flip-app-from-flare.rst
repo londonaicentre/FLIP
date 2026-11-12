@@ -140,8 +140,8 @@ Central Hub for you. What matters to you as an app author:
   ``RESULTS_UPLOADED`` (or ``ERROR`` / ``STOPPED``). At the end of the run it zips and uploads
   ``FL_global_model.pt``, ``cross_val_results.json`` and, with best-model selection, ``best_FL_global_model.pt``,
   plus your app's files under ``app/`` as the run used them (``config.json`` with the rounds FLIP filled in), so the
-  study can be recreated. Checkpoint files you bundled (``.pt``, ``.pth``, ``.safetensors``, ``.ckpt``) and Python
-  caches are left out.
+  study can be recreated. Checkpoint files you bundled (``.pt``, ``.pth``, ``.safetensors``, ``.ckpt``, ``.pkl``,
+  ``.pickle``) and Python caches are left out.
   This drives the progress bar and downloads on the model page (see :ref:`view-results`).
 - **Round telemetry.** The round-started, result-received and round-aggregated entries in the model page's Live
   activity feed come from the server. Your code never calls ``flip.send_event``.
