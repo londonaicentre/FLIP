@@ -39,11 +39,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Builder
 # ---------------------------------------------------------------------------
-# Model construction only — no pretrained weights are loaded here.
-# This is the construction half of arkplus_flat_models.build_omni_model,
-# used by preprocess_checkpoints.py to create a bare ArkSwinTransformer
-# for checkpoint validation and cleaning, and by the evaluator to build
-# each configured model.
+# Model construction only: builds a bare ArkSwinTransformer and loads no weights.
+# Used by the evaluator and by process_tools/preprocess_checkpoints.py.
 def _build_arkplus_raw(arkplus_config: dict) -> nn.Module:
     """Return a raw ArkSwinTransformer matching *arkplus_config*."""
     model_name = str(arkplus_config.get("MODEL_NAME", "swin_large_768"))

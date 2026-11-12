@@ -59,6 +59,13 @@ DATAFRAME_COLUMNS = [
 ]
 MODALITY_CONCEPT_NAME = "Magnetic resonance imaging"
 ANATOMY_CONCEPT_NAME = "Prostatic structure"
+# What a row carries for an accession the marksheet does not list.
+_NO_CLINICAL: dict[str, object] = {
+    "Image date": "",
+    "ISUP grade group": None,
+    "Clinically significant cancer": "",
+    "PI-RADS": None,
+}
 
 
 def scan_dirname(modality: str) -> str:
@@ -179,20 +186,18 @@ def prepare(data_dir: Path, out_dir: Path, cases: list[str], site_tree: Path | N
     for accession in tqdm(cases, desc="cases"):
         images = write_case(accession, images_dir, labels_dir, zonal_dir, out_dir / "images")
         patient_id, study_id = accession.split("_", 1)
-        clinical_row = clinical.loc[accession] if accession in clinical.index else None
+        clinical_row = clinical.loc[accession] if accession in clinical.index else _NO_CLINICAL
         for modality in MODALITIES:
             rows.append(
                 {
                     "accession_id": accession,
                     "image_series_uid": series_uid(patient_id, study_id, modality),
-                    "Image date": clinical_row["Image date"] if clinical_row is not None else "",
+                    "Image date": clinical_row["Image date"],
                     "Modality": MODALITY_CONCEPT_NAME,
                     "Anatomy": ANATOMY_CONCEPT_NAME,
-                    "ISUP grade group": clinical_row["ISUP grade group"] if clinical_row is not None else None,
-                    "Clinically significant cancer": clinical_row["Clinically significant cancer"]
-                    if clinical_row is not None
-                    else "",
-                    "PI-RADS": clinical_row["PI-RADS"] if clinical_row is not None else None,
+                    "ISUP grade group": clinical_row["ISUP grade group"],
+                    "Clinically significant cancer": clinical_row["Clinically significant cancer"],
+                    "PI-RADS": clinical_row["PI-RADS"],
                 }
             )
         if site_tree is not None:
