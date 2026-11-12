@@ -540,11 +540,13 @@ against a canary fixture, and its guards are regression-tested by `scripts/tests
 
 `trust/deploy/terraform/azure` (FLIP#1390) carries its own credential-free checks: `make -C trust/deploy/terraform/azure test`
 runs `terraform test` with a mocked `azurerm` provider in every root and module plus the static pytest guards, and
-`make -C trust/deploy/terraform/azure lint` runs `terraform fmt` and tflint with the azurerm ruleset. CI runs both, plus
-checkov, in the "Azure node checks" job of `validate_terraform.yml`. The static guards enforce the cost and safety
+`make -C trust/deploy/terraform/azure lint` runs `terraform fmt`, tflint with the azurerm ruleset, and checkov's full
+Azure check set (`make -C trust/deploy/terraform/azure checkov` alone, through `uvx` at the AWS lint's pinned version).
+CI runs both in the "Azure node checks" job of `validate_terraform.yml`. The static guards enforce the cost and safety
 rules a plan cannot show: no target skips Terraform's confirmation, every provider block and `az` call names the
 subscription explicitly, no real subscription or tenant IDs in tracked files, no inbound NSG rules, and the VM's NIC
-always behind its own NSG. Deliberate checkov or tflint exceptions are written in-code with a reason, as for AWS.
+always behind its own NSG. Deliberate checkov or tflint exceptions are written in-code with a reason, as for AWS; a `checkov:skip` without
+one fails the lint.
 
 ### Secret scanning (detect-secrets)
 
