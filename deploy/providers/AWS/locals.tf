@@ -135,7 +135,6 @@ locals {
       # per-connection IAM tokens (DB_HOST = proxy endpoint, see ecs_tasks.tf),
       # which fixes the secret-rotation outage (FLIP#556).
       TRUST_API_KEY_HEADER           = var.TRUST_API_KEY_HEADER
-      INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
       AWS_SECRET_NAME                = "FLIP_API" # pragma: allowlist secret
       AWS_SES_ADMIN_EMAIL_ADDRESS    = var.SES_VERIFIED_EMAIL
       AWS_SES_SENDER_EMAIL_ADDRESS   = var.SES_VERIFIED_EMAIL
@@ -165,11 +164,10 @@ locals {
       # copy here would be dead config that apply-fl-kit-slots never updates.
     })
     fl_server = {
-      LOCAL_DEV                   = "false"
-      NET_ID                      = "net-1"
-      IMAGES_DIR                  = "/app/data/images"
-      FLIP_API_INTERNAL_URL       = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
-      INTERNAL_SERVICE_KEY_HEADER = var.INTERNAL_SERVICE_KEY_HEADER
+      LOCAL_DEV             = "false"
+      NET_ID                = "net-1"
+      IMAGES_DIR            = "/app/data/images"
+      FLIP_API_INTERNAL_URL = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
       # Root of the shared checkpoint-staging volume (mounted from the
       # fl_checkpoints EFS access point in ecs_tasks.tf). The fl-server's
       # EvaluationModelLocator reads a staged checkpoint from
@@ -186,9 +184,6 @@ locals {
       # rolls the service, which reads the kit only at start. The Flower one-shot
       # that registers SuperNode keys waits for that rollout (ecs_flower.tf, FLIP#1738).
       FL_KIT_SOURCE = local.fl_provision_base_s3
-      # INTERNAL_SERVICE_KEY is injected via the `secrets` block in
-      # ecs_tasks.tf (sourced from the FLIP_API Secrets Manager secret),
-      # never exposed as plain env in the task definition.
     }
     fl_api = {
       # ENV gates the entrypoint's uvicorn --reload off in prod/stag so a failed
@@ -222,13 +217,12 @@ locals {
     }
     # Flower SuperLink (compose.prod.flower.yml fl-server-net-1). TLS +
     # SuperNode-auth flags travel as the container command (ecs_tasks.tf), not
-    # env. INTERNAL_SERVICE_KEY is injected via the secrets block.
+    # env.
     fl_server_flower = merge({
-      LOCAL_DEV                   = "false"
-      NET_ID                      = "net-1"
-      IMAGES_DIR                  = "/app/data/images"
-      FLIP_API_INTERNAL_URL       = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
-      INTERNAL_SERVICE_KEY_HEADER = var.INTERNAL_SERVICE_KEY_HEADER
+      LOCAL_DEV             = "false"
+      NET_ID                = "net-1"
+      IMAGES_DIR            = "/app/data/images"
+      FLIP_API_INTERNAL_URL = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
       # Per-job hub credentials, written by the fl-api on the shared jobs volume (see the FLARE maps).
       JOB_CREDENTIAL_DIR = "/app/src/.job-credentials"
       # The ServerApp runs in the image's preinstalled environment on every estate:

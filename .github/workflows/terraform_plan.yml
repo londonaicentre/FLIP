@@ -131,7 +131,6 @@ jobs:
           FL_SERVER_PORT: ${{ vars.FL_SERVER_PORT }}
           ENFORCE_MFA: ${{ vars.ENFORCE_MFA }}
           FL_ADMIN_DIRECTORY: ${{ vars.FL_ADMIN_DIRECTORY }}
-          INTERNAL_SERVICE_KEY_HEADER: ${{ vars.INTERNAL_SERVICE_KEY_HEADER }}
           TRUST_API_KEY_HEADER: ${{ vars.TRUST_API_KEY_HEADER }}
           SES_VERIFIED_EMAIL: ${{ vars.SES_VERIFIED_EMAIL }}
           ALB_SUBDOMAIN: ${{ vars.ALB_SUBDOMAIN }}
@@ -156,8 +155,6 @@ jobs:
           LZA_WEB_EDGE_DISTRIBUTION_ARN: ${{ vars.LZA_WEB_EDGE_DISTRIBUTION_ARN }}
           ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
-          INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
-          INTERNAL_SERVICE_KEY_HASH: ${{ secrets.INTERNAL_SERVICE_KEY_HASH }}
           FL_API_KEY: ${{ secrets.FL_API_KEY }}
           POSTGRES_DB: ${{ vars.POSTGRES_DB }}
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}
@@ -217,7 +214,7 @@ jobs:
           preserve-plan: true
           # MUST stay false. tf-via-pr defaults this to true, and the plan file
           # it uploads is a zip containing the full tfstate — which holds
-          # AES_KEY_BASE64, INTERNAL_SERVICE_KEY and ADMIN_USER_PASSWORD in
+          # AES_KEY_BASE64, FL_API_KEY and ADMIN_USER_PASSWORD in
           # plaintext. This repository is public, so that artifact is a public
           # download. Nothing downstream needs it: this job only comments the
           # diff, and terraform_apply.yml re-plans from scratch rather than

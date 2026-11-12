@@ -156,7 +156,7 @@ locals {
 #   (TRUST_API_KEY_HEADER=Authorization).
 #
 # Deliberately excluded:
-# - X-Internal-Service-Key: fl-server → flip-api traffic is
+# - X-Job-Credential: fl-server → flip-api traffic is
 #   docker-network-internal on the Central Hub and never crosses
 #   CloudFront.
 #

@@ -132,7 +132,7 @@ AICENTRE_BUCKET_NAME=aicentre-stag
 POSTGRES_DB=flip
 ADMIN_USER_PASSWORD=SECRETVALUEMARKER
 AES_KEY_BASE64=bm90LWEtcmVhbC1rZXk=
-INTERNAL_SERVICE_KEY=service-key-marker
+TRUST_API_KEY_HEADER=service-key-marker
 FLIP_TFSTATE_BUCKET_NAME=flip-terraform-state-stag
 ENVFILE
 
@@ -310,7 +310,7 @@ fi
 #     workflows read them — how a repoint carried legacy staging's
 #     ENFORCE_MFA=false onto a new account. They are listed, with the delete
 #     command; keys the file does set are not; nothing is deleted.
-HELD_SECRET_NAMES="INTERNAL_SERVICE_KEY_HASH AES_KEY_BASE64" # pragma: allowlist secret — names, not values
+HELD_SECRET_NAMES="FL_API_KEY AES_KEY_BASE64" # pragma: allowlist secret — names, not values
 run_case "keys the file leaves unset but the environment holds are listed" \
     STUB_GH_VARIABLES="ENFORCE_MFA JOB_RESOURCE_SPEC_NUM_GPUS AICENTRE_BUCKET_NAME TF_HUB" \
     STUB_GH_SECRETS="${HELD_SECRET_NAMES}" -- \
@@ -319,7 +319,7 @@ expect_rc 0 "dry run succeeds"
 expect_mentions "Still set on aws-stag" "under its own heading"
 expect_mentions "gh variable delete ENFORCE_MFA --env aws-stag --repo acme/flip" "the skipped ENFORCE_MFA is listed"
 expect_mentions "gh variable delete JOB_RESOURCE_SPEC_NUM_GPUS" "and an optional key the file omits"
-expect_mentions "gh secret delete INTERNAL_SERVICE_KEY_HASH" "a secret gets the secret command"
+expect_mentions "gh secret delete FL_API_KEY" "a secret gets the secret command"
 expect_silent_about "delete AICENTRE_BUCKET_NAME" "a key the file sets is not listed"
 expect_silent_about "delete AES_KEY_BASE64" "nor a secret it sets"
 expect_silent_about "delete TF_HUB" "nor TF_HUB, which the script writes itself"

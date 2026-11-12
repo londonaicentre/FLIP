@@ -354,8 +354,6 @@ def stub_aws(monkeypatch):
             return json.dumps(
                 {
                     "aes_key": "not-a-real-key",  # pragma: allowlist secret
-                    "internal_service_key": "not-a-real-service-key",  # pragma: allowlist secret
-                    "internal_service_key_hash": "0" * 64,
                     "fl_api_key": "not-a-real-fl-api-key",  # pragma: allowlist secret
                 }
             )

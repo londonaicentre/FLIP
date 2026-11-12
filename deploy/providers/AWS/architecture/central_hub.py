@@ -253,7 +253,7 @@ def _fargate_services(drawn: _Drawn) -> tuple[Node, Node, Node]:
 
 def _hub_internal_edges(flip_api: Node, fl_api: Node, fl_server: Node, cloud_map: Node) -> None:
     """The hub-internal control edges, shared by both pictures."""
-    fl_server >> Edge(label="logs, metrics, status\nINTERNAL_SERVICE_KEY", style="dashed") >> flip_api
+    fl_server >> Edge(label="logs, metrics, status\nper-job credential", style="dashed") >> flip_api
     flip_api >> Edge(label="submit job") >> fl_api >> Edge(label="admin API") >> fl_server
     cloud_map - Edge(style="dotted", label="service discovery") - fl_api
 
