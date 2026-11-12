@@ -102,10 +102,7 @@ async def download_images_by_accession_number(
         logger.error(error_msg)
         raise HTTPException(status_code=404, detail=error_msg)
     except LocalStorageError as e:
-        # Trust-host misconfiguration (bind mount missing, perms wrong, disk
-        # full, etc.). This is NOT a 404 — the remote data may exist fine —
-        # so do not return it as "resource not found", which was the bug this
-        # branch addresses.
+        # Trust-host storage fault (bind mount, permissions, disk): not a 404, the XNAT data may be fine.
         error_msg = f"Trust-side storage error: {e.detail}"
         logger.error(error_msg)
         raise HTTPException(status_code=e.status_code, detail=error_msg)

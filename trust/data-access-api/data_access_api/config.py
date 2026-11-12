@@ -22,6 +22,7 @@ from data_access_api.policy import Policy, load_policy
 # The shipped disclosure floor. Referenced by both the field default and the empty-string
 # coercion validator below, so the two cannot drift apart.
 DEFAULT_COHORT_QUERY_THRESHOLD = 10
+DEFAULT_SNAPSHOT_MAX_BYTES = 536_870_912  # 512 MiB
 
 
 class Settings(BaseSettings):
@@ -38,12 +39,9 @@ class Settings(BaseSettings):
             return "development"
         return v
 
-    # env file is 3 directories up from this file
-    # Get current directory: data-access-api/data_access_api/config.py
+    # Repo-root .env.development; fixed at class definition, not chosen by ENV.
     model_config = SettingsConfigDict(
-        env_file=[
-            str(Path(__file__).parent.parent.parent.parent / f".env.{ENV}"),
-        ],
+        env_file=[str(Path(__file__).parents[3] / ".env.development")],
         env_file_encoding="utf-8",
         extra="allow",
     )
@@ -98,14 +96,14 @@ class Settings(BaseSettings):
 
     # Hard cap on one serialized membership record. Over the cap it is REFUSED, never
     # truncated — a partial membership would silently drop patients from training.
-    SNAPSHOT_MAX_BYTES: PositiveInt = 536_870_912  # 512 MiB
+    SNAPSHOT_MAX_BYTES: PositiveInt = DEFAULT_SNAPSHOT_MAX_BYTES
 
     @field_validator("SNAPSHOT_MAX_BYTES", mode="before")
     @classmethod
     def coerce_empty_snapshot_max_bytes(cls, v: object) -> object:
         """Treat an empty-string cap as the default (same kit-file gotcha as the threshold)."""
         if v is None or v == "":
-            return 536_870_912
+            return DEFAULT_SNAPSHOT_MAX_BYTES
         return v
 
     #

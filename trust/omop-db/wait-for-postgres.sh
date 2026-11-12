@@ -12,9 +12,9 @@
 #
 
 # wait-for-postgres.sh <port> — block until Postgres answers on localhost:<port>.
-# Bounded (default 180 x 5s = 15 min: a FIRST container boot runs the whole
-# init chain including the multi-GB vocabulary load before the server accepts
-# TCP connections; override via WAIT_FOR_POSTGRES_ATTEMPTS). Strict about its
+# Bounded (default 180 x 5s = 15 min: a FIRST container boot runs the image's
+# init scripts before the server accepts TCP connections, and slow hosts need
+# headroom; override via WAIT_FOR_POSTGRES_ATTEMPTS). Strict about its
 # argument: an empty port would make pg_isready fall back to 5432 and report
 # readiness of an unrelated server.
 
@@ -32,7 +32,7 @@ if ! command -v pg_isready >/dev/null 2>&1; then
 fi
 
 attempts=0
->&2 echo "⏳ Waiting for Postgres to be available on port $1 (first init loads the vocabulary — can take minutes)..."
+>&2 echo "⏳ Waiting for Postgres to be available on port $1 (first init can take a while)..."
 until pg_isready -h localhost -p "$1" >/dev/null 2>&1; do
   attempts=$((attempts + 1))
   if [ "$attempts" -ge "$max_attempts" ]; then
