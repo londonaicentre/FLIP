@@ -986,13 +986,16 @@ class E2eSmokeSpleenBackend(unittest.TestCase):
 
     def test_each_backend_uploads_its_own_app(self):
         apps = {"nvflare": "app_files", "flower": "app"}
-        for target in ("e2e_smoke_spleen", "e2e_smoke_spleen_evaluation"):
+        tutorials = {
+            "e2e_smoke_spleen": "image_segmentation/3d_spleen_segmentation",
+            "e2e_smoke_spleen_evaluation": "image_evaluation/3d_spleen_segmentation_evaluation",
+        }
+        for target, tutorial in tutorials.items():
             for backend, app in apps.items():
                 out = dry_run(target, f"FL_BACKEND={backend}", subdir="flip-api")
                 model_dir = re.search(r'--model-files-dir "([^"]+)"', out)[1]
                 query = re.search(r'--query-file "([^"]+)"', out)[1]
-                assert f"/fl-tutorials/{backend}/" in model_dir, (target, out)
-                assert model_dir.endswith(f"/{app}"), (target, out)
+                assert model_dir.endswith(f"/fl-tutorials/{backend}/{tutorial}/{app}"), (target, out)
                 assert query.endswith(f"/fl-tutorials/{backend}/image_segmentation/3d_spleen_segmentation/query.sql")
                 assert "upload_spleen_labels_to_xnat.py" in out, (target, backend)
                 for rel in (model_dir, query):
