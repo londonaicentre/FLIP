@@ -52,7 +52,9 @@ def test_nginx_config_replaces_the_image_nginx_conf():
     assert mount == {"name": "config", "mountPath": "/etc/nginx/nginx.conf", "subPath": "nginx.conf"}
     conf = configmap["data"][mount["subPath"]]
     # A whole nginx.conf: a bare server block at the top level would stop nginx starting.
-    assert conf.lstrip().startswith("worker_processes") and "events {" in conf and "http {" in conf, conf
+    assert conf.startswith("worker_processes"), conf
+    assert "events {" in conf
+    assert "http {" in conf
     assert "proxy_read_timeout 300s;" in conf
 
 
