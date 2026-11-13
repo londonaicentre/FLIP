@@ -16,23 +16,6 @@ Replaces the all-mocked unit tests for the file-services flow. moto intercepts
 ``boto3.client("s3", ...)`` at the botocore layer, so the production code path
 through ``S3Client`` exercises the real boto3 -> botocore -> moto stack with
 no test-only branches in source.
-
-Coverage:
-
-* ``S3Client`` direct calls — presigned URL, head/get/put/delete/list/copy.
-* ``POST /files/preSignedUrl/model/{model_id}`` — endpoint returns a working
-  upload URL; pre-signed PUT against moto succeeds and the object lands at the
-  expected key.
-* ``POST /files/process-scanned-file/{model_id}/{file_name}`` — pre-seeded
-  S3 object's metadata makes its way into the ``uploaded_files`` row.
-* ``GET /files/model/{model_id}/files/list`` — listing reflects the keys
-  actually present in the scanned bucket.
-* ``GET /files/model/{model_id}/{file_name}`` — download returns a presigned URL
-  that itself serves the object's bytes byte-for-byte.
-* ``DELETE /files/model/{model_id}/{file_name}`` — endpoint removes the S3
-  object and the DB row.
-* ``GET /files/model/{model_id}/fl/results`` — federated-results endpoint
-  returns presigned URLs for every object under the FL prefix.
 """
 
 from urllib.parse import urlparse
@@ -519,8 +502,7 @@ def test_delete_model_file_removes_object_and_db_row(client: TestClient, session
     settings = get_settings()
     bucket, prefix = _bucket_and_prefix(settings.SCANNED_MODEL_FILES_BUCKET)
     file_name = "to-delete.txt"
-    s3 = boto3.client("s3")
-    s3.put_object(Bucket=bucket, Key=f"{prefix}/{model_id}/{file_name}", Body=b"goodbye")
+    boto3.client("s3").put_object(Bucket=bucket, Key=f"{prefix}/{model_id}/{file_name}", Body=b"goodbye")
     session.add(
         UploadedFiles(
             id=uuid4(),
@@ -536,19 +518,8 @@ def test_delete_model_file_removes_object_and_db_row(client: TestClient, session
     response = client.delete(f"/api/files/model/{model_id}/{file_name}")
     assert response.status_code == 200, response.text
 
-    # S3: object gone.
-    listing = s3.list_objects_v2(Bucket=bucket, Prefix=f"{prefix}/{model_id}/")
-    keys = [o["Key"] for o in listing.get("Contents", [])]
-    assert f"{prefix}/{model_id}/{file_name}" not in keys
-
-    # DB: row gone.
-    remaining = session.exec(
-        select(UploadedFiles).where(
-            UploadedFiles.model_id == model_id,
-            UploadedFiles.name == file_name,
-        )
-    ).first()
-    assert remaining is None
+    assert f"{prefix}/{model_id}/{file_name}" not in _object_keys(bucket, f"{prefix}/{model_id}/")  # S3: object gone.
+    assert _uploaded_file_row(session, model_id, file_name) is None  # DB: row gone.
 
 
 # ---------------------------------------------------------------------------
