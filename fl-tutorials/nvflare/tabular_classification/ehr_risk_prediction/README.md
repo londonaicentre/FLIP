@@ -5,11 +5,7 @@ Federated training of a small **multi-layer perceptron (MLP)** that predicts **t
 visit history. It runs on the **FLARE Client API** (`nvflare.client`): the whole job is defined in
 Python via `FlipFedAvgRecipe`, with no hand-written JSON configs.
 
-This is FLIP's first **tabular / EHR-only** example. Where the imaging tutorials pull DICOM into
-XNAT, this one fetches its entire cohort through `flip.get_dataframe` — arbitrary SQL over each
-trust's OMOP CDM database — and touches **no imaging at all**: no Orthanc, no XNAT, no PACS pull, no
-data-enrichment step. It is the counterpart to the imaging tutorials, exercising the platform's
-other data path, and **CPU is enough** to train it.
+This is a **tabular / EHR-only** example. The imaging tutorials pull DICOM into XNAT. This one fetches its entire cohort through `flip.get_dataframe` (SQL over each trust's OMOP CDM database) and touches **no imaging at all**: no Orthanc, no XNAT, no PACS pull, no data-enrichment step. **CPU is enough** to train it.
 
 ## At a glance
 
@@ -19,7 +15,8 @@ other data path, and **CPU is enough** to train it.
 | Job type | standard |
 | Imaging | off |
 | Cohort query | `query.sql` |
-| Dataset | `make -C fl-tutorials download-synthea-data` |
+| Dataset (simulator) | `make -C fl-tutorials download-synthea-data` |
+| Dataset (dev stack) | `make -C trust load-synthea-ehr TRUST_INDEX=<1\|2> OMOP_DB_PORT=<5434\|5436>` |
 | Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=ehr_risk_prediction` (CPU) |
 
 ---
@@ -27,7 +24,7 @@ other data path, and **CPU is enough** to train it.
 ## Table of contents
 
 - [The use case](#the-use-case)
-- [Data](#data) — where it comes from and how it is fetched
+- [Data](#data)
 - [Features and label](#features-and-label)
 - [Preprocessing](#preprocessing)
 - [The model](#the-model)
@@ -83,17 +80,14 @@ make -C trust load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434   # GSTT
 make -C trust load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH
 ```
 
-(See [`trust/omop-db/README.md`](../../../../trust/omop-db/README.md) → "The Synthea EHR cohort".
-A trust on Kubernetes publishes no host port — use the port-forward form in
-[`trust/deploy/helm/README.md`](../../../../trust/deploy/helm/README.md),
-"Local clusters (kind)", then restart its data-access-api.)
-On a **real** trust this step is unnecessary — real condition data is already there and `query.sql`
-runs against it unchanged.
+Details: [`trust/omop-db/README.md`](../../../../trust/omop-db/README.md), "The Synthea EHR cohort".
+
+- **Trust on Kubernetes:** it publishes no host port. Use the port-forward form in
+  [`trust/deploy/helm/README.md`](../../../../trust/deploy/helm/README.md) ("Local clusters (kind)"), then restart its data-access-api.
+- **Real trust:** skip this step. Real condition data is already there, and `query.sql` runs against it unchanged.
 
 The builder's feature logic deliberately **mirrors `query.sql`** (the SQL a deployed run sends to
-each trust). Change one and change the other to match — both pin the label SNOMED code and the
-feature codes in one place each, and both scope the cohort to persons with at least one recorded
-condition.
+each trust). Both pin the label SNOMED code and the feature codes in one place each, and both limit the cohort to persons with at least one recorded condition. This is a reasonable 'has clinical history' inclusion criterion, and it also excludes the dev mock's imaging-only persons. **If you change one, change the other to match.**
 
 ## Features and label
 
@@ -102,7 +96,7 @@ order is the input layout, and the model sizes its first layer from the list len
 
 | Feature | Meaning |
 | --- | --- |
-| `age` | Age vs. 2023 (the dataset's export year — deterministic) |
+| `age` | Age in 2023, the dataset's export year (so the value is deterministic) |
 | `is_female` | `gender_concept_id == 8532` |
 | `has_prediabetes` | SNOMED `15777000`, before first T2DM diagnosis |
 | `has_obesity` | SNOMED `162864005` |
@@ -121,8 +115,8 @@ is never leaked into its own features.
 
 ## Preprocessing
 
-[`app_files/feature_engineering.py`](app_files/feature_engineering.py) (shared byte-identical with the
-Flower tutorial) imputes missing values with medians and z-scores with mean/std fitted **on the local
+[`app_files/feature_engineering.py`](app_files/feature_engineering.py) (byte-identical with the
+[Flower version of this tutorial](../../../flower/tabular_classification/ehr_risk_prediction/README.md)) imputes missing values with medians and z-scores with mean/std fitted **on the local
 training split only**. No fitted state crosses sites, so there is nothing to federate and no
 train/eval leakage. The training loss is `BCEWithLogitsLoss` with `pos_weight` from the local class
 balance (~6 % positive); validation and test use the plain unweighted loss so sites of differing
@@ -140,8 +134,7 @@ torch rather than scikit-learn.
 Per-epoch `TRAIN_LOSS`, `VAL_LOSS`, `VAL-AUROC` and `VAL-ACCURACY` stream to the platform analytics;
 cross-site evaluation reports `TEST_LOSS` / `TEST-AUROC` / `TEST-ACCURACY` on the held-out split.
 `BEST_MODEL_METRIC` (`VAL-AUROC`) enables the server-side `IntimeModelSelector`, exactly as in the
-imaging tutorials. AUROC on a single-class split is reported as NaN (published as 0.0) so a
-degenerate split stays visible rather than silently pinning "best".
+imaging tutorials. On a split containing only one class, AUROC is undefined: it is computed as NaN and published to the platform as 0.0. A degenerate split therefore stays visible instead of silently being picked as "best".
 
 ## Expected performance
 
@@ -155,7 +148,7 @@ narrower 16-unit layer or a single epoch/round plateaus markedly lower.
 
 ### Export the job config (no GPU, no data needed)
 
-Produces a complete FLARE job directory under `./fl_job/flip_fedavg/`:
+From this tutorial's directory, produce a complete FLARE job directory under `./fl_job/flip_fedavg/`:
 
 ```bash
 make export
@@ -175,26 +168,24 @@ off a single file. Override the round/client counts inline, e.g.
 
 ### On the platform (or `make e2e_smoke`)
 
-1. Upload [`app_files/`](app_files) as the model files of a **`standard`**-job-type model.
-2. Submit [`query.sql`](query.sql) as the project's cohort query.
+On the dev stack, first load the Synthea data into each trust's OMOP (`make -C trust load-synthea-ehr`, see [Data](#2-on-the-platform--loaded-into-omop)). Then:
 
-The cohort fetches no imaging, so create the project with **"Includes imaging data" turned off**
-(`has_imaging=false`): the hub then skips the imaging stage entirely — no XNAT project at the
-trusts, no PACS pull — and the project page shows no imaging status. Turning it **on** would reject
-this cohort at submission: an imaging project's cohort query must return an `accession_id` column,
-and this one has none. On the dev stack, run `make -C trust load-synthea-ehr` (above) first so the
-query has data. As an end-to-end smoke against a running stack — the `e2e_smoke_ehr` target passes
-`--no-imaging` for you, **no enrichment flags**:
+1. Create the project with **"Includes imaging data" turned off** (`has_imaging=false`). The hub then skips the imaging stage entirely: no XNAT project at the trusts, no PACS pull, and no imaging status on the project page. With imaging on, this cohort is rejected at submission, because an imaging project's cohort query must return an `accession_id` column and this one has none.
+2. Upload [`app_files/`](app_files) as the model files of a **`standard`**-job-type model.
+3. Submit [`query.sql`](query.sql) as the project's cohort query.
+
+To run the same flow as an end-to-end smoke test against a running stack, use the `e2e_smoke_ehr` target. It passes `--no-imaging` for you and needs **no enrichment flags**:
 
 ```bash
 make e2e_smoke_ehr
 ```
 
-### FLIP-specific values
+### How the project ID and query reach the trainer
 
 `FLIP_PROJECT_ID` and `FLIP_QUERY` are read from environment variables (stubs in `.env.app`), **not**
-CLI flags — the SQL query contains spaces that don't survive argparse whitespace-splitting. The
-trainer reads the query from `config_fed_client.json` at runtime via `load_query()`.
+CLI flags, because the SQL query contains spaces that argparse would split. `job.py` passes them to the
+recipe, which writes the query into the generated `config_fed_client.json`. At run time the trainer reads it
+from there via `load_query()`.
 
 ## Honest caveats (what a rigorous study would add)
 
@@ -208,13 +199,8 @@ prediction study would address:
   (`value_as_number` is empty throughout), which is why the features are condition-history flags
   rather than HbA1c/BMI values.
 
-The cohort is scoped (in both `query.sql` and the builder) to persons with at least one recorded
-condition — a sensible "has clinical history" inclusion criterion that also cleanly excludes the
-dev mock's imaging-only persons.
-
 ## Swapping the label
 
-[`datasets/synthea/build_synthea_dataframe.py`](../../../datasets/synthea/build_synthea_dataframe.py) and `query.sql` pin the label
-SNOMED code in one constant each. To re-derive with a different label (e.g. another condition in the
-dataset), keep both in lockstep, and prefer labels with ≥30 positives per site — below that the
+To use a different label (e.g. another condition in the dataset), change the label SNOMED code in both
+[`datasets/synthea/build_synthea_dataframe.py`](../../../datasets/synthea/build_synthea_dataframe.py) and `query.sql` (see [Data](#data)). Prefer labels with ≥30 positives per site. Below that, the
 builder warns that validation AUROC will be mostly noise.

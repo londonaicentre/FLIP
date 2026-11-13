@@ -10,20 +10,20 @@ Three things are produced from it, all under the gitignored `fl-tutorials/data/`
 
 | Output | Path | Consumed by |
 | --- | --- | --- |
-| Raw MSD extract | `data/Task01_BrainTumour/{imagesTr,labelsTr,dataset.json}` | the two chains below |
-| Simulator layout | `data/brain_mri/images/<accession>/scans/{input_<channel>_<case>,label_<case>}.nii.gz` + `dataframe.csv` | tutorials under `LOCAL_DEV` (the latent-diffusion tutorial, once retargeted) |
+| Raw MSD extract | `data/Task01_BrainTumour/{imagesTr,labelsTr,dataset.json}` | the two rows below |
+| Simulator layout | `data/brain_mri/images/<accession>/scans/{input_<channel>_<case>,label_<case>}.nii.gz` + `dataframe.csv` | tutorials under `LOCAL_DEV` (the brain MRI latent-diffusion tutorials) |
 | Mock trust data | `data/brain_mri/dicom/<accession>/*.dcm` (four MR series per study) + `source/dicom_metadata.csv` + `omop/…` + `canonical/…` | a running dev trust's Orthanc and OMOP (`seed-brain-mri`), the published tables |
 
 ## What is published, and what is not
 
 **Only the OMOP tables and the metadata table they were built from go to Hugging Face**
-(`aicentreflip/trust-data`, `omop-csv/brain_mri_project/` — the `pathology_project` precedent). The
-DICOM set is never re-hosted: the converter is deterministic, so it regenerates byte-for-byte from the
-MSD tar on any machine — every UID and identity is a pure function of the MSD case id
-(`../utils/dicom_writer.py`) — and `convert-brain-mri-to-dicom METADATA_TABLE=…` converts exactly the
+(`aicentreflip/trust-data`, `omop-csv/brain_mri_project/`, following the same layout as `pathology_project`). The
+DICOM set is never re-hosted. It does not need to be: the converter is deterministic, so it regenerates byte-for-byte from the
+MSD tar on any machine. Every UID and identity is a pure function of the MSD case id
+(`../utils/dicom_writer.py`), and `convert-brain-mri-to-dicom METADATA_TABLE=…` converts exactly the
 cases the published table names. The published cohort is the first 40 training cases in natural order
 (`BRAIN_MRI_NUM_CASES=40`), round-robin across two trusts (`source_trust` 1/2, 20 studies each — above
-the trusts' 10-row `COHORT_QUERY_THRESHOLD`).
+the trusts' default 10-subject `COHORT_QUERY_THRESHOLD`).
 
 ## Targets
 
@@ -34,7 +34,7 @@ All run from the repo root as `make -C fl-tutorials <target>`; every path below 
 make -C fl-tutorials download-brain-mri-msd-raw            # 7.6 GB tar (md5-checked) -> data/Task01_BrainTumour/ (training half)
 make -C fl-tutorials download-brain-mri-data NUM_CASES=10  # simulator layout -> data/brain_mri/images + dataframe.csv
 
-# The mock-trust chain (no root, no binaries):
+# The mock-trust chain (needs no root access and no external tools):
 make -C fl-tutorials convert-brain-mri-to-dicom            # -> data/brain_mri/dicom/<accession>/*.dcm  (BRAIN_MRI_NUM_CASES=40)
 make -C fl-tutorials create-brain-mri-metadata-table       # -> data/brain_mri/source/dicom_metadata.csv (one row per series)
 make -C fl-tutorials build-brain-mri-omop-tables           # -> omop/brain_mri_project + omop/trust_{1,2}/brain_mri_project
@@ -42,19 +42,22 @@ make -C fl-tutorials build-brain-mri-canonical             # -> data/brain_mri/c
 make -C fl-tutorials verify-brain-mri-dicom                # DICOM tree <-> canonical tables, both ways
 make -C fl-tutorials seed-brain-mri KIT=GSTT               # both halves of a RUNNING dev trust, from the local tree
 
-# The reproducible path (published metadata table -> tables -> gate):
+# The reproducible path (published metadata table -> OMOP tables -> verification):
 make -C fl-tutorials reproduce-brain-mri-omop              # fetch + build + verify against the pinned data version
 make -C fl-tutorials convert-brain-mri-to-dicom METADATA_TABLE=data/brain_mri/source/dicom_metadata.csv   # exactly the published cohort
 ```
 
-`seed-brain-mri` loads the OMOP rows from `canonical/` (`make -C trust seed-omop … CANONICAL_DIR=`)
-and POSTs the instances from `dicom/` (`make -C trust seed-orthanc … DICOM_SOURCE= TABLES_DIR=`), so a
-platform pull can be proven before a data version is tagged. After publishing,
-`make -C trust seed-omop KIT=<CODE> PROJECTS=brain_mri_project` loads the same rows from the tag; the
-DICOM half always comes from the local tree. `DRY_RUN=1` counts the DICOM half and loads nothing.
+`seed-brain-mri` seeds both halves of a running dev trust from the local tree, so you can prove a platform pull before a data version is tagged:
 
-Driving the platform end to end (cohort query → Orthanc → XNAT → dcm2niix), with `query.sql` here
-as the cohort and any FLARE app as the model files:
+- **OMOP:** rows from `canonical/`, via `make -C trust seed-omop … CANONICAL_DIR=`.
+- **Orthanc:** instances POSTed from `dicom/`, via `make -C trust seed-orthanc … DICOM_SOURCE= TABLES_DIR=`.
+- **Dry run:** `DRY_RUN=1` counts the DICOM half and loads nothing.
+
+After publishing, `make -C trust seed-omop KIT=<CODE> PROJECTS=brain_mri_project` loads the same OMOP rows from the tag. The DICOM half always comes from the local tree.
+
+## End-to-end platform check
+
+To drive the platform end to end (cohort query → Orthanc → XNAT → dcm2niix), run the smoke test from the repo root. Use `query.sql` in this directory as the cohort and any FLARE app as the model files:
 
 ```bash
 make e2e_smoke MODEL_FILES_DIR=../fl-tutorials/nvflare/image_generation/brain_mri_ldm_stage1_autoencoder/app_files \
@@ -77,12 +80,14 @@ metadata table's `Subject` column is recovered from the tree.
 
 ## The OMOP tables
 
-`omop_convert_brain_mri.py` builds, on the shared contract in `../utils/`: `person` per case
-(`person_id` = the first nine digits of the synthetic NHS number), `visit_occurrence` and
-`procedure_occurrence` per study (concept 3037128), `image_occurrence` per **series** (four rows share
-an `accession_id`; anatomic site 4133034 *Brain structure*, modality 4013636), and `image_feature` +
-`measurement` for the five DICOM attributes spleen publishes (Manufacturer, ManufacturerModelName,
-SliceThickness in mm, Rows, Columns). Surrogate keys come from `brain_mri_project`'s reserved block
+`omop_convert_brain_mri.py` builds these tables on the shared contract in `../utils/`:
+
+| Table | Granularity | Notes |
+| --- | --- | --- |
+| `person` | per case | `person_id` = the first nine digits of the synthetic NHS number |
+| `visit_occurrence`, `procedure_occurrence` | per study | concept 3037128 |
+| `image_occurrence` | per **series** | four rows share an `accession_id`; anatomic site 4133034 *Brain structure*, modality 4013636 |
+| `image_feature` + `measurement` | per series attribute | the same five DICOM attributes as the spleen dataset: Manufacturer, ManufacturerModelName, SliceThickness (mm), Rows, Columns | Surrogate keys come from `brain_mri_project`'s reserved block
 (`5_000_000`; `../utils/omop_ids.py`). The tumour labels are deliberately **not** in OMOP: the
 dataset's first use is unsupervised (latent diffusion), and a segmentation mask has nowhere to live in
 a cohort query anyway — it would reach a project by XNAT data enrichment, as the spleen labels do.

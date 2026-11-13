@@ -66,7 +66,7 @@ latent diffusion tutorial train a single model that is told which sequence to ge
 sequence is read from its name (`app_files/modality.py`), and `MODALITIES` in `config.json` selects
 which sequences train:
 
-```json
+```jsonc
 "MODALITIES": ["FLAIR", "T1w", "T1Gd", "T2w"]   // all four (shipped)
 "MODALITIES": ["T1w"]                            // one sequence
 ```
@@ -119,10 +119,14 @@ L1 alone gives blurry reconstructions; the perceptual and adversarial terms shar
 critics exist only for training: the latent diffusion tutorial keeps the autoencoder alone.
 
 The generator step runs under bfloat16 mixed precision and the discriminator step in float32.
-bfloat16 has float32's range, so there is no gradient scaler. Under float16, whose largest value is
-65504, the loss sometimes became NaN in the first iterations: at MONAI's clamp on the latent's
-log-variance, sigma is about 22,000, and the latent passed to the decoder can overflow. The KL term is computed in float32. Gradients are accumulated over batches of
-`BATCH_SIZE` to an effective batch of 8 volumes per optimiser step, and both networks use AdamW.
+bfloat16 has float32's range, so no gradient scaler is needed. The KL term is computed in float32.
+
+Why not float16: its largest value is 65504. At MONAI's clamp on the latent's log-variance, sigma is
+about 22,000, so the latent passed to the decoder can overflow, and the loss sometimes became NaN in
+the first iterations.
+
+Gradients are accumulated over batches of `BATCH_SIZE` to an effective batch of 8 volumes per
+optimiser step. Both networks use AdamW.
 
 The learning rate starts at `LR_START`. Add `LR_END` and `LR_DECAY_EPOCHS` to `config.json` to
 decay it along half a cosine over the job's first `LR_DECAY_EPOCHS` epochs, counted across rounds,
@@ -142,28 +146,33 @@ released by Tencent under the MIT licence
 ([`TencentMedicalNet/MedicalNet-Resnet50`](https://huggingface.co/TencentMedicalNet/MedicalNet-Resnet50)).
 Cite the paper if you publish results that use this loss.
 
-An FL app never downloads at run time (FLIP#1206): the FL server and a trust host may have no
-internet route, and a downloaded file bypasses the scanned upload path. So the weights ship as an
+An FL app never downloads at run time: the FL server and a trust host may have no internet route, and a downloaded file bypasses the scanned upload path. So the weights ship as an
 uploaded file, prepared by:
 
 ```bash
 make weights   # -> app_files/medicalnet_perceptual.pt (gitignored)
 ```
 
-`make export` and `make sim` run it for you. **Upload the file with the other app files.** At 185 MB
-it is too big to travel in the job bundle (FLARE gives each trust 10 s to acknowledge a deploy), so
-`config.json` names it `SERVER_CHECKPOINT`, as the latent diffusion tutorial does its autoencoder: it
-stays on the FL server, which loads it into the model's frozen `perceptual` submodule in the round-0
-global model, and `AGGREGATE_ONLY_REGEX` leaves it out of aggregation. `make weights` checks the
-published file's hash and converts it; each trust checks the weights it receives against
-`MEDICALNET_FINGERPRINT` in `app_files/medicalnet_perceptual.py` before training.
+`make export` and `make sim` run it for you. **Upload the file with the other app files.**
+
+How the file reaches the trusts:
+
+- At 185 MB it is too big for the job bundle (FLARE gives each trust 10 s to acknowledge a deploy).
+  So `config.json` names it `SERVER_CHECKPOINT`, as the latent diffusion tutorial does for its
+  autoencoder, and it stays on the FL server.
+- The server loads it into the model's frozen `perceptual` submodule in the round-0 global model.
+  `AGGREGATE_ONLY_REGEX` leaves it out of aggregation.
+- `make weights` checks the published file's hash and converts it. Before training, each trust checks
+  the weights it receives against `MEDICALNET_FINGERPRINT` in `app_files/medicalnet_perceptual.py`.
 
 ## Training for real
 
 The shipped `config.json` runs 2 rounds of 3 epochs (`GLOBAL_ROUNDS`, `LOCAL_ROUNDS`), like the
 other tutorials: enough to run the whole job end to end in minutes, far too little to learn to
-reconstruct a brain. The published autoencoder was trained with this tutorial for 10 rounds of 25
-epochs, at the shipped constant learning rate, on 321 brain MR studies (1,284 volumes) split between
+reconstruct a brain. The published autoencoder (`autoencoder/v3.1` in
+[`aicentreflip/tutorials-brain-mri-latent-diffusion`](https://huggingface.co/aicentreflip/tutorials-brain-mri-latent-diffusion),
+whose model card gives the full recipe and held-out scores) was trained with this tutorial for 10
+rounds of 25 epochs, at the shipped constant learning rate, on 321 brain MR studies (1,284 volumes) split between
 two simulated sites; the run took 12 h 28 min on one RTX 5090. To train your own, raise the two
 counts in `config.json`, and set the batch it was trained with:
 
@@ -177,9 +186,6 @@ The shipped `BATCH_SIZE` is 1 so that two trusts sharing one 32 GB GPU fit: abou
 2 they run out of memory. The optimiser step is unchanged, since gradients accumulate to 8 volumes
 either way; only the discriminator's BatchNorm sees one volume at a time instead of two.
 
-It is `autoencoder/v3.1` in [`aicentreflip/tutorials-brain-mri-latent-diffusion`](https://huggingface.co/aicentreflip/tutorials-brain-mri-latent-diffusion),
-whose model card gives the full recipe and how it scores on held-out patients.
-
 ## Debugging
 
 Sample images (tri-planar input vs reconstruction figures) need `"SAVE_DEBUG_SAMPLES": true` and a
@@ -188,17 +194,19 @@ local simulator run; loss curves come from `python ../dev/plot_utils.py`. Both a
 
 ## FLIP-specific values
 
-`FLIP_PROJECT_ID` and `FLIP_QUERY` are read from environment variables (stubs in `.env.app`).
-They are NOT passed as CLI flags because the SQL query contains spaces that don't survive
-argparse whitespace-splitting. The trainer reads the query from `config_fed_client.json` at
-runtime via `load_query()`. `.env.app` ships `FLIP_PROJECT_ID=dev`: LOCAL_DEV ignores the value,
-but the `--project_id {project_id}` task arg needs a non-empty token to substitute.
+`job.py` reads `FLIP_PROJECT_ID` and `FLIP_QUERY` from environment variables (stubs in `.env.app`)
+and writes them into the exported job's `config_fed_client.json`. The query is not passed as a CLI
+flag, because FLARE splits task arguments on whitespace and SQL contains spaces: the trainer reads it
+from `config_fed_client.json` at run time via `load_query()`. `.env.app` ships `FLIP_PROJECT_ID=dev`:
+a local run (`LOCAL_DEV`) ignores the value, but the `--project_id {project_id}` task argument needs a
+non-empty token to substitute.
 
 ## How to run
 
-### Export (primary — no GPU needed)
+### Export (no GPU needed)
 
-Produces a complete FLARE job directory under `./fl_job/flip_fedavg/` including:
+Produces a complete FLARE job directory under `./fl_job/flip_fedavg/`, including:
+
 - `meta.json` with `custom_props.model_id` (dev UUID for local use)
 - `app/config/config_fed_server.json` and `config_fed_client.json`
 - `app/custom/` with the bundled `flip/` package and the app files staged alongside it
@@ -214,14 +222,14 @@ or equivalently, after `make weights` (the **flip-utils** environment with the `
 uv run --project ../../../../flip-utils --extra full --group diffusion python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 1
 ```
 
-> **Note:** `make run` (invoked by the tutorial runner `run-tutorial`/`run-all-tutorials`)
-> delegates to `make sim`. Use `make export` (no GPU) or `make sim`/`make run` (GPU + data).
+> **Note:** `make run` (what `run-tutorial`/`run-all-tutorials` invoke) is the same as `make sim`.
 
 ### Local simulation (requires a GPU + the dataset)
 
 With the dataset downloaded (see *Data requirements*), run `make sim` here, or
 `make -C fl-tutorials run-tutorial TUTORIAL=brain_mri_ldm_stage1_autoencoder` from the repository root. The simulator
-runs the sites side by side (at the shipped `BATCH_SIZE` of 1, about 10 GB of GPU memory each) and writes its
+runs the sites side by side (about 10 GB of GPU memory each at the shipped `BATCH_SIZE`; see
+*Training for real*) and writes its
 workspace, final global model included, under `/tmp/nvflare/brain_mri_ldm_stage1_autoencoder/`.
 
 ### Overriding rounds and clients

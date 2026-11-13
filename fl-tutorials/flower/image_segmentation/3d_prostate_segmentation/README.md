@@ -32,7 +32,7 @@ the [spleen tutorial](../3d_spleen_segmentation/README.md) in two ways worth lea
 
 The training recipe is nnU-Net's (deep-supervised Dice + binary cross-entropy, SGD with polynomial decay,
 patch-based training with nnU-Net's augmentations), ported from the standalone trainer this tutorial
-grew out of — see [Where the reference trainer went](#where-the-reference-trainer-went).
+grew out of — see [Reference (standalone) trainer](#reference-standalone-trainer).
 
 ## At a glance
 
@@ -42,12 +42,12 @@ grew out of — see [Where the reference trainer went](#where-the-reference-trai
 | Job type | standard |
 | Imaging | on, DICOM to NIfTI on; masks uploaded as data enrichment |
 | Cohort query | `query.sql` |
-| Dataset | `make -C fl-tutorials prepare-prostate-local-data NUM_CASES=12` (simulator); `download-prostate-data FOLDS=0` (platform) |
+| Dataset | `make -C fl-tutorials prepare-prostate-local-data NUM_CASES=12` (simulator); `make -C fl-tutorials download-prostate-data FOLDS=0` (platform) |
 | Simulator | `make -C fl-tutorials sim-tutorial TUTORIAL=3d_prostate_segmentation FL_BACKEND=flower` (GPU; Flower only) |
 
 ## Folder structure
 
-```shell
+```text
 3d_prostate_segmentation
 ├── app/                                    # FLAT: everything here is uploaded to the platform
 │   ├── client_app.py                       # Flower ClientApp: cohort -> pull -> train_seg -> reply
@@ -99,7 +99,7 @@ trusts with `make -C trust seed-trusts PROJECTS=prostate_project` (one PI-CAI ce
 ZGT → trust 1, PCNN → trust 2). The masks are **not** in OMOP — a segmentation has nowhere to live in a
 cohort query — so they reach the project as **data enrichment**: after the image pull,
 `upload-prostate-labels` writes the whole-gland mask (`label_*`) and the zonal mask (`zonal_*`)
-into every scan's `NIFTI` resource on every trust's XNAT. The smoke does all of it:
+into every scan's `NIFTI` resource on every trust's XNAT. The end-to-end smoke test (`e2e_smoke_prostate`) does all of it:
 
 ```bash
 make -C fl-tutorials download-prostate-data FOLDS=0         # the labels + zonal labels (+ images)
@@ -114,7 +114,8 @@ make -C fl-tutorials upload-prostate-labels FLIP_PROJECT_ID=<uuid> \
 ```
 
 Or upload `app/` by hand in the UI (`query.sql` is the cohort), run the enrichment, confirm it, and
-train. `app/config.toml` carries the platform's round budget.
+train. `app/config.toml` carries the platform's round budget. The UI steps are in the user guide's
+[Data Enrichment](../../../../docs/source/user-guides/user-data-enrichment.rst) page.
 
 ## Data on the platform
 
@@ -133,7 +134,7 @@ and raises, listing the files, when none of these singles one out — a broken p
 coin toss. The masks are then the `label_` / `zonal_` siblings of the chosen image. Image and masks
 are paired **by affine, not by array index** (`app/dataset.py`): XNAT's dcm2niix stores volumes with
 the row axis reversed relative to the `.mha`-derived masks, and reading both through `Orientationd`
-puts them on one grid (`tests/test_prostate_dataset_orientation.py` pins it).
+puts them on one grid (`fl-tutorials/tests/test_prostate_dataset_orientation.py` pins it).
 
 The simulator reads the same shape from disk: `prepare-prostate-local-data` writes
 `data/prostate/images/<accession>/scans/<n>-<Description>/{input,label,zonal}_<accession>_<mod>.nii.gz`
@@ -145,21 +146,23 @@ selection and mask pairing exercised locally are the ones that run on a trust.
 Training is configured by a **dataset fingerprint** (per-case spacing, cropped shape and foreground
 intensity statistics) and the **experiment plan** derived from it (target spacing, patch and batch
 size, normalisation, U-Net topology). `calculate_dataset_fingerprint_segmentation.py` — nnU-Net v2's
-extractor and planner, adapted — produces both from the partitioned site folders:
+extractor and planner, adapted — produces both from the partitioned site folders.
 
-```bash
-uv sync --group planning          # nnunetv2 and its dependencies, for the planner only
-make plan                         # pooled over data/prostate/sites/{ZGT,PCNN,RUMC}; copies the plan into app/
-make plan PLAN_SITES=../../../data/prostate/sites/RUMC   # one site, for comparison
-```
-
-`make plan` needs the dcm2niix-converted site tree
+**Prerequisite:** `make plan` needs the dcm2niix-converted site tree
 (`download-prostate-data` → `convert-prostate-to-dicom` → `convert-prostate-to-nifti` →
 `partition-prostate-data`; the NIfTI step runs the platform's own dcm2niix image in Docker). Without
 Docker, `prepare-prostate-local-data PROSTATE_SITE_TREE=data/prostate/local_sites` lays a
 SimpleITK-converted tree out in the same shape, and `make plan PLAN_SITES=…/local_sites/*` gives
 the same plan: the fingerprint reads only zooms, cropped shapes and intensities, none of which depend
 on the storage order.
+
+Then, from this tutorial's directory:
+
+```bash
+uv sync --group planning          # nnunetv2 and its dependencies, for the planner only
+make plan                         # pooled over data/prostate/sites/{ZGT,PCNN,RUMC}; copies the plan into app/
+make plan PLAN_SITES=../../../data/prostate/sites/RUMC   # one site, for comparison
+```
 
 **Make one plan from all sites together and give every site the same file.** Here is what you get
 when each site is planned on its own, on PI-CAI fold 0 (`t2w`, `--gpu-memory-GB 24`, the Makefile
@@ -184,47 +187,60 @@ slices. A step then needs about 12 GiB in bf16. A smaller budget gives a smaller
 a 2 × 2 grid to cover the crop and actually uses more memory (8–12 patches of `[16, 320, 320]` at
 8 GB, which no longer fits on a 24 GB GPU for the deepest studies).
 
-**Provenance of the committed plan** (`app/nnUNetPlans_segmentation.json`), regenerated 2026-10-05:
-the canonical dcm2niix route over **PI-CAI fold 0** — `download-prostate-data FOLDS=0` →
-`convert-prostate-to-dicom` (t2w/adc/hbv) → `convert-prostate-to-nifti`
-(`ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724`) → `partition-prostate-data` → `make plan`
-pooled over `sites/{ZGT,PCNN,RUMC}` = 76 + 69 + 155 = 300 studies, `--modality t2w`,
-`--gpu-memory-GB 24`. Result: median spacing
-`[3.0, 0.5, 0.5]`, median shape `[21, 383, 383]`, patch `[24, 384, 384]`, seven stages
-`[32, 64, 128, 256, 320, 320, 320]`, kernels `[1,3,3] [1,3,3] [3,3,3] ×5`, strides
-`[1,1,1] [1,2,2] [1,2,2] [2,2,2] [2,2,2] [1,2,2] [1,2,2]`, foreground mean/std 214.5 / 116.1 — the
-pooled row of the table above. As an `NnUNetDynUNet` that is 44.6 M parameters with five auxiliary
-outputs. Record the route, cohort, budget and date here whenever the plan is regenerated.
+**Provenance of the committed plan** (`app/nnUNetPlans_segmentation.json`). Record the route, cohort,
+budget and date here whenever the plan is regenerated.
+
+- **Regenerated:** 2026-10-05
+- **Cohort:** PI-CAI fold 0, pooled over `sites/{ZGT,PCNN,RUMC}` = 76 + 69 + 155 = 300 studies
+- **Route (canonical dcm2niix):** `download-prostate-data FOLDS=0` → `convert-prostate-to-dicom` (t2w/adc/hbv) →
+  `convert-prostate-to-nifti` (`ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724`) → `partition-prostate-data` → `make plan`
+- **Planner flags:** `--modality t2w`, `--gpu-memory-GB 24`
+- **Result** (the pooled row of the table above): median spacing `[3.0, 0.5, 0.5]`, median shape `[21, 383, 383]`,
+  patch `[24, 384, 384]`; seven stages `[32, 64, 128, 256, 320, 320, 320]`; kernels `[1,3,3] [1,3,3] [3,3,3] ×5`;
+  strides `[1,1,1] [1,2,2] [1,2,2] [2,2,2] [2,2,2] [1,2,2] [1,2,2]`; foreground mean/std 214.5 / 116.1
+- **As an `NnUNetDynUNet`:** 44.6 M parameters with five auxiliary outputs
 
 ### From the plan to a MONAI network
 
 The platform's FL images carry MONAI but not `nnunetv2`, and an app must not install packages at run
 time, so `app/models.py` builds the network with MONAI instead: `NnUNetDynUNet`, a subclass of
-MONAI's `DynUNet`, from the plan's `arch_kwargs` — `kernel_sizes` → `kernel_size`, `strides` →
-`strides` (and `strides[1:]` → `upsample_kernel_size`), `features_per_stage` → `filters`,
-`conv_bias` → `conv_bias`, instance norm and leaky ReLU as planned, and `n_stages - 2` →
-`deep_supr_num` (nnU-Net supervises every decoder resolution but the lowest). A plan DynUNet cannot
-build faithfully — a residual encoder, a stage with other than two convolutions — raises rather than
-being approximated.
+MONAI's `DynUNet`, built from the plan's `arch_kwargs`:
+
+| plan (`arch_kwargs`) | `DynUNet` argument |
+| --- | --- |
+| `kernel_sizes` | `kernel_size` |
+| `strides` | `strides` |
+| `strides[1:]` | `upsample_kernel_size` |
+| `features_per_stage` | `filters` |
+| `conv_bias` | `conv_bias` |
+| `n_stages - 2` | `deep_supr_num` (nnU-Net supervises every decoder resolution but the lowest) |
+
+Instance norm and leaky ReLU are used as planned. A plan that DynUNet cannot build faithfully (a residual
+encoder, or a stage with other than two convolutions) raises an error rather than being approximated.
 
 ## Metrics and best-model selection
 
-Per client and round: `train_loss`, `val_loss`, `val_dice_mean` and the per-zone `val_dice_wg`,
-`val_dice_pz`, `val_dice_tz` (whole gland, PZ, TZ), each also as a per-epoch series
-(`<name>@epoch.x_<N>`). The evaluate phase scores the test split **per volume** with sliding-window
-inference (`test_loss`, `test_dice_mean`, `test_dice_wg/pz/tz`); note that the training and validation
-Dice `train_seg` reports are per **patch** averages, so the two are not directly comparable. The
-aggregated `test_dice_mean` selects the best global model (`best_FL_global_model.pt`, alongside the
-final one) — `best-model-metric` in `config.toml`.
+Reported per client and round:
+
+- **Training:** `train_loss`, `val_loss`, `val_dice_mean` and the per-zone `val_dice_wg`, `val_dice_pz`,
+  `val_dice_tz` (whole gland, PZ, TZ). Each is also reported as a per-epoch series (`<name>@epoch.x_<N>`).
+- **Evaluate phase:** `test_loss`, `test_dice_mean`, `test_dice_wg/pz/tz`, scored **per volume** on the test
+  split with sliding-window inference.
+
+The training and validation Dice that `train_seg` reports are per-**patch** averages, so they are not
+directly comparable with the per-volume test Dice.
+
+The aggregated `test_dice_mean` selects the best global model (`best_FL_global_model.pt`, saved alongside
+the final one). The selecting metric is `best-model-metric` in `config.toml`.
 
 ## Differential privacy
 
-Same mechanism as the spleen tutorial: `flip.flower.privacy.flip_local_dp_mod` clips each client's
+Same mechanism as the [spleen tutorial](../3d_spleen_segmentation/README.md) (background: [Privacy controls on model updates](../../../../docs/source/components/component-fl-privacy.rst)): `flip.flower.privacy.flip_local_dp_mod` clips each client's
 update to `dp-clipping-norm` and adds Gaussian noise calibrated to (`dp-epsilon`, `dp-delta`) before
 the reply leaves the SuperNode; `dp-enabled = false` switches it off. DynUNet with affine instance
 norm has only floating-point tensors, so every array is privatised.
 
-## Where the reference trainer went
+## Reference (standalone) trainer
 
 `nnunet_train.py`, `nnunet_infer.py` and `network.py` stay at the tutorial root as the standalone
 (non-federated) trainer this app was ported from. They are not runnable on the platform — they need

@@ -5,13 +5,14 @@ Federated training of a small **multi-layer perceptron (MLP)** that predicts **t
 visit history — on the **Flower** backend (`ClientApp` / `ServerApp`).
 
 This is the Flower twin of the FLARE
-[`ehr_risk_prediction`](../../../nvflare/tabular_classification/ehr_risk_prediction) tutorial, and
-FLIP's first **tabular / EHR-only** example. The whole cohort arrives through `flip.get_dataframe`
-(arbitrary SQL over each trust's OMOP CDM database); **no imaging is fetched** — no Orthanc, no XNAT,
-no PACS pull, no data-enrichment step — and **CPU is enough** to train it. The data model, features,
-label, preprocessing and network are identical to the FLARE tutorial; see
-[its README](../../../nvflare/tabular_classification/ehr_risk_prediction/README.md) for the full
-treatment of those. This page focuses on the **Flower-specific mechanics** and how to run it.
+[`ehr_risk_prediction`](../../../nvflare/tabular_classification/ehr_risk_prediction/README.md) tutorial, and
+FLIP's first **tabular / EHR-only** example.
+
+- The whole cohort arrives through `flip.get_dataframe` (arbitrary SQL over each trust's OMOP CDM database).
+- **No imaging is fetched**: no Orthanc, no XNAT, no PACS pull, no data-enrichment step.
+- **CPU is enough** to train it.
+
+The data model, features, label, preprocessing and network are identical to the FLARE tutorial, whose README covers them in full. This page covers the **Flower-specific mechanics** and how to run it.
 
 ## At a glance
 
@@ -28,7 +29,7 @@ treatment of those. This page focuses on the **Flower-specific mechanics** and h
 
 ## Layout
 
-```
+```text
 app/
   client_app.py          # ClientApp: @app.train / @app.evaluate — fetches the cohort, trains, reports
   server_app.py          # ServerApp: FedAvg loop + best-model save + results upload (from the standard template)
@@ -42,12 +43,15 @@ pyproject.toml           # flwr app definition + run-config defaults (incl. DP k
 query.sql                # the OMOP cohort query (identical to the FLARE copy)
 ```
 
-`server_app.py` and `strategy.py` are copied byte-for-byte from the
-[`fl-apps/flower/standard`](../../../../fl-apps/flower/standard) template (CI enforces this via
-`fl-tutorials/tests/test_flower_platform_parity.py`; `scripts/check_tutorial_sync.sh` pins the three
-files shared with the FLARE twin — `feature_engineering.py`, `models.py`, `query.sql`), so all the
-platform telemetry, best-model selection and `min_clients` wiring come from the shared template — this
-tutorial only supplies `client_app.py`, `task.py` and the shared feature/model code.
+This tutorial only supplies `client_app.py`, `task.py` and the feature/model code it shares with the FLARE twin.
+
+`server_app.py` and `strategy.py` are byte-for-byte copies of the
+[`fl-apps/flower/standard`](../../../../fl-apps/flower/standard) template. Platform telemetry, best-model selection and `min_clients` wiring therefore all come from that template. Do not edit these files here.
+
+CI keeps the copies in sync:
+
+- `fl-tutorials/tests/test_flower_platform_parity.py` checks the two template files.
+- `scripts/check_tutorial_sync.sh` checks the three files shared with the FLARE twin: `feature_engineering.py`, `models.py` and `query.sql`.
 
 ## Configuration: two files
 
@@ -57,13 +61,13 @@ tutorial only supplies `client_app.py`, `task.py` and the shared feature/model c
   because the deployed bundle's `pyproject.toml` comes from the base template, not from here.
 - **`app/config.toml`** — Flower run-config overrides that fl-api-flower feeds to
   `flwr run --run-config` on a platform submit: `num-server-rounds = 5` and `best-model-metric = "test_auroc"`.
-  A tutorial run (`run-tutorial`, or `make submit` on `fl-services/flower`) uses `pyproject.toml`'s values instead (FLIP#1432).
+  A tutorial run (`run-tutorial`, or `make submit` on `fl-services/flower`) uses `pyproject.toml`'s values instead.
 
-> `flip-utils` is deliberately **not** declared as a dependency in `pyproject.toml` — a local
-> `flwr run` still runtime-installs an app's declared deps and prepends them to `sys.path`, so
-> declaring it would pull a PyPI release over the flip-utils the run should use (FLIP#767). On the
-> platform nothing installs at run time (FLIP#1418) and the app imports the FL image's copy; pick
-> up a flip-utils change on the compose stacks with `make build-fl FL_BACKEND=flower`.
+> `flip-utils` is deliberately **not** declared as a dependency in `pyproject.toml`.
+> A local `flwr run` installs an app's declared dependencies at run time and puts them first on
+> `sys.path`, so declaring it would replace the flip-utils the run should use with a PyPI release
+> (FLIP#767). On the platform nothing is installed at run time: the app imports the FL image's copy.
+> To pick up a flip-utils change on the compose stacks, run `make build-fl FL_BACKEND=flower`.
 
 ## The model and cohort
 
@@ -106,16 +110,20 @@ rounds only — `@app.evaluate` is untouched.
 | `dp-epsilon`       | `10.0`  | Privacy budget — smaller means more privacy and more noise |
 | `dp-delta`         | `1e-5`  | Probability the guarantee fails outright |
 
-To override per run without editing the app, pass `--run-config` to `sim-tutorial.sh` (what
-`make run-tutorial` runs); it forwards everything after the tutorial name to `flwr run`:
-`bash fl-tutorials/flower/sim-tutorial.sh ehr_risk_prediction --run-config "dp-enabled=false"`.
+To override a value for one run without editing the app, pass `--run-config` to `sim-tutorial.sh`, the script `make run-tutorial` runs. It forwards everything after the tutorial name to `flwr run`:
+
+```bash
+bash fl-tutorials/flower/sim-tutorial.sh ehr_risk_prediction --run-config "dp-enabled=false"
+```
 
 > ⚠️ The DP defaults are **demonstration values, not a privacy budget.** `dp-clipping-norm` is
 > sized to this model's update so clipping does not throttle training, but the noise comes from
 > `dp-sensitivity` alone, which is negligible beside an update of that norm: the configured
 > `dp-epsilon` is not the guarantee these runs get until the noise is calibrated to the clipping norm
 > (FLIP#1760). There is also no cross-round composition accounting, and noise does not average down
-> with only a handful of trusts. See the xray tutorial's DP section for the full discussion.
+> with only a handful of trusts. See the
+> [xray tutorial's DP section](../../image_classification/xray_classification/README.md#differential-privacy)
+> for the full discussion.
 
 ## Data
 
@@ -149,19 +157,17 @@ make -C fl-tutorials download-synthea-data FL_BACKEND=flower           # once
 make -C fl-tutorials run-tutorial TUTORIAL=ehr_risk_prediction FL_BACKEND=flower
 ```
 
-### On the platform (or `make e2e_smoke`)
+### On the platform (or `make e2e_smoke_ehr`)
 
-Upload [`app/`](app) as the model files of a **`standard`**-job-type model and submit
-[`query.sql`](query.sql) as the project's cohort query. The cohort fetches no imaging, so create the
-project with **"Includes imaging data" turned off** (`has_imaging=false`): the hub then skips the
-imaging stage entirely — no XNAT project at the trusts, no PACS pull — and the project page shows no
-imaging status. Turning it **on** would reject this cohort at submission: an imaging project's
-cohort query must return an `accession_id` column, and this one has none. As an end-to-end smoke
-against a running stack — the `e2e_smoke_ehr` target passes `--no-imaging` for you, **no enrichment
-flags**:
+1. Load the Synthea data into each trust's OMOP database (see [Data](#data)).
+2. Create the project with **"Includes imaging data" turned off** (`has_imaging=false`). The hub then skips the imaging stage entirely: no XNAT project at the trusts, no PACS pull, and no imaging status on the project page. Turning it **on** would reject this cohort at submission, because an imaging project's cohort query must return an `accession_id` column and this one has none.
+3. Submit [`query.sql`](query.sql) as the project's cohort query.
+4. Upload [`app/`](app) as the model files of a **`standard`**-job-type model.
+
+To run the same flow as an end-to-end smoke against a running stack, use the `e2e_smoke_ehr` target. It passes `--no-imaging` for you and needs **no enrichment flags**:
 
 ```bash
 make e2e_smoke_ehr FL_BACKEND=flower
 ```
 
-(On the dev stack, run `make -C trust load-synthea-ehr` first so the query returns data.)
+(On the dev stack, load the data first, as in step 1 above.)
