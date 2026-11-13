@@ -223,6 +223,18 @@ class CohortSnapshotState(StrEnum):
     FAILED = "failed"
 
 
+class CohortDraftStatus(StrEnum):
+    """Where one cohort SQL drafting request (FLIP#1556) stands in the monthly allowance.
+
+    RESERVED holds a place in the allowance while the model runs. A validated draft turns it CONSUMED;
+    anything else (clarification, decline, error, an abandoned request) turns it RELEASED, uncharged.
+    """
+
+    RESERVED = "reserved"
+    CONSUMED = "consumed"
+    RELEASED = "released"
+
+
 class XNATImageStatus(StrEnum):
     """Status of the XNAT imaging project."""
 

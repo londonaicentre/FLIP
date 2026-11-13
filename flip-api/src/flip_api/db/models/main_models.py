@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Annotated, Optional
 from uuid import UUID, uuid4
 
@@ -22,6 +22,7 @@ from sqlmodel import Field, Relationship, SQLModel
 from flip_api.domain.schemas.actions import ModelAuditAction, ProjectAuditAction, TrustAuditAction
 from flip_api.domain.schemas.file import FileUploadStatus
 from flip_api.domain.schemas.status import (
+    CohortDraftStatus,
     DecisionMaker,
     JobStatus,
     ModelStatus,
@@ -459,3 +460,35 @@ class CohortSnapshotStatus(SQLModel, table=True):
     query_hash: str | None = Field(default=None)
     snapshot_at: datetime = Field()
     created_at: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
+
+
+class CohortDraftAllowance(SQLModel, table=True):
+    """One row per user per UTC month for cohort SQL drafting (FLIP#1556).
+
+    It holds no counter: its row lock serialises a user's reservations across replicas, so two
+    concurrent requests cannot both take the last draft of the month. The count is read from
+    ``cohort_draft_request``.
+    """
+
+    __tablename__ = "cohort_draft_allowance"  # type: ignore
+    user_id: UUID = Field(primary_key=True)
+    period_start: date = Field(primary_key=True)
+
+
+class CohortDraftRequest(SQLModel, table=True):
+    """One cohort SQL drafting request (FLIP#1556): its place in the monthly allowance.
+
+    Metadata only. The description and the model's output are never stored. The idempotency key is
+    unique per user, so a retried request is not charged twice. Times are naive UTC.
+    """
+
+    __tablename__ = "cohort_draft_request"  # type: ignore
+    __table_args__ = (UniqueConstraint("user_id", "idempotency_key", name="uq_cohort_draft_request_user_key"),)
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    user_id: UUID = Field(index=True)
+    project_id: UUID = Field(foreign_key="projects.id")
+    idempotency_key: str = Field(max_length=128)
+    period_start: date = Field()
+    status: CohortDraftStatus = Field(default=CohortDraftStatus.RESERVED)
+    created_at: datetime = Field()
+    updated_at: datetime = Field()
