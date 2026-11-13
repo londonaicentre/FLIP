@@ -25,7 +25,7 @@ How releases work
 - A release is a git tag of the form ``vX.Y.Z``, cut from ``main``. Every container image is rebuilt and published
   with that tag, so a site can run exactly that release.
 - The ``flip-utils`` Python package is released to PyPI with the same version number, under a separate
-  ``flip-utils-vX.Y.Z`` GitHub release.
+  ``flip-utils-vX.Y.Z`` GitHub release that lists only the changes to the package.
 - The Central Hub reports the release it runs on its ``/api/health`` endpoint. Trusts should run the same release as
   their hub.
 

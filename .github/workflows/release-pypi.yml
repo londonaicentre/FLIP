@@ -112,6 +112,8 @@ jobs:
           git tag -a "$TAG" -m "Release $TAG"
           git push origin "$TAG"
 
+      # The notes list only the pull requests that changed flip-utils/, not the platform's
+      # curated header or its full changelog: those belong to the v<X.Y.Z> release (release.yml).
       - name: Prepare release notes
         if: steps.check_tag.outputs.skip == 'false'
         id: notes
@@ -119,42 +121,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          VERSION="${{ steps.version.outputs.version }}"
           TAG="${{ steps.version.outputs.tag }}"
-          # Match only this artefact's tags, so the changelog spans flip-utils history rather than
-          # whatever the platform released most recently. The `|| true` is load-bearing under
-          # `set -o pipefail`: the tag for THIS release already exists by now (created above), so on
-          # the first prefixed release grep filters the only match away and exits 1 — which would
-          # kill the step immediately after an irreversible PyPI publish. Empty is a valid answer
-          # here and is handled by the ${PREV_TAG:-initial release} default below.
+          # Match only this artefact's tags. The `|| true` is load-bearing under `set -o pipefail`:
+          # the tag for THIS release already exists by now (created above), so on the first
+          # prefixed release grep filters the only match away and exits 1 — which would kill the
+          # step immediately after an irreversible PyPI publish. Empty is a valid answer.
           PREV_TAG=$(git tag --list 'flip-utils-v*.*.*' | sort -V | grep -v "^${TAG}$" | tail -n1 || true)
 
-          # Strip the license comment block and substitute placeholders.
-          # The range delimiters are anchored to whole lines (`^<!--$` / `^-->$`) because only the
-          # license block spans lines that way. The template's other comments are single-line
-          # `<!-- ... -->`, and an unanchored `/^<!--/,/-->/` opens a range on one of those that
-          # does not close until the NEXT comment — silently eating every section in between.
-          HEADER=$(sed '/^<!--$/,/^-->$/d' "$GITHUB_WORKSPACE/.github/RELEASE_NOTES_TEMPLATE.md" \
-            | sed "s/{{PROJECT}}/flip-utils/g" \
-            | sed "s/{{VERSION}}/${VERSION}/g" \
-            | sed "s/{{TAG}}/${TAG}/g" \
-            | sed "s/{{PREV_TAG}}/${PREV_TAG:-initial release}/g")
-
-          # Generate changelog from GitHub API (respects .github/release.yml categories)
-          API_ARGS=(-X POST
-            -f "tag_name=${TAG}"
-            -f "target_commitish=${{ github.sha }}")
-          if [[ -n "$PREV_TAG" ]]; then
-            API_ARGS+=(-f "previous_tag_name=${PREV_TAG}")
-          fi
-          GENERATED=$(gh api "repos/${{ github.repository }}/releases/generate-notes" \
-            "${API_ARGS[@]}" --jq '.body' 2>/dev/null || echo "")
-
-          # Combine header + generated changelog into a single notes file
-          printf '%s\n\n%s\n' "$HEADER" "$GENERATED" > /tmp/release_notes.md
+          bash "$GITHUB_WORKSPACE/.github/scripts/flip-utils-release-notes.sh" \
+            "${{ steps.version.outputs.version }}" "$TAG" "$PREV_TAG" "${{ github.sha }}" > /tmp/release_notes.md
 
           echo "notes_file=/tmp/release_notes.md" >> "$GITHUB_OUTPUT"
 
+      # --latest=false: "Latest" on the releases page is the platform release, which sites follow.
       - name: Create GitHub Release
         if: steps.check_tag.outputs.skip == 'false'
         env:
@@ -163,4 +142,5 @@ jobs:
           gh release create "${{ steps.version.outputs.tag }}" \
             --title "flip-utils v${{ steps.version.outputs.version }}" \
             --notes-file "${{ steps.notes.outputs.notes_file }}" \
+            --latest=false \
             dist/*
