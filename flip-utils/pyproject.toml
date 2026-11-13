@@ -79,10 +79,10 @@ nvflare = [
     # excludes 36.0.0).
     "kubernetes>=33.1.0,<36",
 ]
-# Floor matches flwr/base:1.42.0 and fl-api-flower; the Flower fl-base keeps flwr/base's flwr, which the
+# Floor matches flwr/base:1.43.0 and fl-api-flower; the Flower fl-base keeps flwr/base's flwr, which the
 # locked version must equal.
 flower = [
-    "flwr>=1.42.0",
+    "flwr>=1.43.0",
 ]
 # Full dependencies for running FL jobs (includes ML frameworks); no FL backend, add one of the above.
 full = [
