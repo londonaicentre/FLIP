@@ -17,8 +17,6 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
-import pytest
-
 from fl_api import app as app_module
 from fl_api.schemas import ClientInfoModel, ServerInfoModel
 
