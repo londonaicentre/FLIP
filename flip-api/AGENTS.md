@@ -42,9 +42,9 @@ Central Hub REST API. FastAPI + psycopg2 + SQLModel (sync sessions). Handles use
 
 ```bash
 make test          # ruff + mypy + pytest (unit + integration)
-make unit_test     # ruff + mypy + pytest unit + step function tests (--skip-client)
+make unit_test     # ruff + mypy + pytest unit + step function tests
 make integration_test  # Integration tests only
-make local_test    # Tests without Docker (--skip-client --skip-db)
+make local_test    # Tests without Docker (same suite as unit_test)
 make lint          # ruff check --fix (in Docker)
 make mypy          # mypy type check (in Docker)
 make build         # docker compose build

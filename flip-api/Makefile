@@ -69,16 +69,15 @@ local_lint:
 	$(lint_command)
 local_mypy:
 	$(mypy_command)
+# The unit suite only: the integration suite needs Docker for Testcontainers.
 local_test:
-	$(lint_command) && $(mypy_command) && $(test_coverage_html_command) --skip-client --skip-db
+	$(lint_command) && $(mypy_command) && $(test_coverage_html_command_unit)
 unit_test:
-	$(lint_command) && $(mypy_command) && $(test_coverage_html_command_unit) --skip-client
+	$(lint_command) && $(mypy_command) && $(test_coverage_html_command_unit)
 # Integration tests boot a throwaway Postgres via Testcontainers (see
-# tests/integration/conftest.py). --skip-client stays so the AWS-Cognito tests
-# (out of scope for B1, see tests/integration/test_user_registration_real_api.py)
-# don't try to call boto3.
+# tests/integration/conftest.py).
 integration_test:
-	$(lint_command) && $(mypy_command) && $(test_coverage_html_command_integration) --skip-client
+	$(lint_command) && $(mypy_command) && $(test_coverage_html_command_integration)
 build:
 	$(docker_command) build $(service_name)
 restart: down up
