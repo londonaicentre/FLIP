@@ -111,7 +111,7 @@
                                         row.file.status === FileUploadStatus.INFECTED && 'ring-red-600 dark:ring-red-500',
                                     ]"
                                 >
-                                    <div class="relative flex items-center justify-center w-full h-full text-gray-700 bg-gray-100 border border-gray-300 rounded-full shadow dark:bg-dark-surface dark:text-gray-300 dark:border-dark-border-strong text-[10px]">
+                                    <div class="relative flex items-center justify-center w-full h-full text-gray-700 bg-gray-100 border border-gray-300 rounded-full shadow dark:bg-dark-surface dark:text-gray-300 dark:border-dark-border-strong text-2xs">
                                         <Transition name="fade" mode="out-in">
                                             <AiLoader v-if="row.file.status === FileUploadStatus.UPLOADING" small data-test="file-upload-status-uploading" aria-label="Uploading" />
                                             <!-- Its own mark, not the upload spinner: the bytes are safely

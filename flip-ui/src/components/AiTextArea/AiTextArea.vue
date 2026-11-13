@@ -46,7 +46,7 @@
                     :placeholder="placeholder"
                     rows="5"
                     class="block w-full text-sm text-gray-700 dark:text-gray-300 dark:bg-dark-raised border-0 resize-y focus:ring-0"
-                    :class="errorMessage ? 'placeholder-red-500/50' : 'placeholder:text-gray-400'"
+                    :class="errorMessage ? 'placeholder-red-500/50' : 'placeholder:text-gray-500 dark:placeholder:text-gray-300/70'"
                     v-bind="inputProps"
                     @input="handleChange"
                     @blur="handleBlur"

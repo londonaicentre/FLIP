@@ -15,7 +15,7 @@
     <div
         class="fixed inset-0 z-10 flex items-start justify-end p-6 px-4 py-6 pointer-events-none"
     >
-        <div class="w-full max-w-md p-2">
+        <div class="w-full max-w-md p-2" aria-live="polite">
             <TransitionGroup
                 enter-active-class="transition duration-300 ease-out"
                 enter-from-class="transform scale-50 opacity-0"
@@ -29,6 +29,7 @@
                     v-for="notification in sortedNotifications"
                     :key="notification.id"
                     class="flex w-full max-w-md p-2 mx-auto"
+                    :role="notification.type === 'error' ? 'alert' : undefined"
                     data-test="snackbar"
                 >
                     <div class="flex items-center w-full max-w-md bg-white dark:bg-dark-canvas dark:ring-white/20 rounded-lg shadow-lg dark:shadow-white/10 pointer-events-auto ring-1 ring-black ring-opacity-5">
@@ -53,7 +54,7 @@
                         <div class="flex flex-col py-2 space-y-2 border-l border-gray-200 dark:border-dark-border">
                             <button
                                 v-if="notification.actionText && !!notification.action"
-                                class="flex items-center justify-center w-full px-4 py-1 text-sm font-bold rounded-none transition text-primary-500 dark:text-primary-300 hover:text-primary-400 dark:hover:text-primary-400 focus:outline-none"
+                                class="flex items-center justify-center w-full px-4 py-1 text-sm font-bold rounded-none transition text-primary-500 dark:text-primary-300 hover:text-primary-400 dark:hover:text-primary-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 dark:focus-visible:ring-primary-400"
                                 data-test="snackbar-action-button"
                                 @click="() => {
                                     notification.action?.();
@@ -64,7 +65,7 @@
                             </button>
                             <hr v-if="notification.actionText && notification.action" class="dark:border-dark-border">
                             <button
-                                class="flex items-center justify-center w-full px-4 py-1 text-sm font-bold text-gray-500 transition rounded-none hover:text-gray-600 focus:outline-none dark:text-gray-300 dark:hover:text-gray-200"
+                                class="flex items-center justify-center w-full px-4 py-1 text-sm font-bold text-gray-500 transition rounded-none hover:text-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 dark:focus-visible:ring-primary-400 dark:text-gray-300 dark:hover:text-gray-200"
                                 data-test="snackbar-dismiss-button"
                                 @click="() => {
                                     remove(notification.id)
