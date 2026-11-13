@@ -413,15 +413,16 @@ variable "cohort_draft_enabled" {
 variable "cohort_draft_bedrock_model_id" {
   description = <<-EOT
     Bedrock model ID or cross-Region inference profile ID flip-api drafts with
-    (COHORT_DRAFT_BEDROCK_MODEL_ID). The default matches flip-api's and is NOT
-    offered on demand in eu-west-2: there it needs a profile
-    (eu.anthropic.claude-sonnet-5-5 or global.anthropic.claude-sonnet-5-5), or an
-    in-Region model (anthropic.claude-opus-5-5 or anthropic.claude-sonnet-5; not
-    Claude 4.6 or older, which reject the API version the SDK sends). Which one
-    is an information-governance decision.
+    (COHORT_DRAFT_BEDROCK_MODEL_ID). The default matches flip-api's: Claude Opus
+    5.5 on demand in eu-west-2, so drafting is processed in the UK only. Claude
+    Sonnet 5.5 is offered there only through a cross-Region profile
+    (eu.anthropic.claude-sonnet-5-5 or global.anthropic.claude-sonnet-5-5), which
+    may process requests outside the UK, so it is not used. Changing the model
+    needs an information-governance check (and not Claude 4.6 or older, which
+    reject the API version the SDK sends).
   EOT
   type        = string
-  default     = "anthropic.claude-sonnet-5-5"
+  default     = "anthropic.claude-opus-5-5"
 
   validation {
     condition     = can(regex("^([a-z-]+\\.)?[a-z0-9-]+\\.[A-Za-z0-9.:_-]+$", var.cohort_draft_bedrock_model_id))

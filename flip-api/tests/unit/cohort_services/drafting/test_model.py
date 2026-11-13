@@ -85,7 +85,7 @@ def test_bedrock_request_shape(monkeypatch):
 
     kwargs = client.messages.create.call_args.kwargs
     settings = get_settings()
-    assert kwargs["model"] == settings.COHORT_DRAFT_BEDROCK_MODEL_ID == "anthropic.claude-sonnet-5-5"
+    assert kwargs["model"] == settings.COHORT_DRAFT_BEDROCK_MODEL_ID == "anthropic.claude-opus-5-5"
     assert kwargs["max_tokens"] == settings.COHORT_DRAFT_MAX_TOKENS
     assert kwargs["system"] == [{"type": "text", "text": "SYSTEM", "cache_control": {"type": "ephemeral"}}]
     assert kwargs["output_config"] == {
@@ -104,8 +104,8 @@ def test_bedrock_request_shape(monkeypatch):
     "model_id",
     ["eu.anthropic.claude-sonnet-5-5", "global.anthropic.claude-sonnet-5-5", "anthropic.claude-sonnet-5"],
 )
-def test_bedrock_sends_an_inference_profile_id_unchanged(monkeypatch, model_id):
-    """eu-west-2 offers the default model only through a cross-region inference profile (FLIP#1556)."""
+def test_bedrock_sends_an_overridden_model_id_unchanged(monkeypatch, model_id):
+    """An override may name a cross-region inference profile or another model; it is sent as it is (FLIP#1556)."""
     monkeypatch.setattr(get_settings(), "COHORT_DRAFT_BEDROCK_MODEL_ID", model_id)
     client = MagicMock()
     client.messages.create.return_value = _message()

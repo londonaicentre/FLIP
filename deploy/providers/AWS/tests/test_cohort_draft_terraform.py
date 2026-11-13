@@ -75,6 +75,17 @@ def test_the_grant_names_no_wildcard_resource():
     assert "aws_bedrock_guardrail.cohort_draft[0].guardrail_arn" in policy
 
 
+def test_the_default_model_is_on_demand_in_region():
+    """UK-only processing: the default is an in-Region foundation model, not a profile, and matches flip-api's."""
+    body = hcl_block(VARIABLES, 'variable "cohort_draft_bedrock_model_id"')
+    default = re.search(r'default\s*=\s*"([^"]+)"', body).group(1)
+    assert default == "anthropic.claude-opus-5-5"
+    profile = re.search(r'cohort_draft_model_is_profile\s*=\s*can\(regex\("([^"]+)"', DRAFT).group(1)
+    assert not re.match(profile.replace("\\\\", "\\"), default)
+    config = (AWS_DIR.parents[2] / "flip-api" / "src" / "flip_api" / "config.py").read_text()
+    assert f'COHORT_DRAFT_BEDROCK_MODEL_ID: str = "{default}"' in config
+
+
 def test_a_profile_grant_is_bound_to_the_profile():
     """Foundation-model ARNs in other Regions are reachable only through the configured inference profile."""
     policy = hcl_block(DRAFT, 'data "aws_iam_policy_document" "cohort_draft"')

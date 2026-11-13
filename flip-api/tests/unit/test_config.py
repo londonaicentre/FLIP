@@ -435,10 +435,10 @@ def test_s3_public_endpoint_tolerates_an_empty_string():
 
 
 def test_cohort_draft_is_off_by_default_with_safe_defaults():
-    """FLIP#1556: the assistant ships off; Claude Sonnet 5.5 on Bedrock in London when turned on."""
+    """FLIP#1556: the assistant ships off; Claude Opus 5.5 on demand in London (UK-only processing)."""
     fields = Settings.model_fields
     assert fields["COHORT_DRAFT_ENABLED"].default is False
-    assert fields["COHORT_DRAFT_BEDROCK_MODEL_ID"].default == "anthropic.claude-sonnet-5-5"
+    assert fields["COHORT_DRAFT_BEDROCK_MODEL_ID"].default == "anthropic.claude-opus-5-5"
     assert fields["COHORT_DRAFT_BEDROCK_REGION"].default == "eu-west-2"
     assert fields["COHORT_DRAFT_MONTHLY_ALLOWANCE"].default == 30
     assert fields["COHORT_DRAFT_GUARDRAIL_ID"].default is None

@@ -444,9 +444,9 @@ class Settings(BaseSettings):
     COHORT_DRAFT_ENABLED: bool = False
     COHORT_DRAFT_PROVIDER: Literal["fake", "bedrock"] = "bedrock"
     # Claude on Amazon Bedrock through the ECS task role (no API key). A model id or a cross-region
-    # inference profile id (eu.…, global.…), sent as it is. The default is not offered on demand in
-    # eu-west-2, only through a profile: the choice is an information-governance one (FLIP#1556).
-    COHORT_DRAFT_BEDROCK_MODEL_ID: str = "anthropic.claude-sonnet-5-5"
+    # inference profile id (eu.…, global.…), sent as it is. The default is Claude Opus 5.5 on demand in
+    # eu-west-2, so drafting is processed in the UK only; changing it is an information-governance decision.
+    COHORT_DRAFT_BEDROCK_MODEL_ID: str = "anthropic.claude-opus-5-5"
     COHORT_DRAFT_BEDROCK_REGION: str = "eu-west-2"
     # Thinking depth for the draft call; tune with the benchmark.
     COHORT_DRAFT_EFFORT: Literal["low", "medium", "high"] = "medium"
