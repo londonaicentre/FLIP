@@ -105,10 +105,8 @@ def retrieve_model_status_from_logs(
         if not ts or not status_in_log or not source.get("model"):
             continue
 
-        # Determine status
-        if (status_in_log.endswith("_COMPLETED") and not trust and not latest_status) or (
-            status_in_log and not latest_status
-        ):
+        # Determine status: hits are newest first, so the first valid one wins unless an error overrides it
+        if not latest_status:
             latest_status = {"modelStatus": status_in_log}
 
         if message == "returned status: dead" or message.startswith("trust exception: "):
