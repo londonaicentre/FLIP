@@ -129,15 +129,11 @@ const twoUsers = (): IProject["users"] => [
     {
         id: "u1",
         email: "a@x",
-        name: "User A",
-        organisation: "Org",
         isDisabled: false
     },
     {
         id: "u2",
         email: "b@x",
-        name: "User B",
-        organisation: "Org",
         isDisabled: false
     }
 ];
