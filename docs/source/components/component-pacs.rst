@@ -43,7 +43,7 @@ configured alongside the AE title, not derived from it.
      - Search — "which study has accession number ABC123?"
      - XNAT to PACS
    * - ``C-MOVE``
-     - "Send that study to the system called ``FLIPXNAT``"
+     - "Send that study to the system called ``FLIP_XNAT``"
      - XNAT to PACS
    * - ``C-STORE``
      - The image transfer itself
@@ -135,7 +135,7 @@ turn out to matter.
 
 .. tip::
 
-   A trust PACS has many AE titles configured, so choose one that names the platform, for example ``FLIPXNAT``. It
+   A trust PACS has many AE titles configured, so choose one that names the platform, for example ``FLIP_XNAT``. It
    must be the same on both sides: the PACS opens the C-STORE with the AE title it has registered, and XNAT's
    receiver rejects any other.
 
@@ -168,7 +168,7 @@ From FLIP, to register on the PACS as a destination:
 .. code-block:: text
 
    Destination node (FLIP XNAT SCP receiver)
-     AE Title:  FLIPXNAT
+     AE Title:  FLIP_XNAT
      IP:        10.0.0.20
      Port:      8104
 
@@ -217,7 +217,7 @@ above), not the settings themselves.
    * - ``XNAT_AETITLE``
      - ``xnat.web.dicomAet``
      - XNAT's own AE title, used for the DICOM receiver, the DQR calling AE and the C-MOVE destination
-     - ``XNAT``
+     - ``FLIP_XNAT``
    * - ``XNAT_PORT``
      - ``xnat.web.dicomPort``
      - DICOM receiver port

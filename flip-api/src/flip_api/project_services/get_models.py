@@ -87,7 +87,6 @@ def get_models(
 
     # Get the models associated with the project
     models, paging_info = get_project_models_service(project_id, session, dict(request.query_params))
-    print(f"Models retrieved for project ID: {project_id}: {models}")
     if not models.data:
         # This is a valid case where no models are found for the project yet
         logger.info(f"No models found for project ID: {project_id}")

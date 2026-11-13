@@ -65,26 +65,15 @@ class TestInvokeModelStatusUpdateEndpoint:
         mock_update.assert_called_once_with(model_id, ModelStatus.INITIATED, mock_db_session)
         mock_add_log.assert_called_once()
 
-    @patch(MOCKED_ADD_LOG_PATH)
     @patch(MOCKED_UPDATE_STATUS_PATH)
-    def test_invoke_update_accepts_legacy_training_started_as_running(
-        self,
-        mock_update: MagicMock,
-        mock_add_log: MagicMock,
-        client: TestClient,
-        model_id: UUID,
-        mock_db_session: MagicMock,
+    def test_invoke_update_rejects_legacy_training_started(
+        self, mock_update: MagicMock, client: TestClient, model_id: UUID
     ):
-        # A pre-rename fl-server image still reports TRAINING_STARTED; the hub must
-        # accept it as RUNNING (#782) because FL images deploy separately from flip-api.
-        mock_update.return_value = ModelStatus.RUNNING
-
+        # The pre-rename name is no longer an alias for RUNNING (#803).
         response = client.put(f"/api/model/{model_id}/status/TRAINING_STARTED")
 
-        assert response.status_code == status.HTTP_200_OK
-        assert response.json() == {"success": "status set"}
-        mock_update.assert_called_once_with(model_id, ModelStatus.RUNNING, mock_db_session)
-        assert "running" in mock_add_log.call_args.args[1].lower()
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        mock_update.assert_not_called()
 
     @patch(MOCKED_ADD_LOG_PATH)
     @patch(MOCKED_UPDATE_STATUS_PATH)

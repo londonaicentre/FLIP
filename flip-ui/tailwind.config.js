@@ -72,7 +72,7 @@ module.exports = {
                 // tokens. See the palette reference for usage rules.
                 dark: {
                     canvas: "#0B1018", // app background / page (deep cool charcoal)
-                    surface: "#0E0B13", // cards, panels, sidebar
+                    surface: "#1A1622", // cards, panels, sidebar: lighter than canvas so cards read as raised
                     raised: "#201A29", // modals, popovers, sticky header, hover
                     inset: "#070509", // input wells, code blocks, table headers (darker than surface so wells read)
                     border: "#2A2336", // default dividers + card borders
@@ -81,9 +81,9 @@ module.exports = {
                 // Status colours, lightened to read on dark surfaces. Render as
                 // the solid colour for text + dot over a low-opacity tint.
                 status: {
-                    approved: "#4ADE80", // success / APPROVED
-                    staged: "#F4BE1D", // warn / STAGED (brand gold)
-                    unstaged: "#F87171", // danger / UNSTAGED
+                    approved: "#34D399", // APPROVED (emerald-400; light mode uses emerald)
+                    staged: "#FBBF24", // STAGED (amber-400; light mode uses amber)
+                    unstaged: "#9CA3AF", // UNSTAGED / draft (gray-400): grey in both themes, never the error red
                     info: "#A9C5DC", // info / data
                 }
             },
@@ -93,9 +93,6 @@ module.exports = {
                 "5xl": "3840px"
             }
         },
-    },
-    variants: {
-        extend: {},
     },
     plugins: [
         require('@tailwindcss/forms'),

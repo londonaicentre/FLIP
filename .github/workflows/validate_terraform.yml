@@ -161,15 +161,13 @@ jobs:
   # (e.g. the Cognito callback_urls / CORS allowlist invariants, which no runtime
   # suite can see — flip-api reads that list from live Cognito, not from this
   # tree; and reconcile_ci_env.py's state mining, which decides what a CI plan is
-  # handed). No AWS calls, no init, no plan. Deps are named explicitly rather than
-  # synced from the lockfile: the tests need only pytest, jinja2 and click,
-  # while the project's dev group pulls ansible-core and pyqt5.
+  # handed). No AWS calls, no init, no plan. Deps are named explicitly rather
+  # than synced from the lockfile: the project's dev group pulls ansible-core
+  # and pyqt5, which this suite does not need.
   #
   # This is the only place the suite runs: the root `make unit_test` does not
-  # reach here — deploy/providers/AWS is not one of the service directories it
-  # walks — and `make -C deploy/providers/AWS test` cannot be used either, since
-  # that Makefile errors at parse time unless AWS_PROFILE matches the target
-  # environment.
+  # reach deploy/providers/AWS, and that directory's Makefile has no `test`
+  # target.
   python-tests:
     name: AWS deploy tests
     runs-on: ubuntu-latest

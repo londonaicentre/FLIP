@@ -101,9 +101,9 @@ torchscript` is consumable by both MAP templates; a directory bundle only by `cl
   normalise either on-disk shape FLIP produces — FLARE's persistence format (a `model` key plus
   optional `train_conf`/`meta_props`, as `PTFileModelPersistor` writes `FL_global_model.pt` and
   `best_FL_global_model.pt`) or a bare state dict (as carried by user-uploaded evaluation
-  checkpoints) — via FLARE's own `PTModelPersistenceFormatManager`, so reading stays faithful to
-  how FLIP itself reads a checkpoint. `load_app_model(app_dir)` instantiates the architecture from
-  `models.py::get_model()`; `load_weights_into_app_model(checkpoint, app_dir, allow_pickle=False)`
+  checkpoints) — told apart as FLARE's `PTModelPersistenceFormatManager` does (a `model` key), without
+  importing NVFLARE, so export needs no FL backend extra (FLIP#1047). `load_app_model(app_dir)`
+  instantiates the architecture from `models.py::get_model()`; `load_weights_into_app_model(checkpoint, app_dir, allow_pickle=False)`
   loads the checkpoint's weights into it with `strict=True` and returns the model in eval mode —
   the assumption the whole packaging path rests on, that the aggregated weights and the declared
   architecture still fit one another.

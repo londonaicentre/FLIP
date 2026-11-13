@@ -27,7 +27,7 @@ data:
   # never a DICOM port. Pointing this at xnat-web sends every C-STORE to a port that Service does
   # not have, which breaks image retrieval on every default K8s install and the C-STORE smoke test.
   ORTHANC__DICOM_MODALITIES: |
-    {"XNAT": {"AET": {{ .Values.xnat.web.dicomAet | default "XNAT" | quote }}, "Host": "xnat-web-dicom", "Port": {{ .Values.xnat.web.dicomPort | default 8104 | quote }}}}
+    {"XNAT": {"AET": {{ .Values.xnat.web.dicomAet | default "FLIP_XNAT" | quote }}, "Host": "xnat-web-dicom", "Port": {{ .Values.xnat.web.dicomPort | default 8104 | quote }}}}
 ---
 apiVersion: v1
 kind: Service

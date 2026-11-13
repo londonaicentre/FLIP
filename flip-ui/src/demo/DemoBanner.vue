@@ -26,14 +26,12 @@
         class="w-full py-1.5 px-3 text-sm font-medium text-center text-white bg-amber-600 dark:bg-amber-700"
         data-test="demo-banner"
     >
-        Read-only demo of FLIP on example data — {{ projectCount }} federated projects,
+        Read-only demo of FLIP on example data — {{ PROJECT_COUNT }} federated projects,
         snapshots captured {{ captureWindow }}.
     </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
-
 import { EARLIEST_CAPTURE_DATE, LATEST_CAPTURE_DATE, PROJECT_COUNT } from "../../mocks/demo/capture-window";
 
 // capture-window.ts only — never the registry (every fixture JSON) nor Mirage —
@@ -45,10 +43,9 @@ const asDate = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString(
     timeZone: "UTC"
 });
 
-const projectCount = PROJECT_COUNT;
 // One date when every project was captured together; a window otherwise, so
 // no half of the exhibit is misdated (the provenance discipline of FLIP#794).
-const captureWindow = computed(() => EARLIEST_CAPTURE_DATE === LATEST_CAPTURE_DATE
+const captureWindow = EARLIEST_CAPTURE_DATE === LATEST_CAPTURE_DATE
     ? asDate(LATEST_CAPTURE_DATE)
-    : `between ${asDate(EARLIEST_CAPTURE_DATE)} and ${asDate(LATEST_CAPTURE_DATE)}`);
+    : `between ${asDate(EARLIEST_CAPTURE_DATE)} and ${asDate(LATEST_CAPTURE_DATE)}`;
 </script>

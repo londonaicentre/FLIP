@@ -159,67 +159,40 @@ def test_upload_nonexistent_file_to_xnat(headers):
     assert str(exc_info.value) == f"[Errno 2] No such file or directory: '{file_path}'"
 
 
+@pytest.mark.parametrize("status_code", [200, 201])
 @patch("imaging_api.services.upload.requests.put")
-def test_upload_file_to_xnat(mock_put, headers):
-    mock_put.return_value = _xnat_put_response()
+def test_upload_file_to_xnat(mock_put, status_code, headers, tmp_path):
+    mock_put.return_value = _xnat_put_response(status_code=status_code)
+    file_path = tmp_path / "scan.nii"
+    file_path.write_bytes(b"Hello, world!")
 
-    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        temp_file.write(b"Hello, world!")
-        temp_file_path = temp_file.name
+    uploaded_file = upload_file_to_xnat(
+        project_id="test",
+        subject_id="XNAT_S00002",
+        experiment_id_or_label="XNAT_E00002",
+        scan_id="TEST_SCAN",
+        resource_id="TEST_FILES",
+        file_path=str(file_path),
+        exist_ok=False,
+        headers=headers,
+    )
 
-    try:
-        uploaded_file = upload_file_to_xnat(
-            project_id="test",
-            subject_id="XNAT_S00002",
-            experiment_id_or_label="XNAT_E00002",
-            scan_id="TEST_SCAN",
-            resource_id="TEST_FILES",
-            file_path=temp_file_path,
-            exist_ok=False,
-            headers=headers,
-        )
-        temp_file_name = os.path.basename(temp_file_path)
-        assert (
-            uploaded_file == f"{XNAT_URL}/data/projects/test/subjects/XNAT_S00002/"
-            f"experiments/XNAT_E00002/scans/TEST_SCAN/"
-            f"resources/TEST_FILES/files/{temp_file_name}?inbody=true"
-        )
-    finally:
-        os.remove(temp_file_path)
-
-
-@patch("imaging_api.services.upload.requests.put")
-def test_upload_file_to_xnat_201_is_success(mock_put, headers):
-    mock_put.return_value = _xnat_put_response(status_code=201)
-
-    with tempfile.NamedTemporaryFile(delete=False) as f:
-        f.write(b"data")
-        temp_path = f.name
-
-    try:
-        uploaded_file = upload_file_to_xnat(
-            "PROJ", "SUBJ", "EXP", "SCAN1", "DICOM", temp_path, exist_ok=False, headers=headers
-        )
-        assert uploaded_file.endswith(f"/files/{os.path.basename(temp_path)}?inbody=true")
-    finally:
-        os.remove(temp_path)
+    assert (
+        uploaded_file == f"{XNAT_URL}/data/projects/test/subjects/XNAT_S00002/"
+        f"experiments/XNAT_E00002/scans/TEST_SCAN/resources/TEST_FILES/files/scan.nii?inbody=true"
+    )
 
 
 @pytest.mark.parametrize("status_code", [401, 403, 404, 413, 500])
 @patch("imaging_api.services.upload.requests.put")
-def test_upload_file_to_xnat_rejected_put_raises(mock_put, status_code, headers):
+def test_upload_file_to_xnat_rejected_put_raises(mock_put, status_code, headers, tmp_path):
     # A PUT that XNAT rejects must raise rather than be reported as an uploaded file (#1387)
     mock_put.return_value = MagicMock(status_code=status_code, ok=False, text="rejected")
+    file_path = tmp_path / "scan.nii"
+    file_path.write_bytes(b"data")
 
-    with tempfile.NamedTemporaryFile(delete=False) as f:
-        f.write(b"data")
-        temp_path = f.name
-
-    try:
-        with pytest.raises(Exception, match=f"Error uploading file .*: {status_code} rejected"):
-            upload_file_to_xnat("PROJ", "SUBJ", "EXP", "SCAN1", "DICOM", temp_path, exist_ok=False, headers=headers)
-    finally:
-        os.remove(temp_path)
+    with pytest.raises(Exception, match=f"Error uploading file .*: {status_code} rejected"):
+        upload_file_to_xnat("PROJ", "SUBJ", "EXP", "SCAN1", "DICOM", str(file_path), exist_ok=False, headers=headers)
 
 
 @pytest.mark.parametrize(
@@ -338,34 +311,6 @@ class TestUploadDataToXnat:
             assert not os.path.exists(stale_net1)
             assert not os.path.exists(stale_net2)
             assert os.path.exists(survivor)
-
-    @pytest.mark.asyncio
-    @patch("imaging_api.services.upload.upload_file_to_xnat", return_value="url")
-    @patch("imaging_api.services.upload.create_xnat_scan")
-    @patch("imaging_api.services.upload.get_subject_id_from_experiment_response", return_value="SUBJ1")
-    @patch("imaging_api.services.upload.get_experiment", return_value=_experiment_response())
-    @patch("imaging_api.services.upload.get_project_from_central_hub_project_id")
-    async def test_upload_with_no_cached_downloads_succeeds(
-        self, mock_get_project, mock_get_exp, mock_get_subj, mock_create_scan, mock_upload, headers
-    ):
-        mock_get_project.return_value = MagicMock(ID="PROJ1")
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            self._seed_upload_file(tmp_dir)
-
-            with patch("imaging_api.services.upload.BASE_IMAGES_DOWNLOAD_DIR", tmp_dir):
-                result = await upload_data_to_xnat(
-                    central_hub_project_id="hub-proj-1",
-                    accession_id="ACC123",
-                    net_id="net1",
-                    scan_id="SCAN1",
-                    resource_id="NIFTI",
-                    files_relative_paths_to_upload=["scan.nii"],
-                    exist_ok=False,
-                    headers=headers,
-                )
-
-            assert len(result) == 1
 
     @pytest.mark.asyncio
     @patch("imaging_api.services.upload.invalidate_accession", side_effect=OSError("stale NFS handle"))

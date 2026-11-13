@@ -141,10 +141,10 @@ make export
 ```
 
 Writes a complete FLARE job to `./fl_job/flip_fedavg/` (`make clean` removes it). The Makefile runs
-`job.py` in the **flip-utils** environment (`full` extra, `diffusion` group), equivalent to:
+`job.py` in the **flip-utils** environment (`nvflare` and `full` extras, `diffusion` group), equivalent to:
 
 ```bash
-uv run --project ../../../../flip-utils --extra full --group diffusion python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 1
+uv run --project ../../../../flip-utils --extra nvflare --extra full --group diffusion python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 1
 ```
 
 ### Local simulation (requires a GPU + the dataset)
