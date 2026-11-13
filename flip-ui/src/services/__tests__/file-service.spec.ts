@@ -40,6 +40,9 @@ const fetchMock = vi.fn();
 
 beforeEach(() => {
     fetchMock.mockReset();
+    httpGet.mockReset();
+    httpDelete.mockReset();
+    httpPost.mockReset();
     global.fetch = fetchMock as unknown as typeof fetch;
 });
 
@@ -70,15 +73,17 @@ const mockPresignedDownload = (blob: Blob) => {
     });
 };
 
+const axiosError = (message: string, status: number) =>
+    Object.assign(new Error(message), {
+        isAxiosError: true,
+        response: { status }
+    });
+
 const mockConfigJson = (payload: unknown) => {
     mockPresignedDownload(new Blob([JSON.stringify(payload)], { type: "application/json" }));
 };
 
 describe("getJobTypeFromConfig", () => {
-    beforeEach(() => {
-        httpGet.mockReset();
-    });
-
     it("returns the job_type from config.json when it is valid", async () => {
         mockConfigJson({ job_type: "diffusion" });
         const result = await getJobTypeFromConfig("model-1", jobTypes);
@@ -104,29 +109,19 @@ describe("getJobTypeFromConfig", () => {
     });
 
     it("falls back to DEFAULT_JOB_TYPE when config.json is not yet uploaded (404)", async () => {
-        httpGet.mockRejectedValueOnce(Object.assign(new Error("not found"), {
-            isAxiosError: true,
-            response: { status: 404 }
-        }));
+        httpGet.mockRejectedValueOnce(axiosError("not found", 404));
         const result = await getJobTypeFromConfig("model-5", jobTypes);
         expect(result).toBe(DEFAULT_JOB_TYPE);
     });
 
     it("propagates non-404 fetch errors so the caller can decide retry policy", async () => {
-        httpGet.mockRejectedValueOnce(Object.assign(new Error("bad gateway"), {
-            isAxiosError: true,
-            response: { status: 502 }
-        }));
+        httpGet.mockRejectedValueOnce(axiosError("bad gateway", 502));
         await expect(getJobTypeFromConfig("model-5b", jobTypes)).rejects.toThrow("bad gateway");
     });
 
 });
 
 describe("resolveModelConfigState", () => {
-    beforeEach(() => {
-        httpGet.mockReset();
-    });
-
     it("reports no change when config.json status matches previous status", async () => {
         const files = [{
             name: "config.json",
@@ -153,10 +148,7 @@ describe("resolveModelConfigState", () => {
     });
 
     it("returns changed:false on transient fetch failure so the next poll can retry", async () => {
-        httpGet.mockRejectedValueOnce(Object.assign(new Error("bad gateway"), {
-            isAxiosError: true,
-            response: { status: 502 }
-        }));
+        httpGet.mockRejectedValueOnce(axiosError("bad gateway", 502));
         const files = [{
             name: "config.json",
             status: FileUploadStatus.COMPLETED
@@ -223,10 +215,6 @@ describe("resolveModelConfigState", () => {
 });
 
 describe("downloadModelFile", () => {
-    beforeEach(() => {
-        httpGet.mockReset();
-    });
-
     it("fetches a presigned URL, downloads the bytes from it, and returns the blob", async () => {
         const blob = new Blob(["payload"]);
         httpGet.mockResolvedValueOnce({
@@ -292,10 +280,6 @@ describe("downloadModelFile", () => {
 });
 
 describe("getModelConfig", () => {
-    beforeEach(() => {
-        httpGet.mockReset();
-    });
-
     it("returns the parsed config when the blob is valid JSON", async () => {
         mockConfigJson({ job_type: "diffusion" });
 
@@ -313,10 +297,7 @@ describe("getModelConfig", () => {
     });
 
     it("returns null when config.json is not yet uploaded (404)", async () => {
-        httpGet.mockRejectedValueOnce(Object.assign(new Error("not found"), {
-            isAxiosError: true,
-            response: { status: 404 }
-        }));
+        httpGet.mockRejectedValueOnce(axiosError("not found", 404));
 
         const result = await getModelConfig("m-1");
 
@@ -340,20 +321,13 @@ describe("getModelConfig", () => {
     it("re-throws non-404 axios errors so callers can retry", async () => {
         // 5xx / network failures must propagate — a silent null would
         // lock the UI to DEFAULT_JOB_TYPE for the rest of the session.
-        httpGet.mockRejectedValueOnce(Object.assign(new Error("bad gateway"), {
-            isAxiosError: true,
-            response: { status: 502 }
-        }));
+        httpGet.mockRejectedValueOnce(axiosError("bad gateway", 502));
 
         await expect(getModelConfig("m-1")).rejects.toThrow("bad gateway");
     });
 });
 
 describe("deleteModelFile", () => {
-    beforeEach(() => {
-        httpDelete.mockReset();
-    });
-
     it("DELETEs the URL and returns the response body", async () => {
         httpDelete.mockResolvedValueOnce({ data: "ok" });
 
@@ -365,10 +339,6 @@ describe("deleteModelFile", () => {
 });
 
 describe("processScannedFile", () => {
-    beforeEach(() => {
-        httpPost.mockReset();
-    });
-
     it("POSTs to the URL and returns the response body", async () => {
         httpPost.mockResolvedValueOnce({ data: "scanned" });
 
