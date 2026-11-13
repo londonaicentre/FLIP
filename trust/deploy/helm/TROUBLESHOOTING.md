@@ -338,7 +338,8 @@ command: ["/bin/sh", "-c", ". /opt/nvflare/startup/start.sh && wait"]
 ### 7.7 AWS Credentials Expired in K8s Secret
 
 **Symptom:** fl-client pod logs show `AccessDenied` when trying to download
-participant kit from S3. The omop-db vocab-load Job (the chart's only AWS-bearing Job) also fails with S3 errors.
+participant kit from S3. (The chart's omop-db vocab-load Job holds no AWS credentials: it loads a
+folder staged onto the node with `make stage-vocab` — chart README, "OMOP core vocabulary".)
 
 **Root Cause:** The K8s Secret `aws-credentials` (mounted by init containers)
 contains stale AWS SSO credentials. SSO sessions expire after 12-24 hours.

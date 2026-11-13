@@ -11,8 +11,8 @@
 
 """Unit tests for sync_k8s_kit.py's generated Helm override — the values whose
 absence or misplacement installs a release that looks healthy and is not: the
-FL-server port-only egress rule (FLIP#593 pt.3), the OMOP vocab-load bucket
-(FLIP#842/843), and flClient.kitHostPath (FLIP#965/#1009).
+FL-server port-only egress rule (FLIP#593 pt.3), the staged OMOP vocabulary's
+node path (FLIP#842/843, #923), and flClient.kitHostPath (FLIP#965/#1009).
 
 The egress rule is PORT-ONLY (FL_SERVER_PORT added to ``allowedEgressPorts``),
 not a resolved-/32 CIDR pin: the FL server's internet-facing NLB has AWS-managed
@@ -26,6 +26,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "sync_k8s_kit.py"
 _spec = importlib.util.spec_from_file_location("sync_k8s_kit", _SCRIPT)
@@ -39,7 +40,7 @@ _FL_KIT = {
     "FL_KIT_SLOT_NUMBER": "0",
     "CENTRAL_HUB_API_URL": "https://stag.flip.aicentre.co.uk/api",
     "FL_BACKEND": "nvflare",
-    "AICENTRE_BUCKET_NAME": "flipstag-aicentre",
+    "OMOP_VOCAB_DIR": "/opt/flip/omop-vocab",
     "FLARE_KIT_DATE": "20260312",
     "NLB_SUBDOMAIN": "fl.stag.flip.aicentre.co.uk",
     "FL_SERVER_PORT": "8002",
@@ -126,46 +127,40 @@ def test_render_override_omits_block_without_fl_port():
     assert "allowedEgressPorts" not in out
 
 
-def test_render_override_sets_vocab_load_bucket_from_kit():
-    """The chart's vocab-load hook is gated on omopDb.vocabLoad.s3Bucket, whose
-    default is empty (the licensed bundle has no public mirror — FLIP#842/843).
-    The override must supply the env's OWN bucket, or the deployment installs
+def test_render_override_sets_the_staged_vocabulary_from_kit():
+    """The chart's vocab-load hook is gated on omopDb.vocabLoad.hostPath, whose
+    default is empty (the licensed bundle has no public mirror — FLIP#842/843, #923).
+    The override must name where the operator staged it, or the deployment installs
     cleanly with no vocabulary and cohort queries silently match nothing."""
     out = sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2")
     # Anchored on newlines, not loose substrings: the nesting IS the meaning here.
     # Emitted one level deeper (e.g. folded into the preceding trustApi block) each
     # fragment would still match, and `trustApi` is additionalProperties:true in
     # values.schema.json — so Helm would silently accept the misplaced key.
-    assert "\nomopDb:\n  vocabLoad:\n    s3Bucket: flipstag-aicentre\n" in out
+    assert "\nomopDb:\n  vocabLoad:\n    hostPath: /opt/flip/omop-vocab\n" in out
 
 
-def test_render_override_omits_vocab_load_without_bucket():
-    """No AICENTRE_BUCKET_NAME in the kit ⇒ no vocabLoad block, leaving the chart's
-    empty default in place (rather than emitting an empty bucket that reads as a
-    configured one)."""
-    kit = {k: v for k, v in _FL_KIT.items() if k != "AICENTRE_BUCKET_NAME"}
+def test_render_override_quotes_a_vocabulary_path_yaml_would_cut_short():
+    """A free-form path is quoted: unquoted, ``#`` would start a comment and the hook mount another folder."""
+    out = sync_k8s_kit.render_override({**_FL_KIT, "OMOP_VOCAB_DIR": "/data/vocab #2024"}, "Trust_K8s", "eu-west-2")
+    assert yaml.safe_load(out)["omopDb"]["vocabLoad"]["hostPath"] == "/data/vocab #2024"
+
+
+def test_render_override_omits_vocab_load_without_a_staged_vocabulary():
+    """No OMOP_VOCAB_DIR in the kit ⇒ no vocabLoad block, leaving the chart's
+    empty default in place."""
+    kit = {k: v for k, v in _FL_KIT.items() if k != "OMOP_VOCAB_DIR"}
     out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
     # Not `"omopDb:" not in out` — that would break spuriously the day an unrelated
-    # omopDb key joins the override. s3Bucket appears nowhere else: the fl-client
-    # section carries only `kitHostPath:` now that the chart never fetches the kit.
+    # omopDb key joins the override.
     assert "vocabLoad" not in out
-    assert "s3Bucket" not in out
 
 
 def test_render_override_can_leave_the_vocab_load_off():
-    """A cluster with no AWS route (AKS, FLIP#1390) must not get the S3 vocab-load hook: it would
-    fail, and as a post-install hook it fails the whole release."""
+    """NO_VOCAB_LOAD=1 (a managed node pool, FLIP#1390) keeps the hook out whatever the kit names: a
+    failing post-install hook fails the whole release."""
     out = sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2", vocab_load=False)
     assert "vocabLoad" not in out
-
-
-def test_only_the_scaffolding_bucket_outside_development_is_flagged():
-    stag = {**_FL_KIT, "AICENTRE_BUCKET_NAME": "flipstag-aicentre"}
-    scaffold = {**_FL_KIT, "AICENTRE_BUCKET_NAME": "flipdev-aicentre"}
-    assert not sync_k8s_kit.is_scaffold_bucket(stag, "stag")
-    # #881: .env.example ships the dev bucket, which no other environment can read.
-    assert sync_k8s_kit.is_scaffold_bucket(scaffold, "lza-stag")
-    assert not sync_k8s_kit.is_scaffold_bucket(scaffold, "development")
 
 
 def test_render_override_carries_the_kits_seed_partition():
@@ -195,14 +190,12 @@ def test_render_override_refuses_a_seed_setting_it_would_read_as_true():
             sync_k8s_kit.render_override({**_FL_KIT, "TRUST_DATA_SEED": value}, "Trust_K8s", "eu-west-2")
 
 
-def test_render_override_treats_a_placeholder_bucket_as_unset():
-    """An uncommented scaffolding placeholder must not reach the chart: the hook would try to
-    read a bucket literally named ``<...>``, fail, and take the whole release down with it
-    (FLIP#881)."""
-    kit = {**_FL_KIT, "AICENTRE_BUCKET_NAME": "<your-environment-aicentre-bucket>"}
+def test_render_override_treats_a_placeholder_vocab_dir_as_unset():
+    """An uncommented scaffolding placeholder must not reach the chart: the hook would mount a
+    path literally named ``<...>``, fail, and take the whole release down with it."""
+    kit = {**_FL_KIT, "OMOP_VOCAB_DIR": "<node-dir-with-the-staged-vocabulary>"}
     out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
     assert "vocabLoad" not in out
-    assert "s3Bucket" not in out
 
 
 def test_render_override_holds_pinned_images_back_from_the_release():
@@ -556,7 +549,7 @@ def test_an_interpreter_without_tomllib_is_a_clear_refusal(tmp_path, monkeypatch
 
 @pytest.mark.parametrize("target", ["sync-kit", "sync-kit-override", "patch-kit-secrets"])
 def test_make_passes_no_vocab_load_through_to_every_sync(target):
-    """NO_VOCAB_LOAD=1 is how an AKS operator keeps the S3 hook out (FLIP#1390); dry-run each target."""
+    """NO_VOCAB_LOAD=1 is how an AKS operator keeps the vocab-load hook out (FLIP#1390); dry-run each target."""
     if shutil.which("make") is None:
         pytest.skip("make is not installed")
     chart = Path(__file__).resolve().parents[1]

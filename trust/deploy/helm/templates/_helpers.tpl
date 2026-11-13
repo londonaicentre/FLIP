@@ -115,10 +115,9 @@ Namespace name
 {{- end }}
 
 {{/*
-OMOP database connection environment, shared by the vocab-load Job's probe and
-loader containers. Both talk to the same database with the same credentials —
-keeping one definition means a rename here cannot leave the probe reading a
-different database than the loader writes to.
+OMOP database connection environment, shared by the vocab-load and trust-seed Jobs. Both
+talk to the same database with the same credentials — keeping one definition means a
+rename here cannot leave one Job reading a different database than the other writes to.
 */}}
 {{- define "flip-trust.omopVocabDbEnv" -}}
 - name: OMOP_DB_HOST
