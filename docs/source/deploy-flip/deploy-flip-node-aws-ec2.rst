@@ -23,7 +23,7 @@ Its only links to a hub are its **kit** and its **registration**, as for any tru
 public IP and no inbound rule; it is reached through SSM Session Manager only. In one of the hub's
 Landing Zone Accelerator accounts, outbound traffic leaves through the estate's central firewall, which
 drops anything it has no rule for: the node can run there only once that firewall allows the hosts in
-:ref:`deploy-trust-node-network` from the node's address.
+:ref:`deploy-trust-node-network` from the node's address (see :ref:`deploy-flip-node-aws-ec2-hub-account`).
 
 For a node on a Trust's own host see :doc:`deploy-flip-node-on-prem`; on Azure,
 :doc:`deploy-flip-node-azure`; as the Helm chart on Amazon EKS, :doc:`deploy-flip-node-aws-eks`.
@@ -88,7 +88,8 @@ The root has two network modes:
      - A NAT gateway created with the stack; its Elastic IP is destroyed with it.
 
 The hub never checks a trust's IP address: it admits a trust by its API key and the kit's mTLS
-certificates. So the node needs no fixed address, and no hub change is needed to add or remove it.
+certificates. So the node needs no fixed address, and no hub change is needed to add or remove it. The
+exception is the hub's own account (below), where the estate's firewall allows the node by address.
 
 **Does the node expose an IP address?** No. The instance has no public IP and its security group no
 inbound rule; even Session Manager is a connection the node's own agent opens. The one public address in
@@ -126,6 +127,34 @@ read parameters in its account), ship logs and metrics to CloudWatch, and, only 
 given, read **its own slot's** FL kit and the OMOP vocabulary. IMDS takes v2 tokens with a hop limit of
 1, so a container on the host, the FL client among them, cannot reach the role's credentials. Where
 the account requires a permissions boundary on new roles, pass it as ``BOUNDARY_ARN``.
+
+.. _deploy-flip-node-aws-ec2-hub-account:
+
+************************
+In the hub's own account
+************************
+
+A mock trust can run in the hub's own account on the Landing Zone Accelerator estate. That account has
+no internet egress: the estate's central firewall drops every connection it has no rule for. The platform
+team allows the hosts in :ref:`deploy-trust-node-network` from the node's address, and from nothing else in
+the VPC, so the hub keeps no internet access. Agree the address with them before ``plan``. Otherwise the
+node differs from one in its own account in four ways:
+
+- **An existing subnet and a fixed address.** The estate denies ``ec2:CreateVpc``, so ``SUBNET_ID`` is one
+  of the hub VPC's ``app`` subnets, and ``PRIVATE_IP`` is the address the firewall allows. Changing
+  ``PRIVATE_IP`` later replaces the node, and its data with it.
+- **A permissions boundary.** Pass the estate's as ``BOUNDARY_ARN``; the hub's own roles carry it too.
+- **No** ``SSM_ENDPOINTS``. The estate's central endpoints already serve SSM and CloudWatch, and the
+  VPC's gateway endpoint serves S3.
+- **The kit from the hub's bucket.** ``KIT_BUCKET`` and ``KIT_KMS_KEY_ARN`` are the hub's kit bucket and
+  its key, and ``FL_KIT_DATE`` the hub's kit date for its FL backend. The node reads its slot's kit and the
+  vocabulary itself, so ``provision`` and ``stage-kit`` need no ``KIT_SRC``.
+
+.. code-block:: bash
+
+   make plan KIT=$KIT HUB=stag SUBNET_ID=<hub app subnet> PRIVATE_IP=<allowed address> \
+     BOUNDARY_ARN=<estate boundary ARN> KIT_BUCKET=<hub kit bucket> KIT_KMS_KEY_ARN=<bucket key ARN>
+   make provision KIT=$KIT HUB=stag KIT_BUCKET=<hub kit bucket> FL_KIT_DATE=<hub kit date>
 
 ****
 Cost

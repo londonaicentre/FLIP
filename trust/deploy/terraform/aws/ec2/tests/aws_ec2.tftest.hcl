@@ -62,6 +62,41 @@ run "existing_subnet_creates_no_network_and_no_address" {
   }
 }
 
+run "private_ip_pins_the_node_address" {
+  command = apply
+
+  variables {
+    subnet_id  = "subnet-0site"
+    private_ip = "10.20.0.200"
+  }
+
+  assert {
+    condition     = aws_instance.node.private_ip == "10.20.0.200"
+    error_message = "With private_ip the node takes that address, so a firewall can allowlist it."
+  }
+}
+
+run "private_ip_without_a_subnet_is_refused" {
+  command = plan
+
+  variables {
+    private_ip = "10.20.0.200"
+  }
+
+  expect_failures = [var.private_ip]
+}
+
+run "private_ip_must_be_one_address" {
+  command = plan
+
+  variables {
+    subnet_id  = "subnet-0site"
+    private_ip = "10.20.0.0/24"
+  }
+
+  expect_failures = [var.private_ip]
+}
+
 run "no_subnet_creates_its_own_network_with_a_nat_gateway" {
   command = apply
 
