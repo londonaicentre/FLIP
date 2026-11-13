@@ -123,8 +123,8 @@ template and your uploaded files; an uploaded ``job.py`` is ignored.
    ``nvflare``, ``torch`` and ``monai``. Nothing is installed per run, so your app can import only what the image
    already carries. If you need another dependency, ask the platform operators.
 
-   For local runs, use the ``flip-utils`` project environment with its ``full`` extra, which installs the same
-   packages as the FL image (see :ref:`flare-local-testing`).
+   For local runs, use the ``flip-utils`` project environment with its ``nvflare`` and ``full`` extras, which
+   install the same packages as the FL image (see :ref:`flare-local-testing`).
 
 .. _flare-server-side:
 
@@ -649,7 +649,7 @@ with your files — under ``./fl_job/flip_fedavg/``, so you can inspect exactly 
 .. code-block:: shell
 
    make export            # or, from the app directory:
-   uv run --project ../../../../flip-utils --extra full \
+   uv run --project ../../../../flip-utils --extra nvflare --extra full \
        python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 2
 
 **Simulation (GPU and data).** Runs the job in the FLARE simulator against local data. In ``LOCAL_DEV`` mode (the
@@ -673,11 +673,13 @@ named in the app's ``.env.app``:
 
 .. important::
 
-   Run ``job.py`` in the ``flip-utils`` environment with the ``full`` extra, as the tutorial Makefiles do. A bare
-   ``uv run`` from the repository root picks an environment without ``torch``, ``nvflare`` or ``monai``.
+   Run ``job.py`` in the ``flip-utils`` environment with the ``nvflare`` and ``full`` extras, as the tutorial
+   Makefiles do. A bare ``uv run`` from the repository root picks an environment without ``torch``, ``nvflare``
+   or ``monai``.
 
    The simulator runs on the host, not in a container, so you do **not** need ``make build-fl``. You need the
-   ``full`` extra installed (``uv sync --extra full`` in ``flip-utils``) and a GPU visible to that environment.
+   ``nvflare`` and ``full`` extras installed (``uv sync --extra nvflare --extra full`` in ``flip-utils``) and a GPU
+   visible to that environment.
 
 .. note::
 

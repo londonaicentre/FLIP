@@ -13,7 +13,7 @@
 
 The module under test is the FLARE copy — ``scripts/check_tutorial_sync.sh`` pins the Flower
 copy byte-identical to it, so one import covers both backends. Fixtures are synthesised
-in-process (no dataset download); everything runs on CPU in the flip-utils[full] env.
+in-process (no dataset download); everything runs on CPU in the flip-utils[nvflare,flower,full] env.
 """
 
 from __future__ import annotations
