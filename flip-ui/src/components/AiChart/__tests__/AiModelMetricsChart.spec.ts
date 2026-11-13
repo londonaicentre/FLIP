@@ -80,9 +80,9 @@ const DATA = {
     ]
 };
 
-function mountChart() {
+function mountChart(props: InstanceType<typeof AiModelMetricsChart>["$props"] = { data: DATA }) {
     return mount(AiModelMetricsChart, {
-        props: { data: DATA },
+        props,
         global: {
             plugins: [createTestingPinia({
                 createSpy: vi.fn,
@@ -90,6 +90,15 @@ function mountChart() {
             })]
         }
     });
+}
+
+// Mounts the chart and returns the first option object pushed to echarts.
+async function firstOption(props?: InstanceType<typeof AiModelMetricsChart>["$props"]) {
+    mountChart(props);
+    await nextTick();
+    await flushPromises();
+
+    return setOption.mock.calls[0][0];
 }
 
 describe("AiModelMetricsChart", () => {
@@ -114,40 +123,24 @@ describe("AiModelMetricsChart", () => {
     });
 
     it("titles the x-axis with props.data.xLabel instead of a hardcoded label", async () => {
-        mount(AiModelMetricsChart, {
-            props: {
-                data: {
-                    yLabel: "Loss",
-                    xLabel: "epoch",
-                    metrics: [{
-                        seriesLabel: "A",
-                        data: [{
-                            xValue: 1,
-                            yValue: 0.5
-                        }]
+        const opts = await firstOption({
+            data: {
+                yLabel: "Loss",
+                xLabel: "epoch",
+                metrics: [{
+                    seriesLabel: "A",
+                    data: [{
+                        xValue: 1,
+                        yValue: 0.5
                     }]
-                }
-            },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
+                }]
             }
         });
-        await nextTick();
-        await flushPromises();
-
-        const opts = setOption.mock.calls[0][0];
         expect(opts.xAxis.name).toBe("epoch");
     });
 
     it("floats the legend over the plot and lifts the toolbox above it, reserving no side column", async () => {
-        mountChart();
-        await nextTick();
-        await flushPromises();
-
-        const opts = setOption.mock.calls[0][0];
+        const opts = await firstOption();
         // The grid takes the full card width — no 160px legend column on the right.
         expect(opts.grid.right).toBeLessThanOrEqual(24);
         // The toolbox sits above the plot, not on the lines. Its icons are echarts'
@@ -165,11 +158,7 @@ describe("AiModelMetricsChart", () => {
     });
 
     it("ships no persistent zoom UI, only the on-demand toolbox box-zoom", async () => {
-        mountChart();
-        await nextTick();
-        await flushPromises();
-
-        const opts = setOption.mock.calls[0][0];
+        const opts = await firstOption();
         // No dataZoom components: no slider bar under the plot, no scroll/trackpad
         // hijack. Zoom lives behind the toolbox magnifier instead.
         expect(opts.dataZoom).toBeUndefined();
@@ -178,11 +167,7 @@ describe("AiModelMetricsChart", () => {
     });
 
     it("emits a line series per metric, sorted to match the alphabetical legend", async () => {
-        mountChart();
-        await nextTick();
-        await flushPromises();
-
-        const opts = setOption.mock.calls[0][0];
+        const opts = await firstOption();
         expect(opts.series).toHaveLength(2);
         expect(opts.series.every((s: { type: string }) => s.type === "line")).toBe(true);
         // Series sort with the legend: palette slots follow the label, not the
@@ -192,27 +177,15 @@ describe("AiModelMetricsChart", () => {
     });
 
     it("keys series colours by styleIndexBySeries, so a trust keeps its colour across plots", async () => {
-        mount(AiModelMetricsChart, {
-            props: {
-                data: DATA,
-                // The parent derives the slots from every plot's series, so a plot
-                // missing a trust must not shift the colours of the trusts it has.
-                styleIndexBySeries: {
-                    "Trust A": 2,
-                    "Trust B": 0
-                }
-            },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
+        const opts = await firstOption({
+            data: DATA,
+            // The parent derives the slots from every plot's series, so a plot
+            // missing a trust must not shift the colours of the trusts it has.
+            styleIndexBySeries: {
+                "Trust A": 2,
+                "Trust B": 0
             }
         });
-        await nextTick();
-        await flushPromises();
-
-        const opts = setOption.mock.calls[0][0];
         expect(opts.series[0].name).toBe("Trust A");
         expect(opts.series[0].itemStyle.color).toBe(CHART_SERIES_COLORS.light[2]);
         expect(opts.series[1].name).toBe("Trust B");
@@ -220,108 +193,72 @@ describe("AiModelMetricsChart", () => {
     });
 
     it("dashes a series whose assigned slot sits beyond the palette", async () => {
-        mount(AiModelMetricsChart, {
-            props: {
-                data: {
-                    yLabel: "y",
-                    xLabel: "x",
-                    metrics: [{
-                        seriesLabel: "A",
-                        data: [{
-                            xValue: 1,
-                            yValue: 0.5
-                        }]
-                    }]
-                },
-                styleIndexBySeries: { A: 8 }
-            },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
-            }
-        });
-        await nextTick();
-        await flushPromises();
-
         // The ninth slot wraps the palette; the dashed line carries the distinction.
-        const opts = setOption.mock.calls[0][0];
+        const opts = await firstOption({
+            data: {
+                yLabel: "y",
+                xLabel: "x",
+                metrics: [{
+                    seriesLabel: "A",
+                    data: [{
+                        xValue: 1,
+                        yValue: 0.5
+                    }]
+                }]
+            },
+            styleIndexBySeries: { A: 8 }
+        });
         expect(opts.series[0].itemStyle.color).toBe(CHART_SERIES_COLORS.light[0]);
         expect(opts.series[0].lineStyle.type).toBe("dashed");
     });
 
     it("sorts each series' data by xValue", async () => {
-        mount(AiModelMetricsChart, {
-            props: {
-                data: {
-                    yLabel: "y",
-                    xLabel: "x",
-                    metrics: [{
-                        seriesLabel: "A",
-                        data: [
-                            {
-                                xValue: 3,
-                                yValue: 0.3
-                            },
-                            {
-                                xValue: 1,
-                                yValue: 0.1
-                            },
-                            {
-                                xValue: 2,
-                                yValue: 0.2
-                            }
-                        ]
-                    }]
-                }
-            },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
+        const opts = await firstOption({
+            data: {
+                yLabel: "y",
+                xLabel: "x",
+                metrics: [{
+                    seriesLabel: "A",
+                    data: [
+                        {
+                            xValue: 3,
+                            yValue: 0.3
+                        },
+                        {
+                            xValue: 1,
+                            yValue: 0.1
+                        },
+                        {
+                            xValue: 2,
+                            yValue: 0.2
+                        }
+                    ]
+                }]
             }
         });
-        await nextTick();
-        await flushPromises();
-
-        const opts = setOption.mock.calls[0][0];
         expect(opts.series[0].data).toEqual([[1, 0.1], [2, 0.2], [3, 0.3]]);
     });
 
     it("plots fractional x-values without forcing integer ticks", async () => {
-        mount(AiModelMetricsChart, {
-            props: {
-                data: {
-                    yLabel: "VAL_LOSS",
-                    xLabel: "epoch",
-                    metrics: [{
-                        seriesLabel: "A",
-                        data: [
-                            {
-                                xValue: 0.75,
-                                yValue: 0.3
-                            },
-                            {
-                                xValue: 0.25,
-                                yValue: 0.1
-                            }
-                        ]
-                    }]
-                }
-            },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
+        const opts = await firstOption({
+            data: {
+                yLabel: "VAL_LOSS",
+                xLabel: "epoch",
+                metrics: [{
+                    seriesLabel: "A",
+                    data: [
+                        {
+                            xValue: 0.75,
+                            yValue: 0.3
+                        },
+                        {
+                            xValue: 0.25,
+                            yValue: 0.1
+                        }
+                    ]
+                }]
             }
         });
-        await nextTick();
-        await flushPromises();
-
-        const opts = setOption.mock.calls[0][0];
         // Arbitrary float coordinates flow straight through, sorted (FLIP#148)...
         expect(opts.series[0].data).toEqual([[0.25, 0.1], [0.75, 0.3]]);
         // ...and the axis must not force integer tick spacing, or a 0–1 range
@@ -330,52 +267,36 @@ describe("AiModelMetricsChart", () => {
     });
 
     it("keeps whole-number ticks when every x-value is an integer", async () => {
-        mount(AiModelMetricsChart, {
-            props: {
-                data: {
-                    yLabel: "VAL_LOSS",
-                    xLabel: "Global Rounds",
-                    metrics: [{
-                        seriesLabel: "A",
-                        data: [
-                            {
-                                xValue: 1,
-                                yValue: 0.1
-                            },
-                            {
-                                xValue: 2,
-                                yValue: 0.2
-                            },
-                            {
-                                xValue: 3,
-                                yValue: 0.3
-                            }
-                        ]
-                    }]
-                }
-            },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
-            }
-        });
-        await nextTick();
-        await flushPromises();
-
         // A short round-based run (splitNumber 10 over 3 rounds) must not show
         // fractional ticks — rounds are whole numbers.
-        const opts = setOption.mock.calls[0][0];
+        const opts = await firstOption({
+            data: {
+                yLabel: "VAL_LOSS",
+                xLabel: "Global Rounds",
+                metrics: [{
+                    seriesLabel: "A",
+                    data: [
+                        {
+                            xValue: 1,
+                            yValue: 0.1
+                        },
+                        {
+                            xValue: 2,
+                            yValue: 0.2
+                        },
+                        {
+                            xValue: 3,
+                            yValue: 0.3
+                        }
+                    ]
+                }]
+            }
+        });
         expect(opts.xAxis.minInterval).toBe(1);
     });
 
     it("themes chrome and series from the shared chart theme", async () => {
-        mountChart();
-        await nextTick();
-        await flushPromises();
-
-        const opts = setOption.mock.calls[0][0];
+        const opts = await firstOption();
         expect(opts.color).toEqual([...CHART_SERIES_COLORS.light]);
         expect(opts.backgroundColor).toBe("transparent");
         expect(opts.grid.backgroundColor).toBe("transparent");
@@ -392,60 +313,36 @@ describe("AiModelMetricsChart", () => {
     });
 
     it("gives a ninth series a dashed line rather than silently repeating a colour", async () => {
-        mount(AiModelMetricsChart, {
-            props: {
-                data: {
-                    yLabel: "y",
-                    xLabel: "x",
-                    metrics: Array.from({ length: 9 }, (_, i) => ({
-                        seriesLabel: `Trust ${i}`,
-                        data: [{
-                            xValue: 1,
-                            yValue: i
-                        }]
-                    }))
-                }
-            },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
+        const opts = await firstOption({
+            data: {
+                yLabel: "y",
+                xLabel: "x",
+                metrics: Array.from({ length: 9 }, (_, i) => ({
+                    seriesLabel: `Trust ${i}`,
+                    data: [{
+                        xValue: 1,
+                        yValue: i
+                    }]
+                }))
             }
         });
-        await nextTick();
-        await flushPromises();
-
-        const opts = setOption.mock.calls[0][0];
         expect(opts.series[0].lineStyle.type).toBe("solid");
         expect(opts.series[8].itemStyle.color).toBe(CHART_SERIES_COLORS.light[0]);
         expect(opts.series[8].lineStyle.type).toBe("dashed");
     });
 
     it("guards the animation maths against an empty series", async () => {
-        mount(AiModelMetricsChart, {
-            props: {
-                data: {
-                    yLabel: "y",
-                    xLabel: "x",
-                    metrics: [{
-                        seriesLabel: "empty",
-                        data: []
-                    }]
-                }
-            },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
+        // 3000 / 0 = Infinity would reach echarts as animationDuration.
+        const opts = await firstOption({
+            data: {
+                yLabel: "y",
+                xLabel: "x",
+                metrics: [{
+                    seriesLabel: "empty",
+                    data: []
+                }]
             }
         });
-        await nextTick();
-        await flushPromises();
-
-        // 3000 / 0 = Infinity would reach echarts as animationDuration.
-        const opts = setOption.mock.calls[0][0];
         expect(Number.isFinite(opts.series[0].animationDuration)).toBe(true);
     });
 

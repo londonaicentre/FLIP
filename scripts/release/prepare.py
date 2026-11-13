@@ -40,7 +40,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import record  # noqa: E402
-from release_lib import REPO, TEMPLATE, ReleaseError, assert_clean, git, parse_tag  # noqa: E402
+from release_lib import REPO, TAG_RE, TEMPLATE, ReleaseError, assert_clean, git, parse_tag  # noqa: E402
 
 # CONTRIBUTING § Versioning: each service's directory and the file carrying its version.
 SERVICES = (
@@ -189,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         assert_clean()
         previous = git("tag", "--list", "v*.*.*", "--sort=-v:refname").splitlines()
-        previous = [t for t in previous if re.fullmatch(r"v\d+\.\d+\.\d+", t)]
+        previous = [t for t in previous if TAG_RE.match(t)]
         if not previous:
             raise ReleaseError("no previous v*.*.* tag")
         prev = previous[0]

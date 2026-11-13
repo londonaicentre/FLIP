@@ -751,8 +751,6 @@ def get_age_distribution(df: pd.DataFrame) -> dict:
     """
     Returns the distribution of ages in the DataFrame.
 
-    Assumes the DataFrame has accesion_id, query the table to get the age distribution.
-
     Args:
         df (pd.DataFrame): The cohort DataFrame. Must include a ``person_id`` column; otherwise an
             empty result set is returned.

@@ -31,18 +31,16 @@ class Settings(BaseSettings):
             return "development"
         return v
 
-    # env file is 3 directories up from this file
-    # Get current directory: imaging-api/imaging_api/config.py
+    # Repo-root .env.development (ENV here is the class default, not the runtime value). A .parent
+    # chain, not parents[3]: in the image (/app/<pkg>/config.py) the path is too shallow for the index.
     model_config = SettingsConfigDict(
-        env_file=str(Path(__file__).parent.parent.parent.parent / f".env.{ENV}"),
+        env_file=str(Path(__file__).parent.parent.parent.parent / ".env.development"),
         env_file_encoding="utf-8",
         extra="allow",
     )
 
-    #
     LOG_LEVEL: str = "INFO"
 
-    #
     CENTRAL_HUB_API_URL: str
     # Internal trust-network URLs (docker service name + container port), fixed by
     # the compose topology — default here instead of being required kit fields.

@@ -105,19 +105,6 @@ class IModelsListResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
 
 
-class IModelLog(BaseModel):
-    timestamp: datetime = Field(alias="@timestamp")
-    model: str
-    status: str
-    trust: str | None = None
-    message: str
-
-
-class ISourceLog(BaseModel):
-    _source: IModelLog
-    _id: str
-
-
 class IModelStatus(BaseModel):
     modelStatus: str
 

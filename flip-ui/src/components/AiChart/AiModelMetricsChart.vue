@@ -120,20 +120,7 @@ onMounted(() => {
                         // at top: 0 — measured, not guessed. grid.top clears them below.
                         right: 8,
                         top: 0,
-                        padding: 0,
-                        feature: {
-                            ...chartToolbox(darkMode).feature,
-                            dataZoom: {
-                                show: true,
-                                // "none" keeps the drawn box as the exact view instead of
-                                // filtering points outside it (which re-clips the lines).
-                                filterMode: "none" as const,
-                                title: {
-                                    zoom: "Zoom",
-                                    back: "Undo Zoom"
-                                }
-                            }
-                        }
+                        padding: 0
                     },
                     grid: {
                         backgroundColor: chrome.background,

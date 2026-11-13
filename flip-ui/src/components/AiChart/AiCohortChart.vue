@@ -139,20 +139,7 @@ onMounted(() => {
                     ...chartToolbox(darkMode),
                     // Floats inside the plot below the title band (metrics-chart idiom).
                     top: 36,
-                    right: 12,
-                    feature: {
-                        ...chartToolbox(darkMode).feature,
-                        dataZoom: {
-                            show: true,
-                            // "none" keeps the drawn box as the exact view instead of
-                            // filtering points outside it.
-                            filterMode: "none" as const,
-                            title: {
-                                zoom: "Zoom",
-                                back: "Undo Zoom"
-                            }
-                        }
-                    }
+                    right: 12
                 },
                 grid: {
                     left: "5%",

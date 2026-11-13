@@ -197,15 +197,11 @@ const close = () => {
 const updateBanner = async (v: unknown) => {
     const banner = v as ISiteBanner;
 
-    if (loadingButton.value) {
+    if (loadingButton.value || !details.banner) {
         return;
     }
 
     loadingButton.value = true;
-
-    if (!details.banner) {
-        return;
-    }
 
     await useSiteDetailsStore().updateBanner({
         ...banner,
@@ -217,16 +213,11 @@ const updateBanner = async (v: unknown) => {
 
 const toggleBanner = async () => {
 
-    if (loadingButton.value) {
+    if (loadingButton.value || !details.banner) {
         return;
     }
 
     loadingButton.value = true;
-
-
-    if(!details.banner) {
-        return;
-    }
 
     await useSiteDetailsStore().updateBanner({
         ...details.banner,

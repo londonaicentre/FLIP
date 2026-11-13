@@ -145,18 +145,10 @@ demo_video:
 # waits for results, downloads them. Intended for PR sanity checks — replaces
 # the manual UI clickthrough.
 #
-# Defaults pick the chest-xray tutorial that matches FL_BACKEND so the same
-# `make e2e_smoke` invocation works against either stack. Both tutorials are
-# now in-tree under fl-tutorials/<backend>/ (FLARE at fl-tutorials/nvflare/,
-# Flower at fl-tutorials/flower/). Both reuse the same query.sql
-# against the trust mock OMOP data. Default backend matches
-# deploy/fl_backend.mk (nvflare). Override either path explicitly:
+# Defaults pick the chest-xray tutorial matching FL_BACKEND (default nvflare, as deploy/fl_backend.mk);
+# the query follows HUB (see XRAY_QUERY_NAME). Override either explicitly:
 #     make e2e_smoke MODEL_FILES_DIR=/path/to/app_files
 #     make e2e_smoke QUERY_FILE=/path/to/your_cohort.sql
-# The x-ray query is picked automatically from HUB (see XRAY_QUERY_NAME below): a test trust
-# deployed without the OMOP vocabulary (the Helm chart's NO_VOCAB_LOAD=1, FLIP#1390) gets the
-# vocabulary-free copy, because there query.sql's concept joins return nothing and staging refuses
-# the project. Pass QUERY_FILE explicitly to override.
 # Anything else passed via EXTRA_ARGS goes straight to the script:
 #     make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5"
 #
@@ -167,9 +159,10 @@ demo_video:
 # TARGET_ARGS is the same idea for any other flag a variant target must pin (e.g. --no-imaging).
 FL_BACKEND ?= nvflare
 # A development stack (HUB unset) smokes the vocabulary-free copy of the cohort query: its trusts
-# carry only the DICOM vocabulary unless the licensed core vocabulary was loaded by hand, and
-# query.sql looks every concept up in omop.concept. Where the vocabulary is loaded the two return
-# the same rows. A deployed hub (HUB set) smokes query.sql.
+# carry only the DICOM vocabulary unless the licensed core vocabulary was loaded by hand, as does a
+# Helm trust deployed with NO_VOCAB_LOAD=1 (FLIP#1390), and query.sql looks every concept up in
+# omop.concept, so its joins return nothing and staging refuses the project. Where the vocabulary is
+# loaded the two return the same rows. A deployed hub (HUB set) smokes query.sql.
 XRAY_QUERY_NAME := $(if $(strip $(HUB)),query.sql,query_novocab.sql)
 ifeq ($(FL_BACKEND),flower)
 MODEL_FILES_DIR ?= ../fl-tutorials/flower/image_classification/xray_classification/app

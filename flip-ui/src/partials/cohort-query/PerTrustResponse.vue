@@ -119,10 +119,9 @@
 </template>
 
 <script lang="ts" setup>
-import useSWRV from "swrv";
-import { computed, ref, watch } from "vue";
+import { computed } from "vue";
 
-import { getOMOPResults, IResults } from "@/services/cohort-query-service";
+import { useCohortResults } from "@/composables/useCohortResults";
 import { useProjectStore } from "@/store/project";
 import { useTrustStore } from "@/store/trusts";
 import { filterByQueriedTrustIds } from "@/utils/cohort/query";
@@ -136,66 +135,9 @@ const props = withDefaults(defineProps<IProps>(), { submitting: false });
 const projectStore = useProjectStore();
 const trustStore = useTrustStore();
 
-const results = ref<IResults | null>(null);
-
-const { data } = useSWRV(
-    () => projectStore.project?.query?.id ? `/cohort/${projectStore.project.query.id}` : "",
-    getOMOPResults,
-    {
-        errorRetryInterval: 1_000,
-        refreshInterval: projectStore.project?.status !== "UNSTAGED" ? 0 : 10_000
-    }
-);
-
-watch(data, (v) => { results.value = (v as IResults | null | undefined) ?? null; }, { immediate: true });
-
-// Per-trust state comes from `trustRecordCounts` and `trustErrors` on the
-// response — both populated by the hub aggregator. A trust present in
-// trustRecordCounts has responded successfully (count may be 0 for
-// privacy-suppressed); a trust in trustErrors failed; a trust in neither is
-// still running. We fall back to per-field aggregation only when neither map
-// is present (back-compat with older QueryStats rows that pre-date this fix).
-interface IFieldShape {
-    results: { trustId: string; data: { count: number }[] }[];
-}
-
-interface IResultsShape {
-    trustsResults?: IFieldShape[];
-    trustRecordCounts?: Record<string, number>;
-    trustErrors?: Record<string, string>;
-    trustSuppressed?: string[];
-}
-
-const perTrustCounts = computed<Record<string, number>>(() => {
-    const r = results.value as unknown as IResultsShape | null;
-    if (r?.trustRecordCounts) return r.trustRecordCounts;
-    // Back-compat fallback for QueryStats rows written before the trust_record_counts field existed.
-    const trustsResults = r?.trustsResults;
-    if (!trustsResults?.length) return {};
-    const firstField = trustsResults.find(f => f.results?.length);
-    if (!firstField) return {};
-    const counts: Record<string, number> = {};
-    for (const t of firstField.results) {
-        counts[t.trustId] = t.data.reduce((acc, d) => acc + (d.count || 0), 0);
-    }
-
-    return counts;
-});
-
-const perTrustErrors = computed<Record<string, string>>(() => {
-    const r = results.value as unknown as IResultsShape | null;
-
-    return r?.trustErrors ?? {};
-});
-
-// Set of trust ids whose count was privacy-suppressed (below threshold). These
-// trusts responded successfully but render a "suppressed" chip instead of a
-// literal 0 that would read as "no data available". See issue #519.
-const perTrustSuppressed = computed<Set<string>>(() => {
-    const r = results.value as unknown as IResultsShape | null;
-
-    return new Set(r?.trustSuppressed ?? []);
-});
+// Suppressed trusts render a "suppressed" chip instead of a literal 0 that would read as
+// "no data available" (#519).
+const { perTrustCounts, perTrustErrors, perTrustSuppressed } = useCohortResults();
 
 interface IRow {
     id: string;

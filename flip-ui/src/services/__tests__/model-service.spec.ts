@@ -444,42 +444,21 @@ describe("model-service", () => {
             expect(result).toEqual(urls);
         });
 
-        it("getDownloadUrlForResults returns [] when the backend body is null", async () => {
-            // Some endpoints serialise "no results yet" as an explicit
-            // null. The component renders `result.length === 0` as "no
-            // results" — leaking the null straight through would crash
-            // the table.
-            vi.mocked(_http.get).mockResolvedValue({ data: null } as never);
+        // Some endpoints serialise "no results yet" as an explicit null; the component renders
+        // `result.length === 0` as "no results", so leaking the null through would crash the table.
+        // A 200 with no body reaches the fetch layer as the string "" — `?? []` lets it through and
+        // every caller then treats a string as an array (FLIP#1011).
+        it.each<[string, null | string, () => Promise<unknown>]>([
+            ["getDownloadUrlForResults", null, () => getDownloadUrlForResults("m-1")],
+            ["getDownloadUrlForResults", "", () => getDownloadUrlForResults("m-1")],
+            ["getLogsForModel", null, () => getLogsForModel("/logs/m-1")],
+            ["getLogsForModel", "", () => getLogsForModel("/logs/m-1")],
+            ["getModelMetrics", null, () => getModelMetrics("/metrics/m-1")],
+            ["getModelMetrics", "", () => getModelMetrics("/metrics/m-1")]
+        ])("%s returns [] when the backend body is %j", async (_name, data, call) => {
+            vi.mocked(_http.get).mockResolvedValue({ data } as never);
 
-            const result = await getDownloadUrlForResults("m-1");
-
-            expect(result).toEqual([]);
-        });
-
-        it("getDownloadUrlForResults returns [] when the backend body is empty", async () => {
-            // A 200 with no body reaches the fetch layer as the string "" — `?? []` lets it
-            // through and every caller then treats a string as an array (FLIP#1011).
-            vi.mocked(_http.get).mockResolvedValue({ data: "" } as never);
-
-            const result = await getDownloadUrlForResults("m-1");
-
-            expect(result).toEqual([]);
-        });
-
-        it("getLogsForModel returns [] when body is null", async () => {
-            vi.mocked(_http.get).mockResolvedValue({ data: null } as never);
-
-            const result = await getLogsForModel("/logs/m-1");
-
-            expect(result).toEqual([]);
-        });
-
-        it("getLogsForModel returns [] when the backend body is empty", async () => {
-            vi.mocked(_http.get).mockResolvedValue({ data: "" } as never);
-
-            const result = await getLogsForModel("/logs/m-1");
-
-            expect(result).toEqual([]);
+            expect(await call()).toEqual([]);
         });
 
         it("getLogsForModel returns the parsed log list", async () => {
@@ -498,22 +477,6 @@ describe("model-service", () => {
             const result = await getLogsForModel("/logs/m-1");
 
             expect(result).toEqual(logs);
-        });
-
-        it("getModelMetrics returns [] when body is null", async () => {
-            vi.mocked(_http.get).mockResolvedValue({ data: null } as never);
-
-            const result = await getModelMetrics("/metrics/m-1");
-
-            expect(result).toEqual([]);
-        });
-
-        it("getModelMetrics returns [] when the backend body is empty", async () => {
-            vi.mocked(_http.get).mockResolvedValue({ data: "" } as never);
-
-            const result = await getModelMetrics("/metrics/m-1");
-
-            expect(result).toEqual([]);
         });
 
         it("getModelMetrics returns the parsed metrics", async () => {

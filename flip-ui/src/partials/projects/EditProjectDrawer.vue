@@ -231,7 +231,7 @@
 <script lang="ts" setup>
 import { Dialog, DialogTitle, TransitionChild, TransitionRoot } from "@headlessui/vue";
 import { Form } from "vee-validate";
-import { onMounted, ref } from "vue";
+import { ref } from "vue";
 
 import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import AiButton from "@/components/AiButton/AiButton.vue";
@@ -276,11 +276,7 @@ const authStore = useAuthStore();
 
 const props = defineProps<IEditProjectDrawerProps>();
 
-let userList: string[];
-
-onMounted(() => {
-    userList = props.users.map(u => u.id);
-});
+let userList = props.users.map(u => u.id);
 
 const emit = defineEmits(["close", "delete", "save"]);
 

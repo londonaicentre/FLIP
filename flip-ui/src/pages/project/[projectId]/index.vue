@@ -64,7 +64,7 @@
                                     data-test="unstage-project-btn"
                                     aria-label="Unstage Project"
                                     tooltip="Unstage Project"
-                                    @click="openUnstagingModal"
+                                    @click="unstageProjectOpen = true"
                                 >
                                     <icon-ph-clipboard class="lg:mr-2" />
                                     <span class="hidden lg:inline">Unstage Project</span>
@@ -77,7 +77,7 @@
                                     continue-button-text="Unstage Project"
                                     :submitting="unstagingProject"
                                     :continue-action="unstageCurrentProject"
-                                    @close-modal="closeUnstageModal"
+                                    @close-modal="unstageProjectOpen = false"
                                 />
                             </template>
                         </AiGuard>
@@ -92,7 +92,7 @@
                                 data-test="edit-project-btn"
                                 :aria-label="isViewer ? 'View Project' : 'Edit Project'"
                                 :tooltip="isViewer ? 'View Project' : 'Edit Project'"
-                                @click.capture="openEditProjectDrawer"
+                                @click.capture="editDrawerOpen = true"
                             >
                                 <icon-ph-pencil-simple v-if="!isViewer" class="lg:mr-2" />
                                 <icon-mdi-eye-outline v-else class="lg:mr-2" />
@@ -180,7 +180,7 @@
             :has-imaging="hasImaging"
             :updating="projectUpdating"
             :owner-id="project.ownerId"
-            @close="closeEditProjectDrawer"
+            @close="editDrawerOpen = false"
             @save="updateProjectEvent"
         />
     </div>
@@ -227,7 +227,6 @@ const errorStore = useErrorStore();
 const projectStore = useProjectStore();
 
 const editDrawerOpen = ref(false);
-const stageProjectOpen = ref(false);
 const stagingProject = ref(false);
 const unstageProjectOpen = ref(false);
 const projectUpdating = ref(false);
@@ -320,22 +319,6 @@ const totalUserCount = computed(() => (project?.value?.users?.length ?? 0) + 1);
 
 const getUserCountMessage = () => {
     return `${totalUserCount.value} ${totalUserCount.value === 1 ? "User" : "Users"}`;
-};
-
-const openEditProjectDrawer = () => {
-    editDrawerOpen.value = true;
-};
-
-const openUnstagingModal = () => {
-    unstageProjectOpen.value = true;
-};
-
-const closeUnstageModal = () => {
-    unstageProjectOpen.value = false;
-};
-
-const closeEditProjectDrawer = () => {
-    editDrawerOpen.value = false;
 };
 
 const updateProjectEvent = async (update: IEditProject) => {
@@ -469,7 +452,6 @@ const stageProject = async (trustIds: string[]) => {
         });
     }
 
-    stageProjectOpen.value = false;
     stagingProject.value = false;
 
 };

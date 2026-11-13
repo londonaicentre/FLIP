@@ -193,63 +193,27 @@
                                         :class="{ 'opacity-[0.55]': isImportStale(project) }"
                                     >
                                         <template v-if="rowTotal(project) > 0">
-                                            <div
-                                                v-if="(project.importStatus?.successful ?? 0) > 0"
-                                                class="bg-emerald-500 transition-all"
-                                                :style="{ width: `${((project.importStatus?.successful ?? 0) / rowTotal(project)) * 100}%` }"
-                                            />
-                                            <div
-                                                v-if="(project.importStatus?.processing ?? 0) > 0"
-                                                class="bg-sky-500 transition-all"
-                                                :style="{ width: `${((project.importStatus?.processing ?? 0) / rowTotal(project)) * 100}%` }"
-                                            />
-                                            <div
-                                                v-if="(project.importStatus?.queued ?? 0) > 0"
-                                                class="bg-gray-400 transition-all"
-                                                :style="{ width: `${((project.importStatus?.queued ?? 0) / rowTotal(project)) * 100}%` }"
-                                            />
-                                            <div
-                                                v-if="rowFailed(project) > 0"
-                                                class="bg-red-500 transition-all"
-                                                :style="{ width: `${(rowFailed(project) / rowTotal(project)) * 100}%` }"
-                                            />
+                                            <template v-for="seg in IMPORT_SEGMENTS" :key="seg.key">
+                                                <div
+                                                    v-if="segmentCount(project, seg.key) > 0"
+                                                    class="transition-all"
+                                                    :class="seg.colour"
+                                                    :style="{ width: `${(segmentCount(project, seg.key) / rowTotal(project)) * 100}%` }"
+                                                />
+                                            </template>
                                         </template>
                                     </div>
                                     <div
                                         class="flex justify-between text-xs tabular-nums text-gray-500 dark:text-gray-300"
                                         :class="{ 'opacity-[0.65]': isImportStale(project) }"
                                     >
-                                        <span class="inline-flex items-center gap-1">
-                                            <span class="inline-block w-1.5 h-1.5 rounded-sm bg-emerald-500" />
+                                        <span v-for="seg in IMPORT_SEGMENTS" :key="seg.key" class="inline-flex items-center gap-1">
+                                            <span class="inline-block w-1.5 h-1.5 rounded-sm" :class="seg.colour" />
                                             <span
                                                 class="text-gray-700 dark:text-gray-200 font-semibold"
-                                                :data-test="`successful-imports-${project.trustId}`"
-                                            >{{ project.importStatus?.successful ?? 0 }}</span>
-                                            retrieved
-                                        </span>
-                                        <span class="inline-flex items-center gap-1">
-                                            <span class="inline-block w-1.5 h-1.5 rounded-sm bg-sky-500" />
-                                            <span
-                                                class="text-gray-700 dark:text-gray-200 font-semibold"
-                                                :data-test="`processing-imports-${project.trustId}`"
-                                            >{{ project.importStatus?.processing ?? 0 }}</span>
-                                            processing
-                                        </span>
-                                        <span class="inline-flex items-center gap-1">
-                                            <span class="inline-block w-1.5 h-1.5 rounded-sm bg-gray-400" />
-                                            <span
-                                                class="text-gray-700 dark:text-gray-200 font-semibold"
-                                                :data-test="`queued-imports-${project.trustId}`"
-                                            >{{ project.importStatus?.queued ?? 0 }}</span>
-                                            queued
-                                        </span>
-                                        <span class="inline-flex items-center gap-1">
-                                            <span class="inline-block w-1.5 h-1.5 rounded-sm bg-red-500" />
-                                            <span
-                                                class="text-gray-700 dark:text-gray-200 font-semibold"
-                                                :data-test="`failed-imports-${project.trustId}`"
-                                            >{{ rowFailed(project) }}</span>
-                                            failed
+                                                :data-test="`${seg.key}-imports-${project.trustId}`"
+                                            >{{ segmentCount(project, seg.key) }}</span>
+                                            {{ seg.label }}
                                         </span>
                                     </div>
                                 </div>
@@ -376,7 +340,6 @@ interface IImagingProjectOverview {
     processingTotal: number;
     queuedTotal: number;
     failedTotal: number;
-    importKnownTotal: number;
 }
 
 const props = defineProps<IImagingProjectStatusProps>();
@@ -417,21 +380,19 @@ const overview = computed<IImagingProjectOverview>(() => {
         const successful = current.importStatus?.successful ?? 0;
         const processing = current.importStatus?.processing ?? 0;
         const queued = current.importStatus?.queued ?? 0;
-        const failed = (current.importStatus?.failed ?? 0) + (current.importStatus?.queueFailed ?? 0);
+        const failed = rowFailed(current);
 
         return {
             studyRetrievalTotal: previous.studyRetrievalTotal + successful,
             processingTotal: previous.processingTotal + processing,
             queuedTotal: previous.queuedTotal + queued,
-            failedTotal: previous.failedTotal + failed,
-            importKnownTotal: previous.importKnownTotal + successful + processing + queued + failed
+            failedTotal: previous.failedTotal + failed
         };
     }, {
         studyRetrievalTotal: 0,
         processingTotal: 0,
         queuedTotal: 0,
-        failedTotal: 0,
-        importKnownTotal: 0
+        failedTotal: 0
     });
 
     return {
@@ -459,7 +420,7 @@ const rowTotal = (p: IImagingProjectStatus): number => {
     const s = p.importStatus;
     if (!s) return 0;
 
-    return (s.successful ?? 0) + (s.processing ?? 0) + (s.queued ?? 0) + (s.failed ?? 0) + (s.queueFailed ?? 0);
+    return (s.successful ?? 0) + (s.processing ?? 0) + (s.queued ?? 0) + rowFailed(p);
 };
 const rowFailed = (p: IImagingProjectStatus): number => {
     const s = p.importStatus;
@@ -467,6 +428,32 @@ const rowFailed = (p: IImagingProjectStatus): number => {
 
     return (s.failed ?? 0) + (s.queueFailed ?? 0);
 };
+type ImportSegmentKey = "successful" | "processing" | "queued" | "failed";
+const IMPORT_SEGMENTS: ReadonlyArray<{ key: ImportSegmentKey; colour: string; label: string }> = [
+    {
+        key: "successful",
+        colour: "bg-emerald-500",
+        label: "retrieved"
+    },
+    {
+        key: "processing",
+        colour: "bg-sky-500",
+        label: "processing"
+    },
+    {
+        key: "queued",
+        colour: "bg-gray-400",
+        label: "queued"
+    },
+    {
+        key: "failed",
+        colour: "bg-red-500",
+        label: "failed"
+    }
+];
+// `failed` rolls queueFailed in, as rowFailed does.
+const segmentCount = (p: IImagingProjectStatus, key: ImportSegmentKey): number =>
+    key === "failed" ? rowFailed(p) : (p.importStatus?.[key] ?? 0);
 const rowRatio = (p: IImagingProjectStatus): number => {
     const t = rowTotal(p);
 
@@ -480,8 +467,7 @@ const rowRatio = (p: IImagingProjectStatus): number => {
 //
 // `connectionState` is optional so a hub that predates the field renders as healthy rather
 // than flagging every card.
-const isImportStale = (p: IImagingProjectStatus): boolean =>
-    p.connectionState === "unreachable" || p.connectionState === "project-missing";
+const isImportStale = (p: IImagingProjectStatus): boolean => importError(p) !== null;
 
 // Copy per state. The two states send an admin to different places — one is a connectivity
 // problem at the Trust, the other is a data problem inside a reachable XNAT — so the titles
