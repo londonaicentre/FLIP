@@ -20,6 +20,7 @@ from flip_api.trusts_services.services.register_trust import (
     DuplicateTrustError,
     EmptyTrustCodeError,
     EmptyTrustNameError,
+    InvalidTrustError,
     NoFreeKitSlotError,
     register_trust,
 )
@@ -60,6 +61,21 @@ def test_register_trust_creates_trust_and_claims_slot(mock_gen_key):
     # audit_trust_action.
     assert session.flush.call_count == 2
     session.commit.assert_called_once()
+
+
+@patch("flip_api.trusts_services.services.register_trust.generate_trust_key")
+def test_register_trust_without_keys_leaves_the_trust_unable_to_authenticate(mock_gen_key):
+    """The UI path (FLIP#1852): the slot is claimed, no key is minted, and the hash stays NULL."""
+    slot = FLKitSlot(slot_name="Trust_007", slot_number=7)
+    session = _mock_session(existing_trust=None, free_slot=slot)
+
+    result = register_trust(name="GSTT", code="GSTT", region=None, session=session, issue_keys=False)
+
+    mock_gen_key.assert_not_called()
+    assert result.trust.api_key_hash is None
+    assert result.trust_api_key is None
+    assert result.trust_internal_service_key is None
+    assert slot.assigned_to_trust_id == result.trust.id
 
 
 @patch("flip_api.trusts_services.services.register_trust.generate_trust_key")
@@ -121,6 +137,18 @@ def test_register_trust_rejects_blank_name():
     with pytest.raises(EmptyTrustNameError):
         register_trust(name="   ", code="GSTT", region=None, session=session)
     # Validation fires before any DB work.
+    session.exec.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("name", "code", "region"),
+    [("St Thomas", "ST T", None), ("St Thomas", "../etc", None), ("St $(id)", "STT", None), ("St Thomas", "STT", "`")],
+)
+def test_register_trust_rejects_what_a_kit_file_could_not_carry(name, code, region):
+    # Such a trust could never be given a kit, so never keys (FLIP#1852).
+    session = MagicMock()
+    with pytest.raises(InvalidTrustError):
+        register_trust(name=name, code=code, region=region, session=session)
     session.exec.assert_not_called()
 
 

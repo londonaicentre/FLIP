@@ -26,6 +26,9 @@ on:
       # deploy/instance.mk, so `make unit_test` cannot even start without it.
       - ".env.development.example"
       - "deploy/instance.mk"
+      # test_trust_kit.py installs a kit it built with the trust host's installer (FLIP#1852).
+      - "trust/deploy/scripts/*.py"
+      - "trust/.env.example"
       # The cohort-drafting schema copy is checked against the trust's OMOP DDL (FLIP#1556).
       - "trust/omop-db/files/OMOPCDM_postgresql_5.4_ddl.sql"
   pull_request:
@@ -51,6 +54,8 @@ jobs:
         .github/workflows/test_flip_api.yml
         .env.development.example
         deploy/instance.mk
+        trust/deploy/scripts/*.py
+        trust/.env.example
         trust/omop-db/files/OMOPCDM_postgresql_5.4_ddl.sql
 
   flip-api:

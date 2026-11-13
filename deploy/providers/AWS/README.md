@@ -128,11 +128,12 @@ A waiter timeout warns and proceeds. Then, per kit, it:
    decryption, deletes it, and deletes the task's log stream.
 3. Writes the kit through `trust/deploy/scripts/distribute_trust_kits.py` (repo root), the same in-place upsert writer the dev
    path and `sync-trust-kit` use: credentials on first registration only, operator host-local edits preserved, and
-   the hub-shared block upserted with whatever the task's environment carried — on ECS only `TRUST_API_KEY_HEADER`
-   and `FL_BACKEND` (`AES_KEY_BASE64` is a Secrets Manager value, never in the task env, and the other hub-shared
-   keys are not in the task definition at all). So it then runs `trust/deploy/scripts/sync_trust_kit.py` on the kit,
-   as `make sync-trust-kit` does, filling the whole block from the operator env file the Makefile loaded; a key
-   missing there fails the run, naming it (FLIP#1476).
+   the hub-shared block upserted with whatever the task's environment carried — on ECS every hub-shared key but
+   `AES_KEY_BASE64`, which is a Secrets Manager value, never in the task env (the hub URL, kit dates, image tags,
+   NLB subdomain and FL ports joined the task definition with FLIP#1852, for the kits flip-api issues from the UI;
+   before it only `TRUST_API_KEY_HEADER` and `FL_BACKEND` were there). So it then runs
+   `trust/deploy/scripts/sync_trust_kit.py` on the kit, as `make sync-trust-kit` does, filling the whole block from the
+   operator env file the Makefile loaded; a key missing there fails the run, naming it (FLIP#1476).
    It then mints the trust's XNAT stack passwords into the kit (`generate-xnat-credentials`), runtime-only
    trust-side secrets the hub never holds. That step runs locally through flip-api, so it needs flip-api's `uv`
    environment on the admin's machine.
@@ -644,6 +645,10 @@ dial is set separately (FLIP#1365):
 - **Everything else on the trust side:** `FL_EDGE_PORT=8003` in `.env.stag`, which `sync-trust-kit` copies
   into each kit (and refuses to default for a staging kit). It drives the Flower `--superlink`, the Kubernetes
   egress rule and the Helm Flower superlink; unset, it falls back to `FL_SERVER_PORT`, so production needs nothing.
+  The same value is the optional Terraform input `fl_edge_port` (`TF_VAR_fl_edge_port`, exported only when
+  `FL_EDGE_PORT` is set), which reaches nothing but flip-api's task env, for the kits downloaded from the UI
+  (FLIP#1852). CI reads it from the optional `FL_EDGE_PORT` variable on the GitHub environment, so set that to
+  `8003` on the staging environment.
 
 **Fresh-account trap: create a Secrets Manager secret before the first `plan`.** On a never-used account `make plan`
 fails at the very end with `Error: reading KMS Alias (alias/aws/secretsmanager): empty result`

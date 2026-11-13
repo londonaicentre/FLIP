@@ -15,7 +15,7 @@
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr load-adni-cohort \
 	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance prepare-host-dirs \
-	reconvert-nifti
+	reconvert-nifti install-kit
 # HUB selects the compose-file suffix (__DCKR_SUFFIX: every deployed environment
 # runs the prod compose) and the kit-file env token (ENV: .env.<CODE>.stag / .prod,
 # the files the AWS-side register-trusts writes), both from ../deploy/env_mode.mk.
@@ -528,6 +528,15 @@ build:
 # up-trust / upgrade-trust will read, including env suffixes and KIT_FILE overrides.
 onboard-onprem-trust:
 	@HUB="$(HUB)" uv run --no-config deploy/scripts/onboard_onprem_trust.py $(KIT) --kit-file '$(subst ','"'"',$(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),$(CURDIR)/$(KIT_FILE)))' $(ONBOARD_ARGS)
+
+# Install a kit downloaded from the FLIP UI (FLIP#1852): decrypt it, create or update
+# trust/.env.<CODE>.<hub> and stage the FL files in its FL_KIT_DIR. The trust CODE comes from the
+# kit, so this needs no KIT and no kit file; HUB defaults to prod, as the root on-prem verbs do.
+# The passphrase is prompted for (or read from stdin), never a variable here: `ps` would show it.
+#   make -C trust install-kit FILE=<path> [HUB=stag] [KIT=<CODE>] [DELETE=1]
+install-kit:
+	@[ -n "$(FILE)" ] || { echo "❌ FILE=<downloaded kit> is required. Usage: make -C trust install-kit FILE=<path> [HUB=stag]"; exit 1; }
+	@uv run --no-config deploy/scripts/install_kit.py '$(subst ','"'"',$(FILE))' --env $(if $(IS_DEPLOYED),$(ENV),prod) $(if $(KIT),--kit $(KIT)) $(if $(DELETE),--delete-file)
 
 # Prepare the third-party artifacts a development trust needs before `make up` (FLIP#1292): the
 # XNAT plugins its dev stack bind-mounts. They are public upstream downloads, pinned with their

@@ -97,6 +97,11 @@ class Settings(BaseSettings):
     UPLOADED_FEDERATED_DATA_BUCKET: str
     FL_APP_DESTINATION_BUCKET: str
 
+    # Where the pre-provisioned FL participant kits live, for building a trust's downloadable kit
+    # (FLIP#1852): the directory or ``s3://bucket/prefix`` that holds ``net-N/``. Unset, no kit can
+    # be downloaded from the UI.
+    FL_KITS_URI: str | None = None
+
     # The dev object store (FLIP#1291): development runs an S3-compatible
     # RustFS container in the dev compose instead of AWS S3, reached through
     # boto3's native AWS_ENDPOINT_URL_S3 and AWS_ACCESS_KEY_ID env like any

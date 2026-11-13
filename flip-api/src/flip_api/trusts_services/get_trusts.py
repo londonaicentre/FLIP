@@ -93,8 +93,7 @@ def get_trusts(
     topology). Readable by any authenticated user (Researcher, Viewer, Admin) —
     the fields are benign trust metadata (name, code, region, heartbeat, project
     count) with no secrets, so this is deliberately not admin-gated. Creating a
-    trust (``POST /admin/trusts``) and the plaintext keys it returns stay
-    admin-only.
+    trust (``POST /admin/trusts``) stays admin-only.
 
     Issue #901 added ``services``/``services_updated_at`` (per-service status,
     version and probe latency) to that set, and the Connection Status page is

@@ -98,6 +98,13 @@ Things worth knowing before touching any of it:
   Adding an `export TF_VAR_…` line therefore also means adding the key to that
   script's manifest, to all three workflow `env:` blocks, and to both GitHub
   environments — `scripts/tests/test_compose_ci_env.sh` fails the build otherwise.
+  `FL_EDGE_PORT` (`TF_VAR_fl_edge_port`, FLIP#1852) is an optional key there: unset,
+  the kits flip-api issues carry `FL_SERVER_PORT`, so the staging environment must set it.
+- **flip-api's task env carries the hub-shared kit values** (`locals.tf`, FLIP#1852):
+  `FL_KITS_URI` (the kit bucket prefix of the active backend's kit date),
+  `CENTRAL_HUB_API_URL`, both kit dates, `DOCKER_TAG`, `DOCKER_FL_TAG`, `NLB_SUBDOMAIN`,
+  `FL_SERVER_PORT` and `FL_EDGE_PORT`. flip-api builds a trust's downloadable kit from
+  them; `AES_KEY_BASE64` still comes from Secrets Manager.
 - **`TF_HUB` is the one mode input, a GitHub variable.** Each workflow passes
   `vars.TF_HUB` (`stag` | `prod`) to `compose-ci-env.sh` as `HUB`, with no fallback —
   unset fails the run. From it the script derives the env file and the profile the

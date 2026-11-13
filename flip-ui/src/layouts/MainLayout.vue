@@ -51,6 +51,8 @@
                 </template>
             </router-view>
         </main>
+
+        <TrustKitModal :kit="issuedKit" :trust-label="issuedKit?.trustLabel ?? ''" @close-modal="issuedKit = null" />
     </div>
 </template>
 
@@ -68,6 +70,7 @@ import AiUserDropdown from "@/components/AiUserDropdown/AiUserDropdown.vue";
 import { usePermissions } from "@/composables/usePermissions";
 import DeploymentMode from "@/pages/DeploymentMode.vue";
 import CreateModelModal from "@/partials/models/CreateModelModal.vue";
+import TrustKitModal from "@/partials/trusts/TrustKitModal.vue";
 import { getProject } from "@/services/project-service";
 import { getCurrentUser } from "@/services/user-service";
 import { useAuthStore } from "@/store/auth";
@@ -76,6 +79,7 @@ import { useModalsStore } from "@/store/modals";
 import { useProjectStore } from "@/store/project";
 import { useSiteDetailsStore } from "@/store/siteDetailsStore";
 import { useSiteSettings } from "@/store/siteSettingsStore";
+import { issuedKit } from "@/utils/issued-trust-kit";
 import { Snackbar } from "@/utils/snackbar";
 
 const projectStore = useProjectStore();
@@ -112,6 +116,8 @@ const displayName = computed(() => currentUserProfile.value?.name || emailAddres
 const { isAdmin, canCreateProjects } = usePermissions();
 const userRole = computed(() => {
     if (isAdmin.value) return "Admin";
+    // A Trust Admin also holds the Researcher grant; name the role that sets them apart.
+    if (authStore.trustAdminOf) return "Trust Admin";
     if (canCreateProjects.value) return "Researcher";
 
     return "Viewer";
