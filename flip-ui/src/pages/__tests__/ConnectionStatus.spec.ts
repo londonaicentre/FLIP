@@ -166,6 +166,15 @@ function mountPage({ permissions = ["CanAccessAdminPanel"] }: MountOptions = {})
     });
 }
 
+// Seeds the swrv data, mounts, and lets the first render settle.
+async function mountLoaded(data: typeof fixture = fixture, opts?: MountOptions) {
+    mockSwrvData.value = data;
+    const wrapper = mountPage(opts);
+    await wrapper.vm.$nextTick();
+
+    return wrapper;
+}
+
 // The TRUST column shows the name prominently with the code in a small span
 // below (data-test="trust-code"). These sort tests verify row ORDER by code,
 // which mirrors name order in the fixture, so read the code span.
@@ -195,9 +204,7 @@ describe("ConnectionStatus", () => {
     it("shows the hub's release beside the federation count, and an em dash until it is known", async () => {
         // FLIP#1204: a site upgrades to the release its hub runs, so the page names it where the
         // per-trust versions (drawer) can be compared against it.
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded();
         expect(wrapper.find("[data-test='hub-version']").text()).toContain("—");
 
         mockHubHealth.value = {
@@ -223,7 +230,7 @@ describe("ConnectionStatus", () => {
     it("defaults to severity-first sort so failing trusts surface on load", async () => {
         // Alphabetical and severity order DIFFER here: Acme is online, Zebra is
         // offline — severity-first must put Zebra on top despite its name.
-        mockSwrvData.value = [
+        const wrapper = await mountLoaded([
             {
                 ...fixture[1],
                 name: "Acme NHS Trust",
@@ -238,42 +245,33 @@ describe("ConnectionStatus", () => {
                 services: undefined,
                 services_updated_at: undefined
             }
-        ];
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        ]);
         expect(codesInOrder(wrapper)).toEqual(["ZNT", "ANT"]);
         expect(wrapper.find("[data-test='mobile-sort-btn']").text()).toContain("Sort: Severity ↑");
     });
 
-    it("toggles to descending on a second click of the same column", async () => {
+    it.each([
+        ["name", ["ANT", "MNT", "ZNT"], ["ZNT", "MNT", "ANT"]],
+        // Project counts: Zebra=1, Maple=3, Acme=7.
+        ["projects", ["ZNT", "MNT", "ANT"], ["ANT", "MNT", "ZNT"]],
+        // Regions: London (ZNT), North East (MNT), South West (ANT).
+        ["region", ["ZNT", "MNT", "ANT"], ["ANT", "MNT", "ZNT"]]
+    ])("sorts by %s ascending, then descending on a second click", async (column, ascending, descending) => {
         mockSwrvData.value = fixture;
         const wrapper = mountPage();
-        const trustHeader = wrapper.find("[data-test='sort-header-name']");
-        await trustHeader.trigger("click");
-        expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
-        await trustHeader.trigger("click");
-        expect(codesInOrder(wrapper)).toEqual(["ZNT", "MNT", "ANT"]);
+        const header = wrapper.find(`[data-test='sort-header-${column}']`);
+        await header.trigger("click");
+        expect(codesInOrder(wrapper)).toEqual(ascending);
+        await header.trigger("click");
+        expect(codesInOrder(wrapper)).toEqual(descending);
     });
 
     it("severity is the active default — clicking its header toggles to online-first", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded();
         // Acme has no heartbeat → offline; Maple is degraded (2 min old); Zebra is online.
         expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
         await wrapper.find("[data-test='sort-header-severity']").trigger("click");
         expect(codesInOrder(wrapper)).toEqual(["ZNT", "MNT", "ANT"]);
-    });
-
-    it("sorts by project count, ascending then descending, on the Projects header", async () => {
-        // Fixture project counts: Zebra=1, Maple=3, Acme=7
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        const projectsHeader = wrapper.find("[data-test='sort-header-projects']");
-        await projectsHeader.trigger("click");
-        expect(codesInOrder(wrapper)).toEqual(["ZNT", "MNT", "ANT"]);
-        await projectsHeader.trigger("click");
-        expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
     });
 
     it("shows an up arrow on the active ascending column and a down arrow on descending", async () => {
@@ -289,9 +287,7 @@ describe("ConnectionStatus", () => {
     });
 
     it("counts trusts in the subtitle header (3 → 'trusts', 1 → 'trust')", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded();
         // Header copy is "Federation · 3 trusts" — the loaded fixture has three rows.
         expect(wrapper.text()).toContain("3 trusts");
 
@@ -302,9 +298,7 @@ describe("ConnectionStatus", () => {
     });
 
     it("hides the Add Trust button for non-admins", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage({ permissions: [] });
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded(fixture, { permissions: [] });
         expect(wrapper.find("[data-test='add-trust-btn']").exists()).toBe(false);
     });
 
@@ -321,25 +315,19 @@ describe("ConnectionStatus", () => {
     it("lets a non-admin (Researcher / Viewer) load trust statuses with no Add Trust control", async () => {
         // Acceptance criteria for #557: a non-admin sees the statuses populate
         // (no perpetual loader) while the admin-only Add Trust control stays hidden.
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage({ permissions: [] });
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded(fixture, { permissions: [] });
         expect(wrapper.find("[data-test='ai-loader']").exists()).toBe(false);
         expect(wrapper.findAll("[data-test='trust-row']").length).toBe(fixture.length);
         expect(wrapper.find("[data-test='add-trust-btn']").exists()).toBe(false);
     });
 
     it("shows the Add Trust button for admins", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded();
         expect(wrapper.find("[data-test='add-trust-btn']").exists()).toBe(true);
     });
 
     it("puts Add Trust on the title row and collapses it to a plus below lg", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded();
 
         const btn = wrapper.find("[data-test='add-trust-btn']");
         // Same row as the h1 — not a separate bottom-aligned block.
@@ -352,15 +340,13 @@ describe("ConnectionStatus", () => {
     });
 
     it("renders the trust name prominently with the code beneath it (code hidden when absent)", async () => {
-        mockSwrvData.value = [
+        const wrapper = await mountLoaded([
             {
                 ...fixture[0],
                 code: undefined as unknown as string
             }, // codeless trust → name only, no code line
             fixture[1]
-        ];
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        ]);
         const rows = wrapper.findAll("[data-test='trust-row']");
         // Sorted alphabetically by name: "Acme NHS Trust" (ANT) before "Zebra NHS Trust" (no code).
         expect(rows[0].find("[data-test='trust-name']").text()).toBe("Acme NHS Trust");
@@ -371,9 +357,7 @@ describe("ConnectionStatus", () => {
 
     it("flags an offline trust (null heartbeat) and surfaces it via the red row background", async () => {
         // Acme (second fixture entry) has last_heartbeat: null → state "offline".
-        mockSwrvData.value = [fixture[1]];
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded([fixture[1]]);
         const row = wrapper.find("[data-test='trust-row']");
         // The offline-red bg pulls the row out of the default zebra striping.
         expect(row.classes().some(c => c.startsWith("bg-red"))).toBe(true);
@@ -387,9 +371,7 @@ describe("ConnectionStatus", () => {
         // Zebra (first fixture entry) is online — no red tint applies, and no
         // dark-surface either: rows sit transparent on the card's dark canvas
         // exactly like the stacked mobile rows.
-        mockSwrvData.value = [fixture[0]];
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded([fixture[0]]);
         const row = wrapper.find("[data-test='trust-row']");
         expect(row.classes().some(c => c.startsWith("bg-red"))).toBe(false);
         expect(row.classes()).not.toContain("dark:bg-dark-surface");
@@ -406,9 +388,7 @@ describe("ConnectionStatus", () => {
     });
 
     it("stacks the topology legend vertically", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded();
         await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
 
         const legend = wrapper.find("[data-test='radial-legend']");
@@ -417,9 +397,7 @@ describe("ConnectionStatus", () => {
     });
 
     it("lightens the offline dashed spoke in dark mode so it reads on the dark card", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded();
         await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
 
         // Offline spokes are the dashed ones (Acme has a null heartbeat).
@@ -434,9 +412,7 @@ describe("ConnectionStatus", () => {
     });
 
     it("renders the radial topology on the plain card surface with dark-visible labels", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded();
         await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
 
         // The bespoke gradient panel (off-token blue-grey in dark mode) is gone —
@@ -458,9 +434,7 @@ describe("ConnectionStatus", () => {
     });
 
     it("toggles to the radial topology view when its tab is clicked", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded();
         // Table view is the default — the list has rows, the radial SVG isn't mounted.
         expect(wrapper.findAll("[data-test='trust-row']").length).toBe(3);
         expect(wrapper.find("[data-test='connection-radial-svg']").exists()).toBe(false);
@@ -482,17 +456,6 @@ describe("ConnectionStatus", () => {
         await radialTab.trigger("click");
         expect(listTab.attributes("aria-selected")).toBe("false");
         expect(radialTab.attributes("aria-selected")).toBe("true");
-    });
-
-    it("sorts by region alphabetically and toggles direction on repeat click", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        const regionHeader = wrapper.find("[data-test='sort-header-region']");
-        await regionHeader.trigger("click");
-        // Regions: London (ZNT), North East (MNT), South West (ANT).
-        expect(codesInOrder(wrapper)).toEqual(["ZNT", "MNT", "ANT"]);
-        await regionHeader.trigger("click");
-        expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
     });
 
     it("sorts by heartbeat freshness, pushing the never-heartbeat trust to the end", async () => {
@@ -595,9 +558,7 @@ describe("ConnectionStatus", () => {
     });
 
     it("lets the Trust column squash and truncate instead of locking at 18rem", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded();
 
         // The column absorbs the leftover width instead of pinning a 288px floor…
         const th = wrapper.find("[data-test='sort-header-name']");
@@ -610,9 +571,7 @@ describe("ConnectionStatus", () => {
     });
 
     it("renders seven columns — Services dots + drawer chevron, no sparkline", async () => {
-        mockSwrvData.value = fixture;
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
+        const wrapper = await mountLoaded();
 
         expect(wrapper.findAll("th")).toHaveLength(7);
         // Pinned column widths keep Region/Services/Heartbeat from being squeezed

@@ -16,6 +16,13 @@
 
 import { validProject, validProjectWithQuery } from "../../common";
 
+// What the page posts to /step/cohort for the query these tests type.
+const expectedCohortQueryBody = {
+    name: validProject.name + ": Cohort Query",
+    query: "select * from somewhere",
+    projectId: validProject.id
+};
+
 describe("Cohort Query Page - OMOP", () => {
     before(() => {
         cy.login();
@@ -41,12 +48,7 @@ describe("Cohort Query Page - OMOP", () => {
 
         cy.wait("@submitCohortQuery");
 
-        cy.get("@submitCohortQuery").its("request.body").should("deep.equal",
-            {
-                "name": validProject.name + ": Cohort Query",
-                "query": "select * from somewhere",
-                "projectId": validProject.id
-            });
+        cy.get("@submitCohortQuery").its("request.body").should("deep.equal", expectedCohortQueryBody);
 
         cy.wait("@cohortResults");
         cy.get("canvas").eq(0).scrollIntoView().should("be.visible");
@@ -70,12 +72,7 @@ describe("Cohort Query Page - OMOP", () => {
 
         cy.wait("@invalidSubmitCohortQuery");
 
-        cy.get("@invalidSubmitCohortQuery").its("request.body").should("deep.equal",
-            {
-                "name": validProject.name + ": Cohort Query",
-                "query": "select * from somewhere",
-                "projectId": validProject.id
-            });
+        cy.get("@invalidSubmitCohortQuery").its("request.body").should("deep.equal", expectedCohortQueryBody);
 
         cy.getBySel("no-results-message").should("not.exist");
         cy.getBySel("snackbar-text").should("contain", "There was a problem running this cohort query");
@@ -92,12 +89,7 @@ describe("Cohort Query Page - OMOP", () => {
 
         cy.wait("@submitCohortQuery");
 
-        cy.get("@submitCohortQuery").its("request.body").should("deep.equal",
-            {
-                "name": validProject.name + ": Cohort Query",
-                "query": "select * from somewhere",
-                "projectId": validProject.id
-            });
+        cy.get("@submitCohortQuery").its("request.body").should("deep.equal", expectedCohortQueryBody);
 
         cy.wait("@emptyCohortResults");
 
