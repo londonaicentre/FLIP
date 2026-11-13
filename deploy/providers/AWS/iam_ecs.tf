@@ -202,9 +202,11 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
   }
 
   statement {
-    sid       = "SesSend"
-    actions   = ["ses:SendEmail", "ses:SendRawEmail", "ses:SendTemplatedEmail"]
-    resources = [module.ses.sender_identity_arn]
+    sid     = "SesSend"
+    actions = ["ses:SendEmail", "ses:SendRawEmail", "ses:SendTemplatedEmail"]
+    # SES authorises a templated send against the template as well as the sender
+    # identity (FLIP#1840). Pinned by tests/test_flip_api_ses_iam.py.
+    resources = concat([module.ses.sender_identity_arn], module.ses.template_arns)
   }
 
   statement {
