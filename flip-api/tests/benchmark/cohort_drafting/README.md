@@ -65,3 +65,12 @@ prices differ; a Bedrock run is costed at the Claude API rates as an estimate.
 ## Results
 
 Filled in by hand after a run; numbers only. Full reports go in the PR.
+
+Claude Sonnet 5.5 on the Claude API, judged by Claude Opus 5.5. Prompt v1 is two runs pooled (n = 96), prompt v2
+one run (n = 48). v2 is judged on the updated rubric (grain and Beta scope), so the rows are close, not identical,
+comparisons.
+
+| Prompt | Trust validator | Outcome type | Correct / partly / wrong | Held-out correct / partly / wrong | Clarifications | Latency p50 / p90 | Cost per request / per draft |
+|---|---|---|---|---|---|---|---|
+| 2026-11-13.1 | 54/54 | 89/96 (93%) | 71 / 25 / 0 | 18 / 12 / 0 | 32/96 (33%) | 3.7 s / 6.3 s | $0.0053 / $0.0094 |
+| 2026-11-13.2 | 31/31 | 47/48 (98%) | 45 / 3 / 0 | 15 / 0 / 0 | 6/48 (13%) | 3.4 s / 4.4 s | $0.0056 / $0.0087 |
