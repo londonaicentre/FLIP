@@ -115,13 +115,17 @@ upgrade refuses a release from a checkout at any other tag (exit code 6).
 
 .. note::
 
-   **Kits named before FLIP#1479.** A kit was named ``.env.<slot>.production``, ``.env.<slot>.lza-prod`` or a bare
-   ``.env.<slot>``, and the verbs took ``PROD=`` where they now take ``HUB=``. Run ``unset PROD`` first if your shell
-   still exports it (a ``sudo -E`` prefix passes it through too): any ``PROD`` now stops make. An old-named kit keeps working
-   for one release (the verbs find it and print the exact rename), but rename it to ``trust/.env.<slot>.prod`` before
-   the next one, and only once you will not roll back past this release: earlier releases know only the old names.
-   Move it (``mv``), never copy it: two names for one kit stop make. The running stack needs nothing, since the verbs
-   recognise it as this trust under either name, so never move the trust to another slot because of the rename.
+   **Kits with the old file names.** Older kits were named ``.env.<slot>.production``, ``.env.<slot>.lza-prod`` or a
+   bare ``.env.<slot>``, and the commands took ``PROD=`` where they now take ``HUB=``.
+
+   - Run ``unset PROD`` first if your shell still exports it (a ``sudo -E`` prefix passes it through too). Any
+     ``PROD`` now stops make.
+   - An old-named kit keeps working for one release. The commands find it and print the exact rename.
+   - Rename it to ``trust/.env.<slot>.prod`` before the next release, but only once you will not roll back past this
+     one. Earlier releases know only the old names.
+   - Move it (``mv``), never copy it. Two names for one kit stop make.
+   - The running stack needs nothing, because the commands recognise it as this trust under either name. Never move the
+     trust to another slot because of the rename.
 
 .. note::
 
@@ -181,8 +185,8 @@ playbook; see :ref:`onprem-operator-access`):
 #. **Confirm**, then write the tag into the kit's ``DOCKER_TAG`` and ``DOCKER_FL_TAG``, so the kit records what is
    installed.
 #. **Create XNAT's prearchive folder** (``$XNAT_DATA_DIR/xnat-data/prearchive/``) as xnat-web's uid if the site
-   lacks it. Before this release XNAT kept its prearchive inside the container, so sessions waiting there at the first
-   upgrade after it are lost.
+   lacks it. Older releases kept XNAT's prearchive inside the container, so sessions waiting there when you first
+   upgrade from one of them are lost.
 #. **Pull and recreate** only the containers whose image or configuration changed. OMOP, Orthanc and XNAT data stay on
    their bind mounts.
 #. **Upgrade XNAT in place**:
@@ -209,12 +213,16 @@ The upgrade never re-seeds data and never resets XNAT.
       make -C trust/xnat xnat-db-remove-old-cluster KIT=<CODE> HUB=<env>          # shows what would go
       make -C trust/xnat xnat-db-remove-old-cluster KIT=<CODE> HUB=<env> YES=1    # deletes it
 
-   ``xnat-db`` refuses to start beside an older database it has no dump of, rather than starting XNAT empty. That
-   happens when the new image is deployed by anything other than ``make upgrade-onprem-trust`` or
-   ``make -C trust upgrade-trust``. Pin ``XNAT_TAG`` back to the previous release, then upgrade with one of those.
-   Resume an upgrade that failed or was interrupted the same way, never with a plain deploy. An upgrade after a
-   rollback keeps the newer database the site rolled back from as ``pg16.replaced-<timestamp>/``, until the command
-   above removes it.
+   An upgrade after a rollback keeps the newer database the site rolled back from as ``pg16.replaced-<timestamp>/``,
+   until the command above removes it.
+
+.. important::
+
+   **Only the upgrade commands can move** ``xnat-db`` **across a PostgreSQL major.** ``xnat-db`` refuses to start
+   beside an older database it has no dump of, rather than starting XNAT empty. That happens when the new image is
+   deployed by anything other than ``make upgrade-onprem-trust`` or ``make -C trust upgrade-trust``. To recover, pin
+   ``XNAT_TAG`` back to the previous release, then upgrade with one of those commands. Resume an upgrade that failed or
+   was interrupted the same way, never with a plain deploy.
 
 .. note::
 
@@ -256,8 +264,10 @@ The upgrade never re-seeds data and never resets XNAT.
      - The checkout is not at the target tag, or git could not read the checkout.
      - Check out the tag (step 3), or apply the printed ``safe.directory`` fix.
 
-Exit codes 2 to 6 all mean **nothing was changed**. Run through ``make``, the shell sees make's own exit status
-(2); the code above is in make's first ``*** … Error <code>`` line.
+Exit codes 2 to 6 all mean **nothing was changed**.
+
+Because the upgrade runs through ``make``, your shell always sees make's own exit status, 2. Read the upgrade's code
+from make's first ``*** … Error <code>`` line.
 
 Step 5 — Verify
 ===============
@@ -309,17 +319,26 @@ populated data, and the API deployments roll onto the new images.
 
 ``KUBE_CONTEXT`` defaults to kubectl's current context; name it on a workstation with several clusters.
 
-When the release moves ``xnat-db`` to a newer PostgreSQL major (12 to 16 with FLIP#1812), the command first scales
-``xnat-web`` to zero and dumps the ``xnat`` database onto the ``xnat-db`` volume; ``helm upgrade`` then starts the new
-``xnat-db``, which restores the dump into a fresh cluster before XNAT can connect, and brings ``xnat-web`` back. The old
-cluster stays on the volume for a rollback until
-``make -C trust/deploy/helm xnat-db-remove-old-cluster [YES=1]`` removes it. A plain ``helm upgrade`` takes no dump, so
-the new ``xnat-db`` refuses to start beside the old cluster. To recover, pin ``xnat.image.pin`` (or the kit's
-``XNAT_TAG``) to the previous release and redeploy, then delete the ``xnat-db`` pod, because Kubernetes does not replace a
-crash-looping StatefulSet pod on its own. When it is up on the old release, remove the pin and use ``upgrade-trust-k8s``.
-It refuses in the same way after a rollback, when the old cluster has run again since the dump was taken: upgrade with
-the command again, which takes a new dump. Resume an upgrade that failed or was interrupted with the command too, never
-a plain ``helm upgrade``.
+**PostgreSQL major upgrades** (for example 12 to 16 with FLIP#1812). When a release moves ``xnat-db`` to a newer
+PostgreSQL major, the command:
+
+#. scales ``xnat-web`` to zero and dumps the ``xnat`` database onto the ``xnat-db`` volume;
+#. runs ``helm upgrade``, which starts the new ``xnat-db``. It restores the dump into a fresh cluster before XNAT can
+   connect, and ``xnat-web`` comes back.
+
+The old cluster stays on the volume for a rollback until
+``make -C trust/deploy/helm xnat-db-remove-old-cluster [YES=1]`` removes it.
+
+Always use ``upgrade-trust-k8s``, including to resume an upgrade that failed or was interrupted. A plain ``helm
+upgrade`` takes no dump, so the new ``xnat-db`` refuses to start beside the old cluster. It also refuses after a
+rollback, when the old cluster has run again since the dump was taken; run ``upgrade-trust-k8s`` again to take a new
+dump.
+
+If ``xnat-db`` has refused to start:
+
+#. Pin ``xnat.image.pin`` (or the kit's ``XNAT_TAG``) to the previous release and redeploy.
+#. Delete the ``xnat-db`` pod. Kubernetes does not replace a crash-looping StatefulSet pod on its own.
+#. When it is up on the old release, remove the pin and run ``upgrade-trust-k8s``.
 
 .. warning::
 
@@ -327,16 +346,18 @@ a plain ``helm upgrade``.
    upgrade re-applies the listed mock projects (only those projects' rows are replaced). For a site whose stores
    hold real data only, set ``TRUST_DATA_SEED=false`` in the kit; ``sync-kit`` carries it into the release.
 
-**Databases initialised before the role split.** A trust whose XNAT database volume was created by a chart
-older than the xnat-db role split holds a single superuser named ``xnat`` and no ``postgres`` role. Releases
-that carry FLIP#1658 connect as whichever of the two roles the volume has, so the upgrade completes and the
-application role's password is re-synced; on such a site the application role stays the database superuser
-until it is converged (see :ref:`ts-k8s-xnat-db-roles`). The move to PostgreSQL 16 converges it: the database is
-restored into a cluster that carries the current two roles. One related pre-flight check: a release from the
-``guard-xnat-db-passwords.sh`` era refuses to start xnat-db when the two XNAT passwords are equal
-(``XNAT_DATASOURCE_PASSWORD`` and ``XNAT_DATASOURCE_ADMIN_PASSWORD`` in the kit, ``xnat-datasource-password``
-and ``xnat-datasource-admin-password`` in ``values-secrets.yaml``; ``xnat-admin-password`` is a different
-secret, XNAT's web admin password), so a site that ever set them to the same value must
+**Databases initialised before the role split.** If your XNAT database volume was created by an older chart, it
+holds a single superuser named ``xnat`` and no ``postgres`` role. Releases from ``v0.14.0`` connect as whichever role
+the volume has, so the upgrade completes and re-syncs the application role's password. Until the roles are converged,
+the application role stays the database superuser (see :ref:`ts-k8s-xnat-db-roles`). The move to PostgreSQL 16
+converges them, because the database is restored into a cluster with the current two roles.
+
+**The two XNAT database passwords must differ.** xnat-db refuses to start when these are equal:
+
+- in the kit: ``XNAT_DATASOURCE_PASSWORD`` and ``XNAT_DATASOURCE_ADMIN_PASSWORD``;
+- in ``values-secrets.yaml``: ``xnat-datasource-password`` and ``xnat-datasource-admin-password``.
+
+(``xnat-admin-password`` is a different secret, XNAT's web admin password.) If you ever set the two to the same value,
 rotate one of them before the upgrade, or the pod stops for that reason instead.
 
 **Per-image pins.** The kit's opt-outs reach the chart as pins that override ``global.image.tag`` for one image
@@ -374,8 +395,8 @@ three.
 AWS EC2 node
 ============
 
-*Who: whoever deployed the node*, from their workstation at the release tag. It uses the same SSH Docker context as
-the root's ``make deploy``.
+*Who: whoever deployed the node*, from their workstation, with the checkout at the release tag. It uses the same SSH
+Docker context as ``make deploy`` in ``trust/deploy/terraform/aws/ec2``.
 
 .. code-block:: shell
 
@@ -473,7 +494,7 @@ Upgrading the hub
 
 .. seealso::
 
-   ``deploy/providers/AWS/README.md`` and *Cutting a release* in ``CONTRIBUTING.md`` for the full hub procedure.
+   :gh:`deploy/providers/AWS/README.md` and *Cutting a release* in :gh:`CONTRIBUTING.md` for the full hub procedure.
 
 Approved cohorts after an upgrade
 =================================
