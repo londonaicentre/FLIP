@@ -43,6 +43,8 @@ services:
       - XNAT_HOME=${XNAT_HOME}
       - XNAT_ROOT=${XNAT_ROOT}
       - XNAT_EMAIL=${XNAT_EMAIL}
+      # The zone DQR reads the PACS availability window in (FLIP#1880); set in trust/xnat/.env.
+      - TZ=${XNAT_TZ}
       # Site branding for the enclave XNAT login page. TRUST_NAME comes from the trust kit
       # (exported by trust/xnat/Makefile); configure-xnat.sh turns it into the site description
       # ("Welcome to FLIP's XNAT at <trust>"). XNAT_SITE_DESCRIPTION overrides the whole string.

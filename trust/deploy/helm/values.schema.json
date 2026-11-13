@@ -401,6 +401,12 @@
         "db": {
           "type": "object",
           "properties": {
+            "maxConnections": { "type": "integer", "minimum": 1, "description": "Postgres max_connections (FLIP#662)" },
+            "sharedBuffers": {
+              "type": "string",
+              "pattern": "^[0-9]+(kB|MB|GB|TB)?$",
+              "description": "Postgres shared_buffers, e.g. 512MB (FLIP#662)"
+            },
             "persistence": {
               "type": "object",
               "properties": {

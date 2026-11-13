@@ -275,6 +275,9 @@ else
 # In development, mount plugins and config from the host for hot-reload
 STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.development.yml
 XNAT_PLUGINS_FROM_HOST = 1
+# The development overlay caps xnat-web at 8G, which .env's 8192m heap would fill: keep the heap to
+# three quarters of it, leaving the rest for the JVM's own memory (FLIP#1880).
+XNAT_MAX_HEAP = 6144m
 endif
 
 # Guard: a KIT-selected target needs KIT set.

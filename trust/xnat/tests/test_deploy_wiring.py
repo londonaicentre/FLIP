@@ -399,3 +399,22 @@ def test_nginx_update_rides_out_the_xnat_web_restart():
     assert re.search(update_policy, block.group(1), re.M), (
         "xnat-nginx must set deploy.update_config.failure_action: continue"
     )
+
+
+def test_xnat_runs_in_uk_local_time():
+    """DQR reads the PACS availability window with LocalTime.now(), the JVM's zone (FLIP#1880).
+
+    Without TZ, xnat-web runs in UTC and a UK trust's agreed window is an hour off during BST.
+    """
+    assert compose_environment()["TZ"] == "${XNAT_TZ}"
+    assert make_vars("XNAT_TZ")["XNAT_TZ"] == "Europe/London"
+
+
+@pytest.mark.parametrize(("hub", "heap"), [("", "6144m"), ("stag", "8192m"), ("prod", "8192m")])
+def test_dev_heap_leaves_room_under_the_dev_container_limit(hub, heap):
+    """Development caps xnat-web at 8G; a heap that size gets the container OOM-killed (FLIP#1880).
+
+    Deployed trusts have no limit and keep .env's heap.
+    """
+    overrides = {"HUB": hub} if hub else {}
+    assert make_vars("XNAT_MAX_HEAP", **overrides)["XNAT_MAX_HEAP"] == heap
