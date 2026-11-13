@@ -119,13 +119,9 @@ spec:
       {{- end }}
     spec:
       enableServiceLinks: false
+      {{- with .Values.flClient.hostAliases }}
       hostAliases:
-      {{- range .Values.flClient.hostAliases }}
-        - ip: {{ .ip | quote }}
-          hostnames:
-          {{- range .hostnames }}
-            - {{ . | quote }}
-          {{- end }}
+        {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "flip-trust.fullname" . }}-fl-client
       {{- if .Values.imagePullSecrets }}
