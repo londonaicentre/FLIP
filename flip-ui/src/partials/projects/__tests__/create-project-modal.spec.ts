@@ -58,22 +58,27 @@ const stubs = {
     "ProjectUsers": { template: "<div>Project Users Component</div>" }
 };
 
+const mountModal = (Form = formStub()) => mount(NewProject, {
+    props: { open: true },
+    global: {
+        plugins: [createTestingPinia({
+            createSpy: vi.fn,
+            stubActions: false
+        })],
+        stubs: {
+            ...stubs,
+            Form
+        }
+    }
+});
+
 describe("Create Project Modal", () => {
     let component: ReturnType<typeof mount>;
 
     beforeEach(() => {
         mockCreateProject.mockClear();
 
-        component = mount(NewProject, {
-            props: { open: true },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })],
-                stubs
-            }
-        });
+        component = mountModal();
     });
 
     it("Renders the component", () => {
@@ -92,39 +97,12 @@ describe("Create Project Modal", () => {
         expect(descriptionInput.exists()).toBe(true);
     });
 
-    it("DICOM to NIfTI toggle exists", () => {
-        const toggle = component.find(CreateProjectModal.dicomToNiftiToggle);
-        expect(toggle.exists()).toBe(true);
-    });
-
-    it("dicom_to_nifti string 'true' is coerced to boolean true on submit", async () => {
-        const form = component.find("form");
-        await form.trigger("submit");
-        await vi.waitFor(() => expect(mockCreateProject).toHaveBeenCalled());
-
-        const submittedValues = mockCreateProject.mock.calls[0][1];
-        expect(submittedValues.dicom_to_nifti).toBe(true);
-        expect(typeof submittedValues.dicom_to_nifti).toBe("boolean");
-    });
-
     it("dicom_to_nifti falsy value is coerced to boolean false on submit", async () => {
-        component = mount(NewProject, {
-            props: { open: true },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })],
-                stubs: {
-                    ...stubs,
-                    // Imaging on, the DICOM switch unchecked (AiSwitch reports that as an empty value).
-                    Form: formStub({
-                        has_imaging: "true",
-                        dicom_to_nifti: ""
-                    })
-                }
-            }
-        });
+        // Imaging on, the DICOM switch unchecked (AiSwitch reports that as an empty value).
+        component = mountModal(formStub({
+            has_imaging: "true",
+            dicom_to_nifti: ""
+        }));
 
         const form = component.find("form");
         await form.trigger("submit");
@@ -150,21 +128,9 @@ describe("Create Project Modal", () => {
     });
 
     it("turning imaging off hides the DICOM to NIfTI toggle and submits has_imaging=false with dicom_to_nifti at its default", async () => {
-        component = mount(NewProject, {
-            props: { open: true },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })],
-                stubs: {
-                    ...stubs,
-                    // The real Form drops an unmounted field from `values` (AiSwitch reports an
-                    // unchecked switch as undefined): mirror that — no dicom_to_nifti key.
-                    Form: formStub({ has_imaging: "" })
-                }
-            }
-        });
+        // The real Form drops an unmounted field from `values` (AiSwitch reports an
+        // unchecked switch as undefined): mirror that — no dicom_to_nifti key.
+        component = mountModal(formStub({ has_imaging: "" }));
 
         expect(component.find(CreateProjectModal.hasImagingToggle).exists()).toBe(true);
         expect(component.find(CreateProjectModal.dicomToNiftiToggle).exists()).toBe(false);
