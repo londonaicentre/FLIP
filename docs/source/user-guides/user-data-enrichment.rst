@@ -144,19 +144,13 @@ ask it to.
 Relative paths are resolved from the manifest's own folder. An optional third column, ``target_filename``, overrides
 the derived name.
 
-**Step 3 — Provide your XNAT credentials**, as environment variables:
+**Step 3 — Provide your XNAT credentials**, as environment variables or as a JSON file (``--credentials-file``):
 
 .. code-block:: shell
 
    export XNAT_HOST=https://xnat.trust.example
    export XNAT_USER=your-username
    export XNAT_PASS=your-password
-
-or as a JSON file passed with ``--credentials-file`` (one file per Trust):
-
-.. code-block:: json
-
-   {"server": "https://xnat.trust.example", "user": "your-username", "password": "your-password"}
 
 .. note::
 
