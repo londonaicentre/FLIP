@@ -1194,7 +1194,7 @@ The chart is validated in CI via:
 | **Bad env vars** | `kubectl exec <pod> -n <ns> -- env` shows empty/wrong URLs | Check ConfigMap values. For trust-api, verify `CENTRAL_HUB_API_URL` is reachable. |
 | **DB unreachable** | data-access-api logs show DB connection errors | If using external DB: verify `external.host:port` is correct and firewall allows. For in-cluster DB: check the StatefulSet pod is running. |
 | **NVFLARE GPU count** | fl-client log shows `num_of_gpus specified (1) exceeds available GPUs: 0` | The pod does not see the GPU `flClient.gpu.count` promises. Check `kubectl exec <fl-client> -n <ns> -- nvidia-smi -L`; fix the node's NVIDIA runtime, or set `flClient.gpu.enabled: false`. |
-| **NVFLARE kit not writable** | fl-client log shows `cannot write /app/local/resources.json` | The client renders `resources.json` into the kit's `local/` at start. `chown` the staged kit's `local/` to uid 1000 on the node. |
+| **NVFLARE kit not writable** | the `fl-client-init` init container fails writing `/app/local/resources.json` | `fl-client-init` renders `resources.json` into the kit's `local/` before the client starts (the client mounts it read-only). `chown` the staged kit's `local/` to uid 1000 on the node. |
 | **Init container failed** | `kubectl logs <pod> -c <init-container> -n <ns>` | For fl-client (`images-init`): the shared images volume must be writable by the init's root user — check the PVC is bound. For omop-db-init: verify PVC is bound. |
 
 ### FL client won't connect

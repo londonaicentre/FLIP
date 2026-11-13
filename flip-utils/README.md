@@ -102,7 +102,7 @@ flip/
 │   ├── recipes/       # High-level FLARE job recipes
 │   ├── runtime.py     # Runtime helpers for FLARE apps
 │   ├── site_policy.py # Client-side entrypoint (`python -m flip.nvflare.site_policy`):
-│   │                  # renders `local/privacy.json` from FL_SITE_PRIVACY_* env vars at container start
+│   │                  # renders `local/privacy.json` from FL_SITE_PRIVACY_* env vars in the fl-client's init step
 │   ├── server_site_config.py # Server-side entrypoint (`python -m flip.nvflare.server_site_config`):
 │   │                  # registers FLIP's server site components in `local/flip__p_resources.json`
 │   └── metrics.py     # Metrics collection and reporting

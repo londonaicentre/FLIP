@@ -107,8 +107,9 @@ This is the minimum cohort size the trust will release anything about. Cohort st
 #### Site-enforced FL privacy policy (optional, FLARE only)
 
 The kit file's Host-local profile can set `FL_SITE_PRIVACY_POLICY=percentile` (plus optional
-`FL_SITE_PRIVACY_*` parameters — see the commented block in `trust/.env.example`). The fl-client entrypoint
-renders these into the client's FLARE `local/privacy.json` at container start, so THIS trust's
+`FL_SITE_PRIVACY_*` parameters — see the commented block in `trust/.env.example`). A one-shot `fl-client-init`
+step renders these into the client's FLARE `local/privacy.json` before the client starts (the client mounts its
+kit's `local/` and `startup/` read-only and refuses a missing or stale render, FLIP#1570), so THIS trust's
 update-privacy filter is applied to every outgoing model update regardless of the researcher's app config
 (site filters run before app filters and a job's configuration cannot opt out or pick a weaker scope). The
 bound object is the job's *configuration*: every FLARE app template runs the Client API `in_process`, so job
@@ -547,7 +548,9 @@ and upgrades XNAT in place (database dump first, no reset); it never runs
 `ensure-seeded`, so the OMOP / Orthanc stores are left as they are. Before the kit is touched
 it asks the registry for every image at the target and refuses a tag any of them was
 never built at (each `sha-` build is path-filtered; a release tag builds them all —
-for a `sha-` move, `FL_TAG=` holds the FL client at its own build and `OMOP_DB_TAG` /
+for a `sha-` move, `FL_TAG=` holds the FL client at its own build — on NVFLARE never one older than
+this checkout's compose files, which from FLIP#1570 on need the fl-client image's `/app/fl-client-init.sh`
+and stop an older client — and `OMOP_DB_TAG` /
 `ORTHANC_TAG` in the kit do the same for those data services). `XNAT_TAG` pins all three
 XNAT images together; their builds no longer share `sha-` tags. Set it to a release tag
 (or `stag`/`prod`) published for all three images when moving a site to a `sha-` tag.

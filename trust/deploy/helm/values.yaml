@@ -488,8 +488,10 @@ flClient:
     pin: ""
     pullPolicy: Always
   nvflare:
-    # Site-enforced privacy policy (FLIP#851): rendered into /app/local/privacy.json
-    # at container start by `python -m flip.nvflare.site_policy`. Empty string = unset
+    # Site-enforced privacy policy (FLIP#851): rendered into the kit's local/privacy.json
+    # by the fl-client-init init container (`python -m flip.nvflare.site_policy`, whose
+    # errors are in that container's log) and checked, without writing, by the client's
+    # `site_policy --assert-rendered` (FLIP#1570). Empty string = unset
     # = no site policy (previous behavior). policy: "percentile"; the params
     # mirror the FL_SITE_PRIVACY_* env vars documented in trust/README.md. An invalid
     # combination fails the pod (fail closed) rather than running unfiltered.
@@ -555,8 +557,8 @@ flClient:
       memory: "32Gi"
       cpu: "16"
   shmSize: 8Gi
-  # gpu.count is also what the NVFLARE client tells its scheduler it can lend: the chart renders the kit's
-  # local/resources.template.json with it at start (0 while gpu.enabled is false). The pod sees GPU 0 only, so on
+  # gpu.count is also what the NVFLARE client tells its scheduler it can lend: the fl-client-init init container renders
+  # the kit's local/resources.template.json with it (0 while gpu.enabled is false). The pod sees GPU 0 only, so on
   # NVFLARE an enabled GPU requires count 1; use gpu.enabled=false for CPU-only mode.
   gpu:
     enabled: false

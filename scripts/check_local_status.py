@@ -136,16 +136,16 @@ def check_command(command: str) -> bool:
 def unexpected_exits(listing: str) -> list[str]:
     """Names of exited containers worth a warning, from ``docker ps --format '{{.Names}}\t{{.Status}}'``.
 
-    A trust's ``fl-governance-init`` is a one-shot that exits 0 once it has extracted the
-    fl-clients' section of the governance document (FLIP#1259); a completed one is expected, a
-    failed one is not.
+    A trust's ``fl-governance-init`` and ``fl-client-init`` are one-shots that exit 0 once they have
+    extracted the fl-clients' section of the governance document (FLIP#1259) and rendered their kits
+    (FLIP#1570); a completed one is expected, a failed one is not.
     """
     names = []
     for line in listing.splitlines():
         name, _, status = line.partition("\t")
         if not name.strip():
             continue
-        if "fl-governance-init" in name and status.startswith("Exited (0)"):
+        if ("fl-governance-init" in name or "fl-client-init" in name) and status.startswith("Exited (0)"):
             continue
         names.append(name.strip())
     return names

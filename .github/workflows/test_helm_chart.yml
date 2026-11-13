@@ -45,6 +45,8 @@ on:
       # (tests/test_makefile.py, FLIP#1812).
       - "trust/xnat/.env"
       - "trust/xnat/scripts/xnat_db_*.sh"
+      # The fl-client-init script the chart's init container runs (tests/templates/test_fl_client_resources_render.py).
+      - "fl-services/nvflare/fl-client/fl-client/init.sh"
   push:
     branches: [develop, main]
     paths:
@@ -65,6 +67,7 @@ on:
       - "trust/deploy/scripts/trust_kit_lib.py"
       - "trust/xnat/.env"
       - "trust/xnat/scripts/xnat_db_*.sh"
+      - "fl-services/nvflare/fl-client/fl-client/init.sh"
   workflow_dispatch:
 
 jobs:
@@ -660,8 +663,20 @@ jobs:
 
           # Nothing runs ahead of the client that could overwrite, --delete or chown the
           # staged kit: that is what the removed kit-init did to a node directory, as root.
+          # The one exception is fl-client-init (FLIP#1570): the client's own renders into
+          # local/ and startup/, moved out of the client so it can mount them read-only,
+          # as the client's user: non-root enforced, the container's settings over the pod's.
           for init in pod.get("initContainers", []):
-              if any(m.get("name") == KIT for m in init.get("volumeMounts", [])):
+              mounts = [m for m in init.get("volumeMounts", []) if m.get("name") == KIT]
+              if not mounts:
+                  continue
+              sc = {**(pod.get("securityContext") or {}), **(init.get("securityContext") or {})}
+              if (
+                  init["name"] != "fl-client-init"
+                  or sc.get("runAsUser") == 0
+                  or sc.get("runAsNonRoot") is not True
+                  or {m.get("subPath") for m in mounts} - {"local", "startup"}
+              ):
                   die(f"initContainer {init['name']!r} mounts {KIT} — it would write over the staged kit")
 
           # And the pod holds no FLIP AWS credentials: a trust never does (AGENTS.md, "FL

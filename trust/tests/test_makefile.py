@@ -267,7 +267,7 @@ class Governance(unittest.TestCase):
 
     def test_reload_governance_on_nvflare_re_extracts_for_the_clients(self):
         out = dry_run("reload-governance", kit=GOVERNED_KIT)
-        assert "fl-governance-init" in out, out
+        assert "fl-governance-init fl-client-init $clients" in out, out
         assert "--force-recreate --pull never" in out, out
         assert "[governance]" in out, out  # waits for the startup line
         assert_data_safe(out, "reload-governance")
@@ -276,6 +276,7 @@ class Governance(unittest.TestCase):
         """Nothing on Flower reads the document, so recreating its clients only killed their jobs."""
         out = dry_run("reload-governance", ON_FLOWER, kit=FLOWER_GOVERNED_KIT)
         assert "fl-governance-init" not in out, out
+        assert "fl-client-init" not in out, out
         assert 'services="data-access-api"' in out, out
         assert 'if [ -n "" ]' in out, out  # the client branch is compiled out
 
@@ -288,7 +289,18 @@ class Governance(unittest.TestCase):
     def test_up_fl_clients_kit_runs_the_extract_first(self):
         """--no-deps skips dependencies, so the init must be named or the clients start on a stale extract."""
         out = dry_run("up-fl-clients-kit", kit=GOVERNED_KIT)
-        assert "fl-governance-init $clients" in out, out
+        assert "fl-governance-init fl-client-init $clients" in out, out
+
+    def test_up_fl_clients_kit_renders_an_ungoverned_kit_too(self):
+        """fl-client-init renders resources.json and the FL_SITE_PRIVACY_* policy with or without a document."""
+        out = dry_run("up-fl-clients-kit", kit=KIT)
+        assert "fl-governance-init fl-client-init $clients" in out, out
+
+    def test_up_fl_clients_kit_on_flower_names_no_flare_init(self):
+        """The Flower composes have no fl-client-init, and `up` would refuse an unknown service."""
+        out = dry_run("up-fl-clients-kit", ON_FLOWER, kit=KIT.replace("FL_BACKEND=nvflare", "FL_BACKEND=flower"))
+        assert "fl-client-init" not in out, out
+        assert "fl-governance-init" not in out, out
 
     def test_a_governance_document_is_refused_over_a_remote_daemon(self):
         """Compose resolves the document on this machine and the trust host would mount a path it
@@ -328,6 +340,15 @@ class Governance(unittest.TestCase):
         preflight = out.index("site_policy --help")
         recreate = out.index("--force-recreate")
         assert preflight < recreate, out
+
+    def test_reload_governance_refuses_an_fl_image_without_the_init_step_before_recreating(self):
+        """An FL client held back to an image from before FLIP#1570 would not start under these composes."""
+        for kit in (KIT, GOVERNED_KIT):
+            out = dry_run("reload-governance", kit=kit)
+            preflight = out.index("test -x /app/fl-client-init.sh")
+            assert "grep -q -- --assert-rendered" in out, out
+            assert preflight < out.index("--force-recreate"), out
+        assert "test -x" not in dry_run("reload-governance", ON_FLOWER, kit=FLOWER_GOVERNED_KIT)
 
     def test_a_remote_daemon_without_a_document_is_not_refused(self):
         out = run_target("upgrade-trust", "YES=1", dry=True, env={"DOCKER_HOST": "ssh://flip-trust"})
