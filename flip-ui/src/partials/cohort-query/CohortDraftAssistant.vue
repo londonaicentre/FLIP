@@ -11,22 +11,32 @@
     limitations under the License.
 -->
 
-<!-- Optional SQL drafting assistant (FLIP#1556 UI mock). Lives inside the cohort <Form> and writes
-     only the `query` field; every control is type="button", so Run stays the only submit. -->
+<!-- Optional SQL drafting assistant (FLIP#1556 UI mock), closed until asked for. Lives inside the cohort
+     <Form> and writes only the `query` field; every control is type="button", so Run stays the only submit.
+     Once a draft lands the card collapses to CohortDraftSummary, which carries its assumptions. -->
 <template>
     <div>
-        <button
-            v-if="!open"
-            type="button"
-            data-test="draft-assistant-open"
-            :aria-expanded="false"
-            class="inline-flex items-center gap-1.5 text-sm font-semibold text-primary-600 hover:text-primary-800
-            dark:text-primary-200 dark:hover:text-primary-100 focus:outline-none focus:underline"
-            @click="open = true"
-        >
-            <icon-ph-magic-wand class="w-4 h-4" aria-hidden="true" />
-            Draft SQL from a description
-        </button>
+        <div v-if="!open" class="flex justify-end">
+            <AiButton
+                type="button"
+                small
+                data-test="draft-assistant-open"
+                @click="open = true"
+            >
+                <icon-ph-magic-wand class="w-4 h-4 mr-1.5" aria-hidden="true" />
+                Draft from a description
+                <span :class="betaPill">Beta</span>
+            </AiButton>
+        </div>
+
+        <CohortDraftSummary
+            v-else-if="collapsed && draft.inserted.value"
+            :draft="draft.inserted.value"
+            :description="draftedFrom"
+            :edited="edited"
+            @redraft="expanded = true"
+            @close="close"
+        />
 
         <section
             v-else
@@ -34,24 +44,31 @@
             aria-labelledby="draft-assistant-title"
             class="p-4 space-y-3 bg-white border border-gray-200 rounded-xl dark:bg-dark-canvas dark:border-dark-border"
         >
-            <div class="flex items-center justify-between">
-                <h2
-                    id="draft-assistant-title"
-                    class="flex items-center gap-1.5 text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 dark:text-gray-300"
-                >
-                    <icon-ph-magic-wand class="w-4 h-4" aria-hidden="true" />
-                    Draft SQL from a description
-                </h2>
-                <button
-                    type="button"
-                    data-test="draft-assistant-close"
-                    aria-label="Close the drafting assistant"
-                    class="p-1 text-gray-400 dark:text-gray-300 rounded-md hover:text-gray-600 dark:hover:text-gray-200
-                    focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    @click="close"
-                >
-                    <icon-mdi-close class="w-4 h-4" aria-hidden="true" />
-                </button>
+            <div>
+                <div class="flex items-center justify-between">
+                    <h2
+                        id="draft-assistant-title"
+                        class="flex items-center gap-1.5 text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 dark:text-gray-300"
+                    >
+                        <icon-ph-magic-wand class="w-4 h-4" aria-hidden="true" />
+                        Draft SQL from a description
+                        <span :class="betaPill">Beta</span>
+                    </h2>
+                    <button
+                        type="button"
+                        data-test="draft-assistant-close"
+                        aria-label="Close the drafting assistant"
+                        class="p-1 text-gray-400 dark:text-gray-300 rounded-md hover:text-gray-600
+                        dark:hover:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        @click="close"
+                    >
+                        <icon-mdi-close class="w-4 h-4" aria-hidden="true" />
+                    </button>
+                </div>
+                <p data-test="draft-beta-note" class="mt-1 text-xs text-gray-500 dark:text-gray-300">
+                    Beta: drafts can be wrong. Read the SQL and its assumptions before you run it; the trust checks
+                    still apply.
+                </p>
             </div>
 
             <div>
@@ -110,7 +127,7 @@
                     @click="draft.generate(description)"
                 >
                     <icon-ph-magic-wand class="w-4 h-4 mr-1.5" aria-hidden="true" />
-                    Generate SQL
+                    {{ draft.inserted.value ? "Regenerate SQL" : "Generate SQL" }}
                 </AiButton>
                 <DraftUsageIndicator v-if="draft.usage.value" :usage="draft.usage.value" />
                 <template v-if="draft.phase.value === 'drafting'">
@@ -149,7 +166,7 @@
                 <div
                     v-else-if="draft.phase.value === 'clarifying' && draft.clarification.value"
                     data-test="draft-clarification"
-                    class="p-3 space-y-2 rounded-lg bg-primary-50 dark:bg-dark-raised"
+                    class="p-3 space-y-2 rounded-lg bg-primary-100 dark:bg-dark-raised"
                 >
                     <p class="text-sm font-semibold text-gray-800 dark:text-gray-100">
                         {{ draft.clarification.value.question }}
@@ -261,8 +278,9 @@ import AiButton from "@/components/AiButton/AiButton.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
 import { formatDraftReset, useCohortDraft } from "@/composables/useCohortDraft";
 import { getPageDrafter } from "@/services/cohort-draft/fake-drafter";
-import type { ICohortDraft, ICohortDrafter } from "@/services/cohort-draft/types";
+import type { ICohortDrafter } from "@/services/cohort-draft/types";
 
+import CohortDraftSummary from "./CohortDraftSummary.vue";
 import DraftUsageIndicator from "./DraftUsageIndicator.vue";
 
 const props = defineProps<{
@@ -271,9 +289,10 @@ const props = defineProps<{
     drafter?: ICohortDrafter;
 }>();
 
-const emit = defineEmits<{ notes: [draft: ICohortDraft | null] }>();
-
 const open = ref(false);
+// The card stays expanded until a draft lands; Redraft opens it again.
+const expanded = ref(false);
+const draftedFrom = ref("");
 const description = ref("");
 const reply = ref("");
 
@@ -312,10 +331,22 @@ const submitReply = () => {
     reply.value = "";
 };
 
+const collapsed = computed(() => !expanded.value && draft.phase.value === "drafted");
+// Hand edits after the draft make its assumptions possibly stale.
+const edited = computed(() => !!draft.inserted.value && (query.value ?? "") !== draft.inserted.value.sql);
+
+const betaPill = "ml-1.5 px-1.5 py-px text-[10px] font-semibold tracking-wide uppercase font-sans rounded-full "
+    + "text-primary-600 bg-primary-100 border border-primary-200 dark:text-primary-200 dark:bg-dark-raised "
+    + "dark:border-dark-border";
+
 const close = () => {
     draft.cancel();
     open.value = false;
 };
 
-watch(draft.inserted, (d) => emit("notes", d));
+watch(draft.phase, (phase) => {
+    if (phase !== "drafted") return;
+    draftedFrom.value = description.value.trim();
+    expanded.value = false;
+});
 </script>

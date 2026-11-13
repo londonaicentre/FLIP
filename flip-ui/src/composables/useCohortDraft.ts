@@ -49,7 +49,7 @@ export function useCohortDraft(drafter: ICohortDrafter, editor: IEditor, hasImag
     const clarification = ref<IDraftClarification | null>(null);
     const answers = ref<string[]>([]);
     const message = ref("");
-    // The draft whose SQL is in the editor, for the assumptions panel.
+    // The draft whose SQL was last placed in the editor, for its assumptions.
     const inserted = ref<ICohortDraft | null>(null);
     const heldDraft = ref<ICohortDraft | null>(null);
 
@@ -165,8 +165,6 @@ export function useCohortDraft(drafter: ICohortDrafter, editor: IEditor, hasImag
         phase.value = "drafted";
     };
 
-    const dismissNotes = () => { inserted.value = null; };
-
     onBeforeUnmount(cancel);
 
     return {
@@ -182,7 +180,6 @@ export function useCohortDraft(drafter: ICohortDrafter, editor: IEditor, hasImag
         cancelReplace,
         answer,
         cancel,
-        acceptHeldDraft,
-        dismissNotes
+        acceptHeldDraft
     };
 }

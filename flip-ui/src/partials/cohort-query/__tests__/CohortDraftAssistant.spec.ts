@@ -88,7 +88,9 @@ const stubs = {
     }
 };
 
-async function setup(options: { initial?: string; used?: number } = {}) {
+const DESCRIPTION = "All CT scans of women aged over 60, please.";
+
+async function mountClosed(options: { initial?: string; used?: number } = {}) {
     const { drafter, calls } = controlledDrafter(options.used);
     const wrapper = mount(Harness, {
         props: {
@@ -98,8 +100,17 @@ async function setup(options: { initial?: string; used?: number } = {}) {
         global: { stubs }
     });
     await flushPromises();
+
+    return {
+        wrapper,
+        calls
+    };
+}
+
+async function setup(options: { initial?: string; used?: number } = {}) {
+    const { wrapper, calls } = await mountClosed(options);
     await wrapper.get("[data-test='draft-assistant-open']").trigger("click");
-    await wrapper.get("[data-test='draft-description']").setValue("All CT scans of women aged over 60.");
+    await wrapper.get("[data-test='draft-description']").setValue(DESCRIPTION);
 
     const editor = () => (wrapper.get("[data-test='editor']").element as HTMLTextAreaElement).value;
     const generate = async () => {
@@ -133,9 +144,84 @@ describe("CohortDraftAssistant", () => {
             clarifications: []
         });
         expect(editor()).toBe(CT_WOMEN_OVER_60_DRAFT.sql);
-        expect(wrapper.find("[data-test='draft-inserted']").exists()).toBe(true);
-        expect(wrapper.findComponent(CohortDraftAssistant).emitted("notes")?.at(-1)).toEqual([CT_WOMEN_OVER_60_DRAFT]);
         expect(wrapper.emitted("run")).toBeUndefined();
+    });
+
+    it("is closed by default, and opening and closing it leaves the SQL alone", async () => {
+        const { wrapper } = await mountClosed({ initial: "SELECT 1" });
+        const editor = () => (wrapper.get("[data-test='editor']").element as HTMLTextAreaElement).value;
+
+        expect(wrapper.find("[data-test='draft-assistant']").exists()).toBe(false);
+        expect(wrapper.find("[data-test='draft-summary']").exists()).toBe(false);
+        expect(wrapper.get("button[data-test='draft-assistant-open']").text()).toContain("Draft from a description");
+        expect(wrapper.get("button[data-test='draft-assistant-open']").text()).toContain("Beta");
+
+        await wrapper.get("button[data-test='draft-assistant-open']").trigger("click");
+        const panel = wrapper.get("[data-test='draft-assistant']");
+        expect(panel.get("h2").text()).toContain("Beta");
+        expect(panel.get("[data-test='draft-beta-note']").text()).toContain("Beta: drafts can be wrong.");
+
+        await wrapper.get("[data-test='draft-assistant-close']").trigger("click");
+        expect(wrapper.find("[data-test='draft-assistant']").exists()).toBe(false);
+        expect(wrapper.find("button[data-test='draft-assistant-open']").exists()).toBe(true);
+        expect(editor()).toBe("SELECT 1");
+    });
+
+    it("collapses to a one-line summary after a draft, and Redraft expands the card again", async () => {
+        const { wrapper, generate, respond } = await setup();
+
+        await generate();
+        await respond(CT_WOMEN_OVER_60_DRAFT);
+
+        expect(wrapper.find("[data-test='draft-assistant']").exists()).toBe(false);
+        const summary = wrapper.get("[data-test='draft-summary']");
+        expect(summary.text()).toContain("Drafted from");
+        expect(summary.get("[data-test='draft-summary-description']").text()).toBe(DESCRIPTION);
+        expect(summary.get("button[data-test='draft-redraft']").text()).toBe("Redraft");
+
+        await summary.get("button[data-test='draft-redraft']").trigger("click");
+        expect(wrapper.find("[data-test='draft-summary']").exists()).toBe(false);
+        expect((wrapper.get("[data-test='draft-description']").element as HTMLTextAreaElement).value)
+            .toBe(DESCRIPTION);
+        expect(wrapper.get("button[data-test='draft-generate']").text()).toContain("Regenerate SQL");
+    });
+
+    it("folds the assumptions under the summary only once a draft has landed", async () => {
+        const { wrapper, generate, respond } = await setup();
+
+        // Manual SQL, no draft: no assumptions anywhere.
+        await wrapper.get("[data-test='editor']").setValue("SELECT 1");
+        expect(wrapper.find("[data-test='draft-assumptions']").exists()).toBe(false);
+
+        await generate();
+        await wrapper.get("[data-test='replace-sql']").trigger("click");
+        await flushPromises();
+        expect(wrapper.find("[data-test='draft-assumptions']").exists()).toBe(false);
+        await respond(CT_WOMEN_OVER_60_DRAFT);
+
+        const fold = wrapper.get("[data-test='draft-assumptions']");
+        expect(fold.element.tagName).toBe("DETAILS");
+        const n = CT_WOMEN_OVER_60_DRAFT.assumptions.length;
+        expect(fold.get("[data-test='draft-assumptions-title']").text()).toBe(`${n} assumptions behind this draft`);
+        expect(fold.findAll("li")).toHaveLength(n + CT_WOMEN_OVER_60_DRAFT.conceptsUsed.length);
+        expect(fold.find("[data-test='draft-assumptions-stale']").exists()).toBe(false);
+    });
+
+    it("marks the assumptions as possibly out of date once the SQL is edited", async () => {
+        const { wrapper, generate, respond } = await setup();
+
+        await generate();
+        await respond(CT_WOMEN_OVER_60_DRAFT);
+        await wrapper.get("[data-test='editor']").setValue(`${CT_WOMEN_OVER_60_DRAFT.sql}\n-- tweak`);
+
+        const fold = wrapper.get("[data-test='draft-assumptions']");
+        expect(fold.get("[data-test='draft-assumptions-title']").text()).toContain("(may be out of date)");
+        expect(fold.get("[data-test='draft-assumptions-stale']").text())
+            .toBe("You have edited the SQL since the draft, so some assumptions may no longer apply.");
+
+        // Back to the draft's text: current again.
+        await wrapper.get("[data-test='editor']").setValue(CT_WOMEN_OVER_60_DRAFT.sql);
+        expect(wrapper.get("[data-test='draft-assumptions-title']").text()).not.toContain("out of date");
     });
 
     it("asks before replacing existing SQL, and keeping it starts no draft", async () => {
@@ -233,6 +319,14 @@ describe("CohortDraftAssistant", () => {
         const buttons = wrapper.get("[data-test='draft-assistant']").findAll("button");
         expect(buttons.length).toBeGreaterThan(4);
         buttons.forEach((b) => expect(b.attributes("type")).toBe("button"));
+
+        // The collapsed summary's controls too.
+        await wrapper.get("button[data-test='draft-clarification-option']").trigger("click");
+        await respond(CT_WOMEN_OVER_60_DRAFT);
+        const summaryButtons = wrapper.get("[data-test='draft-summary']").findAll("button");
+        expect(summaryButtons).toHaveLength(2);
+        summaryButtons.forEach((b) => expect(b.attributes("type")).toBe("button"));
+        await wrapper.get("[data-test='draft-assumptions-title']").trigger("click");
         expect(wrapper.emitted("run")).toBeUndefined();
 
         await wrapper.get("[data-test='editor']").setValue("SELECT 1");
