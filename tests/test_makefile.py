@@ -766,6 +766,29 @@ class RotateTrustKeys(unittest.TestCase):
         assert "could not be written" in out, out
 
 
+class LocalRegistrationRefusesADeployedHub(unittest.TestCase):
+    """With HUB set, the targets that exec into the local flip-api point at the AWS Makefile (FLIP#938).
+
+    Otherwise they wait 3 minutes for a local hub, or register on a dev one and overwrite the real kit.
+    """
+
+    TARGETS = {"register-trust": "register-trusts", "rotate-trust-keys": "rotate-trust-keys"}
+
+    def test_a_deployed_hub_is_refused_before_waiting_for_one(self):
+        for target, aws_target in self.TARGETS.items():
+            with self.subTest(target=target):
+                # ALLOW_FOREIGN_PROJECT: a dev stack on this host belongs to another checkout than the scratch copy.
+                result = run_target(target, "HUB=stag", "ALLOW_FOREIGN_PROJECT=1", subdir=".")
+                assert result.returncode != 0, result.stdout
+                assert f"make -C deploy/providers/AWS {aws_target} KIT=SCR HUB=stag" in result.stdout, result.stdout
+                assert "Waiting for the hub" not in result.stdout, result.stdout
+
+    def test_development_still_registers_on_the_local_hub(self):
+        for target in self.TARGETS:
+            with self.subTest(target=target):
+                assert "flip_api.scripts.register_trust" in dry_run(target, "HUB=", subdir=".")
+
+
 def compose_targets(makefile: str) -> set[str]:
     """The targets whose recipe runs `$(DOCKER_COMMAND)` or its debug-override twin."""
     targets: set[str] = set()
@@ -979,6 +1002,27 @@ class E2eSmokeQuery(unittest.TestCase):
 
     def test_an_explicit_query_file_still_wins(self):
         assert self.query_file("HUB=", "QUERY_FILE=/tmp/mine.sql") == "/tmp/mine.sql"
+
+
+class E2eSmokeSpleenBackend(unittest.TestCase):
+    """The spleen smokes upload the tutorial matching FL_BACKEND and keep the label enrichment (FLIP#1695)."""
+
+    def test_each_backend_uploads_its_own_app(self):
+        apps = {"nvflare": "app_files", "flower": "app"}
+        tutorials = {
+            "e2e_smoke_spleen": "image_segmentation/3d_spleen_segmentation",
+            "e2e_smoke_spleen_evaluation": "image_evaluation/3d_spleen_segmentation_evaluation",
+        }
+        for target, tutorial in tutorials.items():
+            for backend, app in apps.items():
+                out = dry_run(target, f"FL_BACKEND={backend}", subdir="flip-api")
+                model_dir = re.search(r'--model-files-dir "([^"]+)"', out)[1]
+                query = re.search(r'--query-file "([^"]+)"', out)[1]
+                assert model_dir.endswith(f"/fl-tutorials/{backend}/{tutorial}/{app}"), (target, out)
+                assert query.endswith(f"/fl-tutorials/{backend}/image_segmentation/3d_spleen_segmentation/query.sql")
+                assert "upload_spleen_labels_to_xnat.py" in out, (target, backend)
+                for rel in (model_dir, query):
+                    assert (REPO / "flip-api" / rel).exists(), (target, backend, rel)
 
 
 HUB_MAKEFILES = ("Makefile", "deploy/env_mode.mk", "deploy/fl_backend.mk", "deploy/instance.mk")

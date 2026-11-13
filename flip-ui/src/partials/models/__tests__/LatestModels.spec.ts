@@ -65,6 +65,17 @@ function setData(v: unknown) {
     (mockData.ref as { value: unknown }).value = v;
 }
 
+// One populated row; a factory so every test gets its own payload.
+function oneModel() {
+    return {
+        data: [{
+            id: "m1",
+            name: "Alpha",
+            description: ""
+        }]
+    };
+}
+
 interface MountOptions {
     isViewer?: boolean;
     projectStatus?: string;
@@ -259,13 +270,7 @@ describe("LatestModels — defensive data access", () => {
     });
 
     test("lays out as a flex column whose list region scrolls when the card height is pinned", async () => {
-        setData({
-            data: [{
-                id: "m1",
-                name: "Alpha",
-                description: ""
-            }]
-        });
+        setData(oneModel());
         const wrapper = mountLatestModels();
         await flushPromises();
 
@@ -282,13 +287,7 @@ describe("LatestModels — defensive data access", () => {
     });
 
     test("shows the header Create-Model button when not a viewer", async () => {
-        setData({
-            data: [{
-                id: "m1",
-                name: "Alpha",
-                description: ""
-            }]
-        });
+        setData(oneModel());
         const wrapper = mountLatestModels({ isViewer: false });
         await flushPromises();
 
@@ -302,13 +301,7 @@ describe("LatestModels — defensive data access", () => {
 
     test("hides Create Model from a Trust Admin reading a project they are not on (FLIP#1258)", async () => {
         // The API refuses them (can_contribute_to_project); the button must not promise otherwise.
-        setData({
-            data: [{
-                id: "m1",
-                name: "Alpha",
-                description: ""
-            }]
-        });
+        setData(oneModel());
         const wrapper = mountLatestModels({ trustAdminReader: true });
         await flushPromises();
 
@@ -317,13 +310,7 @@ describe("LatestModels — defensive data access", () => {
 
     test("lists models to a Trust Admin reader without linking to model pages (FLIP#1258)", async () => {
         // Model pages stay with the project's members (can_access_model); a link would open on a 403.
-        setData({
-            data: [{
-                id: "m1",
-                name: "Alpha",
-                description: ""
-            }]
-        });
+        setData(oneModel());
         const wrapper = mountLatestModels({ trustAdminReader: true });
         await flushPromises();
 
@@ -336,13 +323,7 @@ describe("LatestModels — defensive data access", () => {
     });
 
     test("links each model to its page for a project member", async () => {
-        setData({
-            data: [{
-                id: "m1",
-                name: "Alpha",
-                description: ""
-            }]
-        });
+        setData(oneModel());
         const wrapper = mountLatestModels();
         await flushPromises();
 
@@ -354,13 +335,7 @@ describe("LatestModels — defensive data access", () => {
     test("shows the header Create-Model button for a Researcher (CanCreateProjects only)", async () => {
         // Researchers don't have CanManageProjects — per-project access is
         // enforced server-side. The UI gate must not exclude them.
-        setData({
-            data: [{
-                id: "m1",
-                name: "Alpha",
-                description: ""
-            }]
-        });
+        setData(oneModel());
         const wrapper = mountLatestModels({ isViewer: false });
         await flushPromises();
 
@@ -368,13 +343,7 @@ describe("LatestModels — defensive data access", () => {
     });
 
     test("hides the header Create-Model button for viewers", async () => {
-        setData({
-            data: [{
-                id: "m1",
-                name: "Alpha",
-                description: ""
-            }]
-        });
+        setData(oneModel());
         const wrapper = mountLatestModels({ isViewer: true });
         await flushPromises();
 
@@ -389,17 +358,6 @@ describe("LatestModels — defensive data access", () => {
         expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(false);
     });
 
-    test("non-viewer empty state renders the create-model CTA in the header", async () => {
-        setData({ data: [] });
-        const wrapper = mountLatestModels({ isViewer: false });
-        await flushPromises();
-
-        expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(true);
-
-        await wrapper.find("[data-test=add-model-btn]").trigger("click");
-        expect(wrapper.exists()).toBe(true);
-    });
-
     test("Create-Model button collapses its label below lg with an aria-label and an icon", async () => {
         setData({ data: [] });
         const wrapper = mountLatestModels({ isViewer: false });
@@ -412,6 +370,10 @@ describe("LatestModels — defensive data access", () => {
         const label = btn.find("span.hidden.lg\\:inline");
         expect(label.exists()).toBe(true);
         expect(label.text()).toBe("Create Model");
+
+        // Clicking exercises addModel() from the empty state.
+        await btn.trigger("click");
+        expect(wrapper.exists()).toBe(true);
     });
 
     test("does not throw when project status is non-APPROVED and data.data is undefined", async () => {
@@ -421,44 +383,7 @@ describe("LatestModels — defensive data access", () => {
         // the Create-Model header button even though the project list
         // body is hidden.
         setData({});
-        const wrapper = mount(LatestModels, {
-            global: {
-                plugins: [
-                    createTestingPinia({
-                        createSpy: vi.fn,
-                        initialState: {
-                            auth: {
-                                user: {
-                                    username: "u",
-                                    userId: "id",
-                                    attributes: {},
-                                    permissions: ["CanCreateProjects"]
-                                },
-                                signInStep: "DONE",
-                                mfaEnabled: true
-                            },
-                            project: {
-                                project: {
-                                    id: "project-1",
-                                    name: "Test",
-                                    status: "UNSTAGED"
-                                }
-                            }
-                        }
-                    })
-                ],
-                stubs: {
-                    AiCard: { template: "<div><slot /></div>" },
-                    AiButton: { template: "<button><slot /></button>" },
-                    AiAlert: { template: "<div><slot /></div>" },
-                    AiLoader: { template: "<div data-test='ai-loader' />" },
-                    "router-link": {
-                        template: "<a><slot /></a>",
-                        props: ["to"]
-                    }
-                }
-            }
-        });
+        const wrapper = mountLatestModels({ projectStatus: "UNSTAGED" });
         await flushPromises();
 
         expect(wrapper.exists()).toBe(true);

@@ -248,9 +248,7 @@ def build_operations(
 ) -> list[Operation]:
     """Adds for every manifest GIF, the manifest and the card; deletes for published GIFs no spec calls for."""
     expected = set(manifest["files"])
-    strays = [
-        p for p in sorted(g.relative_to(gifs_dir).as_posix() for g in gifs_dir.rglob("*.gif")) if p not in expected
-    ]
+    strays = sorted({g.relative_to(gifs_dir).as_posix() for g in gifs_dir.rglob("*.gif")} - expected)
     if strays:
         print(f"⚠️  ignoring {len(strays)} GIF(s) under {gifs_dir} with no spec: {', '.join(strays)}")
     if card is not None and not card.is_file():

@@ -45,7 +45,7 @@ covers `datasets/cxr/omop_convert_cxr.py`, and
 
 Cross-cutting guards that assert a property across several source files
 (`test_dicom_orientation.py`, `test_nifti_orientation.py`, `test_flower_min_clients_wiring.py`,
-`test_flower_platform_parity.py`, `test_flower_starved_partition.py`,
+`test_flower_eval_metric_keys.py`, `test_flower_platform_parity.py`, `test_flower_starved_partition.py`,
 `test_flwr_import_paths.py`, `test_offline_apps.py`, `test_autoencoder_offline_backbone.py`,
 `test_spleen_inference_config_parity.py`, `test_spleen_uploader_paths.py`,
 `test_ehr_feature_engineering.py`, `test_fetch_weights.py`,
@@ -74,8 +74,8 @@ updates weights and contributes metrics. These tests call the real shared batch 
 also preserve the existing empty-metric behavior when every batch is skipped.
 
 **Two kinds of environment, split at `tests/datasets/`.** Everything else under `tests/` covers
-the tutorial apps themselves and runs in flip-utils' environment (`flip-utils[full]` — monai,
-pydicom, torch, timm, sklearn), which is what the FL images give those apps at runtime — see
+the tutorial apps themselves and runs in flip-utils' environment (`flip-utils[nvflare,flower,full]` — monai,
+pydicom, torch, timm, sklearn), a superset of either FL image's runtime environment — see
 "What it runs" below (`make -C fl-tutorials pytest`, which passes `--ignore=tests/datasets`).
 `tests/datasets/` instead covers `fl-tutorials/datasets/**`, which is workstation tooling that
 never runs on an FL image — it has no business pulling `pandera`/`sqlglot` (needed to validate
@@ -119,12 +119,15 @@ radiographs while the model was being fed the transpose.
 
 ## What it runs
 
-The environment is **flip-utils'** (`flip-utils[full]` — monai, pydicom, torch, timm, sklearn),
-which is what the FL images give these apps at runtime, plus its `diffusion` group (matplotlib) for
-the image-generation tutorials' local plotting helpers, which no FL image carries. There is deliberately no `pyproject.toml`
+The environment is **flip-utils'** (`flip-utils[nvflare,flower,full]` — monai, pydicom, torch, timm, sklearn),
+plus its `diffusion` group (matplotlib) for the image-generation tutorials' local plotting helpers,
+which no FL image carries. It is a superset of either FL image: each installs only its own backend
+(`flip-utils[nvflare,full]` or `flip-utils[flower,full]`), so this suite does not catch a tutorial
+app importing the other backend; `flip-utils/tests/unit/test_backend_extras.py` checks per backend
+that `flip` itself does not. There is deliberately no `pyproject.toml`
 here: the per-tutorial `uv` environments are the wrong target (`arkplus_fine_tuning/pyproject.toml`
 does not even declare `monai`, so that environment cannot import its own `data_utils.py`), and one
-shared environment matching the runtime is both cheaper and more faithful.
+shared environment close to the runtime is cheaper.
 
 Every app on the MONAI `LoadImaged` DICOM path is covered, both backends — the five entries in
 `DICOM_APPS` (`tutorial_apps.py`). Each app's chain is fetched from the app's own factory, not

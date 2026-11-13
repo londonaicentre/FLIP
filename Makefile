@@ -13,7 +13,7 @@
 .PHONY: build build-fl clean clean-object-store up down up-no-trust up-trusts central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks \
 		check-aws-access generate-internal-service-key generate-fl-api-key generate-xnat-credentials _check-compose-project-owner \
-		register-trust register-trusts rotate-trust-keys new-trust _wait-for-hub integration_test \
+		register-trust register-trusts rotate-trust-keys new-trust _wait-for-hub _refuse-deployed-hub integration_test \
 		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint mirror-images aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
 		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
@@ -99,21 +99,6 @@ $(error OBJECT_STORE_DIR=/ is not a directory of its own)
 endif
 export OBJECT_STORE_DIR
 
-# Service configuration
-define SERVICE_CONFIG
-data-access-api:trust
-imaging-api:trust
-trust-api:trust
-flip-api
-fl-api
-endef
-
-# Function to get service type (trust or central)
-get_service_type = $(word 2,$(subst :, ,$(filter $1:%,$(SERVICE_CONFIG))))
-
-# Function to get service display name
-get_service_name = $(subst -api,, $(subst flip-,central hub ,$(subst fl-,central FL ,$1)))
-
 export COMPOSE_BAKE=true
 DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
 # The pair (and FL_API_KEY) is exported at parse time, before `up`'s generators can rewrite it,
@@ -123,12 +108,7 @@ read_key_env = $$(sed -n 's/^$1=//p' '$(KEY_ENV_FILE)' | head -n 1 | tr -d '\r')
 FRESH_INTERNAL_SERVICE_KEY = INTERNAL_SERVICE_KEY="$(call read_key_env,INTERNAL_SERVICE_KEY)" \
 	INTERNAL_SERVICE_KEY_HASH="$(call read_key_env,INTERNAL_SERVICE_KEY_HASH)" \
 	FL_API_KEY="$(call read_key_env,FL_API_KEY)"
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.development.debug.override.yml
-# Through compose, addressing the service rather than the container: the containers are
-# named by the project (deploy-flip-api-1, or <instance>-deploy-flip-api-1), so a literal
-# `docker logs flip-api` names nothing on any stack.
-SHOW_LOGS_CENTRAL_HUB=$(DOCKER_COMMAND) logs --follow --tail 100 --timestamps flip-api
-GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
+DEBUG_OVERRIDE_COMPOSE_COMMAND=$(DOCKER_COMMAND) -f deploy/compose.development.debug.override.yml
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the `up` targets.
 #
@@ -270,8 +250,6 @@ up-trusts: create-networks
 	@echo "✅ Trust services started successfully!"
 
 up-trust-ec2: create-networks
-	@echo "Hey! HUB="$(HUB)
-	@echo "Hey! UI_PORT="$(UI_PORT)
 	@echo "🚢 Starting Trust services..."
 	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=$(KIT) HUB=${HUB}
 	@echo "✅ Trust services started successfully!"
@@ -378,8 +356,7 @@ clean-object-store: _check-compose-project-owner
 # Clean Docker resources
 clean: _check-compose-project-owner
 	${DOCKER_COMMAND} down --rmi local && \
-	docker system prune -f && \
-	rm -rf ./flip-fl-api/*/transfer/*/
+	docker system prune -f
 
 # Stop all services and remove the containers
 restart: down up
@@ -695,13 +672,19 @@ _wait-for-hub:
 	  sleep 2; \
 	done
 
+# A deployed hub runs on ECS, out of reach of the local flip-api these targets exec into: they
+# would mint keys in the local database and write them into the real kit (FLIP#938).
+_refuse-deployed-hub:
+	@[ -z "$(IS_DEPLOYED)" ] || { echo "❌ HUB=$(HUB) is the ECS hub: run 'make -C deploy/providers/AWS $(AWS_TARGET) KIT=$(or $(KIT),<CODE>) HUB=$(HUB)'"; exit 1; }
+
 # Register one trust on the running hub from its kit file. KIT is the trust
 # CODE (the kit-file handle). Seeds trust/.env.<CODE>.<env> from its .example on
 # first run, reads TRUST_NAME/CODE/REGION from it, registers (idempotent — an
 # already-registered name is skipped, credentials preserved), then writes the
 # minted credentials + assigned FL kit slot + hub-shared block back into the
 # kit. The hub keeps no trust list — the kit files ARE the list.
-register-trust: _check-compose-project-owner _wait-for-hub
+register-trust: AWS_TARGET := register-trusts
+register-trust: _check-compose-project-owner _refuse-deployed-hub _wait-for-hub
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1; }
 	@kit='$(call kit_file,trust/,$(KIT))'; ex="trust/.env.$(KIT).$(ENV).example"; \
 	  if [ ! -f "$$kit" ]; then \
@@ -728,7 +711,8 @@ register-trust: _check-compose-project-owner _wait-for-hub
 # Only the two hub keys rotate here; XNAT credentials have their own caveat
 # (Postgres applies XNAT_DATASOURCE_* only on first initdb, see
 # generate-xnat-credentials).
-rotate-trust-keys: _check-compose-project-owner _wait-for-hub
+rotate-trust-keys: AWS_TARGET := rotate-trust-keys
+rotate-trust-keys: _check-compose-project-owner _refuse-deployed-hub _wait-for-hub
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1; }
 	@kit='$(call kit_file,trust/,$(KIT))'; \
 	  [ -f "$$kit" ] || { echo "❌ $$kit not found. Register the trust first."; exit 1; }; \
@@ -768,9 +752,8 @@ new-trust:
 # $(MAIN_ENV_FILE) values. Preserves credentials. Safe to run repeatedly. Use
 # after rotating AES_KEY_BASE64 or bumping image tags on the hub side — does NOT
 # redistribute the updated kit file to remote operators (still out-of-band).
-# On prod this is REQUIRED after `register-trust`: register fills only the
-# hub-shared vars present in the flip-api task env (AES_KEY_BASE64,
-# TRUST_API_KEY_HEADER, FL_BACKEND); the rest come from the admin's local env here.
+# A deployed hub's `make -C deploy/providers/AWS register-trusts` runs this same refresh
+# itself (FLIP#1476): its flip-api task env carries only some of the hub-shared vars.
 #
 # Works identically for dev/stag/prod: the Hub-shared values live in
 # $(MAIN_ENV_FILE), which the root Makefile already `include`s + exports.

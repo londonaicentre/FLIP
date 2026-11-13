@@ -154,7 +154,6 @@ const submitForm = async (v: unknown) => {
 
     formSubmitting.value = true;
 
-
     try {
         const values = v as IModelCreate;
         // Prop first, route second: the Models page opens this with a project from its ?project=
@@ -168,7 +167,6 @@ const submitForm = async (v: unknown) => {
                 title: "No project selected",
                 text: "Pick a project before creating a model."
             });
-            formSubmitting.value = false;
 
             return;
         }
@@ -195,8 +193,8 @@ const submitForm = async (v: unknown) => {
             text: "There was a problem creating this model.",
             title: "Error"
         });
+    } finally {
+        formSubmitting.value = false;
     }
-
-    formSubmitting.value = false;
 };
 </script>

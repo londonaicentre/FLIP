@@ -35,10 +35,9 @@
 </template>
 
 <script lang="ts" setup>
-import useSWRV from "swrv";
-import { computed, ref, watch } from "vue";
+import { computed } from "vue";
 
-import { getOMOPResults, IResults } from "@/services/cohort-query-service";
+import { useCohortResults } from "@/composables/useCohortResults";
 import { useProjectStore } from "@/store/project";
 import { useTrustStore } from "@/store/trusts";
 
@@ -51,103 +50,35 @@ const props = withDefaults(defineProps<IProps>(), { submitting: false });
 const projectStore = useProjectStore();
 const trustStore = useTrustStore();
 
-const results = ref<IResults | null>(null);
-
-// Same SWRV key as PerTrustResponse — useSWRV dedupes by key so this is a
-// shared cache hit, not a second fetch.
-const { data } = useSWRV(
-    () => projectStore.project?.query?.id ? `/cohort/${projectStore.project.query.id}` : "",
-    getOMOPResults,
-    {
-        errorRetryInterval: 1_000,
-        refreshInterval: projectStore.project?.status !== "UNSTAGED" ? 0 : 10_000
-    }
-);
-
-watch(data, (v) => { results.value = (v as IResults | null | undefined) ?? null; }, { immediate: true });
-
-interface IFieldShape {
-    results: { trustId: string; data: { count: number }[] }[];
-}
-
-interface IResultsShape {
-    trustsResults?: IFieldShape[];
-    trustRecordCounts?: Record<string, number>;
-    trustErrors?: Record<string, string>;
-    trustSuppressed?: string[];
-}
-
-const perTrustCounts = computed<Record<string, number>>(() => {
-    const r = results.value as unknown as IResultsShape | null;
-    if (r?.trustRecordCounts) return r.trustRecordCounts;
-    const trustsResults = r?.trustsResults;
-    if (!trustsResults?.length) return {};
-    const firstField = trustsResults.find(f => f.results?.length);
-    if (!firstField) return {};
-    const counts: Record<string, number> = {};
-    for (const t of firstField.results) {
-        counts[t.trustId] = t.data.reduce((acc, d) => acc + (d.count || 0), 0);
-    }
-
-    return counts;
-});
-
-const perTrustErrors = computed<Record<string, string>>(() => {
-    const r = results.value as unknown as IResultsShape | null;
-
-    return r?.trustErrors ?? {};
-});
+// Same SWRV key as PerTrustResponse, so this is a shared cache hit, not a second fetch.
+const { perTrustCounts, perTrustErrors, perTrustSuppressed } = useCohortResults();
 
 // Restrict the subtitle's counts to the trusts this project actually queried, so the
 // segments (complete · running · errored · suppressed) share one denominator and stay
 // consistent even if the trust store and the query response ever drift. Falls back to
 // "all known trusts" when the query hasn't loaded yet (or pre-#519 data lacks the field),
 // preserving prior behaviour (e.g. all trusts shown running before any results arrive).
-const queriedTrustIdSet = computed<Set<string> | null>(() => {
+const queriedTrusts = computed(() => {
     const ids = projectStore.project?.query?.queriedTrustIds;
-
-    return ids?.length ? new Set(ids) : null;
-});
-
-const isQueried = (id: string): boolean => {
-    const s = queriedTrustIdSet.value;
-
-    return !s || s.has(id);
-};
-
-const trustCount = computed(() => {
+    const queried = ids?.length ? new Set(ids) : null;
     const trusts = Array.isArray(trustStore.getTrusts) ? trustStore.getTrusts : [];
 
-    return trusts.filter(t => isQueried(t.id)).length;
+    return queried ? trusts.filter(t => queried.has(t.id)) : trusts;
 });
 
-const completeCount = computed(() => {
-    if (props.submitting) return 0;
-    const trusts = Array.isArray(trustStore.getTrusts) ? trustStore.getTrusts : [];
-    const counts = perTrustCounts.value;
+const trustCount = computed(() => queriedTrusts.value.length);
 
-    return trusts.filter(t => isQueried(t.id) && t.id in counts).length;
-});
+const completeCount = computed(() =>
+    props.submitting ? 0 : queriedTrusts.value.filter(t => t.id in perTrustCounts.value).length);
 
-const erroredCount = computed(() => {
-    if (props.submitting) return 0;
-    const trusts = Array.isArray(trustStore.getTrusts) ? trustStore.getTrusts : [];
-    const errors = perTrustErrors.value;
-
-    return trusts.filter(t => isQueried(t.id) && t.id in errors).length;
-});
+const erroredCount = computed(() =>
+    props.submitting ? 0 : queriedTrusts.value.filter(t => t.id in perTrustErrors.value).length);
 
 // Trusts whose cohort is below the privacy threshold and was suppressed (the exact count,
 // which may be zero, is hidden). Surfaced in the subtitle so the headline total isn't
 // misread as the whole picture (#519).
-const suppressedCount = computed(() => {
-    if (props.submitting) return 0;
-    const trusts = Array.isArray(trustStore.getTrusts) ? trustStore.getTrusts : [];
-    const r = results.value as unknown as IResultsShape | null;
-    const suppressed = new Set(r?.trustSuppressed ?? []);
-
-    return trusts.filter(t => isQueried(t.id) && suppressed.has(t.id)).length;
-});
+const suppressedCount = computed(() =>
+    props.submitting ? 0 : queriedTrusts.value.filter(t => perTrustSuppressed.value.has(t.id)).length);
 
 const runningCount = computed(() => Math.max(0, trustCount.value - completeCount.value - erroredCount.value));
 

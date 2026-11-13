@@ -26,9 +26,9 @@ omopDb:
     # A fresh Azure Disk has lost+found at its root, which initdb refuses.
     pgdataSubdir: pgdata
   vocabLoad:
-    # The S3 vocabulary load needs an AWS route and, on a node role, the metadata endpoint, which
-    # on Azure hands out managed-identity tokens. Off here whatever bucket the kit names, so the
-    # NetworkPolicy keeps 169.254.169.254 closed and no failing post-install hook sinks the release.
+    # The load reads a bundle staged onto the node, and a managed node pool replaces nodes at
+    # will. Off here whatever the kit names, so no failing post-install hook sinks the release;
+    # load the vocabulary by hand (chart README, "OMOP core vocabulary").
     enabled: false
 
 xnat:

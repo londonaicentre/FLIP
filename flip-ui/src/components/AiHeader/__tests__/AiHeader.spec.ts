@@ -105,38 +105,22 @@ describe("AiHeader", () => {
         );
     });
 
-    it("uses the light AI Centre logo in light mode", () => {
-        const component = mountHeader({ isDark: false });
+    it.each([
+        ["AI Centre", false, "aicentre-logo-transparent.webp", "aicentre-logo-transparent-dark.webp"],
+        ["AI Centre", true, "aicentre-logo-transparent-dark.webp", "aicentre-logo-transparent.webp"],
+        ["FLIP text", false, "flip-logo-text.webp", "flip-logo-text-dark.webp"],
+        ["FLIP text", true, "flip-logo-text-dark.webp", "flip-logo-text.webp"]
+    ])("%s logo with isDark=%s shows %s, not %s", (_logo, isDark, shown, hidden) => {
+        const component = mountHeader({ isDark });
 
-        expect(component.find("img[src=\"/images/aicentre-logo-transparent.webp\"]").exists()).toBe(true);
-        expect(component.find("img[src=\"/images/aicentre-logo-transparent-dark.webp\"]").exists()).toBe(false);
-    });
-
-    it("uses the dark AI Centre logo in dark mode", () => {
-        const component = mountHeader({ isDark: true });
-
-        expect(component.find("img[src=\"/images/aicentre-logo-transparent-dark.webp\"]").exists()).toBe(true);
-        expect(component.find("img[src=\"/images/aicentre-logo-transparent.webp\"]").exists()).toBe(false);
+        expect(component.find(`img[src="/images/${shown}"]`).exists()).toBe(true);
+        expect(component.find(`img[src="/images/${hidden}"]`).exists()).toBe(false);
     });
 
     it("names the icon-only mobile menu button for assistive tech", () => {
         const component = mountHeader();
 
         expect(component.find("[data-test='mobile-menu-btn']").attributes("aria-label")).toBe("Open menu");
-    });
-
-    it("uses the light FLIP text logo in light mode", () => {
-        const component = mountHeader({ isDark: false });
-
-        expect(component.find("img[src=\"/images/flip-logo-text.webp\"]").exists()).toBe(true);
-        expect(component.find("img[src=\"/images/flip-logo-text-dark.webp\"]").exists()).toBe(false);
-    });
-
-    it("uses the dark FLIP text logo in dark mode", () => {
-        const component = mountHeader({ isDark: true });
-
-        expect(component.find("img[src=\"/images/flip-logo-text-dark.webp\"]").exists()).toBe(true);
-        expect(component.find("img[src=\"/images/flip-logo-text.webp\"]").exists()).toBe(false);
     });
 
     it("renders an entry per navigation item with the matching item marked current", () => {

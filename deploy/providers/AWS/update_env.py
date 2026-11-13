@@ -36,24 +36,15 @@ def update_env_file(env_path: str, updates: dict[str, str]) -> None:
         sys.exit(1)
 
     new_lines = []
-    updated_keys = set()
-
     for line in lines:
-        # Check if line is a variable definition (handling optional export)
         # Matches KEY=VALUE or export KEY=VALUE
         match = re.match(r"^(?:export\s+)?([A-Za-z0-9_]+)=(.*)$", line.strip())
-
-        if match:
+        if match and match.group(1) in updates:
             key = match.group(1)
-            if key in updates:
-                new_value = updates[key]
-                # Preserve export if present in original line
-                prefix = "export " if line.strip().startswith("export ") else ""
-                new_lines.append(f"{prefix}{key}={new_value}\n")
-                updated_keys.add(key)
-                print(f"   Updated {key}")
-            else:
-                new_lines.append(line)
+            # Preserve export if present in original line
+            prefix = "export " if line.strip().startswith("export ") else ""
+            new_lines.append(f"{prefix}{key}={updates[key]}\n")
+            print(f"   Updated {key}")
         else:
             new_lines.append(line)
 

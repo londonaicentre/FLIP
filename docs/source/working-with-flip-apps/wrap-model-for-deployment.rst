@@ -208,7 +208,8 @@ or as a library (the same code path):
    )
    assert result.max_abs_delta == 0.0
 
-``flip.export`` needs PyTorch, which is in the ``full`` extra (``pip install "flip-utils[full]"``).
+``flip.export`` needs PyTorch, which is in the ``full`` extra (``pip install "flip-utils[full]"``), and no FL backend
+extra.
 
 What the exporter does and does not do:
 
