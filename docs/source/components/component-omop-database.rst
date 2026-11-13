@@ -292,12 +292,85 @@ Two consequences:
    this: it parses the query, checks it and runs its own re-emitted copy. See :ref:`create-cohort-query` for
    the user workflow.
 
+.. _omop-backends:
+
+******************************
+Where a Trust's OMOP can live
+******************************
+
+FLIP reads a Trust's OMOP through one configured **backend**, chosen in the Trust's own deployment kit and
+nowhere else. The Central Hub is not involved: where a Trust's clinical data lives, and what credentials reach
+it, are the Trust's decisions.
+
+.. list-table::
+   :widths: 18 30 52
+   :header-rows: 1
+
+   * - ``OMOP_BACKEND``
+     - Where OMOP is
+     - Notes
+   * - ``postgres`` (default)
+     - The PostgreSQL database on the Trust node, or another PostgreSQL the node can reach on port 5432
+     - The shipped default and the dev/CI path. A kit file that names no backend selects this, so an existing
+       Trust needs no change at all.
+   * - ``snowflake``
+     - The Trust's own Snowflake warehouse
+     - For a Trust that has migrated its OMOP into Snowflake. The query executes in the Trust's own Snowflake
+       tenancy, reached over outbound HTTPS on 443.
+
+**One query, every backend.** Cohort queries are authored once, in PostgreSQL dialect, and the hub fans the same
+string out to every Trust in a project. Each Trust parses it, applies the identical safety rules, and re-emits
+it for its own engine with ``sqlglot``. There is no per-Trust query authoring and no hub-side change when a
+Trust migrates. Result column names are also folded to the same lower case on every backend, so
+``flip.get_dataframe`` consumers and the tutorial transform chains cannot tell the difference.
+
+Configuring a Snowflake Trust
+=============================
+
+These go in the **Trust-local credentials** section of the Trust's kit file (``trust/.env.<CODE>.<env>``),
+hand-edited by the operator and never written by ``register-trust``:
+
+.. code-block:: shell
+
+   OMOP_BACKEND=snowflake
+   SNOWFLAKE_ACCOUNT=<account locator>
+   SNOWFLAKE_WAREHOUSE=FLIP_<CODE>_WH
+   SNOWFLAKE_DATABASE=FLIP_TRUST_<CODE>
+   SNOWFLAKE_SCHEMA=OMOP                       # default
+   SNOWFLAKE_ROLE=FLIP_<CODE>_OMOP_READER
+   # Key-pair auth only (off Snowpark Container Services):
+   SNOWFLAKE_USER=<service user>
+   SNOWFLAKE_PRIVATE_KEY_FILE=/run/secrets/snowflake_key.pem
+
+Authentication is **never** by password, and there is no setting for one. Two modes are supported:
+
+- **Snowpark Container Services OAuth token.** A service running inside SPCS is handed a short-lived token at
+  ``/snowflake/session/token`` and connects back to its own account through ``SNOWFLAKE_HOST``. Nothing is
+  stored, and the token is re-read on every connect so a rotation is picked up. This is how an SPCS service is
+  meant to authenticate, and it is used automatically whenever the token file is present.
+- **Key-pair.** For a Trust node reading Snowflake over the internet: a ``TYPE = SERVICE`` Snowflake user, which
+  cannot have a password at all, with the private key mounted on the node.
+
+**The read-only role is a prerequisite, and the Trust creates it.** FLIP cannot: the Trust owns its Snowflake
+account. The script to run is shipped at :gh:`trust/data-access-api/sql/snowflake_readonly_grants.sql`; it
+grants ``SELECT`` on the OMOP schema and nothing else, no write or DDL privilege of any kind, and a statement
+timeout. Treat it exactly as the PostgreSQL read-only role below is treated: the Trust cannot be onboarded until
+it exists.
+
+**Network.** One new outbound destination from the Trust node, HTTPS 443 to
+``<account>.snowflakecomputing.com``. No inbound rule, and no change to the claim that Trust systems accept no
+inbound connections. A Trust that egresses through a proxy needs that proxy configured for the connector.
+
+**Health.** ``data-access-api`` exposes ``/health/omop``, which opens a session and reports what happened; the
+Trust API uses it instead of the TCP port probe whenever the backend is not ``postgres``, so a Snowflake Trust
+reports a truthful OMOP status rather than a permanently red port.
+
 **************
 Access control
 **************
 
-The Data Access API runs cohort queries as a **read-only database user** (``DATA_ACCESS_POSTGRES_USER``,
-``data_analyst_reader`` by default). Its grants are:
+On the ``postgres`` backend the Data Access API runs cohort queries as a **read-only database user**
+(``DATA_ACCESS_POSTGRES_USER``, ``data_analyst_reader`` by default). Its grants are:
 
 - ``CONNECT`` on the database, ``USAGE`` on the ``omop`` schema, and ``SELECT`` on its tables and sequences;
 - ``INSERT``, ``UPDATE``, ``DELETE``, ``TRUNCATE`` and ``CREATE`` explicitly revoked;
@@ -312,6 +385,13 @@ them on every pod start, so an upgrade also narrows a role created by an older c
    On Kubernetes, the narrowing comes from the ``omop-db`` image. An image tag older than the fix leaves an
    existing role's wider access in place, and logs a warning saying so. The upgrade path is in the
    :gh:`chart README <trust/deploy/helm/README.md>`. The query validator's ``omop``-schema pin applies either way.
+
+On the ``snowflake`` backend the equivalent is the ``FLIP_<CODE>_OMOP_READER`` role created by the grant script
+above: ``USAGE`` on the database, the OMOP schema and the warehouse, ``SELECT`` on the OMOP tables and views,
+and nothing else — no write, no DDL, no other schema, and a ``STATEMENT_TIMEOUT_IN_SECONDS``. The query
+validator's rules are identical on both backends; only the list of unrecognised functions it refuses is
+engine-specific, because PostgreSQL's ``pg_catalog`` surface and Snowflake's ``SYSTEM$…`` / ``RESULT_SCAN`` /
+stage surface are different problems.
 
 **Results are also gated on the Trust's disclosure threshold** (``COHORT_QUERY_THRESHOLD``, default 10), and a
 project's cohort membership is fixed at approval. Both are described on :doc:`component-trust-apis`;

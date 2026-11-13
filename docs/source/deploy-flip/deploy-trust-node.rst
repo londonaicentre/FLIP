@@ -279,3 +279,7 @@ The deploy commands always pull, so the registries are needed in a TRE too (see 
 platforms add destinations of their own: the Kubernetes chart (:doc:`deploy-flip-node-kubernetes`), the Azure VM's
 first boot (:doc:`deploy-flip-node-azure`), AKS (:doc:`deploy-flip-node-azure-aks`), and the AWS services an EC2 node uses
 (:doc:`deploy-flip-node-aws-ec2`).
+
+A trust whose OMOP lives in Snowflake rather than on the node needs one further outbound destination, HTTPS 443
+to ``<account>.snowflakecomputing.com``, and its egress proxy configured for the connector if it has one. Still
+no inbound rule. See :ref:`omop-backends`.

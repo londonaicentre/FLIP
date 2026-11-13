@@ -321,7 +321,7 @@ def test_get_records_generic_exception(mock_read_sql):
     assert "12345" not in str(exc_info.value.detail)
 
 
-@patch("data_access_api.services.cohort.extract_missing_identifier")
+@patch("data_access_api.db.backend.extract_missing_identifier")
 @patch("pandas.read_sql")
 def test_get_records_undefined_table_with_extraction_failure(mock_read_sql, mock_extract):
     """
@@ -346,7 +346,7 @@ def test_get_records_undefined_table_with_extraction_failure(mock_read_sql, mock
         get_records(query)
 
 
-@patch("data_access_api.services.cohort.extract_missing_identifier")
+@patch("data_access_api.db.backend.extract_missing_identifier")
 @patch("pandas.read_sql")
 def test_get_records_undefined_column_with_extraction_failure(mock_read_sql, mock_extract):
     """
