@@ -152,3 +152,11 @@ def test_bedrock_client_signs_with_the_task_role(monkeypatch):
     model_module._bedrock_client.cache_clear()
     assert client.api_key is None
     assert str(client.base_url).startswith("https://bedrock-mantle.eu-west-2.api.aws/anthropic")
+
+
+def test_fake_description_lookup_is_linear_on_adversarial_input():
+    import time
+
+    started = time.perf_counter()
+    model_module._between("<description>a" * 50_000, "<description>", "</description>")
+    assert time.perf_counter() - started < 1

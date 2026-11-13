@@ -53,12 +53,46 @@ OUTPUT_SCHEMA: dict = {
 _LICENCE_HEADER = re.compile(r"\A(--.*\n)+\n")
 # The tags that delimit researcher text in the user turn. Hygiene only: the controls are that a draft
 # is never run, and that the trust validator decides what may run.
-_DELIMITER_TAG = re.compile(r"<\s*/?\s*(description|clarifications|answer|question|reply)\b[^>]*>", re.IGNORECASE)
+_DELIMITER_NAMES = ("description", "clarifications", "answer", "question", "reply")
+
+
+def _skip_space(text: str, i: int) -> int:
+    while i < len(text) and text[i].isspace():
+        i += 1
+    return i
+
+
+def _delimiter_tag_end(text: str, lt: int) -> int | None:
+    """Where a delimiter tag opened at ``lt`` ends, past its name; None if ``lt`` opens no delimiter tag."""
+    i = _skip_space(text, lt + 1)
+    if i < len(text) and text[i] == "/":
+        i = _skip_space(text, i + 1)
+    for name in _DELIMITER_NAMES:
+        end = i + len(name)
+        if text[i:end].lower() == name and not (end < len(text) and (text[end].isalnum() or text[end] == "_")):
+            return end
+    return None
 
 
 def neutralise(text: str) -> str:
-    """Remove any of the prompt's own delimiter tags from researcher text, so it cannot close its wrapper."""
-    return _DELIMITER_TAG.sub("", text)
+    """Remove any of the prompt's own delimiter tags from researcher text, so it cannot close its wrapper.
+
+    A tag is ``<``, optional ``/``, one of the delimiter names (any case) as a whole word, then anything up
+    to the next ``>``. A scan rather than a regex, so adversarial input stays linear time.
+    """
+    kept, start, i = [], 0, 0
+    while (lt := text.find("<", i)) != -1:
+        end = _delimiter_tag_end(text, lt)
+        if end is None:
+            i = lt + 1
+            continue
+        gt = text.find(">", end)
+        if gt == -1:
+            break  # no ">" left, so no later tag can close either
+        kept.append(text[start:lt])
+        start = i = gt + 1
+    kept.append(text[start:])
+    return "".join(kept)
 
 
 def strip_licence_header(sql: str) -> str:

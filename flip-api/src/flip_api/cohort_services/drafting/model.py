@@ -77,8 +77,7 @@ class FakeDraftModel:
     def create(self, system: str, messages: list[dict[str, Any]]) -> ModelReply:
         text = " ".join(m["content"] for m in messages if m["role"] == "user" and isinstance(m["content"], str))
         lowered = text.lower()
-        description = re.search(r"<description>(.*?)</description>", lowered, re.S)
-        asked = description.group(1) if description else lowered
+        asked = _between(lowered, "<description>", "</description>")
         imaging = "project shape: imaging" in lowered
         reply: dict[str, Any] = {
             "outcome": "draft",
@@ -106,6 +105,16 @@ class FakeDraftModel:
                 "concepts_used": ["4056681 = plain radiography", "4300757 = CT", "4013636 = MRI"] if imaging else [],
             }
         return ModelReply(stop_reason="end_turn", text=json.dumps(reply), content=json.dumps(reply))
+
+
+def _between(text: str, opening: str, closing: str) -> str:
+    """The text between the first ``opening`` and the next ``closing``, else all of it (linear time)."""
+    start = text.find(opening)
+    if start != -1:
+        end = text.find(closing, start + len(opening))
+        if end != -1:
+            return text[start + len(opening) : end]
+    return text
 
 
 @cache
