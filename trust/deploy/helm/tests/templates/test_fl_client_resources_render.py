@@ -52,22 +52,37 @@ def _render(*extra: str) -> str:
     return result.stdout
 
 
-def _client_command(rendered: str) -> str:
+def _client(rendered: str) -> dict:
     for doc in yaml.safe_load_all(rendered):
         if (
             doc
             and doc.get("kind") == "Deployment"
             and doc["metadata"]["labels"].get("app.kubernetes.io/component") == "fl-client"
         ):
-            container = next(c for c in doc["spec"]["template"]["spec"]["containers"] if c["name"] == "fl-client")
-            return "\n".join(container.get("command", []) + container.get("args", []))
+            return next(c for c in doc["spec"]["template"]["spec"]["containers"] if c["name"] == "fl-client")
     raise AssertionError("no fl-client Deployment in the render")
 
 
-def _resources_step(command: str) -> str:
-    match = re.search(r"if \[ -f /app/local/resources\.template\.json \]; then\n.*?\n\s*fi\n", command, flags=re.S)
-    assert match, "the NVFLARE client no longer renders resources.json from the kit's template"
+def _client_command(rendered: str) -> str:
+    container = _client(rendered)
+    return "\n".join(container.get("command", []) + container.get("args", []))
+
+
+def _step(rendered: str, template: str, message: str) -> str:
+    """The client command's `if [ -f /app/local/<template> ]; then ... fi` block."""
+    pattern = rf"if \[ -f /app/local/{re.escape(template)} \]; then\n.*?\n\s*fi\n"
+    match = re.search(pattern, _client_command(rendered), flags=re.S)
+    assert match, message
     return match.group(0)
+
+
+def _bash(step: str, local: Path, env: dict[str, str]) -> subprocess.CompletedProcess:
+    """Run a step against ``local`` under plain bash, then a sentinel: a failure must stop the client without help
+    from set -e."""
+    script = step.replace("/app/local", str(local)) + f"echo {SENTINEL}\n"
+    return subprocess.run(
+        ["bash", "-c", script], capture_output=True, text=True, env={"PATH": os.environ["PATH"], **env}, timeout=30
+    )
 
 
 def _configmap(rendered: str) -> dict:
@@ -79,10 +94,12 @@ def _configmap(rendered: str) -> dict:
 
 
 def _run_step(local: Path, gpus: str) -> subprocess.CompletedProcess:
-    """Run the step under plain bash, then a sentinel: a failure must stop the client without help from set -e."""
-    script = _resources_step(_client_command(_render())).replace("/app/local", str(local)) + f"echo {SENTINEL}\n"
-    env = {"PATH": os.environ["PATH"], "NUM_AVAILABLE_GPUS": gpus, "MEMORY_PER_GPU_IN_GIB": "7"}
-    return subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env, timeout=30)
+    step = _step(
+        _render(),
+        "resources.template.json",
+        "the NVFLARE client no longer renders resources.json from the kit's template",
+    )
+    return _bash(step, local, {"NUM_AVAILABLE_GPUS": gpus, "MEMORY_PER_GPU_IN_GIB": "7"})
 
 
 def _assert_stops(result: subprocess.CompletedProcess, message: str) -> None:
@@ -178,27 +195,9 @@ def test_gpu_memory_reaches_the_client(memory):
 
 def _run_log_step(local: Path) -> subprocess.CompletedProcess:
     rendered = _render("--set", "logLevel=DEBUG")
-    deployment = next(
-        doc
-        for doc in yaml.safe_load_all(rendered)
-        if doc
-        and doc.get("kind") == "Deployment"
-        and doc["metadata"]["labels"].get("app.kubernetes.io/component") == "fl-client"
-    )
-    container = next(c for c in deployment["spec"]["template"]["spec"]["containers"] if c["name"] == "fl-client")
-    level = next(e["value"] for e in container["env"] if e["name"] == "LOG_LEVEL")
-    match = re.search(
-        r"if \[ -f /app/local/log_config\.template\.json \]; then\n.*?\n\s*fi\n", _client_command(rendered), re.S
-    )
-    assert match, "the NVFLARE client must render the log template"
-    script = match.group(0).replace("/app/local", str(local)) + f"echo {SENTINEL}\n"
-    return subprocess.run(
-        ["bash", "-c", script],
-        capture_output=True,
-        text=True,
-        env={"PATH": os.environ["PATH"], "LOG_LEVEL": level},
-        timeout=30,
-    )
+    level = next(e["value"] for e in _client(rendered)["env"] if e["name"] == "LOG_LEVEL")
+    step = _step(rendered, "log_config.template.json", "the NVFLARE client must render the log template")
+    return _bash(step, local, {"LOG_LEVEL": level})
 
 
 @needs_envsubst
