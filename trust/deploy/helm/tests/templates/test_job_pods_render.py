@@ -162,15 +162,19 @@ def test_a_job_pod_gets_what_the_client_container_has():
     volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
     assert volumes["images"] == next(v for v in client_spec["volumes"] if v["name"] == "images")
     assert volumes["dshm"]["emptyDir"]["medium"] == "Memory"
-    assert "hostAliases" not in pod["spec"] and "hostAliases" not in client_spec, "none by default"
+    # None by default: both backends dial the hub's public FL name.
+    assert "hostAliases" not in pod["spec"]
+    assert "hostAliases" not in client_spec
     assert pod["spec"]["enableServiceLinks"] is False
 
 
 def test_a_job_pod_resolves_the_fl_server_as_the_client_does():
     alias = [{"ip": "203.0.113.10", "hostnames": ["fl.example.org"]}]
     docs = _enabled(
-        "--set", "flClient.hostAliases[0].ip=203.0.113.10",
-        "--set", "flClient.hostAliases[0].hostnames[0]=fl.example.org",
+        "--set",
+        "flClient.hostAliases[0].ip=203.0.113.10",
+        "--set",
+        "flClient.hostAliases[0].hostnames[0]=fl.example.org",
     )
     assert _client(docs)["spec"]["template"]["spec"]["hostAliases"] == alias
     assert _job_pod(docs)["spec"]["hostAliases"] == alias
