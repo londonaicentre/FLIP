@@ -150,7 +150,7 @@ interface IProjectApprovalProps {
 const STATUS_CHIP: Record<TrustApprovalStatus, { label: string; class: string }> = {
     APPROVED: {
         label: "Approved",
-        class: "bg-emerald-600 text-white"
+        class: "bg-emerald-700 text-white"
     },
     DECLINED: {
         label: "Declined",

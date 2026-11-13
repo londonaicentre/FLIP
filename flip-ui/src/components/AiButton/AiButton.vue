@@ -157,7 +157,7 @@ const clickButton = () => {
 }
 
 .btn-base.btn-text {
-    @apply border-0 shadow-none bg-transparent outline-none focus:ring-0 focus:bg-none focus:shadow-none focus:ring-offset-0 dark:hover:bg-transparent;
+    @apply border-0 shadow-none bg-transparent outline-none focus:ring-0 focus:bg-none focus:shadow-none focus:ring-offset-0 dark:hover:bg-transparent focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-primary-400 dark:focus-visible:ring-offset-dark-canvas;
 }
 
 .btn-base.btn-text-primary {
@@ -165,11 +165,11 @@ const clickButton = () => {
 }
 
 .btn-base.btn-text-secondary {
-    @apply border-0 shadow-none bg-transparent outline-none focus:ring-0 focus:bg-none focus:shadow-none focus:ring-offset-0 dark:hover:bg-dark-surface hover:bg-gray-100;
+    @apply border-0 shadow-none bg-transparent outline-none focus:ring-0 focus:bg-none focus:shadow-none focus:ring-offset-0 dark:hover:bg-dark-surface hover:bg-gray-100 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-primary-400 dark:focus-visible:ring-offset-dark-canvas;
 }
 
 .btn-base.btn-text-error {
-    @apply text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-500;
+    @apply text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-500;
 }
 
 .btn-base.btn-primary {
