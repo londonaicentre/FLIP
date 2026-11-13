@@ -453,15 +453,11 @@ const approveProjectEvent = async (decisions: ITrustDecisions) => {
 
 const stageProject = async (trustIds: string[]) => {
 
-    if(stagingProject.value) {
+    if (stagingProject.value || !trustIds.length) {
         return;
     }
 
     stagingProject.value = true;
-
-    if (!trustIds.length) {
-        return;
-    }
 
     try {
         await stageProjectWithTrusts(`/projects/${project?.value?.id}/stage`, trustIds);

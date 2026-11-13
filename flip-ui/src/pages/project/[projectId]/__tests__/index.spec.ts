@@ -273,6 +273,19 @@ describe("Project page (/project/[id]/index.vue)", () => {
         expect(staging.attributes("data-stageable")).toBe("t1");
     });
 
+    test("still stages after a staging attempt with no trusts (#1926)", async () => {
+        const wrapper = mountProjectPage();
+        const staging = wrapper.findComponent(stubs.ProjectStaging);
+
+        await staging.vm.$emit("staged", []);
+        await flushPromises();
+        expect(stageProjectWithTrusts).not.toHaveBeenCalled();
+
+        await staging.vm.$emit("staged", ["t1"]);
+        await flushPromises();
+        expect(stageProjectWithTrusts).toHaveBeenCalledWith("/projects/p-123/stage", ["t1"]);
+    });
+
     test("marks Project Staged when status moves off UNSTAGED, and Project Approved when status is APPROVED", () => {
         const stagedProject = baseProject();
         stagedProject.status = "STAGED";
