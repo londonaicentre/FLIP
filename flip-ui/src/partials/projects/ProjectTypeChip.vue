@@ -11,31 +11,43 @@
   limitations under the License.
 -->
 <template>
-    <!-- Project-type chip (FLIP#1071): every project gets one — imaging projects use OMOP data too,
-         so the labels are "Imaging + OMOP" (primary tint, x-ray + register-book icons) and "OMOP only"
-         (steel blue, register-book icon): the icons add up the way the data does. Informational only. -->
+    <!-- Project type (FLIP#1071) as icons that add up the way the data does: every project has OMOP
+         records (register book), imaging projects add an x-ray. The name is kept for screen readers
+         and as a hover tooltip. Informational only. -->
     <span
-        class="inline-flex items-center gap-1 rounded-full px-2 py-px text-xs font-semibold whitespace-nowrap shrink-0"
+        class="inline-flex items-center gap-1 shrink-0"
         :class="hasImaging ? IMAGING_CLASS : OMOP_ONLY_CLASS"
+        :title="label"
         :data-test="`project-type-chip-${projectTypeId(hasImaging)}`"
     >
-        <icon-healthicons-xray-outline v-if="hasImaging" class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-        <icon-healthicons-register-book-outline class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-        {{ hasImaging ? IMAGING_LABEL : OMOP_ONLY_LABEL }}
+        <icon-healthicons-xray-outline v-if="hasImaging" :class="SIZE_CLASS[size]" aria-hidden="true" />
+        <icon-healthicons-register-book-outline :class="SIZE_CLASS[size]" aria-hidden="true" />
+        <span class="sr-only">{{ label }}</span>
     </span>
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
+
 import { IMAGING_LABEL, OMOP_ONLY_LABEL, projectTypeId } from "@/partials/projects/projectType";
 
 interface IProjectTypeChipProps {
     // Resolved by the caller (see `projectHasImaging`), so the "absent means imaging" rule lives in one place.
     hasImaging: boolean;
+    size?: "sm" | "md" | "lg";
 }
 
-defineProps<IProjectTypeChipProps>();
+const props = withDefaults(defineProps<IProjectTypeChipProps>(), { size: "md" });
 
-// Design tokens from tailwind.config: the primary tint for imaging, the steel-blue accent for data-only.
-const IMAGING_CLASS = "bg-primary-100 text-primary-500 dark:bg-primary-900/60 dark:text-primary-200";
-const OMOP_ONLY_CLASS = "bg-steel-100 text-steel-700 dark:bg-steel-700/40 dark:text-steel-100";
+const label = computed(() => (props.hasImaging ? IMAGING_LABEL : OMOP_ONLY_LABEL));
+
+const SIZE_CLASS = {
+    sm: "w-[18px] h-[18px]",
+    md: "w-5 h-5",
+    lg: "w-6 h-6"
+} as const;
+
+// Design tokens from tailwind.config: plum for imaging, the steel-blue accent for data-only.
+const IMAGING_CLASS = "text-primary-500 dark:text-primary-300";
+const OMOP_ONLY_CLASS = "text-steel-700 dark:text-steel-100";
 </script>

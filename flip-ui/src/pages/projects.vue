@@ -182,6 +182,7 @@
                                 :class="ROW_GRID_CLASS"
                                 class="grid flex-1 gap-5 px-5 py-3 text-xs font-medium text-gray-500 dark:text-gray-300"
                             >
+                                <div>Type</div>
                                 <div>Project</div>
                                 <div>Description</div>
                                 <div class="hidden lg:block">
@@ -214,12 +215,15 @@
                                 class="grid gap-x-3 gap-y-1 md:gap-5 px-5 py-4 items-center flex-1"
                                 data-test="project-row-grid"
                             >
+                                <div class="hidden md:flex">
+                                    <ProjectTypeChip :has-imaging="projectHasImaging(project)" size="lg" />
+                                </div>
                                 <div class="min-w-0">
                                     <div class="font-semibold text-base text-gray-900 dark:text-gray-100 truncate" data-test="project-name">
                                         {{ project.name }}
                                     </div>
                                     <div class="flex items-center gap-2 mt-0.5 min-w-0 text-note text-gray-500 dark:text-gray-300">
-                                        <ProjectTypeChip :has-imaging="projectHasImaging(project)" />
+                                        <ProjectTypeChip :has-imaging="projectHasImaging(project)" size="sm" class="md:hidden" />
                                         <span class="truncate">{{ ownerLabel(project) }} · {{ relativeUpdated(project) }}</span>
                                     </div>
                                 </div>
@@ -395,12 +399,12 @@ const userId = authStore.user?.userId;
 // Each fr track is wrapped in `minmax(0,…)` deliberately: a bare `1.6fr` means
 // `minmax(auto,1.6fr)`, whose min-content floor lets a long name or description push
 // its own track past its share — don't simplify them back to bare `fr`. The trusts
-// column is `hidden lg:flex`, and a `display: none` child occupies no grid cell, so
-// the md template deliberately declares three tracks to the lg template's four.
+// and Type columns are hidden below lg and md, and a `display: none` child occupies no
+// grid cell, so the md template deliberately declares four tracks to the lg template's five.
 // Keep each class name whole within one string literal: Tailwind's extractor scans
 // source text, so a class split across a concatenation is never generated.
-const ROW_GRID_CLASS = "grid-cols-[minmax(0,1fr)_8rem] md:grid-cols-[minmax(0,1.2fr)_minmax(0,1.8fr)_10rem] "
-    + "lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1.8fr)_11rem_10rem]";
+const ROW_GRID_CLASS = "grid-cols-[minmax(0,1fr)_8rem] md:grid-cols-[3.5rem_minmax(0,1.2fr)_minmax(0,1.8fr)_10rem] "
+    + "lg:grid-cols-[3.5rem_minmax(0,1.2fr)_minmax(0,1.8fr)_11rem_10rem]";
 
 type ViewMode = "list" | "grid";
 const viewMode = ref<ViewMode>("list");
