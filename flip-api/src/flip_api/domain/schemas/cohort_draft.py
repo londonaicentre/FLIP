@@ -70,3 +70,34 @@ class CohortDraftResponse(BaseModel):
     error_code: str | None = None
     message: str | None = Field(default=None, max_length=MAX_TEXT_CHARS)
     usage: CohortDraftUsage
+
+
+_Reason = Annotated[str, Field(min_length=1, max_length=500)]
+
+
+class CohortDraftOverrideBody(BaseModel):
+    """PUT /cohort/draft/overrides/{user_id}: one user's monthly limits, until ``expires_at`` (UTC) if given."""
+
+    monthly_allowance: int = Field(ge=0, le=10_000)
+    # None keeps the configured COHORT_DRAFT_MONTHLY_REQUEST_CAP.
+    monthly_request_cap: int | None = Field(default=None, ge=0, le=100_000)
+    expires_at: datetime | None = None
+    reason: _Reason
+
+
+class CohortDraftOverrideClearBody(BaseModel):
+    """DELETE /cohort/draft/overrides/{user_id}."""
+
+    reason: _Reason
+
+
+class CohortDraftOverrideView(BaseModel):
+    """A user's override, and whether it is in force now."""
+
+    user_id: UUID
+    monthly_allowance: int
+    monthly_request_cap: int | None
+    expires_at: datetime | None
+    active: bool
+    updated_by: UUID
+    updated_at: datetime

@@ -19,7 +19,8 @@ reservation older than ``COHORT_DRAFT_RESERVATION_TTL_MINUTES`` (a crashed reque
 
 Every request also counts towards ``COHORT_DRAFT_MONTHLY_REQUEST_CAP``, a hidden monthly cap on model
 calls whatever their outcome, retries included: a reservation holds the most calls one request can
-make, and is settled to the calls it made.
+make, and is settled to the calls it made. An admin may override either limit for one user until a
+date (``cohort_draft_override``); both checks read the override.
 Times are naive UTC, like the column type.
 """
 
@@ -34,7 +35,7 @@ from sqlmodel import Session, and_, col, select
 
 from flip_api.cohort_services.drafting.service import MAX_MODEL_CALLS
 from flip_api.config import get_settings
-from flip_api.db.models.main_models import CohortDraftAllowance, CohortDraftRequest
+from flip_api.db.models.main_models import CohortDraftAllowance, CohortDraftOverride, CohortDraftRequest
 from flip_api.domain.schemas.status import CohortDraftStatus
 
 
@@ -72,6 +73,18 @@ def next_reset(now: datetime) -> datetime:
     return datetime(year, month, 1, tzinfo=timezone.utc)
 
 
+def limits(db: Session, user_id: UUID, now: datetime) -> tuple[int, int]:
+    """The user's monthly allowance and request cap: an unexpired admin override, else the settings."""
+    settings = get_settings()
+    allowance, cap = settings.COHORT_DRAFT_MONTHLY_ALLOWANCE, settings.COHORT_DRAFT_MONTHLY_REQUEST_CAP
+    override = db.get(CohortDraftOverride, user_id)
+    if override is not None and (override.expires_at is None or override.expires_at > now):
+        allowance = override.monthly_allowance
+        if override.monthly_request_cap is not None:
+            cap = override.monthly_request_cap
+    return allowance, cap
+
+
 def _counts_against_allowance(user_id: UUID, now: datetime):  # noqa: ANN202 - a SQLAlchemy clause
     """Consumed drafts this month, plus reservations still in flight."""
     fresh = now - timedelta(minutes=get_settings().COHORT_DRAFT_RESERVATION_TTL_MINUTES)
@@ -92,7 +105,7 @@ def get_usage(db: Session, user_id: UUID, now: datetime | None = None) -> Usage:
     """The user's allowance this month. Reads only."""
     now = now or utcnow()
     used = db.exec(select(func.count()).select_from(CohortDraftRequest).where(_counts_against_allowance(user_id, now)))
-    return Usage(used=used.one(), limit=get_settings().COHORT_DRAFT_MONTHLY_ALLOWANCE, resets_at=next_reset(now))
+    return Usage(used=used.one(), limit=limits(db, user_id, now)[0], resets_at=next_reset(now))
 
 
 def reserve(
@@ -173,11 +186,12 @@ def reserve(
                     col(CohortDraftRequest.period_start) == period,
                 )
             ).one()
+            allowance, request_cap = limits(db, user_id, now)
             if recent >= settings.COHORT_DRAFT_RATE_LIMIT_PER_MINUTE:
                 refusal = Refusal.RATE_LIMITED
-            elif calls + MAX_MODEL_CALLS > settings.COHORT_DRAFT_MONTHLY_REQUEST_CAP:
+            elif calls + MAX_MODEL_CALLS > request_cap:
                 refusal = Refusal.REQUEST_CAP
-            elif used >= settings.COHORT_DRAFT_MONTHLY_ALLOWANCE:
+            elif used >= allowance:
                 refusal = Refusal.EXHAUSTED
         if refusal is not None:
             db.commit()

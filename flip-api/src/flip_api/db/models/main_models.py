@@ -494,3 +494,36 @@ class CohortDraftRequest(SQLModel, table=True):
     model_calls: int = Field(default=0)
     created_at: datetime = Field()
     updated_at: datetime = Field()
+
+
+class CohortDraftOverride(SQLModel, table=True):
+    """An admin's override of one user's cohort drafting limits (FLIP#1556), until it expires or is cleared.
+
+    ``monthly_request_cap`` None keeps the configured cap. Times are naive UTC; ``expires_at`` None never expires.
+    """
+
+    __tablename__ = "cohort_draft_override"  # type: ignore
+    user_id: UUID = Field(primary_key=True)
+    monthly_allowance: int = Field()
+    monthly_request_cap: int | None = Field(default=None)
+    expires_at: datetime | None = Field(default=None)
+    updated_by: UUID = Field()
+    updated_at: datetime = Field()
+
+
+class CohortDraftOverrideAudit(SQLModel, table=True):
+    """One change to a cohort drafting override: who, for whom, from what to what, and why. Append-only."""
+
+    __tablename__ = "cohort_draft_override_audit"  # type: ignore
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    actor_user_id: UUID = Field()
+    target_user_id: UUID = Field(index=True)
+    action: str = Field(max_length=16)  # "set" or "clear"
+    old_monthly_allowance: int | None = Field(default=None)
+    new_monthly_allowance: int | None = Field(default=None)
+    old_monthly_request_cap: int | None = Field(default=None)
+    new_monthly_request_cap: int | None = Field(default=None)
+    old_expires_at: datetime | None = Field(default=None)
+    new_expires_at: datetime | None = Field(default=None)
+    reason: str = Field(max_length=500)
+    timestamp: datetime = Field()
