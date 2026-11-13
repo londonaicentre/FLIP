@@ -218,6 +218,22 @@ What this means for training code:
 - Uploads through ``flip.add_resource`` refresh the cached copy automatically.
 - Each FL client sees only its own net's directory, so a job cannot read another net's cached studies.
 
+Imaging follows the approved cohort
+===================================
+
+A patient who leaves a project's approved cohort after approval, for example through the national data opt-out,
+stops being served by ``data-access-api`` at once. ``imaging-api`` keeps the project's imaging to the same list:
+
+- **Downloads** of that patient's studies are refused within a minute.
+- **The cached copy** on the Trust host is removed within 15 minutes.
+- **The study in XNAT** is deleted once it has been off the list for 24 hours, and the patient's XNAT subject
+  with it when none of their studies is left. The wait is there because a Trust that reloads its OMOP tables
+  serves a shorter list for a while, and only a new pull from the PACS brings a deleted study back. Each removal
+  is logged at the Trust with the project and the accession number.
+
+Nothing is removed while ``data-access-api`` cannot say what the list is. Both times are settings of the Trust
+(``COHORT_RECONCILE_MINUTES``, ``COHORT_REMOVAL_GRACE_HOURS``).
+
 ***************
 Data Access API
 ***************

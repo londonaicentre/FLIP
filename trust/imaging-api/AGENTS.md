@@ -13,6 +13,7 @@ FastAPI service for DICOM image retrieval via XNAT. Receives requests from trust
 - DICOM-to-NIfTI conversion support
 - Never reads XNAT's database: import status comes from DQR's and XNAT's REST listings (`services/import_requests.py`, FLIP#1456 B1)
 - Downloads are cached on disk per (net, project, accession): extraction lands in `<BASE_IMAGES_DOWNLOAD_DIR>/<net_id>/<central_hub_project_id>/<accession_id>/` with a `.flip_complete-<assessor>-<resource>` sentinel written after successful extraction (`services/image_cache.py`); a hit is checked with one XNAT resource-stats call and a changed resource re-downloaded (FLIP#953 — FL apps fetch the cohort per round; README, "Download"). Invalidated by uploads to the same (project, accession), by `force_refresh=true`, and wiped with the net dir by FLARE's `CleanupImages`
+- Imaging follows the approved cohort (FLIP#1860, `services/approved_cohort.py`): every route of the download router calls `require_served` before it reads a study (a guard test walks the router's routes), and a background reconcile removes the cached copies of an accession that left a project's cohort, then its XNAT session after `COHORT_REMOVAL_GRACE_HOURS`. The list is data-access-api's `/cohort/accession-ids`; a refused or unreadable list refuses downloads and removes nothing. Only imaging sessions are removed (an assessor is an experiment too)
 - The download URL pins `structure=default` (`<accession>/scans/<scan id>-<desc>/resources/<R>/files/…`), the layout FL apps read; never change it (README, "Download")
 
 ## Commands

@@ -11,16 +11,19 @@
 #
 
 import os
+import shutil
 from pathlib import Path
 
 import pytest
 
+from imaging_api.services import image_cache
 from imaging_api.services.image_cache import (
     SENTINEL_PREFIX,
     CachedDownload,
     clear_resource,
     invalidate_accession,
     read_sentinel,
+    remove_accessions_except,
     sentinel_path,
     write_sentinel,
 )
@@ -229,3 +232,86 @@ class TestClearResource:
     def test_path_component_values_are_rejected(self, tmp_path, assessor, resource):
         with pytest.raises(ValueError, match="Path traversal detected in"):
             clear_resource(str(tmp_path), assessor, resource)
+
+
+class TestRemoveAccessionsExcept:
+    """A project's cached studies follow its approved cohort (FLIP#1860)."""
+
+    def test_removes_the_projects_other_accessions_in_every_net(self, tmp_path):
+        for net, accession in (("net-1", "A1"), ("net-1", "A2"), ("net-2", "A2"), ("net-2", "A3")):
+            _seed_sentinel(tmp_path, net, "proj", accession)
+
+        assert remove_accessions_except(str(tmp_path), "proj", {"A1"}) == (["A2", "A3"], [])
+
+        assert (tmp_path / "net-1" / "proj" / "A1").is_dir()
+        assert not (tmp_path / "net-1" / "proj" / "A2").exists()
+        assert list((tmp_path / "net-2" / "proj").iterdir()) == []
+
+    def test_leaves_other_projects_and_files_alone(self, tmp_path):
+        _seed_sentinel(tmp_path, "net-1", "other", "A2")
+        _seed_sentinel(tmp_path, "net-1", "proj", "A1")
+        archive = tmp_path / "net-1" / "proj" / "A2-scans-NIFTI.zip"  # a download in progress
+        archive.write_bytes(b"")
+
+        assert remove_accessions_except(str(tmp_path), "proj", {"A1"}) == ([], [])
+
+        assert (tmp_path / "net-1" / "other" / "A2").is_dir()
+        assert archive.exists()
+
+    def test_never_follows_a_symlink_an_fl_client_left(self, tmp_path):
+        """The fl-client can write in its net directory; a link must not point the removal elsewhere."""
+        victim = Path(_seed_sentinel(tmp_path, "net-1", "other", "A9")).parent
+        (tmp_path / "net-1" / "proj").mkdir()
+        (tmp_path / "net-1" / "proj" / "link").symlink_to(victim, target_is_directory=True)
+        (tmp_path / "net-2").mkdir()
+        (tmp_path / "net-2" / "proj").symlink_to(victim.parent, target_is_directory=True)
+
+        assert remove_accessions_except(str(tmp_path), "proj", set()) == ([], [])
+
+        assert victim.is_dir()
+
+    def test_a_study_swapped_for_a_link_during_the_walk_is_not_followed(self, tmp_path, monkeypatch):
+        """The window between listing a folder and removing a study in it."""
+        victim = Path(_seed_sentinel(tmp_path, "net-1", "other", "A9")).parent
+        study = Path(_seed_sentinel(tmp_path, "net-1", "proj", "A2")).parent
+        listed = image_cache._subdir_names
+
+        def swap_after_listing(dir_fd):
+            names = listed(dir_fd)
+            if names == ["A2"]:
+                shutil.rmtree(study)
+                study.symlink_to(victim, target_is_directory=True)
+            return names
+
+        monkeypatch.setattr(image_cache, "_subdir_names", swap_after_listing)
+
+        assert remove_accessions_except(str(tmp_path), "proj", set()) == ([], ["net-1/proj/A2"])
+
+        assert list(victim.iterdir())
+
+    def test_a_study_that_cannot_be_removed_does_not_keep_the_others(self, tmp_path, monkeypatch):
+        """Else one folder a client made unremovable would keep every study that left the cohort on disk."""
+        for accession in ("A1", "A2", "A3"):
+            _seed_sentinel(tmp_path, "net-1", "proj", accession)
+        rmtree = shutil.rmtree
+
+        def refuse_a2(path, **kwargs):
+            if path == "A2":
+                raise PermissionError(path)
+            rmtree(path, **kwargs)
+
+        monkeypatch.setattr(image_cache.shutil, "rmtree", refuse_a2)
+
+        removed, failed = remove_accessions_except(str(tmp_path), "proj", set())
+
+        assert (removed, failed) == (["A1", "A3"], ["net-1/proj/A2"])
+        assert [p.name for p in (tmp_path / "net-1" / "proj").iterdir()] == ["A2"]
+
+    def test_a_project_with_nothing_cached_removes_nothing(self, tmp_path):
+        assert remove_accessions_except(str(tmp_path), "proj", set()) == ([], [])
+        assert remove_accessions_except(str(tmp_path / "missing"), "proj", set()) == ([], [])
+
+    @pytest.mark.parametrize("project", ["", "..", "a/b"])
+    def test_rejects_a_project_id_that_is_a_path(self, tmp_path, project):
+        with pytest.raises(ValueError, match="Path traversal"):
+            remove_accessions_except(str(tmp_path), project, set())

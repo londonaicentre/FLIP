@@ -238,6 +238,33 @@ scan; in a session with no scans, the upload fails.
 
 Create users, update user details, or add a user to an XNAT project.
 
+#### Imaging follows the approved cohort
+
+A patient who leaves a project's approved cohort (the national data opt-out, a removal from OMOP) stops being served
+by data-access-api at once (FLIP#857). Their imaging follows (FLIP#1860), from the same list: the accessions
+data-access-api serves for the project now (`/cohort/accession-ids`).
+
+| What | When | How |
+| --- | --- | --- |
+| Downloads | Within a minute | The route answers `404` for an accession that is not on the list. The list is read at most once a minute per project. |
+| The cached copy | Within `COHORT_RECONCILE_MINUTES` (15) | `<net_id>/<central_hub_project_id>/<accession_id>/` is removed in every net's folder. |
+| XNAT | After `COHORT_REMOVAL_GRACE_HOURS` (24) off the list | The session is deleted from the project's archive and prearchive with its files, then the subject when none of their studies is left. The log names the project and the accession when it is first seen off the list, and again at each removal. |
+
+- **Why XNAT waits.** A cached copy is downloaded again on demand, but only a new pull from the PACS refills XNAT,
+  and the list is short for a while whenever a trust reloads its OMOP tables. An accession that is back on the list
+  before the wait ends is kept, and the wait starts again if it leaves again. The count is held in memory, so a
+  restart of imaging-api starts it again: a removal can come late, never early.
+- **When nothing is removed.** While data-access-api cannot answer, or refuses the whole list (`403`): a refusal does
+  not say whether the cohort fell below the trust's threshold or its lookup failed. Downloads are refused in both
+  cases (`503` and `404`). An empty list is an answer, not a refusal: the approved cohort has no imaging, and the
+  project's sessions are removed like any other that is off the list.
+- **What is removed.** Imaging sessions the project owns whose label is not a served accession, with their files. XNAT keeps no copy of them while its `backupDeletedToCache` site setting is off, its default (FLIP does not set it). An assessor (a
+  segmentation) goes with its session, never on its own; a session shared in from another project is left to that
+  project.
+- **Not pulled again.** A study removed this way is not imported again if the patient returns to OMOP. Their rows are
+  served again (the frozen membership still holds them), the download answers `404`, and the import status shows the
+  study as processing.
+
 ## Configuration
 
 Key environment variables. Most come from the trust kit file — template at [`../.env.example`](../.env.example), copied per trust to `trust/.env.<CODE>.<env>` — but `XNAT_URL` and `DATA_ACCESS_API_URL` are internal-topology constants with defaults in `imaging_api/config.py`, and the composes do not inject them into this service (`trust/deploy/compose/compose_trust.development.yml` says as much: an empty `${VAR}` from a kit that carried them would override the code default). `XNAT_URL` is deliberately absent from the kit template; `DATA_ACCESS_API_URL` is in it only because the fl-client reads it from env.
@@ -252,6 +279,8 @@ Key environment variables. Most come from the trust kit file — template at [`.
 | `DATA_ACCESS_API_URL` | Internal URL of the data-access-api (default `http://data-access-api:8000`) |
 | `DCM2NIIX_IMAGE` | Container Service image used for automatic DICOM→NIfTI conversion. The default is `ghcr.io/londonaicentre/xnat-dcm2niix:<version>` at the tag `ARG DCM2NIIX_VERSION` in `trust/xnat/dcm2niix/Dockerfile` names — the one source of truth, which `trust/xnat/dcm2niix/check_image_pin_sync.sh` (pre-commit + CI, FLIP#980) checks `imaging_api/config.py` against. The per-project event subscription looks the XNAT command up by this **exact** image string, so it must match what `trust/xnat/xnat/config/dcm2niix_command.json` registers — pinned by version tag, never `latest` |
 | `BASE_IMAGES_DOWNLOAD_DIR` | **Required.** Root of the downloaded-images tree as seen **inside the container** — the composes and the Helm chart inject the literal `/app/data/images`. The kit file's same-named `BASE_IMAGES_DOWNLOAD_DIR` is a different value: the *host* directory the composes bind-mount onto that path (the same host-vs-container dual meaning the trust-api README notes for the kit's `OMOP_DB_PORT`). imaging-api mounts the whole tree; each fl-client mounts only its own `net-N` slice |
+| `COHORT_RECONCILE_MINUTES` | How often imaging-api brings each project's cached studies and XNAT sessions to its approved cohort (default `15`; see "Imaging follows the approved cohort"). `0` turns the removal off; a download of an accession that left the cohort is refused either way |
+| `COHORT_REMOVAL_GRACE_HOURS` | How long an accession must have been off a project's approved cohort before its XNAT session is deleted (default `24`). The cached copy does not wait |
 | `REIMPORT_STUDIES_ENABLED` | Whether the retry-failed-imports route is available (default `true`). When `false`, `PUT` to the reimport endpoint returns `418` with "Reimport studies feature is not enabled" |
 | `AES_KEY_BASE64` | AES-256 key shared with the hub, used to open the AES-256-GCM-enveloped project identifiers the FL client forwards (FLIP#1179). Must be byte-identical to the hub's and to trust-api's; a mismatch fails closed |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |

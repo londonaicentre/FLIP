@@ -134,6 +134,8 @@ services:
       DEBUG: ${DEBUG}
       ENV: development
       BASE_IMAGES_DOWNLOAD_DIR: /app/data/images
+      COHORT_RECONCILE_MINUTES: ${COHORT_RECONCILE_MINUTES:-15}
+      COHORT_REMOVAL_GRACE_HOURS: ${COHORT_REMOVAL_GRACE_HOURS:-24}
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
       TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
       # Dev-on-pull (see `user:` above): host-uid process imports the package via

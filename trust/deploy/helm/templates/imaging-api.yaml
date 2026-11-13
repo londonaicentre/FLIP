@@ -38,6 +38,8 @@ data:
   XNAT_AETITLE: {{ .Values.xnat.web.dicomAet | quote }}
   DATA_ACCESS_API_URL: {{ .Values.imagingApi.env.DATA_ACCESS_API_URL | quote }}
   BASE_IMAGES_DOWNLOAD_DIR: {{ .Values.imagingApi.env.BASE_IMAGES_DOWNLOAD_DIR | quote }}
+  COHORT_RECONCILE_MINUTES: {{ .Values.imagingApi.env.COHORT_RECONCILE_MINUTES | quote }}
+  COHORT_REMOVAL_GRACE_HOURS: {{ .Values.imagingApi.env.COHORT_REMOVAL_GRACE_HOURS | quote }}
   ENV: {{ .Values.environment | quote }}
   LOG_LEVEL: {{ .Values.logLevel | quote }}
 ---

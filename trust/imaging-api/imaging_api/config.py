@@ -79,6 +79,13 @@ class Settings(BaseSettings):
     # Reimport settings
     REIMPORT_STUDIES_ENABLED: bool = True
 
+    # Imaging follows the approved cohort (FLIP#1860, services/approved_cohort.py). Every COHORT_RECONCILE_MINUTES
+    # the cached studies of an accession that left a project's cohort are removed, and its XNAT session once it has
+    # been off the cohort for COHORT_REMOVAL_GRACE_HOURS. 0 minutes turns the removal off; downloads of such an
+    # accession are refused either way.
+    COHORT_RECONCILE_MINUTES: float = 15.0
+    COHORT_REMOVAL_GRACE_HOURS: float = 24.0
+
 
 # Eager load once (for app use)
 _settings = Settings()  # type: ignore
