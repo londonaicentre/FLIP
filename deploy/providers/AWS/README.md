@@ -1356,11 +1356,15 @@ GIT_SHA=$(git rev-parse HEAD) RESOLVE_SHA_TAG=false DOCKER_REGISTRY=<registry> F
 The tags go on the command line because the env file's `DOCKER_TAG` would beat an exported one. Read the plan,
 never `make apply` it: the estate is CI-applied ([Break-glass](#break-glass) is the exception).
 
-**An infrastructure-only apply does not wait for images that cannot exist.** The
-apply fires on `deploy/providers/AWS/**` while the image builds fire on service
-paths, so the commonest apply publishes no `sha-…` image at all. The workflow
-diffs the push against its predecessor and spends the `GHCR_WAIT_SECONDS` budget
-only when a path that builds one of the two images actually changed.
+**An apply does not wait for images that cannot exist.** Most applies build no
+`sha-…` image at all. `scripts/image-wait-budgets.sh` asks GitHub, per image
+group, whether the workflow that builds it has a push run for this commit:
+`test_flip_api.yml` (whose green run triggers `docker_build_flip_api.yml`) for
+flip-api, and `fl-docker-build-<FL_BACKEND>.yml` for the FL images. A queued,
+running or green run gets the full `GHCR_WAIT_SECONDS`; no run, or a red one,
+probes once. A push and an `fl_quiesced` re-dispatch get the same answer. An API
+error waits the full budget. A release apply is unaffected: the resolver probes its
+`v<X.Y.Z>` images once.
 
 **It will not disturb a training run.** Replacing `fl-server-net-1` kills any
 in-flight run (FLIP#770). A runner cannot ask the hub whether one is in flight —

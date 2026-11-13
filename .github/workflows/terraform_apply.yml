@@ -187,13 +187,14 @@ jobs:
       contents: read
       id-token: write # mint the OIDC token
       packages: read # probe GHCR for the release image tag
+      actions: read # read this commit's image build runs (the wait step)
 
     steps:
       - name: Checkout code
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          # Full history: the image-wait decision below diffs this push against
-          # its predecessor, which a shallow clone cannot reach.
+          # Full history and tags: the release-tag check below resolves
+          # release_tag to a commit, which a shallow clone cannot.
           fetch-depth: 0
 
       # Validated here as well as in the resolver, because the two reject
@@ -243,52 +244,28 @@ jobs:
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      # This workflow fires on `deploy/providers/AWS/**`; the image builds fire on
-      # service paths. An infrastructure-only merge therefore publishes no
-      # `sha-<short7>` image at all, and waiting the full budget for one that
-      # cannot exist burns GHCR_WAIT_SECONDS of idle runner on the commonest kind
-      # of apply. The resolver looks for three images (flip-api, fl-server,
-      # fl-api), but the two FL ones are published by one workflow and share a
-      # single budget, so the worst case is two waits, not three. So the budget is
-      # spent only when this push actually touched a path that builds one of them.
+      # Most applies build no `sha-<short7>` image, and waiting the full budget
+      # for one idles the runner, with FL quiesced on an fl_quiesced re-dispatch.
+      # The resolver waits per image group: the hub (flip-api) and FL (fl-server,
+      # fl-api and Flower's proxy: one workflow, so one budget). A group gets
+      # GHCR_WAIT_SECONDS only while its build workflow has a queued, running or
+      # green push run for this commit; otherwise it probes once (an API error
+      # waits in full). A push and a dispatch get the same answer (FLIP#1811,
+      # scripts/image-wait-budgets.sh).
       - name: Decide how long to wait for this commit's images
         id: wait
         env:
-          BEFORE: ${{ github.event.before }}
-          CONFIGURED_WAIT: ${{ vars.GHCR_WAIT_SECONDS || 900 }}
-        run: |
-          set -euo pipefail
-          # flip-api        <- test_flip_api.yml -> docker_build_flip_api.yml
-          # flare-fl-server
-          # flower-superlink <- fl-docker-build-{nvflare,flower}.yml
-          paths=(
-            flip-api
-            fl-services
-            flip-utils
-            .github/workflows/test_flip_api.yml
-            .github/workflows/docker_build_flip_api.yml
-            .github/workflows/fl-docker-build-nvflare.yml
-            .github/workflows/fl-docker-build-flower.yml
-          )
-          seconds="${CONFIGURED_WAIT}"
-          reason="cannot tell what changed — waiting the full budget"
-          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${BEFORE}" =~ ^[0-9a-f]{40}$ ]] &&
-            git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
-            if [[ -z "$(git diff --name-only "${BEFORE}" "${GITHUB_SHA}" -- "${paths[@]}")" ]]; then
-              seconds=0
-              reason="no service path changed in ${BEFORE:0:7}..${GITHUB_SHA:0:7} — probing once instead of waiting"
-            else
-              reason="a service path changed — waiting up to ${CONFIGURED_WAIT}s for its image"
-            fi
-          fi
-          echo "GHCR wait: ${seconds}s (${reason})."
-          echo "seconds=${seconds}" >> "$GITHUB_OUTPUT"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FL_BACKEND: ${{ vars.FL_BACKEND }}
+          GHCR_WAIT_SECONDS: ${{ vars.GHCR_WAIT_SECONDS || 900 }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: deploy/providers/AWS/scripts/image-wait-budgets.sh >> "$GITHUB_OUTPUT"
 
-      # Hazard A. Waits for this commit's `sha-<short7>` images, which
-      # docker_build_*.yml publishes only after the service's tests pass — so an
-      # apply cannot deploy an image that never went green. When no image was
-      # published (an infrastructure-only merge) it reuses what the services are
-      # already running, never the mutable tag.
+      # Hazard A. Waits for this commit's `sha-<short7>` images while their build
+      # runs. docker_build_flip_api.yml publishes only after the service's tests
+      # pass — so an apply cannot deploy a flip-api that never went green. When
+      # no image was published (an infrastructure-only merge) it reuses what the
+      # services are already running, never the mutable tag.
       - name: Resolve the image tags to pin
         env:
           GIT_SHA: ${{ github.sha }}
@@ -299,7 +276,10 @@ jobs:
           FALLBACK_DOCKER_TAG: ${{ vars.DOCKER_TAG }}
           FALLBACK_DOCKER_FL_TAG: ${{ vars.DOCKER_FL_TAG }}
           FL_BACKEND: ${{ vars.FL_BACKEND }}
-          GHCR_WAIT_SECONDS: ${{ steps.wait.outputs.seconds }}
+          # The fallback for an empty group budget; the groups come from the step above.
+          GHCR_WAIT_SECONDS: ${{ vars.GHCR_WAIT_SECONDS || 900 }}
+          GHCR_WAIT_SECONDS_HUB: ${{ steps.wait.outputs.hub }}
+          GHCR_WAIT_SECONDS_FL: ${{ steps.wait.outputs.fl }}
         run: deploy/providers/AWS/scripts/resolve-image-tags.sh >> "$GITHUB_ENV"
 
       # DOCKER_TAG / DOCKER_FL_TAG are deliberately absent from this env block:
