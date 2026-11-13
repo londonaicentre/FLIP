@@ -66,6 +66,9 @@ module "flip_stag_terraform_ci" {
 - **`environment`** — `stag` or `prod`. Only staging's plan role accepts pull-request merge refs.
 - **`ui_bucket_name`** — the FLIP root's `FLIP_UI_BUCKET_NAME`. Setting it creates the UI-publish role CI uses to
   ship flip-ui after an apply; left empty, the module creates no such role.
+- **`snowflake_github_environment`** — the GitHub environment the Snowflake trust workflows declare in this
+  account (`sf-stag` / `sf-prod`, epic #1589). The plan and drift workflows declare `<that>-plan` (Snowflake maps one OIDC subject to one user, so plan and apply need different subjects). Setting it creates the two Snowflake state roles; left empty, the
+  module creates neither. `snowflake_state_prefix` (default `snowflake-trust`) is the key prefix they reach.
 - **`create_permissions_boundary` / `permissions_boundary_name`** — by default the module declares
   `AICentre-FLIPTerraformBoundary`. Where the platform already deploys a boundary and requires it on every role, as an
   AWS Landing Zone Accelerator estate does, set `create_permissions_boundary = false` and name that policy instead: the
@@ -91,6 +94,16 @@ Least privilege, with each grant explained where it is declared:
   `job_workflow_ref`). `s3:ListBucket` on the UI bucket, `Get`/`Put`/`DeleteObject` on its objects, a Deny on writes
   and deletes under `demo/*` (the public demo, FLIP#1746), and nothing else. Its ARN, the `ui_publish_role_arn` output, goes in the environment
   variable `TF_UI_PUBLISH_ROLE_ARN`.
+- **Snowflake state roles** ([`iam_snowflake_state.tf`](iam_snowflake_state.tf), epic #1589): created only when
+  `snowflake_github_environment` is set. The Snowflake trust's two Terraform roots keep their OpenTofu-encrypted state
+  in this bucket under `snowflake_state_prefix`; these roles reach those keys and hold no other permission (Snowflake
+  itself is reached through Snowflake workload identity federation, not AWS). Both trust their own environment's
+  `sub`, never the hub's. The **plan** role trusts `snowflake_trust_plan.yml` at a pull-request merge ref (staging
+  only) and `snowflake_trust_drift.yml` at `drift_branch`, and may list the prefix and read its objects (plans run
+  with `-lock=false`). The **apply** role trusts `snowflake_trust_apply.yml` at `apply_branch` only, and may also put
+  and delete there (state plus `.tflock`). With `restrict_state_writes` on, the apply role is added to the bucket's
+  writers. Their ARNs, the `snowflake_state_plan_role_arn` / `snowflake_state_apply_role_arn` outputs, go in the
+  `sf-*` environment's `SNOWFLAKE_STATE_PLAN_ROLE_ARN` / `SNOWFLAKE_STATE_APPLY_ROLE_ARN` variables.
 - **Boundary** ([`boundary.tf`](boundary.tf)): allow everything, deny identity management, Organizations and Account.
 
 `tests/test_terraform_ci_bootstrap.py` holds `apply_service_prefixes` equal to the services the FLIP root's resource

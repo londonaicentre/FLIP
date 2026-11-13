@@ -173,4 +173,20 @@ locals {
   apply_role_arn           = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.apply_role_name}"
   ui_publish_role_arn      = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.ui_publish_role_name}"
   permissions_boundary_arn = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${var.permissions_boundary_name}"
+
+  # The Snowflake trust's state roles (iam_snowflake_state.tf, epic #1589). Their own GitHub
+  # environment, so their own `sub`: a Snowflake job declares sf-stag / sf-prod, never aws-*,
+  # and the hub roles never trust it. Their own workflow files, at the same refs the hub's use.
+  snowflake_state    = var.snowflake_github_environment != ""
+  snowflake_oidc_sub = "repo:${local.repo}:environment:${var.snowflake_github_environment}"
+  # Snowflake maps one OIDC subject to one user, so the plan and drift jobs run in their own
+  # environment, <env>-plan, which admits any branch; the apply environment admits the apply branch.
+  snowflake_plan_oidc_sub       = "repo:${local.repo}:environment:${var.snowflake_github_environment}-plan"
+  snowflake_apply_workflow_refs = ["${local.workflow_ref_prefix}/${var.snowflake_apply_workflow_file}@refs/heads/${var.apply_branch}"]
+  snowflake_plan_workflow_refs = concat(
+    var.environment == "stag" ? ["${local.workflow_ref_prefix}/${var.snowflake_plan_workflow_file}@refs/pull/*/merge"] : [],
+    ["${local.workflow_ref_prefix}/${var.snowflake_drift_workflow_file}@refs/heads/${var.drift_branch}"],
+  )
+  snowflake_state_objects_arn    = "${local.state_arn}/${var.snowflake_state_prefix}/*"
+  snowflake_state_apply_role_arn = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.snowflake_state_apply_role_name}"
 }

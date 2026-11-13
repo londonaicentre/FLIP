@@ -91,6 +91,14 @@ module "terraform_ci" {
   ui_publish_workflow_file = var.ui_publish_workflow_file
   ui_publish_role_name     = var.ui_publish_role_name
 
+  snowflake_github_environment    = var.snowflake_github_environment
+  snowflake_state_prefix          = var.snowflake_state_prefix
+  snowflake_plan_workflow_file    = var.snowflake_plan_workflow_file
+  snowflake_apply_workflow_file   = var.snowflake_apply_workflow_file
+  snowflake_drift_workflow_file   = var.snowflake_drift_workflow_file
+  snowflake_state_plan_role_name  = var.snowflake_state_plan_role_name
+  snowflake_state_apply_role_name = var.snowflake_state_apply_role_name
+
   manage_state_bucket                = var.manage_state_bucket
   state_bucket_sse_algorithm         = var.state_bucket_sse_algorithm
   state_noncurrent_versions_retained = var.state_noncurrent_versions_retained
