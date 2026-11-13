@@ -21,7 +21,7 @@
                 <span
                     v-if="sortedTrusts.length"
                     data-test="trust-approval-count"
-                    class="font-mono text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-300 shrink-0"
+                    class="font-mono text-2xs uppercase tracking-wide text-gray-500 dark:text-gray-300 shrink-0"
                 >
                     {{ countLabel }}
                 </span>
@@ -42,7 +42,7 @@
                                     {{ trust.code || trust.name }}
                                 </p>
                                 <p
-                                    class="mt-0.5 text-[11px] truncate text-gray-500 dark:text-gray-300"
+                                    class="mt-0.5 text-2xs truncate text-gray-500 dark:text-gray-300"
                                     :data-test="`trust-decision-${idx}`"
                                 >
                                     {{ decisionLine(trust) }}
@@ -91,7 +91,7 @@
                             </div>
                             <span
                                 v-else
-                                :class="['inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold shrink-0', chipFor(trust).class]"
+                                :class="['inline-flex items-center gap-1 px-2 py-1 rounded-md text-2xs font-semibold shrink-0', chipFor(trust).class]"
                                 :data-test="`trust-status-chip-${idx}`"
                                 :data-status="trust.status"
                                 :title="decisionTitle(trust)"
@@ -172,7 +172,7 @@ const chipFor = (trust: IProjectTrust) =>
     (closedWithoutDecision(trust) ? NOT_APPROVED_CHIP : STATUS_CHIP[trust.status]);
 
 const CHOICE_BASE_CLASS =
-    "relative inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold border transition "
+    "relative inline-flex items-center gap-1 px-2 py-1 text-2xs font-semibold border transition "
     + "focus:z-10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-50";
 
 const CHOICE_CLASS = {

@@ -80,7 +80,7 @@
                                     </span>
                                     <span
                                         v-if="row.isDisabled"
-                                        class="flex-shrink-0 rounded-full bg-red-100 px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-red-800 dark:bg-red-900/50 dark:text-red-200"
+                                        class="flex-shrink-0 rounded-full bg-red-100 px-1.5 py-px text-2xs font-bold uppercase tracking-wide text-red-800 dark:bg-red-900/50 dark:text-red-200"
                                     >
                                         Disabled
                                     </span>

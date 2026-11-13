@@ -49,7 +49,7 @@
                                             <div class="flex-1 min-w-0">
                                                 <div class="flex items-baseline justify-between gap-2">
                                                     <span
-                                                        class="text-[11px] font-mono font-bold truncate"
+                                                        class="text-2xs font-mono font-bold truncate"
                                                         :class="log.trustName
                                                             ? 'text-gray-800 dark:text-gray-200'
                                                             : 'text-primary-600 dark:text-primary-300'"
@@ -57,7 +57,7 @@
                                                     >
                                                         {{ log.trustCode ?? log.trustName ?? "Hub" }}
                                                     </span>
-                                                    <span class="text-[10px] font-mono text-gray-500 dark:text-gray-300 shrink-0" data-test="log-timestamp">
+                                                    <span class="text-2xs font-mono text-gray-500 dark:text-gray-300 shrink-0" data-test="log-timestamp">
                                                         {{ getShortDateFromString(log.logDate) }}
                                                     </span>
                                                 </div>

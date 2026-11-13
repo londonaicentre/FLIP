@@ -68,7 +68,7 @@
                 <div class="text-right">
                     <span
                         v-if="row.errored"
-                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-white rounded-full bg-red-600"
+                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-2xs font-semibold tracking-wide text-white rounded-full bg-red-600"
                         :title="row.error || 'Query failed on this trust'"
                     >
                         <span class="inline-block w-1.5 h-1.5 bg-white rounded-full" />
@@ -76,7 +76,7 @@
                     </span>
                     <span
                         v-else-if="row.cancelled"
-                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-gray-500 dark:text-gray-300 rounded-full bg-gray-100 dark:bg-dark-surface"
+                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-2xs font-semibold tracking-wide text-gray-500 dark:text-gray-300 rounded-full bg-gray-100 dark:bg-dark-surface"
                         title="Project was approved without this trust; query task cancelled"
                     >
                         <span class="inline-block w-1.5 h-1.5 bg-gray-400 rounded-full" />
@@ -84,7 +84,7 @@
                     </span>
                     <span
                         v-else-if="row.pending"
-                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-gray-700 dark:text-gray-200 rounded-full bg-gray-200 dark:bg-dark-raised"
+                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-2xs font-semibold tracking-wide text-gray-700 dark:text-gray-200 rounded-full bg-gray-200 dark:bg-dark-raised"
                         title="Queued at the hub; trust hasn't polled for it yet"
                     >
                         <span class="inline-block w-1.5 h-1.5 bg-gray-500 rounded-full" />
@@ -92,7 +92,7 @@
                     </span>
                     <span
                         v-else-if="row.running"
-                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-white rounded-full"
+                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-2xs font-semibold tracking-wide text-white rounded-full"
                         style="background-color: #e51170"
                     >
                         <span class="inline-block w-1.5 h-1.5 bg-white rounded-full cq-pulse" />
@@ -100,7 +100,7 @@
                     </span>
                     <span
                         v-else-if="row.suppressed"
-                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-amber-700 dark:text-amber-300 rounded-full bg-amber-100 dark:bg-amber-900/40"
+                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-2xs font-semibold tracking-wide text-amber-700 dark:text-amber-300 rounded-full bg-amber-100 dark:bg-amber-900/40"
                         title="The matching cohort is below the privacy threshold, so the trust suppressed the exact count (which may be zero)"
                     >
                         <span class="inline-block w-1.5 h-1.5 bg-amber-500 rounded-full" />
