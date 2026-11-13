@@ -77,7 +77,8 @@
                     </div>
 
                     <!-- Type filter (FLIP#1071): the same segmented pattern as the My/All toggle;
-                         the two typed labels are long, so they collapse to their icons below md. -->
+                         the two types show only their icons (as in the Type column), named by the tooltip and for
+                         screen readers. -->
                     <div role="tablist" aria-label="Project type" :class="SEGMENTED_GROUP_CLASS" data-test="type-filter">
                         <button
                             v-for="opt in typeOptions"
@@ -92,11 +93,11 @@
                         >
                             <icon-healthicons-register-book-outline
                                 v-if="opt.id !== 'all'"
-                                class="w-4 h-4 shrink-0"
+                                class="w-6 h-6 shrink-0"
                                 aria-hidden="true"
                             />
-                            <icon-healthicons-xray-outline v-if="opt.id === 'imaging'" class="w-4 h-4 shrink-0" aria-hidden="true" />
-                            <span :class="opt.id === 'all' ? '' : 'hidden md:inline'">{{ opt.label }}</span>
+                            <icon-healthicons-xray-outline v-if="opt.id === 'imaging'" class="w-6 h-6 shrink-0" aria-hidden="true" />
+                            <span :class="opt.id === 'all' ? '' : 'sr-only'">{{ opt.label }}</span>
                         </button>
                     </div>
 
