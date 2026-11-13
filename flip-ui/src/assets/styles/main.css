@@ -176,6 +176,22 @@
     @apply  !px-4
 }
 
+/* Looping indicators hold their static state; spinners keep turning (they mean "working").
+   !important because Tailwind utilities are generated with `important: true`. */
+@media (prefers-reduced-motion: reduce) {
+    .animate-ping,
+    .animate-pulse {
+        animation: none !important;
+    }
+
+    .slidedown-enter-active,
+    .slidedown-leave-active,
+    .slide-up-enter-active,
+    .slide-up-leave-active {
+        transition: none !important;
+    }
+}
+
 .slidedown-enter-active {
     transition: max-height 0.8s ease-in-out;
 }
