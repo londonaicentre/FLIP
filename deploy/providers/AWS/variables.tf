@@ -360,8 +360,30 @@ variable "flip_nlb_subdomain" {
 }
 
 variable "SES_VERIFIED_EMAIL" {
-  description = "SES verified email address for FLIP"
+  description = "Address the access-request notifications go to, verified as an SES email identity. Also the address FLIP sends from while SES_SENDER_EMAIL is empty."
   type        = string
+}
+
+variable "SES_SENDER_EMAIL" {
+  description = "Address FLIP's emails come from, on the SES sender domain (flip_alb_subdomain), e.g. no-reply@<flip_alb_subdomain>. Empty (default) sends from SES_VERIFIED_EMAIL. Set it only once the domain identity is verified, i.e. its DKIM records are published (FLIP#592)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.SES_SENDER_EMAIL == "" || endswith(var.SES_SENDER_EMAIL, "@${var.flip_alb_subdomain}")
+    error_message = "SES_SENDER_EMAIL must be an address on the SES sender domain, <local-part>@<flip_alb_subdomain>."
+  }
+}
+
+variable "cognito_email_via_ses" {
+  description = "Send Cognito's own emails (invitations, password-reset codes) through SES as SES_SENDER_EMAIL instead of Cognito's built-in sender. Default false. Turn on only once the SES account has production access: in the SES sandbox Cognito delivers to verified addresses only, which would stop the resets that work on the built-in sender (FLIP#592)."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.cognito_email_via_ses || var.SES_SENDER_EMAIL != ""
+    error_message = "cognito_email_via_ses needs SES_SENDER_EMAIL: Cognito sends as that address."
+  }
 }
 
 variable "TRUST_API_KEY_HEADER" {

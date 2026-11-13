@@ -24,6 +24,10 @@
 locals {
   flip_local_domain = "flip.local"
 
+  # The one address flip-api sends from (FLIP#592): on the sender domain once
+  # SES_SENDER_EMAIL is set, the verified address until then.
+  ses_sender_email = var.SES_SENDER_EMAIL != "" ? var.SES_SENDER_EMAIL : var.SES_VERIFIED_EMAIL
+
   # Permissions boundary carried by every IAM role in this root (FLIP#962).
   #
   # Composed rather than looked up: the policy is declared by
@@ -138,23 +142,18 @@ locals {
       INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
       AWS_SECRET_NAME                = "FLIP_API" # pragma: allowlist secret
       AWS_SES_ADMIN_EMAIL_ADDRESS    = var.SES_VERIFIED_EMAIL
-      AWS_SES_SENDER_EMAIL_ADDRESS   = var.SES_VERIFIED_EMAIL
+      AWS_SES_SENDER_EMAIL_ADDRESS   = local.ses_sender_email
       UPLOADED_MODEL_FILES_BUCKET    = local.uploaded_model_files_uri
       SCANNED_MODEL_FILES_BUCKET     = local.scanned_model_files_uri
       UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
       FL_APP_DESTINATION_BUCKET      = local.fl_app_destination_uri
       NET_ENDPOINTS                  = local.net_endpoints_json
       FL_BACKEND                     = var.fl_backend
-      # Raise the per-file model-upload cap from the 100 MiB Settings default
-      # to 5 GB. This is the practical ceiling for the current upload path: a
-      # browser presigned POST (services.tf) is a *single* S3 POST, and S3
-      # rejects any single PUT/POST over 5 GiB — larger files would need
-      # multipart upload, which is not implemented. 5e9 (SI 5 GB) is used
-      # rather than a binary 5 GiB so the encoded multipart/form-data body
-      # (file + _MULTIPART_OVERHEAD_BUFFER_BYTES + framing) stays safely under
-      # S3's 5 GiB hard limit. Note: the presigned-POST TTL is clamped to
-      # 1800s (MAX_PUT_PRESIGNED_URL_TTL_SECONDS), so multi-GB uploads must
-      # complete within 30 minutes or they time out at the edge.
+      # 5e9 (SI 5 GB), just under the 5 GiB Settings default: the browser upload
+      # is a single presigned S3 POST (services.tf), capped by S3 at 5 GiB, and the
+      # file plus _MULTIPART_OVERHEAD_BUFFER_BYTES and framing must fit. Larger files
+      # would need multipart upload, which is not implemented. Uploads must finish
+      # within the 1800 s presign TTL (MAX_PRESIGNED_URL_TTL_SECONDS).
       MAX_MODEL_FILE_BYTES = "5000000000"
       # uv's cache on the task's /tmp volume: its default, under HOME, is on the
       # read-only root filesystem (FLIP#1795).

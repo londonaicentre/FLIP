@@ -822,7 +822,6 @@ wheels = [
 name = "flip-utils"
 source = { editable = "." }
 dependencies = [
-    { name = "nvflare" },
     { name = "pandas" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -832,11 +831,13 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+flower = [
+    { name = "flwr" },
+]
 full = [
     { name = "causal-learn" },
     { name = "einops" },
     { name = "gdown" },
-    { name = "kubernetes" },
     { name = "lpips" },
     { name = "monai", extra = ["pyyaml", "scipy", "skimage"] },
     { name = "nibabel" },
@@ -848,10 +849,14 @@ full = [
     { name = "torchvision", version = "0.28.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
     { name = "torchvision", version = "0.28.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "sys_platform != 'darwin'" },
 ]
+nvflare = [
+    { name = "kubernetes" },
+    { name = "nvflare" },
+]
 
 [package.dev-dependencies]
 dev = [
-    { name = "flwr" },
+    { name = "flip-utils", extra = ["flower", "nvflare"] },
     { name = "huggingface-hub" },
     { name = "mypy" },
     { name = "pytest" },
@@ -868,12 +873,13 @@ diffusion = [
 requires-dist = [
     { name = "causal-learn", marker = "extra == 'full'", specifier = ">=0.1.4.3" },
     { name = "einops", marker = "extra == 'full'", specifier = "==0.8.1" },
+    { name = "flwr", marker = "extra == 'flower'", specifier = ">=1.43.0" },
     { name = "gdown", marker = "extra == 'full'", specifier = ">=5.2.2" },
-    { name = "kubernetes", marker = "extra == 'full'", specifier = ">=33.1.0,<36" },
+    { name = "kubernetes", marker = "extra == 'nvflare'", specifier = ">=33.1.0,<36" },
     { name = "lpips", marker = "extra == 'full'", specifier = "==0.1.4" },
     { name = "monai", extras = ["pyyaml", "scipy", "skimage"], marker = "extra == 'full'", specifier = ">=1.6.1" },
     { name = "nibabel", marker = "extra == 'full'", specifier = ">=5.3.2" },
-    { name = "nvflare", specifier = "==2.9.0" },
+    { name = "nvflare", marker = "extra == 'nvflare'", specifier = "==2.9.0" },
     { name = "pandas", specifier = ">=2.3.0" },
     { name = "pydantic", specifier = ">=2.11.7" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
@@ -888,11 +894,11 @@ requires-dist = [
     { name = "torchvision", marker = "sys_platform != 'darwin' and extra == 'full'", specifier = ">=0.28.0,<0.29", index = "https://download.pytorch.org/whl/cu130" },
     { name = "tqdm", specifier = ">=4.67.1" },
 ]
-provides-extras = ["full"]
+provides-extras = ["flower", "full", "nvflare"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "flwr", specifier = ">=1.43.0" },
+    { name = "flip-utils", extras = ["nvflare", "flower"] },
     { name = "huggingface-hub", specifier = ">=1.6.0" },
     { name = "mypy", specifier = ">=1.18.2,<2.0" },
     { name = "pytest", specifier = ">=8.4.2" },

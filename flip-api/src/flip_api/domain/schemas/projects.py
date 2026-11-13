@@ -15,43 +15,9 @@ from typing import Generic, TypeVar
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlmodel import SQLModel
 
 from flip_api.domain.schemas.status import XNATImageStatus
 from flip_api.domain.schemas.types import NonEmptyUUIDList
-
-
-class UserAccessInfo(SQLModel):  # Or BaseModel
-    id: UUID
-    email: str
-    # Add other relevant user fields, e.g., is_active, name
-
-
-class ProjectQueryInfo(SQLModel):  # Or BaseModel
-    id: UUID  # This could be the project's query_id or a separate ID for the query object
-    query_string: str  # The actual query content
-
-
-class ApprovedTrustInfo(SQLModel):  # Or BaseModel
-    id: UUID  # Or str, depending on your Trust identifier
-    name: str
-    status: str  # e.g., "Approved", "Pending"
-
-
-class ProjectDetailResponse(SQLModel):  # Or BaseModel
-    id: UUID
-    name: str
-    description: str | None = None
-    status: str
-    owner_id: UUID
-    created_at: datetime
-    updated_at: datetime
-    query_id: UUID | None = None  # Assuming your Project model has this
-
-    owner_email: str | None = None
-    query_details: ProjectQueryInfo | None = None
-    approved_trusts: list[ApprovedTrustInfo] = []
-    users_with_access: list[UserAccessInfo] = []
 
 
 class ProjectListItemSchema(BaseModel):

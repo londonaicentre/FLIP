@@ -11,9 +11,10 @@
 
 """The cloud instance-metadata egress rule (169.254.169.254), rendered (FLIP#1390).
 
-Its one consumer is the omop-db vocab-load Job reaching S3 through an AWS node role. Every other
-deployment (kind, AKS) must not open the metadata endpoint, a known SSRF/credential-theft target,
-to every pod. Asserted on `helm template` output. Skipped without helm.
+Its one consumer was the omop-db vocab-load Job reaching S3 through an AWS node role; since that
+Job reads a staged bundle (FLIP#923) no deployment needs it, and none (kind, AKS) may open the
+metadata endpoint, a known SSRF/credential-theft target, to every pod. Asserted on `helm template`
+output. Skipped without helm.
 """
 
 import shutil
@@ -69,16 +70,8 @@ def test_no_metadata_egress_by_default():
     assert {"ipBlock": {"cidr": "0.0.0.0/0", "except": [IMDS]}} in first["to"]
 
 
-def test_the_vocab_load_job_on_a_node_role_gets_metadata_egress():
-    rules = _egress_rules(_render("omopDb.vocabLoad.enabled=true", "omopDb.vocabLoad.s3Bucket=some-bucket"))
-    assert _reaches_imds_on_port_80(rules)
-
-
-def test_a_vocab_load_job_with_mounted_credentials_needs_no_metadata():
-    rendered = _render(
-        "omopDb.vocabLoad.enabled=true",
-        "omopDb.vocabLoad.s3Bucket=some-bucket",
-        "omopDb.vocabLoad.hostAwsMount.enabled=true",
-        "omopDb.vocabLoad.hostAwsMount.hostPath=/home/op/.aws",
-    )
+def test_the_vocab_load_job_needs_no_metadata_egress():
+    """It reads a bundle staged onto the node (FLIP#923), not S3."""
+    rendered = _render("omopDb.vocabLoad.hostPath=/opt/flip/omop-vocab")
+    assert "omop-vocab-load" in rendered
     assert not _reaches_imds_on_port_80(_egress_rules(rendered))

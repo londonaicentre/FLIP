@@ -17,27 +17,23 @@
 
 This is the FLARE **Client API** evaluation job type (`JOB_TYPE=evaluation`). It evaluates
 every uploaded model listed in `config.json['models']` across every site and reports aggregate
-metrics. It replaced the retired
-Executor-based `evaluation` template, which paired the `RUN_EVALUATOR` executor with the bespoke
-`ModelEval` + `EvaluationPTModelLocator` (multi-model `COLLECTION`) server flow.
+metrics.
 
-Here the server reuses the same cross-site validation path as the
-[`standard`](../standard/README.md) training template:
-`InitEvaluation` → stock `GlobalModelEval` → `BroadcastTask` cleanup.
-Only server-provided models are validated. `EvaluationModelLocator` serves every entry in
-`config.json['models']` (multi-model works, e.g. the Ark+ multimodel eval), and each is broadcast
-as its own single-model validate task per (model, client) — one `FLModel` at a time.
+The server reuses the cross-site validation path of the
+[`standard`](../standard/README.md) training template (see [Execution sequence](#execution-sequence)).
+Only server-provided models are validated; several models per job are supported (e.g. the Ark+
+multimodel evaluation).
 
 The base configs (`app/config/config_fed_server.json`, `app/config/config_fed_client.json`) and
 `meta.json` are **recipe-generated** from `flip.nvflare.recipes.FlipEvalRecipe`. Do not hand-edit them —
-regenerate via `recipe.py` after any recipe change and commit the result.
+see [Regenerating the committed configs](#regenerating-the-committed-configs).
 
-## What's the logic?
+## How it works
 
 1. `InitEvaluation` reports evaluation start to the Central Hub, runs the client image-cleanup task,
    and validates that `config.json` declares the model(s) to evaluate.
-2. `GlobalModelEval` loads the uploaded checkpoint via `EvaluationModelLocator` and broadcasts it to
-   every site as a single `FLModel` (`validate` task).
+2. `GlobalModelEval` loads each model listed in `config.json['models']` via `EvaluationModelLocator`
+   and sends it to every site as its own `validate` task — one `FLModel` per (model, site).
 3. Each site runs the user's `evaluator.py` via `ClientAPIExecutor` (in-process mode), using the FLARE Client
    API `is_evaluate()` path (`flare.receive()` / `flare.send()`) to receive the model and return
    **aggregate-only** metrics (`DataKind.METRICS`).
@@ -49,11 +45,15 @@ regenerate via `recipe.py` after any recipe change and commit the result.
    are upper-cased; when a site evaluated more than one model, each label starts with the model's
    name. Only finite numbers are sent: a NaN metric is left out, and lists are never sent.
 
-**The rule:** `FLModel.metrics` are sent to the hub and plotted per site; put anything else you want
-in `evaluation_results.json` under `meta[FlipMetaKey.SUPPLEMENTARY_RESULTS.value]` (from
-`flip.constants`). `EvaluationJsonGenerator` merges it into that reply's entry, key by key, so the
-file holds both side by side. The Ark+ multimodel evaluation sends its per-model AUROCs as `metrics`
-and its DeLong p/q tables this way.
+### Metrics vs. supplementary results
+
+- **`FLModel.metrics`** — sent to the Central Hub and plotted per site.
+- **Anything else** — put it in `meta[FlipMetaKey.SUPPLEMENTARY_RESULTS.value]` (`FlipMetaKey` is in
+  `flip.constants`). `EvaluationJsonGenerator` merges it, key by key, into the same site/model entry
+  of `evaluation_results.json`, beside the metrics.
+
+Example: the Ark+ multimodel evaluation returns its per-model AUROCs as `metrics` and its DeLong p/q
+tables as supplementary results.
 
 There is **no `validator.py`** and no client model submission — the evaluator only scores the
 server-provided model.
@@ -75,17 +75,18 @@ sends one `validate` task per (model, client), so each model gets its own entry)
 ```
 
 `evaluation_failures.json` lists every `validate` task that did not return metrics. It is always
-written, so an empty list `[]` positively means "no task failed" rather than "this FLIP version
-didn't record them":
+written, so an empty list `[]` means no task failed:
 
 ```json
 [{ "model": "SRV_arkplus_pretrained", "client": "Trust_1", "return_code": "TASK_ABORTED" }]
 ```
 
-When **every** `validate` task fails the model ends in `ERROR`, not `RESULTS_UPLOADED`. The results
-are still uploaded either way — the zip is what carries `evaluation_failures.json` and `error_log.txt`.
-A partial failure (some tasks succeeded) uploads the successful metrics and reports `RESULTS_UPLOADED`,
-with the failed tasks recorded in `evaluation_failures.json`.
+The results zip is uploaded in every case; it carries `evaluation_failures.json` and `error_log.txt`.
+
+| Outcome | Final model status |
+|---|---|
+| Some or all `validate` tasks succeed | `RESULTS_UPLOADED` (failed tasks listed in `evaluation_failures.json`) |
+| Every `validate` task fails | `ERROR` |
 
 ## Execution sequence
 
@@ -101,7 +102,7 @@ with the failed tasks recorded in `evaluation_failures.json`.
 - `validate` → `nvflare.app_common.executors.ClientAPIExecutor` (in-process mode)
 - Event handler: `ClientEventHandler`
 
-## What does the user upload?
+## What you upload
 
 The required files (see [`required_files.json`](./required_files.json)) are:
 
@@ -116,7 +117,8 @@ Helper modules (e.g. `transforms.py`) and the model checkpoint are uploaded alon
 ## Regenerating the committed configs
 
 After any change to `FlipEvalRecipe` (in `flip-utils/flip/nvflare/recipes/`), regenerate the committed
-JSONs by running from the `flip-utils` venv:
+JSONs. Run this from the repository root; it uses the `flip-utils` environment and a stub `models` module
+in place of a user's `models.py`:
 
 ```bash
 cd flip-utils && uv run --no-sync python - <<'PY'

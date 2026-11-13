@@ -408,6 +408,11 @@ output "CognitoAppClientId" {
   value       = module.cognito.app_client_id
 }
 
+output "SesDkimTokens" {
+  description = "DKIM tokens of the SES sender domain (flip_alb_subdomain). Whoever runs the domain's zone publishes <token>._domainkey.<domain> CNAME <token>.dkim.amazonses.com for each (FLIP#592)."
+  value       = module.ses.dkim_tokens
+}
+
 output "FlServerEndpoint" {
   description = "FL server DNS endpoint (NLB pass-through; on LZA the name resolves to the networking account's edge NLB, which relays to the internal NLB in fl_ingress_lza.tf)"
   value       = var.flip_nlb_subdomain
@@ -425,6 +430,7 @@ module "ses" {
   source = "./modules/ses"
 
   sender_email  = var.SES_VERIFIED_EMAIL
+  sender_domain = var.flip_alb_subdomain
   templates_dir = "${path.module}/templates/ses"
   # template_name_prefix left empty so prod keeps its existing SES template
   # names (flip-access-request etc.) and this refactor is a pure state-mv.

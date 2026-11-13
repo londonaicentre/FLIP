@@ -23,11 +23,9 @@ class HealthResponse(BaseModel):
     version: str
 
 
-class FlowerCommandResponse(BaseModel):
+class FlowerSubmitRunCommandResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-
-class FlowerSubmitRunCommandResponse(FlowerCommandResponse):
     run_id: str = Field(alias="run-id")
 
 
@@ -38,10 +36,6 @@ class ServerInfoModel(BaseModel):
 class ClientInfoModel(BaseModel):
     name: str
     status: str
-
-
-class ErrorResponse(BaseModel):
-    detail: str
 
 
 class NodeRegistrationRequest(BaseModel):

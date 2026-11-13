@@ -71,15 +71,17 @@ _USER_DICT = {
 }
 
 
+def _listing(*rows: dict) -> MagicMock:
+    """A 200 XNAT ResultSet listing (``GET /data/projects``, ``/subjects``, ``/experiments``) carrying ``rows``."""
+    return MagicMock(status_code=200, json=MagicMock(return_value={"ResultSet": {"Result": list(rows)}}))
+
+
 # ===========================================================================
 # get_all_projects
 # ===========================================================================
 @patch("imaging_api.services.projects.requests.get")
 def test_get_all_projects_success(mock_get, headers):
-    mock_get.return_value = MagicMock(
-        status_code=200,
-        json=MagicMock(return_value={"ResultSet": {"Result": [_PROJECT_DICT]}}),
-    )
+    mock_get.return_value = _listing(_PROJECT_DICT)
     projects = get_all_projects(headers)
     assert len(projects) == 1
     assert projects[0].ID == "TEST"
@@ -103,11 +105,6 @@ def test_get_all_projects_connection_error(mock_get, headers):
 # get_project / get_project_from_central_hub_project_id
 # ===========================================================================
 _HUB_PROJECT_ID = "3fa85f64-5717-4562-b3fc-2c963f66afa6"
-
-
-def _listing(*rows: dict) -> MagicMock:
-    """A 200 from ``GET /data/projects`` carrying ``rows``."""
-    return MagicMock(status_code=200, json=MagicMock(return_value={"ResultSet": {"Result": list(rows)}}))
 
 
 @pytest.mark.parametrize(
@@ -464,41 +461,26 @@ def test_get_wrapper_action_key_listing_failure(mock_get, headers):
 @patch("imaging_api.services.projects.requests.post")
 @patch("imaging_api.services.projects.requests.put")
 @patch("imaging_api.services.projects.get_command_info")
-def test_create_project_event_subscription_active(mock_cmd_info, mock_put, mock_post, mock_key, headers):
+@pytest.mark.parametrize("active", [True, False], ids=["active", "inactive"])
+def test_create_project_event_subscription(mock_cmd_info, mock_put, mock_post, mock_key, headers, active):
     mock_cmd_info.return_value = (1, 3)
     mock_put.return_value = MagicMock(status_code=200)
     mock_post.return_value = MagicMock(status_code=200)
 
-    create_project_event_subscription("TEST", "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", True, headers)
+    create_project_event_subscription("TEST", _PIN, active, headers)
 
-    mock_cmd_info.assert_called_once_with("TEST", "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", headers)
+    mock_cmd_info.assert_called_once_with("TEST", _PIN, headers)
     mock_put.assert_called_once()
     assert "/commands/1/wrappers/dcm2niix-scan/enabled" in mock_put.call_args[0][0]
     mock_post.assert_called_once()
     call_url = mock_post.call_args[0][0]
     call_payload = mock_post.call_args[1]["json"]
     assert "/xapi/projects/TEST/events/subscription" in call_url
-    assert call_payload["active"] is True
+    assert call_payload["active"] is active
     assert call_payload["name"] == "DICOM-NIfTI Conversion"
     # The key XNAT lists for the wrapper (id 3), not one formatted from the command id (1).
     mock_key.assert_called_once_with(3, headers)
     assert call_payload["action-key"] == f"{_PROVIDER}3"
-
-
-@patch("imaging_api.services.projects.get_wrapper_action_key", return_value=f"{_PROVIDER}3")
-@patch("imaging_api.services.projects.requests.post")
-@patch("imaging_api.services.projects.requests.put")
-@patch("imaging_api.services.projects.get_command_info")
-def test_create_project_event_subscription_inactive(mock_cmd_info, mock_put, mock_post, mock_key, headers):
-    mock_cmd_info.return_value = (1, 3)
-    mock_put.return_value = MagicMock(status_code=200)
-    mock_post.return_value = MagicMock(status_code=200)
-
-    create_project_event_subscription("TEST", "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", False, headers)
-
-    mock_post.assert_called_once()
-    call_payload = mock_post.call_args[1]["json"]
-    assert call_payload["active"] is False
 
 
 @patch("imaging_api.services.projects.requests.put")
@@ -508,7 +490,7 @@ def test_create_project_event_subscription_enable_command_failure(mock_cmd_info,
     mock_put.return_value = MagicMock(status_code=500, text="Internal Server Error")
 
     with pytest.raises(Exception, match="Enabling command"):
-        create_project_event_subscription("TEST", "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", True, headers)
+        create_project_event_subscription("TEST", _PIN, True, headers)
 
 
 @patch("imaging_api.services.projects.get_wrapper_action_key", return_value=f"{_PROVIDER}3")
@@ -521,7 +503,7 @@ def test_create_project_event_subscription_failure(mock_cmd_info, mock_put, mock
     mock_post.return_value = MagicMock(status_code=500, text="Internal Server Error")
 
     with pytest.raises(Exception, match="Creating event subscription"):
-        create_project_event_subscription("TEST", "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", True, headers)
+        create_project_event_subscription("TEST", _PIN, True, headers)
 
 
 # ===========================================================================
@@ -753,24 +735,15 @@ async def test_delete_project_failure(mock_delete, mock_get_project, headers):
 @patch("imaging_api.services.projects.get_project")
 def test_get_subjects_success(mock_get_project, mock_get, headers):
     mock_get_project.return_value = Project(**_PROJECT_DICT)
-    mock_get.return_value = MagicMock(
-        status_code=200,
-        json=MagicMock(
-            return_value={
-                "ResultSet": {
-                    "Result": [
-                        {
-                            "ID": "S1",
-                            "label": "subj1",
-                            "insert_date": "2023-01-01",
-                            "project": "TEST",
-                            "insert_user": "admin",
-                            "URI": "/subjects/S1",
-                        },
-                    ]
-                }
-            }
-        ),
+    mock_get.return_value = _listing(
+        {
+            "ID": "S1",
+            "label": "subj1",
+            "insert_date": "2023-01-01",
+            "project": "TEST",
+            "insert_user": "admin",
+            "URI": "/subjects/S1",
+        }
     )
     subjects = get_subjects("TEST", headers)
     assert len(subjects) == 1
@@ -793,25 +766,16 @@ def test_get_subjects_failure(mock_get_project, mock_get, headers):
 @patch("imaging_api.services.projects.get_project")
 def test_get_experiments_success(mock_get_project, mock_get, headers):
     mock_get_project.return_value = Project(**_PROJECT_DICT)
-    mock_get.return_value = MagicMock(
-        status_code=200,
-        json=MagicMock(
-            return_value={
-                "ResultSet": {
-                    "Result": [
-                        {
-                            "ID": "E1",
-                            "label": "exp1",
-                            "date": "2023-01-01",
-                            "project": "TEST",
-                            "insert_date": "2023-01-01",
-                            "xsiType": "xnat:ctScanData",
-                            "URI": "/exp/E1",
-                        },
-                    ]
-                }
-            }
-        ),
+    mock_get.return_value = _listing(
+        {
+            "ID": "E1",
+            "label": "exp1",
+            "date": "2023-01-01",
+            "project": "TEST",
+            "insert_date": "2023-01-01",
+            "xsiType": "xnat:ctScanData",
+            "URI": "/exp/E1",
+        }
     )
     experiments = get_experiments("TEST", headers)
     assert len(experiments) == 1
@@ -842,10 +806,7 @@ def test_get_experiments_uses_unfiltered_global_listing(mock_get_project, mock_g
     # there (e.g. xnat:dxSessionData for chest X-rays) are silently omitted and the import shows
     # "0 imported". The global listing returns identical fields without that filter.
     mock_get_project.return_value = Project(**_PROJECT_DICT)
-    mock_get.return_value = MagicMock(
-        status_code=200,
-        json=MagicMock(return_value={"ResultSet": {"Result": []}}),
-    )
+    mock_get.return_value = _listing()
 
     get_experiments("TEST", headers)
 

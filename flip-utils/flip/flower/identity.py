@@ -28,8 +28,8 @@ require the researcher to edit their app between them:
 
 Consulting both sources is what lets one app run unchanged in all three.
 
-``flwr`` is deliberately not imported at runtime — flip-utils does not depend on it — so the
-``Context`` type sits behind a ``TYPE_CHECKING`` guard and only ``node_config`` is touched.
+Only ``node_config`` is touched, so the ``Context`` type sits behind a ``TYPE_CHECKING`` guard; ``flwr``
+itself comes with the ``flower`` extra, which importing ``flip.flower`` requires.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ import pandas as pd
 
 from flip.constants.flip_constants import FlipConstants
 
-if TYPE_CHECKING:  # pragma: no cover - typing only, flwr is not a runtime dependency
+if TYPE_CHECKING:  # pragma: no cover - typing only
     from flwr.common import Context
 
 PARTITION_ID_KEY = "partition-id"

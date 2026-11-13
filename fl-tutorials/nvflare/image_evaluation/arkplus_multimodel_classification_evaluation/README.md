@@ -18,27 +18,25 @@ fine-tuned model) on chest X-ray classification, using the **FLARE Client API**.
 at each site is scored against every model, and per-lesion AUROC plus pairwise **DeLong** statistical
 comparisons between the models are reported.
 
-This tutorial replaces the previous executor-based implementation (`class FLIP_EVALUATOR(Executor)` +
-the bespoke `ModelEval`/`EvaluationPTModelLocator` server flow, where **all** checkpoints arrived
-unwrapped from a single `DataKind.COLLECTION` DXO), which is now deprecated. Here `evaluator.py` is a
-plain `nvflare.client` script (`flare.init/receive/send`) and the job is a Python `FlipEvalRecipe` driven
-by `job.py` rather than a job-type template + Docker harness.
+`evaluator.py` is a plain `nvflare.client` script (`flare.init/receive/send`), and the job is a Python `FlipEvalRecipe` built by `job.py`.
 
-The checkpoints stay **server-side**: `EvaluationModelLocator` loads every entry of
-`config.json['models']` on the server and `GlobalModelEval` broadcasts each one as its own `validate`
-task, named in the broadcast's DXO meta (`flip_eval_model_name`). The evaluator scores each broadcast on
-the shared local cohort, caches the per-sample scores across tasks, and replies with the metrics of every
-model scored so far — so the reply to the final task carries all per-model AUROCs plus the pairwise
-DeLong map, which is what the server's last-reply-wins `EvaluationJsonGenerator` writes out. The
-`evaluation_results.json` output contract (per-site, per-model metrics + DeLong) is unchanged from the
-legacy tutorial.
+The checkpoints stay **server-side**:
 
-> **Scope.** The same code path runs on the **local FLARE simulator / `uv` workflow** (`make run`,
-> where `job.py` bundles the `.pt` files for the server-side locator) and on the **production FL
-> platform** (where the FL API de-bundles uploaded checkpoints onto the hub staging volume — nothing
-> client-side ever opens a `.pt` file in either mode). The FL server must run a `flip` package recent
-> enough to name its evaluation broadcasts (`EvaluationModelLocator` stamping `flip_eval_model_name`);
-> the evaluator fails with that remedy if the meta is absent.
+1. `EvaluationModelLocator` loads every entry of `config.json['models']` on the server.
+2. `GlobalModelEval` broadcasts each model as its own `validate` task, named in the broadcast's DXO meta
+   (`flip_eval_model_name`).
+3. Each site's evaluator scores the broadcast on its local cohort, caches the per-sample scores across tasks,
+   and replies with the metrics of every model scored so far.
+4. The reply to the final task therefore carries all per-model AUROCs plus the pairwise DeLong map. The
+   server's `EvaluationJsonGenerator` keeps each task's reply in `evaluation_results.json` (see
+   [Output metrics](#output-metrics)).
+
+> **Scope.** The same code path runs in two modes. In neither does anything client-side open a `.pt` file:
+>
+> - **Local FLARE simulator / `uv` workflow** (`make run`): `job.py` bundles the `.pt` files for the server-side locator.
+> - **Production FL platform**: the FL API de-bundles the uploaded checkpoints onto the hub staging volume.
+>
+> The FL server must run a `flip` package recent enough to name its evaluation broadcasts (`EvaluationModelLocator` stamping `flip_eval_model_name`). If that meta is absent, the evaluator fails and names this remedy.
 
 ## At a glance
 
@@ -60,8 +58,7 @@ Example radiographs, one per target lesion, are in the fine-tuning tutorial's
 - Python 3.12+
 - A GPU (the Ark+ Swin-Large models run at 768×768) for a SimEnv run — both models are held on the
   device together, so this is more memory-hungry than the single-model baseline
-- Access to the Ark+ foundation-model checkpoint (see checkpoint setup below); the fine-tuned checkpoint
-  is downloaded automatically
+- Access to the Ark+ foundation-model checkpoint: request it with the [Ark+ checkpoint access form](https://forms.gle/qkoDGXNiKRPTDdCe8) (see [Checkpoint setup](#checkpoint-setup)). The fine-tuned checkpoint is downloaded automatically.
 
 ## Dataset setup
 
@@ -90,9 +87,7 @@ For local development, per-site paths are set in `.env.app`:
 
 ### Per-site data in the simulator
 
-Unlike the previous executor-based implementation (whose testing harness Docker-mounted each site's data
-into the containers), the Client-API SimEnv runs **in-process with no Docker
-mounts**. Per-site data is therefore selected inside the evaluator: it calls `flare.get_site_name()`
+The Client-API SimEnv runs **in-process with no Docker mounts**, so per-site data is selected inside the evaluator: it calls `flare.get_site_name()`
 (`site-1`/`site-2`) and `app_files/data_utils.py` resolves the matching `SITE{N}_IMAGES_DIR` /
 `SITE{N}_DATAFRAME` from `.env.app` (falling back to the single `DEV_*` paths). So `site-1` and `site-2`
 score **different** hold-out sets.
@@ -133,7 +128,7 @@ The zero-shot Ark+ checkpoint is produced from the raw Ark6 training output
 
    This downloads it to the path given by `RAW_CHECKPOINT` in `.env.app` (default
    `models/Ark6_swinLarge768_ep50.pth.tar`, an app-relative path). If you already have the file, point
-   `RAW_CHECKPOINT` at it instead. Access is via [this form](https://forms.gle/qkoDGXNiKRPTDdCe8).
+   `RAW_CHECKPOINT` at it instead. Request access with the [Ark+ checkpoint access form](https://forms.gle/qkoDGXNiKRPTDdCe8).
 
 2. **Prepare it** — done automatically by `make run`/`make export`, or on demand with
    `make prepare-checkpoint`, which converts the raw checkpoint into the clean
@@ -162,7 +157,7 @@ Each model is defined in `app_files/arkplus_flat_models.py`, built by `app_files
 and head/label mapping). The mapping from a model's NIH-14 head outputs to the target DECAF lesions lives
 in `app_files/data_utils.py` (`MAPPING_REGISTRY`).
 
-`make export`/`make run` run `job.py` in the **flip-utils** environment with the `full` ML extra (the same
+`make export`/`make run` run `job.py` in the **flip-utils** environment with the `nvflare` and `full` extras (the same
 package set the `flare-fl-base` FL image installs) so a local run matches the deployed image.
 
 ## Run the tutorial
@@ -179,9 +174,7 @@ make export                    # prepares both checkpoints, then writes ./fl_job
 make run                       # prepares both checkpoints (if needed), then runs the simulator via `make sim`
 ```
 
-The fine-tuned checkpoint is auto-downloaded from HuggingFace on the first prepare. To override either
-source, set `RAW_CHECKPOINT` / `FINETUNED_CHECKPOINT` in `.env.app` (or pass on the CLI, e.g.
-`make run FINETUNED_CHECKPOINT=/path/to/custom_finetuned.pt`).
+To override either checkpoint source, set `RAW_CHECKPOINT` / `FINETUNED_CHECKPOINT` in `.env.app` or pass it on the command line, e.g. `make run FINETUNED_CHECKPOINT=/path/to/custom_finetuned.pt` (see [Checkpoint setup](#checkpoint-setup)).
 
 `make run`/`make sim` score a deterministic, class-balanced subset of `MAX_SAMPLES` (default `128`)
 hold-out studies per simulated site (`cap_dataframe` in `app_files/data_utils.py`), so a plain run is a
@@ -203,16 +196,14 @@ Useful targets: `make prepare-checkpoint` (prepare both checkpoints only), `make
 
 ## Output metrics
 
-The evaluator returns **aggregate** (cohort-level) metrics only — per-lesion AUROC per model plus pairwise
-DeLong p-values and Benjamini-Hochberg (BH) FDR-adjusted q-values — collected by the server into
-`evaluation_results.json`. The file is keyed by site, then by the server's validate task (`SRV_<model>`, one per
-model in `config.json`), then by model. Each reply carries every model the site has scored so far, so the entry of
-the site's last task holds every model's AUROCs plus the DeLong tables, and an earlier entry holds only the models
-scored up to then (with no DeLong tables while only one model has been scored). The AUROCs are the reply's `metrics`, which the FL
-server also sends to the hub: one point per trust for each `<MODEL>/AUROC_<LESION>`, ten plots for two models
-and five lesions (e.g. `ARKPLUS_PRETRAINED/AUROC_EFFUSION`). The DeLong tables go in the reply's
-`meta[FlipMetaKey.SUPPLEMENTARY_RESULTS]`, which the server merges back under each model in the results file
-only:
+The evaluator returns **aggregate** (cohort-level) metrics only: per-lesion AUROC per model, pairwise DeLong p-values, and Benjamini-Hochberg (BH) FDR-adjusted q-values. The server collects them into `evaluation_results.json`:
+
+- The file is keyed by site, then by the server's validate task (`SRV_<model>`, one per model in `config.json`), then by model.
+- Each reply carries every model the site has scored so far. The entry for the site's last task holds every model's AUROCs plus the DeLong tables. An earlier entry holds only the models scored up to then, with no DeLong tables while only one model has been scored.
+- The AUROCs are the reply's `metrics`, which the FL server also sends to the hub: one point per trust for each `<MODEL>/AUROC_<LESION>` (e.g. `ARKPLUS_PRETRAINED/AUROC_EFFUSION`), so ten plots for two models and five lesions.
+- The DeLong tables go in the reply's `meta[FlipMetaKey.SUPPLEMENTARY_RESULTS]`, which the server merges back under each model in the results file only.
+
+Example:
 
 ```json
 {
@@ -285,9 +276,36 @@ only:
 | `delong_q_values` | `dict[str, dict[str, float]]` | Benjamini-Hochberg FDR-adjusted q-values, same shape and diagonal convention as `delong_p_values`. Corrected **per model pair**, across that pair's lesion-level p-values — each pair is its own independent correction family, never pooled across multiple pairs. `NaN` wherever the corresponding `delong_p_values` entry is `NaN` (excluded from that pair's correction, not folded into the other lesions' ranks). Only present when ≥ 2 models are configured. |
 
 Per-sample (row-level) predictions are deliberately **not** produced or exported: a per-patient list would
-leak the exact evaluation cohort size and be linkable to individual patients. (The previous executor-based
-implementation wrote per-sample CSVs to the run dir; this tutorial omits them and returns aggregate
-metrics only.)
+leak the exact evaluation cohort size and be linkable to individual patients.
+
+### Reading `delong_q_values`
+
+A q-value is not a rescaled or "corrected" version of that lesion's raw p-value. It is the smallest false-discovery
+rate (FDR) at which this lesion's comparison would be called significant, considered jointly with the other lesion
+tests for the same model pair.
+
+- `q <= 0.05` means "this finding survives if we accept a 5% FDR across this pair's lesion comparisons".
+- It does not mean "a 5% chance of this AUROC gap under the null". That is what the raw p-value alone means,
+  without accounting for the other simultaneous lesion tests.
+- To decide which lesions survived correction, compare `q` with your chosen significance level, not the raw
+  `delong_p_values`.
+
+A q-value is always `>= p` and can differ substantially from it. Several lesions can share the same q-value even
+with different raw p-values.
+
+**Why ties happen.** The step-up rule always rejects a contiguous prefix of the sorted ranks. If rank `k` crosses
+its own line `p_(k) <= (k/m)*Q`, every smaller rank `1..k-1` is rejected with it, whether or not its own raw value
+crosses at that `Q`. So `q_(i) = min` over `j >= i` of `p_(j) * m/j`, computed as a running minimum from the
+largest rank inward. Example with `m=3` sorted p-values `0.02, 0.025, 0.03`: the per-rank raw values are
+`0.06, 0.0375, 0.03` (not ascending), and the running minimum from the back gives `q = 0.03` for all three. This
+is expected, not a bug: a later, weaker-p lesion can set the q-value of an earlier, stronger-p lesion in the same
+pair.
+
+**From an FDR level to a p-value cutoff.** Pick a target `Q` for a model pair and take every lesion in that pair
+with `q <= Q`. The largest raw p-value among them is the critical cutoff for that `Q`: every `delong_p_values`
+entry at or below it is exactly the set that survives at `Q`. Use this to present a table of raw p-values (or AUROC
+gaps) with the surviving cells flagged, stating `Q` and the derived cutoff together in the caption, instead of
+printing a `q` column.
 
 ## Model code & `timm` compatibility
 
@@ -302,11 +320,11 @@ internally — it ended with `AdaptiveAvgPool1d(1)` and returned a per-image `(B
 `(B, H, W, C)` (a 24×24 grid for a 768px Swin).
 
 This tutorial runs on modern timm, and the upstream `forward` bypasses `forward_head` (it uses its own
-`omni_heads`). Without an explicit pool the heads emitted a **per-location** grid of outputs instead of one
-prediction per image — producing mis-shaped predictions and making AUROC fail with
+`omni_heads`). Without an explicit pool the heads would emit a **per-location** grid of outputs instead of one
+prediction per image, giving mis-shaped predictions and an AUROC failure with
 `ValueError: multi_class must be in ('ovo', 'ovr')`.
 
-**Fix.** `forward` (and `generate_embeddings`) now apply an explicit global-average-pool over the spatial
+**Fix.** `forward` (and `generate_embeddings`) apply an explicit global-average-pool over the spatial
 dims right after `forward_features`, restoring the timm 0.5.4 behaviour and matching the Swin head's
 default `global_pool='avg'`:
 
@@ -324,38 +342,6 @@ already-pooled `(B, C)` tensor.
 ## Notes and troubleshooting
 
 - DeLong p-values below machine epsilon are reported as `0.0`. The test is two-sided (H₀: AUC_a = AUC_b).
-- `delong_p_values` is only emitted when at least 2 models are configured in `config.json["models"]`.
-- `delong_q_values` applies Benjamini-Hochberg FDR correction independently per model pair, across that
-  pair's lesion-level DeLong p-values (5 tests per pair in this tutorial's config). If a third model is
-  ever added, each new pair gets its own independent correction — q-values are never pooled across pairs.
-- A lesion with a `NaN` p-value (either the cohort has only one class, or either class has fewer than 2
-  members) is excluded from its pair's BH correction and reported as `NaN` in `delong_q_values`, not
-  folded into the other lesions' ranks.
-- **Interpreting `delong_q_values`**: a q-value is not a rescaled or "corrected" version of that same
-  lesion's raw p-value — it is the smallest false-discovery-rate level at which this specific lesion's
-  comparison would be called significant, considering it jointly with the rest of its pair's lesion
-  tests. Concretely, `q <= 0.05` means "this finding survives if we're willing to accept a 5% false
-  discovery rate across this pair's lesion comparisons" — not "there's a 5% chance of this AUROC gap
-  under the null" (that's what the raw p-value alone would mean, without accounting for having run
-  multiple simultaneous lesion tests). A q-value can therefore differ substantially from its own raw
-  p-value (it's always `>= p`, and several lesions can share an identical q-value even with different
-  raw p-values) — comparing `q` against your chosen significance level is the correct way to decide
-  which lesions "survived" correction, not comparing the raw `delong_p_values` entries directly.
-  **Why ties happen:** the step-up rule always rejects a contiguous prefix of the sorted ranks — if rank
-  `k` crosses its own line `p_(k) <= (k/m)*Q`, every smaller rank `1..k-1` is swept into that same
-  rejection *regardless of whether their own raw value would have crossed at that `Q`*. So rank `i`'s
-  true q-value isn't "the `Q` at which `i` crosses its own line" — it's "the smallest `Q` at which *any*
-  rank `j >= i` crosses its own line," i.e. `q_(i) = min` over `j >= i` of `p_(j) * m/j`, computed as a
-  running minimum from the largest rank inward. Worked example with `m=3` sorted p-values `0.02, 0.025,
-  0.03`: the per-rank raw values are `0.06, 0.0375, 0.03` (not ascending), but the running min from the
-  back collapses all three to `q = 0.03` — rank 3's own crossing point is small enough to pull in ranks
-  1 and 2 even though their individual raw values were larger. That's the mechanism, not a bug: a later,
-  weaker-p lesion can still set the q-value for an earlier, stronger-p lesion in the same pair.
-  You can also go the other direction, from a chosen FDR level back to a raw-p cutoff: pick a target
-  `Q` for a given model pair, take every lesion in that pair with `q <= Q`, and the *largest* raw
-  p-value among them is the critical cutoff for that `Q` — every `delong_p_values` entry at or below
-  that cutoff is exactly the set that survives correction at `Q`. That's useful if you'd rather present
-  a table of raw p-values (or the AUROC gap) and bold/flag whichever cells clear that single cutoff,
-  stating `Q` and the derived cutoff together in the caption, instead of printing a `q` column.
+- BH correction runs separately per model pair, over that pair's lesion-level p-values (5 tests per pair in this tutorial's config). The other rules (≥ 2 models required, `NaN` handling, no pooling across pairs) are in [Fields](#fields).
 - Both models are loaded onto the GPU together; if you hit an out-of-memory error, reduce `BATCH_SIZE` in
   `config.json` (it defaults to 1) or evaluate on a smaller GPU-fitting cohort.

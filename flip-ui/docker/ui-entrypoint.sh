@@ -24,20 +24,8 @@ if [ -f package-lock.json ]; then
     expected_state="${runtime_id}-${lock_hash}"
     installed_state="$(cat "$install_state_file" 2>/dev/null || true)"
 
-    needs_install=0
-    if [ "$expected_state" != "$installed_state" ]; then
-        needs_install=1
-    fi
-
-    if [ "$needs_install" -eq 0 ] && ! node -e "import('vite-plugin-vue-layouts-next').then(()=>process.exit(0)).catch(()=>process.exit(1))" >/dev/null 2>&1; then
-        needs_install=1
-    fi
-
-    if [ "$needs_install" -eq 0 ] && ! node -e "import('rolldown').then(()=>process.exit(0)).catch(()=>process.exit(1))" >/dev/null 2>&1; then
-        needs_install=1
-    fi
-
-    if [ "$needs_install" -eq 1 ]; then
+    probe="Promise.all([import('vite-plugin-vue-layouts-next'), import('rolldown')]).then(() => process.exit(0), () => process.exit(1))"
+    if [ "$expected_state" != "$installed_state" ] || ! node -e "$probe" >/dev/null 2>&1; then
         npm install --include=optional
         echo "$expected_state" > "$install_state_file"
     fi

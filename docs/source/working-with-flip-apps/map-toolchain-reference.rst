@@ -77,7 +77,7 @@ loosen the current pins one at a time, and do not mix the two sets.
    :widths: 40 60
 
    * - Component
-     - Version
+     - Version or flag
    * - ``monai``
      - ``>=1.6.0``
    * - ``torch``
@@ -91,7 +91,7 @@ loosen the current pins one at a time, and do not mix the two sets.
    * - ``holoscan package``
      - ``--cuda 12``
 
-This set is one commit back in the guide's history and produces the same DICOM SEG.
+This set produces the same DICOM SEG as the current pins (see :ref:`map-gpu-compatibility`).
 
 
 .. _map-environment-traps:
@@ -99,7 +99,7 @@ This set is one commit back in the guide's history and produces the same DICOM S
 Environment traps
 =================
 
-All of these came up while establishing the packaging steps, and none is documented upstream.
+None of these is documented upstream.
 
 .. list-table::
    :header-rows: 1
@@ -213,7 +213,7 @@ the only nearby release that still caps ``torch<2.7.0``. Measured on an RTX 5090
   against the published tutorial checkpoint and a 168-slice spleen CT. ``UNet`` and ``DenseNet121``, the two
   tutorial architectures, have identical state-dict keys and shapes in 1.5.2 and 1.6.0, so the directory form's
   MONAI coupling does not affect them — a fact about those two releases, not a guarantee for the next.
-- **The CUDA-13 move costs a driver floor and buys a torch line that still moves.** PyTorch publishes no CUDA-12.8
+- **Moving to CUDA 13 requires driver 580 or later, but keeps torch upgradable.** PyTorch publishes no CUDA-12.8
   wheel above 2.11.0, so the previous pins were a permanent ceiling: a torch advisory fixed in 2.12 or later would
   have forced this migration under time pressure.
 
@@ -227,7 +227,7 @@ layout — ``NamedModel`` expects exactly one item per model folder, and a bundl
 placeholder ``Model`` with ``predictor = None``, so ``app_context.models`` is truthy. ``MonaiBundleInferenceOperator``
 checks ``app_context.models`` *before* its own directory-bundle branch, takes the placeholder, and fails much later
 inside the inferer. ``core/models/named_model.py`` and ``core/models/factory.py`` are byte-identical in App SDK 3.5.0
-and 4.0.0.
+and 4.0.0, so both toolchain generations are affected.
 
 The classification template is unaffected because its operator loads the bundle itself and checks that the model has
 a predictor. If ``torch.jit`` is ever removed, the SDK's own ``torch.jit.load`` breaks at the same time, so this has

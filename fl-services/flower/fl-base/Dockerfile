@@ -54,11 +54,12 @@ COPY flip-utils/pyproject.toml flip-utils/uv.lock flip-utils/README.md /opt/flip
 COPY flip-utils/docs/ /opt/flip-utils/docs/
 COPY flip-utils/flip/ /opt/flip-utils/flip/
 # Dependencies come from flip-utils' uv.lock, hash-checked, as in the NVFLARE fl-base (#1801), so its
-# security floors reach this image through the lock. flwr is not in the export (flip-utils' dev group):
-# the image keeps flwr/base's own, and `pip check` fails the build if the locked packages no longer fit it.
+# security floors reach this image through the lock. The `flower` extra, not `nvflare` (FLIP#1047): its flwr is
+# flwr/base's own version (test_flip_utils_lock_carries_the_fl_base_images_flwr pins the two), so pip keeps that
+# install and the lock pins flwr's dependencies; `pip check` fails the build if they no longer fit.
 # uv builds the flip-utils wheel, so hatchling comes within the 72h cooldown; pip would fetch the newest.
 RUN cd /opt/flip-utils \
- && python -m uv export --frozen --extra full --no-dev --no-emit-project -o /tmp/flip-utils.txt \
+ && python -m uv export --frozen --extra flower --extra full --no-dev --no-emit-project -o /tmp/flip-utils.txt \
  && python -m pip install --no-cache-dir --require-hashes -r /tmp/flip-utils.txt \
       --extra-index-url https://download.pytorch.org/whl/cu130 \
  && python -m uv build --wheel --no-cache --out-dir /tmp/dist \

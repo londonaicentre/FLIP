@@ -10,10 +10,6 @@ model's updates come back, and FLIP combines them into one shared model.
    :local:
    :depth: 1
 
-*************
-How it works
-*************
-
 What FLIP guarantees
 ====================
 
@@ -24,10 +20,15 @@ What FLIP guarantees
 - **Nothing reaches into a Trust.** The Trust's node fetches its work from the Central Hub over outbound HTTPS.
   Neither the internet nor the hub can open a connection into the Trust.
 
-**What leaves a Trust** is limited to aggregate cohort statistics (hidden below the Trust's own minimum group size),
-model updates (privacy-filtered before they are sent on FLARE, and on Flower when the researcher's code enables
-it) and operational status. The trained model is the project's
-deliverable and goes to the research team, so a Trust that approves a project is also approving that.
+**What leaves a Trust** is limited to:
+
+- aggregate cohort statistics, hidden when below the Trust's own minimum group size;
+- model updates, privacy-filtered before they are sent (on FLARE; on Flower only when the researcher's code
+  enables it);
+- operational status.
+
+The trained model is the project's deliverable and goes to the research team. A Trust that approves a project is
+also agreeing to that release.
 
 .. seealso::
 
@@ -47,6 +48,7 @@ own hardware. It holds the data and does the training.
 .. figure:: assets/flip-diagram-node.png
    :width: 600
    :align: center
+   :alt: A FLIP node inside a Trust's firewall: the OMOP database, XNAT, the Trust APIs and the FL client.
 
    FLIP node at a glance.
 
@@ -77,12 +79,13 @@ full component map, see :doc:`components/overview`.
 How a project runs
 ==================
 
-A researcher writes a cohort query, and every Trust answers with aggregate statistics only. The researcher stages the
-project at the Trusts they need, and each Trust approves or declines it. Each approving Trust pulls the cohort's
-images from its PACS into its own XNAT, where project members can add labels if the model needs them. The researcher
-uploads their training code and starts training, and the code trains on each approving Trust's data. After each
-round, the hub combines the Trusts' model updates and sends the combined model back out. When training ends, the final model
-and its metrics are available in the FLIP UI.
+1. A researcher writes a cohort query. Every Trust answers with aggregate statistics only.
+2. The researcher stages the project at the Trusts they need. Each Trust approves or declines it.
+3. Each approving Trust pulls the cohort's images from its PACS into its own XNAT. Project members can add labels
+   there if the model needs them.
+4. The researcher uploads their training code and starts training. The code trains on each approving Trust's data.
+5. After each round, the hub combines the Trusts' model updates and sends the combined model back out.
+6. When training ends, the final model and its metrics are available in the FLIP UI.
 
 Each step is drawn as a diagram on :doc:`flip-workflow`. The :doc:`user-guides` show the screens.
 

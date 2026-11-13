@@ -58,12 +58,6 @@ def cohort_query_step_function_endpoint(
         HTTPException: If an error occurs during any step of the process.
     """
     try:
-        # Generate a request ID
-        # request_id = str(uuid.uuid4())
-
-        # Create request context
-        # request_context = {"requestId": request_id}
-
         # Get Project (Check if project exists)
         if not get_project_by_id(project_id=cohort_query.project_id, db=db):
             raise HTTPException(

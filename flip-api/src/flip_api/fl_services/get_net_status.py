@@ -17,9 +17,8 @@ from sqlmodel import Session
 
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.domain.interfaces.fl import IClientStatus, INetStatus
-from flip_api.domain.schemas.status import ClientStatus
-from flip_api.fl_services.get_status import fetch_client_status
+from flip_api.domain.interfaces.fl import INetStatus
+from flip_api.fl_services.get_status import fetch_client_status, match_trust_clients
 from flip_api.fl_services.services.fl_scheduler_service import get_net_by_name, get_slot_names_by_trust_ids
 from flip_api.trusts_services.services.trust import get_trusts
 from flip_api.utils.logger import logger
@@ -74,25 +73,9 @@ def get_net_status(
                 clients=[],
             )
 
-        # Match by FL kit slot name — the FL net never sees Trust.name. See the equivalent
-        # comment in get_status.py for the rationale (an admin-chosen display name is
-        # independent of the slot identity).
         trusts = get_trusts(db)
         slot_names_by_trust_id = get_slot_names_by_trust_ids([t.id for t in trusts], db)
-        trust_client_statuses: list[IClientStatus] = []
-        for trust in trusts:
-            slot_name = slot_names_by_trust_id.get(trust.id)
-            matched = next((c for c in clients if slot_name and c.name == slot_name), None)
-            if matched is None:
-                logger.warning(f"Trust {trust.name} (slot={slot_name}) not found in client statuses")
-                trust_client_statuses.append(
-                    IClientStatus(name=trust.name, code=trust.code, status=ClientStatus.NO_REPLY, fl_kit_slot=slot_name)
-                )
-                continue
-            logger.debug(f"Trust {trust.name} matched slot {slot_name} → status {matched.status}")
-            trust_client_statuses.append(
-                IClientStatus(name=trust.name, code=trust.code, status=matched.status, fl_kit_slot=slot_name)
-            )
+        trust_client_statuses = match_trust_clients(trusts, slot_names_by_trust_id, clients)
 
         # Create net status response
         net_status = INetStatus(

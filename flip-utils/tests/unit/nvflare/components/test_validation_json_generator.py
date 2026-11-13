@@ -16,6 +16,7 @@ import tempfile
 from unittest.mock import MagicMock, Mock
 
 import numpy as np
+import pytest
 from nvflare.apis.dxo import DXO, DataKind
 from nvflare.apis.event_type import EventType
 from nvflare.app_common.app_constant import AppConstants
@@ -33,6 +34,14 @@ class TestValidationJsonGenerator:
         self.generator = ValidationJsonGenerator()
         self.fl_ctx = MagicMock()
         self.fl_ctx.get_peer_context.return_value = None
+
+    def _set_props(self, owner, client, result):
+        """Stub the FLContext props a controller sets before VALIDATION_RESULT_RECEIVED."""
+        self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
+            AppConstants.MODEL_OWNER: owner,
+            AppConstants.DATA_CLIENT: client,
+            AppConstants.VALIDATION_RESULT: result,
+        }.get(key, default)
 
     def test_init_default_values(self):
         """Test initialization with default values"""
@@ -65,11 +74,7 @@ class TestValidationJsonGenerator:
         dxo = DXO(data_kind=DataKind.METRICS, data=metrics_data)
         shareable = dxo.to_shareable()
 
-        self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
-            AppConstants.MODEL_OWNER: model_owner,
-            AppConstants.DATA_CLIENT: data_client,
-            AppConstants.VALIDATION_RESULT: shareable,
-        }.get(key, default)
+        self._set_props(model_owner, data_client, shareable)
 
         self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
 
@@ -77,75 +82,28 @@ class TestValidationJsonGenerator:
         assert model_owner in self.generator._val_results[data_client]
         assert self.generator._val_results[data_client][model_owner] == metrics_data
 
-    def test_handle_validation_result_received_no_model_owner(self):
-        """Test handling when model_owner is missing"""
-        self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
-            AppConstants.MODEL_OWNER: None,
-            AppConstants.DATA_CLIENT: "client1",
-            AppConstants.VALIDATION_RESULT: MagicMock(),
-        }.get(key, default)
+    @pytest.mark.parametrize(
+        ("owner", "client", "result"),
+        [
+            pytest.param(None, "client1", MagicMock(), id="no_model_owner"),
+            pytest.param("model1", None, MagicMock(), id="no_data_client"),
+            pytest.param("model1", "client1", None, id="no_result"),
+            pytest.param("model1", "client1", "invalid_shareable", id="unparseable_result"),
+            pytest.param(
+                "site1",
+                "site2",
+                DXO(data_kind=DataKind.WEIGHTS, data={"weight": [1, 2, 3]}).to_shareable(),
+                id="wrong_data_kind",
+            ),
+        ],
+    )
+    def test_handle_validation_result_received_records_nothing(self, owner, client, result):
+        """A missing owner/client/result, an unparseable result or a non-METRICS DXO records nothing."""
+        self._set_props(owner, client, result)
 
         self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
 
-        # Should log error, results should remain empty
-        assert len(self.generator._val_results) == 0
-
-    def test_handle_validation_result_received_no_data_client(self):
-        """Test handling when data_client is missing"""
-        self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
-            AppConstants.MODEL_OWNER: "model1",
-            AppConstants.DATA_CLIENT: None,
-            AppConstants.VALIDATION_RESULT: MagicMock(),
-        }.get(key, default)
-
-        self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
-
-        assert len(self.generator._val_results) == 0
-
-    def test_handle_validation_result_received_wrong_data_kind(self):
-        """Test handling when DXO has wrong data kind"""
-        model_owner = "site1"
-        data_client = "site2"
-
-        # Create DXO with WEIGHTS data kind instead of METRICS
-        dxo = DXO(data_kind=DataKind.WEIGHTS, data={"weight": [1, 2, 3]})
-        shareable = dxo.to_shareable()
-
-        self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
-            AppConstants.MODEL_OWNER: model_owner,
-            AppConstants.DATA_CLIENT: data_client,
-            AppConstants.VALIDATION_RESULT: shareable,
-        }.get(key, default)
-
-        self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
-
-        # Should not add to results due to wrong data kind
-        assert data_client not in self.generator._val_results
-
-    def test_handle_validation_result_received_no_result(self):
-        """Test handling when validation result is None"""
-        self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
-            AppConstants.MODEL_OWNER: "model1",
-            AppConstants.DATA_CLIENT: "client1",
-            AppConstants.VALIDATION_RESULT: None,
-        }.get(key, default)
-
-        self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
-
-        assert len(self.generator._val_results) == 0
-
-    def test_handle_validation_result_received_exception(self):
-        """Test handling when exception occurs processing result"""
-        self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
-            AppConstants.MODEL_OWNER: "model1",
-            AppConstants.DATA_CLIENT: "client1",
-            AppConstants.VALIDATION_RESULT: "invalid_shareable",
-        }.get(key, default)
-
-        # Should handle exception gracefully
-        self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
-
-        assert len(self.generator._val_results) == 0
+        assert self.generator._val_results == {}
 
     def test_handle_end_run_creates_json_file(self):
         """Test that END_RUN event creates JSON file"""
@@ -215,11 +173,7 @@ class TestValidationJsonGenerator:
                 dxo = DXO(data_kind=DataKind.METRICS, data=metrics_data)
                 shareable = dxo.to_shareable()
 
-                self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
-                    AppConstants.MODEL_OWNER: model_owner,
-                    AppConstants.DATA_CLIENT: data_client,
-                    AppConstants.VALIDATION_RESULT: shareable,
-                }.get(key, default)
+                self._set_props(model_owner, data_client, shareable)
 
                 self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
 
@@ -227,32 +181,9 @@ class TestValidationJsonGenerator:
         assert len(self.generator._val_results) == 3
         for site in sites:
             assert site in self.generator._val_results
-            # Each site should have validated all models
+            # Each site should have validated every model, and only those
             assert len(self.generator._val_results[site]) == 3
-
-    def test_handle_same_client_multiple_models(self):
-        """Test a single client validating multiple models"""
-        data_client = "site1"
-        models = ["model_a", "model_b", "model_c"]
-
-        for model_owner in models:
-            metrics_data = {"accuracy": 0.9 + (0.01 * models.index(model_owner))}
-            dxo = DXO(data_kind=DataKind.METRICS, data=metrics_data)
-            shareable = dxo.to_shareable()
-
-            self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
-                AppConstants.MODEL_OWNER: model_owner,
-                AppConstants.DATA_CLIENT: data_client,
-                AppConstants.VALIDATION_RESULT: shareable,
-            }.get(key, default)
-
-            self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
-
-        assert data_client in self.generator._val_results
-        assert len(self.generator._val_results[data_client]) == 3
-        for model in models:
-            assert model in self.generator._val_results[data_client]
-            assert model in self.generator._val_results[data_client]
+            assert set(self.generator._val_results[site]) == set(sites)
 
     # --- de-fork contract: thin subclass of stock, dispatched manually ---
 
@@ -265,11 +196,7 @@ class TestValidationJsonGenerator:
         """FLIP dispatches manually via handle_evaluation_events (ServerEventHandler). The
         auto-dispatched handle_event must NOT process events, or every result is counted twice."""
         dxo = DXO(data_kind=DataKind.METRICS, data={"accuracy": 0.9})
-        self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
-            AppConstants.MODEL_OWNER: "m",
-            AppConstants.DATA_CLIENT: "c",
-            AppConstants.VALIDATION_RESULT: dxo.to_shareable(),
-        }.get(key, default)
+        self._set_props("m", "c", dxo.to_shareable())
 
         self.generator.handle_event(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
 
@@ -279,11 +206,7 @@ class TestValidationJsonGenerator:
         """Gained from stock: a COLLECTION (T2) DXO unpacks each leaf metric (fork rejected it)."""
         leaf = DXO(data_kind=DataKind.METRICS, data={"accuracy": 0.8})
         collection = DXO(data_kind=DataKind.COLLECTION, data={"sub_client": leaf})
-        self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
-            AppConstants.MODEL_OWNER: "model1",
-            AppConstants.DATA_CLIENT: "site1",
-            AppConstants.VALIDATION_RESULT: collection.to_shareable(),
-        }.get(key, default)
+        self._set_props("model1", "site1", collection.to_shareable())
 
         self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
 

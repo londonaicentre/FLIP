@@ -42,20 +42,14 @@ class TestDevSettings:
             settings = DevSettings()
             assert settings.LOCAL_DEV is True
 
-    def test_dev_settings_uses_default_dataframe_path(self):
-        """DevSettings should use empty string default for DEV_DATAFRAME if not provided."""
-        with patch.dict(os.environ, {"DEV_IMAGES_DIR": "/test/images"}, clear=True):
-            # Remove LOCAL_DEV to avoid interference
-            os.environ.pop("DEV_DATAFRAME", None)
-            settings = DevSettings()
-            assert settings.DEV_DATAFRAME == ""
-
-    def test_dev_settings_uses_default_images_dir(self):
-        """DevSettings should use empty string default for DEV_IMAGES_DIR if not provided."""
-        with patch.dict(os.environ, {"DEV_DATAFRAME": "/test/df.csv"}, clear=True):
-            os.environ.pop("DEV_IMAGES_DIR", None)
-            settings = DevSettings()
-            assert settings.DEV_IMAGES_DIR == ""
+    @pytest.mark.parametrize(
+        ("missing", "present"),
+        [("DEV_DATAFRAME", {"DEV_IMAGES_DIR": "/test/images"}), ("DEV_IMAGES_DIR", {"DEV_DATAFRAME": "/test/df.csv"})],
+    )
+    def test_dev_settings_defaults_a_missing_path_to_empty(self, missing, present):
+        """DevSettings should use an empty string default for DEV_DATAFRAME / DEV_IMAGES_DIR if not provided."""
+        with patch.dict(os.environ, present, clear=True):
+            assert getattr(DevSettings(), missing) == ""
 
     def test_dev_settings_accepts_custom_values(self):
         """DevSettings should accept custom values from environment."""
@@ -162,51 +156,6 @@ class TestFlipConstantsProxy:
                 _ = FlipConstants.NET_ID
 
 
-class TestResourceType:
-    """Test ResourceType enum."""
-
-    def test_resource_type_values(self):
-        """ResourceType enum should have expected values."""
-        assert ResourceType.DICOM.value == "DICOM"
-        assert ResourceType.NIFTI.value == "NIFTI"
-        assert ResourceType.SEGMENTATION.value == "SEG"
-        assert ResourceType.ALL.value == "ALL"
-
-    def test_resource_type_is_string_enum(self):
-        """ResourceType should be a string enum."""
-        assert isinstance(ResourceType.DICOM, str)
-        assert ResourceType.DICOM == "DICOM"
-
-    def test_resource_type_all_members(self):
-        """ResourceType should have exactly 4 members."""
-        assert len(ResourceType) == 4
-        assert set(ResourceType) == {
-            ResourceType.DICOM,
-            ResourceType.NIFTI,
-            ResourceType.SEGMENTATION,
-            ResourceType.ALL,
-        }
-
-
-class TestFlipTasks:
-    """Test FlipTasks enum."""
-
-    def test_flip_tasks_values(self):
-        """FlipTasks enum should have expected values."""
-        assert FlipTasks.INIT_TRAINING.value == "init_training"
-        assert FlipTasks.POST_VALIDATION.value == "post_validation"
-        assert FlipTasks.CLEANUP.value == "cleanup"
-
-    def test_flip_tasks_is_string_enum(self):
-        """FlipTasks should be a string enum."""
-        assert isinstance(FlipTasks.INIT_TRAINING, str)
-        assert FlipTasks.INIT_TRAINING == "init_training"
-
-    def test_flip_tasks_all_members(self):
-        """FlipTasks should have exactly 5 members (includes evaluation-specific tasks)."""
-        assert len(FlipTasks) == 5
-
-
 class TestFlipEvents:
     """Test FlipEvents class constants."""
 
@@ -225,44 +174,39 @@ class TestFlipEvents:
         assert isinstance(FlipEvents.SEND_RESULT, str)
 
 
-class TestModelStatus:
-    """Test ModelStatus enum."""
-
-    def test_model_status_values(self):
-        """ModelStatus enum should have expected values."""
-        assert ModelStatus.PENDING.value == "PENDING"
-        assert ModelStatus.INITIATED.value == "INITIATED"
-        assert ModelStatus.PREPARED.value == "PREPARED"
-        assert ModelStatus.RUNNING.value == "RUNNING"
-        assert ModelStatus.RESULTS_UPLOADED.value == "RESULTS_UPLOADED"
-        assert ModelStatus.ERROR.value == "ERROR"
-        assert ModelStatus.STOPPED.value == "STOPPED"
-        assert ModelStatus.RESULTS_UPLOAD_FAILED.value == "RESULTS_UPLOAD_FAILED"
-
-    def test_model_status_is_string_enum(self):
-        """ModelStatus should be a string enum."""
-        assert isinstance(ModelStatus.PENDING, str)
-        assert ModelStatus.PENDING == "PENDING"
-
-    def test_model_status_all_members(self):
-        """ModelStatus should have exactly 8 members."""
-        assert len(ModelStatus) == 8
-
-
-class TestFlipMetricsLabel:
-    """Test FlipMetricsLabel enum."""
-
-    def test_flip_metrics_label_values(self):
-        """FlipMetricsLabel enum should have expected values."""
-        assert FlipMetricsLabel.LOSS_FUNCTION.value == "LOSS_FUNCTION"
-        assert FlipMetricsLabel.DL_RESULT.value == "DL_RESULT"
-        assert FlipMetricsLabel.AVERAGE_SCORE.value == "AVERAGE_SCORE"
-
-    def test_flip_metrics_label_is_string_enum(self):
-        """FlipMetricsLabel should be a string enum."""
-        assert isinstance(FlipMetricsLabel.LOSS_FUNCTION, str)
-        assert FlipMetricsLabel.LOSS_FUNCTION == "LOSS_FUNCTION"
-
-    def test_flip_metrics_label_all_members(self):
-        """FlipMetricsLabel should have exactly 3 members."""
-        assert len(FlipMetricsLabel) == 3
+# A 4-member enum whose 4 names all resolve has exactly those members (the old set-equality check).
+@pytest.mark.parametrize(
+    ("enum", "values", "count"),
+    [
+        (ResourceType, {"DICOM": "DICOM", "NIFTI": "NIFTI", "SEGMENTATION": "SEG", "ALL": "ALL"}, 4),
+        # 5 members: includes the evaluation-specific tasks
+        (FlipTasks, {"INIT_TRAINING": "init_training", "POST_VALIDATION": "post_validation", "CLEANUP": "cleanup"}, 5),
+        (
+            ModelStatus,
+            {
+                "PENDING": "PENDING",
+                "INITIATED": "INITIATED",
+                "PREPARED": "PREPARED",
+                "RUNNING": "RUNNING",
+                "RESULTS_UPLOADED": "RESULTS_UPLOADED",
+                "ERROR": "ERROR",
+                "STOPPED": "STOPPED",
+                "RESULTS_UPLOAD_FAILED": "RESULTS_UPLOAD_FAILED",
+            },
+            8,
+        ),
+        (
+            FlipMetricsLabel,
+            {"LOSS_FUNCTION": "LOSS_FUNCTION", "DL_RESULT": "DL_RESULT", "AVERAGE_SCORE": "AVERAGE_SCORE"},
+            3,
+        ),
+    ],
+    ids=["ResourceType", "FlipTasks", "ModelStatus", "FlipMetricsLabel"],
+)
+def test_string_enum_values_and_members(enum, values, count):
+    """Each string enum has the expected values and member count, and its members are strings."""
+    assert len(enum) == count
+    for name, value in values.items():
+        assert enum[name].value == value
+        assert isinstance(enum[name], str)
+        assert enum[name] == value

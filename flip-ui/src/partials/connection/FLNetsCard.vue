@@ -21,16 +21,16 @@
                         <h3 class="flex items-center gap-4 mt-2 text-3xl font-semibold font-heading">
                             <icon-ph-plugs-connected-duotone
                                 v-if="healthyPlatform"
-                                class="w-10 h-10 transition text-green-600/70 shrink-0"
+                                class="w-10 h-10 transition text-green-600 shrink-0"
                             />
                             <icon-ph-plugs-duotone
                                 v-else
-                                class="w-10 h-10 transition text-red-900/70 dark:text-red-400 shrink-0"
+                                class="w-10 h-10 transition text-red-900 dark:text-red-400 shrink-0"
                             />
                             <span>
                                 The FL nets are <span
                                     class="font-black underline uppercase transition decoration-4 decoration-solid underline-offset-8"
-                                    :class="[healthyPlatform ? 'decoration-green-600/70' : 'decoration-red-900/70 dark:decoration-red-400']"
+                                    :class="[healthyPlatform ? 'decoration-green-600' : 'decoration-red-900 dark:decoration-red-400']"
                                 >
                                     {{ healthyPlatform ? 'Healthy' : 'Unhealthy' }}
                                 </span>
@@ -82,11 +82,11 @@
                                         <span class="flex flex-row items-center gap-4 ">
                                             <icon-ph-check-circle-duotone
                                                 v-if="client.online"
-                                                class="w-6 h-6 transition transform rounded-full shrink-0 text-green-600/70 dark:text-green-400 group-hover:scale-110"
+                                                class="w-6 h-6 transition transform rounded-full shrink-0 text-green-600 dark:text-green-400 group-hover:scale-110"
                                             />
                                             <icon-ph-x-circle-duotone
                                                 v-else
-                                                class="w-6 h-6 transition transform rounded-full shrink-0 text-red-600/70 dark:text-red-400 group-hover:scale-110"
+                                                class="w-6 h-6 transition transform rounded-full shrink-0 text-red-600 dark:text-red-400 group-hover:scale-110"
                                             />
                                             <span class="w-full">
                                                 <span class="flex items-center gap-2">
@@ -122,7 +122,7 @@
                                         class="flex flex-col items-center justify-center h-full px-4 py-4 text-center"
                                     >
                                         <icon-ph-plugs-duotone
-                                            class="w-16 h-16 text-red-900/70 dark:text-red-400"
+                                            class="w-16 h-16 text-red-900 dark:text-red-400"
                                         />
                                         {{ net.name }} is offline: the hub got no status from its FL server, or no
                                         clients are connected.

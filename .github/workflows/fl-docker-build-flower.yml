@@ -195,16 +195,14 @@ jobs:
           echo "✅ Pushed SuperLink."
 
       - name: Cleanup after SuperLink
+        env:
+          TAGS: ${{ steps.tags.outputs.server_tags }}
         run: |
-          docker rmi $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} || true
-          docker rmi $REGISTRY/$ORG/$SERVER_IMAGE:sha-$SHORT_SHA || true
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            docker rmi $REGISTRY/$ORG/$SERVER_IMAGE:prod || true
-          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
-            docker rmi $REGISTRY/$ORG/$SERVER_IMAGE:stag || true
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            docker rmi $REGISTRY/$ORG/$SERVER_IMAGE:${GITHUB_REF_NAME} || true
-          fi
+          # The two build tags plus every pushed tag (:prod/:stag, or :v<X.Y.Z> on a release run).
+          img="$REGISTRY/$ORG/$SERVER_IMAGE"
+          for tag in $(printf '%s\n' "$img:${{ github.sha }}" "$img:sha-$SHORT_SHA" ${TAGS//,/ } | sort -u); do
+            docker rmi "$tag" || true
+          done
           docker system prune -f
           echo "Disk space after SuperLink cleanup:"
           df -h
@@ -233,16 +231,14 @@ jobs:
           echo "✅ Pushed SuperNode."
 
       - name: Cleanup after SuperNode
+        env:
+          TAGS: ${{ steps.tags.outputs.client_tags }}
         run: |
-          docker rmi $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} || true
-          docker rmi $REGISTRY/$ORG/$CLIENT_IMAGE:sha-$SHORT_SHA || true
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            docker rmi $REGISTRY/$ORG/$CLIENT_IMAGE:prod || true
-          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
-            docker rmi $REGISTRY/$ORG/$CLIENT_IMAGE:stag || true
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            docker rmi $REGISTRY/$ORG/$CLIENT_IMAGE:${GITHUB_REF_NAME} || true
-          fi
+          # The two build tags plus every pushed tag (:prod/:stag, or :v<X.Y.Z> on a release run).
+          img="$REGISTRY/$ORG/$CLIENT_IMAGE"
+          for tag in $(printf '%s\n' "$img:${{ github.sha }}" "$img:sha-$SHORT_SHA" ${TAGS//,/ } | sort -u); do
+            docker rmi "$tag" || true
+          done
           docker system prune -f
           echo "Disk space after SuperNode cleanup:"
           df -h
@@ -271,16 +267,14 @@ jobs:
           echo "✅ Pushed fleet proxy."
 
       - name: Cleanup after fleet proxy
+        env:
+          TAGS: ${{ steps.tags.outputs.proxy_tags }}
         run: |
-          docker rmi $REGISTRY/$ORG/$PROXY_IMAGE:${{ github.sha }} || true
-          docker rmi $REGISTRY/$ORG/$PROXY_IMAGE:sha-$SHORT_SHA || true
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            docker rmi $REGISTRY/$ORG/$PROXY_IMAGE:prod || true
-          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
-            docker rmi $REGISTRY/$ORG/$PROXY_IMAGE:stag || true
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            docker rmi $REGISTRY/$ORG/$PROXY_IMAGE:${GITHUB_REF_NAME} || true
-          fi
+          # The two build tags plus every pushed tag (:prod/:stag, or :v<X.Y.Z> on a release run).
+          img="$REGISTRY/$ORG/$PROXY_IMAGE"
+          for tag in $(printf '%s\n' "$img:${{ github.sha }}" "$img:sha-$SHORT_SHA" ${TAGS//,/ } | sort -u); do
+            docker rmi "$tag" || true
+          done
 
       ###########################################
       # 5️⃣ Build and Push FL API
@@ -309,16 +303,14 @@ jobs:
           echo "✅ Pushed FL API."
 
       - name: Final cleanup
+        env:
+          TAGS: ${{ steps.tags.outputs.api_tags }}
         run: |
-          docker rmi $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} || true
-          docker rmi $REGISTRY/$ORG/$API_IMAGE:sha-$SHORT_SHA || true
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            docker rmi $REGISTRY/$ORG/$API_IMAGE:prod || true
-          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
-            docker rmi $REGISTRY/$ORG/$API_IMAGE:stag || true
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            docker rmi $REGISTRY/$ORG/$API_IMAGE:${GITHUB_REF_NAME} || true
-          fi
+          # The two build tags plus every pushed tag (:prod/:stag, or :v<X.Y.Z> on a release run).
+          img="$REGISTRY/$ORG/$API_IMAGE"
+          for tag in $(printf '%s\n' "$img:${{ github.sha }}" "$img:sha-$SHORT_SHA" ${TAGS//,/ } | sort -u); do
+            docker rmi "$tag" || true
+          done
           # Clean up the base image
           docker rmi $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} || true
           docker system prune -af
