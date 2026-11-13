@@ -200,10 +200,12 @@ a fixed IP for it.
 
 ```bash
 make test   # terraform test (mocked azurerm) in every root and module, plus the static guards
-make lint   # terraform fmt and tflint with the azurerm ruleset
+make lint   # terraform fmt, tflint with the azurerm ruleset, and checkov (make checkov alone)
 ```
 
-CI runs both in `validate_terraform.yml`. The static guards (`tests/test_static_guards.py`)
+CI runs both in `validate_terraform.yml`. Checkov runs every Azure check, at the version the AWS
+lint pins; a deliberate exception is a `# checkov:skip=<ID>:<why>` inside the resource, and a
+skip without a reason fails the lint. The static guards (`tests/test_static_guards.py`)
 enforce the cost and safety rules: nothing skips Terraform's confirmation, every provider and `az` call names the
 subscription, no real subscription IDs in tracked files, no NSG rule that allows inbound traffic, and the
 VM's NIC always behind its own NSG, which denies all inbound.

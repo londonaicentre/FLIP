@@ -236,9 +236,9 @@ DNS:fl-server-net-1, DNS:fl.stag.flip.aicentre.co.uk
 
 **Fix:** Add both SANs when regenerating the certificate (see §7.2 config above).
 
-The `hostAliases` in the fl-client deployment map `fl-server-net-1` to the
-NLB IPs, so clients resolve the hostname correctly but the server must present
-a cert that matches the hostname the client uses to connect.
+The client connects by the hub's public FL name from its kit, so the server must
+present a cert that carries that name. The chart sets no `hostAliases` by default;
+`flClient.hostAliases` is there for a site whose DNS cannot resolve the FL name.
 
 ### 7.4 Signature PSS Padding Mismatch
 
@@ -336,29 +336,7 @@ source the script instead:
 command: ["/bin/sh", "-c", ". /opt/nvflare/startup/start.sh && wait"]
 ```
 
-### 7.7 Vocabulary Load Fails with Expired AWS Credentials
-
-**Symptom:** the `<release>-omop-vocab-load` Job fails with an S3 `ExpiredToken` or
-`AccessDenied`, and `helm install`/`upgrade` reports its post-install hook failed.
-
-**Root Cause:** with `omopDb.vocabLoad.hostAwsMount.enabled`, the Job reads the node
-operator's `~/.aws` and uses the profile in `omopDb.vocabLoad.awsProfile` (default
-`default`); an expired SSO session there fails the S3 read. Without the host mount, on
-EKS, it uses the node role instead. This Job is the chart's only AWS-using workload: the
-fl-client holds no AWS credentials and its kit is staged onto the node beforehand.
-
-**Check** (on the node):
-```bash
-aws sts get-caller-identity --profile <awsProfile> || echo "Credentials expired"
-```
-
-**Fix:** log in again on the node, then re-run the same `helm upgrade`. The Job is a
-post-install/post-upgrade hook, and the previous one is deleted before it is created again:
-```bash
-aws sso login --profile <awsProfile>
-```
-
-### 7.8 gRPC Async Connect Fails on Kernel 7 (Ubuntu 26.04)
+### 7.7 gRPC Async Connect Fails on Kernel 7 (Ubuntu 26.04)
 
 **Symptom:** fl-client pod crash-loops with no FLARE registration output.
 The pod logs end at `STARTING CLIENT...` with no further output. After

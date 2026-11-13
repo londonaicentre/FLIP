@@ -332,21 +332,28 @@ def test_unreadable_policy_file_is_rejected(tmp_path):
         load_policy(path=str(missing), floor=FLOOR)
 
 
-def test_policy_file_is_loaded_with_a_digest_of_its_bytes(tmp_path):
+@pytest.mark.parametrize(
+    "content",
+    [b"[disclosure]\nmin_cohort_size = 30\n", b"[disclosure]\r\nmin_cohort_size = 30\r\n"],
+    ids=["lf", "crlf"],
+)
+def test_policy_file_is_loaded_with_a_digest_of_its_bytes(tmp_path, content):
     """The digest is what an operator compares between check-governance and the service's
-    startup line, to know the document they validated is the one in force."""
+    startup line, to know the document they validated is the one in force.
+
+    reload-governance compares the logged digest with `sha256sum` of the file. Hashing the
+    decoded text normalised CRLF to LF and made a correct reload report a different document."""
     import hashlib
 
     path = tmp_path / "governance.toml"
-    text = "[disclosure]\nmin_cohort_size = 30\n"
-    path.write_text(text, encoding="utf-8")
+    path.write_bytes(content)
 
     policy = load_policy(path=str(path), floor=FLOOR)
 
     assert policy is not None
     assert policy.min_cohort_size == 30
     assert str(path) in policy.source
-    assert policy.digest == hashlib.sha256(text.encode("utf-8")).hexdigest()
+    assert policy.digest == hashlib.sha256(content).hexdigest()
 
 
 def test_describe_names_the_source_digest_and_every_rule():
@@ -426,20 +433,6 @@ def test_the_shipped_example_leaves_fl_training_and_real_projects_alone():
     assert training.rule_id == "default.unmentioned"
     assert imaging.permit is True
     assert imaging.effective_threshold == 50
-
-
-def test_the_digest_is_of_the_files_bytes_even_with_crlf_line_endings(tmp_path):
-    """reload-governance compares the logged digest with `sha256sum` of the file. Hashing the
-    decoded text normalised CRLF to LF and made a correct reload report a different document."""
-    import hashlib
-
-    path = tmp_path / "governance.toml"
-    path.write_bytes(b"[disclosure]\r\nmin_cohort_size = 30\r\n")
-
-    policy = load_policy(path=str(path), floor=FLOOR)
-
-    assert policy is not None
-    assert policy.digest == hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 @pytest.mark.parametrize("text", ["[disclosure]\n", "[access]\n", "[disclosure]\n[access]\n"])

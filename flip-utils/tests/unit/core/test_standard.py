@@ -14,6 +14,7 @@
 
 import io
 import json
+import logging
 import math
 import re
 import zipfile
@@ -42,13 +43,20 @@ def hub_constants():
         yield constants
 
 
+@pytest.fixture
+def flip_dev():
+    """Create a FLIPStandardDev instance."""
+    return FLIPStandardDev()
+
+
+@pytest.fixture
+def flip_prod():
+    """Create a FLIPStandardProd instance."""
+    return FLIPStandardProd()
+
+
 class TestFLIPStandardDevGetDataframe:
     """Test FLIPStandardDev get_dataframe method."""
-
-    @pytest.fixture
-    def flip_dev(self):
-        """Create a FLIPStandardDev instance."""
-        return FLIPStandardDev()
 
     def test_get_dataframe_reads_from_csv(self, flip_dev, tmp_path):
         """get_dataframe should read CSV from DEV_DATAFRAME path."""
@@ -86,11 +94,6 @@ class TestFLIPStandardDevGetDataframe:
 class TestFLIPStandardDevGetByAccessionNumber:
     """Test FLIPStandardDev get_by_accession_number method."""
 
-    @pytest.fixture
-    def flip_dev(self):
-        """Create a FLIPStandardDev instance."""
-        return FLIPStandardDev()
-
     def test_get_by_accession_number_returns_path(self, flip_dev, tmp_path):
         """get_by_accession_number should return path from DEV_IMAGES_DIR."""
         images_dir = tmp_path / "images"
@@ -125,11 +128,6 @@ class TestFLIPStandardDevGetByAccessionNumber:
 class TestFLIPStandardDevAddResource:
     """Test FLIPStandardDev add_resource method."""
 
-    @pytest.fixture
-    def flip_dev(self):
-        """Create a FLIPStandardDev instance."""
-        return FLIPStandardDev()
-
     def test_add_resource_runs_without_error_in_dev_mode(self, flip_dev, tmp_path):
         """add_resource should run without error in dev mode (no-op)."""
         resource_path = tmp_path / "test_resource.txt"
@@ -148,11 +146,6 @@ class TestFLIPStandardDevAddResource:
 class TestFLIPStandardDevUpdateStatus:
     """Test FLIPStandardDev update_status method."""
 
-    @pytest.fixture
-    def flip_dev(self):
-        """Create a FLIPStandardDev instance."""
-        return FLIPStandardDev()
-
     def test_update_status_runs_without_error_in_dev_mode(self, flip_dev):
         """update_status should run without error in dev mode (no-op)."""
         # Should not raise any exception - it's a no-op in dev mode, and reports it as accepted
@@ -161,11 +154,6 @@ class TestFLIPStandardDevUpdateStatus:
 
 class TestFLIPStandardDevSendHandledException:
     """Test FLIPStandardDev send_handled_exception method."""
-
-    @pytest.fixture
-    def flip_dev(self):
-        """Create a FLIPStandardDev instance."""
-        return FLIPStandardDev()
 
     def test_send_handled_exception_runs_without_error_in_dev_mode(self, flip_dev):
         """send_handled_exception should run without error in dev mode (no-op)."""
@@ -177,11 +165,6 @@ class TestFLIPStandardDevSendHandledException:
 
 class TestFLIPStandardDevSendEvent:
     """Test FLIPStandardDev send_event method."""
-
-    @pytest.fixture
-    def flip_dev(self):
-        """Create a FLIPStandardDev instance."""
-        return FLIPStandardDev()
 
     def test_send_event_runs_without_error_in_dev_mode(self, flip_dev):
         """send_event should run without error in dev mode (local log only)."""
@@ -195,11 +178,6 @@ class TestFLIPStandardDevSendEvent:
 
 class TestFLIPStandardProdSendEvent:
     """Test FLIPStandardProd send_event method."""
-
-    @pytest.fixture
-    def flip_prod(self):
-        """Create a FLIPStandardProd instance."""
-        return FLIPStandardProd()
 
     def test_hub_event_posts_facts_with_null_client(self, flip_prod):
         """A hub-attributed event posts the typed payload with no client name and no text."""
@@ -341,11 +319,6 @@ class TestFLIPStandardProdSendEvent:
 class TestFLIPStandardProdSendHandledExceptionSuccessFlag:
     """The exception path must persist as a failure row (red dot), not the success default."""
 
-    @pytest.fixture
-    def flip_prod(self):
-        """Create a FLIPStandardProd instance."""
-        return FLIPStandardProd()
-
     def test_exception_payload_carries_success_false(self, flip_prod):
         mock_response = Mock()
         mock_response.status_code = 200
@@ -368,11 +341,6 @@ class TestFLIPStandardProdSendHandledExceptionSuccessFlag:
 
 class TestFLIPStandardProdGetDataframe:
     """Test FLIPStandardProd get_dataframe method."""
-
-    @pytest.fixture
-    def flip_prod(self):
-        """Create a FLIPStandardProd instance."""
-        return FLIPStandardProd()
 
     def test_get_dataframe_makes_api_request(self, flip_prod):
         """get_dataframe should make API request to data-access-api."""
@@ -468,14 +436,51 @@ class TestFLIPStandardProdGetDataframe:
             assert "x-trust-internal-service-key" in headers
             assert headers["x-trust-internal-service-key"] == ""
 
+    def test_get_dataframe_does_not_log_cohort_rows(self, flip_prod):
+        """FLIP-SR-051: the response body is the cohort's patient rows. These INFO lines are shipped to
+        the trust's shared log store, where a later job at the same trust could read an earlier project's
+        cohort. get_dataframe must log only the status code and the row count, never the body.
+        """
+        rows = [
+            {"accession_id": "ACC-SECRET-001", "label": 1},
+            {"accession_id": "ACC-SECRET-002", "label": 0},
+        ]
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = json.dumps(rows)
+
+        # The prod logger sets propagate = False, so caplog (which captures via the root logger) never
+        # sees these records — attach a capture handler directly to the instance logger instead.
+        captured: list[str] = []
+        handler = logging.Handler()
+        handler.emit = lambda record: captured.append(record.getMessage())
+        flip_prod.logger.addHandler(handler)
+        try:
+            with (
+                patch("flip.core.standard.FlipConstants") as mock_constants,
+                patch("flip.core.standard.requests.post", return_value=mock_response),
+            ):
+                mock_constants.DATA_ACCESS_API_URL = "https://data.example.com"
+                # pragma: allowlist nextline secret
+                mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
+                mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"  # pragma: allowlist secret
+
+                df = flip_prod.get_dataframe(project_id="proj-1", query="SELECT * FROM table")
+        finally:
+            flip_prod.logger.removeHandler(handler)
+
+        logged = "\n".join(captured)
+        # No cohort content, in any field, reaches the log.
+        assert "ACC-SECRET-001" not in logged
+        assert "ACC-SECRET-002" not in logged
+        assert mock_response.text not in logged
+        # The useful operational signal is still logged: the status and the row count.
+        assert "Received response status code: 200" in logged
+        assert f"Successfully fetched dataframe ({len(df)} rows)" in logged
+
 
 class TestFLIPStandardProdGetByAccessionNumber:
     """Test FLIPStandardProd get_by_accession_number method."""
-
-    @pytest.fixture
-    def flip_prod(self):
-        """Create a FLIPStandardProd instance."""
-        return FLIPStandardProd()
 
     def test_get_by_accession_number_downloads_resources(self, flip_prod, tmp_path):
         """get_by_accession_number should download resources from API."""
@@ -510,11 +515,6 @@ class TestFLIPStandardProdGetByAccessionNumber:
 
 class TestFLIPStandardProdAddResource:
     """Test FLIPStandardProd add_resource method."""
-
-    @pytest.fixture
-    def flip_prod(self):
-        """Create a FLIPStandardProd instance."""
-        return FLIPStandardProd()
 
     def test_add_resource_uploads_to_api(self, flip_prod, tmp_path):
         """add_resource should upload file to imaging API."""
@@ -554,11 +554,6 @@ class TestFLIPStandardProdAddResource:
 
 class TestFLIPStandardProdUpdateStatus:
     """Test FLIPStandardProd update_status method."""
-
-    @pytest.fixture
-    def flip_prod(self):
-        """Create a FLIPStandardProd instance."""
-        return FLIPStandardProd()
 
     def test_update_status_calls_api_with_valid_uuid(self, flip_prod):
         """update_status should call API to update model status with valid UUID."""
@@ -625,11 +620,6 @@ class TestFLIPStandardProdUpdateStatus:
 class TestFLIPStandardProdSendHandledException:
     """Test FLIPStandardProd send_handled_exception method."""
 
-    @pytest.fixture
-    def flip_prod(self):
-        """Create a FLIPStandardProd instance."""
-        return FLIPStandardProd()
-
     def test_send_handled_exception_calls_api_with_valid_uuid(self, flip_prod):
         """send_handled_exception should POST exception to API with valid UUID."""
         mock_response = Mock()
@@ -664,11 +654,6 @@ class TestFLIPStandardProdSendHandledException:
 
 class TestFLIPStandardProdSendMetrics:
     """Test FLIPStandardProd send_metrics method."""
-
-    @pytest.fixture
-    def flip_prod(self):
-        """Create a FLIPStandardProd instance."""
-        return FLIPStandardProd()
 
     def test_send_metrics_posts_to_flip_api_internal_url(self, flip_prod):
         """send_metrics should POST to the internal flip-api URL with auth header + payload."""
@@ -809,11 +794,6 @@ class TestFLIPStandardProdUploadResultsToS3:
     """Test FLIPStandardProd upload_results_to_s3 method."""
 
     @pytest.fixture
-    def flip_prod(self):
-        """Create a FLIPStandardProd instance."""
-        return FLIPStandardProd()
-
-    @pytest.fixture
     def results_folder(self, tmp_path):
         folder = tmp_path / "results"
         folder.mkdir()
@@ -936,11 +916,6 @@ class TestFLIPStandardProdUploadResultsToS3:
 class TestFLIPStandardProdCleanup:
     """Test FLIPStandardProd cleanup method."""
 
-    @pytest.fixture
-    def flip_prod(self):
-        """Create a FLIPStandardProd instance."""
-        return FLIPStandardProd()
-
     def test_cleanup_removes_existing_path(self, flip_prod, tmp_path):
         """cleanup should remove the provided path recursively."""
         cleanup_dir = tmp_path / "to_cleanup"
@@ -964,11 +939,6 @@ class TestFLIPStandardProdCleanup:
 
 class TestFLIPStandardDevUploadAndCleanup:
     """Test FLIPStandardDev upload_results_to_s3 and cleanup methods."""
-
-    @pytest.fixture
-    def flip_dev(self):
-        """Create a FLIPStandardDev instance."""
-        return FLIPStandardDev()
 
     def test_upload_results_to_s3_runs_without_error_in_dev_mode(self, flip_dev, tmp_path):
         """upload_results_to_s3 should run without error in dev mode (no-op)."""

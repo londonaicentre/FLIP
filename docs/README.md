@@ -13,33 +13,49 @@
 
 # Documentation
 
-Uses [sphinx-autoapi](https://sphinx-autoapi.readthedocs.io/en/latest/) to generate API documentation from docstrings in the codebase.
+Sphinx source for the FLIP documentation published on Read the Docs. The Python API pages are generated from docstrings with [sphinx-autoapi](https://sphinx-autoapi.readthedocs.io/en/latest/).
 
 ## Prerequisites
 
 - [uv](https://docs.astral.sh/uv/) — installs the pinned Sphinx toolchain from `pyproject.toml` / `uv.lock`.
-- graphviz (`dot` on PATH, e.g. `apt-get install graphviz`) — `source/conf.py` renders the Central Hub AWS
-  diagrams from `../deploy/providers/AWS/architecture/central_hub.py` at build time and fails without it.
-  ReadTheDocs installs it through `build.apt_packages`; for a text-only build on a host without graphviz,
-  set `FLIP_DOCS_SKIP_DIAGRAMS=1` (the two Central Hub deployment pages then warn about their missing images).
-- Network access to `huggingface.co` (and `*.hf.co`) — the user-guide GIFs are not tracked in git (FLIP#1236):
-  `source/conf.py` fetches them from the public dataset `aicentreflip/docs-gifs` (the newest recording, or a
-  release's own set on a release build — FLIP#1547) into the gitignored `source/assets/generated/gifs/`,
-  verifying every file, and fails without it. A repeat build downloads only what changed. For a text-only build
-  offline set `FLIP_DOCS_SKIP_GIF_FETCH=1` (the user-guide pages then warn about their missing images).
-  `make test` runs the fetcher/publisher/release-tagger suites.
+- graphviz (`dot` on PATH, e.g. `apt-get install graphviz`). At build time `source/conf.py` renders the Central Hub
+  AWS diagrams from `../deploy/providers/AWS/architecture/central_hub.py`, and the build fails without graphviz.
+  Read the Docs installs it through `build.apt_packages`.
+- Network access to `huggingface.co` and `*.hf.co`. The user-guide GIFs are not tracked in git (FLIP#1236).
+  `source/conf.py` fetches them from the public dataset `aicentreflip/docs-gifs` into the gitignored
+  `source/assets/generated/gifs/` and verifies every file. The build fails if it cannot fetch them.
+  - A normal build takes the newest recording.
+  - A release build takes that release's own set (FLIP#1547).
+  - A repeat build downloads only what changed.
 
-To generate the documentation, run (from the repository root):
+To build without graphviz or network access, see [Text-only build](#text-only-build).
+
+## Build
+
+From the repository root:
 
 ```bash
 make -C docs clean
 make -C docs docs
 ```
 
-Or, from inside the `docs/` directory:
+From inside `docs/`, run `make clean` and then `make docs`.
+
+### Text-only build
+
+On a host without graphviz or network access, skip the diagrams, the GIF fetch, or both:
 
 ```bash
-cd docs
-make clean
-make docs
+FLIP_DOCS_SKIP_DIAGRAMS=1 FLIP_DOCS_SKIP_GIF_FETCH=1 make -C docs docs
 ```
+
+- `FLIP_DOCS_SKIP_DIAGRAMS=1`: the two Central Hub deployment pages then warn about their missing images.
+- `FLIP_DOCS_SKIP_GIF_FETCH=1`: the user-guide pages then warn about their missing images.
+
+## Tests
+
+```bash
+make -C docs test
+```
+
+Runs the GIF fetcher, publisher and release-tagger suites.

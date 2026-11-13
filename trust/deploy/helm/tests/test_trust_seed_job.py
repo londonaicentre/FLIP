@@ -136,10 +136,10 @@ def test_seed_values_defaults():
     assert "initJob" not in VALUES["orthanc"]
 
 
-def test_vocab_load_credentials_live_under_vocab_load():
-    """The vocab-load Job borrowed omopDb.initJob's AWS keys; with initJob gone they are its own."""
+def test_vocab_load_carries_no_aws_settings():
+    """The vocab-load Job reads a staged bundle (FLIP#923): no AWS keys in its values or template."""
     text = VOCAB_JOB.read_text()
     assert ".Values.omopDb.initJob" not in text
-    for key in ("hostAwsMount", "awsProfile"):
-        assert f".Values.omopDb.vocabLoad.{key}" in text, key
-        assert key in VALUES["omopDb"]["vocabLoad"], key
+    for key in ("hostAwsMount", "awsProfile", "s3Bucket"):
+        assert f".Values.omopDb.vocabLoad.{key}" not in text, key
+        assert key not in VALUES["omopDb"]["vocabLoad"], key

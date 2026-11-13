@@ -13,7 +13,7 @@
 
 # FLARE Federated Learning Services
 
-This folder contains base code to create NVIDIA FLARE federated learning networks, each containing a set of clients, a server and an API. `fl-api-base` and `fl-base` are base services used by the provisioning command to build upon. `fl-base` can be used to test applications locally, but is a single container that does not constitute a fully working FL network.
+This folder contains the code to build and provision NVIDIA FLARE federated learning networks, each with a server, a set of clients and an API. See [Anatomy of a network](#anatomy-of-a-network) for what each image does.
 
 ## Layout
 
@@ -70,9 +70,10 @@ compose pulls FL images by tag, so their build definitions live only in [`compos
 
 ### Containers run as a non-root user (GHSA-8465)
 
-`fl-server`, `fl-client`, and `fl-base` run as a non-root user baked at `1000`/`1000`/`flip`. That identity
-is **fixed**, not taken from the building developer's environment: build-time identity and runtime identity
-are two different things and conflating them was FLIP#1171.
+`fl-server`, `fl-client`, and `fl-base` run as a non-root user, `flip` (uid 1000, gid 1000), baked into the image. That identity
+is **fixed**, not taken from the building developer's environment. Build-time identity and runtime identity
+are two different things. When the uid came from the builder, the published images crash-looped for anyone
+not on uid 1000 (FLIP#1171):
 
 - **Build time** — every image, whether built by CI as `:stag` or locally as `:dev`, contains the same
   `flip` user. This is what lets the composes name `/home/flip` literally, and it means a local build is a
@@ -85,18 +86,18 @@ are two different things and conflating them was FLIP#1171.
   group-writable (see `fl-base/Dockerfile`), which is what keeps FLARE's job workspace and torch's cache
   writable for a foreign uid. Production sets no `user:` and runs as `flip` unchanged.
 
-Previously the build args carried the developer's own uid, so images worked for whoever built them and
-crash-looped for everyone else — including on every published image, for any developer not on uid 1000.
 Anywhere one of these containers bind-mounts a host path, that path must still be owned by the uid the
-container runs as, or the entrypoint fails (loudly, since the entrypoint scripts exit non-zero when they
-can't write their generated config). Letting Docker auto-create the bind source leaves it root-owned and
+container runs as, or the container fails (loudly: `fl-client-init`, which renders the client's generated
+config, exits non-zero when it can't write it, and the client refuses to start without it). Letting Docker auto-create the bind source leaves it root-owned and
 silently breaks the container. See the [trust troubleshooting page](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/trust-node-compose.html#ts-compose-images-permission) for the failure mode and
 `trust/deploy/ansible/aws-ec2-host.yml` / `trust/deploy/ansible/onprem.yml` for how the provisioning
 Ansible pre-creates these paths with the right owner.
 
 **Upgrading an existing environment:** hosts that already ran the previous (root) images may have
 root-owned files under the kit's `local/` directory (e.g. `resources.json`, `log_config.json`), written by
-the old containers. The non-root entrypoint can't overwrite those in place — a one-time `chown -R` of the
+the old containers. The non-root `fl-client-init` step (which does every write into the kit's `local/` and `startup/`, which
+the client mounts read-only, FLIP#1570; `transfer/` stays writable, as NVFLARE stages job payloads through
+it) can't overwrite those in place — a one-time `chown -R` of the
 provisioned kit directories to the new container uid is needed before the first non-root run.
 
 ### Container capability hardening
@@ -108,10 +109,11 @@ for root, so a grant there would sit unused in the bounding set (`CapEff` stays 
 kit whose ownership doesn't match is not fixed by a capability either — it is fixed by the `user:` override
 above, which runs the container as the host user that already owns the kit. Production adds nothing back
 either: the provisioning Ansible pre-chowns its kit directory to the container's uid (see
-[`deploy/README.md`](../../deploy/README.md#linux-capability-restrictions)). None of
-this covers the standalone `fl-services/nvflare/compose.dev.yml` dev harness (`make -C fl-services/nvflare up`),
-which remains unhardened — it runs the same non-root image and kit dirs, so it can be hardened the same way
-whenever someone picks it up.
+[`deploy/README.md`](../../deploy/README.md#linux-capability-restrictions)). In the
+standalone `fl-services/nvflare/compose.dev.yml` dev harness (`make -C fl-services/nvflare up`) only
+`fl-client-init` carries these settings (plus `read_only` and no network); the rest of the harness remains
+unhardened — it runs the same non-root image and kit dirs, so it can be hardened the same way whenever someone
+picks it up.
 
 ## Step-by-step provisioning
 
@@ -123,13 +125,17 @@ define the services available within a network. Modify the relevant one if you w
 
 - Incorporate further services (e.g. >2 clients)
 - Modify GPU resources for the services
-- Modify default ports [etc.]
+- Modify default ports
 
-### Net-specific yml file
+### Provisioning one net
 
-You can run `make -C fl-services/nvflare provision NET_NUMBER=${NET_NUMBER}` to create a network: this will create an instance of the
-services defined in `net-${NET_NUMBER}_project_dev.yml`, substituting the naming by `net-${NET_NUMBER}`.
-You can also pass `FL_PORT` if you do not want to use the default (which will be the same for each created net).
+To create network `net-<N>`:
+
+```sh
+make -C fl-services/nvflare provision NET_NUMBER=<N>
+```
+
+This instantiates the services defined in `net-<N>_project_dev.yml`, using `net-<N>` in their names. Pass `FL_PORT` to override the default port, which is otherwise the same for every net.
 
 ### Provisioning command
 
@@ -149,12 +155,7 @@ the repo-root `flip` project has no dependencies. End to end, the target:
    need (e.g. the Admin API's Python files) are copied in from `fl-base` (server + clients) and
    `fl-api-base` (API).
 
-Once your network is provisioned, you can test it works by bringing the net up standalone (no hub/trusts)
-on the local `:dev` images — build them first with `make build-fl` (see [Images](#images-built-in-ci-or-locally-as-dev)):
-
-```sh
-make -C fl-services/nvflare up NET_NUMBER=<NET_NUMBER>
-```
+Once your network is provisioned, test it by bringing it up standalone (no hub/trusts) on the local `:dev` images. Build them first with `make build-fl` (see [Images](#images-built-in-ci-or-locally-as-dev)), then follow [Standalone targets](#standalone-targets).
 
 ### Onboarding a new client onto an existing network
 
@@ -166,8 +167,8 @@ then just **claims the next unclaimed `Trust_N` kit** via `register_trust` on th
 no provisioning step at all, provided the slot name is already in the hub's pool (see
 [Activating the new slot on the hub](#activating-the-new-slot-on-the-hub)).
 
-Don't assume the spare pool exists — nets provisioned before FLIP#626 (including the
-current prod net-1) carry **no** spare slots. Check what is actually in S3 first:
+Don't assume the spare pool exists — nets provisioned before FLIP#626 carry **no** spare slots
+(prod net-1 was one when this was written). Check what is actually in S3 first:
 
 ```sh
 aws s3 ls s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}/net-<N>/services/

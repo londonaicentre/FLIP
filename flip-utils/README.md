@@ -15,18 +15,20 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/flip-utils)](https://pypi.org/project/flip-utils/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Documentation Status](https://readthedocs.org/projects/londonaicentreflip/badge/?version=latest)](https://londonaicentreflip.readthedocs.io/en/latest/)[![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](../LICENSE.md)
+[![Documentation Status](https://readthedocs.org/projects/londonaicentreflip/badge/?version=latest)](https://londonaicentreflip.readthedocs.io/en/latest/)
+[![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](../LICENSE.md)
 
 This directory is a sub-tree of the [FLIP](https://github.com/londonaicentre/FLIP) mono-repo. It hosts the
 pip-installable `flip` Python package (published as `flip-utils` on PyPI) that ships inside every FL server / client
-image and is imported as `from flip import ...` by user-uploaded training code. Sibling FL trees in the same mono-repo:
+image and is imported as `from flip import ...` by user-uploaded training code. The package source is in [`flip/`](./flip/): platform logic, FLARE components, Flower helpers and utilities.
 
-- **[`flip-utils/flip/`](./flip/)** — pip-installable Python package with platform logic, FLARE components, Flower helpers and utilities (this directory)
+Sibling FL trees in the same mono-repo:
+
 - **[`../fl-apps/`](../fl-apps/)** — FL job-type implementations / app templates per backend (`nvflare/{standard,evaluation,fed_opt}`, `flower/{standard,evaluation}`)
 - **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples per backend (`nvflare/`, `flower/`)
 - **[`../fl-services/`](../fl-services/)** — Docker images and network provisioning for FL networks per backend (`nvflare/`, `flower/`); each backend's `Makefile` owns build / provision / up / down / submit
 
-Make targets called out below run from the `flip-utils/` directory unless otherwise noted.
+Commands written `make -C <dir> …` run from the repo root. Plain `make …` commands run from `flip-utils/` unless the section names another directory.
 
 ## Table of Contents
 
@@ -42,6 +44,8 @@ Make targets called out below run from the `flip-utils/` directory unless otherw
 - [FL Services API](#fl-services-api)
   - [Prerequisites](#prerequisites)
   - [Provisioning the 2 Networks](#provisioning-the-2-networks)
+  - [Provisioning Networks for Staging/Production](#provisioning-networks-for-stagingproduction)
+  - [Creating a New Network](#creating-a-new-network)
   - [Running a Network](#running-a-network)
   - [CI/CD](#cicd)
   - [Makefile Reference](#makefile-reference)
@@ -58,10 +62,22 @@ all platform logic core to training and evaluating FL applications.
 ### Installation
 
 ```bash
-uv sync
+uv sync                                   # dev group: both FL backends, for tests and mypy
 # or
-pip install .
+pip install ".[nvflare,full]"             # or ".[flower,full]"
 ```
+
+Each FL backend is an extra, so an install carries only the one it runs (FLIP#1047):
+
+| Extra | Brings | Needed by |
+|-------|--------|-----------|
+| `nvflare` | NVFLARE, and the `kubernetes` client its K8s job launcher imports | `flip.nvflare` |
+| `flower` | flwr | `flip.flower` |
+| `full` | The ML stack (torch, MONAI, …); no FL backend | FL training and evaluation code, `flip.export` |
+
+`import flip` and every module outside `flip.nvflare` / `flip.flower` need neither backend; importing a
+backend package without its extra fails with an `ImportError` naming the extra. A plain `flip-utils`
+install no longer brings NVFLARE: add `[nvflare]` where it used to be relied on.
 
 To build a distributable package:
 
@@ -91,7 +107,7 @@ flip/
 │   ├── runtime.py     # Runtime helpers for FLARE apps
 │   ├── k8s_job_mode.py # Kubernetes job-pod mode for the FLARE client
 │   ├── site_policy.py # Client-side entrypoint (`python -m flip.nvflare.site_policy`):
-│   │                  # renders `local/privacy.json` from FL_SITE_PRIVACY_* env vars at container start
+│   │                  # renders `local/privacy.json` from FL_SITE_PRIVACY_* env vars in the fl-client's init step
 │   ├── server_site_config.py # Server-side entrypoint (`python -m flip.nvflare.server_site_config`):
 │   │                  # registers FLIP's server site components in `local/flip__p_resources.json`
 │   └── metrics.py     # Metrics collection and reporting
@@ -133,8 +149,9 @@ when trust cohort sizes are uneven; expect that rather than treating it as a bug
 
 ### User Application Requirements
 
-The job components dynamically import user-provided files from the job's `custom/`
-directory. On the platform that directory is assembled by the FL API, which merges the
+These are the files a **FLARE** app provides (Flower apps follow
+[`fl-apps/flower/standard/README.md`](../fl-apps/flower/standard/README.md)). The job components dynamically
+import them from the job's `custom/` directory. On the platform that directory is assembled by the FL API, which merges the
 uploaded app files onto the matching `fl-apps/nvflare/<JOB_TYPE>/app` template; in local
 SimEnv runs the tutorial's `job.py` stages its `app_files/` into the job's `custom/`
 directly.
@@ -167,14 +184,17 @@ loss-like metrics, `BEST_MODEL_METRIC_MINIMIZE: true`) wires FLARE's stock
 - The results zip contains the best model only when selection ran and saved one; no best file is
   fabricated from the final model otherwise.
 
-The metric label must be one the trainer reports (e.g. the client-API x-ray tutorial reports
-`VAL_LOSS`, per-lesion `VAL-<METRIC>-<lesion>` and macro `VAL-<METRIC>` labels). Wired for both
-supported paths: the `standard` recipe (`FlipFedAvgRecipe(best_model_metric=...)`) and
-platform-submitted jobs, where fl-api-base's job-assembly step (`prepare_config.validate_config` /
-`configure_server`) reads `BEST_MODEL_METRIC` / `BEST_MODEL_METRIC_MINIMIZE` straight from the
-uploaded `config.json` and injects the same selector. On the platform path, a `config.json` that
-sets `BEST_MODEL_METRIC` without an explicit `GLOBAL_ROUNDS >= 2` is rejected at upload (the
-platform defaults to a single round, where selection could never fire).
+The metric label must be one the trainer reports. For example, the client-API x-ray tutorial reports
+`VAL_LOSS`, per-lesion `VAL-<METRIC>-<lesion>` and macro `VAL-<METRIC>` labels.
+
+Selection works on both supported paths:
+
+- **Recipe:** the `standard` recipe, `FlipFedAvgRecipe(best_model_metric=...)`.
+- **Platform-submitted jobs:** fl-api-base's job-assembly step (`prepare_config.validate_config` /
+  `configure_server`) reads `BEST_MODEL_METRIC` / `BEST_MODEL_METRIC_MINIMIZE` from the uploaded
+  `config.json` and injects the same selector. A `config.json` that sets `BEST_MODEL_METRIC` without an
+  explicit `GLOBAL_ROUNDS >= 2` is rejected at upload, because the platform defaults to a single round,
+  where selection could never fire.
 
 ### Job Types
 
@@ -185,7 +205,7 @@ Pass the job type to the `FLIP()` factory (`FLIP(job_type=...)`). The `JobType` 
 | ------ | ------------- |
 | `standard` | Federated training with FedAvg aggregation (default) |
 | `evaluation` | Distributed model evaluation without training |
-| `fed_opt` | Custom federated optimization |
+| `fed_opt` | Adaptive federated optimisation (FedOpt) |
 
 The FLARE templates under `fl-apps/nvflare/` (`standard`, `evaluation`, `fed_opt`) are all
 Client-API apps with recipe-generated configs. The corresponding configs live
@@ -198,17 +218,10 @@ deploying. The runnable tutorials live in [`../fl-tutorials/`](../fl-tutorials/)
 carries a `.env.app` (`JOB_TYPE`, `DEV_IMAGES_DIR`, `DEV_DATAFRAME`) and a `job.py` that
 drives a FLIP recipe on the FLARE simulator (SimEnv) from the flip-utils venv.
 
-1. Get the tutorial's dataset. Datasets are managed under `fl-tutorials/datasets/` with
-   dedicated Make targets forwarded from `fl-tutorials/`. Only the tutorial-facing ones:
-   `make -C fl-tutorials download-xray-data` (Hugging Face reference dataset, xray_classification),
-   `make -C fl-tutorials download-spleen-data` (spleen segmentation tutorials),
-   `make -C fl-tutorials download-synthea-data` (EHR risk-prediction tutorials),
-   `make -C fl-tutorials download-arkplus-finetuning-data` (Ark+ TRAIN splits, arkplus_fine_tuning),
-   `make -C fl-tutorials download-arkplus-eval-data` (Ark+ HOLD-OUT splits, the two arkplus evaluation
-   tutorials). For spleen and brain_mri the **DICOM sets are regenerated locally** from a public MSD
-   download and are not republished (their converters are deterministic); the **OMOP tables and metadata
-   table are published** to HF and fetched by the `reproduce-<dataset>-omop` chain. See
-   `fl-tutorials/AGENTS.md` and `fl-tutorials/datasets/README.md`.
+1. Get the tutorial's dataset with its `make -C fl-tutorials download-*-data` target, listed in
+   [Running tutorials](#running-tutorials-from-the-repo-root) below and in the tutorial's own README.
+   How each dataset is built and published is in
+   [`fl-tutorials/datasets/README.md`](../fl-tutorials/datasets/README.md).
 
 2. Adapt the tutorial's `app_files/` as needed; on the platform they are merged onto the
    matching `fl-apps/nvflare/<JOB_TYPE>/app` template at submit time.
@@ -264,13 +277,11 @@ Paths below are relative to `../fl-tutorials/` (per-backend subdirectories):
 | flower | `standard` | `flower/tabular_causal_discovery/biomarker_causal_discovery` |
 | flower | `evaluation` | `flower/image_evaluation/3d_spleen_segmentation_evaluation` |
 
-The plain job-type names (`standard`, `evaluation`, `fed_opt`) are the
-Client-API templates — the legacy Executor syntax (`FLIP_TRAINER`-style classes) is retired and
-such apps can no longer run.
+Apps written against the old Executor syntax (`FLIP_TRAINER`-style classes) no longer run; every
+job type uses the Client-API templates.
 
 A latent diffusion model is trained as two `standard` jobs: a `brain_mri_ldm_stage1_autoencoder` run, then a
 separate `brain_mri_ldm_stage2_diffusion` run that takes the resulting autoencoder as a frozen `SERVER_CHECKPOINT`.
-The two-stage `diffusion_model` job type that once did both in one job has been removed.
 
 ---
 
@@ -327,29 +338,18 @@ make down NET_NUMBER=1    # Stop the network — must match the NET_NUMBER used 
                           # (compose embeds it in container names + mount paths)
 ```
 
-### Running the tutorials
-
-Each FLARE tutorial runs on the local simulator via the [`fl-tutorials/`](../fl-tutorials/)
-Makefile. Download the tutorial's dataset first (see its README), then:
-
-```bash
-make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
-make -C fl-tutorials run-all-tutorials
-```
-
 ### CI/CD
 
 GitHub Actions workflows use OIDC to authenticate to AWS (no long-lived keys).
 
-The base FL application templates ([`../fl-apps/`](../fl-apps/)) are **no longer published to S3**. They are
-baked into the flip-api image at build time and read from a local directory (`FL_APP_BASE_DIR`,
-default `/app/fl-apps`); flip-api validates job types and bundles applications straight from that
-tree (FLIP#724). Two CI checks still guard the templates on every PR:
+The FL app templates in [`../fl-apps/`](../fl-apps/) are baked into the flip-api image at build time and
+read from a local directory (`FL_APP_BASE_DIR`, default `/app/fl-apps`). flip-api validates job types and
+bundles applications straight from that tree. Two CI checks guard the templates on every PR:
 
 - `fl-apps-check-required-files.yml` — regenerates each backend's `required_files.json` from the
   per-template arrays and fails if the committed manifest is stale.
-- `fl-apps-check-tutorial-sync.yml` — keeps the Flower tutorials in sync with the `fl-apps/flower/`
-  templates.
+- `fl-apps-check-tutorial-sync.yml` — checks the byte-identical file pairs listed in
+  `scripts/check_tutorial_sync.sh`.
 
 To exercise a PR's templates on a running FLIP stack **before merge**, rebuild the flip-api image
 from the PR branch (the templates ride along in the image) — for local dev the `../fl-apps` bind-mount
@@ -367,14 +367,6 @@ means edits take effect immediately without a rebuild. A new job type needs no S
 | `make build` | `fl-services/nvflare/` | Build the :dev FL images |
 | `make up NET_NUMBER=X` | `fl-services/nvflare/` | Start FL network X |
 | `make down NET_NUMBER=X` | `fl-services/nvflare/` | Stop FL network X (must match the `NET_NUMBER` used at `up`) |
-
-#### Testing
-
-| Command | Description |
-| --------- | ------------- |
-| `make unit-test` | Run ruff (lint + format check), mypy and the pytest unit tests for the flip python package |
-| `make mypy` | Type-check the flip python package only |
-| `make format` / `make format-check` | Apply / check ruff formatting for the flip python package |
 
 #### Running tutorials (from the repo root)
 

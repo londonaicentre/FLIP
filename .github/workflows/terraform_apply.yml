@@ -243,9 +243,8 @@ jobs:
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      # This workflow fires on `deploy/providers/AWS/**`; the image builds fire on
-      # service paths. An infrastructure-only merge therefore publishes no
-      # `sha-<short7>` image at all, and waiting the full budget for one that
+      # Image builds fire only on service paths, so a merge that touches none of
+      # them (infrastructure, docs) publishes no `sha-<short7>` image at all, and waiting the full budget for one that
       # cannot exist burns GHCR_WAIT_SECONDS of idle runner on the commonest kind
       # of apply. The resolver looks for three images (flip-api, fl-server,
       # fl-api), but the two FL ones are published by one workflow and share a
@@ -331,6 +330,8 @@ jobs:
           INTERNAL_SERVICE_KEY_HEADER: ${{ vars.INTERNAL_SERVICE_KEY_HEADER }}
           TRUST_API_KEY_HEADER: ${{ vars.TRUST_API_KEY_HEADER }}
           SES_VERIFIED_EMAIL: ${{ vars.SES_VERIFIED_EMAIL }}
+          SES_SENDER_EMAIL: ${{ vars.SES_SENDER_EMAIL }}
+          COGNITO_EMAIL_VIA_SES: ${{ vars.COGNITO_EMAIL_VIA_SES }}
           ALB_SUBDOMAIN: ${{ vars.ALB_SUBDOMAIN }}
           NLB_SUBDOMAIN: ${{ vars.NLB_SUBDOMAIN }}
           DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}

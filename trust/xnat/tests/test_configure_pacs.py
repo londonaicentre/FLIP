@@ -308,12 +308,13 @@ FLIP_OWNED_RECEIVER = '{"id":3,"aeTitle":"FLIPXNAT","port":8104,"identifier":"dq
 STOCK_RECEIVER = '{"id":1,"aeTitle":"XNAT","port":8104,"identifier":"dicomObjectIdentifier"}'
 # FLIP's receiver exactly as XNAT 1.10.0 returned it on dev trust 1 (GET /xapi/dicomscp, 14 Oct 2026),
 # after an earlier run of this script under the default kit: every field the script sets, plus the
-# ones XNAT adds. A test drifts a copy of it field by field.
+# ones XNAT adds, with the AE title since moved to today's default. A test drifts a copy of it field
+# by field.
 LIVE_RECEIVER = {
-    "label": "XNAT:8104",
+    "label": "FLIP_XNAT:8104",
     "port": 8104,
     "identifier": "dqrObjectIdentifier",
-    "aeTitle": "XNAT",
+    "aeTitle": "FLIP_XNAT",
     "whitelist": [],
     "routingExpressionsEnabled": False,
     "subjectRoutingExpression": "",
@@ -515,10 +516,10 @@ def test_defaults_configure_the_mocked_orthanc(tmp_path):
     assert pacs["queryRetrievePort"] == 4242
 
     receiver = payload_for(payloads, "/xapi/dicomscp")
-    assert receiver["aeTitle"] == "XNAT"
+    assert receiver["aeTitle"] == "FLIP_XNAT"
     assert receiver["port"] == 8104
 
-    assert payload_for(payloads, "/xapi/dqr/settings")["dqrCallingAe"] == "XNAT"
+    assert payload_for(payloads, "/xapi/dqr/settings")["dqrCallingAe"] == "FLIP_XNAT"
 
 
 def test_configured_pacs_and_ae_title_reach_xnat(tmp_path):
@@ -760,7 +761,7 @@ def test_a_renamed_ae_title_updates_flips_receiver_in_place(tmp_path):
     assert code == 0, output
     assert scp_writes(payloads) == [("PUT", f"{SCP}/3")]
     [receiver] = receivers_after(tmp_path)
-    assert (receiver["id"], receiver["aeTitle"], receiver["port"]) == (3, "XNAT", 8104)
+    assert (receiver["id"], receiver["aeTitle"], receiver["port"]) == (3, "FLIP_XNAT", 8104)
 
 
 def test_a_receiver_this_script_does_not_own_survives_the_reconcile(tmp_path):
@@ -854,7 +855,7 @@ def test_a_receiver_that_already_matches_is_not_written(tmp_path):
     assert scp_writes(payloads) == []
     assert listener_restarts(tmp_path) == []
     assert receivers_after(tmp_path) == [LIVE_RECEIVER]
-    assert "'XNAT:8104' (id 2) already matches the kit" in output
+    assert "'FLIP_XNAT:8104' (id 2) already matches the kit" in output
 
 
 def test_routing_expressions_returned_as_null_are_not_drift(tmp_path):
@@ -898,7 +899,7 @@ def test_a_drifted_receiver_is_updated_in_place_under_the_same_id(tmp_path, env,
     [receiver] = receivers_after(tmp_path)
     assert receiver["id"] == 2
     assert (receiver["aeTitle"], receiver["port"]) == (
-        env.get("XNAT_AETITLE", "XNAT"),
+        env.get("XNAT_AETITLE", "FLIP_XNAT"),
         int(env.get("XNAT_PORT", "8104")),
     )
     for field in ("enabled", "customProcessing", "directArchive", "anonymizationEnabled"):
@@ -919,14 +920,14 @@ def test_a_receiver_is_created_only_when_flip_has_none(tmp_path, scp_state):
     assert code == 0, output
     assert scp_writes(payloads) == [("POST", SCP)]
     flip = [r for r in receivers_after(tmp_path) if r["identifier"] == "dqrObjectIdentifier"]
-    assert [(r["aeTitle"], r["port"]) for r in flip] == [("XNAT", 8104)]
+    assert [(r["aeTitle"], r["port"]) for r in flip] == [("FLIP_XNAT", 8104)]
 
 
 def test_first_boot_replaces_the_stock_receiver_rather_than_updating_it(tmp_path):
     """The stock receiver is deleted and FLIP's created, because the POST is the write XNAT validates.
 
-    The delete has to come first: the stock receiver already holds XNAT:8104, and XNAT refuses a
-    second receiver at the same AE title and port.
+    The delete has to come first: under ``XNAT_AETITLE=XNAT`` the stock receiver already holds
+    XNAT:8104, and XNAT refuses a second receiver at the same AE title and port.
     """
     code, payloads, output = run_configure(tmp_path, scp_state=f"[{STOCK_RECEIVER}]")
     assert code == 0, output
@@ -976,9 +977,15 @@ def test_the_deletes_run_before_the_update(tmp_path):
         # A 200 with no body at all reads as no receivers, not as nothing to check.
         ("[]", {"SCP_LISTING_AFTER_WRITE": "EMPTY"}, "0 receivers this script owns are left, not one"),
         # Created, but not with FLIP's identifier: studies would land Unassigned (TROUBLESHOOTING §2.2).
+        # Titled "XNAT", the one title the script still owns a receiver by without that identifier.
         (
             f"[{STOCK_RECEIVER}]",
-            {"SCP_LISTING_AFTER_WRITE": json.dumps([{**LIVE_RECEIVER, "identifier": "dicomObjectIdentifier"}])},
+            {
+                "XNAT_AETITLE": "XNAT",
+                "SCP_LISTING_AFTER_WRITE": json.dumps(
+                    [{**LIVE_RECEIVER, "aeTitle": "XNAT", "identifier": "dicomObjectIdentifier"}]
+                ),
+            },
             "it still differs on identifier",
         ),
         # An update that re-created the receiver under a new id: the churn this step exists to stop.
@@ -1008,7 +1015,7 @@ def test_a_write_the_read_back_does_not_show_fails_the_run(tmp_path, scp_state, 
     """XNAT answering 200 without persisting is how FLIP#822 stayed hidden, and the PUT checks nothing."""
     code, _, output = run_configure(tmp_path, env, scp_state=scp_state)
     assert code == 1, output
-    assert f"did not converge on 'XNAT:8104': {problem}" in output
+    assert f"did not converge on '{env.get('XNAT_AETITLE', 'FLIP_XNAT')}:8104': {problem}" in output
 
 
 def test_a_read_back_that_fails_fails_the_run(tmp_path):

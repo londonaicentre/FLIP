@@ -67,6 +67,10 @@ def _client_container(docs: list[dict]) -> dict:
     return next(c for c in _client(docs)["spec"]["template"]["spec"]["containers"] if c["name"] == "fl-client")
 
 
+def _init_container(docs: list[dict]) -> dict:
+    return next(c for c in _client(docs)["spec"]["template"]["spec"]["initContainers"] if c["name"] == "fl-client-init")
+
+
 def _env(container: dict) -> dict:
     return {e["name"]: e for e in container.get("env", [])}
 
@@ -81,9 +85,9 @@ def test_a_default_install_renders_no_job_pod_machinery():
 
     assert not [n for n in names if n[0] in {"Role", "RoleBinding"} and "fl-client" in n[1]]
     assert not [n for n in names if n[1].endswith(("-parent", "-fl-job-pod-net-1"))]
-    container = _client_container(docs)
-    assert "k8s_job_mode" not in "\n".join(container["command"])
-    assert not [n for n in _env(container) if n.startswith("FL_K8S_")]
+    for container in (_client_container(docs), _init_container(docs)):
+        assert "k8s_job_mode" not in "\n".join(container["command"])
+        assert not [n for n in _env(container) if n.startswith("FL_K8S_")]
 
 
 def test_the_launcher_may_manage_job_pods_and_their_secrets_in_its_namespace_only():
@@ -117,20 +121,25 @@ def test_job_pods_reach_the_parent_through_a_service_that_selects_only_the_paren
     assert 8102 in ports
 
 
-def test_the_client_switches_its_kit_before_nvflare_starts():
+def test_the_init_container_switches_the_kit_before_nvflare_starts():
+    """fl-client-init does the switch, after rendering resources.json; the client, whose kit is read-only
+    (FLIP#1570), refuses to start without the switched kit's study_runtime.yaml."""
     docs = _enabled("--set", f"{JOB_PODS}.maxGpus=2", "--set", f"{JOB_PODS}.pendingTimeout=1200")
-    container = _client_container(docs)
+    container = _init_container(docs)
+    client = _client_container(docs)
 
     script = container["command"][-1]
     switch = script.index(f"python -m flip.nvflare.k8s_job_mode {WORKSPACE}/local")
-    assert switch < script.index(f"cd {WORKSPACE}/startup")
-    assert script.index(f"cp {WORKSPACE}/local/resources.json.default {WORKSPACE}/local/resources.json") < switch
+    assert script.index(f"/app/fl-client-init.sh {WORKSPACE}") < switch
+    assert "k8s_job_mode" not in client["command"][-1]
+    assert "study_runtime.yaml" in client["command"][-1]
+    assert not [n for n in _env(client) if n.startswith("FL_K8S_")], "only the init container reads them"
 
     env = _env(container)
     assert env["FL_K8S_NAMESPACE"]["valueFrom"] == {"fieldRef": {"fieldPath": "metadata.namespace"}}
     assert env["FL_K8S_PARENT_SERVICE"]["value"] == _one(docs, "Service", "-parent")["metadata"]["name"]
     assert env["FL_K8S_PARENT_PORT"]["value"] == "8102"
-    assert env["FL_K8S_JOB_IMAGE"]["value"] == container["image"], "jobs run the image the client runs"
+    assert env["FL_K8S_JOB_IMAGE"]["value"] == client["image"], "jobs run the image the client runs"
     assert env["FL_K8S_MAX_GPUS"]["value"] == "2"
     assert env["FL_K8S_PENDING_TIMEOUT"]["value"] == "1200"
     assert env["FL_K8S_POD_TEMPLATE"]["value"] == "/app/k8s/job-pod.yaml"
@@ -162,9 +171,22 @@ def test_a_job_pod_gets_what_the_client_container_has():
     volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
     assert volumes["images"] == next(v for v in client_spec["volumes"] if v["name"] == "images")
     assert volumes["dshm"]["emptyDir"]["medium"] == "Memory"
-    # A job pod talks to the FL server directly, by the same name the client does.
-    assert pod["spec"]["hostAliases"] == client_spec["hostAliases"]
+    # None by default: both backends dial the hub's public FL name.
+    assert "hostAliases" not in pod["spec"]
+    assert "hostAliases" not in client_spec
     assert pod["spec"]["enableServiceLinks"] is False
+
+
+def test_a_job_pod_resolves_the_fl_server_as_the_client_does():
+    alias = [{"ip": "203.0.113.10", "hostnames": ["fl.example.org"]}]
+    docs = _enabled(
+        "--set",
+        "flClient.hostAliases[0].ip=203.0.113.10",
+        "--set",
+        "flClient.hostAliases[0].hostnames[0]=fl.example.org",
+    )
+    assert _client(docs)["spec"]["template"]["spec"]["hostAliases"] == alias
+    assert _job_pod(docs)["spec"]["hostAliases"] == alias
 
 
 def test_job_pods_take_the_gpu_pool_placement_settings():
@@ -247,6 +269,11 @@ def test_the_parent_keeps_its_workspace_off_the_image_directory():
     for sub in ("local", "startup", "transfer"):
         assert mounts[f"{WORKSPACE}/{sub}"]["subPath"] == sub
         assert f"/app/{sub}" not in mounts
+    # The switch resolves the workspace from local/'s parent, so the init container mounts the kit there too.
+    init_mounts = {m["mountPath"]: m for m in _init_container(docs)["volumeMounts"]}
+    for sub in ("local", "startup"):
+        assert mounts[f"{WORKSPACE}/{sub}"].get("readOnly") is True
+        assert init_mounts[f"{WORKSPACE}/{sub}"]["subPath"] == sub
     volumes = {v["name"]: v for v in _client(docs)["spec"]["template"]["spec"]["volumes"]}
     workspace = volumes[mounts[WORKSPACE]["name"]]
     assert "emptyDir" in workspace, "the workspace root must be writable for per-job directories"

@@ -36,10 +36,8 @@ For a node on a Trust's own host see :doc:`deploy-flip-node-on-prem`; on Azure,
 Architecture
 ************
 
-The diagrams are generated when this documentation is built, by a script kept next to the Terraform
-(``trust/deploy/terraform/aws/ec2/architecture/``). A test in that tree pins every drawn node to a resource
-in the ``.tf`` files, and every load-bearing resource to a drawn node. Dashed boxes are optional: the own-VPC
-network mode, the SSM endpoints, the stop/start schedule and the S3 kit read.
+The diagrams are generated from the Terraform in ``trust/deploy/terraform/aws/ec2``, so they match what it deploys.
+Dashed boxes are optional: the own-VPC network mode, the SSM endpoints, the stop/start schedule and the S3 kit read.
 
 .. figure:: ../assets/generated/trust-node-aws-ec2-network.png
    :align: center
@@ -115,11 +113,13 @@ firewall narrows that to these names.
    * - AWS: SSM (``ssm``, ``ssmmessages``, ``ec2messages``), CloudWatch, and S3 in the node's region
      - 443
      - access, logs and metrics; the CloudWatch agent package at provisioning; the kit and vocabulary
-       when they come from a bucket. On a subnet with no internet route to SSM, set ``SSM_ENDPOINTS=true``
-       for interface endpoints (~$24/month per AZ). They cover Session Manager only: CloudWatch, S3 and every
-       other row here still need the site's own route
+       when they come from a bucket
 
-Neither row has been measured behind a firewall yet.
+On a subnet with no internet route to SSM, set ``SSM_ENDPOINTS=true`` to create interface endpoints
+(~$24/month per AZ). They cover Session Manager only: CloudWatch, S3 and every other destination above still
+need the site's own route.
+
+Neither of the two rows in the table has been measured behind a firewall yet.
 
 **What the instance role may do**: open Session Manager sessions (no ``ssm:GetParameter``, so it cannot
 read parameters in its account), ship logs and metrics to CloudWatch, and, only when ``KIT_BUCKET`` is
@@ -186,9 +186,13 @@ Build the node and join
 The FL kit arrives out of band with the kit file. ``KIT_SRC`` is the slot's own kit, as the Kubernetes
 chart takes it: ``local/``, ``startup/`` and ``transfer/`` for FLARE, ``certificates/`` and ``keys/`` for
 Flower. ``stage-kit`` refuses a FLARE kit that names another slot. Without a ``KIT_BUCKET`` the seed
-loads no OMOP vocabulary, so cohort queries use the vocabulary-free form. Check the node joined from the hub's *Trusts* page (the trust is
-online) and from the trust: ``make shell`` and ``curl -s localhost:<TRUST_API_PORT>/health`` reports
-``hub_key_match: true``.
+loads no OMOP vocabulary, so cohort queries use the vocabulary-free form.
+
+To check the node has joined:
+
+1. On the hub's *Trusts* page, the trust shows as online.
+2. On the node, the trust-api health check reports ``hub_key_match: true``. Open a shell with ``make shell``, then
+   run ``curl -s localhost:<TRUST_API_PORT>/health`` in it.
 
 Before ``deploy``:
 
@@ -217,16 +221,16 @@ Operate and remove
   live node.
 - ``make stage-kit`` re-stages the FL kit after a re-registration; ``make seed`` re-seeds after a data
   version bump (the stack must be stopped).
-- ``make destroy KIT=… HUB=…`` removes the node with its root volume, and so the trust's data, and in
-  own-VPC mode its network. It names the target account and asks for a typed yes first. Deregister the
-  trust on the hub first.
+- To remove the node, first deregister the trust on the hub, then run ``make destroy KIT=… HUB=…``. It
+  removes the node with its root volume, and so the trust's data, and in own-VPC mode its network. It names
+  the target account and asks for a typed yes first.
 
-*************
-Not yet here
-*************
+*****************
+Not yet supported
+*****************
 
 - **The node self-test before join** (``selftest_node.sh`` over SSM, as the Azure node runs it through Run
-  Command) and **the running-stack check after join** (FLIP#1449) are not wired to this root yet.
-- **GPU hosts**: ``flip_gpu_host`` holds the NVIDIA driver and checks a container sees the GPU (it does
-  nothing on a CPU host), but ``make deploy`` still starts the FL client CPU-only. Untested until the
-  account has G-instance quota.
+  Command) and **the running-stack check after join** (FLIP#1449) are not yet available for EC2 nodes.
+- **GPU hosts**: provisioning installs the NVIDIA driver and checks a container can see the GPU (the
+  ``flip_gpu_host`` role; it does nothing on a CPU host), but ``make deploy`` still starts the FL client
+  CPU-only. GPU instances have not been tested.

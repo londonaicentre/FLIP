@@ -60,9 +60,11 @@ _ALLOWED_TABLE_FUNCTIONS = frozenset({"generate_series", "unnest"})
 # appears unless it is on this allowlist. This stays an allowlist for the same reason the table one
 # does; the table functions are a subset (they are also legitimate in a lateral or scalar
 # position), and ``age`` is included because deriving patient age is an ordinary cohort filter and
-# sqlglot happens to leave it Anonymous. Every real cohort query in the tutorials uses only typed
-# nodes, so the false-positive surface is small.
-_ALLOWED_FUNCTIONS = _ALLOWED_TABLE_FUNCTIONS | frozenset({"age"})
+# sqlglot happens to leave it Anonymous. ``make_date`` joins it because OMOP stores date of birth as
+# year/month/day columns, so it is how an exact birth date or age is derived; like ``age`` it is a
+# pure constructor. Every real cohort query in the tutorials uses only typed nodes, so the
+# false-positive surface is small.
+_ALLOWED_FUNCTIONS = _ALLOWED_TABLE_FUNCTIONS | frozenset({"age", "make_date"})
 
 # Cheapest possible "is the vocabulary there?" test: an existence probe, not a count. On a
 # loaded trust concept_ancestor holds ~33M rows, so COUNT(*) would be a seq scan on the very
@@ -748,8 +750,6 @@ def get_sex_distribution(df: pd.DataFrame) -> dict:
 def get_age_distribution(df: pd.DataFrame) -> dict:
     """
     Returns the distribution of ages in the DataFrame.
-
-    Assumes the DataFrame has accesion_id, query the table to get the age distribution.
 
     Args:
         df (pd.DataFrame): The cohort DataFrame. Must include a ``person_id`` column; otherwise an

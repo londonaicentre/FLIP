@@ -76,6 +76,13 @@ spec:
         - name: postgres
           image: "{{ .Values.xnat.db.image.repository }}:{{ include "flip-trust.imageTag" (dict "pin" .Values.xnat.image.pin "global" .Values.global.image.tag "own" .Values.xnat.db.image.tag) }}"
           imagePullPolicy: {{ .Values.xnat.db.image.pullPolicy }}
+          # As Compose's xnat-db command (FLIP#662); args keep the image's guard entrypoint.
+          args:
+            - postgres
+            - -c
+            - max_connections={{ .Values.xnat.db.maxConnections }}
+            - -c
+            - shared_buffers={{ .Values.xnat.db.sharedBuffers }}
           ports:
             - name: postgres
               containerPort: 5432

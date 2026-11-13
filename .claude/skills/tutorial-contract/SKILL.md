@@ -78,7 +78,7 @@ comments in the copied structural files — each explains a trap that has bitten
 ## 3. NVFLARE: the file set and its traps
 
 A loose directory of scripts, not a Python project; it runs in the **flip-utils venv** (`uv run
---project flip-utils --extra full`, the package set the FL image installs) and copies nothing from
+--project flip-utils --extra nvflare --extra full`, the package set the FL image installs) and copies nothing from
 `fl-apps/nvflare/`: `job.py` regenerates the server/client configs from the same recipe class.
 
 Layout `fl-tutorials/nvflare/<category>/<name>/`. Discovery is `$(wildcard */*/.env.app)`: a

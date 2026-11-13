@@ -43,6 +43,8 @@ services:
       - XNAT_HOME=${XNAT_HOME}
       - XNAT_ROOT=${XNAT_ROOT}
       - XNAT_EMAIL=${XNAT_EMAIL}
+      # The zone DQR reads the PACS availability window in (FLIP#1880); set in trust/xnat/.env.
+      - TZ=${XNAT_TZ}
       # Site branding for the enclave XNAT login page. TRUST_NAME comes from the trust kit
       # (exported by trust/xnat/Makefile); configure-xnat.sh turns it into the site description
       # ("Welcome to FLIP's XNAT at <trust>"). XNAT_SITE_DESCRIPTION overrides the whole string.
@@ -54,7 +56,7 @@ services:
       - XNAT_SERVICE_USER=${XNAT_SERVICE_USER}
       - XNAT_SERVICE_PASSWORD=${XNAT_SERVICE_PASSWORD}
       - XNAT_PORT=${XNAT_PORT}
-      - XNAT_AETITLE=${XNAT_AETITLE-XNAT}
+      - XNAT_AETITLE=${XNAT_AETITLE-FLIP_XNAT}
       # Upstream PACS, read by configure-xnat.sh. Defaults are the mocked Orthanc, so an
       # unconfigured stack behaves exactly as before; a real trust sets these in its kit file.
       # ${VAR-default}, not ${VAR:-default}: compose substitutes the default for a set-but-empty

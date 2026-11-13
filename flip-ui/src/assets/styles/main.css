@@ -156,7 +156,7 @@
     }
 
     tbody td {
-        @apply px-4 py-2 first:font-semibold first:text-gray-700 text-gray-500 dark:first:text-gray-300 text-sm border-r border-gray-200 dark:border-gray-700;
+        @apply px-4 py-2 first:font-semibold first:text-gray-700 text-gray-500 dark:text-gray-300 text-sm border-r border-gray-200 dark:border-gray-700;
     }
 }
 

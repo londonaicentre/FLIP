@@ -16,45 +16,18 @@
 
 import { ISnackbar, notify } from "@/components/AiSnackbar/notify";
 
+// The four variants differ only in their default type and timeout; a caller's own `type` still wins.
+const notifier = (type: ISnackbar["type"], defaultTimeout: number) =>
+    (snackbar: ISnackbar, timeout = defaultTimeout): void =>
+        notify({
+            group: "top-right",
+            type,
+            ...snackbar
+        }, timeout);
+
 export const Snackbar = {
-    show: (snackbar: ISnackbar, timeout = 6_000): void => {
-
-        const notification: ISnackbar = {
-            group: "top-right",
-            type: "info",
-            ...snackbar
-        };
-
-        notify(notification, timeout);
-    },
-    error: (snackbar: ISnackbar, timeout = 12_000): void => {
-
-        const notification: ISnackbar = {
-            group: "top-right",
-            type: "error",
-            ...snackbar
-        };
-
-        notify(notification, timeout);
-    },
-    success: (snackbar: ISnackbar, timeout = 6_000): void => {
-
-        const notification: ISnackbar = {
-            group: "top-right",
-            type: "success",
-            ...snackbar
-        };
-
-        notify(notification, timeout);
-    },
-    warning: (snackbar: ISnackbar, timeout = 6_000): void => {
-
-        const notification: ISnackbar = {
-            group: "top-right",
-            type: "warning",
-            ...snackbar
-        };
-
-        notify(notification, timeout);
-    }
+    show: notifier("info", 6_000),
+    error: notifier("error", 12_000),
+    success: notifier("success", 6_000),
+    warning: notifier("warning", 6_000)
 };

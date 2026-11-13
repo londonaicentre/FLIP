@@ -196,6 +196,15 @@ def is_filled(value: str | None) -> bool:
     return bool(value) and "<run-make-" not in value
 
 
+def is_deployed_kit(kit_path: str) -> bool:
+    """Whether a kit path names a deployed site (``.stag`` / ``.prod``) rather than a dev kit.
+
+    A deployed kit publishes real services and holds real credentials, so some checks escalate
+    from WARN to FAIL for it.
+    """
+    return kit_path.rsplit(".", 1)[-1] in ("stag", "prod")
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Environment probes (independent of kit file)
 # ─────────────────────────────────────────────────────────────────────
@@ -312,7 +321,13 @@ def check_kit_file(kit: str, kit_file: Path, kit_path: str | None = None) -> Che
 def check_hub_shared(kit_vars: dict[str, str], kit_present: bool) -> Check:
     if not kit_present:
         return Check("Hub-shared block (10 keys)", Status.PENDING, "pending — needs kit file")
-    missing = [k for k in HUB_SHARED_KEYS if not is_filled(kit_vars.get(k))]
+    # The other backend's kit date may be empty (FLIP#1476): an NVFLARE hub has no FLOWER_KIT_DATE.
+    other_kit_date = {"nvflare": "FLOWER_KIT_DATE", "flower": "FLARE_KIT_DATE"}.get(kit_vars.get("FL_BACKEND", ""))
+    missing = [
+        k
+        for k in HUB_SHARED_KEYS
+        if not is_filled(kit_vars.get(k)) and not (k == other_kit_date and not kit_vars.get(k))
+    ]
     if not missing:
         hub_url = kit_vars.get("CENTRAL_HUB_API_URL", "").removesuffix("/api")
         return Check(
@@ -1015,7 +1030,7 @@ def check_unrotated_passwords(
     ]
     if not unchanged:
         return Check("Trust-local passwords", Status.PASS, "all rotated from template defaults")
-    deployed = kit_path.rsplit(".", 1)[-1] in ("stag", "prod")
+    deployed = is_deployed_kit(kit_path)
     return Check(
         "Trust-local passwords",
         Status.FAIL if deployed else Status.WARN,
@@ -1024,6 +1039,36 @@ def check_unrotated_passwords(
             f"Unchanged: {', '.join(unchanged)}",
             f"Edit {kit_path} → Trust-local credentials section and replace each with a",
             "  random secret (`make new-trust` mints them for a fresh kit).",
+        ],
+    )
+
+
+def check_log_level(kit_vars: dict[str, str], kit_present: bool, kit_path: str) -> Check:
+    """Refuse a deployed kit left at ``TRUST_LOG_LEVEL=DEBUG`` (FLIP-SR-050).
+
+    At DEBUG the trust APIs log request headers and bodies into Loki, which runs with auth
+    disabled, shares the trust network with the FL client, and keeps 30 days of history — so the
+    trust's hub API key, internal key and cohort-admin proof land where researcher FL code can read
+    them. On a `.stag` / `.prod` kit that is a FAIL; on a development kit it is a WARN (mock data,
+    throwaway credentials).
+    """
+    label = "Trust log level"
+    if not kit_present:
+        return Check(label, Status.PENDING, "pending — needs kit file")
+    level = (kit_vars.get("TRUST_LOG_LEVEL") or "").strip().upper()
+    if level and level != "DEBUG":
+        return Check(label, Status.PASS, f"TRUST_LOG_LEVEL={level}")
+    if not level:
+        # Unset falls back to each service's own default; name it rather than assume.
+        return Check(label, Status.WARN, "TRUST_LOG_LEVEL unset — set it to INFO explicitly")
+    deployed = is_deployed_kit(kit_path)
+    return Check(
+        label,
+        Status.FAIL if deployed else Status.WARN,
+        "TRUST_LOG_LEVEL=DEBUG logs trust credentials into Loki (FLIP-SR-050)",
+        hints=[
+            f"Edit {kit_path} → set TRUST_LOG_LEVEL=INFO, then recreate the trust APIs.",
+            "A site that already ran at DEBUG should rotate both trust keys.",
         ],
     )
 
@@ -1277,6 +1322,7 @@ def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None) -> list[
         check_site_privacy_policy(kit_vars, kit_present, kit, repo_root, kit_path),
         check_governance_document(kit_vars, kit_present, kit, repo_root, kit_file),
         check_unrotated_passwords(kit_vars, kit_present, repo_root, kit, kit_path),
+        check_log_level(kit_vars, kit_present, kit_path),
         check_sample_data(kit_vars, kit_present, kit_path),
         check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, kit_present, repo_root),
         check_data_dir("Orthanc storage dir", "ORTHANC_STORAGE_DIR", kit_vars, kit_present, repo_root),
