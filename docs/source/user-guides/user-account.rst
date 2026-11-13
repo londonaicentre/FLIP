@@ -35,7 +35,7 @@ You can ask for an account from the login page. You do not need an account to se
 
 An administrator reviews the request in the Admin Area and either enrols you, choosing your role, or dismisses the
 request (see :ref:`admin-project-and-user-management`). Your request is saved even if the notification email to the
-administrators fails, so it is not lost.
+administrators fails.
 
 When you are enrolled, FLIP emails you a one-time password for your :ref:`initial-login`.
 
@@ -83,8 +83,9 @@ Initial login
 
 .. _flip-login:
 
+**********
 Signing in
-==========
+**********
 
 On later visits, sign in with your email address and password, then enter the current 6-digit code from your
 authenticator app. You land on the Projects page.
@@ -115,8 +116,8 @@ Forgot password
 
 .. note::
 
-   Your local FLIP system administrator can also start the reset for you. You then receive the confirmation code by
-   email without asking for one: click **I have a code** instead of **Request Code** in step 3.
+   Your local FLIP system administrator can also start the reset for you. The confirmation code is then emailed to you
+   automatically: at step 3, click **I have a code** instead of **Request Code**.
 
 .. _change-password:
 

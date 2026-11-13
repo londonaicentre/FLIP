@@ -8,7 +8,8 @@ Data Enrichment
    :class: note
 
    You need to be signed in to FLIP, be a member of the project, and have access to the :term:`XNAT` instance at each
-   participating Trust (see :ref:`receiving-xnat-credentials`).
+   participating Trust (see :ref:`receiving-xnat-credentials`). Images must already have been pulled and converted at
+   each Trust (see :ref:`enrichment-when`).
 
 *Data enrichment* is where you add whatever your app needs on top of the images FLIP has pulled into each Trust's XNAT
 — segmentation masks, ROI annotations, contours. Trust :term:`PACS` supply images only, so anything else has to be added
@@ -75,8 +76,9 @@ Run enrichment only **after both of these have finished** at each Trust:
 
 .. important::
 
-   Running too early is the most common mistake, and it fails quietly: the upload reports that it skipped every scan.
-   Wait for conversion to finish, then run it again.
+   Running too early is the most common mistake: nothing is uploaded, and every scan is reported as
+   *skipped (no image in resource)*. A dry run (:ref:`enrichment-scripted`, step 4) shows this without changing
+   anything. Wait for conversion to finish, then run it again.
 
 .. _enrichment-contract:
 
@@ -142,7 +144,7 @@ ask it to.
 Relative paths are resolved from the manifest's own folder. An optional third column, ``target_filename``, overrides
 the derived name.
 
-**Step 3 — Provide your XNAT credentials**, as environment variables or as a JSON file (``--credentials-file``):
+**Step 3 — Provide your XNAT credentials**, as environment variables:
 
 .. code-block:: shell
 
@@ -150,13 +152,21 @@ the derived name.
    export XNAT_USER=your-username
    export XNAT_PASS=your-password
 
+or as a JSON file passed with ``--credentials-file`` (one file per Trust):
+
+.. code-block:: json
+
+   {"server": "https://xnat.trust.example", "user": "your-username", "password": "your-password"}
+
 .. note::
 
    These are **your own** XNAT login, not a deployment secret. Use a personal account where you have one, so uploads
-   are audited under your name; the ``XNAT_SERVICE_USER`` account belongs to FLIP's imaging service. If you administer
-   the Trust and read values from its kit file (``trust/.env.<CODE>.<env>``), ``XNAT_URL`` maps to ``XNAT_HOST``,
-   ``XNAT_ADMIN_USER`` to ``XNAT_USER`` and ``XNAT_ADMIN_PASSWORD`` to ``XNAT_PASS``. The same variables are set inside
-   XNAT Container Service jobs, so the command also runs unchanged as a container job.
+   are audited under your name. The ``XNAT_SERVICE_USER`` account belongs to FLIP's imaging service.
+
+   - **Trust administrators** reading values from the Trust's kit file (``trust/.env.<CODE>.<env>``): ``XNAT_URL``
+     maps to ``XNAT_HOST``, ``XNAT_ADMIN_USER`` to ``XNAT_USER`` and ``XNAT_ADMIN_PASSWORD`` to ``XNAT_PASS``.
+   - **XNAT Container Service jobs** already have these variables set, so the command runs unchanged as a container
+     job.
 
 **Step 4 — Do a dry run.** It reports exactly what a real run would do, and is the quickest way to catch an upload that
 is too early or aimed at the wrong place:
@@ -226,7 +236,8 @@ Worked example: spleen labels
 *******************************
 
 The spleen segmentation tutorials ship a runnable version of this workflow. It downloads the public MSD spleen dataset,
-pairs each label with its accession and uploads them. On the dev stack:
+pairs each label with its accession and uploads them. It runs against a local development stack (see
+:doc:`../deploy-flip/deploy-local-dev`), not a live Trust:
 
 .. code-block:: shell
 
@@ -236,8 +247,8 @@ pairs each label with its accession and uploads them. On the dev stack:
 
 Remove ``DRY_RUN=1`` to do the upload. Things to know:
 
-- **Both Trusts in one run.** The two URLs are the dev XNATs, GSTT on 8105 and KCH on 8107. These are the XNAT web
-  ports; 8104 and 8106 are DICOM receiver ports and will not answer.
+- **Both Trusts in one run.** The two URLs are the dev XNATs' web ports: GSTT on 8105 and KCH on 8107. (8104 and 8106
+  are their DICOM receiver ports and will not answer.)
 - **Per-Trust logins**: pass ``XNAT_CREDENTIALS_FILES`` instead of ``XNAT_URLS``.
 - **Download all 41 cases.** The label mapping covers 41 accessions; a smaller download enriches only part of the
   cohort, and the command warns you.
@@ -245,7 +256,9 @@ Remove ``DRY_RUN=1`` to do the upload. Things to know:
   ``2`` is KCH). This numbering is the OMOP data partition, unrelated to the ``Trust_N`` FL kit slot names the hub
   assigns at registration.
 
-See the tutorial READMEs under ``fl-tutorials/`` for the full walkthrough.
+See the spleen segmentation tutorial READMEs
+(:gh:`fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/README.md`,
+:gh:`fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/README.md`) for the full walkthrough.
 
 .. _enrichment-draw-labels:
 
@@ -277,7 +290,7 @@ data is ready; the platform cannot check it for you.
 
 .. note::
 
-   You must confirm the data enrichment step is complete **even if no enrichment was required** and none was performed.
+   Confirm this step **even if no enrichment was required** (see :ref:`enrichment-do-i-need-it`).
 
 .. _enrichment-troubleshooting:
 
