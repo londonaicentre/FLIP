@@ -960,6 +960,8 @@ def test_a_trust_on_any_slot_gets_its_own_network(tmp_path: Path) -> None:
         line for line in (REPO_ROOT / "trust" / "Makefile").read_text().splitlines() if line.startswith("up-trust:")
     )
     assert "create-trust-network" in up_trust.split(":", 1)[1], "up-trust must create its network before compose"
+    ec2_recipe = (REPO_ROOT / "trust" / "Makefile").read_text().split("\nup-trust-ec2:", 1)[1].split("\n\n", 1)[0]
+    assert "create-trust-network" in ec2_recipe.split(" up -d", 1)[0], "so must up-trust-ec2 (FLIP#1277)"
 
 
 def test_recreate_networks_brings_back_the_slot_network(tmp_path: Path) -> None:

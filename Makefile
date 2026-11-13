@@ -270,8 +270,6 @@ up-trusts: create-networks
 	@echo "✅ Trust services started successfully!"
 
 up-trust-ec2: create-networks
-	@echo "Hey! HUB="$(HUB)
-	@echo "Hey! UI_PORT="$(UI_PORT)
 	@echo "🚢 Starting Trust services..."
 	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=$(KIT) HUB=${HUB}
 	@echo "✅ Trust services started successfully!"
