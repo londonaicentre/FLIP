@@ -13,17 +13,18 @@ limitations under the License.
 
 # fl-tutorials tests
 
-CPU-only pytest suites over `fl-tutorials/`: the tutorial apps' transform chains plus a static
-drift guard on the Flower apps' `min_clients` wiring (which also covers `fl-apps/flower/`, the
-templates that actually deploy), the EHR risk-prediction tutorial's shared feature engineering +
-model contract (`test_ehr_feature_engineering.py` — that app reads no DICOM, so it is deliberately
-absent from `DICOM_APPS`), and a second, dataset-tooling suite over `datasets/**`. No GPU,
-no dataset download, no FL image, no network — fixtures are synthesised in-process (synthetic
-DICOMs, NIfTI volumes and dataframes, or for the dataset-tooling tests, small in-memory DICOM/CSV
-fixtures).
+Two CPU-only pytest suites over `fl-tutorials/`:
+
+- **Tutorial-app suite** (`tests/`, minus `tests/datasets/`):
+  - the tutorial apps' transform chains;
+  - a static drift guard on the Flower apps' `min_clients` wiring, which also covers `fl-apps/flower/`, the templates that actually deploy;
+  - the EHR risk-prediction tutorial's shared feature engineering and model contract (`test_ehr_feature_engineering.py`). That app reads no DICOM, so it is deliberately absent from `DICOM_APPS`.
+- **Dataset-tooling suite** (`tests/datasets/`) over `datasets/**`.
+
+Neither suite needs a GPU, a dataset download, an FL image or the network. Fixtures are synthesised in-process: synthetic DICOMs, NIfTI volumes and dataframes, or, for the dataset-tooling tests, small in-memory DICOM/CSV fixtures.
 
 ```bash
-make -C fl-tutorials test              # ruff over fl-tutorials/ + both suites below
+make -C fl-tutorials test              # ruff over fl-tutorials/ + both suites
 make -C fl-tutorials pytest            # tutorial-app suite only (tests/, minus tests/datasets/)
 make -C fl-tutorials pytest-datasets   # dataset-tooling suites only (tests/datasets/, one env per dataset)
 make -C fl-tutorials lint              # ruff only
@@ -70,8 +71,8 @@ the apps import.
 The X-ray `app/test_task.py` (Flower) and `app_files/test_trainer.py` (NVFLARE) share
 `xray_batch_contract.py`. A tiny CPU model exercises all five train/validation/test paths with
 masked labels and NaN/infinite losses, then checks that a partially supervised batch still
-updates weights and contributes metrics. These tests call the real shared batch guard and
-also preserve the existing empty-metric behavior when every batch is skipped.
+updates weights and contributes metrics. These tests call the real shared batch guard. They
+also check that when every batch is skipped, the metrics stay empty.
 
 **Two kinds of environment, split at `tests/datasets/`.** Everything else under `tests/` covers
 the tutorial apps themselves and runs in flip-utils' environment (`flip-utils[nvflare,flower,full]` — monai,
@@ -88,11 +89,11 @@ what that dataset's tooling actually needs. `make -C fl-tutorials pytest-dataset
 The split is not just tidiness: it is the only thing in CI that checks a dataset's
 `pyproject.toml` declares what its code actually imports. A dataset's tests import its converter,
 which imports the shared contract in `datasets/utils/`, so an undeclared transitive dependency
-fails that dataset's own run. It earned that immediately — adding `datasets/cxr` surfaced a
-missing `requests`, imported at module scope by `omop_schemas.py`. (Verified rather than assumed:
-deleting `requests` from `datasets/cxr/pyproject.toml` against a clean venv errors all 13 cxr
-tests. Note a *stale* venv hides this — `uv run` does not prune an already-installed package, so
-re-test with `rm -rf datasets/<name>/.venv` first.)
+fails that dataset's own run. (Adding `datasets/cxr` surfaced exactly this: a missing `requests`,
+imported at module scope by `omop_schemas.py`.)
+
+**A stale venv hides a missing dependency.** `uv run` does not prune an already-installed package,
+so when you check a dataset's declared dependencies, start with `rm -rf datasets/<name>/.venv`.
 
 `tests/datasets/utils/` — the shared contract itself — runs **once**, in the first listed
 project's environment (`DATASET_UTILS_PROJECT`). Any dataset environment can host it, and
@@ -105,7 +106,7 @@ imports monai and pydicom at module scope to build the tutorial-app fixtures, an
 every conftest between rootdir and the collected tests — so without the second inifile, a dataset
 project that does not declare monai fails during *collection*, before running a single test.
 
-## Why this exists
+## Why the DICOM orientation checks exist
 
 A preprocessing defect fed the Ark+ foundation model **sideways** radiographs. It survived three
 apps and two attempted fixes (`Rotate90d`, then `Flipd` — neither of which can undo a transpose),
@@ -129,9 +130,12 @@ here: the per-tutorial `uv` environments are the wrong target (`arkplus_fine_tun
 does not even declare `monai`, so that environment cannot import its own `data_utils.py`), and one
 shared environment close to the runtime is cheaper.
 
-Every app on the MONAI `LoadImaged` DICOM path is covered, both backends — the five entries in
+## What the tutorial-app tests assert
+
+Every app on the MONAI `LoadImaged` DICOM path is covered, on both backends: the six entries in
 `DICOM_APPS` (`tutorial_apps.py`). Each app's chain is fetched from the app's own factory, not
-reconstructed here, so the test asserts on the shipped code.
+reconstructed here, so the test asserts on the shipped code. The table also covers the Flower
+`min_clients` and template-parity guards, `sim-tutorial.sh`, and the app and config guards.
 
 | Test | Asserts |
 | --- | --- |
@@ -192,7 +196,7 @@ the standalone prostate inference script is deliberately excluded. See the modul
 
 `test_spleen_inference_config_parity.py` pins the spleen tutorial's exported
 `export/inference.json` preprocessing to `app_files/transforms.py::get_val_transforms()`. That
-drift shipped once already (fixed in e4981613): the bundle resampled before windowing and dropped
+drift shipped once already (fixed in commit e4981613): the bundle resampled before windowing and dropped
 `CropForegroundd`, so a MAP built from it fed the model a field of view it never saw in training —
 quietly worse on five of six MSD cases, invisible without ground truth. The bundle is the
 deliberate image-only projection of the training chain, so the comparison normalises exactly three
@@ -201,7 +205,7 @@ strict about everything else: transform order by class name, declared parameter 
 with the load-bearing values (pixdim, the CT window, RAS, `allow_smaller`) pinned literally on
 both sides so even a consistent retune stops there. The bundle side is read as plain JSON, never
 instantiated via `monai.bundle`, so the check stays hermetic. This is a config-parity check, not a
-`DICOM_APPS` entry — the paragraph below still applies.
+`DICOM_APPS` entry, so the limits in [What it does **not** cover](#what-it-does-not-cover) still apply.
 
 ## What it does **not** cover
 
@@ -218,7 +222,7 @@ contract, and should not be mistaken for it. Untested here:
 - End-to-end training behaviour, which stays with the GPU simulator harness
   (`make -C fl-tutorials run-tutorial`).
 
-The spleen and brain MRI tutorials have their own NIfTI orientation checks above. They stay
+The spleen, prostate and brain MRI tutorials have their own checks in [NIfTI orientation](#nifti-orientation). They stay
 outside `DICOM_APPS`: the 2-D DICOM reader correction does not apply to their 3-D
 `Orientationd`/`Spacingd` path.
 

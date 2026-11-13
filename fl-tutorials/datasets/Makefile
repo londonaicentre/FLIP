@@ -205,12 +205,14 @@ partition-prostate-data:
 # image — plus dataframe.csv with query.sql's columns, written straight from the .mha download (no
 # dcm2niix, no Docker). Downloads PROSTATE_LOCAL_FOLDS first (fold 0 = 300 studies, 5 GB) and takes
 # the first NUM_CASES complete studies. PROSTATE_SITE_TREE=<dir> also lays the same files out per
-# contributing centre in the PicaiDataset layout `make plan` reads.
+# contributing centre in the PicaiDataset layout `make plan` reads; a relative path is taken from
+# fl-tutorials/, like DATA_DIR, wherever make was called from.
 PROSTATE_LOCAL_FOLDS ?= 0
+PROSTATE_SITE_TREE_ABS = $(abspath $(if $(filter /%,$(PROSTATE_SITE_TREE)),,../)$(PROSTATE_SITE_TREE))
 prepare-prostate-local-data:
 	@$(MAKE) --no-print-directory download-prostate-data FOLDS="$(PROSTATE_LOCAL_FOLDS)"
 	@PYTHONPATH=. $(PROSTATE_UV) python prostate/prepare_prostate_local_data.py --data-dir $(abspath $(DATA_DIR))/prostate \
-		$(if $(NUM_CASES),--num-cases $(NUM_CASES)) $(if $(PROSTATE_SITE_TREE),--site-tree $(abspath $(PROSTATE_SITE_TREE)))
+		$(if $(NUM_CASES),--num-cases $(NUM_CASES)) $(if $(PROSTATE_SITE_TREE),--site-tree $(PROSTATE_SITE_TREE_ABS))
 	@echo "✅ prostate simulator data ready — make -C fl-tutorials sim-tutorial TUTORIAL=3d_prostate_segmentation FL_BACKEND=flower"
 
 # Data enrichment for a real FLIP project: both picai_labels masks (whole gland -> label_*, zonal

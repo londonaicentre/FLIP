@@ -5,10 +5,6 @@ This tutorial trains a 3D UNet spleen segmentation model on CT scans from the
 (`nvflare.client`). The job is defined entirely in Python via `FlipFedAvgRecipe` — no hand-written
 JSON configs required.
 
-It replaced the retired Executor-API tutorial of the same name (removed along with the other
-legacy-syntax FLARE tutorials); unlike that legacy flow there is no separate `validator.py` —
-validation runs server-side via global model evaluation.
-
 The training code is adapted from the MONAI spleen example:
 <https://github.com/Project-MONAI/tutorials/blob/main/3d_segmentation/spleen_segmentation_3d.ipynb>
 
@@ -27,10 +23,11 @@ The training code is adapted from the MONAI spleen example:
 ## Data requirements
 
 Each converted `input_*.nii.gz` CT volume must have a sibling `label_*.nii.gz` segmentation mask in
-the same folder. The trainer QC-skips non-3D images and image/label shape mismatches, and **fails
-loudly when no pair is found** — on the platform that almost always means the data-enrichment (label
-upload) step was skipped (the trust PACS supplies CT images only; see
-`docs/source/user-guides/user-data-enrichment.rst`).
+the same folder. The trainer skips non-3D images and image/label pairs whose shapes differ, and **fails
+loudly when no pair is found**. On the platform that almost always means the data-enrichment (label
+upload) step was skipped: the trust PACS supplies CT images only. See
+[Running on a real FLIP project](#running-on-a-real-flip-project-data-enrichment) and the
+[Data Enrichment user guide](../../../../docs/source/user-guides/user-data-enrichment.rst).
 
 ### Dataset setup (local runs)
 
@@ -63,8 +60,9 @@ directory before re-running.
 
 ## The network
 
-MONAI UNet (`spatial_dims` read from `config.json`'s `net_config`), identical architecture — and
-therefore checkpoint-compatible state dict — to the spleen evaluation tutorial.
+A MONAI UNet, with `spatial_dims` read from `net_config` in `config.json`. The architecture is identical
+to the [spleen evaluation tutorial](../../image_evaluation/3d_spleen_segmentation_evaluation/)'s, so its
+checkpoints load there directly.
 
 ## The training logic
 
@@ -86,11 +84,12 @@ both keys to skip selection (and the extra per-round validation pass).
 
 ## FLIP-specific values
 
-`FLIP_PROJECT_ID` and `FLIP_QUERY` are read from environment variables (stubs in `.env.app`).
-They are NOT passed as CLI flags because the SQL query contains spaces that don't survive
-argparse whitespace-splitting. The trainer reads the query from `config_fed_client.json` at
-runtime via `load_query()`. `.env.app` ships `FLIP_PROJECT_ID=dev`: LOCAL_DEV ignores the value,
-but the `--project_id {project_id}` task arg needs a non-empty token to substitute.
+`job.py` reads `FLIP_PROJECT_ID` and `FLIP_QUERY` from environment variables (stubs in `.env.app`)
+and writes them into the exported job's `config_fed_client.json`. The query is not passed as a CLI
+flag, because FLARE splits task arguments on whitespace and SQL contains spaces: the trainer reads it
+from `config_fed_client.json` at run time via `load_query()`. `.env.app` ships `FLIP_PROJECT_ID=dev`:
+a local run (`LOCAL_DEV`) ignores the value, but the `--project_id {project_id}` task argument needs a
+non-empty token to substitute.
 
 ## How to run
 
@@ -114,15 +113,13 @@ avoided:
 uv run --project ../../../../flip-utils --extra nvflare --extra full python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 2
 ```
 
-> **Note:** `make run` (invoked by the tutorial runner `run-tutorial`/`run-all-tutorials`)
-> delegates to `make sim`. Use `make export` (no GPU) or `make sim`/`make run` (GPU + data).
+> **Note:** `make run`, which `run-tutorial`/`run-all-tutorials` call, is the same as `make sim` (GPU + data).
 
 ### SimEnv (requires GPU + data)
 
-Runs the job under the FLARE simulator with a local GPU. First download the reference dataset:
+Runs the job under the FLARE simulator with a local GPU, after the [dataset setup](#dataset-setup-local-runs) above:
 
 ```bash
-make -C fl-tutorials download-spleen-data
 make sim
 ```
 
@@ -144,11 +141,13 @@ make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation NUM_ROUNDS=10
 ### Running against the FLIP stack
 
 The standalone FLARE submit path (`make -C fl-services/nvflare submit`) is **not wired** (it is
-admin-API based, unlike Flower's HTTP submit) — run locally via the simulator instead. To exercise
-the full platform path, upload the app files through the FLIP UI (or `make e2e_smoke`), where the
-FL API bundles the template and applies `config.json`'s `GLOBAL_ROUNDS` at submit time. Remember
-the data-enrichment step: training dies with "No image/label pairs found" until the labels are
-uploaded next to the pulled images in XNAT.
+admin-API based, unlike Flower's HTTP submit), so run locally via the simulator instead. To exercise
+the full platform path, upload the app files through the FLIP UI and submit [`query.sql`](query.sql)
+as the cohort query. The FL API bundles the template and applies `config.json`'s `GLOBAL_ROUNDS` at
+submit time. No `make e2e_smoke` target runs this FLARE app yet: `make -C flip-api e2e_smoke_spleen`
+uploads the Flower spleen app. Training fails with "No image/label pairs
+found" until the labels are uploaded next to the pulled images in XNAT: see
+[data enrichment](#running-on-a-real-flip-project-data-enrichment).
 
 ## Running on a real FLIP project: data enrichment
 
@@ -157,8 +156,9 @@ each Trust's PACS — and PACS supply images only. A segmentation mask is a 3D v
 with nowhere to live in OMOP, so the labels have to be uploaded into each Trust's XNAT before training.
 That upload is the platform's **data enrichment** stage.
 
-(Contrast the chest X-ray classification tutorial, whose labels *are* in OMOP: its `query.sql` projects
-them as dataframe columns and it needs no enrichment. See the Data Enrichment user guide.)
+(Contrast the [chest X-ray classification tutorial](../../image_classification/xray_classification/), whose
+labels *are* in OMOP: its `query.sql` returns them as dataframe columns, so it needs no enrichment. See the
+[Data Enrichment user guide](../../../../docs/source/user-guides/user-data-enrichment.rst).)
 
 Each label must land in the **same scan's `NIFTI` resource** as its image, named to match — the training
 code pairs them by filename, substituting `/input_` with `/label_`:
@@ -180,10 +180,10 @@ First download all 41 cases (the default of 10 covers only part of the cohort):
 make -C fl-tutorials download-spleen-data NUM_CASES=41
 ```
 
-Then, with network access to the Trust's XNAT and credentials in the environment:
+Then, with network access to each Trust's XNAT and credentials in the environment (the `XNAT_URLS`
+below are the two local dev Trusts' XNAT web ports; replace them with your Trusts' XNAT web URLs):
 
 ```bash
-export XNAT_HOST=https://xnat.trust.example
 export XNAT_USER=your-username
 export XNAT_PASS=your-password
 
@@ -197,7 +197,8 @@ upload.
 **Enrich every Trust.** Each Trust's XNAT holds only its own studies, so the project is enriched
 only once all of them are; a Trust left without labels fails training at the zero-pairs guard. The
 `XNAT_URLS` list above is the dev roster — GSTT on 8105, KCH on 8107, the XNAT **web** ports; 8104
-and 8106 are the DICOM receivers and will not answer a REST call — and one invocation covers both. Where the Trusts need different logins, repeat `XNAT_CREDENTIALS_FILES` instead. Sending the
+and 8106 are the DICOM receivers and will not answer a REST call — and one invocation covers both. Where the Trusts need different logins, set `XNAT_CREDENTIALS_FILES` to one credentials file per
+Trust (space-separated) instead. With neither, the upload goes to the single server in `XNAT_HOST`. Sending the
 whole mapping to every Trust is safe: an accession exists at exactly one site, and the others report
 it as "no matching scan".
 
@@ -216,4 +217,4 @@ Options: `OVERWRITE=1` to replace labels already in place, `XNAT_CREDENTIALS_FIL
 credentials from a JSON file instead of the environment.
 
 This step is **backend-agnostic** — the labels live in XNAT, so a project enriched once can be trained
-by either the FLARE or the Flower spleen tutorial. `fl-tutorials/flower` delegates to this same script.
+by either the FLARE or the Flower spleen tutorial. The Flower tutorial uses the same `upload-spleen-labels` target.
