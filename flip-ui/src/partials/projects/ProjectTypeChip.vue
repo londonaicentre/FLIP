@@ -44,7 +44,7 @@ const label = computed(() => (props.hasImaging ? IMAGING_LABEL : OMOP_ONLY_LABEL
 const SIZE_CLASS = {
     sm: "w-[18px] h-[18px]",
     md: "w-5 h-5",
-    lg: "w-6 h-6"
+    lg: "w-8 h-8"
 } as const;
 
 // Design tokens from tailwind.config: plum for imaging, the steel-blue accent for data-only.

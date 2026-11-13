@@ -267,7 +267,7 @@ describe("Projects Page", () => {
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
         const header = wrapper.find("[data-test='projects-list-header']");
-        expect(header.findAll(".grid > div").map(c => c.text())).toEqual(["Type", "Project", "Description", "Trusts", "Status"]);
+        expect(header.findAll(".grid > div").map(c => c.text())).toEqual(["Project", "Type", "Description", "Trusts", "Status"]);
     });
 
     test("toggles between list and grid views via the view-mode buttons", async () => {

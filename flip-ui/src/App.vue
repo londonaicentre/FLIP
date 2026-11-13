@@ -12,9 +12,11 @@
 -->
 
 <template>
-    <DemoBanner v-if="isDemoBuild" />
     <AiRouteProgress />
-    <router-view />
+    <DemoBanner v-if="isDemoBuild">
+        <router-view />
+    </DemoBanner>
+    <router-view v-else />
     <AiSnackbar />
 </template>
 
