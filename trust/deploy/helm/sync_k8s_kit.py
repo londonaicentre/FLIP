@@ -186,8 +186,8 @@ def _validate_governance(kit: dict[str, str], document: Path | None) -> str | No
     env = {key: value for key, value in kit.items() if key.startswith("FL_SITE_PRIVACY_")}
     backend = (kit.get("FL_BACKEND", "").strip() or "nvflare").lower()
     floor = kit.get("COHORT_QUERY_THRESHOLD", "").strip() or "10"
-    if not floor.isdigit() or int(floor) < 1:
-        raise GovernanceDocumentError(f"COHORT_QUERY_THRESHOLD={floor!r} is not a positive integer")
+    if not floor.isdigit() or int(floor) < 10:
+        raise GovernanceDocumentError(f"COHORT_QUERY_THRESHOLD={floor!r} is not an integer of at least 10")
     if document is None and not any(value.strip() for value in env.values()):
         # Nothing to validate — and the validators need tomllib (3.11+), which a trust using
         # neither control must not: sync-kit runs on the deploy host's own python3.
