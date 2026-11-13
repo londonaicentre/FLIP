@@ -158,55 +158,20 @@ def test_run_jobs_deployment_mode_still_recovers_stale_schedulers(mock_db, deplo
 # ── _recover_stale_busy_schedulers tests ────────────────────────────────────
 
 
-def _make_mock_session(rowcount: int) -> MagicMock:
-    """Create a mocked Session whose db.execute() returns a result with the given rowcount."""
+# The rowcount is the UPDATE's result; which BUSY rows qualify (job_id None, deleted job) is the SQL's business.
+@pytest.mark.parametrize("rowcount", [0, 1, 2], ids=["none-stale", "one-reset", "two-reset"])
+def test_recover_stale_busy_schedulers(rowcount, caplog):
+    """Returns the reset count; commits and logs only when something was reset."""
     session = MagicMock(name="mock_session")
-    mock_result = MagicMock(name="mock_result")
-    mock_result.rowcount = rowcount
-    session.execute.return_value = mock_result
-    return session
+    session.execute.return_value.rowcount = rowcount
 
+    assert _recover_stale_busy_schedulers(session) == rowcount
 
-def test_recover_stale_busy_no_busy_rows(caplog):
-    """No BUSY rows → 0 returned, no db.commit() called."""
-    session = _make_mock_session(rowcount=0)
-
-    result = _recover_stale_busy_schedulers(session)
-
-    assert result == 0
-    session.commit.assert_not_called()
-
-
-def test_recover_stale_busy_job_id_none(caplog):
-    """BUSY + job_id=None → reset, commit called, returns 1."""
-    session = _make_mock_session(rowcount=1)
-
-    result = _recover_stale_busy_schedulers(session)
-
-    assert result == 1
-    session.commit.assert_called_once()
-    assert "Recovered 1 stale BUSY scheduler(s)" in caplog.text
-
-
-def test_recover_stale_busy_valid_job(caplog):
-    """BUSY + valid job exists → 0 returned (subquery finds the job), no commit."""
-    session = _make_mock_session(rowcount=0)
-
-    result = _recover_stale_busy_schedulers(session)
-
-    assert result == 0
-    session.commit.assert_not_called()
-
-
-def test_recover_stale_busy_deleted_job(caplog):
-    """BUSY + deleted job → reset, commit called, returns 2."""
-    session = _make_mock_session(rowcount=2)
-
-    result = _recover_stale_busy_schedulers(session)
-
-    assert result == 2
-    session.commit.assert_called_once()
-    assert "Recovered 2 stale BUSY scheduler(s)" in caplog.text
+    if rowcount:
+        session.commit.assert_called_once()
+        assert f"Recovered {rowcount} stale BUSY scheduler(s)" in caplog.text
+    else:
+        session.commit.assert_not_called()
 
 
 # ── queue-position re-emission ───────────────────────────────────────────────

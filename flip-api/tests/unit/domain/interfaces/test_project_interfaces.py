@@ -11,7 +11,6 @@
 #
 
 from datetime import datetime
-from typing import TypeVar
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
@@ -169,8 +168,6 @@ class TestIReturnedProjectSchema:
 
 
 class TestIPagedResponseSchema:
-    TData = TypeVar("TData")
-
     class SampleData(BaseModel):
         value: int
 
@@ -183,8 +180,6 @@ class TestIPagedResponseSchema:
 
 
 class TestIPagedDataSchema:
-    TData = TypeVar("TData")
-
     class SampleData(BaseModel):
         item: str
 
@@ -207,7 +202,7 @@ class TestIModelsInfoResponseSchema:
             name="Clinical Model",
             description="Predicts outcomes",
             status=ModelStatus.RUNNING,
-            owner_id=owner_id,  # Renamed from owner_id
+            owner_id=owner_id,
         )
         assert info.id == UUID(model_id)
         assert info.status == ModelStatus.RUNNING
@@ -218,11 +213,6 @@ class TestICountResponseSchema:
     def test_valid_icount_response(self):
         response = ICountResponse(count=123)
         assert response.count == 123
-
-
-# Schemas like IProjectDetails, IProjectApproval, IStageProjectRequest
-# are assumed to be tested in test_projects_schemas.py if they are defined there.
-# If they are moved here, their tests should also be moved/duplicated.
 
 
 class TestIImagingStatusSchemas:
@@ -252,7 +242,7 @@ class TestIImagingStatusSchemas:
     def test_valid_iimaging_status(self):
         trust_id_val = str(uuid4())
         status = IImagingStatus(
-            trust_id=trust_id_val,  # Renamed from trust_id
+            trust_id=trust_id_val,
             trust_name="XNAT Trust",
             project_creation_completed=True,
         )
@@ -279,7 +269,7 @@ class TestIImagingProjectStatusParamsSchema:
 class TestIReimportQuerySchema:
     def test_valid_ireimport_query(self):
         query_id_val = str(uuid4())
-        xnat_project_id_val = str(uuid4())  # Assuming this is also a UUID string
+        xnat_project_id_val = str(uuid4())
         trust_id_val = str(uuid4())
         reimport_q = IReimportQuery(
             query_id=query_id_val,

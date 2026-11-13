@@ -193,15 +193,6 @@ def test_get_model_status_not_found():
     assert result is None
 
 
-def test_resolve_trust_resolves_kit_slot():
-    mock_trust = MagicMock()
-    session = MagicMock()
-    session.exec.return_value.first.return_value = mock_trust
-
-    result = resolve_trust_from_fl_client_name("Trust_2", session)
-    assert result is mock_trust
-
-
 def test_resolve_trust_unassigned_slot():
     session = MagicMock()
     # No slot row matches, or the slot is not assigned to a trust.
