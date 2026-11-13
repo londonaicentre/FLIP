@@ -300,7 +300,7 @@ describe("Models Page", () => {
         expect(headerStrip).toBeTruthy();
     });
 
-    test("mobile rows carry a capitals project eyebrow above the name and the description below (design 6a)", async () => {
+    test("mobile rows carry a project eyebrow above the name and the description below (design 6a)", async () => {
         setModels([
             makeModel({ description: "Predicts stroke outcomes" }),
             makeModel({
@@ -320,7 +320,7 @@ describe("Models Page", () => {
         const rows = wrapper.findAll("[data-test='models-list-item-0'], [data-test='models-list-item-1'], [data-test='models-list-item-2']");
 
         const eyebrow = rows[0].find("[data-test='model-project-eyebrow']");
-        expect(eyebrow.classes()).toContain("uppercase");
+        expect(eyebrow.classes()).not.toContain("uppercase");
         expect(eyebrow.text()).toBe("Stroke triage");
         // Eyebrow precedes the name link in the stacked column.
         const mobile = rows[0].find(".sm\\:hidden");

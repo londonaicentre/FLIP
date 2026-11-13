@@ -15,7 +15,7 @@
          so the labels are "Imaging + OMOP" (primary tint, scan icon) and "OMOP only" (steel blue,
          database icon). Informational only. -->
     <span
-        class="inline-flex items-center gap-1 rounded-full px-2 py-px text-2xs font-semibold whitespace-nowrap shrink-0"
+        class="inline-flex items-center gap-1 rounded-full px-2 py-px text-xs font-semibold whitespace-nowrap shrink-0"
         :class="hasImaging ? IMAGING_CLASS : OMOP_ONLY_CLASS"
         :data-test="`project-type-chip-${projectTypeId(hasImaging)}`"
     >

@@ -106,7 +106,7 @@ onMounted(() => {
                     darkMode,
                     backgroundColor: chrome.background,
                     textStyle: {
-                        fontFamily: "JetBrainsMono",
+                        fontFamily: "Inter",
                         fontWeight: 700
                     },
                     calculable: true,
@@ -214,7 +214,7 @@ onMounted(() => {
                         axisLabel: {
                             show: true,
                             fontWeight: 900,
-                            fontFamily: "JetBrainsMono",
+                            fontFamily: "Inter",
                             color: chrome.axisLabel
                         },
                         axisLine: { show: false },

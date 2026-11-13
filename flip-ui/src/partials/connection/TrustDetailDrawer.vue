@@ -60,7 +60,7 @@
                             >
                                 <template #title="{ trustName }">
                                     <DialogTitle
-                                        class="font-heading font-semibold text-[19px] mt-1 text-gray-900 dark:text-gray-100 truncate"
+                                        class="font-semibold text-[19px] mt-1 text-gray-900 dark:text-gray-100 truncate"
                                     >
                                         {{ trustName }}
                                     </DialogTitle>

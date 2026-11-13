@@ -23,14 +23,14 @@
             <div v-else class="flex flex-col flex-1 min-w-0 overflow-y-auto">
                 <!-- Page header (design ref: ProjectsStatusSpine + ProjectsB header section) -->
                 <header class="px-8 pt-8 pb-4">
-                    <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                    <p class="text-xs text-gray-500 dark:text-gray-300">
                         Workspace · {{ approvedTrustCount }}
                         {{ approvedTrustCount === 1 ? "trust" : "trusts" }} active
                     </p>
                     <div class="flex items-center justify-between gap-4">
                         <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100">
                             <span class="text-primary-600 underline decoration-4 decoration-primary-500/60 underline-offset-8 dark:text-white">Projects</span>
-                            <span class="ml-3 text-gray-400 dark:text-gray-300 font-medium">{{ data.data.length }}</span>
+                            <span class="ml-3 text-gray-500 dark:text-gray-300 font-medium">{{ data.data.length }}</span>
                         </h1>
                         <AiButton
                             v-if="canCreateProjects"
@@ -176,7 +176,7 @@
                             <div class="w-2 shrink-0" />
                             <div
                                 :class="ROW_GRID_CLASS"
-                                class="grid flex-1 gap-5 px-5 py-3 text-xs font-mono font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300"
+                                class="grid flex-1 gap-5 px-5 py-3 text-xs font-medium text-gray-500 dark:text-gray-300"
                             >
                                 <div>Project</div>
                                 <div>Description</div>
@@ -211,10 +211,10 @@
                                 data-test="project-row-grid"
                             >
                                 <div class="min-w-0">
-                                    <div class="font-heading font-semibold text-base text-gray-900 dark:text-gray-100 truncate" data-test="project-name">
+                                    <div class="font-semibold text-base text-gray-900 dark:text-gray-100 truncate" data-test="project-name">
                                         {{ project.name }}
                                     </div>
-                                    <div class="flex items-center gap-2 mt-0.5 min-w-0 text-xs text-gray-500 dark:text-gray-300">
+                                    <div class="flex items-center gap-2 mt-0.5 min-w-0 text-note text-gray-500 dark:text-gray-300">
                                         <ProjectTypeChip :has-imaging="projectHasImaging(project)" />
                                         <span class="truncate">{{ ownerLabel(project) }} · {{ relativeUpdated(project) }}</span>
                                     </div>
@@ -224,7 +224,7 @@
                                      right. From md the normal column flow takes over. -->
                                 <div
                                     class="col-start-1 row-start-2 md:col-start-auto md:row-start-auto
-                                    text-[12.5px] md:text-[13px] text-gray-600 dark:text-gray-300
+                                    text-note text-gray-600 dark:text-gray-300
                                     leading-snug line-clamp-2"
                                     data-test="project-row-description"
                                 >
@@ -241,16 +241,16 @@
                                     flex flex-col items-end gap-1.5"
                                 >
                                     <span
-                                        class="inline-flex items-center px-2 py-0.5 rounded text-2xs font-semibold tracking-wide uppercase"
+                                        class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold"
                                         :class="pillClass(project.status)"
                                         data-test="project-status-indicator"
                                     >
                                         {{ statusLabel(project.status) }}
                                     </span>
-                                    <span v-if="nextActionFor(project)" class="text-2xs text-gray-500 dark:text-gray-300">
+                                    <span v-if="nextActionFor(project)" class="text-xs text-gray-500 dark:text-gray-300">
                                         {{ nextActionFor(project) }}
                                     </span>
-                                    <span v-if="cohortSize(project)" class="text-2xs text-gray-500 dark:text-gray-300 font-mono">
+                                    <span v-if="cohortSize(project)" class="text-xs text-gray-500 dark:text-gray-300 tabular-nums">
                                         {{ cohortSize(project)?.toLocaleString() }} patients
                                     </span>
                                 </div>
@@ -278,7 +278,7 @@
                         <div class="flex items-center justify-between gap-2">
                             <div class="flex items-center gap-2 min-w-0">
                                 <span
-                                    class="inline-flex items-center px-2 py-0.5 rounded text-2xs font-semibold tracking-wide uppercase"
+                                    class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold"
                                     :class="pillClass(project.status)"
                                 >
                                     {{ statusLabel(project.status) }}
@@ -288,7 +288,7 @@
                         </div>
 
                         <div>
-                            <h3 class="font-heading font-semibold text-lg leading-tight text-gray-900 dark:text-gray-100">
+                            <h3 class="font-semibold text-lg leading-tight text-gray-900 dark:text-gray-100">
                                 {{ project.name }}
                             </h3>
                             <p
@@ -307,17 +307,17 @@
                         >
                             <icon-ph-users-three-duotone class="w-4 h-4 text-gray-500 dark:text-gray-300 shrink-0" />
                             <template v-if="cohortSize(project)">
-                                <span class="font-mono font-semibold text-gray-800 dark:text-gray-200">
+                                <span class="font-semibold tabular-nums text-gray-800 dark:text-gray-200">
                                     {{ cohortSize(project)?.toLocaleString() }}
                                 </span>
                                 <span class="text-gray-500 dark:text-gray-300">patients in cohort</span>
                             </template>
-                            <span v-else class="text-gray-400 dark:text-gray-300 italic">
+                            <span v-else class="text-gray-500 dark:text-gray-300">
                                 No cohort yet
                             </span>
                         </div>
 
-                        <div class="flex justify-between items-center gap-2 pt-2 mt-auto border-t border-gray-100 dark:border-dark-border text-xs text-gray-500 dark:text-gray-300">
+                        <div class="flex justify-between items-center gap-2 pt-2 mt-auto border-t border-gray-100 dark:border-dark-border text-note text-gray-500 dark:text-gray-300">
                             <!-- Same owner · created line the list rows carry, so a card and a row
                                  say the same things about a project. -->
                             <span class="truncate" data-test="project-card-meta">

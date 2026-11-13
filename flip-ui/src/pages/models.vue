@@ -25,7 +25,7 @@
                 <header class="flex flex-col gap-4 px-8 pt-8 pb-4 sm:flex-row sm:items-end sm:justify-between">
                     <div>
                         <p
-                            class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300"
+                            class="text-xs text-gray-500 dark:text-gray-300"
                             data-test="models-scope-eyebrow"
                         >
                             <template v-if="isScoped">
@@ -46,7 +46,7 @@
                         </p>
                         <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100">
                             <span class="text-primary-600 underline decoration-4 decoration-primary-500/60 underline-offset-8 dark:text-white">Models</span>
-                            <span class="ml-3 text-gray-400 dark:text-gray-300 font-medium">{{ data.totalRecords ?? data.data.length }}</span>
+                            <span class="ml-3 text-gray-500 dark:text-gray-300 font-medium">{{ data.totalRecords ?? data.data.length }}</span>
                         </h1>
                         <p class="mt-2 text-sm text-gray-500 dark:text-gray-300">
                             {{ isScoped ? SCOPED_SUBTITLE : ESTATE_SUBTITLE }}
@@ -84,13 +84,13 @@
                     >
                         <div class="flex items-center gap-2">
                             <span class="inline-block w-2 h-2 rounded-full" :class="tile.dot" />
-                            <span class="text-2xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                            <span class="text-xs text-gray-500 dark:text-gray-300">
                                 {{ tile.label }}
                             </span>
                         </div>
                         <div
                             :data-test="`filter-tile-count-${tile.key}`"
-                            class="mt-1 text-2xl font-heading font-bold text-gray-900 dark:text-gray-100"
+                            class="mt-1 text-2xl font-bold tabular-nums text-gray-900 dark:text-gray-100"
                         >
                             {{ tileCount(tile) }}
                         </div>
@@ -132,7 +132,7 @@
                     <span
                         v-if="isScoped"
                         data-test="project-filter-chip"
-                        class="inline-flex items-center gap-2 rounded-full border border-primary-200 bg-primary-100 py-1.5 pl-4 pr-1.5 text-[13.5px] font-semibold text-primary-600 dark:border-dark-border dark:bg-dark-surface dark:text-primary-200"
+                        class="inline-flex items-center gap-2 rounded-full border border-primary-200 bg-primary-100 py-1.5 pl-4 pr-1.5 text-note font-semibold text-primary-600 dark:border-dark-border dark:bg-dark-surface dark:text-primary-200"
                     >
                         Project: {{ scopedProjectLabel }}
                         <button
@@ -163,7 +163,7 @@
                                     :key="col.label"
                                     type="button"
                                     :data-test="col.key ? `sort-header-${col.key}` : undefined"
-                                    class="flex items-center gap-1 text-xs font-mono font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300 select-none"
+                                    class="flex items-center gap-1 text-xs font-medium text-gray-500 dark:text-gray-300 select-none"
                                     :class="[
                                         col.align === 'right' ? 'justify-end' : 'justify-start',
                                         col.key ? 'cursor-pointer hover:text-gray-700 dark:hover:text-gray-200' : 'cursor-default'
@@ -198,12 +198,12 @@
                                     <router-link
                                         :to="`/project/${model.projectId}/model/${model.id}`"
                                         data-test="model-name"
-                                        class="font-mono text-sm font-semibold text-gray-900 hover:text-primary-600 dark:text-gray-100 dark:hover:text-primary-300"
+                                        class="text-sm font-semibold text-gray-900 hover:text-primary-600 dark:text-gray-100 dark:hover:text-primary-300"
                                         @click.stop
                                     >
                                         {{ model.name }}
                                     </router-link>
-                                    <p data-test="model-owner-meta" class="mt-1 text-xs text-gray-500 dark:text-gray-300">
+                                    <p data-test="model-owner-meta" class="mt-1 text-note text-gray-500 dark:text-gray-300">
                                         {{ ownerLabel(model) }} · {{ relativeCreatedLabel(model.creationTimestamp) }}
                                     </p>
                                 </div>
@@ -237,7 +237,7 @@
                                     <p
                                         v-else
                                         data-test="model-trusts-empty"
-                                        class="text-xs italic text-gray-400 dark:text-gray-300"
+                                        class="text-sm text-gray-500 dark:text-gray-300"
                                     >
                                         Trusts assigned when training starts
                                     </p>
@@ -260,12 +260,12 @@
                             <div class="flex-1 px-4 py-3 sm:hidden">
                                 <div class="flex items-start gap-2.5">
                                     <div class="flex-1 min-w-0">
-                                        <!-- Design 6a: the project reads as a capitals eyebrow over the name. -->
+                                        <!-- Design 6a: the project reads as an eyebrow over the name. -->
                                         <router-link
                                             :to="`/project/${model.projectId}`"
                                             data-test="model-project-eyebrow"
-                                            class="block font-mono text-2xs uppercase tracking-wider mb-[3px]
-                                            truncate text-gray-400 dark:text-gray-300
+                                            class="block text-xs mb-[3px]
+                                            truncate text-gray-500 dark:text-gray-300
                                             hover:text-primary-600 dark:hover:text-primary-300"
                                             @click.stop
                                         >
@@ -274,7 +274,7 @@
                                         <router-link
                                             :to="`/project/${model.projectId}/model/${model.id}`"
                                             data-test="model-name-mobile"
-                                            class="font-mono text-sm font-semibold break-words
+                                            class="text-sm font-semibold break-words
                                             text-gray-900 dark:text-gray-100
                                             hover:text-primary-600 dark:hover:text-primary-300"
                                             @click.stop
@@ -284,12 +284,12 @@
                                         <p
                                             v-if="model.description !== undefined"
                                             data-test="model-description-mobile"
-                                            class="mt-1 text-[12.5px] leading-snug break-words line-clamp-2
+                                            class="mt-1 text-note leading-snug break-words line-clamp-2
                                             text-gray-500 dark:text-gray-300"
                                         >
                                             {{ model.description }}
                                             <template v-if="!model.description">
-                                                <span class="italic text-gray-400 dark:text-gray-300">No description provided...</span>
+                                                <span class="text-gray-500 dark:text-gray-300">No description provided...</span>
                                             </template>
                                         </p>
                                     </div>
@@ -322,7 +322,7 @@
                                         <p
                                             v-else
                                             data-test="model-trusts-empty-mobile"
-                                            class="text-xs italic text-right text-gray-400 dark:text-gray-300"
+                                            class="text-sm text-right text-gray-500 dark:text-gray-300"
                                         >
                                             Trusts assigned when training starts
                                         </p>
