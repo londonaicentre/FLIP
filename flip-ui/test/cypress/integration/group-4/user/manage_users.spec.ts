@@ -162,12 +162,11 @@ describe("Manage Users as Administrator", () => {
 
     it("allows reset of a user's password", () => {
         cy.getBySel("user").contains("Researcher User").click();
-        cy.intercept("POST", "https://cognito-idp.eu-west-2.amazonaws.com/", { statusCode: 200, body: {} })
-            .as("passwordReset");
+        cy.intercept("POST", "/users/*/password/reset", { statusCode: 200 }).as("passwordReset");
         cy.getBySel("reset-password-btn").click();
         cy.getBySel("confirm-modal-btn").click();
         cy.wait("@passwordReset");
-        cy.contains("The user's password has been reset").should("be.visible");
+        cy.contains("The user has been emailed a way to set a new password").should("be.visible");
     });
 
     it("Should support pagination", () => {

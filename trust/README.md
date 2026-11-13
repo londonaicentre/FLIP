@@ -21,7 +21,7 @@ Deploy components at the trust level:
 * Trust API ([trust-api](trust-api))
 * OMOP Database ([omop-db](omop-db))
 * XNAT ([xnat](xnat))
-* Observability ([observability](observability)) — Grafana (host `GRAFANA_PORT`, container 3000),
+* Observability ([observability](observability)) — Grafana (host `GRAFANA_PORT` on loopback unless `TRUST_BIND_ADDRESS` says otherwise, container 3000),
   Loki (host `LOKI_PORT`, container 3100) and an Alloy log collector (internal only, no published
   port). Each trust runs its own; logs never leave the trust.
 
@@ -63,7 +63,7 @@ Registration (`register_trust` service, `POST /admin/trusts`):
 
 ### 2. The per-trust kit file
 
-Each trust stack reads a per-trust kit file `trust/.env.<CODE>.<env>` (e.g. `trust/.env.GSTT.development`, `trust/.env.<CODE>.production`; gitignored; dev templates `trust/.env.<CODE>.development.example` for GSTT/KCH, generic base `trust/.env.example`), auto-included by `trust/Makefile`. `make register-trust KIT=<CODE>` writes the managed blocks. It carries:
+Each trust stack reads a per-trust kit file `trust/.env.<CODE>.<env>` (e.g. `trust/.env.GSTT.development`, `trust/.env.<CODE>.prod`; gitignored; dev templates `trust/.env.<CODE>.development.example` for GSTT/KCH, generic base `trust/.env.example`), auto-included by `trust/Makefile`. `make register-trust KIT=<CODE>` writes the managed blocks. It carries:
 
 ```sh
 TRUST_API_KEY=<from kit>
@@ -102,7 +102,7 @@ The kit also carries the trust's **disclosure floor**:
 COHORT_QUERY_THRESHOLD=10
 ```
 
-This is the minimum cohort size the trust will release anything about. Cohort statistics below it are privacy-suppressed (a genuine zero and a small count are indistinguishable), and both row-level routes refuse outright — `/cohort/dataframe`, which supplies FL training data, and `/cohort/accession-ids`, which decides whose imaging is pulled into XNAT. Raise it to release less. It is the operator's setting, not the hub's: trusts need not agree on a value, and the hub cannot lower it. See [`data-access-api/README.md`](data-access-api/README.md#row-level-data-and-the-disclosure-threshold). The same schema serves dev trusts (GSTT/KCH against a local hub), on-prem trusts (against a prod hub), and laptop-against-prod testing — operator picks the kit code (`trust/.env.<CODE>.<env>`) and `make -C trust up-trust KIT=<CODE> PROD=<env>` handles the rest.
+This is the minimum cohort size the trust will release anything about. Cohort statistics below it are privacy-suppressed (a genuine zero and a small count are indistinguishable), and both row-level routes refuse outright — `/cohort/dataframe`, which supplies FL training data, and `/cohort/accession-ids`, which decides whose imaging is pulled into XNAT. Raise it to release less. It is the operator's setting, not the hub's: trusts need not agree on a value, and the hub cannot lower it. The FL client receives the same value, so an app that releases site-level statistics rather than model weights (the biomarker causal-discovery tutorial) refuses below the trust's floor too. See [`data-access-api/README.md`](data-access-api/README.md#row-level-data-and-the-disclosure-threshold). The same schema serves dev trusts (GSTT/KCH against a local hub), on-prem trusts (against a prod hub), and laptop-against-prod testing — operator picks the kit code (`trust/.env.<CODE>.<env>`) and `make -C trust up-trust KIT=<CODE> HUB=<env>` handles the rest.
 
 #### Site-enforced FL privacy policy (optional, FLARE only)
 
@@ -110,9 +110,12 @@ The kit file's Host-local profile can set `FL_SITE_PRIVACY_POLICY=percentile` (p
 `FL_SITE_PRIVACY_*` parameters — see the commented block in `trust/.env.example`). The fl-client entrypoint
 renders these into the client's FLARE `local/privacy.json` at container start, so THIS trust's
 update-privacy filter is applied to every outgoing model update regardless of the researcher's app config
-(site filters run before app filters and jobs cannot opt out). Unset = no site policy (app-level filters
-only, the previous behavior). Invalid values stop the fl-client at startup — fail closed. Apply changes with
-`make -C trust up-fl-clients-kit KIT=<CODE>` (`down-fl-clients-kit KIT=<CODE>` stops and removes
+(site filters run before app filters and a job's configuration cannot opt out or pick a weaker scope). The
+bound object is the job's *configuration*: every FLARE app template runs the Client API `in_process`, so job
+code runs inside the client's job process and is not currently isolated from the filter (FLIP#1572). Unset =
+no site policy (app-level filters only, the previous behavior). Invalid values stop the fl-client at startup
+(fail closed). Apply changes with `make -C trust up-fl-clients-kit KIT=<CODE>`
+(`down-fl-clients-kit KIT=<CODE>` stops and removes
 just that trust's clients; `up-fl-clients` / `down-fl-clients` do the same across every kit for
 this env, leaving the rest of each trust stack up); the fl-client log then shows
 `[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-privacy.rst`
@@ -192,10 +195,11 @@ make -C trust down-trust KIT=GSTT   # if a previous GSTT stack is running
 make -C trust up-trust KIT=GSTT
 ```
 
-On an on-prem host provisioned by the on-prem playbook, prefix these with `sudo -E` — the login
-user is deliberately not in the docker group (see
-[trust/deploy/ansible/README.md](deploy/ansible/README.md)). Dev workstations are
-unaffected.
+Run these as a user with Docker socket access. On a host provisioned by the on-prem playbook
+that means prefixing `sudo -E` — the login user is deliberately not in the docker group (see
+[trust/deploy/ansible/README.md](deploy/ansible/README.md)); what the stack needs from the
+account is listed under "Access the operator needs" in `docs/source/deploy-flip/deploy-flip-node-on-prem.rst`.
+Dev workstations are unaffected.
 
 The trust-api container authenticates with its `TRUST_API_KEY` and posts a heartbeat to `POST /trust/heartbeat` (no name segment — the hub resolves the trust's identity from the API key). The Connection status page flips the row online within ~30s.
 
@@ -273,6 +277,11 @@ make -C trust ensure-seeded KIT=GSTT PROJECTS="cxr_project"                   # 
 make -C trust seed KIT=GSTT PROJECTS="prostate_project"                       # add a project, unconditionally
 ```
 
+A real trust, whose OMOP and PACS hold its own data, sets `TRUST_DATA_SEED=false` in its kit:
+`ensure-seeded` then fetches, loads and marks nothing, and on Kubernetes `sync-kit` turns
+`trustData.seed.enabled` off. The explicit `seed*` / `unseed*` targets refuse that trust unless `FORCE_SEED=1`. If that trust's OMOP lacks the DICOM vocabulary, load it on its own with
+`make -C trust/omop-db load-dicom-vocab` and the kit's `OMOP_*` values.
+
 **A host seeded before FLIP#1187 re-seeds once.** The PACS marker used to live *inside* the
 storage directory (`<storage dir>/.seeded`) and now sits beside it, because the directory
 itself is owned by Orthanc's uid. The new reader does not look at the old path, so the first
@@ -286,7 +295,7 @@ concept is present, and that concept is committed before the bulk load, so a run
 between leaves a database that reports itself loaded and is skipped for good.
 `make -C trust/omop-db load-dicom-vocab FORCE_DICOM_VOCAB=1` reloads over it. The same
 variable reaches the Kubernetes hook (`trustData.seed.forceDicomVocab`) and the EC2 play
-(`make -C deploy/providers/AWS seed-trust-data KIT=<CODE> FORCE_DICOM_VOCAB=1`).
+(`make -C trust/deploy/terraform/aws/ec2 seed KIT=<CODE> HUB=<hub> FORCE_DICOM_VOCAB=1`).
 
 ### Which partition a trust is seeded with
 
@@ -393,7 +402,7 @@ further consequences on a real trust:
   Because of that, **`MONAI_LABEL_BIND_HOST` defaults to `127.0.0.1`**: out of the box the port
   is published on loopback only, and the trust host gains no listener reachable from the
   network (the trust deployment model is otherwise strictly outbound — see
-  [Deployment Architecture](../CLAUDE.md)). That default is deliberately *not* browser-usable
+  [Deployment Architecture](../AGENTS.md#deployment-architecture)). That default is deliberately *not* browser-usable
   from another machine. To give clinicians access, pick one:
 
   1. **Serve it through the XNAT nginx** (recommended) — same-origin with XNAT, so it also
@@ -466,7 +475,7 @@ Notes:
   back to HTTP downloads only for scans it cannot resolve there.
 - Pretrained weights are fetched on first start and persisted in the `monailabel-models`
   volume, so a container recreate does not re-download them.
-- Production (`PROD=true|stag`) runs the published `ghcr.io/londonaicentre/monailabel` image
+- A deployed trust (`HUB=stag|prod`) runs the published `ghcr.io/londonaicentre/monailabel` image
   (built by `docker_build_monailabel.yml`; dev builds locally from `trust/monailabel/`).
 
 ## Running standalone (remote trust operator)
@@ -476,38 +485,35 @@ If you are operating a trust on a host that does not have the hub's
 need only your trust's kit file (`trust/.env.<CODE>.<env>`).
 
 The root `onboard-onprem-trust`, `up-onprem-trust` and `upgrade-onprem-trust`
-wrappers default to production. Their readiness checklist checks the same file
-as deployment: `trust/.env.<KIT>.<env>` when present, otherwise `trust/.env.<KIT>`.
-Its heading and fix hints name that selected path, so a suffixed kit needs no
-unsuffixed copy. Pass the same `PROD` value to the checklist and deployment when
-joining stag or an LZA environment.
+wrappers default to `HUB=prod`. Their readiness checklist checks the same file
+as deployment: `trust/.env.<KIT>.<env>`, resolved by `deploy/env_mode.mk`'s `kit_file`.
+Its heading and fix hints name that selected path. Pass `HUB=stag` to the checklist and deployment when joining the staging hub.
 
 ### One-time setup
 
 1. The hub admin scaffolds and registers your kit
-   (`make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." PROD=true`
-   then `make register-trust KIT=<CODE> PROD=true`). The result is a complete
-   kit file at `trust/.env.<CODE>.production` containing credentials, the AES
+   (`make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." HUB=prod`
+   then `make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=prod` and
+   `make sync-trust-kit KIT=<CODE> HUB=prod`). The result is a complete
+   kit file at `trust/.env.<CODE>.prod` containing credentials, the AES
    key, the hub URL, image tags, and a host-local profile.
 2. The hub admin transmits the file to you out-of-band (SCP-via-SSM for an
    EC2 trust; encrypted channel for on-prem).
-3. Drop it at `trust/.env.<CODE>.production` in your checkout.
+3. Drop it at `trust/.env.<CODE>.prod` in your checkout.
 4. Fill in the **Trust-local credentials** block (Orthanc / OMOP / XNAT /
    Grafana passwords) — these are your secrets, the hub never sees them.
 5. Start the stack:
-   - EC2 trust: `make -C trust up-trust-ec2 KIT=<CODE> PROD=true` (stop it with
-     `make -C trust down-trust-ec2 KIT=<CODE> PROD=true`)
-   - On-prem trust: `sudo -E env PROD=true make -C trust up-trust KIT=<CODE>`
-     (sudo: the provisioned login user is deliberately not in the docker group;
-     `-E` keeps `$HOME` so root's docker reuses your GHCR login)
-   - Laptop-against-prod: `make -C trust up-trust KIT=<CODE> PROD=true` (no sudo —
-     your workstation isn't provisioned by the on-prem playbook)
+   - EC2 trust: `make -C trust up-trust-ec2 KIT=<CODE> HUB=prod` (stop it with
+     `make -C trust down-trust-ec2 KIT=<CODE> HUB=prod`)
+   - On-prem trust: `make -C trust up-trust KIT=<CODE> HUB=prod`, as a user with
+     Docker socket access (on a playbook-provisioned host: `sudo -E make …`, since
+     its login user has none; `-E` keeps `$HOME` so root's docker reuses your GHCR login)
+   - Laptop-against-prod: the same command, as yourself
 
-   `PROD` names the hub you are joining, and with it the kit-file suffix the
-   trust Makefiles read: `true` → `.env.<CODE>.production`, `stag` → `.stag`,
-   and on an LZA estate (FLIP#749) `lza` → `.lza-prod`, `lza-stag` → `.lza-stag`.
-   All four run the production compose and stack files; only `PROD` unset is
-   the development stack.
+   `HUB` names the hub you are joining, and with it the kit-file suffix the
+   trust Makefiles read: `prod` → `.env.<CODE>.prod`, `stag` → `.env.<CODE>.stag`.
+   Both run the prod compose and stack files; only `HUB` unset is the
+   development stack.
 
    On-prem, `up-trust` runs `ensure-seeded` unconditionally, the same way it does in
    dev: a store with no `.seeded` marker beside it is seeded with the listed mock
@@ -528,8 +534,8 @@ joining stag or an LZA environment.
 
 ```bash
 git fetch --tags origin && git checkout vX.Y.Z              # the checkout first: compose files + this verb come from it
-sudo -E make upgrade-onprem-trust KIT=<slot>              # → the release the hub runs
-sudo -E make upgrade-onprem-trust KIT=<slot> TAG=vX.Y.Z   # → a named release
+make upgrade-onprem-trust KIT=<CODE>              # → the release the hub runs
+make upgrade-onprem-trust KIT=<CODE> TAG=vX.Y.Z   # → a named release
 ```
 
 Runs the readiness checklist, resolves the target (the hub's `/api/health`
@@ -542,7 +548,9 @@ and upgrades XNAT in place (database dump first, no reset); it never runs
 it asks the registry for every image at the target and refuses a tag any of them was
 never built at (each `sha-` build is path-filtered; a release tag builds them all —
 for a `sha-` move, `FL_TAG=` holds the FL client at its own build and `OMOP_DB_TAG` /
-`ORTHANC_TAG` / `XNAT_TAG` in the kit do the same for the data services).
+`ORTHANC_TAG` in the kit do the same for those data services). `XNAT_TAG` pins all three
+XNAT images together; their builds no longer share `sha-` tags. Set it to a release tag
+(or `stag`/`prod`) published for all three images when moving a site to a `sha-` tag.
 `FORCE=1` allows a downgrade, `YES=1` skips the prompt. The full runbook — ordering, refreshed kits,
 Kubernetes and EC2 variants, rollback — is
 `docs/source/sys-admin/admin-upgrading-sites.rst`.
@@ -550,14 +558,14 @@ Kubernetes and EC2 variants, rollback — is
 ### Refreshing shared values (when the hub admin rotates an AES key etc.)
 
 When the hub admin rotates a shared value (AES key, FL backend, image tag),
-they will run `make sync-trust-kit KIT=<CODE> PROD=true` on their side. That
+they will run `make sync-trust-kit KIT=<CODE> HUB=prod` on their side. That
 produces an updated kit file with the new Hub-shared block; credentials are
 preserved. The updated file is transmitted to you using the same out-of-band
 channel. Replace **only the Hub-shared block** in your local copy (your
 Host-local profile and Trust-local credentials stay yours), then re-apply:
 
 ```bash
-sudo -E make upgrade-onprem-trust KIT=<slot> YES=1
+make upgrade-onprem-trust KIT=<CODE> YES=1
 ```
 
 That recreates only the containers whose configuration changed and leaves the
@@ -569,7 +577,7 @@ key shows up there before it shows up as every task failing to decrypt.
 
 ## Integration tests (cohort-query end-to-end)
 
-The `trust-api` and `data-access-api` integration suites run against a throwaway Compose stack — vanilla Postgres seeded from a small OMOP fixture plus a freshly-built `data-access-api`. The stack is defined in [`deploy/compose.test.yml`](deploy/compose.test.yml) and brought up by [Testcontainers](https://testcontainers-python.readthedocs.io/) inside session-scoped pytest fixtures, so a single test invocation is enough — no `make up` first.
+The `trust-api` and `data-access-api` integration suites run against a throwaway Compose stack — vanilla Postgres seeded from a small OMOP fixture plus a freshly-built `data-access-api`. The stack is defined in [`deploy/compose/compose.test.yml`](deploy/compose/compose.test.yml) and brought up by [Testcontainers](https://testcontainers-python.readthedocs.io/) inside session-scoped pytest fixtures, so a single test invocation is enough — no `make up` first.
 
 ```sh
 # trust-api: drives ``handle_cohort_query`` end-to-end through trust-api → data-access-api → omop-db

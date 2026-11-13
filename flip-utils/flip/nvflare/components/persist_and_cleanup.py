@@ -43,9 +43,6 @@ class PersistToS3AndCleanup(FLComponent):
             persistor_id (str, optional): ID of the persistor component. Defaults to "persistor".
             flip (FLIPBase, optional): FLIP client used for status updates and exception reporting to the hub.
                 Defaults to ``FLIP()``.
-
-        Raises:
-            FileNotFoundError: boto3 error for when the zip file does not exist.
         """
 
         super().__init__()
@@ -156,7 +153,7 @@ class PersistToS3AndCleanup(FLComponent):
                 self.log_info(fl_ctx, f"Found best global model: {fl_best_model_filepath}")
                 shutil.move(fl_best_model_filepath, run_dir)
 
-            # For certain workflows (e.g., diffusion_model), also move trainer.py and validator.py
+            # Also move trainer.py, and validator.py where an app ships one
             trainer_path = os.path.join(app_server_path, "custom", "trainer.py")
             validator_path = os.path.join(app_server_path, "custom", "validator.py")
 

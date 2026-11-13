@@ -19,7 +19,7 @@ on:
     branches: [main, develop]
     tags: ['v*.*.*']
     paths:
-      - "trust/xnat/**"
+      - "trust/xnat/nginx/**"
       - ".github/workflows/docker_build_xnat_nginx.yml"
 
 permissions:
@@ -61,8 +61,6 @@ jobs:
           GH_EVENT_NAME: ${{ github.event_name }}
           GH_REF: ${{ github.ref }}
           GH_SHA: ${{ github.sha }}
-          GH_WR_BRANCH: ${{ github.event.workflow_run.head_branch }}
-          GH_WR_EVENT: ${{ github.event.workflow_run.event }}
         run: |
           TAGS="${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}"
 
@@ -97,9 +95,7 @@ jobs:
 
           # Determine if this is a merge/push to main or develop
           BRANCH_NAME=""
-          if [[ "$GH_EVENT_NAME" == "workflow_run" && "$GH_WR_EVENT" == "push" ]]; then
-            BRANCH_NAME="$GH_WR_BRANCH"
-          elif [[ "$GH_EVENT_NAME" == "push" ]]; then
+          if [[ "$GH_EVENT_NAME" == "push" ]]; then
             BRANCH_NAME="$GH_REF_NAME"
           fi
 

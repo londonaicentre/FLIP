@@ -16,7 +16,7 @@
 # the documented entrypoints keep working:
 #
 #   make -C fl-tutorials download-xray-data
-#   make -C fl-tutorials download-weights ARCH=squeezenet1_1   # a pretrained backbone a tutorial ships (LDM)
+#   make -C fl-tutorials download-weights ARCH=medicalnet_resnet50   # a pretrained backbone a tutorial ships (autoencoder)
 #   make -C fl-tutorials download-spleen-data [NUM_CASES=<1-41>]
 #   make -C fl-tutorials download-spleen-checkpoint   # evaluation-tutorial checkpoint only
 #   make -C fl-tutorials download-arkplus-finetuning-data
@@ -58,7 +58,7 @@ PROSTATE_UV := uv run --project prostate
 .PHONY: download-xray-data download-weights \
 	download-spleen-data download-spleen-msd-data \
 	download-spleen-checkpoint download-arkplus-finetuning-data \
-	download-arkplus-eval-data download-synthea-data upload-spleen-labels \
+	download-arkplus-eval-data download-synthea-data convert-adni-cohort upload-spleen-labels \
 	fetch-spleen-metadata-table download-spleen-msd-raw convert-spleen-to-dicom \
 	create-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables \
 	reproduce-spleen-omop build-spleen-canonical verify-spleen-dicom seed-spleen \
@@ -85,9 +85,9 @@ download-xray-data:
 # A pretrained network a tutorial ships beside its code (FLIP#1206): downloaded ONCE here, with
 # torch.hub's own sha256-prefix check, into data/weights/<torchvision filename>. Keyed by
 # architecture, not tutorial — a backbone is shared by construction (`weights/fetch_weights.py`
-# lists the known ones). Today: `ARCH=squeezenet1_1`, the latent-diffusion perceptual loss.
+# lists the known ones). Today: `ARCH=medicalnet_resnet50`, the autoencoder tutorial's perceptual loss.
 download-weights:
-	@[ -n "$(ARCH)" ] || (echo "❌  ARCH is required. Usage: make download-weights ARCH=squeezenet1_1"; exit 1)
+	@[ -n "$(ARCH)" ] || (echo "❌  ARCH is required. Usage: make download-weights ARCH=medicalnet_resnet50"; exit 1)
 	@$(WEIGHTS_UV) python weights/fetch_weights.py $(ARCH) --out $(WEIGHTS_DIR)
 
 # One spleen dataset for both backends: the MSD build, honouring NUM_CASES, plus the
@@ -151,6 +151,22 @@ download-synthea-data:
 	@$(SYNTHEA_UV) python synthea/build_synthea_dataframe.py --output-dir $(DATA_DIR)/synthea
 	@echo "✅ Synthea data ready at $(abspath $(DATA_DIR))/synthea/ — make -C fl-tutorials run-tutorial TUTORIAL=ehr_risk_prediction"
 
+# Build the biomarker_causal_discovery tutorial's cohort from the user's OWN ADNI download: the five
+# IDA study tables in ADNI_DIR (PTDEMOG, APOERES, ADAS, UCSFFSX7, UPENN_PLASMA_FUJIREBIO_QUANTERIX,
+# matched by prefix) become dataframe.csv + site1/ + site2/ (person_id-modulo splits) + a counts-only
+# summary under OUT (an absolute path; default: the gitignored data/ad_biomarkers/, where both
+# simulators look). ADNI is access-controlled (the tutorial README's "Data" section), so the repository
+# ships the converter, never the cohort: the converter refuses an OUT inside a git checkout that git does
+# not ignore (symlinks resolved), and prints counts, never a row. Runs in ad_biomarkers/'s own uv project.
+AD_BIOMARKERS_UV := uv run --project ad_biomarkers
+convert-adni-cohort: OUT ?= $(DATA_DIR)/ad_biomarkers
+convert-adni-cohort:
+	@test -n "$(ADNI_DIR)" || { echo "❌ ADNI_DIR=<directory of the five IDA table downloads> is required"; exit 2; }
+	@echo "🧬 Building the biomarker cohort from the ADNI tables in $(ADNI_DIR)..."
+	@$(AD_BIOMARKERS_UV) python ad_biomarkers/make_adni_cohort.py --adni-dir "$(ADNI_DIR)" --output-dir "$(OUT)" \
+		$(if $(NUM_SITES),--num-sites $(NUM_SITES))
+	@echo "✅ Cohort ready at $(abspath $(OUT))/ (never commit it) — make -C fl-tutorials run-tutorial TUTORIAL=biomarker_causal_discovery"
+
 # Download the PI-CAI bpMRI dataset (images + whole-gland/zonal labels + clinical marksheet)
 # and convert/partition it for the 3d_prostate_segmentation tutorial (Flower). Script + README
 # live in prostate/ (see its README). Runs in prostate/'s own uv project for MONAI/SimpleITK.
@@ -167,7 +183,7 @@ download-prostate-data:
 # (and the published set). PROSTATE_MODALITIES="t2w adc hbv sag cor" converts everything.
 PROSTATE_MODALITIES ?= t2w adc hbv
 convert-prostate-to-dicom:
-	@$(PROSTATE_UV) python prostate/convert_mha_to_dicom.py \
+	@PYTHONPATH=. $(PROSTATE_UV) python prostate/convert_mha_to_dicom.py \
 		--input $(DATA_DIR)/prostate/images --output $(DATA_DIR)/prostate/dicom \
 		--modalities $(PROSTATE_MODALITIES)
 

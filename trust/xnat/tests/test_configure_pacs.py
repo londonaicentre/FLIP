@@ -124,7 +124,7 @@ edit() {  # edit <state-file> <jq-filter> [args...]
   jq "$@" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
 }
 
-# DQR 3.0.0's availability API over $AVAIL_STATE (one JSON array of intervals): times stored as DQR
+# DQR 3.1.0's availability API over $AVAIL_STATE (one JSON array of intervals): times stored as DQR
 # stores them (24:00 as 00:00, H:MM zero-padded), overlap judged per day, a create refused with 400
 # on overlap, and a PUT that copies the day, times, threads, utilisation and pacsId from the body and
 # answers 304 when none of them differ.
@@ -247,6 +247,16 @@ esac
 case ",${WRONG_LOGINS:-}," in
   *",${creds#*:},"*) [ -n "$creds" ] && { status=401; body='{"error":"unauthorized"}'; } ;;
 esac
+
+# Or, with ADMIN_PASSWORD_FILE, the one admin password XNAT holds: any other is refused (and logged
+# to $ADMIN_PASSWORD_FILE.refused), and the rotation's PUT /xapi/users/admin replaces it.
+if [ -n "${ADMIN_PASSWORD_FILE:-}" ] && [ "${creds%%:*}" = admin ]; then
+  if [ "${creds#*:}" != "$(cat "$ADMIN_PASSWORD_FILE")" ]; then
+    status=401; body='{"error":"unauthorized"}'; echo "$creds" >> "$ADMIN_PASSWORD_FILE.refused"
+  elif [ "$method" = "PUT" ] && [[ "$url" == */xapi/users/admin ]]; then
+    jq -j '.password' <<< "$data" > "$ADMIN_PASSWORD_FILE"
+  fi
+fi
 
 # A first boot still initialising its database: the first N logins fail whatever the password.
 # The count covers every authenticated request, so keep N below the number of probe logins.
@@ -1185,7 +1195,7 @@ def test_non_boolean_extended_negotiation_is_refused(tmp_path, value):
 def test_availability_window_is_written_enabled(tmp_path):
     """A window is never written disabled.
 
-    DQR 3.0.0 does not read an interval's ``enabled`` flag (only ``isAvailableNow``, which it computes
+    DQR 3.1.0 does not read an interval's ``enabled`` flag (only ``isAvailableNow``, which it computes
     from the clock and which has no setter, so the script no longer sends ``availableNow``), but a
     disabled write would be a trap the day a later DQR starts honouring it.
     """
@@ -1322,6 +1332,29 @@ def test_first_boot_activates_with_the_initial_password_and_rotates_it(tmp_path)
     assert code == 0, output
     assert credentials_used(tmp_path, "POST", "/xapi/siteConfig")[0] == "admin:initial"  # the activation call
     assert credentials_used(tmp_path, "PUT", "/xapi/users/admin") == ["admin:initial"]
+
+
+def test_a_configured_site_still_on_the_initial_password_moves_to_the_kits(tmp_path):
+    """A Kubernetes trust installed before FLIP#1692 runs on XNAT's factory password. Setting its own in
+    the kit and upgrading changes it with no refused login; the next upgrade converges on it."""
+    held = tmp_path / "admin-password"
+    held.write_text("initial")
+    refused = tmp_path / "admin-password.refused"
+    env = {"ADMIN_PASSWORD_FILE": str(held), "INITIALIZED_BODY": "true"}
+
+    code, _, output = run_configure(tmp_path / "upgrade", env, pacs_state=MOCK_PACS_REGISTRATION)
+    assert code == 0, output
+    assert held.read_text() == "rotated"
+    assert credentials_used(tmp_path / "upgrade", "PUT", "/xapi/users/admin") == ["admin:initial"]
+    assert not refused.exists(), refused.read_text()
+
+    code, _, output = run_configure(tmp_path / "next", env, pacs_state=MOCK_PACS_REGISTRATION)
+    assert code == 0, output
+    assert "converging" in output
+    assert held.read_text() == "rotated"
+    # As on Compose: the mode probe and the plugin wait each try the initial password first (at least
+    # twice; more while the plugins are still loading).
+    assert refused.read_text().splitlines() == ["admin:initial"] * 2
 
 
 def test_neither_password_working_stops_before_touching_xnat(tmp_path):

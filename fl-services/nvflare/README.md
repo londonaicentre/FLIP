@@ -91,7 +91,7 @@ Anywhere one of these containers bind-mounts a host path, that path must still b
 container runs as, or the entrypoint fails (loudly, since the entrypoint scripts exit non-zero when they
 can't write their generated config). Letting Docker auto-create the bind source leaves it root-owned and
 silently breaks the container. See the [trust troubleshooting page](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/trust-node-compose.html#ts-compose-images-permission) for the failure mode and
-`deploy/providers/AWS/site.yml` / `trust/deploy/ansible/onprem.yml` for how the provisioning
+`trust/deploy/ansible/aws-ec2-host.yml` / `trust/deploy/ansible/onprem.yml` for how the provisioning
 Ansible pre-creates these paths with the right owner.
 
 **Upgrading an existing environment:** hosts that already ran the previous (root) images may have
@@ -101,7 +101,7 @@ provisioned kit directories to the new container uid is needed before the first 
 
 ### Container capability hardening
 
-The trust-deployment `fl-client-net-*` services (`trust/deploy/compose_trust.{production,development}.nvflare.yml`)
+The trust-deployment `fl-client-net-*` services (`trust/deploy/compose/compose_trust.{production,development}.nvflare.yml`)
 also set `security_opt: [no-new-privileges:true]` and `cap_drop: [ALL]`, matching every other trust-side
 service. Development adds nothing back: the image is non-root, and Docker makes a `cap_add` effective only
 for root, so a grant there would sit unused in the bounding set (`CapEff` stays `0`). A `provision/workspace-dev/`
@@ -189,7 +189,7 @@ already-onboarded participant's kit byte-identical — no re-provision, no CA ro
 fleet-wide redeploy. The new kit lands in `workspace-<env>/net-N/services/<CLIENT_NAME>/`.
 
 **One-command path (stag/prod).** `make -C deploy/providers/AWS add-fl-kits N=<n>
-PROD=stag|true` runs this whole section end to end. `N` is a target ("ensure N more live
+HUB=stag|prod` runs this whole section end to end. `N` is a target ("ensure N more live
 slots"), not a mint count: it discovers the deployment's nets from S3, **activates** up
 to `N` existing spares first (env-file edit only — no CA workspace, no certs, no upload),
 and for any remaining shortfall restores + fingerprint-verifies each net's CA workspace
@@ -205,7 +205,7 @@ unusual cases (custom slot names, a single net).
 different things: the hub only claims names listed in `FL_KIT_SLOT_NAMES` (via the SSM
 parameter). A net provisioned with spare kits therefore has kits no trust can claim, and
 those need **activating, not minting** — add the name to `FL_KIT_SLOT_NAMES`, run
-`make -C deploy/providers/AWS apply-fl-kit-slots PROD=…`, done (no certs, no upload, no
+`make -C deploy/providers/AWS apply-fl-kit-slots HUB=…`, done (no certs, no upload, no
 restart). `add-fl-kits N=<n>` does this for you: it treats `N` as "ensure N more live
 slots" and activates up to `N` such spares (lowest-numbered first) before minting the
 shortfall, so a good kit is never stranded and, when spares cover `N`, nothing is minted
@@ -213,26 +213,39 @@ at all.
 
 **CA-state custody.** The preserved `state/` is the hard prerequisite: it holds the root
 CA that signs the new kit. The workspace is gitignored, so it exists only in the checkout
-that provisioned (or last added to) the net. `upload-kits-to-s3` mirrors it to S3
-alongside the kits, so to add a client from a fresh checkout, restore the CA state and
+that provisioned (or last added to) the net. `upload-kits-to-s3` mirrors it to S3 under
+its own prefix, `fl-flare-ca-state/<FLARE_KIT_DATE>/net-<N>/`, never among the kits: it
+holds the root CA's private key, and no ECS task role can read that prefix (operators use
+their own credentials). To add a client from a fresh checkout, restore the CA state and
 the server kit (the two things `add-client.sh` checks for) first:
 
 ```sh
-aws s3 cp s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}/net-<N>/state/ \
+aws s3 cp s3://${AICENTRE_BUCKET_NAME}/fl-flare-ca-state/${FLARE_KIT_DATE}/net-<N>/ \
   provision/workspace-<env>/net-<N>/state/ --recursive
 aws s3 cp s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}/net-<N>/services/fl-server-net-<N>/ \
   provision/workspace-<env>/net-<N>/services/fl-server-net-<N>/ --recursive
 ```
 
+An estate uploaded before the CA state had its own prefix still holds it at
+`fl-flare-participant-kits/<FLARE_KIT_DATE>/net-<N>/state/`. `add-fl-kits` reads it from
+there, with a notice, while the new prefix is empty. Move it once per net, then remove the
+old copy and its earlier versions (the bucket is versioned, so `aws s3 mv` alone leaves
+them behind):
+
+```sh
+aws s3 mv s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}/net-<N>/state/ \
+  s3://${AICENTRE_BUCKET_NAME}/fl-flare-ca-state/${FLARE_KIT_DATE}/net-<N>/ --recursive
+```
+
 **Pushing the new kit to S3 (stag/prod).** Upload **additively** — only the new kit, plus
-a refresh of `state/cert.json` so the mirrored CA registry records the new identity for
+a refresh of the mirrored `cert.json` so the CA registry records the new identity for
 the next add-from-a-fresh-checkout:
 
 ```sh
 aws s3 cp provision/workspace-<env>/net-<N>/services/<CLIENT_NAME>/ \
   s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}/net-<N>/services/<CLIENT_NAME>/ --recursive
 aws s3 cp provision/workspace-<env>/net-<N>/state/cert.json \
-  s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}/net-<N>/state/cert.json
+  s3://${AICENTRE_BUCKET_NAME}/fl-flare-ca-state/${FLARE_KIT_DATE}/net-<N>/cert.json
 ```
 
 > ⚠️ Do **not** push a single added kit with `upload-kits-to-s3`. That target runs
@@ -254,7 +267,7 @@ aws s3 cp provision/workspace-<env>/net-<N>/state/cert.json \
 > wipes `state/`, rotates the root CA, and so **forces a redeploy of every already-onboarded
 > trust** (the same fleet-wide churn called out above). Only take this route in a maintenance
 > window where redeploying the whole fleet is acceptable, then re-upload:
-> `make -C fl-services/nvflare provision-prod PROD_NUM_CLIENTS=1000 && make -C fl-services/nvflare upload-kits-to-s3 PROD=true`.
+> `make -C fl-services/nvflare provision-prod PROD_NUM_CLIENTS=1000 && make -C fl-services/nvflare upload-kits-to-s3 HUB=prod`.
 
 ### Activating the new slot on the hub
 
@@ -274,8 +287,8 @@ list has a single source per environment (`resolve_fl_kit_slot_names`):
   production source (the list is plain configuration, not a secret, and there is
   deliberately no env fallback: a broken or missing parameter means the pool can't grow,
   loudly, rather than silently serving stale env values). Add the name to
-  `FL_KIT_SLOT_NAMES` in `.env.stag` / `.env.production` and run
-  `make -C deploy/providers/AWS apply-fl-kit-slots PROD=stag|true` — a targeted
+  `FL_KIT_SLOT_NAMES` in `.env.stag` / `.env.prod` and run
+  `make -C deploy/providers/AWS apply-fl-kit-slots HUB=stag|prod` — a targeted
   plan/apply of just that parameter, with a plain-text diff you can review. **No
   restart, no task-definition change**: the next registration reconciles the pool from
   the parameter. (`make add-fl-kits` runs this step for you.)

@@ -18,17 +18,17 @@
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 
-# Load the env file selected by PROD (dev by default), exactly as
-# fl-services/nvflare/Makefile does — with PROD=stag|true (or lza|lza-stag for
-# the LZA estate, FLIP#749) this brings in the upload vars (AICENTRE_BUCKET_NAME,
-# FLOWER_KIT_DATE) used by upload-creds-to-s3.
+# Load the env file selected by HUB (dev by default), exactly as
+# fl-services/nvflare/Makefile does — with HUB=stag|prod this brings in the upload
+# vars (AICENTRE_BUCKET_NAME, FLOWER_KIT_DATE) used by upload-creds-to-s3.
+READS_HUB_ENV_FILE := yes
 include $(REPO_ROOT)/deploy/env_mode.mk
 # MAIN_ENV_FILE is a bare filename in the repo root, as everywhere else; a second instance passes its own.
 MAIN_ENV_FILE ?= $(ENV_FILE_NAME)
 MAIN_ENV_PATH := $(REPO_ROOT)/$(MAIN_ENV_FILE)
 ifneq ("$(wildcard $(MAIN_ENV_PATH))","")
 include $(MAIN_ENV_PATH)
-export $(shell sed 's/=.*//' $(MAIN_ENV_PATH))
+export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(MAIN_ENV_PATH))
 endif
 include $(REPO_ROOT)/deploy/fl_backend.mk
 
@@ -53,8 +53,9 @@ export WORKING_DIR := $(REPO_ROOT)/fl-services/flower/runs
 build:
 	@echo "🛠️  Building flower-fl-base:$(FL_BUILD_TAG) (LOCAL_DEV=$(LOCAL_DEV))..."
 	LOCAL_DEV=$(LOCAL_DEV) $(DEV_COMPOSE) --profile build-only build flwr-base
-	@echo "🛠️  Building flower-{fl-api,superlink,supernode}:$(FL_BUILD_TAG)..."
+	@echo "🛠️  Building flower-{fl-api,superlink,supernode,fleet-proxy}:$(FL_BUILD_TAG)..."
 	$(DEV_COMPOSE) build fl-api superlink supernode-1
+	$(SECURE_COMPOSE) build fleet-proxy
 
 # How many SuperNode credentials a provisioning run mints. Defaults to the size of
 # this environment's FL kit slot pool, so the kit covers every slot the hub can hand
@@ -80,9 +81,9 @@ provision:
 # For a hub deployment the server cert must carry the ECS hostnames — e.g.:
 #   FLOWER_EXTRA_SERVER_SANS="fl-server-net-1.flip.local,fl.stag.flip.aicentre.co.uk" \
 #     make provision NET_NUMBER=1
-#   make upload-creds-to-s3 NET_NUMBER=1 PROD=stag
+#   make upload-creds-to-s3 NET_NUMBER=1 HUB=stag
 upload-creds-to-s3:
-	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with PROD=stag|true|lza|lza-stag"; exit 1; }
+	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with HUB=stag|prod"; exit 1; }
 	@[ -n "$(FLOWER_KIT_DATE)" ] || { echo "❌ FLOWER_KIT_DATE not set — add it to the env file (e.g. 20260811)"; exit 1; }
 	@echo "⬆️  Uploading Flower creds (net-$(NET_NUMBER)) → s3://$(AICENTRE_BUCKET_NAME)/fl-flower-participant-kits/$(FLOWER_KIT_DATE)/net-$(NET_NUMBER) $(DRYRUN)"
 	aws s3 sync ./provision/creds/net-$(NET_NUMBER) s3://$(AICENTRE_BUCKET_NAME)/fl-flower-participant-kits/$(FLOWER_KIT_DATE)/net-$(NET_NUMBER) --delete --exclude "certificates/ca.key" $(DRYRUN)
@@ -117,4 +118,4 @@ down:
 # (FLIP#1432); /submit_run is UUID-only (flip-api's production model_id path).
 submit:
 	$(DEV_COMPOSE) -p flwr exec -T fl-api \
-		python -c "import urllib.request as u; print(u.urlopen(u.Request('http://localhost:8000/submit_tutorial/$(APP)', method='POST')).read().decode())"
+		python -c "import urllib.request as u; print(u.urlopen(u.Request('http://localhost:8000/submit_tutorial/$(APP)', method='POST', headers={'X-FL-API-Key': '$(FL_API_KEY)'})).read().decode())"

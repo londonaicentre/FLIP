@@ -72,8 +72,6 @@ def main() -> None:
 
     # Extract values safely
     try:
-        db_endpoint = outputs["DbEndpoint"]["value"]
-        db_secret_arn = outputs["DbSecretArn"]["value"]
         cognito_user_pool_id = outputs["CognitoUserPoolId"]["value"]
         cognito_app_client_id = outputs["CognitoAppClientId"]["value"]
     except KeyError as e:
@@ -84,7 +82,9 @@ def main() -> None:
     # NOTE Ports are assumed based on standard project configuration
     # TODO Set variable ports in Terraform and output them if they differ from defaults
     updates = {
-        "DB_HOST": db_endpoint,
+        # NOTE: DB_HOST is intentionally not written. The hub reaches Postgres through the RDS Proxy
+        # (ecs_tasks.tf sets it), and the DbEndpoint output is the instance address, which only
+        # the bastion can reach (FLIP#566).
         # NOTE: CENTRAL_HUB_API_URL and FLIP_API_INTERNAL_URL are intentionally NOT updated here.
         # CENTRAL_HUB_API_URL is the public CloudFront URL consumed by flip-ui and trust-api;
         # in staging/production it should be the canonical Route53 domain (e.g. https://stag.flip.aicentre.co.uk/api).
@@ -92,7 +92,6 @@ def main() -> None:
         # (e.g. http://flip-api:8000/api) — it must not cross CloudFront because that strips
         # X-Internal-Service-Key at the edge.
         # Set both values manually in the env file.
-        "POSTGRES_SECRET_ARN": db_secret_arn,
         "AWS_COGNITO_USER_POOL_ID": cognito_user_pool_id,
         "AWS_COGNITO_APP_CLIENT_ID": cognito_app_client_id,
     }

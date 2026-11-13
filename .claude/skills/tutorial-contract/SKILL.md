@@ -36,10 +36,10 @@ Settle these with the user, or state your assumption, before copying anything �
 file set:
 
 1. **Backend(s).** New tutorials usually ship on both, under the same `<name>`; single-backend is
-   fine when the user says so (prostate is Flower-only; two-stage diffusion is NVFLARE-only).
-2. **Job type** — one of the four `fl-apps` templates: `standard` (FedAvg training), `evaluation`
-   (no training, an uploaded checkpoint), `fed_opt`, `diffusion_model` (NVFLARE only). It fixes the
-   required files and the recipe / template.
+   fine when the user says so (prostate is Flower-only; the image-generation tutorials are NVFLARE-only).
+2. **Job type** — one of the three `fl-apps` templates: `standard` (FedAvg training), `evaluation`
+   (no training, an uploaded checkpoint), `fed_opt`. It fixes the required files and the recipe /
+   template.
 3. **Data.** 2-D DICOM through MONAI, 3-D NIfTI converted by XNAT with labels as enrichment, or
    tabular / OMOP-only (`has_imaging=false` project, CPU is enough).
 4. **Dataset.** Reuse one under `fl-tutorials/datasets/` when the cohort fits. A new dataset is a
@@ -68,11 +68,12 @@ comments in the copied structural files — each explains a trap that has bitten
 | New tutorial is… | NVFLARE | Flower |
 |------------------|---------|--------|
 | Tabular / OMOP-only, CPU | `tabular_classification/ehr_risk_prediction` (smallest; per-site partitioning) | `ehr_risk_prediction` |
+| Statistics through FedAvg (no training; the model is the result) | `tabular_causal_discovery/biomarker_causal_discovery` | `biomarker_causal_discovery` |
 | 2-D imaging classification | `image_classification/xray_classification` | `xray_classification` |
 | 3-D segmentation (NIfTI via XNAT, labels as enrichment) | `image_segmentation/3d_spleen_segmentation` | `3d_spleen_segmentation`; `3d_prostate_segmentation` for multi-series studies + an nnU-Net plan |
 | Evaluation of an uploaded checkpoint | `image_evaluation/3d_spleen_segmentation_evaluation`; `arkplus_*_evaluation` for several checkpoints | `3d_spleen_segmentation_evaluation` |
 | Fine-tuning from a shipped checkpoint | `image_classification/arkplus_fine_tuning` (`SERVER_CHECKPOINT`, `AGGREGATE_ONLY_REGEX`) | — |
-| Generative / two-stage | `image_synthesis/latent_diffusion_model` | — |
+| Generative | `image_generation/xray_diffusion` (one job); `image_generation/brain_mri_ldm_stage1_autoencoder` then `brain_mri_ldm_stage2_diffusion` (two jobs: the second trains in the first's frozen latent space) | — |
 
 ## 3. NVFLARE: the file set and its traps
 
@@ -84,7 +85,7 @@ Layout `fl-tutorials/nvflare/<category>/<name>/`. Discovery is `$(wildcard */*/.
 directory counts as a tutorial **iff** it sits two levels down and carries a `.env.app`.
 `run-tutorial` matches `TUTORIAL=` on the basename, so names are unique across categories and
 backends. Reuse a category (`image_classification`, `image_segmentation`, `image_evaluation`,
-`image_synthesis`, `tabular_classification`); never put an `__init__.py` in `nvflare/` or a
+`image_generation`, `tabular_classification`); never put an `__init__.py` in `nvflare/` or a
 category dir — a package named `nvflare` shadows the real one.
 
 | File | Role / trap |
@@ -114,8 +115,8 @@ category dir — a package named `nvflare` shadows the real one.
 - Recipes (`flip-utils/flip/nvflare/recipes/`): `FlipFedAvgRecipe(num_rounds, min_clients,
   train_script, train_args, project_id, query, local_rounds, model_id, percentile_privacy, …,
   aggregate_only_regex, best_model_metric, best_model_metric_minimize)`; `FlipFedOptRecipe` adds
-  `optimizer_args` / `lr_scheduler_args`; `FlipEvalRecipe` takes `eval_script="evaluator.py"`;
-  `FlipDiffusionRecipe` takes `num_rounds_ae` + `num_rounds_dm`. All expose `.job` for `stage_app_files`.
+  `optimizer_args` / `lr_scheduler_args`; `FlipEvalRecipe` takes `eval_script="evaluator.py"`.
+  All expose `.job` for `stage_app_files`.
 - Tests you add by hand: a 2-D DICOM app read through MONAI `LoadImaged` → `tests/tutorial_apps.py`
   `DICOM_APPS` (the orientation suite then covers it); app-file unit tests mirror the path
   (`tests/nvflare/<category>/<name>/app_files/test_<module>.py`, loaded through `load_module`; an
@@ -124,9 +125,14 @@ category dir — a package named `nvflare` shadows the real one.
 ## 4. Flower: the file set and its traps
 
 A flwr app: `pyproject.toml` for the local simulator plus an `app/` package that is **exactly what
-the user uploads**. Layout `fl-tutorials/flower/<name>/` (flat; #1500 moves it to
-`<category>/<name>/`); discovery is a direct subdirectory carrying `app/`. Same `<name>` as the
-NVFLARE twin.
+the user uploads**. Layout `fl-tutorials/flower/<category>/<name>/`, the NVFLARE layout (#1500):
+discovery is `$(wildcard */*/app/.)`, a directory two levels down carrying `app/`, and
+`run-tutorial TUTORIAL=<name>` / `sim-tutorial.sh` resolve the bare name to its directory, refusing a
+name found in two categories. Use the NVFLARE twin's `<category>/<name>` (the catalogue guard checks
+it); a Flower-only tutorial takes the category its job type and modality imply (prostate:
+`image_segmentation`). Depth is exactly two: a checkout that pulled the move keeps ignored caches at
+the old flat `fl-tutorials/flower/<name>/`, which the harness reports as stale leftovers
+(`git clean -fdX`), never as tutorials.
 
 Two files in `app/` are not the tutorial's own: `server_app.py` and `strategy.py` are byte-for-byte
 copies of `fl-apps/flower/<job_type>/app/` (`cp`, never symlink — `flwr build` drops symlinks),
@@ -146,7 +152,7 @@ parity test refuses any difference.
 | `.env.app` + `Makefile` | Evaluation tutorials only: `MODEL_CHECKPOINT_URL=…` and a `download-checkpoints` target. Not a discovery marker on Flower. |
 
 `[tool.flwr.app.config]` must hold: `num-server-rounds`; the five `dp-*` keys with `dp-enabled =
-true` (`flip.flower.privacy.LocalDpConfig`); the `flip-model-id` / `flip-project-id` /
+true` (`flip.flower.privacy.LocalDpConfig`; a statistics app sets `false`, §5); the `flip-model-id` / `flip-project-id` /
 `flip-cohort-query` / `flip-job-dir` placeholders fl-api overrides at submit; `flip-min-clients = 2`
 as a TOML int ≥ 2 at line start (`sim-tutorial.sh` seds it for the site count, the min_clients guard
 asserts it, fl-api overrides it — it is a quorum, never a partition count); `best-model-metric` /
@@ -183,11 +189,33 @@ template, required files present, template files byte-identical), `test_flower_m
   project as *enrichment* between the pull and training (`upload-*-labels`; the e2e target's
   `ENRICHMENT_ARGS`, the recorder's `--data-enrichment-cwd/-cmd` + `--publish-segmentations`). The
   app loads `label_*.nii.gz` beside `input_*.nii.gz`; multi-series studies (prostate) select the
-  series. Not in `DICOM_APPS`. Each FL client sees only its own `net-N` image slice.
+  series. Not in `DICOM_APPS`; register its transform factories in `NIFTI_APPS`
+  (`tests/test_nifti_orientation.py`) instead. Each FL client sees only its own `net-N` image slice.
 - **Tabular / OMOP-only.** `query.sql` projects `person_id`; `get_dataframe` only; project created
   with imaging **off** (FLIP#1071 — left on, the hub dispatches `create_imaging` and the run dies at
   the image-pull wait): the e2e target pins `--no-imaging`, the demo profile `has_imaging: False`.
   One dev CSV sliced per site; CPU; figure = feature set + label prevalence.
+- **Statistics through FedAvg.** A parameter-free module whose buffers are the exchanged arrays, so
+  the downloaded model *is* the result and a committed `summarise_results.py` reads it
+  (`biomarker_causal_discovery`: bootstrapped FCI as pooled sufficient statistics). Each site releases
+  **one** statistic per run, never one per bootstrap — reproducible resamples are a system of known
+  weighted sums that inverts to rows (the #1484 review). Floors the config can only raise (a hard row
+  floor above the trust's own `COHORT_QUERY_THRESHOLD`, which its data-access-api enforces before the app
+  sees a row, and a small-cell rule for discrete columns) and refusals that name neither count nor
+  column, since Flower forwards a client's exception text to the hub (NVFLARE's client API sends a
+  generic failure). The last round consumes and zeroes the statistics, so the job refuses
+  fewer than two rounds. Shape the payload so the NVFLARE percentile filter is a no-op; Flower's
+  clip-and-noise cannot be made one, so switch it off in both `pyproject.toml` and `config.toml`
+  (the exception to §4's `dp-enabled = true`), refuse a run config that turns it back on, and say
+  why. Say in the README which checks are app code and which the trust enforces. The README shows
+  the loop as a Mermaid block and an agreement table in place of a curve.
+- **Access-controlled dataset.** The dataset target is a converter from the licence holder's own
+  download (`convert-adni-cohort ADNI_DIR=`) into the gitignored data root, refusing any output path
+  git tracks; no rows, no synthetic stand-in, tests on invented tables of the same shape, and when the
+  agreement forbids third-party AI tools on the rows, never print a row into a session. The README
+  carries the application steps, the acknowledgement and the agreement's conditions; figures are
+  aggregates. Never seeded on the shared dev trusts: a `load-<cohort>` target for a licence holder's
+  local trusts, the e2e target documented with that prerequisite, and no demo video.
 - **Evaluation.** `evaluator.py` + `FlipEvalRecipe` / the `evaluation` template; the checkpoint is
   staged host-side (`download-checkpoints`, `prepare-checkpoint`) into the upload dir, never fetched
   at run time; the e2e target points `QUERY_FILE` at the training tutorial's query. The demo
@@ -195,9 +223,12 @@ template, required files present, template files byte-identical), `test_flower_m
   exists — say so instead.
 - **Fine-tune / two-stage.** Fine-tune: `SERVER_CHECKPOINT` seeds round 0, `AGGREGATE_ONLY_REGEX`
   keeps the frozen backbone out of aggregation (Ark+; `prepare-checkpoint` converts the upstream
-  pickle host-side under `process_tools/`). Two-stage: `FlipDiffusionRecipe`, `job_type
-  diffusion_model`, `validator.py`, perceptual-loss weights via `make weights`; NVFLARE only. Show
-  the loop as a Mermaid block in the README. `fed_opt` has a template and no tutorial yet.
+  pickle host-side under `process_tools/`). Two-stage: two `standard` jobs, the second
+  taking the first's result as a frozen `SERVER_CHECKPOINT` (`prepare-checkpoint` extracts it,
+  `AGGREGATE_ONLY_REGEX` keeps it out of aggregation), perceptual-loss weights via `make weights`;
+  NVFLARE only (`image_generation/brain_mri_ldm_*`). A flow diagram only where the loop cannot be
+  said in two sentences, in plain words (`references/readme-shape.md`). `fed_opt` has a template and
+  no tutorial yet.
 - **Weights and checkpoints** follow the root `AGENTS.md` security rule: no run-time download in
   app code, every `torch.load` with `weights_only=True`, uploads `.safetensors` preferred
   (`test_offline_apps.py` is the guard).
@@ -237,4 +268,6 @@ workflow's `paths:` if needed. Changing the dataset or job type: re-run §1 for 
 every registration that named the old value. Known drift to look for when auditing: a Flower client
 reading `SUPERNODE_NAME`, a README quoting a target the root Makefile does not forward, a tutorial
 missing from the docs catalogue or the recorder's `APPS`, a `torch.load` without `weights_only=True`,
-a README with no figure, no Expected performance, no citation. Fix what is small in place; file the rest.
+a README with no figure, no Expected performance, no citation; a title that names the backend or
+"FLIP tutorial" instead of the task, a "Compatible job type" section beside the at-a-glance table, a
+diagram that restates a sentence. Fix what is small in place; file the rest.

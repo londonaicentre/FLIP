@@ -1,0 +1,165 @@
+{
+  "modelId": "7648612f-ddb1-8243-9455-34e30a017671",
+  "modelName": "Ark+ Finetuning 50r client_api",
+  "modelDescription": "Federated fine-tuning of the pretrained Ark+ (Swin-Large, 768px) chest X-ray foundation model for 5-finding classification. The encoder stays frozen; a fresh 5-class linear head is trained with FedAvg over 50 global rounds of 5 local epochs (batch size 4, Adam, exponential LR decay 1.5e-3 to 1.5e-4 during round 0, fixed thereafter; mean per-logit BCE loss). Only head parameter updates are exchanged, passed through a selective parameter-sharing privacy filter (10% quantile threshold), keeping per-round payloads in the tens of kilobytes after the round-0 checkpoint broadcast. The resulting global model will be compared against the pretrained baseline on each site's holdout cohort in a separate federated evaluation job.",
+  "projectId": "790980e6-4782-8bcf-b837-a35e9c2cf196",
+  "status": "RESULTS_UPLOADED",
+  "query": {
+    "id": "984a92e7-f309-8787-8f1e-0956590dbdff",
+    "name": "Ark+ cohort query",
+    "query": "WITH project_images AS (\n    SELECT io.image_occurrence_id, io.accession_id, io.image_occurrence_date, io.modality_concept_id\n    FROM omop.image_occurrence io\n    JOIN omop.procedure_occurrence pr ON pr.procedure_occurrence_id = io.procedure_occurrence_id\n    WHERE pr.procedure_source_value = 'Chest X-ray'\n),\nfeature_observation AS (\n    -- image_feature rows that link to the observation table (carry the Yes/No labels)\n    SELECT ife.image_occurrence_id, ife.image_feature_concept_id, ife.image_feature_event_id\n    FROM omop.image_feature ife\n    WHERE ife.image_feature_event_field_concept_id = 1147304\n      AND ife.image_occurrence_id IN (SELECT image_occurrence_id FROM project_images)\n),\nobservation_value AS (\n    -- pivot the per-label observations to one row per image occurrence\n    SELECT fo.image_occurrence_id,\n        MAX(CASE WHEN image_feature_concept_id = 4215818  THEN vc.concept_name END) AS effusion,\n        MAX(CASE WHEN image_feature_concept_id = 4196943  THEN vc.concept_name END) AS edema,\n        MAX(CASE WHEN image_feature_concept_id = 4319884  THEN vc.concept_name END) AS consolidation,\n        MAX(CASE WHEN image_feature_concept_id = 4264333  THEN vc.concept_name END) AS infiltration,\n        MAX(CASE WHEN image_feature_concept_id = 4214641  THEN vc.concept_name END) AS lung_nodule_or_mass,\n        MAX(CASE WHEN image_feature_concept_id = 253796   THEN vc.concept_name END) AS pneumothorax,\n        MAX(CASE WHEN image_feature_concept_id = 40481136 THEN vc.concept_name END) AS normal_lungs\n    FROM feature_observation fo\n    JOIN omop.observation o ON o.observation_id = fo.image_feature_event_id\n    JOIN omop.concept vc ON vc.concept_id = o.value_as_concept_id\n    GROUP BY fo.image_occurrence_id\n)\nSELECT\n    pi.accession_id,\n    pi.image_occurrence_date AS \"Image date\",\n    modality.concept_name    AS \"Modality\",\n    ov.effusion              AS \"Effusion\",\n    ov.edema                 AS \"Edema\",\n    ov.consolidation         AS \"Consolidation\",\n    ov.infiltration          AS \"Infiltration\",\n    ov.lung_nodule_or_mass   AS \"Lung Nodule or Mass\",\n    ov.pneumothorax          AS \"Pneumothorax\",\n    ov.normal_lungs          AS \"Lungs in normal arrangement\"\nFROM project_images pi\nJOIN observation_value ov ON ov.image_occurrence_id = pi.image_occurrence_id\nJOIN omop.concept modality ON modality.concept_id = pi.modality_concept_id\nORDER BY pi.accession_id\n",
+    "results": null
+  },
+  "files": [
+    {
+      "id": "dcdeb315-d2ad-845c-b2b4-fe20b753ad4a",
+      "name": "models.py",
+      "status": "COMPLETED",
+      "size": 7245,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "7648612f-ddb1-8243-9455-34e30a017671",
+      "bandit_findings": [],
+      "updated_at": null
+    },
+    {
+      "id": "a0b72e2a-dfa6-8fb2-a6c9-d962972053ef",
+      "name": "arkplus_flat_models.py",
+      "status": "COMPLETED",
+      "size": 9062,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "7648612f-ddb1-8243-9455-34e30a017671",
+      "bandit_findings": [
+        {
+          "test_id": "B101",
+          "severity": "LOW",
+          "confidence": "HIGH",
+          "issue_text": "Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.",
+          "line_number": 119
+        }
+      ],
+      "updated_at": null
+    },
+    {
+      "id": "bbe372e8-031a-8abd-b982-0745e30a4f54",
+      "name": "arkplus_flat_utils.py",
+      "status": "COMPLETED",
+      "size": 11873,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "7648612f-ddb1-8243-9455-34e30a017671",
+      "bandit_findings": [
+        {
+          "test_id": "B101",
+          "severity": "LOW",
+          "confidence": "HIGH",
+          "issue_text": "Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.",
+          "line_number": 81
+        },
+        {
+          "test_id": "B101",
+          "severity": "LOW",
+          "confidence": "HIGH",
+          "issue_text": "Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.",
+          "line_number": 94
+        },
+        {
+          "test_id": "B101",
+          "severity": "LOW",
+          "confidence": "HIGH",
+          "issue_text": "Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.",
+          "line_number": 226
+        },
+        {
+          "test_id": "B614",
+          "severity": "MEDIUM",
+          "confidence": "HIGH",
+          "issue_text": "Use of unsafe PyTorch load",
+          "line_number": 239
+        }
+      ],
+      "updated_at": null
+    },
+    {
+      "id": "fff3237a-c560-8c85-827f-a9b4016a2331",
+      "name": "config.json",
+      "status": "COMPLETED",
+      "size": 1024,
+      "type": "application/json",
+      "tag": null,
+      "model_id": "7648612f-ddb1-8243-9455-34e30a017671",
+      "bandit_findings": null,
+      "updated_at": null
+    },
+    {
+      "id": "bc744691-40c7-8552-b580-8b455b4de1d9",
+      "name": "data_utils.py",
+      "status": "COMPLETED",
+      "size": 17954,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "7648612f-ddb1-8243-9455-34e30a017671",
+      "bandit_findings": [
+        {
+          "test_id": "B112",
+          "severity": "LOW",
+          "confidence": "HIGH",
+          "issue_text": "Try, Except, Continue detected.",
+          "line_number": 423
+        }
+      ],
+      "updated_at": null
+    },
+    {
+      "id": "76760232-6a1f-8f01-8bf2-9532db45d403",
+      "name": "loss_and_metrics.py",
+      "status": "COMPLETED",
+      "size": 2600,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "7648612f-ddb1-8243-9455-34e30a017671",
+      "bandit_findings": [],
+      "updated_at": null
+    },
+    {
+      "id": "fc27c1f9-c2c7-874f-b759-164f0304cce1",
+      "name": "trainer.py",
+      "status": "COMPLETED",
+      "size": 22096,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "7648612f-ddb1-8243-9455-34e30a017671",
+      "bandit_findings": [],
+      "updated_at": null
+    },
+    {
+      "id": "b1462722-a89e-8fb2-95b0-bfaebefbe17c",
+      "name": "pretrained_weights.pt",
+      "status": "COMPLETED",
+      "size": 795507300,
+      "type": "application/octet-stream",
+      "tag": null,
+      "model_id": "7648612f-ddb1-8243-9455-34e30a017671",
+      "bandit_findings": null,
+      "updated_at": null
+    }
+  ],
+  "creationTimestamp": "2026-08-21T17:49:18.896",
+  "preparedAt": "2026-08-21T21:50:14.052",
+  "runningAt": "2026-08-21T21:50:14.097",
+  "resultsUploadedAt": "2026-08-22T08:44:57.817",
+  "trusts": [
+    {
+      "id": "00000000-0000-4000-8000-00000000a002",
+      "name": "King's College Hospital",
+      "code": "KCH"
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000a001",
+      "name": "Guy's and St Thomas' Trust",
+      "code": "GSTT"
+    }
+  ],
+  "queuePosition": null
+}

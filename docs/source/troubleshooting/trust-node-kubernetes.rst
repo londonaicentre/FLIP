@@ -39,7 +39,7 @@ Quick checks, in order
    kubectl get pods -n flip-trust
    helm list -n flip-trust
 
-   # 2. The chart's own checks: release status, XNAT plugin roster, smoke tests
+   # 2. The chart's own checks: release status, XNAT plugins, smoke tests
    make -C trust/deploy/helm status
    make -C trust/deploy/helm smoke-cstore     # a real C-STORE through the PACS into XNAT
 
@@ -114,6 +114,59 @@ Start with the pod's events and logs:
    The "Troubleshooting" section of the :gh:`chart README <trust/deploy/helm/README.md>` for pods stuck in
    ``Pending`` or ``CrashLoopBackOff``, a slow XNAT start and the FL client checklist.
 
+.. _ts-k8s-xnat-db-roles:
+
+xnat-db crash-loops on upgrade: no ``postgres`` role
+====================================================
+
+*Symptom.* ``helm upgrade`` reports success, then ``xnat-db-0`` goes ``CrashLoopBackOff``. The pod's events
+carry a ``FailedPostStartHook`` entry whose message ends in::
+
+   psql: error: could not connect to server: FATAL:  role "postgres" does not exist
+
+The ``postgres`` container log carries the server's own side of the same refusal, timestamped::
+
+   FATAL:  role "postgres" does not exist
+
+``xnat-web`` then fails its readiness check and every DICOM path stops with it.
+
+*Cause.* The volume was first initialised by a chart that rendered ``POSTGRES_USER``. The Postgres entrypoint
+honours that variable only at the first initdb, so that database's single superuser is ``xnat`` and no
+``postgres`` role exists. A data volume is never initialised twice, so the layout survives every later chart
+and only shows up when a release starts connecting to it.
+
+*Check.* Ask the database which roles it holds:
+
+.. code-block:: shell
+
+   kubectl -n flip-trust exec <release>-flip-trust-xnat-db-0 -c postgres -- psql -X -U xnat -d postgres \
+     -tAc "select rolname, rolsuper from pg_roles where rolname in ('postgres','xnat')"
+
+``xnat|t`` on its own is this layout. ``postgres|t`` alongside ``xnat|f`` is a current one.
+
+*Fix.* A release that carries FLIP#1658 probes both roles over the local socket and connects as whichever
+answers, so the upgrade completes and the application role's password is re-synced either way. On an older
+release, create the missing role once, after dumping the database:
+
+.. code-block:: shell
+
+   kubectl -n flip-trust exec <release>-flip-trust-xnat-db-0 -c postgres -- \
+     psql -X -v ON_ERROR_STOP=1 -U xnat -d postgres -c "CREATE ROLE postgres SUPERUSER LOGIN"
+
+No password is needed: the statement runs over the container's local socket, where the image's authentication
+is ``trust``.
+
+.. note::
+
+   On this layout the application role is also the database superuser, which a current install does not allow.
+   The chart leaves the layout alone rather than rewriting roles on a live database at container start;
+   converging it is an operator job (``ALTER DATABASE ... OWNER TO``, then ``REASSIGN OWNED``), tracked as
+   FLIP#1666.
+
+.. seealso::
+
+   The upgrade path itself, including this case, is in :ref:`admin-upgrading-sites`.
+
 .. _ts-k8s-secret-conflict:
 
 Deploy refused: ``conflict with "kubectl-patch"``
@@ -139,8 +192,8 @@ leaves those keys alone:
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm patch-kit-secrets KIT=<CODE> PROD=<env>
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>
+   make -C trust/deploy/helm patch-kit-secrets KIT=<CODE> HUB=<env>
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
 
 .. warning::
 
@@ -196,7 +249,7 @@ wait budget. Helm has already applied the new spec by then, so the error names H
 .. code-block:: shell
 
    kubectl get job -n flip-trust -w
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> HELM_TIMEOUT=45m
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> HELM_TIMEOUT=45m
 
 If the job is wedged rather than slow, set ``xnat.initJob.enabled: false`` in your values file (``VALUES_FILE``, see
 "Key values" on :doc:`../deploy-flip/deploy-flip-node-kubernetes`), deploy, and run
@@ -221,37 +274,41 @@ crashing:
    kubectl exec -n flip-trust "$XNAT_POD" -- \
      grep -E 'AbstractMethodError|unable to read DICOM object null' /data/xnat/home/logs/dicom.log
 
-**Cause.** The running ``xnat-web`` pod has older plugin jars than the chart lists. A C-ECHO never reaches XNAT's
-importer, so it cannot detect this. The pod downloads its plugins afresh every time it is created, so wrong jars
-mean the pod itself is old: no deploy has replaced it since the plugin list changed. Three reasons are common:
+**Cause.** The image the pod runs pairs a plugin with the wrong XNAT core. A C-ECHO never reaches XNAT's importer, so
+it cannot detect this. Three reasons are common:
 
-#. **The deploy never carried the new list**: an older checkout, or an overrides file pinning old versions. Check
-   with ``helm get values trust-release -n flip-trust --revision <N> --all | grep -A5 urls``.
-#. **The rollout stalled.** Releases deployed before the chart switched ``xnat-web`` to the ``Recreate`` strategy
-   start the new pod beside the old one; it never gets the volume and the old pod keeps serving. Two ReplicaSets
-   with a stuck pod in ``kubectl -n flip-trust get rs,pods -l app.kubernetes.io/component=xnat-web`` show this.
-#. **The deploy never finished**, because the ``xnat-init`` job outran the wait: :ref:`ts-k8s-xnat-init-timeout`.
+#. **The pod runs an image built before the fix**: one pinned in your overrides or kit file, or a tag such as
+   ``stag`` that was rebuilt after the pod pulled it. A redeploy does not replace the pod while its tag is
+   unchanged; restart it to pull the rebuilt image:
+   ``kubectl -n flip-trust rollout restart deployment/trust-release-flip-trust-xnat-web``.
+#. **The new pod never replaced the old one.** Releases deployed before the chart switched ``xnat-web`` to the
+   ``Recreate`` strategy start the new pod beside the old one; it never gets the volume and the old pod keeps
+   serving. Two ReplicaSets with a stuck pod in
+   ``kubectl -n flip-trust get rs,pods -l app.kubernetes.io/component=xnat-web`` show this. A deploy whose
+   ``xnat-init`` job outran the wait stops short the same way: :ref:`ts-k8s-xnat-init-timeout`.
+#. **The plugin list FLIP builds the image from pairs them wrongly**, so every image built from it does. Report it to
+   the FLIP team: the fix is a new image.
 
 **Check.**
 
 .. code-block:: shell
 
+   kubectl -n flip-trust get pod "$XNAT_POD" -o jsonpath='{.status.containerStatuses[0].imageID}'   # the digest it runs
    kubectl exec -n flip-trust "$XNAT_POD" -- ls -la /data/xnat/home/plugins   # the jars the pod carries
-   make -C trust/deploy/helm status          # fails naming both versions when the roster drifted
 
 **Fix.** Get one deploy to complete, from a current checkout, with a wait budget above the init job's real
 duration:
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> HELM_TIMEOUT=45m
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> HELM_TIMEOUT=45m
 
 If a stalled pod from reason 2 is still stuck, delete it (``kubectl -n flip-trust delete pod <pod>``) so the new one
 can take the volume. Then confirm the pod was replaced and send a test study:
 
 .. code-block:: shell
 
-   kubectl exec -n flip-trust "$XNAT_POD" -- ls -la /data/xnat/home/plugins   # dated today
+   kubectl -n flip-trust get pods -l app.kubernetes.io/component=xnat-web       # a new pod
    make -C trust/deploy/helm smoke-cstore
 
 If ``smoke-cstore`` finds no receipt line and no new prearchive object, the study went to something other than
@@ -300,15 +357,10 @@ Releases before the DICOM and web ports were split could send ``XNAT:8080``, the
 Studies arrive but land in the Unassigned prearchive
 ====================================================
 
-Retrieval works (the PACS sends, requests reach ``RECEIVED``), but no sessions appear in the project.
-``dqr.log`` shows:
-
-.. code-block:: text
-
-   WARN ... PacsDequeueThread - Cannot build session. 0 prearchive sessions found
-   for study 1.2.826... in project <imaging-project-id>.
-
-and ``/data/xnat/prearchive/`` fills with top-level timestamp folders instead of ``<project>/<timestamp>/``.
+Retrieval works (the PACS sends), but no sessions appear in the project, and ``/data/xnat/prearchive/`` fills
+with top-level timestamp folders instead of ``<project>/<timestamp>/``. The request's ``FAILED`` and the
+``Received zero files for study ... in project ...`` warning in ``dqr.log`` do not tell this apart: DQR reports
+every import into FLIP's direct-archive receiver that way.
 
 **Cause.** XNAT's DICOM receiver is the stock one. Routing studies to the requesting project, and relabelling them
 the way the FL client looks them up, needs the retrieval plugin's identifier on the receiver.
@@ -335,8 +387,9 @@ hand: delete the top-level timestamp folders and re-pull them (:ref:`ts-k8s-forc
 
 .. note::
 
-   With direct archiving on, the ``Cannot build session`` warning still appears on every pull and is harmless:
-   sessions skip the prearchive. Count the project's sessions with
+   With direct archiving on, DQR marks every request ``FAILED`` and logs the
+   ``Received zero files for study ... in project ...`` warning on every pull. Both are harmless: sessions skip the
+   prearchive, the only place DQR looks. Count the project's sessions with
    ``ls /data/xnat/archive/<imaging-project-id>/arc001 | wc -l`` in the pod.
 
 .. _ts-k8s-xnat-401:
@@ -378,7 +431,7 @@ account for an hour.
    kubectl exec -n flip-trust "$XNAT_POD" -- \
      curl -s -X DELETE -u admin:<admin-pass> \
      "http://localhost:8080/xapi/users/flipServiceAccount?permanently=true"
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
 
 .. _ts-k8s-dcm2niix-not-registered:
 
@@ -637,7 +690,7 @@ every later upgrade skips it. Force one reload: set ``trustData.seed.forceDicomV
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> VALUES_FILE=<your values file>
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> VALUES_FILE=<your values file>
 
 .. important::
 
@@ -708,7 +761,7 @@ trust-api heartbeats fail with 401
 
   .. code-block:: shell
 
-     make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>
+     make -C trust/deploy/helm sync-kit KIT=<CODE> HUB=<env>
 
 - **No heartbeat at all:** check that ``CENTRAL_HUB_API_URL`` is right and that the egress policy lets trust-api
   reach it on 443.
@@ -733,7 +786,7 @@ Other pods in the namespace can reach the FL server address.
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
 
 If you manage the values by hand, add the port to ``networkPolicies.allowedEgressPorts``.
 
@@ -741,6 +794,19 @@ If you manage the values by hand, add the port to ``networkPolicies.allowedEgres
 
    "FL client won't connect" in the :gh:`chart README <trust/deploy/helm/README.md>` for the kit path, kit owner
    and GPU checks.
+
+.. _ts-k8s-fl-reset:
+
+The FL client's connection to the FL server is reset after the TLS hello
+========================================================================
+
+A TCP connection to the FL server succeeds and the egress policy allows the port, but the connection drops with
+nothing read back once the TLS handshake starts.
+
+**Cause.** An application-aware firewall at the site's perimeter rejecting TLS on a non-default port. Nothing in the
+cluster changes it. Confirm with the ``openssl`` check on :ref:`deploy-trust-node-network`, from a pod or the admin
+host, then ask the network team to allow the ``ssl`` application to the FL endpoint on its port, or use a site-to-site
+VPN (:ref:`site-to-site-vpn`).
 
 **********
 Governance
@@ -769,8 +835,8 @@ silently dropped rule would be worse than none, because the operator would belie
 
 .. code-block:: shell
 
-   make -C trust check-governance KIT=<CODE> PROD=<env>
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>
+   make -C trust check-governance KIT=<CODE> HUB=<env>
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
 
 .. _ts-k8s-governance-ignored:
 

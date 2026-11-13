@@ -88,7 +88,7 @@ def test_both_fl_api_task_families_allow_list_the_shared_endpoint() -> None:
         assert (
             _attribute(_task_env_map(family), "BUNDLE_URL_ALLOWED_ORIGINS") == f'"https://${{local.{SHARED_LOCAL}}}"'
         ), family
-        # The pre-#1291 name rides along for one release so an image/environment skew cannot fail open.
+        # Inert since #1479, but still emitted so this release plans as moves only.
         assert _attribute(_task_env_map(family), "BUNDLE_URL_ALLOWED_HOSTS") == f"local.{SHARED_LOCAL}", family
 
 

@@ -28,6 +28,15 @@ The API listens on `8000` inside the container. The dev compose publishes it via
 (see [`../compose.dev.yml`](../compose.dev.yml)); in a full deployment it is reached over the
 Docker network rather than a host port.
 
+## Authentication
+
+Every route except the health one requires the hub's FL API key: the caller sends `FL_API_KEY` in the
+`FL_API_KEY_HEADER` header (default `X-FL-API-Key`) and the API compares it in constant time
+([`fl_api/utils/auth.py`](./fl_api/utils/auth.py), byte-identical in both backends). Missing or wrong key
+is a 401; an API started without `FL_API_KEY` answers 401 on every protected route and says so in its boot
+log. The key is dedicated to this hop — flip-api holds it (`make up` mints it into the hub env file;
+on ECS it is a `secrets` entry of every task that calls the API) and it is never `INTERNAL_SERVICE_KEY`.
+
 ## Endpoints
 
 The app is a FastAPI instance mounted at the service root (no prefix), grouped by router tag
@@ -72,9 +81,9 @@ When a job is running, the user's training code reaches the Central Hub through 
 
 ## Bundle-fetch origin allow-list (`BUNDLE_URL_ALLOWED_ORIGINS`)
 
-`/upload_app/{model_id}` fetches every `bundle_urls` entry **server-side**, and the FL API
-authenticates no caller of its own — so an unchecked URL is a blind SSRF from anything that can
-reach the API (a compromised trust container, an SSM port-forward). `validate_bundle_url` in
+`/upload_app/{model_id}` fetches every `bundle_urls` entry **server-side**, so an unchecked URL is
+a blind SSRF from anything holding the FL API key (or reaching the API should the key leak).
+`validate_bundle_url` in
 [`fl_api/utils/validation.py`](./fl_api/utils/validation.py) guards the fetch in layers:
 
 1. **`BUNDLE_URL_ALLOWED_ORIGINS` — the primary control.** A comma-separated list of the only
@@ -89,7 +98,7 @@ reach the API (a compromised trust container, an SSM port-forward). `validate_bu
    `AWS_ENDPOINT_URL_S3=https://s3.<AWS_REGION>.amazonaws.com`, which makes boto3 presign
    *path-style* URLs — bucket in the path, host exactly `s3.<AWS_REGION>.amazonaws.com` — so
    `https://s3.<AWS_REGION>.amazonaws.com` is the value, set in
-   `deploy/compose.production.<backend>.yml` and, on ECS, in `deploy/providers/AWS/locals.tf` from
+   `deploy/compose.prod.<backend>.yml` and, on ECS, in `deploy/providers/AWS/locals.tf` from
    the same local as flip-api's endpoint (a static test in `deploy/providers/AWS/tests/` holds both
    fl-api task families to it); the dev compose lists its RustFS service, `http://object-store:9000`
    (FLIP#1291). Moving the presign endpoint without the allow-list 400s every bundle download, i.e.
@@ -109,6 +118,10 @@ has no hub and leaves the variable unset — nothing presigns bundle URLs for it
 `WARNING` naming the variable once at startup (and again on the first validation if startup was
 bypassed) saying exactly what is disabled: fetches from *any* public https host, with only the
 range check and its rebinding window left. On a hub deployment that warning is a wiring regression.
+
+Bundle-fetch logs and errors show the URL's origin and file name, without credentials, query parameters
+or fragments. Download errors name the exception type rather than repeating its URL-bearing message.
+The signed URL is preserved for the actual fetch.
 
 ## Testing
 

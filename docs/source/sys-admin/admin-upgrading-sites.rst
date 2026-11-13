@@ -31,7 +31,7 @@ Two rules apply throughout:
 .. warning::
 
    **Never use the first-install commands to move a live site.** ``make up-onprem-trust``, ``make -C trust
-   up-trust``, ``restart-trust`` and ``make -C deploy/providers/AWS deploy-trust`` re-seed the mock data and **wipe
+   up-trust``, ``restart-trust`` and an EC2 node's ``make -C trust/deploy/terraform/aws/ec2 deploy`` re-seed the mock data and **wipe
    the XNAT archive**. Use only the upgrade commands below.
 
 .. list-table:: Upgrade command per deployment shape
@@ -43,16 +43,16 @@ Two rules apply throughout:
      - Command (from a FLIP checkout at the release tag)
    * - On-premises (Docker Compose)
      - Site operator
-     - ``sudo -E make upgrade-onprem-trust KIT=<slot>``
+     - ``make upgrade-onprem-trust KIT=<CODE>``
    * - Kubernetes (Helm)
      - Site operator
-     - ``make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> PROD=<env>``
-   * - Cloud (EC2) trust
-     - FLIP admin
-     - ``make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env>``
+     - ``make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env>``
+   * - AWS EC2 node
+     - Whoever deployed it
+     - ``make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env>``
    * - Central Hub
      - FLIP admin
-     - ``make -C deploy/providers/AWS deploy-centralhub PROD=true TAG=vX.Y.Z`` (see :ref:`upgrade-hub`)
+     - ``make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=vX.Y.Z`` (see :ref:`upgrade-hub`)
 
 .. contents::
    :local:
@@ -84,7 +84,7 @@ Step 2 — Replace the Hub-shared block (refreshed kit only)
 
 *Who: site operator*
 
-If you were sent a refreshed kit, open the new ``.env.<CODE>.production`` and copy **only** the block between
+If you were sent a refreshed kit, open the new ``.env.<CODE>.prod`` and copy **only** the block between
 ``# ── Hub-shared (managed …)`` and ``# ── Kit credentials (managed)`` into your own kit file. Keep your Host-local
 profile (ports, data directories, ``FL_KIT_DIR``) and your Trust-local credentials. Do not copy the whole file over
 yours.
@@ -115,6 +115,16 @@ upgrade refuses a release from a checkout at any other tag (exit code 6).
 
 .. note::
 
+   **Kits named before FLIP#1479.** A kit was named ``.env.<slot>.production``, ``.env.<slot>.lza-prod`` or a bare
+   ``.env.<slot>``, and the verbs took ``PROD=`` where they now take ``HUB=``. Run ``unset PROD`` first if your shell
+   still exports it (a ``sudo -E`` prefix passes it through too): any ``PROD`` now stops make. An old-named kit keeps working
+   for one release (the verbs find it and print the exact rename), but rename it to ``trust/.env.<slot>.prod`` before
+   the next one, and only once you will not roll back past this release: earlier releases know only the old names.
+   Move it (``mv``), never copy it: two names for one kit stop make. The running stack needs nothing, since the verbs
+   recognise it as this trust under either name, so never move the trust to another slot because of the rename.
+
+.. note::
+
    **Upgrading from v0.7.0 or earlier.** The ``upgrade-onprem-trust`` command does not exist in those checkouts; it
    arrives with the checkout in this step. A hub on v0.7.0 or earlier does not report its release either, so until
    the hub has moved past it, pass ``TAG=vX.Y.Z`` explicitly.
@@ -124,12 +134,13 @@ Step 4 — Run the upgrade
 
 *Who: site operator*
 
-From the checkout:
+From the checkout, as a user with Docker socket access (``sudo -E make …`` on a host provisioned by the on-prem
+playbook; see :ref:`onprem-operator-access`):
 
 .. code-block:: shell
 
-   sudo -E make upgrade-onprem-trust KIT=<slot>                # e.g. KIT=Trust_2; targets the hub's release
-   sudo -E make upgrade-onprem-trust KIT=<slot> TAG=vX.Y.Z     # or pin the release explicitly
+   make upgrade-onprem-trust KIT=<CODE>                # e.g. KIT=GSTT; targets the hub's release
+   make upgrade-onprem-trust KIT=<CODE> TAG=vX.Y.Z     # or pin the release explicitly
 
 .. list-table:: Options
    :header-rows: 1
@@ -137,13 +148,14 @@ From the checkout:
 
    * - Option
      - Effect
-   * - ``KIT=<slot>``
-     - Required. The trust's kit slot.
+   * - ``KIT=<CODE>``
+     - Required. The name in your kit file, ``trust/.env.<KIT>.prod``: the trust's code, or its FL slot (for
+       example ``Trust_2``) for a kit packaged before FLIP#1419.
    * - ``TAG=vX.Y.Z``
      - The release to move to. Default: the release the hub reports.
-   * - ``PROD=<env>``
-     - Which kit file to use. Default ``true``: ``trust/.env.<KIT>.production``, else ``trust/.env.<KIT>``. Other
-       values: ``stag``, ``lza``, ``lza-stag``.
+   * - ``HUB=<env>``
+     - Which hub the site joins, and so which kit file to use. Default ``prod``: ``trust/.env.<KIT>.prod``. ``stag``
+       joins the staging hub.
    * - ``FORCE=1``
      - Allow a move to an older release (including a release's own release candidates).
    * - ``YES=1``
@@ -168,12 +180,19 @@ From the checkout:
    tag, or at the kit's own ``OMOP_DB_TAG`` / ``ORTHANC_TAG`` / ``XNAT_TAG`` pin.
 #. **Confirm**, then write the tag into the kit's ``DOCKER_TAG`` and ``DOCKER_FL_TAG``, so the kit records what is
    installed.
+#. **Create XNAT's prearchive folder** (``$XNAT_DATA_DIR/xnat-data/prearchive/``) as xnat-web's uid if the site
+   lacks it. Before this release XNAT kept its prearchive inside the container, so sessions waiting there at the first
+   upgrade after it are lost.
 #. **Pull and recreate** only the containers whose image or configuration changed. OMOP, Orthanc and XNAT data stay on
    their bind mounts.
 #. **Upgrade XNAT in place**:
 
-   - dump ``xnat-db`` with ``pg_dumpall`` into ``$XNAT_DATA_DIR/backups/``. Without a complete dump the upgrade stops
-     before touching XNAT;
+   - dump ``xnat-db`` with ``pg_dumpall`` into ``$XNAT_DATA_DIR/backups/``, written as xnat-web's uid. Without a complete
+     dump the upgrade stops before touching XNAT. An upgrade before this release made ``backups/`` as root; the first
+     upgrade after it stops there and prints the one-time ``chown`` to run as root;
+   - when the release moves ``xnat-db`` to a newer PostgreSQL major (12 to 16 with FLIP#1812), stop ``xnat-web`` and
+     dump the ``xnat`` database beside the running cluster. The new ``xnat-db`` restores it into a fresh cluster on its
+     first start, before XNAT can connect, and leaves the old cluster where it was;
    - redeploy the XNAT stack on the new image (XNAT migrates its own schema on boot);
    - re-apply XNAT's configuration: DICOM receiver, DQR lockdown, PACS registration, PACS availability schedule (from
      the kit, see step 2), Container Service backend and the dcm2niix command.
@@ -182,10 +201,30 @@ The upgrade never re-seeds data and never resets XNAT.
 
 .. note::
 
+   **After a PostgreSQL major upgrade** the old XNAT database stays on disk, so going back to the previous release
+   (pin ``XNAT_TAG`` to it) still finds it. Once XNAT is confirmed on the new release, remove it:
+
+   .. code-block:: shell
+
+      make -C trust/xnat xnat-db-remove-old-cluster KIT=<CODE> HUB=<env>          # shows what would go
+      make -C trust/xnat xnat-db-remove-old-cluster KIT=<CODE> HUB=<env> YES=1    # deletes it
+
+   ``xnat-db`` refuses to start beside an older database it has no dump of, rather than starting XNAT empty. That
+   happens when the new image is deployed by anything other than ``make upgrade-onprem-trust`` or
+   ``make -C trust upgrade-trust``. Pin ``XNAT_TAG`` back to the previous release, then upgrade with one of those.
+   Resume an upgrade that failed or was interrupted the same way, never with a plain deploy. An upgrade after a
+   rollback keeps the newer database the site rolled back from as ``pg16.replaced-<timestamp>/``, until the command
+   above removes it.
+
+.. note::
+
    **Release tags versus** ``sha-`` **tags.** A release tag is built for every image. A ``sha-`` tag only exists for
    the images that commit changed, so ``TAG=sha-…`` is refused when any image was never built at it. To move to a
    ``sha-`` tag anyway, hold the missing images at their own build: ``FL_TAG=sha-…`` for the FL client, and
-   ``OMOP_DB_TAG`` / ``ORTHANC_TAG`` / ``XNAT_TAG`` in the kit for the data services.
+   ``OMOP_DB_TAG`` / ``ORTHANC_TAG`` in the kit for those data services. ``XNAT_TAG`` pins all three XNAT images
+   together, whose builds no longer share ``sha-`` tags. Set it to a release tag (or ``stag``/``prod``) published
+   for all three images. Never pin XNAT ahead of the trust APIs: from the release that ships DQR 3.1.0, xnat-web
+   needs imaging-api from the same release or later (see the Kubernetes note on ``xnat.image.pin`` below).
 
 .. list-table:: Exit codes
    :header-rows: 1
@@ -248,7 +287,7 @@ A healthy reply looks like
      - ``true`` when trust-api's encryption key matches the hub's.
 
 The hub fields are ``null`` until the next accepted heartbeat (a few seconds), and again whenever the hub rejects one.
-Run ``make onboard-onprem-trust KIT=<slot>`` to see every checklist row again.
+Run ``make onboard-onprem-trust KIT=<CODE>`` to see every checklist row again.
 
 On the hub, the FLIP admin sees the same versions in *Connection Status → trust drawer*. Any container still on another
 build shows an amber ``≠ hub`` pill.
@@ -261,7 +300,7 @@ command refuses a release from any other checkout.
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> PROD=<env> [TAG=vX.Y.Z] [KUBE_CONTEXT=<ctx>]
+   make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env> [TAG=vX.Y.Z] [KUBE_CONTEXT=<ctx>]
 
 Every FLIP-built image follows one chart value, ``global.image.tag`` (the observability images and ``xnat-dcm2niix``
 keep their upstream versions). The command pins the target in your kit as on Compose, regenerates the Helm override
@@ -270,13 +309,38 @@ populated data, and the API deployments roll onto the new images.
 
 ``KUBE_CONTEXT`` defaults to kubectl's current context; name it on a workstation with several clusters.
 
+When the release moves ``xnat-db`` to a newer PostgreSQL major (12 to 16 with FLIP#1812), the command first scales
+``xnat-web`` to zero and dumps the ``xnat`` database onto the ``xnat-db`` volume; ``helm upgrade`` then starts the new
+``xnat-db``, which restores the dump into a fresh cluster before XNAT can connect, and brings ``xnat-web`` back. The old
+cluster stays on the volume for a rollback until
+``make -C trust/deploy/helm xnat-db-remove-old-cluster [YES=1]`` removes it. A plain ``helm upgrade`` takes no dump, so
+the new ``xnat-db`` refuses to start beside the old cluster. To recover, pin ``xnat.image.pin`` (or the kit's
+``XNAT_TAG``) to the previous release and redeploy, then delete the ``xnat-db`` pod, because Kubernetes does not replace a
+crash-looping StatefulSet pod on its own. When it is up on the old release, remove the pin and use ``upgrade-trust-k8s``.
+It refuses in the same way after a rollback, when the old cluster has run again since the dump was taken: upgrade with
+the command again, which takes a new dump. Resume an upgrade that failed or was interrupted with the command too, never
+a plain ``helm upgrade``.
+
 .. warning::
 
    Unlike Compose, the chart's mock-data seed also runs on upgrade. While ``trustData.seed.enabled`` is on, every
-   upgrade re-applies the listed mock projects (only those projects' rows are replaced). **Turn it off in the
-   override for a site whose stores hold real data only.**
+   upgrade re-applies the listed mock projects (only those projects' rows are replaced). For a site whose stores
+   hold real data only, set ``TRUST_DATA_SEED=false`` in the kit; ``sync-kit`` carries it into the release.
 
-**Per-image pins.** The kit's opt-outs reach the chart as pins that override ``global.image.tag`` for one image:
+**Databases initialised before the role split.** A trust whose XNAT database volume was created by a chart
+older than the xnat-db role split holds a single superuser named ``xnat`` and no ``postgres`` role. Releases
+that carry FLIP#1658 connect as whichever of the two roles the volume has, so the upgrade completes and the
+application role's password is re-synced; on such a site the application role stays the database superuser
+until it is converged (see :ref:`ts-k8s-xnat-db-roles`). The move to PostgreSQL 16 converges it: the database is
+restored into a cluster that carries the current two roles. One related pre-flight check: a release from the
+``guard-xnat-db-passwords.sh`` era refuses to start xnat-db when the two XNAT passwords are equal
+(``XNAT_DATASOURCE_PASSWORD`` and ``XNAT_DATASOURCE_ADMIN_PASSWORD`` in the kit, ``xnat-datasource-password``
+and ``xnat-datasource-admin-password`` in ``values-secrets.yaml``; ``xnat-admin-password`` is a different
+secret, XNAT's web admin password), so a site that ever set them to the same value must
+rotate one of them before the upgrade, or the pod stops for that reason instead.
+
+**Per-image pins.** The kit's opt-outs reach the chart as pins that override ``global.image.tag`` for one image
+(or all three XNAT images for ``xnat.image.pin``):
 
 .. list-table::
    :header-rows: 1
@@ -293,7 +357,9 @@ populated data, and the API deployments roll onto the new images.
      - ``flClient.image.pin``
 
 A release tag never needs a pin. They are the only way to move a Kubernetes site to a ``sha-`` tag that some images
-were never built at: a StatefulSet rolled onto a tag that does not exist stays down.
+were never built at: a StatefulSet rolled onto a tag that does not exist stays down. The three XNAT builds no longer
+share ``sha-`` tags, so set ``XNAT_TAG`` (or ``xnat.image.pin``) to a release tag (or ``stag``/``prod``) published for all
+three.
 
 .. note::
 
@@ -301,17 +367,21 @@ were never built at: a StatefulSet rolled onto a tag that does not exist stays d
    Older xnat-web images (v0.12.0, for example) carry a Docker-only script, and the Job refuses them by name. Hold
    XNAT back only to an xnat-web image from the release that ships your chart, or later.
 
-Cloud (EC2) trust
-=================
+   Do not pin XNAT ahead of the trust APIs either. An xnat-web image that carries DQR 3.1.0 needs imaging-api from
+   the same release or later: DQR 3.1.0 marks every import ``FAILED`` as its C-MOVE ends, and an older imaging-api
+   reports the studies still arriving as failed, so the hub pulls them from the PACS again.
 
-*Who: FLIP admin*, from the admin workstation at the release tag. It uses the same SSH Docker context as
-``make deploy-trust``.
+AWS EC2 node
+============
+
+*Who: whoever deployed the node*, from their workstation at the release tag. It uses the same SSH Docker context as
+the root's ``make deploy``.
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env> [TAG=vX.Y.Z]
+   make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env> [TAG=vX.Y.Z]
 
-It takes the same options as the on-premises upgrade and never re-seeds data. ``deploy-trust`` remains the
+It takes the same options as the on-premises upgrade and never re-seeds data. ``make deploy`` remains the
 first-install command: it re-seeds OMOP and Orthanc and resets the XNAT archive.
 
 .. _upgrade-rolling-back:
@@ -323,7 +393,7 @@ Check out the previous release's tag, then run the upgrade with that tag and ``F
 
 .. code-block:: shell
 
-   sudo -E make upgrade-onprem-trust KIT=<slot> TAG=vX.Y.Z FORCE=1
+   make upgrade-onprem-trust KIT=<CODE> TAG=vX.Y.Z FORCE=1
 
 **Rolling back to v0.7.0 or earlier.** Those releases have no ``:vX.Y.Z`` images (the registry check refuses
 ``TAG=v0.7.0``) and their checkouts have no upgrade command. Stay on your current checkout and use the images built from
@@ -341,7 +411,7 @@ that release's commit:
 
 .. code-block:: shell
 
-   sudo -E make upgrade-onprem-trust KIT=<slot> TAG=sha-23cf331
+   make upgrade-onprem-trust KIT=<CODE> TAG=sha-23cf331
 
 A ``sha-`` tag has no release order, so the command does not see this as a downgrade and needs no ``FORCE=1``: check the
 printed ``site <current> → target sha-…`` yourself. The old images then run under the newer checkout's compose files, a
@@ -372,21 +442,20 @@ until it is re-keyed. On the admin workstation:
 
       cd deploy/providers/AWS
       uv run --no-project --with boto3 python scripts/reconcile_ci_env.py \
-          --env prod --profile prod --compare ../../../.env.production
+          --env prod --compare ../../../.env.prod
 
 #. **Refresh every local kit's Hub-shared block** from the reconciled env file.
 
    .. code-block:: shell
 
-      make sync-trust-kits PROD=true
+      make sync-trust-kits HUB=prod
 
-#. **Package each site's kit** and send it over the encrypted channel used at onboarding. The packaging reads the
-   slot-named file, so copy the refreshed kit there first:
+#. **Package each site's kit** and send it over the encrypted channel used at onboarding. It packs the FL kit share
+   of the kit's ``FL_KIT_SLOT``:
 
    .. code-block:: shell
 
-      cp trust/.env.<CODE>.production trust/.env.<slot>
-      make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> PROD=true
+      make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod
 
 Then mark *Refreshed kit needed: yes* in the release's Site upgrade section, with the keys that changed, so operators
 replace the block before upgrading.
@@ -400,7 +469,7 @@ Upgrading the hub
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS deploy-centralhub PROD=true TAG=vX.Y.Z
+   make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=vX.Y.Z
 
 .. seealso::
 

@@ -81,7 +81,6 @@ class TestProdSettings:
             "IMAGING_API_URL": "https://imaging.example.com",
             "IMAGES_DIR": "/data/images",
             "NET_ID": "net-1",
-            "UPLOADED_FEDERATED_DATA_BUCKET": "s3://my-bucket",
         }
 
     def test_prod_settings_valid_config(self):
@@ -107,30 +106,6 @@ class TestProdSettings:
         with patch.dict(os.environ, env, clear=True):
             with pytest.raises(ValidationError):
                 ProdSettings()
-
-    def test_prod_settings_validates_s3_bucket_url(self):
-        """ProdSettings should validate S3 bucket URL starts with s3://."""
-        env = self.get_valid_prod_env()
-        env["UPLOADED_FEDERATED_DATA_BUCKET"] = "https://not-s3-bucket"
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(ValidationError, match="Invalid S3 URL"):
-                ProdSettings()
-
-    def test_prod_settings_rejects_empty_s3_bucket(self):
-        """An empty (compose-rendered unset) required prod setting must still fail, not fall back to its default."""
-        env = self.get_valid_prod_env()
-        env["UPLOADED_FEDERATED_DATA_BUCKET"] = ""
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(ValidationError, match="Invalid S3 URL"):
-                ProdSettings()
-
-    def test_prod_settings_accepts_valid_s3_bucket(self):
-        """ProdSettings should accept valid S3 bucket URL."""
-        env = self.get_valid_prod_env()
-        env["UPLOADED_FEDERATED_DATA_BUCKET"] = "s3://my-federated-bucket/path"
-        with patch.dict(os.environ, env, clear=True):
-            settings = ProdSettings()
-            assert settings.UPLOADED_FEDERATED_DATA_BUCKET == "s3://my-federated-bucket/path"
 
     def test_prod_settings_server_checkpoint_root_default(self):
         """SERVER_CHECKPOINT_ROOT defaults to the shared-volume mount path the fl-server reads."""

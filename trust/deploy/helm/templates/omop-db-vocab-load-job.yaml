@@ -107,9 +107,13 @@ spec:
             - name: vocab-work
               mountPath: /vocab-work
         - name: fetch-bundle
-          image: amazon/aws-cli:2.22.0
+          # The omop-db image bakes the AWS CLI (Debian's package), like unzip: nothing is
+          # installed at run time and S3 is the only host this step reaches. It replaced a Docker
+          # Hub aws-cli image (FLIP#1721).
+          image: "{{ .Values.omopDb.image.repository }}:{{ include "flip-trust.imageTag" (dict "pin" .Values.omopDb.image.pin "global" .Values.global.image.tag "own" .Values.omopDb.image.tag) }}"
+          imagePullPolicy: {{ .Values.omopDb.image.pullPolicy }}
           command:
-            - /bin/sh
+            - /bin/bash
             - -c
             - |
               set -euo pipefail
@@ -117,14 +121,10 @@ spec:
                 echo "Core vocabulary already loaded — skipping bundle fetch."
                 exit 0
               fi
-              # Download only. Unpacking is the loader's job because unzip lives
-              # in the omop-db image and not in this one — which is what keeps
-              # this step free of any package install, and therefore of any
-              # dependency on egress to a package mirror. S3 is the only host it
-              # has to reach.
-              # Nothing to resume from on a retry: restartPolicy is Never, so a
-              # failed attempt is replaced by a new pod with a new emptyDir. The
-              # skip that saves the download is the probe above.
+              # Download only; the loader unpacks. Nothing to resume from on a
+              # retry: restartPolicy is Never, so a failed attempt is replaced by
+              # a new pod with a new emptyDir. The skip that saves the download is
+              # the probe above.
               aws s3 cp "s3://{{ .Values.omopDb.vocabLoad.s3Bucket }}/vocab/{{ .Values.omopDb.vocabLoad.bundleName }}.zip" /vocab-work/bundle.zip
           {{- if .Values.omopDb.vocabLoad.hostAwsMount.enabled }}
           env:

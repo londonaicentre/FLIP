@@ -20,6 +20,7 @@ import { getAccessRequests,
     lookupProjectUser,
     registerUser,
     resetUserMfa,
+    resetUserPassword,
     revokeToken,
     submitAccessRequest,
     updateAccessRequestStatus,
@@ -76,6 +77,16 @@ describe("user-service", () => {
             vi.mocked(_http.post).mockRejectedValue(new Error("403 Forbidden"));
 
             await expect(resetUserMfa("abc-123")).rejects.toThrow("403 Forbidden");
+        });
+    });
+
+    describe("resetUserPassword", () => {
+        it("POSTs to /users/{userId}/password/reset with no body", async () => {
+            vi.mocked(_http.post).mockResolvedValue({ data: undefined } as never);
+
+            await resetUserPassword("abc-123");
+
+            expect(_http.post).toHaveBeenCalledWith("/users/abc-123/password/reset");
         });
     });
 

@@ -12,7 +12,7 @@
 
 [project]
 name = "flip-api"
-version = "0.13.1"
+version = "0.15.0"
 description = ""
 readme = "README.md"
 authors = [
@@ -42,7 +42,6 @@ dependencies = [
     "apscheduler>=3.11.0",
     "slowapi>=0.1.9",
     "starlette>=0.49.1",
-    "tornado>=6.5.8",
     "urllib3>=2.7.0",
     "picklescan>=1.0.5",
     "bandit>=1.7.10",
@@ -129,12 +128,10 @@ exclude = [
 [tool.uv]
 # 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
 exclude-newer = "3 days"
-# Emergency cooldown override (CONTRIBUTING.md, "Emergency override"): admit the critical-advisory fix
-# certifi 2026.10.19 before the 3-day cooldown does. Each cutoff is that release's upload time, so
-# nothing newer gets in, and it also freezes the package: remove it after 2026-10-23T15:13Z (#1618).
-exclude-newer-package = { certifi = "2026-10-20T02:25:00Z" }
 # Security: minimum versions for transitive packages with open CVEs.
 constraint-dependencies = [
     "anyio>=4.14.2",  # CVE-2026-63374, CVE-2026-64847; transitive via httpx, starlette, watchfiles
     "certifi>=2026.10.19",  # GHSA-6q48-6c7w-9gw2
+    "dnspython>=2.9.0",  # GHSA-45c3-73f7-pv4m
+    "tornado>=6.6",  # GHSA-pcg2-g6cj-q92c, GHSA-pw9p-v7r6-gx4p, GHSA-r4j5-9xpp-3985; transitive via ipykernel (dev)
 ]

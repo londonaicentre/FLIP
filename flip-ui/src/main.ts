@@ -91,11 +91,11 @@ if (!isDemoBuild) {
  */
 async function bootstrap(): Promise<void> {
     if (isDemoBuild) {
-        // Public Ark+ demo: offline, read-only, mocked API with the recorded
-        // (anonymised) platform register. Pin the axios baseURL to the prefix the
+        // Public demo: offline, read-only, mocked API with the registered
+        // (scrubbed) example projects. Pin the axios baseURL to the prefix the
         // demo Mirage server answers on, so a stale window.js can't point the app
         // at a real backend, then seed the read-only viewer identity.
-        console.info("Running in Ark+ demo mode — offline, read-only, mocked API.");
+        console.info("Running in FLIP demo mode — offline, read-only, mocked API.");
         window.AWS_BASE_URL = "/api";
         const { makeDemoServer } = await import("../mocks/demo-server");
         makeDemoServer();

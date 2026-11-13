@@ -22,7 +22,7 @@ The **imaging-api** is a Trust-side service that manages imaging data operations
 interfaces with [XNAT](https://www.xnat.org/) for imaging project management and [Orthanc](https://www.orthanc-server.com/)
 as the mock PACS source. It is called only by the [trust-api](../trust-api/).
 
-Tested with `XNAT version 1.10.0, build: 246` (DQR 3.0.0, Container Service 3.8.1).
+Tested with `XNAT version 1.10.2.1` (DQR 3.1.0, Container Service 3.9.0).
 
 ## Role in the FLIP Platform
 
@@ -116,6 +116,10 @@ receiver port (`8104`/`8106`) and serves no HTTP.
 - Query PACS with an accession number
 - Queue image retrieval from PACS to an XNAT project
 
+DQR responses may omit `studyDescription` and `referringPhysicianName`, as anonymised studies often do.
+Missing values default to empty strings; no placeholder tags need to be added to the source DICOMs.
+The study UID and accession number remain required for import.
+
 There is no PACS id to configure. A query sends no `pacsId`, so DQR runs it against the PACS XNAT
 flags as its default query/retrieve PACS — the one registration `configure-xnat.sh` keeps, with that
 flag set. DQR's import does not default the same way, so each import reads that PACS's id from
@@ -185,11 +189,13 @@ query: SELECT * FROM omop.image_occurrence
 ```
 
 Each cohort accession gets one status, the first that applies: `successful` when it is an experiment in
-the project; `failed` when DQR executed its request and the request `FAILED`, or its direct-archive
-or prearchive session is in `ERROR` (XNAT moves a failed direct-archive into the prearchive and deletes
-its row, FLIP#1511); `processing` for any other executed request or direct-archive session (DQR's
-`RECEIVED` means the study was transferred, not archived); `queued` while its request waits in DQR's
-queue; `queue_failed` when none of these exists.
+the project; `failed` when DQR executed its request and the request `FAILED` while no direct-archive
+or prearchive session is receiving the study (DQR 3.1.0 marks every C-MOVE into the direct archive
+`FAILED`, files or not, FLIP#1816), or its direct-archive or prearchive session is in `ERROR` (XNAT
+moves a failed direct-archive into the prearchive and deletes its row, FLIP#1511); `processing` for any
+other executed request, or a direct-archive or prearchive session in another status (DQR's `RECEIVED`
+means the study was transferred, not archived); `queued` while its request waits in DQR's queue;
+`queue_failed` when none of these exists.
 
 The DQR records come from XNAT's REST API, not its database (`services/import_requests.py`): DQR's
 `GET /xapi/dqr/import/queue` and `/import/history`, which take no project filter, so they are read with
@@ -234,7 +240,7 @@ Create users, update user details, or add a user to an XNAT project.
 
 ## Configuration
 
-Key environment variables. Most come from the trust kit file — template at [`../.env.example`](../.env.example), copied per trust to `trust/.env.<CODE>.<env>` — but `XNAT_URL` and `DATA_ACCESS_API_URL` are internal-topology constants with defaults in `imaging_api/config.py`, and the composes do not inject them into this service (`trust/deploy/compose_trust.development.yml` says as much: an empty `${VAR}` from a kit that carried them would override the code default). `XNAT_URL` is deliberately absent from the kit template; `DATA_ACCESS_API_URL` is in it only because the fl-client reads it from env.
+Key environment variables. Most come from the trust kit file — template at [`../.env.example`](../.env.example), copied per trust to `trust/.env.<CODE>.<env>` — but `XNAT_URL` and `DATA_ACCESS_API_URL` are internal-topology constants with defaults in `imaging_api/config.py`, and the composes do not inject them into this service (`trust/deploy/compose/compose_trust.development.yml` says as much: an empty `${VAR}` from a kit that carried them would override the code default). `XNAT_URL` is deliberately absent from the kit template; `DATA_ACCESS_API_URL` is in it only because the fl-client reads it from env.
 
 | Variable | Description |
 | --- | --- |

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -38,7 +39,7 @@ class UpgradeXnat(unittest.TestCase):
     def test_upgrade_xnat_checks_ownership_where_the_directories_are(self):
         """With a remote (ssh://) docker context the XNAT dirs live on the trust host (FLIP#1204).
 
-        upgrade-trust-ec2 drives upgrade-xnat from the admin workstation, so a bare `stat -c` reads
+        An EC2 node's upgrade drives upgrade-xnat from the admin workstation, so a bare `stat -c` reads
         this machine's filesystem (and fails outright on BSD stat) instead of the trust host's —
         the same split xnat-reset already makes.
         """
@@ -47,18 +48,120 @@ class UpgradeXnat(unittest.TestCase):
         assert 'ssh "$xnat_ctx" "stat -c' in out, f"the remote branch must stat over ssh:\n{out}"
         assert "Fix: ssh $xnat_ctx sudo chown" in out, f"the remote remedy must be runnable on the host:\n{out}"
 
+    def test_upgrade_xnat_creates_the_mount_sources_before_checking_them(self):
+        """A site installed before FLIP#1818 has no prearchive dir; Swarm fails a task whose mount source is missing."""
+        out = self.recipe
+        assert out.index("xnat-web-dirs KIT=SCR") < out.index("owned="), out
+
     def test_upgrade_xnat_backs_up_before_redeploying(self):
         out = self.recipe
         assert "xnat-backup KIT=SCR" in out, out
         assert out.index("xnat-backup KIT=SCR") < out.index("docker stack deploy"), out
 
+    def test_upgrade_xnat_takes_the_migration_dump_while_the_old_db_still_runs(self):
+        """The new image cannot read the old cluster, so its dump has to exist before the deploy (FLIP#1812)."""
+        out = self.recipe
+        assert out.index("xnat-backup KIT=SCR") < out.index("xnat-db-migrate-dump KIT=SCR"), out
+        assert out.index("xnat-db-migrate-dump KIT=SCR") < out.index("docker stack deploy"), out
+
+    def test_upgrade_xnat_drops_a_dump_the_deploy_did_not_use(self):
+        """A kit pinning the old release keeps the old database live, and its dump goes stale."""
+        out = self.recipe
+        assert out.index("docker stack deploy") < out.index("xnat-db-drop-unused-dump KIT=SCR"), out
+
+    def test_upgrade_xnat_drops_the_dump_when_the_deploy_fails(self):
+        """The old server may stay up after a failed deploy, and a later one would restore that dump."""
+        deploy = next(line for line in self.recipe.replace("\\\n", "").splitlines() if "docker stack deploy" in line)
+        assert deploy.rstrip().endswith("xnat_db_drop_unused_dump.sh; exit 1; }"), deploy
+
+
+# A stand-in for docker, for the xnat-db major-upgrade targets: every call is logged to $CALLS, `ps`
+# finds the db, `exec … cat …PG_VERSION` answers $CURRENT, and `exec -i` logs which script came on stdin.
+STUB_DOCKER_DB = r"""#!/bin/bash
+echo "$*" >> "$CALLS"
+case "$1" in
+  ps) [[ "$*" == *"service.name="*"_xnat-db"* ]] && echo stub-xnat-db; exit 0 ;;
+  exec)
+    if [ "$2" = -i ]; then
+      script=$(cat)
+      [[ "$script" == *"pg_dump -Fc"* ]] && echo "stdin: migrate-dump" >> "$CALLS"
+      [[ "$script" == *"Removed the unused migration dump"* ]] && echo "stdin: drop-unused-dump" >> "$CALLS"
+      [[ "$script" == *"pg_dump -Fc"* && -n "$DUMP_FAILS" ]] && exit 1
+      [[ "$script" == *"-exec rm -rf"* ]] && echo "stdin: remove-old-cluster" >> "$CALLS"
+      exit 0
+    fi
+    echo "$CURRENT"; exit 0 ;;
+esac
+exit 0
+"""
+
+
+class XnatDbMajorUpgrade(unittest.TestCase):
+    """xnat-db-migrate-dump and xnat-db-remove-old-cluster, run for real against a stub docker (FLIP#1812)."""
+
+    def _run(self, target: str, *extra: str, current: str = "12", fails: bool = False, **env: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "bin"
+            bin_dir.mkdir()
+            (bin_dir / "docker").write_text(STUB_DOCKER_DB)
+            (bin_dir / "docker").chmod(0o755)
+            calls = Path(tmp) / "calls"
+            result = run_target(
+                target,
+                *extra,
+                subdir="trust/xnat",
+                env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "CALLS": str(calls), "CURRENT": current, **env},
+            )
+            assert (result.returncode != 0) == fails, result.stdout + result.stderr
+            return calls.read_text().splitlines() if calls.exists() else []
+
+    def test_an_older_cluster_is_dumped_after_xnat_web_stops(self):
+        calls = self._run("xnat-db-migrate-dump", current="12")
+        scale = next(i for i, c in enumerate(calls) if c.startswith("service scale") and c.endswith("_xnat-web=0"))
+        dump = next(i for i, c in enumerate(calls) if c.startswith("exec -i stub-xnat-db sh -s 16"))
+        assert scale < dump, calls
+        assert calls[dump + 1] == "stdin: migrate-dump", calls
+
+    def test_a_cluster_already_on_the_major_is_left_alone(self):
+        calls = self._run("xnat-db-migrate-dump", current="16")
+        assert not any(c.startswith(("service scale", "exec -i")) for c in calls), calls
+
+    def test_a_failed_dump_starts_xnat_web_again(self):
+        """Nothing was upgraded, so the site must not stay down on a full disk."""
+        calls = self._run("xnat-db-migrate-dump", fails=True, DUMP_FAILS="1")
+        assert calls[-1].startswith("service scale --detach "), calls
+        assert calls[-1].endswith("_xnat-web=1"), calls
+
+    def test_a_major_that_is_not_a_number_is_refused_not_read_as_already_moved(self):
+        calls = self._run("xnat-db-migrate-dump", current="", fails=True)
+        assert not any(c.startswith(("service scale", "exec -i")) for c in calls), calls
+
+    def test_the_unused_dump_check_runs_in_the_db(self):
+        calls = self._run("xnat-db-drop-unused-dump")
+        assert "stdin: drop-unused-dump" in calls, calls
+
+    def test_removing_the_old_cluster_needs_yes(self):
+        for extra, expected in (
+            ((), "exec -i stub-xnat-db sh -s --"),
+            (("YES=1",), "exec -i stub-xnat-db sh -s -- --delete"),
+        ):
+            with self.subTest(extra=extra):
+                calls = self._run("xnat-db-remove-old-cluster", *extra)
+                assert expected in [c.strip() for c in calls], calls
+                assert "stdin: remove-old-cluster" in calls, calls
+
 
 # A stand-in for the docker CLI, just enough of it for xnat-backup: `ps` finds the db by its service
 # label (NO_DB hides it), `exec` is the db container's `pg_dumpall | gzip` (DUMP=ok|fail|truncated),
-# and `run alpine …` runs the command here — under bash, as the containers' busybox sh has pipefail
-# and dash does not — with each `-v src:dst` mount rewritten to its host path.
+# `context` is a local daemon, and `run alpine …` runs the command here — under bash, as the
+# containers' busybox sh has pipefail and dash does not — with each `-v src:dst` mount rewritten
+# to its host path.
 STUB_DOCKER = r"""#!/bin/bash
 case "$1" in
+  context)
+    [ "$2" = show ] && echo default
+    [ "$2" = inspect ] && echo unix:///var/run/docker.sock
+    exit 0 ;;
   ps)
     [ -z "$NO_DB" ] && [[ "$*" == *"service.name="*"_xnat-db"* ]] && echo "stub-xnat-db"
     exit 0 ;;
@@ -76,6 +179,7 @@ case "$1" in
     while [ $# -gt 0 ]; do
       case "$1" in
         --rm|-i) shift ;;
+        --user) [ -n "$RUN_USERS" ] && echo "$2" >> "$RUN_USERS"; shift 2 ;;
         -v) mounts+=("$2"); shift 2 ;;
         alpine:*) shift; break ;;
         *) shift ;;
@@ -99,7 +203,7 @@ exit 0
 class XnatBackup(unittest.TestCase):
     """xnat-backup, run for real against a stub docker: only a complete dump counts as a backup."""
 
-    def _backup(self, **env: str) -> tuple[int, str, list[str]]:
+    def _backup(self, *, locked_backups: bool = False, locked_data: bool = False, extra_kit: str = "", **env: str):
         with tempfile.TemporaryDirectory() as tmp:
             bin_dir = Path(tmp) / "bin"
             bin_dir.mkdir()
@@ -108,13 +212,25 @@ class XnatBackup(unittest.TestCase):
             docker.chmod(0o755)
             data = Path(tmp) / "xnat"
             data.mkdir()
-            result = run_target(
-                "xnat-backup",
-                subdir="trust/xnat",
-                kit=kit_with("XNAT_DATA_DIR=/nonexistent/xnat", f"XNAT_DATA_DIR={data}"),
-                env={"PATH": f"{bin_dir}:{os.environ['PATH']}", **env},
-            )
-            kept = sorted(b.name for b in (data / "backups").glob("*.sql.gz")) if (data / "backups").exists() else []
+            if locked_backups:  # a backups/ an earlier upgrade made as root: this uid cannot write it
+                (data / "backups").mkdir(mode=0o555)
+            if locked_data:  # no backups/ yet, in a data dir this uid cannot write
+                data.chmod(0o555)
+            users = Path(tmp) / "run-users"
+            try:
+                result = run_target(
+                    "xnat-backup",
+                    subdir="trust/xnat",
+                    kit=kit_with("XNAT_DATA_DIR=/nonexistent/xnat", f"XNAT_DATA_DIR={data}") + extra_kit,
+                    env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "RUN_USERS": str(users), **env},
+                )
+                backups = data / "backups"
+                kept = sorted(b.name for b in backups.glob("*.sql.gz")) if backups.exists() else []
+            finally:
+                if locked_backups:
+                    (data / "backups").chmod(0o755)
+                data.chmod(0o755)
+            self.run_users = users.read_text().split() if users.exists() else []
             return result.returncode, result.stdout + result.stderr, kept
 
     def test_a_complete_dump_is_kept(self):
@@ -134,11 +250,107 @@ class XnatBackup(unittest.TestCase):
         assert code != 0, out
         assert kept == [], kept
 
+    def test_every_container_writes_as_the_xnat_uid(self):
+        """Not root: the backups stay the operator's under FLIP_UID, and xnat-reset still owns the tree (FLIP#1731)."""
+        code, out, _ = self._backup(DUMP="ok")
+        assert code == 0, out
+        assert self.run_users, "no container was run with --user"
+        assert set(self.run_users) == {"1001:1001"}, self.run_users
+        code, out, _ = self._backup(DUMP="ok", extra_kit="FLIP_UID=4242\nFLIP_GID=4243\n")
+        assert code == 0, out
+        assert set(self.run_users) == {"4242:4243"}, self.run_users
+
+    def test_a_backups_dir_the_uid_cannot_write_is_refused_before_dumping(self):
+        """Upgrades before FLIP#1731 made backups/ as root: refuse, naming the chown, and dump nothing."""
+        if os.getuid() == 0:
+            self.skipTest("root writes a 0555 directory anyway")
+        code, out, kept = self._backup(DUMP="ok", locked_backups=True)
+        assert code != 0, out
+        assert "chown -R 1001:1001" in out, out
+        assert "Backing up" not in out, "refused before dumping"
+        assert kept == [], kept
+
+    def test_a_data_dir_the_uid_cannot_create_backups_in_names_that_dir(self):
+        """No backups/ yet: the fix is to create it for the uid, not to chown a path that is not there."""
+        if os.getuid() == 0:
+            self.skipTest("root writes a 0555 directory anyway")
+        code, out, kept = self._backup(DUMP="ok", locked_data=True)
+        assert code != 0, out
+        assert "is not writable by uid 1001:1001, which creates backups/ in it" in out, out
+        assert "&& chown 1001:1001" in out, out
+        assert "chown -R" not in out, out
+        assert "Backing up" not in out, "refused before dumping"
+
     def test_no_running_db_is_a_refusal(self):
         """Its one caller is upgrade-xnat: no db to dump means no upgrade, never a skipped backup."""
         code, out, _ = self._backup(NO_DB="1")
         assert code != 0, out
         assert "refusing to upgrade XNAT without a dump" in out, out
+
+
+class XnatWebDirs(unittest.TestCase):
+    """xnat-web-dirs, run for real against a stub docker: a live site gets the mount sources it lacks (FLIP#1818)."""
+
+    def _run(self, data: Path, tmp: str) -> subprocess.CompletedProcess[str]:
+        bin_dir = Path(tmp) / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "docker").write_text(STUB_DOCKER)
+        (bin_dir / "docker").chmod(0o755)
+        self.users = Path(tmp) / "run-users"
+        return run_target(
+            "xnat-web-dirs",
+            subdir="trust/xnat",
+            kit=kit_with("XNAT_DATA_DIR=/nonexistent/xnat", f"XNAT_DATA_DIR={data}"),
+            env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "RUN_USERS": str(self.users)},
+        )
+
+    def test_a_site_without_a_prearchive_gets_one_as_the_xnat_uid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp) / "xnat"
+            study = data / "xnat-data" / "archive" / "study.dcm"
+            study.parent.mkdir(parents=True)
+            study.write_text("x")
+            result = self._run(data, tmp)
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert (data / "xnat-data" / "prearchive").is_dir()
+            assert study.exists(), "an upgrade keeps the data"
+            assert self.users.read_text().split() == ["1001:1001"], "made as xnat-web's uid, not root"
+
+    def test_an_xnat_data_dir_the_uid_cannot_write_names_the_chown(self):
+        """Recursive: a tree a root xnat-web wrote would otherwise pass here and fail upgrade-xnat's check."""
+        if os.getuid() == 0:
+            self.skipTest("root writes a 0555 directory anyway")
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp) / "xnat"
+            (data / "xnat-data" / "archive").mkdir(parents=True)
+            (data / "xnat-data").chmod(0o555)
+            try:
+                result = self._run(data, tmp)
+            finally:
+                (data / "xnat-data").chmod(0o755)
+            assert result.returncode != 0, result.stdout
+            assert f"chown -R 1001:1001 {data}/xnat-data" in result.stdout, result.stdout
+
+    def test_a_tree_without_an_archive_is_refused_and_left_alone(self):
+        """A kit whose XNAT_DATA_DIR is not the site's tree must not get empty dirs the ownership check accepts."""
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp) / "xnat"
+            data.mkdir()
+            result = self._run(data, tmp)
+            assert result.returncode != 0, result.stdout
+            assert f"{data}/xnat-data/archive does not exist" in result.stdout, result.stdout
+            assert not (data / "xnat-data").exists(), "nothing is created in a tree that is not the site's"
+
+    def test_a_docker_failure_is_not_reported_as_an_ownership_problem(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "bin"
+            bin_dir.mkdir()
+            (bin_dir / "docker").write_text("#!/bin/sh\nexit 125\n")
+            (bin_dir / "docker").chmod(0o755)
+            result = run_target("xnat-web-dirs", subdir="trust/xnat", env={"PATH": f"{bin_dir}:{os.environ['PATH']}"})
+            assert result.returncode != 0, result.stdout
+            assert "docker run failed" in result.stdout, result.stdout
+            assert "chown" not in result.stdout, result.stdout
 
 
 class XnatImageRegistry(unittest.TestCase):
@@ -170,7 +382,7 @@ class XnatImageRegistry(unittest.TestCase):
             assert image.startswith("ghcr.io/londonaicentre/xnat-"), image
 
     def test_development_with_an_empty_registry_runs_local_images(self):
-        for image in self._images("PROD=", PROD="", DOCKER_REGISTRY=""):
+        for image in self._images("HUB=", HUB="", DOCKER_REGISTRY=""):
             assert image.startswith("xnat-"), image
 
 
@@ -190,6 +402,11 @@ class UpXnatBuild(unittest.TestCase):
         assert '--resolve-image "never"' in out, out
         # Built before the running stack is torn down, so a failed build leaves it up.
         assert out.index("docker build") < out.index("down-xnat"), out
+
+    def test_xnat_web_pulls_its_base_unless_told_not_to(self):
+        """The Tomcat base tag moves; XNAT_BUILD_PULL= is the build on a host with no registry route."""
+        assert "docker build --pull " in dry_run("up-xnat", "BUILD=true", subdir="trust/xnat")
+        assert "--pull" not in dry_run("up-xnat", "BUILD=true", "XNAT_BUILD_PULL=", subdir="trust/xnat")
 
     def test_a_command_line_xnat_tag_names_the_build(self):
         """Tags are daemon-wide: a second stack on the host (a release check) keeps off the shared :dev."""
@@ -215,6 +432,94 @@ class UpXnatBuild(unittest.TestCase):
         with mock.patch.dict(os.environ, {"XNAT_TAG": "stag"}):
             out = dry_run("up-xnat", subdir="trust/xnat")
         assert "XNAT_TAG=sha-badcff1" in out, out
+
+
+# Neither sudo nor a root container may be reached on the non-root path (FLIP#1723).
+REFUSING = {
+    "sudo": '#!/bin/sh\necho "STUB: sudo called" >&2\nexit 1\n',
+    "docker": '#!/bin/sh\ncase "$1" in\n  context)\n    [ "$2" = show ] && echo default\n'
+    '    [ "$2" = inspect ] && echo unix:///var/run/docker.sock\n    exit 0 ;;\nesac\n'
+    'echo "STUB: docker $1 called" >&2\nexit 1\n',
+}
+
+
+XNAT_SUBDIRS = ("tomcat_logs", "archive", "build", "cache", "prearchive", "../xnat-db-data")
+
+
+class XnatDirsWithoutRoot(unittest.TestCase):
+    """xnat-reset's local prod branch and xnat-prepare-dirs, run for real as a non-root user: no sudo, no
+    root container (FLIP#1723). As the container uid (a kit's FLIP_UID, FLIP#1731) the reset provisions the
+    tree itself; as anyone else it deletes nothing and only checks."""
+
+    def _run(self, target: str, data: Path, tmp: str, uid: int | None = None) -> subprocess.CompletedProcess[str]:
+        bin_dir = Path(tmp) / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        for name, body in REFUSING.items():
+            (bin_dir / name).write_text(body)
+            (bin_dir / name).chmod(0o755)
+        return run_target(
+            target,
+            f"XNAT_DATA_DIR={data}",
+            f"XNAT_CONTAINER_UID={os.getuid() if uid is None else uid}",
+            f"XNAT_CONTAINER_GID={os.getgid() if uid is None else uid}",
+            subdir="trust/xnat",
+            env={"PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        )
+
+    def setUp(self):
+        if os.getuid() == 0:
+            self.skipTest("running as root takes the direct branch")
+        self.other_uid = os.getuid() + 1
+
+    def test_prepare_dirs_then_reset_completes_without_escalating(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp) / "xnat"
+            prepared = self._run("xnat-prepare-dirs", data, tmp)
+            assert prepared.returncode == 0, prepared.stdout + prepared.stderr
+            for name in XNAT_SUBDIRS:
+                assert (data / "xnat-data" / name).is_dir(), name
+            reset = self._run("xnat-reset", data, tmp)
+            assert reset.returncode == 0, reset.stdout + reset.stderr
+            assert "STUB:" not in reset.stderr, reset.stderr
+
+    def test_the_container_uid_provisions_and_wipes_the_tree_itself(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp) / "xnat"
+            reset = self._run("xnat-reset", data, tmp)
+            assert reset.returncode == 0, reset.stdout + reset.stderr
+            assert "resetting it without root (FLIP#1731)" in reset.stdout, reset.stdout
+            for name in XNAT_SUBDIRS:
+                assert (data / "xnat-data" / name).is_dir(), name
+            left = data / "xnat-data" / "archive" / "study.dcm"
+            left.write_text("x")
+            again = self._run("xnat-reset", data, tmp)
+            assert again.returncode == 0, again.stdout + again.stderr
+            assert not left.exists(), "a first install starts XNAT fresh"
+            assert "STUB:" not in reset.stderr + again.stderr, reset.stderr + again.stderr
+
+    def test_another_uids_tree_with_files_is_refused_not_deleted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp) / "xnat"
+            left = data / "xnat-data" / "archive" / "study.dcm"
+            left.parent.mkdir(parents=True)
+            left.write_text("x")
+            reset = self._run("xnat-reset", data, tmp, uid=self.other_uid)
+            assert reset.returncode != 0, reset.stdout
+            assert "from an earlier install" in reset.stdout, reset.stdout
+            assert f"uid {os.getuid()} cannot wipe and re-create the tree for uid {self.other_uid}." in reset.stdout, (
+                reset.stdout
+            )
+            assert f"rm -rf {data} && make -C trust prepare-host-dirs KIT=SCR HUB=prod" in reset.stdout, reset.stdout
+            assert left.exists(), "a non-root reset must delete nothing"
+            assert "STUB:" not in reset.stderr, reset.stderr
+
+    def test_another_uids_missing_tree_names_prepare_host_dirs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reset = self._run("xnat-reset", Path(tmp) / "absent", tmp, uid=self.other_uid)
+            assert reset.returncode != 0, reset.stdout
+            assert "make -C trust prepare-host-dirs KIT=SCR HUB=prod" in reset.stdout, reset.stdout
+            assert not (Path(tmp) / "absent").exists(), "another uid's tree is not created"
+            assert "STUB:" not in reset.stderr, reset.stderr
 
 
 if __name__ == "__main__":

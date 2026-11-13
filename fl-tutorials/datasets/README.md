@@ -33,7 +33,7 @@ make -C fl-tutorials download-arkplus-finetuning-data  # large (~6.3 GB)
 make -C fl-tutorials download-arkplus-eval-data        # (~1.6 GB)
 make -C fl-tutorials download-synthea-data             # EHR tabular dataset (~5 MB, backend-agnostic)
 make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrichment
-make -C fl-tutorials download-weights ARCH=squeezenet1_1   # a pretrained backbone a tutorial ships beside its app
+make -C fl-tutorials download-weights ARCH=medicalnet_resnet50   # a pretrained backbone a tutorial ships beside its app
 make -C fl-tutorials download-brain-mri-data NUM_CASES=10  # MSD Task01 brain MRI, simulator layout (7.6 GB download)
 make -C fl-tutorials download-prostate-data            # PI-CAI (FOLDS="0 1 2 3 4" by default, ~5GB/fold)
 make -C fl-tutorials convert-prostate-to-dicom
@@ -49,19 +49,20 @@ the **nnU-Net experiment plan** derived from it (target spacing, patch and batch
 normalisation, U-Net topology). `make plan` in the tutorial directory runs the planner pooled over
 every site and copies the plan into `app/nnUNetPlans_segmentation.json`, from which the app builds
 its network — see
-[`../flower/3d_prostate_segmentation/README.md`](../flower/3d_prostate_segmentation/README.md#nnu-net-plans)
+[`../flower/image_segmentation/3d_prostate_segmentation/README.md`](../flower/image_segmentation/3d_prostate_segmentation/README.md#nnu-net-plans)
 for why the plan is pooled and the measured per-center figures.
 
 | Dataset | Source | Output under `fl-tutorials/data/` | Consumed by |
 | --- | --- | --- | --- |
-| xray | HF `aicentreflip/flip-fl-base-test-data` | `xrays_mini_300/{accession-resources/, dataframe.csv}` | xray_classification (both backends) |
-| spleen | MSD Task09_Spleen (`NUM_CASES`, default 10) | `spleen/{images/, dataframe.csv}` | 3d_spleen_segmentation + evaluation + latent_diffusion_model (**both backends**); enrichment labels |
+| xray | HF `aicentreflip/flip-fl-base-test-data` | `xrays_mini_300/{accession-resources/, dataframe.csv}` | xray_classification (both backends); image_generation/xray_diffusion (smoke only) |
+| spleen | MSD Task09_Spleen (`NUM_CASES`, default 10) | `spleen/{images/, dataframe.csv}` | 3d_spleen_segmentation + evaluation (**both backends**); enrichment labels |
 | spleen checkpoint | HF `aicentreflip/flip-fl-base-test-data` | `model_checkpoints/model.pt` | 3d_spleen_segmentation_evaluation |
-| brain_mri | MSD Task01_BrainTumour (`download-brain-mri-msd-raw`, 7.6 GB; `NUM_CASES` for the simulator layout) | `Task01_BrainTumour/`, `brain_mri/{images/, dataframe.csv, dicom/, source/, canonical/}` | the latent-diffusion tutorial once retargeted (FLIP#1221 follow-up); the mock trust data via `seed-brain-mri` |
+| brain_mri | MSD Task01_BrainTumour (`download-brain-mri-msd-raw`, 7.6 GB; `NUM_CASES` for the simulator layout) | `Task01_BrainTumour/`, `brain_mri/{images/, dataframe.csv, dicom/, source/, canonical/}` | image_generation/brain_mri_ldm_stage1_autoencoder + image_generation/brain_mri_ldm_stage2_diffusion (3-D, 96³, four MR sequences); the mock trust data via `seed-brain-mri` |
 | arkplus | HF `aicentreflip/tutorials-arkplus-cxr-classification` | `arkplus/site{1,2}[,_holdoff]/` | the three Ark+ tutorials (FLARE) |
 | synthea | Synthea-in-OMOP, 1k persons (AWS Open Data Registry) | `synthea/{dataframe.csv, site{1,2}/dataframe.csv}` | ehr_risk_prediction (both backends); on the platform the same data goes into each trust's OMOP via `make -C trust load-synthea-ehr` |
+| ad_biomarkers | the user's own ADNI download (access-controlled; `convert-adni-cohort ADNI_DIR=`, no download target) | `ad_biomarkers/{dataframe.csv, site{1,2}/dataframe.csv, cohort_summary.json}` | biomarker_causal_discovery (both backends); `make -C trust load-adni-cohort` seeds a local trust from it |
 | prostate | Zenodo PI-CAI + `picai_labels` (GitHub) | `prostate/{images/, labels/, zonal_labels/, clinical_information/, dicom/, nifti/, sites/<CENTER>/}` | 3d_prostate_segmentation (Flower) |
-| weights | `download.pytorch.org` (torchvision checkpoints, sha256-prefix checked; `weights/fetch_weights.py` lists them) | `weights/<torchvision filename>` (flat, e.g. `squeezenet1_1-b8a52dc0.pth`) | latent_diffusion_model via its own `make weights`, which copies the file into `app_files/` to be uploaded with the app — FL apps never download at run time (FLIP#1206) |
+| weights | `download.pytorch.org` and the Hugging Face hub (sha256-checked; `weights/fetch_weights.py` lists them) | `weights/<hash-named filename>` (flat, e.g. `medicalnet_resnet50_23datasets-ff48a622.pth`) | autoencoder via its own `make weights`, which copies the file into `app_files/` to be uploaded with the app — FL apps never download at run time (FLIP#1206) |
 
 One spleen tree serves both backends. `download-spleen-data` refuses to overwrite an
 existing `data/spleen/images` — remove it first to rebuild at a different `NUM_CASES`.
@@ -118,9 +119,28 @@ script imports, like the others):
   `tests/datasets/synthea/` keeps the two honest: it runs the actual `query.sql` on SQLite over the
   same tiny tables and diffs it against `derive_features` row for row.
 
+[`ad_biomarkers/`](ad_biomarkers/) owns the biomarker causal-discovery tutorial's cohort, in a uv
+project as small as synthea's (numpy + pandas). The data is ADNI, which is **access-controlled** (what
+its Data Use Agreement requires: the tutorial README's "Data" section), so there is no download target
+and no synthetic stand-in: the user applies for ADNI access
+(the tutorial README's "Running on real ADNI data" has the steps), downloads five study tables, and
+
+- `make_adni_cohort.py` — *converts* (`convert-adni-cohort ADNI_DIR=<IDA downloads> [OUT=…]`) that
+  download — the `PTDEMOG`, `APOERES`, `ADAS`, `UCSFFSX7` and `UPENN_PLASMA_FUJIREBIO_QUANTERIX`
+  tables, found by prefix — into the twelve-column cohort the tutorial's `query.sql` returns
+  (demographics, APOE4 count, four plasma markers, two brain volumes, ADAS-Cog13), the
+  `person_id`-modulo site splits and a counts-only summary, applying the centralised analysis's
+  rules (earliest FreeSurfer scan with a baseline plasma draw within ±3 months, ADNI missing-value
+  codes, left + right hippocampus, APOE ε4 count from the genotype). Code only: `OUT` defaults to the
+  gitignored `data/ad_biomarkers/` and the converter refuses any output path inside a git checkout
+  that git does not ignore (symlinks resolved); the script prints counts, never a row.
+  `tests/datasets/ad_biomarkers/` pins the cohort rules on invented ADNI-shaped tables; the trust
+  loader's tests (`trust/omop-db/tests/unit/test_adni_cohort.py`) run the actual `query.sql` over the
+  OMOP rows it writes on SQLite, so the simulator's CSV and a deployed query agree row for row.
+
 [`prostate/`](prostate/) owns the prostate download/preprocessing scripts. The dataset class that
 reads this data lives with the tutorial instead, at
-`../flower/3d_prostate_segmentation/app/dataset.py`, as does the nnU-Net planning step above:
+`../flower/image_segmentation/3d_prostate_segmentation/app/dataset.py`, as does the nnU-Net planning step above:
 
 - `download_data.py` — fetch the PI-CAI bpMRI images + whole-gland/zonal labels + clinical
   marksheet from Zenodo/GitHub (`FOLDS` narrows which of the 5 ~5GB fold zips to fetch).

@@ -85,12 +85,63 @@ class TrainingMetrics(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _default_x_value_to_global_round(cls, data: Any) -> Any:
-        """Backfill a missing/None ``x_value`` from ``global_round`` (back-compat with old senders)."""
+        """Default an unset or None ``x_value`` to ``global_round`` (FLIP#148)."""
         if isinstance(data, dict) and data.get("x_value") is None:
             global_round = data.get("global_round")
             if global_round is not None:  # absent global_round -> let the field-required error surface
                 data = {**data, "x_value": global_round}
         return data
+
+
+# S3's multipart limits: at most 10,000 parts, each at least 5 MiB except the last.
+RESULTS_UPLOAD_MAX_PARTS = 10_000
+RESULTS_UPLOAD_PART_BYTES = 64 * 1024 * 1024
+
+# What the hub hands out for a started upload and takes back on every later call (``results_upload.py``).
+_UploadHandle = Annotated[str, StringConstraints(min_length=1, max_length=8192)]
+
+
+class ResultsUploadRequest(BaseModel):
+    """Body of ``POST /model/{id}/results-upload``. Mirrored by the sender, flip-utils' ``flip/core/standard.py``."""
+
+    # A plain zip name: no separator and no second dot, so the object key stays under the model's own prefix.
+    file_name: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,64}\.zip$")]
+    size: int = Field(gt=0)
+
+
+class ResultsUpload(BaseModel):
+    """A started results upload: the caller sends the file in ``part_size`` pieces, the last one shorter."""
+
+    upload: str
+    part_size: int
+
+
+class ResultsUploadPartRequest(BaseModel):
+    """Body of ``POST /model/{id}/results-upload/part``."""
+
+    upload: _UploadHandle
+    part_number: int = Field(ge=1)
+
+
+class ResultsUploadPart(BaseModel):
+    """Where to PUT one part."""
+
+    url: str
+
+
+class ResultsUploadCompletion(BaseModel):
+    """Body of ``POST /model/{id}/results-upload/complete``: the ETag S3 returned for each part, in part order."""
+
+    upload: _UploadHandle
+    etags: list[Annotated[str, StringConstraints(min_length=1, max_length=128)]] = Field(
+        min_length=1, max_length=RESULTS_UPLOAD_MAX_PARTS
+    )
+
+
+class ResultsUploadAbort(BaseModel):
+    """Body of ``POST /model/{id}/results-upload/abort``."""
+
+    upload: _UploadHandle
 
 
 class TrainingLog(BaseModel):

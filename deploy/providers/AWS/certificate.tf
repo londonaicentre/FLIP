@@ -27,11 +27,10 @@
 # the certificate is created, so Terraform cannot plan the DNS records
 # in a single pass.
 #
-# The whole chain is skipped when var.manage_dns is false (the zone-less
-# first LZA bring-up, FLIP#749): DNS validation is impossible without the
-# hosted zone, and an unvalidated cert cannot be attached to the ALB — which
-# serves plain HTTP on the private CloudFront-VPC-origin leg instead (see the
-# listeners comment in main.tf).
+# The whole chain is skipped when var.manage_dns is false (FLIP#749): DNS
+# validation is impossible without the hosted zone. The LZA estates keep it
+# that way, and the web listener's certificate comes from the platform instead
+# (fl_ingress_lza.tf, FLIP#1797).
 ############################
 
 resource "aws_acm_certificate" "flip" {

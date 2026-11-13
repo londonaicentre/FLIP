@@ -11,7 +11,7 @@
     limitations under the License.
 -->
 
-# Ark+ Fine-tuning — Chest X-ray Classification
+# Fine-tuning a chest X-ray foundation model (Ark+)
 
 FLIP tutorial for **federated fine-tuning** of an Ark+ Swin foundation model on chest X-ray
 classification, using the FLARE **Client API** (`nvflare.client`). It replaces the earlier
@@ -21,12 +21,24 @@ legacy Executor API to the Client API. The job is defined entirely in Python via
 [`FlipFedAvgRecipe`](../../../../flip-utils/flip/nvflare/recipes/flip_fedavg_recipe.py) in
 [`job.py`](job.py) — no hand-written server/client JSON.
 
-## Compatible job type
+## At a glance
 
-`config.json["job_type"] = "standard"`. Each client runs [`app_files/trainer.py`](app_files/trainer.py)
-as an in-process Client-API script (`flare.init()` → `flare.receive()`/`flare.send()` round loop) via
-FLARE's `ClientAPIExecutor` (`in_process` mode). There is **no `validator.py`** — the held-out validation folds
-into the trainer's `flare.is_evaluate()` branch (server-driven evaluation: each site scores the final aggregated model on its own data).
+| Item | Value |
+|---|---|
+| What you upload | everything in `app_files/`, plus the checkpoint from `make prepare-checkpoint` |
+| Job type | standard: FedAvg, but only the classification head is averaged |
+| Imaging | on, DICOM to NIfTI off |
+| Cohort query | `query.sql` |
+| Dataset | `make -C fl-tutorials download-arkplus-finetuning-data`, plus the raw Ark+ checkpoint (`make download-raw-checkpoint`) |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning` (GPU; `MAX_SAMPLES=128` by default) |
+
+```mermaid
+flowchart LR
+    A["round 0: the server sends the full model (backbone from the checkpoint)"] --> B["each site trains only the classification head"]
+    B --> C["sites send back their head updates"]
+    C --> D["the server averages the head; later rounds send the head only"]
+    D --> B
+```
 
 ## Target labels
 
@@ -266,7 +278,7 @@ run's `GLOBAL_ROUNDS`). If the simulation finished but packing failed (or you wa
 - [`app_files/data_utils.py`](app_files/data_utils.py): data loading, per-site resolution, DICOM parsing, transforms.
 - [`app_files/config.json`](app_files/config.json): model, training, finetuning and per-site data settings.
 
-There is **no `validator.py`** — validation runs in the trainer's `flare.is_evaluate()` branch.
+There is **no `validator.py`** — validation runs in the trainer's `flare.is_evaluate()` branch: each site scores the final aggregated model on its own data, in the same in-process Client-API script.
 
 ## Dependency note
 

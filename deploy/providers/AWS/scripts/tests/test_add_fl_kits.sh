@@ -48,6 +48,8 @@ mkdir -p "${MOCKBIN}"
 #   <net>.<name>.startup       — override a kit's startup/ file list (completeness check);
 #                                default is a complete kit
 #   <net>.<name>.keycount      — override the never-overwrite KeyCount probe; default 0 (empty)
+#   ca-state / kit-state       — the CA state exists under fl-flare-ca-state/ / among the kits
+# Every `s3 cp` is logged to cp.log as "<src> <dst>".
 cat > "${MOCKBIN}/aws" <<'MOCK_AWS'
 #!/usr/bin/env bash
 if [[ "$1" == "s3" && "$2" == "ls" ]]; then
@@ -98,7 +100,16 @@ if [[ "$1" == "s3" && "$2" == "cp" ]]; then
         [[ -z "$src" ]] && { src="$a"; continue; }
         dst="$a"
     done
-    if [[ "$dst" != s3://* ]]; then  # download: create the destination so later reads work
+    echo "${src} ${dst}" >> "${FIXTURE_DIR}/cp.log"
+    if [[ "$dst" != s3://* && "$src" == */ ]]; then  # recursive download: only a CA state the fixture holds
+        marker=""
+        [[ "$src" == */fl-flare-ca-state/* ]] && marker="ca-state"
+        [[ "$src" == */state/ ]] && marker="kit-state"
+        if [[ -n "$marker" && -f "${FIXTURE_DIR}/${marker}" ]]; then
+            mkdir -p "$dst"
+            echo '{}' > "${dst}cert.json"
+        fi
+    elif [[ "$dst" != s3://* ]]; then  # download: create the destination so later reads work
         mkdir -p "$(dirname "$dst")"
         : > "$dst"
     fi
@@ -120,7 +131,8 @@ FAIL=0
 STARTUP_OVERRIDES=()
 KEYCOUNT_OVERRIDES=()
 YES_MODE=""
-ENV_MODE=""  # ENV_NAME for the next run_case (default stag; the Makefile passes it from PROD via deploy/env_mode.mk)
+STATE_FIXTURES=()  # ca-state and/or kit-state: where the mocked bucket holds the CA state
+ENV_MODE=""  # ENV_NAME for the next run_case (default stag; the Makefile passes it from HUB via deploy/env_mode.mk)
 
 run_case() {
     local name="$1" N="$2" env_json="$3" nets="$4"
@@ -142,6 +154,10 @@ run_case() {
         [[ -z "${ov}" ]] && continue
         echo "${ov}" | cut -d' ' -f3- > "${fx}/$(echo "${ov}" | awk '{print $1"."$2}').keycount"
     done
+    for ov in "${STATE_FIXTURES[@]:-}"; do
+        [[ -n "${ov}" ]] && : > "${fx}/${ov}"
+    done
+    LAST_CP_LOG="${fx}/cp.log"
     LAST_ENVF="$(mktemp --tmpdir="${TEST_ROOT}")"
     printf 'SOMETHING=1\nFL_KIT_SLOT_NAMES=%s\nOTHER=2\n' "${env_json}" > "${LAST_ENVF}"
     LAST_OUT="$(printf 'n\n' | env PATH="${MOCKBIN}:${PATH}" \
@@ -154,6 +170,7 @@ run_case() {
     echo "── ${name}"
     STARTUP_OVERRIDES=()
     KEYCOUNT_OVERRIDES=()
+    STATE_FIXTURES=()
     YES_MODE=""
     ENV_MODE=""
 }
@@ -291,8 +308,53 @@ check_refuses "refuses net-2 overwrite" "already has objects — refusing to ove
 check_refuses "reports the net-1 upload" "Kits already uploaded this run: net-1/Trust_3"
 check_refuses "warns against the instinctive re-run" "Do NOT re-run add-fl-kits"
 
-# --- ENV_NAME (FLIP#749): the environment CLASS the Makefile derives from PROD (deploy/env_mode.mk's
-# --- ENV_CLASS — the LZA pair rides the legacy env workspaces); anything else is refused ---
+# --- CA state location: its own prefix, never among the kits ---------------------------
+
+check_cp_log() {  # assert the last run's `s3 cp` log does (want=0) or does not (want=1) match a pattern
+    local label="$1" want="$2" pattern="$3"
+    grep -qE "${pattern}" "${LAST_CP_LOG}"
+    if [[ $? -eq "${want}" ]]; then
+        echo "   ✅ ${label}"
+        PASS=$((PASS + 1))
+    else
+        echo "   ❌ ${label}"
+        echo "      cp log: $(cat "${LAST_CP_LOG}")"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+# 11. A fresh checkout restores the CA state from fl-flare-ca-state/ and refreshes it there.
+rm -rf "${WORKSPACE_PARENT}"
+STATE_FIXTURES=(ca-state)
+YES_MODE=1
+run_case "CA state read from and written to its own prefix (N=1)" 1 '["Trust_1", "Trust_2"]' "net-1" \
+    "net-1=Trust_1 Trust_2 fl-server-net-1"
+check_contains "run succeeds" 0 "minted [Trust_3"
+check_cp_log "cert.json refreshed under fl-flare-ca-state/" 0 \
+    '/state/cert\.json s3://testbucket/fl-flare-ca-state/2026-01-01/net-1/cert\.json$'
+check_cp_log "nothing read from or written to state/ among the kits" 1 'fl-flare-participant-kits/[^ ]*/state/'
+
+# 12. An estate uploaded before the move: read from among the kits, said in one line, written to the new prefix.
+rm -rf "${WORKSPACE_PARENT}"
+STATE_FIXTURES=(kit-state)
+YES_MODE=1
+run_case "CA state still among the kits is read with a notice (N=1)" 1 '["Trust_1", "Trust_2"]' "net-1" \
+    "net-1=Trust_1 Trust_2 fl-server-net-1"
+check_contains "falls back and says so" 0 \
+    "none there — reading s3://testbucket/fl-flare-participant-kits/2026-01-01/net-1/state/"
+check_cp_log "cert.json refreshed under fl-flare-ca-state/" 0 \
+    '/state/cert\.json s3://testbucket/fl-flare-ca-state/2026-01-01/net-1/cert\.json$'
+check_cp_log "nothing written to state/ among the kits" 1 ' s3://testbucket/fl-flare-participant-kits/[^ ]*/state/'
+
+# 13. No CA state in either place: refuse to mint.
+rm -rf "${WORKSPACE_PARENT}"
+YES_MODE=1
+run_case "no CA state anywhere is refused (N=1)" 1 '["Trust_1", "Trust_2"]' "net-1" \
+    "net-1=Trust_1 Trust_2 fl-server-net-1"
+check_refuses "refuses to mint without the CA state" "the S3 mirror has no cert.json"
+
+# --- ENV_NAME (FLIP#749): the environment CLASS the Makefile derives from HUB (deploy/env_mode.mk's
+# --- ENV_CLASS); anything else is refused ---
 
 ENV_MODE=stag
 run_case "ENV_NAME=stag plans as the stag env (N=2)" 2 '["Trust_1", "Trust_2"]' "net-1 net-2" \
@@ -306,7 +368,7 @@ run_case "ENV_NAME=prod plans as the prod env (N=1)" 1 '["Trust_1", "Trust_2"]' 
 check_contains "plan header names the prod env" 1 "Plan (prod):"
 
 ENV_MODE=lza-stag
-run_case "a raw PROD value is refused — the Makefile must map it first (N=1)" 1 '["Trust_1", "Trust_2"]' "net-1 net-2" \
+run_case "anything but prod|stag is refused (N=1)" 1 '["Trust_1", "Trust_2"]' "net-1 net-2" \
     "net-1=Trust_1 Trust_2 fl-server-net-1" "net-2=Trust_1 Trust_2 fl-server-net-2"
 check_refuses "rejects ENV_NAME=lza-stag before touching anything" "ENV_NAME must be"
 

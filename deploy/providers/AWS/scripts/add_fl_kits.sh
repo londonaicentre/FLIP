@@ -23,7 +23,8 @@
 #      fingerprint-verify each net's CA workspace (state/ holds the root CA),
 #      `nvflare provision --add_client` (via make), upload ONLY the new kits to S3
 #      (additive `aws s3 cp`; never `sync --delete`) + refresh each net's mirrored
-#      state/cert.json CA registry. Skipped entirely when spares cover N (M = 0), so
+#      cert.json CA registry under fl-flare-ca-state/ (operator-only: no ECS task
+#      role reads that prefix). Skipped entirely when spares cover N (M = 0), so
 #      pure activation needs no CA workspace and no provisioning toolchain at all.
 #   4. append the activated + minted names to FL_KIT_SLOT_NAMES in the env file
 #
@@ -32,11 +33,10 @@
 # trust registration — flip-api reconciles its pool on a miss, so no restart and no
 # task-definition change is needed.
 #
-# Invoked by `make -C deploy/providers/AWS add-fl-kits N=<n> PROD=<env> [YES=1]`
-# (PROD=stag|true, or lza|lza-stag for the LZA estate — FLIP#749; the Makefile
-# hands this script the environment CLASS as ENV_NAME=prod|stag),
+# Invoked by `make -C deploy/providers/AWS add-fl-kits N=<n> HUB=<stag|prod> [YES=1]`
+# (the Makefile hands this script the environment CLASS as ENV_NAME=prod|stag),
 # which exports the env-file vars this script reads (AICENTRE_BUCKET_NAME,
-# FLARE_KIT_DATE, AWS_PROFILE, FL_BACKEND, PROD) plus N / YES / MAIN_ENV_FILE.
+# FLARE_KIT_DATE, AWS_PROFILE, FL_BACKEND, HUB) plus N / YES / MAIN_ENV_FILE.
 #
 # Safety invariants (live trusts' kits are sacred):
 #   - activates existing spares before minting, so a good kit minted on every net is
@@ -54,8 +54,8 @@
 set -euo pipefail
 
 N="${N:?N is required (number of kit slots to add, e.g. N=2)}"
-AICENTRE_BUCKET_NAME="${AICENTRE_BUCKET_NAME:?AICENTRE_BUCKET_NAME must be set (run via make with PROD=<env>)}"
-FLARE_KIT_DATE="${FLARE_KIT_DATE:?FLARE_KIT_DATE must be set (run via make with PROD=<env>)}"
+AICENTRE_BUCKET_NAME="${AICENTRE_BUCKET_NAME:?AICENTRE_BUCKET_NAME must be set (run via make with HUB=<env>)}"
+FLARE_KIT_DATE="${FLARE_KIT_DATE:?FLARE_KIT_DATE must be set (run via make with HUB=<env>)}"
 MAIN_ENV_FILE="${MAIN_ENV_FILE:?MAIN_ENV_FILE must be set (the env file to append FL_KIT_SLOT_NAMES to)}"
 YES="${YES:-}"
 
@@ -72,17 +72,17 @@ fi
 
 # ENV_NAME (prod|stag) selects the CA workspace and project YAML
 # (provision/workspace-<env>, net-N_project_<env>.yml). It is the environment
-# CLASS the Makefile derives from PROD (deploy/env_mode.mk's ENV_CLASS, the
+# CLASS the Makefile derives from HUB (deploy/env_mode.mk's ENV_CLASS, the
 # same value fl-services/nvflare/Makefile keys FL_KIT_WORKSPACE on), handed in
-# rather than re-derived here. The LZA environments deliberately map onto the
-# legacy classes: their kits carry the same server FQDN and root CA, so trusts
-# keep their client kits across the DNS cutover (FLIP#749). A staging estate
-# provisioned with a fresh CA instead trips the fingerprint guard below, never
-# a silent mint.
+# rather than re-derived here. Both network modes map onto the same class: an LZA
+# estate's kits carry the same server FQDN and root CA as the self-contained one
+# they replaced, so trusts keep their client kits across the DNS cutover
+# (FLIP#749). A staging estate provisioned with a fresh CA instead trips the
+# fingerprint guard below, never a silent mint.
 case "${ENV_NAME:-}" in
 prod | stag) ;;
 *)
-    echo "❌ ENV_NAME must be 'prod' or 'stag' (the Makefile passes it from PROD; run via \`make add-fl-kits\`) — got '${ENV_NAME:-}'." >&2
+    echo "❌ ENV_NAME must be 'prod' or 'stag' (the Makefile passes it from HUB; run via \`make add-fl-kits\`) — got '${ENV_NAME:-}'." >&2
     exit 1
     ;;
 esac
@@ -93,6 +93,7 @@ NVFLARE_DIR="${REPO_ROOT}/fl-services/nvflare"
 WORKSPACE_PARENT="${NVFLARE_DIR}/provision/workspace-${ENV_NAME}"
 KEY_PREFIX="fl-flare-participant-kits/${FLARE_KIT_DATE}"
 BASE_S3="s3://${AICENTRE_BUCKET_NAME}/${KEY_PREFIX}"
+CA_STATE_S3="s3://${AICENTRE_BUCKET_NAME}/fl-flare-ca-state/${FLARE_KIT_DATE}"
 
 log() { echo "🧩 $*"; }
 
@@ -111,7 +112,7 @@ on_error() {
         echo "   Kits already uploaded this run: ${UPLOADED[*]}" >&2
         echo "   Do NOT re-run add-fl-kits to recover — it would mint HIGHER numbers and orphan the" >&2
         echo "   names above. Instead: append the uploaded names to FL_KIT_SLOT_NAMES in" >&2
-        echo "   ${MAIN_ENV_FILE} and run 'make apply-fl-kit-slots PROD=${PROD:-<env>}' (a name uploaded to" >&2
+        echo "   ${MAIN_ENV_FILE} and run 'make apply-fl-kit-slots HUB=${HUB:-<env>}' (a name uploaded to" >&2
         echo "   only SOME nets must first be minted on the missing nets — see the nvflare README)." >&2
     else
         echo "   Nothing was minted or uploaded. If this failed during the env-file edit (step 5)," >&2
@@ -315,10 +316,15 @@ for net in "${NETS[@]}"; do
     # Restore the CA state + server kit from the S3 mirror if this checkout has
     # never provisioned (or added to) this net — the two things add-client.sh needs.
     if [[ ! -f "${workspace}/state/cert.json" ]]; then
-        log "${net}: no local CA state — restoring workspace from ${BASE_S3}/${net}/"
-        aws s3 cp "${BASE_S3}/${net}/state/" "${workspace}/state/" --recursive --only-show-errors
+        log "${net}: no local CA state — restoring it from ${CA_STATE_S3}/${net}/"
+        aws s3 cp "${CA_STATE_S3}/${net}/" "${workspace}/state/" --recursive --only-show-errors
         if [[ ! -f "${workspace}/state/cert.json" ]]; then
-            die "❌ ${net}: the S3 mirror has no state/cert.json — this net's CA state was never" \
+            # Uploaded before the CA state had its own prefix: still among the kits.
+            log "${net}: none there — reading ${BASE_S3}/${net}/state/ (move it: fl-services/nvflare/README.md)"
+            aws s3 cp "${BASE_S3}/${net}/state/" "${workspace}/state/" --recursive --only-show-errors
+        fi
+        if [[ ! -f "${workspace}/state/cert.json" ]]; then
+            die "❌ ${net}: the S3 mirror has no cert.json — this net's CA state was never" \
                 "   uploaded, so kits can only be minted from the checkout that provisioned it." \
                 "   (Do NOT re-provision: that rotates the CA and forces a fleet-wide redeploy.)"
         fi
@@ -363,8 +369,8 @@ for net in "${NETS[@]}"; do
 
     # Refresh the mirrored CA registry so the next add from a fresh checkout signs
     # with a registry that knows these identities.
-    aws s3 cp "${workspace}/state/cert.json" "${BASE_S3}/${net}/state/cert.json" --only-show-errors
-    log "${net}: done (${#MINT_NAMES[@]} kits minted + uploaded, state/cert.json refreshed)."
+    aws s3 cp "${workspace}/state/cert.json" "${CA_STATE_S3}/${net}/cert.json" --only-show-errors
+    log "${net}: done (${#MINT_NAMES[@]} kits minted + uploaded, CA state cert.json refreshed)."
 done
 fi
 

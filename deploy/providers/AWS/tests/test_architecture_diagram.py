@@ -26,17 +26,11 @@ map matches the HCL, so this suite pins the two together in both directions:
   service, bucket or load balancer cannot land without being drawn — or without an explicit
   decision not to.
 
-The map is one superset over both deployment modes (``Variant``): the legacy self-contained
-account and the LZA estate each get their own pictures, and ``VARIANT_ONLY_LABELS`` names the
-labels that exist in only one of them. The mode-agnostic rules above are what make a new
-resource undrawable in either mode; the per-variant exclusivity is enforced by the renderer and
-exercised by the smoke tests.
-
 The inventory is read straight from the ``.tf`` text with the same ``read_text()`` + ``re``
 approach as the rest of this suite: no ``terraform`` binary, no state, no credentials, so it
 runs on fork PRs. Only the root module is inventoried — ``module.<name>`` is the address of a
 child module, and its internals are not separately drawn. ``data`` blocks are inventoried for
-the existence check only: the LZA pictures draw the accelerator's VPC and subnets, which this
+the existence check only: the pictures draw the accelerator's VPC and subnets, which this
 root looks up rather than creates, but a data source can never become "must be drawn". The
 render itself needs graphviz, so the smoke tests are skipped (reported, not silently green)
 where ``dot`` is absent.
@@ -54,8 +48,6 @@ from architecture.central_hub import (
     DRAWN_RESOURCE_TYPES,
     TERRAFORM_ADDRESSES,
     UNDRAWN_MODULES,
-    VARIANT_ONLY_LABELS,
-    Variant,
     render,
 )
 
@@ -118,24 +110,10 @@ def test_map_is_well_formed():
             )
 
 
-def test_variant_only_labels_are_declared_and_disjoint():
-    """A mode-only label must be a map key, and no label can be exclusive to both modes at once."""
-    for variant, only in VARIANT_ONLY_LABELS.items():
-        undeclared = sorted(only - set(TERRAFORM_ADDRESSES))
-        assert not undeclared, (
-            f"VARIANT_ONLY_LABELS[{variant.value}] names labels not in TERRAFORM_ADDRESSES: {undeclared}"
-        )
-    both = sorted(VARIANT_ONLY_LABELS[Variant.LEGACY] & VARIANT_ONLY_LABELS[Variant.LZA])
-    assert not both, f"labels listed as exclusive to both variants: {both}"
-    assert set(VARIANT_ONLY_LABELS) == set(Variant), "every variant needs an entry, even an empty one"
-
-
-def test_every_variant_has_pictures():
-    """Each variant renders at least one picture, and every picture stem is unique."""
-    stems = [suffix for _, suffix, _, _ in DIAGRAMS]
+def test_picture_stems_are_unique():
+    """Every picture stem is unique: the README image links and the Sphinx figure paths embed them."""
+    stems = [suffix for suffix, _, _ in DIAGRAMS]
     assert len(stems) == len(set(stems)), f"duplicate picture suffixes in DIAGRAMS: {stems}"
-    for variant in Variant:
-        assert any(v is variant for v, _, _, _ in DIAGRAMS), f"DIAGRAMS has no picture for the {variant.value} variant"
 
 
 def test_every_drawn_address_exists_in_terraform():
@@ -196,34 +174,11 @@ _NO_DOT = pytest.mark.skipif(
 )
 
 
-@pytest.fixture(scope="module")
-def rendered(tmp_path_factory: pytest.TempPathFactory) -> list[Path]:
-    """One combined render for the module: ``render`` tracks completeness per variant, so a single pass proves
-    both picture sets (the per-variant test below reads this output rather than rendering again)."""
-    return render(tmp_path_factory.mktemp("diagrams"))
-
-
 @_NO_DOT
-def test_render_smoke(rendered: list[Path]):
-    """Both variants render: four non-empty PNGs with the stems the README and Sphinx pages embed, every mapped
-    node drawn in each variant it belongs to (``assert_complete`` raises otherwise)."""
-    outputs = rendered
-    assert {path.name for path in outputs} == {
-        "central-hub-aws-network.png",
-        "central-hub-aws-data.png",
-        "central-hub-aws-lza-network.png",
-        "central-hub-aws-lza-data.png",
-    }
+def test_render_smoke(tmp_path: Path):
+    """The pictures render: non-empty PNGs with the stems the README and Sphinx pages embed, every mapped
+    node drawn (``assert_complete`` raises otherwise)."""
+    outputs = render(tmp_path)
+    assert {path.name for path in outputs} == {"central-hub-aws-lza-network.png", "central-hub-aws-lza-data.png"}
     for path in outputs:
         assert path.stat().st_size > 0, f"{path} is empty"
-
-
-@_NO_DOT
-@pytest.mark.parametrize("variant", list(Variant), ids=lambda variant: variant.value)
-def test_each_variant_has_its_pictures(rendered: list[Path], variant: Variant):
-    """Every picture ``DIAGRAMS`` declares for the variant is among the rendered outputs and non-empty."""
-    expected = {f"central-hub-aws-{suffix}.png" for v, suffix, _, _ in DIAGRAMS if v is variant}
-    by_name = {path.name: path for path in rendered}
-    assert expected <= set(by_name)
-    for name in expected:
-        assert by_name[name].stat().st_size > 0, f"{name} is empty"

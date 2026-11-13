@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import cast
 from uuid import UUID
 
+import httpx
 from sqlalchemy import Column
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, col, select
@@ -40,6 +41,7 @@ from flip_api.domain.schemas.status import (
 )
 from flip_api.domain.schemas.types import FLBackend, FLLogEvent
 from flip_api.fl_services.services.fl_service import (
+    ResearcherFacingError,
     _raise_if_job_aborted,
     bundle_flower_application,
     bundle_nvflare_application,
@@ -49,6 +51,7 @@ from flip_api.fl_services.services.fl_service import (
 )
 from flip_api.model_services.services.model_service import add_log, update_model_status, validate_trust_ids
 from flip_api.utils.exceptions import DatabaseError, JobAbortedError, NotFoundError
+from flip_api.utils.http import fl_api_error_message
 from flip_api.utils.logger import logger
 
 
@@ -729,9 +732,13 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         return False
 
     except Exception as e:
-        logger.error(f"Failed to start training: {e}")
-        error_message = str(e)
-        logger.info(f"Error message: {error_message}")
+        logger.exception("Failed to start training for model %s (job %s)", model_id, fl_job_id)
+        if isinstance(e, httpx.HTTPStatusError):
+            error_message = fl_api_error_message(e)
+        elif isinstance(e, ResearcherFacingError):
+            error_message = str(e)
+        else:
+            error_message = f"Training could not be started; the platform team has the details (job {fl_job_id})."
         remove_job(fl_job_id, session)
         add_log(model_id, error_message, session, success=False)
         update_model_status(model_id, ModelStatus.ERROR, session)
@@ -740,7 +747,7 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         release_scheduler_for_model(model_id, session)
 
         logger.debug("Reverted job and released scheduler pickup")
-        raise e
+        raise
 
 
 def get_required_training_details(model_id: UUID, session: Session) -> IRequiredTrainingInformation:

@@ -30,7 +30,7 @@ from tutorial_apps import TUTORIALS_ROOT, load_module
 MAPPINGS_PATH = TUTORIALS_ROOT / "datasets" / "utils" / "omop_mappings.py"
 QUERY_DIRS = {
     "nvflare": TUTORIALS_ROOT / "nvflare" / "image_classification" / "xray_classification",
-    "flower": TUTORIALS_ROOT / "flower" / "xray_classification",
+    "flower": TUTORIALS_ROOT / "flower" / "image_classification" / "xray_classification",
 }
 # What the app consumes: accession_id to fetch the study, the three findings as labels, and person_id
 # for the trust's per-subject age/sex distributions.

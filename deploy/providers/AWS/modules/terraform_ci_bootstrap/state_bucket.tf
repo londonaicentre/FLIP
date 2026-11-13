@@ -17,7 +17,7 @@
 ############################
 #
 # The bucket holding the FLIP root's state in this account. Until this module,
-# nothing declared it: three were made by scripts/create-backend.sh and one by
+# nothing declared it: three were made by a since-removed create-backend.sh and one by
 # hand, and they had drifted (three SSE-S3, one SSE-KMS; one carried a
 # hand-added policy granting another account write access). Declaring it here
 # makes its settings reviewed and consistent. The IAM policies above address it
@@ -191,4 +191,14 @@ resource "aws_s3_bucket_policy" "state" {
 
   # A policy on a bucket whose public-access block is still being set races it.
   depends_on = [aws_s3_bucket_public_access_block.state]
+}
+
+# Server access logs (S3.9), off unless state_access_log_bucket names a
+# target; the variable says which bucket that should be, and which never.
+resource "aws_s3_bucket_logging" "state" {
+  count = var.manage_state_bucket && var.state_access_log_bucket != "" ? 1 : 0
+
+  bucket        = aws_s3_bucket.state[0].id
+  target_bucket = var.state_access_log_bucket
+  target_prefix = "${var.state_bucket_name}/"
 }

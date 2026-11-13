@@ -28,7 +28,7 @@ flip_app_dirs: []
 # The imaging-api / fl-client images trees. Each entry is one
 # BASE_IMAGES_DOWNLOAD_DIR; the per-net slices (net-N) are created underneath.
 # On-prem there is one tree; the EC2 play passes one per FL kit slot because the
-# production composes default BASE_IMAGES_DOWNLOAD_DIR to /opt/flip/data/trust-<slot>.
+# prod composes default BASE_IMAGES_DOWNLOAD_DIR to /opt/flip/data/trust-<slot>.
 flip_images_base_dirs:
   - "{{ flip_dir }}/data/images"
 flip_net_ids:
@@ -39,7 +39,7 @@ flip_net_ids:
 flip_net_dirs: "{{ flip_images_base_dirs | product(flip_net_ids) | map('join', '/') | list | unique }}"
 
 # The approved-cohort membership stores (FLIP#857), one per FL kit slot: records are keyed by
-# project alone, so trusts sharing a host must not share one. The production composes default
+# project alone, so trusts sharing a host must not share one. The prod composes default
 # COHORT_SNAPSHOT_STORAGE_DIR to /opt/flip/cohort-snapshots/trust-<slot>. Slots 1 and 2 here; the
 # EC2 play adds its registered slot, and `make -C trust up-trust` prepares any other at bring-up.
 flip_cohort_snapshot_dirs:
@@ -47,5 +47,5 @@ flip_cohort_snapshot_dirs:
   - "{{ flip_dir }}/cohort-snapshots/trust-2"
 
 # Host-side Loki/Grafana data dirs (/opt/flip/volumes/*). Only the EC2 stack bind-mounts
-# them; the on-prem production compose defaults to Docker-managed named volumes.
+# them; the on-prem prod compose defaults to Docker-managed named volumes.
 flip_observability_volume_dirs: false

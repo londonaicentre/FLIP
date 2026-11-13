@@ -12,7 +12,7 @@
 """Load the public Synthea-in-OMOP tabular cohort into a running trust OMOP database.
 
 This is the populate side of the EHR risk-prediction tutorial
-(``fl-tutorials/{nvflare/tabular_classification,flower}/ehr_risk_prediction``). That tutorial's
+(``fl-tutorials/{nvflare,flower}/tabular_classification/ehr_risk_prediction``). That tutorial's
 ``query.sql`` reads ``omop.person`` / ``omop.condition_occurrence`` / ``omop.visit_occurrence``,
 but the shipped mock OMOP carries no condition rows at all — so without this loader the cohort
 query returns nothing. Here we download three OMOP CDM tables of the fully synthetic 1k-person
@@ -71,7 +71,7 @@ REQUIRED_SOURCE_COLUMNS = {
 # Shift Synthea ids clear of the imaging cohorts' person_id range at INSERT time. This offset is
 # *not* what makes clean_reserved_band's delete safe (see that function and the module docstring) —
 # it only has to be large enough that no shifted Synthea id can equal an imaging person_id. The
-# imaging cohorts' person_id is nhs_number_to_integer(PatientID) — the first 9 digits of a real NHS
+# imaging cohorts' person_id is person_id(PatientID) — the first 9 digits of a real NHS
 # number — so it is bounded above by 999_999_999; any offset >= 1_000_000_000 therefore satisfies
 # that by construction. This is the one place that bound is load-bearing: if NHS-number generation
 # ever changes to emit more than 9 digits, this offset must be revisited. Stays far below the int32
@@ -205,7 +205,7 @@ def clean_reserved_band(conn: Connection) -> None:
 
     Deliberately does **not** filter on ``PERSON_ID_OFFSET`` (an id-range threshold): the imaging
     cohorts' ``person_id`` is derived from a real, effectively random NHS number
-    (``nhs_number_to_integer``), so it scatters across the whole 9-digit range and a plain
+    (``utils.omop_ids.person_id``), so it scatters across the whole 9-digit range and a plain
     "person_id >= offset" delete would remove a chunk of the imaging cohort along with its cascaded
     ``image_occurrence``/``procedure_occurrence`` rows on every reload — confirmed live on a trust
     holding 4187 imaging persons, of which 422 had ``person_id >= 900_000_000`` and were destroyed by

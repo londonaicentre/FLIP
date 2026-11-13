@@ -23,7 +23,7 @@ import shutil
 
 import pandas as pd
 from tqdm import tqdm
-from utils.omop_ids import surrogate_ids
+from utils.omop_ids import person_id, surrogate_ids
 from utils.omop_mappings import (
     EHR_TYPE_CONCEPT_ID,
     INPATIENT_VISIT_CONCEPT_ID,
@@ -38,7 +38,7 @@ from utils.omop_mappings import (
 from utils.omop_schemas import schemas
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     args = argparse.ArgumentParser()
     args.add_argument(
         "--dataset_table", type=str, default="data/cxr_metadata.csv", help="Path to the Dicom data table."
@@ -56,7 +56,7 @@ def get_concepts_from_pathologies(pathologies_str: str, conditioning: str) -> li
     """Convert `pathologies` and `conditioning` values from the synthetic x-ray table to a dictionary of concept IDs.
 
     Args:
-        pathologies (str): comma-delimited list of findings, e.g. "no_pleural_effusion,edema".
+        pathologies_str (str): comma-delimited list of findings, e.g. "no_pleural_effusion,edema".
         conditioning (str): full text description of the findings, e.g. "No pleural effusion. Right-sided pulmonary
         edema."
 
@@ -121,11 +121,6 @@ DICOM_FOLDER_PATH = "./dicom_output"
 PROJECT = "cxr_project"
 
 
-def nhs_number_to_integer(s):
-    """Converts the PatientID (NHS number e.g. '123 456 789') to an integer"""
-    return int(f"{s.replace(' ', '')[:9]}")
-
-
 def transform_dicom_metadata_to_omop_tables(csv_file_path: str, omop_root: str = "") -> dict[str, pd.DataFrame]:
     """
     Convert a dicom_metadata.csv file to OMOP tables
@@ -148,7 +143,7 @@ def transform_dicom_metadata_to_omop_tables(csv_file_path: str, omop_root: str =
     # ---------------- Person table ----------------
     # ----------------------------------------------
     person = pd.DataFrame()
-    person["person_id"] = df["PatientID"].apply(nhs_number_to_integer)
+    person["person_id"] = df["PatientID"].apply(person_id)
     person["gender_concept_id"] = df["PatientSex"].map(MAPPING_SEX)
     person["birth_datetime"] = pd.to_datetime(df["PatientBirthDate"], format="%Y%m%d")
     person["year_of_birth"] = person["birth_datetime"].dt.year.astype(

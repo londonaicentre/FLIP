@@ -23,8 +23,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/xnat-lib.sh"
 # jars in ${XNAT_HOME}/plugins declare (the `id=` in each jar's META-INF/xnat/*-plugin.properties,
 # which is what XNAT lists). Those jars are the ones XNAT loaded only inside the xnat-web container,
 # so only the Compose recipe that configures from there sets the flag (trust/xnat/Makefile
-# xnat-configure). The chart's xnat-init pod sees the image's baked jars, not the pod's
-# xnat.web.plugins.urls; `make -C trust/deploy/helm status` checks the loaded roster there instead.
+# xnat-configure). The chart's xnat-init pod runs the same image, but a mutable tag can be rebuilt
+# between its pull and xnat-web's; `make -C trust/deploy/helm status` checks the loaded plugins instead.
 # The DQR route is probed either way, because a listed plugin can still have no routes: XNAT lists
 # every plugin it discovered, but one ClassNotFoundException ends its config-loading loop
 # (XnatWebAppInitializer.getPluginConfigs, xnat-web 1.10.0).

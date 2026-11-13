@@ -1,0 +1,31 @@
+# Production overlay for docker-compose-stack.yml
+# Mounts persistent data volumes on the host for XNAT data survival across restarts.
+# Development bind-mounts the same xnat-web dirs (see the development overlay); what it
+# does not persist is the database — xnat-db gets no PGDATA mount there, only the
+# init scripts, so a dev XNAT's Postgres is ephemeral while its archive is not.
+# Host path comes from XNAT_DATA_DIR (set by trust/xnat/Makefile; defaults to the
+# per-slot /opt/flip/xnat-trust<N> in stag/prod — not the /opt/flip/xnat the Ansible
+# playbooks provision). Keep this in lockstep with the xnat-reset recipe so the dirs
+# Make creates and the dirs compose mounts match.
+services:
+  xnat-web:
+    # The kit's FLIP_UID:FLIP_GID when set, else the image's xnat user (FLIP#1731). xnat-db keeps
+    # the stack file's root entrypoint: every existing site's database is uid 70's, the image's
+    # postgres user, which the entrypoint keeps it.
+    user: "${FLIP_UID:-1001}:${FLIP_GID:-1001}"
+    environment:
+      - DATA_PATH=${XNAT_DATA_DIR}/xnat-data
+      # Who the Container Service runs its jobs (dcm2niix, export-mask) as: the same uid as
+      # xnat-web, or they cannot read the 640 files it archives. trust/xnat/Makefile derives it
+      # from FLIP_UID; empty keeps each job image's own user, 1001 (FLIP#1731).
+      - XNAT_CS_CONTAINER_USER=${XNAT_CS_CONTAINER_USER:-}
+    volumes:
+      - ${XNAT_DATA_DIR}/xnat-data/tomcat_logs:${XNAT_HOME}/logs
+      - ${XNAT_DATA_DIR}/xnat-data/archive:${XNAT_ROOT}/archive
+      - ${XNAT_DATA_DIR}/xnat-data/build:${XNAT_ROOT}/build
+      - ${XNAT_DATA_DIR}/xnat-data/cache:${XNAT_ROOT}/cache
+      - ${XNAT_DATA_DIR}/xnat-data/prearchive:${XNAT_ROOT}/prearchive
+
+  xnat-db:
+    volumes:
+      - ${XNAT_DATA_DIR}/xnat-db-data:/var/lib/postgresql/data

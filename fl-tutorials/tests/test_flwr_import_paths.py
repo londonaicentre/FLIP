@@ -37,12 +37,19 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-# Both trees ship Flower apps: the tutorials researchers copy, and the templates they scaffold from.
-APP_ROOTS = (REPO_ROOT / "fl-tutorials" / "flower", REPO_ROOT / "fl-apps" / "flower")
+# Both trees ship Flower apps: the tutorials researchers copy (<category>/<name>/app, #1500) and the
+# templates they scaffold from (<job_type>/app) — one glob depth per root.
+APP_ROOTS = {REPO_ROOT / "fl-tutorials" / "flower": "*/*/app/*.py", REPO_ROOT / "fl-apps" / "flower": "*/app/*.py"}
 
 
 def _flower_app_sources() -> list[Path]:
-    return sorted(p for root in APP_ROOTS for p in root.glob("*/app/*.py") if p.name != "__init__.py")
+    return sorted(p for root, pattern in APP_ROOTS.items() for p in root.glob(pattern) if p.name != "__init__.py")
+
+
+def test_discovery_finds_sources_under_both_roots() -> None:
+    """Guard the guard: a wrong glob depth would silently empty the parametrize list for one tree."""
+    for root, pattern in APP_ROOTS.items():
+        assert any(root.glob(pattern)), f"no Flower app sources under {root} for {pattern!r} — has the layout changed?"
 
 
 def _flwr_imports(source: Path) -> list[tuple[str, tuple[str, ...]]]:

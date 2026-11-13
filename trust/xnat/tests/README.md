@@ -85,7 +85,10 @@ models. Its `*/`, `+/`, `X`/`@` tag wildcards, `removeAllPrivateTags`,
 6.9.0 from the `xnat-web` image (FLIP#1513), and the two engines gave the same
 output on the fixture and on real CT, MR, enhanced MR, RT structure set,
 secondary capture, ultrasound and X-ray samples. Check any new construct the
-same way before relying on it. DicomEdit rejects some forms outright (a space
+same way before relying on it. On an XNAT bump, run the script through the new
+WAR's DicomEdit as well: for 1.10.2.1 (FLIP#1648), DicomEdit 6.10.0 gave output
+identical to 6.9.0's on the fixture, with and without a private block, Digital
+Signatures Sequence and padding after Pixel Data. DicomEdit rejects some forms outright (a space
 inside the tag brackets, a lowercase `x`, `removeallprivatetags`), and then
 XNAT cannot parse the script at all.
 

@@ -17,9 +17,9 @@
 # compose-file source of truth - making it harder to forget vars like
 # LOCAL_DEV=false or UPLOADED_FEDERATED_DATA_BUCKET when the task defs change.
 #
-# These maps mirror compose.production.yml + compose.production.nvflare.yml so
+# These maps mirror compose.prod.yml + compose.prod.nvflare.yml so
 # the running container sees the same env whether it runs on EC2+compose or
-# ECS Fargate.
+# ECS Fargate, plus what the read-only root filesystem there takes (FLIP#1795).
 
 locals {
   flip_local_domain = "flip.local"
@@ -57,24 +57,18 @@ locals {
   # only has to land in one place.
   #
   # After the split, FL results live in their own purpose-built bucket. The
-  # ECS task env below pins fl-server / flip-api to the `${bucket}/results`
-  # path, not the bucket root, as a workaround for a leading-slash bug in
-  # the FL package's S3 upload path-construction
-  # (flip-utils/flip/core/standard.py:415-427: when `urlparse(bucket).path`
-  # is empty, the concatenation `f"{prefix}/{key}"` produces `/<key>` with
-  # a literal leading slash, so flip-api's `list_objects_v2(Prefix=<model_id>)`
-  # never matches the keys fl-server actually uploads). Removing this
-  # workaround requires patching flip-utils/flip, rebuilding fl-server, and
-  # redeploying — see PR description on FLIP#465 for the long-term fix path.
+  # ECS task env below pins flip-api to the `${bucket}/results` path, not the
+  # bucket root: a workaround from when the fl-server built the key itself
+  # (FLIP#465), kept because the results uploaded so far live under it. Only
+  # flip-api names the bucket now; a job uploads through URLs it presigns.
   flip_model_files_uploads_bucket_uri = "s3://${module.flip_model_files_uploads_bucket.bucket_id}"
   flip_fl_results_bucket_uri          = "s3://${module.flip_fl_results_bucket.bucket_id}"
   flip_app_bundles_bucket_uri         = "s3://${module.flip_app_bundles_bucket.bucket_id}"
 
-  # Sub-paths under the new three-bucket layout. The legacy single-bucket
+  # Sub-paths under the three-bucket layout. The legacy single-bucket
   # prefixes (`model_files/uploaded`, `uploaded_federated_data`,
-  # `app_destination_bucket`) are re-pointed at the new purpose-built buckets
-  # per the migration mapping in `make migrate-flip-bucket` (see
-  # deploy/providers/AWS/Makefile). Keeping the same local names
+  # `app_destination_bucket`) are re-pointed at the purpose-built buckets
+  # (FLIP#24). Keeping the same local names
   # (`uploaded_federated_data_uri`, …) means the ecs_task_env map below can stay
   # byte-identical with the prior single-bucket layout — only the value behind
   # each local changes.
@@ -110,10 +104,10 @@ locals {
   enforce_mfa_env = var.ENFORCE_MFA == "" ? {} : { ENFORCE_MFA = var.ENFORCE_MFA }
 
   # Env vars per service — the CANONICAL definition of production container
-  # config (#936; the compose.production*.yml files mirror a subset as the
+  # config (#936; the compose.prod*.yml files mirror a subset as the
   # local prod-image harness). fl_server/fl_api are the FLARE maps
-  # (compose.production.nvflare.yml); fl_server_flower/fl_api_flower are the
-  # Flower maps (compose.production.flower.yml). ecs_tasks.tf selects by
+  # (compose.prod.nvflare.yml); fl_server_flower/fl_api_flower are the
+  # Flower maps (compose.prod.flower.yml). ecs_tasks.tf selects by
   # var.fl_backend (#566).
   # The regional S3 endpoint host. One value, two consumers that must agree
   # (FLIP#905): flip-api presigns bundle URLs against it as AWS_ENDPOINT_URL_S3,
@@ -131,7 +125,7 @@ locals {
       # Pin boto3 to the regional S3 endpoint: the legacy global endpoint's
       # ~24h DNS lag on freshly created non-us-east-1 buckets caused the
       # FLIP#24 500s. Same rationale as the matching block in
-      # deploy/compose.production.yml; was compose-only until #566.
+      # deploy/compose.prod.yml; was compose-only until #566.
       AWS_ENDPOINT_URL_S3       = "https://${local.s3_regional_endpoint_host}"
       AWS_COGNITO_USER_POOL_ID  = module.cognito.user_pool_id
       AWS_COGNITO_APP_CLIENT_ID = module.cognito.app_client_id
@@ -162,24 +156,36 @@ locals {
       # 1800s (MAX_PUT_PRESIGNED_URL_TTL_SECONDS), so multi-GB uploads must
       # complete within 30 minutes or they time out at the edge.
       MAX_MODEL_FILE_BYTES = "5000000000"
+      # uv's cache on the task's /tmp volume: its default, under HOME, is on the
+      # read-only root filesystem (FLIP#1795).
+      UV_CACHE_DIR = "/tmp/uv-cache"
       # FL_KIT_SLOT_NAMES is deliberately NOT in the task env: in production the
       # kit-slot pool's single source is the /flip/fl_kit_slot_names SSM parameter
       # (parameter_store.tf), read at runtime by resolve_fl_kit_slot_names — an env
       # copy here would be dead config that apply-fl-kit-slots never updates.
     })
     fl_server = {
-      LOCAL_DEV                      = "false"
-      NET_ID                         = "net-1"
-      IMAGES_DIR                     = "/app/data/images"
-      UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
-      FLIP_API_INTERNAL_URL          = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
-      INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
+      LOCAL_DEV                   = "false"
+      NET_ID                      = "net-1"
+      IMAGES_DIR                  = "/app/data/images"
+      FLIP_API_INTERNAL_URL       = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
+      INTERNAL_SERVICE_KEY_HEADER = var.INTERNAL_SERVICE_KEY_HEADER
       # Root of the shared checkpoint-staging volume (mounted from the
       # fl_checkpoints EFS access point in ecs_tasks.tf). The fl-server's
       # EvaluationModelLocator reads a staged checkpoint from
       # <root>/<model_id>/ here (FLIP#695). Matches the default in
-      # flip-utils FlipConstants + compose.production.nvflare.yml.
+      # flip-utils FlipConstants + compose.prod.nvflare.yml.
       SERVER_CHECKPOINT_ROOT = "/app/server-checkpoints"
+      # Per-job hub credentials: the fl-api writes each job's here, the fl-server's job presents it on
+      # its callbacks to flip-api. On the volume the two tasks share, so never deployed to a trust.
+      JOB_CREDENTIAL_DIR = "/app/server-checkpoints/.job-credentials"
+      # Where ecs_tasks.tf mounts the kit (FLIP#1795).
+      FL_WORKSPACE = "/workspace"
+      # The kit this task runs on (ecs_efs_provision.tf syncs it to EFS). The image
+      # ignores it; it is here so a kit-date change registers a new revision and
+      # rolls the service, which reads the kit only at start. The Flower one-shot
+      # that registers SuperNode keys waits for that rollout (ecs_flower.tf, FLIP#1738).
+      FL_KIT_SOURCE = local.fl_provision_base_s3
       # INTERNAL_SERVICE_KEY is injected via the `secrets` block in
       # ecs_tasks.tf (sourced from the FLIP_API Secrets Manager secret),
       # never exposed as plain env in the task definition.
@@ -194,38 +200,52 @@ locals {
       # <root>/<model_id>/ for the fl-server to load (FLIP#695). Same path the
       # fl-server reads. Mounted from the fl_checkpoints EFS access point.
       SERVER_CHECKPOINT_ROOT = "/app/server-checkpoints"
+      # Per-job hub credentials: the fl-api writes each job's here, the fl-server's job presents it on
+      # its callbacks to flip-api. On the volume the two tasks share, so never deployed to a trust.
+      JOB_CREDENTIAL_DIR = "/app/server-checkpoints/.job-credentials"
       # GPUs the fl-api writes into a FLARE job's meta when the job declares none.
       # Requests GPUs on the fl-CLIENTS (trust hosts) — the hub Fargate tasks are
       # CPU-only. Default 0; jobs declare their own in their meta.json (FLIP#70).
       JOB_RESOURCE_SPEC_NUM_GPUS = tostring(var.JOB_RESOURCE_SPEC_NUM_GPUS)
+      # The entrypoint's `uv run` must not sync the baked .venv, which is on the
+      # read-only root filesystem, and its cache goes to the /tmp volume (FLIP#1795).
+      UV_NO_SYNC   = "1"
+      UV_CACHE_DIR = "/tmp/uv-cache"
+      # Rolls the service on a kit-date change; see fl_server's (FLIP#1738).
+      FL_KIT_SOURCE = local.fl_provision_base_s3
       # The only origin the server-side bundle fetch may download from: the
       # presign origin above (FLIP#905). Empty would mean "any public host".
-      # Both names for one release (FLIP#1291): an fl-api image from before the
-      # rename reads only the old one, one from after reads both, and a deploy
-      # that swaps only the image or only this environment must not leave
-      # either with an empty list. Drop BUNDLE_URL_ALLOWED_HOSTS in the release
-      # after every environment runs a post-#1291 fl-api.
       BUNDLE_URL_ALLOWED_ORIGINS = "https://${local.s3_regional_endpoint_host}"
-      BUNDLE_URL_ALLOWED_HOSTS   = local.s3_regional_endpoint_host
+      # Inert: the fl-api no longer reads it (#1479). Kept so this release plans as moves only;
+      # it goes with the moved/removed cleanup once that has applied on both estates.
+      BUNDLE_URL_ALLOWED_HOSTS = local.s3_regional_endpoint_host
     }
-    # Flower SuperLink (compose.production.flower.yml fl-server-net-1). TLS +
+    # Flower SuperLink (compose.prod.flower.yml fl-server-net-1). TLS +
     # SuperNode-auth flags travel as the container command (ecs_tasks.tf), not
     # env. INTERNAL_SERVICE_KEY is injected via the secrets block.
     fl_server_flower = merge({
-      LOCAL_DEV                      = "false"
-      NET_ID                         = "net-1"
-      IMAGES_DIR                     = "/app/data/images"
-      UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
-      FLIP_API_INTERNAL_URL          = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
-      INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
+      LOCAL_DEV                   = "false"
+      NET_ID                      = "net-1"
+      IMAGES_DIR                  = "/app/data/images"
+      FLIP_API_INTERNAL_URL       = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
+      INTERNAL_SERVICE_KEY_HEADER = var.INTERNAL_SERVICE_KEY_HEADER
+      # Per-job hub credentials, written by the fl-api on the shared jobs volume (see the FLARE maps).
+      JOB_CREDENTIAL_DIR = "/app/src/.job-credentials"
       # The ServerApp runs in the image's preinstalled environment on every estate:
       # Flower's documented restricted-network mode (exit-code 608 docs). Sealed egress
       # (FLIP#749) leaves the per-run `uv sync` no package index to reach, and elsewhere a
       # cold sync outlives Flower's task heartbeat, so the run never starts (FLIP#1418).
       # Researcher package additions ship via image rebuild, not pyproject.
       FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION = "1"
+      # Everything the SuperLink and its ServerApp write goes to the /tmp volume, as in
+      # the dev compose: the image's HOME (/app) and the apps' default WORKING_DIR
+      # (/app/runs) are on the read-only root filesystem (FLIP#1795).
+      HOME        = "/tmp"
+      WORKING_DIR = "/tmp/runs"
+      # Rolls the service on a kit-date change; see fl_server's (FLIP#1738).
+      FL_KIT_SOURCE = local.flower_creds_base_s3
     })
-    # Flower fl-api (compose.production.flower.yml fl-api-net-1). SuperLink
+    # Flower fl-api (compose.prod.flower.yml fl-api-net-1). SuperLink
     # addresses use the Cloud Map name — the provisioned server cert must
     # carry it as a SAN (FLOWER_EXTRA_SERVER_SANS at provision time).
     fl_api_flower = {
@@ -235,8 +255,10 @@ locals {
       SUPERLINK_HEALTH_ADDRESS    = "${local.service_discovery_names.fl_server}:9097"
       SUPERLINK_ROOT_CERTIFICATES = "/certs/ca.crt"
       FLOWER_SRC_ROOT             = "/app/src"
-      # Same bundle-fetch allow-list as the FLARE map (FLIP#905), both names
-      # for one release (FLIP#1291) for the same reason.
+      JOB_CREDENTIAL_DIR          = "/app/src/.job-credentials"
+      # Rolls the service on a kit-date change; see fl_server's (FLIP#1738).
+      FL_KIT_SOURCE = local.flower_creds_base_s3
+      # Same bundle-fetch allow-list as the FLARE map (FLIP#905), and the same inert old name.
       BUNDLE_URL_ALLOWED_ORIGINS = "https://${local.s3_regional_endpoint_host}"
       BUNDLE_URL_ALLOWED_HOSTS   = local.s3_regional_endpoint_host
     }

@@ -16,10 +16,6 @@ was ``sha-<short7>``; a release now also publishes ``:v<X.Y.Z>`` on every image,
 deploy must accept it — while still refusing the floating ``:prod`` / ``:stag``, which would
 defeat the revision audit trail the guard exists for. The guard's regex is the single line
 that decides both, so it is asserted here by running the tag check the way the recipe does.
-
-``upgrade-trust-ec2`` is the EC2 twin of ``make -C trust upgrade-trust``: it must not chain
-through ``seed-trust-data`` (which re-seeds OMOP/Orthanc on the host) or
-``down-trust-ec2`` — those belong to ``deploy-trust``, the first-install verb.
 """
 
 import os
@@ -60,33 +56,6 @@ def _recipe(target: str) -> str:
     m = re.search(rf"^{re.escape(target)}:[^\n]*\n((?:\t[^\n]*\n)+)", text, re.M)
     assert m, f"target {target} not found"
     return "\n".join(line for line in m.group(1).splitlines() if not line.strip().startswith("#"))
-
-
-def test_upgrade_trust_ec2_is_the_data_safe_verb() -> None:
-    text = MAKEFILE.read_text()
-    header = re.search(r"^upgrade-trust-ec2:([^\n]*)\n", text, re.M)
-    assert header, "upgrade-trust-ec2 target not found"
-    prerequisites = header.group(1)
-    for forbidden in ("seed-trust-data", "update-env", "stage-fl-kit"):
-        assert forbidden not in prerequisites, f"upgrade-trust-ec2 must not depend on {forbidden}"
-    recipe = _recipe("upgrade-trust-ec2")
-    assert "upgrade-trust" in recipe, "upgrade-trust-ec2 must delegate to trust/Makefile's upgrade-trust"
-    for forbidden in ("seed-trust-data", "down-trust-ec2", "up-trust-ec2", "image prune"):
-        assert forbidden not in recipe, f"upgrade-trust-ec2 must not run {forbidden}"
-
-
-def test_upgrade_trust_ec2_keeps_the_fl_client_cpu_only() -> None:
-    """The EC2 t3.xlarge has no GPU; up-trust-ec2 pins the fl-client to CPU and the upgrade must too.
-
-    A kit seeded from the template carries NUM_AVAILABLE_GPUS=1, so without the override the
-    upgrade adds the GPU overlay (compose_trust.<env>.gpu.yml) and the recreated fl-client fails
-    with "could not select device driver nvidia" — found by the FLIP#1204 stag run. Passing
-    NUM_AVAILABLE_GPUS=0 on the sub-make's command line both drops the overlay (GPU_OVERRIDE keys
-    on it) and reaches the recipe's shell env, which beats the kit's --env-file for the
-    fl-client's generated resources.json.
-    """
-    call = next(line for line in _recipe("upgrade-trust-ec2").splitlines() if "upgrade-trust " in line)
-    assert "NUM_AVAILABLE_GPUS=0" in call, f"upgrade-trust-ec2 must pin the fl-client to CPU:\n{call}"
 
 
 def _base_ref_shell() -> str:
@@ -132,15 +101,6 @@ def test_both_deploy_loops_swap_the_tag_onto_the_stripped_reference() -> None:
     assert recipe.count('base_ref "$$image" "$$service"') == 2, "both loops must resolve through base_ref()"
 
 
-def test_deploy_trust_still_reseeds_so_the_two_verbs_stay_distinct() -> None:
-    """deploy-trust is the first-install verb; if it ever stops re-seeding, the split above is moot.
-
-    The seed runs in the recipe, between down-trust-ec2 and up-trust-ec2, not as a prerequisite
-    (a prerequisite would run against the still-running omop-db — #1190 review).
-    """
-    assert "seed-trust-data" in _recipe("deploy-trust")
-
-
 # ── Static goals run without the deploy env file (FLIP#1440) ─────────────────────────────────
 
 
@@ -151,11 +111,12 @@ def _make_dry_run(
 
     MAIN_ENV_FILE points at a path that does not exist unless one is given, so a contributor's
     gitignored .env.stag (if any) cannot make a test pass for the wrong reason. Goal-like words
-    containing "=" are passed through as command-line variables.
+    containing "=" are passed through as command-line variables; HUB defaults to stag.
     """
     env = {"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", str(tmp_path)), **(extra_env or {})}
+    hub = [] if any(goal.startswith("HUB=") for goal in goals) else ["HUB=stag"]
     return subprocess.run(
-        ["make", "-n", "-s", *goals, f"MAIN_ENV_FILE={env_file or tmp_path / 'absent.env'}"],
+        ["make", "-n", "-s", *goals, *hub, f"MAIN_ENV_FILE={env_file or tmp_path / 'absent.env'}"],
         cwd=AWS_PROVIDER_DIR,
         env=env,
         capture_output=True,
@@ -168,9 +129,8 @@ COMPLETE_ENV = {
     "AWS_PROFILE": "probe",
     "PROD_AWS_PROFILE": "probe",
     "STAG_AWS_PROFILE": "probe",
-    "LZA_AWS_PROFILE": "probe",
-    "LZA_STAG_AWS_PROFILE": "probe",
     "LZA_VPC_NAME": "probe-vpc",
+    "MANAGE_DNS": "false",
     "FLARE_KIT_DATE": "00000000",
     "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": "probe-uploads",
     "FLIP_FL_RESULTS_BUCKET_NAME": "probe-results",
@@ -179,6 +139,7 @@ COMPLETE_ENV = {
     "INTERNAL_SERVICE_KEY": "probe",  # pragma: allowlist secret
     "INTERNAL_SERVICE_KEY_HASH": "probe",  # pragma: allowlist secret
     "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
+    "FL_API_KEY": "probe",  # pragma: allowlist secret
 }
 
 
@@ -190,10 +151,10 @@ def _env_file(tmp_path: Path, **changes: str | None) -> Path:
     return path
 
 
-@pytest.mark.parametrize("prod", ["", "true", "lza", "lza-stag"])
+@pytest.mark.parametrize("hub", ["", "stag", "prod"])
 @pytest.mark.parametrize("goal", ["lint", "fmt-check", "tflint-lint", "checkov-lint", "help"])
-def test_a_static_goal_needs_no_env_file(goal: str, prod: str, tmp_path: Path) -> None:
-    result = _make_dry_run(goal, f"PROD={prod}", tmp_path=tmp_path)
+def test_a_static_goal_needs_no_env_file(goal: str, hub: str, tmp_path: Path) -> None:
+    result = _make_dry_run(goal, f"HUB={hub}", tmp_path=tmp_path)
     assert result.returncode == 0, result.stderr
 
 
@@ -222,6 +183,10 @@ def test_a_complete_env_file_passes_every_guard(tmp_path: Path) -> None:
         ({"INTERNAL_SERVICE_KEY": None}, "INTERNAL_SERVICE_KEY must be set"),
         ({"INTERNAL_SERVICE_KEY_HASH": None}, "INTERNAL_SERVICE_KEY_HASH"),
         ({"INTERNAL_SERVICE_KEY_HEADER": None}, "INTERNAL_SERVICE_KEY_HEADER"),
+        ({"FL_API_KEY": None}, "FL_API_KEY must be set"),
+        # No default: true is wrong on a zone-less estate, false wrong on one with a zone.
+        ({"MANAGE_DNS": None}, "MANAGE_DNS must be true or false"),
+        ({"MANAGE_DNS": "yes"}, "MANAGE_DNS must be true or false"),
     ],
 )
 def test_each_env_guard_still_refuses_a_real_goal(change: dict[str, str | None], named: str, tmp_path: Path) -> None:
@@ -230,8 +195,16 @@ def test_each_env_guard_still_refuses_a_real_goal(change: dict[str, str | None],
     assert named in result.stderr, result.stderr
 
 
-def test_the_lza_staging_vpc_guard_still_refuses_a_real_goal(tmp_path: Path) -> None:
-    result = _make_dry_run("plan", "PROD=lza-stag", tmp_path=tmp_path, env_file=_env_file(tmp_path, LZA_VPC_NAME=None))
+def test_an_unset_hub_refuses_a_real_goal(tmp_path: Path) -> None:
+    """No default estate any more (FLIP#1377): an unset HUB is development, which has none."""
+    result = _make_dry_run("plan", "HUB=", tmp_path=tmp_path, env_file=_env_file(tmp_path))
+    assert result.returncode != 0
+    assert "HUB=stag or HUB=prod is required" in result.stderr, result.stderr
+
+
+def test_the_staging_vpc_guard_still_refuses_a_real_goal(tmp_path: Path) -> None:
+    env_file = _env_file(tmp_path, LZA_VPC_NAME=None)
+    result = _make_dry_run("plan", tmp_path=tmp_path, env_file=env_file)
     assert result.returncode != 0
     assert "LZA_VPC_NAME must be set" in result.stderr, result.stderr
 
@@ -262,3 +235,34 @@ def test_the_static_switch_cannot_be_set_from_outside(
     result = _make_dry_run(*args, tmp_path=tmp_path, extra_env=extra_env)
     assert result.returncode != 0
     assert "FLARE_KIT_DATE must be set" in result.stderr, result.stderr
+
+
+def test_register_trusts_finding_no_kit_warns_and_passes() -> None:
+    """full-deploy registers whatever kits exist; a new hub has none yet, and its trusts register later."""
+    env = {"PATH": os.environ["PATH"], "AWS_PROFILE": "probe", "AWS_REGION": "eu-west-2", "HUB": "stag"}
+    script = subprocess.run(
+        ["bash", "scripts/register-trusts.sh"],
+        cwd=AWS_PROVIDER_DIR,
+        env={**env, "KIT_FILES": ""},
+        capture_output=True,
+        text=True,
+    )
+    assert script.returncode == 0, script.stdout + script.stderr
+    assert "No trust/.env.<CODE>.stag kits found" in script.stdout + script.stderr
+
+
+def test_register_trusts_mints_the_xnat_credentials_into_the_kit(tmp_path: Path) -> None:
+    """As the dev register-trust does, so a packaged kit carries no XNAT placeholders (FLIP#1419)."""
+    result = _make_dry_run("register-trusts", "KIT=AZ1", tmp_path=tmp_path, env_file=_env_file(tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert "generate_xnat_credentials --env-file " + str(AWS_PROVIDER_DIR.parents[2] / "trust" / ".env.AZ1.stag") in (
+        result.stdout
+    )
+
+
+def test_register_trusts_never_rotates_the_xnat_credentials(tmp_path: Path) -> None:
+    """A FORCE=1 on the command line reaches sub-makes; it must not rotate a live trust's XNAT passwords."""
+    result = _make_dry_run("register-trusts", "KIT=AZ1", "FORCE=1", tmp_path=tmp_path, env_file=_env_file(tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert "generate_xnat_credentials --env-file " in result.stdout
+    assert "--force" not in result.stdout

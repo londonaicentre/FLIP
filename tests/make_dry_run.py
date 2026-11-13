@@ -101,6 +101,7 @@ def run_target(
     dry: bool = False,
     env: dict[str, str] | None = None,
     probe: str = "",
+    hub: str = "prod",
 ) -> subprocess.CompletedProcess[str]:
     """Run ``make [-n] <target>`` in a scratch copy of the repo's Makefiles with a scratch kit.
 
@@ -108,7 +109,7 @@ def run_target(
     root operator entry points. ``env`` is layered over the caller's environment — how a test
     puts a stub ``docker`` first on PATH for a real (non ``-n``) run. ``probe`` is extra makefile
     text read after the real Makefile (a ``--eval`` that make 3.81 can run), e.g. a target that
-    echoes a variable.
+    echoes a variable. ``hub`` is the HUB the kit is written for (``""`` is development).
     """
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -123,16 +124,19 @@ def run_target(
             "fl-services/nvflare/Makefile",
             "trust/Makefile",
             "trust/xnat/Makefile",
+            "trust/xnat/scripts/xnat_db_drop_unused_dump.sh",
+            "trust/xnat/scripts/xnat_db_migrate_dump.sh",
+            "trust/xnat/scripts/xnat_db_remove_old_cluster.sh",
         ):
             dst = root / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(REPO / rel, dst)
         shutil.copy(REPO / "trust" / "xnat" / ".env", root / "trust" / "xnat" / ".env")
-        (root / "trust" / ".env.SCR.production").write_text(kit)
-        # scripts/ paths are referenced relative to trust/, so the resolver must exist to
-        # be printed; an empty file is enough for -n.
-        (root / "scripts").mkdir()
-        (root / "scripts" / "site_upgrade.py").write_text("")
+        shutil.copytree(REPO / "trust" / "deploy" / "compose", root / "trust" / "deploy" / "compose")
+        (root / "trust" / f".env.SCR.{hub or 'development'}").write_text(kit)
+        # The resolver must exist to be printed; an empty file is enough for -n.
+        (root / "trust" / "deploy" / "scripts").mkdir(parents=True)
+        (root / "trust" / "deploy" / "scripts" / "site_upgrade.py").write_text("")
         files: list[str] = []
         if probe:
             (root / "probe.mk").write_text(probe)
@@ -146,12 +150,12 @@ def run_target(
                 *files,
                 target,
                 "KIT=SCR",
-                "PROD=true",
+                f"HUB={hub}",
                 *extra,
             ],
             capture_output=True,
             text=True,
-            env={**_without_make_vars(os.environ), "PROD": "true", **(env or {})},
+            env={**_without_make_vars(os.environ), "HUB": hub, **(env or {})},
             timeout=60,
         )
 

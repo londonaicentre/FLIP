@@ -50,8 +50,8 @@ What holds state
    * - Hub database (RDS PostgreSQL, ``flip-database``)
      - Projects, cohort queries, models, FL jobs with their metrics and logs, registered trusts (hashes of their
        credentials) and FL kit-slot assignments, user roles and profiles, access requests, audit records.
-     - Automated backups kept for **7 days**, on every estate. Production-grade estates only: deletion protection,
-       and a final snapshot (``flip-database-final-…``) when Terraform deletes the instance.
+     - Automated backups kept for **7 days** and deletion protection, on every estate. Production-grade estates
+       only: a final snapshot (``flip-database-final-…``) when Terraform deletes the instance.
      - No.
    * - Model files bucket (``…-model-files-uploads``)
      - Model files uploaded by researchers, before and after the malware scan.
@@ -92,8 +92,8 @@ What holds state
      - None. Both are gitignored.
      - Partly: Terraform inputs can be recovered from AWS (see `Restoring the hub`_). Trust kit credentials cannot.
 
-**Production-grade** means ``PROD=true`` or ``PROD=lza``. Staging (``stag``, ``lza-stag``) keeps the 7-day backups but
-has no deletion protection and no final snapshot, so the database can be torn down freely.
+**Production-grade** means ``HUB=prod``. Staging (``HUB=stag``) keeps the 7-day backups and deletion protection
+but takes no final snapshot.
 
 .. note::
 
@@ -104,26 +104,20 @@ What ``make destroy`` keeps
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS destroy PROD=<env>
+   make -C deploy/providers/AWS destroy HUB=<env>
 
 It lists what it will remove and asks you to type ``yes``. It **keeps** the Cognito user pool, the ``FLIP_API``
-secret, every S3 bucket, the ACM certificates and Route 53 records, and the VPC unless you pass
-``PRESERVE_VPC=false`` (``PROD=true`` always keeps it). It removes only what it targets: the database (unless
-deletion protection stops it) with its parameter and subnet groups, the cloud trust's EC2 instance, the bastion, the
-security groups, the ALB, the EC2 IAM role, the key pairs and the SES email templates, plus any resources Terraform
+secret, every S3 bucket, the ACM certificates and Route 53 records, and the platform's VPC, which is never this
+stack's. It removes only what it targets: the database (once you have lifted its deletion protection) with its parameter and
+subnet groups, the bastion, the security groups, the EC2 IAM role, the key pairs and the SES email templates, plus any resources Terraform
 finds depend on them. Everything else, including the CloudWatch logs, stays.
 
 .. warning::
 
    **The destroy command never takes a final snapshot of the database.** It deletes the instance directly with
-   ``--skip-final-snapshot`` rather than through Terraform, and does not ask AWS to keep its automated backups. On
-   staging the database is gone at once. On production, deletion protection makes the delete fail; if you remove the
-   protection first, take a manual snapshot (below) before you run ``make destroy``.
-
-.. warning::
-
-   **The destroy command deletes a cloud trust's data.** The trust EC2 instance keeps OMOP, Orthanc and XNAT on its
-   root disk, which is deleted with the instance. FLIP takes no snapshots of it.
+   ``--skip-final-snapshot`` rather than through Terraform, and does not ask AWS to keep its automated backups.
+   Deletion protection stops it on every estate; if you remove the protection, take a manual snapshot (below) before
+   you run ``make destroy``.
 
 Recommended backups
 ===================
@@ -153,7 +147,7 @@ The hub database
    wrote the backup or a later one: flip-api upgrades the schema when it starts, but cannot move it backward.
 
    A trust registered after the restore point is unknown to the restored database, so the hub rejects its
-   credentials. Register it again (``make -C deploy/providers/AWS register-trusts KIT=<CODE> PROD=<env>``), which
+   credentials. Register it again (``make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<env>``), which
    issues new credentials, and send the site its new kit.
 
 A deleted or overwritten S3 object
@@ -176,7 +170,7 @@ The Cognito user pool
 Trust node on Docker Compose (on-premises or EC2)
 *************************************************
 
-*Who: site operator* (for a cloud trust on EC2: FLIP admin)
+*Who: site operator* (for an AWS node: whoever deployed it)
 
 What holds state
 ================
@@ -214,7 +208,7 @@ names each directory; the table gives the default the production stack uses when
      - The frozen cohort of each approved project: person and accession IDs, no clinical values.
      - Partly. Re-freezing rebuilds it from the live database, which may no longer match the original cohort.
    * - Kit file
-     - ``trust/.env.<CODE>.production`` in the checkout. For an EC2 trust it stays on the admin's workstation.
+     - ``trust/.env.<CODE>.prod`` in the checkout. For an EC2 trust it stays on the admin's workstation.
      - The trust's credentials, the hub-shared settings, your host profile and your local passwords.
      - Hub-shared settings: yes, the admin can refresh them. **Credentials: no** (see below).
    * - Governance document
@@ -240,7 +234,7 @@ containers on the trust host:
 .. code-block:: shell
 
    for c in omop-db orthanc data-access-api imaging-api; do
-     sudo docker inspect --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}' trust<N>-$c-1
+     docker inspect --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}' trust<N>-$c-1
    done
 
 **Mock data is re-seedable; site data is not.** The mock OMOP rows and Orthanc studies come from the published trust
@@ -266,7 +260,7 @@ FLIP schedules none of these. Take them with the site running (see the warning u
 
    .. code-block:: shell
 
-      sudo -E make -C trust/xnat xnat-backup KIT=<slot> PROD=true
+      make -C trust/xnat xnat-backup KIT=<CODE> HUB=prod
 
    It writes ``$XNAT_DATA_DIR/backups/xnat-db-<timestamp>.sql.gz`` and keeps it only if the dump is complete. Copy it
    off the host: the first-install commands delete the whole ``XNAT_DATA_DIR``, dumps included.
@@ -284,7 +278,7 @@ or snapshot tooling.
 
 .. note::
 
-   For a cloud trust on EC2, FLIP's Terraform takes no snapshots of the instance's disk. Use AWS's own EBS snapshot
+   For an AWS EC2 node, FLIP's Terraform takes no snapshots of the instance's disk. Use AWS's own EBS snapshot
    tooling if the trust holds data you need to keep.
 
 Restoring a trust node
@@ -297,7 +291,7 @@ FLIP has no restore command for a trust. What it does tell you:
 .. warning::
 
    **Never run a first-install command on a restored site.** ``make up-onprem-trust``, ``make -C trust up-trust``,
-   ``restart-trust`` and ``make -C deploy/providers/AWS deploy-trust`` delete the whole ``XNAT_DATA_DIR`` (archive,
+   ``restart-trust`` and an EC2 node's ``make -C trust/deploy/terraform/aws/ec2 deploy`` delete the whole ``XNAT_DATA_DIR`` (archive,
    database and dumps) and may re-seed OMOP and Orthanc. Starting a stopped site with them has the same effect.
 
 - **The upgrade command touches no data.** It recreates the trust containers on their existing directories (see
@@ -312,13 +306,13 @@ FLIP has no restore command for a trust. What it does tell you:
   ``POST /api/projects/{project_id}/cohort-snapshots?include_frozen=true``. Sites that still hold their cohort keep it;
   yours freezes afresh from its live database. Until then your site refuses the project's training and imaging pulls.
 - **Lost OMOP core vocabulary.** Load it again from your own export: :ref:`onprem-core-vocabulary`.
-- **Lost kit file.** The admin can rebuild the hub-shared settings (``make sync-trust-kit KIT=<CODE> PROD=<env>`` from
+- **Lost kit file.** The admin can rebuild the hub-shared settings (``make sync-trust-kit KIT=<CODE> HUB=<env>`` from
   the repo root on the admin workstation), but not the credentials.
 
 .. warning::
 
    **The only way FLIP gives a trust new credentials is to delete it on the hub and register it again**
-   (``make -C deploy/providers/AWS delete-trust NAME=<trust-name> PROD=<env>``, then ``register-trusts``). Deleting a
+   (``make -C deploy/providers/AWS delete-trust NAME=<trust-name> HUB=<env>``, then ``register-trusts``). Deleting a
    trust also deletes its records on the hub: its task queue, project and model links, FL job participation, metrics
    and logs, cohort results, cohort snapshot and imaging status, and user roles scoped to it.
 
@@ -389,7 +383,7 @@ Restoring a Kubernetes node
   re-applied at every pod start, but the ``postgres`` superuser's is set only when the database is first created. See
   the :gh:`Helm chart README <trust/deploy/helm/README.md>` for rotating it by hand.
 - **Mock-data seeding runs on every upgrade** while ``trustData.seed.enabled`` is on, replacing the listed mock
-  projects' rows. Turn it off for a site whose stores hold real data only.
+  projects' rows. A site whose stores hold real data only turns it off with ``TRUST_DATA_SEED=false`` in the kit.
 
 ***********************
 Local development stack
@@ -433,5 +427,5 @@ All three run from the repo root. Things to know:
 .. seealso::
 
    - Upgrading a site, and the first-install commands to avoid: :doc:`admin-upgrading-sites`
-   - Deploying the hub on AWS: :doc:`/deploy-flip/deploy-central-hub-aws`
+   - Deploying the hub on AWS: :doc:`/deploy-flip/deploy-central-hub-aws-lza`
    - Onboarding a site: :doc:`/deploy-flip/onboarding-a-trust`

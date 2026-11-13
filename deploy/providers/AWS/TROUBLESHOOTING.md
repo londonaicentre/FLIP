@@ -34,8 +34,8 @@ terraform state rm aws_efs_file_system.fl_data
 # ... repeat for all stale resources
 
 # Alternatively, destroy everything and start fresh:
-make destroy PROD=stag
-make full-deploy PROD=stag
+make destroy HUB=stag
+make full-deploy HUB=stag
 ```
 
 ---
@@ -110,7 +110,7 @@ If you regress this: confirm the ALB listener rule's `target_group_arn` is `aws_
 
 ### 1.7 ECS-internal call from fl-api → fl-server hangs in `try_connect`
 
-**Symptom**: On ECS `fl-api-net-1` boots, registers in Cloud Map, but its FLARE admin client hangs trying to reach fl-server. `fl-server-net-1` is healthy on the NLB and reachable from the trust EC2.
+**Symptom**: On ECS `fl-api-net-1` boots, registers in Cloud Map, but its FLARE admin client hangs trying to reach fl-server. `fl-server-net-1` is healthy on the NLB and reachable from off-VPC trust FL clients.
 
 **Root cause**: fl-api is the FLARE admin client and connects directly to fl-server inside the VPC (the NLB path is reserved for off-VPC trust FL clients). The fl-server SG had no ingress on 8002 from the fl-api SG, so the in-VPC connect attempt timed out.
 
@@ -151,7 +151,7 @@ The two digests will match. To confirm the tag was rebuilt by a specific merge, 
 
 ### 2.2 Container images missing for current branch tag
 
-**Symptom**: `make deploy-trust` fails with `docker manifest inspect` returning "no such manifest", or a Central Hub ECS deployment reports `CannotPullContainerError`.
+**Symptom**: A Central Hub ECS deployment reports `CannotPullContainerError`.
 
 **Root cause**: The `DOCKER_TAG` in `.env.stag` refers to a branch whose images haven't been built. GitHub Actions only auto-publish to GHCR on merges to `develop` and `main`. Branch images require manual `workflow_dispatch`.
 
@@ -162,9 +162,8 @@ The two digests will match. To confirm the tag was rebuilt by a specific merge, 
 sed -i 's/^DOCKER_TAG=.*/DOCKER_TAG=develop/' .env.stag
 
 # Option B: Trigger builds for specific branch
-gh workflow run docker_build_trust_trust_api.yml --ref <branch>
-gh workflow run docker_build_trust_imaging_api.yml --ref <branch>
-gh workflow run docker_build_trust_data_access_api.yml --ref <branch>
+gh workflow run docker_build_flip_api.yml --ref <branch>
+gh workflow run fl-docker-build-nvflare.yml --ref <branch>   # or fl-docker-build-flower.yml
 # Wait for green, then use branch tag
 ```
 
@@ -172,7 +171,7 @@ gh workflow run docker_build_trust_data_access_api.yml --ref <branch>
 
 ### 2.7 `make deploy-ui` fails with `InvalidAccessKeyId` despite a successful SSO login
 
-**Symptom**: `make -C deploy/providers/AWS deploy-ui PROD=stag` builds the bundle successfully, then fails on the first `aws s3` call:
+**Symptom**: `make -C deploy/providers/AWS deploy-ui HUB=stag` builds the bundle successfully, then fails on the first `aws s3` call:
 
 ```
 📦 Syncing static assets to s3://flipstag/ ...
@@ -200,7 +199,7 @@ sed -n '/^deploy-ui:/,/^$/p' deploy/providers/AWS/Makefile | grep -c '_AWS_ENV'
 
 **Symptom**: All authenticated API calls return `401 Unauthorized` or `403 Forbidden`. The UI shows "Something went wrong" but the login works.
 
-**Root cause**: `ENFORCE_MFA=true` (the Settings default in `flip-api/src/flip_api/config.py:85`) gates every authenticated route on TOTP enrollment. The production compose file (`deploy/compose.production.yml`) did not pass `ENFORCE_MFA`, so the default `true` always applied.
+**Root cause**: `ENFORCE_MFA=true` (the Settings default in `flip-api/src/flip_api/config.py:85`) gates every authenticated route on TOTP enrollment. The prod compose file (`deploy/compose.prod.yml`) did not pass `ENFORCE_MFA`, so the default `true` always applied.
 
 **Fix**: The compose file now passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` (inheriting the secure default). To temporarily disable for testing, set in `.env.stag`:
 
@@ -208,7 +207,7 @@ sed -n '/^deploy-ui:/,/^$/p' deploy/providers/AWS/Makefile | grep -c '_AWS_ENV'
 ENFORCE_MFA=false
 ```
 
-Then redeploy: `make deploy-centralhub PROD=stag`
+Then redeploy: `make deploy-centralhub HUB=stag`
 
 ---
 
@@ -252,7 +251,7 @@ UPDATE xnat_project_status SET last_reimport='2020-01-01' WHERE xnat_project_id=
 
 **Symptom**: All authenticated routes return 401/403 despite `ENFORCE_MFA=false` in `.env.stag`.
 
-**Root cause**: The production compose file (`deploy/compose.production.yml`) did not include `ENFORCE_MFA` in the flip-api environment block. The Pydantic Settings default (`true`) was never overridden.
+**Root cause**: The prod compose file (`deploy/compose.prod.yml`) did not include `ENFORCE_MFA` in the flip-api environment block. The Pydantic Settings default (`true`) was never overridden.
 
 **Fix**: The compose file now passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so the env var can be overridden. To disable MFA in staging, add `ENFORCE_MFA=false` to `.env.stag` and redeploy. Note: the default in compose is `true` (secure by default) — you must explicitly set `false` to disable.
 
@@ -267,7 +266,7 @@ UPDATE xnat_project_status SET last_reimport='2020-01-01' WHERE xnat_project_id=
 **Fix**: Reboot the EC2 instance to force an immediate DHCP renewal:
 
 ```bash
-aws ec2 reboot-instances --instance-ids <instance-id> --profile lza-stag   # or lza-prod
+aws ec2 reboot-instances --instance-ids <instance-id> --profile stag   # or prod
 ```
 
 Or wait for the lease to renew naturally. This only matters if the instance needs to resolve `flip.local` domains (which it doesn't during PR 1 — ECS Fargate tasks are the consumers in PR 2).
@@ -279,7 +278,7 @@ Or wait for the lease to renew naturally. This only matters if the instance need
 ### Quick health check
 
 ```bash
-make status PROD=stag
+make status HUB=stag
 ```
 
 ### Connect to RDS through the Central Hub bastion
@@ -288,7 +287,7 @@ The bastion has `psql` installed and its security group is allowed to reach RDS 
 
 ```bash
 cd deploy/providers/AWS
-make ssh-config PROD=stag
+make ssh-config HUB=stag
 terraform output -raw DbEndpoint
 ssh flip
 
@@ -321,14 +320,15 @@ SELECT xnat_project_id, last_reimport, reimport_count FROM xnat_project_status W
 # Central Hub ECS service
 AWS_PROFILE=stag aws logs tail /ecs/flip-api --since 10m | grep -iE 'ERROR|Exception|Traceback' | tail -20
 
-# Trust
-ssh flip-trust "docker logs trust1-trust-api-1 2>&1 | grep -iE 'ERROR|ReadTimeout|502' | tail -20"
+# Trust on an AWS EC2 node, after `make -C trust/deploy/terraform/aws/ec2 ssh-config KIT=<CODE> HUB=stag`;
+# containers are trust<N>-<service>-1, <N> the kit's FL_KIT_SLOT_NUMBER
+ssh flip-stag-<code> "docker logs trust<N>-trust-api-1 2>&1 | grep -iE 'ERROR|ReadTimeout|502' | tail -20"
 ```
 
 ### Test XNAT connectivity from imaging-api
 
 ```bash
-ssh flip-trust "docker exec trust1-imaging-api-1 python3 -c \"
+ssh flip-stag-<code> "docker exec trust<N>-imaging-api-1 python3 -c \"
 import os, requests
 r = requests.get('http://xnat-web:8080/data/projects',
     auth=(os.environ.get('XNAT_SERVICE_USER', 'flipServiceAccount'),

@@ -29,6 +29,7 @@ from fl_api.utils.constants import (
 from fl_api.utils.io_utils import read_config, write_config
 from fl_api.utils.job_resources import JobMeta, nvflare_resource_spec
 from fl_api.utils.logger import logger
+from fl_api.utils.refusals import ResearcherRefusal
 from fl_api.utils.schemas import AggregationWeights, FLAggregators, IOverridableConfig, JobResources, TrainingRound
 
 
@@ -52,7 +53,7 @@ def configure_config(
         Path: path to the config file that was updated.
 
     Raises:
-        ValueError: if the config.json file does not have the LOCAL_ROUNDS and GLOBAL_ROUNDS keys, or
+        ResearcherRefusal: if the config.json file does not have the LOCAL_ROUNDS and GLOBAL_ROUNDS keys, or
         sub-versions of these.
     """
     config_json = job_dir / "custom" / CONFIG
@@ -96,7 +97,7 @@ def configure_config(
     if len(found_local_round) == 1:
         # This needs to be called LOCAL_ROUNDS, otherwise we can error
         if found_local_round[0] != LOCAL_ROUNDS:
-            raise ValueError(
+            raise ResearcherRefusal(
                 f"{CONFIG} has encountered 1 local rounds key ({found_local_round[0]}). When only 1 local rounds key "
                 f"is present, it must be called {LOCAL_ROUNDS}. Please change the name of the local rounds key to "
                 f"{LOCAL_ROUNDS}."
@@ -128,7 +129,7 @@ def configure_config(
             # key corresponds to which local rounds key.
             stage_keyword = local_key.split(f"{LOCAL_ROUNDS}_")[1]
             if f"{GLOBAL_ROUNDS}_{stage_keyword}" not in user_config.keys():
-                raise ValueError(
+                raise ResearcherRefusal(
                     f"{CONFIG} has encountered {LOCAL_ROUNDS} for {stage_keyword=} but not the "
                     f"equivalent {GLOBAL_ROUNDS}. You must provide a global rounds key that corresponds to each "
                     f"local rounds key, with the same sub-key."
@@ -220,7 +221,7 @@ def _inject_reconstruct_full_model_filter(config: dict) -> None:
     changing which tasks its filters run on, so that raises instead.
 
     Raises:
-        ValueError: if an existing task_data_filters chain covers ``train`` or ``validate`` together
+        ResearcherRefusal: if an existing task_data_filters chain covers ``train`` or ``validate`` together
             with other tasks — unmergeable, and FLARE would reject the overlap at job parse time.
     """
     reconstruct_filter = {
@@ -233,7 +234,7 @@ def _inject_reconstruct_full_model_filter(config: dict) -> None:
     to_merge = [block for block in filters_blocks if covered_tasks & set(block.get("tasks", []))]
     unmergeable = [block for block in to_merge if set(block.get("tasks", [])) - covered_tasks]
     if unmergeable:
-        raise ValueError(
+        raise ResearcherRefusal(
             "AGGREGATE_ONLY_REGEX requires a single client task_data_filters chain over ['train', 'validate'], "
             f"but the app config has a chain over {unmergeable[0].get('tasks')} — folding it in would apply its "
             "filters to train/validate only, and FLARE rejects a task covered by two chains. Restrict the "
@@ -297,7 +298,7 @@ def _inject_trim_eval_broadcast_filter(config: dict, include_regex: str) -> None
     backbone cache) — that raises instead.
 
     Raises:
-        ValueError: if an existing task_data_filters chain covers ``validate`` together with other
+        ResearcherRefusal: if an existing task_data_filters chain covers ``validate`` together with other
             tasks — the unconditional trim cannot be scoped to ``validate`` within a shared chain.
     """
     trim_filter = {
@@ -311,7 +312,7 @@ def _inject_trim_eval_broadcast_filter(config: dict, include_regex: str) -> None
         if "validate" not in tasks:
             continue
         if tasks != ["validate"]:
-            raise ValueError(
+            raise ResearcherRefusal(
                 "AGGREGATE_ONLY_REGEX requires a dedicated ['validate'] server task_data_filters chain, but the "
                 f"app config has a chain over {tasks} — TrimEvalBroadcastVars trims unconditionally, so it cannot "
                 "share a chain with other tasks, and FLARE rejects a task covered by two chains. Split validate "
@@ -376,13 +377,13 @@ def configure_client(
         Path: path to the client config file that was updated.
 
     Raises:
-        FileNotFoundError: if config_fed_client.json is not there, FileNotFound error arises.
+        ResearcherRefusal: If the required config_fed_client.json is missing.
     """
     config_file = job_dir / "config" / CONFIG_FED_CLIENT
 
     if not config_file.is_file():
         err_msg = f"No {CONFIG_FED_CLIENT} found in app '{app_name}'"
-        raise FileNotFoundError(err_msg)
+        raise ResearcherRefusal(err_msg, status_code=404)
 
     config = read_config(config_file)
 
@@ -443,7 +444,7 @@ def configure_server(
         Path: path to the server config file that was updated.
 
     Raises:
-        FileNotFoundError: if the config file does not exist.
+        ResearcherRefusal: If the required server config file does not exist.
 
     .. code-block:: json
 
@@ -475,7 +476,7 @@ def configure_server(
 
     if not config_file.is_file():
         err_msg = f"No {CONFIG_FED_SERVER} found in app '{app_name}'"
-        raise FileNotFoundError(err_msg)
+        raise ResearcherRefusal(err_msg, status_code=404)
 
     config = read_config(config_file)
 
@@ -613,7 +614,7 @@ def validate_config(config: dict) -> IOverridableConfig:
         IOverridableConfig: The validated configuration dictionary.
 
     Raises:
-        ValueError: If any of the checks fail, a ValueError is raised with an appropriate message.
+        ResearcherRefusal: If any configuration check fails.
     """
     validated = IOverridableConfig()
 
@@ -621,7 +622,7 @@ def validate_config(config: dict) -> IOverridableConfig:
         return isinstance(value, (int, float)) and TrainingRound.MIN <= value <= TrainingRound.MAX
 
     if not isinstance(config, dict):
-        raise ValueError("Provided config is not a valid dictionary")
+        raise ResearcherRefusal("Provided config is not a valid dictionary")
 
     if is_valid(config.get("LOCAL_ROUNDS")):
         validated.LOCAL_ROUNDS = config["LOCAL_ROUNDS"]
@@ -637,12 +638,12 @@ def validate_config(config: dict) -> IOverridableConfig:
         if agg in FLAggregators:
             validated.AGGREGATOR = agg
         else:
-            raise ValueError(f"Unknown aggregator: {agg}")
+            raise ResearcherRefusal(f"Unknown aggregator: {agg}")
 
     weights = config.get("AGGREGATION_WEIGHTS")
     if weights:
         if not isinstance(weights, dict):
-            raise ValueError("AGGREGATION_WEIGHTS must be a dictionary")
+            raise ResearcherRefusal("AGGREGATION_WEIGHTS must be a dictionary")
 
         for key, val in weights.items():
             logger.info(f"Validating aggregation weight: {key} -> {val}")
@@ -650,24 +651,24 @@ def validate_config(config: dict) -> IOverridableConfig:
                 isinstance(val, (int, float))
                 and AggregationWeights.MinimumAggregationWeight <= val <= AggregationWeights.MaximumAggregationWeight
             ):
-                raise ValueError(f"Invalid weight: {val}")
+                raise ResearcherRefusal(f"Invalid weight: {val}")
 
         validated.AGGREGATION_WEIGHTS = weights
 
     regex = config.get("AGGREGATE_ONLY_REGEX")
     if regex:
         if not isinstance(regex, str):
-            raise ValueError("AGGREGATE_ONLY_REGEX must be a string regex")
+            raise ResearcherRefusal("AGGREGATE_ONLY_REGEX must be a string regex")
         try:
             re.compile(regex)
         except re.error as exc:
-            raise ValueError(f"AGGREGATE_ONLY_REGEX is not a valid regex: {exc}") from exc
+            raise ResearcherRefusal(f"AGGREGATE_ONLY_REGEX is not a valid regex: {exc}") from exc
         validated.AGGREGATE_ONLY_REGEX = regex
 
     best_model_metric = config.get("BEST_MODEL_METRIC")
     if best_model_metric is not None:
         if not isinstance(best_model_metric, str) or not best_model_metric.strip():
-            raise ValueError("BEST_MODEL_METRIC must be a non-empty string metric label")
+            raise ResearcherRefusal("BEST_MODEL_METRIC must be a non-empty string metric label")
         # Store stripped: a stray space in the JSON would otherwise survive validation and never
         # match the metric label the trainer reports.
         validated.BEST_MODEL_METRIC = best_model_metric.strip()
@@ -676,20 +677,20 @@ def validate_config(config: dict) -> IOverridableConfig:
         # Guard bool before int: in Python ``isinstance(True, int)`` is True, but we want to reject
         # a stray 1/0 here so the config stays explicit.
         if not isinstance(minimize, bool):
-            raise ValueError("BEST_MODEL_METRIC_MINIMIZE must be a boolean")
+            raise ResearcherRefusal("BEST_MODEL_METRIC_MINIMIZE must be a boolean")
         validated.BEST_MODEL_METRIC_MINIMIZE = minimize
 
         # IntimeModelSelector always skips round 0, so a job whose effective GLOBAL_ROUNDS is 1 —
         # the platform default when the key is unset or invalid (see upload.py) — can never fire
         # the selector: the job would run fine but the results zip silently lacks the best model.
         if (validated.GLOBAL_ROUNDS or TrainingRound.MIN) <= 1:
-            raise ValueError(
+            raise ResearcherRefusal(
                 "BEST_MODEL_METRIC requires GLOBAL_ROUNDS >= 2: the best-model selector skips "
                 "round 0, so a single-round job can never save a best model"
             )
     elif "BEST_MODEL_METRIC_MINIMIZE" in config:
         # BEST_MODEL_METRIC_MINIMIZE only has meaning alongside a selector metric — silently
         # accepting it without BEST_MODEL_METRIC would let a user believe it took effect.
-        raise ValueError("BEST_MODEL_METRIC_MINIMIZE requires BEST_MODEL_METRIC to also be set")
+        raise ResearcherRefusal("BEST_MODEL_METRIC_MINIMIZE requires BEST_MODEL_METRIC to also be set")
 
     return validated

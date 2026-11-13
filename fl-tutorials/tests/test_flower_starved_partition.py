@@ -34,7 +34,7 @@ from flip.flower import identity
 from tutorial_apps import flower_client_app, simulated_site_context
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EVALUATION_TUTORIAL = REPO_ROOT / "fl-tutorials" / "flower" / "3d_spleen_segmentation_evaluation"
+EVALUATION_TUTORIAL = REPO_ROOT / "fl-tutorials" / "flower" / "image_evaluation" / "3d_spleen_segmentation_evaluation"
 
 
 @pytest.fixture

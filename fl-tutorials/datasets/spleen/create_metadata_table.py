@@ -23,7 +23,7 @@ import pydicom
 from natsort import natsorted
 
 
-def quality_checks(df):
+def quality_checks(df: pd.DataFrame) -> bool:
     # Checks before saving the metadata
     # PatientID should be integers
     # assert df['PatientID'].apply(lambda x: isinstance(x, int)).all(), "Not all elements of PatientID are integers"
@@ -32,7 +32,7 @@ def quality_checks(df):
     return True
 
 
-def extract_dicom_metadata(base_dir):
+def extract_dicom_metadata(base_dir: str) -> pd.DataFrame:
     """
     Extract metadata from DICOM files in a directory structure.
     Each folder represents a subject, and contains DICOM files.

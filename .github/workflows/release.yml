@@ -262,9 +262,9 @@ jobs:
             # — the intuitive choice, since the images are built there — fails OIDC with an
             # unhelpful "not authorized to perform sts:AssumeRoleWithWebIdentity".
             #
-            # This bypasses terraform_apply.yml's `deploy/providers/AWS/**` path filter, which is
-            # the point: a release that touches no infrastructure otherwise never re-pins the hub
-            # and keeps reporting `sha-<short7>` (FLIP#1283).
+            # The push apply of the release commit pins its `sha-<short7>` images; only this
+            # dispatch pins the release, so without it the hub keeps reporting `sha-<short7>`
+            # (FLIP#1283). Its `ui` job then publishes the release's flip-ui (FLIP#1186).
             #
             # BEFORE "Create GitHub Release", DELIBERATELY. Both steps are gated on the release
             # not existing, which is the re-run contract: a run that fails partway must be

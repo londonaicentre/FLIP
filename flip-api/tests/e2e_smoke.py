@@ -32,8 +32,8 @@ Usage (preferred):
 Direct invocation:
     cd flip-api
     uv run python -m tests.e2e_smoke \\
-        --model-files-dir ../fl-tutorials/flower/xray_classification/app \\
-        --query-file ../fl-tutorials/flower/xray_classification/query.sql
+        --model-files-dir ../fl-tutorials/flower/image_classification/xray_classification/app \\
+        --query-file ../fl-tutorials/flower/image_classification/xray_classification/query.sql
 
 Run on a stack that already has trusts approved (`make up` plus the usual
 seeding) and non-empty XNAT data so image pull has something to do.
@@ -64,6 +64,7 @@ from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.utils import constants
 from tests.integration.utils import admin_authentication
+from tests.query_files import read_query_file
 
 # Resolve next to this file so the default works regardless of CWD (direct
 # `uv run` from any directory, not just `flip-api/`). `make e2e_smoke` passes
@@ -90,49 +91,72 @@ class TutorialCopy:
 # listed falls back to a capitalised, de-hyphenated form of the directory name and a generic task.
 TUTORIALS: dict[str, TutorialCopy] = {
     "xray_classification": TutorialCopy(
-        "Chest X-ray classification",
+        "Chest X-ray lesion classification",
         "Detecting pleural effusion and pulmonary oedema on chest X-rays with an image classifier trained "
         "across the participating trusts' radiographs.",
         nifti=False,
     ),
     "3d_spleen_segmentation": TutorialCopy(
-        "3D spleen segmentation",
+        "Spleen segmentation on CT",
         "Outlining the spleen on abdominal CT scans, so its size and shape can be measured automatically, "
         "with a 3D segmentation model trained across the participating trusts.",
     ),
     "3d_spleen_segmentation_evaluation": TutorialCopy(
-        "3D spleen segmentation evaluation",
+        "Evaluating a spleen segmentation model",
         "Checking how accurately an existing spleen-outlining model traces the spleen on each participating "
         "trust's abdominal CT scans, without retraining it.",
     ),
     "arkplus_fine_tuning": TutorialCopy(
-        "Ark+ fine-tuning",
+        "Fine-tuning a chest X-ray foundation model (Ark+)",
         "Adapting the Ark+ chest X-ray foundation model to the participating trusts' own radiographs so it "
         "recognises the chest conditions seen locally.",
         nifti=False,
     ),
     "arkplus_baseline_classification_evaluation": TutorialCopy(
-        "Ark+ baseline classification evaluation",
+        "Evaluating a chest X-ray foundation model (Ark+)",
         "Measuring how well the existing Ark+ chest X-ray model recognises chest conditions on each "
         "participating trust's radiographs, without retraining it.",
         nifti=False,
     ),
     "3d_prostate_segmentation": TutorialCopy(
-        "3D prostate segmentation",
+        "Prostate MRI zonal segmentation",
         "Outlining the prostate gland and its peripheral and transition zones on T2-weighted MRI, with a "
         "3D segmentation model trained across the participating trusts' scans.",
     ),
     "ehr_risk_prediction": TutorialCopy(
-        "EHR risk prediction",
+        "Type 2 diabetes risk from health records",
         "Predicting which patients will go on to develop type 2 diabetes from their routine electronic "
         "health records — demographics plus the conditions and hospital visits recorded before diagnosis — "
         "with a model trained across the participating trusts.",
         nifti=False,
     ),
+    "biomarker_causal_discovery": TutorialCopy(
+        "Biomarker causal discovery",
+        "Learning which Alzheimer's disease blood biomarkers, brain volumes and demographics drive one another "
+        "— a causal graph with a confidence on every edge — from the participating trusts' cohorts, without any "
+        "trust's rows leaving it.",
+        nifti=False,
+    ),
     "arkplus_multimodel_classification_evaluation": TutorialCopy(
-        "Ark+ multi-model classification evaluation",
+        "Comparing two chest X-ray models: pretrained vs fine-tuned",
         "Comparing several existing Ark+ chest X-ray models on each participating trust's radiographs to "
         "see which recognises chest conditions best, without retraining them.",
+        nifti=False,
+    ),
+    "brain_mri_ldm_stage1_autoencoder": TutorialCopy(
+        "Brain MRI generation, step 1: autoencoder",
+        "Learning to compress brain MRI scans and rebuild them faithfully, across the participating trusts' "
+        "scans: the first step towards generating realistic synthetic brain MRI.",
+    ),
+    "brain_mri_ldm_stage2_diffusion": TutorialCopy(
+        "Brain MRI generation, step 2: latent diffusion",
+        "Generating realistic synthetic brain MRI scans of a chosen sequence (FLAIR, T1, contrast-enhanced T1 "
+        "or T2) with a generative model trained across the participating trusts' scans.",
+    ),
+    "xray_diffusion": TutorialCopy(
+        "Generating chest X-rays with diffusion",
+        "Generating realistic synthetic chest X-rays with a generative model trained across the participating "
+        "trusts' radiographs.",
         nifti=False,
     ),
 }
@@ -956,7 +980,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=None,
         help="Directory whose files are uploaded to the model. Flower: "
-        "../fl-tutorials/flower/xray_classification/app. "
+        "../fl-tutorials/flower/image_classification/xray_classification/app. "
         "FLARE: ../fl-tutorials/nvflare/image_classification/xray_classification/app_files. "
         "Required unless --stop-after-enrichment.",
     )
@@ -1116,7 +1140,7 @@ def main(argv: list[str] | None = None) -> int:
         _log(f"❌ Query file not found: {args.query_file}")
         return 2
 
-    query = args.query_file.read_text()
+    query = read_query_file(args.query_file)
     _log(f"🎯 Target hub: {constants.BASE_URL}")
     headers = authenticate()
     client = requests.Session()

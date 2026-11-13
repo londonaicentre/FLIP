@@ -58,7 +58,7 @@ make -C trust/omop-db load-omop-vocab OMOP_DB_PORT=5436  # Trust_2 (KCH)
 ```
 
 Cohort queries that join `omop.concept` return nothing until this step has
-run. On EC2 trusts the equivalent load is part of `seed-trust-data` (Ansible);
+run. On EC2 trusts the equivalent load is part of the EC2 root's `make seed` (Ansible);
 on Kubernetes it is the chart's `omop-vocab-load` post-install job — when
 `omopDb.vocabLoad.s3Bucket` is set and the Job can reach AWS credentials, which
 on a local `kind` cluster it cannot without extra setup (the node is a container
@@ -118,7 +118,7 @@ indices, the read-only role); later starts find `PG_VERSION` and skip them.
 
 The shipped mock OMOP is built from the imaging projects and carries **no `condition_occurrence`
 rows**. The EHR risk-prediction tutorial
-([`fl-tutorials/{nvflare/tabular_classification,flower}/ehr_risk_prediction`](../../fl-tutorials))
+([`fl-tutorials/{nvflare,flower}/tabular_classification/ehr_risk_prediction`](../../fl-tutorials))
 runs a cohort query over person demographics + condition/visit history, so it needs those tables
 populated. `load-synthea-ehr` fetches the fully synthetic 1k-person
 [Synthea-in-OMOP dataset](https://registry.opendata.aws/synthea-omop/) from the AWS Open Data
@@ -129,6 +129,17 @@ Registry (anonymous HTTPS, no credentials, ~5 MB, downloaded at run time and cac
 ```sh
 make -C trust/omop-db load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434   # Trust_1 (GSTT)
 make -C trust/omop-db load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # Trust_2 (KCH)
+```
+
+The biomarker causal-discovery tutorial's cohort is **ADNI**, which is access-controlled, so there is
+no download: `load-adni-cohort` reads the cohort the licence holder built from their own IDA download
+(`make -C fl-tutorials convert-adni-cohort`, gitignored) and appends each trust's `person_id`-modulo
+slice as `person` / `measurement` / `observation` rows — for a **local** dev stack only, nothing
+ADNI-derived may reach a shared trust:
+
+```sh
+make -C trust/omop-db load-adni-cohort TRUST_INDEX=1 OMOP_DB_PORT=5434   # Trust_1 (GSTT)
+make -C trust/omop-db load-adni-cohort TRUST_INDEX=2 OMOP_DB_PORT=5436   # Trust_2 (KCH)
 ```
 
 A Kubernetes trust publishes no host port: port-forward `svc/omop-db` and pass the connection as
@@ -195,11 +206,12 @@ to run the one-time `make load-omop-vocab` seeding of any stack — see
 starts cleanly but returns nothing from cohort queries that join
 `omop.concept`):
 
-1. **FLIP developers (org AWS access)** — `make fetch-vocab-core VOCAB_S3_BUCKET=<bucket>`:
-   downloads `s3://<bucket>/vocab/vocab_aicentre_core_20240916.zip` and unpacks
-   it into `data/`. There is no default bucket: the AI Centre's copy lives in the
-   deploy environments' own aicentre buckets (the dev-account copy was retired
-   with that account, FLIP#1371), so name one your AWS profile can read. Each deploy environment reads
+1. **AI Centre developers** — `AWS_PROFILE=dev make fetch-vocab-core`:
+   downloads `s3://flip-lza-stag-aicentre/vocab/vocab_aicentre_core_20240916.zip`
+   and unpacks it into `data/`. The `dev` profile is the `FLIPDeveloperAccess`
+   role, which can read that prefix and nothing else; set it up as in
+   [Step 3 of the local deployment guide](../../docs/source/deploy-flip/deploy-local-dev.rst).
+   `VOCAB_S3_BUCKET=<bucket>` names another bucket. Each deploy environment reads
    from its **own** bucket (`AICENTRE_BUCKET_NAME`; no cross-account access) —
    when staging the zip in an env bucket, upload it with `--sse AES256`: the
    trust EC2 role has no `kms:Decrypt` on the buckets' default KMS keys.

@@ -302,7 +302,8 @@
           "type": "object",
           "properties": {
             "enabled": { "type": "boolean" },
-            "count": { "type": "integer" }
+            "count": { "type": "integer" },
+            "allocation": { "type": "string", "enum": ["devicePlugin", "runtime"] }
           }
         }
       }
@@ -406,7 +407,7 @@
                 "pgdataSubdir": {
                   "type": "string",
                   "pattern": "^([A-Za-z0-9_-][A-Za-z0-9._-]*)?$",
-                  "description": "Postgres data directory within the volume: one relative name (e.g. pgdata on a fresh cloud disk), or empty for the volume root"
+                  "description": "Directory of the volume mounted as xnat-db's data dir (the image keeps its cluster in pg<major>/ below it): one relative name (e.g. pgdata on a fresh cloud disk), or empty for the volume root"
                 }
               }
             }

@@ -6,15 +6,15 @@ Two halves of one pipeline (merged from the retired private `flip-omop-db` repo,
 
 1. **Image build source** for `ghcr.io/londonaicentre/omop-db`: `Dockerfile` on `postgres:17` bakes the
    `files/` init chain (create `omop` schema → OMOP CDM 5.4 DDL → primary keys → indices → read-only
-   roles) plus the seed-time helpers (`load_core_vocab.sh`, `OMOPCDM_postgresql_5.4_constraints.sql`, and `unzip` — the
-   k8s vocab-load Job unpacks the bundle with the image's own copy so it installs nothing at
-   run time, keeping S3 the only host it must reach). The image is
+   roles) plus the seed-time helpers (`load_core_vocab.sh`, `OMOPCDM_postgresql_5.4_constraints.sql`, `unzip` and
+   Debian's `awscli` — the k8s vocab-load Job fetches and unpacks the bundle with the image's own copies so it
+   installs nothing at run time, keeping S3 the only host it must reach; FLIP#1721). The image is
    **vocab-free** (FLIP#842) — nothing licensed in any layer — so it is published by CI
    (`docker_build_omop_db.yml`, gated on the "Trust - OMOP DB CI" test workflow like the other
    services). FK **constraints are deliberately absent from init** — they are applied only AFTER data
    load (loading after constraints fails).
 2. **Seed loaders** for the dev trust stacks (FLIP#1187): the container initialises an empty schema on
-   `volumes/Trust_<N>/db_data` (which `trust/deploy/compose_trust.<env>.yml` mounts) and
+   `volumes/Trust_<N>/db_data` (which `trust/deploy/compose/compose_trust.<env>.yml` mounts) and
    `omop_db_tools.import_tables` then loads this trust's `source_trust` slice of the published
    per-project tables (`omop-csv/<project>/`, fetched anonymously from the public HF dataset
    `aicentreflip/trust-data` at the tag pinned by `trust/.data_version`). Bring-up downloads no
@@ -32,8 +32,8 @@ tolerate the DICOM vocab the seed has already loaded):
 
 - **Dev**: `make load-omop-vocab [OMOP_DB_PORT=5436]` (after the stack is up and seeded). Cohort
   queries joining `omop.concept` return nothing until this runs.
-- **EC2**: the "load OMOP core vocabulary on Trust EC2" Ansible play (part of `seed-trust-data`;
-  throwaway container on loopback port 15499; kit credentials passed by the AWS Makefile).
+- **EC2**: the `flip_omop_vocab` Ansible role (part of the EC2 root's `make seed`; throwaway container on
+  loopback port 15499; kit credentials passed by that root's Makefile).
 - **Kubernetes**: the chart's `omop-vocab-load` post-install/post-upgrade hook Job
   (`omopDb.vocabLoad` values; bundle from S3, loader + constraints from the image). Its first
   stage runs `load_core_vocab.sh --check` and skips the multi-GB fetch when the database is
@@ -53,8 +53,8 @@ tolerate the DICOM vocab the seed has already loaded):
 - **Vocabulary licensing**: the core vocab bundle — an OHDSI Athena export, 59 vocabularies incl.
   SNOMED CT, LOINC, Read, dm+d (roster + versions in README "The core vocabulary bundle") — is licensed
   material: `data/` is gitignored and must never be committed or published. Acquisition: org members via
-  `make fetch-vocab-core VOCAB_S3_BUCKET=<bucket>` from `s3://$(VOCAB_S3_BUCKET)/vocab/` (no default — a
-  deploy environment's own aicentre bucket since FLIP#1371 retired the dev-account copy; org AWS needed); external users self-serve an equivalent export from OHDSI Athena under their own licences.
+  `AWS_PROFILE=dev make fetch-vocab-core` from `s3://$(VOCAB_S3_BUCKET)/vocab/` (default
+  `flip-lza-stag-aicentre`; the `dev` profile is the read-only `FLIPDeveloperAccess` role, FLIP#1623); external users self-serve an equivalent export from OHDSI Athena under their own licences.
   The DICOM vocab (byte-identical to DICOM2OMOP `files/OMOP CDM Staging/` @ upstream `1ef3354`, Apache
   2.0, pickle converted to CSV) is freely redistributable: it lives on the HF dataset, and the seed loads it
   before the OMOP rows.
@@ -96,7 +96,7 @@ tolerate the DICOM vocab the seed has already loaded):
   with the imaging cohorts' keys at INSERT time (the per-trust split is taken on the raw id before
   the shift, and the raw id is kept in `person_source_value` — never re-derive a trust from a
   shifted id) — but that offset is not what makes reloading safe: imaging `person_id` is
-  `nhs_number_to_integer(PatientID)`, the first 9 digits of a real NHS number, so it scatters across
+  `person_id(PatientID)`, the first 9 digits of a real NHS number, so it scatters across
   the whole 9-digit range rather than staying "small", and a plain id-range delete silently destroys
   imaging persons (and, via `ON DELETE CASCADE`, their `image_occurrence`/`procedure_occurrence`
   rows) that happen to land above the threshold — confirmed live at ~10% of one trust's imaging
@@ -107,6 +107,13 @@ tolerate the DICOM vocab the seed has already loaded):
   8507/8532 (`query.sql` reads it), every other `*_concept_id` is zeroed to `0` ("No matching
   concept"), conditions match on the `condition_source_value` SNOMED string. Idempotent; unit-tested
   in `tests/unit/test_synthea_ehr.py`.
+- **ADNI biomarker cohort** (`src/omop_db_tools/adni_cohort.py`, `make load-adni-cohort`): the populate
+  side of the biomarker causal-discovery tutorial on a LOCAL dev stack. Downloads nothing — ADNI is
+  access-controlled, so it reads the licence holder's own converted cohort
+  (`fl-tutorials/data/ad_biomarkers/dataframe.csv`, from `make -C fl-tutorials convert-adni-cohort`) and
+  appends this trust's `person_id`-modulo slice as `person` / `measurement` / `observation` rows, ids
+  shifted to `PERSON_ID_OFFSET` (1.2e9, clear of the imaging and Synthea bands), reloads deleting by
+  provenance (`person_source_value` `adni-cohort-…`). Never point it at a shared or published trust.
 - The populate scripts run on the **host** against published ports (`OMOP_DB_HOST` defaults to
   localhost) and need postgresql-client (`psql`/`pg_isready`).
 
@@ -115,6 +122,10 @@ tolerate the DICOM vocab the seed has already loaded):
 ```bash
 make load-omop-vocab [OMOP_DB_PORT=5436]  # seed the licensed vocab + constraints into a running trust DB
 make load-dicom-vocab [OMOP_DB_PORT=5436] # the Apache-licensed DICOM vocab (anonymous HF fetch); no-op when present
+make load-adni-cohort TRUST_INDEX=1 OMOP_DB_PORT=5434  # biomarker causal-discovery tutorial: load the user's
+                                    # OWN converted ADNI cohort (fl-tutorials/data/ad_biomarkers/dataframe.csv,
+                                    # from `make -C fl-tutorials convert-adni-cohort`) into a LOCAL trust DB —
+                                    # nothing downloaded, nothing ADNI-derived may reach a shared trust
 make load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434  # EHR risk-prediction tutorial: load public
                                     # Synthea-in-OMOP conditions/visits/persons into a running trust DB
                                     # (once per trust; downloads ~5MB from AWS Open Data at run time)

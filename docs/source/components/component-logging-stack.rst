@@ -198,8 +198,8 @@ Set these in the Trust's kit file (``trust/.env.<CODE>.<env>``):
 Docker Compose services
 =======================
 
-The stack is part of the Trust's Compose files: ``trust/deploy/compose_trust.development.yml`` (configurable
-ports) and ``trust/deploy/compose_trust.production.yml`` (persistent data, automatic restart). It adds three
+The stack is part of the Trust's Compose files: ``trust/deploy/compose/compose_trust.development.yml`` (configurable
+ports) and ``trust/deploy/compose/compose_trust.prod.yml`` (persistent data, automatic restart). It adds three
 services, with the same images in the Helm chart (``observability.enabled`` turns all three off):
 
 .. list-table::
@@ -209,14 +209,17 @@ services, with the same images in the Helm chart (``observability.enabled`` turn
      - Image
      - Role
    * - ``loki``
-     - ``grafana/loki:3.4.0``
+     - ``ghcr.io/londonaicentre/mirror/grafana/loki:3.4.0``
      - Log storage
    * - ``alloy``
-     - ``grafana/alloy:v1.9.0``
+     - ``ghcr.io/londonaicentre/mirror/grafana/alloy:v1.9.0``
      - Log collector (starts after Loki)
    * - ``grafana``
-     - ``grafana/grafana:11.5.0``
+     - ``ghcr.io/londonaicentre/mirror/grafana/grafana:11.5.0``
      - Dashboard (starts after Loki)
+
+The images are FLIP's byte-identical mirrors of upstream's, pinned by digest, so a trust pulls them from GHCR
+alongside FLIP's own images (:gh:`trust/deploy/mirror-images.manifest`).
 
 In production, Loki and Grafana keep their data in persistent volumes. On hosts provisioned with Ansible (AWS
 EC2 or on-prem), these are ``/opt/flip/volumes/loki`` and ``/opt/flip/volumes/grafana``.
@@ -267,13 +270,13 @@ On a Compose Trust host, where ``<N>`` is the Trust's slot number:
 
    .. code-block:: shell
 
-      sudo docker ps --filter name=trust<N>-
+      docker ps --filter name=trust<N>-
 
 2. Check that Alloy can reach Loki:
 
    .. code-block:: shell
 
-      sudo docker logs trust<N>-alloy-1
+      docker logs trust<N>-alloy-1
 
 3. Check that the Docker socket (``/var/run/docker.sock``) is mounted into the Alloy container. Alloy cannot
    find containers without it.

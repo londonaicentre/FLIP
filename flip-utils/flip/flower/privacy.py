@@ -19,8 +19,8 @@ Gaussian noise **on the SuperNode**, so the fl-server only ever receives a priva
 Unlike the FLARE filter — percentile sparsification with no noise — this is a real
 (epsilon, delta) mechanism.
 
-The maths is Flower's own (``compute_clip_model_update`` and ``add_gaussian_noise_inplace`` from
-``flwr.supercore.differential_privacy``), and the noise scale is the formula used by
+The maths is Flower's own (``get_norm``, ``clip_inputs_inplace`` and ``add_gaussian_noise_inplace``
+from ``flwr.supercore.differential_privacy``), and the noise scale is the formula used by
 ``flwr.clientapp.mod.LocalDpMod``. Two things are added on top of instantiating ``LocalDpMod``
 directly:
 
@@ -64,7 +64,8 @@ from flwr.common import MessageType
 from flwr.common.logger import log
 from flwr.supercore.differential_privacy import (
     add_gaussian_noise_inplace,
-    compute_clip_model_update,
+    clip_inputs_inplace,
+    get_norm,
 )
 
 __all__ = ["LocalDpConfig", "flip_local_dp_mod"]
@@ -76,17 +77,19 @@ CONFIG_SENSITIVITY = "dp-sensitivity"
 CONFIG_EPSILON = "dp-epsilon"
 CONFIG_DELTA = "dp-delta"
 
+# Clipping that scales an update below this fraction is reported as a WARNING (#1754).
+OVER_CLIPPING_SCALE = 0.1
+
 
 @dataclass(frozen=True)
 class LocalDpConfig:
     """Parameters of the local (epsilon, delta) mechanism, with FLIP's defaults.
 
-    The defaults are deliberately **utility-first**: they keep the shipped tutorials trainable
-    while the mechanism is live, so a DP-on run still converges and the effect stays visible. They
-    are not a defensible privacy budget. A real budget calibrates ``sensitivity`` to the local
-    dataset (``2 * clipping_norm / |D|`` for an average-of-examples update) and accounts for
-    composition across rounds, neither of which this mechanism does — each round spends the budget
-    again.
+    The defaults are placeholders, not a defensible privacy budget. ``clipping_norm`` is absolute,
+    so size it to the model's update norm, which the mod logs each round (#1754). A real budget
+    calibrates ``sensitivity`` to the local dataset (``2 * clipping_norm / |D|`` for an
+    average-of-examples update) and accounts for composition across rounds, neither of which this
+    mechanism does — each round spends the budget again (#1760).
 
     Attributes:
         enabled (bool): Whether to privatise the update at all. False makes the mod a pass-through,
@@ -179,9 +182,10 @@ def flip_local_dp_mod(msg: Message, context: Context, call_next: ClientAppCallab
         Message: The reply, with its update clipped and noised unless DP was skipped.
 
     Raises:
-        ValueError: If the DP parameters are invalid, or the messages do not carry exactly one
-            ArrayRecord with matching keys. Failing loudly is deliberate — silently skipping the
-            mechanism would release a raw update from the trust.
+        ValueError: If the DP parameters are invalid, the update is non-finite or unchanged from the
+            global model, or the messages do not carry exactly one ArrayRecord with matching keys.
+            Failing loudly is deliberate — silently skipping the mechanism would release a raw update
+            from the trust.
     """
     # ``@app.train(mods=[...])`` already scopes this to training, but the guard makes the scope
     # structural for an app that instead registers the mod on the whole ClientApp: only training
@@ -257,26 +261,49 @@ def flip_local_dp_mod(msg: Message, context: Context, call_next: ClientAppCallab
 
     updates = [reply_arrays[i] for i in float_indices]
     baselines = [global_arrays[i] for i in float_indices]
-
-    # compute_clip_model_update rebinds list entries rather than mutating the arrays, so the
-    # clipped values have to be read back off `updates` — which is also what the noise lands on.
-    compute_clip_model_update(updates, baselines, config.clipping_norm)
-    add_gaussian_noise_inplace(updates, config.noise_stddev)
-    for position, index in enumerate(float_indices):
-        reply_arrays[index] = updates[position]
+    # Flower's compute_clip_model_update, unrolled so the norm its clip decides on can be reported.
+    deltas = [np.subtract(u, b) for u, b in zip(updates, baselines, strict=True)]
+    pre_clip_norm = get_norm(deltas)
+    # min(1, C/nan) is 1, so a NaN would release every other array unclipped.
+    if not math.isfinite(pre_clip_norm):
+        raise ValueError(
+            f"FLIP local DP: the update's L2 norm is non-finite ({pre_clip_norm}): training diverged, so the "
+            "update is not being released."
+        )
+    if pre_clip_norm == 0.0:
+        raise ValueError(
+            "FLIP local DP: the update is identical to the global model (L2 norm 0): did this site train on any "
+            "data? Nothing is being released."
+        )
+    scale = min(1.0, config.clipping_norm / pre_clip_norm)
+    clip_inputs_inplace(deltas, config.clipping_norm)
+    clipped = [b + d for b, d in zip(baselines, deltas, strict=True)]
+    add_gaussian_noise_inplace(clipped, config.noise_stddev)
+    for index, array in zip(float_indices, clipped, strict=True):
+        reply_arrays[index] = array
 
     reply.content[reply_key] = ArrayRecord(
         dict(zip(reply_keys, (Array(np.asarray(v)) for v in reply_arrays), strict=True))
     )
     log(
         INFO,
-        "FLIP local DP: update clipped to L2 norm %.4f and Gaussian noise of stddev %.3e added "
-        "across %d array(s); %d integer array(s) passed through.",
+        "FLIP local DP: update pre-clip L2 norm %.4f clipped to %.4f (scaled by %.4f) and Gaussian noise of "
+        "stddev %.3e added across %d array(s); %d integer array(s) passed through.",
+        pre_clip_norm,
         config.clipping_norm,
+        scale,
         config.noise_stddev,
         len(float_indices),
         len(reply_arrays) - len(float_indices),
     )
+    if scale < OVER_CLIPPING_SCALE:
+        # A smaller learning rate in disguise: the run looks healthy and learns nothing (#1754).
+        log(
+            WARNING,
+            "FLIP local DP: clipping scaled this update by %.4f; raise %s towards the pre-clip norm above.",
+            scale,
+            CONFIG_CLIPPING_NORM,
+        )
     return reply
 
 

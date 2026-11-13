@@ -12,19 +12,35 @@
 
 """Tests for flip.core.standard module."""
 
+import io
 import json
+import logging
+import math
+import re
+import zipfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
+import requests
 from pydantic import HttpUrl
-from requests import HTTPError
+from requests import HTTPError, Request
 
 from flip.constants import ModelStatus, ResourceType
 from flip.core.standard import FLIPStandardDev, FLIPStandardProd
 from flip.exceptions import ResultsUploadError
 from flip.schemas import FLLogEvent
+
+
+@pytest.fixture
+def hub_constants():
+    """Provide production reporting settings independently of the local test config."""
+    with patch("flip.core.standard.FlipConstants") as constants:
+        constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
+        constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
+        constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
+        yield constants
 
 
 class TestFLIPStandardDevGetDataframe:
@@ -453,6 +469,48 @@ class TestFLIPStandardProdGetDataframe:
             assert "x-trust-internal-service-key" in headers
             assert headers["x-trust-internal-service-key"] == ""
 
+    def test_get_dataframe_does_not_log_cohort_rows(self, flip_prod):
+        """FLIP-SR-051: the response body is the cohort's patient rows. These INFO lines are shipped to
+        the trust's shared log store, where a later job at the same trust could read an earlier project's
+        cohort. get_dataframe must log only the status code and the row count, never the body.
+        """
+        rows = [
+            {"accession_id": "ACC-SECRET-001", "label": 1},
+            {"accession_id": "ACC-SECRET-002", "label": 0},
+        ]
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = json.dumps(rows)
+
+        # The prod logger sets propagate = False, so caplog (which captures via the root logger) never
+        # sees these records — attach a capture handler directly to the instance logger instead.
+        captured: list[str] = []
+        handler = logging.Handler()
+        handler.emit = lambda record: captured.append(record.getMessage())
+        flip_prod.logger.addHandler(handler)
+        try:
+            with (
+                patch("flip.core.standard.FlipConstants") as mock_constants,
+                patch("flip.core.standard.requests.post", return_value=mock_response),
+            ):
+                mock_constants.DATA_ACCESS_API_URL = "https://data.example.com"
+                # pragma: allowlist nextline secret
+                mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
+                mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"  # pragma: allowlist secret
+
+                df = flip_prod.get_dataframe(project_id="proj-1", query="SELECT * FROM table")
+        finally:
+            flip_prod.logger.removeHandler(handler)
+
+        logged = "\n".join(captured)
+        # No cohort content, in any field, reaches the log.
+        assert "ACC-SECRET-001" not in logged
+        assert "ACC-SECRET-002" not in logged
+        assert mock_response.text not in logged
+        # The useful operational signal is still logged: the status and the row count.
+        assert "Received response status code: 200" in logged
+        assert f"Successfully fetched dataframe ({len(df)} rows)" in logged
+
 
 class TestFLIPStandardProdGetByAccessionNumber:
     """Test FLIPStandardProd get_by_accession_number method."""
@@ -751,6 +809,44 @@ class TestFLIPStandardProdSendMetrics:
             assert payload["x_value"] == 7.5
             assert payload["global_round"] == 2
 
+    @pytest.mark.parametrize("field", ["value", "x_value"])
+    @pytest.mark.parametrize("non_finite", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "minus-inf"])
+    def test_non_finite_metric_is_dropped_and_next_metric_sends(self, flip_prod, hub_constants, field, non_finite):
+        response = Mock(status_code=204, text="")
+        kwargs = {"value": 0.5, "x_value": 2.0, field: non_finite}
+        with (
+            patch("flip.core.standard.requests.post", return_value=response) as post,
+            patch.object(flip_prod.logger, "warning") as warning,
+        ):
+            flip_prod.send_metrics("Trust_1", "550e8400-e29b-41d4-a716-446655440000", "loss", global_round=2, **kwargs)
+            post.assert_not_called()
+            warning.assert_called_once()
+            assert "Dropping invalid metric" in warning.call_args.args[0]
+            assert warning.call_args.args[1:4] == ("loss", "Trust_1", "550e8400-e29b-41d4-a716-446655440000")
+
+            flip_prod.send_metrics("Trust_1", "550e8400-e29b-41d4-a716-446655440000", "loss", 0.25, 2)
+            post.assert_called_once()
+            assert post.call_args.kwargs["json"]["result"] == 0.25
+            # Exercise the real requests serializer; it refuses NaN/Inf before sending.
+            Request("POST", "https://hub.example.com/metrics", json=post.call_args.kwargs["json"]).prepare()
+
+    def test_http_error_without_response_is_non_fatal(self, flip_prod, hub_constants):
+        failure = HTTPError("no response")
+        with (
+            patch("flip.core.standard.requests.post", side_effect=failure),
+            patch.object(flip_prod.logger, "error") as error,
+            patch.object(flip_prod.logger, "exception") as logged,
+        ):
+            flip_prod.send_metrics("Trust_1", "550e8400-e29b-41d4-a716-446655440000", "loss", 0.5, 2)
+            assert "status code unknown" in error.call_args.args[0]
+            logged.assert_called_once_with(failure)
+
+    def test_schema_validation_failure_is_non_fatal(self, flip_prod):
+        with patch("flip.core.standard.requests.post") as post, patch.object(flip_prod.logger, "warning") as warning:
+            flip_prod.send_metrics("Trust_1", "550e8400-e29b-41d4-a716-446655440000", "loss", 0.5, -1)
+            post.assert_not_called()
+            warning.assert_called_once()
+
 
 class TestFLIPStandardProdUploadResultsToS3:
     """Test FLIPStandardProd upload_results_to_s3 method."""
@@ -760,89 +856,122 @@ class TestFLIPStandardProdUploadResultsToS3:
         """Create a FLIPStandardProd instance."""
         return FLIPStandardProd()
 
-    def test_upload_results_to_s3_uploads_zip_to_expected_bucket_path(self, flip_prod, tmp_path):
-        """upload_results_to_s3 should zip results and upload to expected S3 location."""
-        results_folder = tmp_path / "results"
-        results_folder.mkdir()
-        (results_folder / "metrics.json").write_text("{}")
+    @pytest.fixture
+    def results_folder(self, tmp_path):
+        folder = tmp_path / "results"
+        folder.mkdir()
+        (folder / "metrics.json").write_text("{}")
+        return folder
 
-        mock_s3_client = Mock()
+    @pytest.fixture
+    def hub(self):
+        """A hub that starts an upload in 100-byte parts, and an object store that takes every part."""
+        sent = {"parts": []}
 
-        with (
-            patch("flip.core.standard.FlipConstants") as mock_constants,
-            patch("flip.core.standard.boto3.client", return_value=mock_s3_client) as mock_boto_client,
-        ):
-            mock_constants.UPLOADED_FEDERATED_DATA_BUCKET = "s3://test-bucket/uploads"
+        def post(url, json, headers, timeout):
+            sent.setdefault("posts", []).append((url, json, headers))
+            body = {"upload": "handle-1", "part_size": 100}
+            if url.endswith("/part"):
+                body = {"url": f"https://store.test/part-{json['part_number']}?X-Amz-Signature=secret"}
+            return Mock(json=Mock(return_value=body))
 
-            flip_prod.upload_results_to_s3(results_folder, "model-123")
-
-            mock_boto_client.assert_called_once_with("s3")
-            mock_s3_client.upload_file.assert_called_once()
-            upload_args = mock_s3_client.upload_file.call_args[0]
-
-            assert upload_args[0].endswith(".zip")
-            assert upload_args[1] == "test-bucket"
-            assert upload_args[2].startswith("uploads/model-123/")
-            assert upload_args[2].endswith(".zip")
-
-    def test_upload_results_to_s3_no_leading_slash_with_bare_bucket_uri(self, flip_prod, tmp_path):
-        """Regression for FLIP#465: bare-bucket env (s3://<bucket>) must not produce leading-slash keys."""
-        results_folder = tmp_path / "results"
-        results_folder.mkdir()
-        (results_folder / "metrics.json").write_text("{}")
-
-        mock_s3_client = Mock()
+        def put(url, data, timeout):
+            sent["parts"].append((url, len(data), b"".join(data)))
+            return Mock(headers={"ETag": f'"etag-{len(sent["parts"])}"'})
 
         with (
-            patch("flip.core.standard.FlipConstants") as mock_constants,
-            patch("flip.core.standard.boto3.client", return_value=mock_s3_client),
+            patch("flip.core.standard.FlipConstants") as constants,
+            patch("flip.core.standard._job_credential", return_value="job-credential"),
+            patch("flip.core.standard.requests.post", side_effect=post) as mock_post,
+            patch("flip.core.standard.requests.put", side_effect=put) as mock_put,
         ):
-            mock_constants.UPLOADED_FEDERATED_DATA_BUCKET = "s3://test-bucket"
+            constants.FLIP_API_INTERNAL_URL = "http://flip-api:8000/api/"
+            constants.INTERNAL_SERVICE_KEY_HEADER = "X-Internal-Service-Key"  # pragma: allowlist secret
+            constants.INTERNAL_SERVICE_KEY = "internal-key"  # pragma: allowlist secret
+            sent["post"], sent["put"] = mock_post, mock_put
+            yield sent
 
+    def test_upload_results_to_s3_sends_the_zip_in_parts_through_the_hub(self, flip_prod, results_folder, hub):
+        """The zip is started on the hub, PUT part by part to the URLs it signs, then completed."""
+        flip_prod.upload_results_to_s3(results_folder, "model-123")
+
+        base = "http://flip-api:8000/api/model/model-123/results-upload"
+        (start_url, start, headers), *parts, (complete_url, complete, _) = hub["posts"]
+        size = start["size"]
+        assert start_url == base
+        assert re.fullmatch(r"\d{8}_\d{6}\.zip", start["file_name"])
+        assert headers == {"X-Internal-Service-Key": "internal-key", "X-Job-Credential": "job-credential"}
+
+        assert size > 100, "the fixture's zip must span several parts"
+        assert [(url, body["part_number"]) for url, body, _ in parts] == [
+            (f"{base}/part", number) for number in range(1, math.ceil(size / 100) + 1)
+        ]
+        assert [length for _, length, _ in hub["parts"]] == [100] * (size // 100) + [size % 100]
+        assert all(len(body) == length for _, length, body in hub["parts"])
+        assert zipfile.ZipFile(io.BytesIO(b"".join(body for _, _, body in hub["parts"]))).namelist() == ["metrics.json"]
+
+        assert complete_url == f"{base}/complete"
+        assert all(body["upload"] == "handle-1" for _, body, _ in parts)
+        assert complete == {
+            "upload": "handle-1",
+            "etags": [f'"etag-{number}"' for number in range(1, len(parts) + 1)],
+        }
+
+    def test_upload_results_to_s3_retries_a_failed_part_with_a_fresh_url(self, flip_prod, results_folder, hub):
+        """A part that fails once is sent again from its own offset."""
+        put = hub["put"].side_effect
+        failures = iter([requests.ConnectionError("reset")])
+
+        def flaky_put(url, data, timeout):
+            for failure in failures:
+                raise failure
+            return put(url, data, timeout)
+
+        hub["put"].side_effect = flaky_put
+
+        flip_prod.upload_results_to_s3(results_folder, "model-123")
+
+        part_requests = [body["part_number"] for url, body, _ in hub["posts"] if url.endswith("/part")]
+        assert part_requests[:2] == [1, 1]
+        assert zipfile.ZipFile(io.BytesIO(b"".join(body for _, _, body in hub["parts"]))).namelist() == ["metrics.json"]
+
+    def test_upload_results_to_s3_raises_when_a_part_keeps_failing(
+        self, flip_prod, results_folder, hub, caplog, monkeypatch
+    ):
+        """A part that never lands fails the upload, uncompleted, without logging the signed URL."""
+        response = Mock(status_code=403)
+        response.raise_for_status.side_effect = HTTPError("403 for url: https://store.test/?X-Amz-Signature=secret")
+        hub["put"].side_effect = None
+        hub["put"].return_value = response
+        monkeypatch.setattr(flip_prod.logger, "propagate", True)
+
+        with pytest.raises(ResultsUploadError):
             flip_prod.upload_results_to_s3(results_folder, "model-123")
 
-            upload_args = mock_s3_client.upload_file.call_args[0]
-            assert upload_args[1] == "test-bucket"
-            # Key must NOT start with a leading slash — `list_objects_v2` with
-            # `Prefix=model-123` does not match keys like `/model-123/...`,
-            # which is what the buggy concatenation produced when the env
-            # was a bare bucket URI with empty `urlparse(...).path`.
-            assert not upload_args[2].startswith("/"), upload_args[2]
-            assert upload_args[2].startswith("model-123/")
-            assert upload_args[2].endswith(".zip")
+        assert hub["put"].call_count == 3
+        last_url, last_body, _ = hub["posts"][-1]
+        assert (last_url.rsplit("/", 1)[1], last_body) == ("abort", {"upload": "handle-1"})
+        assert not any(url.endswith("/complete") for url, _, _ in hub["posts"])
+        assert "X-Amz-Signature" not in caplog.text
 
-    def test_upload_results_to_s3_normalises_trailing_slash_in_bucket_uri(self, flip_prod, tmp_path):
-        """A trailing slash in the env value must not produce a double-slash key."""
-        results_folder = tmp_path / "results"
-        results_folder.mkdir()
-        (results_folder / "metrics.json").write_text("{}")
+    def test_upload_results_to_s3_raises_when_the_hub_refuses(self, flip_prod, results_folder, hub):
+        """A hub refusal (another job's model, a finished job) fails the upload before any part is sent."""
+        refusal = Mock(status_code=403)
+        refusal.raise_for_status.side_effect = HTTPError("403", response=refusal)
+        hub["post"].side_effect = None
+        hub["post"].return_value = refusal
 
-        mock_s3_client = Mock()
-
-        with (
-            patch("flip.core.standard.FlipConstants") as mock_constants,
-            patch("flip.core.standard.boto3.client", return_value=mock_s3_client),
-        ):
-            mock_constants.UPLOADED_FEDERATED_DATA_BUCKET = "s3://test-bucket/uploads/"
-
+        with pytest.raises(ResultsUploadError):
             flip_prod.upload_results_to_s3(results_folder, "model-123")
 
-            upload_args = mock_s3_client.upload_file.call_args[0]
-            assert upload_args[1] == "test-bucket"
-            assert "//" not in upload_args[2], upload_args[2]
-            assert upload_args[2].startswith("uploads/model-123/")
+        hub["put"].assert_not_called()
 
     def test_upload_results_to_s3_raises_when_archive_creation_fails(self, flip_prod, tmp_path):
         """upload_results_to_s3 should raise ResultsUploadError when archiving fails."""
         results_folder = tmp_path / "results"
         results_folder.mkdir()
 
-        with (
-            patch("flip.core.standard.FlipConstants") as mock_constants,
-            patch("flip.core.standard.shutil.make_archive", side_effect=RuntimeError("archive failed")),
-        ):
-            mock_constants.UPLOADED_FEDERATED_DATA_BUCKET = "s3://test-bucket/uploads"
-
+        with patch("flip.core.standard.shutil.make_archive", side_effect=RuntimeError("archive failed")):
             with pytest.raises(ResultsUploadError, match="Unexpected failure uploading results to S3"):
                 flip_prod.upload_results_to_s3(results_folder, "model-123")
 
@@ -900,3 +1029,50 @@ class TestFLIPStandardDevUploadAndCleanup:
         flip_dev.cleanup(cleanup_dir)
 
         assert cleanup_dir.exists()
+
+
+class TestJobCredential:
+    """Every hub call about a model presents the credential of that model's job."""
+
+    MODEL_ID = "550e8400-e29b-41d4-a716-446655440000"
+    OTHER_MODEL_ID = "650e8400-e29b-41d4-a716-446655440000"
+    CREDENTIAL = "job-credential-sentinel"  # pragma: allowlist secret (synthetic sentinel)
+
+    @pytest.fixture
+    def credential_dir(self, hub_constants, tmp_path):
+        hub_constants.JOB_CREDENTIAL_DIR = str(tmp_path)
+        (tmp_path / self.MODEL_ID).write_text(self.CREDENTIAL)
+        return tmp_path
+
+    @pytest.mark.parametrize(
+        ("method", "call"),
+        [
+            ("put", lambda flip, model_id: flip.update_status(model_id, ModelStatus.RUNNING)),
+            ("post", lambda flip, model_id: flip.send_metrics("Trust_1", model_id, "loss", 0.5, 1)),
+            ("post", lambda flip, model_id: flip.send_handled_exception("boom", "Trust_1", model_id)),
+            ("post", lambda flip, model_id: flip.send_event(model_id, FLLogEvent.ROUND_STARTED, 1)),
+        ],
+    )
+    def test_hub_calls_present_the_models_job_credential(self, credential_dir, method, call):
+        with patch(f"flip.core.standard.requests.{method}", return_value=Mock(status_code=200, text="OK")) as sent:
+            call(FLIPStandardProd(), self.MODEL_ID)
+
+        assert sent.call_args.kwargs["headers"] == {
+            "x-internal-service-key": "test-internal-key",  # pragma: allowlist secret
+            "X-Job-Credential": self.CREDENTIAL,
+        }
+
+    def test_another_models_credential_is_never_sent(self, credential_dir):
+        with patch("flip.core.standard.requests.put", return_value=Mock(status_code=200, text="OK")) as sent:
+            FLIPStandardProd().update_status(self.OTHER_MODEL_ID, ModelStatus.RUNNING)
+
+        assert "X-Job-Credential" not in sent.call_args.kwargs["headers"]
+
+    def test_no_credential_directory_sends_the_internal_key_alone(self, hub_constants):
+        hub_constants.JOB_CREDENTIAL_DIR = ""
+        with patch("flip.core.standard.requests.put", return_value=Mock(status_code=200, text="OK")) as sent:
+            FLIPStandardProd().update_status(self.MODEL_ID, ModelStatus.RUNNING)
+
+        assert sent.call_args.kwargs["headers"] == {
+            "x-internal-service-key": "test-internal-key"  # pragma: allowlist secret
+        }

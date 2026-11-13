@@ -67,7 +67,7 @@ resource "aws_security_group_rule" "ecs_flip_api_egress_all" {
 
 resource "aws_security_group" "ecs_fl_api" {
   name        = "ecs-fl-api"
-  description = "ECS fl-api-net-1 task - inbound HTTP from VPC"
+  description = "ECS fl-api-net-1 task - inbound HTTP from flip-api"
   vpc_id      = local.vpc_id
 
   tags = {
@@ -75,14 +75,29 @@ resource "aws_security_group" "ecs_fl_api" {
   }
 }
 
-resource "aws_security_group_rule" "ecs_fl_api_ingress_vpc_http" {
+# The FL API drives the whole net (submit, abort, shut down), so only its callers reach it:
+# flip-api (NET_ENDPOINTS) and, on Flower, the key-registration one-shot (ecs_flower.tf), which
+# runs with this SG and maps node ids on /register_node. A VPC-wide rule handed every route to
+# anything in the VPC, the optional cloud trust EC2 included.
+resource "aws_security_group_rule" "ecs_fl_api_ingress_flip_api_http" {
+  type                     = "ingress"
+  description              = "HTTP from flip-api task"
+  from_port                = local.api_container_port
+  to_port                  = local.api_container_port
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.ecs_fl_api.id
+  source_security_group_id = aws_security_group.ecs_flip_api.id
+}
+
+resource "aws_security_group_rule" "ecs_fl_api_ingress_self_http" {
+  count             = var.fl_backend == "flower" ? 1 : 0
   type              = "ingress"
-  description       = "HTTP from VPC (fl-server to fl-api)"
+  description       = "HTTP from the Flower key-registration one-shot (same SG)"
   from_port         = local.api_container_port
   to_port           = local.api_container_port
   protocol          = "tcp"
   security_group_id = aws_security_group.ecs_fl_api.id
-  cidr_blocks       = [local.vpc_cidr_block]
+  self              = true
 }
 
 resource "aws_security_group_rule" "ecs_fl_api_egress_all" {
@@ -107,28 +122,6 @@ resource "aws_security_group" "ecs_fl_server" {
   tags = {
     FlipSG = "true"
   }
-}
-
-# Gated off with the NLB on LZA (FLIP#749): no NLB security group to reference.
-resource "aws_security_group_rule" "ecs_fl_server_ingress_nlb_grpc" {
-  count       = var.lza_managed_network ? 0 : 1
-  type        = "ingress"
-  description = "gRPC from NLB (FL client connections)"
-  # Backend-dependent container port (Flower: SuperLink Fleet 9092) — the
-  # NLB forwards its FL_SERVER_PORT listener here.
-  from_port                = local.fl_server_container_port
-  to_port                  = local.fl_server_container_port
-  protocol                 = "tcp"
-  security_group_id        = aws_security_group.ecs_fl_server.id
-  source_security_group_id = module.fl_server_nlb.security_group_id
-}
-
-# State migration for the count added above (FLIP#749): keeps existing legacy
-# states aligned without a manual `terraform state mv`. Safe to remove once
-# every live state file has been migrated.
-moved {
-  from = aws_security_group_rule.ecs_fl_server_ingress_nlb_grpc
-  to   = aws_security_group_rule.ecs_fl_server_ingress_nlb_grpc[0]
 }
 
 # fl-api (the FLARE admin client) connects directly to fl-server on the
@@ -173,7 +166,14 @@ resource "aws_security_group_rule" "ecs_fl_server_ingress_fl_api_flower_health" 
   source_security_group_id = aws_security_group.ecs_fl_api.id
 }
 
+# NVFLARE only. On Flower this port is the SuperLink's Control and Runtime API,
+# which open-source Flower does not authenticate, so it is open to its callers alone:
+# the fl-api and the key-registration one-shot, both on the fl-api SG
+# (ecs_fl_server_ingress_fl_api_flower_exec).
+# A VPC-wide rule would hand it to anything in the VPC and route around the fleet
+# proxy (FLIP#1517), including the optional cloud trust EC2.
 resource "aws_security_group_rule" "ecs_fl_server_ingress_vpc_http" {
+  count             = var.fl_backend == "flower" ? 0 : 1
   type              = "ingress"
   description       = "HTTP from VPC (internal API calls)"
   from_port         = local.api_container_port
@@ -181,6 +181,13 @@ resource "aws_security_group_rule" "ecs_fl_server_ingress_vpc_http" {
   protocol          = "tcp"
   security_group_id = aws_security_group.ecs_fl_server.id
   cidr_blocks       = [local.vpc_cidr_block]
+}
+
+# State migration for the count added above (FLIP#1517), so the NVFLARE estates plan
+# no change. Safe to remove once every live state file has been migrated.
+moved {
+  from = aws_security_group_rule.ecs_fl_server_ingress_vpc_http
+  to   = aws_security_group_rule.ecs_fl_server_ingress_vpc_http[0]
 }
 
 resource "aws_security_group_rule" "ecs_fl_server_egress_all" {

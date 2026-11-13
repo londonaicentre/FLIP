@@ -1,0 +1,37 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# After Docker is installed (flip_docker may swap a distro docker.io for docker-ce): re-register the
+# nvidia runtime the image's toolkit set up, then prove a container sees the GPU. An fl-client that
+# silently falls back to CPU is the failure to catch here, not at training time.
+---
+- name: register the nvidia runtime with Docker
+  command: nvidia-ctk runtime configure --runtime=docker
+  register: nvidia_ctk
+  changed_when: "'Wrote updated config' in nvidia_ctk.stdout"
+  when: trust_has_gpu | default(false)
+
+- name: restart Docker to pick up the nvidia runtime
+  systemd:
+    name: docker
+    state: restarted
+  when: nvidia_ctk is changed
+
+- name: check a container can see the GPU
+  command: docker run --rm --gpus all ubuntu:24.04 nvidia-smi --query-gpu=name,driver_version --format=csv,noheader
+  register: gpu_container_check
+  changed_when: false
+  when: trust_has_gpu | default(false)
+
+- name: report the GPU the fl-client will get
+  debug:
+    msg: "GPU visible in containers: {{ gpu_container_check.stdout }}"
+  when: trust_has_gpu | default(false)

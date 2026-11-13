@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 # Overlay for a managed AKS cluster (FLIP#1390): deploy with PLATFORM_VALUES=values-aks.yaml, e.g.
-#   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> \
+#   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<stag|prod> \
 #     PLATFORM_VALUES=values-aks.yaml KUBE_CONTEXT=<aks context>
 # after `make kit-secret KIT_SRC=<slot kit dir>` has put the FL kit in its Secret. Set
 # K8S_PLATFORM_VALUES=values-aks.yaml in the kit file instead and every deploy and upgrade of

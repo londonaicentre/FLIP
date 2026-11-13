@@ -104,6 +104,17 @@ variable "apply_workflow_file" {
   default     = "terraform_apply.yml"
 }
 
+variable "power_workflow_file" {
+  description = <<-EOT
+    Staging power workflow (FLIP#1596). It assumes the APPLY role, because
+    stopping staging mutates ECS, EC2 and RDS, so its job_workflow_ref has to be
+    trusted by the apply role as well. Staging only: the trust below adds it only
+    when environment == "stag".
+  EOT
+  type        = string
+  default     = "staging_lifecycle.yml"
+}
+
 variable "drift_workflow_file" {
   description = "Scheduled drift-detection workflow, which also plans."
   type        = string
@@ -141,12 +152,15 @@ variable "managed_role_names" {
     "ecs-flip-api-task-role",
     "ecs-fl-api-task-role",
     "ecs-fl-server-task-role",
+    "ecs-fl-kit-provision-task-role",
     # rds_proxy.tf
     "flip-rds-proxy-role",
-    # security.tf
-    "flip-sg-drift-lambda-role",
     # main.tf, via terraform-aws-modules/iam//modules/iam-assumable-role
     "ec2-role",
+    # main.tf, flip_db enhanced monitoring (RDS.6, FLIP#1796)
+    "flip-rds-monitoring-role",
+    # Retiring (FLIP#1438): the root no longer declares it. Kept so the apply that deletes it is
+    # allowed; remove once stag and prod have applied that change.
     "trust-ec2-role",
   ]
 }
@@ -157,6 +171,8 @@ variable "managed_instance_profile_names" {
   type        = list(string)
   default = [
     "ec2-role-profile",
+    # Retiring (FLIP#1438): the root no longer declares it. Kept so the apply that deletes it is
+    # allowed; remove once stag and prod have applied that change.
     "trust-ec2-role-profile",
   ]
 }
@@ -169,8 +185,9 @@ variable "attachable_managed_policies" {
   type        = list(string)
   default = [
     "service-role/AmazonECSTaskExecutionRolePolicy", # iam_ecs.tf, execution role
-    "AmazonSSMManagedInstanceCore",                  # main.tf, both EC2 roles
-    "CloudWatchAgentServerPolicy",                   # main.tf, trust EC2 role
+    "AmazonSSMManagedInstanceCore",                  # main.tf, the bastion role
+    "service-role/AmazonRDSEnhancedMonitoringRole",  # main.tf, flip_db enhanced monitoring (RDS.6, FLIP#1796)
+    "CloudWatchAgentServerPolicy",                   # retiring with trust-ec2-role (FLIP#1438)
   ]
 }
 
@@ -196,7 +213,7 @@ variable "create_permissions_boundary" {
 
 # The AWS services an apply may call, as IAM service prefixes; each becomes
 # `<prefix>:*` in the apply role's inline policy, limited to this region plus
-# us-east-1 (CloudFront's certificate and WAF live there). The list is the FLIP
+# us-east-1 (CloudFront's control plane lives there). The list is the FLIP
 # root's own, derived from the resource types it declares, and
 # tests/test_terraform_ci_bootstrap.py holds the two equal in both directions: a
 # FLIP change that starts using a new service fails CI until the service is added
@@ -209,15 +226,13 @@ variable "apply_service_prefixes" {
   default = [
     "acm",
     "cloudfront",
-    "cloudwatch",
     "cognito-idp",
     "ec2",
+    "ecr",
     "ecs",
     "elasticfilesystem",
     "elasticloadbalancing",
-    "events",
     "kms",
-    "lambda",
     "logs",
     "rds",
     "route53",
@@ -225,10 +240,7 @@ variable "apply_service_prefixes" {
     "secretsmanager",
     "servicediscovery",
     "ses",
-    "sns",
-    "sqs",
     "ssm",
-    "wafv2",
   ]
 
   validation {
@@ -279,6 +291,26 @@ variable "apply_role_name" {
   default     = "AICentre-FLIPTerraformApplyRole"
 }
 
+# The UI-publish role (FLIP#1186). Off unless the bucket is named, so callers
+# that predate it are unchanged.
+variable "ui_bucket_name" {
+  description = "Name of the flip-ui bucket (the FLIP root's FLIP_UI_BUCKET_NAME). Setting it creates the UI-publish role, scoped to this bucket; empty creates none."
+  type        = string
+  default     = ""
+}
+
+variable "ui_publish_workflow_file" {
+  description = "Reusable workflow permitted to assume the UI-publish role."
+  type        = string
+  default     = "publish_ui.yml"
+}
+
+variable "ui_publish_role_name" {
+  description = "Name of the UI-publish role."
+  type        = string
+  default     = "AICentre-FLIPUiPublishRole"
+}
+
 variable "manage_state_bucket" {
   description = "Declare and harden the Terraform state bucket named by state_bucket_name (versioning, public-access block, encryption, lifecycle, TLS-only policy). False leaves the bucket to something else."
   type        = bool
@@ -311,6 +343,16 @@ variable "state_noncurrent_version_days" {
   description = "How many days a previous state version is kept before it may expire."
   type        = number
   default     = 90
+}
+
+# S3.9. On an AWS Landing Zone Accelerator estate, the accelerator's own
+# aws-accelerator-s3-access-logs-<account>-<region> bucket, whose policy admits
+# S3 log delivery from any bucket in the account. Never a bucket the FLIP root
+# declares (flip-access-logs-*): that bucket's own state is kept in this one.
+variable "state_access_log_bucket" {
+  description = "Bucket, in the same account and region, that receives the state bucket's S3 server access logs under a <state_bucket_name>/ prefix. Empty turns access logging off."
+  type        = string
+  default     = ""
 }
 
 variable "restrict_state_writes" {

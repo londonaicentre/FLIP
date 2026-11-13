@@ -21,7 +21,6 @@ fl-apps/
 ├── nvflare/
 │   ├── standard/          # JOB_TYPE=standard        — FedAvg (Client API)
 │   ├── evaluation/        # JOB_TYPE=evaluation       — cross-site model evaluation
-│   ├── diffusion_model/   # JOB_TYPE=diffusion_model  — two-stage latent diffusion
 │   ├── fed_opt/           # JOB_TYPE=fed_opt          — Adaptive Federated Optimization
 │   └── required_files.json
 ├── flower/
@@ -35,7 +34,7 @@ Each `<backend>/<template>/` directory is a **job type**: the server-side orches
 a declaration of which files the researcher must upload alongside it. See each template's own
 README for what it does and what its `required_files.json` requires:
 [`nvflare/standard`](nvflare/standard/README.md), [`nvflare/evaluation`](nvflare/evaluation/README.md),
-[`nvflare/diffusion_model`](nvflare/diffusion_model/README.md), [`nvflare/fed_opt`](nvflare/fed_opt/README.md),
+[`nvflare/fed_opt`](nvflare/fed_opt/README.md),
 [`flower/standard`](flower/standard/README.md), [`flower/evaluation`](flower/evaluation/README.md).
 
 All FLARE templates are **Client API** apps (`ClientAPIExecutor`, in-process mode) — the legacy
@@ -90,7 +89,7 @@ file is silently omitted rather than shipped, so a hotfix to a base template shi
 Some tutorial files are kept as byte-identical copies of another file, and two guards police them
 — one derived from the tree, one hand-listed:
 
-- **Flower tutorials vs. the `fl-apps/flower/` templates.** Every `fl-tutorials/flower/*/app` ships
+- **Flower tutorials vs. the `fl-apps/flower/` templates.** Every `fl-tutorials/flower/*/*/app` ships
   its own copy of the platform-owned `app/*.py` (`server_app.py`, `strategy.py`) of the template its
   `config.json` job type selects: `flwr build` excludes symlinks from a FAB, so these have to be
   real copies rather than links, and since the bundler discards an uploaded copy in favour of the
@@ -114,7 +113,7 @@ Some tutorial files are kept as byte-identical copies of another file, and two g
     byte-identical copies (same preprocessing/architecture must train on either backend). The
     FLARE copy is the reference; resync by copying it over the Flower copy. Watched paths
     include `fl-tutorials/nvflare/tabular_classification/**` and
-    `fl-tutorials/flower/ehr_risk_prediction/**`.
+    `fl-tutorials/flower/tabular_classification/ehr_risk_prediction/**`.
 
   Adding another hand-listed pair means extending that workflow's path filters too, or drift
   on the new path goes uncaught.

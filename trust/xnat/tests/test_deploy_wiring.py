@@ -18,7 +18,7 @@ exported an empty AE title, and the compose file's ``${VAR:-default}`` cancelled
 fail-loud guard. None of those are visible from inside the script.
 
 The AE title also has consumers the script never sees — Orthanc's mocked-modality entry and
-imaging-api, wired in ``trust/deploy/compose_trust.{development,production}.yml`` — and they take
+imaging-api, wired in ``trust/deploy/compose/compose_trust.{development,prod}.yml`` — and they take
 the opposite form (``${VAR:-default}``) on purpose, because they default the value in code and have
 no empty-value check of their own. The tests at the end cover that layer: the two forms are
 reconciled by ``trust/Makefile`` refusing an explicitly-empty value before either stack runs.
@@ -41,7 +41,7 @@ COMPOSE = XNAT_DIR / "docker-compose-stack.yml"
 TRUST_DIR = XNAT_DIR.parent
 INIT_JOB = TRUST_DIR / "deploy" / "helm" / "templates" / "xnat-init-job.yaml"
 # The trust-core compose files: the AE title's consumers outside the XNAT stack.
-TRUST_COMPOSES = [TRUST_DIR / "deploy" / f"compose_trust.{env}.yml" for env in ("development", "production")]
+TRUST_COMPOSES = [TRUST_DIR / "deploy" / "compose" / f"compose_trust.{env}.yml" for env in ("development", "prod")]
 
 
 def make_vars(*names: str, **overrides: str) -> dict[str, str]:
@@ -246,7 +246,7 @@ def dry_run_trust_up(tmp_path, kit_lines: str, *overrides: str) -> subprocess.Co
             "up-trust",
             "KIT=Probe",
             f"KIT_FILE={kit}",
-            "PROD=",
+            "HUB=",
             "MAIN_ENV_FILE=.env.absent-for-deploy-wiring-test",
             *overrides,
         ],
@@ -372,6 +372,15 @@ def test_refuses_to_publish_both_services_on_one_port(tmp_path):
     result = run_xnat_reset(tmp_path, XNAT_PORT="8104", XNAT_WEB_PORT="8104")
     assert result.returncode != 0, "the collision was accepted"
     assert "must differ" in result.stdout + result.stderr
+
+
+def test_xnat_dir_owner_follows_the_kits_flip_uid():
+    """xnat-web runs as the kit's FLIP_UID:FLIP_GID when set (the prod stack's `user:`), so that is who must
+    own its bind-mount sources; unset keeps the image's xnat user, and FLIP_GID alone unset follows FLIP_UID
+    (FLIP#1731)."""
+    assert make_vars("XNAT_DIR_OWNER")["XNAT_DIR_OWNER"] == "1001:1001"
+    assert make_vars("XNAT_DIR_OWNER", FLIP_UID="4242", FLIP_GID="4243")["XNAT_DIR_OWNER"] == "4242:4243"
+    assert make_vars("XNAT_DIR_OWNER", FLIP_UID="4242")["XNAT_DIR_OWNER"] == "4242:4242"
 
 
 def test_nginx_update_rides_out_the_xnat_web_restart():

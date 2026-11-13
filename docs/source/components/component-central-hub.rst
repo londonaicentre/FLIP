@@ -86,19 +86,14 @@ the Trust API keys, never the keys. Database migrations run at every start-up (s
 Deployment
 **********
 
-The hub runs on AWS, provisioned with Terraform/OpenTofu, in one of two modes:
-
-- **self-contained** in a single AWS account;
-- on a `Landing Zone Accelerator <https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/>`_
-  estate, where a platform team owns the network and the edge.
-
-The services on this page are the same in both modes; only where they sit and how traffic reaches them differs.
+The hub runs on AWS, provisioned with Terraform/OpenTofu from one root module, on a `Landing Zone
+Accelerator <https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/>`_ estate
+whose platform team owns the network and the edge.
 
 .. seealso::
 
-   :ref:`deploy-central-hub` has the architecture diagrams and runbooks, one page per mode
-   (:doc:`/deploy-flip/deploy-central-hub-aws` and :doc:`/deploy-flip/deploy-central-hub-aws-lza`). Security
-   controls are on :ref:`security`.
+   :ref:`deploy-central-hub` and :doc:`/deploy-flip/deploy-central-hub-aws-lza` have the architecture diagrams,
+   the resource layout and the runbook. Security controls are on :ref:`security`.
 
 ********
 Start-up
@@ -174,7 +169,8 @@ The hub **never connects to a Trust**. Work for a Trust is queued as a task on t
      - Sent on every poll, with the Trust's health snapshot when it has one.
    * - ``POST /api/cohort/results``
      - A cohort query's aggregate statistics from one Trust. The hub saves them and recomputes the combined
-       statistics each time a Trust answers.
+       statistics each time a Trust answers. It accepts them only from a Trust it dispatched that query to (the
+       Trust's ``cohort_query`` task) and only while the project is still unstaged; anything else is refused.
 
 The task types are ``cohort_query``, ``persist_cohort``, ``create_imaging``, ``delete_imaging``,
 ``get_imaging_status``, ``reimport_studies`` and ``update_user_profile``. Task payloads are encrypted with the
@@ -195,8 +191,25 @@ During training the FL server reports to the hub through three endpoints:
 - ``POST /api/model/{id}/metrics``
 - ``PUT /api/model/{id}/status/{status}``
 
+When a job finishes it uploads its results the same way. The FL server holds no object-store credentials: it
+asks the hub to start the upload of the model's results file, then for a short-lived URL for each part, then
+to complete it, or to abort it if a part cannot be sent. The hub signs only for an upload it started for that
+model, for the parts the declared size has and for each part's exact size. The size is capped
+(``MAX_RESULTS_FILE_BYTES``, 50 GiB by default), and a model has one upload in progress at a time: starting
+another discards the unfinished one.
+
+- ``POST /api/model/{id}/results-upload``
+- ``POST /api/model/{id}/results-upload/part``
+- ``POST /api/model/{id}/results-upload/complete``
+- ``POST /api/model/{id}/results-upload/abort``
+
 These calls carry the hub's **internal service key**, not a Trust key. They must use the hub's internal URL
 (``FLIP_API_INTERNAL_URL``), never the public address, because the public edge strips that key's header.
+
+Each call also carries a **job credential**. The hub mints one for every job it dispatches and keeps only its
+hash; the FL API leaves it where the FL server reads it and no Trust does. The hub accepts a callback about a
+model only with the credential of that model's own job, and only while that job is still reporting, so one job
+cannot change another model's status, logs, metrics or results.
 
 FL clients hold no hub credential. Anything a client needs the hub to know goes through the FL server.
 
@@ -218,7 +231,7 @@ through the same provider.
 Authorisation is **role-based**. A user's roles are tied to their identity-provider account, and per-resource
 checks decide who may see or change a project, model or cohort query. The role matrix is on :ref:`rbac-roles`.
 
-Three other keys each secure one connection:
+Four other keys each secure one connection:
 
 .. list-table::
    :header-rows: 1
@@ -233,6 +246,9 @@ Three other keys each secure one connection:
    * - Internal service key
      - FL server → hub
      - The hub only
+   * - Job credential
+     - One job's FL server → hub, for that job's model
+     - The hub only, minted per job; hashed in the database
    * - Trust-internal service key
      - Between services inside a Trust
      - The Trust only; never reaches the hub
@@ -269,8 +285,8 @@ FLIP's own emails (access-request notifications, XNAT credentials) are sent acco
   redacted, so a local stack needs no SES setup.
 
 The identity provider sends its own invitations and password-reset codes. In staging and production, Cognito
-sends them. The development Keycloak has no mail server, so a new user gets the shared dev password
-(``ADMIN_USER_PASSWORD``) as a temporary password and changes it at first sign-in.
+sends them. The development Keycloak has no mail server, so a new user, or one an admin resets, gets the shared dev
+password (``ADMIN_USER_PASSWORD``) as a temporary password and changes it at first sign-in.
 
 ***************
 Further reading

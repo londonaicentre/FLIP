@@ -49,14 +49,6 @@ class TestFLIPFactory:
         assert isinstance(result, FLIPStandardDev)
 
     @patch("flip.core.factory.FlipConstants")
-    def test_factory_creates_diffusion_dev(self, mock_constants):
-        """Factory should create FLIPStandardDev for diffusion_model job type."""
-        mock_constants.LOCAL_DEV = True
-
-        result = FLIP(JobType.DIFFUSION)
-        assert isinstance(result, FLIPStandardDev)
-
-    @patch("flip.core.factory.FlipConstants")
     def test_factory_creates_prod_when_not_local_dev(self, mock_constants):
         """Factory should create FLIPStandardProd when LOCAL_DEV=false."""
 
@@ -69,6 +61,11 @@ class TestFLIPFactory:
         """Factory should raise ValueError for invalid job type string."""
         with pytest.raises(ValueError, match="Unknown job_type"):
             FLIP("invalid_job_type")
+
+    def test_factory_rejects_the_removed_diffusion_model_job_type(self):
+        """The two-stage diffusion_model job type is gone; naming it fails rather than running standard."""
+        with pytest.raises(ValueError, match="Unknown job_type"):
+            FLIP("diffusion_model")
 
     @patch("flip.core.factory.FlipConstants")
     def test_factory_accepts_string_job_types(self, mock_constants):
@@ -83,7 +80,4 @@ class TestFLIPFactory:
         assert isinstance(result, FLIPStandardDev)
 
         result = FLIP("fed_opt")
-        assert isinstance(result, FLIPStandardDev)
-
-        result = FLIP("diffusion_model")
         assert isinstance(result, FLIPStandardDev)

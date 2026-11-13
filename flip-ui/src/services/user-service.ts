@@ -184,6 +184,10 @@ export async function resetUserMfa(userId: string): Promise<void> {
     await _http.post(`/users/${userId}/mfa/reset`);
 }
 
+export async function resetUserPassword(userId: string): Promise<void> {
+    await _http.post(`/users/${userId}/password/reset`);
+}
+
 export async function getMfaStatus(): Promise<{ enabled: boolean; required: boolean }> {
     const response = await _http.get<{ enabled: boolean; required: boolean }>("/users/me/mfa/status");
 

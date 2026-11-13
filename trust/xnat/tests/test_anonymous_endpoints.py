@@ -20,8 +20,8 @@ from pathlib import Path
 
 XNAT_ENV = Path(__file__).resolve().parents[3] / "trust" / "xnat" / ".env"
 
-# 1.10.0: read from the running webapp on dev trust 1, 2026-10-14 (FLIP#1456, item H5).
-CHECKED_XNAT_VERSIONS = {"1.10.0"}
+# 1.10.2.1: read from the WAR, 2026-10-23 (FLIP#1648); configured-urls.yaml is unchanged from 1.10.0.
+CHECKED_XNAT_VERSIONS = {"1.10.2.1"}
 
 
 def test_the_pinned_xnat_version_was_checked_for_its_anonymous_paths() -> None:

@@ -14,7 +14,7 @@
 
 The Terraform CI pipeline (FLIP#962) needs every ``TF_VAR_*`` input present as a
 GitHub environment secret or variable. The nominal source is the operator's
-``.env.stag`` / ``.env.production``, but those files live on laptops, drift, and
+``.env.stag`` / ``.env.prod``, but those files live on laptops, drift, and
 in at least one observed case were months stale — a copy that still named a
 renamed S3 bucket, which plans as ``must be replaced`` on a bucket carrying
 ``prevent_destroy``. Seeding GitHub from a stale file would bake that drift into
@@ -27,16 +27,21 @@ what a plan would have to see to be a no-op — which is the definition of corre
 for this purpose.
 
 Distinct from ``update_env.py`` next door, which pushes Terraform *outputs*
-(DB endpoint, Cognito IDs) back into an env file after an apply. This recovers
+(the two Cognito IDs) back into an env file after an apply. This recovers
 Terraform *inputs*.
 
 Secret values are written to the output file but never printed: the summary
 shows a truncated SHA-256 so two copies can be compared without either being
 disclosed.
 
+``--env prod|stag`` is required. ``--profile`` and ``--bucket`` default to AI Centre's
+LZA estates (profile ``lza-<env>``, state bucket ``flip-terraform-state-lza`` /
+``flip-terraform-state-lza-stag``); another estate passes its own.
+
 Usage:
-    scripts/reconcile_ci_env.py --env prod --profile prod --out ../../../.env.production
-    scripts/reconcile_ci_env.py --env stag --profile stag --compare ../../../.env.stag
+    scripts/reconcile_ci_env.py --env prod --out ../../../.env.prod
+    scripts/reconcile_ci_env.py --env stag --compare ../../../.env.stag
+    scripts/reconcile_ci_env.py --env prod --profile <profile> --bucket <state bucket> --compare ../../../.env.prod
 """
 
 from __future__ import annotations
@@ -63,6 +68,7 @@ SECRET_KEYS = {
     "AES_KEY_BASE64",
     "INTERNAL_SERVICE_KEY",
     "INTERNAL_SERVICE_KEY_HASH",
+    "FL_API_KEY",
 }
 
 
@@ -87,8 +93,8 @@ class State:
     def __init__(self, doc: dict) -> None:
         self.doc = doc
 
-    def attrs(self, rtype: str, name: str) -> dict[str, Any]:
-        """Attributes of a managed resource's first instance, by type and name.
+    def attrs(self, rtype: str, name: str, mode: str = "managed") -> dict[str, Any]:
+        """Attributes of a resource's first instance, by type and name.
 
         `mode` matters: a `data` source and a `managed` resource can share a
         type and name (aws_ecs_task_definition.flip_api is both, by design —
@@ -98,42 +104,14 @@ class State:
         Args:
             rtype (str): Terraform resource type, e.g. `aws_ecs_task_definition`.
             name (str): Resource name, e.g. `flip_api`.
+            mode (str): `managed` (the default) or `data`.
 
         Returns:
             dict[str, Any]: The first instance's attributes, or `{}` when the resource
                 is absent from state or has no instances.
         """
         for r in self.doc.get("resources", []):
-            if r.get("mode") == "managed" and r.get("type") == rtype and r.get("name") == name:
-                instances = r.get("instances") or []
-                if instances:
-                    return instances[0].get("attributes") or {}
-        return {}
-
-    def instance_keys(self, rtype: str, name: str) -> list[str]:
-        """index_key of every instance — how a for_each map's keys are recovered."""
-        for r in self.doc.get("resources", []):
-            if r.get("mode") == "managed" and r.get("type") == rtype and r.get("name") == name:
-                return [i.get("index_key") for i in r.get("instances", []) if i.get("index_key") is not None]
-        return []
-
-    def data_attrs(self, rtype: str, name: str) -> dict[str, Any]:
-        """Attributes of a `data` source — the mirror of `attrs`.
-
-        Needed where the deployed value only exists as a lookup: the Ark+ demo
-        bucket is not Terraform-managed, so `data.aws_s3_bucket.demo_assets` is
-        the only record of the name that was passed in.
-
-        Args:
-            rtype (str): Terraform data source type, e.g. `aws_s3_bucket`.
-            name (str): Data source name, e.g. `demo_assets`.
-
-        Returns:
-            dict[str, Any]: The first instance's attributes, or `{}` when the data
-                source is absent from state or has no instances.
-        """
-        for r in self.doc.get("resources", []):
-            if r.get("mode") == "data" and r.get("type") == rtype and r.get("name") == name:
+            if r.get("mode") == mode and r.get("type") == rtype and r.get("name") == name:
                 instances = r.get("instances") or []
                 if instances:
                     return instances[0].get("attributes") or {}
@@ -145,13 +123,13 @@ class State:
         `attrs` ignores the module an address sits in, which is fine while the
         type/name pair is unique. It is not here: every caller of
         `modules/flip_s3_bucket` contributes an `aws_s3_bucket.this`, so reading
-        the demo-assets bucket by type/name alone would hand back whichever of
-        the four buckets state happens to list first. The module is the only
+        one bucket by type/name alone would hand back whichever of the buckets
+        state happens to list first. The module is the only
         thing that distinguishes them, so it is matched — on a module boundary,
-        exactly as `has_module_resource` does.
+        so `module.x` never matches `module.x_y`.
 
         Args:
-            module_prefix (str): Module address to match, e.g. `module.flip_demo_assets_bucket`.
+            module_prefix (str): Module address to match, e.g. `module.fl_internal_nlb_security_group`.
             rtype (str): Terraform resource type, e.g. `aws_s3_bucket`.
             name (str): Resource name within the module, e.g. `this`.
 
@@ -168,38 +146,9 @@ class State:
                     return instances[0].get("attributes") or {}
         return {}
 
-    def has_module_resource(self, module_prefix: str, rtype: str, name: str) -> bool:
-        """Whether a managed resource of this type/name exists inside a module.
-
-        `attrs` does *not* filter on `module` — it matches a type/name pair
-        wherever it sits, which is why the Cognito and SES module resources
-        recover through it perfectly well. The bug this method was written for
-        was not a missed module but a **wrong resource name**: `DEPLOY_TRUST_EC2`
-        was read from the root's `aws_instance.ec2_instance`, which is the SSM
-        bastion and exists in every environment, so the answer came back "true"
-        whether or not a trust host was deployed. Observed on stag, which runs no
-        cloud trust: the recovered value said `DEPLOY_TRUST_EC2=true` and the
-        resulting plan created one.
-
-        The right resource is `module.trust_ec2[0].aws_instance.trust_host`, and
-        this method exists to say *which module* as well as which name — the
-        module is the part that distinguishes it, so it is checked rather than
-        ignored.
-
-        The prefix has to match on a module boundary. A plain `startswith` would
-        accept `module.trust_ec2_role`, which is present even in a hub-only
-        deployment, so the very lookup that fixed one false "true" would hand
-        back another.
-        """
-        for r in self.doc.get("resources", []):
-            if r.get("mode") != "managed" or r.get("type") != rtype or r.get("name") != name:
-                continue
-            module = r.get("module") or ""
-            # `module.trust_ec2`, `module.trust_ec2[0]`, `module.trust_ec2.module.inner`
-            # — but never `module.trust_ec2_role`.
-            if module == module_prefix or module.startswith((f"{module_prefix}[", f"{module_prefix}.")):
-                return bool(r.get("instances"))
-        return False
+    def output(self, name: str) -> str:
+        """A root output's value, or '' when state has none."""
+        return str((self.doc.get("outputs", {}).get(name) or {}).get("value") or "")
 
     def containers(self, task_family: str) -> list[dict]:
         raw = self.attrs("aws_ecs_task_definition", task_family).get("container_definitions")
@@ -214,6 +163,19 @@ class State:
 
 def env_of(container: dict) -> dict[str, str]:
     return {e["name"]: e["value"] for e in (container.get("environment") or [])}
+
+
+def networking_ingress_cidrs(st: State) -> str:
+    """The networking account's ingress CIDRs, as the HCL list the env file carries.
+
+    The internal NLB's rules admit them beside the VPC's own CIDR (fl_ingress_lza.tf),
+    so they are the rules' sources less that one; '' when state has either side missing.
+    """
+    vpc_cidr = st.attrs("aws_vpc", "lza", mode="data").get("cidr_block")
+    rule = st.module_attrs("module.fl_internal_nlb_security_group", "aws_security_group_rule", "ingress")
+    if not vpc_cidr or "cidr_blocks" not in rule:
+        return ""
+    return json.dumps([cidr for cidr in rule["cidr_blocks"] or [] if cidr != vpc_cidr])
 
 
 def first_port(container: dict) -> str:
@@ -285,13 +247,17 @@ def live_image_tag(service: str, container: str, cluster: str, profile: str, reg
     tag = split_image(image)[1] if image and image != "None" else ""
     # Strip any digest: `v<X.Y.Z>@sha256:…` is the pin a release APPLY writes
     # into a task definition (FLIP#1283), but this value goes into the operator
-    # env file, where the Makefile reuses DOCKER_TAG for the three TRUST_IMAGES
-    # and for `-e omop_db_tag` (the omop-db and orthanc images). Those are
-    # different repositories, so flip-api's digest makes every one of them
-    # unpullable — `make deploy-trust` reports them all missing and
-    # seed-trust-data / ansible-init fail. The tag alone is the right record
-    # here; CI re-resolves the digest pin from live ECS on every run.
+    # env file, which sync-trust-kit copies into every kit's Hub-shared block,
+    # where DOCKER_TAG tags the trust images (trust-api, imaging-api,
+    # data-access-api, omop-db, orthanc). Those are different repositories, so
+    # flip-api's digest makes every one of them unpullable at the site. The tag
+    # alone is the right record here; CI re-resolves the digest pin from live
+    # ECS on every run.
     return tag.partition("@")[0]
+
+
+# AI Centre's LZA estates' state buckets: the --bucket defaults.
+LZA_STATE_BUCKETS = {"prod": "flip-terraform-state-lza", "stag": "flip-terraform-state-lza-stag"}
 
 
 def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tuple[dict, dict]:
@@ -350,33 +316,21 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         region,
     )
 
-    trust_ips = st.instance_keys("aws_security_group_rule", "local_trust_fl_server_nlb")
-    k8s_ips = st.instance_keys("aws_security_group_rule", "k8s_trust_fl_server_nlb")
-    has_trust_ec2 = st.has_module_resource("module.trust_ec2", "aws_instance", "trust_host")
+    # The OAC is named after the subdomain (cloudfront.tf); the Route 53 records once read
+    # for both subdomains never existed on an LZA estate.
+    oac_name = st.attrs("aws_cloudfront_origin_access_control", "flip_ui").get("name", "")
 
     v: dict[str, str] = {
         "AWS_REGION": region,
         "FLIP_TFSTATE_BUCKET_NAME": bucket,
         "AICENTRE_BUCKET_NAME": st.attrs("aws_s3_bucket", "aicentre_bucket").get("bucket", ""),
         "FLIP_UI_BUCKET_NAME": st.attrs("aws_s3_bucket", "flip_ui").get("bucket", ""),
-        # Two shapes, one key (FLIP#1199). On a legacy estate the demo bucket is
-        # not Terraform-managed (objects are staged by hand), so the `data`
-        # lookup is the only record of the name that was passed in. On an LZA
-        # estate Terraform creates it, and the name lives on the managed
-        # resource inside module.flip_demo_assets_bucket. Exactly one of the two
-        # exists in any given state, so the fallback cannot pick the wrong one —
-        # and reading only the data source would have recovered "" on LZA, which
-        # keys_expected_empty() treats as a failed recovery on prod.
-        "DEMO_ASSETS_BUCKET_NAME": (
-            st.data_attrs("aws_s3_bucket", "demo_assets").get("bucket", "")
-            or st.module_attrs("module.flip_demo_assets_bucket", "aws_s3_bucket", "this").get("bucket", "")
-        ),
         "FLIP_APP_BUNDLES_BUCKET_NAME": bucket_of("flip_app_bundles_bucket"),
         "FLIP_FL_RESULTS_BUCKET_NAME": bucket_of("flip_fl_results_bucket"),
         "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": bucket_of("flip_model_files_uploads_bucket"),
         "SES_VERIFIED_EMAIL": st.attrs("aws_ses_email_identity", "flip_sender").get("email", ""),
-        "ALB_SUBDOMAIN": st.attrs("aws_route53_record", "alb").get("fqdn", ""),
-        "NLB_SUBDOMAIN": st.attrs("aws_route53_record", "fl_server_nlb").get("fqdn", ""),
+        "ALB_SUBDOMAIN": oac_name.removeprefix("flip-ui-") if oac_name.startswith("flip-ui-") else "",
+        "NLB_SUBDOMAIN": st.output("FlServerEndpoint"),
         "POSTGRES_DB": api_env.get("POSTGRES_DB", ""),
         "POSTGRES_USER": api_env.get("POSTGRES_USER", ""),
         "FL_SERVER_PORT": first_port(fl_server),
@@ -397,10 +351,15 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "AES_KEY_BASE64": secret.get("aes_key", ""),
         "INTERNAL_SERVICE_KEY": secret.get("internal_service_key", ""),
         "INTERNAL_SERVICE_KEY_HASH": secret.get("internal_service_key_hash", ""),
+        "FL_API_KEY": secret.get("fl_api_key", ""),
         "JOB_RESOURCE_SPEC_NUM_GPUS": fl_api_env.get("JOB_RESOURCE_SPEC_NUM_GPUS", ""),
-        "DEPLOY_TRUST_EC2": "true" if has_trust_ec2 else "false",
-        "LOCAL_TRUST_PUBLIC_IPS": json.dumps(sorted(trust_ips)).replace('", "', '", "') if trust_ips else "[]",
-        "K8S_TRUST_PUBLIC_IPS": json.dumps(sorted(k8s_ips)) if k8s_ips else "[]",
+        # The keys every estate requires (compose-ci-env.sh's LZA_REQUIRED_KEYS).
+        "ACCESS_LOGS_BUCKET_NAME": st.attrs("aws_s3_bucket", "flip_access_logs").get("bucket", ""),
+        "EFS_PROVISION_IMAGE": st.container("efs_provision", "provision-efs-certs").get("image", ""),
+        "LZA_VPC_NAME": (st.attrs("aws_vpc", "lza", mode="data").get("tags") or {}).get("Name", ""),
+        # certificate.tf creates the certificate exactly when manage_dns is true.
+        "MANAGE_DNS": "true" if st.attrs("aws_acm_certificate", "flip") else "false",
+        "NETWORKING_INGRESS_CIDRS": networking_ingress_cidrs(st),
     }
     # Which values did NOT come from state. Built by grouping rather than as
     # literal `"KEY": "..."` pairs: secret-scanning treats a quoted string beside
@@ -411,36 +370,19 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
     for group, keys in (
         ("live ECS service", ("DOCKER_TAG", "DOCKER_FL_TAG")),
         ("live SSM parameter", ("FL_KIT_SLOT_NAMES",)),
-        ("live Secrets Manager", ("AES_KEY_BASE64", "INTERNAL_SERVICE_KEY", "INTERNAL_SERVICE_KEY_HASH")),
+        ("live Secrets Manager", ("AES_KEY_BASE64", "INTERNAL_SERVICE_KEY", "INTERNAL_SERVICE_KEY_HASH", "FL_API_KEY")),
     ):
         sources.update(dict.fromkeys(keys, group))
     return v, sources
 
 
-def keys_expected_empty(env: str) -> set[str]:
+def keys_expected_empty() -> set[str]:
     """Keys whose empty value is a real answer rather than a failed recovery.
 
-    ``ENFORCE_MFA`` unset means "use flip-api's secure Pydantic default", and
-    only one of the two FL kit dates is ever provisioned.
-
-    ``DEMO_ASSETS_BUCKET_NAME`` is the asymmetric one, and getting it wrong is
-    destructive rather than merely wrong. Empty is correct on **stag**, which
-    hosts no public Ark+ demo. On **prod** it gates four live resources plus the
-    ``/ark_demo/*`` CloudFront behaviour on a legacy estate, and the bucket
-    itself on an LZA one (``module.flip_demo_assets_bucket``, FLIP#1199) — where
-    an empty value plans a destroy that ``prevent_destroy`` turns into a failed
-    apply. Either way the gate is ``var.DEMO_ASSETS_BUCKET_NAME != ""``, so an
-    empty recovered value on prod means
-    the lookup failed, not that there is no demo — and seeding the GitHub
-    environment from it would destroy the demo on the next apply. Treated as
-    not-recovered on prod, and omitted from ``--out`` rather than written blank,
-    so ``setup-github-environments.sh`` reports it as required-but-absent instead
-    of filing it under "optional, which is fine".
+    ``ENFORCE_MFA`` unset means "use flip-api's secure Pydantic default". (Only one
+    of the two FL kit dates is ever provisioned; main() adds the other.)
     """
-    expected = {"ENFORCE_MFA"}
-    if env != "prod":
-        expected.add("DEMO_ASSETS_BUCKET_NAME")
-    return expected
+    return {"ENFORCE_MFA"}
 
 
 def shown(key: str, value: str) -> str:
@@ -463,10 +405,13 @@ def read_env_file(path: str) -> dict[str, str]:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--env", required=True, choices=["stag", "prod"])
-    ap.add_argument("--profile", help="AWS profile (default: same as --env)")
+    ap.add_argument("--env", required=True, choices=["stag", "prod"], help="the hub, as HUB=stag|prod")
+    ap.add_argument("--profile", help="AWS profile (default: lza-<env>)")
     ap.add_argument("--region", default="eu-west-2")
-    ap.add_argument("--bucket", help="state bucket (default: flip-terraform-state-<env>)")
+    ap.add_argument(
+        "--bucket",
+        help="state bucket (default: the LZA estate's, flip-terraform-state-lza / flip-terraform-state-lza-stag)",
+    )
     ap.add_argument("--cluster", default="flip-cluster")
     ap.add_argument("--out", help="write the recovered values here (mode 0600); refuses to overwrite")
     ap.add_argument(
@@ -478,7 +423,7 @@ def main() -> None:
     args = ap.parse_args()
 
     profile = args.profile or args.env
-    bucket = args.bucket or f"flip-terraform-state-{args.env}"
+    bucket = args.bucket or LZA_STATE_BUCKETS[args.env]
 
     print(f"🔎 Reading deployed configuration for '{args.env}' (profile {profile})…\n")
     values, sources = build(args.env, profile, args.region, bucket, args.cluster)
@@ -488,7 +433,7 @@ def main() -> None:
         src = sources.get(key, "terraform state")
         print(f"  {key:<{width}}  {shown(key, values[key]):<28}  [{src}]")
 
-    expected_empty = keys_expected_empty(args.env)
+    expected_empty = keys_expected_empty()
     expected_empty.add("FLOWER_KIT_DATE" if values.get("FL_BACKEND") == "nvflare" else "FLARE_KIT_DATE")
     empties = [k for k, val in values.items() if not val and k not in expected_empty]
     if empties:
@@ -525,7 +470,7 @@ def main() -> None:
             fh.write("# NOT a complete operator env file: the trust/XNAT/Orthanc/OMOP settings\n")
             fh.write("# are not recoverable from AWS and are absent here.\n")
             for key in sorted(values):
-                if values[key] or key in keys_expected_empty(args.env):
+                if values[key] or key in keys_expected_empty():
                     fh.write(f"{key}={values[key]}\n")
         print(f"\n✅ Wrote {args.out} (0600).")
 

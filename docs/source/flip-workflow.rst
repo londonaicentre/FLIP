@@ -45,6 +45,10 @@ Hub; services on the right run inside each trust.
    FL client opens its own connection to the FL server. Patient-level data never leaves the trust; only aggregate
    statistics, model updates, training metrics and status information reach the hub.
 
+.. contents:: On this page
+   :local:
+   :depth: 1
+
 ************
 Cohort query
 ************
