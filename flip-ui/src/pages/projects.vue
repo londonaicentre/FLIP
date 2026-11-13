@@ -241,16 +241,16 @@
                                     flex flex-col items-end gap-1.5"
                                 >
                                     <span
-                                        class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold tracking-wide uppercase"
+                                        class="inline-flex items-center px-2 py-0.5 rounded text-2xs font-semibold tracking-wide uppercase"
                                         :class="pillClass(project.status)"
                                         data-test="project-status-indicator"
                                     >
                                         {{ statusLabel(project.status) }}
                                     </span>
-                                    <span v-if="nextActionFor(project)" class="text-[11px] text-gray-500 dark:text-gray-300">
+                                    <span v-if="nextActionFor(project)" class="text-2xs text-gray-500 dark:text-gray-300">
                                         {{ nextActionFor(project) }}
                                     </span>
-                                    <span v-if="cohortSize(project)" class="text-[11px] text-gray-500 dark:text-gray-300 font-mono">
+                                    <span v-if="cohortSize(project)" class="text-2xs text-gray-500 dark:text-gray-300 font-mono">
                                         {{ cohortSize(project)?.toLocaleString() }} patients
                                     </span>
                                 </div>
@@ -278,7 +278,7 @@
                         <div class="flex items-center justify-between gap-2">
                             <div class="flex items-center gap-2 min-w-0">
                                 <span
-                                    class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold tracking-wide uppercase"
+                                    class="inline-flex items-center px-2 py-0.5 rounded text-2xs font-semibold tracking-wide uppercase"
                                     :class="pillClass(project.status)"
                                 >
                                     {{ statusLabel(project.status) }}

@@ -54,7 +54,7 @@
 
             <span
                 v-if="tab.locked"
-                class="font-mono text-[10px] font-normal tracking-[0.04em]"
+                class="font-mono text-2xs font-normal tracking-[0.04em]"
             >after start</span>
         </button>
     </nav>

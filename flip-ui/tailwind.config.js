@@ -21,6 +21,8 @@ module.exports = {
     theme: {
         extend: {
             fontSize: {
+                // Smallest text step: the WCAG-readable floor for captions, chips and dates.
+                "2xs": "11px",
                 sm: "0.95rem"
             },
             fontFamily: {

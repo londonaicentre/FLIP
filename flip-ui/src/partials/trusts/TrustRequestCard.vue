@@ -46,7 +46,7 @@
 
                 <div class="grid gap-3 mt-4 grid-cols-[repeat(auto-fit,minmax(200px,1fr))]">
                     <div class="px-4 py-3 border rounded-lg bg-gray-50 border-gray-100 dark:bg-dark-surface dark:border-dark-border">
-                        <p class="font-mono text-[10.5px] uppercase tracking-[0.12em] text-gray-500 dark:text-gray-300">
+                        <p class="font-mono text-2xs uppercase tracking-[0.12em] text-gray-500 dark:text-gray-300">
                             Cohort at this Trust
                         </p>
                         <p class="mt-1">
@@ -55,7 +55,7 @@
                         </p>
                     </div>
                     <div class="px-4 py-3 border rounded-lg bg-gray-50 border-gray-100 dark:bg-dark-surface dark:border-dark-border">
-                        <p class="font-mono text-[10.5px] uppercase tracking-[0.12em] text-gray-500 dark:text-gray-300">
+                        <p class="font-mono text-2xs uppercase tracking-[0.12em] text-gray-500 dark:text-gray-300">
                             Imaging
                         </p>
                         <p class="mt-1">

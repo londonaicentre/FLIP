@@ -27,7 +27,7 @@
             />
         </div>
         <p
-            class="mt-5 text-[11px] font-black uppercase tracking-[0.06em] text-primary-600/70 dark:text-primary-300"
+            class="mt-5 text-2xs font-black uppercase tracking-[0.06em] text-primary-600/70 dark:text-primary-300"
             data-test="eyebrow"
         >
             Error 404

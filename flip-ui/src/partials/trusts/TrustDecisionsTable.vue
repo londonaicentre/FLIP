@@ -21,7 +21,7 @@
     >
         <div class="hidden sm:flex items-stretch bg-gray-50 border-b border-gray-200 dark:bg-dark-surface dark:border-dark-border">
             <div class="w-[3px] shrink-0" aria-hidden="true" />
-            <div :class="GRID_CLASS" class="grid flex-1 gap-4 px-6 py-2.5 font-mono text-[11px] uppercase tracking-[0.1em] text-gray-500 dark:text-gray-300">
+            <div :class="GRID_CLASS" class="grid flex-1 gap-4 px-6 py-2.5 font-mono text-2xs uppercase tracking-[0.1em] text-gray-500 dark:text-gray-300">
                 <span>Project</span>
                 <span>Cohort</span>
                 <span>Decision</span>

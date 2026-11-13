@@ -72,7 +72,7 @@
                                     </p>
                                     <span
                                         data-test="latest-model-status-chip"
-                                        class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium shrink-0"
+                                        class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-2xs font-medium shrink-0"
                                         :class="modelStatusPillClass(model.status)"
                                     >
                                         <span class="inline-block w-1.5 h-1.5 rounded-full" :class="modelStatusDotClass(model.status)" />

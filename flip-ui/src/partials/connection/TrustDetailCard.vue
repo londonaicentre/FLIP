@@ -20,7 +20,7 @@
         <div class="px-[22px] pt-[22px] pb-[18px] border-b border-gray-200 dark:border-dark-border">
             <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
-                    <p class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                    <p class="text-2xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
                         Trust detail
                     </p>
                     <slot name="title" :trust-name="trust.name">
@@ -69,7 +69,7 @@
 
         <!-- Container list -->
         <div class="flex-1 overflow-y-auto px-[22px] pb-[22px] pt-2">
-            <p class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300 pt-4 pb-1">
+            <p class="text-2xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300 pt-4 pb-1">
                 Containers · {{ services.length }}
             </p>
             <div
@@ -91,7 +91,7 @@
                         </span>
                         <span
                             data-test="container-chip"
-                            class="shrink-0 px-2 py-0.5 rounded-full text-[11px] font-bold whitespace-nowrap"
+                            class="shrink-0 px-2 py-0.5 rounded-full text-2xs font-bold whitespace-nowrap"
                             :class="CHIP_CLASSES[svc.status]"
                         >
                             {{ CHIP_LABELS[svc.status] }}
@@ -100,12 +100,12 @@
                     <p class="text-[11.5px] text-gray-600 dark:text-gray-300 mt-0.5">
                         {{ svc.role }}
                     </p>
-                    <p data-test="container-meta" class="font-mono text-[11px] text-gray-500 dark:text-gray-300 mt-1.5">
+                    <p data-test="container-meta" class="font-mono text-2xs text-gray-500 dark:text-gray-300 mt-1.5">
                         <span>{{ svc.version ?? "—" }}</span>
                         <span
                             v-if="driftsFromHub(svc)"
                             data-test="version-drift"
-                            class="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+                            class="ml-1.5 px-1.5 py-0.5 rounded-full text-2xs font-bold whitespace-nowrap bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
                             :title="`This container runs ${svc.version}; the hub runs ${hubVersion}. Move the site with: make upgrade-onprem-trust KIT=<CODE>`"
                         >≠ hub {{ hubVersion }}</span>
                         <span class="mx-2 text-gray-300 dark:text-gray-600">·</span>
