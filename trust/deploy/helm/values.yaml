@@ -29,10 +29,8 @@ trustNumber: 1
 environment: production
 logLevel: INFO
 
-# AWS region for the OMOP and Orthanc data Jobs — the seed restores and the OMOP
-# vocabulary load — which read from S3 with the operator credentials mounted at
-# omopDb.vocabLoad.hostAwsMount. Not used by the FL client:
-# it holds no AWS credentials and its kit is staged onto the node out-of-band.
+# AWS region of the hub's estate. No template reads it since the vocabulary load stopped
+# fetching from S3 (FLIP#923); sync-kit still writes it into the generated override.
 awsRegion: "eu-west-2"
 
 # S3 bucket for uploaded federated data (s3://…). Leave empty to omit the variable
@@ -273,7 +271,6 @@ trustApi:
     # A mismatch makes the hub answer 401 "API key is missing".
     TRUST_API_KEY_HEADER: "Authorization"  # pragma: allowlist secret
     POLL_INTERVAL_SECONDS: "5"
-    # Internal service URLs (short names resolve via K8s DNS in same namespace)
 
 # ---------------------------------------------------------------------------
 # imaging-api — DICOM image retrieval from PACS / XNAT
@@ -473,10 +470,12 @@ flClient:
     source: hostPath
     # The Secret's name; empty means <release fullname>-fl-kit.
     secretName: ""
-  hostAliases:
-    - ip: "13.43.162.56"
-      hostnames:
-        - "fl-server-net-1"
+  # Static /etc/hosts entries for the FL client (and its job pods). Empty by default: both
+  # backends dial the hub's public FL name from the kit, which DNS resolves.
+  hostAliases: []
+  #   - ip: "203.0.113.10"
+  #     hostnames:
+  #       - "fl.example.org"
   image:
     repository: ghcr.io/londonaicentre
     tag: stag
@@ -488,8 +487,10 @@ flClient:
     pin: ""
     pullPolicy: Always
   nvflare:
-    # Site-enforced privacy policy (FLIP#851): rendered into /app/local/privacy.json
-    # at container start by `python -m flip.nvflare.site_policy`. Empty string = unset
+    # Site-enforced privacy policy (FLIP#851): rendered into the kit's local/privacy.json
+    # by the fl-client-init init container (`python -m flip.nvflare.site_policy`, whose
+    # errors are in that container's log) and checked, without writing, by the client's
+    # `site_policy --assert-rendered` (FLIP#1570). Empty string = unset
     # = no site policy (previous behavior). policy: "percentile"; the params
     # mirror the FL_SITE_PRIVACY_* env vars documented in trust/README.md. An invalid
     # combination fails the pod (fail closed) rather than running unfiltered.
@@ -555,8 +556,8 @@ flClient:
       memory: "32Gi"
       cpu: "16"
   shmSize: 8Gi
-  # gpu.count is also what the NVFLARE client tells its scheduler it can lend: the chart renders the kit's
-  # local/resources.template.json with it at start (0 while gpu.enabled is false). The pod sees GPU 0 only, so on
+  # gpu.count is also what the NVFLARE client tells its scheduler it can lend: the fl-client-init init container renders
+  # the kit's local/resources.template.json with it (0 while gpu.enabled is false). The pod sees GPU 0 only, so on
   # NVFLARE an enabled GPU requires count 1; use gpu.enabled=false for CPU-only mode.
   gpu:
     enabled: false
@@ -632,10 +633,8 @@ omopDb:
   # pg_isready can take many seconds while the vocabulary COPY is running. The
   # Kubernetes defaults (timeoutSeconds 1, failureThreshold 3) restart Postgres
   # mid-load and abort the omop-vocab-load hook, so they are set explicitly here.
-  # initialDelaySeconds/periodSeconds carry the values that used to be hardcoded in
-  # templates/omop-db.yaml, so the default render is unchanged; they are here so this
-  # block honours the same four keys as every other service's probes block rather
-  # than silently ignoring two of them.
+  # initialDelaySeconds/periodSeconds are set too, so this block honours the same four
+  # keys as every other service's probes block.
   probes:
     liveness:
       initialDelaySeconds: 30
@@ -647,108 +646,51 @@ omopDb:
       periodSeconds: 5
       timeoutSeconds: 15
       failureThreshold: 10
-  # Streams the licensed core vocabulary into the running database after
-  # install/upgrade (the published image and the seeded data carry no licensed vocabulary —
-  # FLIP#842/843).
-  #
-  # The bundle CANNOT be publicly mirrored (SNOMED CT / LOINC / Read v2 / dm+d
-  # licences — see trust/omop-db/README.md), so unlike the mock-data seed there is no
-  # credential-free fallback. The Job therefore runs only when s3Bucket names a
-  # bucket this cluster can read; left empty, the release installs cleanly with
-  # NO vocabulary loaded.
+  # Loads the licensed core vocabulary into the running database after install/upgrade
+  # (the published image and the seeded data carry no licensed vocabulary — FLIP#842/843),
+  # from an unpacked bundle the operator stages onto the node (FLIP#923). One path for
+  # every site, with no cloud credentials or egress:
+  #   1. Get the bundle as a folder of Athena CSVs (CONCEPT.csv, …): with access to the
+  #      AI Centre bucket, `make -C trust/deploy/helm download-vocab` (host-side, your own
+  #      AWS CLI profile); otherwise an OHDSI Athena / NHS TRUD export (trust/omop-db/README.md).
+  #   2. `make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<ctx>`.
+  #   3. Set hostPath to the node directory it was staged to (stage-vocab prints the flag;
+  #      sync-kit writes it from the kit's OMOP_VOCAB_DIR).
+  # The bundle CANNOT be publicly mirrored (SNOMED CT / LOINC / Read v2 / dm+d licences),
+  # so hostPath defaults to empty: no Job, and the release installs cleanly with NO
+  # vocabulary loaded.
   #
   # ⚠️  With no vocabulary the stack looks healthy but cohort queries that join
-  # omop.concept return nothing. Either set s3Bucket, or load the bundle by hand
-  # (chart README → "OMOP core vocabulary").
+  # omop.concept return nothing (chart README → "OMOP core vocabulary").
   #
-  # Use YOUR environment's own bucket — trust roles have no cross-account read
-  # on another environment's bucket. `make -C trust/deploy/helm
-  # sync-kit KIT=<CODE> HUB=<env>` writes this from the kit's
-  # AICENTRE_BUCKET_NAME, so check that the kit carries the right one (it is not
-  # a hub-managed key — a kit scaffolded from trust/.env.example ships it commented
-  # out, so the release loads no core vocabulary until it is set).
-  #
-  # The AWS *credentials* live on this block too (vocabLoad.awsProfile /
-  # vocabLoad.hostAwsMount, below): this is the chart's only AWS-bearing Job now
-  # that the snapshot init Jobs are retired (FLIP#1187) — the trust-seed hook
-  # fetches the mock data anonymously. Note the AWS_PROFILE/region env vars only
-  # reach this Job when vocabLoad.hostAwsMount is enabled; on EKS it relies on
-  # the node role.
+  # hostPath is resolved on the node the Job lands on: on a cluster with more than one node,
+  # pin the Job to the node holding the folder with nodeSelector (e.g.
+  # kubernetes.io/hostname: <node>). The folder is read only for the first load; once the
+  # database holds the vocabulary, upgrades skip it, so it may be removed. A managed node
+  # pool (values-aks.yaml / values-eks.yaml) turns the load off and loads by hand instead.
   #
   # enabled: false is only for keeping an in-cluster omop-db while loading the
   # vocabulary by hand — an external database (omopDb.enabled: false) already
   # skips this Job.
+  #
+  # s3Bucket, bundleName, awsProfile, hostAwsMount, fetchResources and workDirSize were
+  # removed with the in-cluster S3 fetch (FLIP#923); a values file still setting one fails
+  # the render.
   vocabLoad:
     enabled: true
-    s3Bucket: ""
-    bundleName: "vocab_aicentre_core_20240916"
-    # The fetch initContainer runs in the omop-db image, which bakes the AWS CLI like unzip, so
-    # the Job installs nothing at run time and reaches no host but S3. It replaced a Docker Hub
-    # aws-cli image (FLIP#1721).
-    # Scratch space for the downloaded bundle. Must hold the zip and its unpacked
-    # contents at the same time — for the 20240916 bundle that is ~3.6 GiB
-    # unpacked plus a ~600 MiB zip, so a peak near 4.2 GiB (both figures are in
-    # trust/omop-db/README.md, "The core vocabulary bundle"). The kubelet
-    # enforces this on the emptyDir directly; keep the pod's ephemeral-storage
-    # ceiling (below) above it, so that this limit is what bounds the work dir
-    # rather than the pod being evicted before it has finished filling it.
-    workDirSize: 10Gi
-    # The fetch initContainer downloads the zip and stops there — unpacking is
-    # the loader's. Its request is small for that reason, though the pod's request is set
-    # by loadResources either way (see the max rule below); the zip itself lands
-    # in the emptyDir, which is charged to the pod and never to this container —
-    # a container's own ephemeral-storage accounting covers only its writable
-    # layer and logs.
-    fetchResources:
-      requests:
-        cpu: "250m"
-        memory: 512Mi
-        ephemeral-storage: 2Gi
-      limits:
-        cpu: "1"
-        memory: 1Gi
-        ephemeral-storage: 12Gi
-    # Shared by the probe and the loader. The work dir itself is bounded by
-    # workDirSize above, which the kubelet enforces on the emptyDir directly and
-    # independently of anything here. What the ephemeral-storage REQUEST buys is
-    # scheduling and eviction ranking: emptyDir usage counts against the pod, and
-    # the kubelet ranks eviction on usage OVER request, so a pod that requested
-    # nothing is picked first under node disk pressure — and an evicted run
-    # restarts from zero. Sized for the loader, which briefly holds the zip and
-    # its unpacked contents at once. The probe over-requests harmlessly: an
-    # ordinary init container's resources are taken as a max against the regular
-    # containers' total, never added to it (a restartable init container — a
-    # sidecar — WOULD be added, so do not convert the probe into one without
-    # revisiting these numbers).
-    #
-    # Limits follow that same max rule, not a sum: the pod's ceiling here is
-    # max(12Gi regular, 12Gi per init) = 12Gi, above workDirSize. Do not read it
-    # as 3 x 12Gi — setting all three to 4Gi on a sum reading would give a real
-    # ceiling of 4Gi and evict the pod less than halfway through the work dir.
+    hostPath: ""
+    nodeSelector: {}
+    # The loader streams the CSVs from the read-only mount over COPY, so it needs no
+    # scratch space beyond its own logs.
     loadResources:
       requests:
         cpu: "100m"
         memory: 256Mi
-        ephemeral-storage: 6Gi
+        ephemeral-storage: 256Mi
       limits:
         cpu: "500m"
         memory: 512Mi
-        ephemeral-storage: 12Gi
-    # AWS credentials for the bundle fetch on clusters whose node holds the operator's
-    # SSO session (k3s, minikube's `none` driver); IRSA on EKS. The profile only reaches
-    # the Job when hostAwsMount is enabled.
-    awsProfile: "default"
-    # hostPath has NO default: it is the ~/.aws of whoever runs the *node*, so any shipped
-    # value is one developer's home directory and silently wrong on every other machine.
-    # Set it explicitly when enabling, e.g. --set omopDb.vocabLoad.hostAwsMount.hostPath=$HOME/.aws
-    # Left empty while enabled, rendering fails with a named error rather than mounting a
-    # path that does not exist on this node. On kind the node is a container and your
-    # ~/.aws is not in it: add an extraMounts entry to the kind config and point hostPath
-    # at the node-side path (README, "Local clusters (kind)"), or pre-seed and leave this off.
-    hostAwsMount:
-      enabled: false
-      hostPath: ""
-      readOnly: true
+        ephemeral-storage: 1Gi
 
 # ---------------------------------------------------------------------------
 # orthanc — Mocked DICOM PACS server
@@ -814,7 +756,7 @@ xnat:
     # destination. DQR matches that destination against a registered receiver by exact AE title and
     # port, so these must equal what the PACS has registered for us — no translation is possible on
     # that leg (FLIP#993).
-    dicomAet: XNAT
+    dicomAet: FLIP_XNAT
     dicomPort: 8104
     # Fixed NodePort for the DICOM receiver, used with dicomService.type: NodePort. Required when
     # the PACS is outside the cluster: after XNAT issues C-MOVE the PACS opens a *new* association
@@ -877,11 +819,18 @@ xnat:
         timeoutSeconds: 5
     env:
       XNAT_EMAIL: ""
+      # XNAT's time zone (TZ). DQR reads pacs.availability's window in it, so the window is UK
+      # local time, BST included (FLIP#1880).
+      XNAT_TZ: "Europe/London"
       XNAT_MIN_HEAP: "1024m"
       XNAT_MAX_HEAP: "3072m"
   db:
     enabled: true
     datasourceUsername: "xnat"
+    # Above Postgres's defaults (100, 128MB), as on Compose: a bulk DQR import opens many
+    # connections at once and a restarted xnat-web briefly doubles them (FLIP#662).
+    maxConnections: 300
+    sharedBuffers: "512MB"
     image:
       repository: ghcr.io/londonaicentre/xnat-db
       tag: stag
@@ -902,8 +851,9 @@ xnat:
       requests:
         memory: "512Mi"
         cpu: "250m"
+      # 2Gi: shared_buffers alone is 512MB, on top of one backend per connection.
       limits:
-        memory: "1Gi"
+        memory: "2Gi"
         cpu: "500m"
   nginx:
     enabled: true
@@ -1096,6 +1046,7 @@ pacs:
   # may want retrieval confined to out-of-hours. Agree the window with the PACS manager.
   # Every helm upgrade sets XNAT's schedule from these, reverting edits made in XNAT's UI. The window
   # must not cross midnight (FLIP#1465): for out-of-hours use 19:00-24:00, 00:00-07:00 or whole days.
+  # Times are in xnat.web.env.XNAT_TZ (Europe/London), BST included.
   availability:
     days: MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY,SUNDAY
     start: "00:00"
@@ -1138,8 +1089,7 @@ networkPolicies:
   # Each entry: cidrs (list of CIDR strings) + port (int) + optional protocol (default TCP)
   allowedEgressCIDRsWithPorts: []
   # - cidrs:
-  #     - 13.43.208.193/32
-  #     - 13.43.162.56/32
+  #     - 203.0.113.10/32
   #   port: 8002
   # Egress rules to allow (defaults include DNS/HTTP/HTTPS)
   allowedEgressPorts:

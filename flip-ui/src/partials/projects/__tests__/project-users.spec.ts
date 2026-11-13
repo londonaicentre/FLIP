@@ -40,24 +40,15 @@ describe("Project Users Modal", () => {
         expect(component.exists()).toBe(true);
     });
 
-    it("Alert exists regarding adding users", async () => {
-        const infoAlert = component.find(AddProjectUsers.infoAlert);
-        expect(infoAlert.exists()).toBeTruthy();
-    });
-
-    it("Displays the 'Optional' text", async () => {
-        const optionalText = component.find(AddProjectUsers.optionalText);
-        expect(optionalText.exists()).toBeTruthy();
-    });
-
-    it("Add user input exists", async () => {
-        const addUserInput = component.find(AddProjectUsers.addUserInput);
-        expect(addUserInput.exists()).toBeTruthy();
-    });
-
-    it("Add user button exists", async () => {
-        const addUserButton = component.find(AddProjectUsers.addUserButton);
-        expect(addUserButton.exists()).toBeTruthy();
+    it.each([
+        ["infoAlert", true],
+        ["optionalText", true],
+        ["addUserInput", true],
+        ["addUserButton", true],
+        ["invalidUsersList", false],
+        ["addedUsersList", false]
+    ] as const)("%s is rendered initially: %s", (key, present) => {
+        expect(component.find(AddProjectUsers[key]).exists()).toBe(present);
     });
 
     it("Enables the Add button only once an address has been entered", async () => {
@@ -67,15 +58,5 @@ describe("Project Users Modal", () => {
         await component.find(AddProjectUsers.addUserInput).setValue("new@e.com");
 
         expect(addUserButton.attributes("disabled")).toBeUndefined();
-    });
-
-    it("Does not initially display the element containing the list of invalid users", async () => {
-        const invalidUsersList = component.find(AddProjectUsers.invalidUsersList);
-        expect(invalidUsersList.exists()).toBeFalsy();
-    });
-
-    it("Does not initially display the element containing the the list of users added to the project", async () => {
-        const addedUsersList = component.find(AddProjectUsers.addedUsersList);
-        expect(addedUsersList.exists()).toBeFalsy();
     });
 });

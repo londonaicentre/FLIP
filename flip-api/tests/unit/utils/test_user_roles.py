@@ -30,18 +30,11 @@ from flip_api.utils.user_roles import apply_user_profile, get_all_roles, get_use
 class TestApplyUserProfile:
     """`apply_user_profile` merges DB profile fields onto a Cognito user."""
 
-    def _make_user(self):
-        return CognitoUser(
-            id=uuid4(),
-            email="alice@example.com",
-            is_disabled=False,
-        )  # type: ignore[call-arg]
-
     def test_returns_user_unchanged_when_session_has_no_get(self):
         """Duck-typed guard: list-listing call-sites pass `None` for `session`
         when they don't have one. Don't blow up — just return the input.
         """
-        user = self._make_user()
+        user = _user("alice@example.com")
 
         result = apply_user_profile(user, session=None)  # type: ignore[arg-type]
 
@@ -49,7 +42,7 @@ class TestApplyUserProfile:
 
     def test_returns_user_unchanged_when_no_profile_row_exists(self):
         """No UserProfile row → no fields to apply; return the input verbatim."""
-        user = self._make_user()
+        user = _user("alice@example.com")
         session = Mock()
         session.get.return_value = None
 
@@ -63,7 +56,7 @@ class TestApplyUserProfile:
         """A matching UserProfile row supplies the name + organisation that
         Cognito doesn't carry. is_disabled is preserved verbatim.
         """
-        user = self._make_user()
+        user = _user("alice@example.com")
         profile = Mock(name="…", organisation="London AI Centre")
         # Mock(name=…) on a stock Mock is reserved — use side-effect attrs.
         profile.name = "Alice Example"

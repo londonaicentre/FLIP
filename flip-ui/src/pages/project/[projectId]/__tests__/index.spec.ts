@@ -126,6 +126,19 @@ const baseProject = (): IProject => ({
     approvedTrusts: []
 });
 
+const twoUsers = (): IProject["users"] => [
+    {
+        id: "u1",
+        email: "a@x",
+        isDisabled: false
+    },
+    {
+        id: "u2",
+        email: "b@x",
+        isDisabled: false
+    }
+];
+
 function mountProjectPage({
     project = baseProject(),
     permissions = ["CanCreateProjects", "CanUnstageProjects"],
@@ -274,6 +287,19 @@ describe("Project page (/project/[id]/index.vue)", () => {
         expect(staging.attributes("data-stageable")).toBe("t1");
     });
 
+    test("still stages after a staging attempt with no trusts (#1926)", async () => {
+        const wrapper = mountProjectPage();
+        const staging = wrapper.findComponent(stubs.ProjectStaging);
+
+        await staging.vm.$emit("staged", []);
+        await flushPromises();
+        expect(stageProjectWithTrusts).not.toHaveBeenCalled();
+
+        await staging.vm.$emit("staged", ["t1"]);
+        await flushPromises();
+        expect(stageProjectWithTrusts).toHaveBeenCalledWith("/projects/p-123/stage", ["t1"]);
+    });
+
     test("marks Project Staged when status moves off UNSTAGED, and Project Approved when status is APPROVED", () => {
         const stagedProject = baseProject();
         stagedProject.status = "STAGED";
@@ -343,11 +369,17 @@ describe("Project page (/project/[id]/index.vue)", () => {
             ]
         });
 
-        test("posts the approved and declined trusts and announces the approval", async () => {
-            const wrapper = mountProjectPage({ project: stagedProject() });
-
+        // Mounts the page and clicks the decision panel's save.
+        async function saveDecisions(project: IProject = stagedProject()) {
+            const wrapper = mountProjectPage({ project });
             await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
             await flushPromises();
+
+            return wrapper;
+        }
+
+        test("posts the approved and declined trusts and announces the approval", async () => {
+            const wrapper = await saveDecisions();
 
             expect(approveProject).toHaveBeenCalledWith(
                 "/step/project/p-123/approve",
@@ -366,10 +398,7 @@ describe("Project page (/project/[id]/index.vue)", () => {
                 declined: ["t1", "t2"]
             };
             approveProject.mockResolvedValue({ projectStatus: "STAGED" });
-            const wrapper = mountProjectPage({ project: stagedProject() });
-
-            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
-            await flushPromises();
+            const wrapper = await saveDecisions();
 
             expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "All trusts declined" }));
             expect(snackbarSuccess.mock.calls[0][0].text).toContain("stays staged");
@@ -383,10 +412,7 @@ describe("Project page (/project/[id]/index.vue)", () => {
                 declined: ["t1"]
             };
             approveProject.mockResolvedValue({ projectStatus: "STAGED" });
-            const wrapper = mountProjectPage({ project: stagedProject() });
-
-            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
-            await flushPromises();
+            await saveDecisions();
 
             expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Trust decisions saved" }));
             expect(snackbarSuccess.mock.calls[0][0].text).toContain("until a trust approves it");
@@ -398,15 +424,10 @@ describe("Project page (/project/[id]/index.vue)", () => {
                 declined: ["t2"]
             };
             approveProject.mockResolvedValue({ projectStatus: "APPROVED" });
-            const wrapper = mountProjectPage({
-                project: {
-                    ...stagedProject(),
-                    status: "APPROVED"
-                }
+            await saveDecisions({
+                ...stagedProject(),
+                status: "APPROVED"
             });
-
-            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
-            await flushPromises();
 
             expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Trust decisions saved" }));
         });
@@ -421,15 +442,10 @@ describe("Project page (/project/[id]/index.vue)", () => {
                 successful: true,
                 details: []
             });
-            const wrapper = mountProjectPage({
-                project: {
-                    ...stagedProject(),
-                    status: "APPROVED"
-                }
+            await saveDecisions({
+                ...stagedProject(),
+                status: "APPROVED"
             });
-
-            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
-            await flushPromises();
 
             expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Trust approved" }));
         });
@@ -451,10 +467,7 @@ describe("Project page (/project/[id]/index.vue)", () => {
                     }
                 ]
             });
-            const wrapper = mountProjectPage({ project: stagedProject() });
-
-            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
-            await flushPromises();
+            const wrapper = await saveDecisions();
 
             expect(snackbarSuccess).not.toHaveBeenCalled();
             expect(snackbarWarning).toHaveBeenCalledTimes(1);
@@ -466,10 +479,7 @@ describe("Project page (/project/[id]/index.vue)", () => {
 
         test("treats a response without a known project status as a failure", async () => {
             approveProject.mockResolvedValue({});
-            const wrapper = mountProjectPage({ project: stagedProject() });
-
-            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
-            await flushPromises();
+            await saveDecisions();
 
             expect(snackbarSuccess).not.toHaveBeenCalled();
             expect(snackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "Unable to save trust decisions" }));
@@ -482,20 +492,14 @@ describe("Project page (/project/[id]/index.vue)", () => {
                     data: { detail: "Unable to approve the project as it has not been staged" }
                 }
             });
-            const wrapper = mountProjectPage({ project: stagedProject() });
-
-            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
-            await flushPromises();
+            await saveDecisions();
 
             expect(snackbarError.mock.calls[0][0].text).toBe("Unable to approve the project as it has not been staged");
         });
 
         test("reports a failed save without claiming anything was decided", async () => {
             approveProject.mockRejectedValue(new Error("boom"));
-            const wrapper = mountProjectPage({ project: stagedProject() });
-
-            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
-            await flushPromises();
+            await saveDecisions();
 
             expect(snackbarSuccess).not.toHaveBeenCalled();
             expect(snackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "Unable to save trust decisions" }));
@@ -548,22 +552,7 @@ describe("Project page (/project/[id]/index.vue)", () => {
         expect(wrapper.text()).not.toContain("1 Users");
 
         const project = baseProject();
-        project.users = [
-            {
-                id: "u1",
-                email: "a@x",
-                name: "User A",
-                organisation: "Org",
-                isDisabled: false
-            },
-            {
-                id: "u2",
-                email: "b@x",
-                name: "User B",
-                organisation: "Org",
-                isDisabled: false
-            }
-        ];
+        project.users = twoUsers();
         const wrapper2 = mountProjectPage({ project });
         // owner + 2 = 3 Users
         expect(wrapper2.text()).toContain("3 Users");
@@ -636,22 +625,7 @@ describe("Project page (/project/[id]/index.vue)", () => {
 
         test("hides the word 'Users' below lg but keeps the count visible with a full-title tooltip", () => {
             const project = baseProject();
-            project.users = [
-                {
-                    id: "u1",
-                    email: "a@x",
-                    name: "User A",
-                    organisation: "Org",
-                    isDisabled: false
-                },
-                {
-                    id: "u2",
-                    email: "b@x",
-                    name: "User B",
-                    organisation: "Org",
-                    isDisabled: false
-                }
-            ];
+            project.users = twoUsers();
             const wrapper = mountProjectPage({ project });
 
             const pill = wrapper.find("[data-test=user-count-pill]");

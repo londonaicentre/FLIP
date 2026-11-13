@@ -40,7 +40,6 @@ services:
       # URLs against (AWS_ENDPOINT_URL_S3 in its service block; path-style URLs, host exactly
       # object-store:9000). The two lines must move together, or every bundle download 400s.
       - BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000
-      - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
       - FLOWER_SRC_ROOT=/app/src
       # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
@@ -79,7 +78,6 @@ services:
       - FL_API_KEY=${FL_API_KEY}
       # Bundle-fetch origin allow-list: the dev object store, like fl-api-net-1 (FLIP#905, #1291).
       - BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000
-      - SUPERLINK_HEALTH_ADDRESS=fl-server-net-2:9097
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
       - FLOWER_SRC_ROOT=/app/src
       # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
@@ -154,8 +152,6 @@ services:
       - LOCAL_DEV=false
       - IMAGES_DIR=/app/data/images
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
-      - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
-      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
       - JOB_CREDENTIAL_DIR=/app/src/.job-credentials
     depends_on:
@@ -174,8 +170,6 @@ services:
       # otherwise. Reached over `default`; the host port below is on loopback only.
       - --host
       - 0.0.0.0
-      - --health-server-address
-      - 0.0.0.0:9097
     ports:
       - "127.0.0.1:${FLOWER_SUPERLINK_NET_1_PORT:-9093}:8000"
     security_opt:
@@ -189,7 +183,7 @@ services:
     # through the file's own owner and group, which is the least-privileged route
     # (FLIP#1320).
     # `default` is the hub-internal network. fl-server is the one FL service that calls back
-    # into flip-api (FLIP_API_INTERNAL_URL + INTERNAL_SERVICE_KEY above), and flip-api is
+    # into flip-api (FLIP_API_INTERNAL_URL above), and flip-api is
     # deliberately not on the FL net — see the networks block in compose.development.yml.
     # Not on `fl-net-1` either (FLIP#1517): its port 8000 is the Control and Runtime API too.
     networks:
@@ -245,9 +239,9 @@ services:
     volumes:
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-1/keys:/keys:ro
-      # Dev-overlay: edits to the register-supernode-keys.sh script apply without a rebuild.
-      # In-tree at fl-services/flower/ (#622); also baked into the image, so removal still works.
-      # Pathed off FL_JOBS_DIR (abs /repo/jobs) since FL_PROVISIONED_DIR now lives under deploy/.
+      # Dev overlay: edits to fl-services/flower/register-supernode-keys.sh (in-tree since #622) apply without a rebuild
+      # (also baked into the image). Pathed off FL_JOBS_DIR (<repo>/jobs), not FL_PROVISIONED_DIR, which no longer sits
+      # one level below the repo root.
       - ${FL_JOBS_DIR}/../fl-services/flower/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
     entrypoint: ["/bin/bash", "/scripts/register-supernode-keys.sh"]
     depends_on:
@@ -285,8 +279,6 @@ services:
       - LOCAL_DEV=false
       - IMAGES_DIR=/app/data/images
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
-      - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
-      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
       - JOB_CREDENTIAL_DIR=/app/src/.job-credentials
     depends_on:
@@ -305,8 +297,6 @@ services:
       # otherwise. Reached over `default`; the host port below is on loopback only.
       - --host
       - 0.0.0.0
-      - --health-server-address
-      - 0.0.0.0:9097
     ports:
       - "127.0.0.1:${FLOWER_SUPERLINK_NET_2_PORT:-9095}:8000"
     security_opt:
@@ -358,7 +348,7 @@ services:
     volumes:
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-2/keys:/keys:ro
-      # See net-1 above — symmetric dev-overlay (was missing the flower/ path segment).
+      # Dev overlay — see net-1 above.
       - ${FL_JOBS_DIR}/../fl-services/flower/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
     entrypoint: ["/bin/bash", "/scripts/register-supernode-keys.sh"]
     depends_on:

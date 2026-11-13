@@ -136,9 +136,6 @@ COMPLETE_ENV = {
     "FLIP_FL_RESULTS_BUCKET_NAME": "probe-results",
     "FLIP_APP_BUNDLES_BUCKET_NAME": "probe-bundles",
     "AICENTRE_BUCKET_NAME": "probe-aicentre",
-    "INTERNAL_SERVICE_KEY": "probe",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY_HASH": "probe",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
     "FL_API_KEY": "probe",  # pragma: allowlist secret
 }
 
@@ -180,9 +177,6 @@ def test_a_complete_env_file_passes_every_guard(tmp_path: Path) -> None:
         ({"FLIP_FL_RESULTS_BUCKET_NAME": None}, "FLIP_FL_RESULTS_BUCKET_NAME"),
         ({"FLIP_APP_BUNDLES_BUCKET_NAME": "<your-bundles-bucket>"}, "FLIP_APP_BUNDLES_BUCKET_NAME"),
         ({"AICENTRE_BUCKET_NAME": None}, "AICENTRE_BUCKET_NAME"),
-        ({"INTERNAL_SERVICE_KEY": None}, "INTERNAL_SERVICE_KEY must be set"),
-        ({"INTERNAL_SERVICE_KEY_HASH": None}, "INTERNAL_SERVICE_KEY_HASH"),
-        ({"INTERNAL_SERVICE_KEY_HEADER": None}, "INTERNAL_SERVICE_KEY_HEADER"),
         ({"FL_API_KEY": None}, "FL_API_KEY must be set"),
         # No default: true is wrong on a zone-less estate, false wrong on one with a zone.
         ({"MANAGE_DNS": None}, "MANAGE_DNS must be true or false"),
@@ -258,6 +252,13 @@ def test_register_trusts_mints_the_xnat_credentials_into_the_kit(tmp_path: Path)
     assert "generate_xnat_credentials --env-file " + str(AWS_PROVIDER_DIR.parents[2] / "trust" / ".env.AZ1.stag") in (
         result.stdout
     )
+
+
+def test_register_trusts_passes_the_env_class_and_env_file_for_the_hub_shared_sync(tmp_path: Path) -> None:
+    """register-trusts.sh refreshes the hub-shared block from the env file (FLIP#1476), so it needs both."""
+    result = _make_dry_run("register-trusts", "KIT=AZ1", tmp_path=tmp_path, env_file=_env_file(tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert "ENV_CLASS=stag MAIN_ENV_FILE=/" in result.stdout, result.stdout
 
 
 def test_register_trusts_never_rotates_the_xnat_credentials(tmp_path: Path) -> None:

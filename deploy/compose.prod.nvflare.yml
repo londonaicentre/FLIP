@@ -66,20 +66,6 @@ services:
       - fl-server-net-1
     restart: unless-stopped
 
-  # TODO add second FL network when needed
-  # fl-api-net-2:
-  #   image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
-  #   environment:
-  #     - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
-  #     - BUNDLE_URL_ALLOWED_ORIGINS=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
-  #   volumes:
-  #     # Provisioned FLARE admin secrets (certificates, fed_admin.json)
-  #     - /opt/flip/services/flip-fl-api-net-2/local:/app/admin/local
-  #     - /opt/flip/services/flip-fl-api-net-2/startup:/app/admin/startup
-  #   depends_on:
-  #     - fl-server-net-2
-  #   restart: unless-stopped
-
   fl-server-net-1:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
@@ -112,29 +98,10 @@ services:
       - LOCAL_DEV=false
       - IMAGES_DIR=/app/data/images
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
-      - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
-      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
       # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
       - JOB_CREDENTIAL_DIR=/app/server-checkpoints/.job-credentials
     restart: unless-stopped
     init: true
 
-  # TODO add second FL network when needed
-  # fl-server-net-2:
-  #   image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
-  #   volumes:
-  #     # Provisioned FLARE secrets (certificates, fed_server.json)
-  #     - /opt/flip/services/fl-server-net-2/local:/app/local
-  #     - /opt/flip/services/fl-server-net-2/startup:/app/startup
-  #     - /opt/flip/services/fl-server-net-2/transfer:/app/transfer
-  #   environment:
-  #     - NET_ID=net-2
-  #     - LOCAL_DEV=false
-  #     - IMAGES_DIR=/app/data/images
-  #     - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
-  #     - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
-  #     - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
-  #     # - AWS_PROFILE=${AWS_PROFILE} # in production, AWS credentials are retrieved from the instance role
-  #   restart: unless-stopped
-  #   init: true
+  # TODO add a second FL network when needed: mirror net-1 (compose.development.nvflare.yml has the net-2 shape).

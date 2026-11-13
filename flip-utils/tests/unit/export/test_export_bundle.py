@@ -249,18 +249,11 @@ class TestExportBundle:
 
         assert out.is_file()
         assert result.method == "script"
+        assert result.max_abs_delta == 0.0  # scripting must not change the maths
         assert result.num_state_entries == len(_reference_state_dict())
         embedded = zipfile.ZipFile(out).namelist()
         assert any(name.endswith("extra/inference.json") for name in embedded)
         assert any(name.endswith("extra/metadata.json") for name in embedded)
-
-    def test_scripted_model_is_numerically_identical_to_eager(self, checkpoint, app, tmp_path):
-        """Scripting must not change what the model computes."""
-        out = tmp_path / "model.ts"
-
-        result = export_bundle(checkpoint, app, out, example_input_shape=_INPUT_SHAPE)
-
-        assert result.max_abs_delta == 0.0
 
     def test_an_export_that_changes_the_maths_is_reported(self, tmp_path):
         """A divergent export is otherwise silent: it writes, it loads, and it computes the wrong thing.

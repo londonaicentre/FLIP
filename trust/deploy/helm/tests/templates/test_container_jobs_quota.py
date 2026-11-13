@@ -39,11 +39,12 @@ def _docs(*args: str) -> list[dict]:
     return [d for d in yaml.safe_load_all(rendered) if d]
 
 
-def _quotas(*sets: str) -> list[dict]:
-    args = ["--set", KIT_PATH]
-    for item in sets:
-        args += ["--set", item]
-    return [d for d in _docs(*args) if d["kind"] == "ResourceQuota"]
+def _sets(*items: str) -> list[str]:
+    return [arg for item in items for arg in ("--set", item)]
+
+
+def _quotas(*items: str) -> list[dict]:
+    return [d for d in _docs(*_sets(KIT_PATH, *items)) if d["kind"] == "ResourceQuota"]
 
 
 def test_the_quota_admits_the_configured_number_of_best_effort_pods():
@@ -60,23 +61,17 @@ def test_no_quota_without_a_cap_or_without_xnat(unset):
 
 
 RENDERS = {
-    "default": ["--set", KIT_PATH],
-    "flower": ["--set", KIT_PATH, "--set", "flBackend=flower"],
+    "default": _sets(KIT_PATH),
+    "flower": _sets(KIT_PATH, "flBackend=flower"),
     "aks small node": ["-f", str(CHART_DIR / "values-aks.yaml"), "-f", str(CHART_DIR / "values-small-node.yaml")],
-    "vocab load and gpu": [
-        "--set",
+    "vocab load and gpu": _sets(
         KIT_PATH,
-        "--set",
         "omopDb.vocabLoad.enabled=true",
-        "--set",
-        "omopDb.vocabLoad.s3Bucket=bucket",
-        "--set",
+        "omopDb.vocabLoad.hostPath=/opt/flip/omop-vocab",
         "flClient.gpu.enabled=true",
-        "--set",
         "flClient.gpu.count=1",
-        "--set",
         "flClient.gpu.operator.enabled=true",
-    ],
+    ),
 }
 
 

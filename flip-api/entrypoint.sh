@@ -31,9 +31,6 @@ else
     fast_api_cmd="-m fastapi dev ./src/flip_api/main.py --host 0.0.0.0 --port 8000 --reload"
 fi
 debug_cmd="-Xfrozen_modules=off -m debugpy --listen 0.0.0.0:5678 --wait-for-client"
-seed_cmd="uv run python src/flip_api/db/seed/seed_essential_data.py"
-
-echo fs.inotify.max_user_watches=524288 | tee -a /proc/sys/fs/inotify/max_user_watches
 
 # Ping the Postgres database to check if it's up, no login is needed to this check
 >&2 echo "Waiting for Postgres to be available..."
@@ -46,26 +43,22 @@ done
 # Alembic owns the schema (replaces the old SQLModel.metadata.create_all). Fail fast:
 # a non-zero migration exit must NOT seed or start FastAPI, so a half-applied schema
 # never serves traffic. Runs from /app where alembic.ini lives.
-uv run alembic upgrade head
-if [ $? -ne 0 ]; then
+if ! uv run alembic upgrade head; then
     >&2 echo "Alembic migration failed - exiting"
     exit 1
 fi
 
 >&2 echo "Migrations applied - executing seeding command"
-${seed_cmd}
-
-# Check if seeding was successful
-if [ $? -eq 0 ]; then
-    >&2 echo "Seeding database complete - starting FastAPI server"
-    if [ "$DEBUG" = "true" ]; then
-        echo "🚨 Starting API in debug mode... 🐛"
-        exec uv run python ${debug_cmd} ${fast_api_cmd}
-    else
-        echo "🚢 Starting API in normal mode... "
-        exec uv run python ${fast_api_cmd}
-    fi
-else
+if ! uv run python src/flip_api/db/seed/seed_essential_data.py; then
     >&2 echo "Seeding database failed - exiting"
     exit 1
+fi
+
+>&2 echo "Seeding database complete - starting FastAPI server"
+if [ "$DEBUG" = "true" ]; then
+    echo "🚨 Starting API in debug mode... 🐛"
+    exec uv run python ${debug_cmd} ${fast_api_cmd}
+else
+    echo "🚢 Starting API in normal mode... "
+    exec uv run python ${fast_api_cmd}
 fi

@@ -79,33 +79,26 @@ def mock_upload_multiple_apps_request():
 
 
 @pytest.fixture
-def mock_upload_multiple_apps_request_missing_meta_json():
-    base = f"https://test.local/bundles/{TEST_MODEL_ID}"
+def mock_upload_multiple_apps_request_missing_meta_json(mock_upload_multiple_apps_request):
+    """The multi-app request without its meta.json."""
+    urls = [u for u in mock_upload_multiple_apps_request.bundle_urls if not u.endswith("/meta.json")]
+    return mock_upload_multiple_apps_request.model_copy(update={"bundle_urls": urls})
 
-    return UploadAppRequest(
-        bundle_urls=[
-            # Default app
-            f"{base}/app/config/config_fed_server.json",
-            f"{base}/app/config/config_fed_client.json",
-            f"{base}/app/custom/trainer.py",
-            f"{base}/app/custom/models.py",
-            # Per-trust app: Trust 1
-            f"{base}/app-trust1/config/config_fed_server.json",
-            f"{base}/app-trust1/config/config_fed_client.json",
-            f"{base}/app-trust1/custom/trainer.py",
-            f"{base}/app-trust1/custom/models.py",
-            # Per-trust app: Trust 2
-            f"{base}/app-trust2/config/config_fed_server.json",
-            f"{base}/app-trust2/config/config_fed_client.json",
-            f"{base}/app-trust2/custom/trainer.py",
-            f"{base}/app-trust2/custom/models.py",
-            # ❌ Intentionally missing:
-            # f"{base}/meta.json"
-        ],
-        project_id="123456789",
-        cohort_query="SELECT * FROM patients WHERE age > 60",
-        trusts=["Trust_1", "Trust_2"],
-    )
+
+@pytest.fixture
+def stub_configure_steps(monkeypatch):
+    """Stub upload_application's configure steps, for the tests that exercise only the fetch and staging."""
+    for name in (
+        "configure_environment",
+        "configure_meta",
+        "configure_server",
+        "configure_client",
+        "configure_config",
+        "validate_config",
+        "configure_flip_model_id",
+    ):
+        monkeypatch.setattr(f"fl_api.utils.upload.{name}", MagicMock())
+    monkeypatch.setattr("fl_api.utils.upload.read_config", MagicMock(return_value={}))
 
 
 @pytest.fixture
@@ -142,14 +135,7 @@ def test_error_requests_get(
     assert "Network error" in str(exc_info.value)
 
 
-@patch("fl_api.utils.upload.configure_environment", MagicMock())
-@patch("fl_api.utils.upload.configure_meta", MagicMock())
-@patch("fl_api.utils.upload.configure_server", MagicMock())
-@patch("fl_api.utils.upload.configure_client", MagicMock())
-@patch("fl_api.utils.upload.configure_config", MagicMock())
-@patch("fl_api.utils.upload.validate_config", MagicMock())
-@patch("fl_api.utils.upload.read_config", MagicMock(return_value={}))
-@patch("fl_api.utils.upload.configure_flip_model_id", MagicMock())
+@pytest.mark.usefixtures("stub_configure_steps")
 def test_upload_app_success(
     mock_requests_get_success,
     mock_upload_correct_request,
@@ -166,14 +152,7 @@ def test_upload_app_success(
     assert [call.args[0] for call in mock_requests_get_success.call_args_list] == body.bundle_urls
 
 
-@patch("fl_api.utils.upload.configure_environment", MagicMock())
-@patch("fl_api.utils.upload.configure_meta", MagicMock())
-@patch("fl_api.utils.upload.configure_server", MagicMock())
-@patch("fl_api.utils.upload.configure_client", MagicMock())
-@patch("fl_api.utils.upload.configure_config", MagicMock())
-@patch("fl_api.utils.upload.validate_config", MagicMock())
-@patch("fl_api.utils.upload.read_config", MagicMock(return_value={}))
-@patch("fl_api.utils.upload.configure_flip_model_id", MagicMock())
+@pytest.mark.usefixtures("stub_configure_steps")
 def test_upload_delivers_the_job_credential_outside_the_job(
     mock_requests_get_success, mock_upload_correct_request, tmp_path, monkeypatch, caplog
 ):
@@ -194,14 +173,7 @@ def test_upload_delivers_the_job_credential_outside_the_job(
     assert credential not in caplog.text
 
 
-@patch("fl_api.utils.upload.configure_environment", MagicMock())
-@patch("fl_api.utils.upload.configure_meta", MagicMock())
-@patch("fl_api.utils.upload.configure_server", MagicMock())
-@patch("fl_api.utils.upload.configure_client", MagicMock())
-@patch("fl_api.utils.upload.configure_config", MagicMock())
-@patch("fl_api.utils.upload.validate_config", MagicMock())
-@patch("fl_api.utils.upload.read_config", MagicMock(return_value={}))
-@patch("fl_api.utils.upload.configure_flip_model_id", MagicMock())
+@pytest.mark.usefixtures("stub_configure_steps")
 def test_upload_multiple_apps_success(
     mock_requests_get_success,
     mock_upload_multiple_apps_request,
@@ -222,14 +194,7 @@ def test_upload_multiple_apps_missing_meta_json(
     assert exc_info.value.status_code == 404
 
 
-@patch("fl_api.utils.upload.configure_environment", MagicMock())
-@patch("fl_api.utils.upload.configure_meta", MagicMock())
-@patch("fl_api.utils.upload.configure_server", MagicMock())
-@patch("fl_api.utils.upload.configure_client", MagicMock())
-@patch("fl_api.utils.upload.configure_config", MagicMock())
-@patch("fl_api.utils.upload.validate_config", MagicMock())
-@patch("fl_api.utils.upload.read_config", MagicMock(return_value={}))
-@patch("fl_api.utils.upload.configure_flip_model_id", MagicMock())
+@pytest.mark.usefixtures("stub_configure_steps")
 def test_upload_stages_server_checkpoint_off_job(mock_requests_get_success, tmp_path, monkeypatch):
     """A bundle file under ``/server_checkpoints/`` is staged on the shared checkpoint volume
     (``SERVER_CHECKPOINT_ROOT/<model_id>/<file>``), NOT placed in the FLARE job dir — so it is
@@ -261,14 +226,7 @@ def test_upload_stages_server_checkpoint_off_job(mock_requests_get_success, tmp_
     assert not list((job_root / TEST_MODEL_ID).rglob("weights.pt"))
 
 
-@patch("fl_api.utils.upload.configure_environment", MagicMock())
-@patch("fl_api.utils.upload.configure_meta", MagicMock())
-@patch("fl_api.utils.upload.configure_server", MagicMock())
-@patch("fl_api.utils.upload.configure_client", MagicMock())
-@patch("fl_api.utils.upload.configure_config", MagicMock())
-@patch("fl_api.utils.upload.validate_config", MagicMock())
-@patch("fl_api.utils.upload.read_config", MagicMock(return_value={}))
-@patch("fl_api.utils.upload.configure_flip_model_id", MagicMock())
+@pytest.mark.usefixtures("stub_configure_steps")
 def test_upload_clears_stale_server_checkpoints(
     mock_requests_get_success, mock_upload_correct_request, tmp_path, monkeypatch
 ):
@@ -325,11 +283,6 @@ def test_validate_config_valid():
     assert config.AGGREGATION_WEIGHTS == {"client1": 1.0}
 
 
-def test_validate_config_invalid_type():
-    with pytest.raises(ValueError, match="Provided config is not a valid dictionary"):
-        validate_config("not-a-dict")
-
-
 def test_validate_config_skips_invalid_rounds():
     config = {
         "LOCAL_ROUNDS": -1,
@@ -342,29 +295,9 @@ def test_validate_config_skips_invalid_rounds():
     assert result.GLOBAL_ROUNDS is None
 
 
-def test_validate_config_invalid_aggregator():
-    invalid_config = {
-        "LOCAL_ROUNDS": 5,
-        "GLOBAL_ROUNDS": 10,
-        "AGGREGATOR": "invalid_agg",
-    }
-    with pytest.raises(ValueError, match="Unknown aggregator: invalid_agg"):
-        validate_config(invalid_config)
-
-
 def test_validate_config_accepts_aggregate_only_regex():
     config = validate_config({"AGGREGATE_ONLY_REGEX": "omni_heads"})
     assert config.AGGREGATE_ONLY_REGEX == "omni_heads"
-
-
-def test_validate_config_rejects_invalid_aggregate_only_regex():
-    with pytest.raises(ValueError, match="not a valid regex"):
-        validate_config({"AGGREGATE_ONLY_REGEX": "([unclosed"})
-
-
-def test_validate_config_rejects_non_string_aggregate_only_regex():
-    with pytest.raises(ValueError, match="must be a string regex"):
-        validate_config({"AGGREGATE_ONLY_REGEX": 123})
 
 
 def test_validate_config_aggregate_only_regex_defaults_none():
@@ -391,66 +324,70 @@ def test_validate_config_strips_best_model_metric():
     assert config.BEST_MODEL_METRIC == "VAL-F1-SCORE"
 
 
-def test_validate_config_rejects_best_model_metric_without_global_rounds():
-    # GLOBAL_ROUNDS unset resolves to the platform default of 1, where the selector can never fire.
-    with pytest.raises(ValueError, match="BEST_MODEL_METRIC requires GLOBAL_ROUNDS >= 2"):
-        validate_config({"BEST_MODEL_METRIC": "VAL_DICE"})
-
-
-def test_validate_config_rejects_best_model_metric_with_single_round():
-    with pytest.raises(ValueError, match="BEST_MODEL_METRIC requires GLOBAL_ROUNDS >= 2"):
-        validate_config({"BEST_MODEL_METRIC": "VAL_DICE", "GLOBAL_ROUNDS": 1})
-
-
-def test_validate_config_rejects_best_model_metric_with_invalid_rounds():
-    # An out-of-range GLOBAL_ROUNDS is silently dropped and also resolves to the 1-round default.
-    with pytest.raises(ValueError, match="BEST_MODEL_METRIC requires GLOBAL_ROUNDS >= 2"):
-        validate_config({"BEST_MODEL_METRIC": "VAL_DICE", "GLOBAL_ROUNDS": 0})
-
-
-def test_validate_config_rejects_non_string_best_model_metric():
-    with pytest.raises(ValueError, match="BEST_MODEL_METRIC must be a non-empty string"):
-        validate_config({"BEST_MODEL_METRIC": 123})
-
-
-def test_validate_config_rejects_empty_best_model_metric():
-    with pytest.raises(ValueError, match="BEST_MODEL_METRIC must be a non-empty string"):
-        validate_config({"BEST_MODEL_METRIC": ""})
-
-
-def test_validate_config_rejects_whitespace_only_best_model_metric():
-    with pytest.raises(ValueError, match="BEST_MODEL_METRIC must be a non-empty string"):
-        validate_config({"BEST_MODEL_METRIC": "   "})
-
-
-def test_validate_config_rejects_non_bool_best_model_metric_minimize():
-    with pytest.raises(ValueError, match="BEST_MODEL_METRIC_MINIMIZE must be a boolean"):
-        validate_config({"BEST_MODEL_METRIC": "VAL_DICE", "BEST_MODEL_METRIC_MINIMIZE": "yes"})
-
-
-def test_validate_config_rejects_best_model_metric_minimize_without_metric():
-    with pytest.raises(ValueError, match="BEST_MODEL_METRIC_MINIMIZE requires BEST_MODEL_METRIC"):
-        validate_config({"BEST_MODEL_METRIC_MINIMIZE": True})
-
-
 def test_validate_config_best_model_metric_defaults_none():
     result = validate_config({"LOCAL_ROUNDS": 3})
     assert result.BEST_MODEL_METRIC is None
     assert result.BEST_MODEL_METRIC_MINIMIZE is False
 
 
-def test_validate_config_rejects_non_dict_weights():
-    with pytest.raises(ValueError, match="AGGREGATION_WEIGHTS must be a dictionary"):
-        validate_config({"AGGREGATION_WEIGHTS": ["client1"]})
-
-
-def test_validate_config_invalid_weights():
-    bad_weights = {
-        "AGGREGATION_WEIGHTS": {"client1": "not-a-number"},
-        "AGGREGATOR": "InTimeAccumulateWeightedAggregator",
-    }
-    with pytest.raises(ValueError, match="Invalid weight"):
-        validate_config(bad_weights)
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        pytest.param("not-a-dict", "Provided config is not a valid dictionary", id="not-a-dict"),
+        pytest.param(
+            {"LOCAL_ROUNDS": 5, "GLOBAL_ROUNDS": 10, "AGGREGATOR": "invalid_agg"},
+            "Unknown aggregator: invalid_agg",
+            id="unknown-aggregator",
+        ),
+        pytest.param({"AGGREGATE_ONLY_REGEX": "([unclosed"}, "not a valid regex", id="invalid-regex"),
+        pytest.param({"AGGREGATE_ONLY_REGEX": 123}, "must be a string regex", id="non-string-regex"),
+        # GLOBAL_ROUNDS unset resolves to the platform default of 1, where the selector can never fire.
+        pytest.param(
+            {"BEST_MODEL_METRIC": "VAL_DICE"},
+            "BEST_MODEL_METRIC requires GLOBAL_ROUNDS >= 2",
+            id="metric-without-global-rounds",
+        ),
+        pytest.param(
+            {"BEST_MODEL_METRIC": "VAL_DICE", "GLOBAL_ROUNDS": 1},
+            "BEST_MODEL_METRIC requires GLOBAL_ROUNDS >= 2",
+            id="metric-with-single-round",
+        ),
+        # An out-of-range GLOBAL_ROUNDS is silently dropped and also resolves to the 1-round default.
+        pytest.param(
+            {"BEST_MODEL_METRIC": "VAL_DICE", "GLOBAL_ROUNDS": 0},
+            "BEST_MODEL_METRIC requires GLOBAL_ROUNDS >= 2",
+            id="metric-with-invalid-rounds",
+        ),
+        pytest.param(
+            {"BEST_MODEL_METRIC": 123}, "BEST_MODEL_METRIC must be a non-empty string", id="non-string-metric"
+        ),
+        pytest.param({"BEST_MODEL_METRIC": ""}, "BEST_MODEL_METRIC must be a non-empty string", id="empty-metric"),
+        pytest.param(
+            {"BEST_MODEL_METRIC": "   "}, "BEST_MODEL_METRIC must be a non-empty string", id="whitespace-only-metric"
+        ),
+        pytest.param(
+            {"BEST_MODEL_METRIC": "VAL_DICE", "BEST_MODEL_METRIC_MINIMIZE": "yes"},
+            "BEST_MODEL_METRIC_MINIMIZE must be a boolean",
+            id="non-bool-minimize",
+        ),
+        pytest.param(
+            {"BEST_MODEL_METRIC_MINIMIZE": True},
+            "BEST_MODEL_METRIC_MINIMIZE requires BEST_MODEL_METRIC",
+            id="minimize-without-metric",
+        ),
+        pytest.param(
+            {"AGGREGATION_WEIGHTS": ["client1"]}, "AGGREGATION_WEIGHTS must be a dictionary", id="non-dict-weights"
+        ),
+        pytest.param(
+            {"AGGREGATION_WEIGHTS": {"client1": "not-a-number"}, "AGGREGATOR": "InTimeAccumulateWeightedAggregator"},
+            "Invalid weight",
+            id="invalid-weight",
+        ),
+    ],
+)
+def test_validate_config_rejects(config, message):
+    with pytest.raises(ValueError, match=message):
+        validate_config(config)
 
 
 def test_upload_app_rejects_non_https_bundle_url():

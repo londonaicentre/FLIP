@@ -14,15 +14,10 @@
 from __future__ import annotations
 
 import csv
-import sys
 from pathlib import Path
 
 import pytest
-
-DATASETS_DIR = Path(__file__).resolve().parents[3] / "datasets"
-sys.path.insert(0, str(DATASETS_DIR))
-
-from brain_mri import cases  # noqa: E402
+from brain_mri import cases
 
 ALL = ["BRATS_001", "BRATS_002", "BRATS_010", "BRATS_003", "BRATS_100"]
 

@@ -24,7 +24,6 @@ from flip_api.config import get_settings
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Model, Projects, ProjectTrustIntersect, ProjectUserAccess, Queries, Trust
 from flip_api.db.models.user_models import PermissionRef, RoleRef, UserRole
-from flip_api.utils.get_secrets import get_secret
 from flip_api.utils.logger import logger
 
 
@@ -334,72 +333,6 @@ def can_access_cohort_query(user_id: UUID, query_id: UUID, db: Session) -> bool:
 
 API_KEY_HEADER_NAME = get_settings().TRUST_API_KEY_HEADER
 api_key_header_scheme = APIKeyHeader(name=API_KEY_HEADER_NAME, auto_error=False)
-
-
-INTERNAL_SERVICE_KEY_HEADER_NAME = get_settings().INTERNAL_SERVICE_KEY_HEADER
-internal_key_header_scheme = APIKeyHeader(name=INTERNAL_SERVICE_KEY_HEADER_NAME, auto_error=False)
-
-_internal_service_key_hash_cache: str | None = None
-
-
-def _get_internal_service_key_hash() -> str:
-    """Get internal service key hash from env var (dev) or AWS Secrets Manager (prod).
-
-    Cached after first call — the hash does not change during the lifetime of a process.
-
-    Returns:
-        str: SHA-256 hex digest of the internal service key, or empty string if not configured.
-    """
-    global _internal_service_key_hash_cache  # noqa: PLW0603
-    if _internal_service_key_hash_cache is not None:
-        return _internal_service_key_hash_cache
-
-    stt = get_settings()
-    if stt.ENV == "production":
-        _internal_service_key_hash_cache = get_secret("internal_service_key_hash")
-    else:
-        _internal_service_key_hash_cache = stt.INTERNAL_SERVICE_KEY_HASH
-
-    return _internal_service_key_hash_cache
-
-
-def authenticate_internal_service(api_key: str = Security(internal_key_header_scheme)) -> None:
-    """Authenticate an internal service (e.g., fl-server on the Central Hub).
-
-    The fl-server sends an internal service key in the X-Internal-Service-Key header.
-    This dependency hashes the provided key and compares it against the stored hash
-    using constant-time comparison.
-
-    Args:
-        api_key (str): The internal service key from the request header.
-
-    Raises:
-        HTTPException: 401 if the key is missing, unconfigured, or invalid.
-    """
-    if not api_key:
-        logger.warning("Internal service authentication failed: key missing from request.")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated: internal service key is missing.",
-        )
-    expected_hash = _get_internal_service_key_hash()
-    if not expected_hash:
-        logger.warning("Internal service authentication failed: INTERNAL_SERVICE_KEY_HASH not configured.")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Internal service auth not configured.",
-        )
-    # SHA-256 is appropriate here: the input is a 256-bit random token from `secrets.token_urlsafe(32)`,
-    # not a user-chosen password. Slow KDFs (bcrypt/argon2) only defend against low-entropy inputs; against
-    # 256-bit random keys they provide no security benefit. CodeQL flags this as `py/weak-sensitive-data-hashing`
-    # but the rule targets password hashing — false positive for API-key storage. See generate_internal_service_key.py.
-    provided_hash = hashlib.sha256(api_key.encode()).hexdigest()
-    if not hmac.compare_digest(provided_hash, expected_hash):
-        logger.warning("Internal service authentication failed: invalid key.")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid internal service key.",
-        )
 
 
 def authenticate_trust(

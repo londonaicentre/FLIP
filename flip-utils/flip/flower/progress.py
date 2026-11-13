@@ -129,6 +129,9 @@ class RoundTelemetry:
         ``resolve_absent_site``) so its error is attributed to the right trust. fl-clients never reach the
         Central Hub directly — every forward happens here, server-side.
 
+        The per-client result row goes to the activity feed from the train phase, or
+        from the evaluate phase only when the round did not train (evaluation jobs).
+
         Args:
             replies: The round's reply Messages.
             phase: The strategy phase these replies belong to.
@@ -148,11 +151,16 @@ class RoundTelemetry:
         dispatched = self._dispatched_by_phase.get(phase, set())
         absent_site = resolve_absent_site(dispatched, responded, self.site_by_node)
 
+        # One "result received" row per client per round: when the round also trained, the
+        # evaluate replies (every round under best-model selection) add no feed row (FLIP#928).
+        owns_feed = phase == "train" or not self.dispatched_count("train")
+
         returned = 0
         for msg in replies:
             handle_client_metrics(msg, server_round, model_id, flip)
             handle_client_exception(msg, model_id, flip, site_name=absent_site)
-            if report_client_result(msg, server_round, model_id, flip):
+            healthy = report_client_result(msg, server_round, model_id, flip) if owns_feed else not msg.has_error()
+            if healthy:
                 returned += 1
         return returned
 

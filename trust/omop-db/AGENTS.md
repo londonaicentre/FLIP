@@ -6,9 +6,10 @@ Two halves of one pipeline (merged from the retired private `flip-omop-db` repo,
 
 1. **Image build source** for `ghcr.io/londonaicentre/omop-db`: `Dockerfile` on `postgres:17` bakes the
    `files/` init chain (create `omop` schema → OMOP CDM 5.4 DDL → primary keys → indices → read-only
-   roles) plus the seed-time helpers (`load_core_vocab.sh`, `OMOPCDM_postgresql_5.4_constraints.sql`, `unzip` and
-   Debian's `awscli` — the k8s vocab-load Job fetches and unpacks the bundle with the image's own copies so it
-   installs nothing at run time, keeping S3 the only host it must reach; FLIP#1721). The image is
+   roles) plus the seed-time helpers (`load_core_vocab.sh`, `OMOPCDM_postgresql_5.4_constraints.sql`). It also
+   still bakes `unzip` and Debian's `awscli` (FLIP#1721) for the k8s vocab-load Job's in-cluster S3 fetch, which
+   FLIP#923 removed: that Job now reads an unpacked folder from the node and reaches no host, so nothing in the
+   chart uses them. The image is
    **vocab-free** (FLIP#842) — nothing licensed in any layer — so it is published by CI
    (`docker_build_omop_db.yml`, gated on the "Trust - OMOP DB CI" test workflow like the other
    services). FK **constraints are deliberately absent from init** — they are applied only AFTER data
@@ -35,10 +36,13 @@ tolerate the DICOM vocab the seed has already loaded):
 - **EC2**: the `flip_omop_vocab` Ansible role (part of the EC2 root's `make seed`; throwaway container on
   loopback port 15499; kit credentials passed by that root's Makefile).
 - **Kubernetes**: the chart's `omop-vocab-load` post-install/post-upgrade hook Job
-  (`omopDb.vocabLoad` values; bundle from S3, loader + constraints from the image). Its first
-  stage runs `load_core_vocab.sh --check` and skips the multi-GB fetch when the database is
-  already loaded — the hook sits on the critical path of every `helm upgrade`, so the fetch
-  must stay conditional. The loader still runs (constraints).
+  (`omopDb.vocabLoad.hostPath`: the unpacked bundle staged onto the node with the chart's
+  `stage-vocab`, loader + constraints from the image; no S3 fetch since FLIP#923). The hook runs on
+  every upgrade, so it is on the critical path of each one (a failed hook fails the release): it asks
+  the database first and, with the vocabulary loaded, reads nothing from the folder and only re-applies
+  the constraints. The folder is needed for the first load only, and the volume is
+  `DirectoryOrCreate` so a folder removed afterwards (or a rebuilt node) does not hold the pod.
+  On a multi-node cluster `omopDb.vocabLoad.nodeSelector` pins the Job to the node holding it.
 
 ## Load-bearing facts
 

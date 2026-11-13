@@ -54,15 +54,6 @@ the tutorial's cohort query with the names of the handful of concepts the mock
 data uses written in. You need the vocabulary for the tutorials' own
 ``query.sql`` and for any query of yours that looks concepts up by name.
 
-.. note::
-
-   **Outside the AI Centre, skip Step 3 entirely.** The SSO profile and the
-   maintainer access it mentions only apply to the AI Centre team. Download an
-   equivalent vocabulary export from `OHDSI Athena <https://athena.ohdsi.org/>`_
-   under your own licence instead — see
-   `the core vocabulary bundle <https://github.com/londonaicentre/FLIP/blob/develop/trust/omop-db/README.md#the-core-vocabulary-bundle>`__.
-   That route needs no AWS account either.
-
 *************
 Prerequisites
 *************
@@ -80,7 +71,7 @@ Prerequisites
   `AWS CLI v2 <https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html>`_
   and an AWS IAM Identity Center user in the ``FLIPDeveloper`` group (Step 3).
   Nothing else in this guide uses it.
-- Free host ports for the hub (UI, ``8080`` API, ``5432`` database, ``8180``
+- Free host ports for the hub (``UI_PORT``, default ``443``; ``8080`` API, ``5432`` database, ``8180``
   Keycloak, ``9000``/``9001`` object store) and for the two Trusts (their ports
   are listed in ``trust/.env.GSTT.development.example`` and
   ``trust/.env.KCH.development.example``).
@@ -132,8 +123,7 @@ placeholders:
      - A new 32-byte key:
        ``python3 -c "import base64, os; print(base64.b64encode(os.urandom(32)).decode())"``
 
-Leave these alone: ``INTERNAL_SERVICE_KEY``, ``INTERNAL_SERVICE_KEY_HASH`` and
-``FL_API_KEY`` (``make up`` generates them), the Cognito and SES settings (staging and
+Leave these alone: ``FL_API_KEY`` (``make up`` generates it), the Cognito and SES settings (staging and
 production only) and the object-store keys (defaults are in
 ``deploy/compose.development.yml``).
 
@@ -151,9 +141,13 @@ Trust's credentials when it registers it with the hub.
 Step 3 — (Optional) Set up AWS SSO for the vocabulary
 *******************************************************
 
-**Skip this step and the stack stays entirely AWS-free.** It only matters if
-you are on the AI Centre team and want the licensed vocabulary from its bucket
-(Step 7). Everything up to and including a training run works without it.
+**Skip this step unless you are on the AI Centre team** and want the licensed
+vocabulary from its bucket (Step 7). Without it the stack stays entirely
+AWS-free, up to and including a training run. Outside the AI Centre, download an
+equivalent vocabulary export from `OHDSI Athena <https://athena.ohdsi.org/>`_
+under your own licence instead — see
+`the core vocabulary bundle <https://github.com/londonaicentre/FLIP/blob/develop/trust/omop-db/README.md#the-core-vocabulary-bundle>`__.
+That route needs no AWS account either.
 
 1. Ask a maintainer for an AWS IAM Identity Center user in the ``FLIPDeveloper``
    group, follow its sign-in email, and set a password and MFA at
@@ -203,7 +197,7 @@ Step 4 — Log in to the image registry
 *************************************
 
 ``make up`` pulls the published images from GHCR. Create a GitHub personal
-access token with the ``read:packages`` scope and log in once:
+access token with the ``read:packages`` scope, put it in ``GHCR_PAT`` and log in once:
 
 .. code-block:: bash
 
@@ -262,7 +256,7 @@ Step 6 — Start the platform
 
    make up
 
-In order, this generates the internal service key, creates the Docker networks
+In order, this generates the FL API key, creates the Docker networks
 and the object-store buckets, starts the hub, registers GSTT and KCH with it
 and writes their kit files. Then, one Trust at a time, it starts the Trust
 stack, seeds it with the mock data pinned in ``trust/.data_version`` and starts
@@ -278,7 +272,7 @@ loaded into Orthanc. Later runs skip anything already seeded.
    expect a **password prompt** (usually just one: sudo remembers it for the
    second Trust). Answer it in the terminal; do not
    rerun the whole command as ``sudo make up``, which leaves root-owned files
-   behind (see Troubleshooting). From a script, CI job or any shell without a
+   behind (see `Troubleshooting`_). From a script, CI job or any shell without a
    terminal it fails with ``sudo: A terminal is required to authenticate``.
 
 The two Trusts run side by side on one host as separate Compose projects,
@@ -322,15 +316,15 @@ cached results. The first load downloads the bundle with the ``dev`` profile
 
    docker restart trust1-data-access-api-1 trust2-data-access-api-1
 
+The container names assume the default stack; with ``FLIP_INSTANCE`` set they
+carry its prefix (``<instance>-trust1-...``). ``docker ps`` lists them.
+
 Each load takes around fifteen minutes. Check the result rather than the
 closing message, which is printed even when the target database was already
 loaded: ``omop.concept`` holds about six million rows afterwards, against
 under ten thousand before.
 
-The container names assume the default stack; with ``FLIP_INSTANCE`` set they
-carry its prefix (``<instance>-trust1-...``). ``docker ps`` lists them.
-
-Without it, a cohort query of your own that joins ``omop.concept`` with an
+Without the vocabulary, a cohort query of your own that joins ``omop.concept`` with an
 inner ``JOIN`` returns zero rows, and the project later fails staging with
 ``returned no cohort records (zero or privacy-suppressed)`` — which looks like a
 privacy-threshold problem but is the missing vocabulary.
@@ -392,13 +386,17 @@ To run the same job by hand, sign in to the UI and follow
 :doc:`../user-guides`, using the cohort query and app files of
 ``fl-tutorials/nvflare/image_classification/xray_classification/``
 (``query_novocab.sql`` and ``app_files/``). Each Trust should report about 300
-subjects. Use ``query.sql`` instead once you have loaded the vocabulary
-(Step 7); it returns the same cohort. The Trusts hold only the chest X-ray
-project the seed loads, so a query for other data
-(``flip-api/tests/example_query.sql`` looks for spleen CT, for example) comes
-back empty, and so does any query that filters on concept names until you load
-the vocabulary. An empty cohort and one below the
-Trust's privacy threshold are reported the same way, as suppressed.
+subjects.
+
+- Once you have loaded the vocabulary (Step 7), ``query.sql`` returns the same
+  cohort.
+- The Trusts hold only the chest X-ray project the seed loads, so a query for
+  other data (``flip-api/tests/example_query.sql`` looks for spleen CT, for
+  example) comes back empty.
+- Until you load the vocabulary, any query that filters on concept names also
+  comes back empty.
+- An empty cohort and one below the Trust's privacy threshold are reported the
+  same way, as suppressed.
 
 **************
 Day-to-day use

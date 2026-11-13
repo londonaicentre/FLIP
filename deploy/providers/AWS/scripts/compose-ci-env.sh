@@ -172,8 +172,6 @@ REQUIRED_KEYS=(
     # Secrets — stored as GitHub environment secrets
     ADMIN_USER_PASSWORD
     AES_KEY_BASE64
-    INTERNAL_SERVICE_KEY
-    INTERNAL_SERVICE_KEY_HASH
     FL_API_KEY
 
     # Database identifiers — configuration, stored as GitHub environment
@@ -186,7 +184,6 @@ REQUIRED_KEYS=(
     # Service wiring baked into the ECS task definitions (locals.tf)
     FL_ADMIN_DIRECTORY
     FL_SERVER_PORT
-    INTERNAL_SERVICE_KEY_HEADER
     SES_VERIFIED_EMAIL
     TRUST_API_KEY_HEADER
 
@@ -225,6 +222,12 @@ OPTIONAL_KEYS=(
     # anchor. Requiring a non-empty value here would reject the correct prod
     # configuration. Only stag sets it (to "false", for testing).
     ENFORCE_MFA
+
+    # Email delivery (FLIP#592). Unset is today's behaviour: FLIP sends from
+    # SES_VERIFIED_EMAIL and Cognito uses its built-in sender. Each is set per
+    # environment once its precondition holds (README, "SES Prerequisites").
+    SES_SENDER_EMAIL
+    COGNITO_EMAIL_VIA_SES
 )
 
 # ---------------------------------------------------------------------------

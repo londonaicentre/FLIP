@@ -15,7 +15,6 @@ import logging
 from pathlib import Path
 
 import nibabel as nib
-import numpy as np
 import nvflare.client as flare
 import pandas as pd
 import torch
@@ -131,7 +130,8 @@ def build_datalist(flip: FLIP, dataframe: pd.DataFrame, project_id: str) -> list
 
 def split_datalist(datalist: list, val_split: float) -> tuple:
     """Deterministic train/validation split — no shuffling, matching the legacy trainer."""
-    train_items, val_items = np.split(datalist, [int((1 - val_split) * len(datalist))])
+    cut = int((1 - val_split) * len(datalist))
+    train_items, val_items = datalist[:cut], datalist[cut:]
     logger.info("Split → train=%d, val=%d", len(train_items), len(val_items))
     return train_items, val_items
 

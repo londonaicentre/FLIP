@@ -26,7 +26,6 @@ from fastapi.security.api_key import APIKeyHeader
 from sqlalchemy import Column
 from sqlmodel import Session, select
 
-from flip_api.auth.access_manager import authenticate_internal_service
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import FLJob, Model
 from flip_api.domain.schemas.status import JobStatus, ModelStatus
@@ -76,7 +75,6 @@ def authorise_job_callback(
     model_id: UUID,
     credential: str | None = Security(_job_credential_header),
     db: Session = Depends(get_session),
-    _: None = Depends(authenticate_internal_service),
 ) -> None:
     """Refuse a callback unless it carries the credential of a job still reporting on the model.
 
@@ -88,7 +86,10 @@ def authorise_job_callback(
     Raises:
         HTTPException: 403 when the credential is missing or is not that of a reporting job of this model.
     """
-    presented = hash_job_credential(credential or "")
+    # Refused before the database is read: these routes have no other gate.
+    if not credential:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_REFUSAL)
+    presented = hash_job_credential(credential)
     # Every candidate is compared, so timing does not say which job matched.
     matches = [hmac.compare_digest(presented, job.credential_hash or "") for job in reporting_jobs(model_id, db)]
     if not any(matches):

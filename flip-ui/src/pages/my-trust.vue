@@ -135,17 +135,13 @@ import { computed, onBeforeMount, ref } from "vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
+import { useHubVersion, useTrustStatuses } from "@/composables/useTrustPolls";
 import TrustDetailCard from "@/partials/connection/TrustDetailCard.vue";
 import TrustDecisionsTable from "@/partials/trusts/TrustDecisionsTable.vue";
 import TrustRequestCard from "@/partials/trusts/TrustRequestCard.vue";
 import { routeChange } from "@/router";
 import { approveProject } from "@/services/project-service";
-import { getHubHealth,
-    getTrustDecisions,
-    getTrustStatuses,
-    IHubHealth,
-    ITrustDecision,
-    ITrustResponse } from "@/services/trust-service";
+import { getTrustDecisions, ITrustDecision } from "@/services/trust-service";
 import { useAuthStore } from "@/store/auth";
 import { extractErrorDetail } from "@/utils/api-errors";
 import { deriveTrust } from "@/utils/connection-health";
@@ -159,17 +155,8 @@ onBeforeMount(() => {
 });
 
 // Same key and cadence as Connection Status, so the two pages share one poll.
-const { data: trusts } = useSWRV<ITrustResponse[]>("trust-connection-status", getTrustStatuses, {
-    dedupingInterval: 5_000,
-    shouldRetryOnError: false,
-    refreshInterval: 15_000
-});
-const { data: hubHealth } = useSWRV<IHubHealth>("hub-health", getHubHealth, {
-    dedupingInterval: 30_000,
-    shouldRetryOnError: false,
-    refreshInterval: 60_000
-});
-const hubVersion = computed<string | null>(() => hubHealth.value?.version ?? null);
+const { data: trusts } = useTrustStatuses();
+const hubVersion = useHubVersion();
 
 const derivedTrust = computed(() => {
     const trust = (trusts.value ?? []).find(t => t.id === trustAdminOf.value?.id);

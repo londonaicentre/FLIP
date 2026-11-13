@@ -447,13 +447,12 @@ def get_imaging_project_statuses(
             snapshot = _get_imaging_status_snapshot(row_project.trust_id, row_project.xnat_project_id, db)
 
             # Queue a status refresh task only if one isn't already pending or in progress for this XNAT project
-            existing_task = db.exec(
-                select(TrustTask)
-                .where(TrustTask.trust_id == row_project.trust_id)
-                .where(TrustTask.task_type == TaskType.GET_IMAGING_STATUS)
-                .where(col(TrustTask.status).in_([TaskStatus.PENDING, TaskStatus.IN_PROGRESS]))
-                .where(col(TrustTask.payload).contains(str(row_project.xnat_project_id)))
-            ).first()
+            existing_task = _latest_status_task(
+                row_project.trust_id,
+                row_project.xnat_project_id,
+                db,
+                (TaskStatus.PENDING, TaskStatus.IN_PROGRESS),
+            )
             if not existing_task:
                 task = TrustTask(
                     trust_id=row_project.trust_id,

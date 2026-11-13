@@ -27,10 +27,9 @@ Docker network. The earlier hash-only-on-receivers split provided no real
 defence within that boundary while complicating deploy config; we collapsed
 it to a single plaintext env var.
 
-This is the trust-side analogue of ``flip-api``'s ``INTERNAL_SERVICE_KEY``
-(which protects fl-server → flip-api on the Central Hub). The two keys are
-deliberately distinct: a leaked trust key only compromises that trust's
-APIs, and a leaked hub key cannot drive any trust.
+It is deliberately distinct from the per-job credential that protects
+fl-server → flip-api on the Central Hub: a leaked trust key only compromises
+that trust's APIs, and a hub credential cannot drive any trust.
 """
 
 import hmac

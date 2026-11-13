@@ -27,184 +27,70 @@ def mock_session():
     return session
 
 
+def _net(i):
+    net = MagicMock(spec=FLNets, id=i)
+    net.name = f"test_net_{i}"  # set after construction: the `name` kwarg would name the mock itself
+    return net
+
+
+def _scheduler(i):
+    return MagicMock(spec=FLScheduler, id=i, net_id=i, status=NetStatus.AVAILABLE)
+
+
 @pytest.fixture
 def sample_nets():
     """Create sample FLNets for testing."""
-    net1 = MagicMock(spec=FLNets)
-    net1.id = 1
-    net1.name = "test_net_1"
-
-    net2 = MagicMock(spec=FLNets)
-    net2.id = 2
-    net2.name = "test_net_2"
-
-    net3 = MagicMock(spec=FLNets)
-    net3.id = 3
-    net3.name = "test_net_3"
-
-    return [net1, net2, net3]
+    return [_net(i) for i in (1, 2, 3)]
 
 
 @pytest.fixture
 def sample_existing_scheduler():
     """Create a sample existing scheduler."""
-    scheduler = MagicMock(spec=FLScheduler)
-    scheduler.id = 1
-    scheduler.net_id = 1
-    scheduler.status = NetStatus.AVAILABLE
-    return scheduler
+    return _scheduler(1)
 
 
 @pytest.fixture
 def sample_all_schedulers():
     """Create sample schedulers that would be returned."""
-    scheduler1 = MagicMock(spec=FLScheduler)
-    scheduler1.id = 1
-    scheduler1.net_id = 1
-    scheduler1.status = NetStatus.AVAILABLE
-
-    scheduler2 = MagicMock(spec=FLScheduler)
-    scheduler2.id = 2
-    scheduler2.net_id = 2
-    scheduler2.status = NetStatus.AVAILABLE
-
-    scheduler3 = MagicMock(spec=FLScheduler)
-    scheduler3.id = 3
-    scheduler3.net_id = 3
-    scheduler3.status = NetStatus.AVAILABLE
-
-    return [scheduler1, scheduler2, scheduler3]
+    return [_scheduler(i) for i in (1, 2, 3)]
 
 
-@patch("flip_api.db.seed.fl_scheduler.logger")
-@patch("flip_api.db.seed.fl_scheduler.select")
-@patch("flip_api.db.seed.fl_scheduler.col")
-@patch("flip_api.db.seed.fl_scheduler.FLScheduler")
-def test_seed_fl_scheduler_no_existing_schedulers(
-    mock_fl_scheduler_class, mock_col, mock_select, mock_logger, mock_session, sample_nets, sample_all_schedulers
+@pytest.fixture
+def scheduler_cls():
+    """Patch the query builders and the logger; yield the FLScheduler class double."""
+    mod = "flip_api.db.seed.fl_scheduler"
+    with patch(f"{mod}.logger"), patch(f"{mod}.select"), patch(f"{mod}.col"), patch(f"{mod}.FLScheduler") as cls:
+        yield cls
+
+
+@pytest.mark.parametrize(
+    "existing",
+    [[False, False, False], [True, False, False], [True, True, True], []],
+    ids=["none-existing", "some-existing", "all-existing", "no-nets"],
+)
+def test_seed_fl_scheduler_creates_only_missing_schedulers(
+    existing, scheduler_cls, mock_session, sample_nets, sample_existing_scheduler, sample_all_schedulers
 ):
-    """Test seeding when no existing schedulers exist."""
-    # Setup mocks
+    """A scheduler is created for each net without one; existing ones are kept; one commit; all are returned."""
+    nets = sample_nets[: len(existing)]
+    missing = [net for net, exists in zip(nets, existing, strict=True) if not exists]
+    new_schedulers = [MagicMock() for _ in missing]
+    scheduler_cls.side_effect = new_schedulers
+    # One existence check per net, then the final select of every scheduler.
     mock_session.exec.side_effect = [
-        MagicMock(first=MagicMock(return_value=None)),  # No existing scheduler for net1
-        MagicMock(first=MagicMock(return_value=None)),  # No existing scheduler for net2
-        MagicMock(first=MagicMock(return_value=None)),  # No existing scheduler for net3
-        MagicMock(all=MagicMock(return_value=sample_all_schedulers)),  # Return all schedulers
-    ]
+        MagicMock(first=MagicMock(return_value=sample_existing_scheduler if exists else None)) for exists in existing
+    ] + [MagicMock(all=MagicMock(return_value=sample_all_schedulers))]
 
-    mock_new_schedulers = [MagicMock(), MagicMock(), MagicMock()]
-    mock_fl_scheduler_class.side_effect = mock_new_schedulers
+    result = seed_fl_scheduler(mock_session, nets)
 
-    # Execute
-    result = seed_fl_scheduler(mock_session, sample_nets)
-
-    # Verify
-    assert mock_session.exec.call_count == 4  # 3 checks + 1 final select
-    assert mock_session.add.call_count == 3  # 3 new schedulers added
+    assert mock_session.exec.call_count == len(nets) + 1
+    assert mock_session.add.call_count == len(missing)
+    assert scheduler_cls.call_count == len(missing)
     assert mock_session.commit.call_count == 1
-    assert mock_fl_scheduler_class.call_count == 3
-
-    # Verify new schedulers created with correct parameters
-    for i, net in enumerate(sample_nets):
-        mock_fl_scheduler_class.assert_any_call(status=NetStatus.AVAILABLE, net_id=net.id)
-        mock_session.add.assert_any_call(mock_new_schedulers[i])
-
+    for net, scheduler in zip(missing, new_schedulers, strict=True):
+        scheduler_cls.assert_any_call(status=NetStatus.AVAILABLE, net_id=net.id)
+        mock_session.add.assert_any_call(scheduler)
     assert result == sample_all_schedulers
-    assert len(result) == 3
-
-
-@patch("flip_api.db.seed.fl_scheduler.logger")
-@patch("flip_api.db.seed.fl_scheduler.select")
-@patch("flip_api.db.seed.fl_scheduler.col")
-@patch("flip_api.db.seed.fl_scheduler.FLScheduler")
-def test_seed_fl_scheduler_some_existing_schedulers(
-    mock_fl_scheduler_class,
-    mock_col,
-    mock_select,
-    mock_logger,
-    mock_session,
-    sample_nets,
-    sample_existing_scheduler,
-    sample_all_schedulers,
-):
-    """Test seeding when some schedulers already exist."""
-    # Setup mocks - first net has existing scheduler, others don't
-    mock_session.exec.side_effect = [
-        MagicMock(first=MagicMock(return_value=sample_existing_scheduler)),  # Existing for net1
-        MagicMock(first=MagicMock(return_value=None)),  # No existing for net2
-        MagicMock(first=MagicMock(return_value=None)),  # No existing for net3
-        MagicMock(all=MagicMock(return_value=sample_all_schedulers)),  # Return all schedulers
-    ]
-
-    mock_new_schedulers = [MagicMock(), MagicMock()]
-    mock_fl_scheduler_class.side_effect = mock_new_schedulers
-
-    # Execute
-    result = seed_fl_scheduler(mock_session, sample_nets)
-
-    # Verify
-    assert mock_session.exec.call_count == 4  # 3 checks + 1 final select
-    assert mock_session.add.call_count == 2  # Only 2 new schedulers added
-    assert mock_session.commit.call_count == 1
-    assert mock_fl_scheduler_class.call_count == 2  # Only 2 new schedulers created
-
-    assert result == sample_all_schedulers
-
-
-@patch("flip_api.db.seed.fl_scheduler.logger")
-@patch("flip_api.db.seed.fl_scheduler.select")
-@patch("flip_api.db.seed.fl_scheduler.col")
-@patch("flip_api.db.seed.fl_scheduler.FLScheduler")
-def test_seed_fl_scheduler_all_existing_schedulers(
-    mock_fl_scheduler_class,
-    mock_col,
-    mock_select,
-    mock_logger,
-    mock_session,
-    sample_nets,
-    sample_existing_scheduler,
-    sample_all_schedulers,
-):
-    """Test seeding when all schedulers already exist."""
-    # Setup mocks - all nets have existing schedulers
-    mock_session.exec.side_effect = [
-        MagicMock(first=MagicMock(return_value=sample_existing_scheduler)),  # Existing for net1
-        MagicMock(first=MagicMock(return_value=sample_existing_scheduler)),  # Existing for net2
-        MagicMock(first=MagicMock(return_value=sample_existing_scheduler)),  # Existing for net3
-        MagicMock(all=MagicMock(return_value=sample_all_schedulers)),  # Return all schedulers
-    ]
-
-    # Execute
-    result = seed_fl_scheduler(mock_session, sample_nets)
-
-    # Verify
-    assert mock_session.exec.call_count == 4  # 3 checks + 1 final select
-    assert mock_session.add.call_count == 0  # No new schedulers added
-    assert mock_session.commit.call_count == 1
-    assert mock_fl_scheduler_class.call_count == 0  # No new schedulers created
-
-    assert result == sample_all_schedulers
-
-
-@patch("flip_api.db.seed.fl_scheduler.logger")
-@patch("flip_api.db.seed.fl_scheduler.select")
-@patch("flip_api.db.seed.fl_scheduler.col")
-@patch("flip_api.db.seed.fl_scheduler.FLScheduler")
-def test_seed_fl_scheduler_empty_nets_list(mock_fl_scheduler_class, mock_col, mock_select, mock_logger, mock_session):
-    """Test seeding with empty nets list."""
-    # Setup mocks
-    mock_session.exec.return_value = MagicMock(all=MagicMock(return_value=[]))
-
-    # Execute
-    result = seed_fl_scheduler(mock_session, [])
-
-    # Verify
-    assert mock_session.exec.call_count == 1  # Only final select
-    assert mock_session.add.call_count == 0  # No schedulers added
-    assert mock_session.commit.call_count == 1
-    assert mock_fl_scheduler_class.call_count == 0  # No schedulers created
-
-    assert result == []
 
 
 @patch("flip_api.db.seed.fl_scheduler.logger")

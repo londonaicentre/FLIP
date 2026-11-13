@@ -21,20 +21,23 @@ site's rows leaving it. It is the federated form of a centralised analysis devel
 the first FLIP tutorial whose job trains nothing: the platform's ordinary `standard` (FedAvg) job
 carries it, because what the sites average is chosen so that the average *is* the analysis.
 
+To run it you need your own ADNI access: "Data" gives the four steps, and "How to run" collects the
+commands in one place.
+
 ![Recovered PAG from the federated run on the ADNI cohort](docs/recovered_pag.png)
 
 *The output: the partial ancestral graph two simulated sites recover from the real ADNI cohort
 (560 participants, 280 per site, 50 bootstraps), each edge labelled with its bootstrap frequency.
-Its 16 stable edges hold all 14 of the centralised analysis's Fisher-z preset (its main preset uses
-the kernel test, KCI), plus two pTau217 orientations near 0.5 ("Expected performance"). The
+It has 16 stable edges: all 14 stable edges of the centralised analysis's Fisher-z preset, plus two
+pTau217 orientations near 0.5 (see "Expected performance"). The
 repository ships this summary figure and the converter, never data (see "Data").*
 
 ## The use case
 
 The centralised analysis (`adni_fci`, Natalia Glazman) runs FCI 200 times on bootstrap resamples
-of ~560 ADNI participants (its main preset with the kernel test, KCI; its Fisher-z preset is what the
-pooled mode here reproduces exactly), with background knowledge that demographics are exogenous and the
-cognitive score is a sink, and reports how often each edge appears. Its stable graph is what a
+of ~560 ADNI participants, with background knowledge that demographics are exogenous and the
+cognitive score is a sink, and reports how often each edge appears. Its main preset uses the kernel
+test (KCI); its Fisher-z preset is the one the pooled mode here reproduces exactly. Its stable graph is what a
 clinician would hope for: sex drives head size, age drives NfL and hippocampal volume, APOE4 drives
 pTau217 and the Aβ42/40 ratio, pTau217 and hippocampal volume drive ADAS-Cog13, and intracranial
 and hippocampal volume share a latent cause.
@@ -63,10 +66,10 @@ Fisher's z, whose test needs nothing but second moments and a sample size. Each 
 mean vector and **one** second-moment matrix of its (log-transformed, fixed-scaled) variables over
 all its rows, weighted by its row count — p(p+3)/2 = 77 independent numbers for the eleven variables
 here (the moment matrix is symmetric). The weighted mean of those is exactly the pooled cohort's
-statistics, so the correlation matrix every site gets back in round 2 is the centralised one to
-machine precision, and causal-learn's own `fci()` on it — the complete algorithm, possible-D-sep
-stage and all, run identically at every site — is exactly centralised Fisher-z FCI on the pooled
-rows (`tests/test_biomarker_causal_discovery.py` pins this against `fci()` on the rows). The bootstrap is drawn *after* pooling, from the pooled correlation
+statistics. So the correlation matrix every site gets back in round 2 is the centralised one to
+machine precision. Every site then runs causal-learn's own `fci()` on it — the complete algorithm,
+possible-D-sep stage and all — which is exactly centralised Fisher-z FCI on the pooled rows
+(`tests/test_biomarker_causal_discovery.py` pins this against `fci()` on the rows). The bootstrap is drawn *after* pooling, from the pooled correlation
 (a parametric bootstrap: Wishart draws of the sample covariance under the Gaussian model Fisher's z
 already assumes, re-standardised, with a stream every site shares), so no site ever releases more
 than that one statistic — see "Privacy" for why a per-resample statistic would be too much. In
@@ -94,7 +97,7 @@ your own ADNI licence. ADNI is access-controlled: every user signs a Data Use Ag
 redistributing participant-level data in any form, so this repository ships no rows, no per-site
 split, no thinned fixture and no synthetic stand-in. What it ships is the **code** that turns an
 ADNI download into the cohort, and the summary results of running on it. This is the
-data-access-tier rule of the repo's tutorial skill.
+access-controlled dataset rule of the repo's `tutorial-contract` skill.
 
 ### Running on real ADNI data
 
@@ -132,7 +135,7 @@ participants with the April 2025 plasma release):
    codes as missing, left + right hippocampus, APOE ε4 count from the genotype, age = scan year −
    birth year) and writes `dataframe.csv`, `site1/`, `site2/` and a counts-only
    `cohort_summary.json` to the gitignored `fl-tutorials/data/ad_biomarkers/`, where `.env.app`
-   and the Flower wrapper already look. It prints the participant count, never a value. Pass the
+   and the Flower version of this tutorial already look. It prints the participant count, never a value. Pass the
    tables explicitly (`--demographics … --plasma …`) if your file names differ, and
    `OUT=/secure/flip-data/ad_biomarkers` to keep the cohort elsewhere (the target refuses a path
    inside the repository that git does not ignore).
@@ -157,7 +160,7 @@ or file contents into a coding assistant — run the converter and the simulator
 such tools see code only. The author ran this path under their own access; the result is reported
 in "Expected performance" as numbers only.
 
-**On the platform.** `query.sql` pivots each person's *baseline* (earliest-dated) OMOP measurements
+**On a local dev stack.** `query.sql` pivots each person's *baseline* (earliest-dated) OMOP measurements
 matched on `measurement_source_value` (`PLASMA_PTAU217`, `ICV_MM3`, …) and the education
 observation into one row, deterministically ordered. The trust loader's tests
 (`trust/omop-db/tests/unit/test_adni_cohort.py`) run it on SQLite over the OMOP rows the loader writes
@@ -180,8 +183,7 @@ edges as the simulator: both paths pool the same statistics, and the pooled boot
 `[SEED, 104729]`, with no site term. Frequencies agree to within one bootstrap on a test that sits at
 α: NVFLARE adds each site's DIFF in float32, so its pooled statistics differ from Flower's (exact) by
 ulps, which on this cohort flips one of 50 bootstraps of a weak edge (Aβ42/40 → ADAS-Cog13, 0.32 on
-NVFLARE, 0.34 on Flower). The FL images carry
-causal-learn (flip-utils' `full` extra). There is no demo-video profile, since a recording would show
+NVFLARE, 0.34 on Flower). There is no demo-video profile, since a recording would show
 ADNI-derived values.
 
 ## Preprocessing and background knowledge (`config.json`)
@@ -194,7 +196,7 @@ ADNI-derived values.
 | `ALPHA` | `0.05` | CI-test significance level |
 | `CI_TEST` | `fisherz` | voting mode only (`kci`, `fastkci`, `rcit`, …); pooled mode runs Fisher's z on the pooled correlation and refuses any other value |
 | `VOTE_RATIO` | `0.5` | voting mode: keep an edge if at least this share of sites kept it (FedPC's default is 0.3) |
-| `LOG_TRANSFORM` | the four plasma markers | fixed, site-independent log of the right-skewed markers; the centralised analysis applied a data-fitted Yeo-Johnson to every column with skew above 1 — the same four markers plus intracranial volume and ADAS-Cog13 — and a fitted λ cannot be shared without exchanging it, so this is a departure in the transform and, for those two columns, in whether one is applied at all (see Honest caveats) |
+| `LOG_TRANSFORM` | the four plasma markers | fixed, site-independent log of the right-skewed markers; a data-fitted transform (the centralised analysis's Yeo-Johnson) cannot be shared without exchanging its λ. How this departs from the centralised preprocessing is in Honest caveats |
 | `SCALE` | volumes, age, education, ADAS | fixed divisors so second moments are O(1) — see "Privacy" for why this is load-bearing |
 | `KNOWLEDGE.EXOGENOUS` | age, sex, education, APOE4 | nothing may cause these |
 | `KNOWLEDGE.SINKS` | ADAS-Cog13 | may cause nothing |
@@ -213,11 +215,15 @@ decodes it into the edge-frequency table and the figure below (`make summarise R
 the time it is downloaded the statistics buffers are zero — exactly on Flower; on NVFLARE, which adds
 each site's DIFF in float32, to within a few ulps of the round-1 values (about 1e-6, far below
 `STATISTICS_RESIDUAL_TOLERANCE`) — so only `pag` and `site_counts` carry anything. `summarise_results.py`
-says when a model holds the statistics (a job stopped or failed after round 1, see Privacy), and
-refuses PAGs whose average is not whole endpoint marks: every site computes the same PAGs, so a
-mixture means the sites disagree or one failed its orientation round. A failed site's payload also
-marks the PAGs' diagonal, which no real PAG has, so a mixture that happens to average to whole marks
-(two equal sites, a circle and nothing) and a job in which every site failed are refused too.
+checks the model before decoding it:
+
+- it says when the model still holds the statistics (a job stopped or failed after round 1, see Privacy);
+- it refuses PAGs whose average is not whole endpoint marks — every site computes the same PAGs, so a
+  mixture means the sites disagree or one failed its orientation round;
+- it refuses a mixture that happens to average to whole marks (two equal sites, a circle and nothing),
+  and a job in which every site failed, because a failed site's payload also marks the PAGs' diagonal,
+  which no real PAG has.
+
 Per-round metrics streamed to the hub are `site_rows`, `pooled_rows`, `sites_seen`, `stable_edges`,
 `mean_edges_per_pag`, `stable_adjacencies` (and `mean_edges_kept` per voting layer); the final
 evaluation reports the same for the aggregated PAGs. There is no best-model selection — "best" has
@@ -371,7 +377,7 @@ researcher-settable `AGGREGATION_WEIGHTS` would further let one site be weighted
 the "pooled" statistics into that site's; an approver should reject a config that sets it.
 `summarise_results.py` says when a model holds the statistics, but on the researcher's machine, after
 the download. Closing this needs the platform: a job output contract that declares what a result may
-hold, enforced by the server (#1778). Until then a trust should treat the pooled statistics as
+hold, enforced by the server ([FLIP#1778](https://github.com/londonaicentre/FLIP/issues/1778)). Until then a trust should treat the pooled statistics as
 something the researcher of an approved project can obtain.
 There is also no per-project release ledger: a researcher can re-run the job under one approval with a
 different `LOG_TRANSFORM` and collect the moments of another function of the same rows, one more
@@ -404,12 +410,13 @@ releases; in voting mode they do, which is one reason that mode is gated. What r
 the one covariance per site itself: with two sites, each can subtract its own from the pooled one and
 read the other's. A formal guarantee would add calibrated noise to that single matrix — the Gaussian
 mechanism of Analyze Gauss (Dwork et al. 2014) or the Wishart mechanism (Jiang et al. 2016) — at
-little accuracy cost at this dimension (#1779). The NVFLARE percentile filter and Flower's per-update
+little accuracy cost at this dimension ([FLIP#1779](https://github.com/londonaicentre/FLIP/issues/1779)).
+
+**Why the platform's update filters do nothing for this payload.** The NVFLARE percentile filter and Flower's per-update
 clip-and-noise are not that mechanism, both being calibrated for weight deltas: the payload is
 shaped so the former is a no-op (checked against the trust's effective clip *and* percentile, from
 its site policy), and the latter is switched off in `config.toml`, with the ClientApp refusing a run
-that turns it back on, because clip-and-noise on these arrays corrupts the graph silently. This is the
-one place the reason for switching Flower's DP off is written down; the code and config point here.
+that turns it back on, because clip-and-noise on these arrays corrupts the graph silently. <!-- This is the one place the reason for switching Flower's DP off is written down; the code and config point here. -->
 Neither is a trust-side control for this payload in any case — the filter's clip scales with a weight
 the client sets, and the mod with a file the researcher uploads. Secure aggregation, so the hub sees
 only the sum, is platform work and only helps with three or more sites.
@@ -419,13 +426,13 @@ only the sum, is platform work and only helps with three or more sites.
 ```bash
 make -C fl-tutorials convert-adni-cohort ADNI_DIR=~/adni_tables         # once, from your own ADNI download (see Data)
 make -C fl-tutorials run-tutorial TUTORIAL=biomarker_causal_discovery  # NVFLARE simulator, CPU, < 1 min
-make -C fl-tutorials run-tutorial TUTORIAL=biomarker_causal_discovery NUM_ROUNDS=6   # FEDERATION=layer_voting (rounds formula above)
+make -C fl-tutorials run-tutorial TUTORIAL=biomarker_causal_discovery NUM_ROUNDS=6   # after setting FEDERATION=layer_voting in config.json (rounds formula above)
 make -C fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery summarise   # edge table + PAG figure
 make -C fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery export      # the job folder, no data needed
 ```
 
-`WORKSPACE=<dir>` moves the simulator workspace (default `/tmp/nvflare/causal`), and `make
-summarise RESULTS=<FL_global_model.pt>` reads a model downloaded from the hub (add `REFERENCE=<edges.csv>`
+`WORKSPACE=<dir>` moves the simulator workspace (default `/tmp/nvflare/causal`). From this directory,
+`make summarise RESULTS=<FL_global_model.pt>` reads a model downloaded from the hub (add `REFERENCE=<edges.csv>`
 to score its final graph against another run's, see "Graph metrics"). The job runs in the
 flip-utils environment with its `full` extra, which includes causal-learn, the same set the FL image
 installs.
@@ -450,7 +457,7 @@ installs.
 - The reference run reproduces the centralised analysis's graph from the same 560 participants,
   so agreement between the two is a check of the federation machinery, not independent evidence
   about Alzheimer's disease. Both simulated sites are `person_id`-modulo samples of one cohort; sites
-  that genuinely differ (acquisition site, scanner) are untested (#1780).
+  that genuinely differ (acquisition site, scanner) are untested ([FLIP#1780](https://github.com/londonaicentre/FLIP/issues/1780)).
 - `LOG_TRANSFORM` logs the four plasma markers. The centralised run (both presets, per its
   `preprocessing.csv`) Yeo-Johnson-transformed every column whose skew exceeded 1: those four plus
   intracranial volume and ADAS-Cog13, the latter just over the threshold; hippocampal volume, age and
@@ -531,6 +538,8 @@ https://adni.loni.usc.edu/wp-content/uploads/how_to_apply/ADNI_Acknowledgement_L
 25 March 2026 release is the centralised analysis's `plasma_assays` sensitivity preset, not the
 main run). Anyone reproducing these numbers under their own access should check the database for
 updated tables first, as the agreement requires.
+
+BibTeX for FedPC (Huang et al., 2023):
 
 ```bibtex
 @article{huang2023fedpc,

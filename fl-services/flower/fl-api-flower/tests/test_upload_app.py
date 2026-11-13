@@ -25,6 +25,7 @@ from fl_api.schemas import UploadAppRequest
 
 _URL_SECRET = "bundle-signature-sentinel"  # pragma: allowlist secret (synthetic sentinel)
 _SIGNED_QUERY = f"?X-Amz-Signature={_URL_SECRET}&X-Amz-Security-Token={_URL_SECRET}"
+_PYPROJECT = b'[tool.flwr.app]\npublisher = "test"\n\n[tool.flwr.app.config]\nnum_server_rounds = 3\n'
 
 
 @pytest.fixture
@@ -69,14 +70,6 @@ def test_upload_app_basic_success(client, upload_dir, mock_requests_get, caplog)
     caplog.set_level(logging.INFO)
     model_id = str(uuid4())
 
-    pyproject_content = b"""
-[tool.flwr.app]
-publisher = "test"
-
-[tool.flwr.app.config]
-num_server_rounds = 3
-"""
-
     config_content = b"""
 [models.my_model]
 path = "model_path"
@@ -85,7 +78,7 @@ checkpoint = "model.pt"
 
     mock_requests_get(
         {
-            f"https://example.com/{model_id}/pyproject.toml{_SIGNED_QUERY}": pyproject_content,
+            f"https://example.com/{model_id}/pyproject.toml{_SIGNED_QUERY}": _PYPROJECT,
             f"https://example.com/{model_id}/app/config.toml{_SIGNED_QUERY}": config_content,
         }
     )
@@ -110,6 +103,8 @@ checkpoint = "model.pt"
     job_dir = upload_dir / model_id
     assert (job_dir / "pyproject.toml").exists()
     assert (job_dir / "app" / "config.toml").exists()
+    # config.toml stays in app/, where submit_run reads it; it is not moved to the job root
+    assert not (job_dir / "config.toml").exists()
 
     assert _URL_SECRET not in caplog.text
 
@@ -117,14 +112,6 @@ checkpoint = "model.pt"
 def test_upload_app_injects_flip_params_without_touching_pyproject(client, upload_dir, mock_requests_get):
     """config.toml receives the FLIP params; pyproject.toml is left untouched."""
     model_id = str(uuid4())
-
-    pyproject_content = b"""
-[tool.flwr.app]
-publisher = "test"
-
-[tool.flwr.app.config]
-num_server_rounds = 3
-"""
 
     config_content = b"""
 [models.my_model]
@@ -137,7 +124,7 @@ accuracy = true
 
     mock_requests_get(
         {
-            f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
+            f"https://example.com/{model_id}/pyproject.toml": _PYPROJECT,
             f"https://example.com/{model_id}/app/config.toml": config_content,
         }
     )
@@ -270,17 +257,9 @@ def test_upload_app_places_checkpoint_in_job_dir(client, upload_dir, mock_reques
     """
     model_id = str(uuid4())
 
-    pyproject_content = b"""
-[tool.flwr.app]
-publisher = "test"
-
-[tool.flwr.app.config]
-num_server_rounds = 3
-"""
-
     mock_requests_get(
         {
-            f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
+            f"https://example.com/{model_id}/pyproject.toml": _PYPROJECT,
             f"https://example.com/{model_id}/model.pt": b"fake model weights",
         }
     )
@@ -302,53 +281,6 @@ num_server_rounds = 3
     job_dir = upload_dir / model_id
     assert (job_dir / "model.pt").exists()
     assert (job_dir / "pyproject.toml").exists()
-
-
-def test_upload_app_keeps_config_toml_in_app_dir(client, upload_dir, mock_requests_get):
-    """config.toml stays in app/ (where submit_run reads it); it is not moved to the job root."""
-    model_id = str(uuid4())
-
-    pyproject_content = b"""
-[tool.flwr.app]
-publisher = "test"
-
-[tool.flwr.app.config]
-num_server_rounds = 3
-"""
-
-    app_config_content = b"""
-[models.my_model]
-path = "model_path"
-"""
-
-    mock_requests_get(
-        {
-            f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
-            f"https://example.com/{model_id}/app/config.toml": app_config_content,
-        }
-    )
-
-    body = UploadAppRequest(
-        project_id="project-123",
-        cohort_query="*",
-        trusts=["trust1"],
-        bundle_urls=[
-            f"https://example.com/{model_id}/pyproject.toml",
-            f"https://example.com/{model_id}/app/config.toml",
-        ],
-    )
-
-    response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
-
-    assert response.status_code == 200
-
-    job_dir = upload_dir / model_id
-
-    # config.toml stays in app/
-    assert (job_dir / "app" / "config.toml").exists()
-
-    # it is not moved to the job root
-    assert not (job_dir / "config.toml").exists()
 
 
 def test_upload_app_download_failure(client, upload_dir, mock_requests_get):
@@ -386,17 +318,9 @@ def test_upload_app_cleans_existing_directories(client, upload_dir, mock_request
     job_dir.mkdir(parents=True, exist_ok=True)
     (job_dir / "old_file.txt").write_text("old content")
 
-    pyproject_content = b"""
-[tool.flwr.app]
-publisher = "test"
-
-[tool.flwr.app.config]
-num_server_rounds = 3
-"""
-
     mock_requests_get(
         {
-            f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
+            f"https://example.com/{model_id}/pyproject.toml": _PYPROJECT,
         }
     )
 
@@ -532,8 +456,7 @@ def test_startup_refuses_a_malformed_bundle_allow_list(monkeypatch):
 
 
 def _minimal_upload(model_id, mock_requests_get, **extra):
-    pyproject = b'[tool.flwr.app]\npublisher = "test"\n\n[tool.flwr.app.config]\nnum_server_rounds = 3\n'
-    mock_requests_get({f"https://example.com/{model_id}/pyproject.toml": pyproject})
+    mock_requests_get({f"https://example.com/{model_id}/pyproject.toml": _PYPROJECT})
     return {
         "project_id": "project-123",
         "cohort_query": "SELECT * FROM patients",

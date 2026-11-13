@@ -257,20 +257,6 @@ UPDATE xnat_project_status SET last_reimport='2020-01-01' WHERE xnat_project_id=
 
 ---
 
-### 4.4 DHCP options change not applied to running instances
-
-**Symptom**: After deploying the ECS foundation, `flip.local` domain resolution doesn't work from existing EC2 instances.
-
-**Root cause**: The `dhcp.tf` resource associates a new DHCP options set (with `flip.local` search domain) to the VPC. Existing EC2 instances won't pick up the new options until their DHCP lease expires and renews (typically 24-72 hours for AWS default, or a reboot). Until renewal, the instances continue using the previous (default) DHCP options.
-
-**Fix**: Reboot the EC2 instance to force an immediate DHCP renewal:
-
-```bash
-aws ec2 reboot-instances --instance-ids <instance-id> --profile stag   # or prod
-```
-
-Or wait for the lease to renew naturally. This only matters if the instance needs to resolve `flip.local` domains (which it doesn't during PR 1 — ECS Fargate tasks are the consumers in PR 2).
-
 ---
 
 ## 5. Verification Commands

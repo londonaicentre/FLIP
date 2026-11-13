@@ -119,8 +119,6 @@ services:
       - LOCAL_DEV=false
       - IMAGES_DIR=/app/data/images
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
-      - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
-      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
       # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
       - JOB_CREDENTIAL_DIR=/app/server-checkpoints/.job-credentials
@@ -156,7 +154,7 @@ services:
     # when the published images' uid stopped matching the developer's. Reading the
     # mounts is now the `user:` override's job, honestly and least-privileged.
     # `default` is the hub-internal network. fl-server is the one FL service that calls back
-    # into flip-api (FLIP_API_INTERNAL_URL + INTERNAL_SERVICE_KEY above), and flip-api is
+    # into flip-api (FLIP_API_INTERNAL_URL above), and flip-api is
     # deliberately not on the FL net — see the networks block in compose.development.yml.
     networks:
       - default
@@ -180,8 +178,6 @@ services:
       - LOCAL_DEV=false
       - IMAGES_DIR=/app/data/images
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
-      - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
-      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
       # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
       - JOB_CREDENTIAL_DIR=/app/server-checkpoints/.job-credentials

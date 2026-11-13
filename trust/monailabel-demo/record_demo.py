@@ -212,13 +212,12 @@ def plan(api, experiment: str) -> dict:
     assert oracle.any(), f"segmentation_spleen found no spleen on {experiment}"
     z = int(oracle.sum(axis=(1, 2)).argmax())
 
-    files = api.get(f"/data/experiments/{experiment}/scans/{scan}/resources/NIFTI/files?format=json").json()
+    nifti_files = f"/data/experiments/{experiment}/scans/{scan}/resources/NIFTI/files"
+    files = api.get(f"{nifti_files}?format=json").json()
     labels = [f["Name"] for f in files["ResultSet"]["Result"] if f["Name"].startswith("label_")]
     if labels:
         path = workdir / labels[0]
-        path.write_bytes(
-            api.get(f"/data/experiments/{experiment}/scans/{scan}/resources/NIFTI/files/{labels[0]}").body()
-        )
+        path.write_bytes(api.get(f"{nifti_files}/{labels[0]}").body())
         truth = sitk.Resample(sitk.ReadImage(str(path)), oracle_image, sitk.Transform(), sitk.sitkNearestNeighbor, 0)
         reference, against = sitk.GetArrayFromImage(truth)[z] > 0, "the expert's label"
     else:

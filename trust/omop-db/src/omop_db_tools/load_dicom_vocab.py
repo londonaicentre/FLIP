@@ -120,7 +120,7 @@ def load_vocabulary_metadata(engine: Engine) -> None:
     df_vocab_concept = pd.DataFrame(
         [
             {
-                "concept_id": 2128000000,
+                "concept_id": DICOM_VOCABULARY_CONCEPT_ID,
                 "concept_name": "Digital Imaging and Communications in Medicine (DICOM)",
                 "domain_id": "Metadata",
                 "vocabulary_id": "Vocabulary",
@@ -167,7 +167,7 @@ def load_vocabulary_metadata(engine: Engine) -> None:
                 "vocabulary_name": "Digital Imaging and Communications in Medicine (NEMA)",
                 "vocabulary_reference": "https://www.dicomstandard.org/current",
                 "vocabulary_version": "NEMA Standard PS3",
-                "vocabulary_concept_id": 2128000000,
+                "vocabulary_concept_id": DICOM_VOCABULARY_CONCEPT_ID,
             }
         ]
     )
