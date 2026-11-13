@@ -529,18 +529,9 @@ export interface IModelSummary {
     // up); null/absent unless the model has a queued job waiting for a net.
     queuePosition?: number | null;
     // Optional so an older hub still renders: the latest thing that happened to the model (the
-    // list's order), when its results arrived, and how far a running job has got.
+    // list's order) and when its results arrived.
     lastActivity?: string;
     finishedAt?: string | null;
-    progress?: IModelProgress | null;
-}
-
-/** How far a running job has got; any part the hub cannot tell yet is null. */
-export interface IModelProgress {
-    round?: number | null;
-    totalRounds?: number | null;
-    trustsReturned?: number | null;
-    trustsExpected?: number | null;
 }
 
 /**

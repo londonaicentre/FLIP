@@ -162,34 +162,21 @@ const allProjects = (tables: Tables, query: Record<string, unknown>): unknown =>
 };
 
 type Step = { creationTimestamp?: string; resultsUploadedAt?: string | null };
-type Log = { logDate: string; globalRound?: number | null; log: string };
+type Log = { logDate: string };
 
 /**
  * The /models activity fields for one model, read off its captured fixtures: the last log line is its
- * latest activity, the step's upload time when it finished, and the last "Round N aggregated · a of b
- * trusts returned" line (with the config's GLOBAL_ROUNDS, when it has one) how far it got.
+ * latest activity and the step's upload time when it finished.
  */
 const activityFor = (tables: Tables, modelId: string): { lastActivity?: string } & Record<string, unknown> => {
     const step = (tables.stepByModel[modelId] ?? {}) as Step;
     const logs = (tables.logsByModel[modelId] ?? []) as Log[];
-    const config = (tables.configByModel[modelId] ?? {}) as { GLOBAL_ROUNDS?: number };
     const latest = logs.map(log => log.logDate).sort().at(-1);
-    const rounds = logs.filter(log => log.globalRound != null)
-        .sort((a, b) => (a.globalRound as number) - (b.globalRound as number));
-    const returned = rounds.at(-1)?.log.match(/(\d+) of (\d+) trusts returned/);
 
     return {
         creationTimestamp: step.creationTimestamp,
         lastActivity: latest ?? step.resultsUploadedAt ?? step.creationTimestamp,
-        finishedAt: step.resultsUploadedAt ?? null,
-        progress: rounds.length
-            ? {
-                round: rounds.at(-1)?.globalRound,
-                totalRounds: config.GLOBAL_ROUNDS ?? null,
-                trustsReturned: returned ? Number(returned[1]) : null,
-                trustsExpected: returned ? Number(returned[2]) : null
-            }
-            : null
+        finishedAt: step.resultsUploadedAt ?? null
     };
 };
 

@@ -259,33 +259,15 @@ describe("Models Page", () => {
         expect(wrapper.find("[data-test='model-owner-meta']").text()).toBe("Dr Ada · Position 2 in queue");
     });
 
-    test.each([
-        [{
-            round: 12,
-            totalRounds: 50,
-            trustsReturned: 2,
-            trustsExpected: 3
-        }, "Round 12 of 50 · 2 of 3 trusts returned"],
-        [{
-            round: 4,
-            totalRounds: null,
-            trustsReturned: null,
-            trustsExpected: 3
-        }, "Round 4"],
-        [{
-            round: null,
-            trustsReturned: 1,
-            trustsExpected: 2
-        }, "1 of 2 trusts returned"]
-    ])("a running model's meta line shows its progress, leaving out what is unknown (%o)", async (progress, text) => {
+    test("a running model's meta line says when it was last updated", async () => {
         setModels([makeModel({
             status: "RUNNING",
-            progress
+            lastActivity: new Date(Date.now() - 3 * 3_600_000).toISOString().slice(0, 19)
         })]);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        expect(wrapper.find("[data-test='model-owner-meta']").text()).toBe(`Dr Ada · ${text}`);
+        expect(wrapper.find("[data-test='model-owner-meta']").text()).toBe("Dr Ada · Updated 3h ago");
     });
 
     test("a completed model says when it finished, falling back to its last activity", async () => {

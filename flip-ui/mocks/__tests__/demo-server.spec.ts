@@ -172,17 +172,15 @@ describe("makeDemoServer route coverage", () => {
         }
     });
 
-    it("carries each model's activity, newest first, with progress read off its round logs", async () => {
+    it("carries each model's activity, newest first", async () => {
         const { data } = (await client.get("/models")).data as {
-            data: { lastActivity: string; finishedAt: string | null; progress: Record<string, number | null> | null }[]
+            data: { lastActivity: string; finishedAt: string | null }[]
         };
         const activity = data.map(model => model.lastActivity);
         expect(activity.every(Boolean)).toBe(true);
         expect(activity).toEqual([...activity].sort().reverse());
         // Every demo model finished, so each carries its upload time.
         expect(data.every(model => model.finishedAt)).toBe(true);
-        // At least one captured run logged its rounds and how many trusts returned.
-        expect(data.some(model => model.progress?.round && model.progress.trustsExpected)).toBe(true);
     });
 
     it("filters the estate-wide Models list by project and sums statusCounts to totalRecords", async () => {

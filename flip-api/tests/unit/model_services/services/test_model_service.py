@@ -22,7 +22,6 @@ from flip_api.domain.schemas.status import ModelStatus
 from flip_api.domain.schemas.types import FLLogEvent
 from flip_api.model_services.services.model_service import (
     _finished_at_by_model,
-    _progress_by_model,
     _run_trusts_by_model,
     add_log,
     delete_model,
@@ -725,64 +724,3 @@ def test_finished_at_by_model_empty_input_short_circuits():
 
     assert _finished_at_by_model([], session) == {}
     session.exec.assert_not_called()
-
-
-def test_progress_by_model_reads_the_latest_jobs_newest_round_events():
-    """Round from the newer event, total from ROUND_STARTED, counts from the aggregated current round."""
-    session = MagicMock()
-    model_id = uuid4()
-    session.exec.return_value.all.return_value = [
-        (model_id, FLLogEvent.ROUND_STARTED.value, 3, {"total_rounds": 5}),
-        (model_id, FLLogEvent.ROUND_AGGREGATED.value, 3, {"returned": 2, "expected": 3}),
-    ]
-
-    progress = _progress_by_model([model_id], session)[model_id]
-
-    stmt = str(session.exec.call_args.args[0])
-    assert "fl_logs" in stmt
-    assert "fl_job" in stmt
-    assert (progress.round, progress.total_rounds, progress.trusts_returned, progress.trusts_expected) == (3, 5, 2, 3)
-
-
-def test_progress_by_model_round_in_flight_has_no_trust_counts():
-    """Round 4 has started but only round 3 aggregated: round 3's counts must not be shown as round 4's."""
-    session = MagicMock()
-    model_id = uuid4()
-    session.exec.return_value.all.return_value = [
-        (model_id, FLLogEvent.ROUND_STARTED.value, 4, {"total_rounds": 5}),
-        (model_id, FLLogEvent.ROUND_AGGREGATED.value, 3, {"returned": 2, "expected": 3}),
-    ]
-
-    progress = _progress_by_model([model_id], session)[model_id]
-
-    assert (progress.round, progress.total_rounds, progress.trusts_returned, progress.trusts_expected) == (
-        4,
-        5,
-        None,
-        None,
-    )
-
-
-def test_progress_by_model_ignores_unusable_details():
-    session = MagicMock()
-    model_id = uuid4()
-    session.exec.return_value.all.return_value = [
-        (model_id, FLLogEvent.ROUND_AGGREGATED.value, 1, {"returned": True, "expected": "3"}),
-    ]
-
-    progress = _progress_by_model([model_id], session)[model_id]
-
-    assert (progress.round, progress.total_rounds, progress.trusts_returned, progress.trusts_expected) == (
-        1,
-        None,
-        None,
-        None,
-    )
-
-
-def test_progress_by_model_without_round_events_is_absent():
-    session = MagicMock()
-    session.exec.return_value.all.return_value = []
-
-    assert _progress_by_model([uuid4()], session) == {}
-    assert _progress_by_model([], session) == {}

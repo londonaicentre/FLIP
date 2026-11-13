@@ -38,13 +38,11 @@ from flip_api.domain.interfaces.model import (
     IModelMetrics,
     IModelMetricsData,
     IModelMetricsValue,
-    IModelProgress,
     IModelsProjectOption,
     ITrustSummary,
 )
 from flip_api.domain.schemas.actions import ModelAuditAction
 from flip_api.domain.schemas.status import JobStatus, ModelStatus, ProjectStatus
-from flip_api.domain.schemas.types import FLLogEvent
 from flip_api.fl_services.services import fl_scheduler_service
 from flip_api.model_services.utils.audit_helper import audit_model_action, audit_model_actions
 from flip_api.utils.logger import logger
@@ -503,72 +501,6 @@ def _finished_at_by_model(model_ids: list[UUID], session: Session) -> dict[UUID,
     return {model_id: completed for model_id, completed in rows}
 
 
-def _count(value: Any) -> int | None:
-    """A ``details`` value when it is a genuine integer count (bools excluded), else None."""
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-
-def _progress_by_model(model_ids: list[UUID], session: Session) -> dict[UUID, IModelProgress]:
-    """How far each model's latest FL job got, from its newest round events.
-
-    ``fl_logs`` rows carry no job id, so the latest job's events are those logged since it was
-    created. One query returns, per model, the newest ``ROUND_STARTED`` (``details.total_rounds``)
-    and the newest ``ROUND_AGGREGATED`` (``details.returned`` / ``details.expected``).
-
-    Args:
-        model_ids (list[UUID]): Model ids to look up. Empty input short-circuits.
-        session (Session): The database session.
-
-    Returns:
-        dict[UUID, IModelProgress]: ``model_id -> progress``. Models without round events are absent.
-    """
-    if not model_ids:
-        return {}
-
-    latest_job = (
-        select(FLJob.model_id, func.max(FLJob.created).label("created"))  # type: ignore[call-overload]
-        .where(col(FLJob.model_id).in_(model_ids))
-        .group_by(col(FLJob.model_id))
-        .subquery()
-    )
-    newest_first = func.row_number().over(
-        partition_by=(col(FLLogs.model_id), col(FLLogs.event_type)),
-        order_by=(desc(col(FLLogs.log_date)), desc(col(FLLogs.global_round))),
-    )
-    ranked = (
-        select(  # type: ignore[call-overload]
-            FLLogs.model_id, FLLogs.event_type, FLLogs.global_round, FLLogs.details, newest_first.label("rank")
-        )
-        .join(latest_job, and_(latest_job.c.model_id == FLLogs.model_id, col(FLLogs.log_date) >= latest_job.c.created))
-        .where(col(FLLogs.event_type).in_([FLLogEvent.ROUND_STARTED, FLLogEvent.ROUND_AGGREGATED]))
-        .subquery()
-    )
-    rows = session.exec(
-        select(ranked.c.model_id, ranked.c.event_type, ranked.c.global_round, ranked.c.details).where(
-            ranked.c.rank == 1
-        )
-    ).all()
-
-    events: dict[UUID, dict[str, tuple[int | None, dict]]] = defaultdict(dict)
-    for model_id, event_type, global_round, details in rows:
-        events[model_id][event_type] = (global_round, details or {})
-
-    progress: dict[UUID, IModelProgress] = {}
-    for model_id, by_type in events.items():
-        started_round, started = by_type.get(FLLogEvent.ROUND_STARTED, (None, {}))
-        aggregated_round, aggregated = by_type.get(FLLogEvent.ROUND_AGGREGATED, (None, {}))
-        current = max((r for r in (started_round, aggregated_round) if r is not None), default=None)
-        # Returned/expected describe an aggregated round; a round still in flight has none yet.
-        counts = aggregated if aggregated_round == current else {}
-        progress[model_id] = IModelProgress(
-            round=current,
-            total_rounds=_count(started.get("total_rounds")),
-            trusts_returned=_count(counts.get("returned")),
-            trusts_expected=_count(counts.get("expected")),
-        )  # type: ignore[call-arg]
-    return progress
-
-
 def queued_positions_by_model(session: Session) -> dict[UUID, int]:
     """Map each queued model to its 1-based place in the FL training queue.
 
@@ -694,7 +626,6 @@ def get_all_models_service(
     trusts_by_model = _run_trusts_by_model(model_ids, session)
     queue_positions = queued_positions_by_model(session)
     finished_at = _finished_at_by_model(model_ids, session)
-    progress = _progress_by_model(model_ids, session)
 
     data = [
         IAllModelsResponse(
@@ -711,7 +642,6 @@ def get_all_models_service(
             queue_position=queue_positions.get(model.id),
             last_activity=model_last_activity,
             finished_at=finished_at.get(model.id),
-            progress=progress.get(model.id),
         )  # type: ignore[call-arg]
         for model, project_name, owner_name, model_last_activity in rows
     ]

@@ -782,15 +782,6 @@ const since = (verb: string, timestamp?: string | null): string => {
 
 // What is happening to the model now; empty when the hub sent nothing to say it with.
 const activityLabel = (model: IModelSummary): string => {
-    const { round, totalRounds, trustsReturned, trustsExpected } = model.progress ?? {};
-    if (model.status === "RUNNING") {
-        const returned = trustsReturned != null && trustsExpected != null;
-        const parts = [
-            round != null ? `Round ${round}${totalRounds != null ? ` of ${totalRounds}` : ""}` : "",
-            returned ? `${trustsReturned} of ${trustsExpected} trusts returned` : ""
-        ].filter(Boolean);
-        if (parts.length) return parts.join(" · ");
-    }
     if (model.status === "INITIATED" && model.queuePosition != null && model.queuePosition >= 1) {
         return `Position ${model.queuePosition} in queue`;
     }

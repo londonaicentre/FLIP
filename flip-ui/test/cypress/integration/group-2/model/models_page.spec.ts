@@ -32,14 +32,6 @@ const model = (id: string, name: string, projectId: string, projectName: string,
     creationTimestamp: "2026-08-01T10:00:00",
     lastActivity: "2026-08-02T10:00:00",
     finishedAt: status === "RESULTS_UPLOADED" ? "2026-08-02T10:00:00" : null,
-    progress: status === "RUNNING"
-        ? {
-            round: 3,
-            totalRounds: 10,
-            trustsReturned: 1,
-            trustsExpected: 1
-        }
-        : null,
     status,
     trusts: status === "RUNNING" ? [trust("GSTT")] : []
 });
@@ -190,7 +182,7 @@ describe("models page", () => {
         cy.getBySel("filter-tile-running").click();
         cy.wait("@getRunning");
         cy.getBySel("filter-tile-running").should("have.attr", "aria-pressed", "true");
-        cy.getBySel("model-owner-meta").should("contain", "Round 3 of 10 · 1 of 1 trusts returned");
+        cy.getBySel("model-owner-meta").should("contain", "Updated");
 
         cy.getBySel("filter-tile-running").click();
         cy.getBySel("filter-tile-running").should("have.attr", "aria-pressed", "false");

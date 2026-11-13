@@ -696,50 +696,29 @@ def test_rows_are_ordered_by_last_activity(client: TestClient, session, project_
     assert page_two[0]["lastActivity"] == "2026-06-01T00:00:00"
 
 
-def test_progress_and_finished_at_come_from_the_latest_job(client: TestClient, session, project_factory, model_factory):
-    """Progress reads the latest job's newest round events; an earlier run's events are ignored."""
+def test_finished_at_comes_from_the_latest_job(client: TestClient, session, project_factory, model_factory):
+    """finishedAt is the latest job's completion; an earlier run's is ignored."""
     user_id = uuid4()
-    project = _add_project(session, project_factory, owner_id=user_id, name="Progress")
+    project = _add_project(session, project_factory, owner_id=user_id, name="Finished")
     model = _add_model(session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.STOPPED)
-    session.add(FLJob(model_id=model.id, status=JobStatus.COMPLETED, created=datetime(2026, 1, 1)))
-    _add_round_event(
-        session,
-        model_id=model.id,
-        event=FLLogEvent.ROUND_AGGREGATED,
-        global_round=9,
-        at=datetime(2026, 1, 1, 1),
-        details={"returned": 1, "expected": 1},
+    session.add(
+        FLJob(
+            model_id=model.id, status=JobStatus.COMPLETED, created=datetime(2026, 1, 1), completed=datetime(2026, 1, 2)
+        )
     )
     finished = datetime(2026, 2, 1, 3)
     session.add(FLJob(model_id=model.id, status=JobStatus.COMPLETED, created=datetime(2026, 2, 1), completed=finished))
     session.commit()
-    _add_round_event(
-        session,
-        model_id=model.id,
-        event=FLLogEvent.ROUND_STARTED,
-        global_round=2,
-        at=datetime(2026, 2, 1, 1),
-        details={"total_rounds": 3},
-    )
-    _add_round_event(
-        session,
-        model_id=model.id,
-        event=FLLogEvent.ROUND_AGGREGATED,
-        global_round=2,
-        at=datetime(2026, 2, 1, 2),
-        details={"returned": 2, "expected": 3},
-    )
 
     override_verify_token_as(user_id)
     row = next(r for r in client.get(MODELS_URL).json()["data"] if r["id"] == str(model.id))
 
-    assert row["progress"] == {"round": 2, "totalRounds": 3, "trustsReturned": 2, "trustsExpected": 3}
     assert row["finishedAt"] == "2026-02-01T03:00:00"
     assert row["lastActivity"] == "2026-02-01T03:00:00"
 
 
-def test_model_without_jobs_has_no_progress(client: TestClient, session, project_factory, model_factory):
-    """No FL job means no progress and no finish time; last activity falls back to creation."""
+def test_model_without_jobs_has_no_finish_time(client: TestClient, session, project_factory, model_factory):
+    """No FL job means no finish time; last activity falls back to creation."""
     user_id = uuid4()
     project = _add_project(session, project_factory, owner_id=user_id, name="Idle")
     model = _add_model(session, model_factory, project_id=project.id, owner_id=user_id)
@@ -747,6 +726,5 @@ def test_model_without_jobs_has_no_progress(client: TestClient, session, project
     override_verify_token_as(user_id)
     row = next(r for r in client.get(MODELS_URL).json()["data"] if r["id"] == str(model.id))
 
-    assert row["progress"] is None
     assert row["finishedAt"] is None
     assert row["lastActivity"] == row["creationTimestamp"]
