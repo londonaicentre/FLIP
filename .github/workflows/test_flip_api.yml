@@ -26,6 +26,8 @@ on:
       # deploy/instance.mk, so `make unit_test` cannot even start without it.
       - ".env.development.example"
       - "deploy/instance.mk"
+      # The cohort-drafting schema copy is checked against the trust's OMOP DDL (FLIP#1556).
+      - "trust/omop-db/files/OMOPCDM_postgresql_5.4_ddl.sql"
   pull_request:
     branches: [main, develop]
 
@@ -49,6 +51,7 @@ jobs:
         .github/workflows/test_flip_api.yml
         .env.development.example
         deploy/instance.mk
+        trust/omop-db/files/OMOPCDM_postgresql_5.4_ddl.sql
 
   flip-api:
     needs: changes

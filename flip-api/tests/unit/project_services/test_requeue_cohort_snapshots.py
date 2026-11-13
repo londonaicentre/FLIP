@@ -60,7 +60,7 @@ def client(db: MagicMock) -> Generator[TestClient, None, None]:
     app.include_router(router, prefix="/api")
     app.dependency_overrides[get_session] = lambda: db
     app.dependency_overrides[verify_token] = lambda: USER_ID
-    return TestClient(app)
+    yield TestClient(app)
 
 
 @pytest.fixture
