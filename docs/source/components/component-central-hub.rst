@@ -370,8 +370,9 @@ Settings
      - ``eu-west-2``
      - Bedrock region.
    * - ``COHORT_DRAFT_EFFORT``
-     - ``medium``
-     - Model effort (``low``, ``medium``, ``high``).
+     - ``low``
+     - Model effort (``low``, ``medium``, ``high``). The benchmark showed Opus 5.5 at ``low`` matching
+       ``medium`` on quality, about 20% faster and cheaper.
    * - ``COHORT_DRAFT_GUARDRAIL_ID``, ``COHORT_DRAFT_GUARDRAIL_VERSION``
      - unset
      - A Bedrock Guardrail passed through on every call; set both or neither.
