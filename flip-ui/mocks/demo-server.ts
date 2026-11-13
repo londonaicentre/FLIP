@@ -30,7 +30,14 @@ import { DEMO_NET_NAME, DEMO_SITES, DEMO_USER } from "./demo/roster";
 
 const BASE = "/api";
 
-type Project = { id: string; name: string; query: { id: string }; approvedTrusts: { id: string }[] };
+type Project = {
+    id: string;
+    name: string;
+    description?: string;
+    has_imaging?: boolean;
+    query: { id: string };
+    approvedTrusts: { id: string }[];
+};
 type Models = { data: ({ name?: unknown; status?: unknown; owner_id?: unknown } & Record<string, unknown>)[] };
 
 export { DEMO_PROJECTS };
@@ -134,6 +141,26 @@ const trustHealth = (): unknown => DEMO_SITES.map(site => ({
  * Like the real route, `search` and `project` narrow both the list and the counts,
  * while `status` narrows only the list, so the tiles keep their numbers when one is selected.
  */
+// The Projects list's Type filter and search, as the hub applies them: an unknown type means every
+// type, an absent has_imaging means imaging, and search matches the name or description.
+const allProjects = (tables: Tables, query: Record<string, unknown>): unknown => {
+    const type = query.projectType;
+    const search = String(query.search ?? "").toLowerCase();
+    const data = tables.projects
+        .map(demo => demo.project as Project)
+        .filter(project => (type !== "imaging" && type !== "omop_only")
+            || (project.has_imaging ?? true) === (type === "imaging"))
+        .filter(project => !search || `${project.name} ${project.description ?? ""}`.toLowerCase().includes(search));
+
+    return {
+        page: 1,
+        pageSize: 20,
+        totalPages: 1,
+        totalRecords: data.length,
+        data
+    };
+};
+
 const allModels = (tables: Tables, query: Record<string, unknown>): unknown => {
     const projectId = query.project as string | undefined;
     const search = String(query.search ?? "").toLowerCase();
@@ -223,13 +250,8 @@ export function makeDemoServer(options: { timing?: number; projects?: readonly D
             this.get(`${BASE}/users/:email`, () => new Response(200, undefined, DEMO_USER));
             this.get(`${BASE}/users/:userId/permissions`, () => new Response(200, undefined, { permissions: [] }));
 
-            this.get(`${BASE}/projects`, () => new Response(200, undefined, {
-                page: 1,
-                pageSize: 20,
-                totalPages: 1,
-                totalRecords: tables.projects.length,
-                data: tables.projects.map(demo => demo.project)
-            } as never));
+            this.get(`${BASE}/projects`, (_schema, request) =>
+                new Response(200, undefined, allProjects(tables, request.queryParams ?? {}) as never));
             this.get(`${BASE}/projects/:projectId`, (_schema, request) =>
                 byParam(tables.projectsById, request.params.projectId));
             this.get(`${BASE}/projects/:projectId/models`, (_schema, request) =>

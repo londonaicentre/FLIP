@@ -94,6 +94,20 @@ describe("makeDemoServer route coverage", () => {
         expect(res.data.data.map((p: { id: string }) => p.id)).toEqual(DEMO_PROJECTS.map(d => projectOf(d).id));
     });
 
+    it("filters the Projects list by type and search", async () => {
+        const all = (await client.get("/projects")).data.data as { id: string; name: string; has_imaging?: boolean }[];
+        const omop = (await client.get("/projects?projectType=omop_only")).data;
+        const imaging = (await client.get("/projects?projectType=imaging")).data;
+        expect(omop.data.length).toBeGreaterThan(0);
+        expect(omop.data.every((p: { has_imaging?: boolean }) => p.has_imaging === false)).toBe(true);
+        expect(imaging.totalRecords + omop.totalRecords).toBe(all.length);
+
+        const name = all[0].name;
+        const searched = (await client.get(`/projects?search=${encodeURIComponent(name.toUpperCase())}`)).data;
+        expect(searched.data.map((p: { name: string }) => p.name)).toContain(name);
+        expect(searched.totalRecords).toBeLessThan(all.length);
+    });
+
     it("answers /model/job-types", async () => {
         const res = await client.get("/model/job-types");
         expect(res.status).toBe(200);
