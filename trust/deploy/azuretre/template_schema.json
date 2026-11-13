@@ -1,0 +1,393 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema",
+  "$id": "https://github.com/londonaicentre/FLIP/trust/deploy/azuretre/template_schema.json",
+  "type": "object",
+  "title": "FLIP trust node (draft)",
+  "description": "A FLIP trust node: FLIP's Docker Compose node on a VM in its own workspace subnet",
+  "required": [
+    "flip_release",
+    "hub_api_hostname",
+    "fl_server_ip_addresses"
+  ],
+  "properties": {
+    "display_name": {
+      "type": "string",
+      "title": "Name for the workspace service",
+      "description": "The name of the workspace service to be displayed to users",
+      "default": "FLIP trust node",
+      "updateable": true
+    },
+    "description": {
+      "type": "string",
+      "title": "Description of the workspace service",
+      "description": "Description of the workspace service",
+      "default": "A FLIP node: takes part in federated learning projects from the FLIP hub, on data loaded into this workspace.",
+      "updateable": true
+    },
+    "overview": {
+      "type": "string",
+      "title": "Workspace Service Overview",
+      "description": "Long form description of the workspace service, in markdown syntax",
+      "default": "A [FLIP](https://github.com/londonaicentre/FLIP) trust node. Its VM runs the trust's APIs, an OMOP database, Orthanc, XNAT and the FL client, and connects out to the FLIP hub only. Operate it with `az vm run-command` (see the `status_command` and `join_command` outputs). **Draft**: not yet deployed on an AzureTRE.",
+      "updateable": true
+    },
+    "flip_release": {
+      "type": "string",
+      "title": "FLIP release",
+      "description": "The FLIP release tag (vX.Y.Z, v0.15.0 or later) the node installs at first boot. Use the release your FLIP hub runs.",
+      "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "fl_backend": {
+      "type": "string",
+      "title": "FL backend",
+      "description": "The federated learning framework the hub runs.",
+      "enum": [
+        "nvflare",
+        "flower"
+      ],
+      "default": "nvflare"
+    },
+    "vm_size": {
+      "type": "string",
+      "title": "VM size",
+      "description": "Size of the node's VM. CPU only.",
+      "enum": [
+        "4 CPU | 16GB RAM",
+        "8 CPU | 32GB RAM",
+        "16 CPU | 64GB RAM"
+      ],
+      "default": "4 CPU | 16GB RAM",
+      "updateable": true
+    },
+    "hub_api_hostname": {
+      "type": "string",
+      "title": "FLIP hub",
+      "description": "The host of the hub URL in your kit: production or staging. Fixed once deployed (a TRE admin reinstalls to change it).",
+      "enum": [
+        "app.flip.aicentre.co.uk",
+        "stag.flip.aicentre.co.uk"
+      ],
+      "default": "app.flip.aicentre.co.uk",
+      "updateable": false
+    },
+    "fl_server_ip_addresses": {
+      "type": "array",
+      "title": "FL server IP addresses",
+      "description": "The public IPv4 addresses of the hub's FL endpoint, from the FLIP team. Addresses, not a hostname: the TRE firewall resolves no names in network rules. Fixed once deployed.",
+      "items": {
+        "type": "string",
+        "format": "ipv4",
+        "pattern": "^(?!(?:0|10|127)\\.)(?!169\\.254\\.)(?!172\\.(?:1[6-9]|2[0-9]|3[01])\\.)(?!192\\.168\\.)(?!100\\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\.)(?!192\\.0\\.0\\.)(?!198\\.1[89]\\.)(?!(?:22[4-9]|2[34][0-9]|25[0-5])\\.)(?!168\\.63\\.129\\.16$)(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$"
+      },
+      "minItems": 1,
+      "maxItems": 4,
+      "updateable": false
+    },
+    "fl_port": {
+      "type": "string",
+      "title": "FL port",
+      "description": "Your kit's FL port: 8002 on production, 8003 on staging. Fixed once deployed.",
+      "enum": [
+        "8002",
+        "8003"
+      ],
+      "default": "8002",
+      "updateable": false
+    },
+    "address_space": {
+      "type": "string",
+      "title": "Address space",
+      "description": "The node subnet's range. The TRE API allocates it: any value given is replaced."
+    },
+    "address_space_size": {
+      "type": "string",
+      "title": "Address space size",
+      "description": "Fixed: the TRE API allocates a /24. Declared so that it refuses \"custom\", which would let whoever deploys the service choose the range.",
+      "enum": [
+        "small"
+      ],
+      "default": "small"
+    },
+    "enable_shutdown_schedule": {
+      "type": "boolean",
+      "title": "Enable shutdown schedule",
+      "description": "Shut the VM down daily. A node that is off misses the hub's tasks, so leave this off for a node in use.",
+      "default": false,
+      "updateable": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "enable_shutdown_schedule": {
+            "const": true
+          }
+        },
+        "required": [
+          "enable_shutdown_schedule"
+        ]
+      },
+      "then": {
+        "properties": {
+          "shutdown_time": {
+            "type": "string",
+            "title": "Shutdown time",
+            "description": "Time of day to shut the VM down (HHmm), e.g. 1900",
+            "pattern": "^([01][0-9]|2[0-3])[0-5][0-9]$",
+            "default": "1900",
+            "updateable": true
+          },
+          "shutdown_timezone": {
+            "type": "string",
+            "title": "Shutdown timezone",
+            "description": "Windows time zone name for the schedule, e.g. GMT Standard Time",
+            "default": "UTC",
+            "updateable": true
+          }
+        },
+        "required": [
+          "shutdown_time"
+        ]
+      }
+    }
+  ],
+  "uiSchema": {
+    "address_space": {
+      "classNames": "tre-hidden"
+    },
+    "address_space_size": {
+      "classNames": "tre-hidden"
+    },
+    "ui:order": [
+      "display_name",
+      "description",
+      "overview",
+      "flip_release",
+      "fl_backend",
+      "hub_api_hostname",
+      "fl_server_ip_addresses",
+      "fl_port",
+      "vm_size",
+      "enable_shutdown_schedule",
+      "*"
+    ]
+  },
+  "pipeline": {
+    "install": [
+      {
+        "stepId": "flip-node-address-space",
+        "stepTitle": "Upgrade the workspace so its network includes the node's address space",
+        "resourceType": "workspace",
+        "resourceAction": "upgrade",
+        "properties": []
+      },
+      {
+        "stepId": "flip-node-firewall-install",
+        "stepTitle": "Add the FLIP node's firewall rules (before the VM, whose first boot needs them)",
+        "resourceTemplateName": "tre-shared-service-firewall",
+        "resourceType": "shared-service",
+        "resourceAction": "upgrade",
+        "properties": [
+          {
+            "name": "network_rule_collections",
+            "type": "array",
+            "arraySubstitutionAction": "replace",
+            "arrayMatchField": "name",
+            "value": {
+              "name": "nrc_svc_{{ resource.id }}_flip_node",
+              "action": "Allow",
+              "rules": [
+                {
+                  "name": "flip-fl-server",
+                  "description": "Federated learning to the hub's FL endpoint (mutual TLS), by address",
+                  "source_addresses": ["{{ resource.properties.address_space }}"],
+                  "destination_addresses": "{{ resource.properties.fl_server_ip_addresses }}",
+                  "destination_ports": ["{{ resource.properties.fl_port }}"],
+                  "protocols": ["TCP"]
+                }
+              ]
+            }
+          },
+          {
+            "name": "rule_collections",
+            "type": "array",
+            "arraySubstitutionAction": "replace",
+            "arrayMatchField": "name",
+            "value": {
+              "name": "arc_svc_{{ resource.id }}_flip_node",
+              "action": "Allow",
+              "rules": [
+                {
+                  "name": "flip-hub-api",
+                  "description": "Task polling, heartbeats and results",
+                  "source_addresses": ["{{ resource.properties.address_space }}"],
+                  "target_fqdns": ["{{ resource.properties.hub_api_hostname }}"],
+                  "protocols": [{"port": "443", "type": "Https"}]
+                },
+                {
+                  "name": "flip-images",
+                  "description": "Every container image the node runs (GHCR and its layer host)",
+                  "source_addresses": ["{{ resource.properties.address_space }}"],
+                  "target_fqdns": ["ghcr.io", "pkg-containers.githubusercontent.com"],
+                  "protocols": [{"port": "443", "type": "Https"}]
+                },
+                {
+                  "name": "docker-engine",
+                  "description": "Docker Engine packages",
+                  "source_addresses": ["{{ resource.properties.address_space }}"],
+                  "target_fqdns": ["download.docker.com"],
+                  "protocols": [{"port": "443", "type": "Https"}]
+                },
+                {
+                  "name": "sample-data",
+                  "description": "FLIP's sample trust data (Hugging Face) and the Python packages its loaders run",
+                  "source_addresses": ["{{ resource.properties.address_space }}"],
+                  "target_fqdns": ["huggingface.co", "*.hf.co", "pypi.org", "files.pythonhosted.org"],
+                  "protocols": [{"port": "443", "type": "Https"}]
+                },
+                {
+                  "name": "flip-provisioning",
+                  "description": "Cloning FLIP at the release, the Ansible role it installs, and uv",
+                  "source_addresses": ["{{ resource.properties.address_space }}"],
+                  "target_fqdns": ["github.com", "codeload.github.com", "galaxy.ansible.com", "astral.sh", "releases.astral.sh"],
+                  "protocols": [{"port": "443", "type": "Https"}]
+                },
+                {
+                  "name": "ubuntu-packages",
+                  "description": "OS packages and security updates",
+                  "source_addresses": ["{{ resource.properties.address_space }}"],
+                  "target_fqdns": ["azure.archive.ubuntu.com", "archive.ubuntu.com", "security.ubuntu.com"],
+                  "protocols": [{"port": "80", "type": "Http"}]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "stepId": "main"
+      }
+    ],
+    "upgrade": [
+      {
+        "stepId": "flip-node-firewall-upgrade",
+        "stepTitle": "Update the FLIP node's firewall rules",
+        "resourceTemplateName": "tre-shared-service-firewall",
+        "resourceType": "shared-service",
+        "resourceAction": "upgrade",
+        "properties": [
+          {
+            "name": "network_rule_collections",
+            "type": "array",
+            "arraySubstitutionAction": "replace",
+            "arrayMatchField": "name",
+            "value": {
+              "name": "nrc_svc_{{ resource.id }}_flip_node",
+              "action": "Allow",
+              "rules": [
+                {
+                  "name": "flip-fl-server",
+                  "description": "Federated learning to the hub's FL endpoint (mutual TLS), by address",
+                  "source_addresses": ["{{ resource.properties.address_space }}"],
+                  "destination_addresses": "{{ resource.properties.fl_server_ip_addresses }}",
+                  "destination_ports": ["{{ resource.properties.fl_port }}"],
+                  "protocols": ["TCP"]
+                }
+              ]
+            }
+          },
+          {
+            "name": "rule_collections",
+            "type": "array",
+            "arraySubstitutionAction": "replace",
+            "arrayMatchField": "name",
+            "value": {
+              "name": "arc_svc_{{ resource.id }}_flip_node",
+              "action": "Allow",
+              "rules": [
+                {
+                  "name": "flip-hub-api",
+                  "description": "Task polling, heartbeats and results",
+                  "source_addresses": ["{{ resource.properties.address_space }}"],
+                  "target_fqdns": ["{{ resource.properties.hub_api_hostname }}"],
+                  "protocols": [{"port": "443", "type": "Https"}]
+                },
+                {
+                  "name": "flip-images",
+                  "description": "Every container image the node runs (GHCR and its layer host)",
+                  "source_addresses": ["{{ resource.properties.address_space }}"],
+                  "target_fqdns": ["ghcr.io", "pkg-containers.githubusercontent.com"],
+                  "protocols": [{"port": "443", "type": "Https"}]
+                },
+                {
+                  "name": "docker-engine",
+                  "description": "Docker Engine packages",
+                  "source_addresses": ["{{ resource.properties.address_space }}"],
+                  "target_fqdns": ["download.docker.com"],
+                  "protocols": [{"port": "443", "type": "Https"}]
+                },
+                {
+                  "name": "sample-data",
+                  "description": "FLIP's sample trust data (Hugging Face) and the Python packages its loaders run",
+                  "source_addresses": ["{{ resource.properties.address_space }}"],
+                  "target_fqdns": ["huggingface.co", "*.hf.co", "pypi.org", "files.pythonhosted.org"],
+                  "protocols": [{"port": "443", "type": "Https"}]
+                },
+                {
+                  "name": "flip-provisioning",
+                  "description": "Cloning FLIP at the release, the Ansible role it installs, and uv",
+                  "source_addresses": ["{{ resource.properties.address_space }}"],
+                  "target_fqdns": ["github.com", "codeload.github.com", "galaxy.ansible.com", "astral.sh", "releases.astral.sh"],
+                  "protocols": [{"port": "443", "type": "Https"}]
+                },
+                {
+                  "name": "ubuntu-packages",
+                  "description": "OS packages and security updates",
+                  "source_addresses": ["{{ resource.properties.address_space }}"],
+                  "target_fqdns": ["azure.archive.ubuntu.com", "archive.ubuntu.com", "security.ubuntu.com"],
+                  "protocols": [{"port": "80", "type": "Http"}]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "stepId": "main"
+      }
+    ],
+    "uninstall": [
+      {
+        "stepId": "flip-node-firewall-uninstall",
+        "stepTitle": "Remove the FLIP node's firewall rules",
+        "resourceTemplateName": "tre-shared-service-firewall",
+        "resourceType": "shared-service",
+        "resourceAction": "upgrade",
+        "properties": [
+          {
+            "name": "network_rule_collections",
+            "type": "array",
+            "arraySubstitutionAction": "remove",
+            "arrayMatchField": "name",
+            "value": {
+              "name": "nrc_svc_{{ resource.id }}_flip_node"
+            }
+          },
+          {
+            "name": "rule_collections",
+            "type": "array",
+            "arraySubstitutionAction": "remove",
+            "arrayMatchField": "name",
+            "value": {
+              "name": "arc_svc_{{ resource.id }}_flip_node"
+            }
+          }
+        ]
+      },
+      {
+        "stepId": "main"
+      }
+    ]
+  }
+}
