@@ -45,7 +45,7 @@ covers `datasets/cxr/omop_convert_cxr.py`, and
 
 Cross-cutting guards that assert a property across several source files
 (`test_dicom_orientation.py`, `test_nifti_orientation.py`, `test_flower_min_clients_wiring.py`,
-`test_flower_platform_parity.py`, `test_flower_starved_partition.py`,
+`test_flower_eval_metric_keys.py`, `test_flower_platform_parity.py`, `test_flower_starved_partition.py`,
 `test_flwr_import_paths.py`, `test_offline_apps.py`, `test_autoencoder_offline_backbone.py`,
 `test_spleen_inference_config_parity.py`, `test_spleen_uploader_paths.py`,
 `test_ehr_feature_engineering.py`, `test_fetch_weights.py`,
