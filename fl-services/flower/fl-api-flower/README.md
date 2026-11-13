@@ -77,10 +77,10 @@ uvx flwr stop <run_id> local --format json
 
 It returns the full JSON payload from Flower.
 
-The server status endpoint checks the Flower SuperLink health service configured by
-`SUPERLINK_HEALTH_ADDRESS` and returns:
+The server status endpoint requests the SuperLink's own `/health` route, on the same listener as
+its Control API (`SUPERLINK_ADDRESS`, port 8000), and returns:
 
-- `{"status": "RUNNING"}` when gRPC health returns `SERVING`
+- `{"status": "RUNNING"}` when it answers 200
 - `{"status": "STOPPED"}` otherwise
 
 The register node endpoint accepts a JSON body `{"name": "<trust_name>", "node_id": "<flower_node_id>"}`
@@ -98,9 +98,14 @@ If `targets` are omitted, all registered trust names are returned.
 
 ## Health status configuration
 
-Set these environment variables in the FL API container:
+The check needs no setting of its own. It uses the connection the FL API already has:
 
-- `SUPERLINK_HEALTH_ADDRESS` (example: `superlink:9097`) — for server status checks
+- `SUPERLINK_ADDRESS` (example: `superlink:8000`) — the SuperLink's HTTP listener
+- `SUPERLINK_ROOT_CERTIFICATES` — when set, the check is HTTPS verified against this CA; unset
+  (the standalone insecure dev stack), it is plain HTTP
+- `FLOWER_HEALTHCHECK_TIMEOUT_SECONDS` (default `1.0`)
+
+Flower 1.43 removed the separate gRPC health server (port 9097) this used to call (FLIP#1914).
 
 ## Bundle-fetch origin allow-list (`BUNDLE_URL_ALLOWED_ORIGINS`)
 

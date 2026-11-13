@@ -134,8 +134,8 @@ make submit APP=xray_classification    # from fl-services/flower/
   the SuperLink reads a tutorial and its checkpoint), and the `environment:` blocks
   point the app at those paths, so relative paths in tutorial code resolve
   consistently regardless of your host layout.
-- `make up` runs the stack `--insecure` (the SuperLink's mode and health server
-  are set by `command:`); `make up-secure` runs it with TLS and SuperNode auth after
+- `make up` runs the stack `--insecure` (the SuperLink's mode is set by
+  `command:`); `make up-secure` runs it with TLS and SuperNode auth after
   `make provision`.
 
 The `DEV_DATAFRAME` CSV must expose chest-X-ray accession IDs with the same

@@ -150,8 +150,8 @@ the compose file and re-running `make up`.
   the SuperLink reads a tutorial and its checkpoint), and the `environment:` blocks
   point the app at those paths, so relative paths in tutorial code resolve
   consistently regardless of your host layout.
-- `make up` runs the stack `--insecure` (the SuperLink's mode and health server
-  are set by `command:`); `make up-secure` runs it with TLS and SuperNode auth after
+- `make up` runs the stack `--insecure` (the SuperLink's mode is set by
+  `command:`); `make up-secure` runs it with TLS and SuperNode auth after
   `make provision`.
 
 ## Best-model selection

@@ -40,7 +40,6 @@ services:
       # URLs against (AWS_ENDPOINT_URL_S3 in its service block; path-style URLs, host exactly
       # object-store:9000). The two lines must move together, or every bundle download 400s.
       - BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000
-      - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
       - FLOWER_SRC_ROOT=/app/src
       # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
@@ -79,7 +78,6 @@ services:
       - FL_API_KEY=${FL_API_KEY}
       # Bundle-fetch origin allow-list: the dev object store, like fl-api-net-1 (FLIP#905, #1291).
       - BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000
-      - SUPERLINK_HEALTH_ADDRESS=fl-server-net-2:9097
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
       - FLOWER_SRC_ROOT=/app/src
       # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
@@ -174,8 +172,6 @@ services:
       # otherwise. Reached over `default`; the host port below is on loopback only.
       - --host
       - 0.0.0.0
-      - --health-server-address
-      - 0.0.0.0:9097
     ports:
       - "127.0.0.1:${FLOWER_SUPERLINK_NET_1_PORT:-9093}:8000"
     security_opt:
@@ -305,8 +301,6 @@ services:
       # otherwise. Reached over `default`; the host port below is on loopback only.
       - --host
       - 0.0.0.0
-      - --health-server-address
-      - 0.0.0.0:9097
     ports:
       - "127.0.0.1:${FLOWER_SUPERLINK_NET_2_PORT:-9095}:8000"
     security_opt:

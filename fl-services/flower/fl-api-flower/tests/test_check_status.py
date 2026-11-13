@@ -12,16 +12,20 @@
 #
 
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+import pytest
 
 from fl_api import app as app_module
 from fl_api.schemas import ClientInfoModel, ServerInfoModel
 
-# ── check_server_status (unchanged — still uses gRPC health) ──────────────────
+# ── check_server_status (the SuperLink's HTTP /health route, FLIP#1914) ───────
 
 
 def test_check_server_status_running(client, monkeypatch):
-    monkeypatch.setenv("SUPERLINK_HEALTH_ADDRESS", "superlink:9097")
-    monkeypatch.setattr(app_module, "_check_health", lambda _address, _timeout: True)
+    monkeypatch.setenv("SUPERLINK_ADDRESS", "superlink:8000")
+    monkeypatch.setattr(app_module, "_check_health", lambda _url, _timeout: True)
 
     response = client.get("/check_server_status")
 
@@ -31,14 +35,67 @@ def test_check_server_status_running(client, monkeypatch):
 
 
 def test_check_server_status_stopped(client, monkeypatch):
-    monkeypatch.setenv("SUPERLINK_HEALTH_ADDRESS", "superlink:9097")
-    monkeypatch.setattr(app_module, "_check_health", lambda _address, _timeout: False)
+    monkeypatch.setenv("SUPERLINK_ADDRESS", "superlink:8000")
+    monkeypatch.setattr(app_module, "_check_health", lambda _url, _timeout: False)
 
     response = client.get("/check_server_status")
 
     assert response.status_code == 200
     assert response.json()["status"] == "STOPPED"
     ServerInfoModel.model_validate(response.json())
+
+
+def test_check_server_status_stopped_without_superlink_address(client, monkeypatch):
+    monkeypatch.delenv("SUPERLINK_ADDRESS", raising=False)
+
+    assert client.get("/check_server_status").json()["status"] == "STOPPED"
+
+
+def test_health_url_is_https_only_with_root_certificates(monkeypatch):
+    monkeypatch.setenv("SUPERLINK_ADDRESS", "superlink:8000")
+    monkeypatch.delenv("SUPERLINK_ROOT_CERTIFICATES", raising=False)
+    assert app_module._get_superlink_health_url() == "http://superlink:8000/health"
+
+    monkeypatch.setenv("SUPERLINK_ROOT_CERTIFICATES", "/certs/ca.crt")
+    assert app_module._get_superlink_health_url() == "https://superlink:8000/health"
+
+
+@pytest.fixture
+def health_server():
+    """A local HTTP server whose /health answers with the status the test sets."""
+
+    class Handler(BaseHTTPRequestHandler):
+        answer = 200
+
+        def do_GET(self):
+            self.send_response(self.answer if self.path == "/health" else 404)
+            self.end_headers()
+
+        def log_message(self, *_args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield Handler, f"http://127.0.0.1:{server.server_port}/health"
+    server.shutdown()
+    server.server_close()
+
+
+def test_check_health_follows_the_health_route(health_server):
+    handler, url = health_server
+    assert app_module._check_health(url, 2.0) is True
+
+    handler.answer = 503
+    assert app_module._check_health(url, 2.0) is False
+
+
+def test_check_health_false_when_unreachable():
+    assert app_module._check_health("http://127.0.0.1:1/health", 0.5) is False
+
+
+def test_check_health_false_when_ca_file_missing(monkeypatch, tmp_path):
+    monkeypatch.setenv("SUPERLINK_ROOT_CERTIFICATES", str(tmp_path / "absent.crt"))
+    assert app_module._check_health("https://127.0.0.1:1/health", 0.5) is False
 
 
 # ── register_node ─────────────────────────────────────────────────────────────

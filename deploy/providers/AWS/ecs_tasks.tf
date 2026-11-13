@@ -51,7 +51,6 @@ locals {
   # trusts reach only the fleet proxy sidecar on its own port (FLIP#1517).
   flower_fleet_proxy_port       = 9092
   flower_superlink_control_port = 8000
-  flower_superlink_health_port  = 9097
 
   # The container the NLB target group binds: the proxy on Flower, the server on NVFLARE.
   fl_server_lb_container = var.fl_backend == "flower" ? "fleet-proxy" : "fl-server-net-1"
@@ -372,17 +371,15 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
         # flwr>=1.37: the Control API is HTTP on port 8000, loopback-only
         # unless --host says otherwise; fl-api reaches it over Cloud Map.
         "--host", "0.0.0.0",
-        "--health-server-address", "0.0.0.0:${local.flower_superlink_health_port}",
       ] : null
       linuxParameters = var.fl_backend == "flower" ? { initProcessEnabled = true } : null
 
       # FLARE serves client gRPC + admin multiplexed on one port. Flower's
       # SuperLink serves its HTTP APIs on 8000 (fl-api submits runs to the
-      # Control API there) and health on 9097; the NLB's 9092 is the fleet
+      # Control API there and reads /health); the NLB's 9092 is the fleet
       # proxy's, below.
       portMappings = var.fl_backend == "flower" ? [
         { containerPort = local.flower_superlink_control_port, protocol = "tcp" },
-        { containerPort = local.flower_superlink_health_port, protocol = "tcp" },
         ] : [
         { containerPort = var.FL_SERVER_PORT, protocol = "tcp" },
       ]
