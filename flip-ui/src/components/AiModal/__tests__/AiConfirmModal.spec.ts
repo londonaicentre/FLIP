@@ -83,12 +83,8 @@ describe("Ai ConfirmModal", () => {
     });
 
     describe("typing-confirmation validator (no-throw guarantee)", () => {
-        // Invariant: mounting the component with a non-empty
-        // `typingConfirmation` must not throw, even though
-        // `this.parent.confirmation` is undefined on the first yup pass.
-        // The headless DOM here can't fully simulate HeadlessUI's teleport,
-        // so we rely on mount + validation-pass to reach the schema's
-        // test() callback without crashing.
+        // Mounting with a non-empty `typingConfirmation` while `confirmation` is still
+        // undefined is covered by "rejects undefined input (first validation pass)" above.
 
         test("does not throw on subsequent prop changes that re-trigger validation", async () => {
             const wrapper = mountWithTyping("");
