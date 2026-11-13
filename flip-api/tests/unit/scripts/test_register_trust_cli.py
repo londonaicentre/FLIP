@@ -24,10 +24,12 @@ from uuid import uuid4
 import pytest
 
 from flip_api.db.models.main_models import FLKitSlot, Trust
+from flip_api.scripts import register_trust as cli
 from flip_api.scripts.register_trust import _write_kit_to_ssm, register_one_trust
 from flip_api.trusts_services.services.register_trust import (
     NoFreeKitSlotError,
     RegisteredTrust,
+    TrustRegistrationError,
 )
 
 
@@ -182,8 +184,6 @@ def _patch_session(monkeypatch):
 
 def test_main_happy_path_prints_kit_json(monkeypatch, capsys):
     """Happy path: CLI emits a JSON-array of one kit object on stdout."""
-    from flip_api.scripts import register_trust as cli
-
     _patch_session(monkeypatch)
     monkeypatch.setattr(
         cli,
@@ -204,9 +204,7 @@ def test_main_happy_path_prints_kit_json(monkeypatch, capsys):
     cli.main()
 
     out = capsys.readouterr().out
-    import json as _json
-
-    payload = _json.loads(out)
+    payload = json.loads(out)
     assert isinstance(payload, list)
     assert len(payload) == 1
     assert payload[0]["trust_name"] == "Open Trust"
@@ -215,8 +213,6 @@ def test_main_happy_path_prints_kit_json(monkeypatch, capsys):
 
 def test_main_skip_prints_metadata_only_kit(monkeypatch, capsys):
     """Idempotent skip: an already-registered trust → stdout is a one-element JSON array without credentials."""
-    from flip_api.scripts import register_trust as cli
-
     _patch_session(monkeypatch)
     monkeypatch.setattr(
         cli,
@@ -235,9 +231,7 @@ def test_main_skip_prints_metadata_only_kit(monkeypatch, capsys):
 
     cli.main()
 
-    import json as _json
-
-    payload = _json.loads(capsys.readouterr().out)
+    payload = json.loads(capsys.readouterr().out)
     assert isinstance(payload, list)
     assert len(payload) == 1
     kit = payload[0]
@@ -250,8 +244,6 @@ def test_main_skip_prints_metadata_only_kit(monkeypatch, capsys):
 
 def test_main_exits_1_on_registration_error(monkeypatch, capsys):
     """Service failure: rollback, print `[]`, sys.exit(1)."""
-    from flip_api.scripts import register_trust as cli
-
     session = _patch_session(monkeypatch)
 
     def boom(*_a, **_kw):
@@ -270,8 +262,6 @@ def test_main_exits_1_on_registration_error(monkeypatch, capsys):
 
 def test_main_rotate_emits_a_full_kit(monkeypatch, capsys):
     """`--rotate` takes the rotation path and always returns credentials: no skip shape."""
-    from flip_api.scripts import register_trust as cli
-
     _patch_session(monkeypatch)
     rotated = RegisteredTrust(
         trust=Trust(id=uuid4(), name="Rotating Trust", code="ROT"),
@@ -295,8 +285,6 @@ def test_main_rotate_emits_a_full_kit(monkeypatch, capsys):
 
 def test_main_exits_1_on_rotation_error(monkeypatch, capsys):
     """Rotation failure takes the same contract as registration: rollback, `[]`, exit 1."""
-    from flip_api.scripts import register_trust as cli
-
     session = _patch_session(monkeypatch)
 
     def boom(*_a, **_kw):
@@ -317,8 +305,6 @@ def test_main_exits_1_on_rotation_error(monkeypatch, capsys):
 @pytest.mark.parametrize("flag", [["--code", "ROT"], ["--region", "London"], ["--require-existing"]])
 def test_main_rotate_rejects_registration_flags(monkeypatch, capsys, flag):
     """`--rotate` identifies the trust by name only; a registration flag is an error, not ignored."""
-    from flip_api.scripts import register_trust as cli
-
     _patch_session(monkeypatch)
     monkeypatch.setattr(cli, "rotate_one_trust", _never_called)
     monkeypatch.setattr("sys.argv", ["register_trust", "--name", "Rotating Trust", "--rotate", *flag])
@@ -332,8 +318,6 @@ def test_main_rotate_rejects_registration_flags(monkeypatch, capsys, flag):
 
 def test_main_requires_name(monkeypatch, capsys):
     """argparse rejects a call with no --name and exits 2 (the argparse convention)."""
-    from flip_api.scripts import register_trust as cli
-
     _patch_session(monkeypatch)
     monkeypatch.setattr("sys.argv", ["register_trust"])
 
@@ -344,9 +328,6 @@ def test_main_requires_name(monkeypatch, capsys):
     # argparse writes the "the following arguments are required" message to stderr.
     assert "--name" in capsys.readouterr().err
 
-
-# TrustRegistrationError needs to be importable at the module level (used by main).
-from flip_api.trusts_services.services.register_trust import TrustRegistrationError  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # hub_shared block

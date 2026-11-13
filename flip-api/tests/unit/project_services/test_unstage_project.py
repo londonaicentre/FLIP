@@ -93,7 +93,13 @@ def test_unstage_project_permission_denied(app_fixture, client, test_user_id, te
     mock_get_project.assert_not_called()
 
 
-def test_unstage_project_not_found(app_fixture, client, test_user_id, test_project_id):
+# The nil UUID is still a valid UUID: it reaches the lookup (404), not path validation (422).
+@pytest.mark.parametrize(
+    "project_id",
+    ["87654321-4321-8765-2109-876543210987", "00000000-0000-0000-0000-000000000000"],
+    ids=["regular", "all-zeros"],
+)
+def test_unstage_project_not_found(app_fixture, client, test_user_id, project_id):
     # Arrange
     mock_session = MagicMock()
     app_fixture.dependency_overrides[get_session] = lambda: mock_session
@@ -104,42 +110,26 @@ def test_unstage_project_not_found(app_fixture, client, test_user_id, test_proje
         patch("flip_api.project_services.unstage_project.get_project", return_value=None),
     ):
         # Act
-        response = client.post(f"/api/projects/{test_project_id}/unstage")
+        response = client.post(f"/api/projects/{project_id}/unstage")
 
     # Assert
     assert response.status_code == status.HTTP_404_NOT_FOUND
-    assert response.json()["detail"] == f"Unable to find project with ID: {test_project_id}"
+    assert response.json()["detail"] == f"Unable to find project with ID: {project_id}"
 
 
-def test_unstage_project_not_staged_status(app_fixture, client, test_user_id, test_project_id):
+@pytest.mark.parametrize(
+    "project_status",
+    [ProjectStatus.UNSTAGED, ProjectStatus.APPROVED],
+    ids=["unstaged", "approved"],
+)
+def test_unstage_project_not_staged_status(
+    app_fixture, client, test_user_id, test_project_id, mock_project_data, project_status
+):
     # Arrange
     mock_session = MagicMock()
     app_fixture.dependency_overrides[get_session] = lambda: mock_session
     app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
-
-    mock_project_data = MagicMock()
-    mock_project_data.status = ProjectStatus.UNSTAGED.value
-
-    with (
-        patch("flip_api.project_services.unstage_project.has_permissions", return_value=True),
-        patch("flip_api.project_services.unstage_project.get_project", return_value=mock_project_data),
-    ):
-        # Act
-        response = client.post(f"/api/projects/{test_project_id}/unstage")
-
-    # Assert
-    assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert response.json()["detail"] == f"Project with ID: {test_project_id} is not currently staged."
-
-
-def test_unstage_project_approved_status(app_fixture, client, test_user_id, test_project_id):
-    # Arrange
-    mock_session = MagicMock()
-    app_fixture.dependency_overrides[get_session] = lambda: mock_session
-    app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
-
-    mock_project_data = MagicMock()
-    mock_project_data.status = ProjectStatus.APPROVED.value
+    mock_project_data.status = project_status.value
 
     with (
         patch("flip_api.project_services.unstage_project.has_permissions", return_value=True),
@@ -232,47 +222,3 @@ def test_unstage_project_permission_check_called_correctly(app_fixture, client, 
 
     # Assert
     mock_has_permissions.assert_called_once_with(test_user_id, [PermissionRef.CAN_UNSTAGE_PROJECTS], mock_session)
-
-
-def test_unstage_project_session_transaction_management(
-    app_fixture, client, test_user_id, test_project_id, mock_project_data
-):
-    # Arrange
-    mock_session = MagicMock()
-    app_fixture.dependency_overrides[get_session] = lambda: mock_session
-    app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
-
-    with (
-        patch("flip_api.project_services.unstage_project.has_permissions", return_value=True),
-        patch("flip_api.project_services.unstage_project.get_project", return_value=mock_project_data),
-        patch("flip_api.project_services.unstage_project.unstage_project_service") as mock_unstage_service,
-    ):
-        # Act
-        response = client.post(f"/api/projects/{test_project_id}/unstage")
-
-    # Assert
-    assert response.status_code == status.HTTP_204_NO_CONTENT
-    mock_unstage_service.assert_called_once_with(
-        project_id=test_project_id, current_user_id=test_user_id, session=mock_session
-    )
-
-
-def test_unstage_project_edge_case_empty_uuid(app_fixture, client, test_user_id):
-    # Arrange
-    mock_session = MagicMock()
-    app_fixture.dependency_overrides[get_session] = lambda: mock_session
-    app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
-
-    # UUID with all zeros should still be valid UUID format
-    zero_uuid = "00000000-0000-0000-0000-000000000000"
-
-    with (
-        patch("flip_api.project_services.unstage_project.has_permissions", return_value=True),
-        patch("flip_api.project_services.unstage_project.get_project", return_value=None),
-    ):
-        # Act
-        response = client.post(f"/api/projects/{zero_uuid}/unstage")
-
-    # Assert
-    assert response.status_code == status.HTTP_404_NOT_FOUND
-    assert response.json()["detail"] == f"Unable to find project with ID: {zero_uuid}"

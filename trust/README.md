@@ -11,7 +11,7 @@
     limitations under the License.
 -->
 
-# Mock trust setup
+# Trust stack
 
 Deploy components at the trust level:
 
@@ -43,11 +43,11 @@ The Trust API polls the Central Hub for tasks. In development, it connects to th
 
 ## Joining as a new trust (dev hub)
 
-Use this flow when you want a trust whose identity (keys, FL kit slot) came from the hub at runtime. The `trust` table on the hub is the sole trust registry — there is no env-slot model. The trust's plaintext keys never live in a hub-side env file; they live only in the trust's gitignored kit file. The Ansible-driven prod flow lives in `docs/source/deploy-flip/deploy-flip-node-on-prem.rst`.
+Use this flow when you want a trust whose identity (keys, FL kit slot) came from the hub at runtime. The `trust` table on the hub is the sole trust registry. The trust's plaintext keys never live in a hub-side env file; they live only in the trust's gitignored kit file. The Ansible-driven prod flow lives in `docs/source/deploy-flip/deploy-flip-node-on-prem.rst`.
 
 ### 1. Register the trust on the hub
 
-A trust is registered on the **running hub** rather than configured via env-file key dicts. The kit files (`trust/.env.<CODE>.<env>`) ARE the roster. Either:
+The kit files (`trust/.env.<CODE>.<env>`) are the roster; each is registered on the **running hub**. Either:
 
 * **`make register-trusts`** (from the repo root) — registers the shipped dev roster (every `trust/.env.*.development.example`, currently GSTT and KCH; run automatically by `make up`), or
 * **`make register-trust KIT=<CODE>`** — registers one trust (after `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..."` scaffolds its kit), or
@@ -75,7 +75,7 @@ FL_KIT_SLOT_NUMBER=<from kit>
 EXPECTED_TRUST_ID=<from kit>
 ```
 
-plus the trust's identity (`TRUST_NAME` / `TRUST_CODE` / `TRUST_REGION`, read by `register-trust`) and its host-local ports and data directories. The optional `EXPECTED_TRUST_ID` lets trust-api self-check the hub-resolved id at startup.
+plus the trust's identity (`TRUST_NAME` / `TRUST_CODE` / `TRUST_REGION`, read by `register-trust`) and its host-local ports and data directories. The optional `EXPECTED_TRUST_ID` lets trust-api self-check the hub-resolved id at startup. The same schema serves dev trusts (GSTT/KCH against a local hub), on-prem trusts (against a prod hub), and laptop-against-prod testing — operator picks the kit code (`trust/.env.<CODE>.<env>`) and `make -C trust up-trust KIT=<CODE> HUB=<env>` handles the rest.
 
 The kit also carries **XNAT's own AE title** and the **upstream PACS** block (see the commented
 `── Upstream PACS ──` section of `trust/.env.example`, and
@@ -104,7 +104,7 @@ The kit also carries the trust's **disclosure floor**:
 COHORT_QUERY_THRESHOLD=10
 ```
 
-This is the minimum cohort size the trust will release anything about. Cohort statistics below it are privacy-suppressed (a genuine zero and a small count are indistinguishable), and both row-level routes refuse outright — `/cohort/dataframe`, which supplies FL training data, and `/cohort/accession-ids`, which decides whose imaging is pulled into XNAT. Raise it to release less. It is the operator's setting, not the hub's: trusts need not agree on a value, and the hub cannot lower it. The FL client receives the same value, so an app that releases site-level statistics rather than model weights (the biomarker causal-discovery tutorial) refuses below the trust's floor too. See [`data-access-api/README.md`](data-access-api/README.md#row-level-data-and-the-disclosure-threshold). The same schema serves dev trusts (GSTT/KCH against a local hub), on-prem trusts (against a prod hub), and laptop-against-prod testing — operator picks the kit code (`trust/.env.<CODE>.<env>`) and `make -C trust up-trust KIT=<CODE> HUB=<env>` handles the rest.
+This is the minimum cohort size the trust will release anything about. Cohort statistics below it are privacy-suppressed (a genuine zero and a small count are indistinguishable), and both row-level routes refuse outright — `/cohort/dataframe`, which supplies FL training data, and `/cohort/accession-ids`, which decides whose imaging is pulled into XNAT. Raise it to release less. It is the operator's setting, not the hub's: trusts need not agree on a value, and the hub cannot lower it. The FL client receives the same value, so an app that releases site-level statistics rather than model weights (the biomarker causal-discovery tutorial) refuses below the trust's floor too. See [`data-access-api/README.md`](data-access-api/README.md#row-level-data-and-the-disclosure-threshold).
 
 #### Site-enforced FL privacy policy (optional, FLARE only)
 
@@ -117,11 +117,15 @@ update-privacy filter is applied to every outgoing model update regardless of th
 bound object is the job's *configuration*: every FLARE app template runs the Client API `in_process`, so job
 code runs inside the client's job process and is not currently isolated from the filter (FLIP#1572). Unset =
 no site policy (app-level filters only, the previous behavior). Invalid values stop the fl-client at startup
-(fail closed). Apply changes with `make -C trust up-fl-clients-kit KIT=<CODE>`
-(`down-fl-clients-kit KIT=<CODE>` stops and removes
-just that trust's clients; `up-fl-clients` / `down-fl-clients` do the same across every kit for
-this env, leaving the rest of each trust stack up); the fl-client log then shows
-`[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-privacy.rst`
+(fail closed). Apply changes by recreating the FL clients; the rest of the trust stack stays up:
+
+```sh
+make -C trust up-fl-clients-kit KIT=<CODE>     # this trust's clients
+make -C trust down-fl-clients-kit KIT=<CODE>   # stop and remove this trust's clients
+make -C trust up-fl-clients                    # every kit for this env (down-fl-clients to stop)
+```
+
+The fl-client log then shows `[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-privacy.rst`
 ("Site-enforced privacy policy").
 
 #### Trust governance policy (optional)
@@ -227,7 +231,7 @@ the metadata table they were built from; its DICOMs are regenerated locally by a
 converter (`fl-tutorials/datasets/`, FLIP#1221) and seeded from that tree
 (`make -C fl-tutorials seed-<dataset> KIT=<CODE>`, which drives `seed-omop … CANONICAL_DIR=` and
 `seed-orthanc … DICOM_SOURCE= TABLES_DIR=` here). `cxr_project` and `prostate_project` still ship
-one, which is why the default `PROJECTS` a bring-up seeds is `cxr_project` alone.
+one. The default `PROJECTS` a bring-up seeds is `cxr_project` alone.
 
 A trust is stood up by **seeding** those into its running omop-db and Orthanc (`up-trust` does it,
 see below); there are no volume snapshots to download. A **data version is a git tag on that
@@ -238,8 +242,8 @@ and Orthanc together, because a tag describes the whole dataset state. Every con
 duplicated as a second directory or a suffixed filename. `HF_TRUST_DATA_REVISION` overrides the
 tag everywhere (`main` to work against files uploaded but not tagged yet; a sha to freeze one).
 
-Publishing a new version is one commit that replaces exactly the artefacts that changed, plus one
-tag. An existing tag is never moved, so a published version means one set of bytes for good. The
+Publishing a new version needs `hf auth login` with write access to the dataset. It is one commit
+that replaces exactly the artefacts that changed, plus one tag. An existing tag is never moved, so a published version means one set of bytes for good. The
 commit and the tag are separate calls to the Hub: if the second fails, the bytes sit on `main` with
 nothing pinning them and no consumer resolving them — re-run the same command to finish it.
 
@@ -254,16 +258,14 @@ make publish-trust-data VERSION=20261001 OMOP_CSV=… DELETE=dicom/spleen_projec
 `DELETE=<path in repo>` removes a file from `main` in the same commit (earlier tags keep it) — how
 `dicom/spleen_project.tar.gz` went when spleen moved to local regeneration.
 
-(`hf auth login` with write access to the dataset is needed.) Bumping `.data_version` is what
-moves a checkout: the next `up-trust` (its `ensure-seeded` step) re-seeds the trust's projects at
+Bumping `.data_version` is what moves a checkout: the next `up-trust` (its `ensure-seeded` step) re-seeds the trust's projects at
 the new tag — OMOP rows replaced project by project, PACS studies cleared and re-uploaded — and
 every seed/enrichment run reads at the new tag.
 
 ### Seeding at bring-up
 
 `up-trust` starts omop-db and Orthanc on empty, pre-created volumes and then runs
-`ensure-seeded`, which loads `PROJECTS` (default `cxr_project` — the projects that publish a DICOM
-set, see above) from the dataset at
+`ensure-seeded`, which loads `PROJECTS` (default `cxr_project`, see above) from the dataset at
 the pinned version. Each half leaves a marker beside its store — `<omop dir>/../.seeded` and
 `<orthanc parent>/.<storage dir>.seeded` — recording projects, partition and version; a marker
 that matches means nothing to do, so a second `up` fetches and uploads nothing and the seeded
@@ -282,13 +284,11 @@ A real trust, whose OMOP and PACS hold its own data, sets `TRUST_DATA_SEED=false
 `trustData.seed.enabled` off. The explicit `seed*` / `unseed*` targets refuse that trust unless `FORCE_SEED=1`. If that trust's OMOP lacks the DICOM vocabulary, load it on its own with
 `make -C trust/omop-db load-dicom-vocab` and the kit's `OMOP_*` values.
 
-**A host seeded before FLIP#1187 re-seeds once.** The PACS marker used to live *inside* the
-storage directory (`<storage dir>/.seeded`) and now sits beside it, because the directory
-itself is owned by Orthanc's uid. The new reader does not look at the old path, so the first
-`up-trust` after this change finds no marker and re-seeds: the DICOM cache under
-`trust/orthanc/volumes/dicom/` is keyed by data version and survives, so nothing is
-re-downloaded, but every instance is re-posted (Orthanc answers `AlreadyStored`) — a few
-minutes, once. The stale `.seeded` inside the storage directory can be deleted.
+**Upgrading a host seeded before FLIP#1187:** a PACS marker left *inside* the storage directory
+(`<storage dir>/.seeded`) is no longer read (the marker now sits beside the directory, which Orthanc's uid owns), so the first `up-trust` re-posts every instance
+(Orthanc answers `AlreadyStored`; the DICOM cache under `trust/orthanc/volumes/dicom/` is keyed by
+data version, so nothing is re-downloaded) — a few minutes, once. The stale `.seeded` inside the
+storage directory can then be deleted.
 
 Recovering a half-loaded DICOM vocabulary: the loader skips itself when its scaffolding
 concept is present, and that concept is committed before the bulk load, so a run killed in
@@ -313,6 +313,10 @@ Override with `SOURCE_TRUST` when the two differ:
 make -C trust seed KIT=<CODE> SOURCE_TRUST=1        # slot stays as assigned; load partition 1
 ```
 
+`SOURCE_TRUST` moves only the partition. The trust's volumes, ports and the `.seeded` marker stay
+keyed to its kit slot, which is why it exists as its own variable rather than an override of
+`TRUST_NUM`.
+
 To seed the whole shipped dev roster in one go — `seed KIT=GSTT` then `seed KIT=KCH`, same
 projects, same partition-by-slot default:
 
@@ -322,10 +326,6 @@ make -C trust seed-trusts PROJECTS="cxr_project"
 
 `seed` itself is just `seed-omop` + `seed-orthanc`; run either half alone with
 `make -C trust seed-omop KIT=<CODE> PROJECTS=…` / `seed-orthanc KIT=<CODE> PROJECTS=…`.
-
-`SOURCE_TRUST` moves only the partition. The trust's volumes, ports and the `.seeded` marker stay
-keyed to its kit slot, which is why it exists as its own variable rather than an override of
-`TRUST_NUM`.
 
 ### Unseeding, and moving off a re-cut project
 
@@ -350,7 +350,7 @@ See dedicated README under [omop-db/README.md](omop-db/README.md) for instructio
 
 ## XNAT
 
-`make up` (and `make up-trust KIT=<name>`) brings up that trust's XNAT automatically — it is no longer a separate step. See the dedicated README under [xnat/README.md](xnat/README.md) for standalone XNAT management and debugging.
+`make up` (and `make -C trust up-trust KIT=<CODE>`) brings up that trust's XNAT automatically. See the dedicated README under [xnat/README.md](xnat/README.md) for standalone XNAT management and debugging.
 
 ## MONAI Label (optional)
 
@@ -401,8 +401,7 @@ further consequences on a real trust:
 
   Because of that, **`MONAI_LABEL_BIND_HOST` defaults to `127.0.0.1`**: out of the box the port
   is published on loopback only, and the trust host gains no listener reachable from the
-  network (the trust deployment model is otherwise strictly outbound — see
-  [Deployment Architecture](../AGENTS.md#deployment-architecture)). That default is deliberately *not* browser-usable
+  network (the trust deployment model is otherwise strictly outbound). That default is deliberately *not* browser-usable
   from another machine. To give clinicians access, pick one:
 
   1. **Serve it through the XNAT nginx** (recommended) — same-origin with XNAT, so it also
@@ -425,7 +424,6 @@ verifiable in the monailabel container's logs):
   NVIDIA AIAA click tool instead of MONAI Label's, so left-clicks on the image never reach the
   server. **Pick *Mask ▾ → MONAILabel* again** once the panel shows the server; clicks then prompt
   the model (Ctrl+click for a negative point).
-
 - *"Empty mask was returned by the model run"* from every interactive model (`sam_2d`,
   `deepgrow_*`) while `deepedit_seg` still works: the tab's segment state has gone stale —
   **reload the tab**.
@@ -530,13 +528,14 @@ own settings, sending the host's public egress IP to the hub team, and `make onb
    Both run the prod compose and stack files; only `HUB` unset is the
    development stack.
 
-   On-prem, `up-trust` runs `ensure-seeded` unconditionally, the same way it does in
+   On-prem, `up-trust` runs `ensure-seeded` the same way it does in
    dev: a store with no `.seeded` marker beside it is seeded with the listed mock
    projects (anonymous Hugging Face download, no hub credentials) — OMOP via
    `--clean projects`, which replaces only those projects' own rows, and Orthanc by
    posting their studies. A real on-prem operator who points `OMOP_DATA_DIR` /
-   `ORTHANC_STORAGE_DIR` at real data therefore gets the mock projects loaded
-   alongside it on first bring-up; there is no switch to turn the seed off yet.
+   `ORTHANC_STORAGE_DIR` at real data must set `TRUST_DATA_SEED=false` in the kit
+   before the first bring-up (see [Seeding at bring-up](#seeding-at-bring-up));
+   otherwise the mock projects are loaded alongside the real data.
 
    `up-trust` is the **first-install** verb on every path, on-prem included: its
    XNAT step runs `xnat-reset`, which wipes the XNAT archive and database, and its
@@ -545,7 +544,7 @@ own settings, sending the host's public egress IP to the hub team, and `make onb
    on-prem operator runs `up-trust` **once**; every later move to a release goes
    through `upgrade-trust` (below), never `up-trust` or `restart-trust`.
 
-### Upgrading to a release (FLIP#1204)
+### Upgrading to a release
 
 ```bash
 git fetch --tags origin && git checkout vX.Y.Z              # the checkout first: compose files + this verb come from it
@@ -615,6 +614,6 @@ make -C trust-api integration_test
 make -C data-access-api integration_test
 ```
 
-The seed data lives in [`trust-api/tests/integration/fixtures/omop_seed.sql`](trust-api/tests/integration/fixtures/omop_seed.sql) and follows the MI-CDM shape — `image_occurrence` joined to `concept` for modality lookups. Counts there match the assertions in `test_cohort_query.py` and `test_cohort_endpoint.py` (24 patients, 20 of them with imaging; 32 image occurrences). When adjusting the seed, update both. The trust-api side mocks nothing on the HTTP boundary — the only stub is an in-process HTTP server that catches the trust-api → flip-api callback (B3 is intentionally scoped to exclude the hub leg, see issue #369).
+The seed data lives in [`trust-api/tests/integration/fixtures/omop_seed.sql`](trust-api/tests/integration/fixtures/omop_seed.sql) and follows the MI-CDM shape — `image_occurrence` joined to `concept` for modality lookups. Counts there match the assertions in `test_cohort_query.py` and `test_cohort_endpoint.py` (24 patients, 20 of them with imaging; 32 image occurrences). When adjusting the seed, update both. The trust-api side mocks nothing on the HTTP boundary — the only stub is an in-process HTTP server that catches the trust-api → flip-api callback (the hub leg is deliberately out of scope, see issue #369).
 
 Both Make targets are also wired into CI via dedicated jobs in `test_trust_trust_api.yml` and `test_trust_data_access_api.yml`.

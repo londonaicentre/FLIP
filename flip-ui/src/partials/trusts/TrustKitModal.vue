@@ -46,7 +46,7 @@
                             </DialogTitle>
                             <div class="px-8 py-4 space-y-4 text-sm font-normal leading-5 dark:text-gray-300">
                                 <div
-                                    class="border-l-4 border-red-500 bg-red-50 dark:bg-red-900/20 p-3"
+                                    class="p-3 border border-red-200 rounded-md bg-red-50 dark:border-red-500/40 dark:bg-red-900/20"
                                     data-test="kit-warning"
                                 >
                                     <p class="text-sm font-bold text-red-800 dark:text-red-200">

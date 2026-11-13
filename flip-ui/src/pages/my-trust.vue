@@ -25,7 +25,7 @@
                 <header class="mb-6">
                     <p
                         data-test="my-trust-eyebrow"
-                        class="text-[11px] font-mono uppercase tracking-[0.16em] text-gray-500 dark:text-gray-300"
+                        class="text-2xs font-mono uppercase tracking-[0.16em] text-gray-500 dark:text-gray-300"
                     >
                         Trust admin · {{ trustAdminOf?.code ?? trustAdminOf?.name }}
                     </p>

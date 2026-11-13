@@ -186,15 +186,25 @@ def test_update_status_error(mock_mode, mock_request, mock_can_access_model, moc
 # These tests check the behavior when either the model or trust does not exist in the database.
 
 
-@patch("flip_api.trusts_services.update_trust_status.check_trust_exists", return_value=False)
-@patch("flip_api.trusts_services.update_trust_status.check_model_exists", return_value=False)
-def test_update_status_no_model_or_trust(
-    mock_model_exists, mock_trust_exists, mock_request, mock_can_access_model, mock_get_session
-):
+@pytest.mark.parametrize(
+    ("model_exists", "trust_exists", "detail"),
+    [
+        (False, False, f"Both {model_id=} and {trust_id=} do not exist"),
+        (False, True, f"{model_id=} does not exist"),
+        (True, False, f"{trust_id=} does not exist"),
+        (True, True, f"No relationship exists between {model_id=} and {trust_id=}"),
+    ],
+    ids=["neither", "no-model", "no-trust", "no-relationship"],
+)
+def test_update_status_404(model_exists, trust_exists, detail, mock_request, mock_can_access_model, mock_get_session):
     # Simulate no intersect
     mock_get_session.exec.return_value.first.return_value = None
 
-    with pytest.raises(HTTPException) as exc_info:
+    with (
+        patch("flip_api.trusts_services.update_trust_status.check_model_exists", return_value=model_exists),
+        patch("flip_api.trusts_services.update_trust_status.check_trust_exists", return_value=trust_exists),
+        pytest.raises(HTTPException) as exc_info,
+    ):
         update_trust_status(
             request=mock_request,
             model_id=model_id,
@@ -204,75 +214,5 @@ def test_update_status_no_model_or_trust(
             db=mock_get_session,
         )
 
-    # Assert that the correct 404 error is raised
     assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
-    assert f"Both {model_id=} and {trust_id=} do not exist" in exc_info.value.detail
-
-
-@patch("flip_api.trusts_services.update_trust_status.check_trust_exists", return_value=True)
-@patch("flip_api.trusts_services.update_trust_status.check_model_exists", return_value=False)
-def test_update_status_no_model(
-    mock_model_exists, mock_trust_exists, mock_request, mock_can_access_model, mock_get_session
-):
-    # Simulate no intersect
-    mock_get_session.exec.return_value.first.return_value = None
-
-    with pytest.raises(HTTPException) as exc_info:
-        update_trust_status(
-            request=mock_request,
-            model_id=model_id,
-            trust_id=trust_id,
-            trust_status=trust_status,
-            data=update_trust_status_data,
-            db=mock_get_session,
-        )
-
-    # Assert that the correct 404 error is raised for the missing model
-    assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
-    assert f"{model_id=} does not exist" in exc_info.value.detail
-
-
-@patch("flip_api.trusts_services.update_trust_status.check_trust_exists", return_value=False)
-@patch("flip_api.trusts_services.update_trust_status.check_model_exists", return_value=True)
-def test_update_status_no_trust(
-    mock_model_exists, mock_trust_exists, mock_request, mock_can_access_model, mock_get_session
-):
-    # Simulate no intersect
-    mock_get_session.exec.return_value.first.return_value = None
-
-    with pytest.raises(HTTPException) as exc_info:
-        update_trust_status(
-            request=mock_request,
-            model_id=model_id,
-            trust_id=trust_id,
-            trust_status=trust_status,
-            data=update_trust_status_data,
-            db=mock_get_session,
-        )
-
-    # Assert that the correct 404 error is raised for the missing trust
-    assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
-    assert f"{trust_id=} does not exist" in exc_info.value.detail
-
-
-@patch("flip_api.trusts_services.update_trust_status.check_trust_exists", return_value=True)
-@patch("flip_api.trusts_services.update_trust_status.check_model_exists", return_value=True)
-def test_update_status_no_relationship(
-    mock_model_exists, mock_trust_exists, mock_request, mock_can_access_model, mock_get_session
-):
-    # Simulate no intersect
-    mock_get_session.exec.return_value.first.return_value = None
-
-    with pytest.raises(HTTPException) as exc_info:
-        update_trust_status(
-            request=mock_request,
-            model_id=model_id,
-            trust_id=trust_id,
-            trust_status=trust_status,
-            data=update_trust_status_data,
-            db=mock_get_session,
-        )
-
-    # Assert that the correct 404 error is raised for no relationship between model and trust
-    assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
-    assert f"No relationship exists between {model_id=} and {trust_id=}" in exc_info.value.detail
+    assert detail in exc_info.value.detail

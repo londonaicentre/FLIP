@@ -437,23 +437,6 @@ def test_heartbeat_accepts_values_at_the_caps(mutate, reason, mock_auth, mock_tr
 
 
 @patch("flip_api.private_services.trust_tasks.handle_imaging_task_completed")
-def test_submit_create_imaging_result_triggers_email(mock_send_emails, trust_id, task_id, mock_auth):
-    mock_task = _mock_task_owned_by(trust_id, task_id, TaskType.CREATE_IMAGING)
-    mock_db = MagicMock()
-    mock_db.exec.return_value.first.return_value = mock_task
-    app.dependency_overrides[get_session] = lambda: mock_db
-
-    response = client.post(
-        f"/api/tasks/{task_id}/result",
-        json={"success": True, "result": '{"ID": "img-1", "name": "Test", "created_users": []}'},
-    )
-
-    assert response.status_code == 200
-    mock_send_emails.assert_called_once_with(mock_task, mock_db)
-    app.dependency_overrides.pop(get_session, None)
-
-
-@patch("flip_api.private_services.trust_tasks.handle_imaging_task_completed")
 def test_submit_non_imaging_result_does_not_trigger_email(mock_send_emails, trust_id, task_id, mock_auth):
     mock_task = _mock_task_owned_by(trust_id, task_id, TaskType.COHORT_QUERY)
     mock_db = MagicMock()

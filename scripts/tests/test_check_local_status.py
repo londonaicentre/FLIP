@@ -144,40 +144,39 @@ def test_missing_dir_returns_empty() -> None:
     _assert(kits == [], "missing trust dir -> empty list", f"got {kits!r}")
 
 
+def _check_cases(fn, cases: list[tuple[dict[str, str], str | None, str, str]]) -> None:
+    """Assert ``fn(env_file) == want`` per ``(env_file, shell FLIP_INSTANCE or None, want, label)`` row."""
+    original = os.environ.pop("FLIP_INSTANCE", None)
+    try:
+        for env_file, shell, want, label in cases:
+            if shell is None:
+                os.environ.pop("FLIP_INSTANCE", None)
+            else:
+                os.environ["FLIP_INSTANCE"] = shell
+            got = fn(env_file)
+            _assert(got == want, label, f"got {got!r}")
+    finally:
+        os.environ.pop("FLIP_INSTANCE", None)
+        if original is not None:
+            os.environ["FLIP_INSTANCE"] = original
+
+
 def test_instance_prefix() -> None:
     """The network prefix must match `${FLIP_INSTANCE:+$FLIP_INSTANCE-}`, environment winning.
 
     Getting the default-stack case wrong is the expensive one: a stray prefix would report every
     hub network missing on the single-stack setup that nearly every run inspects.
     """
-    original = os.environ.pop("FLIP_INSTANCE", None)
-    try:
-        _assert(instance_prefix({}) == "", "unset -> no prefix", f"got {instance_prefix({})!r}")
-        _assert(
-            instance_prefix({"FLIP_INSTANCE": ""}) == "",
-            "empty env-file value -> no prefix",
-            f"got {instance_prefix({'FLIP_INSTANCE': ''})!r}",
-        )
-        _assert(
-            instance_prefix({"FLIP_INSTANCE": "  "}) == "",
-            "whitespace-only value -> no prefix",
-            f"got {instance_prefix({'FLIP_INSTANCE': '  '})!r}",
-        )
-        _assert(
-            instance_prefix({"FLIP_INSTANCE": "b"}) == "b-",
-            "env-file value -> '<value>-'",
-            f"got {instance_prefix({'FLIP_INSTANCE': 'b'})!r}",
-        )
-        os.environ["FLIP_INSTANCE"] = "shell"
-        _assert(
-            instance_prefix({"FLIP_INSTANCE": "envfile"}) == "shell-",
-            "process environment beats the env file",
-            f"got {instance_prefix({'FLIP_INSTANCE': 'envfile'})!r}",
-        )
-    finally:
-        os.environ.pop("FLIP_INSTANCE", None)
-        if original is not None:
-            os.environ["FLIP_INSTANCE"] = original
+    _check_cases(
+        instance_prefix,
+        [
+            ({}, None, "", "unset -> no prefix"),
+            ({"FLIP_INSTANCE": ""}, None, "", "empty env-file value -> no prefix"),
+            ({"FLIP_INSTANCE": "  "}, None, "", "whitespace-only value -> no prefix"),
+            ({"FLIP_INSTANCE": "b"}, None, "b-", "env-file value -> '<value>-'"),
+            ({"FLIP_INSTANCE": "envfile"}, "shell", "shell-", "process environment beats the env file"),
+        ],
+    )
 
 
 def test_compose_project() -> None:
@@ -187,29 +186,15 @@ def test_compose_project() -> None:
     directory of the first `-f` file, so anything else stops matching the containers `make up`
     created, on the single-stack setup that nearly every run inspects.
     """
-    original = os.environ.pop("FLIP_INSTANCE", None)
-    try:
-        _assert(compose_project({}) == "deploy", "unset -> 'deploy'", f"got {compose_project({})!r}")
-        _assert(
-            compose_project({"FLIP_INSTANCE": "  "}) == "deploy",
-            "whitespace-only value -> 'deploy'",
-            f"got {compose_project({'FLIP_INSTANCE': '  '})!r}",
-        )
-        _assert(
-            compose_project({"FLIP_INSTANCE": "b"}) == "b-deploy",
-            "env-file value -> '<value>-deploy'",
-            f"got {compose_project({'FLIP_INSTANCE': 'b'})!r}",
-        )
-        os.environ["FLIP_INSTANCE"] = "shell"
-        _assert(
-            compose_project({"FLIP_INSTANCE": "envfile"}) == "shell-deploy",
-            "process environment beats the env file",
-            f"got {compose_project({'FLIP_INSTANCE': 'envfile'})!r}",
-        )
-    finally:
-        os.environ.pop("FLIP_INSTANCE", None)
-        if original is not None:
-            os.environ["FLIP_INSTANCE"] = original
+    _check_cases(
+        compose_project,
+        [
+            ({}, None, "deploy", "unset -> 'deploy'"),
+            ({"FLIP_INSTANCE": "  "}, None, "deploy", "whitespace-only value -> 'deploy'"),
+            ({"FLIP_INSTANCE": "b"}, None, "b-deploy", "env-file value -> '<value>-deploy'"),
+            ({"FLIP_INSTANCE": "envfile"}, "shell", "shell-deploy", "process environment beats the env file"),
+        ],
+    )
 
 
 def test_parse_compose_containers() -> None:

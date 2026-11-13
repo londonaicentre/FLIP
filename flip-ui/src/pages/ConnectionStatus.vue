@@ -53,7 +53,7 @@
 
             <!-- View toggle: list (ConnectionA) vs radial (ConnectionD) -->
             <div class="flex items-center justify-end mb-3 gap-2">
-                <span class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">View</span>
+                <span class="text-2xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">View</span>
                 <div
                     role="tablist"
                     aria-label="Connection view"
@@ -107,7 +107,7 @@
                 >
                     <div class="flex items-center gap-2">
                         <span class="inline-block w-2 h-2 rounded-full" :class="tile.dot" />
-                        <span class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                        <span class="text-2xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
                             {{ tile.label }}
                         </span>
                     </div>
@@ -134,7 +134,7 @@
                             class="flex items-center gap-2 px-4 py-2 bg-gray-50 border-b border-gray-200
                             dark:bg-dark-surface dark:border-dark-border"
                         >
-                            <span class="flex-1 text-[10.5px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                            <span class="flex-1 text-2xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
                                 Trusts
                             </span>
                             <Menu as="div" class="relative">
@@ -197,26 +197,26 @@
                                         <div
                                             v-if="t.code && t.code !== t.name"
                                             data-test="trust-code-mobile"
-                                            class="font-mono text-[11px] text-gray-500 dark:text-gray-300 mt-0.5"
+                                            class="font-mono text-2xs text-gray-500 dark:text-gray-300 mt-0.5"
                                         >
                                             {{ t.code }}
                                         </div>
                                     </div>
                                     <span
-                                        class="inline-block px-2 py-0.5 rounded text-[11px] font-medium shrink-0"
+                                        class="inline-block px-2 py-0.5 rounded text-2xs font-medium shrink-0"
                                         :class="pillClass(t._state)"
                                     >
                                         {{ stateLabel(t._state) }}
                                     </span>
                                 </div>
                                 <div class="flex items-center gap-1.5 mt-2 pl-[18px]">
-                                    <span class="font-mono text-[11px] text-gray-600 dark:text-gray-300">
+                                    <span class="font-mono text-2xs text-gray-600 dark:text-gray-300">
                                         {{ t.region ?? "—" }}
                                     </span>
                                     <span class="text-gray-300 dark:text-gray-600">·</span>
                                     <span
                                         data-test="trust-heartbeat-mobile"
-                                        class="font-mono text-[11px]"
+                                        class="font-mono text-2xs"
                                         :class="t._state === 'offline'
                                             ? 'text-red-600 dark:text-red-400'
                                             : 'text-gray-600 dark:text-gray-300'"
@@ -224,7 +224,7 @@
                                         {{ heartbeatText(t.last_heartbeat) }}
                                     </span>
                                     <span class="text-gray-300 dark:text-gray-600">·</span>
-                                    <span class="font-mono text-[11px] text-gray-600 dark:text-gray-300">
+                                    <span class="font-mono text-2xs text-gray-600 dark:text-gray-300">
                                         {{ t.project_count }} {{ t.project_count === 1 ? "project" : "projects" }}
                                     </span>
                                     <span class="flex-1" />
@@ -335,7 +335,7 @@
                                             <span
                                                 v-if="t._failing.length"
                                                 data-test="trust-failing"
-                                                class="font-mono text-[11px] mt-0.5 truncate"
+                                                class="font-mono text-2xs mt-0.5 truncate"
                                                 :class="t._state === 'offline'
                                                     ? 'text-red-600 dark:text-red-400'
                                                     : 'text-amber-600 dark:text-amber-400'"
@@ -395,7 +395,7 @@
                     class="relative overflow-hidden h-[560px]"
                 >
                     <div class="absolute top-4 left-5 z-10">
-                        <div class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                        <div class="text-2xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
                             Federation topology · Live
                         </div>
                         <div class="mt-1 text-xs text-gray-500 dark:text-gray-300">
@@ -412,7 +412,7 @@
                         <span
                             v-for="tile in TILES"
                             :key="tile.key"
-                            class="inline-flex items-center gap-1.5 text-[11px] text-gray-700 dark:text-gray-300"
+                            class="inline-flex items-center gap-1.5 text-2xs text-gray-700 dark:text-gray-300"
                         >
                             <span class="inline-block w-2 h-2 rounded-full" :class="tile.dot" />
                             {{ tile.label }}
@@ -601,7 +601,7 @@
                     <div class="absolute bottom-4 left-5 z-10 flex gap-4 items-center">
                         <span class="inline-flex items-center gap-2">
                             <span class="inline-block w-2 h-2 rounded-full bg-fuchsia-500 animate-pulse" />
-                            <span class="font-mono text-[11px] uppercase tracking-widest text-gray-700 dark:text-gray-300">
+                            <span class="font-mono text-2xs uppercase tracking-widest text-gray-700 dark:text-gray-300">
                                 {{ onlineCount }} online
                             </span>
                         </span>
@@ -611,7 +611,7 @@
                 <!-- Side panel: incidents + hover detail -->
                 <AiCard class="p-0 flex flex-col overflow-hidden">
                     <div class="px-5 py-4 border-b border-gray-200 dark:border-dark-border">
-                        <div class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                        <div class="text-2xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
                             Incidents · open
                         </div>
                     </div>
@@ -625,7 +625,7 @@
                                 <span class="font-heading font-semibold text-[13px] text-gray-900 dark:text-gray-100">
                                     {{ t.code || t.name }}
                                 </span>
-                                <span class="inline-block px-2 py-0.5 rounded text-[11px] font-medium" :class="pillClass(t._state)">
+                                <span class="inline-block px-2 py-0.5 rounded text-2xs font-medium" :class="pillClass(t._state)">
                                     {{ stateLabel(t._state) }}
                                 </span>
                             </div>
@@ -643,7 +643,7 @@
                     </div>
 
                     <div class="px-5 py-4 border-t border-gray-200 dark:border-dark-border mt-auto">
-                        <div class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                        <div class="text-2xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
                             Trust detail
                         </div>
                     </div>
@@ -655,13 +655,13 @@
                         <span class="font-heading font-semibold text-[13px] text-gray-900 dark:text-gray-100">
                             {{ hoveredTrust.code || hoveredTrust.name }}
                         </span>
-                        <span class="font-mono text-[11px] text-gray-500 dark:text-gray-300">
+                        <span class="font-mono text-2xs text-gray-500 dark:text-gray-300">
                             {{ hoveredTrust.region ?? "—" }} · {{ heartbeatText(hoveredTrust.last_heartbeat) }}
                         </span>
                     </div>
                     <div
                         v-else
-                        class="px-5 py-3 text-[11px] text-gray-400 dark:text-gray-300 border-t border-gray-100 dark:border-dark-border"
+                        class="px-5 py-3 text-2xs text-gray-400 dark:text-gray-300 border-t border-gray-100 dark:border-dark-border"
                     >
                         Hover a trust on the topology to see details.
                     </div>

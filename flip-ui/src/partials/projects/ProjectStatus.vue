@@ -42,51 +42,51 @@
                 <div v-else class="flex flex-col flex-1 min-h-0">
                     <div class="grid grid-cols-5 shrink-0 overflow-hidden border-t border-b border-gray-200 divide-x divide-gray-200 dark:border-dark-border dark:divide-dark-border">
                         <div class="min-w-0 p-2.5">
-                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
+                            <p class="font-mono text-2xs uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Trusts onboarded
                             </p>
                             <p class="mt-1.5 text-xl font-semibold leading-none font-heading text-gray-900 dark:text-gray-100" data-test="overview-project-creation">
                                 {{ overview.projectCreationCompleted }}/{{ overview.projectCreationTotal }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300">
+                            <p class="mt-1.5 text-2xs leading-tight text-gray-500 dark:text-gray-300">
                                 imaging projects created
                             </p>
                         </div>
                         <div class="min-w-0 p-2.5">
-                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
+                            <p class="font-mono text-2xs uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Studies retrieved
                             </p>
                             <p class="mt-1.5 text-xl font-semibold leading-none font-heading text-gray-900 dark:text-gray-100" data-test="overview-image-retrieval">
                                 {{ formatCount(overview.studyRetrievalTotal) }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300" data-test="overview-retrieval-percent">
+                            <p class="mt-1.5 text-2xs leading-tight text-gray-500 dark:text-gray-300" data-test="overview-retrieval-percent">
                                 {{ overviewRetrievalPercent }}% of expected {{ expectedCohortLabel }}
                             </p>
                         </div>
                         <div class="min-w-0 p-2.5">
-                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
+                            <p class="font-mono text-2xs uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Processing
                             </p>
                             <p class="mt-1.5 text-xl font-semibold leading-none font-heading text-gray-900 dark:text-gray-100">
                                 {{ formatCount(overview.processingTotal) }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300">
+                            <p class="mt-1.5 text-2xs leading-tight text-gray-500 dark:text-gray-300">
                                 in flight at trusts
                             </p>
                         </div>
                         <div class="min-w-0 p-2.5">
-                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
+                            <p class="font-mono text-2xs uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Queued
                             </p>
                             <p class="mt-1.5 text-xl font-semibold leading-none font-heading text-gray-900 dark:text-gray-100">
                                 {{ formatCount(overview.queuedTotal) }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300">
+                            <p class="mt-1.5 text-2xs leading-tight text-gray-500 dark:text-gray-300">
                                 waiting on import workers
                             </p>
                         </div>
                         <div class="min-w-0 p-2.5">
-                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
+                            <p class="font-mono text-2xs uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Failed
                             </p>
                             <p
@@ -97,7 +97,7 @@
                             >
                                 {{ formatCount(overview.failedTotal) }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300">
+                            <p class="mt-1.5 text-2xs leading-tight text-gray-500 dark:text-gray-300">
                                 {{ overview.failedTotal > 0 ? "requires attention" : "no errors" }}
                             </p>
                         </div>
@@ -175,14 +175,14 @@
                                                  the number rather than letting it read as live. -->
                                             <span
                                                 v-if="isImportStale(project) && rowTotal(project) > 0"
-                                                class="font-mono text-[9px] uppercase tracking-[0.08em] rounded px-1.5 py-0.5 border border-red-200 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300"
+                                                class="font-mono text-2xs uppercase tracking-[0.08em] rounded px-1.5 py-0.5 border border-red-200 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300"
                                                 :data-test="`last-known-tag-${project.trustId}`"
                                             >
                                                 Last known
                                             </span>
                                         </span>
                                         <span
-                                            class="font-mono text-[11px] text-gray-500 dark:text-gray-300 shrink-0"
+                                            class="font-mono text-2xs text-gray-500 dark:text-gray-300 shrink-0"
                                             :data-test="`import-count-${project.trustId}`"
                                         >
                                             {{ importCountLabel(project) }}
@@ -204,7 +204,7 @@
                                         </template>
                                     </div>
                                     <div
-                                        class="flex justify-between font-mono text-[9px] uppercase tracking-wide text-gray-500 dark:text-gray-300"
+                                        class="flex justify-between font-mono text-2xs uppercase tracking-wide text-gray-500 dark:text-gray-300"
                                         :class="{ 'opacity-[0.65]': isImportStale(project) }"
                                     >
                                         <span v-for="seg in IMPORT_SEGMENTS" :key="seg.key" class="inline-flex items-center gap-1">
@@ -237,7 +237,7 @@
                                         <span class="text-xs font-bold text-red-700 dark:text-red-300">
                                             {{ importError(project)?.title }}
                                         </span>
-                                        <span class="text-[11px] leading-[1.4] text-red-600 dark:text-red-400">
+                                        <span class="text-2xs leading-[1.4] text-red-600 dark:text-red-400">
                                             {{ importError(project)?.detail }}
                                         </span>
                                     </span>

@@ -81,10 +81,10 @@ flwr stop <run_id> local --format json
 
 It returns `{"job_id", "status"}`: `STOPPED`, or the run's terminal status if it had already finished.
 
-The server status endpoint checks the Flower SuperLink health service configured by
-`SUPERLINK_HEALTH_ADDRESS` and returns:
+The server status endpoint requests the SuperLink's own `/health` route, on the same listener as
+its Control API (`SUPERLINK_ADDRESS`, port 8000), and returns:
 
-- `{"status": "RUNNING"}` when gRPC health returns `SERVING`
+- `{"status": "RUNNING"}` when it answers 200
 - `{"status": "STOPPED"}` otherwise
 
 The register node endpoint accepts a JSON body `{"name": "<trust_name>", "node_id": "<flower_node_id>"}`
@@ -102,11 +102,17 @@ If `targets` are omitted, all registered trust names are returned.
 
 ## Environment variables
 
-- `SUPERLINK_HEALTH_ADDRESS` (example: `superlink:9097`) — the SuperLink gRPC health service `/check_server_status` queries
+- `SUPERLINK_ADDRESS` (example: `superlink:8000`) — the SuperLink's HTTP listener; `/check_server_status` requests its
+  `/health` route, so the check needs no setting of its own
+- `SUPERLINK_ROOT_CERTIFICATES` — when set, the check is HTTPS verified against this CA; unset
+  (the standalone insecure dev stack), it is plain HTTP
+- `FLOWER_HEALTHCHECK_TIMEOUT_SECONDS` (default `1.0`)
 - `FL_API_KEY`, `FL_API_KEY_HEADER` — see [Authentication](#authentication)
 - `BUNDLE_URL_ALLOWED_ORIGINS` — see below
 - `JOB_CREDENTIAL_DIR` — where the job's hub credential is written for the fl-server; see
   [`fl-services/AGENTS.md`](../../AGENTS.md#environment-variables)
+
+Flower 1.43 removed the separate gRPC health server (port 9097) the check used to call (FLIP#1914).
 
 ## Bundle-fetch origin allow-list (`BUNDLE_URL_ALLOWED_ORIGINS`)
 

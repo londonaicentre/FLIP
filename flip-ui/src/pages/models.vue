@@ -84,7 +84,7 @@
                     >
                         <div class="flex items-center gap-2">
                             <span class="inline-block w-2 h-2 rounded-full" :class="tile.dot" />
-                            <span class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                            <span class="text-2xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
                                 {{ tile.label }}
                             </span>
                         </div>
@@ -264,7 +264,7 @@
                                         <router-link
                                             :to="`/project/${model.projectId}`"
                                             data-test="model-project-eyebrow"
-                                            class="block font-mono text-[9.5px] uppercase tracking-wider mb-[3px]
+                                            class="block font-mono text-2xs uppercase tracking-wider mb-[3px]
                                             truncate text-gray-400 dark:text-gray-300
                                             hover:text-primary-600 dark:hover:text-primary-300"
                                             @click.stop

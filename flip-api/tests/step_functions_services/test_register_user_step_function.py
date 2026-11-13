@@ -129,27 +129,35 @@ def test_role_assignment_400_invalid_roles_rolls_back(
     mock_delete_user.assert_called_once()
 
 
+@pytest.mark.parametrize(
+    ("code", "detail"),
+    [
+        (status.HTTP_404_NOT_FOUND, "User with ID {user_id} not found"),
+        (status.HTTP_503_SERVICE_UNAVAILABLE, "Could not verify user existence in Cognito; please try again."),
+    ],
+    ids=["listusers-lag-404", "cognito-unavailable-503"],
+)
 @patch("flip_api.step_functions_services.register_user_step_function.delete_user")
 @patch("flip_api.step_functions_services.register_user_step_function.set_user_roles")
 @patch("flip_api.step_functions_services.register_user_step_function.register_user")
-def test_role_assignment_404_does_not_roll_back(
-    mock_register, mock_set_roles, mock_delete_user, user_payload, mock_register_response
+def test_role_assignment_transient_error_does_not_roll_back(
+    mock_register, mock_set_roles, mock_delete_user, code, detail, user_payload, mock_register_response
 ):
-    """A 404 from set_user_roles immediately after admin_create_user is Cognito ListUsers
-    propagation lag — the user definitely exists (we just created it). Rolling back here
-    destroys a valid registration, which is exactly the silent destruction this PR is
-    supposed to eliminate. Treat 404 as transient like 503.
+    """Transient errors from set_user_roles straight after admin_create_user must not tear down the new user.
+
+    A 404 is Cognito ListUsers propagation lag — the user definitely exists (we just created it).
+    A 503 is a transient Cognito read failure during the existence check. In both cases the operator
+    retries role assignment once Cognito recovers; rolling back here would destroy a valid registration.
     """
     mock_register.return_value = mock_register_response
     mock_set_roles.side_effect = HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"User with ID {mock_register_response.user_id} not found",
+        status_code=code, detail=detail.format(user_id=mock_register_response.user_id)
     )
 
     response = client.post("/api/step/users", json=user_payload)
 
-    # Surfaced as 404 (or any non-500) so the operator can retry; user must remain.
-    assert response.status_code == status.HTTP_404_NOT_FOUND
+    # Surfaced as-is (non-500) so the operator can retry; the user must remain.
+    assert response.status_code == code
     mock_delete_user.assert_not_called()
 
 
@@ -196,29 +204,6 @@ def test_register_user_unexpected_exception(mock_register, user_payload):
     assert "DB failure" not in response.json()["detail"]
 
     mock_register.assert_called_once()
-
-
-@patch("flip_api.step_functions_services.register_user_step_function.delete_user")
-@patch("flip_api.step_functions_services.register_user_step_function.set_user_roles")
-@patch("flip_api.step_functions_services.register_user_step_function.register_user")
-def test_role_assignment_503_does_not_roll_back(
-    mock_register, mock_set_roles, mock_delete_user, user_payload, mock_register_response
-):
-    """A 503 from set_user_roles signals a transient Cognito read failure during the
-    existence check. The just-created user must NOT be torn down — the operator can
-    retry role assignment once Cognito recovers.
-    """
-    mock_register.return_value = mock_register_response
-    mock_set_roles.side_effect = HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="Could not verify user existence in Cognito; please try again.",
-    )
-
-    response = client.post("/api/step/users", json=user_payload)
-
-    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
-    # Critical: the rollback was NOT performed — we'd be destroying a valid registration.
-    mock_delete_user.assert_not_called()
 
 
 @patch("flip_api.step_functions_services.register_user_step_function.delete_user")

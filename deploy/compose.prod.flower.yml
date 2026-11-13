@@ -13,7 +13,7 @@
 # ROLE (FLIP#936): Flower overlay of the local prod-image harness (see the note in
 # compose.prod.yml) — not a deployment target. The canonical production equivalent is the Flower
 # branch of the ECS task definitions (deploy/providers/AWS/ecs_tasks.tf with fl_backend=flower, FLIP#566),
-# which mirrors this overlay: SuperLink 8000/9097 behind the fleet proxy on 9092 (FLIP#1517; its own
+# which mirrors this overlay: SuperLink 8000 behind the fleet proxy on 9092 (FLIP#1517; its own
 # container here, an ECS sidecar there), TLS + SuperNode-auth command flags, and the
 # register-supernode-keys one-shot (ecs_flower.tf).
 
@@ -43,7 +43,6 @@ services:
       - BUNDLE_URL_ALLOWED_ORIGINS=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
       # Use the internal hostnames and ports for the server since the API is within the same Docker network
       - SUPERLINK_ADDRESS=fl-server-net-1:8000
-      - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097
       - FL_API_KEY=${FL_API_KEY}
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
       - FLOWER_SRC_ROOT=/app/src
@@ -98,8 +97,6 @@ services:
       # otherwise. Reached over the compose network, never published.
       - --host
       - 0.0.0.0
-      - --health-server-address
-      - 0.0.0.0:9097
     # No trust-facing port: the fleet proxy below publishes it.
     security_opt:
       - no-new-privileges:true

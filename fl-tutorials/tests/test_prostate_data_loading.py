@@ -19,7 +19,6 @@ singles a file out.
 from __future__ import annotations
 
 import importlib
-import sys
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import MagicMock, patch
@@ -27,7 +26,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 import requests
-from tutorial_apps import TUTORIALS_ROOT
+from tutorial_apps import TUTORIALS_ROOT, app_package
 
 PROSTATE_DIR = TUTORIALS_ROOT / "flower" / "image_segmentation" / "3d_prostate_segmentation"
 # XNAT's export tree for one pulled accession: one scan folder per series, named <scan id>-<description>
@@ -35,28 +34,11 @@ PROSTATE_DIR = TUTORIALS_ROOT / "flower" / "image_segmentation" / "3d_prostate_s
 PLATFORM_SCANS = {"t2w": "1-T2_Weighted", "adc": "2-ADC_Map", "hbv": "3-High_B-Value_DWI"}
 
 
-def _app_modules() -> dict[str, ModuleType]:
-    return {name: module for name, module in sys.modules.items() if name == "app" or name.startswith("app.")}
-
-
 @pytest.fixture(scope="module")
 def data_loading_module() -> ModuleType:
-    """``app.data_loading`` imported under the ``app`` package name the tutorial ships as.
-
-    Every tutorial ships its code as a package called ``app``, so whichever one is imported first
-    would otherwise be served to the next; the fixture clears that name before and after.
-    """
-    displaced = _app_modules()
-    for name in displaced:
-        del sys.modules[name]
-    sys.path.insert(0, str(PROSTATE_DIR))
-    try:
+    """``app.data_loading`` imported under the ``app`` package name the tutorial ships as."""
+    with app_package(PROSTATE_DIR):
         yield importlib.import_module("app.data_loading")
-    finally:
-        sys.path.remove(str(PROSTATE_DIR))
-        for name in _app_modules():
-            del sys.modules[name]
-        sys.modules.update(displaced)
 
 
 def _touch(path: Path) -> None:
@@ -212,18 +194,11 @@ def _http_error(status: int) -> requests.HTTPError:
     return requests.HTTPError(f"{status} from imaging-api", response=response)
 
 
-def _raising(error: Exception):
-    def get_by_accession_number(_project, _accession, **_kw):
-        raise error
-
-    return get_by_accession_number
-
-
-def test_not_pulled_study_is_skipped_and_the_error_says_so(data_loading_module: ModuleType, tmp_path: Path) -> None:
+def test_not_pulled_study_is_skipped_and_the_error_says_so(data_loading_module: ModuleType) -> None:
     """A 404 means that study wasn't pulled: skip it, and if nothing is left, say so (not "run enrichment")."""
     flip_base = _flip_base(data_loading_module, {}, ["acc6"])
     not_found = _http_error(404)
-    flip_base.flip.get_by_accession_number.side_effect = _raising(not_found)
+    flip_base.flip.get_by_accession_number.side_effect = not_found
 
     with pytest.raises(RuntimeError, match="not found in XNAT") as raised:
         flip_base.get_case_list(modality="t2w", val_split=0.0, test_split=0.0)
@@ -237,12 +212,10 @@ def test_not_pulled_study_is_skipped_and_the_error_says_so(data_loading_module: 
     [_http_error(401), _http_error(403), _http_error(500), requests.Timeout("timed out"), OSError("disk full")],
     ids=["401", "403", "500", "timeout", "disk"],
 )
-def test_trust_level_failures_propagate_as_themselves(
-    data_loading_module: ModuleType, tmp_path: Path, error: Exception
-) -> None:
+def test_trust_level_failures_propagate_as_themselves(data_loading_module: ModuleType, error: Exception) -> None:
     """Errors that aren't about one study (bad key, 5xx, timeout, full disk) should be raised, not skipped."""
     flip_base = _flip_base(data_loading_module, {}, ["acc7"])
-    flip_base.flip.get_by_accession_number.side_effect = _raising(error)
+    flip_base.flip.get_by_accession_number.side_effect = error
 
     with pytest.raises(type(error)) as raised:
         flip_base.get_case_list(modality="t2w", val_split=0.0, test_split=0.0)

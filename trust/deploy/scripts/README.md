@@ -13,24 +13,23 @@
 
 # trust/deploy/scripts/
 
-The trust kit lifecycle and node self-test scripts (moved here from the repo-root `scripts/` by
-FLIP#1438). They are invoked through `make` targets — the root and `trust/` Makefiles — rather
-than run directly; see each entry for the wrapping target. Their stdlib-only tests live in
+The trust kit lifecycle, site upgrade and node self-test scripts (moved here from the repo-root
+`scripts/` by FLIP#1438). Run them through their `make` targets in the root and `trust/` Makefiles,
+not directly; each entry below names its target. Their stdlib-only tests live in
 [`tests/`](tests/) and run in CI from
 [`.github/workflows/test_trust_kit_scripts.yml`](../../../.github/workflows/test_trust_kit_scripts.yml).
 
 ## Trust kit scripts
 
 These scaffold, write, and keep in sync the `trust/.env.<CODE>.<env>` kit files that carry a
-trust's identity, credentials, and Hub-shared configuration. `trust_kit_lib.py` is the shared
-in-place-upsert implementation behind the others, so a kit file's operator edits (host-local
-ports, bind dirs) always survive a re-run.
+trust's identity, credentials, and Hub-shared configuration. Every write goes through
+`trust_kit_lib.py` (below), so operator edits to a kit file (host-local ports, bind dirs) survive
+a re-run.
 
 - **`new_trust.py`** (`make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." HUB=<stag|prod>`; leave
   `HUB` unset for development) — scaffolds `trust/.env.<CODE>.<env>` from the base template
   (`trust/.env.example`), prepending the trust's identity (`TRUST_NAME` / `TRUST_CODE` /
-  `TRUST_REGION`). Refuses to overwrite an existing kit (the root `new-trust` target also
-  refuses beside a kit still under its pre-FLIP#1479 name). The result is ready for
+  `TRUST_REGION`). Refuses to overwrite an existing kit. The root `new-trust` target also refuses when that trust still has a kit under its old, pre-FLIP#1479 file name. The result is ready for
   registration to fill in credentials (`make -C deploy/providers/AWS register-trusts KIT=<CODE>
   HUB=<hub>` on a deployed hub, `make register-trust KIT=<CODE>` in development).
 - **`trust_kit_lib.py`** — the single kit-file writer behind `distribute_trust_kits.py`,
@@ -40,10 +39,9 @@ ports, bind dirs) always survive a re-run.
   (`EXPECTED_TRUST_ID` / `FL_KIT_SLOT` / `FL_KIT_SLOT_NUMBER`) and the Hub-shared block are
   upserted unconditionally, the latter under a sentinel header added once on first write. Writes
   every kit file `0600`.
-- **`distribute_trust_kits.py`** — writes a trust kit file from `register_trust`'s JSON output:
-  one kit (object or one-element array) on stdin to the required `--target PATH` — the dev
-  `register-trust` Makefile pipe (`--target trust/.env.<CODE>.<env>`) and
-  `deploy/providers/AWS/scripts/register-trusts.sh` for stag/prod alike.
+- **`distribute_trust_kits.py`** — writes a trust kit file from `register_trust`'s JSON output. It reads one kit (a JSON object or a one-element array) on stdin and writes it to `--target PATH` (required). Callers:
+  - the dev `register-trust` Makefile pipe (`--target trust/.env.<CODE>.<env>`);
+  - `deploy/providers/AWS/scripts/register-trusts.sh`, for stag/prod.
 - **`sync_trust_kit.py`** (`make sync-trust-kit KIT=<CODE> HUB=<env>`) — refreshes only the
   Hub-shared block in `trust/.env.<CODE>.<env>` from the caller's environment (the root Makefile
   `include`s the right `.env.<env>` and exports it first). Credentials and operator edits are left
@@ -67,28 +65,38 @@ ports, bind dirs) always survive a re-run.
 
 ## Site upgrades
 
-- **`site_upgrade.py`** (invoked by `make -C trust upgrade-trust`, and by the AWS/Helm twins —
-  see `AGENTS.md` "Site release upgrades") — the **plan-and-guard-and-pin** phase of a site release
-  upgrade (FLIP#1204). Resolves the target tag against what the hub reports on `/api/health`
-  (defaults to that; `--tag vX.Y.Z` or `--tag sha-<short7>` overrides), says when GitHub lists a newer
-  release (offering to stop and move to it only when the hub already runs it), runs the guards (image tag
-  shape, downgrade → `--force`, release-tag checkout match → `--allow-checkout-drift`, every image
-  actually built at the tag via `docker manifest inspect`, operator confirmation unless `--yes`),
-  and — if everything passes — rewrites `DOCKER_TAG` / `DOCKER_FL_TAG` in the kit's Hub-shared
-  block. The script **stops before any container is touched**; the Makefile then re-includes the
-  updated kit and does the pull / recreate (`_upgrade-trust-apply` on trust; the EC2 twin and
-  `make -C trust/deploy/helm upgrade-trust-k8s` do the same for the other shapes). The operator
-  entry points wrap both phases together — `make upgrade-onprem-trust KIT=<CODE>` also runs
-  `onboard-onprem-trust --gate` (the readiness checklist implemented by `onboard_onprem_trust.py`,
-  above) before the plan phase. Exit codes (the Makefile's contract): 0 pinned, 2 no usable target,
-  3 refused downgrade, 4 not confirmed, 5 an image is missing at the target tag, 6 the checkout is
-  not at the target release. Running the script directly rewrites the kit but leaves the containers
-  at the old tag — use the Make targets. Runbook: `docs/source/sys-admin/admin-upgrading-sites.rst`.
+- **`site_upgrade.py`** — the plan phase of a site release upgrade (FLIP#1204): it picks the target
+  tag, runs the guards, and pins the tag in the kit. It is invoked by `make -C trust upgrade-trust` and
+  by the EC2 and Helm equivalents (see
+  [`AGENTS.md` "Site release upgrades"](../../../AGENTS.md#site-release-upgrades-flip1204)).
+  - **Target tag**: defaults to what the hub reports on `/api/health`; `--tag vX.Y.Z` or
+    `--tag sha-<short7>` overrides it. The script says when GitHub lists a newer release, and offers to
+    stop and move to it only when the hub already runs it.
+  - **Guards**:
+    - image tag shape;
+    - downgrade (override with `--force`);
+    - release-tag checkout match (override with `--allow-checkout-drift`);
+    - every image actually built at the tag (`docker manifest inspect`);
+    - operator confirmation (skip with `--yes`).
+  - **Pin**: if everything passes, it rewrites `DOCKER_TAG` / `DOCKER_FL_TAG` in the kit's Hub-shared
+    block.
+  - **Apply**: the script **stops before any container is touched**. The Makefile then re-includes the
+    updated kit and does the pull / recreate: `_upgrade-trust-apply` on trust, and
+    `make -C trust/deploy/terraform/aws/ec2 upgrade` and `make -C trust/deploy/helm upgrade-trust-k8s`
+    for the other shapes. Running the script directly rewrites the kit but leaves the containers at the
+    old tag, so use the Make targets.
+  - **Operator entry point**: `make upgrade-onprem-trust KIT=<CODE>` wraps both phases. Before the plan
+    phase it also runs `onboard-onprem-trust --gate` (the readiness checklist implemented by
+    `onboard_onprem_trust.py`, above).
+  - **Exit codes** (the Makefile's contract): `0` pinned, `2` no usable target, `3` refused downgrade,
+    `4` not confirmed, `5` an image is missing at the target tag, `6` the checkout is not at the target
+    release.
+  - Runbook: [`admin-upgrading-sites.rst`](../../../docs/source/sys-admin/admin-upgrading-sites.rst).
 
 ## Node self-test
 
-- **`selftest_node.sh`** (`make -C trust selftest-node FL_BACKEND=<backend>`) — the hubless
-  trust-node self-test checklist, run on the node itself, which writes a JSON + markdown report
-  (FLIP#1390, FLIP#1406).
+- **`selftest_node.sh`** (`make -C trust selftest-node FL_BACKEND=<backend>`) — the trust-node
+  self-test checklist. It runs on the node itself, needs no hub ("hubless"), and writes a JSON +
+  markdown report (FLIP#1390, FLIP#1406).
 - **`selftest_kit.py`** — called by `selftest_node.sh` to write a hubless kit file for the
   self-test: a hub URL under `.invalid`, fresh random keys, slot `Trust_1`.

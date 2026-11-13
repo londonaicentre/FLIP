@@ -17,6 +17,11 @@ from fl_api import app as app_module
 from fl_api.schemas import HealthResponse
 
 
+def _ok_schema(spec: dict, path: str, method: str) -> dict:
+    """The JSON schema of a route's 200 response."""
+    return spec["paths"][path][method]["responses"]["200"]["content"]["application/json"]["schema"]
+
+
 def test_docs_and_openapi_contract(client):
     docs_response = client.get("/docs")
     openapi_response = client.get("/openapi.json")
@@ -39,26 +44,12 @@ def test_docs_and_openapi_contract(client):
     ):
         assert path in spec["paths"]
 
-    health_schema = spec["paths"]["/health"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-    server_status_schema = spec["paths"]["/check_server_status"]["get"]["responses"]["200"]["content"][
-        "application/json"
-    ]["schema"]
-    client_status_schema = spec["paths"]["/check_client_status"]["get"]["responses"]["200"]["content"][
-        "application/json"
-    ]["schema"]
-    list_schema = spec["paths"]["/list_runs"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-    submit_schema = spec["paths"]["/submit_run/{job_folder}"]["post"]["responses"]["200"]["content"][
-        "application/json"
-    ]["schema"]
-    abort_schema = spec["paths"]["/abort_run/{run_id}"]["delete"]["responses"]["200"]["content"]["application/json"][
-        "schema"
-    ]
-    assert health_schema["$ref"] == "#/components/schemas/HealthResponse"
-    assert server_status_schema["$ref"] == "#/components/schemas/ServerInfoModel"
-    assert client_status_schema["items"]["$ref"] == "#/components/schemas/ClientInfoModel"
-    assert list_schema["items"]["$ref"] == "#/components/schemas/JobMetadata"
-    assert submit_schema["type"] == "string"
-    assert abort_schema["$ref"] == "#/components/schemas/JobMetadata"
+    assert _ok_schema(spec, "/health", "get")["$ref"] == "#/components/schemas/HealthResponse"
+    assert _ok_schema(spec, "/check_server_status", "get")["$ref"] == "#/components/schemas/ServerInfoModel"
+    assert _ok_schema(spec, "/check_client_status", "get")["items"]["$ref"] == "#/components/schemas/ClientInfoModel"
+    assert _ok_schema(spec, "/list_runs", "get")["items"]["$ref"] == "#/components/schemas/JobMetadata"
+    assert _ok_schema(spec, "/submit_run/{job_folder}", "post")["type"] == "string"
+    assert _ok_schema(spec, "/abort_run/{run_id}", "delete")["$ref"] == "#/components/schemas/JobMetadata"
 
 
 def test_health_success(client):

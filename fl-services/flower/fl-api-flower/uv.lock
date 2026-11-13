@@ -270,8 +270,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "grpcio" },
-    { name = "grpcio-health-checking" },
     { name = "httpx" },
     { name = "mypy" },
     { name = "pytest" },
@@ -283,7 +281,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115.11" },
-    { name = "flwr", specifier = ">=1.42.0" },
+    { name = "flwr", specifier = ">=1.43.0" },
     { name = "pydantic", specifier = ">=2.11.0" },
     { name = "pydantic-settings", specifier = ">=2.11.0" },
     { name = "tomlkit", specifier = ">=0.14.0" },
@@ -292,8 +290,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "grpcio", specifier = ">=1.60" },
-    { name = "grpcio-health-checking", specifier = ">=1.60" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "mypy", specifier = ">=1.19.1" },
     { name = "pytest", specifier = ">=8.3.5" },
@@ -304,7 +300,7 @@ dev = [
 
 [[package]]
 name = "flwr"
-version = "1.42.0"
+version = "1.43.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "alembic" },
@@ -313,7 +309,6 @@ dependencies = [
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "grpcio" },
-    { name = "grpcio-health-checking" },
     { name = "httpx" },
     { name = "iterators" },
     { name = "numpy" },
@@ -333,9 +328,9 @@ dependencies = [
     { name = "uv" },
     { name = "uvicorn", extra = ["standard"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/33/02/01ef753ea7198acfacb0208e85fae50ff7f3278a3764899081c67ab281b9/flwr-1.42.0.tar.gz", hash = "sha256:12b005e4c5083b1b0c74d66c95baf8f376078d86ef9ff1b4cac32afe5544b5f2", size = 752777, upload-time = "2026-10-22T15:42:09.746Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/aa/bd/e691b830c0c3d9260be6b2ff35f2110acfc16d950ba850e1cac47672b328/flwr-1.43.0.tar.gz", hash = "sha256:561535404083855f27e3e1753bcd06c45b7eb6836106f4e4ef790f9372fe1771", size = 716475, upload-time = "2026-11-04T16:52:54.529Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a9/65/aaa75a37c39933178b1c44637e15fdfb4e4dcea21d1bbcaaa04479c75445/flwr-1.42.0-py3-none-any.whl", hash = "sha256:c4e77a528ff1ba93b57c9bb8d04af3f14884f0c9a6f4325bd974f1f807510732", size = 1234506, upload-time = "2026-10-22T15:42:08.323Z" },
+    { url = "https://files.pythonhosted.org/packages/99/fc/18ed661d212d7906369ea7488cbaa36ffdd94092f8e232d31fdab49a7f05/flwr-1.43.0-py3-none-any.whl", hash = "sha256:0ceb3b06b632cc92e318221a4d9214f725f6ca4d1b963181e90ff55a94931b54", size = 1186900, upload-time = "2026-11-04T16:52:52.628Z" },
 ]
 
 [[package]]
@@ -395,19 +390,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ff/aa/66fe9f39871d766987d869a03ee0842a026f499c7b1e62decb9e78a8088e/grpcio-1.81.1-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:58ad1131c300d3c9b933802b3cc4dc69d380822935ba50b28703156ea826fbf7", size = 7844521, upload-time = "2026-06-11T12:46:12.171Z" },
     { url = "https://files.pythonhosted.org/packages/f0/9e/69bb7194861bcd28fb3193261d4f9c3831b4446993f002cf59068943e7ab/grpcio-1.81.1-cp313-cp313-win32.whl", hash = "sha256:78e29211f26da2fdd0e9c6d2b79f489476140cf7029b6a64808ade7ca4156a42", size = 4182786, upload-time = "2026-06-11T12:46:15.192Z" },
     { url = "https://files.pythonhosted.org/packages/0d/20/3da8bb0d637feccdc3e1e419bb511ce93651ce7d54164f95de22cc0b8b34/grpcio-1.81.1-cp313-cp313-win_amd64.whl", hash = "sha256:edb59506291b647a30884b1d51a599d605f40b20af4a7dc3d33786a47a31de60", size = 4928648, upload-time = "2026-06-11T12:46:17.823Z" },
-]
-
-[[package]]
-name = "grpcio-health-checking"
-version = "1.81.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "grpcio" },
-    { name = "protobuf" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/65/46/6b6678b5a922765ae7637205bb6d0618a4da8b35f2ce6116f8bcff262370/grpcio_health_checking-1.81.1.tar.gz", hash = "sha256:ecc61480e25058a4a04e11e4ab6900ad7439b32e60a8ce4ece7d9f219221c85d", size = 17107, upload-time = "2026-06-11T12:58:49.632Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6e/87/174bbfb5613794862c45b5cdf567fcfb478ad5a3a7b594e11d998656b2f9/grpcio_health_checking-1.81.1-py3-none-any.whl", hash = "sha256:cbc6a4171825ec64389de2f062d296ba129a5c27eefd0dd55fa837909184bdf9", size = 19120, upload-time = "2026-06-11T12:58:38.008Z" },
 ]
 
 [[package]]

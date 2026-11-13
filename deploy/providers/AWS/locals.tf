@@ -259,7 +259,6 @@ locals {
       # Same reload-gating rationale as the FLARE map (FLIP#593 pt.1).
       ENV                         = "production"
       SUPERLINK_ADDRESS           = "${local.service_discovery_names.fl_server}:8000"
-      SUPERLINK_HEALTH_ADDRESS    = "${local.service_discovery_names.fl_server}:9097"
       SUPERLINK_ROOT_CERTIFICATES = "/certs/ca.crt"
       FLOWER_SRC_ROOT             = "/app/src"
       JOB_CREDENTIAL_DIR          = "/app/src/.job-credentials"

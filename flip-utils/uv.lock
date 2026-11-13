@@ -873,7 +873,7 @@ diffusion = [
 requires-dist = [
     { name = "causal-learn", marker = "extra == 'full'", specifier = ">=0.1.4.3" },
     { name = "einops", marker = "extra == 'full'", specifier = "==0.8.1" },
-    { name = "flwr", marker = "extra == 'flower'", specifier = ">=1.42.0" },
+    { name = "flwr", marker = "extra == 'flower'", specifier = ">=1.43.0" },
     { name = "gdown", marker = "extra == 'full'", specifier = ">=5.2.2" },
     { name = "kubernetes", marker = "extra == 'nvflare'", specifier = ">=33.1.0,<36" },
     { name = "lpips", marker = "extra == 'full'", specifier = "==0.1.4" },
@@ -911,7 +911,7 @@ diffusion = [{ name = "matplotlib", specifier = ">=3.10.7" }]
 
 [[package]]
 name = "flwr"
-version = "1.42.0"
+version = "1.43.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "alembic" },
@@ -920,7 +920,6 @@ dependencies = [
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "grpcio" },
-    { name = "grpcio-health-checking" },
     { name = "httpx" },
     { name = "iterators" },
     { name = "numpy" },
@@ -940,9 +939,9 @@ dependencies = [
     { name = "uv" },
     { name = "uvicorn", extra = ["standard"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/33/02/01ef753ea7198acfacb0208e85fae50ff7f3278a3764899081c67ab281b9/flwr-1.42.0.tar.gz", hash = "sha256:12b005e4c5083b1b0c74d66c95baf8f376078d86ef9ff1b4cac32afe5544b5f2", size = 752777, upload-time = "2026-10-22T15:42:09.746Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/aa/bd/e691b830c0c3d9260be6b2ff35f2110acfc16d950ba850e1cac47672b328/flwr-1.43.0.tar.gz", hash = "sha256:561535404083855f27e3e1753bcd06c45b7eb6836106f4e4ef790f9372fe1771", size = 716475, upload-time = "2026-11-04T16:52:54.529Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a9/65/aaa75a37c39933178b1c44637e15fdfb4e4dcea21d1bbcaaa04479c75445/flwr-1.42.0-py3-none-any.whl", hash = "sha256:c4e77a528ff1ba93b57c9bb8d04af3f14884f0c9a6f4325bd974f1f807510732", size = 1234506, upload-time = "2026-10-22T15:42:08.323Z" },
+    { url = "https://files.pythonhosted.org/packages/99/fc/18ed661d212d7906369ea7488cbaa36ffdd94092f8e232d31fdab49a7f05/flwr-1.43.0-py3-none-any.whl", hash = "sha256:0ceb3b06b632cc92e318221a4d9214f725f6ca4d1b963181e90ff55a94931b54", size = 1186900, upload-time = "2026-11-04T16:52:52.628Z" },
 ]
 
 [[package]]
@@ -1204,19 +1203,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/17/0f/0e0ec749a7034ffcbaa050e39779872950ead90c22e7e0116be3f28b2b46/grpcio-1.83.0-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:61007cd08640abc5c54547ee32505474c482cd733a53cb87551ea81faa6350af", size = 7979826, upload-time = "2026-07-23T15:20:31.182Z" },
     { url = "https://files.pythonhosted.org/packages/83/fa/c3fda157287f64bc65acee6c5aa90c41acf9e0d3a8e69a265eecff6d00a1/grpcio-1.83.0-cp314-cp314-win32.whl", hash = "sha256:32e11c37f5285b0c6fa3042c05fe06903696689749833fc64e67dec71b9bbe33", size = 4471765, upload-time = "2026-07-23T15:20:33.195Z" },
     { url = "https://files.pythonhosted.org/packages/a1/00/b1b26431c9d54eee11724fd6e5585473a2ed47fbc1fb95e5204906a642ce/grpcio-1.83.0-cp314-cp314-win_amd64.whl", hash = "sha256:2bb48cb5e6dd005ca12b89ce4b6ac0b48ff3112c747542ee7986ef611a8ca6d9", size = 5298932, upload-time = "2026-07-23T15:20:35.48Z" },
-]
-
-[[package]]
-name = "grpcio-health-checking"
-version = "1.81.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "grpcio" },
-    { name = "protobuf" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/65/46/6b6678b5a922765ae7637205bb6d0618a4da8b35f2ce6116f8bcff262370/grpcio_health_checking-1.81.1.tar.gz", hash = "sha256:ecc61480e25058a4a04e11e4ab6900ad7439b32e60a8ce4ece7d9f219221c85d", size = 17107, upload-time = "2026-06-11T12:58:49.632Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6e/87/174bbfb5613794862c45b5cdf567fcfb478ad5a3a7b594e11d998656b2f9/grpcio_health_checking-1.81.1-py3-none-any.whl", hash = "sha256:cbc6a4171825ec64389de2f062d296ba129a5c27eefd0dd55fa837909184bdf9", size = 19120, upload-time = "2026-06-11T12:58:38.008Z" },
 ]
 
 [[package]]

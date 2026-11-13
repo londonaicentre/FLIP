@@ -75,7 +75,7 @@
                     </div>
                     <div
                         v-if="stageSubLabel(idx)"
-                        class="text-[10px] text-gray-500 dark:text-gray-300 mt-0.5 font-mono"
+                        class="text-2xs text-gray-500 dark:text-gray-300 mt-0.5 font-mono"
                     >
                         {{ stageSubLabel(idx) }}
                     </div>

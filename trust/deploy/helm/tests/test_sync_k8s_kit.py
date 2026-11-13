@@ -222,34 +222,32 @@ def test_render_override_pins_the_fl_client_to_an_immutable_docker_fl_tag():
         assert "pin:" not in out, tag
 
 
-def test_render_override_sets_kit_host_path_from_kit():
-    """flClient.kitHostPath comes from the kit's FL_KIT_DIR. It is `required` in the
-    chart, so an override that omits it (or nests it wrong) fails the render — and one
-    that emits the wrong path leaves the pod Pending on `hostPath type check failed`,
-    with nothing naming the staged path it disagrees with. Anchored on newlines because
-    the nesting IS the meaning: emitted a level deeper the fragment would still match."""
-    kit = {**_FL_KIT, "FL_KIT_DIR": "/srv/kits/Trust_K8s"}
-    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
-    assert "\nflClient:\n  kitHostPath: /srv/kits/Trust_K8s\n" in out
+@pytest.mark.parametrize(
+    ("fl_kit_dir", "expected"),
+    [
+        pytest.param("/srv/kits/Trust_K8s", "/srv/kits/Trust_K8s", id="from-kit"),
+        pytest.param(None, "/opt/flip/fl-kit", id="absent"),
+        pytest.param("   ", "/opt/flip/fl-kit", id="blank"),
+    ],
+)
+def test_render_override_kit_host_path(fl_kit_dir, expected):
+    """flClient.kitHostPath comes from the kit's FL_KIT_DIR. It is `required` in the chart, so an override that
+    omits it (or nests it wrong) fails the render — and one that emits the wrong path leaves the pod Pending on
+    `hostPath type check failed`, with nothing naming the staged path it disagrees with.
 
+    A kit with no FL_KIT_DIR still renders the canonical path — the same value every shipped kit file sets, the
+    Ansible EC2/on-prem plays stage to, and the chart Makefile's KIT_DEST defaults to. Any other fallback would
+    render a path nothing staged to (FLIP#1009 review). An empty FL_KIT_DIR (a commented-out or cleared value) must
+    fall back too rather than emit `kitHostPath:` with no value — Helm would read that as null and the chart's
+    `required` guard would fire at deploy time instead of here.
 
-def test_render_override_falls_back_to_canonical_kit_host_path():
-    """A kit with no FL_KIT_DIR still renders the canonical path — the same value every
-    shipped kit file sets, the Ansible EC2/on-prem plays stage to, and the chart
-    Makefile's KIT_DEST defaults to. Any other fallback would render a path nothing
-    staged to (FLIP#1009 review)."""
+    Anchored on newlines because the nesting IS the meaning: emitted a level deeper the fragment would still match.
+    """
     kit = {k: v for k, v in _FL_KIT.items() if k != "FL_KIT_DIR"}
+    if fl_kit_dir is not None:
+        kit["FL_KIT_DIR"] = fl_kit_dir
     out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
-    assert "\nflClient:\n  kitHostPath: /opt/flip/fl-kit\n" in out
-
-
-def test_render_override_kit_host_path_ignores_blank_fl_kit_dir():
-    """A kit file carrying an empty FL_KIT_DIR (a commented-out or cleared value) must
-    fall back rather than emit `kitHostPath:` with no value — Helm would read that as
-    null and the chart's `required` guard would fire at deploy time instead of here."""
-    kit = {**_FL_KIT, "FL_KIT_DIR": "   "}
-    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
-    assert "\nflClient:\n  kitHostPath: /opt/flip/fl-kit\n" in out
+    assert f"\nflClient:\n  kitHostPath: {expected}\n" in out
 
 
 _DOCUMENT = (

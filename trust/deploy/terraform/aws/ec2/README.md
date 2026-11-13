@@ -14,8 +14,8 @@
 # AWS EC2 trust node
 
 > **Deploys: trust only** (FLIP#1528). A FLIP trust node on one EC2 instance, in any AWS account and
-> VPC. It reads nothing from a hub: its own state, no hub env file, no hub credentials. The kit file and
-> the registration are its only links to a hub.
+> VPC. It keeps its own Terraform state and needs no hub env file or hub credentials; the trust's kit
+> file and its registration with the hub are its only links to a hub.
 
 Runbook: [Deploy a FLIP node on AWS EC2](../../../../../docs/source/deploy-flip/deploy-flip-node-aws-ec2.rst)
 (network modes, egress, IAM, cost, commands).
@@ -27,11 +27,14 @@ Runbook: [Deploy a FLIP node on AWS EC2](../../../../../docs/source/deploy-flip/
 | `Makefile` | `init plan apply ssh-config provision deploy upgrade …`; `make help` lists them |
 | `scripts/ssh_config.py` | The `~/.ssh/config` entry that reaches the node over SSM |
 | `architecture/` | The node diagrams, rendered by the docs build; `tests/test_architecture_diagram.py` fails when they drift from the `.tf` files |
-| `tests/` | `terraform test` (mocked provider) and the Makefile / ssh-config pytest: `make test` |
+| `tests/` | `terraform test` (mocked provider) and the Makefile / ssh-config pytest (see Checks below) |
 
-The host is configured by [`../../../ansible/aws-ec2.yml`](../../../ansible/aws-ec2.yml), whose plays
-(`aws-ec2-host.yml`) the hub's own trust EC2 shares until FLIP#1438 PR 3 removes it from the hub root.
+The host is configured by [`../../../ansible/aws-ec2.yml`](../../../ansible/aws-ec2.yml), which imports the shared trust-host plays in `aws-ec2-host.yml`.
+
+## Checks
+
+Run the credential-free checks locally (CI runs the same as `validate_terraform.yml` "AWS EC2 node checks"):
 
 ```bash
-make test lint      # credential-free; CI: validate_terraform.yml "AWS EC2 node checks"
+make test lint
 ```

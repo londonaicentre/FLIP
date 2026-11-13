@@ -18,8 +18,8 @@ pins in its docstring.
   in-memory DICOM datasets populated with PHI in every tag the script
   references, run a Python interpreter for the `.das` rule subset used
   by FLIP, and assert each PHI tag is removed, replaced, or hashed.
-- **Negative parser checks** (`test_anon_engine_negative.py`) — feed the
-  parser known-bad `.das` snippets and assert each one raises
+- **Negative parser checks** (`test_anon_engine_negative.py`) — feed
+  `anon_engine.py`'s parser known-bad `.das` snippets and assert each one raises
   `UnsupportedRuleError`. Pins the "fail loud" contract so a future grammar
   change cannot silently start accepting unknown directives.
 - **Password-guard parity** (`test_password_guards.py`) — four layers decide
@@ -29,8 +29,8 @@ pins in its docstring.
   (`wait-for-postgres.sh`, `guard-xnat-db-passwords.sh`). They cannot share one
   list at runtime — the XNAT images carry no Python, and each image's build
   context is its own leaf directory — so these tests parse all four and fail if
-  any one drifts. Without them a value one layer calls strong and the next calls
-  weak strands the operator between two tools that disagree.
+  any one drifts. Otherwise one layer could accept a password that the next
+  rejects, leaving the operator stuck between two tools that disagree.
 - **Guard behaviour** (`test_guard_scripts.py`) — parity pins *what* each layer
   calls weak, by reading its source; it cannot see whether the guard still runs.
   An errant `exit 0`, a `case` block that drifts below the `exec`, or a reverted
@@ -55,51 +55,67 @@ pins in its docstring.
   the new version's anonymous paths have been checked (the assert message says how).
 
 The tests do not stand up XNAT, DicomEdit, or Postgres. The anonymization tests
-validate the FLIP-authored ruleset against synthetic studies; the guard-behaviour
-tests stub the few external commands the scripts reach for (`docker-entrypoint.sh`,
-`psql`) onto `PATH`, the same mock-bin idiom as
+validate the FLIP-authored ruleset against synthetic studies. The script tests put
+stubs for the external commands they call (`docker-entrypoint.sh`, `psql`, `curl`,
+`aws`) onto `PATH`, the same mock-bin idiom as
 `deploy/providers/AWS/scripts/tests/test_add_fl_kits.sh`. So a regression is caught
 in CI without a heavyweight integration environment or an image build.
 
 ## Running
 
+From the repo root:
+
 ```bash
-make unit_test    # ruff + mypy + pytest
-make test         # alias of unit_test
+make -C trust/xnat/tests unit_test    # ruff + mypy + pytest
 ```
 
-Run from `trust/xnat/tests/` or via `make -C trust/xnat/tests unit_test`.
+Or run `make unit_test` from `trust/xnat/tests/`; `make test` does the same.
 
 ## When to update
 
-`anon_script.das` handles every row of DICOM PS3.15 Table E.1-1, which is
-copied into `ps315_table_e1_1.csv`; `test_every_table_e1_1_attribute_is_handled`
-fails when a row is not removed at any depth, hashed, or replaced. When a new
-edition of the standard adds rows, refresh the copy with
-`extract_ps315_table.py` (its docstring has the commands) and add a rule per
-new row. Write removals as `- */(gggg,eeee)`: a bare tag matches the top level
-only, and the static tests fail on one. A tag the script replaces at the top
-level needs `- +/(gggg,eeee)` for its nested copies. A tag a test should name
-explicitly also goes in `PHI_TAGS_REQUIRED` in `test_anon_script_static.py`,
-and in the synthetic study fixture in `conftest.py`.
+### The anonymization script
+
+`anon_script.das` handles every row of DICOM PS3.15 Table E.1-1, copied into
+`ps315_table_e1_1.csv`. `test_every_table_e1_1_attribute_is_handled` fails when
+a row is not removed at any depth, hashed, or replaced.
+
+When a new edition of the standard adds rows:
+
+1. Refresh the copy with `extract_ps315_table.py` (its docstring has the commands).
+2. Add a rule per new row. Write removals as `- */(gggg,eeee)`: a bare tag matches
+   the top level only, and the static tests fail on one. A tag the script replaces
+   at the top level needs `- +/(gggg,eeee)` for its nested copies.
+3. If a test should name the tag explicitly, add it to `PHI_TAGS_REQUIRED` in
+   `test_anon_script_static.py` and to the synthetic study fixture in `conftest.py`.
+
+### The DicomEdit stand-in (`anon_engine.py`)
 
 `anon_engine.py` is a stand-in for DicomEdit, so it only proves what it
 models. Its `*/`, `+/`, `X`/`@` tag wildcards, `removeAllPrivateTags`,
 `hashUID` on an absent tag, and `\\` semantics were checked against DicomEdit
-6.9.0 from the `xnat-web` image (FLIP#1513), and the two engines gave the same
-output on the fixture and on real CT, MR, enhanced MR, RT structure set,
-secondary capture, ultrasound and X-ray samples. Check any new construct the
-same way before relying on it. On an XNAT bump, run the script through the new
-WAR's DicomEdit as well: for 1.10.2.1 (FLIP#1648), DicomEdit 6.10.0 gave output
-identical to 6.9.0's on the fixture, with and without a private block, Digital
-Signatures Sequence and padding after Pixel Data. DicomEdit rejects some forms outright (a space
-inside the tag brackets, a lowercase `x`, `removeallprivatetags`), and then
-XNAT cannot parse the script at all.
+6.9.0 from the `xnat-web` image (FLIP#1513). Both engines gave the same output on
+the fixture and on real CT, MR, enhanced MR, RT structure set, secondary capture,
+ultrasound and X-ray samples.
+
+- **New construct in the script:** check it against DicomEdit the same way before
+  relying on it.
+- **XNAT version bump:** also run the script through the new WAR's DicomEdit. For
+  XNAT 1.10.2.1 (FLIP#1648), DicomEdit 6.10.0 gave output identical to 6.9.0's on
+  the fixture, with and without a private block, Digital Signatures Sequence and
+  padding after Pixel Data.
+
+DicomEdit rejects some forms outright (a space inside the tag brackets, a lowercase
+`x`, `removeallprivatetags`), and then XNAT cannot parse the script at all.
+
+### The weak-password list
 
 If you change what counts as a weak XNAT password, change it in **all four**
 places and update `CANONICAL_WEAK_VALUES` in `test_password_guards.py` — the
 tests fail until they agree. `test_guard_scripts.py` imports that same set, so a
-new value is exercised against both entrypoints automatically. Note these read
-files from outside this directory, so `.github/workflows/test_trust_xnat.yml`
-lists each of them in its paths filter; a new input needs adding there too, or
-the guard change lands with its test unrun.
+new value is exercised against both entrypoints automatically.
+
+### Inputs outside this directory
+
+Many of these tests read files from outside `trust/xnat/tests/`, so
+`.github/workflows/test_trust_xnat.yml` lists each of them in its paths filter.
+A new input needs adding there too, or a change to it lands with its test unrun.
