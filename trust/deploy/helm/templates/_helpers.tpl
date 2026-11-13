@@ -250,3 +250,11 @@ carry it, so whichever restarts follows the one still running; at install the fi
 {{- end }}
 {{- with $affinity }}{{ toYaml . }}{{ end }}
 {{- end }}
+
+{{/*
+How the trust runs an FL job, reported by trust-api in its heartbeat (FLIP#1739):
+"pods" when NVFLARE starts each job in its own pod, "process" otherwise.
+*/}}
+{{- define "flip-trust.flClientJobMode" -}}
+{{- if and (eq .Values.flBackend "nvflare") .Values.flClient.nvflare.jobPods.enabled }}pods{{ else }}process{{ end }}
+{{- end }}
