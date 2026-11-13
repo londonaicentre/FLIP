@@ -45,7 +45,7 @@ describe("WCAG AA colour pairs", () => {
         ["white on APPROVED chip emerald-700", white, colors.emerald[700], 4.5],
         ["input border gray-500 on white", colors.gray[500], white, 3],
         ["status icon green-600 on white", colors.green[600], white, 3],
-        ["dark table cell gray-400 on gray-800", colors.gray[400], colors.gray[800], 4.5],
+        ["dark table cell gray-300 on gray-800", colors.gray[300], colors.gray[800], 4.5],
         ["dark input border gray-500 on dark-raised", colors.gray[500], colors.dark.raised, 3],
         ["dark focus ring primary-400 on dark-canvas", colors.primary[400], colors.dark.canvas, 3]
     ])("%s", (_name, fg, bg, min) => {
