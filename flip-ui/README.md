@@ -145,6 +145,7 @@ stack, so there is no VITE_-prefixed duplication to keep in sync.
 | `BLACKLISTED_MODEL_FILES` | Comma-separated file names to reject in model uploads |
 | `VITE_LOCAL` | Set to `true` for local mock mode (bypasses Cognito). **Local dev only — see warning below.** |
 | `VITE_DEMO` | Selects the public demo bundle (bypasses Cognito, offline Mirage API). **Never set this in the environment — see warning below**; it is inlined automatically by `npm run build:demo` / `npm run demo` (`--mode demo`). |
+| `VITE_COHORT_DRAFT_ASSISTANT` | `true` shows the cohort SQL drafting assistant UI mock (FLIP#1556): canned drafts from a fake drafter, no backend, no model. Honoured only by the `VITE_LOCAL=true` dev server; every build folds it to off (`vite.config.mts`). |
 
 Authentication sits behind a provider seam ([`src/auth/`](src/auth/), FLIP#919): the store, router guard, axios
 interceptor and auth pages speak only the `AuthProvider` contract in `src/auth/provider.ts`, and `getAuthProvider()`

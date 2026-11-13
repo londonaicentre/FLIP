@@ -349,6 +349,8 @@ export const projectDataPage1: IProject[] = [
         creationtimestamp: "2022-02-07T14:10:56.687Z",
         approvedTrusts: trustsToStage,
         users: [],
+        // Tabular-only (FLIP#1071), so the local mock has one of each project shape.
+        has_imaging: false,
         status: "UNSTAGED"
     },
     {

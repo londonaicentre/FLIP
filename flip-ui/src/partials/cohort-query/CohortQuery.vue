@@ -36,6 +36,11 @@
                             />
                             {{ lastRunLine }}
                         </div>
+                        <CohortDraftAssistant
+                            v-if="CohortDraftAssistant && !queryLocked && !isViewer"
+                            :has-imaging="projectHasImaging(project)"
+                            @notes="draftNotes = $event"
+                        />
                         <AiCodeTextArea
                             :initial-value="project?.query?.query"
                             :input-props="{readonly: queryLocked || isViewer}"
@@ -47,6 +52,11 @@
                         />
                     </div>
                     <div class="flex flex-col gap-3 min-h-[440px]">
+                        <CohortDraftNotes
+                            v-if="CohortDraftNotes && draftNotes"
+                            :draft="draftNotes"
+                            @dismiss="draftNotes = null"
+                        />
                         <CohortAggregateCard :submitting="formSubmitting" />
                         <div class="flex-1 min-h-0">
                             <PerTrustResponse :submitting="formSubmitting" />
@@ -69,13 +79,15 @@
 
 <script setup lang="ts">
 import { Form } from "vee-validate";
-import { computed, onBeforeMount, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeMount, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { object, string } from "yup";
 
 import AiCodeTextArea from "@/components/AiTextArea/AiCodeTextArea.vue";
 import { usePermissions } from "@/composables/usePermissions";
+import { projectHasImaging } from "@/partials/projects/projectType";
 import router from "@/router";
+import type { ICohortDraft } from "@/services/cohort-draft/types";
 import { ICohortQueryCreate, sendQuery } from "@/services/cohort-query-service";
 import { IProject } from "@/services/project-service";
 import { useProjectStore } from "@/store/project";
@@ -88,6 +100,17 @@ import QueryResultCharts from "./QueryResultCharts.vue";
 const route = useRoute();
 const projectStore = useProjectStore();
 const { isViewer } = usePermissions();
+
+// SQL drafting assistant (FLIP#1556), a UI mock on a fake drafter. The literal flag is
+// defined in vite.config.mts, so every build folds this to null and drops both chunks.
+const draftAssistantEnabled = import.meta.env.VITE_COHORT_DRAFT_ASSISTANT === "true";
+const CohortDraftAssistant = draftAssistantEnabled
+    ? defineAsyncComponent(() => import("./CohortDraftAssistant.vue"))
+    : null;
+const CohortDraftNotes = draftAssistantEnabled
+    ? defineAsyncComponent(() => import("./CohortDraftNotes.vue"))
+    : null;
+const draftNotes = ref<ICohortDraft | null>(null);
 
 const queryId = ref<string>("");
 const project = ref<IProject>();
