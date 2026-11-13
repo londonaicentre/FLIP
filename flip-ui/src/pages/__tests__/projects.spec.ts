@@ -603,8 +603,8 @@ describe("Projects Page", () => {
         expect(imaging.text()).toBe("Imaging + OMOP");
         // Icons only on screen; the name stays for screen readers and the tooltip.
         expect(omop.attributes("title")).toBe("OMOP only");
-        expect(omop.classes()).toContain("text-steel-700");
-        expect(imaging.classes()).toContain("text-primary-500");
+        expect(omop.classes()).toContain("text-gray-800");
+        expect(imaging.classes()).toContain("text-gray-800");
     });
 
     test("grid cards carry the type icons beside the status pill", async () => {

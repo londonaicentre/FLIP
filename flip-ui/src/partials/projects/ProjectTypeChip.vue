@@ -11,12 +11,12 @@
   limitations under the License.
 -->
 <template>
-    <!-- Project type (FLIP#1071) as icons that add up the way the data does: every project has OMOP
-         records (register book, always first), imaging projects add an x-ray after it. The name is kept for screen readers
-         and as a hover tooltip. Informational only. -->
+    <!-- Project type (FLIP#1071) as icons that add up the way the data does: every project has
+         OMOP records (register book, always first); imaging projects add an x-ray after it. The
+         name is kept for screen readers and as a hover tooltip. Informational only. -->
     <span
         class="inline-flex items-center gap-1 shrink-0"
-        :class="hasImaging ? IMAGING_CLASS : OMOP_ONLY_CLASS"
+        :class="ICON_CLASS"
         :title="label"
         :data-test="`project-type-chip-${projectTypeId(hasImaging)}`"
     >
@@ -47,7 +47,6 @@ const SIZE_CLASS = {
     lg: "w-8 h-8"
 } as const;
 
-// Design tokens from tailwind.config: plum for imaging, the steel-blue accent for data-only.
-const IMAGING_CLASS = "text-primary-500 dark:text-primary-300";
-const OMOP_ONLY_CLASS = "text-steel-700 dark:text-steel-100";
+// One ink for both types: the icons tell them apart, colour does not.
+const ICON_CLASS = "text-gray-800 dark:text-gray-100";
 </script>
