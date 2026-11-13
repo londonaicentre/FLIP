@@ -52,11 +52,21 @@ const TRUSTS: ITrust[] = [
     }
 ];
 
+// `project` replaces the default store project; it is not merged into it.
 function mountPerTrustResponse(options: {
     data?: unknown;
     submitting?: boolean;
+    project?: Record<string, unknown>;
 } = {}) {
-    const { data = null, submitting = false } = options;
+    const {
+        data = null,
+        submitting = false,
+        project = {
+            id: "p-1",
+            status: "UNSTAGED",
+            query: { id: "q-1" }
+        }
+    } = options;
     swrvMock.value = data;
 
     return mount(PerTrustResponse, {
@@ -67,13 +77,7 @@ function mountPerTrustResponse(options: {
                 stubActions: false,
                 initialState: {
                     trust: { trusts: TRUSTS },
-                    project: {
-                        project: {
-                            id: "p-1",
-                            status: "UNSTAGED",
-                            query: { id: "q-1" }
-                        }
-                    }
+                    project: { project }
                 }
             })],
             stubs
@@ -292,28 +296,15 @@ describe("PerTrustResponse", () => {
                 "trust-2": 5
             }
         };
-        swrvMock.value = data;
-        const wrapper = mount(PerTrustResponse, {
-            props: { submitting: false },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false,
-                    initialState: {
-                        trust: { trusts: TRUSTS },
-                        project: {
-                            project: {
-                                id: "p-1",
-                                status: "UNSTAGED",
-                                query: {
-                                    id: "q-1",
-                                    queriedTrustIds: ["trust-1", "trust-2"]
-                                }
-                            }
-                        }
-                    }
-                })],
-                stubs
+        const wrapper = mountPerTrustResponse({
+            data,
+            project: {
+                id: "p-1",
+                status: "UNSTAGED",
+                query: {
+                    id: "q-1",
+                    queriedTrustIds: ["trust-1", "trust-2"]
+                }
             }
         });
         await nextTick();
@@ -328,28 +319,15 @@ describe("PerTrustResponse", () => {
         // While the user is mid-submit, the fan-out targets the live trust
         // list — including trust-3 — so the in-flight UI shows them all as
         // "queued" (the hub is about to create the TrustTasks).
-        swrvMock.value = null;
-        const wrapper = mount(PerTrustResponse, {
-            props: { submitting: true },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false,
-                    initialState: {
-                        trust: { trusts: TRUSTS },
-                        project: {
-                            project: {
-                                id: "p-1",
-                                status: "UNSTAGED",
-                                query: {
-                                    id: "q-1",
-                                    queriedTrustIds: ["trust-1", "trust-2"]
-                                }
-                            }
-                        }
-                    }
-                })],
-                stubs
+        const wrapper = mountPerTrustResponse({
+            submitting: true,
+            project: {
+                id: "p-1",
+                status: "UNSTAGED",
+                query: {
+                    id: "q-1",
+                    queriedTrustIds: ["trust-1", "trust-2"]
+                }
             }
         });
         await nextTick();
@@ -371,32 +349,19 @@ describe("PerTrustResponse", () => {
             trustsResults: [],
             trustRecordCounts: { "trust-1": 5 }
         };
-        swrvMock.value = data;
-        const wrapper = mount(PerTrustResponse, {
-            props: { submitting: false },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false,
-                    initialState: {
-                        trust: { trusts: TRUSTS },
-                        project: {
-                            project: {
-                                id: "p-1",
-                                status: "APPROVED",
-                                query: {
-                                    id: "q-1",
-                                    queriedTrustIds: ["trust-1", "trust-2"],
-                                    pendingTrustIds: [],
-                                    cancelledTrustIds: ["trust-2"],
-                                    respondedTrustIds: ["trust-1"],
-                                    erroredTrustIds: []
-                                }
-                            }
-                        }
-                    }
-                })],
-                stubs
+        const wrapper = mountPerTrustResponse({
+            data,
+            project: {
+                id: "p-1",
+                status: "APPROVED",
+                query: {
+                    id: "q-1",
+                    queriedTrustIds: ["trust-1", "trust-2"],
+                    pendingTrustIds: [],
+                    cancelledTrustIds: ["trust-2"],
+                    respondedTrustIds: ["trust-1"],
+                    erroredTrustIds: []
+                }
             }
         });
         await nextTick();
@@ -416,31 +381,18 @@ describe("PerTrustResponse", () => {
             trustsResults: [],
             trustRecordCounts: {}
         };
-        swrvMock.value = data;
-        const wrapper = mount(PerTrustResponse, {
-            props: { submitting: false },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false,
-                    initialState: {
-                        trust: { trusts: TRUSTS },
-                        project: {
-                            project: {
-                                id: "p-1",
-                                status: "UNSTAGED",
-                                query: {
-                                    id: "q-1",
-                                    queriedTrustIds: ["trust-1", "trust-2"],
-                                    pendingTrustIds: ["trust-2"],
-                                    respondedTrustIds: [],
-                                    erroredTrustIds: []
-                                }
-                            }
-                        }
-                    }
-                })],
-                stubs
+        const wrapper = mountPerTrustResponse({
+            data,
+            project: {
+                id: "p-1",
+                status: "UNSTAGED",
+                query: {
+                    id: "q-1",
+                    queriedTrustIds: ["trust-1", "trust-2"],
+                    pendingTrustIds: ["trust-2"],
+                    respondedTrustIds: [],
+                    erroredTrustIds: []
+                }
             }
         });
         await nextTick();
@@ -461,29 +413,16 @@ describe("PerTrustResponse", () => {
             trustsResults: [],
             trustRecordCounts: { "trust-1": 7 }
         };
-        swrvMock.value = data;
-        const wrapper = mount(PerTrustResponse, {
-            props: { submitting: false },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false,
-                    initialState: {
-                        trust: { trusts: TRUSTS },
-                        project: {
-                            project: {
-                                id: "p-1",
-                                status: "UNSTAGED",
-                                query: {
-                                    id: "q-1",
-                                    queriedTrustIds: ["trust-1", "trust-3"],
-                                    erroredTrustIds: []
-                                }
-                            }
-                        }
-                    }
-                })],
-                stubs
+        const wrapper = mountPerTrustResponse({
+            data,
+            project: {
+                id: "p-1",
+                status: "UNSTAGED",
+                query: {
+                    id: "q-1",
+                    queriedTrustIds: ["trust-1", "trust-3"],
+                    erroredTrustIds: []
+                }
             }
         });
         await nextTick();
@@ -505,29 +444,16 @@ describe("PerTrustResponse", () => {
             trustRecordCounts: {},
             trustErrors: {}  // empty — aggregator hasn't re-run
         };
-        swrvMock.value = data;
-        const wrapper = mount(PerTrustResponse, {
-            props: { submitting: false },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false,
-                    initialState: {
-                        trust: { trusts: TRUSTS },
-                        project: {
-                            project: {
-                                id: "p-1",
-                                status: "UNSTAGED",
-                                query: {
-                                    id: "q-1",
-                                    queriedTrustIds: ["trust-2"],
-                                    erroredTrustIds: ["trust-2"]
-                                }
-                            }
-                        }
-                    }
-                })],
-                stubs
+        const wrapper = mountPerTrustResponse({
+            data,
+            project: {
+                id: "p-1",
+                status: "UNSTAGED",
+                query: {
+                    id: "q-1",
+                    queriedTrustIds: ["trust-2"],
+                    erroredTrustIds: ["trust-2"]
+                }
             }
         });
         await nextTick();
@@ -542,24 +468,10 @@ describe("PerTrustResponse", () => {
         // Project has no query — without an explicit branch the panel would
         // render every current trust as "running" (filter helper passes
         // undefined through to the whole list, no counts/errors land).
-        swrvMock.value = null;
-        const wrapper = mount(PerTrustResponse, {
-            props: { submitting: false },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false,
-                    initialState: {
-                        trust: { trusts: TRUSTS },
-                        project: {
-                            project: {
-                                id: "p-1",
-                                status: "UNSTAGED"
-                            }
-                        }
-                    }
-                })],
-                stubs
+        const wrapper = mountPerTrustResponse({
+            project: {
+                id: "p-1",
+                status: "UNSTAGED"
             }
         });
         await nextTick();

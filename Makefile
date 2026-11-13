@@ -99,21 +99,6 @@ $(error OBJECT_STORE_DIR=/ is not a directory of its own)
 endif
 export OBJECT_STORE_DIR
 
-# Service configuration
-define SERVICE_CONFIG
-data-access-api:trust
-imaging-api:trust
-trust-api:trust
-flip-api
-fl-api
-endef
-
-# Function to get service type (trust or central)
-get_service_type = $(word 2,$(subst :, ,$(filter $1:%,$(SERVICE_CONFIG))))
-
-# Function to get service display name
-get_service_name = $(subst -api,, $(subst flip-,central hub ,$(subst fl-,central FL ,$1)))
-
 export COMPOSE_BAKE=true
 DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
 # The pair (and FL_API_KEY) is exported at parse time, before `up`'s generators can rewrite it,
@@ -123,12 +108,7 @@ read_key_env = $$(sed -n 's/^$1=//p' '$(KEY_ENV_FILE)' | head -n 1 | tr -d '\r')
 FRESH_INTERNAL_SERVICE_KEY = INTERNAL_SERVICE_KEY="$(call read_key_env,INTERNAL_SERVICE_KEY)" \
 	INTERNAL_SERVICE_KEY_HASH="$(call read_key_env,INTERNAL_SERVICE_KEY_HASH)" \
 	FL_API_KEY="$(call read_key_env,FL_API_KEY)"
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.development.debug.override.yml
-# Through compose, addressing the service rather than the container: the containers are
-# named by the project (deploy-flip-api-1, or <instance>-deploy-flip-api-1), so a literal
-# `docker logs flip-api` names nothing on any stack.
-SHOW_LOGS_CENTRAL_HUB=$(DOCKER_COMMAND) logs --follow --tail 100 --timestamps flip-api
-GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
+DEBUG_OVERRIDE_COMPOSE_COMMAND=$(DOCKER_COMMAND) -f deploy/compose.development.debug.override.yml
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the `up` targets.
 #
@@ -376,8 +356,7 @@ clean-object-store: _check-compose-project-owner
 # Clean Docker resources
 clean: _check-compose-project-owner
 	${DOCKER_COMMAND} down --rmi local && \
-	docker system prune -f && \
-	rm -rf ./flip-fl-api/*/transfer/*/
+	docker system prune -f
 
 # Stop all services and remove the containers
 restart: down up

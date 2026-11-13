@@ -226,32 +226,24 @@ describe("MainLayout", () => {
     });
 
     describe("userRole", () => {
-        it("returns Admin when user has CanAccessAdminPanel permission", () => {
-            const wrapper = mountMainLayout({ permissions: ["CanAccessAdminPanel"] });
+        it.each<[string, string[], string]>([
+            ["returns Admin when user has CanAccessAdminPanel permission", ["CanAccessAdminPanel"], "Admin"],
+            [
+                "returns Researcher when user has CanCreateProjects but not CanAccessAdminPanel",
+                ["CanCreateProjects"],
+                "Researcher"
+            ],
+            ["returns Viewer when user has no management permissions", [], "Viewer"],
+            [
+                "prioritises Admin over Researcher when user has both permissions",
+                ["CanAccessAdminPanel", "CanManageProjects"],
+                "Admin"
+            ]
+        ])("%s", (_name, permissions, role) => {
+            const wrapper = mountMainLayout({ permissions });
             const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper;
 
-            expect((dropdown.props() as Record<string, unknown>).role).toBe("Admin");
-        });
-
-        it("returns Researcher when user has CanCreateProjects but not CanAccessAdminPanel", () => {
-            const wrapper = mountMainLayout({ permissions: ["CanCreateProjects"] });
-            const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper;
-
-            expect((dropdown.props() as Record<string, unknown>).role).toBe("Researcher");
-        });
-
-        it("returns Viewer when user has no management permissions", () => {
-            const wrapper = mountMainLayout({ permissions: [] });
-            const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper;
-
-            expect((dropdown.props() as Record<string, unknown>).role).toBe("Viewer");
-        });
-
-        it("prioritises Admin over Researcher when user has both permissions", () => {
-            const wrapper = mountMainLayout({ permissions: ["CanAccessAdminPanel", "CanManageProjects"] });
-            const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper;
-
-            expect((dropdown.props() as Record<string, unknown>).role).toBe("Admin");
+            expect((dropdown.props() as Record<string, unknown>).role).toBe(role);
         });
     });
 

@@ -616,11 +616,8 @@ if [[ -n "$foreign_pacs" ]]; then
     echo "       PACS_HOST are still the mocked-Orthanc defaults. Refusing to delete a registration" >&2
     echo "       this deployment may not own. Set PACS_AETITLE/PACS_HOST to the trust's PACS, or" >&2
     echo "       remove the unwanted registration in XNAT's admin UI. Found:" >&2
-    printf '%s\n' "$foreign_pacs" | while read -r entry; do
-      [[ -n "$entry" ]] || continue
-      printf '         %s\n' "$(printf '%s' "$entry" | base64 -d \
-        | jq -r '"\(.aeTitle) at \(.host):\(.queryRetrievePort) (id \(.id))"')" >&2
-    done
+    printf '%s' "$existing_pacs" | jq -r --arg ae "${PACS_AETITLE}" \
+      '.[] | select(.aeTitle != $ae) | "         \(.aeTitle) at \(.host):\(.queryRetrievePort) (id \(.id))"' >&2
     exit 1
   fi
   while read -r entry; do

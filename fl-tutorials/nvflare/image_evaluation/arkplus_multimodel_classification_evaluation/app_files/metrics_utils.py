@@ -35,7 +35,7 @@ def _delong_covariance(
     y_true: np.ndarray,
     y_score_a: np.ndarray,
     y_score_b: np.ndarray,
-) -> tuple[float, float, float, float, float]:
+) -> tuple[np.ndarray, np.ndarray, float, float, int, int]:
     """Compute the covariance matrices and ψ-based AUCs for DeLong's test.
 
     Returns (s10, s01, auc_a, auc_b, n_pos, n_neg):
@@ -94,21 +94,10 @@ def _delong_covariance(
     v10_a = np.mean(cmp_a, axis=1) + 0.5 * np.mean(eq_a, axis=1)  # [n_pos]
     v10_b = np.mean(cmp_b, axis=1) + 0.5 * np.mean(eq_b, axis=1)
 
-    # ── V10 covariance (2×2) — sample variance (÷ n_pos-1) ────────
-    # Manual cross-check (skipped if only one positive — cannot estimate variance):
-    if n_pos > 1:
-        mean_a = np.mean(v10_a)
-        dev_a = v10_a - mean_a
-        mean_b = np.mean(v10_b)
-        dev_b = v10_b - mean_b
-        s10_var_a = np.sum(dev_a**2) / (n_pos - 1)  # s10[0,0]
-        s10_var_b = np.sum(dev_b**2) / (n_pos - 1)  # s10[1,1]
-        s10_cov_ab = np.sum(dev_a * dev_b) / (n_pos - 1)  # s10[0,1]
+    # ── V10 covariance (2×2) — sample covariance (÷ n_pos-1); zero when a single positive cannot estimate it ──
     s10 = np.cov(v10_a, v10_b, ddof=1) if n_pos > 1 else np.zeros((2, 2))
-    if n_pos > 1:
-        assert np.allclose([s10_var_a, s10_var_b, s10_cov_ab], [s10[0, 0], s10[1, 1], s10[0, 1]]), (
-            "V10 covariance mismatch"
-        )
+    if np.isnan(s10).any():  # an empty opposite class (a label outside 0/1) leaves NaN means
+        raise AssertionError("V10 covariance is NaN")
 
     # ── V01 (negative compartment) ──────────────────────────────────
     # For each negative sample k, compute its mean ψ against all positives:
@@ -119,20 +108,10 @@ def _delong_covariance(
     v01_a = np.mean(cmp_a, axis=0) + 0.5 * np.mean(eq_a, axis=0)  # [n_neg]
     v01_b = np.mean(cmp_b, axis=0) + 0.5 * np.mean(eq_b, axis=0)
 
-    # ── V01 covariance (2×2) — sample variance (÷ n_neg-1) ────────
-    if n_neg > 1:
-        mean_a = np.mean(v01_a)
-        dev_a = v01_a - mean_a
-        mean_b = np.mean(v01_b)
-        dev_b = v01_b - mean_b
-        s01_var_a = np.sum(dev_a**2) / (n_neg - 1)  # s01[0,0]
-        s01_var_b = np.sum(dev_b**2) / (n_neg - 1)  # s01[1,1]
-        s01_cov_ab = np.sum(dev_a * dev_b) / (n_neg - 1)  # s01[0,1]
+    # ── V01 covariance (2×2) — sample covariance (÷ n_neg-1); zero when a single negative cannot estimate it ──
     s01 = np.cov(v01_a, v01_b, ddof=1) if n_neg > 1 else np.zeros((2, 2))
-    if n_neg > 1:
-        assert np.allclose([s01_var_a, s01_var_b, s01_cov_ab], [s01[0, 0], s01[1, 1], s01[0, 1]]), (
-            "V01 covariance mismatch"
-        )
+    if np.isnan(s01).any():  # an empty opposite class (a label outside 0/1) leaves NaN means
+        raise AssertionError("V01 covariance is NaN")
 
     # ── ψ-based AUC ────────────────────────────────────────────────
     # v10_a[j] is already  mean_k ψ(a_pos[j], a_neg[k])  —

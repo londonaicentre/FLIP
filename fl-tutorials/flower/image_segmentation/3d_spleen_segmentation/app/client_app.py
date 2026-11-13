@@ -40,6 +40,30 @@ from app.transforms import get_train_transforms, get_val_transforms
 app = ClientApp()
 
 
+def _build_flip_utils(context: Context) -> FLIP_BASE:
+    """Fetch this site's cohort dataframe through FLIP."""
+    flip_utils = FLIP_BASE()
+    flip_utils.project_id = context.run_config.get("flip-project-id", "monai-flower-tutorial")
+    flip_utils.query = context.run_config.get("flip-cohort-query", "*")
+    log(INFO, "Fetching FLIP dataframe using project_id=%s and query=%s", flip_utils.project_id, flip_utils.query)
+    flip_utils.dataframe = flip_utils.flip.get_dataframe(project_id=flip_utils.project_id, query=flip_utils.query)
+    # Slice the shared dev cohort so the simulated sites really differ; a no-op off LOCAL_DEV.
+    flip_utils.dataframe = partition_cohort(flip_utils.dataframe, context)
+    log(INFO, f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
+    return flip_utils
+
+
+def _load_global_model(msg: Message, device: torch.device) -> torch.nn.Module:
+    """Build the model and load the received global weights onto device."""
+    model = get_model()
+    # strict=True (default) — server and client build get_model() from the same
+    # factory, so any missing/unexpected key means the wire format has drifted
+    # from the architecture; better to fail than train with random weights in
+    # mismatched layers.
+    model.load_state_dict(state_dict=msg.content["arrays"].to_torch_state_dict())
+    return model.to(device)
+
+
 # The DP mod clips the update to `dp-clipping-norm` and adds Gaussian noise calibrated to
 # (dp-epsilon, dp-delta) before the reply leaves the SuperNode — see pyproject.toml's
 # [tool.flwr.app.config]. It is applied to @app.train only; @app.evaluate below is untouched.
@@ -55,7 +79,6 @@ def train(msg: Message, context: Context) -> Message:
     learning_rate = float(run_config.get("learning-rate", 1e-4))
     val_split = float(run_config.get("val-split", 0.2))
     test_split = float(run_config.get("test-split", 0.2))
-    # test_split = float(run_config.get("test-split", 0.2))
     batch_size = int(run_config.get("batch-size", 2))
 
     # NOTE this needs to match the name of the trust in the central hub database
@@ -65,14 +88,7 @@ def train(msg: Message, context: Context) -> Message:
     global_round = int(msg.content["config"]["server-round"]) - 1
 
     # Configure FLIP
-    flip_utils = FLIP_BASE()
-    flip_utils.project_id = run_config.get("flip-project-id", "monai-flower-tutorial")
-    flip_utils.query = run_config.get("flip-cohort-query", "*")
-    log(INFO, "Fetching FLIP dataframe using project_id=%s and query=%s", flip_utils.project_id, flip_utils.query)
-    flip_utils.dataframe = flip_utils.flip.get_dataframe(project_id=flip_utils.project_id, query=flip_utils.query)
-    # Slice the shared dev cohort so the simulated sites really differ; a no-op off LOCAL_DEV.
-    flip_utils.dataframe = partition_cohort(flip_utils.dataframe, context)
-    log(INFO, f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
+    flip_utils = _build_flip_utils(context)
 
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -101,14 +117,7 @@ def train(msg: Message, context: Context) -> Message:
     val_loader = DataLoader(dataset_val, batch_size=1, shuffle=False)
 
     # Initialize model and load received weights
-    model = get_model()
-    state_dict = msg.content["arrays"].to_torch_state_dict()
-    # strict=True (default) — server and client build get_model() from the same
-    # factory, so any missing/unexpected key means the wire format has drifted
-    # from the architecture; better to fail than train with random weights in
-    # mismatched layers.
-    model.load_state_dict(state_dict=state_dict)
-    model.to(device)
+    model = _load_global_model(msg, device)
 
     # Initialize optimizer and loss function
     # DiceCELoss recipe mirrors the reference trainer (line 205 of
@@ -205,14 +214,7 @@ def evaluate(msg: Message, context: Context) -> Message:
     log(INFO, "Evaluating on device: %s", device)
 
     # Get FLIP config
-    flip_utils = FLIP_BASE()
-    flip_utils.project_id = run_config.get("flip-project-id", "monai-flower-tutorial")
-    flip_utils.query = run_config.get("flip-cohort-query", "*")
-    log(INFO, "Fetching FLIP dataframe using project_id=%s and query=%s", flip_utils.project_id, flip_utils.query)
-    flip_utils.dataframe = flip_utils.flip.get_dataframe(project_id=flip_utils.project_id, query=flip_utils.query)
-    # Slice the shared dev cohort so the simulated sites really differ; a no-op off LOCAL_DEV.
-    flip_utils.dataframe = partition_cohort(flip_utils.dataframe, context)
-    log(INFO, f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
+    flip_utils = _build_flip_utils(context)
 
     # Get test data
     test_datalist = flip_utils.get_image_and_label_list(_val_split=val_split, _test_split=test_split, is_test=True)
@@ -226,12 +228,7 @@ def evaluate(msg: Message, context: Context) -> Message:
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
     # Initialize model and load received weights
-    model = get_model()
-    state_dict = msg.content["arrays"].to_torch_state_dict()
-    # strict=True (default) — see note in the train handler above; same wire
-    # contract applies to the test path.
-    model.load_state_dict(state_dict=state_dict)
-    model.to(device)
+    model = _load_global_model(msg, device)
 
     # Initialize loss function
     # DiceCELoss recipe mirrors the reference trainer (line 205 of
@@ -248,14 +245,7 @@ def evaluate(msg: Message, context: Context) -> Message:
         lambda_dice=0.8,
     )
 
-    # Perform evaluation
-    if len(test_loader.dataset) == 0:
-        log(INFO, "No test data found!")
-        metrics = {"test_loss": 0.0, "test_dice": 0.0, "num-examples": 0}
-        metric_record = MetricRecord(metrics)
-        content = RecordDict({"metrics": metric_record})
-        return Message(content=content, reply_to=msg)
-
+    # Perform evaluation (check_splits_are_populated above has already refused an empty test split)
     test_dice, test_loss = validate_func(
         model=model,
         val_loader=test_loader,

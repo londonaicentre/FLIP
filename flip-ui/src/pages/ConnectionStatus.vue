@@ -400,12 +400,12 @@
                         dark:bg-dark-canvas px-3 py-2 border border-gray-200 dark:border-dark-border rounded-lg"
                     >
                         <span
-                            v-for="legend in radialLegend"
-                            :key="legend.state"
+                            v-for="tile in TILES"
+                            :key="tile.key"
                             class="inline-flex items-center gap-1.5 text-2xs text-gray-700 dark:text-gray-300"
                         >
-                            <span class="inline-block w-2 h-2 rounded-full" :class="legend.dotClass" />
-                            {{ legend.label }}
+                            <span class="inline-block w-2 h-2 rounded-full" :class="tile.dot" />
+                            {{ tile.label }}
                         </span>
                     </div>
 
@@ -687,18 +687,18 @@
 
 <script setup lang="ts">
 import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/vue";
-import useSWRV from "swrv";
 import { computed, ref, watch } from "vue";
 
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
+import { useHubVersion, useTrustStatuses } from "@/composables/useTrustPolls";
 import FLNetsCard from "@/partials/connection/FLNetsCard.vue";
 import TrustDetailDrawer from "@/partials/connection/TrustDetailDrawer.vue";
 import AddTrustModal from "@/partials/trusts/AddTrustModal.vue";
 import TrustKitModal from "@/partials/trusts/TrustKitModal.vue";
 import { ICreatedTrust } from "@/services/admin-trusts-service";
-import { getHubHealth, getTrustStatuses, IHubHealth, ITrustResponse, ServiceStatus } from "@/services/trust-service";
+import { ITrustResponse, ServiceStatus } from "@/services/trust-service";
 import { useAuthStore } from "@/store/auth";
 import { deriveTrust,
     deriveTrustState,
@@ -718,30 +718,9 @@ type ViewMode = "list" | "radial";
 const viewMode = ref<ViewMode>("list");
 const hoverTrustId = ref<string | null>(null);
 
-// SWRV handles 5s dedupe + 15s polling so the heartbeat column stays fresh
-// without per-page setInterval bookkeeping.
-const { data: trusts, mutate: refresh } = useSWRV<ITrustResponse[]>(
-    "trust-connection-status",
-    getTrustStatuses,
-    {
-        dedupingInterval: 5_000,
-        shouldRetryOnError: false,
-        refreshInterval: 15_000
-    }
-);
-
-// The hub's own build (FLIP#1204). Changes only on a hub deploy, so a slow poll is plenty;
-// the value is what the header shows and what the drawer flags trust versions against.
-const { data: hubHealth } = useSWRV<IHubHealth>(
-    "hub-health",
-    getHubHealth,
-    {
-        dedupingInterval: 30_000,
-        shouldRetryOnError: false,
-        refreshInterval: 60_000
-    }
-);
-const hubVersion = computed<string | null>(() => hubHealth.value?.version ?? null);
+const { data: trusts, mutate: refresh } = useTrustStatuses();
+// What the header shows and what the drawer flags trust versions against.
+const hubVersion = useHubVersion();
 
 // Labels + pill classes are shared with the drawer via connection-health.ts.
 const stateLabel = (s: TrustState): string => STATE_LABELS[s];
@@ -1054,24 +1033,6 @@ const radialNodes = computed<IRadialNode[]>(() => {
         };
     });
 });
-
-const radialLegend = computed(() => [
-    {
-        state: "online" as TrustState,
-        label: "Online",
-        dotClass: "bg-emerald-600"
-    },
-    {
-        state: "degraded" as TrustState,
-        label: "Degraded",
-        dotClass: "bg-amber-500"
-    },
-    {
-        state: "offline" as TrustState,
-        label: "Offline",
-        dotClass: "bg-red-500"
-    }
-]);
 
 const onlineCount = computed(() => radialNodes.value.filter(n => n.state === "online").length);
 

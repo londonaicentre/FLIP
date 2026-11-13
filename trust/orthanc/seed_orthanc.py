@@ -73,6 +73,7 @@ COMPLETE_MARKER = ".complete"
 # The published column that says which trust a study belongs to — the same one omop_db_tools
 # partitions by, which is what makes a trust's OMOP rows and its PACS studies agree.
 SOURCE_TRUST_COLUMN = "source_trust"
+PAIRING_ERROR = "❌ --source and --tables-dir go together: a local DICOM tree needs the local tables it was cut from"
 
 
 def require_env(name: str, hint: str) -> str:
@@ -274,13 +275,11 @@ def seed_project(
     DICOMs are NOT on the dataset is seeded from a local tree (any layout) and local canonical tables
     (spleen, brain_mri — FLIP#1221) — same selection by ``source_trust``, same zero-mismatch guard.
     ``remove_only`` deletes this trust's studies for the project instead of uploading anything."""
-    local = source is not None or tables_dir is not None
-    if local and (source is None or tables_dir is None):
-        raise SystemExit(
-            "❌ --source and --tables-dir go together: a local DICOM tree needs the local tables it was cut from"
-        )
-    if local:
-        rows = read_local_image_occurrence(tables_dir, project)  # type: ignore[arg-type]
+    if (source is None) != (tables_dir is None):
+        raise SystemExit(PAIRING_ERROR)
+    local = source is not None
+    if tables_dir is not None:
+        rows = read_local_image_occurrence(tables_dir, project)
     else:
         rows = fetch_image_occurrence(revision, project, cache_dir)
     accessions = select_accessions(rows, trust_index)
@@ -291,8 +290,8 @@ def seed_project(
         if dry_run:
             return Counter({"dry-run-remove": len(accessions)})
         return Counter({"removed": delete_studies(session, orthanc_url, accessions)})
-    if local:
-        tree = scan_local_tree(Path(source))  # type: ignore[arg-type]
+    if source is not None:
+        tree = scan_local_tree(source)
         missing = [a for a in accessions if a not in tree]
         where = f"the local tree {source}"
     else:
@@ -356,9 +355,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     if (args.source is None) != (args.tables_dir is None):
-        raise SystemExit(
-            "❌ --source and --tables-dir go together: a local DICOM tree needs the local tables it was cut from"
-        )
+        raise SystemExit(PAIRING_ERROR)
 
     revision = resolve_revision(args.revision)
     kit_hint = "it comes from the trust's kit file; use `make -C trust seed-orthanc KIT=<CODE>` to supply it"

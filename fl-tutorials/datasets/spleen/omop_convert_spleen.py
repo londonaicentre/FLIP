@@ -39,7 +39,6 @@ TRUSTS = {
     "trust_1": ("Dummy"),
     "trust_2": ("Dummy"),
 }
-DICOM_FOLDER_PATH = "./dicom_output"
 PROJECT = "spleen_project"
 # Per-dataset, not shared: this is a fact about what spleen_project depicts, not an OMOP convention.
 # The prostate follow-up would use a different value (4165732).
@@ -90,6 +89,10 @@ def transform_dicom_metadata_to_omop_tables(
     person["trust"] = df["trust"]
     combined_tables["person"] = person
 
+    df["StudyTime"] = [f"{int(i):06d}" for i in df["StudyTime"]]
+    study_date = pd.to_datetime(df["StudyDate"], format="%Y%m%d")
+    study_datetime = pd.to_datetime(df["StudyDate"] + df["StudyTime"], format="%Y%m%d%H%M%S")
+
     # ----------------------------------------------
     # --------- Visit Occurrence table -------------
     # ----------------------------------------------
@@ -99,9 +102,8 @@ def transform_dicom_metadata_to_omop_tables(
     visit_occurrence["visit_concept_id"] = (
         INPATIENT_VISIT_CONCEPT_ID  # Inpatient visit https://athena.ohdsi.org/search-terms/terms/9201
     )
-    visit_occurrence["visit_start_date"] = pd.to_datetime(df["StudyDate"], format="%Y%m%d")
-    df["StudyTime"] = [f"{int(i):06d}" for i in list(df["StudyTime"])]
-    visit_occurrence["visit_start_datetime"] = pd.to_datetime(df["StudyDate"] + df["StudyTime"], format="%Y%m%d%H%M%S")
+    visit_occurrence["visit_start_date"] = study_date
+    visit_occurrence["visit_start_datetime"] = study_datetime
     visit_occurrence["visit_end_date"] = visit_occurrence["visit_start_date"]
     visit_occurrence["visit_end_datetime"] = visit_occurrence["visit_start_datetime"]
     visit_occurrence["visit_type_concept_id"] = (
@@ -121,10 +123,8 @@ def transform_dicom_metadata_to_omop_tables(
     procedure_occurrence["procedure_occurrence_id"] = surrogate_ids(PROJECT, len(df))
     procedure_occurrence["person_id"] = person["person_id"]
     procedure_occurrence["procedure_concept_id"] = df["StudyDescription"].str.lower().map(MAPPING_PROCEDURE_TYPE)
-    procedure_occurrence["procedure_date"] = pd.to_datetime(df["StudyDate"], format="%Y%m%d")
-    procedure_occurrence["procedure_datetime"] = pd.to_datetime(
-        df["StudyDate"] + df["StudyTime"], format="%Y%m%d%H%M%S"
-    )
+    procedure_occurrence["procedure_date"] = study_date
+    procedure_occurrence["procedure_datetime"] = study_datetime
     procedure_occurrence["procedure_type_concept_id"] = (
         EHR_TYPE_CONCEPT_ID  # EHR as per https://doi.org/10.1007/s10278-024-00982-6
     )
@@ -152,7 +152,7 @@ def transform_dicom_metadata_to_omop_tables(
     # In spleen_metadata.csv, 'FilePath' contains the full path to the DICOM file,
     # so use `dirname` to get the folder path
     image_occurrence["local_path"] = df["FilePath"].apply(os.path.dirname)
-    image_occurrence["image_occurrence_date"] = pd.to_datetime(df["StudyDate"], format="%Y%m%d")
+    image_occurrence["image_occurrence_date"] = study_date
     image_occurrence["image_study_uid"] = df["StudyInstanceUID"]
     image_occurrence["image_series_uid"] = df["SeriesInstanceUID"]
     image_occurrence["modality_concept_id"] = df["Modality"].map(MAPPING_MODALITY)
@@ -248,18 +248,15 @@ def transform_dicom_metadata_to_omop_tables(
 
 def split_data_into_trusts_and_copy_dicoms(
     combined_tables: dict[str, pd.DataFrame],
-    COPY_DICOM: bool = False,
 ) -> dict[str, dict[str, pd.DataFrame]]:
-    """
-    Split the data into trust specific folders.
-        * DICOMs are copied to the trust specific folders.
-        * The person and radiology CSVs are split and saved into trust specific folders.
+    """Split the tables into trust-specific folders and save them as CSVs.
+
+    No DICOMs are copied: the spleen DICOM set is regenerated locally and seeded from DICOM_SOURCE (FLIP#1221).
     """
     tables_by_trust: dict[str, dict[str, pd.DataFrame]] = {trust: {} for trust in TRUSTS.keys()}
 
     for trust in TRUSTS.keys():
         trust_folder_name = f"omop/{trust}/{PROJECT}"
-        trust_dicom_folder_name = f"{trust_folder_name}/dicoms"
 
         # Delete the trust folder if it already exists
         if os.path.isdir(trust_folder_name):
@@ -274,42 +271,6 @@ def split_data_into_trusts_and_copy_dicoms(
             trust_table.to_csv(f"{trust_folder_name}/{table_name}.csv", index=False)
             tables_by_trust[trust][table_name] = trust_table
 
-        if COPY_DICOM:
-            os.makedirs(trust_dicom_folder_name)
-            image_occurrence = tables_by_trust[trust]["image_occurrence"]
-            for _, row in image_occurrence.iterrows():
-                # Retrieve and check source DICOM folder path
-                subject_dicom_source_folder = str(row["local_path"])
-                if not subject_dicom_source_folder:
-                    raise ValueError("Dicom folder path is blank")
-                if not os.path.isdir(subject_dicom_source_folder):
-                    raise FileNotFoundError(f"Source DICOM folder not found: {subject_dicom_source_folder}")
-
-                # Construct and check subject_name
-                subject_name = os.path.basename(subject_dicom_source_folder)
-                if not subject_name:
-                    raise ValueError(
-                        f"Subject name could not be determined from DICOM folder path: {subject_dicom_source_folder}"
-                    )
-
-                # Retrieve accession_id and confirm it is not blank
-                accession_id = row["accession_id"]
-                if not accession_id:
-                    raise ValueError(f"Accession ID is blank for {subject_dicom_source_folder}")
-
-                # Copy all dicoms for this subject to the trust dicom folder under a subject folder
-                trust_subject_dicom_folder_name = f"{trust_dicom_folder_name}/{accession_id}_{subject_name}"
-                # subject_dicom_source_folder by definition is a folder not a file
-                shutil.copytree(subject_dicom_source_folder, trust_subject_dicom_folder_name)
-                print(
-                    f"Copied dicoms from {accession_id} ({subject_dicom_source_folder}) to "
-                    f"{trust_subject_dicom_folder_name}"
-                )
-
-            trust_dicom_count = len(os.listdir(trust_dicom_folder_name))
-            print(f"trust_dicom_count: {trust_dicom_count}")
-            print(f"dicom datasets expected: {len(image_occurrence)}")
-
     return tables_by_trust
 
 
@@ -317,10 +278,8 @@ if __name__ == "__main__":
     combined_tables = transform_dicom_metadata_to_omop_tables("data/spleen_metadata.csv")
     print("Created combined tables and saved to CSV.")
 
-    tables_by_trust = split_data_into_trusts_and_copy_dicoms(combined_tables, COPY_DICOM=False)
+    tables_by_trust = split_data_into_trusts_and_copy_dicoms(combined_tables)
     print("Split data into trusts and saved to CSV.")
-
-    # upload_trust_data_to_orthanc(clear_orthanc=True)
 
     # Review results
     for trust, tables in tables_by_trust.items():

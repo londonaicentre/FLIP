@@ -107,35 +107,36 @@ def get_user_role_data(
                 )
             )
 
-    # Filter by email and apply pagination
+    def profile_of(user: CognitoUser) -> UserProfile:
+        return user_profiles_map.get(str(user.id), UserProfile(user_id=user.id))
+
+    # Filter by email/name/organisation and apply pagination
     search_str = paging_info.search_str.lower()
-    filtered_users = [
-        user
-        for user in users
-        if search_str in user.email.lower()
-        or search_str in user_profiles_map.get(str(user.id), UserProfile(user_id=user.id)).name.lower()
-        or search_str in user_profiles_map.get(str(user.id), UserProfile(user_id=user.id)).organisation.lower()
-    ]
+
+    def matches(user: CognitoUser) -> bool:
+        profile = profile_of(user)
+        return any(search_str in t.lower() for t in (user.email, profile.name, profile.organisation))
+
+    filtered_users = [user for user in users if matches(user)]
     sorted_users = sorted(filtered_users, key=lambda u: u.email)
     paged_users = sorted_users[paging_info.offset : paging_info.offset + paging_info.page_size]
 
-    # Reconstruct IUser objects with roles
-    final_users = [
-        IUser(
-            id=user.id,
-            email=user.email,
-            name=user_profiles_map.get(str(user.id), UserProfile(user_id=user.id)).name,
-            organisation=user_profiles_map.get(str(user.id), UserProfile(user_id=user.id)).organisation,
-            is_disabled=user.is_disabled,
-            roles=(
-                [trust_admin_map[str(user.id)][0]]
-                if str(user.id) in trust_admin_map
-                else user_roles_map.get(str(user.id), [])
-            ),
-            trust_admin_of=trust_admin_map[str(user.id)][1] if str(user.id) in trust_admin_map else None,
-        )  # type: ignore[call-arg]
-        for user in paged_users
-    ]
+    # Reconstruct IUser objects with roles; a trust admin reports that one role and its trust
+    final_users: list[IUser] = []
+    for user in paged_users:
+        profile = profile_of(user)
+        admin = trust_admin_map.get(str(user.id))
+        final_users.append(
+            IUser(
+                id=user.id,
+                email=user.email,
+                name=profile.name,
+                organisation=profile.organisation,
+                is_disabled=user.is_disabled,
+                roles=[admin[0]] if admin else user_roles_map.get(str(user.id), []),
+                trust_admin_of=admin[1] if admin else None,
+            )  # type: ignore[call-arg]
+        )
 
     return final_users
 

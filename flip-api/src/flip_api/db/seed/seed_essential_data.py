@@ -39,7 +39,6 @@ def main() -> None:
 
     with Session(get_engine()) as session:
         try:
-            # Clear existing data
             logger.debug("Creating Roles")
             roles = seed_roles(session)
             logger.debug("Creating Permissions")
@@ -73,7 +72,6 @@ def main() -> None:
                 }
             )
             session.commit()
-            session.flush()
 
         except Exception as e:
             session.rollback()

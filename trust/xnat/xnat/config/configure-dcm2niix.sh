@@ -207,8 +207,6 @@ echo "Wrapper Name: $dcm2niix_wrapper_name (id $WRAPPER_ID)"
 echo "Enabling $DCM2NIIX_NAME command..."
 admin_curl -X PUT "$XNAT_URL/xapi/commands/$CMD_ID/wrappers/$dcm2niix_wrapper_name/enabled" >/dev/null
 
-# Note: this only enables the command site-wide so it can be used per-project.
-
 # ----------------------------------------------------------------
 # EVENT SERVICE
 # ----------------------------------------------------------------

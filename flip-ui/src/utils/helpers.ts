@@ -18,15 +18,6 @@ import { format } from "date-fns";
 
 import { ILog } from "@/services/model-service";
 
-export const stringArrayEquals = (a: string[], b: string[]): boolean => {
-    // Both inputs are Arrays
-    return Array.isArray(a) && Array.isArray(b) &&
-        // Both have the same length
-        a.length === b.length &&
-        // Everything in a is in b
-        a.every((val) => b.includes(val));
-};
-
 /**
  * Everything in B is in A
  * @param a array of strings. Must contain everything in B.
@@ -119,14 +110,8 @@ export const getOrderedLogs = (logs: ILog[] | undefined, reverse = false): ILog[
     return orderedLogs;
 };
 
-export const capatilizeString = (value: string): string => {
-    return value.replace(/\w\S*/g,
-        (w) => (
-            w.replace(/^\w/,
-                (c) => c.toUpperCase())
-        )
-    );
-};
+export const capatilizeString = (value: string): string =>
+    value.replace(/\w\S*/g, (w) => w[0].toUpperCase() + w.slice(1));
 
 /**
  * Get a cryptographically random identifier (UUID v4)
