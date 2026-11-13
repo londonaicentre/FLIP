@@ -8,5 +8,6 @@
     "combined-path-translation": "/data/xnat/",
     "pull-images-on-xnat-init": true,
     "container-user": "",
-    "auto-cleanup": true
+    "auto-cleanup": true,
+    "build-dir-cleanup-enabled": true
 }

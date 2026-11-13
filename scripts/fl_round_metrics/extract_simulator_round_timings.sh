@@ -159,8 +159,8 @@ extract_events() {
     : > "$out"
     while IFS= read -r line; do
         local ts
-        ts="$(grep -oE "$TS_RE" <<<"$line" | head -1)"
-        [[ -z "$ts" ]] && continue
+        [[ "$line" =~ $TS_RE ]] || continue
+        ts="${BASH_REMATCH[0]}"
         # Assign before printf: inlining "$(ts_ms "$ts")" directly as a printf argument
         # would swallow a die() from inside ts_ms — a failed command substitution only
         # trips `set -e` when it's the whole right-hand side of a plain assignment.
@@ -221,8 +221,9 @@ maybe_dur() {
 }
 
 ROUNDS_TSV="${OUT_DIR}/rounds.tsv"
+ROUNDS_HEADER=$'round\tstarted_utc\tfinished_utc\tduration_s\tagg_started_utc\tagg_finished_utc\tagg_duration_s\taccepted\trejected\tstart_ms\tend_ms\tagg_start_ms\tagg_end_ms'
 {
-    printf 'round\tstarted_utc\tfinished_utc\tduration_s\tagg_started_utc\tagg_finished_utc\tagg_duration_s\taccepted\trejected\tstart_ms\tend_ms\tagg_start_ms\tagg_end_ms\n'
+    printf '%s\n' "$ROUNDS_HEADER"
     i=0
     while IFS=$'\t' read -r round_num start_ms; do
         i=$((i + 1))
@@ -249,11 +250,14 @@ log "Wrote per-round table: ${ROUNDS_TSV}"
 # Summary statistics (same definitions as the production script; steady-state = rounds >= 1)
 # --------------------------------------------------------------------------------------
 
-# col_stats COLUMN [MIN_ROUND] -> "mean \t std \t n" over numeric values of rounds >= MIN_ROUND
+# col_stats COLUMN [MIN_ROUND] [FILE] -> "mean \t std \t n" over numeric values of rounds >= MIN_ROUND
+# in FILE (default: this run's rounds.tsv).
 col_stats() {
-    awk -F'\t' -v c="$1" -v minr="${2:-0}" 'NR > 1 && $1+0 >= minr && $c != "-" {x=$c+0; s+=x; ss+=x*x; n++}
+    # $c != "-" alone lets a truncated/blank field ("") through too — awk coerces "" to 0
+    # and it contributes a phantom 0.0 to the mean instead of being excluded like "-" is.
+    awk -F'\t' -v c="$1" -v minr="${2:-0}" 'NR > 1 && $1+0 >= minr && $c != "-" && $c != "" {x=$c+0; s+=x; ss+=x*x; n++}
         END { if (n==0) {print "-\t-\t0"; exit}
-              m=s/n; sd=(n>1)?sqrt((ss-n*m*m)/(n-1)):0; printf "%.3f\t%.3f\t%d\n", m, sd, n }' "$ROUNDS_TSV"
+              m=s/n; sd=(n>1)?sqrt((ss-n*m*m)/(n-1)):0; printf "%.3f\t%.3f\t%d\n", m, sd, n }' "${3:-$ROUNDS_TSV}"
 }
 # Inter-round gap = this round's start minus the PREVIOUS round's end. A round with a
 # missing start or end breaks that chain, so reset prev_end instead of skipping the row:
@@ -265,7 +269,7 @@ gap_stats() {
             if (prev_end != "") {g=($10-prev_end)/1000; s+=g; ss+=g*g; n++}
             prev_end=$11 }
         END { if (n==0) {print "-\t-\t0"; exit}
-              m=s/n; sd=(n>1)?sqrt((ss-n*m*m)/(n-1)):0; printf "%.3f\t%.3f\t%d\n", m, sd, n }' "$ROUNDS_TSV"
+              m=s/n; sd=(n>1)?sqrt((ss-n*m*m)/(n-1)):0; printf "%.3f\t%.3f\t%d\n", m, sd, n }' "${1:-$ROUNDS_TSV}"
 }
 
 DUR_ALL="$(col_stats 4)";     DUR_SS="$(col_stats 4 1)"
@@ -319,26 +323,11 @@ if [[ -n "$COMPARE_TSV" ]]; then
     # Validate this is actually a rounds.tsv (from either extractor — they share the schema),
     # not an arbitrary file: check the header, not just that a file exists. An unrelated or
     # truncated file would otherwise silently render as a 0-round or garbage comparison.
-    EXPECTED_HEADER='round	started_utc	finished_utc	duration_s	agg_started_utc	agg_finished_utc	agg_duration_s	accepted	rejected	start_ms	end_ms	agg_start_ms	agg_end_ms'
-    compare_header="$(head -1 "$COMPARE_TSV")"
-    [[ "$compare_header" == "$EXPECTED_HEADER" ]] || die "--compare file does not look like a rounds.tsv (unexpected header): ${COMPARE_TSV}"
+    [[ "$(head -1 "$COMPARE_TSV")" == "$ROUNDS_HEADER" ]] || die "--compare file does not look like a rounds.tsv (unexpected header): ${COMPARE_TSV}"
     [[ "$(wc -l < "$COMPARE_TSV" | tr -d ' ')" -gt 1 ]] || die "--compare file has no data rows: ${COMPARE_TSV}"
-    p_stats() {  # same as col_stats but against the platform TSV
-        # $c != "-" alone lets a truncated/blank field ("") through too — awk coerces "" to 0
-        # and it contributes a phantom 0.0 to the mean instead of being excluded like "-" is.
-        awk -F'\t' -v c="$1" -v minr="${2:-0}" 'NR > 1 && $1+0 >= minr && $c != "-" && $c != "" {x=$c+0; s+=x; ss+=x*x; n++}
-            END { if (n==0) {print "-\t-\t0"; exit}
-                  m=s/n; sd=(n>1)?sqrt((ss-n*m*m)/(n-1)):0; printf "%.3f\t%.3f\t%d\n", m, sd, n }' "$COMPARE_TSV"
-    }
-    P_DUR_SS="$(p_stats 4 1)"; P_AGG_SS="$(p_stats 7 1)"
+    P_DUR_SS="$(col_stats 4 1 "$COMPARE_TSV")"; P_AGG_SS="$(col_stats 7 1 "$COMPARE_TSV")"
     P_ROUND0="$(awk -F'\t' 'NR>1 && $1==0 {print $4; exit}' "$COMPARE_TSV")"
-    # Same chain-reset as gap_stats above — see the comment there.
-    P_GAP="$(awk -F'\t' 'NR > 1 {
-            if ($10 == "-" || $11 == "-") { prev_end = ""; next }
-            if (prev_end != "") {g=($10-prev_end)/1000; s+=g; ss+=g*g; n++}
-            prev_end=$11 }
-        END { if (n==0) {print "-\t-\t0"; exit}
-              m=s/n; sd=(n>1)?sqrt((ss-n*m*m)/(n-1)):0; printf "%.3f\t%.3f\t%d\n", m, sd, n }' "$COMPARE_TSV")"
+    P_GAP="$(gap_stats "$COMPARE_TSV")"
 
     delta() { awk -v p="$1" -v s="$2" 'BEGIN{ if (p=="-"||s=="-") print "-"; else printf "%+.3f", p-s }'; }
     p_round0_n=0; [[ -n "$P_ROUND0" ]] && p_round0_n=1

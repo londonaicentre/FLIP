@@ -70,6 +70,22 @@ $(error ❌  the kit at $(KIT_SRC) has both a FLARE shape (startup/) and a Flowe
 endif
 endif
 KIT_UID ?= $(if $(filter flower,$(KIT_BACKEND)),49999,1000)
+# The OMOP core vocabulary (FLIP#923): VOCAB_DIR is a folder of Athena CSVs (CONCEPT.csv, ...) and
+# VOCAB_DEST the node directory omopDb.vocabLoad.hostPath names (the kit's OMOP_VOCAB_DIR).
+# stage-vocab empties VOCAB_DEST first, as stage-kit does KIT_DEST and with the same guards.
+VOCAB_DEST ?= /opt/flip/omop-vocab
+VOCAB_BUNDLE ?= vocab_aicentre_core_20240916
+ifneq ($(filter stage-vocab,$(MAKECMDGOALS)),)
+ifeq ($(strip $(VOCAB_DEST)),)
+$(error ❌  VOCAB_DEST must not be empty — stage-vocab clears it before copying)
+endif
+ifeq ($(strip $(VOCAB_DEST)),/)
+$(error ❌  VOCAB_DEST must not be / — stage-vocab clears it before copying)
+endif
+ifeq ($(wildcard $(VOCAB_DIR)/CONCEPT.csv),)
+$(error ❌  VOCAB_DIR=<folder holding the unpacked bundle: CONCEPT.csv, ...> is required — make download-vocab, or an OHDSI Athena export)
+endif
+endif
 # Which cluster to act on. Defaults to kubectl's current context, but stage-kit
 # REQUIRES it explicitly: it writes to a node's filesystem, and a machine running
 # several kind clusters will otherwise silently stage into whichever one kubectl
@@ -158,7 +174,7 @@ ifneq ($(strip $(TAG)),)
 	VALUES_OPTS := $(VALUES_OPTS) --set global.image.tag=$(TAG)
 endif
 
-.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init kit-secret stage-kit preflight template-egress-variants smoke-cstore selftest
+.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init kit-secret stage-kit download-vocab stage-vocab preflight template-egress-variants smoke-cstore selftest xnat-db-migrate-dump xnat-db-remove-old-cluster
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -228,6 +244,34 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	  docker exec "$$node" mkdir -p $(addprefix "$(KIT_DEST)"/,$(KIT_SUBDIRS)) && \
 	  docker exec "$$node" sh -c 'chmod -R go-rwx "$(KIT_DEST)" && chown -R $(KIT_UID):$(KIT_UID) "$(KIT_DEST)"' && \
 	  echo "✅ Kit staged. Deploy with --set flClient.kitHostPath=$(KIT_DEST)"
+
+download-vocab: ## Download the OMOP core vocabulary from the AI Centre bucket to this host (your AWS CLI profile)
+	## For operators with access to the bucket (FLIP#923); everyone else exports the same
+	## folder from OHDSI Athena (trust/omop-db/README.md). Runs on this host, never in the
+	## cluster. VOCAB_S3_BUCKET overrides the bucket.
+	$(MAKE) -C $(REPO_ROOT)/trust/omop-db fetch-vocab-core VOCAB_CORE_BUNDLE=$(VOCAB_BUNDLE) $(if $(VOCAB_S3_BUCKET),VOCAB_S3_BUCKET=$(VOCAB_S3_BUCKET))
+	@echo "✅ Next: make stage-vocab VOCAB_DIR=$(REPO_ROOT)/trust/omop-db/data/$(VOCAB_BUNDLE) KUBE_CONTEXT=<ctx>"
+
+stage-vocab: ## Place the unpacked OMOP core vocabulary onto the node (omopDb.vocabLoad.hostPath; run BEFORE deploy)
+	## Like stage-kit, the kind case:
+	##
+	##   make stage-vocab VOCAB_DIR=<folder with CONCEPT.csv, ...> KUBE_CONTEXT=kind-flip-kch
+	##
+	## On any other cluster copy the folder to VOCAB_DEST on the node yourself (with several
+	## nodes, pin the Job there: omopDb.vocabLoad.nodeSelector). It is read only for the first
+	## load. World-readable, as the loader runs as the image user.
+	##
+	## VOCAB_DEST is emptied first: `docker cp` merges, so a narrower re-stage would otherwise
+	## leave the previous bundle's table files beside the new ones for the loader to read.
+	@[ -n "$(KUBE_CONTEXT)" ] || (echo "❌  KUBE_CONTEXT is required — this writes to a node's filesystem. e.g. KUBE_CONTEXT=kind-flip-kch"; exit 1)
+	@node=$$(kubectl --context $(KUBE_CONTEXT) get nodes -o jsonpath='{.items[0].metadata.name}') && \
+	  [ -n "$$node" ] || { echo "❌  no node found in context $(KUBE_CONTEXT) — is the cluster reachable?"; exit 1; }; \
+	  echo "📦 Staging $(VOCAB_DIR) → [$(KUBE_CONTEXT)] $$node:$(VOCAB_DEST)"; \
+	  docker exec "$$node" mkdir -p "$(VOCAB_DEST)" && \
+	  docker exec "$$node" find "$(VOCAB_DEST)" -mindepth 1 -delete && \
+	  docker cp "$(VOCAB_DIR)/." "$$node:$(VOCAB_DEST)/" && \
+	  docker exec "$$node" chmod -R a+rX "$(VOCAB_DEST)" && \
+	  echo "✅ Vocabulary staged. Deploy with --set omopDb.vocabLoad.hostPath=$(VOCAB_DEST) (or OMOP_VOCAB_DIR=$(VOCAB_DEST) in the kit)"
 
 # Deliberately NO --force-conflicts here. Helm 4 applies the release server-side, and
 # `patch-kit-secrets` writes the kit's per-trust keys into the same Secret with field
@@ -326,8 +370,58 @@ upgrade-trust-k8s: ## Move a deployed trust to a release tag (data-safe helm upg
 # Secret from the same kit, then a plain `helm upgrade` at that tag.
 _upgrade-trust-k8s-apply:
 	$(MAKE) sync-kit KIT=$(KIT)
-	$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml TAG=$(shell sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1)
+	$(MAKE) xnat-db-migrate-dump
+	$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml TAG=$(shell sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1) \
+	  || { $(MAKE) xnat-db-drop-unused-dump AFTER_FAILED_DEPLOY=1; exit 1; }
+	$(MAKE) xnat-db-drop-unused-dump
 	@echo "✅ $(KIT) is on $$(sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1). Verify: kubectl -n $(NAMESPACE) get pods; trust-api /health reports the new version."
+
+# The PostgreSQL major the xnat-db image runs, and the release's XNAT pods (FLIP#1812).
+XNAT_DB_PG_MAJOR := $(shell sed -n 's/^PG_VERSION=\([0-9]*\).*/\1/p' $(REPO_ROOT)/trust/xnat/.env)
+XNAT_POD = -n $(NAMESPACE) -l app.kubernetes.io/instance=$(RELEASE_NAME),app.kubernetes.io/component
+
+# Before a helm upgrade that moves xnat-db to a newer PostgreSQL major: stop xnat-web, then dump the
+# xnat database beside the running cluster on its volume, where the new image restores it on first
+# start. The helm upgrade brings xnat-web back. The old cluster stays for a rollback until
+# xnat-db-remove-old-cluster. A no-op without an xnat-db pod or once it is on that major.
+xnat-db-migrate-dump:
+	@set -e; \
+	pod=$$($(KUBECTL) get pod $(XNAT_POD)=xnat-db --field-selector=status.phase=Running -o name | head -1); \
+	[ -n "$$pod" ] || exit 0; \
+	current=$$($(KUBECTL) exec -n $(NAMESPACE) "$$pod" -c postgres -- sh -c 'cat "$$PGDATA/PG_VERSION"'); \
+	case "$$current:$(XNAT_DB_PG_MAJOR)" in *[!0-9:]*|:*|*:) \
+	  echo "❌ Cannot compare xnat-db's PostgreSQL major ('$$current') with the image's ('$(XNAT_DB_PG_MAJOR)', from PG_VERSION in trust/xnat/.env). Nothing was changed."; exit 1 ;; esac; \
+	[ "$$current" -lt $(XNAT_DB_PG_MAJOR) ] || exit 0; \
+	echo "⬆️  xnat-db moves from PostgreSQL $$current to $(XNAT_DB_PG_MAJOR): stopping xnat-web and dumping the xnat database for the new server to restore."; \
+	$(KUBECTL) scale deployment $(XNAT_POD)=xnat-web --replicas=0; \
+	$(KUBECTL) wait pod $(XNAT_POD)=xnat-web --for=delete --timeout=$(HELM_TIMEOUT) \
+	  || ! $(KUBECTL) get pod $(XNAT_POD)=xnat-web -o name | grep -q .; \
+	$(KUBECTL) exec -i -n $(NAMESPACE) "$$pod" -c postgres -- sh -s $(XNAT_DB_PG_MAJOR) \
+	  < $(REPO_ROOT)/trust/xnat/scripts/xnat_db_migrate_dump.sh || { \
+	  echo "❌ The dump failed, so nothing was upgraded. Starting xnat-web again on PostgreSQL $$current."; \
+	  $(KUBECTL) scale deployment $(XNAT_POD)=xnat-web --replicas=1; exit 1; }
+
+# After the helm upgrade: remove a dump the deploy did not use, because xnat-db stayed on the old
+# major (xnat.image.pin or the kit's XNAT_TAG holds an older release). helm upgrade does not wait
+# for the StatefulSet, and the pod it is replacing still answers with the dump the new one needs, so
+# the rollout comes first. After a failed deploy the old server may be the one that stays, and the
+# dump goes all the same.
+xnat-db-drop-unused-dump:
+	@set -e; \
+	sts=$$($(KUBECTL) get statefulset $(XNAT_POD)=xnat-db -o name | head -1); \
+	[ -n "$$sts" ] || exit 0; \
+	$(KUBECTL) rollout status -n $(NAMESPACE) "$$sts" --timeout=$(HELM_TIMEOUT)$(if $(AFTER_FAILED_DEPLOY), || true); \
+	pod=$$($(KUBECTL) get pod $(XNAT_POD)=xnat-db --field-selector=status.phase=Running -o name | head -1); \
+	[ -z "$$pod" ] || $(KUBECTL) exec -i -n $(NAMESPACE) "$$pod" -c postgres -- sh -s \
+	  < $(REPO_ROOT)/trust/xnat/scripts/xnat_db_drop_unused_dump.sh
+
+# Once XNAT is confirmed on the new major: list the older cluster an upgrade kept for a rollback,
+# and delete it with YES=1.
+xnat-db-remove-old-cluster: ## List the PostgreSQL cluster an xnat-db major upgrade kept for a rollback; YES=1 deletes it
+	@pod=$$($(KUBECTL) get pod $(XNAT_POD)=xnat-db -o name); \
+	[ -n "$$pod" ] || { echo "❌ No xnat-db pod in $(NAMESPACE)."; exit 1; }; \
+	$(KUBECTL) exec -i -n $(NAMESPACE) "$$pod" -c postgres -- sh -s -- $(if $(YES),--delete) \
+	  < $(REPO_ROOT)/trust/xnat/scripts/xnat_db_remove_old_cluster.sh
 
 # The node self-test's checklist against a deployed release (FLIP#1390): release ready, FL kit,
 # API health, OMOP/Orthanc seeded, Orthanc auth, a real C-STORE, a dcm2niix conversion (FLIP#1448),
@@ -384,7 +478,7 @@ template-egress-variants: ## Render the egress NetworkPolicy in default / harden
 	@echo "=== Hardened (CIDR-scoped) egress ==="
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) $(VALUES_OPTS) \
 		--set networkPolicies.allowedEgressCIDRs[0]=10.20.0.0/24 \
-		--set networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=13.43.162.56/32 \
+		--set networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=203.0.113.10/32 \
 		--set networkPolicies.allowedEgressCIDRsWithPorts[0].port=8002 \
 		--show-only templates/network-policy.yaml > /dev/null
 	@echo "=== NetworkPolicies disabled ==="

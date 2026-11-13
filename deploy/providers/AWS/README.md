@@ -78,7 +78,7 @@ This command executes the following steps in order:
 8. **`ssh-config`**: Update `~/.ssh/config` with SSM-managed EC2 instance IDs
 9. **`ansible-init`**: Patch the Central Hub bastion and install `psql` on it
 10. **`deploy-centralhub`**: Deploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) at the tip of the env's branch via new task-definition revisions (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)) and sync the UI to S3
-11. **`register-trusts`**: Register every locally-present trust kit file (none yet is fine) (`trust/.env.<CODE>.<hub>`) on the running hub and write its credentials back. Only the two hub-shared values the ECS task env carries (`TRUST_API_KEY_HEADER`, `FL_BACKEND`) come back with it — the rest of the block needs `make sync-trust-kit KIT=<CODE> HUB=<hub>` from the repo root afterwards (see [Registering trusts against the ECS hub](#registering-trusts-against-the-ecs-hub))
+11. **`register-trusts`**: Register every locally-present trust kit file (none yet is fine) (`trust/.env.<CODE>.<hub>`) on the running hub and write its credentials back, with the hub-shared block from the local `.env.<hub>` (see [Registering trusts against the ECS hub](#registering-trusts-against-the-ecs-hub))
 12. **`status`**: Run comprehensive health checks
 
 To provision only the minimal Central Hub bastion after a targeted Terraform
@@ -107,7 +107,7 @@ two-trust port allocation).
 
 ### Registering trusts against the ECS hub
 
-The procedure, the kit-file suffixes, the mandatory `make sync-trust-kit` follow-up and what a failure looks like:
+The procedure, the kit-file suffixes and what a failure looks like:
 [Deploy the Central Hub → Registering trusts](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#deploy-central-hub-register-trusts).
 This section is how it works.
 
@@ -131,7 +131,9 @@ A waiter timeout warns and proceeds. Then, per kit, it:
    path and `sync-trust-kit` use: credentials on first registration only, operator host-local edits preserved, and
    the hub-shared block upserted with whatever the task's environment carried — on ECS only `TRUST_API_KEY_HEADER`
    and `FL_BACKEND` (`AES_KEY_BASE64` is a Secrets Manager value, never in the task env, and the other hub-shared
-   keys are not in the task definition at all). That gap is why the manual's `sync-trust-kit` step is mandatory.
+   keys are not in the task definition at all). So it then runs `trust/deploy/scripts/sync_trust_kit.py` on the kit,
+   as `make sync-trust-kit` does, filling the whole block from the operator env file the Makefile loaded; a key
+   missing there fails the run, naming it (FLIP#1476).
    It then mints the trust's XNAT stack passwords into the kit (`generate-xnat-credentials`), runtime-only
    trust-side secrets the hub never holds. That step runs locally through flip-api, so it needs flip-api's `uv`
    environment on the admin's machine.
@@ -141,7 +143,7 @@ there is nothing to re-emit); it never re-issues credentials. Delivery to a host
 EC2 node's own `make deploy` drives its Docker daemon over an SSH context, so the kit values reach the host only as
 container environment. For an on-prem operator, `make package-onprem-trust-kit
 KIT=<CODE>` tarballs `trust/.env.<CODE>.<hub>` (or the kit named by `KIT_FILE=<path>`) with the FL-kit slice of its
-`FL_KIT_SLOT`, once `sync-trust-kit` has filled it.
+`FL_KIT_SLOT`.
 
 #### Troubleshooting
 
@@ -236,9 +238,9 @@ The Central Hub uses four S3 buckets, each with a distinct purpose, access patte
 | Bucket (per env) | Env-var (`.env.{stag,prod}`) | Consumer | Browser CORS | Holds |
 |---|---|---|---|---|
 | `flip{env}-model-files-uploads` | `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME` | researcher browser (presigned **POST** upload, presigned **GET** download), flip-api reads | `POST`, `GET` from `https://<flip_alb_subdomain>` | researcher-uploaded model artefacts in two prefixes: `uploaded/` (staging — where the browser POSTs) and `scanned/` (promoted by flip-api's malware scan, FLIP#52). Every consumer reads `scanned/` only, so an unscanned or rejected file can never be bundled to a trust. Noncurrent versions expire after 30 days (the scan deletes rejected uploads and moves promoted ones, so this bucket accumulates tombstones). |
-| `flip{env}-fl-results` | `FLIP_FL_RESULTS_BUCKET_NAME` | fl-server writes, researcher browser (presigned **GET**) | `GET` from `https://<flip_alb_subdomain>` | FL training output / aggregated weights — the whole bucket is dedicated to this tenant so no prefix is needed |
+| `flip{env}-fl-results` | `FLIP_FL_RESULTS_BUCKET_NAME` | flip-api (an FL job uploads its own results through presigned part URLs), researcher browser (presigned **GET**) | `GET` from `https://<flip_alb_subdomain>` | FL training output / aggregated weights — the whole bucket is dedicated to this tenant so no prefix is needed |
 | `flip{env}-app-bundles` | `FLIP_APP_BUNDLES_BUCKET_NAME` | flip-api (boto3 only) | **none** (server-only — no `aws_s3_bucket_cors_configuration` resource is emitted at all) | `app_destinations/<model_id>/` (per-bundle FL apps: base templates + user model files, assembled by flip-api). The base FL application templates themselves are baked into the flip-api image (FLIP#724), not stored here. |
-| `flip{env}-aicentre` | `AICENTRE_BUCKET_NAME` | AWS trust nodes (the EC2 root's kit staging), AI Centre operators | `PUT`, `GET` | FL participant kits |
+| `flip{env}-aicentre` | `AICENTRE_BUCKET_NAME` | AWS trust nodes (the EC2 root's kit staging), the EFS provisioning task, flip-api (read-only), AI Centre operators | **none** (no browser reads or writes it) | FL participant kits |
 
 All four share standard configs: public access blocked, SSE-KMS server-side encryption with bucket keys enabled, versioning enabled. The three FLIP application buckets are rendered by the shared **`modules/flip_s3_bucket`** module, which `main.tf` consumes for every deployed environment, so a CORS or bucket-policy change plans identically across them. (Development uses no AWS buckets: the dev stack's object store is a local RustFS container, FLIP#1291.)
 
@@ -289,8 +291,6 @@ make deploy-centralhub
 
 # 11. Register every locally-present trust kit file on the hub and write its credentials back
 make register-trusts
-#     ...then fill the rest of each kit's hub-shared block from the local env file (repo root):
-#     make sync-trust-kit KIT=<CODE> HUB=<hub>
 
 # 12. Check status
 make status
@@ -420,7 +420,9 @@ It runs `scripts/add_fl_kits.sh`: discovers the deployment's nets from S3, activ
 the remaining shortfall restores + fingerprint-verifies each net's CA workspace
 (`fl-services/nvflare/provision/workspace-<env>/`) and mints the next `Trust_<n>` names on **every** net via
 `nvflare provision --add_client` (existing kits untouched — no CA rotation), uploads **only** the new kits
-additively (never `aws s3 sync --delete`) plus a refresh of each net's mirrored `state/cert.json`, and appends the
+additively (never `aws s3 sync --delete`) plus a refresh of each net's mirrored CA state (`cert.json` under
+`fl-flare-ca-state/`, a prefix no ECS task role can read; see the nvflare README for estates that still hold it
+among the kits), and appends the
 activated + minted names to `FL_KIT_SLOT_NAMES` in the env file. The make target then re-invokes make for
 `apply-fl-kit-slots` (so the sub-make re-reads the edited env file) — a targeted plan/apply of only the
 `/flip/fl_kit_slot_names` SSM parameter, plus the flip-api task-role policy that grants its read so the first

@@ -108,8 +108,8 @@ variable "power_workflow_file" {
   description = <<-EOT
     Staging power workflow (FLIP#1596). It assumes the APPLY role, because
     stopping staging mutates ECS, EC2 and RDS, so its job_workflow_ref has to be
-    trusted by the apply role as well. Staging only: the trust below adds it only
-    when environment == "stag".
+    trusted by the apply role as well. Staging only: local.apply_workflow_refs
+    (main.tf) adds it only when environment == "stag".
   EOT
   type        = string
   default     = "staging_lifecycle.yml"
@@ -125,7 +125,7 @@ variable "flip_api_secret_name" {
   description = <<-EOT
     Name of the Secrets Manager secret the FLIP root manages
     (module.flip_api_secret in ../../main.tf). The plan role needs an explicit read
-    grant on it — see plan_read_flip_api_secret in main.tf. Kept as a variable
+    grant on it — see plan_read_flip_api_secret in iam_plan.tf. Kept as a variable
     rather than hardcoded so the coupling to the other root stays visible, and so
     a renamed secret is a one-line change here rather than a silent plan failure.
   EOT
@@ -152,6 +152,7 @@ variable "managed_role_names" {
     "ecs-flip-api-task-role",
     "ecs-fl-api-task-role",
     "ecs-fl-server-task-role",
+    "ecs-fl-kit-provision-task-role",
     # rds_proxy.tf
     "flip-rds-proxy-role",
     # main.tf, via terraform-aws-modules/iam//modules/iam-assumable-role

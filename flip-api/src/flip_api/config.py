@@ -33,8 +33,10 @@ class Settings(BaseSettings):
     # for local development.
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
+    # Constant on purpose: model_config is built once, here, and inherited by DevSettings and
+    # ProdSettings, so it cannot follow ENV. Deployed hubs read the process environment instead.
     model_config = SettingsConfigDict(
-        env_file=f"../.env.{ENV}",
+        env_file="../.env.development",
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -129,6 +131,9 @@ class Settings(BaseSettings):
     # weights, ~1.5 GiB for the multimodel variant) can be uploaded; the FL API
     # stages such checkpoints server-side rather than bundling them into the app.
     MAX_MODEL_FILE_BYTES: int = 5 * 1024 * 1024 * 1024
+    # Hard cap on the results zip an FL job uploads (private_services/results_upload.py). The upper bound is
+    # what S3 takes in the 64 MiB parts the hub signs: 10,000 of them.
+    MAX_RESULTS_FILE_BYTES: int = Field(default=50 * 1024 * 1024 * 1024, gt=0, le=10_000 * 64 * 1024 * 1024)
     # Default equals the MAX_PRESIGNED_URL_TTL_SECONDS security ceiling in
     # utils/s3_client.py: anything higher would be silently clamped anyway,
     # with a per-call warning — so a default-configured deployment would log
@@ -217,22 +222,17 @@ class Settings(BaseSettings):
     # Which email backend send_templated_email (utils/email_sender.py) uses.
     # "ses" sends through AWS SESv2; "console" logs the would-be email
     # instead, so development needs no SES identity, templates or verified
-    # addresses (FLIP#919). The effective value always comes from the
-    # subclass — DevSettings overrides to "console", ProdSettings narrows
-    # the type to Literal["ses"] so console is rejected at boot there. This
-    # base default is only observed by the ENV probe below and by direct
-    # Settings() construction in tests; unlike ENFORCE_MFA (declared only
-    # here, so an unknown environment inherits the secure value) it is NOT
-    # a fallback for a misconfigured deploy: coerce_empty_env maps an unset
-    # ENV to "development", which selects DevSettings and therefore
-    # "console". A deploy that loses ENV fails on DevSettings' other
-    # required fields (POSTGRES_PASSWORD, AES_KEY_BASE64) rather than
-    # silently logging, but do not rely on this default for that.
-    # A dedicated flag rather than an ENV branch (same rationale as
-    # ENFORCE_MFA) so the integration tests can select the SES path on the
-    # base class without flipping ENV — which also drives DB auth, encryption
-    # and docs. Each subclass pins one value (DevSettings "console",
-    # ProdSettings "ses"), so no environment ever chooses.
+    # addresses (FLIP#919). Each subclass pins one value (DevSettings
+    # "console", ProdSettings Literal["ses"], so console is rejected at boot
+    # there), so no environment chooses. This base default is seen only by the
+    # ENV probe below and by Settings() in tests. Unlike ENFORCE_MFA it is NOT
+    # a fallback for a misconfigured deploy: an unset ENV coerces to
+    # "development", which selects DevSettings and so "console". Such a deploy
+    # should then fail on DevSettings' required POSTGRES_PASSWORD /
+    # AES_KEY_BASE64, but do not rely on that. It is a dedicated flag rather
+    # than an ENV branch (as with ENFORCE_MFA) so integration tests can select
+    # SES on the base class without flipping ENV, which also drives DB auth,
+    # encryption and docs.
     EMAIL_BACKEND: Literal["ses", "console"] = "ses"
 
     @field_validator("ENV", mode="before")
@@ -346,19 +346,18 @@ class Settings(BaseSettings):
             return v.upper()
         return v
 
-    @field_validator("MAX_MODEL_FILE_BYTES", mode="before")
+    @field_validator("MAX_MODEL_FILE_BYTES", "MAX_RESULTS_FILE_BYTES", mode="before")
     @classmethod
-    def coerce_empty_max_model_file_bytes(cls, v: object) -> object:
-        """Treat empty-string MAX_MODEL_FILE_BYTES as the field default 5 GiB.
+    def coerce_empty_max_model_file_bytes(cls, v: object, info: ValidationInfo) -> object:
+        """Treat an empty-string size cap as the field's default.
 
         GitHub Actions environments inject empty-string env vars for every
         var that isn't explicitly set in the environment scope; Pydantic
         treats that as a real override and rejects it against ``int``.
-        Same shape as ``coerce_empty_env``. Must stay
-        in sync with the ``MAX_MODEL_FILE_BYTES`` field default above.
+        Same shape as ``coerce_empty_env``.
         """
         if v is None or v == "":
-            return 5 * 1024 * 1024 * 1024
+            return cls.model_fields[str(info.field_name)].default
         return v
 
     @field_validator("PRE_SIGNED_URL_EXPIRATION_SECONDS", mode="before")

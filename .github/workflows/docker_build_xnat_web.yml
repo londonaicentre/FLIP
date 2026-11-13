@@ -154,7 +154,7 @@ jobs:
             TAG_FLAGS+=("-t" "$tag")
           done
           # shellcheck disable=SC2086
-          docker build --build-arg XNAT_VERSION="$XNAT_VERSION" $BUILD_ARGS "${TAG_FLAGS[@]}" .
+          docker build --pull --build-arg XNAT_VERSION="$XNAT_VERSION" $BUILD_ARGS "${TAG_FLAGS[@]}" .
 
       - name: Push Docker image
         env:

@@ -169,8 +169,8 @@ different policies in the same federation, with no hub redeploy.
 
       make -C trust up-fl-clients-kit KIT=<CODE>
 
-   The client writes the policy into its workspace at start-up. With nothing set, no policy is written and only
-   the app's filter applies.
+   A one-shot init step writes the policy into the client's kit before the client starts; the running client
+   mounts that configuration read-only. With nothing set, no policy is written and only the app's filter applies.
 
 .. important::
 

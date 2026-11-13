@@ -58,10 +58,22 @@ all platform logic core to training and evaluating FL applications.
 ### Installation
 
 ```bash
-uv sync
+uv sync                                   # dev group: both FL backends, for tests and mypy
 # or
-pip install .
+pip install ".[nvflare,full]"             # or ".[flower,full]"
 ```
+
+Each FL backend is an extra, so an install carries only the one it runs (FLIP#1047):
+
+| Extra | Brings | Needed by |
+|-------|--------|-----------|
+| `nvflare` | NVFLARE, and the `kubernetes` client its K8s job launcher imports | `flip.nvflare` |
+| `flower` | flwr | `flip.flower` |
+| `full` | The ML stack (torch, MONAI, …); no FL backend | FL training and evaluation code, `flip.export` |
+
+`import flip` and every module outside `flip.nvflare` / `flip.flower` need neither backend; importing a
+backend package without its extra fails with an `ImportError` naming the extra. A plain `flip-utils`
+install no longer brings NVFLARE: add `[nvflare]` where it used to be relied on.
 
 To build a distributable package:
 
@@ -90,7 +102,7 @@ flip/
 │   ├── recipes/       # High-level FLARE job recipes
 │   ├── runtime.py     # Runtime helpers for FLARE apps
 │   ├── site_policy.py # Client-side entrypoint (`python -m flip.nvflare.site_policy`):
-│   │                  # renders `local/privacy.json` from FL_SITE_PRIVACY_* env vars at container start
+│   │                  # renders `local/privacy.json` from FL_SITE_PRIVACY_* env vars in the fl-client's init step
 │   ├── server_site_config.py # Server-side entrypoint (`python -m flip.nvflare.server_site_config`):
 │   │                  # registers FLIP's server site components in `local/flip__p_resources.json`
 │   └── metrics.py     # Metrics collection and reporting

@@ -56,7 +56,6 @@ services:
       - NET_ID=net-${NET_NUMBER}
       - LOCAL_DEV=false
       - IMAGES_DIR=/app/data/images
-      - UPLOADED_FEDERATED_DATA_BUCKET=s3://fake-s3-bucket/results
       - LOG_LEVEL=${LOG_LEVEL}
     volumes:
       # Provisioned secrets from provision/workspace-dev/ (gitignored)
@@ -87,7 +86,7 @@ services:
       # empty-allow-list warning at startup. Every hub deployment sets it — see deploy/compose.*.yml.
     ports:
       - "${FL_API_PORT}:8000"
-      - "5679:5679"
+      - "127.0.0.1:${FL_API_DEBUG_PORT:-5679}:5679"
     volumes:
       # Provisioned secrets from provision/workspace-dev/ (gitignored)
       - ./provision/workspace-dev/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/local:/app/admin/local
@@ -101,6 +100,49 @@ services:
       # - ../flip-fl-api/transfer_upload:/app/admin/transfer_upload:rw
       - ../../fl-services/nvflare/fl-api-base/.vscode:/app/.vscode
     command: ["/bin/bash", "/app/entrypoint.sh"]
+
+  # Every write into the clients' kits, once, before they start (FLIP#1570), so the clients mount local/
+  # and startup/ read-only. Same image and uid as the clients; see fl-client/init.sh.
+  fl-client-init:
+    image: flare-fl-client:${DOCKER_FL_TAG:-dev}
+    user: "${UID:-1000}:1000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    network_mode: none
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -u
+        ok=
+        for kit in /kit/*/; do
+          if /app/fl-client-init.sh "$$kit"; then
+            ok=1
+          else
+            # Only this kit's client is stopped: it refuses the missing or stale render (fail closed).
+            echo "[fl-client-init] $$kit FAILED: its fl-client will refuse to start" >&2
+          fi
+        done
+        [ -n "$$ok" ]
+    environment:
+      - HOME=/home/flip
+      - USER=flip
+      - LOGNAME=flip
+      # What resources.json advertises to FLARE's scheduler for both clients (default 1 GPU, 16 GiB).
+      # - NUM_AVAILABLE_GPUS=1
+      # - MEMORY_PER_GPU_IN_GIB=16
+      - LOG_LEVEL=${LOG_LEVEL}
+      - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
+      - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
+      - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
+    volumes:
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_1/local:/kit/Trust_1/local
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_1/startup:/kit/Trust_1/startup
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_2/local:/kit/Trust_2/local
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_2/startup:/kit/Trust_2/startup
+    restart: "no"
 
   fl-client-1:
     container_name: fl-client-1-net-${NET_NUMBER}
@@ -120,21 +162,21 @@ services:
       - NET_ID=net-${NET_NUMBER}
       - LOCAL_DEV=false
       - IMAGES_DIR=/app/data/images
-      - UPLOADED_FEDERATED_DATA_BUCKET=s3://fake-s3-bucket/results
-      # - NUM_AVAILABLE_GPUS=1
-      # - MEMORY_PER_GPU_IN_GIB=16
       - LOG_LEVEL=${LOG_LEVEL}
       # Site-enforced FLARE privacy policy (FLIP#851) — rendered into
-      # /app/local/privacy.json by the entrypoint. Unset/empty = no site policy.
+      # /app/local/privacy.json by fl-client-init. Unset/empty = no site policy.
       - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
       - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
       - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
     volumes:
       # Provisioned secrets from provision/workspace-dev/ (gitignored)
-      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_1/local:/app/local
-      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_1/startup:/app/startup
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_1/local:/app/local:ro
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_1/startup:/app/startup:ro
       - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_1/transfer:/app/transfer
     command: ["/bin/bash", "/app/entrypoint.sh"]
+    depends_on:
+      fl-client-init:
+        condition: service_completed_successfully
     shm_size: "32gb"
     gpus: all
 
@@ -156,20 +198,20 @@ services:
       - NET_ID=net-${NET_NUMBER}
       - LOCAL_DEV=false
       - IMAGES_DIR=/app/data/images
-      - UPLOADED_FEDERATED_DATA_BUCKET=s3://fake-s3-bucket/results
-      # - NUM_AVAILABLE_GPUS=1
-      # - MEMORY_PER_GPU_IN_GIB=16
       - LOG_LEVEL=${LOG_LEVEL}
       # Site-enforced FLARE privacy policy (FLIP#851) — rendered into
-      # /app/local/privacy.json by the entrypoint. Unset/empty = no site policy.
+      # /app/local/privacy.json by fl-client-init. Unset/empty = no site policy.
       - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
       - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
       - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
     volumes:
       # Provisioned secrets from provision/workspace-dev/ (gitignored)
-      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_2/local:/app/local
-      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_2/startup:/app/startup
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_2/local:/app/local:ro
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_2/startup:/app/startup:ro
       - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_2/transfer:/app/transfer
     command: ["/bin/bash", "/app/entrypoint.sh"]
+    depends_on:
+      fl-client-init:
+        condition: service_completed_successfully
     shm_size: "32gb"
     gpus: all

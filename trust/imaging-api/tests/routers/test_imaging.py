@@ -16,21 +16,32 @@ from imaging_api.routers.schemas import ImportStudy, ImportStudyRequest, ImportS
 from imaging_api.utils.exceptions import NotFoundError
 
 
+def _pacs_status(pacs_id: int) -> PacsStatus:
+    return PacsStatus(
+        pacsId=pacs_id,
+        successful=True,
+        pingTime=123,
+        created=1610000000,
+        enabled=True,
+        timestamp=1610001234,
+        id=pacs_id,
+        disabled=0,
+    )
+
+
+def _import_body() -> dict:
+    return ImportStudyRequest(
+        projectId="TEST123",
+        pacsId=1,
+        studies=[ImportStudy(studyInstanceUid="1.2.3", accessionNumber="ACC123")],
+    ).model_dump(by_alias=True)
+
+
 def test_ping_pacs_success(client):
     pacs_id = 1
-    mock_response = {
-        "pacsId": pacs_id,
-        "successful": True,
-        "pingTime": 123,
-        "created": 1610000000,
-        "enabled": True,
-        "timestamp": 1610001234,
-        "id": 1,
-        "disabled": 0,
-    }
 
     with patch("imaging_api.routers.imaging.ping_pacs") as mock_ping_pacs:
-        mock_ping_pacs.return_value = PacsStatus(**mock_response)
+        mock_ping_pacs.return_value = _pacs_status(pacs_id)
 
         response = client.get(f"/imaging/ping_pacs/{pacs_id}")
 
@@ -56,22 +67,11 @@ def test_ping_pacs_failure(client):
 
 def test_ping_pacs_without_id_resolves_the_registration(client):
     """trust-api's health probe calls this route: it must not have to know the id XNAT assigned."""
-    mock_response = {
-        "pacsId": 7,
-        "successful": True,
-        "pingTime": 123,
-        "created": 1610000000,
-        "enabled": True,
-        "timestamp": 1610001234,
-        "id": 7,
-        "disabled": 0,
-    }
-
     with (
         patch("imaging_api.routers.imaging.ping_registered_pacs") as mock_ping_registered,
         patch("imaging_api.routers.imaging.ping_pacs") as mock_ping_pacs,
     ):
-        mock_ping_registered.return_value = PacsStatus(**mock_response)
+        mock_ping_registered.return_value = _pacs_status(7)
 
         response = client.get("/imaging/ping_pacs")
 
@@ -83,22 +83,11 @@ def test_ping_pacs_without_id_resolves_the_registration(client):
 
 def test_ping_pacs_with_explicit_id_does_not_resolve(client):
     """The by-id route still means that specific registration."""
-    mock_response = {
-        "pacsId": 3,
-        "successful": True,
-        "pingTime": 123,
-        "created": 1610000000,
-        "enabled": True,
-        "timestamp": 1610001234,
-        "id": 3,
-        "disabled": 0,
-    }
-
     with (
         patch("imaging_api.routers.imaging.ping_registered_pacs") as mock_ping_registered,
         patch("imaging_api.routers.imaging.ping_pacs") as mock_ping_pacs,
     ):
-        mock_ping_pacs.return_value = PacsStatus(**mock_response)
+        mock_ping_pacs.return_value = _pacs_status(3)
 
         response = client.get("/imaging/ping_pacs/3")
 
@@ -150,17 +139,6 @@ def test_query_by_accession_number_not_found(client):
 
 
 def test_queue_image_import_request_success(client):
-    import_request = ImportStudyRequest(
-        projectId="TEST123",
-        pacsId=1,
-        studies=[
-            ImportStudy(
-                studyInstanceUid="1.2.3",
-                accessionNumber="ACC123",
-            )
-        ],
-    )
-
     mock_response = [
         ImportStudyResponse(
             id=1,
@@ -176,7 +154,7 @@ def test_queue_image_import_request_success(client):
     with patch("imaging_api.routers.imaging.queue_image_import_request", return_value=mock_response):
         response = client.post(
             "/imaging/queue_image_import_request",
-            json=import_request.model_dump(by_alias=True),
+            json=_import_body(),
         )
 
     assert response.status_code == 200
@@ -184,24 +162,13 @@ def test_queue_image_import_request_success(client):
 
 
 def test_queue_image_import_request_not_found(client):
-    import_request = ImportStudyRequest(
-        projectId="TEST123",
-        pacsId=1,
-        studies=[
-            ImportStudy(
-                studyInstanceUid="1.2.3",
-                accessionNumber="ACC123",
-            )
-        ],
-    )
-
     with patch(
         "imaging_api.routers.imaging.queue_image_import_request",
         side_effect=NotFoundError("No studies found on PACS with the study instance UID(s) provided"),
     ):
         response = client.post(
             "/imaging/queue_image_import_request",
-            json=import_request.model_dump(by_alias=True),
+            json=_import_body(),
         )
 
     assert response.status_code == 404

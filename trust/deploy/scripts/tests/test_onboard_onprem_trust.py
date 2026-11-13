@@ -1058,6 +1058,48 @@ def test_50_fl_endpoint_timeout_hints_at_the_hub_source_address_list() -> None:
             _assert(mod.lookup_egress_ip() is None, f"{type(error).__name__} -> None, not a crash")
 
 
+def test_51_log_level_debug_fails_a_deployed_kit() -> None:
+    """FLIP-SR-050: a .prod/.stag kit left at TRUST_LOG_LEVEL=DEBUG is a blocking FAIL."""
+    print("\n[51] TRUST_LOG_LEVEL=DEBUG on a deployed kit -> FAIL")
+    for env in ("prod", "stag"):
+        result = mod.check_log_level({"TRUST_LOG_LEVEL": "DEBUG"}, True, f"trust/.env.SITE.{env}")
+        _assert(result.status == mod.Status.FAIL, f".{env} at DEBUG is a FAIL", result.detail)
+        _assert(any("INFO" in h for h in result.hints), "hint names INFO", result.detail)
+        _assert(any("rotate" in h for h in result.hints), "hint says to rotate the keys")
+
+
+def test_52_log_level_debug_warns_a_development_kit() -> None:
+    """DEBUG on a development kit is a non-blocking WARN (mock data, throwaway creds)."""
+    print("\n[52] TRUST_LOG_LEVEL=DEBUG on a development kit -> WARN")
+    result = mod.check_log_level({"TRUST_LOG_LEVEL": "DEBUG"}, True, "trust/.env.SITE.development")
+    _assert(result.status == mod.Status.WARN, "development at DEBUG is a WARN, not a blocker", result.detail)
+
+
+def test_53_log_level_info_passes_and_unset_warns() -> None:
+    """INFO (any non-DEBUG level) passes; an unset level is a WARN naming the variable."""
+    print("\n[53] TRUST_LOG_LEVEL=INFO -> PASS; unset -> WARN")
+    ok = mod.check_log_level({"TRUST_LOG_LEVEL": "info"}, True, "trust/.env.SITE.prod")
+    _assert(ok.status == mod.Status.PASS, "INFO passes (case-insensitive)", ok.detail)
+    unset = mod.check_log_level({}, True, "trust/.env.SITE.prod")
+    _assert(unset.status == mod.Status.WARN, "unset level is a WARN", unset.detail)
+
+
+def test_54_hub_shared_allows_the_other_backends_kit_date_empty() -> None:
+    """Only the running backend's kit date is required (FLIP#1476); a placeholder still fails."""
+    print("▶ hub-shared row: the other backend's kit date may be empty")
+    base = {k: "x" for k in mod.HUB_SHARED_KEYS}
+    for backend, other, own in (
+        ("nvflare", "FLOWER_KIT_DATE", "FLARE_KIT_DATE"),
+        ("flower", "FLARE_KIT_DATE", "FLOWER_KIT_DATE"),
+    ):
+        check = mod.check_hub_shared({**base, "FL_BACKEND": backend, other: ""}, True)
+        _assert(check.status == mod.Status.PASS, f"{backend}: empty {other} passes", check.detail)
+        check = mod.check_hub_shared({**base, "FL_BACKEND": backend, other: "<run-make-register-trust>"}, True)
+        _assert(check.status == mod.Status.FAIL, f"{backend}: placeholder {other} fails", check.detail)
+        check = mod.check_hub_shared({**base, "FL_BACKEND": backend, own: ""}, True)
+        _assert(check.status == mod.Status.FAIL and own in check.detail, f"{backend}: empty {own} fails", check.detail)
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -1112,6 +1154,10 @@ def main() -> None:
     test_48_sample_data_off_needs_no_seed_marker_dir()
     test_49_a_sample_data_value_up_trust_refuses_fails_the_checklist()
     test_50_fl_endpoint_timeout_hints_at_the_hub_source_address_list()
+    test_51_log_level_debug_fails_a_deployed_kit()
+    test_52_log_level_debug_warns_a_development_kit()
+    test_53_log_level_info_passes_and_unset_warns()
+    test_54_hub_shared_allows_the_other_backends_kit_date_empty()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

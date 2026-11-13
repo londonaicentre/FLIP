@@ -22,7 +22,7 @@ from flip_api.auth.identity import IdentityProvider, get_identity_provider
 from flip_api.db.database import get_session
 from flip_api.db.models.user_models import PermissionRef, UserProfile, UsersAudit
 from flip_api.domain.interfaces.project import IUpdateXnatProfile
-from flip_api.domain.schemas.users import Disabled, UpdateUser, UpdateUserResponse
+from flip_api.domain.schemas.users import UpdateUser, UpdateUserResponse
 from flip_api.project_services.services.image_service import update_xnat_user_profile
 from flip_api.utils.logger import logger
 
@@ -79,11 +79,9 @@ def update_user_endpoint(
         # re-raise.
         username = idp.get_username(user_id)
 
-        disabled_response = None
         if user_update.disabled is not None:
             # Update the user in the identity provider
             idp.set_enabled(username, not user_update.disabled)
-            disabled_response = Disabled(disabled=user_update.disabled)
 
             # Update XNAT user profile. If this fails after the Cognito mutation
             # has already landed, surface the partial state explicitly so the
@@ -166,7 +164,7 @@ def update_user_endpoint(
             ) from audit_err
 
         response = UpdateUserResponse(
-            disabled=disabled_response.disabled if disabled_response is not None else None,
+            disabled=user_update.disabled,
             name=user_update.name,
             organisation=user_update.organisation,
         )

@@ -21,6 +21,7 @@ from fastapi import HTTPException
 from tomlkit import dumps, parse
 
 from fl_api.schemas import UploadAppRequest
+from fl_api.utils.job_credential import deliver_job_credential
 from fl_api.utils.logger import logger
 from fl_api.utils.refusals import ResearcherRefusal
 from fl_api.utils.validation import redact_url, safe_join, validate_bundle_url
@@ -183,6 +184,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
     upsert_flwr_run_config(config_toml, model_id, body.project_id, body.cohort_query, body.trusts)
 
     logger.info("config.toml updated with FLIP runtime parameters")
+
+    deliver_job_credential(model_id, body.job_credential)
 
     # Flower's deployment runtime places no job by GPU, and flwr rejects run-config keys an app does not
     # declare, so the request is not injected anywhere: it is recorded and reported as not enforced (FLIP#70).

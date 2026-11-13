@@ -30,9 +30,10 @@ XNAT has an unauthenticated account-creation flaw, so sites on an older release 
   [NrgXnat/xnat](https://github.com/NrgXnat/xnat/releases). The Bitbucket downloads stop at 1.10.0.
 - **No platform change.** 1.10.1 and 1.10.2 keep the 1.10.0 Java, Tomcat and PostgreSQL
   requirements, and 1.10.2 makes no database schema change.
-- **Container Service moves to 3.8.2.** The 1.10.2.1 WAR ships snakeyaml 2. Container Service 3.8.1's
+- **Container Service had to leave 3.8.1.** The 1.10.2.1 WAR ships snakeyaml 2. Container Service 3.8.1's
   Kubernetes client calls a constructor snakeyaml 2 removed, so the chart's Kubernetes backend cannot
-  be reached (CS-1058). See [Plugin compatibility](#plugin-compatibility).
+  be reached (CS-1058). FLIP moved to 3.8.2 then and runs 3.9.0 now (FLIP#1817). See
+  [Plugin compatibility](#plugin-compatibility).
 - **DicomEdit 6.10.0.** `anon_script.das` gives the same output on 6.10.0 as on 6.9.0 (see
   [`tests/README.md`](tests/README.md#when-to-update)). The script uses no `alterPixels`, so the new
   pixel-redaction engine does not apply.
@@ -50,8 +51,11 @@ XNAT has an unauthenticated account-creation flaw, so sites on an older release 
 These came with the move to 1.10 and still apply:
 
 - **JDK 21.** 1.10.0 moves from JDK 8 to JDK 21 (for long-term support), so the image's Tomcat base
-  moved to a `jdk21` variant. Upstream states there is **no change in the Tomcat or PostgreSQL
-  version requirements**, which is why Tomcat stays on 9.x and `PG_VERSION` stays at `12.2-alpine`.
+  moved to a `jdk21` variant. The release notes state no change in the Tomcat version requirement,
+  which is why Tomcat stays on 9.x. PostgreSQL is another matter: XNAT's
+  [prerequisites](https://wiki.xnat.org/documentation/prerequisites-for-installing-xnat) now ask for
+  16 or later, and 1.10 is validated on 16 to 18 only, so `PG_VERSION` is `16-alpine` (FLIP#1812;
+  16 rather than 17 or 18 because XNAT's developers reported a minor incompatibility with 17).
   Most JDK 8-compiled plugins still run — see [Plugin compatibility](#plugin-compatibility) below.
 - **dcm4che2 → dcm4che5.** XNAT's core DICOM processing library was replaced. This is what forces the
   DQR plugin upgrade, and it is the change most likely to alter DICOM import behaviour, so the import
@@ -110,7 +114,10 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
   root `rm -rf` (FLIP#1723). In development any other developer, or a root-created directory, gets
   the `sudo` prompt. Never use it to move a live site to a release. `make upgrade-xnat KIT=<CODE> HUB=<env>` (driven
   by `make -C trust upgrade-trust`) keeps the data dir: it takes a `pg_dumpall` of `xnat-db` into
-  `$XNAT_DATA_DIR/backups/`, refuses to proceed unless the `xnat-data/` tree is owned by the
+  `$XNAT_DATA_DIR/backups/`, creates `xnat-data/prearchive/` as the container uid on a site installed
+  before FLIP#1818 (`make xnat-web-dirs KIT=<CODE> HUB=<env>`, which `upgrade-trust` also runs before it pulls
+  anything; it refuses a kit whose `XNAT_DATA_DIR` holds no `xnat-data/archive/`),
+  refuses to proceed unless the `xnat-data/` tree is owned by the
   container uid (1001, or the kit's `FLIP_UID` — an archive written by a pre-hardening root `xnat-web` needs one
   `chown -R` first), redeploys the stack onto the kit's `XNAT_TAG` (XNAT migrates its own schema on
   boot; migrations are forward-only, hence the dump), then re-runs `configure-xnat.sh`, which
@@ -119,6 +126,28 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
   `siteUrl`, the DICOM receiver, the DQR lockdown, the PACS registration and the Container Service
   backend, and skipping only the first-boot admin password rotation (the service account is
   re-requested and an existing one left as-is).
+- **A PostgreSQL major upgrade rides on `upgrade-xnat` (FLIP#1812).** A newer major cannot open an
+  older cluster, so `xnat-db` keeps its cluster in `pg<major>/` under the data dir (`ENV PGDATA` in
+  `postgres/Dockerfile`). When the running cluster is on an older major than `PG_VERSION`,
+  `upgrade-xnat` runs `xnat-db-migrate-dump` after the backup: it stops `xnat-web`, then
+  `scripts/xnat_db_migrate_dump.sh` writes a `pg_dump -Fc` of the `xnat` database beside the running
+  cluster as `xnat-migrate.dump`. The new image's first start creates `pg16/`, and
+  `postgres/restore-xnat-dump.sh` restores the dump into it before the server listens on TCP, so
+  `xnat-web` never sees an empty database. The roles come from that fresh initialisation, so
+  passwords are SCRAM hashes and a volume on the old single-superuser layout (FLIP#1666) comes out
+  with the two-role one. A dump that fails starts `xnat-web` again on the old server and upgrades
+  nothing. The old cluster stays where it was: rolling back is pinning `XNAT_TAG` to the previous
+  release, and after a rollback the way forward is `upgrade-trust` again, which takes a new dump
+  and moves the `pg16/` the site rolled back from aside as `pg16.replaced-<timestamp>/`.
+  `postgres/guard-xnat-db-data.sh` refuses to start next to an older cluster with no dump (it would
+  start XNAT as an empty site), after a restore that did not finish, and when the older cluster has
+  run again since the dump or the restore (they are out of date). A deploy that leaves `xnat-db` on
+  the old major, because the kit pins an older `XNAT_TAG`, has its unused dump removed, and so has a
+  deploy that fails. An upgrade that was interrupted is resumed with `upgrade-trust`, never with a
+  plain deploy: the old server may have run on since the dump, which the guard cannot see unless it
+  restarted. Once the site is confirmed on the new major,
+  `make xnat-db-remove-old-cluster KIT=<CODE> HUB=<env>` lists the old cluster, with anything moved
+  aside, and `YES=1` deletes it. The Helm chart does the same through `upgrade-trust-k8s`.
 
 ## Setup
 
@@ -136,6 +165,13 @@ make build
 This downloads the XNAT WAR and plugins from their upstream URLs in `artifacts.manifest` (or copies them from
 `ARTIFACTS_DIR=<dir>`) and checks their SHA-256, then builds all three images (`xnat-web`, `xnat-db`, `xnat-nginx`) tagged as `${DOCKER_REGISTRY}xnat-<service>:${XNAT_TAG}`
 (`XNAT_TAG` defaults to `DOCKER_TAG`).
+
+`xnat-web` builds on the moving `tomcat:9.0-jdk21-temurin-noble` tag, so every build, in CI or `make build`
+(both pull it), takes the current Tomcat 9 and JDK 21, including Temurin's JVM trust store, which as of Temurin 21.0.13
+no longer holds the `emSign ECC Root CA - G3` anchor upstream removes
+([NrgXnat/xnat 0ec100fee1](https://github.com/NrgXnat/xnat/commit/0ec100fee1), CVE-2026-91403). A published image
+keeps the base of the day it was built, until the next `trust/xnat/**` change or release rebuilds it. On a host with no
+registry route, `make build XNAT_BUILD_PULL=` builds on the local copy of the base.
 
 `make up BUILD=true` (from the repo root) runs this build before deploying each trust's stack, at `XNAT_TAG=dev`. The tag
 must be one the registry does not have: the swarm agent re-pulls a tag on every deploy and keeps the local image only
@@ -237,7 +273,7 @@ In development (when `HUB` is not set), `make up` also mounts the local `xnat/pl
 > `xnat/config/container-service-backend-configuration.json`), and only the `xnat-socket-proxy`
 > sidecar mounts `/var/run/docker.sock:ro`, on a stack-scoped internal network no other trust service
 > can reach. Either way the containers it spawns run on the *host*, so they need XNAT's data through
-> host paths — the data directories (`archive`, `build`, `cache`, `tomcat_logs`) must therefore be
+> host paths — the data directories (`archive`, `build`, `cache`, `prearchive`, `tomcat_logs`) must therefore be
 > bind-mounted rather than using named volumes. Per-instance isolation comes from `XNAT_DATA_DIR`,
 > which the kit file's Host-local profile sets and every shipped kit carries (`./xnat-data` in
 > `trust/.env.example`, hence in anything `make new-trust` scaffolds; `./xnat-data-GSTT` /
@@ -271,7 +307,7 @@ rather than silently falling back.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `XNAT_AETITLE` | `XNAT` | XNAT's **own** AE title. Applied in three places that must agree: the SCP receiver, the DQR calling AE, and the C-MOVE destination handed to the PACS. DQR matches that destination against a registered receiver by exact `AE:port`, so no translation is possible on that leg. |
+| `XNAT_AETITLE` | `FLIP_XNAT` | XNAT's **own** AE title. Applied in three places that must agree: the SCP receiver, the DQR calling AE, and the C-MOVE destination handed to the PACS. DQR matches that destination against a registered receiver by exact `AE:port`, so no translation is possible on that leg. |
 | `XNAT_PORT` | `8104` | XNAT's **DICOM SCP receiver** port. Defaults to the Trust_1 allocation so a single-trust host need not set it. |
 | `XNAT_WEB_PORT` | — (required) | The host-published **web-UI** port. No default of its own: it falls back to `XNAT_PORT`, which collides, so every kit must set it. |
 | `PACS_HOST` | `orthanc` | Upstream PACS hostname — the compose/k8s service name, or a real PACS host. |
@@ -281,6 +317,7 @@ rather than silently falling back.
 | `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS` | `true` | Whether the PACS supports relational queries / extended negotiation. A capability of the PACS, not a preference — one that does not support it rejects the association outright. Validated as literally `true` or `false` before it reaches `jq`. |
 | `PACS_AVAILABILITY_DAYS` | all seven days | Retrieval window: which days retrieval may run. Comma-separated `MONDAY` … `SUNDAY`, in capitals. |
 | `PACS_AVAILABILITY_START` / `_END` | `00:00` / `24:00` | Retrieval window start/end, `HH:MM` from `00:00` to `23:59`, or `24:00` for the end of the day. The start must come before the end, so the window cannot cross midnight (see below). |
+| `XNAT_TZ` | `Europe/London` (in `.env`) | XNAT's time zone (`TZ`). DQR reads the window in it (`LocalTime.now()`), so it is UK local time, BST included. |
 | `PACS_THREADS` | `1` | Concurrent retrieval threads, from 1. |
 | `PACS_UTILIZATION_PERCENT` | `100` | Share of the window/threads DQR may use, from 1 to 100. |
 | `DQR_MAX_PACS_REQUEST_ATTEMPTS` | `100` | Retries before DQR gives up on a request. |
@@ -395,8 +432,8 @@ applied.
 
 | Plugin                          | Version for XNAT 1.10.2.1   | Installed | Action for 1.10.2.1 |
 | ------------------------------- | --------------------------- | --------- | ------------------- |
-| DICOM Query-Retrieve Plugin     | 3.0.0                       | Yes       | None — 3.0.0 requires XNAT 1.10.0 or newer (DQR changelog). 3.1.0, built for 1.10.1, marks a C-MOVE that delivers no files `FAILED` instead of leaving it `ISSUED`, a change imaging-api reads, so it is not part of this fix |
-| Container Service Plugin        | 3.8.2 (JDK 8 build)         | Yes       | **Must upgrade** from 3.8.1 — its Kubernetes client cannot load on the 1.10.2.1 WAR (CS-1058). 3.8.2 changes only that client. 3.9.0, built for 1.10.1, is not needed |
+| DICOM Query-Retrieve Plugin     | 3.1.0                       | Yes       | Upgraded from 3.0.0 (FLIP#1816) — 3.1.0 requires XNAT 1.10.1 or newer, and marks a C-MOVE that leaves nothing in the prearchive `FAILED` instead of leaving it `ISSUED`. On FLIP's direct-archive receiver that is every C-MOVE: see the note below |
+| Container Service Plugin        | 3.9.0 (JDK 21 build)        | Yes       | Upgraded from 3.8.2 (FLIP#1817); needs XNAT 1.10.1 or newer. Docker Swarm status polling loads the database less, and on Kubernetes an XNAT restart no longer marks finished containers failed. FLIP turns on its daily build-directory cleanup (see [DICOM to NIfTI Conversion](#dicom-to-nifti-conversion)) |
 | Batch Launch Plugin             | 0.9.0 (JDK 8 build)         | Yes       | None — the matrix keeps BLP 0.9.0 for 1.10, and there is no later release |
 | OHIF Viewer Plugin              | 3.8.0 (`-fat` build)        | Yes       | None — 3.8.0 is the plugin's XNAT 1.10 release, and there is no later release; the optional MONAI Label server registers through it — see [MONAI Label](../README.md#monai-label-optional) |
 
@@ -419,16 +456,24 @@ use XNAT-side MFA; hub auth is Cognito and imaging-api authenticates as a servic
 > QUEUED/PROCESSING/ISSUED/RECEIVED/FAILED). On 2026-10-14 the REST reads returned the same rows as
 > the table reads they replaced, for every project on a live 3.0.0 instance (FLIP#1456).
 >
+> **DQR 3.1.0 marks every FLIP import `FAILED` when its C-MOVE ends.** It now fails a request that
+> left nothing in the prearchive (PLUGINS-323), and FLIP's SCP receiver archives directly, so the request
+> ends `FAILED` with `Received zero files for study <uid> in project <project>` even when the study
+> arrived. imaging-api therefore counts an executed `FAILED` as a failure only when no direct-archive
+> session is receiving the study (FLIP#1816). DQR's own import history shows every import as failed.
+> Verified against 3.1.0 and Orthanc (2026-11-09): the status vocabulary and the REST answers are
+> unchanged, apart from two optional request fields (`subjectLabel`, `experimentLabel`) FLIP leaves unset.
+>
 > The DQR thread-leakage fix is also worth attention: it is plausibly related to the bulk-import
 > wedging investigated in FLIP#662. What holds that wedge at bay is the directArchive JMS
 > build-concurrency cap baked in by `make-xnat-config.sh` plus the raised heap in `.env`; both stay
-> in place on 1.10. Re-test a large cohort pull (thousands of studies) on 1.10 + DQR 3.0.0 before
+> in place on 1.10. Re-test a large cohort pull (thousands of studies) on 1.10 + DQR 3.x before
 > assuming either is no longer needed.
 
 **Staying on 1.9 instead?** The 1.9 line's security hotfix is **XNAT 1.9.3.9**; earlier 1.9
 releases carry the vulnerability 1.10.2.1 fixes. **DQR 2.3.2** is the thread-leak fix alone (JDK 8).
 
-The 1.10.2.1 artifact set (WAR + DQR 3.0.0 + Container Service 3.8.2 + Batch Launch 0.9.0 + OHIF viewer
+The 1.10.2.1 artifact set (WAR + DQR 3.1.0 + Container Service 3.9.0 + Batch Launch 0.9.0 + OHIF viewer
 3.8.0) is pinned in [`artifacts.manifest`](artifacts.manifest). Every file is a public download that needs no
 account. The DQR Bitbucket repository also carries `2.3.2`/`2.4.0` for the JDK 8 fallback.
 
@@ -485,6 +530,21 @@ XNAT's own action listing (`GET /xapi/events/allactions`). So the id must surviv
 matches wrappers by name) while taking every field from `dcm2niix_command.json`, the image included;
 on Kubernetes without the resource keys, so conversion pods stay BestEffort (FLIP#1448). A command is
 registered only when none exists, and the step refuses to choose between two.
+
+The Container Service backend is sent again only when a field FLIP sets has drifted, and then as the
+server XNAT holds with only FLIP's fields changed. `POST /xapi/docker/server` resets every setting it
+leaves out, so a site's own settings, such as the retention periods below, survive a re-run (FLIP#1817).
+When XNAT cannot return the server (it pings the backend inside the GET, so an unreachable backend fails
+it, as does a first install), the step sends FLIP's config alone and prints a warning: that resets them.
+
+FLIP turns on the build-directory cleanup Container Service 3.9.0 adds (`build-dir-cleanup-enabled`).
+Each conversion writes its output to a directory under XNAT's build path (`${XNAT_DATA_DIR}/xnat-data/build`
+on Compose, the `build` subPath of xnat-web's data volume on Helm), XNAT copies it into the scan's
+`NIFTI` resource, and before 3.9.0 nothing deleted the first copy. The daily job (02:00 UTC) deletes a
+build directory once every container of its launch has finished and its retention has passed: 7 days
+after a completed run, 14 after a failed one, 1 after a killed one. A site can change the time and the
+retention periods in XNAT; the switch itself is FLIP's, and a re-run turns it back on. Container logs are
+kept in the archive, and imaging-api reads NIfTI from the archive only.
 
 ### Converting scans archived without NIfTI
 

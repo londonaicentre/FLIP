@@ -235,9 +235,9 @@ DNS:fl-server-net-1, DNS:fl.stag.flip.aicentre.co.uk
 
 **Fix:** Add both SANs when regenerating the certificate (see §7.2 config above).
 
-The `hostAliases` in the fl-client deployment map `fl-server-net-1` to the
-NLB IPs, so clients resolve the hostname correctly but the server must present
-a cert that matches the hostname the client uses to connect.
+The client connects by the hub's public FL name from its kit, so the server must
+present a cert that carries that name. The chart sets no `hostAliases` by default;
+`flClient.hostAliases` is there for a site whose DNS cannot resolve the FL name.
 
 ### 7.4 Signature PSS Padding Mismatch
 
@@ -338,7 +338,8 @@ command: ["/bin/sh", "-c", ". /opt/nvflare/startup/start.sh && wait"]
 ### 7.7 AWS Credentials Expired in K8s Secret
 
 **Symptom:** fl-client pod logs show `AccessDenied` when trying to download
-participant kit from S3. The omop-db vocab-load Job (the chart's only AWS-bearing Job) also fails with S3 errors.
+participant kit from S3. (The chart's omop-db vocab-load Job holds no AWS credentials: it loads a
+folder staged onto the node with `make stage-vocab` — chart README, "OMOP core vocabulary".)
 
 **Root Cause:** The K8s Secret `aws-credentials` (mounted by init containers)
 contains stale AWS SSO credentials. SSO sessions expire after 12-24 hours.

@@ -50,6 +50,8 @@ class UploadAppRequest(BaseModel):
     # Set when the researcher overrode the job's GPU count at submission (FLIP#70). None leaves the
     # job's meta.json resource_spec, or the fl-api default, in force.
     resources: JobResources | None = None
+    # The job's credential for its callbacks to the hub (utils/job_credential.py). None from a hub that mints none.
+    job_credential: str | None = Field(default=None, repr=False)
 
 
 class ServerInfoModel(BaseModel):

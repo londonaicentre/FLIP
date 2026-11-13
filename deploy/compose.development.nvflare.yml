@@ -33,6 +33,8 @@ services:
       - BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000
       # Shared volume where the FL API stages a de-bundled eval checkpoint (mirrors Flower's /app/src).
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
+      # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
+      - JOB_CREDENTIAL_DIR=/app/server-checkpoints/.job-credentials
       # GPUs written into the meta.json resource_spec of a job that declares none (configure_meta).
       # Default 0 => empty resource_spec => FLARE hides the GPU from the training worker (CPU).
       - JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS:-0}
@@ -75,6 +77,8 @@ services:
       - BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000
       # Shared volume where the FL API stages a de-bundled eval checkpoint (mirrors Flower's /app/src).
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
+      # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
+      - JOB_CREDENTIAL_DIR=/app/server-checkpoints/.job-credentials
       # Per-job GPU request (see fl-api-net-1). Default 0 => CPU; set >0 to train on the GPU.
       - JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS:-0}
     # The 640 admin client.key, through the host group (see fl-api-net-1).
@@ -114,17 +118,12 @@ services:
       - NET_ID=net-1
       - LOCAL_DEV=false
       - IMAGES_DIR=/app/data/images
-      - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
-      # Results go to the dev object store (FLIP#1291) with its static keys — generic AWS
-      # env is right here, the fl-server has no other AWS use. Same variables as the store.
-      - AWS_ENDPOINT_URL_S3=http://object-store:9000
-      - AWS_ACCESS_KEY_ID=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
-      - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
-      - AWS_DEFAULT_REGION=${AWS_REGION:?AWS_REGION must be set in the env file}
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
+      # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
+      - JOB_CREDENTIAL_DIR=/app/server-checkpoints/.job-credentials
       - HOME=/home/flip
       # The overridden uid has no /etc/passwd entry, so pwd.getpwuid() raises
       # KeyError: 'getpwuid(): uid not found'. getpass.getuser() consults these first
@@ -133,7 +132,7 @@ services:
       - USER=flip
       - LOGNAME=flip
     depends_on:
-      # The store must serve before the first results upload (FLIP#1291).
+      # The store must serve before the first results upload, through URLs flip-api presigns (FLIP#1291).
       object-store:
         condition: service_healthy
     # Run as the HOST user's uid, with the image's gid (FLIP#1171). The provisioned
@@ -180,17 +179,12 @@ services:
       - NET_ID=net-2
       - LOCAL_DEV=false
       - IMAGES_DIR=/app/data/images
-      - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
-      # Results go to the dev object store (FLIP#1291) with its static keys — generic AWS
-      # env is right here, the fl-server has no other AWS use. Same variables as the store.
-      - AWS_ENDPOINT_URL_S3=http://object-store:9000
-      - AWS_ACCESS_KEY_ID=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
-      - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
-      - AWS_DEFAULT_REGION=${AWS_REGION:?AWS_REGION must be set in the env file}
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
+      # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
+      - JOB_CREDENTIAL_DIR=/app/server-checkpoints/.job-credentials
       - HOME=/home/flip
       # The overridden uid has no /etc/passwd entry, so pwd.getpwuid() raises
       # KeyError: 'getpwuid(): uid not found'. getpass.getuser() consults these first
@@ -199,7 +193,7 @@ services:
       - USER=flip
       - LOGNAME=flip
     depends_on:
-      # The store must serve before the first results upload (FLIP#1291).
+      # The store must serve before the first results upload, through URLs flip-api presigns (FLIP#1291).
       object-store:
         condition: service_healthy
     # Run as the HOST user's uid, with the image's gid (FLIP#1171). The provisioned

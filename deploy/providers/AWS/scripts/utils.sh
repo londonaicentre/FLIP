@@ -44,32 +44,6 @@ check_aws_profile() {
     fi
 }
 
-# Verify resource exists in AWS
-aws_resource_exists() {
-    local resource_type="$1"
-    local resource_id="$2"
-    
-    case "$resource_type" in
-        bucket)
-            aws s3api head-bucket --bucket "$resource_id" --profile "$AWS_PROFILE" 2>/dev/null
-            ;;
-        keypair)
-            aws_cmd ec2 describe-key-pairs --key-names "$resource_id" 2>/dev/null | grep -q "KeyName"
-            ;;
-        *)
-            log_error "Unknown resource type: $resource_type"
-            return 1
-            ;;
-    esac
-}
-
-# Safely read from dotenv file
-read_env_var() {
-    local var_name="$1"
-    local env_file="${2:-.env.stag}"
-    grep "^${var_name}=" "$env_file" 2>/dev/null | cut -d'=' -f2- | tr -d '"'
-}
-
 # Wait for condition with timeout
 wait_for() {
     local condition="$1"

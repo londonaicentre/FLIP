@@ -17,17 +17,18 @@ This module contains the production and development implementations of FLIP
 for the standard, evaluation, and fed_opt job types.
 """
 
+import contextlib
 import json
 import logging
+import math
 import os
 import shutil
 import tempfile
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
-from typing import Any, override
-from urllib.parse import urlparse
+from typing import Any, BinaryIO, override
 
-import boto3
 import pandas as pd
 import requests
 from pydantic import ValidationError
@@ -82,20 +83,134 @@ def _join_url(base: object, path: str) -> str:
     return f"{str(base).rstrip('/')}/{path.lstrip('/')}"
 
 
-def _hub_internal_headers() -> dict[str, str]:
-    """Return the auth header sent on every hub-internal call.
+# The header the hub reads a job's credential from (flip_api.auth.job_callback.JOB_CREDENTIAL_HEADER).
+JOB_CREDENTIAL_HEADER = "X-Job-Credential"
 
-    Used by fl-server on the Central Hub for outbound calls to flip-api
-    (update_status, send_metrics, send_handled_exception). The receiver
-    (flip-api) compares the value with a constant-time compare against its
-    own copy. Distinct boundary from the trust-internal key — a leak in one
-    trust never affects this hub-side path and vice versa.
+
+def _job_credential(model_id: str) -> str | None:
+    """Read the hub credential of the model's job, left by the FL API in ``JOB_CREDENTIAL_DIR``.
+
+    Args:
+        model_id (str): The hub's model id, which names the file.
 
     Returns:
-        dict[str, str]: Single-entry dict mapping the configured header name to
-        the hub internal-service key.
+        str | None: The credential, or None when there is none to read: a run submitted outside the
+        hub, or by a hub that mints none.
     """
-    return {FlipConstants.INTERNAL_SERVICE_KEY_HEADER: FlipConstants.INTERNAL_SERVICE_KEY}
+    if not FlipConstants.JOB_CREDENTIAL_DIR:
+        return None
+    try:
+        return Path(FlipConstants.JOB_CREDENTIAL_DIR, model_id).read_text()
+    except OSError:
+        return None
+
+
+def _hub_internal_headers(model_id: str) -> dict[str, str]:
+    """Return the auth headers sent on every hub-internal call about a model.
+
+    Used by fl-server on the Central Hub for outbound calls to flip-api
+    (update_status, send_metrics, send_handled_exception, send_event). The hub
+    checks the internal-service key against its own copy, and the job credential
+    against the one it minted for this model's job, so a job can report on its
+    own model only. Distinct boundary from the trust-internal key — a leak in one
+    trust never affects this hub-side path and vice versa.
+
+    Args:
+        model_id (str): The model the call is about.
+
+    Returns:
+        dict[str, str]: The hub internal-service key under its configured header name, plus
+        the model's job credential when there is one.
+    """
+    headers = {FlipConstants.INTERNAL_SERVICE_KEY_HEADER: FlipConstants.INTERNAL_SERVICE_KEY}
+    credential = _job_credential(model_id)
+    if credential:
+        headers[JOB_CREDENTIAL_HEADER] = credential
+    return headers
+
+
+# (connect, read) bound on the PUT of one results part to the object store.
+_PART_PUT_TIMEOUT_SECONDS: tuple[int, int] = (5, 600)
+_PART_PUT_ATTEMPTS = 3
+
+
+class _FilePart:
+    """The next ``length`` bytes of an open file as a sized, streamed request body.
+
+    Sized so ``requests`` sends a Content-Length rather than chunked encoding, which S3 refuses.
+    """
+
+    def __init__(self, file: BinaryIO, length: int) -> None:
+        self._file = file
+        self._length = length
+
+    def __len__(self) -> int:
+        return self._length
+
+    def __iter__(self) -> Iterator[bytes]:
+        remaining = self._length
+        while remaining:
+            chunk = self._file.read(min(remaining, 1024 * 1024))
+            remaining -= len(chunk)
+            yield chunk
+
+
+def _upload_file_via_hub(file_path: Path, model_id: str) -> None:
+    """Upload a results file as a multipart upload the hub starts, presigns part by part and completes.
+
+    The hub routes are ``flip_api.private_services.results_upload``; each call presents the job's
+    credential, so the hub only signs for this model's own file, and only for the size declared here.
+
+    Args:
+        file_path (Path): The file to upload; it keeps its name.
+        model_id (str): The model the results belong to.
+
+    Raises:
+        requests.RequestException: If a hub call fails.
+        ResultsUploadError: If a part still fails after its retries.
+    """
+    endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/results-upload")
+    size = file_path.stat().st_size
+
+    def hub(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        response = requests.post(
+            endpoint + path, json=payload, headers=_hub_internal_headers(model_id), timeout=_HUB_POST_TIMEOUT_SECONDS
+        )
+        response.raise_for_status()
+        body: dict[str, Any] = response.json()
+        return body
+
+    started = hub("", {"file_name": file_path.name, "size": size})
+    upload, part_size = started["upload"], started["part_size"]
+
+    etags = []
+    try:
+        with file_path.open("rb") as file:
+            for part_number in range(1, math.ceil(size / part_size) + 1):
+                offset = (part_number - 1) * part_size
+                for _ in range(_PART_PUT_ATTEMPTS):
+                    # A fresh URL per attempt: each is short-lived.
+                    url = hub("/part", {"upload": upload, "part_number": part_number})["url"]
+                    file.seek(offset)
+                    try:
+                        response = requests.put(
+                            url, data=_FilePart(file, min(part_size, size - offset)), timeout=_PART_PUT_TIMEOUT_SECONDS
+                        )
+                        response.raise_for_status()
+                        break
+                    except requests.RequestException as e:
+                        failure = type(e).__name__
+                else:
+                    # Named by type only: the exception's message carries the signed URL.
+                    raise ResultsUploadError(f"Uploading part {part_number} failed: {failure}")
+                etags.append(response.headers["ETag"])
+    except Exception:
+        # Have the hub discard the parts sent so far. It does so itself when completing fails.
+        with contextlib.suppress(requests.RequestException):
+            hub("/abort", {"upload": upload})
+        raise
+
+    hub("/complete", {"upload": upload, "etags": etags})
 
 
 class FLIPStandardProd(FLIPBase):
@@ -156,7 +271,9 @@ class FLIPStandardProd(FLIPBase):
             headers=_trust_internal_headers(),
         )
 
-        self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+        # Do not log response.text: this body is the cohort's patient rows, and these INFO lines are
+        # shipped to the trust's shared log store where a later job could read them (FLIP-SR-051).
+        self.logger.info(f"Received response status code: {response.status_code}")
 
         response.raise_for_status()
 
@@ -164,7 +281,7 @@ class FLIPStandardProd(FLIPBase):
 
         df = pd.DataFrame(data=content)
 
-        self.logger.info("Successfully fetched dataframe")
+        self.logger.info(f"Successfully fetched dataframe ({len(df)} rows)")
 
         return df
 
@@ -216,7 +333,7 @@ class FLIPStandardProd(FLIPBase):
                 },
                 headers=_trust_internal_headers(),
             )
-            self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+            self.logger.info(f"Received response status code: {response.status_code}")
 
             response.raise_for_status()
 
@@ -311,10 +428,10 @@ class FLIPStandardProd(FLIPBase):
             )
             response = requests.put(
                 endpoint,
-                headers=_hub_internal_headers(),
+                headers=_hub_internal_headers(model_id),
                 timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
-            self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+            self.logger.info(f"Received response status code: {response.status_code}")
             response.raise_for_status()
 
             self.logger.info(f"Successfully updated model status to [{new_model_status}]")
@@ -379,10 +496,10 @@ class FLIPStandardProd(FLIPBase):
             response = requests.post(
                 endpoint,
                 json=payload,
-                headers=_hub_internal_headers(),
+                headers=_hub_internal_headers(model_id),
                 timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
-            self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+            self.logger.info(f"Received response status code: {response.status_code}")
             response.raise_for_status()
 
             self.logger.info(f"Successfully sent metrics for {client_name}")
@@ -438,10 +555,10 @@ class FLIPStandardProd(FLIPBase):
             response = requests.post(
                 endpoint,
                 json=payload,
-                headers=_hub_internal_headers(),
+                headers=_hub_internal_headers(model_id),
                 timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
-            self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+            self.logger.info(f"Received response status code: {response.status_code}")
             response.raise_for_status()
 
             self.logger.info(f"Successfully sent the exception raised by {client_name}")
@@ -504,12 +621,12 @@ class FLIPStandardProd(FLIPBase):
             response = requests.post(
                 endpoint,
                 json=payload,
-                headers=_hub_internal_headers(),
+                headers=_hub_internal_headers(model_id),
                 # The except arms cannot catch a hang: a hub that accepts TCP
                 # and then stalls would freeze result acceptance mid-round.
                 timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
-            self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+            self.logger.info(f"Received response status code: {response.status_code}")
             response.raise_for_status()
 
             self.logger.info(f"Successfully sent {event_type} for round {global_round}")
@@ -526,55 +643,30 @@ class FLIPStandardProd(FLIPBase):
     @override
     def upload_results_to_s3(self, results_folder: Path, model_id: str) -> None:
         """
-        Uploads results to S3 bucket in standard mode.
+        Zips the results folder and uploads it to the model's results on the Central Hub.
+
+        The upload goes through URLs the hub presigns for this job's own file, so the FL server holds
+        no object-store credentials (``_upload_file_via_hub``).
 
         Args:
             results_folder (Path): The folder containing results to upload
             model_id (str): The model UUID for which results are being uploaded
+
+        Raises:
+            ResultsUploadError: If zipping or uploading fails.
         """
-        s3_bucket = FlipConstants.UPLOADED_FEDERATED_DATA_BUCKET
-        self.logger.info(f"Attempting to upload results folder for model {model_id} to S3 bucket {s3_bucket} ...")
+        self.logger.info(f"Attempting to upload results folder {results_folder} for model {model_id} ...")
 
         zip_name = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        self.logger.info(f"Results folder to be zipped: {results_folder}")
-
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
-                zip_base = Path(tmpdir) / zip_name
-
-                # Create archive
-                shutil.make_archive(str(zip_base), "zip", results_folder)
-
-                zip_file = f"{zip_base}.zip"
+                zip_file = Path(shutil.make_archive(str(Path(tmpdir) / zip_name), "zip", results_folder))
                 self.logger.info(f"Zip file created at: {zip_file}")
 
-                # Parse bucket
-                parsed = urlparse(s3_bucket)
-                bucket = parsed.netloc
-                prefix = parsed.path.lstrip("/").rstrip("/")
+                _upload_file_via_hub(zip_file, model_id)
 
-                bucket_zip_path = f"{model_id}/{zip_name}.zip"
-
-                # Filter empty parts before joining so a bare bucket URI
-                # (`s3://<bucket>` — `parsed.path` empty, `prefix` empty)
-                # produces `<model_id>/<file>.zip`, NOT `/<model_id>/<file>.zip`.
-                # A leading-slash key is silently accepted by S3 but downstream
-                # listers (e.g. `list_objects_v2(Prefix=<model_id>)`) won't
-                # match it, and the FLIP UI then reports "no result files".
-                # See FLIP#465 for the incident this guards against.
-                key = "/".join(part for part in (prefix, bucket_zip_path) if part)
-
-                self.logger.info(f"Uploading zip file {zip_file} to {bucket}/{key}...")
-
-                s3_client = boto3.client("s3")
-                s3_client.upload_file(
-                    zip_file,
-                    bucket,
-                    key,
-                )
-
-                self.logger.info("Upload .zip to the S3 bucket successful")
+                self.logger.info("Upload of the results .zip successful")
 
         except Exception as e:
             # catch-all: ensures you still get a consistent exception type at the boundary
@@ -720,7 +812,6 @@ class FLIPStandardDev(FLIPBase):
     @override
     def upload_results_to_s3(self, results_folder: Path, model_id: str) -> None:
         """Log only in dev mode - no actual upload."""
-        # NOTE FlipConstants.UPLOADED_FEDERATED_DATA_BUCKET is not available in dev mode, so we can't log it here.
         self.logger.info("[DEV] Upload → results from %s", results_folder)
 
     @override

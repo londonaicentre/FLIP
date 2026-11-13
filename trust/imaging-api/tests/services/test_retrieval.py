@@ -141,24 +141,23 @@ async def test_retrieve_images_queries_pacs_off_the_event_loop(
     assert all(thread is not main_thread() for thread in threads)
 
 
+# Covers both entry points: the first retrieval and its retry.
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "run", [retrieve_images_for_project, retry_retrieve_images_for_project], ids=["retrieve", "retry"]
+)
+@pytest.mark.parametrize(
+    ("project_id", "error", "status"),
+    [("missing", NotFoundError("not found"), 404), ("proj1", RuntimeError("boom"), 500)],
+    ids=["project-not-found", "project-generic-error"],
+)
 @patch("imaging_api.services.retrieval.get_project")
-async def test_retrieve_images_project_not_found(mock_get_project, headers):
-    mock_get_project.side_effect = NotFoundError("not found")
+async def test_project_lookup_error_maps_to_http_status(mock_get_project, run, project_id, error, status, headers):
+    mock_get_project.side_effect = error
 
     with pytest.raises(HTTPException) as exc_info:
-        await retrieve_images_for_project("missing", "SELECT *", headers)
-    assert exc_info.value.status_code == 404
-
-
-@pytest.mark.asyncio
-@patch("imaging_api.services.retrieval.get_project")
-async def test_retrieve_images_project_generic_error(mock_get_project, headers):
-    mock_get_project.side_effect = RuntimeError("boom")
-
-    with pytest.raises(HTTPException) as exc_info:
-        await retrieve_images_for_project("proj1", "SELECT *", headers)
-    assert exc_info.value.status_code == 500
+        await run(project_id, "SELECT *", headers)
+    assert exc_info.value.status_code == status
 
 
 @pytest.mark.asyncio
@@ -463,50 +462,6 @@ def _import_records(direct_archive=None, executed=None, queued=None, prearchive=
 @patch("imaging_api.services.retrieval.get_experiments")
 @patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
 @patch("imaging_api.services.retrieval.encrypt")
-async def test_get_import_status_all_successful(
-    mock_encrypt,
-    mock_get_accession_ids,
-    mock_get_experiments,
-    mock_get_project,
-    headers,
-):
-    mock_encrypt.return_value = "encrypted_id"
-    mock_get_accession_ids.return_value = ["ACC1", "ACC2"]
-    mock_get_experiments.return_value = [
-        Experiment(
-            ID="e1",
-            label="ACC1",
-            date="2023-01-01",
-            project="proj1",
-            insert_date="2023-01-01",
-            xsiType="xnat:ctScanData",
-            URI="/exp/e1",
-        ),
-        Experiment(
-            ID="e2",
-            label="ACC2",
-            date="2023-01-01",
-            project="proj1",
-            insert_date="2023-01-01",
-            xsiType="xnat:ctScanData",
-            URI="/exp/e2",
-        ),
-    ]
-
-    with _import_records():
-        status = await get_import_status("proj1", "SELECT *", headers)
-
-    assert status.successful == ["ACC1", "ACC2"]
-    assert status.queued == []
-    assert status.processing == []
-    assert status.queue_failed == []
-
-
-@patch("imaging_api.services.retrieval.get_project")
-@pytest.mark.asyncio
-@patch("imaging_api.services.retrieval.get_experiments")
-@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
-@patch("imaging_api.services.retrieval.encrypt")
 async def test_get_import_status_mixed(
     mock_encrypt,
     mock_get_accession_ids,
@@ -516,17 +471,7 @@ async def test_get_import_status_mixed(
 ):
     mock_encrypt.return_value = "encrypted_id"
     mock_get_accession_ids.return_value = ["ACC_OK", "ACC_EXEC", "ACC_QUEUED", "ACC_UNKNOWN"]
-    mock_get_experiments.return_value = [
-        Experiment(
-            ID="e1",
-            label="ACC_OK",
-            date="2023-01-01",
-            project="proj1",
-            insert_date="2023-01-01",
-            xsiType="xnat:ctScanData",
-            URI="/exp/e1",
-        ),
-    ]
+    mock_get_experiments.return_value = [_experiment("ACC_OK")]
 
     executed = [_executed("ACC_EXEC", "EXECUTING")]
     queued = [_queued("ACC_QUEUED")]
@@ -710,7 +655,8 @@ async def test_get_import_status_prearchive_error_is_failed_not_processing(
 
 @patch("imaging_api.services.retrieval.get_project")
 @pytest.mark.asyncio
-@pytest.mark.parametrize("prearchive_status", ["RECEIVING", "BUILDING", "READY"])
+@pytest.mark.parametrize("executed_status", ["RECEIVED", "FAILED"])
+@pytest.mark.parametrize("prearchive_status", ["RECEIVING", "BUILDING", "READY", "CONFLICT"])
 @patch("imaging_api.services.retrieval.get_experiments")
 @patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
 @patch("imaging_api.services.retrieval.encrypt")
@@ -720,15 +666,19 @@ async def test_get_import_status_prearchive_session_not_in_error_is_not_failed(
     mock_get_experiments,
     mock_get_project,
     prearchive_status,
+    executed_status,
     headers,
 ):
-    """Only an ERROR prearchive session is a failure; one still receiving or building stays in flight."""
+    """Only an ERROR prearchive session is a failure; one still receiving or building stays in flight.
+
+    DQR 3.1.0 has already marked its request FAILED by then (FLIP#1816), so the session is what says so.
+    """
     mock_encrypt.return_value = "encrypted_id"
     mock_get_accession_ids.return_value = ["ACC_P"]
     mock_get_experiments.return_value = []
 
     with _import_records(
-        executed=[_executed("ACC_P", "RECEIVED")], prearchive=[_prearchived("ACC_P", prearchive_status)]
+        executed=[_executed("ACC_P", executed_status)], prearchive=[_prearchived("ACC_P", prearchive_status)]
     ):
         status = await get_import_status("proj1", "SELECT *", headers)
 
@@ -799,6 +749,66 @@ async def test_get_import_status_direct_archive_receiving_is_processing(
 @patch("imaging_api.services.retrieval.get_experiments")
 @patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
 @patch("imaging_api.services.retrieval.encrypt")
+async def test_get_import_status_executed_failed_while_direct_archive_receives_is_processing(
+    mock_encrypt,
+    mock_get_accession_ids,
+    mock_get_experiments,
+    mock_get_project,
+    headers,
+):
+    """FLIP#1816: DQR 3.1.0 marks a C-MOVE into the direct archive FAILED ("Received zero files"), files or not.
+
+    A direct-archive session still receiving the study is the files arriving, so it is `processing`; with no
+    such session the same FAILED is a C-MOVE that delivered nothing, and is `failed`.
+    """
+    mock_encrypt.return_value = "encrypted_id"
+    mock_get_accession_ids.return_value = ["ACC_RECV", "ACC_NONE"]
+    mock_get_experiments.return_value = []
+
+    with _import_records(
+        direct_archive=[_direct_archive("ACC_RECV", "RECEIVING")],
+        executed=[_executed("ACC_RECV", "FAILED"), _executed("ACC_NONE", "FAILED")],
+    ):
+        status = await get_import_status("proj1", "SELECT *", headers)
+
+    assert status.processing == ["ACC_RECV"]
+    assert status.failed == ["ACC_NONE"]
+
+
+@patch("imaging_api.services.retrieval.get_project")
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.get_experiments")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+async def test_get_import_status_reads_experiments_again_before_calling_an_executed_failed_failed(
+    mock_encrypt,
+    mock_get_accession_ids,
+    mock_get_experiments,
+    mock_get_project,
+    headers,
+):
+    """A study that finishes archiving between the experiment read and the record reads is `successful`.
+
+    Its direct-archive session is gone and DQR 3.1.0 left its request FAILED, so only a second experiment
+    read tells it apart from a C-MOVE that delivered nothing.
+    """
+    mock_encrypt.return_value = "encrypted_id"
+    mock_get_accession_ids.return_value = ["ACC_DONE", "ACC_NONE"]
+    mock_get_experiments.side_effect = [[], [_experiment("ACC_DONE")]]
+
+    with _import_records(executed=[_executed("ACC_DONE", "FAILED"), _executed("ACC_NONE", "FAILED")]):
+        status = await get_import_status("proj1", "SELECT *", headers)
+
+    assert status.successful == ["ACC_DONE"]
+    assert status.failed == ["ACC_NONE"]
+    assert mock_get_experiments.call_count == 2
+
+
+@patch("imaging_api.services.retrieval.get_project")
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.get_experiments")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
 async def test_get_import_status_direct_archive_error_without_name_falls_back_to_folder_name(
     mock_encrypt,
     mock_get_accession_ids,
@@ -861,17 +871,7 @@ async def test_get_import_status_experiment_present_beats_stale_direct_archive_e
     """`successful` (archived as an experiment) wins over a stale directArchive ERROR for the same accession."""
     mock_encrypt.return_value = "encrypted_id"
     mock_get_accession_ids.return_value = ["ACC"]
-    mock_get_experiments.return_value = [
-        Experiment(
-            ID="e1",
-            label="ACC",
-            date="2023-01-01",
-            project="proj1",
-            insert_date="2023-01-01",
-            xsiType="xnat:ctScanData",
-            URI="/exp/e1",
-        ),
-    ]
+    mock_get_experiments.return_value = [_experiment("ACC")]
 
     with _import_records(direct_archive=[_direct_archive("ACC", "ERROR")]):
         status = await get_import_status("proj1", "SELECT *", headers)
@@ -887,7 +887,7 @@ def _xnat_json(body) -> MagicMock:
 
 
 def _fake_xnat(method: str, url: str, **kwargs) -> MagicMock:
-    """XNAT's answers to the REST reads, shaped as DQR 3.0.0 and xnat-web 1.10.0 serve them."""
+    """XNAT's answers to the REST reads, shaped as DQR 3.1.0 and xnat-web 1.10.0 serve them."""
     if "/xapi/dqr/import/queue" in url:
         return _xnat_json(
             [
@@ -908,7 +908,8 @@ def _fake_xnat(method: str, url: str, **kwargs) -> MagicMock:
         # An archive failure with no name: attributed by its folder name.
         return _xnat_json([{"id": 5, "project": "proj1", "folderName": "ACC_D", "status": "ERROR"}])
     if "/data/prearchive/projects/proj1" in url:
-        # Where XNAT moved a session whose direct-archive failed; its DQR request above is still RECEIVED.
+        # Where XNAT moved a session whose direct-archive failed; its DQR request above is RECEIVED, as
+        # DQR 3.0.0 left it (3.1.0 leaves FAILED).
         return _xnat_json(
             {
                 "ResultSet": {
@@ -980,7 +981,9 @@ async def test_get_import_status_classifies_xnat_rest_records(
 
 @patch("imaging_api.services.retrieval.get_project")
 @pytest.mark.asyncio
-@pytest.mark.parametrize("cohort", [["ACC1", "ACC2", "ACC1"], []], ids=["all-archived", "empty-cohort"])
+@pytest.mark.parametrize(
+    "cohort", [["ACC1", "ACC2", "ACC1"], [], ["ACC1", "ACC2"]], ids=["all-archived", "empty-cohort", "distinct"]
+)
 @patch("imaging_api.services.retrieval.get_experiments")
 @patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
 @patch("imaging_api.services.retrieval.encrypt")
@@ -1033,36 +1036,10 @@ async def test_get_import_status_reads_dqr_off_the_event_loop_once_one_accession
 @patch("imaging_api.services.retrieval.get_project")
 async def test_retry_no_failures(mock_get_project, mock_get_status, headers):
     mock_get_project.return_value = MagicMock()
-    mock_get_status.return_value = ImportStatus(
-        successful=["ACC1"],
-        failed=[],
-        queue_failed=[],
-        queued=[],
-        processing=[],
-    )
+    mock_get_status.return_value = ImportStatus(successful=["ACC1"])
 
     result = await retry_retrieve_images_for_project("proj1", "SELECT *", headers)
     assert result is True
-
-
-@pytest.mark.asyncio
-@patch("imaging_api.services.retrieval.get_project")
-async def test_retry_project_not_found(mock_get_project, headers):
-    mock_get_project.side_effect = NotFoundError("not found")
-
-    with pytest.raises(HTTPException) as exc_info:
-        await retry_retrieve_images_for_project("missing", "SELECT *", headers)
-    assert exc_info.value.status_code == 404
-
-
-@pytest.mark.asyncio
-@patch("imaging_api.services.retrieval.get_project")
-async def test_retry_project_generic_error(mock_get_project, headers):
-    mock_get_project.side_effect = RuntimeError("boom")
-
-    with pytest.raises(HTTPException) as exc_info:
-        await retry_retrieve_images_for_project("proj1", "SELECT *", headers)
-    assert exc_info.value.status_code == 500
 
 
 @pytest.mark.asyncio
@@ -1078,13 +1055,7 @@ async def test_retry_requeues_failed_studies(
     headers,
 ):
     mock_get_project.return_value = MagicMock()
-    mock_get_status.return_value = ImportStatus(
-        successful=["ACC_OK"],
-        failed=["ACC_FAIL"],
-        queue_failed=["ACC_QF"],
-        queued=[],
-        processing=[],
-    )
+    mock_get_status.return_value = ImportStatus(successful=["ACC_OK"], failed=["ACC_FAIL"], queue_failed=["ACC_QF"])
     mock_query.side_effect = [
         [_make_study("ACC_FAIL", "1.2.3.1")],
         [_make_study("ACC_QF", "1.2.3.2")],
@@ -1107,13 +1078,7 @@ async def test_retry_requeues_failed_studies(
 @patch("imaging_api.services.retrieval.get_project")
 async def test_retry_all_queries_fail(mock_get_project, mock_get_status, mock_query, headers):
     mock_get_project.return_value = MagicMock()
-    mock_get_status.return_value = ImportStatus(
-        successful=[],
-        failed=["ACC1"],
-        queue_failed=[],
-        queued=[],
-        processing=[],
-    )
+    mock_get_status.return_value = ImportStatus(failed=["ACC1"])
     mock_query.side_effect = Exception("PACS down")
 
     result = await retry_retrieve_images_for_project("proj1", "SELECT *", headers)
@@ -1135,13 +1100,7 @@ async def test_retry_skips_study_with_unsafe_accession_number(
     """Same guarantee as the first-pass import: one unsafe accession number does not
     take the rest of the retry batch down with it."""
     mock_get_project.return_value = MagicMock()
-    mock_get_status.return_value = ImportStatus(
-        successful=[],
-        failed=["ACC_FAIL", "ACC BAD"],
-        queue_failed=[],
-        queued=[],
-        processing=[],
-    )
+    mock_get_status.return_value = ImportStatus(failed=["ACC_FAIL", "ACC BAD"])
     mock_query.side_effect = [
         [_make_study("ACC_FAIL", "1.2.3.1")],
         [_make_study("ACC BAD", "1.2.3.2")],
@@ -1169,13 +1128,7 @@ async def test_retry_partial_queue_failure(
     headers,
 ):
     mock_get_project.return_value = MagicMock()
-    mock_get_status.return_value = ImportStatus(
-        successful=[],
-        failed=["ACC1"],
-        queue_failed=[],
-        queued=[],
-        processing=[],
-    )
+    mock_get_status.return_value = ImportStatus(failed=["ACC1"])
     mock_query.return_value = [_make_study("ACC1")]
     mock_queue.return_value = [_make_import_response("ACC1", status="FAILED")]
 
@@ -1189,13 +1142,7 @@ async def test_retry_partial_queue_failure(
 @patch("imaging_api.services.retrieval.get_project")
 async def test_retry_no_study_found_for_accession(mock_get_project, mock_get_status, mock_query, headers):
     mock_get_project.return_value = MagicMock()
-    mock_get_status.return_value = ImportStatus(
-        successful=[],
-        failed=["ACC1"],
-        queue_failed=[],
-        queued=[],
-        processing=[],
-    )
+    mock_get_status.return_value = ImportStatus(failed=["ACC1"])
     mock_query.return_value = []
 
     result = await retry_retrieve_images_for_project("proj1", "SELECT *", headers)
@@ -1216,13 +1163,7 @@ async def test_retry_two_studies_under_one_accession_are_skipped_not_guessed(
 ):
     """The retry path narrows the PACS answer the same way the first import does."""
     mock_get_project.return_value = MagicMock()
-    mock_get_status.return_value = ImportStatus(
-        successful=[],
-        failed=["ACC1"],
-        queue_failed=[],
-        queued=[],
-        processing=[],
-    )
+    mock_get_status.return_value = ImportStatus(failed=["ACC1"])
     mock_query.return_value = [_make_study("ACC1", "1.2.3.1"), _make_study("ACC1", "1.2.3.2")]
 
     result = await retry_retrieve_images_for_project("proj1", "SELECT *", headers)

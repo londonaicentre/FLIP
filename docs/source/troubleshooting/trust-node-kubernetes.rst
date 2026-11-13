@@ -328,7 +328,7 @@ Every retrieval cycle, a few minutes apart, logs this exception, and the PACS se
 
 **Cause.** The name is misleading: it is not about the PACS. Each queued retrieval names XNAT's receiver as
 ``<AE title>:<port>``, and XNAT stores it only if a registered DICOM receiver matches that string exactly. The AE
-title and port come from ``xnat.web.dicomAet`` and ``xnat.web.dicomPort`` (defaults ``XNAT`` and ``8104``).
+title and port come from ``xnat.web.dicomAet`` and ``xnat.web.dicomPort`` (defaults ``FLIP_XNAT`` and ``8104``).
 Releases before the DICOM and web ports were split could send ``XNAT:8080``, the web port, which matches nothing.
 
 **Check.** Compare the destination the requests carry with the receivers XNAT has:
@@ -349,7 +349,7 @@ Releases before the DICOM and web ports were split could send ``XNAT:8080``, the
    .. code-block:: shell
 
       kubectl exec -n flip-trust trust-release-flip-trust-xnat-db-0 -- psql -U xnat -d xnat -c \
-        "UPDATE xhbm_queued_pacs_request SET destination_ae_title = 'XNAT:8104'
+        "UPDATE xhbm_queued_pacs_request SET destination_ae_title = 'FLIP_XNAT:8104'
          WHERE destination_ae_title = 'XNAT:8080';"
 
 .. _ts-k8s-unassigned:
@@ -357,15 +357,10 @@ Releases before the DICOM and web ports were split could send ``XNAT:8080``, the
 Studies arrive but land in the Unassigned prearchive
 ====================================================
 
-Retrieval works (the PACS sends, requests reach ``RECEIVED``), but no sessions appear in the project.
-``dqr.log`` shows:
-
-.. code-block:: text
-
-   WARN ... PacsDequeueThread - Cannot build session. 0 prearchive sessions found
-   for study 1.2.826... in project <imaging-project-id>.
-
-and ``/data/xnat/prearchive/`` fills with top-level timestamp folders instead of ``<project>/<timestamp>/``.
+Retrieval works (the PACS sends), but no sessions appear in the project, and ``/data/xnat/prearchive/`` fills
+with top-level timestamp folders instead of ``<project>/<timestamp>/``. The request's ``FAILED`` and the
+``Received zero files for study ... in project ...`` warning in ``dqr.log`` do not tell this apart: DQR reports
+every import into FLIP's direct-archive receiver that way.
 
 **Cause.** XNAT's DICOM receiver is the stock one. Routing studies to the requesting project, and relabelling them
 the way the FL client looks them up, needs the retrieval plugin's identifier on the receiver.
@@ -381,7 +376,7 @@ stock receiver and create this one:
    kubectl exec -n flip-trust "$XNAT_POD" -- \
      curl -s -X POST -u admin:<admin-pass> -H "Content-Type: application/json" \
      http://localhost:8080/xapi/dicomscp -d '{
-       "aeTitle": "XNAT", "port": 8104, "enabled": true,
+       "aeTitle": "FLIP_XNAT", "port": 8104, "enabled": true,
        "customProcessing": true, "directArchive": true,
        "identifier": "dqrObjectIdentifier", "anonymizationEnabled": true,
        "whitelistEnabled": false, "routingExpressionsEnabled": false
@@ -392,8 +387,9 @@ hand: delete the top-level timestamp folders and re-pull them (:ref:`ts-k8s-forc
 
 .. note::
 
-   With direct archiving on, the ``Cannot build session`` warning still appears on every pull and is harmless:
-   sessions skip the prearchive. Count the project's sessions with
+   With direct archiving on, DQR marks every request ``FAILED`` and logs the
+   ``Received zero files for study ... in project ...`` warning on every pull. Both are harmless: sessions skip the
+   prearchive, the only place DQR looks. Count the project's sessions with
    ``ls /data/xnat/archive/<imaging-project-id>/arc001 | wc -l`` in the pod.
 
 .. _ts-k8s-xnat-401:
@@ -902,7 +898,7 @@ Defaults for the mocked Orthanc; a real PACS overrides them through the values n
      - Port
      - Role
    * - XNAT receiver
-     - ``XNAT`` (``xnat.web.dicomAet``)
+     - ``FLIP_XNAT`` (``xnat.web.dicomAet``)
      - ``xnat-web-dicom``
      - 8104 (``xnat.web.dicomPort``)
      - Receives the studies the PACS sends after a C-MOVE

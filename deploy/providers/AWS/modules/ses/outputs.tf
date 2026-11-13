@@ -35,3 +35,12 @@ output "template_names" {
     xnat_added_to_project = aws_ses_template.flip_xnat_added_to_project.name
   }
 }
+
+output "template_arns" {
+  description = "ARNs of every SES template. A sender needs these beside the identity: SES authorises a templated send against both."
+  value = [
+    aws_ses_template.flip_access_request.arn,
+    aws_ses_template.flip_xnat_invite.arn,
+    aws_ses_template.flip_xnat_added_to_project.arn,
+  ]
+}

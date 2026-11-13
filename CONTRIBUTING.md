@@ -540,11 +540,13 @@ against a canary fixture, and its guards are regression-tested by `scripts/tests
 
 `trust/deploy/terraform/azure` (FLIP#1390) carries its own credential-free checks: `make -C trust/deploy/terraform/azure test`
 runs `terraform test` with a mocked `azurerm` provider in every root and module plus the static pytest guards, and
-`make -C trust/deploy/terraform/azure lint` runs `terraform fmt` and tflint with the azurerm ruleset. CI runs both, plus
-checkov, in the "Azure node checks" job of `validate_terraform.yml`. The static guards enforce the cost and safety
+`make -C trust/deploy/terraform/azure lint` runs `terraform fmt`, tflint with the azurerm ruleset, and checkov's full
+Azure check set (`make -C trust/deploy/terraform/azure checkov` alone, through `uvx` at the AWS lint's pinned version).
+CI runs both in the "Azure node checks" job of `validate_terraform.yml`. The static guards enforce the cost and safety
 rules a plan cannot show: no target skips Terraform's confirmation, every provider block and `az` call names the
 subscription explicitly, no real subscription or tenant IDs in tracked files, no inbound NSG rules, and the VM's NIC
-always behind its own NSG. Deliberate checkov or tflint exceptions are written in-code with a reason, as for AWS.
+always behind its own NSG. Deliberate checkov or tflint exceptions are written in-code with a reason, as for AWS; a `checkov:skip` without
+one fails the lint.
 
 ### Secret scanning (detect-secrets)
 
@@ -736,6 +738,13 @@ make -C trust/deploy/helm validate
 # Place this trust's FL participant kit onto the node, BEFORE deploying
 make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
 
+# The OMOP core vocabulary (FLIP#923): download it on this host (AI Centre bucket access, your
+# AWS CLI profile; otherwise an OHDSI Athena export), then place the folder onto the node and set
+# OMOP_VOCAB_DIR=/opt/flip/omop-vocab in the kit (sync-kit turns it into omopDb.vocabLoad.hostPath;
+# without it no load runs)
+make -C trust/deploy/helm download-vocab
+make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<ctx>
+
 # Regenerate k8s-trust-<KIT>.yaml from the kit (validates its governance document, FLIP#1259)
 # without patching the cluster Secret; deploy-trust-k8s KIT= runs it first
 make -C trust/deploy/helm sync-kit-override KIT=<CODE> HUB=<env>
@@ -816,7 +825,7 @@ The same mirroring holds everywhere, not just in the services: a test sits in th
 Two trees sit outside any service and have their own home. `fl-tutorials/tests/` carries **two** suites, split at `tests/datasets/` because the two halves need different dependencies — `make -C fl-tutorials test` runs ruff plus both, and `.github/workflows/fl-tutorials-tests.yml` runs the same on every PR touching `fl-tutorials/**`:
 
 - **`fl-tutorials/tests/`, minus `tests/datasets/`** — the CPU-only suite over the tutorial apps' transform chains (`make -C fl-tutorials pytest`). A test belongs here if it can assert on tutorial code with **no GPU, no dataset download, no FL image and no network** — transform composition, import-time correctness, and what the preprocessing chain actually feeds the model. Fixtures are synthesised in-process (see `fl-tutorials/tests/dicom_phantom.py`), never committed as data. Anything that needs real training to observe — convergence, metric values, multi-round behaviour — belongs instead with the GPU simulator harness (`make -C fl-tutorials run-tutorial`), which is not run in CI: it is a [pre-release gate](#pre-release-checklist) instead.
-  The suite runs in **flip-utils' environment** (`flip-utils[full]`), which is what the FL images give these apps at runtime, plus its `diffusion` group (matplotlib, for the image-generation tutorials' local plotting only); it deliberately has no `pyproject.toml` of its own, and the per-tutorial `uv` environments are the wrong target (`arkplus_fine_tuning/pyproject.toml` does not declare `monai`, so that environment cannot import its own `data_utils.py`).
+  The suite runs in **flip-utils' environment** (`flip-utils[nvflare,flower,full]`), a superset of either FL image's runtime environment — each image installs only its own backend, so this suite does not catch an app importing the other backend (`flip-utils/tests/unit/test_backend_extras.py` checks that for `flip` itself) — plus its `diffusion` group (matplotlib, for the image-generation tutorials' local plotting only); it deliberately has no `pyproject.toml` of its own, and the per-tutorial `uv` environments are the wrong target (`arkplus_fine_tuning/pyproject.toml` does not declare `monai`, so that environment cannot import its own `data_utils.py`).
 - **`fl-tutorials/tests/datasets/`** — the CPU-only suite over `fl-tutorials/datasets/**`, the mock-OMOP generation tooling (`make -C fl-tutorials pytest-datasets`). Same no-GPU/no-download/**no-network** rule, with fixtures built in-process. It runs against **each dataset's own uv project**, one pytest invocation per entry in `DATASET_TEST_PROJECTS`, rather than in flip-utils' environment: this is workstation tooling that never runs on an FL image and has no business pulling `pandera`/`sqlglot` into the FL runtime environment. The per-project split is also the only thing in CI that checks a dataset's `pyproject.toml` declares what its code actually imports. `tests/datasets/` anchors its own pytest rootdir (`tests/datasets/pytest.ini`) so the tutorial-app `conftest.py`, which imports monai and pydicom at module scope, is not loaded into these runs. Anything needing the published export — the end-to-end verification gate — is a Make target (`make -C fl-tutorials reproduce-<project>-omop`), not a test: it reaches the network. See `fl-tutorials/tests/README.md` for the full rationale and `fl-tutorials/datasets/README.md` for the generation and verification targets.
 - **`fl-apps/`** — has no pytest suite; its invariant is the required-files manifest, checked by `fl-apps/check_required_files.sh` (pre-commit + `.github/workflows/fl-apps-check-required-files.yml`). Files that must stay byte-identical to another file — the Flower tutorial copies of the `fl-apps/flower/` templates, and the shared Ark+ evaluation sources — are pinned in `scripts/check_tutorial_sync.sh`.
 
@@ -990,7 +999,7 @@ The list below is what they check and do, and what stays manual (the notes' pros
 The release is not deployed by merging. Two steps, in this order:
 
 1. **Hub.** Enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, then `make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=v<X.Y.Z>` (the guard accepts `sha-<short7>` or `v<X.Y.Z>`), then disable Deployment Mode. The UI ships with the release apply: the `ui` job of `terraform_apply.yml` publishes it from the tagged commit once that apply succeeds, so a held apply holds the UI too (FLIP#1186). The user menu then shows `v<X.Y.Z>`. If the `ui` job fails, re-run it from the apply run, or run `make -C deploy/providers/AWS deploy-ui HUB=prod` from a checkout at the tag. If the apply that accompanied the merge rotated any Hub-shared value — the AES key, the FL kit date — reconcile the operator env from deployed state and re-issue kits **before** telling sites to upgrade: `deploy/providers/AWS/scripts/reconcile_ci_env.py --env prod --compare .env.prod` → `make sync-trust-kits HUB=prod` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod`.
-1. **Sites, operator-triggered.** Each site's operator moves their FLIP checkout to the tag (`git fetch --tags origin && git checkout v<X.Y.Z>` — the compose files, Makefiles and the verb itself come from the checkout, and the verb refuses a release tag from any other checkout) and runs `make upgrade-onprem-trust KIT=<CODE>` (Kubernetes: `upgrade-trust-k8s`; an EC2 node: `make -C trust/deploy/terraform/aws/ec2 upgrade`, both from a checkout at the tag), which defaults to the release the hub now reports. Nothing pushes upgrades to sites; the release notes' *Site upgrade* section is the prompt, and the Connection Status drawer shows which containers are still on another build. The full operator runbook is `docs/source/sys-admin/admin-upgrading-sites.rst`.
+1. **Sites, operator-triggered.** Each site's operator moves their FLIP checkout to the tag (`git fetch --tags origin && git checkout v<X.Y.Z>` — the compose files, Makefiles and the verb itself come from the checkout, and the verb refuses a release tag from any other checkout) and runs `make upgrade-onprem-trust KIT=<CODE>` (Kubernetes: `upgrade-trust-k8s`; an EC2 node: `make -C trust/deploy/terraform/aws/ec2 upgrade`, both from a checkout at the tag), which defaults to the release the hub now reports. Nothing pushes upgrades to sites; the release notes' *Site upgrade* section is the prompt, and the Connection Status drawer shows which containers are still on another build. The full operator runbook is `docs/source/sys-admin/admin-upgrading-sites.rst`. A release that moves `xnat-db` to a newer PostgreSQL major (12 to 16, FLIP#1812) dumps and restores XNAT's database inside that same upgrade and keeps the old cluster for a rollback; say so in the *Site upgrade* section, since `make -C trust/xnat xnat-db-remove-old-cluster KIT=<CODE> HUB=<env> YES=1` (Helm: `make -C trust/deploy/helm xnat-db-remove-old-cluster YES=1`) is the operator's last step once the site is confirmed.
 
 ### Release notes
 

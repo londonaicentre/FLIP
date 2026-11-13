@@ -27,7 +27,8 @@ Notes:
     - Missing columns are NOT added, because there is not safe default for nullable integer columns.
     - Schemas are cached alongside this module as committed YAML (see `SCHEMA_DIR`); importing this
       module never needs the network. Regenerate the cache with `python omop_schemas.py --regenerate`.
-    - If run as a script, debug messages will be printed.
+    - Set the module-level `debug = True` before `--regenerate` to print parsing diagnostics (including
+      unsupported-SQL-type fallbacks to str); it has no effect on the schemas produced.
 """
 
 from __future__ import annotations

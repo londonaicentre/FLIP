@@ -32,7 +32,6 @@ from flip_api.file_services import (
     get_model_files_list,
     presigned_url_for_upload,
     retrieve_federated_results,
-    retrieve_model_files_list,
     retrieve_uploaded_file_info,
     uploaded_file,
 )
@@ -58,6 +57,7 @@ from flip_api.private_services import (
     add_log,
     invoke_model_status_update,
     receive_cohort_results,
+    results_upload,
     save_training_metrics,
     trust_tasks,
 )
@@ -191,7 +191,6 @@ ROUTERS: tuple[APIRouter, ...] = (
     get_model_files_list.router,
     presigned_url_for_upload.router,
     retrieve_federated_results.router,
-    retrieve_model_files_list.router,
     retrieve_uploaded_file_info.router,
     uploaded_file.router,
     # FL services
@@ -215,6 +214,7 @@ ROUTERS: tuple[APIRouter, ...] = (
     add_log.router,
     invoke_model_status_update.router,
     receive_cohort_results.router,
+    results_upload.router,
     save_training_metrics.router,
     trust_tasks.router,
     # Project services
