@@ -119,7 +119,7 @@ locals {
   s3_regional_endpoint_host = "s3.${var.AWS_REGION}.amazonaws.com"
 
   ecs_task_env = {
-    flip_api = merge(local.enforce_mfa_env, {
+    flip_api = merge(local.enforce_mfa_env, local.cohort_draft_env, {
       ENV        = "production"
       AWS_REGION = var.AWS_REGION
       # Pin boto3 to the regional S3 endpoint: the legacy global endpoint's

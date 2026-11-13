@@ -225,6 +225,7 @@ variable "apply_service_prefixes" {
   type        = list(string)
   default = [
     "acm",
+    "bedrock",
     "cloudfront",
     "cognito-idp",
     "ec2",

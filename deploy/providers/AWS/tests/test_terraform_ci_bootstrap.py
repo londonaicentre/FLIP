@@ -658,6 +658,7 @@ RESOURCE_SERVICES = [
     (r"aws_ssm_", "ssm"),
     (r"aws_route53_", "route53"),
     (r"aws_acm_", "acm"),
+    (r"aws_bedrock_", "bedrock"),
     (r"aws_cloudfront_", "cloudfront"),
     (r"aws_wafv2_", "wafv2"),
     (r"aws_cognito_", "cognito-idp"),
