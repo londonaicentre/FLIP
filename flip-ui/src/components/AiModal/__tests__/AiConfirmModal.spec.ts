@@ -19,6 +19,28 @@ import { flushPromises, mount } from "@vue/test-utils";
 import AiConfirmModal from "../AiConfirmModal.vue";
 
 describe("Ai ConfirmModal", () => {
+    function mountWithTyping(typingConfirmation: string) {
+        return mount(AiConfirmModal, {
+            attachTo: document.body,
+            props: {
+                dialog: true,
+                continueAction: () => {},
+                typingConfirmation
+            }
+        });
+    }
+
+    async function schemaFor(typingConfirmation: string) {
+        const wrapper = mountWithTyping(typingConfirmation);
+        await flushPromises();
+        const { schema } = wrapper.vm as unknown as { schema: { validate: (v: unknown) => Promise<unknown> } };
+
+        return {
+            wrapper,
+            schema
+        };
+    }
+
     test("Renders Component", () => {
         const comp = mount(AiConfirmModal);
 
@@ -33,33 +55,13 @@ describe("Ai ConfirmModal", () => {
         // confirmation-match codepath the form would.
 
         test("rejects empty input when typingConfirmation is set", async () => {
-            const wrapper = mount(AiConfirmModal, {
-                attachTo: document.body,
-                props: {
-                    dialog: true,
-                    continueAction: () => {},
-                    typingConfirmation: "DELETE"
-                }
-            });
-            await flushPromises();
-
-            const schema = (wrapper.vm as unknown as { schema: { validate: (v: unknown) => Promise<unknown> } }).schema;
+            const { wrapper, schema } = await schemaFor("DELETE");
             await expect(schema.validate({ confirmation: "" })).rejects.toThrow();
             wrapper.unmount();
         });
 
         test("rejects undefined input (first validation pass)", async () => {
-            const wrapper = mount(AiConfirmModal, {
-                attachTo: document.body,
-                props: {
-                    dialog: true,
-                    continueAction: () => {},
-                    typingConfirmation: "DELETE"
-                }
-            });
-            await flushPromises();
-
-            const schema = (wrapper.vm as unknown as { schema: { validate: (v: unknown) => Promise<unknown> } }).schema;
+            const { wrapper, schema } = await schemaFor("DELETE");
             // Yup runs the validator before the user types; the schema
             // must tolerate `confirmation: undefined` without throwing.
             await expect(schema.validate({ confirmation: undefined })).rejects.toThrow();
@@ -67,33 +69,13 @@ describe("Ai ConfirmModal", () => {
         });
 
         test("accepts a case-insensitive match", async () => {
-            const wrapper = mount(AiConfirmModal, {
-                attachTo: document.body,
-                props: {
-                    dialog: true,
-                    continueAction: () => {},
-                    typingConfirmation: "DELETE"
-                }
-            });
-            await flushPromises();
-
-            const schema = (wrapper.vm as unknown as { schema: { validate: (v: unknown) => Promise<unknown> } }).schema;
+            const { wrapper, schema } = await schemaFor("DELETE");
             await expect(schema.validate({ confirmation: "delete" })).resolves.toEqual({ confirmation: "delete" });
             wrapper.unmount();
         });
 
         test("accepts any input when typingConfirmation is empty (no confirmation required)", async () => {
-            const wrapper = mount(AiConfirmModal, {
-                attachTo: document.body,
-                props: {
-                    dialog: true,
-                    continueAction: () => {},
-                    typingConfirmation: ""
-                }
-            });
-            await flushPromises();
-
-            const schema = (wrapper.vm as unknown as { schema: { validate: (v: unknown) => Promise<unknown> } }).schema;
+            const { wrapper, schema } = await schemaFor("");
             await expect(schema.validate({ confirmation: undefined })).resolves.toEqual({});
             await expect(schema.validate({ confirmation: "anything" })).resolves.toEqual({ confirmation: "anything" });
             wrapper.unmount();
@@ -107,38 +89,6 @@ describe("Ai ConfirmModal", () => {
         // The headless DOM here can't fully simulate HeadlessUI's teleport,
         // so we rely on mount + validation-pass to reach the schema's
         // test() callback without crashing.
-
-        function mountWithTyping(typingConfirmation: string) {
-            return mount(AiConfirmModal, {
-                attachTo: document.body,
-                props: {
-                    dialog: true,
-                    continueAction: () => {},
-                    typingConfirmation
-                }
-            });
-        }
-
-        test("does not throw when typingConfirmation is set and the input is still empty", async () => {
-            const wrapper = mountWithTyping("DELETE PROJECT");
-            await flushPromises();
-
-            // Asserting the wrapper exists also guarantees the synchronous
-            // setup() didn't throw — without the undefined guard, the
-            // first validation pass would crash before this check runs.
-            expect(wrapper.exists()).toBe(true);
-
-            wrapper.unmount();
-        });
-
-        test("does not throw when typingConfirmation is empty (no validator branch)", async () => {
-            const wrapper = mountWithTyping("");
-            await flushPromises();
-
-            expect(wrapper.exists()).toBe(true);
-
-            wrapper.unmount();
-        });
 
         test("does not throw on subsequent prop changes that re-trigger validation", async () => {
             const wrapper = mountWithTyping("");

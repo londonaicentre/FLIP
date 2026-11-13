@@ -26,11 +26,9 @@ import * as helpers from "@/utils/helpers";
 import AiInput from "../AiInput.vue";
 
 describe("Ai Input", () => {
-    it("Renders Component", () => {
-        vi.spyOn(helpers, "getRandomId").mockImplementationOnce(() => "random-id");
-
-        const comp = mount(AiInput, {
-            props: { name: "something" },
+    const mountInput = (props: InstanceType<typeof AiInput>["$props"]) =>
+        mount(AiInput, {
+            props,
             global: {
                 plugins: [createTestingPinia({
                     createSpy: vi.fn,
@@ -39,23 +37,20 @@ describe("Ai Input", () => {
             }
         });
 
+    it("Renders Component", () => {
+        vi.spyOn(helpers, "getRandomId").mockImplementationOnce(() => "random-id");
+
+        const comp = mountInput({ name: "something" });
+
         // Test functionality instead of snapshots
         expect(comp.exists()).toBe(true);
         expect(comp.find("input").attributes("name")).toBe("something");
     });
 
     it("omits autocomplete unless explicitly provided", () => {
-        const comp = mount(AiInput, {
-            props: {
-                name: "password",
-                type: "password"
-            },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
-            }
+        const comp = mountInput({
+            name: "password",
+            type: "password"
         });
 
         // Deriving autocomplete from the input type fabricates invalid tokens
@@ -64,18 +59,10 @@ describe("Ai Input", () => {
     });
 
     it("forwards an explicit autocomplete token", () => {
-        const comp = mount(AiInput, {
-            props: {
-                name: "password",
-                type: "password",
-                autocomplete: "current-password"
-            },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
-            }
+        const comp = mountInput({
+            name: "password",
+            type: "password",
+            autocomplete: "current-password"
         });
 
         expect(comp.find("input").attributes("autocomplete")).toBe("current-password");
