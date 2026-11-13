@@ -58,8 +58,11 @@ def _clear_credential_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(var, raising=False)
 
 
-RESEARCHER_ENV = {"DEMO_RESEARCHER_EMAIL": "researcher@example.com", "DEMO_RESEARCHER_PASSWORD": "researcher-pw"}
-ADMIN_ENV = {"DEMO_ADMIN_EMAIL": "admin@example.com", "DEMO_ADMIN_PASSWORD": "admin-pw"}
+RESEARCHER_ENV = {
+    "DEMO_RESEARCHER_EMAIL": "researcher@example.com",
+    "DEMO_RESEARCHER_PASSWORD": "researcher-pw",  # pragma: allowlist secret
+}
+ADMIN_ENV = {"DEMO_ADMIN_EMAIL": "admin@example.com", "DEMO_ADMIN_PASSWORD": "admin-pw"}  # pragma: allowlist secret
 WELL_KNOWN = (constants.ADMIN_EMAIL_1, "well-known-pw")
 
 
@@ -73,13 +76,13 @@ WELL_KNOWN = (constants.ADMIN_EMAIL_1, "well-known-pw")
             [],
         ),
         (
-            {**ADMIN_ENV, "ADMIN_USER_PASSWORD": "well-known-pw"},
+            {**ADMIN_ENV, "ADMIN_USER_PASSWORD": "well-known-pw"},  # pragma: allowlist secret
             WELL_KNOWN,
             ("admin@example.com", "admin-pw"),
             ["researcher"],
         ),
         (
-            {**RESEARCHER_ENV, "ADMIN_USER_PASSWORD": "well-known-pw"},
+            {**RESEARCHER_ENV, "ADMIN_USER_PASSWORD": "well-known-pw"},  # pragma: allowlist secret
             ("researcher@example.com", "researcher-pw"),
             WELL_KNOWN,
             ["admin"],
@@ -88,8 +91,8 @@ WELL_KNOWN = (constants.ADMIN_EMAIL_1, "well-known-pw")
         (
             {
                 "DEMO_RESEARCHER_EMAIL": "researcher@example.com",
-                "DEMO_ADMIN_PASSWORD": "admin-pw",
-                "ADMIN_USER_PASSWORD": "well-known-pw",
+                "DEMO_ADMIN_PASSWORD": "admin-pw",  # pragma: allowlist secret
+                "ADMIN_USER_PASSWORD": "well-known-pw",  # pragma: allowlist secret
             },
             WELL_KNOWN,
             WELL_KNOWN,
