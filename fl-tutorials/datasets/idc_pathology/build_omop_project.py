@@ -64,10 +64,12 @@ VISIT_INPATIENT = 9201  # matches the existing cxr/spleen projects
 NO_MATCHING_CONCEPT = 0
 
 # person.year_of_birth is NOT NULL, but TCGA pathology DICOM carries no birth date -- every
-# PatientBirthDate in this collection is empty. 1900 is therefore a sentinel, not an estimate: it is
-# chosen precisely because it is implausible, so a reader who sees it in an analysis knows the value
-# is absent rather than quietly believing a realistic-looking year.
-UNKNOWN_YEAR_OF_BIRTH = 1900
+# PatientBirthDate in this collection is empty. 1800 is therefore a sentinel, not an estimate: it is
+# chosen precisely because it is impossible, so a reader who sees it in an analysis knows the value
+# is absent rather than quietly believing a realistic-looking year. Not 1900: TCGA's oldest patients
+# were born around then. 1800 is also below OHDSI's plausibility floor (1850), so a data-quality
+# check flags it as absent instead of passing it.
+UNKNOWN_YEAR_OF_BIRTH = 1800
 
 # The cohort-query discriminator. The other projects filter on procedure_source_value in exactly this
 # way (for example 'Chest X-ray'), so query.sql can select this cohort without touching concept ids.

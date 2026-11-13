@@ -60,7 +60,7 @@ the gigabytes stay at their source — there is deliberately no `dicom/pathology
 
 No demographics are invented. TCGA pathology DICOM is de-identified — every `PatientSex` and
 `PatientBirthDate` in this collection is empty — so those columns carry OMOP's "No matching concept"
-(0), and `year_of_birth`, which is `NOT NULL`, gets the deliberately implausible sentinel 1900 rather
+(0), and `year_of_birth`, which is `NOT NULL`, gets the deliberately impossible sentinel 1800 rather
 than a realistic-looking year an analysis might believe.
 
 ### How sites are formed

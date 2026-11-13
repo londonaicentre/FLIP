@@ -90,7 +90,7 @@ governance:
 # and silently stops taking effect — see README "Upgrading: trustData.version replaces the two
 # per-store pins".
 trustData:
-  version: "20261019"
+  version: "20261113"
   hfRepo: "aicentreflip/trust-data"
   # Seeding (FLIP#1187). The trust-seed post-install/post-upgrade hook loads this trust's slice
   # of `projects` from the dataset into the running omop-db (rows, plus the DICOM vocabulary)
