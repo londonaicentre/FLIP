@@ -349,7 +349,7 @@ To seed by hand:
    make -C trust ensure-seeded KIT=GSTT             # seed unless already seeded at this version
    make -C trust seed KIT=GSTT PROJECTS="…"         # load further published projects
 
-Every row carries a ``source_trust`` column recording which mock Trust it belongs to.
+Every row carries a ``source_trust`` column, its OMOP partition: N Trusts are a deterministic split of the one dataset.
 
 .. seealso::
 

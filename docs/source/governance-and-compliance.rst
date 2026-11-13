@@ -280,7 +280,7 @@ considered position, not an omission:
 **Working copies at FL clients.** During training each FL client holds a working copy of
 its own net's converted imaging. On the FLARE backend the application cleans this up
 after the run. On the Flower backend there is no bounded retention for this cache yet;
-it is open, tracked work.
+it is open, tracked work (FLIP#1050).
 
 **Hub-side artefacts persist until removed.** Uploaded model files, the bundled
 applications sent to trusts, and training outputs (including the trained model) live in

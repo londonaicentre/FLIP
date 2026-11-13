@@ -402,7 +402,7 @@ architecture is identical — as the spleen intensity window above shows.
 .. seealso::
 
    :gh:`map-apps/classification/README.md` describes the orientation check step by step. :gh:`fl-tutorials/tests/`
-   holds the same check for the tutorial apps.
+   holds the same check for the tutorial apps, run in CI.
 
 
 .. _wrap-package:
@@ -674,7 +674,8 @@ It is easy to assume FLIP checks more of ``config.json`` than it does. What is c
 
    **A typo in an export-related key fails silently.** An invented key is outside the validated set, so nothing
    rejects it: the value is just absent at run time, and your code falls back to its own default. Check the
-   spelling of any key your code reads.
+   spelling of any key your code reads. Any export setting added to ``config.json`` in future should come with
+   validation.
 
 .. note::
 

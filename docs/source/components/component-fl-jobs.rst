@@ -56,8 +56,8 @@ training loop, model architecture); for the server side, you choose a **job type
 Every FLARE job type runs your code through the **FLARE Client API**: a plain training or evaluation script
 that uses ``nvflare.client``. Every Flower job type runs your ``client_app.py``.
 
-Setting the job type
-====================
+How to choose a job type
+========================
 
 Set the job type with the ``job_type`` key in the app's ``config.json``, on both backends:
 

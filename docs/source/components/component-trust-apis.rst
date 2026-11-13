@@ -194,7 +194,8 @@ The ``create_imaging`` task runs these steps:
 1. Create the XNAT project and set its prearchive rules.
 2. Subscribe the project to the XNAT event that converts new DICOM scans to NIfTI. The subscription is active
    only when the project has DICOM-to-NIfTI conversion on, and it fires on new scans only; scans already archived
-   are converted with ``make -C trust reconvert-nifti KIT=<CODE>`` (see :doc:`component-xnat`).
+   are converted with ``make -C trust reconvert-nifti KIT=<CODE> LAUNCH=1``; without ``LAUNCH=1`` it only reports
+   (see :doc:`component-xnat`).
 3. Create or add the hub project's members as XNAT users. The hub then emails each new user a link to set
    their XNAT password, and tells existing users they have been added.
 4. Start retrieval in the background. ``imaging-api`` asks ``data-access-api`` for the cohort's **accession

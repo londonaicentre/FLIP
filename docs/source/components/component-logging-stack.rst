@@ -89,7 +89,7 @@ Structured events
 =================
 
 Log lines can carry an ``event`` field with a dotted name (for example ``request.completed`` or
-``project.approved``), so the same kind of event can be filtered the same way in every service.
+``request.failed``), so the same kind of event can be filtered the same way in every service.
 
 .. note::
 

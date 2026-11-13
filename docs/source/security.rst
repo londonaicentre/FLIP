@@ -255,8 +255,8 @@ recorded in the project's issue tracker (FLIP#877, tracking advisory GHSA-8465).
 
 **The FL API fetches app bundles only from the hub's object store.** When a job is
 submitted, the net's FL API downloads the bundled app server-side, from presigned S3 URLs
-handed to it by the Central Hub API. Because it fetches whatever URL it is handed, that
-download is guarded as a server-side request forgery surface:
+handed to it by the Central Hub API. That download is guarded as a server-side request
+forgery surface:
 
 - URLs may never name a private, loopback or link-local address as an IP literal, in any
   spelling.

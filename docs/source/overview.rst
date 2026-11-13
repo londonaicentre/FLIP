@@ -23,7 +23,7 @@ What FLIP guarantees
 **What leaves a Trust** is limited to:
 
 - aggregate cohort statistics, hidden when below the Trust's own minimum group size;
-- model updates, privacy-filtered before they are sent (always on FLARE; on Flower only when the researcher's code
+- model updates, privacy-filtered before they are sent (on FLARE; on Flower only when the researcher's code
   enables it);
 - operational status.
 

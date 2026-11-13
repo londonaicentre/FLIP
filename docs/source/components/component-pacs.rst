@@ -329,8 +329,9 @@ configuration that would leave either direction closed or the inbound path too w
 - no egress rule to the PACS's query/retrieve port;
 - no ingress entry on ``xnat.web.dicomPort`` (the failure where queries succeed and retrievals time out);
 - an ingress entry for ``0.0.0.0/0``;
-- an externally exposed web console (``xnat.web.service.type`` other than ``ClusterIP``);
-- an ingress entry with no ``port``, which Kubernetes reads as *all* ports.
+- an externally exposed web console (``xnat.web.service.type`` other than ``ClusterIP``).
+
+It also refuses any ingress entry with no ``port``, which Kubernetes reads as *all* ports.
 
 The ingress ``port`` is the pod's container port (``xnat.web.dicomPort``, default 8104), not ``dicomNodePort``: a
 NetworkPolicy matches after the node has translated the NodePort back.

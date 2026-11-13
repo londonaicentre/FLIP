@@ -8,8 +8,8 @@ Data Enrichment
    :class: note
 
    You need to be signed in to FLIP, be a member of the project, and have access to the :term:`XNAT` instance at each
-   participating Trust (see :ref:`receiving-xnat-credentials`). Images must already have been pulled and converted at
-   each Trust (see :ref:`enrichment-when`).
+   participating Trust (see :ref:`receiving-xnat-credentials`). Uploading files needs the images pulled and converted
+   first (see :ref:`enrichment-when`).
 
 *Data enrichment* is where you add whatever your app needs on top of the images FLIP has pulled into each Trust's XNAT
 — segmentation masks, ROI annotations, contours. Trust :term:`PACS` supply images only, so anything else has to be added
