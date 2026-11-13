@@ -13,7 +13,7 @@
 .PHONY: build build-fl clean clean-object-store up down up-no-trust up-trusts central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks \
 		check-aws-access generate-internal-service-key generate-fl-api-key generate-xnat-credentials _check-compose-project-owner \
-		register-trust register-trusts rotate-trust-keys new-trust _wait-for-hub integration_test \
+		register-trust register-trusts rotate-trust-keys new-trust _wait-for-hub _refuse-deployed-hub integration_test \
 		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint mirror-images aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
 		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
@@ -695,13 +695,19 @@ _wait-for-hub:
 	  sleep 2; \
 	done
 
+# A deployed hub runs on ECS, out of reach of the local flip-api these targets exec into: they
+# would mint keys in the local database and write them into the real kit (FLIP#938).
+_refuse-deployed-hub:
+	@[ -z "$(IS_DEPLOYED)" ] || { echo "❌ HUB=$(HUB) is the ECS hub: run 'make -C deploy/providers/AWS $(AWS_TARGET) KIT=$(or $(KIT),<CODE>) HUB=$(HUB)'"; exit 1; }
+
 # Register one trust on the running hub from its kit file. KIT is the trust
 # CODE (the kit-file handle). Seeds trust/.env.<CODE>.<env> from its .example on
 # first run, reads TRUST_NAME/CODE/REGION from it, registers (idempotent — an
 # already-registered name is skipped, credentials preserved), then writes the
 # minted credentials + assigned FL kit slot + hub-shared block back into the
 # kit. The hub keeps no trust list — the kit files ARE the list.
-register-trust: _check-compose-project-owner _wait-for-hub
+register-trust: AWS_TARGET := register-trusts
+register-trust: _check-compose-project-owner _refuse-deployed-hub _wait-for-hub
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1; }
 	@kit='$(call kit_file,trust/,$(KIT))'; ex="trust/.env.$(KIT).$(ENV).example"; \
 	  if [ ! -f "$$kit" ]; then \
@@ -728,7 +734,8 @@ register-trust: _check-compose-project-owner _wait-for-hub
 # Only the two hub keys rotate here; XNAT credentials have their own caveat
 # (Postgres applies XNAT_DATASOURCE_* only on first initdb, see
 # generate-xnat-credentials).
-rotate-trust-keys: _check-compose-project-owner _wait-for-hub
+rotate-trust-keys: AWS_TARGET := rotate-trust-keys
+rotate-trust-keys: _check-compose-project-owner _refuse-deployed-hub _wait-for-hub
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1; }
 	@kit='$(call kit_file,trust/,$(KIT))'; \
 	  [ -f "$$kit" ] || { echo "❌ $$kit not found. Register the trust first."; exit 1; }; \
