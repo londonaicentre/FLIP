@@ -22,6 +22,7 @@ from flip_api.db.database import get_session
 from flip_api.domain.interfaces.project import IReturnedProject
 from flip_api.domain.schemas.actions import ProjectAuditAction
 from flip_api.domain.schemas.status import ProjectStatus
+from flip_api.domain.schemas.users import ProjectMemberLookup
 from flip_api.project_services.get_projects import _load_latest_audit_at_per_project, _utc_iso
 from flip_api.project_services.services.project_services import (
     get_project,
@@ -130,11 +131,12 @@ def get_project_details_endpoint(
 
     # Deduplicate by ID and filter out disabled users (matching legacy behavior)
     seen_ids: set[UUID] = set()
-    unique_users = []
+    unique_users: list[ProjectMemberLookup] = []
     for user in users_with_access_cognito:
         if user.id not in seen_ids and not user.is_disabled:
             seen_ids.add(user.id)
-            unique_users.append(user)
+            member = ProjectMemberLookup(id=user.id, email=user.email, is_disabled=user.is_disabled)  # type: ignore[call-arg]
+            unique_users.append(member)
 
     # Reuses the list-endpoint's batch helper with a single ID so list and
     # detail responses agree on which audit row counts as "the" stage event.

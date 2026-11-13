@@ -21,7 +21,6 @@ import pytest
 from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
 
-from flip_api.auth.access_manager import authenticate_internal_service
 from flip_api.auth.job_callback import JOB_CREDENTIAL_HEADER, hash_job_credential
 from flip_api.config import Settings
 from flip_api.db.database import get_session
@@ -61,7 +60,6 @@ def s3() -> Generator[MagicMock, None, None]:
 @pytest.fixture
 def client(s3: MagicMock) -> Generator[TestClient, None, None]:
     """A client whose model has one reporting job, holding ``CREDENTIAL``."""
-    app.dependency_overrides[authenticate_internal_service] = lambda: None
     app.dependency_overrides[get_session] = lambda: MagicMock()
     job = MagicMock(credential_hash=hash_job_credential(CREDENTIAL))
     with patch("flip_api.auth.job_callback.reporting_jobs", return_value=[job]):

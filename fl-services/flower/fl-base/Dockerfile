@@ -13,7 +13,7 @@
 # limitations under the License.
 #
 
-FROM flwr/base:${FLWR_VERSION:-1.42.0-py3.12-ubuntu24.04} AS base
+FROM flwr/base:${FLWR_VERSION:-1.43.0-py3.12-ubuntu24.04} AS base
 
 ARG LOCAL_DEV=false
 # torch's native Triton kernels compile a C helper on first use, and this image has no C compiler:

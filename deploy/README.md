@@ -11,7 +11,7 @@
     limitations under the License.
 -->
 
-# Pre-configurations needed for FLIP Deployment
+# Deployment layer — maintainer notes
 
 > [!NOTE]
 > **This README is maintainer notes** for the deployment layer: where things live, the hub's production
@@ -43,26 +43,20 @@ they are filed by two different rules:
 | Provision an **on-prem** trust host (Ansible) | [`trust/deploy/ansible/`](../trust/deploy/ansible/README.md) |
 | Deploy a trust to **Kubernetes** (Helm) | [Deploy a trust on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html) (chart: [`trust/deploy/helm/`](../trust/deploy/helm/README.md)) |
 
-Every compose file in **this** directory is Central-Hub-only — `flip-ui`, `flip-api`, `flip-db`, `pgadmin`,
-`keycloak` (development only: the local identity provider, ephemeral — no volume — importing
-[`keycloak/flip-realm.json`](keycloak/README.md) at every boot with `start-dev --import-realm`; a realm edit
-needs `make reset-keycloak`, since the import skips a realm that already exists), `object-store` (development
-only, FLIP#1291: an S3-compatible RustFS container standing in for the S3 buckets, its data the host-owned
-`./object-store/` where a top-level directory is a bucket — `make up` pre-creates one per bucket name, the
-`jobs/` idiom; every service reaches it through `AWS_ENDPOINT_URL_S3`, the fl-apis admit it as
-`BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000`, and `make clean-object-store` empties it), and the
-`fl-api-net-*` / `fl-server-net-*` FL server side. Nothing in the development stack mounts `~/.aws` or
-reaches an AWS service: sign-in, email and object storage are all local (FLIP#919, FLIP#1291). No trust service is defined here. The one place
-hub compose touches "trust" is **networking**: `compose.development.yml` joins
-`central-hub-trust-apis-network`, `trust-network-1/2` and `fl-net-1/2` as `external: true` — exactly as
-the trust composes do. Neither side *creates* them; `make create-networks` does. There are **six**
-hub-shared networks, split across two Makefiles: the root `create-networks-centralhub` (also run by
-`make central-hub`) creates `deploy_central-hub-network` (the hub-internal network) and
-`deploy_central-hub-trust-apis-network` (flip-api joins both, FLIP#1344), then `create-networks` forwards to
-`trust/Makefile`, which ensures the trust-apis network too (idempotently, for a trust brought up on its own) and
-owns the other four — `deploy_fl-net-1/2` (bridge) and `deploy_trust-network-1/2` (overlay, because XNAT
-attaches from a swarm stack). Teardown: root `remove-networks` removes the hub-internal one and delegates the
-rest.
+Every compose file in **this** directory is Central-Hub-only; no trust service is defined here. The services are:
+
+- `flip-ui`, `flip-api`, `flip-db`, `pgadmin`.
+- `keycloak` (development only): the local identity provider. It is ephemeral (no volume) and imports [`keycloak/flip-realm.json`](keycloak/README.md) at every boot with `start-dev --import-realm`. The import skips a realm that already exists, so after a realm edit run `make reset-keycloak`.
+- `object-store` (development only, FLIP#1291): an S3-compatible RustFS container standing in for the S3 buckets. Its data is the host-owned `./object-store/`, where each top-level directory is a bucket; `make up` pre-creates one per bucket name (the `jobs/` idiom). Every service reaches it through `AWS_ENDPOINT_URL_S3`, the fl-apis admit it as `BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000`, and `make clean-object-store` empties it.
+- The `fl-api-net-*` / `fl-server-net-*` FL server side.
+
+Nothing in the development stack mounts `~/.aws` or reaches an AWS service: sign-in, email and object storage are all local (FLIP#919, FLIP#1291).
+
+**Networking** is the one place hub compose touches "trust". `compose.development.yml` joins `central-hub-trust-apis-network`, `trust-network-1/2` and `fl-net-1/2` as `external: true`, exactly as the trust composes do. Neither side creates them; `make create-networks` does. There are **six** hub-shared networks, split across two Makefiles:
+
+- Root `create-networks-centralhub` (also run by `make central-hub`) creates `deploy_central-hub-network` (hub-internal) and `deploy_central-hub-trust-apis-network`. flip-api joins both (FLIP#1344).
+- `create-networks` then forwards to `trust/Makefile`. It ensures the trust-apis network too (idempotently, for a trust brought up on its own) and owns the other four: `deploy_fl-net-1/2` (bridge) and `deploy_trust-network-1/2` (overlay, because XNAT attaches from a swarm stack).
+- Teardown: root `remove-networks` removes the hub-internal network and delegates the rest.
 
 `fl-net-<N>` is the FL data plane, and carries exactly two services: the hub's `fl-server-net-<N>` and each
 trust's `fl-client-net-<N>`. It is the FL twin of `central-hub-trust-apis-network` (flip-api ↔ trust-api) —
@@ -78,13 +72,7 @@ shape × infrastructure matrix.
 
 ## Supported PostgreSQL Versions
 
-FLIP uses AWS RDS PostgreSQL with the following version support policy:
-
-- **Current Version**: PostgreSQL 17 (EOL: November 2029) ✓
-- **Minimum Version**: PostgreSQL 15
-- **Deprecated**: PostgreSQL 13 (EOL: November 2025) ❌ EXPIRED
-
-**Version Lifecycle:**
+FLIP uses AWS RDS PostgreSQL. The minimum supported version is PostgreSQL 15; the Terraform default is PostgreSQL 17.
 
 | Version | EOL | Status |
 | ------- | --- | ------ |
@@ -96,7 +84,7 @@ FLIP uses AWS RDS PostgreSQL with the following version support policy:
 
 **Upgrade Policy**: Plan PostgreSQL major version upgrades with a 6-month lead time before EOL. AWS charges premium rates for EOL versions. To change the version, update the `postgres_version` variable in `deploy/providers/AWS/variables.tf`.
 
-## Deployment Architecture
+## Central Hub prerequisites and configuration
 
 ### Prerequisites
 
@@ -164,9 +152,8 @@ The Central Hub has **one supported production deployment**: ECS Fargate via the
 [`deploy/providers/AWS/`](providers/AWS/README.md). The task definitions in `ecs_tasks.tf` (env maps in
 `locals.tf`) are the **canonical definition of production container config**. That root deploys onto an
 AWS Landing Zone Accelerator estate, where the network and edge are owned by the accelerator — see
-[Deploying onto an LZA estate](providers/AWS/README.md#deploying-onto-an-lza-estate)
-([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)). The self-contained single-account mode is no
-longer supported and has been removed (FLIP#1479). What the hub costs to run — hub only,
+[Deploying onto an LZA estate](providers/AWS/README.md#deploying-onto-an-lza-estate).
+There is no self-contained single-account mode (removed in FLIP#1479). What the hub costs to run — hub only,
 trust hosts excluded because their GPU sizing is a per-trust decision — is on the docs site's
 [Deploy the Central Hub → Running costs](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#running-costs)
 section. The ECS FL task definitions serve **both
@@ -177,8 +164,8 @@ additionally needs `FLOWER_KIT_DATE` and provisioned creds uploaded via
 Cloud Map + public FL hostnames).
 
 > **Deprecated — hub on EC2/compose** ([FLIP#936](https://github.com/londonaicentre/FLIP/issues/936)):
-> running the hub via `compose.prod*.yml` on an EC2 or self-managed host is no longer a supported
-> deployment target (the former hub EC2 host was long since replaced by a minimal SSM bastion). The
+> running the hub via `compose.prod*.yml` on an EC2 or self-managed host is not a supported
+> deployment target. The
 > `compose.prod*.yml` files remain maintained **only** as the local prod-image harness
 > (`make up HUB=stag|prod` — the baked images, no dev mounts). When changing production config, change
 > Terraform first and update the compose files only as far as the local harness needs.
@@ -189,7 +176,7 @@ FLIP supports three trust deployment models:
 
 | Model | Location | Documentation |
 | ------- | ---------- | --------------- |
-| **Cloud (EC2)** | AWS EC2 (same account as Central Hub) | [`providers/AWS/README.md`](providers/AWS/README.md) |
+| **Cloud (EC2)** | AWS EC2, in any account | [`trust/deploy/terraform/aws/ec2/README.md`](../trust/deploy/terraform/aws/ec2/README.md) |
 | **Hybrid / On-Premises** | Any Ubuntu host (home lab, hospital server) | [Deploy a trust on-prem](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-on-prem.html) ([`trust/deploy/ansible/README.md`](../trust/deploy/ansible/README.md)) |
 | **Kubernetes** | Any K8s cluster 1.28+ (EKS, AKS, on-prem) | [Deploy a trust on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html) ([`trust/deploy/helm/README.md`](../trust/deploy/helm/README.md)) |
 
@@ -222,8 +209,7 @@ UID. For XNAT, the shared Ansible roles (`flip_trust_dirs` in `trust/deploy/ansi
 `trust/deploy/ansible/aws-ec2-host.yml`, `onprem.yml` and `azure.yml`) provision
 `/opt/flip/xnat/**` as UID 1001. `make -C trust/xnat xnat-reset` is the third path onto the same
 invariant and provisions the XNAT directories as UID 1001 too, verifying it afterwards and failing with
-the exact `chown` to run rather than leaving a host half-provisioned (FLIP#1095 — it previously used a
-hardcoded 1000 on its remote branch and the invoking user's UID on the others). What the three paths
+the exact `chown` to run rather than leaving a host half-provisioned (FLIP#1095). What the three paths
 share is the **UID, not the directory**: the playbooks provision `/opt/flip/xnat/**`, while `xnat-reset`
 and the compose stacks both read `XNAT_DATA_DIR`, which in stag/prod defaults to the per-slot
 `/opt/flip/xnat-trust<N>` so two trusts on one host stay isolated. `xnat-reset` is therefore the path
@@ -231,16 +217,19 @@ that provisions the tree XNAT actually writes to, and an ownership change made a
 `/opt/flip/xnat` would not reach it. Orthanc's storage directory is not a role's job: on EC2,
 `aws-ec2-host.yml`'s seed play creates `/opt/flip/orthanc/orthanc-storage` as UID 999 before Orthanc first
 starts, and on every other host `make -C trust up-trust` (which the on-prem `up-onprem-trust` calls)
-runs `trust/Makefile`'s `ensure_data_dirs`, which chowns it to UID 999 first. If you provision a trust
-host outside these paths, you must replicate this ownership or first-boot writes
-(archive ingest, SQLite index, log rotation) will fail with EACCES. That
-failure is worth recognising because it does not look like a permissions problem: XNAT accepts the
-inbound DICOM association, fails the write and aborts it, so the PACS reports a *network* fault
-(`Peer aborted Association`), while the same EACCES stops XNAT writing the application logs that
-would name the cause. `ensure_data_dirs` chowns through a throwaway alpine container when the
+runs `trust/Makefile`'s `ensure_data_dirs`, which chowns it to UID 999 first.
+
+> [!WARNING]
+> If you provision a trust host outside these paths, replicate this ownership, or first-boot writes
+> (archive ingest, SQLite index, log rotation) will fail with EACCES.
+> The failure does not look like a permissions problem: XNAT accepts the inbound DICOM association,
+> fails the write and aborts it, so the PACS reports a *network* fault (`Peer aborted Association`),
+> and the same EACCES stops XNAT writing the application logs that would name the cause.
+
+`ensure_data_dirs` chowns through a throwaway alpine container when the
 caller is not root, so a developer needs no `sudo` to seed the mock storage directory in dev.
 
-XNAT's dev tree deliberately does **not** follow that convention. `xnat-reset` creates
+Unlike Orthanc's storage directory, XNAT's dev tree deliberately does **not** get that no-`sudo` treatment. `xnat-reset` creates
 `trust/xnat/xnat-data-trust<N>/` owned by UID 1001 — unprivileged when the invoking developer is
 themselves UID 1001 with its GID (the GitHub runner is too) and already owns every directory in the
 tree, under `sudo` otherwise — so on a host whose developer is not UID 1001 that tree is readable
@@ -251,26 +240,21 @@ widened to buy back the convenience.
 
 ### Linux Capability Restrictions
 
-Every container drops **all** Linux capabilities (`cap_drop: [ALL]`) and only adds back what the
-service strictly requires. Two dev-only services (pgadmin, register-supernode-keys) are
-deliberately exempted because their entrypoints depend on root capabilities that would crash-loop
-under `cap_drop: ALL`. The standalone `fl-services/nvflare/compose.dev.yml` dev harness's
-`fl-client-1`/`fl-client-2` — used only by `make -C fl-services/nvflare up` for iterating on the
-backend outside the full trust stack — carry no `cap_drop` either, but for a different reason:
-they are simply **not hardened yet**, not blocked from it. They run the same non-root
-`flare-fl-client` image and the same kit dirs as the hardened `fl-client-net-*` services below, so
-a later pass can harden them the same way. The trust-deployment `fl-client-net-*` services (in
-`trust/deploy/compose/compose_trust.*.yml`, what a real trust actually runs) are hardened — see the rows
-below. The per-service grants in the compose files are:
+Every container drops **all** Linux capabilities (`cap_drop: [ALL]`) and adds back only what the service strictly requires. Containers without `cap_drop`:
+
+- **pgadmin, register-supernode-keys** (dev only): exempt on purpose, because their entrypoints depend on root capabilities and would crash-loop under `cap_drop: ALL`.
+- **`fl-client-1`/`fl-client-2` in `fl-services/nvflare/compose.dev.yml`**: the standalone dev harness used only by `make -C fl-services/nvflare up` to iterate on the backend outside the full trust stack. They are **not hardened yet**, not blocked from it. They run the same non-root `flare-fl-client` image and kit dirs as the hardened `fl-client-net-*` services, so a later pass can harden them the same way.
+
+The `fl-client-net-*` services a real trust runs (`trust/deploy/compose/compose_trust.*.yml`) are hardened. The per-service grants in the compose files are:
 
 | Service(s) | Granted capabilities | Reason |
 |------------|----------------------|--------|
 | flip-api, fl-api (Flower), trust-api, imaging-api, data-access-api, xnat-web, loki, alloy, grafana | `CHOWN` | In-container init/entrypoint fixes ownership on volume paths it owns. |
 | fl-fleet-proxy-net-* (Flower — production and development) | *(none)* | Plain nginx, baked as the SuperLink's uid 49999 with every writable path under `/tmp`, so it needs no capability: in production it reads the server key as the SuperLink does, in development through the host group (`group_add`), like the FL containers (FLIP#1517). |
-| fl-client-net-* (both backends, production and development) | *(none)* | Runs non-root (GHSA-8465), and Docker grants effective capabilities only to root — a `cap_add` here would land in the bounding set with `CapEff` still `0`, so it would buy nothing. Flower's `flower-supernode` entrypoint does no chmod/chown at all and its dev mounts are `:ro`. FLARE's dev kit (`provision/workspace-dev/`) is written by `make provision` as the host user. Since FLIP#1171 the image identity is fixed at `flip`/1000/1000 rather than baked from whoever built the image, and the dev composes pass `user: "${UID:-1000}:1000"` — so the container runs as the host user that already owns the kit, and no `chown` (and no capability) is needed. In production the Ansible-provisioned `FL_KIT_DIR` is pre-chowned to the container's UID by `aws-ec2-host.yml` / `onprem.yml`; the `DAC_OVERRIDE`/`FOWNER` grant kept for pre-GHSA-8465 root images is gone (FLIP#973). |
+| fl-client-net-* (both backends, production and development) | *(none)* | Runs non-root (GHSA-8465), and Docker grants effective capabilities only to root — a `cap_add` here would land in the bounding set with `CapEff` still `0`, so it would buy nothing. Flower's `flower-supernode` entrypoint does no chmod/chown at all and its dev mounts are `:ro`. FLARE's dev kit (`provision/workspace-dev/`) is written by `make provision` as the host user. The image identity is fixed at `flip`/1000/1000 (FLIP#1171), and the dev composes pass `user: "${UID:-1000}:1000"`, so the container runs as the host user that already owns the kit and needs no `chown` and no capability. In production the Ansible-provisioned `FL_KIT_DIR` is pre-chowned to the container's UID by `aws-ec2-host.yml` / `onprem.yml`; the `DAC_OVERRIDE`/`FOWNER` grant kept for pre-GHSA-8465 root images is gone (FLIP#973). |
 | fl-api (FLARE) | `CHOWN` | The `flare-fl-api` image runs as user `flip` (UID 1000, non-root — fixed by FLIP#1171; it previously varied with whoever built the image), so only the `CHOWN` baseline is needed; `DAC_OVERRIDE` and `FOWNER` are inert for non-root processes. |
-| fl-server (FLARE) | *(none)* | Runs non-root, so capabilities are inert here as they are for fl-client above — `CapEff` stays `0` and a `cap_add` sits unused in the bounding set. The grants that used to be here (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`) were removed by FLIP#1171 once measurement confirmed they had never taken effect; the comment claiming they were what made the host-owned mounts readable was wrong. What actually reads the provisioned kit's 0600 keys and the operator's 0600 AWS SSO token cache is the matching **uid**: the dev compose runs the container as the host user via `user: "${UID:-1000}:1000"`. |
-| fl-server (Flower, development only) | *(none)* | Runs non-root, so capabilities are inert here exactly as for the FLARE fl-server above. The dev compose ran the SuperLink as root until FLIP#1320, with `CHOWN` and `DAC_OVERRIDE` granted back on top of `cap_drop: ALL` so it could read the host-provisioned 0640 TLS keys; a root SuperLink also rewrote any host-owned file it touched as `root:root`, which is how the operator's AWS SSO token used to become unreadable to their own CLI. It now runs as `user: "${UID:-1000}:49999"` with `group_add: ["${DOCKER_GID}"]`, reading the keys through their own owner and group, and sets `HOME=/tmp` so the SuperLink's `~/.flwr` and the ServerApp's torch caches land somewhere the host uid can write on any SuperLink image, rather than in the image user's `/app`. Production runs the image's non-root user with an ECS task IAM role and keeps the `CHOWN` baseline. |
+| fl-server (FLARE) | *(none)* | Runs non-root, so capabilities are inert here as they are for fl-client above — `CapEff` stays `0` and a `cap_add` sits unused in the bounding set. (FLIP#1171 removed the earlier `CHOWN`/`DAC_OVERRIDE`/`FOWNER` grants, which had never taken effect.) What actually reads the provisioned kit's 0600 keys and the operator's 0600 AWS SSO token cache is the matching **uid**: the dev compose runs the container as the host user via `user: "${UID:-1000}:1000"`. |
+| fl-server (Flower, development only) | *(none)* | Runs non-root, so capabilities are inert here exactly as for the FLARE fl-server above. It no longer runs as root, because a root SuperLink rewrote any host-owned file it touched, such as the operator's AWS SSO token, as `root:root` (FLIP#1320). It runs as `user: "${UID:-1000}:49999"` with `group_add: ["${DOCKER_GID}"]`, reading the host-provisioned TLS keys through their own owner and group, and sets `HOME=/tmp` so the SuperLink's `~/.flwr` and the ServerApp's torch caches land somewhere the host uid can write on any SuperLink image, rather than in the image user's `/app`. Production runs the image's non-root user with an ECS task IAM role and keeps the `CHOWN` baseline. |
 | flip-db, omop-db, xnat-db | `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID` | The official postgres entrypoint runs as root and `gosu`-drops to the `postgres` user (`SETUID`/`SETGID`). On every start it re-runs `chmod 00700 $PGDATA` and a `chown` sweep over the persisted data dir, which on subsequent boots is already owned by `postgres` with mode `0700` — `chmod` on a dir owned by another uid needs `FOWNER` and traversing it needs `DAC_OVERRIDE`. Without them the container exits 1 on a persisted volume (see commit history, FLIP#485). |
 | orthanc | `CHOWN` | Runs non-root (UID 999) from PID 1 (the root-image `DAC_OVERRIDE`/`FOWNER` grant is gone, FLIP#863). The storage bind mount is made 999-writable at the provisioning layer rather than fixed up with in-container caps; `CHOWN` is kept as the shared baseline. |
 | xnat-nginx | `CHOWN`, `NET_BIND_SERVICE` | `NET_BIND_SERVICE` lets the non-root `nginx` user bind port 80 (Docker sets `net.ipv4.ip_unprivileged_port_start=0`, but capabilities are still checked). |
@@ -283,9 +267,8 @@ Notably **not** granted anywhere: `SYS_ADMIN`, `SYS_PTRACE`, `SYS_MODULE`, `MAC_
 container.
 
 > **Hardened images and hardened compose must ship together.** The minimal-caps compose files
-> assume the rebuilt **non-root** `orthanc` and `xnat-web` images. Until CI publishes those (on
-> merge to `develop`/`main`), the previously published root-running GHCR images break under the
-> new caps: orthanc crash-loops writing its `orthanc`-owned `/etc/hostid` (root without
+> assume the **non-root** `orthanc` and `xnat-web` images. An older, root-running GHCR image breaks
+> under these caps: orthanc crash-loops writing its `orthanc`-owned `/etc/hostid` (root without
 > `DAC_OVERRIDE`), and xnat-web — still root — cannot write its UID-1001 bind mounts
 > (config/archive/build/cache/plugins), so `make up`'s XNAT configure step fails on both trusts
 > (swarm enforces `cap_drop` even though it ignores `security_opt`). When running this hardening
@@ -351,8 +334,8 @@ to the raw socket.
 ### No New Privileges
 
 Nearly every container declares `security_opt: [no-new-privileges:true]` to prevent privilege escalation
-via `setuid` binaries or `LD_PRELOAD` injection. The same dev-only services exempted from `cap_drop`
-(pgadmin, register-supernode-keys, fl-clients) also omit `no-new-privileges`, and the XNAT swarm
+via `setuid` binaries or `LD_PRELOAD` injection. The containers without `cap_drop`
+(the dev-only pgadmin and register-supernode-keys, and the not-yet-hardened `fl-client-1`/`fl-client-2` of the standalone `fl-services/nvflare/compose.dev.yml` harness) also omit `no-new-privileges`, and the XNAT swarm
 stack ignores the `security_opt` key (see caveat below).
 
 > **XNAT swarm caveat.** The XNAT stack (`xnat-web`, `xnat-db`, `xnat-nginx`, `xnat-socket-proxy`)
@@ -380,12 +363,10 @@ docker inspect <container> --format '{{.HostConfig.SecurityOpt}}'
 
 ## Service Authentication
 
-FLIP uses three separate authentication mechanisms for service-to-service communication. The single
-hub-internal key is generated standalone; the two per-trust keys are minted together when you register each
-trust:
+FLIP uses separate authentication mechanisms for service-to-service communication. The two per-trust keys
+are minted together when you register each trust:
 
 ```bash
-make generate-internal-service-key   # fl-server → flip-api (single hub-internal secret)
 make register-trusts                 # mints each trust's TRUST_API_KEY + TRUST_INTERNAL_SERVICE_KEY into its kit file
 ```
 
@@ -396,16 +377,12 @@ only in that trust's kit file (`trust/.env.<CODE>.<env>`), sent in the `TRUST_AP
 only the SHA-256 hash, in the `trust` table's `api_key_hash` column — there is no hub-side env dict of trust keys.
 Used for task polling, cohort result submission, and heartbeat endpoints.
 
-### Internal Service Key (fl-server → flip-api)
+### Job Credential (fl-server → flip-api)
 
-The fl-server on the Central Hub authenticates to flip-api using `INTERNAL_SERVICE_KEY` (a plain string) sent
-in the `INTERNAL_SERVICE_KEY_HEADER` header. The hub validates it against `INTERNAL_SERVICE_KEY_HASH` (the
-SHA-256 hash of the key). Used for model status updates, training metrics, training log and results-upload
-endpoints. This is a **single, hub-internal** secret and is separate from the per-trust internal keys below.
-
-Those endpoints also require a **per-job credential** in the `X-Job-Credential` header. flip-api mints it
-when it dispatches a job, stores its SHA-256 hash on the `fl_job` row and sends the plaintext to the FL API
-with the app; the FL API writes it to `JOB_CREDENTIAL_DIR`, a directory on the volume it shares with the
+The fl-server on the Central Hub authenticates to flip-api with a **per-job credential** in the
+`X-Job-Credential` header, on the model status, training metrics, training log and results-upload
+endpoints. flip-api mints it when it dispatches a job, stores its SHA-256 hash on the `fl_job` row and
+sends the plaintext to the FL API with the app; the FL API writes it to `JOB_CREDENTIAL_DIR`, a directory on the volume it shares with the
 fl-server, and flip-utils reads it there for every callback. A callback is accepted only with the credential
 of the model's own job, while that job is still reporting. Nothing to configure beyond `JOB_CREDENTIAL_DIR`,
 which the compose files and the ECS task definitions set on the fl-api and the fl-server.
@@ -414,7 +391,7 @@ which the compose files and the ECS task definitions set on the fl-api and the f
 
 Every FL API route except `/health` requires `FL_API_KEY`, sent by flip-api in the `FL_API_KEY_HEADER` header
 (default `X-FL-API-Key`) and compared in constant time. On Flower the key-registration one-shot sends it on
-`/register_node` too. It is dedicated to this hop — the FL API never holds `INTERNAL_SERVICE_KEY`. `make up`
+`/register_node` too. It is dedicated to this hop. `make up`
 mints it into the hub env file; on ECS it is the `fl_api_key` field of the `FLIP_API` secret.
 
 ### Trust-Internal Service Keys (trust-api / imaging-api / fl-client → imaging-api / data-access-api)
@@ -429,7 +406,7 @@ probes still work.
 Each trust gets a distinct key — a leak in `Trust_1` cannot drive operations on `Trust_2`'s APIs. The hub
 never sees these keys: they live only in trust-side env (the trust's kit file `trust/.env.<CODE>.<env>`, which
 `trust/Makefile` `-include`s so every trust-internal container inherits it). See the
-[public security model](../docs/source/security.rst#trust-internal-service-authentication) for the full threat model.
+[public security model](https://londonaicentreflip.readthedocs.io/en/latest/security.html#trust-internal-service-authentication) for the full threat model.
 
 FL clients (trust side) **do not** have Central Hub API credentials. Only the fl-server communicates with flip-api.
 FL clients relay metrics and exceptions to the fl-server, which forwards them to the Central Hub.
@@ -466,19 +443,15 @@ Per-trust keys — a distinct key per trust, so a compromised trust can neither 
 are the follow-up in FLIP#845; they add keyring entries without changing the wire format.
 
 The fl-server must reach flip-api via `FLIP_API_INTERNAL_URL` — a Docker-network URL such as
-`http://flip-api:8000/api`. It must **not** go through the public `CENTRAL_HUB_API_URL` because the
-CloudFront distribution in front of flip-api whitelists only `Authorization`, `Content-Type`, and
-`Origin` and strips `X-Internal-Service-Key` at the edge, which would break this handshake. The
-public `CENTRAL_HUB_API_URL` is reserved for flip-ui and trust-side (trust-api) consumers that live
+`http://flip-api:8000/api`. It must **not** go through the public `CENTRAL_HUB_API_URL`: the FL
+server's callbacks stay on the hub's own network, and on a platform-managed estate the FL server has
+no route to the public edge at all. The public `CENTRAL_HUB_API_URL` is reserved for flip-ui and trust-side (trust-api) consumers that live
 outside the hub's Docker network.
 
 | Variable | Where used | Purpose |
 | --- | --- | --- |
 | `TRUST_API_KEY_HEADER` | flip-api, trust-api | Header name for trust auth |
 | `TRUST_API_KEY` | trust-side kit file | Per-trust plaintext key (hub stores its SHA-256 in the `trust` table's `api_key_hash`) |
-| `INTERNAL_SERVICE_KEY_HEADER` | flip-api, fl-server | Header name for internal service auth |
-| `INTERNAL_SERVICE_KEY` | fl-server | Internal service plaintext key (plain string) |
-| `INTERNAL_SERVICE_KEY_HASH` | flip-api | SHA-256 hash of internal service key (plain string) |
 | `FL_API_KEY` | flip-api, fl-api-net-N, Flower `register-supernode-keys-net-N` | Key every FL API route but `/health` requires (header `FL_API_KEY_HEADER`, default `X-FL-API-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | trust-api, imaging-api, data-access-api, fl-client | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | trust-side kit file | Per-trust plaintext key, minted by `register_trust`. The hub never sees it. |
@@ -493,9 +466,8 @@ mechanism: on ECS, Terraform sets it to the Cloud Map private-DNS name
 (`http://flip-api.flip.local:8000/api`, built in `locals.tf`); on the local compose harness it is the
 Docker-network URL (`http://flip-api:8000/api`).
 
-What it must not be: the public CloudFront URL. That's orthogonal to compute — CloudFront strips
-`X-Internal-Service-Key` at the edge. Internal ALBs preserve all request headers by default, so an
-internal-ALB value would also work; CloudFront doesn't.
+What it must not be: the public CloudFront URL. The callbacks never leave the hub's network; an
+internal-ALB value would also work.
 
 > **Note on troubleshooting**: AWS-deployment-specific failure modes (Terraform state drift, ECS
 > service stuck in `PENDING`, CloudFront cache invalidation, RDS connectivity) are documented in

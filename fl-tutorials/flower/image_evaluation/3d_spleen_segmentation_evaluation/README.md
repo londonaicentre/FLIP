@@ -13,8 +13,7 @@
 
 # Evaluating a spleen segmentation model
 
-Flower twin of the FLARE evaluation tutorial at
-`fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation`. It scores a pre-trained
+Flower twin of the [FLARE evaluation tutorial](../../../nvflare/image_evaluation/3d_spleen_segmentation_evaluation). It scores a pre-trained
 MONAI UNet (the model the [3D spleen segmentation](../../image_segmentation/3d_spleen_segmentation)
 tutorial trains) on each trust's cohort without training it: the `ServerApp` loads the checkpoint,
 every `ClientApp` evaluates it on its own `input_`/`label_` NIfTI pairs, and the strategy averages the
@@ -42,7 +41,7 @@ metrics.
 
 ### Folder structure
 
-```shell
+```text
 3d_spleen_segmentation_evaluation
 ├── app
 │   ├── __init__.py
@@ -55,6 +54,8 @@ metrics.
 │   ├── strategy.py     # EvaluationStrategy: native FedAvg aggregation + FLIP forwarding
 │   ├── task.py         # Defines evaluation functions
 │   └── transforms.py   # MONAI transforms for preprocessing
+├── .env.app            # Checkpoint URL
+├── Makefile            # download-checkpoints
 ├── pyproject.toml      # Project metadata like dependencies and configs
 └── README.md
 ```
@@ -63,17 +64,14 @@ metrics.
 
 Nothing to install by hand: the simulator path below runs in the `flip-utils` environment (the
 package set the FL images install) and `flwr run` builds a per-run environment from `pyproject.toml`
-on top of it. `flip-utils` is deliberately not declared there (FLIP#767: a local `flwr run` would
-install a PyPI release over the checkout).
+on top of it. `flip-utils` is deliberately not declared there: a local `flwr run` would otherwise
+install a PyPI release over your checkout (FLIP#767).
 
 ## Running this tutorial
 
-> **Two paths.** `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower`
-> runs it on the flwr simulator (first below), as FLARE's tutorials do — what the release check
-> runs. To run it on the Flower containers by hand, use `fl-services/flower` (second below). The
-> deployment wiring (the FL images, fl-api submit, SuperNode registration) is exercised end to end
-> by `make -C flip-api e2e_smoke_spleen_evaluation FL_BACKEND=flower` against the dev stack
-> (FLIP#1435). Use the make target rather than invoking `flwr run` directly.
+> **Two paths.** The flwr simulator (`make run-tutorial`, first below) is what the release check
+> runs, as for FLARE's tutorials. To run on the Flower containers by hand, use `fl-services/flower`
+> (second below). Either way, use the make targets rather than invoking `flwr run` directly.
 
 ### Run on the flwr simulator (`make run-tutorial`)
 
@@ -83,26 +81,30 @@ make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_
 ```
 
 Runs every ClientApp in-process — no SuperLink container, no SuperNodes, no fl-api, no Docker —
-with the same `app/` code the Flower containers run. The one thing the simulator has to supply
-itself is what fl-api injects at submit time on the platform: the ServerApp opens
-`<flip-job-dir>/<checkpoint>`, so `sim-tutorial.sh` passes a `--run-config` pointing
-`flip-job-dir` at `fl-tutorials/data/model_checkpoints` (where `download-spleen-checkpoint`,
-part of `download-spleen-data`, puts `model.pt`) and `checkpoint` at that file. Nothing in
-`app/` knows which runtime it is in. The deployment wiring (the FL images, fl-api submit, SuperNode
+with the same `app/` code the Flower containers run.
+
+The ServerApp opens `<flip-job-dir>/<checkpoint>`. On the platform, fl-api injects both values at
+submit time. The simulator has no fl-api, so `sim-tutorial.sh` passes a `--run-config` that points
+`flip-job-dir` at `fl-tutorials/data/model_checkpoints` and `checkpoint` at `model.pt` there.
+`download-spleen-checkpoint`, part of `download-spleen-data`, puts the file in that directory.
+Nothing in `app/` knows which runtime it is in. The deployment wiring (the FL images, fl-api submit, SuperNode
 registration) is exercised by `make -C flip-api e2e_smoke_spleen_evaluation FL_BACKEND=flower`
 against the dev stack.
 
-A raw `flwr run` has five sharp edges in this project — a long-lived SuperLink caches its
-environment, the ClientApp's working directory is a snapshot under `~/.flwr/apps/`, and
-`WORKING_DIR` defaults to a container path — which is why the path is a make target rather than
-a command: `sim-tutorial.sh` handles them, and stops only its *own* stale simulator processes
-(a blanket `pkill -f flower-superlink` would also kill the FLIP dev stack's fl-server, whose
-processes are visible in the host PID namespace). Two more edges make it five: `flwr run . local`
-adopts whatever already listens on the local Control API port, so the script refuses to hand the
-run to a SuperLink another checkout left behind; and `flwr run --stream` returns 0 whatever became
-of the run, so the script's exit status is the run's own terminal status as the SuperLink reports
-it. See the
-[3D spleen segmentation README](../../image_segmentation/3d_spleen_segmentation/README.md) for the details.
+A raw `flwr run` has five sharp edges in this project, which is why this path is a make target.
+`sim-tutorial.sh` handles all five:
+
+- a long-lived SuperLink caches its environment;
+- the ClientApp's working directory is a snapshot under `~/.flwr/apps/`;
+- `WORKING_DIR` defaults to a container path;
+- `flwr run . local` adopts whatever already listens on the local Control API port, so the script
+  refuses to hand the run to a SuperLink another checkout left behind;
+- `flwr run --stream` returns 0 whatever became of the run, so the script's exit status is the
+  run's own terminal status as the SuperLink reports it.
+
+The script stops only its *own* stale simulator processes. A blanket `pkill -f flower-superlink`
+would also kill the FLIP dev stack's fl-server, whose processes are visible in the host PID
+namespace. Details: [3D spleen segmentation README](../../image_segmentation/3d_spleen_segmentation/README.md).
 
 ### On the Flower containers, by hand
 
@@ -128,14 +130,14 @@ container and POSTs to its loopback API. To POST from the host or open the
 Swagger UI, publish the fl-api port by editing the compose file and re-running
 `make up`.
 
-The FLIP API will:
+The ServerApp then:
 
-1. Load the model checkpoint named by the `checkpoint` run-config value
-2. Run evaluation across all connected SuperNodes
-3. Aggregate metrics using the `EvaluationStrategy`
-4. Save results to `WORKING_DIR/{model_id}/evaluation_outputs/`
-5. Upload results to S3 (unless `LOCAL_DEV="true"`)
-6. Update job status via FLIP API
+1. Loads the model checkpoint named by the `checkpoint` run-config value
+2. Runs evaluation across all connected SuperNodes
+3. Aggregates metrics using the `EvaluationStrategy`
+4. Saves results to `WORKING_DIR/{model_id}/evaluation_outputs/`
+5. Uploads results to S3 (unless `LOCAL_DEV="true"`)
+6. Updates job status via the FLIP API
 
 `fl-services/flower/compose.dev.yml` wires the containers:
 
@@ -158,7 +160,7 @@ The FLIP API will:
 
 ## Data Location
 
-By default, the app reads from:
+On the simulator path, `sim-tutorial.sh` points `DEV_DATAFRAME` / `DEV_IMAGES_DIR` at:
 
 - `data/spleen/dataframe.csv`
 - `data/spleen/images`
@@ -177,15 +179,8 @@ return — a weighted average by `num-examples` — so the subclass adds only:
 2. **Per-client breakdown**: captures `{client_name: {metric_name: value}}` for the
    `evaluation_results.json` artifact uploaded to S3.
 
-The metrics themselves are simply whatever `client_app.py` puts in its `MetricRecord` —
-there is no metric declaration or validation.
+The metrics themselves are whatever the client returns; see [Metrics](#metrics).
 
-## Notes
-
-- **Evaluation only** (no training or parameter updates)
-- **Metrics**: `MetricRecord` only accepts numeric values; the server aggregates whatever metric keys the client returns
-- **FLIP integration**: Automatically uploads results and updates job status
-- **Environment-agnostic**: Uses `WORKING_DIR` instead of hardcoded paths
 
 ## Configuration
 
@@ -204,11 +199,12 @@ _METRICS = {
 ```
 
 Each metric name becomes a key in the aggregated results and a `LABEL` on the FLIP
-Central Hub (e.g. `MEAN_DICE`, `MEAN_IOU`). No server or `pyproject.toml` change is needed.
+Central Hub (e.g. `MEAN_DICE`, `MEAN_IOU`). Values must be numeric: `MetricRecord` accepts
+nothing else. No server or `pyproject.toml` change is needed.
 
-### Environment Variables
+### Run-config values and environment variables
 
-- `flip-job-dir`: run-config value (in `config.toml`, not an env var) injected by the FL API at submission time; points at the app directory (`/app/src/<model_id>/app` on the shared volume) where the evaluation ServerApp reads the pre-trained model `.pt` file
+- `flip-job-dir` (run-config value in `config.toml`, not an env var): injected by the FL API at submission time; points at the app directory (`/app/src/<model_id>/app` on the shared volume) where the evaluation ServerApp reads the pre-trained model `.pt` file
 - `WORKING_DIR`: Output directory for evaluation results (default: `/app/runs`)
 - `LOCAL_DEV`: Set to `"true"` to skip S3 uploads during local development
 - `DEV_DATAFRAME`: Path to CSV file with test data metadata

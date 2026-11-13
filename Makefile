@@ -12,7 +12,7 @@
 
 .PHONY: build build-fl clean clean-object-store up down up-no-trust up-trusts central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks \
-		check-aws-access generate-internal-service-key generate-fl-api-key generate-xnat-credentials _check-compose-project-owner \
+		check-aws-access generate-fl-api-key generate-xnat-credentials _check-compose-project-owner \
 		register-trust register-trusts rotate-trust-keys new-trust _wait-for-hub _refuse-deployed-hub integration_test \
 		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint mirror-images aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
@@ -101,13 +101,11 @@ export OBJECT_STORE_DIR
 
 export COMPOSE_BAKE=true
 DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
-# The pair (and FL_API_KEY) is exported at parse time, before `up`'s generators can rewrite it,
+# FL_API_KEY is exported at parse time, before `up`'s generator can rewrite it,
 # so `up`/`up-no-trust` re-read it from KEY_ENV_FILE when compose runs (FLIP#1501).
 KEY_ENV_FILE = $(abspath $(or $(ENV_FILE),$(MAIN_ENV_FILE)))
 read_key_env = $$(sed -n 's/^$1=//p' '$(KEY_ENV_FILE)' | head -n 1 | tr -d '\r')
-FRESH_INTERNAL_SERVICE_KEY = INTERNAL_SERVICE_KEY="$(call read_key_env,INTERNAL_SERVICE_KEY)" \
-	INTERNAL_SERVICE_KEY_HASH="$(call read_key_env,INTERNAL_SERVICE_KEY_HASH)" \
-	FL_API_KEY="$(call read_key_env,FL_API_KEY)"
+FRESH_FL_API_KEY = FL_API_KEY="$(call read_key_env,FL_API_KEY)"
 DEBUG_OVERRIDE_COMPOSE_COMMAND=$(DOCKER_COMMAND) -f deploy/compose.development.debug.override.yml
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the `up` targets.
@@ -164,11 +162,11 @@ build-fl:
 # Run all services
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
 # when DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op otherwise.
-up: _check-compose-project-owner generate-internal-service-key generate-fl-api-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
+up: _check-compose-project-owner generate-fl-api-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	$(FRESH_INTERNAL_SERVICE_KEY) ${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
+	$(FRESH_FL_API_KEY) ${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
 	@echo "🔑 Registering trusts and writing kit files..."
 	$(MAKE) register-trusts
 	@echo "🚢 Starting trust services (each trust brings up its own XNAT)..."
@@ -217,7 +215,7 @@ _check-fl-provisioned:
 # working_dir label); both sides are compared with symlinks resolved, an unlabelled container
 # counts as foreign, and `ps -a` because a stopped stack still owns the name. The first
 # prerequisite of every target here that drives the project. ALLOW_FOREIGN_PROJECT=1 skips
-# it: deliberately not FORCE, which `up` hands on to generate-internal-service-key, where it
+# it: deliberately not FORCE, which `up` hands on to generate-fl-api-key, where it
 # rotates the key.
 _check-compose-project-owner:
 	@mine=$$(cd deploy && pwd -P); \
@@ -237,10 +235,10 @@ _check-compose-project-owner:
 	fi
 
 # Minimal $(MAKE) up
-up-no-trust: _check-compose-project-owner generate-internal-service-key generate-fl-api-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
+up-no-trust: _check-compose-project-owner generate-fl-api-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	$(FRESH_INTERNAL_SERVICE_KEY) ${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
+	$(FRESH_FL_API_KEY) ${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
 
 up-trusts: create-networks
 	@echo "🔑 Registering trusts and writing kit files (hub must already be up)..."
@@ -650,12 +648,9 @@ reset-keycloak: _check-compose-project-owner
 seed-demo-projects:
 	$(MAKE) -C flip-api seed_demo_projects $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
-# The key goes into the env file this stack runs from (MAIN_ENV_FILE, or an explicit ENV_FILE),
-# made absolute here because the sub-make runs in flip-api/ (FLIP#1603).
-generate-internal-service-key:
-	$(MAKE) -C flip-api generate-internal-service-key ENV_FILE=$(KEY_ENV_FILE) $(if $(FORCE),FORCE=$(FORCE))
-
-# The key flip-api presents to the FL APIs (every FL API route but /health requires it); same env file.
+# The key flip-api presents to the FL APIs (every FL API route but /health requires it). It goes into
+# the env file this stack runs from (MAIN_ENV_FILE, or an explicit ENV_FILE), made absolute here
+# because the sub-make runs in flip-api/ (FLIP#1603).
 generate-fl-api-key:
 	$(MAKE) -C flip-api generate-fl-api-key ENV_FILE=$(KEY_ENV_FILE) $(if $(FORCE),FORCE=$(FORCE))
 

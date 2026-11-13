@@ -217,6 +217,9 @@ module "cognito" {
   researcher_email        = var.flip_cognito_researcher_email
   seed_user_password      = var.ADMIN_USER_PASSWORD
   templates_dir           = "${path.module}/templates/cognito"
+  # Off by default: Cognito keeps its built-in sender (FLIP#592).
+  ses_identity_arn = var.cognito_email_via_ses ? module.ses.sender_domain_identity_arn : ""
+  ses_from_email   = var.SES_SENDER_EMAIL
   # callback_urls is NOT cosmetic — it is this environment's live browser CORS
   # allowlist. Do not trim it without reading the following.
   #

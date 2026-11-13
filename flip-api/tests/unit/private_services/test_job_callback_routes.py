@@ -19,9 +19,11 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from flip_api.auth.access_manager import authenticate_internal_service
+from flip_api.auth.job_callback import JOB_CREDENTIAL_HEADER
 from flip_api.db.database import get_session
 from flip_api.main import app
+
+AUTH = {JOB_CREDENTIAL_HEADER: "a-credential"}  # pragma: allowlist secret
 
 CALLBACKS = [
     ("PUT", "/api/model/{model_id}/status/ERROR", None),
@@ -39,11 +41,26 @@ CALLBACKS = [
 
 
 @pytest.fixture
-def client() -> Generator[TestClient, None, None]:
-    app.dependency_overrides[authenticate_internal_service] = lambda: None
-    app.dependency_overrides[get_session] = lambda: MagicMock()
+def session() -> MagicMock:
+    return MagicMock()
+
+
+@pytest.fixture
+def client(session: MagicMock) -> Generator[TestClient, None, None]:
+    app.dependency_overrides[get_session] = lambda: session
     yield TestClient(app)
     app.dependency_overrides = {}
+
+
+@pytest.mark.parametrize(("method", "path", "body"), CALLBACKS)
+def test_callback_without_a_credential_is_refused_before_the_database_is_read(
+    client: TestClient, session: MagicMock, method: str, path: str, body: dict | None
+) -> None:
+    response = client.request(method, path.format(model_id=uuid4()), json=body)
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Not authorised for this model."}
+    assert session.mock_calls == []
 
 
 @pytest.mark.parametrize(("method", "path", "body"), CALLBACKS)
@@ -57,7 +74,7 @@ def test_callback_without_a_reporting_job_changes_nothing(
         patch("flip_api.private_services.save_training_metrics.save_training_metrics") as save_metrics,
         patch("flip_api.private_services.results_upload.S3Client") as s3_client,
     ):
-        response = client.request(method, path.format(model_id=uuid4()), json=body)
+        response = client.request(method, path.format(model_id=uuid4()), json=body, headers=AUTH)
 
     assert response.status_code == 403
     assert response.json() == {"detail": "Not authorised for this model."}

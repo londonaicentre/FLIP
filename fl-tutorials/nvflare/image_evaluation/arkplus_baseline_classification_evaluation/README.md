@@ -17,18 +17,11 @@ FLIP tutorial for federated evaluation of a single zero-shot Ark+ foundation mod
 classification, using the **FLARE Client API**. The hold-out data at each site is scored against the
 model and per-lesion AUROC is reported.
 
-This tutorial replaces the previous executor-based implementation (`class FLIP_EVALUATOR(Executor)` +
-the bespoke `ModelEval`/`EvaluationPTModelLocator` server flow, weights arriving unwrapped from a
-`COLLECTION` DXO), which is now deprecated. Here, `evaluator.py` is a plain `nvflare.client` script
-(`flare.init/receive/send`, weights arriving as `input_model.params`), and the server reuses the shared
-`CrossSiteModelEval` validate path with a single-model `EvaluationModelLocator`; the job is a Python
-`FlipEvalRecipe` driven by `job.py` rather than a job-type template + harness.
-
-The recipe loads the uploaded checkpoint on the server and broadcasts it to every client as a single
-`FLModel`; the client's `is_evaluate()` branch scores it on the local cohort and returns aggregate
-per-lesion AUROC. The numerical pipeline (model, transforms, head inference, label mapping, AUROC) is
-identical to the previous implementation's, so the reported metrics match — only the FL transport
-differs. The `evaluation_results.json` output contract is unchanged.
+`evaluator.py` is a plain `nvflare.client` script (`flare.init/receive/send`, weights arriving as
+`input_model.params`). The job is a Python `FlipEvalRecipe` driven by `job.py`. The server loads the uploaded
+checkpoint with a single-model `EvaluationModelLocator` (through the shared `CrossSiteModelEval` validate path)
+and broadcasts it to every client as a single `FLModel`. The client's `is_evaluate()` branch scores it on the
+local cohort and returns aggregate per-lesion AUROC, which ends up in `evaluation_results.json`.
 
 ## At a glance
 
@@ -48,7 +41,7 @@ Example radiographs, one per target lesion, are in the fine-tuning tutorial's
 ## Prerequisites
 
 - Python 3.12+
-- A GPU (the Ark+ Swin-Large model runs at 768×768), plus the `flare-fl-base` image for a SimEnv run
+- A GPU (the Ark+ Swin-Large model runs at 768×768) for a SimEnv run
 - Access to the Ark+ foundation-model checkpoint (see checkpoint setup below)
 
 ## Dataset setup
@@ -62,6 +55,7 @@ The quickest path uses the published reference dataset on Hugging Face. From the
 
 ```bash
 make -C fl-tutorials download-arkplus-eval-data   # fetch + lay out data/arkplus/site{1,2}_holdoff/
+# also fetch the raw Ark+ checkpoint first — see "Checkpoint setup" below (make download-raw-checkpoint)
 make -C fl-tutorials run-tutorial TUTORIAL=arkplus_baseline_classification_evaluation
 ```
 
@@ -78,10 +72,8 @@ For local development, per-site paths are set in `.env.app`:
 
 ### Per-site data in the simulator
 
-Unlike the previous executor-based implementation (whose testing harness Docker-mounted each site's data
-into the containers), the Client-API SimEnv runs **in-process with no Docker
-mounts**. Per-site data is
-therefore selected inside the evaluator: it calls `flare.get_site_name()` (`site-1`/`site-2`) and
+The Client-API SimEnv runs **in-process with no Docker mounts**, so per-site data is selected inside the
+evaluator: it calls `flare.get_site_name()` (`site-1`/`site-2`) and
 `app_files/data_utils.py` resolves the matching `SITE{N}_IMAGES_DIR` / `SITE{N}_DATAFRAME` from `.env.app`
 (falling back to the single `DEV_*` paths). So `site-1` and `site-2` score **different** hold-out sets.
 
@@ -135,7 +127,8 @@ Default local development settings are in `.env.app`:
 - `JOB_TYPE=evaluation`
 - `RAW_CHECKPOINT=models/Ark6_swinLarge768_ep50.pth.tar`
 - `DEV_IMAGES_DIR` / `DEV_DATAFRAME` and the per-site `SITE{1,2}_*` paths
-- `FLIP_PROJECT_ID` / `FLIP_QUERY` (injected into the recipe for SimEnv; ignored under `LOCAL_DEV`)
+- `FLIP_PROJECT_ID` / `FLIP_QUERY` (passed to the recipe, which writes them into the generated job config; the
+  evaluator ignores them under `LOCAL_DEV`, where data comes from the local paths)
 
 The model is defined in `app_files/arkplus_flat_models.py`, built by `app_files/models.py` (`get_model()`),
 and registered in `config.json["models"]`. The mapping from the model's NIH-14 head outputs to the target
@@ -146,7 +139,7 @@ package set the `flare-fl-base` FL image installs) so a local run matches the de
 
 ## Run the tutorial
 
-`job.py` drives the recipe in two modes.
+`job.py` drives the recipe in two modes. Run these targets from this tutorial's directory; the `make -C fl-tutorials …` targets above run from the repo root.
 
 ```bash
 make download-raw-checkpoint   # once: fetch the raw Ark6 checkpoint into models/
@@ -164,24 +157,25 @@ quick smoke test; `make run MAX_SAMPLES=0` (or empty) scores the full ~470 studi
 simulator-only: only the `LOCAL_DEV` dataframe path reads it, and a deployed job scores whatever cohort
 the trust's data-access-api returns. `WORKSPACE` overrides the simulator workspace root.
 
-Useful targets: `make prepare-checkpoint` (convert the raw checkpoint only), `make clean` (removes `./fl_job`).
+Other targets: `make clean` (removes `./fl_job`); `make prepare-checkpoint` is covered under [Checkpoint setup](#checkpoint-setup).
 
 ## Key files
 
 - `app_files/evaluator.py`: the Client-API evaluation loop (receive model → score → send per-lesion AUROC).
 - `app_files/arkplus_flat_models.py`: the `ArkSwinTransformer` model definition.
 - `app_files/models.py`: model factory (`get_model()`).
-- `app_files/metrics_utils.py`: AUROC and head→lesion label mapping.
+- `app_files/metrics_utils.py`: AUROC and applying the head→lesion label mapping (the mappings themselves are
+  in `data_utils.py`).
 - `app_files/data_utils.py`: data loading, DICOM parsing, label mappings, transforms, per-site resolution.
 - `app_files/config.json`: model/checkpoint mapping and evaluation settings.
 - `job.py`: builds `FlipEvalRecipe` and runs export / SimEnv.
 
 ## Output metrics
 
-The evaluator returns **aggregate** (cohort-level) per-lesion AUROC only, collected by the server into
-`evaluation_results.json` keyed by site, then the server's validate task (`SRV_<model>`). The FL server also
-sends them to the hub, where they show on the model page per trust as `AUROC_<LESION>`; a NaN AUROC (one class
-only) is left out:
+The evaluator returns **aggregate** (cohort-level) per-lesion AUROC only. The server collects it into
+`evaluation_results.json`, keyed first by site and then by the server's validate task (`SRV_<model>`).
+The FL server also sends the scores to the hub, where they appear on the model page per trust as
+`AUROC_<LESION>`; a NaN AUROC (only one class present) is left out:
 
 ```json
 {
@@ -200,10 +194,9 @@ only) is left out:
 }
 ```
 
-(Values above are **real measured scores**, not a fabricated example: the pretrained checkpoint over one
-hold-out cohort. Treat them as one cohort's result, not a target to reproduce. With the default
-`MAX_SAMPLES=128` cap a simulator run is a smoke test of the round-trip, not a measurement; `MAX_SAMPLES=0`
-scores the full ~470 studies per site.)
+The values above are real scores from the pretrained checkpoint on one hold-out cohort: one cohort's result,
+not a target to reproduce. A default simulator run (`MAX_SAMPLES=128`) is a smoke test, not a measurement;
+see [Run the tutorial](#run-the-tutorial) for the full-cohort setting.
 
 ### Fields
 
@@ -212,8 +205,7 @@ scores the full ~470 studies per site.)
 | `auroc_<Lesion>` | `float` | Area under the ROC curve for this lesion. Ranges `[0, 1]`; `NaN` if only one class is present in the ground truth. |
 
 Per-sample (row-level) predictions are deliberately **not** produced or exported: a per-patient list would
-leak the exact evaluation cohort size and be linkable to individual patients. (The previous executor-based
-implementation wrote per-sample CSVs to the run dir; this tutorial omits them.)
+leak the exact evaluation cohort size and be linkable to individual patients.
 
 ## Model code & `timm` compatibility
 
@@ -235,13 +227,12 @@ internally — it ended with `AdaptiveAvgPool1d(1)` and returned a per-image `(B
 feature map `(B, H, W, C)` (a 24×24 grid for a 768px Swin).
 
 This tutorial runs on modern timm, and the upstream `forward` bypasses `forward_head` (it uses its own
-`omni_heads`). Without an explicit pool, the heads therefore emitted a **per-location** grid of outputs
-instead of one prediction per image — which produced mis-shaped predictions and made AUROC fail with
-`ValueError: multi_class must be in ('ovo', 'ovr')`.
+`omni_heads`). Without an explicit pool the heads emit a **per-location** grid of outputs instead of one
+prediction per image, and AUROC fails with `ValueError: multi_class must be in ('ovo', 'ovr')`.
 
-**Fix.** `forward` (and `generate_embeddings`) now apply an explicit global-average-pool over the spatial
-dims right after `forward_features`, restoring the timm 0.5.4 behaviour and matching the Swin head's
-default `global_pool='avg'`:
+So `forward` (and `generate_embeddings`) apply an explicit global-average-pool over the spatial dims right
+after `forward_features`, restoring the timm 0.5.4 behaviour and matching the Swin head's default
+`global_pool='avg'`:
 
 ```python
 x = self.forward_features(x)

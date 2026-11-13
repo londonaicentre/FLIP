@@ -29,15 +29,17 @@ from flip_api.project_services.get_imaging_project_status import router as get_i
 
 
 @pytest.fixture
-def app_fixture() -> FastAPI:
-    app = FastAPI()
-    app.include_router(get_imaging_project_status_router, prefix="/api")
-    return app
+def db_session() -> MagicMock:
+    return MagicMock()
 
 
 @pytest.fixture
-def client(app_fixture: FastAPI) -> TestClient:
-    return TestClient(app_fixture)
+def client(db_session: MagicMock) -> TestClient:
+    app = FastAPI()
+    app.include_router(get_imaging_project_status_router, prefix="/api")
+    app.dependency_overrides[get_session] = lambda: db_session
+    app.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
+    return TestClient(app)
 
 
 # Mock data constants
@@ -71,11 +73,7 @@ mock_imaging_statuses_list_data = [
 ]
 
 
-def test_get_imaging_project_status_success(client: TestClient, app_fixture: FastAPI):
-    mock_db_session = MagicMock()
-    app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
-    app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
-
+def test_get_imaging_project_status_success(client: TestClient, db_session: MagicMock):
     with (
         patch(
             "flip_api.project_services.get_imaging_project_status.can_access_project", return_value=True
@@ -102,20 +100,14 @@ def test_get_imaging_project_status_success(client: TestClient, app_fixture: Fas
         assert response.status_code == status.HTTP_200_OK
         assert response.json() == mock_imaging_statuses_list_data
 
-        mock_can_access.assert_called_once_with(MOCK_USER_ID, MOCK_PROJECT_ID, mock_db_session)
-        mock_get_project.assert_called_once_with(MOCK_PROJECT_ID, mock_db_session)
-        mock_get_imaging_projects.assert_called_once_with(MOCK_PROJECT_ID, mock_db_session)
+        mock_can_access.assert_called_once_with(MOCK_USER_ID, MOCK_PROJECT_ID, db_session)
+        mock_get_project.assert_called_once_with(MOCK_PROJECT_ID, db_session)
+        mock_get_imaging_projects.assert_called_once_with(MOCK_PROJECT_ID, db_session)
         mock_base64_encode.assert_called_once_with(mock_project_query_obj.query)
-        mock_get_statuses.assert_called_once_with(mock_imaging_projects_list, MOCK_ENCODED_QUERY, mock_db_session)
-
-    app_fixture.dependency_overrides.clear()
+        mock_get_statuses.assert_called_once_with(mock_imaging_projects_list, MOCK_ENCODED_QUERY, db_session)
 
 
-def test_get_imaging_project_status_forbidden(client: TestClient, app_fixture: FastAPI):
-    mock_db_session = MagicMock()
-    app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
-    app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
-
+def test_get_imaging_project_status_forbidden(client: TestClient, db_session: MagicMock):
     with (
         patch(
             "flip_api.project_services.get_imaging_project_status.can_access_project", return_value=False
@@ -126,29 +118,18 @@ def test_get_imaging_project_status_forbidden(client: TestClient, app_fixture: F
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
         assert response.json()["detail"] == "You do not have permission to access this project."
-        mock_can_access.assert_called_once_with(MOCK_USER_ID, MOCK_PROJECT_ID, mock_db_session)
+        mock_can_access.assert_called_once_with(MOCK_USER_ID, MOCK_PROJECT_ID, db_session)
         mock_get_project.assert_not_called()
-
-    app_fixture.dependency_overrides.clear()
 
 
 def test_get_imaging_project_status_project_not_found(
-    client: TestClient,
-    app_fixture: FastAPI,
-    project_with_approved_trusts,
-    project_id,
+    client: TestClient, project_with_approved_trusts, project_id, db_session: MagicMock
 ):
-    mock_db_session = MagicMock()
-    app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
-    app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
-
     with (
         patch(
             "flip_api.project_services.get_imaging_project_status.can_access_project", return_value=True
         ) as mock_can_access,
-        patch(
-            "flip_api.project_services.get_imaging_project_status.get_project", return_value=None
-        ) as mock_get_project,
+        patch("flip_api.project_services.get_imaging_project_status.get_project") as mock_get_project,
     ):
         mock_get_project.return_value = IProjectResponse(
             id=uuid4(),
@@ -168,17 +149,11 @@ def test_get_imaging_project_status_project_not_found(
         response = client.get(f"/api/projects/{str(project_id)}/image/status")
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert response.json()["detail"] == "The imaging project was not found."
-        mock_can_access.assert_called_once_with(MOCK_USER_ID, project_id, mock_db_session)
-        mock_get_project.assert_called_once_with(project_id, mock_db_session)
-
-    app_fixture.dependency_overrides.clear()
+        mock_can_access.assert_called_once_with(MOCK_USER_ID, project_id, db_session)
+        mock_get_project.assert_called_once_with(project_id, db_session)
 
 
-def test_get_imaging_project_status_project_query_not_found(client: TestClient, app_fixture: FastAPI):
-    mock_db_session = MagicMock()
-    app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
-    app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
-
+def test_get_imaging_project_status_project_query_not_found(client: TestClient, db_session: MagicMock):
     project_response_no_query = MagicMock()
     project_response_no_query.query = None  # Simulate project exists but has no query object
 
@@ -195,17 +170,11 @@ def test_get_imaging_project_status_project_query_not_found(client: TestClient, 
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert response.json()["detail"] == "The project query was not found."
-        mock_can_access.assert_called_once_with(MOCK_USER_ID, MOCK_PROJECT_ID, mock_db_session)
-        mock_get_project.assert_called_once_with(MOCK_PROJECT_ID, mock_db_session)
-
-    app_fixture.dependency_overrides.clear()
+        mock_can_access.assert_called_once_with(MOCK_USER_ID, MOCK_PROJECT_ID, db_session)
+        mock_get_project.assert_called_once_with(MOCK_PROJECT_ID, db_session)
 
 
-def test_get_imaging_project_status_imaging_projects_not_found(client: TestClient, app_fixture: FastAPI):
-    mock_db_session = MagicMock()
-    app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
-    app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
-
+def test_get_imaging_project_status_imaging_projects_not_found(client: TestClient, db_session: MagicMock):
     with (
         patch("flip_api.project_services.get_imaging_project_status.can_access_project", return_value=True),
         patch(
@@ -220,16 +189,10 @@ def test_get_imaging_project_status_imaging_projects_not_found(client: TestClien
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert response.json()["detail"] == "The imaging project was not found."
-        mock_get_imaging_projects.assert_called_once_with(MOCK_PROJECT_ID, mock_db_session)
-
-    app_fixture.dependency_overrides.clear()
+        mock_get_imaging_projects.assert_called_once_with(MOCK_PROJECT_ID, db_session)
 
 
-def test_get_imaging_project_status_statuses_not_found(client: TestClient, app_fixture: FastAPI):
-    mock_db_session = MagicMock()
-    app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
-    app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
-
+def test_get_imaging_project_status_statuses_not_found(client: TestClient, db_session: MagicMock):
     with (
         patch("flip_api.project_services.get_imaging_project_status.can_access_project", return_value=True),
         patch(
@@ -252,17 +215,11 @@ def test_get_imaging_project_status_statuses_not_found(client: TestClient, app_f
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert response.json()["detail"] == "The imaging project status was not found."
-        mock_get_statuses.assert_called_once_with(mock_imaging_projects_list, MOCK_ENCODED_QUERY, mock_db_session)
-
-    app_fixture.dependency_overrides.clear()
+        mock_get_statuses.assert_called_once_with(mock_imaging_projects_list, MOCK_ENCODED_QUERY, db_session)
 
 
-def test_get_imaging_project_status_returns_empty_when_tasks_pending(client: TestClient, app_fixture: FastAPI):
+def test_get_imaging_project_status_returns_empty_when_tasks_pending(client: TestClient, db_session: MagicMock):
     """Should return 200 with empty list when imaging projects don't exist yet but tasks are pending."""
-    mock_db_session = MagicMock()
-    app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
-    app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
-
     with (
         patch("flip_api.project_services.get_imaging_project_status.can_access_project", return_value=True),
         patch(
@@ -278,26 +235,18 @@ def test_get_imaging_project_status_returns_empty_when_tasks_pending(client: Tes
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json() == []
-        mock_has_pending.assert_called_once_with(MOCK_PROJECT_ID, mock_db_session)
-
-    app_fixture.dependency_overrides.clear()
+        mock_has_pending.assert_called_once_with(MOCK_PROJECT_ID, db_session)
 
 
-def test_get_imaging_project_status_invalid_project_id_format(client: TestClient, app_fixture: FastAPI):
-    app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
+def test_get_imaging_project_status_invalid_project_id_format(client: TestClient):
     project_id = "not-a-valid-uuid"
     response = client.get(f"/api/projects/{project_id}/image/status")
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
-    app_fixture.dependency_overrides.clear()
 
-
-def test_get_imaging_project_status_returns_empty_when_project_has_no_imaging(client: TestClient, app_fixture: FastAPI):
+def test_get_imaging_project_status_returns_empty_when_project_has_no_imaging(client: TestClient):
     """A tabular-only project has no imaging to report: 200 [] without touching the imaging tables (FLIP#1071)."""
-    mock_db_session = MagicMock()
-    app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
-    app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
     no_imaging_project = MagicMock()
     no_imaging_project.id = MOCK_PROJECT_ID
     no_imaging_project.has_imaging = False
@@ -313,5 +262,3 @@ def test_get_imaging_project_status_returns_empty_when_project_has_no_imaging(cl
         assert response.status_code == status.HTTP_200_OK
         assert response.json() == []
         mock_imaging_projects.assert_not_called()
-
-    app_fixture.dependency_overrides.clear()

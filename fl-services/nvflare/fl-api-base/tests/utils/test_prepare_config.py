@@ -78,69 +78,45 @@ def mock_write_config():
 
 
 class TestConfigureConfig:
-    def test_valid_config(self, mock_isfile, mock_read_config, mock_write_config):
-        # Setup
-        mock_read_config.return_value = {
-            "LOCAL_ROUNDS": 5,
-            "GLOBAL_ROUNDS": 3,
-            "OTHER_PARAM": "value",
-        }
+    @pytest.mark.parametrize(
+        "config",
+        [
+            {"LOCAL_ROUNDS": 5, "GLOBAL_ROUNDS": 3, "OTHER_PARAM": "value"},
+            {
+                "LOCAL_ROUNDS": 5,
+                "LOCAL_ROUNDS_GAN": 10,
+                "GLOBAL_ROUNDS": 3,
+                "GLOBAL_ROUNDS_GAN": 2,
+                "OTHER_PARAM": "value",
+            },
+        ],
+        ids=["single-stage", "multi-stage"],
+    )
+    def test_valid_config_is_not_rewritten(self, mock_isfile, mock_read_config, mock_write_config, config):
+        mock_read_config.return_value = config
 
-        # Execute
         configure_config(MOCK_JOB_APP_DIR)
 
-        # No exception raised means validation passed
-        # Should mock_write_config be called? No, because the config is already valid, so it should not be modified.
+        # Already valid, so nothing is written back.
         mock_write_config.assert_not_called()
 
-    def test_valid_multi_stage_config(self, mock_isfile, mock_read_config, mock_write_config):
-        # Setup
-        mock_read_config.return_value = {
-            "LOCAL_ROUNDS": 5,
-            "LOCAL_ROUNDS_GAN": 10,
-            "GLOBAL_ROUNDS": 3,
-            "GLOBAL_ROUNDS_GAN": 2,
-            "OTHER_PARAM": "value",
-        }
+    @pytest.mark.parametrize(
+        ("config", "key"),
+        [
+            ({"SOME_OTHER_KEY": "value"}, LOCAL_ROUNDS),
+            ({"LOCAL_ROUNDS": 5, "SOME_OTHER_KEY": "value"}, GLOBAL_ROUNDS),
+        ],
+        ids=["missing-local-rounds", "missing-global-rounds"],
+    )
+    def test_missing_rounds_default_to_one(self, mock_isfile, mock_read_config, mock_write_config, config, key):
+        mock_read_config.return_value = config
 
-        # Execute
         configure_config(MOCK_JOB_APP_DIR)
 
-        # No exception raised means validation passed
-        # Should mock_write_config be called? No, because the config is already valid, so it should not be modified.
-        mock_write_config.assert_not_called()
-
-    def test_missing_local_rounds(self, mock_isfile, mock_read_config, mock_write_config):
-        # Setup
-        mock_read_config.return_value = {"SOME_OTHER_KEY": "value"}
-
-        # Execute
-        configure_config(MOCK_JOB_APP_DIR)
-
-        # Check
+        # The missing key is added, so the config is written back once.
         mock_write_config.assert_called_once()
         args, _ = mock_write_config.call_args
-        modified_config = args[0]
-        assert modified_config[LOCAL_ROUNDS] == 1
-
-        # Should mock_write_config be called? Yes, because the config is missing LOCAL_ROUNDS, so it should be added.
-        mock_write_config.assert_called_once()
-
-    def test_missing_global_rounds(self, mock_isfile, mock_read_config, mock_write_config):
-        # Setup
-        mock_read_config.return_value = {"LOCAL_ROUNDS": 5, "SOME_OTHER_KEY": "value"}
-
-        # Execute
-        configure_config(MOCK_JOB_APP_DIR)
-
-        # Check
-        mock_write_config.assert_called_once()
-        args, _ = mock_write_config.call_args
-        modified_config = args[0]
-        assert modified_config[GLOBAL_ROUNDS] == 1
-
-        # Should mock_write_config be called? Yes, because the config is missing GLOBAL_ROUNDS, so it should be added.
-        mock_write_config.assert_called_once()
+        assert args[0][key] == 1
 
     def test_missing_matching_global_rounds(self, mock_isfile, mock_read_config):
         # Setup
@@ -426,6 +402,22 @@ class TestConfigureClient:
             )
 
 
+SERVER_KWARGS = {
+    "job_dir": MOCK_JOB_APP_DIR,
+    "app_name": MOCK_APP_NAME,
+    "global_rounds": 3,
+    "trusts": MOCK_APP_CLIENTS,
+    "ignore_result_error": True,
+    "aggregator": "agg",
+    "aggregation_weights": MOCK_AGGREGATION_WEIGHTS,
+}
+
+
+def _configure_server(**overrides):
+    """configure_server with SERVER_KWARGS, each test passing only what it varies."""
+    configure_server(**{**SERVER_KWARGS, **overrides})
+
+
 class TestConfigureServer:
     def test_configure_server_success(self, mock_isfile, mock_read_config, mock_write_config):
         # Setup
@@ -446,15 +438,7 @@ class TestConfigureServer:
         mock_read_config.return_value = mock_server_config
 
         # Execute
-        configure_server(
-            job_dir=MOCK_JOB_APP_DIR,
-            app_name=MOCK_APP_NAME,
-            global_rounds=3,
-            trusts=MOCK_APP_CLIENTS,
-            ignore_result_error=True,
-            aggregator="new_aggregator",
-            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
-        )
+        _configure_server(global_rounds=3, aggregator="new_aggregator")
 
         # Assert
         mock_read_config.assert_called_once()
@@ -484,15 +468,7 @@ class TestConfigureServer:
         config["workflows"][0]["args"]["num_rounds"] = 3  # literal, as FedJob serialises it
         mock_read_config.return_value = config
 
-        configure_server(
-            job_dir=MOCK_JOB_APP_DIR,
-            app_name=MOCK_APP_NAME,
-            global_rounds=20,
-            trusts=MOCK_APP_CLIENTS,
-            ignore_result_error=True,
-            aggregator="agg",
-            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
-        )
+        _configure_server(global_rounds=20)
 
         (modified_config, _), _ = mock_write_config.call_args
         assert modified_config["workflows"][0]["args"]["num_rounds"] == 20
@@ -506,15 +482,7 @@ class TestConfigureServer:
         config["workflows"][0]["args"]["num_rounds"] = "{global_rounds}"
         mock_read_config.return_value = config
 
-        configure_server(
-            job_dir=MOCK_JOB_APP_DIR,
-            app_name=MOCK_APP_NAME,
-            global_rounds=20,
-            trusts=MOCK_APP_CLIENTS,
-            ignore_result_error=True,
-            aggregator="agg",
-            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
-        )
+        _configure_server(global_rounds=20)
 
         (modified_config, _), _ = mock_write_config.call_args
         assert modified_config["workflows"][0]["args"]["num_rounds"] == "{global_rounds}"
@@ -529,15 +497,7 @@ class TestConfigureServer:
         config["workflows"][0]["args"]["min_clients"] = 1  # literal, as FedJob serialises it
         mock_read_config.return_value = config
 
-        configure_server(
-            job_dir=MOCK_JOB_APP_DIR,
-            app_name=MOCK_APP_NAME,
-            global_rounds=20,
-            trusts=MOCK_APP_CLIENTS,
-            ignore_result_error=True,
-            aggregator="agg",
-            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
-        )
+        _configure_server(global_rounds=20)
 
         (modified_config, _), _ = mock_write_config.call_args
         assert modified_config["workflows"][0]["args"]["min_clients"] == len(MOCK_APP_CLIENTS)
@@ -548,16 +508,7 @@ class TestConfigureServer:
         only the trainable params instead of the full ~759 MiB model)."""
         mock_read_config.return_value = self._minimal_server_config()
 
-        configure_server(
-            job_dir=MOCK_JOB_APP_DIR,
-            app_name=MOCK_APP_NAME,
-            global_rounds=3,
-            trusts=MOCK_APP_CLIENTS,
-            ignore_result_error=True,
-            aggregator="agg",
-            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
-            aggregate_only_regex="omni_heads",
-        )
+        _configure_server(aggregate_only_regex="omni_heads")
 
         modified_config = mock_write_config.call_args[0][0]
         train_block = next(b for b in modified_config["task_data_filters"] if "train" in b["tasks"])
@@ -574,16 +525,7 @@ class TestConfigureServer:
         config["task_data_filters"] = [{"tasks": ["train"], "filters": [{"id": "existing", "path": "some.Filter"}]}]
         mock_read_config.return_value = config
 
-        configure_server(
-            job_dir=MOCK_JOB_APP_DIR,
-            app_name=MOCK_APP_NAME,
-            global_rounds=3,
-            trusts=MOCK_APP_CLIENTS,
-            ignore_result_error=True,
-            aggregator="agg",
-            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
-            aggregate_only_regex="omni_heads",
-        )
+        _configure_server(aggregate_only_regex="omni_heads")
 
         modified_config = mock_write_config.call_args[0][0]
         train_block = next(b for b in modified_config["task_data_filters"] if "train" in b["tasks"])
@@ -599,16 +541,7 @@ class TestConfigureServer:
         separate chain from the ``train`` TrimBroadcastVars one."""
         mock_read_config.return_value = self._minimal_server_config()
 
-        configure_server(
-            job_dir=MOCK_JOB_APP_DIR,
-            app_name=MOCK_APP_NAME,
-            global_rounds=3,
-            trusts=MOCK_APP_CLIENTS,
-            ignore_result_error=True,
-            aggregator="agg",
-            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
-            aggregate_only_regex="omni_heads",
-        )
+        _configure_server(aggregate_only_regex="omni_heads")
 
         modified_config = mock_write_config.call_args[0][0]
         validate_block = next(b for b in modified_config["task_data_filters"] if b["tasks"] == ["validate"])
@@ -630,16 +563,7 @@ class TestConfigureServer:
         config["task_data_filters"] = [{"tasks": ["validate"], "filters": [{"id": "existing", "path": "some.Filter"}]}]
         mock_read_config.return_value = config
 
-        configure_server(
-            job_dir=MOCK_JOB_APP_DIR,
-            app_name=MOCK_APP_NAME,
-            global_rounds=3,
-            trusts=MOCK_APP_CLIENTS,
-            ignore_result_error=True,
-            aggregator="agg",
-            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
-            aggregate_only_regex="omni_heads",
-        )
+        _configure_server(aggregate_only_regex="omni_heads")
 
         modified_config = mock_write_config.call_args[0][0]
         validate_block = next(b for b in modified_config["task_data_filters"] if b["tasks"] == ["validate"])
@@ -658,16 +582,7 @@ class TestConfigureServer:
         mock_read_config.return_value = config
 
         with pytest.raises(ValueError, match=r"chain over \['validate', 'other_task'\]"):
-            configure_server(
-                job_dir=MOCK_JOB_APP_DIR,
-                app_name=MOCK_APP_NAME,
-                global_rounds=3,
-                trusts=MOCK_APP_CLIENTS,
-                ignore_result_error=True,
-                aggregator="agg",
-                aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
-                aggregate_only_regex="omni_heads",
-            )
+            _configure_server(aggregate_only_regex="omni_heads")
 
     def test_configure_server_no_regex_leaves_data_filters_untouched(
         self, mock_isfile, mock_read_config, mock_write_config
@@ -677,15 +592,7 @@ class TestConfigureServer:
         head-only-trim the validate broadcast (clients don't hold the arbitrary server checkpoints)."""
         mock_read_config.return_value = self._minimal_server_config()
 
-        configure_server(
-            job_dir=MOCK_JOB_APP_DIR,
-            app_name=MOCK_APP_NAME,
-            global_rounds=3,
-            trusts=MOCK_APP_CLIENTS,
-            ignore_result_error=True,
-            aggregator="agg",
-            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
-        )
+        _configure_server()
 
         modified_config = mock_write_config.call_args[0][0]
         injected_paths = {
@@ -703,16 +610,7 @@ class TestConfigureServer:
         at job-assembly from the app's config.json, the same way AGGREGATE_ONLY_REGEX wires filters."""
         mock_read_config.return_value = self._minimal_server_config()
 
-        configure_server(
-            job_dir=MOCK_JOB_APP_DIR,
-            app_name=MOCK_APP_NAME,
-            global_rounds=3,
-            trusts=MOCK_APP_CLIENTS,
-            ignore_result_error=True,
-            aggregator="agg",
-            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
-            best_model_metric="VAL_DICE",
-        )
+        _configure_server(best_model_metric="VAL_DICE")
 
         modified_config = mock_write_config.call_args[0][0]
         selector = next(c for c in modified_config["components"] if c.get("path") == self._SELECTOR_PATH)
@@ -725,17 +623,7 @@ class TestConfigureServer:
         """Loss-like metrics (lower is better) inject with negate_key_metric=True."""
         mock_read_config.return_value = self._minimal_server_config()
 
-        configure_server(
-            job_dir=MOCK_JOB_APP_DIR,
-            app_name=MOCK_APP_NAME,
-            global_rounds=3,
-            trusts=MOCK_APP_CLIENTS,
-            ignore_result_error=True,
-            aggregator="agg",
-            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
-            best_model_metric="VAL_LOSS",
-            best_model_metric_minimize=True,
-        )
+        _configure_server(best_model_metric="VAL_LOSS", best_model_metric_minimize=True)
 
         modified_config = mock_write_config.call_args[0][0]
         selector = next(c for c in modified_config["components"] if c.get("path") == self._SELECTOR_PATH)
@@ -748,15 +636,7 @@ class TestConfigureServer:
         (unchanged behaviour for every job that doesn't opt in)."""
         mock_read_config.return_value = self._minimal_server_config()
 
-        configure_server(
-            job_dir=MOCK_JOB_APP_DIR,
-            app_name=MOCK_APP_NAME,
-            global_rounds=3,
-            trusts=MOCK_APP_CLIENTS,
-            ignore_result_error=True,
-            aggregator="agg",
-            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
-        )
+        _configure_server()
 
         modified_config = mock_write_config.call_args[0][0]
         assert not any(c.get("path") == self._SELECTOR_PATH for c in modified_config["components"])
@@ -771,16 +651,7 @@ class TestConfigureServer:
         )
         mock_read_config.return_value = config
 
-        configure_server(
-            job_dir=MOCK_JOB_APP_DIR,
-            app_name=MOCK_APP_NAME,
-            global_rounds=3,
-            trusts=MOCK_APP_CLIENTS,
-            ignore_result_error=True,
-            aggregator="agg",
-            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
-            best_model_metric="VAL_DICE",
-        )
+        _configure_server(best_model_metric="VAL_DICE")
 
         modified_config = mock_write_config.call_args[0][0]
         selectors = [c for c in modified_config["components"] if c.get("path") == self._SELECTOR_PATH]
@@ -795,15 +666,7 @@ class TestConfigureServer:
             ResearcherRefusal,
             match="No config_fed_server.json found in app 'test_app'",
         ):
-            configure_server(
-                job_dir=MOCK_JOB_APP_DIR,
-                app_name=MOCK_APP_NAME,
-                global_rounds=3,
-                trusts=MOCK_APP_CLIENTS,
-                ignore_result_error=True,
-                aggregator="new_aggregator",
-                aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
-            )
+            _configure_server(aggregator="new_aggregator")
 
     def test_configure_server_evaluation_recipe_config(self, mock_isfile, mock_read_config, mock_write_config):
         """The recipe-generated ``evaluation`` server config has no aggregator component and
@@ -832,15 +695,7 @@ class TestConfigureServer:
         }
         mock_read_config.return_value = mock_server_config
 
-        configure_server(
-            job_dir=MOCK_JOB_APP_DIR,
-            app_name=MOCK_APP_NAME,
-            global_rounds=1,
-            trusts=MOCK_APP_CLIENTS,
-            ignore_result_error=False,
-            aggregator="new_aggregator",
-            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
-        )
+        _configure_server(global_rounds=1, ignore_result_error=False, aggregator="new_aggregator")
 
         args, _ = mock_write_config.call_args
         modified = args[0]

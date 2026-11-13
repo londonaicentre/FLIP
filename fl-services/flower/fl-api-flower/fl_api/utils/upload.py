@@ -56,8 +56,8 @@ def upsert_flwr_run_config(
     config from pyproject.toml and applies these keys on top of it. Any other content the
     researcher placed in config.toml is preserved.
 
-    ``flip-job-dir`` is not set here — ``submit_run`` (in app.py) passes it as an
-    inline ``--run-config`` override at submission time.
+    ``flip-job-dir`` is not set here: ``_submit_from_job_dir`` (app.py) adds it to a temp
+    copy of this file at submission.
 
     Args:
         config_path: Path to the app's config.toml file.

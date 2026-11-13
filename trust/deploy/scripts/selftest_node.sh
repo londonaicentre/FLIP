@@ -200,8 +200,12 @@ log_lines() {
 instance="$(orthanc_curl "http://127.0.0.1:8042/instances?since=0&limit=1" 2>/dev/null | tr -d '[]" \n')"
 if [ -z "${XNAT_CTR}" ]; then
     record "xnat c-store" false "no running xnat-web container"
-elif [ -z "${instance}" ] && [ -n "${NO_SAMPLE_DATA}" ]; then
-    skip "xnat c-store" "${NO_SAMPLE_DATA}, and Orthanc has no instance to send"
+elif [ -z "${instance}" ]; then
+    if [ -n "${NO_SAMPLE_DATA}" ]; then
+        skip "xnat c-store" "${NO_SAMPLE_DATA}, and Orthanc has no instance to send"
+    else
+        record "xnat c-store" false "Orthanc has no instance to send (did seeding run?)"
+    fi
 else
     before="$(log_lines "${RECEIVED_LOG}")"
     dicom_before="$(log_lines "${DICOM_LOG}")"
@@ -216,9 +220,7 @@ else
     done
     errors="$(docker exec "${XNAT_CTR}" sh -c "tail -n +$((dicom_before + 1)) ${DICOM_LOG} 2>/dev/null" 2>/dev/null |
         grep -cE 'AbstractMethodError|NoSuchMethodError|unable to read DICOM object null' || true)"
-    if [ -z "${instance}" ]; then
-        record "xnat c-store" false "Orthanc has no instance to send (did seeding run?)"
-    elif [[ "${store}" != *'"FailedInstancesCount" : 0'* && "${store}" != *'"FailedInstancesCount":0'* ]]; then
+    if [[ "${store}" != *'"FailedInstancesCount" : 0'* && "${store}" != *'"FailedInstancesCount":0'* ]]; then
         record "xnat c-store" false "Orthanc's store to XNAT did not succeed: ${store:0:160}"
     elif [ "${errors:-0}" -gt 0 ]; then
         record "xnat c-store" false "XNAT's importer logged ${errors} failure(s) in dicom.log"

@@ -50,7 +50,8 @@ and is built with ``flip-utils``' ``FlipFedAvgRecipe``, so ``config.json`` is th
 
 Training at a glance:
 
-* **50 global rounds × 5 local epochs**, batch size 4.
+* **50 global rounds × 5 local epochs**, batch size 4 (the platform settings in ``config.json``; the simulator
+  defaults to 3 rounds).
 * **Head-only exchange** (~6,885 parameters ≈ 27 KB per round). The backbone is sent once at round 0 and cached on
   each client.
 * **Percentile privacy filter** (10th percentile, gamma 0.01) on head updates.
@@ -93,8 +94,9 @@ This downloads the site-1 and site-2 training splits from
 `aicentreflip/tutorials-arkplus-cxr-classification <https://huggingface.co/datasets/aicentreflip/tutorials-arkplus-cxr-classification>`_
 into ``fl-tutorials/data/arkplus/``.
 
-To use your own data, set the per-site values in ``.env.app`` — ``SITE1_IMAGES_DIR``, ``SITE1_DATAFRAME``,
-``SITE2_IMAGES_DIR``, ``SITE2_DATAFRAME`` — to your directories.
+To run the simulator on your own data, set the per-site values in ``.env.app`` — ``SITE1_IMAGES_DIR``,
+``SITE1_DATAFRAME``, ``SITE2_IMAGES_DIR``, ``SITE2_DATAFRAME`` — to your directories. These settings apply only to
+local runs.
 
 On the platform, the app gets the cohort from ``flip.get_dataframe(project_id, query)`` and the images from
 ``flip.get_by_accession_number(...)``. The :ref:`query.sql <arkplus-query-sql>` file defines the cohort.
@@ -112,7 +114,7 @@ From the repository root:
 
 .. code-block:: shell
 
-   make -C fl-tutorials download-arkplus-finetuning-data   # one-time
+   # After the dataset download in Dataset setup:
    make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning   # quick smoke test: 3 rounds, 128 studies per site
 
    # Full 50-round replica on the whole dataset (hours on a GPU)
@@ -132,7 +134,8 @@ Simulator options:
 * ``MAX_SAMPLES`` caps the studies each simulated site reads, using a fixed, class-balanced subset so validation and
   per-lesion AUCs still work. It applies **only to the simulator**; a job on FLIP trains on the full cohort.
 * The number of local epochs per round comes from ``LOCAL_ROUNDS`` in ``config.json``, as on the platform.
-* ``make run`` prepares the checkpoint automatically, and skips this if ``pretrained_weights.pt`` already exists.
+* ``make run`` builds ``pretrained_weights.pt`` from the raw checkpoint given in ``RAW_CHECKPOINT``, and skips this
+  step if ``pretrained_weights.pt`` already exists.
 * On a multi-GPU host, choose a device with ``CUDA_VISIBLE_DEVICES=<n>``.
 
 .. _arkplus-submit-to-flip:
@@ -149,7 +152,7 @@ the Ark+ app as the payload.
 1. Create a project
 ===================
 
-#. Log in to the `FLIP UI <https://app.flip.aicentre.co.uk>`_.
+#. Log in to your FLIP UI (for the AI Centre deployment, `app.flip.aicentre.co.uk <https://app.flip.aicentre.co.uk>`_).
 #. On the Projects page, click **Create project**.
 #. Name the project and add any collaborators.
 
@@ -179,8 +182,8 @@ which trusts to include.
 
 #. Select the trusts whose data you need.
 #. Click **Stage Project**. This locks the project.
-#. Each staged trust's Trust Admin approves the project, or a FLIP administrator for a trust that has none. The
-   project stays locked after approval.
+#. The Trust Admin of each staged trust approves the project. For a trust with no Trust Admin, a FLIP administrator
+   approves instead. The project stays locked after approval.
 
 **Approval starts the image pull**: each approving trust copies the cohort's DICOM studies from its PACS into its local
 XNAT. You cannot upload files or start training before approval. The pull takes minutes to hours depending on cohort
@@ -192,8 +195,9 @@ size; follow it in the :ref:`imaging status <imaging-status>` on the project pag
 =========================
 
 On the project page, click **Create Model** in the Models card (or open the **Models** page, filter it to the project
-and create the model there). This app is a ``standard`` job (the Client-API template, which needs no
-``validator.py``); the platform's minimum file set for it is listed in ``fl-apps/nvflare/standard/required_files.json``.
+and create the model there). This app is a ``standard`` job (the Client-API template, which needs no ``validator.py``).
+The platform's minimum file set for it is listed in
+:gh:`required_files.json <fl-apps/nvflare/standard/required_files.json>`.
 
 Upload these files:
 
@@ -276,8 +280,8 @@ Adapting this guide for your model
    trainable parameter names (Ark+ uses ``omni_heads``). The backbone is then sent once and left out of every later
    round — the single biggest saving for large models.
 
-#. **Test locally first.** Run ``make -C fl-tutorials run-tutorial``, or FLARE's ``SimulatorRunner`` from your own
-   script, to catch configuration and shape errors before they cost a platform run.
+#. **Test locally first.** Run the simulator as in :ref:`arkplus-local-testing`, or FLARE's ``SimulatorRunner`` from
+   your own script, to catch configuration and shape errors before they cost a platform run.
 
 #. **Upload, train, iterate.** You can upload new versions of your files and re-train in the same project without
    re-running the query or re-pulling images.

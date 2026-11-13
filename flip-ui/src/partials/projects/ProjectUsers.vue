@@ -120,9 +120,8 @@ import { useAuthStore } from "@/store/auth";
 import { emailValidation } from "@/utils/forms/validation";
 
 export interface IProjectUsersProps {
-    // Only the narrow shape is needed here — this component reads id / email / isDisabled and
-    // nothing else. Existing members (IProjectUser) are assignable to it, and newly looked-up
-    // ones only ever carry these three fields (FLIP#907).
+    // Existing members (`GET /projects/{id}`) and newly looked-up ones (`GET /users/lookup`) both
+    // carry id / email / isDisabled only (FLIP#907, FLIP#996).
     users?: IProjectUserLookup[];
     readonly?: boolean;
 }
@@ -143,9 +142,8 @@ const authStore = useAuthStore();
 const currentUserId = authStore.user?.userId;
 
 const formSubmit = ref<boolean>(false);
-// Copy rather than alias `props.users`: the list is mutated in place on add/remove, and newly
-// looked-up members are the narrower IProjectUserLookup shape, so writing them straight back into
-// the parent's IProjectUser[] would be unsound as well as a prop mutation.
+// Copy rather than alias `props.users`: the list is mutated in place on add/remove, which would
+// otherwise mutate the parent's prop.
 const userList = ref<IProjectUserLookup[]>([...props.users]);
 const displayUsers = computed(() => userList.value.filter(u => u.id !== currentUserId));
 const invalidUser = ref<string[]>([]);

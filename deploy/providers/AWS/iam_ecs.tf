@@ -203,7 +203,18 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
     actions = ["ses:SendEmail", "ses:SendRawEmail", "ses:SendTemplatedEmail"]
     # SES authorises a templated send against the template as well as the sender
     # identity (FLIP#1840). Pinned by tests/test_flip_api_ses_iam.py.
-    resources = concat([module.ses.sender_identity_arn], module.ses.template_arns)
+    # A domain identity authorises every address on the domain, so it is granted
+    # only once the sender is on it, and the From address is pinned either way.
+    resources = concat(
+      [module.ses.sender_identity_arn],
+      var.SES_SENDER_EMAIL != "" ? [module.ses.sender_domain_identity_arn] : [],
+      module.ses.template_arns,
+    )
+    condition {
+      test     = "StringEquals"
+      variable = "ses:FromAddress"
+      values   = [local.ses_sender_email]
+    }
   }
 
   statement {
@@ -371,8 +382,8 @@ resource "aws_iam_role_policy" "ecs_fl_api_task" {
 #
 # fl-server is reachable from untrusted FL clients via the NLB and runs FL job
 # code, so its role grants ECS Exec and nothing else: no bucket, no KMS key, no
-# secret. INTERNAL_SERVICE_KEY reaches it through the execution role's
-# GetSecretValue (the task definition's `secrets` block).
+# secret. Its task definition has no `secrets` block either: a job's hub
+# credential reaches it on the volume it shares with the fl-api.
 
 resource "aws_iam_role" "ecs_fl_server_task" {
   name               = "ecs-fl-server-task-role"

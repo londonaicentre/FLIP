@@ -6,7 +6,7 @@ Wrapping a FLIP model for deployment
 
 .. note::
 
-   This page is a **working draft from a design spike**. The commands have been verified end to end on a
+   This page is a **working draft**. The commands have been verified end to end on a
    development workstation, and the app-contract decisions they rely on are in :ref:`wrap-open-questions`.
    Deployment is **not** settled yet (see :ref:`wrap-deepcos`): treat this as a route that works locally, not as a
    deployment procedure.
@@ -110,7 +110,7 @@ FL workflow runs it. That separation means:
 * **You can re-package a checkpoint at any time**, for example with corrected preprocessing, without retraining.
 
 The cost is that you reunite the weights with their architecture and transforms by hand. The ``export/`` configs
-committed beside each tutorial make that reliable: the person who knows the preprocessing writes them once, when
+committed beside a tutorial make that reliable: the person who knows the preprocessing writes them once, when
 authoring the app.
 
 
@@ -402,8 +402,8 @@ architecture is identical — as the spleen intensity window above shows.
 
 .. seealso::
 
-   ``map-apps/classification/README.md`` describes the orientation check step by step. ``fl-tutorials/tests/`` holds
-   the same check for the tutorial apps, run in CI.
+   :gh:`map-apps/classification/README.md` describes the orientation check step by step. :gh:`fl-tutorials/tests/`
+   holds the same check for the tutorial apps, run in CI.
 
 
 .. _wrap-package:
@@ -448,8 +448,9 @@ Step 5 — Run the MAP
        -i /path/to/dicom_series \
        -o ./output
 
-The MAP writes a DICOM Segmentation object that references the source series. **Check it rather than trusting the
-exit code**: confirm ``Modality``, the segment coding, that ``ReferencedSeriesSequence`` names the input series, and
+A segmentation MAP writes a DICOM Segmentation object that references the source series; a classification MAP
+writes a DICOM SR instead (see :ref:`wrap-classification`). **Check the output rather than trusting the exit code**:
+for a SEG, confirm ``Modality``, the segment coding, that ``ReferencedSeriesSequence`` names the input series, and
 that the frame of reference matches.
 
 
@@ -673,8 +674,9 @@ It is easy to assume FLIP checks more of ``config.json`` than it does. What is c
 .. warning::
 
    **A typo in an export-related key fails silently.** An invented key is outside the validated set, so nothing
-   rejects it: the value is just absent at run time, and your code falls back to its own default. Any export
-   setting added to ``config.json`` in future should come with validation.
+   rejects it: the value is just absent at run time, and your code falls back to its own default. Check the
+   spelling of any key your code reads. Any export setting added to ``config.json`` in future should come with
+   validation.
 
 .. note::
 
@@ -696,7 +698,8 @@ and independent of any deployment target.
 **The input specification uses MONAI's schema.** A bundle needs input shape, voxel spacing, intensity window,
 channel meanings and output labels. FLIP uses the ``network_data_format`` block that MONAI already defines in a
 bundle's ``metadata.json`` rather than inventing its own: it covers exactly this, and it is what the MONAI tooling
-reads. Worked examples sit beside each tutorial in ``fl-tutorials/<backend>/<tutorial>/export/``.
+reads. Worked examples sit beside the NVFLARE ``3d_spleen_segmentation`` and ``xray_classification`` tutorials, in
+``fl-tutorials/nvflare/<category>/<tutorial>/export/``.
 
 **Inference transforms are declared by convention, in** ``transforms.py``. A free-form Python module can build its
 transforms however it likes, so the inference chain cannot be derived automatically, and any rule strict enough to
@@ -706,8 +709,9 @@ procedure.
 
 .. note::
 
-   **MONAI Deploy Express is not currently a safe dependency.** Its repository (``Project-MONAI/monai-deploy``) and
-   workflow manager have had no commits since March 2025, though the App SDK itself is actively maintained. To
+   **MONAI Deploy Express is not currently a safe dependency.** At the time of writing, its repository
+   (``Project-MONAI/monai-deploy``) and workflow manager had had no commits since March 2025, though the App SDK
+   itself is actively maintained. To
    validate a MAP, use the SDK plus a standalone Orthanc, as in :ref:`Step 6 <wrap-view-result>`.
 
 
@@ -796,8 +800,8 @@ What this changes for FLIP
 * **Classification is close to mechanical.** ``map-apps/classification`` already produces what a finding needs: a
   per-label probability and a present/absent decision against a threshold. What remains is assigning coded
   concepts to the FLIP label names — a clinical terminology task, not an engineering one.
-* **The DICOM SEG stays.** It is what a viewer overlays, what :ref:`Step 6 <wrap-view-result>` checks, what any
-  platform in the AIDE lineage consumes, and deepcOS forwards it as-is.
+* **The DICOM SEG stays.** It is what a viewer overlays, what :ref:`Step 6 <wrap-view-result>` checks, what
+  platforms such as AIDE (see :ref:`below <wrap-aide>`) consume, and deepcOS forwards it as-is.
 * **Segmentation needs a derived quantity it does not compute yet.** The SEG writer outputs pixels only, so a
   deepcOS submission also needs the segmented volume — voxel counting against the volume's spacing. Small, but new
   work.
@@ -814,10 +818,12 @@ Still to establish
 * The research (non-CE-marked) pathway. A FLIP research model is neither CE-marked nor FDA-cleared, so this decides
   whether it may run at all outside a sandbox.
 
+.. _wrap-aide:
+
 Prior art: how AIDE consumed MAPs
 ---------------------------------
 
-AIDE, the AI Deployment Engine this Centre built before deepcOS, deployed applications as MAPs. Its developer
+AIDE, the AI Deployment Engine the London AI Centre built before deepcOS, deployed applications as MAPs. Its developer
 documentation is the closest thing to a specification of how a clinical platform consumes a MAP. Three points carry
 over:
 
@@ -840,7 +846,8 @@ Outputs could then go to a **Clinical Review** step, where a clinician assessed 
 That is a platform feature: the MAP's job ends at a well-formed DICOM object.
 
 AIDE's documentation also recommended MONAI Deploy Express for local testing, with Orthanc standing in for the Trust
-PACS — the same shape as the workflow on this page.
+PACS. This page keeps that shape but uses the App SDK with a standalone Orthanc, because MONAI Deploy Express is not
+currently a safe dependency (see :ref:`wrap-open-questions`).
 
 .. seealso::
 

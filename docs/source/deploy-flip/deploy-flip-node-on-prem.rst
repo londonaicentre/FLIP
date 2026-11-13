@@ -27,8 +27,8 @@ host itself needs:
 - **Ubuntu 22.04 or newer**, physical or VM, with a login user that has the access listed under
   `Access the operator needs`_ (the Ansible step also needs ``sudo``).
 - **Internet access**, to pull Docker images and packages.
-- **Docker in swarm mode** (XNAT runs as a swarm stack). The readiness checklist tells you if it is missing; the
-  one-off fix is ``docker swarm init``.
+- **Docker in swarm mode, as a manager** (XNAT runs as a swarm stack; details under `Access the operator needs`_).
+  The readiness checklist tells you if it is missing; the one-off fix is ``docker swarm init``.
 - **A writable directory for FLIP**, default ``/opt/flip``, with the sub-directories the stack mounts. The
   :gh:`on-prem Ansible playbook <trust/deploy/ansible/onprem.yml>` creates them and shows the full list.
 - **For GPU training or evaluation:** an NVIDIA GPU on driver **580 or newer** (check *Driver Version* in
@@ -108,23 +108,27 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
   directories under ``/opt/flip``. The checklist's *Data dir paths* row warns on a relative path and fails on one
   that does not exist yet and that you cannot create, or whose parent you cannot even enter.
 - **Read access to the checkout and the FL kit** (``FL_KIT_DIR``).
-- **Python 3.11 or later** for the readiness checklist and ``make -C trust check-governance``, which read TOML with
-  the standard library. ``uv`` installs one when it can download it; otherwise the host must provide a
-  ``python3.11`` or newer. The checklist refuses an older interpreter up front.
+- **Python 3.11 or later** for the readiness checklist and ``make -C trust check-governance``. ``uv`` installs one when
+  it can download it; otherwise the host must provide a ``python3.11`` or newer. The checklist refuses an older
+  interpreter up front.
 
-A host provisioned by the Ansible playbook below gives the login user none of this, on purpose: it does not add the
-user to the ``docker`` group. There, every command on this page runs as ``sudo -E make …`` (``-E`` keeps your
-``$HOME``, so root's Docker reuses your registry login), and the playbook has already created the directories. On
-a host where you already have Docker access but no ``sudo``, as in many trusted research environments, run them as
-yourself, with ``FLIP_UID``/``FLIP_GID`` set to your ids or once the host owner has run ``prepare-host-dirs``.
-Rootless Docker is untested and not supported: under it the container uids map to subordinate ids of your
-account, so ``FLIP_UID`` would have to name container root, which nothing here has exercised. Where Docker is not
-available to you at all, use the Helm chart (:doc:`deploy-flip-node-kubernetes`).
+How you run the commands on this page depends on the host:
+
+- **Provisioned by the Ansible playbook below.** The playbook creates the directories but deliberately does not add
+  the login user to the ``docker`` group. Run every command as ``sudo -E make …`` (``-E`` keeps your ``$HOME``, so
+  root's Docker reuses your registry login).
+- **Docker access but no** ``sudo`` (common in trusted research environments). Run the commands as yourself, with
+  ``FLIP_UID``/``FLIP_GID`` set to your ids or once the host owner has run ``prepare-host-dirs``.
+- **No Docker available to you.** Use the Helm chart (:doc:`deploy-flip-node-kubernetes`).
+
+Rootless Docker is untested and not supported: its container uids map to subordinate ids of your account, so
+``FLIP_UID`` would have to name container root, which has never been tested.
 
 .. _onprem-forward-proxy:
 
+**********************
 Behind a forward proxy
-======================
+**********************
 
 Where all outbound traffic goes through a proxy, as in most trusted research environments, three settings matter:
 
@@ -260,9 +264,9 @@ the admin manages them.
 
 .. note::
 
-   **Upgrading a trust deployed before the XNAT port split.** A kit that sets only ``XNAT_PORT`` gives the DICOM
-   receiver and the web UI the same number, so the next ``up-onprem-trust`` is **refused** with a message naming
-   both values and the file to edit. Add ``XNAT_WEB_PORT`` (for example 8105) to the kit before your next deployment.
+   **Older kits without** ``XNAT_WEB_PORT``. A kit that sets only ``XNAT_PORT`` gives the DICOM receiver and the web
+   UI the same number, so ``up-onprem-trust`` is **refused** with a message naming both values and the file to edit.
+   Add ``XNAT_WEB_PORT`` (for example 8105) to the kit before your next deployment.
 
 ********************************************************
 Step 4 — Run the readiness checklist and start the stack
@@ -270,8 +274,9 @@ Step 4 — Run the readiness checklist and start the stack
 
 *Who: trust operator, from the repo root*
 
-Unless you run as root or on a host the playbook provisioned, the host owner first runs
-``make -C trust prepare-host-dirs KIT=<CODE> HUB=prod`` as root (:ref:`onprem-operator-access`).
+Skip this if you run as root, on a host the playbook provisioned, or with ``FLIP_UID``/``FLIP_GID`` set to your own ids.
+Otherwise the host owner first runs ``make -C trust prepare-host-dirs KIT=<CODE> HUB=prod`` as root
+(:ref:`onprem-operator-access`). On a playbook-provisioned host, run the commands below as ``sudo -E make …``.
 
 .. code-block:: shell
 
@@ -310,13 +315,15 @@ Every trust container is named ``trust<N>-<service>-1``, where ``<N>`` is ``FL_K
    * - Trust not polling the hub
      - Is the stack running (``docker ps``)? Look for polling errors in ``docker logs trust<N>-trust-api-1``.
    * - ``Connection timed out`` (FL)
-     - Is a host or network firewall blocking outbound traffic on the FL port (8002 for production, 8003 for staging)?
+     - Is a host or network firewall blocking outbound traffic on the FL port (the kit's ``FL_EDGE_PORT``, else
+       ``FL_SERVER_PORT``; 8002 for production, 8003 for staging)?
    * - Connection reset after the TLS hello (FL)
      - An application-aware firewall rejecting TLS on a non-default port, not a closed port. Confirm with the
        ``openssl`` check on :ref:`deploy-trust-node-network`; the network team must allow the ``ssl`` application on
        the FL port, or the site needs a VPN (:ref:`site-to-site-vpn`).
    * - Ansible ``Permission denied``
-     - Is the SSH key correct? Does the user have ``sudo``? In local-host mode, is ``ANSIBLE_BECOME_PASS`` set?
+     - Does the user have ``sudo``? Is ``ANSIBLE_BECOME_PASS`` exported in the same shell (see `Provision the host with
+       Ansible`_)? If the playbook targets a remote host, is the SSH key correct?
 
 .. seealso::
 

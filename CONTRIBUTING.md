@@ -123,8 +123,7 @@ then the `.venv`), and run **Developer: Reload Window** if an import is still fl
 #### Coding-agent instructions (`AGENTS.md`)
 
 This repo's instructions for coding agents live in [`AGENTS.md`](AGENTS.md), with one more per service directory.
-`AGENTS.md` is the cross-tool standard and is now the only copy — the `CLAUDE.md` twin that used to sit beside each one
-has been removed.
+`AGENTS.md` is the cross-tool standard and the only copy: there is no `CLAUDE.md` beside any of them.
 
 Claude Code reads `AGENTS.md` only from **version 2.1.277** onward, so check `claude --version` and upgrade if you are
 behind. Three situations silently give a session **no project instructions at all** — no error, and nothing in the
@@ -134,13 +133,12 @@ output to say so:
 - the `instructionFiles` option set to `claude-md`, which turns the fallback off (`/config` → Project instructions). It
   is a user or organisation-managed setting and per-project settings are not read for it, so this repo cannot correct it
   for you;
-- Claude Code running via Bedrock, Vertex or Foundry, where `AGENTS.md` support does not exist at all. Those need a
-  `CLAUDE.md`, which this repo no longer carries.
+- Claude Code older than **2.1.281** on Amazon Bedrock, or with telemetry disabled, which reads `CLAUDE.md` only.
+  Upgrading fixes it.
 
-One trap is worth knowing about, because it looks like nothing is wrong: the fallback is decided per project, and *any*
-CLAUDE-named file satisfies it. Keep a personal `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md` inside your
-checkout and every `AGENTS.md` in the tree is skipped — you lose the repo's instructions wholesale, in favour of your own
-notes. Keep personal instructions in `~/.claude/` instead of in the working copy.
+One trap is worth knowing about, because it looks like nothing is wrong: *any* CLAUDE-named file takes the place of
+`AGENTS.md`. Keep a personal `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md` at the root of your checkout (or
+above it) and the root `AGENTS.md` is skipped — you lose the repo's main instructions in favour of your own notes. Keep personal instructions in `~/.claude/` instead of in the working copy.
 
 ### Python environment management
 
@@ -260,15 +258,8 @@ To get started, copy the example file:
 cp .env.development.example .env.development
 ```
 
-Then generate the internal service key (also generated automatically by `make up`):
-
-```bash
-make generate-internal-service-key
-```
-
-This writes `INTERNAL_SERVICE_KEY` with `INTERNAL_SERVICE_KEY_HASH` into the active env file
-(`MAIN_ENV_FILE`, default `.env.development`) for fl-server-to-hub authentication. `make up` also runs
-`make generate-fl-api-key`, which writes `FL_API_KEY` there — the key flip-api presents to the FL APIs.
+`make up` runs `make generate-fl-api-key`, which writes `FL_API_KEY` — the key flip-api presents to the FL
+APIs — into the active env file (`MAIN_ENV_FILE`, default `.env.development`).
 
 #### Updating an existing checkout
 
@@ -278,7 +269,6 @@ These changes affect checkouts created before them. None is picked up automatica
 | What changed | What to do |
 | --- | --- |
 | `NLB_SUBDOMAIN`, `AICENTRE_BUCKET_NAME` and `DEMO_*_PASSWORD` are commented out in `.env.development.example` | Nothing to do: the `scripts/check_env_vars.py` pre-commit hook no longer requires them, and a leftover line is harmless. A dev stack never reads the first two; set the demo passwords only to run `make demo-users`. |
-| `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` ship empty in `.env.development.example` (FLIP#1501) | Nothing to do: the next `make up` replaces a key still set to the old `<run-make-generate-internal-service-key>` placeholder with a random matching pair. |
 | `FL_API_KEY` is new in `.env.development.example` | Nothing to do: the next `make up` mints it. Add an empty `FL_API_KEY=` line if `scripts/check_env_vars.py` asks for it. The FL APIs refuse every call without it, so a stack brought up by hand needs `make generate-fl-api-key` first. |
 | uv floor raised to **>= 0.10.0** | `uv self update` (or reinstall). Below the floor, `make lock` and the FLARE provisioning script refuse to run rather than silently re-resolving `uv.lock` without the cooldown. |
 | `NUM_AVAILABLE_GPUS` defaults to `0` in the two shipped dev kit examples (`trust/.env.GSTT.development.example`, `trust/.env.KCH.development.example`) | Only those two pre-populated example kits were changed; the base template (`trust/.env.example`) that `make new-trust` scaffolds from still defaults to `1`, and an existing `trust/.env.<CODE>.<env>` keeps its own value regardless. On a GPU dev host, set `NUM_AVAILABLE_GPUS=1` in the kit to restore passthrough — `make up-trust` prints a warning naming the variable when it is zero, so this is not silent. |
@@ -387,19 +377,16 @@ compose file — avoid hardcoding values in Dockerfiles or compose files directl
 - `TRUST_API_KEY_HEADER` — HTTP header name for trust-to-hub authentication.
 - `TRUST_API_KEY` — single per-trust plaintext API key. Lives only in that trust's kit file
   (`trust/.env.<CODE>.<env>`), written by `make register-trusts`; never on the hub.
-- `INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for fl-server-to-hub authentication.
-- `INTERNAL_SERVICE_KEY` — internal service key used by the fl-server on the Central Hub.
-- `INTERNAL_SERVICE_KEY_HASH` — hub-side SHA-256 hash of the internal service key.
 - `FL_API_KEY` — the key flip-api sends to every FL API (`fl-api-net-N`) in the `FL_API_KEY_HEADER` header
   (default `X-FL-API-Key`); every FL API route but `/health` requires it. Minted by `make up`; on ECS a
-  Secrets Manager field. Distinct from `INTERNAL_SERVICE_KEY`, which the FL API never holds.
+  Secrets Manager field.
 - `TRUST_INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for trust-internal service auth (default
   `X-Trust-Internal-Service-Key`). Sent by every caller (trust-api, imaging-api, fl-client) on every
   call to imaging-api or data-access-api.
 - `TRUST_INTERNAL_SERVICE_KEY` — single per-trust plaintext key, in that trust's kit file
   (`trust/.env.<CODE>.<env>`), minted by `register_trust`. Read by every trust-internal container. The hub
-  never sees it. Distinct from `INTERNAL_SERVICE_KEY*` (which protects fl-server → flip-api on the
-  Central Hub). See the [public security model](docs/source/security.rst#trust-internal-service-authentication).
+  never sees it. Distinct from the per-job credential that protects fl-server → flip-api on the
+  Central Hub. See the [public security model](docs/source/security.rst#trust-internal-service-authentication).
 
 FL clients (trust side) intentionally do **not** receive Central Hub API credentials. Only the fl-server (on the Central
 Hub) communicates with flip-api. FL clients relay metrics and exceptions to the fl-server, which forwards them.
@@ -812,7 +799,7 @@ A test belongs in `tests/integration/` **if and only if it touches a real backin
 - A running sibling API (trust-api, data-access-api, etc.) reachable over HTTP
 - A real Orthanc / XNAT / OMOP fixture
 
-If your test mocks **all** external dependencies (database session, HTTP client, AWS clients, sibling APIs), it's a unit test — put it in `tests/unit/`, mirroring the source layout (e.g. tests for `src/flip_api/user_services/set_user_roles.py` go in `tests/unit/user_services/test_set_user_roles.py`).
+If your test mocks **all** external dependencies (database session, HTTP client, AWS clients, sibling APIs), it's a unit test — put it in `tests/unit/` (directly under `tests/` in the trust APIs), mirroring the source layout (e.g. tests for `src/flip_api/user_services/set_user_roles.py` go in `tests/unit/user_services/test_set_user_roles.py`).
 
 FastAPI `TestClient` on its own does **not** make a test "integration" — what matters is whether the dependencies it transitively hits are real or mocked. A `TestClient`-based test that overrides every dependency (via `app.dependency_overrides`) and patches the DB session is a unit test; one that runs against an un-overridden real Postgres is an integration test.
 
@@ -914,7 +901,7 @@ Releases are cut from `main`. The version is set in the root `pyproject.toml`, a
 
 - **The release job runs as long as the slowest image build** (xnat-web, ~30 min). A red build, or an expired wait budget, fails the release job and names what to re-run; production stays on the sha pin it got from the push apply. Re-running `release.yml` is safe — everything after the tag is keyed on the GitHub Release not existing, so a re-run re-dispatches the builds and re-tries the apply.
 - **Nothing may merge to `main` during the wait.** The release apply runs `main` as it is when the dispatch fires, so a hotfix merged in that window would have the *release's* images applied over its code — a silent production rollback. Both ends refuse it: `release.yml` checks `main`'s HEAD before dispatching, and `terraform_apply.yml` refuses unless `release_tag` resolves to the very commit it has checked out. Recovery is to cut a release from the newer commit, not to re-run the old one.
-- **The release apply can hold on the FL gate.** Re-pinning changes the FL task-definition tag, which `scripts/check-fl-plan-impact.sh` treats as FL-affecting, so the apply holds for an operator attestation. Quiesce FL and re-dispatch `terraform_apply.yml` with both `fl_quiesced: true` and the same `release_tag` — see [`deploy/providers/AWS/README.md`](deploy/providers/AWS/README.md#release-applies-pinning-vxyz-instead-of-the-sha-flip1283).
+- **The release apply can hold on the FL gate.** Re-pinning changes the FL task-definition tag, which `deploy/providers/AWS/scripts/check-fl-plan-impact.sh` treats as FL-affecting, so the apply holds for an operator attestation. Quiesce FL and re-dispatch `terraform_apply.yml` with both `fl_quiesced: true` and the same `release_tag` — see [`deploy/providers/AWS/README.md`](deploy/providers/AWS/README.md#release-applies-pinning-vxyz-instead-of-the-sha-flip1283).
 
 ### Two release trains, two tag namespaces
 

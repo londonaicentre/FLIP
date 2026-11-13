@@ -24,37 +24,27 @@ project_id = uuid.uuid4()
 
 
 @pytest.fixture
-def mock_auth_token():
-    """Mock authentication token."""
-    return "auth-token"
+def mock_db_session():
+    """Mock database session exposing only add/commit/refresh/exec; any other attribute raises AttributeError."""
+    return MagicMock(spec_set=["add", "commit", "refresh", "exec"])
 
 
 @pytest.fixture
-def mock_db_session():
-    """Mock database session."""
-
-    class MockSession:
-        def __init__(self):
-            self.add = MagicMock()
-            self.commit = MagicMock()
-            self.refresh = MagicMock()
-            self.exec = MagicMock(return_value=MagicMock())
-
-    return MockSession()
+def request_mock():
+    """Mock request whose headers.get returns an auth token."""
+    request = MagicMock()
+    request.headers.get.return_value = "auth-token"
+    return request
 
 
 @patch("flip_api.cohort_services.save_cohort_query.can_modify_project", return_value=True)
 @patch("flip_api.cohort_services.save_cohort_query.has_project_status", return_value=True)
-def test_save_cohort_query(mock_has_project_status, mock_can_modify, mock_db_session, mock_auth_token):
+def test_save_cohort_query(mock_has_project_status, mock_can_modify, mock_db_session, request_mock):
     # Sample input data
     cohort_query_input = CohortQueryInput(name="Test Query", query="SELECT * FROM table", project_id=project_id)
 
-    # Mock the request
-    request = MagicMock()
-    request.headers.get.return_value = mock_auth_token
-
     # Call the function
-    result = save_cohort_query(request=request, cohort_query=cohort_query_input, db=mock_db_session)
+    result = save_cohort_query(request=request_mock, cohort_query=cohort_query_input, db=mock_db_session)
 
     # Check the object added to the session
     added_query = mock_db_session.add.call_args[0][0]
@@ -70,16 +60,13 @@ def test_save_cohort_query(mock_has_project_status, mock_can_modify, mock_db_ses
 @patch("flip_api.cohort_services.save_cohort_query.can_modify_project", return_value=True)
 @patch("flip_api.cohort_services.save_cohort_query.has_project_status", return_value=False)
 def test_save_cohort_query_invalid_project_status(
-    mock_has_project_status, mock_can_modify, mock_db_session, mock_auth_token
+    mock_has_project_status, mock_can_modify, mock_db_session, request_mock
 ):
     cohort_query_input = CohortQueryInput(name="Invalid Project", query="SELECT 1", project_id=project_id)
 
-    request = MagicMock()
-    request.headers.get.return_value = mock_auth_token
-
     # Use HTTPException and specify the match for the error message
     with pytest.raises(HTTPException, match="staged/approved") as exc_info:
-        save_cohort_query(request=request, cohort_query=cohort_query_input, db=mock_db_session)
+        save_cohort_query(request=request_mock, cohort_query=cohort_query_input, db=mock_db_session)
 
     assert exc_info.value.status_code == 400
 
@@ -87,7 +74,7 @@ def test_save_cohort_query_invalid_project_status(
 @patch("flip_api.cohort_services.save_cohort_query.can_modify_project", return_value=True)
 @patch("flip_api.cohort_services.save_cohort_query.has_project_status", return_value=True)
 def test_save_cohort_query_query_id_not_created(
-    mock_has_project_status, mock_can_modify, mock_db_session, mock_auth_token
+    mock_has_project_status, mock_can_modify, mock_db_session, request_mock
 ):
     # Mock refresh to simulate `new_query.id` is None
     def refresh_side_effect(obj):
@@ -97,29 +84,23 @@ def test_save_cohort_query_query_id_not_created(
 
     cohort_query_input = CohortQueryInput(name="No ID Query", query="SELECT *", project_id=project_id)
 
-    request = MagicMock()
-    request.headers.get.return_value = mock_auth_token
-
     # Expect an HTTPException with a specific message
     with pytest.raises(HTTPException, match="Could not create query") as exc_info:
-        save_cohort_query(request=request, cohort_query=cohort_query_input, db=mock_db_session)
+        save_cohort_query(request=request_mock, cohort_query=cohort_query_input, db=mock_db_session)
 
     assert exc_info.value.status_code == 400
 
 
 @patch("flip_api.cohort_services.save_cohort_query.can_modify_project", return_value=True)
 @patch("flip_api.cohort_services.save_cohort_query.has_project_status")
-def test_save_cohort_query_internal_error(mock_has_project_status, mock_can_modify, mock_db_session, mock_auth_token):
+def test_save_cohort_query_internal_error(mock_has_project_status, mock_can_modify, mock_db_session, request_mock):
     # Simulate an unexpected error being raised
     mock_has_project_status.side_effect = Exception("Unexpected DB failure")
 
     cohort_query_input = CohortQueryInput(name="Boom", query="SELECT crash", project_id=project_id)
 
-    request = MagicMock()
-    request.headers.get.return_value = mock_auth_token
-
     with pytest.raises(HTTPException) as exc_info:
-        save_cohort_query(request=request, cohort_query=cohort_query_input, db=mock_db_session)
+        save_cohort_query(request=request_mock, cohort_query=cohort_query_input, db=mock_db_session)
 
     assert exc_info.value.status_code == 500
     # Equality, not `match=`: that is re.search, so it matches

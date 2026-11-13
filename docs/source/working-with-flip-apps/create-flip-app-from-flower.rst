@@ -21,7 +21,7 @@ Create a FLIP app from a Flower app
    table summarising how the backends differ.
 
 This page shows how to adapt a stock Flower app so that it runs on FLIP — for example, one copied from the
-`Flower quickstart examples <https://flower.ai/docs/examples.html>`_ or the FLIP app hub.
+`Flower quickstart examples <https://flower.ai/docs/examples.html>`_.
 
 The FLIP touchpoints your app needs are:
 
@@ -35,11 +35,11 @@ The FLIP touchpoints your app needs are:
 
    Runnable references in the repository:
 
-   - ``fl-apps/flower/standard/app/`` — the platform's base bundle: the ``ServerApp`` and the
+   - :gh:`fl-apps/flower/standard/app/` — the platform's base bundle: the ``ServerApp`` and the
      ``FedAvgWithClientMetrics`` strategy. You supply ``client_app.py`` and ``models.py``.
-   - ``fl-tutorials/flower/image_classification/xray_classification/`` — chest X-ray classification, with both ``ServerApp`` and
+   - :gh:`fl-tutorials/flower/image_classification/xray_classification/` — chest X-ray classification, with both ``ServerApp`` and
      ``ClientApp``.
-   - ``fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/`` — MONAI spleen segmentation. Exercises every touchpoint below,
+   - :gh:`fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/` — MONAI spleen segmentation. Exercises every touchpoint below,
      including best-model selection.
 
 .. contents:: On this page
@@ -97,14 +97,14 @@ the two tutorials above add a matching ``ClientApp``.
 
 .. important::
 
-   **Do not declare ``flip-utils`` as a dependency** in your own ``pyproject.toml``. The ``flip-utils`` package
+   **Do not declare** ``flip-utils`` **as a dependency** in your own ``pyproject.toml``. The ``flip-utils`` package
    (imported as ``flip``) is pre-installed in every FLIP FL node image, and on the platform your app imports that
    copy.
 
    A local ``flwr run`` installs your declared dependencies into a per-run environment that takes precedence. A
    declared ``flip-utils`` would therefore come from PyPI — whose release can lag the one you develop against — and
    hide the copy the run should use. Left undeclared, ``import flip`` resolves to the FL image's copy on the platform,
-   and to your checkout's ``flip-utils`` under ``make sim-tutorial``. See :ref:`flower-config-toml` for how
+   and to your checkout's ``flip-utils`` under ``make run-tutorial``. See :ref:`flower-config-toml` for how
    dependencies resolve on the platform.
 
 *******************************************
@@ -165,7 +165,7 @@ The four lifecycle transitions
 ==============================
 
 Wrap your training entry point with four ``update_status`` calls. They drive the progress bar on the model page
-(see :ref:`view-results`). ``FlipFedAvg`` (see *Strategy considerations*) reports ``RUNNING`` from
+(see :ref:`view-results`). ``FlipFedAvg`` (see :ref:`flower-strategy`) reports ``RUNNING`` from
 ``strategy.start`` itself, so the explicit ``RUNNING`` call is only needed with stock ``FedAvg``, as here.
 
 .. code-block:: python
@@ -188,7 +188,7 @@ Wrap your training entry point with four ``update_status`` calls. They drive the
 
 .. warning::
 
-   **Always report ``RESULTS_UPLOADED`` last, and only after a successful upload.** Without it, the model stays
+   **Always report** ``RESULTS_UPLOADED`` **last, and only after a successful upload.** Without it, the model stays
    "running" in the FLIP UI even though the run has ended. Reported before ``flip.upload_results_to_s3`` succeeds, it
    shows a finished model with nothing to download — the template reports ``ERROR`` instead if saving or uploading
    fails.
@@ -198,7 +198,7 @@ Full minimal example
 
 A simplified version of ``fl-apps/flower/standard/app/server_app.py``, reduced to the lifecycle calls. The template
 also has the best-model bookkeeping, the results-file layout and the ``min_clients`` wiring described under
-*Strategy considerations* below — a real app must not leave that out.
+`Strategy considerations`_ below — a real app must not leave that out.
 
 .. code-block:: python
 
@@ -234,6 +234,8 @@ also has the best-model bookkeeping, the results-file layout and the ``min_clien
        output_dir = save_results(result)  # FL_global_model.pt + cross_val_results.json
        flip.upload_results_to_s3(output_dir, flip_model_id)
        flip.update_status(flip_model_id, ModelStatus.RESULTS_UPLOADED)
+
+.. _flower-strategy:
 
 ***********************
 Strategy considerations
@@ -311,11 +313,11 @@ Minimal in-line version
 
    df = flip_client.get_dataframe(project_id=project_id, query=query)
 
-Wrapper pattern (from the MONAI tutorial)
-==========================================
+Wrapper pattern (from the spleen tutorial)
+===========================================
 
-The MONAI tutorial bundles the FLIP client and cohort metadata into a small helper class (``app/data_loading.py``),
-which makes it easier to pass data-loading state through the ``@app.train()`` function:
+The spleen segmentation tutorial bundles the FLIP client and cohort metadata into a small helper class
+(``app/data_loading.py``), which makes it easier to pass data-loading state through the ``@app.train()`` function:
 
 .. code-block:: python
 
@@ -389,7 +391,7 @@ returns a ``pathlib.Path`` to a local directory containing ``input_*.nii.gz`` fi
 
 .. note::
 
-   ``ResourceType`` is an enum in ``flip.constants``. The samples use ``ResourceType.NIFTI`` and
+   ``ResourceType`` is an enum in ``flip.constants``. The tutorials use ``ResourceType.NIFTI`` and
    ``ResourceType.SEGMENTATION``; pass a single value or a list. The first call for a project, accession and
    resource type downloads the study; later calls — such as the same loop on the next round — return the cached
    copy, so you need no on-disk guards of your own.
@@ -485,7 +487,7 @@ They populate the graphs on the model page (see :ref:`training-metrics`).
 
 .. warning::
 
-   **The ``site`` value must be the Trust's FL kit slot** (``Trust_1``, ``Trust_2``, …), not the Trust's display
+   **The** ``site`` **value must be the Trust's FL kit slot** (``Trust_1``, ``Trust_2``, …), not the Trust's display
    name. The hub maps the slot back to the owning Trust:
 
    - a ``site`` that matches no slot is recorded against ``unknown_client`` and is not attributed to the Trust in the
@@ -539,7 +541,7 @@ FLIP run-config keys (placeholder values are fine) and your training hyperparame
    version = "1.0.0"
    dependencies = [
        # flip-utils is deliberately NOT declared — see the note under "Starting point"
-       "flwr[simulation]>=1.42.0",
+       "flwr[simulation]>=1.43.0",
        # ... your model-framework deps (monai, torch, nibabel, ...)
    ]
 
@@ -600,8 +602,7 @@ key in it overrides the template's ``[tool.flwr.app.config]``. From
    best-model-metric = "test_dice"
    best-model-metric-minimize = false
 
-- ``config.toml`` can only override keys the template already declares; Flower rejects any other key. It cannot add
-  new ones.
+- ``config.toml`` can only override keys the template already declares; Flower rejects any other key.
 - Without a ``config.toml``, an app runs with the template's defaults: three rounds of one local epoch.
 - For a local ``flwr run``, the same keys live in your own ``[tool.flwr.app.config]``.
 
@@ -700,9 +701,9 @@ A tutorial submitted this way runs with its ``pyproject.toml`` values, not its `
 
 .. seealso::
 
-   ``fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/README.md`` has the full local-run instructions and remaining
-   caveats, including the data-enrichment (label upload) step the segmentation tutorials need before they can train
-   on a real FLIP project. ``flip-api/AGENTS.md`` documents the end-to-end smoke tests.
+   :gh:`fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/README.md` has the full local-run instructions and
+   remaining caveats, including the data-enrichment (label upload) step the segmentation tutorials need before they can
+   train on a real FLIP project. The end-to-end smoke tests are documented in :gh:`flip-api/AGENTS.md`.
 
 ***************************
 Common pitfalls
@@ -729,6 +730,6 @@ Common pitfalls
   ``flip-job-dir`` and ``flip-min-clients`` with placeholder values in your own ``pyproject.toml``, or a local run
   fails. On the platform, the template's ``pyproject.toml`` (under ``fl-apps/flower/<job_type>/``) is what FLIP's
   overrides and your ``config.toml`` are checked against; an uploaded ``pyproject.toml`` is not used.
-- **Missing** ``ResourceType``. If a Trust lacks the requested resource type for an accession,
+- **One failing accession aborting the round.** If a Trust lacks the requested ``ResourceType`` for an accession,
   ``get_by_accession_number`` raises. Wrap the call in ``try / except`` and skip that accession, so one bad study
   does not abort the round.

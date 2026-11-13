@@ -239,7 +239,7 @@ import AiDialogOverlay from "@/components/AiDialogOverlay/AiDialogOverlay.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
 import AiSwitch from "@/components/AiSwitch/AiSwitch.vue";
 import router from "@/router";
-import { deleteProject, IProjectUser } from "@/services/project-service";
+import { deleteProject } from "@/services/project-service";
 import { IProjectUserLookup } from "@/services/user-service";
 import { useAuthStore } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
@@ -261,7 +261,7 @@ interface IEditProjectDrawerProps {
     description: string;
     projectUnstaged: boolean;
     updating: boolean;
-    users: IProjectUser[];
+    users: IProjectUserLookup[];
     ownerId: string;
     // Current DICOM-to-NIfTI setting, shown read-only. It's fixed at project
     // creation and cannot be edited, so the toggle is always disabled.

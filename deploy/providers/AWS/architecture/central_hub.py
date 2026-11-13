@@ -305,7 +305,7 @@ def _draw_network(drawn: _Drawn) -> None:
     internal_nlb >> Edge(label=":8002 → ecs-fl-server-lza\n(mTLS pass-through)") >> fl_server
     zone - Edge(style="dotted", label="A → NLB IPs") - internal_nlb
     # Hub-internal control edges.
-    fl_server >> Edge(label="logs, metrics, status\nINTERNAL_SERVICE_KEY", style="dashed") >> flip_api
+    fl_server >> Edge(label="logs, metrics, status\nper-job credential", style="dashed") >> flip_api
     flip_api >> Edge(label="submit job") >> fl_api >> Edge(label="admin API") >> fl_server
     cloud_map - Edge(style="dotted", label="service discovery") - fl_api
 

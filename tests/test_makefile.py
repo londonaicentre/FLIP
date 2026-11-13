@@ -23,7 +23,6 @@ Usage:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -259,9 +258,6 @@ AWS_STUB_ENV = {
     "FLIP_FL_RESULTS_BUCKET_NAME": "probe-results",
     "FLIP_APP_BUNDLES_BUCKET_NAME": "probe-bundles",
     "AICENTRE_BUCKET_NAME": "probe-aicentre",
-    "INTERNAL_SERVICE_KEY": "probe",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY_HASH": "probe",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
     "FL_API_KEY": "probe",  # pragma: allowlist secret
     "MANAGE_DNS": "false",
 }
@@ -865,7 +861,7 @@ class HubProjectOwnerGuard(unittest.TestCase):
         assert self.guard("/elsewhere/deploy").returncode == 0  # project `deploy` is not kc-deploy
 
     def test_only_allow_foreign_project_1_skips_the_check(self):
-        # Not FORCE: `up` hands it on to generate-internal-service-key, which rotates the key.
+        # Not FORCE: `up` hands it on to generate-fl-api-key, which rotates the key.
         cases = (("ALLOW_FOREIGN_PROJECT=1", True), ("ALLOW_FOREIGN_PROJECT=true", False), ("FORCE=1", False))
         for extra, allowed in cases:
             with self.subTest(extra=extra):
@@ -881,12 +877,12 @@ class HubProjectOwnerGuard(unittest.TestCase):
                 assert re.search(rf"^{re.escape(target)}: _check-compose-project-owner(\s|$)", makefile, re.M), target
 
 
-class GenerateInternalServiceKey(unittest.TestCase):
+class GenerateFlApiKey(unittest.TestCase):
     """The key lands in the env file the stack runs from, not always `.env.development` (FLIP#1603)."""
 
     def env_file_arg(self, *extra: str) -> str:
-        out = dry_run("generate-internal-service-key", *extra, subdir=".")
-        line = next(line for line in out.splitlines() if "generate_internal_service_key" in line)
+        out = dry_run("generate-fl-api-key", *extra, subdir=".")
+        line = next(line for line in out.splitlines() if "generate_fl_api_key" in line)
         args = shlex.split(line)
         return args[args.index("--env-file") + 1]
 
@@ -1026,24 +1022,23 @@ class E2eSmokeSpleenBackend(unittest.TestCase):
 
 
 HUB_MAKEFILES = ("Makefile", "deploy/env_mode.mk", "deploy/fl_backend.mk", "deploy/instance.mk")
-KEY_PAIR = ("INTERNAL_SERVICE_KEY", "INTERNAL_SERVICE_KEY_HASH")
 
 
-class FirstUpInternalServiceKey(unittest.TestCase):
-    """The first `make up` hands compose the key pair generate-internal-service-key just wrote (FLIP#1501).
+class FirstUpFlApiKey(unittest.TestCase):
+    """The first `make up` hands compose the FL_API_KEY generate-fl-api-key just wrote (FLIP#1501).
 
     Real generator behind a stub `uv`, a stub `docker` recording compose's env, a non-default MAIN_ENV_FILE.
     """
 
     def run_up(self, env_text, *extra, chosen=".env.b.development"):
-        """`make up-no-trust` in a scratch checkout: compose's env, and the pair the generator left in `chosen`."""
+        """`make up-no-trust` in a scratch checkout: compose's key, and the one the generator left in `chosen`."""
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp).resolve()
             root = base / "checkout"
             for rel in (*HUB_MAKEFILES, "flip-api/Makefile"):
                 (root / rel).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(REPO / rel, root / rel)
-            (root / ".env.b.development").write_bytes(b"INTERNAL_SERVICE_KEY=\nINTERNAL_SERVICE_KEY_HASH=\n")
+            (root / ".env.b.development").write_bytes(b"FL_API_KEY=\n")
             env_file = root / chosen
             env_file.write_bytes(env_text.encode())
             bin_dir = base / "bin"
@@ -1061,12 +1056,11 @@ class FirstUpInternalServiceKey(unittest.TestCase):
             (bin_dir / "docker").write_text(
                 f"#!{sys.executable}\nimport json, os, sys\n"
                 "if 'compose' in sys.argv and 'up' in sys.argv:\n"
-                f"    keys = {sorted(KEY_PAIR)!r}\n"
-                f"    json.dump({{k: os.environ.get(k) for k in keys}}, open({str(seen)!r}, 'w'))\n"
+                f"    json.dump(os.environ.get('FL_API_KEY'), open({str(seen)!r}, 'w'))\n"
             )
             for stub in bin_dir.iterdir():
                 stub.chmod(0o755)
-            excluded = {"MAKEFLAGS", "PROD", "FLIP_INSTANCE", "FORCE", "ENV_FILE", *KEY_PAIR}
+            excluded = {"MAKEFLAGS", "PROD", "FLIP_INSTANCE", "FORCE", "ENV_FILE", "FL_API_KEY"}
             env = {key: value for key, value in os.environ.items() if key not in excluded}
             env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
             skipped = ("create-networks", "_ensure-fl-jobs-dir", "_ensure-object-store-dir", "_check-fl-provisioned")
@@ -1085,45 +1079,40 @@ class FirstUpInternalServiceKey(unittest.TestCase):
                 key, sep, value = line.partition("=")
                 if sep:
                     written.setdefault(key, value.strip())
-            return json.loads(seen.read_text()), {key: written[key] for key in KEY_PAIR}
+            return json.loads(seen.read_text()), written["FL_API_KEY"]
 
-    def assert_compose_got_what_was_written(self, seen, written):
-        key, key_hash = written["INTERNAL_SERVICE_KEY"], written["INTERNAL_SERVICE_KEY_HASH"]
-        assert key, written
-        assert key_hash == hashlib.sha256(key.encode()).hexdigest(), written
-        assert seen == written, seen
-
-    def test_compose_gets_the_pair_the_generator_wrote(self):
-        in_sync = hashlib.sha256(b"k").hexdigest()
+    def test_compose_gets_the_key_the_generator_wrote(self):
         cases = {
-            "generated": "INTERNAL_SERVICE_KEY=\nINTERNAL_SERVICE_KEY_HASH=\n",
-            "hash repaired": "INTERNAL_SERVICE_KEY=k\nINTERNAL_SERVICE_KEY_HASH=stale\n",
-            "duplicate lines": f"INTERNAL_SERVICE_KEY=k\nINTERNAL_SERVICE_KEY_HASH={in_sync}\nINTERNAL_SERVICE_KEY=x\n",
-            "CRLF": f"INTERNAL_SERVICE_KEY=k\r\nINTERNAL_SERVICE_KEY_HASH={in_sync}\r\n",
+            "generated": "FL_API_KEY=\n",
+            "kept": "FL_API_KEY=k\n",
+            "duplicate lines": "FL_API_KEY=k\nFL_API_KEY=x\n",
+            "CRLF": "FL_API_KEY=k\r\n",
         }
         for name, env_text in cases.items():
             with self.subTest(case=name):
-                self.assert_compose_got_what_was_written(*self.run_up(env_text))
+                seen, written = self.run_up(env_text)
+                assert written, name
+                assert seen == written, seen
 
     def test_an_explicit_env_file_is_both_written_and_read(self):
-        env_text = "INTERNAL_SERVICE_KEY=\nINTERNAL_SERVICE_KEY_HASH=\n"
-        self.assert_compose_got_what_was_written(*self.run_up(env_text, "ENV_FILE=other.env", chosen="other.env"))
+        seen, written = self.run_up("FL_API_KEY=\n", "ENV_FILE=other.env", chosen="other.env")
+        assert written
+        assert seen == written, seen
 
-    def test_every_target_that_generates_the_key_composes_with_the_fresh_pair(self):
+    def test_every_target_that_generates_the_key_composes_with_the_fresh_one(self):
         makefile = (REPO / "Makefile").read_text()
-        targets = re.findall(r"^([\w-]+):[^=\n]*\bgenerate-internal-service-key\b", makefile, re.M)
+        targets = re.findall(r"^([\w-]+):[^=\n]*\bgenerate-fl-api-key\b", makefile, re.M)
         assert {"up", "up-no-trust"} <= set(targets), targets
         for target in targets:
             recipe = re.search(rf"^{re.escape(target)}:.*\n((?:\t.*\n)+)", makefile, re.M)[1]
             compose = [line for line in recipe.splitlines() if COMPOSE_COMMAND.search(line)]
             with self.subTest(target=target):
                 assert compose, recipe
-                assert all("$(FRESH_INTERNAL_SERVICE_KEY)" in line for line in compose), recipe
+                assert all("$(FRESH_FL_API_KEY)" in line for line in compose), recipe
 
-    def test_the_example_ships_no_pair_to_repair(self):
+    def test_the_example_ships_no_key(self):
         example = (REPO / ".env.development.example").read_text()
-        assert re.search(r"^INTERNAL_SERVICE_KEY=$", example, re.M), "the example's key must be empty"
-        assert re.search(r"^INTERNAL_SERVICE_KEY_HASH=$", example, re.M), "the example's hash must be empty"
+        assert re.search(r"^FL_API_KEY=$", example, re.M), "the example's key must be empty"
 
 
 if __name__ == "__main__":

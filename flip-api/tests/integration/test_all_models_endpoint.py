@@ -22,6 +22,7 @@ mocked session, so they are exercised against the throwaway Postgres.
 """
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
@@ -44,8 +45,10 @@ MODELS_URL = "/api/models"
 PROJECT_OPTIONS_URL = "/api/models/projects"
 
 
-def _add_project(session, project_factory, *, owner_id: UUID, name: str = "Project") -> Projects:
-    project = project_factory.build(owner_id=owner_id, name=name, deleted=False, status=ProjectStatus.APPROVED)
+def _add_project(session, project_factory, *, owner_id: UUID, name: str = "Project", **overrides: Any) -> Projects:
+    project = project_factory.build(
+        **{"owner_id": owner_id, "name": name, "deleted": False, "status": ProjectStatus.APPROVED, **overrides}
+    )
     session.add(project)
     session.commit()
     return project
@@ -59,12 +62,18 @@ def _add_model(
     owner_id: UUID,
     name: str = "Model",
     status: ModelStatus = ModelStatus.PREPARED,
-    description: str | None = None,
+    **overrides: Any,
 ) -> Model:
-    kwargs = {"project_id": project_id, "owner_id": owner_id, "name": name, "deleted": False, "status": status}
-    if description is not None:
-        kwargs["description"] = description
-    model = model_factory.build(**kwargs)
+    model = model_factory.build(
+        **{
+            "project_id": project_id,
+            "owner_id": owner_id,
+            "name": name,
+            "deleted": False,
+            "status": status,
+            **overrides,
+        }
+    )
     session.add(model)
     session.commit()
     return model
@@ -203,25 +212,22 @@ def test_rows_carry_creation_timestamp_and_list_newest_first(
     """Each row exposes the model's creation timestamp and rows come newest-first."""
     user_id = uuid4()
     project = _add_project(session, project_factory, owner_id=user_id, name="Ordered")
-    older = model_factory.build(
+    older = _add_model(
+        session,
+        model_factory,
         project_id=project.id,
         owner_id=user_id,
         name="older",
-        deleted=False,
-        status=ModelStatus.PREPARED,
         creation_timestamp=datetime(2026, 1, 1, 12, 0, 0),
     )
-    newer = model_factory.build(
+    newer = _add_model(
+        session,
+        model_factory,
         project_id=project.id,
         owner_id=user_id,
         name="newer",
-        deleted=False,
-        status=ModelStatus.PREPARED,
         creation_timestamp=datetime(2026, 6, 1, 12, 0, 0),
     )
-    session.add(older)
-    session.add(newer)
-    session.commit()
 
     override_verify_token_as(user_id)
     rows = [r for r in client.get(MODELS_URL).json()["data"] if r["id"] in {str(older.id), str(newer.id)}]
@@ -280,15 +286,10 @@ def test_excludes_soft_deleted_models_and_projects(client: TestClient, session, 
     live_project = _add_project(session, project_factory, owner_id=user_id, name="Live")
     kept = _add_model(session, model_factory, project_id=live_project.id, owner_id=user_id, name="kept")
 
-    deleted_model = model_factory.build(
-        project_id=live_project.id, owner_id=user_id, name="gone", deleted=True, status=ModelStatus.PREPARED
+    deleted_model = _add_model(
+        session, model_factory, project_id=live_project.id, owner_id=user_id, name="gone", deleted=True
     )
-    session.add(deleted_model)
-    deleted_project = project_factory.build(
-        owner_id=user_id, name="DeadProject", deleted=True, status=ProjectStatus.APPROVED
-    )
-    session.add(deleted_project)
-    session.commit()
+    deleted_project = _add_project(session, project_factory, owner_id=user_id, name="DeadProject", deleted=True)
     orphan = _add_model(session, model_factory, project_id=deleted_project.id, owner_id=user_id, name="orphan")
 
     override_verify_token_as(user_id)
@@ -627,9 +628,7 @@ def test_project_options_include_projects_without_models(client: TestClient, ses
 def test_project_options_carry_status_for_the_create_model_gate(client: TestClient, session, project_factory):
     """The scoped Create Model button needs the project's status, so the option carries it."""
     user_id = uuid4()
-    project = project_factory.build(owner_id=user_id, name="Staged one", deleted=False, status=ProjectStatus.STAGED)
-    session.add(project)
-    session.commit()
+    _add_project(session, project_factory, owner_id=user_id, name="Staged one", status=ProjectStatus.STAGED)
 
     override_verify_token_as(user_id)
     response = client.get(PROJECT_OPTIONS_URL)

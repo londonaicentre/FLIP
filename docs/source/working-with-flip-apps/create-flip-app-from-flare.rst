@@ -9,9 +9,9 @@ Create a FLIP app from a FLARE app
 
    - a FLIP account with the ``researcher`` role;
    - an approved project with a saved cohort query;
-   - a model created under that project, so you have a model ID.
+   - a model created under that project; you upload the app on its model page.
 
-   This page assumes you know the :ref:`flip-fl-nets` component page and the project and model lifecycle in
+   This page assumes you have read :ref:`flip-fl-nets` and know the project and model lifecycle described in
    :doc:`/user-guides/user-common`.
 
 .. note::
@@ -19,10 +19,10 @@ Create a FLIP app from a FLARE app
    This page is the NVIDIA FLARE twin of :doc:`create-flip-app-from-flower`. Both pages follow the same structure
    and cover the same FLIP touchpoints, so you can compare the two backends section by section.
 
-This page shows how to adapt a stock NVIDIA FLARE **Client API** training script so that it runs on FLIP — for
-example, one copied from the `FLARE examples <https://github.com/NVIDIA/NVFlare/tree/main/examples/hello-world>`_ or
-the FLIP app hub. Every FLARE job type on FLIP runs your client code through the Client API (``nvflare.client``): a
-plain Python script that runs on each Trust.
+This page shows how to adapt a stock NVIDIA FLARE **Client API** training script so that it runs on FLIP — for example,
+one copied from the `FLARE examples <https://github.com/NVIDIA/NVFlare/tree/main/examples/hello-world>`_. Every FLARE
+job type on FLIP runs your client code through the Client API (``nvflare.client``): a plain Python script that runs on
+each Trust.
 
 The FLIP touchpoints your script needs are:
 
@@ -75,7 +75,7 @@ lifecycle for you (see :ref:`flare-server-side`).
      - Wired by the template (nothing to do)
    * - Local run
      - ``make run-tutorial`` (simulator), as on FLARE
-     - ``job.py`` recipe: ``make export`` / ``make sim``
+     - ``job.py`` recipe: ``make export`` / ``make sim``, or ``make run-tutorial``
 
 .. contents:: On this page
    :local:
@@ -115,7 +115,8 @@ template and your uploaded files; an uploaded ``job.py`` is ignored.
 
    ``meta.json`` is optional. Upload one to declare the job's GPUs, for example
    ``{"resource_spec": {"@default": {"num_of_gpus": 1}}}``. FLIP keeps its ``resource_spec`` and ``custom_props`` and
-   writes the rest — see :ref:`fl-nvflare-meta-json`.
+   writes the rest. A ``meta.json`` carrying anything beyond what :ref:`fl-nvflare-meta-json` lists (a
+   ``launcher_spec``, a per-site ``resource_spec`` block, …) fails at **Initiate Training**.
 
 .. note::
 
@@ -156,7 +157,7 @@ Central Hub for you. What matters to you as an app author:
 
 .. seealso::
 
-   ``fl-apps/nvflare/standard/README.md`` lists every workflow, executor and filter in the template.
+   :gh:`fl-apps/nvflare/standard/README.md` lists every workflow, executor and filter in the template.
 
 *****************************************
 trainer.py: the Client API loop
@@ -411,7 +412,8 @@ Central Hub. They populate the graphs on the model page (see :ref:`training-metr
    For a once-per-run value such as ``TEST_DICE``, either omit ``global_step`` (plotted at the final round) or pass
    ``global_step=0`` (plotted at x=0). Pick one convention and keep it, or repeated runs will not line up.
 
-   Flower metric keys use the same grammar, plus a ``.x_<V>`` suffix that ``global_step`` makes unnecessary here.
+   Flower apps use the same tag grammar (see :doc:`create-flip-app-from-flower`); on FLARE, ``global_step`` carries
+   the x-coordinate instead.
 
 .. _flare-models-py:
 
@@ -500,7 +502,8 @@ settings **and** anything your own code reads:
    }
 
 - ``job_type`` selects the template (``standard`` here; see *Job types* on :ref:`fl-jobs`).
-- ``GLOBAL_ROUNDS`` is read by the platform. It is the only way to set the number of rounds for a platform run.
+- ``GLOBAL_ROUNDS`` is read by the platform. It is the only way to set the number of rounds for a platform run. A
+  value outside 1–1000 is silently discarded and the run falls back to a **single** round.
 - ``LOCAL_ROUNDS`` is read by your trainer (``config["LOCAL_ROUNDS"]``), not by the server. FLIP still checks it at
   submit time:
 

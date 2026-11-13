@@ -24,7 +24,7 @@ from flip_api.domain.schemas.status import (
     ProjectStatus,
     TrustApprovalStatus,
 )
-from flip_api.domain.schemas.users import CognitoUser
+from flip_api.domain.schemas.users import ProjectMemberLookup
 
 # Blocks the three characters most likely to enable structural XML injection
 # downstream in the imaging-api projectData payload. This is not exhaustive —
@@ -170,16 +170,10 @@ class IProject(BaseModel):  # Base for IProject to avoid repetition
 
 class IReturnedProject(IProject):  # Extends IProject
     owner_email: EmailStr = Field(..., alias="ownerEmail")
-    # Narrow by construction, not by declaration. `CognitoUser` permits `name` and `organisation`,
-    # but they stay empty here because `get_project` fills this list from `get_user_by_email_or_id`
-    # (which populates id/email/is_disabled alone) and never calls `apply_user_profile` — the DB
-    # join that is the only source of those two fields. Do not enrich project members with display
-    # names: that would widen full-profile disclosure to every project co-member, which is the leak
-    # FLIP#907 closed on `/users/{user_id}`. The shape to hold to is `ProjectMemberLookup`; typing
-    # this field as one so the response model enforces it rather than a field default is FLIP#996,
-    # which is not a one-line change — `get_project` passes `CognitoUser` instances, and that field
-    # type rejects them at construction.
-    users: list[CognitoUser]
+    # Members carry id / email / isDisabled only — no `name` or `organisation`, which FLIP#907
+    # withholds from callers without Manage users. Typed as `ProjectMemberLookup` so the response
+    # model enforces it: do not widen this to a full-profile user (FLIP#996).
+    users: list[ProjectMemberLookup]
     # Surfaced read-only so the edit form can display the project's
     # DICOM->NIfTI setting. Fixed at creation and immutable afterwards (the
     # edit endpoint ignores it), so the UI renders the toggle disabled.

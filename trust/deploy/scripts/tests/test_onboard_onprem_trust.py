@@ -1100,6 +1100,26 @@ def test_54_hub_shared_allows_the_other_backends_kit_date_empty() -> None:
         _assert(check.status == mod.Status.FAIL and own in check.detail, f"{backend}: empty {own} fails", check.detail)
 
 
+def test_55_hub_shared_keys_are_trust_kit_libs_minus_the_optional_ones() -> None:
+    print("55. The checklist's Hub-shared keys are trust_kit_lib's, minus FL_EDGE_PORT")
+    expected = (
+        "AES_KEY_BASE64",
+        "CENTRAL_HUB_API_URL",
+        "TRUST_API_KEY_HEADER",
+        "FL_BACKEND",
+        "FLOWER_KIT_DATE",
+        "FLARE_KIT_DATE",
+        "DOCKER_TAG",
+        "DOCKER_FL_TAG",
+        "NLB_SUBDOMAIN",
+        "FL_SERVER_PORT",
+    )
+    _assert(mod.HUB_SHARED_KEYS == expected, "the ten required keys, in order", repr(mod.HUB_SHARED_KEYS))
+    _assert("FL_EDGE_PORT" not in mod.HUB_SHARED_KEYS, "FL_EDGE_PORT is not required")
+    check = mod.check_hub_shared({}, False)
+    _assert(check.label == "Hub-shared block (10 keys)", "the row label still counts ten keys", check.label)
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -1158,6 +1178,7 @@ def main() -> None:
     test_52_log_level_debug_warns_a_development_kit()
     test_53_log_level_info_passes_and_unset_warns()
     test_54_hub_shared_allows_the_other_backends_kit_date_empty()
+    test_55_hub_shared_keys_are_trust_kit_libs_minus_the_optional_ones()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
