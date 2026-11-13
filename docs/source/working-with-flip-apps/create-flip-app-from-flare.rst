@@ -9,9 +9,9 @@ Create a FLIP app from a FLARE app
 
    - a FLIP account with the ``researcher`` role;
    - an approved project with a saved cohort query;
-   - a model created under that project, so you have a model ID.
+   - a model created under that project; you upload the app on its model page.
 
-   This page assumes you know the :ref:`flip-fl-nets` component page and the project and model lifecycle in
+   This page assumes you have read :ref:`flip-fl-nets` and know the project and model lifecycle described in
    :doc:`/user-guides/user-common`.
 
 .. note::
@@ -19,10 +19,10 @@ Create a FLIP app from a FLARE app
    This page is the NVIDIA FLARE twin of :doc:`create-flip-app-from-flower`. Both pages follow the same structure
    and cover the same FLIP touchpoints, so you can compare the two backends section by section.
 
-This page shows how to adapt a stock NVIDIA FLARE **Client API** training script so that it runs on FLIP — for
-example, one copied from the `FLARE examples <https://github.com/NVIDIA/NVFlare/tree/main/examples/hello-world>`_ or
-the FLIP app hub. Every FLARE job type on FLIP runs your client code through the Client API (``nvflare.client``): a
-plain Python script that runs on each Trust.
+This page shows how to adapt a stock NVIDIA FLARE **Client API** training script so that it runs on FLIP — for example,
+one copied from the `FLARE examples <https://github.com/NVIDIA/NVFlare/tree/main/examples/hello-world>`_. Every FLARE
+job type on FLIP runs your client code through the Client API (``nvflare.client``): a plain Python script that runs on
+each Trust.
 
 The FLIP touchpoints your script needs are:
 
@@ -75,7 +75,7 @@ lifecycle for you (see :ref:`flare-server-side`).
      - Wired by the template (nothing to do)
    * - Local run
      - ``make run-tutorial`` (simulator), as on FLARE
-     - ``job.py`` recipe: ``make export`` / ``make sim``
+     - ``job.py`` recipe: ``make export`` / ``make sim``, or ``make run-tutorial``
 
 .. contents:: On this page
    :local:
@@ -115,7 +115,8 @@ template and your uploaded files; an uploaded ``job.py`` is ignored.
 
    ``meta.json`` is optional. Upload one to declare the job's GPUs, for example
    ``{"resource_spec": {"@default": {"num_of_gpus": 1}}}``. FLIP keeps its ``resource_spec`` and ``custom_props`` and
-   writes the rest — see :ref:`fl-nvflare-meta-json`.
+   writes the rest. A ``meta.json`` carrying anything beyond what :ref:`fl-nvflare-meta-json` lists (a
+   ``launcher_spec``, a per-site ``resource_spec`` block, …) fails at **Initiate Training**.
 
 .. note::
 
@@ -123,8 +124,8 @@ template and your uploaded files; an uploaded ``job.py`` is ignored.
    ``nvflare``, ``torch`` and ``monai``. Nothing is installed per run, so your app can import only what the image
    already carries. If you need another dependency, ask the platform operators.
 
-   For local runs, use the ``flip-utils`` project environment with its ``full`` extra, which installs the same
-   packages as the FL image (see :ref:`flare-local-testing`).
+   For local runs, use the ``flip-utils`` project environment with its ``nvflare`` and ``full`` extras, which
+   install the same packages as the FL image (see :ref:`flare-local-testing`).
 
 .. _flare-server-side:
 
@@ -138,7 +139,10 @@ Central Hub for you. What matters to you as an app author:
 
 - **Model lifecycle.** FLIP moves the model through ``INITIATED`` → ``PREPARED`` → ``RUNNING`` →
   ``RESULTS_UPLOADED`` (or ``ERROR`` / ``STOPPED``). At the end of the run it zips and uploads
-  ``FL_global_model.pt``, ``cross_val_results.json`` and, with best-model selection, ``best_FL_global_model.pt``.
+  ``FL_global_model.pt``, ``cross_val_results.json`` and, with best-model selection, ``best_FL_global_model.pt``,
+  plus your app's files under ``app/`` as the run used them (``config.json`` with the rounds FLIP filled in), so the
+  study can be recreated. Checkpoint files you bundled (``.pt``, ``.pth``, ``.safetensors``, ``.ckpt``, ``.pkl``,
+  ``.pickle``) and Python caches are left out.
   This drives the progress bar and downloads on the model page (see :ref:`view-results`).
 - **Round telemetry.** The round-started, result-received and round-aggregated entries in the model page's Live
   activity feed come from the server. Your code never calls ``flip.send_event``.
@@ -153,7 +157,7 @@ Central Hub for you. What matters to you as an app author:
 
 .. seealso::
 
-   ``fl-apps/nvflare/standard/README.md`` lists every workflow, executor and filter in the template.
+   :gh:`fl-apps/nvflare/standard/README.md` lists every workflow, executor and filter in the template.
 
 *****************************************
 trainer.py: the Client API loop
@@ -408,7 +412,8 @@ Central Hub. They populate the graphs on the model page (see :ref:`training-metr
    For a once-per-run value such as ``TEST_DICE``, either omit ``global_step`` (plotted at the final round) or pass
    ``global_step=0`` (plotted at x=0). Pick one convention and keep it, or repeated runs will not line up.
 
-   Flower metric keys use the same grammar, plus a ``.x_<V>`` suffix that ``global_step`` makes unnecessary here.
+   Flower apps use the same tag grammar (see :doc:`create-flip-app-from-flower`); on FLARE, ``global_step`` carries
+   the x-coordinate instead.
 
 .. _flare-models-py:
 
@@ -497,7 +502,8 @@ settings **and** anything your own code reads:
    }
 
 - ``job_type`` selects the template (``standard`` here; see *Job types* on :ref:`fl-jobs`).
-- ``GLOBAL_ROUNDS`` is read by the platform. It is the only way to set the number of rounds for a platform run.
+- ``GLOBAL_ROUNDS`` is read by the platform. It is the only way to set the number of rounds for a platform run. A
+  value outside 1–1000 is silently discarded and the run falls back to a **single** round.
 - ``LOCAL_ROUNDS`` is read by your trainer (``config["LOCAL_ROUNDS"]``), not by the server. FLIP still checks it at
   submit time:
 
@@ -646,7 +652,7 @@ with your files — under ``./fl_job/flip_fedavg/``, so you can inspect exactly 
 .. code-block:: shell
 
    make export            # or, from the app directory:
-   uv run --project ../../../../flip-utils --extra full \
+   uv run --project ../../../../flip-utils --extra nvflare --extra full \
        python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 2
 
 **Simulation (GPU and data).** Runs the job in the FLARE simulator against local data. In ``LOCAL_DEV`` mode (the
@@ -670,11 +676,13 @@ named in the app's ``.env.app``:
 
 .. important::
 
-   Run ``job.py`` in the ``flip-utils`` environment with the ``full`` extra, as the tutorial Makefiles do. A bare
-   ``uv run`` from the repository root picks an environment without ``torch``, ``nvflare`` or ``monai``.
+   Run ``job.py`` in the ``flip-utils`` environment with the ``nvflare`` and ``full`` extras, as the tutorial
+   Makefiles do. A bare ``uv run`` from the repository root picks an environment without ``torch``, ``nvflare``
+   or ``monai``.
 
    The simulator runs on the host, not in a container, so you do **not** need ``make build-fl``. You need the
-   ``full`` extra installed (``uv sync --extra full`` in ``flip-utils``) and a GPU visible to that environment.
+   ``nvflare`` and ``full`` extras installed (``uv sync --extra nvflare --extra full`` in ``flip-utils``) and a GPU
+   visible to that environment.
 
 .. note::
 

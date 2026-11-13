@@ -24,6 +24,12 @@ from flip import FLIP, FLIPBase
 from flip.constants import FlipConstants, FlipEvents, PTConstants
 from flip.nvflare.runtime import get_flip_model_id
 
+# Where the app's files land in the results zip, and what of them is left behind (FLIP#634).
+RESULTS_APP_DIR = "app"
+RESULTS_APP_IGNORE = shutil.ignore_patterns(
+    "__pycache__", "*.pyc", "*.pt", "*.pth", "*.safetensors", "*.ckpt", "*.pkl", "*.pickle"
+)
+
 
 class PersistToS3AndCleanup(FLComponent):
     def __init__(
@@ -78,7 +84,7 @@ class PersistToS3AndCleanup(FLComponent):
                 return
 
             self.model_persistor = engine.get_component(self.persistor_id)
-            if self.model_persistor is None or not isinstance(self.model_persistor, PTFileModelPersistor):
+            if not isinstance(self.model_persistor, PTFileModelPersistor):
                 self.system_panic(
                     f"'persistor_id' component must be PTFileModelPersistor. But got: {type(self.model_persistor)}",
                     fl_ctx,
@@ -88,9 +94,7 @@ class PersistToS3AndCleanup(FLComponent):
             self.log_info(fl_ctx, "Beginning PersistToS3AndCleanup")
             self.model_inventory = self.model_persistor.get_model_inventory(fl_ctx)
 
-            if (self.model_inventory.get(PTConstants.PTFileModelName) is not None) and (
-                PTConstants.PTFileModelName in self.model_inventory
-            ):
+            if self.model_inventory.get(PTConstants.PTFileModelName) is not None:
                 self.model_dir = self.model_inventory[PTConstants.PTFileModelName].location
                 self.log_info(fl_ctx, f"Model dir: {self.model_dir}")
             else:
@@ -153,17 +157,18 @@ class PersistToS3AndCleanup(FLComponent):
                 self.log_info(fl_ctx, f"Found best global model: {fl_best_model_filepath}")
                 shutil.move(fl_best_model_filepath, run_dir)
 
-            # Also move trainer.py, and validator.py where an app ships one
-            trainer_path = os.path.join(app_server_path, "custom", "trainer.py")
-            validator_path = os.path.join(app_server_path, "custom", "validator.py")
-
-            if os.path.isfile(trainer_path):
-                self.log_info(fl_ctx, f"Found trainer.py: {trainer_path}")
-                shutil.move(trainer_path, run_dir)
-
-            if os.path.isfile(validator_path):
-                self.log_info(fl_ctx, f"Found validator.py: {validator_path}")
-                shutil.move(validator_path, run_dir)
+            # Keep the app the run used, so the study can be recreated from its results (FLIP#634). custom/ is
+            # the researcher's upload as the server ran it: config.json carries the rounds FLIP defaulted and the
+            # hub's model id, nothing secret (the job credential lives outside the app). app_server/config/ is
+            # left out: it is FLIP's assembled job config, with the cohort query and the trusts. Skipped:
+            # interpreter caches, and checkpoints the researcher bundled, an input they already uploaded (the
+            # same reasoning as the cross-site-eval prune below).
+            custom_dir = os.path.join(app_server_path, "custom")
+            if os.path.isdir(custom_dir):
+                self.log_info(fl_ctx, f"Copying the app's files into the results: {custom_dir}")
+                shutil.copytree(
+                    custom_dir, os.path.join(run_dir, RESULTS_APP_DIR), ignore=RESULTS_APP_IGNORE, dirs_exist_ok=True
+                )
 
             # Remove app_server directory before zipping
             if os.path.isdir(app_server_path):

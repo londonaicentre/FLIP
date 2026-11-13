@@ -27,29 +27,13 @@ from flip_api.db.models.main_models import Model
 from flip_api.file_services.retrieve_federated_results import retrieve_federated_results
 from flip_api.main import app
 from flip_api.utils.s3_client import PresignAudience, S3Client
-from tests.fixtures.db_fixtures import ModelFactory, ProjectFactory
 from tests.unit._log_policy import _FAKE_SIGNED_URL, _assert_logs_have_no_presigned_url
-
-
-@pytest.fixture
-def mock_logger():
-    """Mock logger for testing."""
-    with patch("flip_api.file_services.retrieve_federated_results.logger") as mock_logger:
-        yield mock_logger
 
 
 @pytest.fixture
 def sample_model_id():
     """Create sample model ID for testing."""
     return uuid.uuid4()
-
-
-@pytest.fixture
-def sample_model(sample_model_id):
-    """Create sample model for testing using factory."""
-    project = ProjectFactory(deleted=False)
-    model = ModelFactory(id=sample_model_id, project_id=project.id)
-    return model, project
 
 
 @pytest.fixture
@@ -68,54 +52,10 @@ def empty_db_session():
 
 
 @pytest.fixture
-def s3_mock_success():
-    """Mock S3 client for success case."""
+def s3_mock():
+    """The S3 client the endpoint builds; each test sets the listing and presign results it needs."""
     with patch("flip_api.file_services.retrieve_federated_results.S3Client") as mock_s3:
-        mock_instance = MagicMock()
-        mock_s3.return_value = mock_instance
-
-        mock_instance.list_objects.return_value = [
-            "model-id/file1.csv",
-            "model-id/file2.csv",
-        ]
-
-        mock_instance.get_presigned_url.side_effect = [
-            "https://test-bucket.s3.amazonaws.com/model-id/file1.csv",
-            "https://test-bucket.s3.amazonaws.com/model-id/file2.csv",
-        ]
-
-        yield mock_instance
-
-
-@pytest.fixture
-def s3_mock_empty():
-    """Mock S3 client returning empty results."""
-    with patch("flip_api.file_services.retrieve_federated_results.S3Client") as mock_s3:
-        mock_instance = MagicMock()
-        mock_s3.return_value = mock_instance
-        mock_instance.list_objects.return_value = []
-        yield mock_instance
-
-
-@pytest.fixture
-def s3_mock_error():
-    """Mock S3 client that raises an error."""
-    with patch("flip_api.file_services.retrieve_federated_results.S3Client") as mock_s3:
-        mock_instance = MagicMock()
-        mock_s3.return_value = mock_instance
-        mock_instance.list_objects.side_effect = Exception("S3 error")
-        yield mock_instance
-
-
-@pytest.fixture
-def s3_mock_presigned_error():
-    """Mock S3 client with presigned URL error."""
-    with patch("flip_api.file_services.retrieve_federated_results.S3Client") as mock_s3:
-        mock_instance = MagicMock()
-        mock_s3.return_value = mock_instance
-        mock_instance.list_objects.return_value = ["model-id/file1.csv"]
-        mock_instance.get_presigned_url.side_effect = Exception("Presigned URL error")
-        yield mock_instance
+        yield mock_s3.return_value
 
 
 @pytest.fixture
@@ -177,8 +117,13 @@ def test_retrieve_federated_results_endpoint_calls_function(override_dependencie
 class TestRetrieveFederatedResults:
     """Tests for retrieve_federated_results function."""
 
-    def test_retrieve_success(self, mock_db_session, s3_mock_success, mocked_settings, sample_model_id, user_id):
+    def test_retrieve_success(self, mock_db_session, s3_mock, mocked_settings, sample_model_id, user_id):
         """Test successful retrieval of federated results."""
+        s3_mock.list_objects.return_value = ["model-id/file1.csv", "model-id/file2.csv"]
+        s3_mock.get_presigned_url.side_effect = [
+            "https://test-bucket.s3.amazonaws.com/model-id/file1.csv",
+            "https://test-bucket.s3.amazonaws.com/model-id/file2.csv",
+        ]
         with patch("flip_api.file_services.retrieve_federated_results.can_access_model", return_value=True):
             result = retrieve_federated_results(model_id=sample_model_id, db=mock_db_session, user_id=user_id)
             assert len(result) == 2
@@ -203,8 +148,9 @@ class TestRetrieveFederatedResults:
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
             assert "does not exist" in exc_info.value.detail
 
-    def test_s3_listing_error(self, mock_db_session, s3_mock_error, mocked_settings, sample_model_id, user_id):
+    def test_s3_listing_error(self, mock_db_session, s3_mock, mocked_settings, sample_model_id, user_id):
         """Test handling of S3 listing error."""
+        s3_mock.list_objects.side_effect = Exception("S3 error")
         with patch("flip_api.file_services.retrieve_federated_results.can_access_model", return_value=True):
             with pytest.raises(HTTPException) as exc_info:
                 retrieve_federated_results(model_id=sample_model_id, db=mock_db_session, user_id=user_id)
@@ -212,16 +158,17 @@ class TestRetrieveFederatedResults:
             assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
             assert "An error occurred when finding the result data" in exc_info.value.detail
 
-    def test_no_files_found(self, mock_db_session, s3_mock_empty, mocked_settings, sample_model_id, user_id):
+    def test_no_files_found(self, mock_db_session, s3_mock, mocked_settings, sample_model_id, user_id):
         """Test handling of no files found in S3."""
+        s3_mock.list_objects.return_value = []
         with patch("flip_api.file_services.retrieve_federated_results.can_access_model", return_value=True):
             result = retrieve_federated_results(model_id=sample_model_id, db=mock_db_session, user_id=user_id)
             assert result == []
 
-    def test_presigned_url_error(
-        self, mock_db_session, s3_mock_presigned_error, mocked_settings, sample_model_id, user_id
-    ):
+    def test_presigned_url_error(self, mock_db_session, s3_mock, mocked_settings, sample_model_id, user_id):
         """Test handling of error when generating presigned URLs."""
+        s3_mock.list_objects.return_value = ["model-id/file1.csv"]
+        s3_mock.get_presigned_url.side_effect = Exception("Presigned URL error")
         with patch("flip_api.file_services.retrieve_federated_results.can_access_model", return_value=True):
             with pytest.raises(HTTPException) as exc_info:
                 retrieve_federated_results(model_id=sample_model_id, db=mock_db_session, user_id=user_id)

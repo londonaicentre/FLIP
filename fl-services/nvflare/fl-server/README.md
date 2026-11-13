@@ -17,14 +17,14 @@ Code to deploy the NVIDIA FLARE Federated Learning server.
 
 ## Ports
 
-> Note that from version 2.7 onwards, [there is an option to use a single port for both controller and admin API communications](https://nvflare.readthedocs.io/en/2.9.0/user_guide/admin_guide/configurations/server_port_consolidation.html).
+The FLARE server typically uses two ports. Both are configurable in the project configuration file.
 
-In NVIDIA FLARE, ports 8002 and 8003 are typically used by the FL server and associated services to facilitate communication between components of the federated learning system.
+| Port | Purpose |
+|------|---------|
+| 8002 | Clients (training sites or edge devices) connect over gRPC to send and receive job data. |
+| 8003 | Communication with the Admin API, which manages the system and job scheduling. |
 
-🔌 **Port 8002**: The FLARE server process listens on this port for messages from clients (e.g., training sites or edge devices). Clients (e.g., training sites) connect to this port using gRPC to send/receive job data.
-
-🔌 **Port 8003**: The FLARE server uses this port to communicate with the Admin API, which manages the overall system and job scheduling.
-These ports are configurable in the project configuration file. 
+From FLARE 2.7 onwards, [one port can serve both controller and admin API traffic](https://nvflare.readthedocs.io/en/2.9.0/user_guide/admin_guide/configurations/server_port_consolidation.html).
 
 ## Configuration
 
@@ -33,33 +33,42 @@ The FL server needs to have the same python packages installed as the FL client,
 The server config includes a PyTorch model persistor:
 
 ```json
-"id": "persistor",
-"path": "nvflare.app_common.pt.pt_file_model_persistor.PTFileModelPersistor",
-"args": { "model": { "path": "models.get_model" } }
+{
+  "id": "persistor",
+  "path": "nvflare.app_common.pt.pt_file_model_persistor.PTFileModelPersistor",
+  "args": { "model": { "path": "models.get_model" } }
+}
 ```
 
 ## FLIP site components
 
-At start-up the entrypoint runs `python -m flip.nvflare.server_site_config <workspace>/local` (the workspace is
-`/app`, or `FL_WORKSPACE`: `/workspace` on ECS), which writes
-`local/flip__p_resources.json`. FLARE merges every `local/*__p_resources.json` into the server's
-parent process config, the process that runs the job scheduler, and never into a job, so the
-provisioned `resources.json` stays untouched. It registers `JobSchedulingReporter`: when FLARE's
-scheduler holds a job because a Trust cannot provide the GPUs its `resource_spec` asks for, the
-reporter puts that in the model's activity feed, and on the scheduler's last try it marks the model
-`ERROR` (FLIP#1390). The container refuses to start if the file cannot be written. See
+At start-up the entrypoint runs:
+
+```bash
+python -m flip.nvflare.server_site_config <workspace>/local
+```
+
+The workspace is `/app` by default, or `FL_WORKSPACE` if set (`/workspace` on ECS). The command writes `local/flip__p_resources.json`. If the file cannot be written, the container refuses to start.
+
+That file registers `JobSchedulingReporter` (FLIP#1390):
+
+- When FLARE's scheduler holds a job because a Trust cannot provide the GPUs its `resource_spec` asks for, the reporter records this in the model's activity feed.
+- On the scheduler's last try, it marks the model `ERROR`.
+
+FLARE merges every `local/*__p_resources.json` into the config of the server's parent process, which runs the job scheduler. It never merges them into a job, so the provisioned `resources.json` stays untouched. See
 [GPU requirements and FLARE's scheduler](../../../docs/source/components/component-fl-nets.rst).
 
-**Rolling back past this change takes one step first.** `local/` is the kit mount, so the file outlives
-the container. FLARE in an fl-server image older than FLIP#1390 still loads it, cannot import the
-`JobSchedulingReporter` it names, and fails while loading its configuration. Delete
-`local/flip__p_resources.json` before starting an older image. On a compose host it is in the mounted kit:
-`/opt/flip/services/fl-server-net-<N>/local/` in production,
-`$FL_PROVISIONED_DIR/net-<N>/services/fl-server-net-<N>/local/` in development. On ECS `local/` is an EFS
-volume, and `make rollback-centralhub` (in `deploy/providers/AWS`) takes care of it: before it repoints any
-service it runs the one-shot task Terraform runs when the kit changes, which empties `local/` and re-syncs
-the kit from S3 (`scripts/reset-fl-server-local.sh`). To do the same by hand, for instance before rolling
-back with plain `aws ecs update-service`:
+## Rolling back to an fl-server image older than FLIP#1390
+
+Delete `local/flip__p_resources.json` before you start an older image. `local/` is the kit mount, so the file outlives the container. An older image still loads the file, cannot import the `JobSchedulingReporter` it names, and fails while loading its configuration.
+
+Where the file lives:
+
+- **Compose host, production:** `/opt/flip/services/fl-server-net-<N>/local/`
+- **Compose host, development:** `$FL_PROVISIONED_DIR/net-<N>/services/fl-server-net-<N>/local/`
+- **ECS:** `local/` is an EFS volume. `make rollback-centralhub` (in `deploy/providers/AWS`) handles it for you. Before repointing any service, it runs the one-shot `efs-provision-certs` task that Terraform runs when the kit changes. That task empties `local/` and re-syncs the kit from S3 (`scripts/reset-fl-server-local.sh`).
+
+To do the ECS step by hand, for instance before rolling back with plain `aws ecs update-service`:
 
 ```bash
 NET=$(aws ecs describe-services --cluster flip-cluster --services fl-server-net-1 \

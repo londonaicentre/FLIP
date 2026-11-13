@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Architecture diagrams of the FLIP Central Hub, generated from code kept beside the Terraform.
+"""Architecture diagrams of the FLIP trust node on Azure, generated from code kept beside the Terraform.
 
 Not named ``diagrams`` on purpose: ``tests/conftest.py`` puts this directory on ``sys.path``, and
 that name would shadow the PyPI package these scripts are written with.

@@ -13,22 +13,22 @@
 
 # Chest X-ray lesion classification
 
-Flower port of the chest-X-ray tutorial that lives at
-`fl-tutorials/nvflare/image_classification/xray_classification`. It scores
-every X-ray against the lesions named in `app/config.json` (Effusion + Edema
-by default, with "Lungs in normal arrangement" as a negative override) using
-a MONAI DenseNet121 trained with multi-label BCE — from scratch, `pretrained=False`.
-An FL app must never download at run time (FLIP#1206: on a platform-managed estate the FL
-server has no internet route, nor does a trust host behind an NHS firewall, and a run-time
-fetch bypasses the scanned upload path). The FLARE tutorial's README records the
-measurement behind dropping the ImageNet initialisation rather than shipping it. Apps
-that do need pretrained weights ship them as an uploaded file; the FLARE
-autoencoder tutorial shows the pattern (`make weights`).
+Flower port of the [FLARE chest-X-ray tutorial](../../../nvflare/image_classification/xray_classification/README.md).
+It scores every X-ray against the lesions named in `app/config.json` (Effusion + Edema by default,
+with "Lungs in normal arrangement" as a negative override) using a MONAI DenseNet121 trained with
+multi-label BCE.
+
+The model trains from scratch (`pretrained=False`) because an FL app must never download at run
+time (FLIP#1206). On a platform-managed estate the FL server has no internet route, nor does a
+trust host behind an NHS firewall, and a run-time fetch bypasses the scanned upload path. The
+FLARE tutorial's README records the measurement behind dropping the ImageNet initialisation
+rather than shipping it. Apps that do need pretrained weights ship them as an uploaded file; the
+FLARE autoencoder tutorial shows the pattern (`make weights`).
 
 The cohort query (`query.sql`) is copied verbatim from the FLARE tutorial
 and matches the chest-X-ray data seeded into the trust mock OMOP DB
-(concept ids 4215818 / 4196943 / 40481136). This is the tutorial that
-`make e2e_smoke` from FLIP picks when `FL_BACKEND=flower`.
+(concept ids 4215818 / 4196943 / 40481136). `make e2e_smoke FL_BACKEND=flower`, run from the
+repo root, uses this tutorial.
 
 ## At a glance
 
@@ -47,11 +47,12 @@ and matches the chest-X-ray data seeded into the trust mock OMOP DB
 xray_classification/
 ├── query.sql                  # Cohort SQL — verbatim from the FLARE tutorial
 ├── query_novocab.sql          # Same cohort for a trust without the OMOP vocabulary (picked automatically when HUB is unset)
-├── pyproject.toml             # Dependency manifest; not consumed by FLIP (base bundle wins)
+├── pyproject.toml             # Dependency manifest + run config for local `flwr run`; ignored on upload (base bundle wins)
 ├── README.md
 └── app/
     ├── __init__.py
     ├── config.json            # Per-tutorial hyperparameters (LOCAL_ROUNDS, splits, LESIONS, ...)
+    ├── config.toml            # Flower run-config for platform-submitted runs
     ├── client_app.py          # @app.train + @app.evaluate
     ├── task.py                # train_func / validate_func helpers
     ├── data_loading.py        # FLIP_BASE + lesion / row helpers
@@ -71,12 +72,11 @@ the upload flow is unaffected.
 
 ## Running this tutorial
 
-> **Two paths.** `make -C fl-tutorials run-tutorial TUTORIAL=xray_classification FL_BACKEND=flower`
-> runs it on the flwr simulator (first below), as FLARE's tutorials do — what the release check
-> runs. To run it on the Flower containers by hand, use `fl-services/flower` (second below). The
-> deployment wiring (the FL images, fl-api submit, SuperNode registration) is exercised end to end
-> by `make e2e_smoke FL_BACKEND=flower` against the dev stack (FLIP#1435). Use the make target
-> rather than invoking `flwr run` directly.
+> **Two paths.** The flwr simulator (first below) is what the release check runs, as for the FLARE
+> tutorials. To run on the Flower containers by hand, use `fl-services/flower` (second below).
+> Either way, use the make targets rather than invoking `flwr run` directly. The deployment wiring
+> (the FL images, fl-api submit, SuperNode registration) is exercised end to end by
+> `make e2e_smoke FL_BACKEND=flower` against the dev stack.
 
 ### Run on the flwr simulator (`make run-tutorial`)
 
@@ -90,20 +90,17 @@ make -C fl-tutorials run-tutorial TUTORIAL=xray_classification FL_BACKEND=flower
 Runs every ClientApp in-process — no SuperLink container, no SuperNodes, no fl-api, no Docker —
 with the same `app/` code the Flower containers run: site identity comes from
 `context.node_config`'s `partition-id`, which the simulator populates and a deployed SuperNode
-accepts via `--node-config`. The deployment wiring (the FL images, fl-api submit, SuperNode
-registration) is exercised by `make e2e_smoke FL_BACKEND=flower` against the dev stack.
+accepts via `--node-config`.
 
-A raw `flwr run` has five sharp edges in this project — a long-lived SuperLink caches its
-environment, the ClientApp's working directory is a snapshot under `~/.flwr/apps/`, and
-`WORKING_DIR` defaults to a container path — which is why the path is a make target rather than
-a command: `sim-tutorial.sh` handles them, and stops only its *own* stale simulator processes
-(a blanket `pkill -f flower-superlink` would also kill the FLIP dev stack's fl-server, whose
-processes are visible in the host PID namespace). Two more edges make it five: `flwr run . local`
-adopts whatever already listens on the local Control API port, so the script refuses to hand the
-run to a SuperLink another checkout left behind; and `flwr run --stream` returns 0 whatever became
-of the run, so the script's exit status is the run's own terminal status as the SuperLink reports
-it. See the
-[3D spleen segmentation README](../../image_segmentation/3d_spleen_segmentation/README.md) for the details.
+Use the make target rather than a raw `flwr run`. Its script, `sim-tutorial.sh`, handles five sharp edges in this project:
+
+1. A long-lived SuperLink caches its environment.
+2. The ClientApp's working directory is a snapshot under `~/.flwr/apps/`.
+3. `WORKING_DIR` defaults to a container path.
+4. `flwr run . local` adopts whatever already listens on the local Control API port, so the script refuses to hand the run to a SuperLink another checkout left behind.
+5. `flwr run --stream` returns 0 whatever became of the run, so the script's exit status is the run's own terminal status as the SuperLink reports it.
+
+The script stops only its *own* stale simulator processes. A blanket `pkill -f flower-superlink` would also kill the FLIP dev stack's fl-server, whose processes are visible in the host PID namespace. Details: [3D spleen segmentation README](../../image_segmentation/3d_spleen_segmentation/README.md).
 
 ### On the Flower containers, by hand
 
@@ -134,19 +131,18 @@ make submit APP=xray_classification    # from fl-services/flower/
   the SuperLink reads a tutorial and its checkpoint), and the `environment:` blocks
   point the app at those paths, so relative paths in tutorial code resolve
   consistently regardless of your host layout.
-- `make up` runs the stack `--insecure` (the SuperLink's mode and health server
-  are set by `command:`); `make up-secure` runs it with TLS and SuperNode auth after
+- `make up` runs the stack `--insecure` (the SuperLink's mode is set by
+  `command:`); `make up-secure` runs it with TLS and SuperNode auth after
   `make provision`.
 
 The `DEV_DATAFRAME` CSV must expose chest-X-ray accession IDs with the same
-column shape `query.sql` returns from the trust mock OMOP DB (concept ids
-4215818 / 4196943 / 40481136). The one exception is `person_id`, which
-`query.sql` projects only so the trust can report per-subject age and sex
-distributions: the app never reads it, nothing computes cohort statistics on
-the local-sim path, and the recorded CSV omits it. DICOMs land in
-`DEV_IMAGES_DIR` keyed by accession number —
-`flip.get_by_accession_number(..., resource_type=[ResourceType.DICOM])` reads
-them directly when `LOCAL_DEV=true`.
+column shape `query.sql` returns from the trust mock OMOP DB, except `person_id`.
+`query.sql` projects `person_id` only so the trust can report per-subject age and
+sex distributions. The app never reads it and nothing computes cohort statistics
+on the local-sim path, so the recorded CSV omits it.
+
+DICOMs land in `DEV_IMAGES_DIR` keyed by accession number. With `LOCAL_DEV=true`,
+`flip.get_by_accession_number(..., resource_type=[ResourceType.DICOM])` reads them directly.
 
 ## Hyperparameters
 
@@ -161,7 +157,7 @@ them directly when `LOCAL_DEV=true`.
 | `BATCH_SIZE`         | 8       | DataLoader batch size |
 | `LESIONS`            | Effusion / Edema / "Lungs in normal arrangement" | Multi-label heads + the normal-override column |
 | `value_to_numerical` | {0:"No",1:"Yes"} | Maps dataframe string values to binary labels |
-| `VALIDATE_EVERY`     | 1       | Validate every N epochs (currently always 1) |
+| `VALIDATE_EVERY`     | 1       | Not read by the app: it validates after every epoch |
 
 ## Best-model selection
 

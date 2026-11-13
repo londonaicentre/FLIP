@@ -24,6 +24,10 @@
 locals {
   flip_local_domain = "flip.local"
 
+  # The one address flip-api sends from (FLIP#592): on the sender domain once
+  # SES_SENDER_EMAIL is set, the verified address until then.
+  ses_sender_email = var.SES_SENDER_EMAIL != "" ? var.SES_SENDER_EMAIL : var.SES_VERIFIED_EMAIL
+
   # Permissions boundary carried by every IAM role in this root (FLIP#962).
   #
   # Composed rather than looked up: the policy is declared by
@@ -135,26 +139,20 @@ locals {
       # per-connection IAM tokens (DB_HOST = proxy endpoint, see ecs_tasks.tf),
       # which fixes the secret-rotation outage (FLIP#556).
       TRUST_API_KEY_HEADER           = var.TRUST_API_KEY_HEADER
-      INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
       AWS_SECRET_NAME                = "FLIP_API" # pragma: allowlist secret
       AWS_SES_ADMIN_EMAIL_ADDRESS    = var.SES_VERIFIED_EMAIL
-      AWS_SES_SENDER_EMAIL_ADDRESS   = var.SES_VERIFIED_EMAIL
+      AWS_SES_SENDER_EMAIL_ADDRESS   = local.ses_sender_email
       UPLOADED_MODEL_FILES_BUCKET    = local.uploaded_model_files_uri
       SCANNED_MODEL_FILES_BUCKET     = local.scanned_model_files_uri
       UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
       FL_APP_DESTINATION_BUCKET      = local.fl_app_destination_uri
       NET_ENDPOINTS                  = local.net_endpoints_json
       FL_BACKEND                     = var.fl_backend
-      # Raise the per-file model-upload cap from the 100 MiB Settings default
-      # to 5 GB. This is the practical ceiling for the current upload path: a
-      # browser presigned POST (services.tf) is a *single* S3 POST, and S3
-      # rejects any single PUT/POST over 5 GiB — larger files would need
-      # multipart upload, which is not implemented. 5e9 (SI 5 GB) is used
-      # rather than a binary 5 GiB so the encoded multipart/form-data body
-      # (file + _MULTIPART_OVERHEAD_BUFFER_BYTES + framing) stays safely under
-      # S3's 5 GiB hard limit. Note: the presigned-POST TTL is clamped to
-      # 1800s (MAX_PUT_PRESIGNED_URL_TTL_SECONDS), so multi-GB uploads must
-      # complete within 30 minutes or they time out at the edge.
+      # 5e9 (SI 5 GB), just under the 5 GiB Settings default: the browser upload
+      # is a single presigned S3 POST (services.tf), capped by S3 at 5 GiB, and the
+      # file plus _MULTIPART_OVERHEAD_BUFFER_BYTES and framing must fit. Larger files
+      # would need multipart upload, which is not implemented. Uploads must finish
+      # within the 1800 s presign TTL (MAX_PRESIGNED_URL_TTL_SECONDS).
       MAX_MODEL_FILE_BYTES = "5000000000"
       # uv's cache on the task's /tmp volume: its default, under HOME, is on the
       # read-only root filesystem (FLIP#1795).
@@ -165,11 +163,10 @@ locals {
       # copy here would be dead config that apply-fl-kit-slots never updates.
     })
     fl_server = {
-      LOCAL_DEV                   = "false"
-      NET_ID                      = "net-1"
-      IMAGES_DIR                  = "/app/data/images"
-      FLIP_API_INTERNAL_URL       = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
-      INTERNAL_SERVICE_KEY_HEADER = var.INTERNAL_SERVICE_KEY_HEADER
+      LOCAL_DEV             = "false"
+      NET_ID                = "net-1"
+      IMAGES_DIR            = "/app/data/images"
+      FLIP_API_INTERNAL_URL = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
       # Root of the shared checkpoint-staging volume (mounted from the
       # fl_checkpoints EFS access point in ecs_tasks.tf). The fl-server's
       # EvaluationModelLocator reads a staged checkpoint from
@@ -186,9 +183,6 @@ locals {
       # rolls the service, which reads the kit only at start. The Flower one-shot
       # that registers SuperNode keys waits for that rollout (ecs_flower.tf, FLIP#1738).
       FL_KIT_SOURCE = local.fl_provision_base_s3
-      # INTERNAL_SERVICE_KEY is injected via the `secrets` block in
-      # ecs_tasks.tf (sourced from the FLIP_API Secrets Manager secret),
-      # never exposed as plain env in the task definition.
     }
     fl_api = {
       # ENV gates the entrypoint's uvicorn --reload off in prod/stag so a failed
@@ -222,13 +216,12 @@ locals {
     }
     # Flower SuperLink (compose.prod.flower.yml fl-server-net-1). TLS +
     # SuperNode-auth flags travel as the container command (ecs_tasks.tf), not
-    # env. INTERNAL_SERVICE_KEY is injected via the secrets block.
+    # env.
     fl_server_flower = merge({
-      LOCAL_DEV                   = "false"
-      NET_ID                      = "net-1"
-      IMAGES_DIR                  = "/app/data/images"
-      FLIP_API_INTERNAL_URL       = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
-      INTERNAL_SERVICE_KEY_HEADER = var.INTERNAL_SERVICE_KEY_HEADER
+      LOCAL_DEV             = "false"
+      NET_ID                = "net-1"
+      IMAGES_DIR            = "/app/data/images"
+      FLIP_API_INTERNAL_URL = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
       # Per-job hub credentials, written by the fl-api on the shared jobs volume (see the FLARE maps).
       JOB_CREDENTIAL_DIR = "/app/src/.job-credentials"
       # The ServerApp runs in the image's preinstalled environment on every estate:
@@ -252,7 +245,6 @@ locals {
       # Same reload-gating rationale as the FLARE map (FLIP#593 pt.1).
       ENV                         = "production"
       SUPERLINK_ADDRESS           = "${local.service_discovery_names.fl_server}:8000"
-      SUPERLINK_HEALTH_ADDRESS    = "${local.service_discovery_names.fl_server}:9097"
       SUPERLINK_ROOT_CERTIFICATES = "/certs/ca.crt"
       FLOWER_SRC_ROOT             = "/app/src"
       JOB_CREDENTIAL_DIR          = "/app/src/.job-credentials"

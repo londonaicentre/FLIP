@@ -33,8 +33,10 @@ class Settings(BaseSettings):
     # for local development.
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
+    # Constant on purpose: model_config is built once, here, and inherited by DevSettings and
+    # ProdSettings, so it cannot follow ENV. Deployed hubs read the process environment instead.
     model_config = SettingsConfigDict(
-        env_file=f"../.env.{ENV}",
+        env_file="../.env.development",
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -42,11 +44,8 @@ class Settings(BaseSettings):
     # Per-trust API key header name (for authenticating requests from trusts to the FLIP API)
     TRUST_API_KEY_HEADER: str
 
-    # Internal service auth (fl-server on the Central Hub)
-    INTERNAL_SERVICE_KEY_HEADER: str
-
     # FL API auth (flip-api → fl-api-net-N): sent on every FL API call, required by every FL API
-    # route but /health. Dedicated to that hop — never INTERNAL_SERVICE_KEY. Dev: minted into the
+    # route but /health. Dedicated to that hop. Dev: minted into the
     # env file by `make up`; prod: a `secrets` entry of the ECS task (FLIP_API secret, `fl_api_key`).
     FL_API_KEY_HEADER: str = "X-FL-API-Key"
     FL_API_KEY: str
@@ -220,22 +219,17 @@ class Settings(BaseSettings):
     # Which email backend send_templated_email (utils/email_sender.py) uses.
     # "ses" sends through AWS SESv2; "console" logs the would-be email
     # instead, so development needs no SES identity, templates or verified
-    # addresses (FLIP#919). The effective value always comes from the
-    # subclass — DevSettings overrides to "console", ProdSettings narrows
-    # the type to Literal["ses"] so console is rejected at boot there. This
-    # base default is only observed by the ENV probe below and by direct
-    # Settings() construction in tests; unlike ENFORCE_MFA (declared only
-    # here, so an unknown environment inherits the secure value) it is NOT
-    # a fallback for a misconfigured deploy: coerce_empty_env maps an unset
-    # ENV to "development", which selects DevSettings and therefore
-    # "console". A deploy that loses ENV fails on DevSettings' other
-    # required fields (POSTGRES_PASSWORD, AES_KEY_BASE64) rather than
-    # silently logging, but do not rely on this default for that.
-    # A dedicated flag rather than an ENV branch (same rationale as
-    # ENFORCE_MFA) so the integration tests can select the SES path on the
-    # base class without flipping ENV — which also drives DB auth, encryption
-    # and docs. Each subclass pins one value (DevSettings "console",
-    # ProdSettings "ses"), so no environment ever chooses.
+    # addresses (FLIP#919). Each subclass pins one value (DevSettings
+    # "console", ProdSettings Literal["ses"], so console is rejected at boot
+    # there), so no environment chooses. This base default is seen only by the
+    # ENV probe below and by Settings() in tests. Unlike ENFORCE_MFA it is NOT
+    # a fallback for a misconfigured deploy: an unset ENV coerces to
+    # "development", which selects DevSettings and so "console". Such a deploy
+    # should then fail on DevSettings' required POSTGRES_PASSWORD /
+    # AES_KEY_BASE64, but do not rely on that. It is a dedicated flag rather
+    # than an ENV branch (as with ENFORCE_MFA) so integration tests can select
+    # SES on the base class without flipping ENV, which also drives DB auth,
+    # encryption and docs.
     EMAIL_BACKEND: Literal["ses", "console"] = "ses"
 
     @field_validator("ENV", mode="before")
@@ -560,8 +554,6 @@ class DevSettings(Settings):
     AWS_SES_SENDER_EMAIL_ADDRESS: EmailStr = "flip-no-reply@example.com"
 
     AES_KEY_BASE64: str  # in dev, get AES key from env variable
-
-    INTERNAL_SERVICE_KEY_HASH: str  # in dev, get internal service auth key hash from env variable
 
     # FL kit slot pool names — one per pre-provisioned FL kit (workspace/net-N/services/<slot>).
     # Seeded into `fl_kit_slot` so POST /admin/trusts can hand each joining trust the next

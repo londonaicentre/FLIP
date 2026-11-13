@@ -19,7 +19,6 @@ for the standard, evaluation, and fed_opt job types.
 
 import contextlib
 import json
-import logging
 import math
 import os
 import shutil
@@ -110,23 +109,19 @@ def _hub_internal_headers(model_id: str) -> dict[str, str]:
 
     Used by fl-server on the Central Hub for outbound calls to flip-api
     (update_status, send_metrics, send_handled_exception, send_event). The hub
-    checks the internal-service key against its own copy, and the job credential
-    against the one it minted for this model's job, so a job can report on its
-    own model only. Distinct boundary from the trust-internal key — a leak in one
-    trust never affects this hub-side path and vice versa.
+    checks the job credential against the one it minted for this model's job, so
+    a job can report on its own model only. Distinct boundary from the
+    trust-internal key — a leak in one trust never affects this hub-side path and
+    vice versa.
 
     Args:
         model_id (str): The model the call is about.
 
     Returns:
-        dict[str, str]: The hub internal-service key under its configured header name, plus
-        the model's job credential when there is one.
+        dict[str, str]: The model's job credential, or nothing when there is none.
     """
-    headers = {FlipConstants.INTERNAL_SERVICE_KEY_HEADER: FlipConstants.INTERNAL_SERVICE_KEY}
     credential = _job_credential(model_id)
-    if credential:
-        headers[JOB_CREDENTIAL_HEADER] = credential
-    return headers
+    return {JOB_CREDENTIAL_HEADER: credential} if credential else {}
 
 
 # (connect, read) bound on the PUT of one results part to the object store.
@@ -231,13 +226,6 @@ class FLIPStandardProd(FLIPBase):
         - ``get_by_accession_number()`` — download a study's images/resources from imaging-api
         - ``add_resource()`` — stage a per-accession resource under the client's images dir
     """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._name = self.__class__.__name__
-        self.logger = logging.getLogger(self._name)
-        self.logger.setLevel(logging.INFO)
-        self.logger.propagate = False
 
     @override
     def get_dataframe(self, project_id: str, query: str) -> pd.DataFrame:
@@ -687,13 +675,6 @@ class FLIPStandardProd(FLIPBase):
 
 class FLIPStandardDev(FLIPBase):
     """Development implementation of FLIP for standard job types."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._name = self.__class__.__name__
-        self.logger = logging.getLogger(self._name)
-        self.logger.setLevel(logging.INFO)
-        self.logger.propagate = False
 
     @override
     def get_dataframe(self, project_id: str, query: str) -> pd.DataFrame:

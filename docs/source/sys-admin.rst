@@ -4,6 +4,9 @@
 System administration
 ######################
 
+Day-to-day administration of a running FLIP deployment: managing projects and users,
+user roles, supported platforms, upgrading sites, and backup and restore.
+
 .. toctree::
    :maxdepth: 2
 
@@ -16,10 +19,7 @@ System administration
 .. seealso::
 
    - Deploying a FLIP node inside a TRE: :doc:`/deploy-flip/deploy-flip-node-in-tre`
+   - Deploying a FLIP node on Kubernetes: :ref:`deploy-flip-node-kubernetes`
+   - Troubleshooting a trust node on Kubernetes: :ref:`ts-trust-node-kubernetes`
    - Logging & observability stack: :doc:`/components/component-logging-stack`
    - Cohort SQL drafting (Beta) settings and allowance: :ref:`cohort-sql-drafting`
-
-.. note::
-
-   For deployments on **Kubernetes**, see :ref:`deploy-flip-node-kubernetes` and
-   :ref:`ts-trust-node-kubernetes`.

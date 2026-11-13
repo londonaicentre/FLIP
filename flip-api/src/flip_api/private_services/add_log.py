@@ -40,8 +40,8 @@ def add_log_endpoint(
     Add a log entry to the database for a specific model.
 
     This endpoint is internal-only: it accepts requests from the fl-server on the
-    Central Hub (authenticated via INTERNAL_SERVICE_KEY_HEADER), and only for a model
-    that has a job still reporting (``authorise_job_callback``). The payload is
+    Central Hub, and only under the credential of a job still reporting on the model
+    (``authorise_job_callback``). The payload is
     either a free-text row (``log`` set) or a typed round event (``event_type``
     set) — ``TrainingLog`` enforces the two shapes.
 

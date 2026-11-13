@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import os
 import re
 from pathlib import Path
@@ -253,7 +254,7 @@ def _central_slice(volume: torch.Tensor, axis: int, flip_lr: bool = False) -> np
         np.ndarray: The 2-D slice, rotated so the axis that runs superior (or anterior, for the
         axial view) points up the page, and mirrored if this view needs it.
     """
-    plane = volume.index_select(axis, torch.tensor([volume.shape[axis] // 2], device=volume.device)).squeeze(axis)
+    plane = volume.select(axis, volume.shape[axis] // 2)
     rotated = np.rot90(plane.numpy())
     return np.fliplr(rotated) if flip_lr else rotated
 
@@ -317,8 +318,9 @@ def save_triplanar(
                 return None
             picked[label] = batch.detach().float().cpu()[min(sample, batch.shape[0] - 1), 0]
 
-        figure, axes = plt.subplots(len(_PLANES), len(picked), figsize=(3.2 * len(picked), 3.2 * len(_PLANES)))
-        axes = np.atleast_2d(axes).reshape(len(_PLANES), len(picked))
+        figure, axes = plt.subplots(
+            len(_PLANES), len(picked), figsize=(3.2 * len(picked), 3.2 * len(_PLANES)), squeeze=False
+        )
         figure.patch.set_facecolor("black")
 
         for row, (view, axis, flip_lr) in enumerate(_PLANES):
@@ -416,9 +418,9 @@ DENSE_RATIO = 0.9
 def _ema(values: list[float], alpha: float = EMA_ALPHA) -> list[float]:
     """Exponential moving average, skipping non-finite points rather than propagating them."""
     out: list[float] = []
-    acc = next((v for v in values if v == v and abs(v) != float("inf")), 0.0)
+    acc = next((v for v in values if math.isfinite(v)), 0.0)
     for value in values:
-        if value == value and abs(value) != float("inf"):
+        if math.isfinite(value):
             acc = alpha * value + (1 - alpha) * acc
         out.append(acc)
     return out
@@ -502,10 +504,6 @@ def _legend(axis, handles=None, labels=None) -> None:
 def plot_site(site: str, series: dict[str, list[float]], out_dir: Path) -> Path:
     """Write the loss figure for one site and return its path.
 
-    The per-iteration panel is log-scaled when every value is positive: the terms routinely span two
-    decades, and on a linear axis the smallest of them — usually the one that is misweighted, which
-    is exactly what you are looking for — is a flat line on the floor.
-
     Args:
         site (str): Site name, used in the title and filename.
         series (dict[str, list[float]]): Output of :func:`parse_log`.
@@ -545,7 +543,7 @@ def plot_site(site: str, series: dict[str, list[float]], out_dir: Path) -> Path:
         # you are looking for — is a flat line on the floor. On the per-epoch panel the first epoch
         # is several times any later one, so a linear axis spends most of its height on it.
         plotted = [values for name, values in panel.items() if name not in twin_names]
-        finite = [v for values in plotted for v in values if v == v and abs(v) != float("inf")]
+        finite = [v for values in plotted for v in values if math.isfinite(v)]
         if finite and min(finite) > 0:
             axis.set_yscale("log")
         axis.set_xlabel("training iteration" if is_dense else "local epoch")

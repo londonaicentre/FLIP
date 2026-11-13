@@ -220,20 +220,26 @@ def test_an_unparsable_store_report_fails() -> None:
 # ── Weaker and absent evidence ───────────────────────────────────────────────────────
 
 
+def _no_evidence(**overrides: object) -> dict:
+    """No UID match, no new prearchive object, no received.log line."""
+    return evidence(
+        **{"prearchive_matches": [], "prearchive_match_mode": "", "prearchive_new": [], "received_log_lines": []}
+        | overrides
+    )
+
+
+def _arrival_time_only(**overrides: object) -> dict:
+    """Only a new prearchive object, matched by arrival time."""
+    return _no_evidence(**{"prearchive_new": ["/data/xnat/prearchive/x.dcm"]} | overrides)
+
+
 def test_a_new_object_without_a_uid_or_receipt_passes_when_received_log_does_not_exist() -> None:
     """The genuine last resort: real evidence, but a concurrent import looks identical.
 
     A receiver with no ``received.log`` at all cannot produce stronger evidence, so arrival time
     is the best there is and the run still passes (exit 0) with its warning.
     """
-    verdict = decide(
-        evidence(
-            prearchive_matches=[],
-            prearchive_match_mode="",
-            prearchive_new=["/data/xnat/prearchive/x.dcm"],
-            received_log_exists=False,
-        )
-    )
+    verdict = decide(_arrival_time_only(received_log_exists=False))
 
     assert verdict.passed
     assert not verdict.inconclusive
@@ -246,16 +252,6 @@ def test_a_new_object_without_a_uid_or_receipt_passes_when_received_log_does_not
 
 
 # ── Arrival time beside a present, silent received.log: inconclusive, not a pass ─────
-
-
-def _arrival_time_only(**overrides: object) -> dict:
-    return evidence(
-        prearchive_matches=[],
-        prearchive_match_mode="",
-        prearchive_new=["/data/xnat/prearchive/x.dcm"],
-        received_log_lines=[],
-        **overrides,
-    )
 
 
 def test_arrival_time_only_with_a_present_received_log_is_inconclusive_not_a_pass() -> None:
@@ -310,16 +306,7 @@ def test_an_importer_failure_beats_the_inconclusive_path() -> None:
 
 def test_no_evidence_at_all_stays_a_failure_even_with_a_present_received_log() -> None:
     """Nothing arrived is a failure, not an inconclusive — exit 1."""
-    verdict = decide(
-        evidence(
-            prearchive_matches=[],
-            prearchive_match_mode="",
-            prearchive_new=[],
-            received_log_lines=[],
-            received_log_exists=True,
-            timed_out=True,
-        )
-    )
+    verdict = decide(_no_evidence(received_log_exists=True, timed_out=True))
 
     assert not verdict.inconclusive
     assert verdict.exit_code == 1
@@ -338,15 +325,7 @@ def test_dicom_log_growth_alone_does_not_pass() -> None:
     Treating it as success passed any importer error outside the three named signatures as
     "the receiver logged the transfer".
     """
-    verdict = decide(
-        evidence(
-            prearchive_matches=[],
-            prearchive_match_mode="",
-            prearchive_new=[],
-            received_log_lines=[],
-            dicom_log_new_lines=4,
-        )
-    )
+    verdict = decide(_no_evidence(dicom_log_new_lines=4))
 
     assert not verdict.passed, "dicom.log growth alone still passes — but that logger is errors-only"
     assert "TROUBLESHOOTING.md" in verdict.remedy
@@ -354,15 +333,7 @@ def test_dicom_log_growth_alone_does_not_pass() -> None:
 
 def test_no_receiver_side_evidence_at_all_fails() -> None:
     """A green association with nothing on the receiver is the false confidence to catch."""
-    verdict = decide(
-        evidence(
-            prearchive_matches=[],
-            prearchive_match_mode="",
-            prearchive_new=[],
-            received_log_lines=[],
-            dicom_log_new_lines=0,
-        )
-    )
+    verdict = decide(_no_evidence(dicom_log_new_lines=0))
 
     assert not verdict.passed
     assert "no new prearchive object" in verdict.reason
@@ -371,16 +342,7 @@ def test_no_receiver_side_evidence_at_all_fails() -> None:
 
 def test_a_timed_out_poll_says_so_and_names_the_window() -> None:
     """An operator who waited 90s for nothing should be told that is what happened."""
-    verdict = decide(
-        evidence(
-            prearchive_matches=[],
-            prearchive_match_mode="",
-            prearchive_new=[],
-            received_log_lines=[],
-            timed_out=True,
-            timeout_seconds=90,
-        )
-    )
+    verdict = decide(_no_evidence(timed_out=True, timeout_seconds=90))
 
     assert not verdict.passed
     assert "within 90s" in verdict.reason
@@ -490,6 +452,17 @@ def _run_cli(ev: dict) -> subprocess.CompletedProcess:
     )
 
 
+def _run_cli_env(**env: str) -> subprocess.CompletedProcess:
+    """`--from-env`, with only ``env`` (and a minimal PATH) in the environment."""
+    return subprocess.run(
+        [sys.executable, str(VERDICT_PY), "--from-env"],
+        env={"PATH": "/usr/bin:/bin", **env},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def test_the_cli_exits_zero_on_the_silent_dicom_log_case() -> None:
     result = _run_cli(evidence())
 
@@ -506,19 +479,12 @@ def test_the_cli_exits_non_zero_on_an_importer_failure() -> None:
 
 def test_the_cli_reads_the_environment_the_shell_hands_it() -> None:
     """`--from-env` is the whole handoff — the shell does no parsing of its own."""
-    result = subprocess.run(
-        [sys.executable, str(VERDICT_PY), "--from-env"],
-        env={
-            "PATH": "/usr/bin:/bin",
-            "FAILED_COUNT": "0",
-            "INSTANCE_COUNT": "1",
-            "NEW_RECEIVED": RECEIVED_LINE,
-            "SENDER_AE": "ORTHANC",
-            "PREARCHIVE_TIMEOUT": "90",
-        },
-        capture_output=True,
-        text=True,
-        check=False,
+    result = _run_cli_env(
+        FAILED_COUNT="0",
+        INSTANCE_COUNT="1",
+        NEW_RECEIVED=RECEIVED_LINE,
+        SENDER_AE="ORTHANC",
+        PREARCHIVE_TIMEOUT="90",
     )
 
     assert result.returncode == 0, result.stderr
@@ -526,13 +492,7 @@ def test_the_cli_reads_the_environment_the_shell_hands_it() -> None:
 
 
 def test_the_cli_from_env_fails_a_run_with_no_receiver_evidence() -> None:
-    result = subprocess.run(
-        [sys.executable, str(VERDICT_PY), "--from-env"],
-        env={"PATH": "/usr/bin:/bin", "FAILED_COUNT": "0", "TIMED_OUT": "1", "PREARCHIVE_TIMEOUT": "90"},
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = _run_cli_env(FAILED_COUNT="0", TIMED_OUT="1", PREARCHIVE_TIMEOUT="90")
 
     assert result.returncode == 1
     assert "within 90s" in result.stderr
@@ -540,15 +500,7 @@ def test_the_cli_from_env_fails_a_run_with_no_receiver_evidence() -> None:
 
 def test_the_cli_exits_two_on_the_inconclusive_case() -> None:
     """2 is the whole point: a caller reading `$?` must not see "passed"."""
-    result = _run_cli(
-        evidence(
-            prearchive_matches=[],
-            prearchive_match_mode="",
-            prearchive_new=["/data/xnat/prearchive/x.dcm"],
-            received_log_lines=[],
-            received_log_exists=True,
-        )
-    )
+    result = _run_cli(_arrival_time_only(received_log_exists=True))
 
     assert result.returncode == 2, result.stderr
     assert "INCONCLUSIVE" in result.stderr
@@ -557,19 +509,12 @@ def test_the_cli_exits_two_on_the_inconclusive_case() -> None:
 
 def test_the_cli_from_env_exits_two_when_the_probe_says_received_log_exists() -> None:
     """End to end over the handoff the shell actually uses."""
-    result = subprocess.run(
-        [sys.executable, str(VERDICT_PY), "--from-env"],
-        env={
-            "PATH": "/usr/bin:/bin",
-            "FAILED_COUNT": "0",
-            "INSTANCE_COUNT": "1",
-            "SCAN": "time\t/data/xnat/prearchive/x.dcm\n",
-            "RECEIVED_LOG_PRESENT": "1",
-            "PREARCHIVE_TIMEOUT": "90",
-        },
-        capture_output=True,
-        text=True,
-        check=False,
+    result = _run_cli_env(
+        FAILED_COUNT="0",
+        INSTANCE_COUNT="1",
+        SCAN="time\t/data/xnat/prearchive/x.dcm\n",
+        RECEIVED_LOG_PRESENT="1",
+        PREARCHIVE_TIMEOUT="90",
     )
 
     assert result.returncode == 2, result.stderr
@@ -577,19 +522,12 @@ def test_the_cli_from_env_exits_two_when_the_probe_says_received_log_exists() ->
 
 
 def test_the_cli_from_env_still_exits_zero_when_received_log_is_absent() -> None:
-    result = subprocess.run(
-        [sys.executable, str(VERDICT_PY), "--from-env"],
-        env={
-            "PATH": "/usr/bin:/bin",
-            "FAILED_COUNT": "0",
-            "INSTANCE_COUNT": "1",
-            "SCAN": "time\t/data/xnat/prearchive/x.dcm\n",
-            "RECEIVED_LOG_PRESENT": "0",
-            "PREARCHIVE_TIMEOUT": "90",
-        },
-        capture_output=True,
-        text=True,
-        check=False,
+    result = _run_cli_env(
+        FAILED_COUNT="0",
+        INSTANCE_COUNT="1",
+        SCAN="time\t/data/xnat/prearchive/x.dcm\n",
+        RECEIVED_LOG_PRESENT="0",
+        PREARCHIVE_TIMEOUT="90",
     )
 
     assert result.returncode == 0, result.stderr

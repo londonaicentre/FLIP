@@ -268,8 +268,7 @@ const initTraining = async (formData: unknown): Promise<void> => {
     };
 
     // If it is only one trust, add to an array
-    const arr: string[] = [];
-    const requestData: IInitTraining = { trust_ids: arr.concat(trust_ids) };
+    const requestData: IInitTraining = { trust_ids: ([] as string[]).concat(trust_ids) };
     // Without the override the job's own meta.json resource_spec, or the platform default, applies.
     if (gpu_override) {
         requestData.resources = { num_gpus: Number(num_gpus) };
@@ -282,15 +281,14 @@ const initTraining = async (formData: unknown): Promise<void> => {
         );
 
         emits("started", true);
-
-        formSubmitting.value = false;
     }
     catch {
         Snackbar.error({
             title: "There was an error starting training.",
             text: "We have been unable to start training for this model. Please try again later."
         });
-
+    }
+    finally {
         formSubmitting.value = false;
     }
 };

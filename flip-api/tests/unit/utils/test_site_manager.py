@@ -12,39 +12,21 @@
 
 from unittest.mock import MagicMock
 
+import pytest
 from sqlmodel import Session
 
 from flip_api.db.models.main_models import SiteConfig
 from flip_api.utils.site_manager import is_deployment_mode_enabled
 
 
-def test_deployment_mode_enabled():
-    # Arrange
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    [(SiteConfig(key="DeploymentMode", value=True), True), (None, False)],  # None: no matching row
+    ids=["enabled", "disabled"],
+)
+def test_deployment_mode(row, expected):
     mock_session = MagicMock(spec=Session)
-    mock_exec = mock_session.exec
-    mock_result = MagicMock()
-    mock_result.first.return_value = SiteConfig(key="DeploymentMode", value=True)
-    mock_exec.return_value = mock_result
+    mock_session.exec.return_value.first.return_value = row
 
-    # Act
-    result = is_deployment_mode_enabled(mock_session)
-
-    # Assert
-    assert result is True
-    mock_exec.assert_called_once()
-
-
-def test_deployment_mode_disabled():
-    # Arrange
-    mock_session = MagicMock(spec=Session)
-    mock_exec = mock_session.exec
-    mock_result = MagicMock()
-    mock_result.first.return_value = None  # Simulate no matching row
-    mock_exec.return_value = mock_result
-
-    # Act
-    result = is_deployment_mode_enabled(mock_session)
-
-    # Assert
-    assert result is False
-    mock_exec.assert_called_once()
+    assert is_deployment_mode_enabled(mock_session) is expected
+    mock_session.exec.assert_called_once()

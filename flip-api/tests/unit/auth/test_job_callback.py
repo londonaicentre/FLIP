@@ -70,7 +70,7 @@ def _job(credential: str | None) -> FLJob:
 
 def _authorise(presented: str | None, jobs: list[FLJob]) -> None:
     with patch("flip_api.auth.job_callback.reporting_jobs", return_value=jobs):
-        authorise_job_callback(uuid4(), presented, MagicMock(), None)
+        authorise_job_callback(uuid4(), presented, MagicMock())
 
 
 def test_callback_with_the_credential_of_a_reporting_job_is_accepted() -> None:
@@ -96,3 +96,15 @@ def test_callback_is_refused(presented: str | None, jobs: list[FLJob]) -> None:
 
     assert refused.value.status_code == 403
     assert refused.value.detail == "Not authorised for this model."
+
+
+@pytest.mark.parametrize("presented", [None, ""])
+def test_callback_without_a_credential_is_refused_before_the_database_is_read(presented: str | None) -> None:
+    session = MagicMock()
+
+    with pytest.raises(HTTPException) as refused:
+        authorise_job_callback(uuid4(), presented, session)
+
+    assert refused.value.status_code == 403
+    assert refused.value.detail == "Not authorised for this model."
+    assert session.mock_calls == []

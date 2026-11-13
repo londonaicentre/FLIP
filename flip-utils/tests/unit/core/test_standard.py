@@ -38,18 +38,32 @@ def hub_constants():
     """Provide production reporting settings independently of the local test config."""
     with patch("flip.core.standard.FlipConstants") as constants:
         constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-        constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
-        constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
         yield constants
+
+
+@pytest.fixture
+def flip_dev():
+    """Create a FLIPStandardDev instance."""
+    return FLIPStandardDev()
+
+
+@pytest.fixture
+def flip_prod():
+    """Create a FLIPStandardProd instance."""
+    return FLIPStandardProd()
+
+
+@pytest.mark.parametrize("cls", [FLIPStandardDev, FLIPStandardProd])
+def test_instance_logger_is_named_after_class(cls):
+    """Both classes take FLIPBase's logger: named after the class, INFO, not propagated to root."""
+    flip = cls()
+    assert flip.logger is logging.getLogger(cls.__name__)
+    assert flip.logger.level == logging.INFO
+    assert flip.logger.propagate is False
 
 
 class TestFLIPStandardDevGetDataframe:
     """Test FLIPStandardDev get_dataframe method."""
-
-    @pytest.fixture
-    def flip_dev(self):
-        """Create a FLIPStandardDev instance."""
-        return FLIPStandardDev()
 
     def test_get_dataframe_reads_from_csv(self, flip_dev, tmp_path):
         """get_dataframe should read CSV from DEV_DATAFRAME path."""
@@ -87,11 +101,6 @@ class TestFLIPStandardDevGetDataframe:
 class TestFLIPStandardDevGetByAccessionNumber:
     """Test FLIPStandardDev get_by_accession_number method."""
 
-    @pytest.fixture
-    def flip_dev(self):
-        """Create a FLIPStandardDev instance."""
-        return FLIPStandardDev()
-
     def test_get_by_accession_number_returns_path(self, flip_dev, tmp_path):
         """get_by_accession_number should return path from DEV_IMAGES_DIR."""
         images_dir = tmp_path / "images"
@@ -126,11 +135,6 @@ class TestFLIPStandardDevGetByAccessionNumber:
 class TestFLIPStandardDevAddResource:
     """Test FLIPStandardDev add_resource method."""
 
-    @pytest.fixture
-    def flip_dev(self):
-        """Create a FLIPStandardDev instance."""
-        return FLIPStandardDev()
-
     def test_add_resource_runs_without_error_in_dev_mode(self, flip_dev, tmp_path):
         """add_resource should run without error in dev mode (no-op)."""
         resource_path = tmp_path / "test_resource.txt"
@@ -149,11 +153,6 @@ class TestFLIPStandardDevAddResource:
 class TestFLIPStandardDevUpdateStatus:
     """Test FLIPStandardDev update_status method."""
 
-    @pytest.fixture
-    def flip_dev(self):
-        """Create a FLIPStandardDev instance."""
-        return FLIPStandardDev()
-
     def test_update_status_runs_without_error_in_dev_mode(self, flip_dev):
         """update_status should run without error in dev mode (no-op)."""
         # Should not raise any exception - it's a no-op in dev mode, and reports it as accepted
@@ -162,11 +161,6 @@ class TestFLIPStandardDevUpdateStatus:
 
 class TestFLIPStandardDevSendHandledException:
     """Test FLIPStandardDev send_handled_exception method."""
-
-    @pytest.fixture
-    def flip_dev(self):
-        """Create a FLIPStandardDev instance."""
-        return FLIPStandardDev()
 
     def test_send_handled_exception_runs_without_error_in_dev_mode(self, flip_dev):
         """send_handled_exception should run without error in dev mode (no-op)."""
@@ -178,11 +172,6 @@ class TestFLIPStandardDevSendHandledException:
 
 class TestFLIPStandardDevSendEvent:
     """Test FLIPStandardDev send_event method."""
-
-    @pytest.fixture
-    def flip_dev(self):
-        """Create a FLIPStandardDev instance."""
-        return FLIPStandardDev()
 
     def test_send_event_runs_without_error_in_dev_mode(self, flip_dev):
         """send_event should run without error in dev mode (local log only)."""
@@ -197,11 +186,6 @@ class TestFLIPStandardDevSendEvent:
 class TestFLIPStandardProdSendEvent:
     """Test FLIPStandardProd send_event method."""
 
-    @pytest.fixture
-    def flip_prod(self):
-        """Create a FLIPStandardProd instance."""
-        return FLIPStandardProd()
-
     def test_hub_event_posts_facts_with_null_client(self, flip_prod):
         """A hub-attributed event posts the typed payload with no client name and no text."""
         mock_response = Mock()
@@ -214,8 +198,6 @@ class TestFLIPStandardProdSendEvent:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             flip_prod.send_event(
                 model_id=valid_model_id,
@@ -247,8 +229,6 @@ class TestFLIPStandardProdSendEvent:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             flip_prod.send_event(
                 model_id=valid_model_id,
@@ -276,8 +256,6 @@ class TestFLIPStandardProdSendEvent:
             patch("flip.core.standard.requests.post", side_effect=ConnectionError("down")),
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             flip_prod.send_event(model_id=valid_model_id, event_type=FLLogEvent.ROUND_STARTED, global_round=1)
 
@@ -291,8 +269,6 @@ class TestFLIPStandardProdSendEvent:
             patch("flip.core.standard.requests.post") as mock_post,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             flip_prod.send_event(model_id=valid_model_id, event_type=FLLogEvent.ROUND_STARTED, global_round=0)
 
@@ -331,8 +307,6 @@ class TestFLIPStandardProdSendEvent:
             patch(f"flip.core.standard.requests.{verb}", return_value=mock_response) as mock_request,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             call(flip_prod)
 
@@ -341,11 +315,6 @@ class TestFLIPStandardProdSendEvent:
 
 class TestFLIPStandardProdSendHandledExceptionSuccessFlag:
     """The exception path must persist as a failure row (red dot), not the success default."""
-
-    @pytest.fixture
-    def flip_prod(self):
-        """Create a FLIPStandardProd instance."""
-        return FLIPStandardProd()
 
     def test_exception_payload_carries_success_false(self, flip_prod):
         mock_response = Mock()
@@ -358,8 +327,6 @@ class TestFLIPStandardProdSendHandledExceptionSuccessFlag:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             flip_prod.send_handled_exception("Error message", "client-1", valid_model_id)
 
@@ -369,11 +336,6 @@ class TestFLIPStandardProdSendHandledExceptionSuccessFlag:
 
 class TestFLIPStandardProdGetDataframe:
     """Test FLIPStandardProd get_dataframe method."""
-
-    @pytest.fixture
-    def flip_prod(self):
-        """Create a FLIPStandardProd instance."""
-        return FLIPStandardProd()
 
     def test_get_dataframe_makes_api_request(self, flip_prod):
         """get_dataframe should make API request to data-access-api."""
@@ -515,11 +477,6 @@ class TestFLIPStandardProdGetDataframe:
 class TestFLIPStandardProdGetByAccessionNumber:
     """Test FLIPStandardProd get_by_accession_number method."""
 
-    @pytest.fixture
-    def flip_prod(self):
-        """Create a FLIPStandardProd instance."""
-        return FLIPStandardProd()
-
     def test_get_by_accession_number_downloads_resources(self, flip_prod, tmp_path):
         """get_by_accession_number should download resources from API."""
         mock_response = Mock()
@@ -553,11 +510,6 @@ class TestFLIPStandardProdGetByAccessionNumber:
 
 class TestFLIPStandardProdAddResource:
     """Test FLIPStandardProd add_resource method."""
-
-    @pytest.fixture
-    def flip_prod(self):
-        """Create a FLIPStandardProd instance."""
-        return FLIPStandardProd()
 
     def test_add_resource_uploads_to_api(self, flip_prod, tmp_path):
         """add_resource should upload file to imaging API."""
@@ -598,11 +550,6 @@ class TestFLIPStandardProdAddResource:
 class TestFLIPStandardProdUpdateStatus:
     """Test FLIPStandardProd update_status method."""
 
-    @pytest.fixture
-    def flip_prod(self):
-        """Create a FLIPStandardProd instance."""
-        return FLIPStandardProd()
-
     def test_update_status_calls_api_with_valid_uuid(self, flip_prod):
         """update_status should call API to update model status with valid UUID."""
         mock_response = Mock()
@@ -618,8 +565,6 @@ class TestFLIPStandardProdUpdateStatus:
             patch("flip.core.standard.requests.put", return_value=mock_response) as mock_put,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             flip_prod.update_status(valid_model_id, ModelStatus.RUNNING)
 
@@ -659,19 +604,12 @@ class TestFLIPStandardProdUpdateStatus:
             patch("flip.core.standard.requests.put", **put),
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             assert flip_prod.update_status("550e8400-e29b-41d4-a716-446655440000", ModelStatus.ERROR) is accepted
 
 
 class TestFLIPStandardProdSendHandledException:
     """Test FLIPStandardProd send_handled_exception method."""
-
-    @pytest.fixture
-    def flip_prod(self):
-        """Create a FLIPStandardProd instance."""
-        return FLIPStandardProd()
 
     def test_send_handled_exception_calls_api_with_valid_uuid(self, flip_prod):
         """send_handled_exception should POST exception to API with valid UUID."""
@@ -688,8 +626,6 @@ class TestFLIPStandardProdSendHandledException:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             flip_prod.send_handled_exception("Error message", "client-1", valid_model_id)
 
@@ -708,11 +644,6 @@ class TestFLIPStandardProdSendHandledException:
 class TestFLIPStandardProdSendMetrics:
     """Test FLIPStandardProd send_metrics method."""
 
-    @pytest.fixture
-    def flip_prod(self):
-        """Create a FLIPStandardProd instance."""
-        return FLIPStandardProd()
-
     def test_send_metrics_posts_to_flip_api_internal_url(self, flip_prod):
         """send_metrics should POST to the internal flip-api URL with auth header + payload."""
         mock_response = Mock()
@@ -726,8 +657,6 @@ class TestFLIPStandardProdSendMetrics:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             flip_prod.send_metrics(
                 client_name="client-1",
@@ -748,9 +677,7 @@ class TestFLIPStandardProdSendMetrics:
                 "x_value": 3.0,
                 "x_label": "Global Rounds",
             }
-            assert mock_post.call_args.kwargs["headers"] == {
-                "x-internal-service-key": "test-internal-key",
-            }
+            assert mock_post.call_args.kwargs["headers"] == {}
 
     def test_send_metrics_includes_custom_x_label_in_payload(self, flip_prod):
         """A custom x_label is sent in the payload; omitting it defaults to "Global Rounds" (FLIP#148)."""
@@ -765,8 +692,6 @@ class TestFLIPStandardProdSendMetrics:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             flip_prod.send_metrics(
                 client_name="client-1",
@@ -792,8 +717,6 @@ class TestFLIPStandardProdSendMetrics:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
-            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
-            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
 
             flip_prod.send_metrics(
                 client_name="client-1",
@@ -852,11 +775,6 @@ class TestFLIPStandardProdUploadResultsToS3:
     """Test FLIPStandardProd upload_results_to_s3 method."""
 
     @pytest.fixture
-    def flip_prod(self):
-        """Create a FLIPStandardProd instance."""
-        return FLIPStandardProd()
-
-    @pytest.fixture
     def results_folder(self, tmp_path):
         folder = tmp_path / "results"
         folder.mkdir()
@@ -886,8 +804,6 @@ class TestFLIPStandardProdUploadResultsToS3:
             patch("flip.core.standard.requests.put", side_effect=put) as mock_put,
         ):
             constants.FLIP_API_INTERNAL_URL = "http://flip-api:8000/api/"
-            constants.INTERNAL_SERVICE_KEY_HEADER = "X-Internal-Service-Key"  # pragma: allowlist secret
-            constants.INTERNAL_SERVICE_KEY = "internal-key"  # pragma: allowlist secret
             sent["post"], sent["put"] = mock_post, mock_put
             yield sent
 
@@ -900,7 +816,7 @@ class TestFLIPStandardProdUploadResultsToS3:
         size = start["size"]
         assert start_url == base
         assert re.fullmatch(r"\d{8}_\d{6}\.zip", start["file_name"])
-        assert headers == {"X-Internal-Service-Key": "internal-key", "X-Job-Credential": "job-credential"}
+        assert headers == {"X-Job-Credential": "job-credential"}
 
         assert size > 100, "the fixture's zip must span several parts"
         assert [(url, body["part_number"]) for url, body, _ in parts] == [
@@ -979,11 +895,6 @@ class TestFLIPStandardProdUploadResultsToS3:
 class TestFLIPStandardProdCleanup:
     """Test FLIPStandardProd cleanup method."""
 
-    @pytest.fixture
-    def flip_prod(self):
-        """Create a FLIPStandardProd instance."""
-        return FLIPStandardProd()
-
     def test_cleanup_removes_existing_path(self, flip_prod, tmp_path):
         """cleanup should remove the provided path recursively."""
         cleanup_dir = tmp_path / "to_cleanup"
@@ -1007,11 +918,6 @@ class TestFLIPStandardProdCleanup:
 
 class TestFLIPStandardDevUploadAndCleanup:
     """Test FLIPStandardDev upload_results_to_s3 and cleanup methods."""
-
-    @pytest.fixture
-    def flip_dev(self):
-        """Create a FLIPStandardDev instance."""
-        return FLIPStandardDev()
 
     def test_upload_results_to_s3_runs_without_error_in_dev_mode(self, flip_dev, tmp_path):
         """upload_results_to_s3 should run without error in dev mode (no-op)."""
@@ -1057,10 +963,7 @@ class TestJobCredential:
         with patch(f"flip.core.standard.requests.{method}", return_value=Mock(status_code=200, text="OK")) as sent:
             call(FLIPStandardProd(), self.MODEL_ID)
 
-        assert sent.call_args.kwargs["headers"] == {
-            "x-internal-service-key": "test-internal-key",  # pragma: allowlist secret
-            "X-Job-Credential": self.CREDENTIAL,
-        }
+        assert sent.call_args.kwargs["headers"] == {"X-Job-Credential": self.CREDENTIAL}
 
     def test_another_models_credential_is_never_sent(self, credential_dir):
         with patch("flip.core.standard.requests.put", return_value=Mock(status_code=200, text="OK")) as sent:
@@ -1068,11 +971,9 @@ class TestJobCredential:
 
         assert "X-Job-Credential" not in sent.call_args.kwargs["headers"]
 
-    def test_no_credential_directory_sends_the_internal_key_alone(self, hub_constants):
+    def test_no_credential_directory_sends_no_credential(self, hub_constants):
         hub_constants.JOB_CREDENTIAL_DIR = ""
         with patch("flip.core.standard.requests.put", return_value=Mock(status_code=200, text="OK")) as sent:
             FLIPStandardProd().update_status(self.MODEL_ID, ModelStatus.RUNNING)
 
-        assert sent.call_args.kwargs["headers"] == {
-            "x-internal-service-key": "test-internal-key"  # pragma: allowlist secret
-        }
+        assert sent.call_args.kwargs["headers"] == {}

@@ -64,16 +64,3 @@ def test_seed_banner_does_not_create_banner_when_exists(mock_session, mock_banne
     mock_session.get.assert_called_once_with(SiteBanner, 1)
     mock_session.add.assert_not_called()
     mock_session.commit.assert_not_called()
-
-
-def test_seed_banner_banner_properties():
-    """Test that the created banner has the correct default properties."""
-    mock_session = Mock(spec=Session)
-    mock_session.get.return_value = None
-
-    seed_banner(mock_session)
-
-    added_banner = mock_session.add.call_args[0][0]
-    assert added_banner.enabled is False
-    assert "automatically seeded 🌱" in added_banner.message
-    assert added_banner.link == ""

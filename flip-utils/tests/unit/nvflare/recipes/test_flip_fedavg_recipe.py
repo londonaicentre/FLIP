@@ -28,6 +28,28 @@ from flip.nvflare.recipes.flip_fedavg_recipe import _DEV_MODEL_ID, PercentilePri
 from flip.nvflare.runtime import FLIP_CUSTOM_PROPS_KEY, FLIP_MODEL_ID_KEY  # noqa: E402
 
 
+@pytest.fixture
+def linear_model(monkeypatch):
+    """A real ``nn.Linear`` for ``models.get_model``: PTFileModelPersistor round-trips its ``model`` arg
+    through FedJob's JSON serialiser at export time."""
+    import torch
+
+    monkeypatch.setattr(sys.modules["models"], "get_model", lambda: torch.nn.Linear(1, 1))
+
+
+def _export_configs(tmp_path: Path, **kwargs) -> tuple[Path, dict, dict]:
+    """Export a recipe; return its job dir and its server and client configs."""
+    recipe = FlipFedAvgRecipe(**kwargs)
+    recipe.export(tmp_path)
+    job_dir = tmp_path / recipe._job.name
+    base = job_dir / "app" / "config"
+    return (
+        job_dir,
+        json.loads((base / "config_fed_server.json").read_text()),
+        json.loads((base / "config_fed_client.json").read_text()),
+    )
+
+
 class TestFlipFedAvgRecipe:
     def test_builds_fed_job_with_flip_components(self):
         """A default recipe should construct a FedJob with the FLIP server + client wiring."""
@@ -89,97 +111,62 @@ class TestFlipFedAvgRecipe:
         assert "--query" not in recipe.train_args
         assert recipe.train_args == "--project_id {project_id}"
 
-    def test_export_writes_fed_job_layout(self, tmp_path: Path):
-        """``recipe.export`` produces the standard FLARE FedJob layout under ``<job_dir>``.
+    def test_export_writes_fed_job_layout(self, tmp_path: Path, linear_model):
+        """``recipe.export`` produces the standard FLARE FedJob layout under ``<job_dir>``."""
+        job_dir, server_cfg, client_cfg = _export_configs(tmp_path)
 
-        Uses a real ``nn.Linear`` stub for ``models.get_model`` because PTFileModelPersistor
-        round-trips its ``model`` arg via FedJob's JSON serialiser at export time.
-        """
-        import torch
+        assert (job_dir / "meta.json").exists()
+        # Server + client share the same config under a single ``app/`` since the recipe
+        # treats all clients uniformly. FedJob picks this layout automatically.
+        assert (job_dir / "app" / "config" / "config_fed_server.json").exists()
+        assert (job_dir / "app" / "config" / "config_fed_client.json").exists()
 
-        sys.modules["models"].get_model = lambda: torch.nn.Linear(1, 1)
-        try:
-            recipe = FlipFedAvgRecipe()
-            recipe.export(tmp_path)
+        meta = json.loads((job_dir / "meta.json").read_text())
+        assert meta[FLIP_CUSTOM_PROPS_KEY][FLIP_MODEL_ID_KEY] == _DEV_MODEL_ID
 
-            job_dir = tmp_path / recipe._job.name
-            assert (job_dir / "meta.json").exists()
-            # Server + client share the same config under a single ``app/`` since the recipe
-            # treats all clients uniformly. FedJob picks this layout automatically.
-            assert (job_dir / "app" / "config" / "config_fed_server.json").exists()
-            assert (job_dir / "app" / "config" / "config_fed_client.json").exists()
+        # project_id / query / local_rounds are emitted as top-level client-config keys
+        # (placeholders) so the template is self-documenting and {project_id} resolves;
+        # fl-server's configure_client overwrites project_id/query at job-assembly.
+        assert client_cfg["project_id"] == ""
+        assert client_cfg["query"] == "SELECT * FROM Table;"
+        assert client_cfg["local_rounds"] == 1
 
-            meta = json.loads((job_dir / "meta.json").read_text())
-            assert meta[FLIP_CUSTOM_PROPS_KEY][FLIP_MODEL_ID_KEY] == _DEV_MODEL_ID
+        evaluation_workflow = next(
+            workflow for workflow in server_cfg["workflows"] if workflow["path"].endswith("GlobalModelEval")
+        )
+        assert evaluation_workflow["path"].startswith("nvflare.app_common.workflows")
+        assert evaluation_workflow["path"].endswith("global_model_eval.GlobalModelEval")
+        assert server_cfg["workflows"][-1]["path"].endswith("broadcast_task.BroadcastTask")
+        assert set(server_cfg["task_result_filters"][0]["tasks"]) == {"validate", "post_validation"}
+        executor_tasks = client_cfg["executors"][-1]["tasks"]
+        assert executor_tasks == ["train", "validate"]
+        assert "submit_model" not in executor_tasks
 
-            # project_id / query / local_rounds are emitted as top-level client-config keys
-            # (placeholders) so the template is self-documenting and {project_id} resolves;
-            # fl-server's configure_client overwrites project_id/query at job-assembly.
-            client_cfg = json.loads((job_dir / "app" / "config" / "config_fed_client.json").read_text())
-            assert client_cfg["project_id"] == ""
-            assert client_cfg["query"] == "SELECT * FROM Table;"
-            assert client_cfg["local_rounds"] == 1
-
-            server_cfg = json.loads((job_dir / "app" / "config" / "config_fed_server.json").read_text())
-            evaluation_workflow = next(
-                workflow for workflow in server_cfg["workflows"] if workflow["path"].endswith("GlobalModelEval")
-            )
-            assert evaluation_workflow["path"].startswith("nvflare.app_common.workflows")
-            assert evaluation_workflow["path"].endswith("global_model_eval.GlobalModelEval")
-            assert server_cfg["workflows"][-1]["path"].endswith("broadcast_task.BroadcastTask")
-            assert set(server_cfg["task_result_filters"][0]["tasks"]) == {"validate", "post_validation"}
-            executor_tasks = client_cfg["executors"][-1]["tasks"]
-            assert executor_tasks == ["train", "validate"]
-            assert "submit_model" not in executor_tasks
-        finally:
-            sys.modules["models"].get_model = lambda: object()
-
-    def test_submit_model_opt_in_exports_cross_site_evaluation(self, tmp_path: Path):
+    def test_submit_model_opt_in_exports_cross_site_evaluation(self, tmp_path: Path, linear_model):
         """Callers can still explicitly request the full client-model evaluation matrix."""
-        import torch
+        _, server_cfg, client_cfg = _export_configs(tmp_path, submit_model_task_name="custom_submit")
 
-        sys.modules["models"].get_model = lambda: torch.nn.Linear(1, 1)
-        try:
-            recipe = FlipFedAvgRecipe(submit_model_task_name="custom_submit")
-            recipe.export(tmp_path)
+        evaluation_workflow = next(
+            workflow for workflow in server_cfg["workflows"] if workflow["path"].endswith("CrossSiteModelEval")
+        )
+        assert evaluation_workflow["path"].startswith("nvflare.app_common.workflows")
+        assert evaluation_workflow["path"].endswith("cross_site_model_eval.CrossSiteModelEval")
+        assert evaluation_workflow["args"]["submit_model_task_name"] == "custom_submit"
+        assert client_cfg["executors"][-1]["tasks"] == ["train", "custom_submit", "validate"]
+        assert set(server_cfg["task_result_filters"][0]["tasks"]) == {
+            "custom_submit",
+            "validate",
+            "post_validation",
+        }
 
-            config_dir = tmp_path / recipe._job.name / "app" / "config"
-            server_cfg = json.loads((config_dir / "config_fed_server.json").read_text())
-            client_cfg = json.loads((config_dir / "config_fed_client.json").read_text())
-
-            evaluation_workflow = next(
-                workflow for workflow in server_cfg["workflows"] if workflow["path"].endswith("CrossSiteModelEval")
-            )
-            assert evaluation_workflow["path"].startswith("nvflare.app_common.workflows")
-            assert evaluation_workflow["path"].endswith("cross_site_model_eval.CrossSiteModelEval")
-            assert evaluation_workflow["args"]["submit_model_task_name"] == "custom_submit"
-            assert client_cfg["executors"][-1]["tasks"] == ["train", "custom_submit", "validate"]
-            assert set(server_cfg["task_result_filters"][0]["tasks"]) == {
-                "custom_submit",
-                "validate",
-                "post_validation",
-            }
-        finally:
-            sys.modules["models"].get_model = lambda: object()
-
-    def test_persistor_is_initial_checkpoint(self, tmp_path: Path):
+    def test_persistor_is_initial_checkpoint(self, tmp_path: Path, linear_model):
         """The FedAvg persistor is InitialCheckpointPTModelPersistor so a SERVER_CHECKPOINT-declaring
         job (e.g. Ark+ finetuning) seeds the round-0 global model server-side. It is a safe drop-in:
         with no SERVER_CHECKPOINT it behaves like the stock PTFileModelPersistor. model_id is resolved
         lazily from meta.json custom_props (like the other FLIP components), not passed as a component arg."""
-        import torch
-
-        sys.modules["models"].get_model = lambda: torch.nn.Linear(1, 1)
-        try:
-            recipe = FlipFedAvgRecipe()
-            recipe.export(tmp_path)
-            server_cfg = json.loads(
-                (tmp_path / recipe._job.name / "app" / "config" / "config_fed_server.json").read_text()
-            )
-            persistor = next(c for c in server_cfg["components"] if c["id"] == "persistor")
-            assert persistor["path"].endswith("InitialCheckpointPTModelPersistor")
-        finally:
-            sys.modules["models"].get_model = lambda: object()
+        _, server_cfg, _ = _export_configs(tmp_path)
+        persistor = next(c for c in server_cfg["components"] if c["id"] == "persistor")
+        assert persistor["path"].endswith("InitialCheckpointPTModelPersistor")
 
     def test_write_client_config_params_is_noop_when_config_absent(self, tmp_path: Path):
         """If export produced no client config (unexpected layout), the param-write is a safe no-op."""
@@ -200,32 +187,17 @@ def _train_filter_paths(cfg: dict, block_key: str) -> list[str]:
 class TestFlipFedAvgRecipeAggregateOnly:
     """Optional head-only (frozen-backbone finetuning) filter wiring."""
 
-    def _export(self, tmp_path: Path, **kwargs):
-        import torch
-
-        sys.modules["models"].get_model = lambda: torch.nn.Linear(1, 1)
-        try:
-            recipe = FlipFedAvgRecipe(**kwargs)
-            recipe.export(tmp_path)
-            base = tmp_path / recipe._job.name / "app" / "config"
-            return (
-                json.loads((base / "config_fed_server.json").read_text()),
-                json.loads((base / "config_fed_client.json").read_text()),
-            )
-        finally:
-            sys.modules["models"].get_model = lambda: object()
-
-    def test_no_regex_leaves_filters_empty(self, tmp_path: Path):
+    def test_no_regex_leaves_filters_empty(self, tmp_path: Path, linear_model):
         """Default recipe (no regex) wires none of the head-only filters."""
-        server_cfg, client_cfg = self._export(tmp_path)
+        _, server_cfg, client_cfg = _export_configs(tmp_path)
         assert not any("TrimBroadcastVars" in p for p in _train_filter_paths(server_cfg, "task_data_filters"))
         assert not any("KeepOnlyVars" in p for p in _train_filter_paths(client_cfg, "task_result_filters"))
         assert not any("ReconstructFullModel" in p for p in _train_filter_paths(client_cfg, "task_data_filters"))
 
-    def test_regex_wires_head_only_filters(self, tmp_path: Path):
+    def test_regex_wires_head_only_filters(self, tmp_path: Path, linear_model):
         """aggregate_only_regex wires TrimBroadcastVars (server), ReconstructFullModel (client data)
         and KeepOnlyVars (client result, BEFORE PercentilePrivacy)."""
-        server_cfg, client_cfg = self._export(tmp_path, aggregate_only_regex="omni_heads")
+        _, server_cfg, client_cfg = _export_configs(tmp_path, aggregate_only_regex="omni_heads")
         assert any("TrimBroadcastVars" in p for p in _train_filter_paths(server_cfg, "task_data_filters"))
         assert any("ReconstructFullModel" in p for p in _train_filter_paths(client_cfg, "task_data_filters"))
         result_paths = _train_filter_paths(client_cfg, "task_result_filters")
@@ -251,24 +223,12 @@ class TestFlipFedAvgRecipeAggregateOnly:
 class TestFlipFedAvgRecipeBestModel:
     """Optional best-global-model selection via stock IntimeModelSelector (FLIP#673)."""
 
-    def _export_server_cfg(self, tmp_path: Path, **kwargs) -> dict:
-        import torch
-
-        sys.modules["models"].get_model = lambda: torch.nn.Linear(1, 1)
-        try:
-            recipe = FlipFedAvgRecipe(**kwargs)
-            recipe.export(tmp_path)
-            base = tmp_path / recipe._job.name / "app" / "config"
-            return json.loads((base / "config_fed_server.json").read_text())
-        finally:
-            sys.modules["models"].get_model = lambda: object()
-
-    def test_default_wires_no_model_selector(self, tmp_path: Path):
+    def test_default_wires_no_model_selector(self, tmp_path: Path, linear_model):
         """Without best_model_metric no selector is wired, so no best checkpoint is ever saved."""
-        server_cfg = self._export_server_cfg(tmp_path)
+        _, server_cfg, _ = _export_configs(tmp_path)
         assert not any("IntimeModelSelector" in c.get("path", "") for c in server_cfg["components"])
 
-    def test_best_model_metric_wires_stock_intime_model_selector(self, tmp_path: Path):
+    def test_best_model_metric_wires_stock_intime_model_selector(self, tmp_path: Path, linear_model):
         """best_model_metric wires stock IntimeModelSelector keyed on that metric.
 
         The selector averages the client-reported metric (evaluated on the received global model,
@@ -276,16 +236,16 @@ class TestFlipFedAvgRecipeBestModel:
         fires GLOBAL_BEST_MODEL_AVAILABLE on improvement; the persistor answers by saving
         best_FL_global_model.pt alongside the final model, in the same persistence format.
         """
-        server_cfg = self._export_server_cfg(tmp_path, best_model_metric="VAL_DICE")
+        _, server_cfg, _ = _export_configs(tmp_path, best_model_metric="VAL_DICE")
         selector = next(c for c in server_cfg["components"] if "IntimeModelSelector" in c.get("path", ""))
         assert selector["path"] == "nvflare.app_common.widgets.intime_model_selector.IntimeModelSelector"
         assert selector["args"]["key_metric"] == "VAL_DICE"
         # FedJob export omits default-valued args; absent means stock's default (False).
         assert selector["args"].get("negate_key_metric", False) is False
 
-    def test_best_model_metric_minimize_negates_key_metric(self, tmp_path: Path):
+    def test_best_model_metric_minimize_negates_key_metric(self, tmp_path: Path, linear_model):
         """Loss-like metrics (lower is better) export with negate_key_metric=True."""
-        server_cfg = self._export_server_cfg(tmp_path, best_model_metric="VAL_LOSS", best_model_metric_minimize=True)
+        _, server_cfg, _ = _export_configs(tmp_path, best_model_metric="VAL_LOSS", best_model_metric_minimize=True)
         selector = next(c for c in server_cfg["components"] if "IntimeModelSelector" in c.get("path", ""))
         assert selector["args"]["negate_key_metric"] is True
 
@@ -298,7 +258,7 @@ class TestFlipFedAvgRecipeBestModel:
         with pytest.raises(ValueError, match="num_rounds >= 2"):
             FlipFedAvgRecipe(num_rounds=1, best_model_metric="VAL_DICE")
 
-    def test_best_model_metric_with_two_rounds_constructs(self, tmp_path: Path):
+    def test_best_model_metric_with_two_rounds_constructs(self, tmp_path: Path, linear_model):
         """num_rounds=2 is the minimum where selection can fire; the selector is wired normally."""
-        server_cfg = self._export_server_cfg(tmp_path, num_rounds=2, best_model_metric="VAL_DICE")
+        _, server_cfg, _ = _export_configs(tmp_path, num_rounds=2, best_model_metric="VAL_DICE")
         assert any("IntimeModelSelector" in c.get("path", "") for c in server_cfg["components"])

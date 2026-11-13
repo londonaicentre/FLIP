@@ -84,31 +84,38 @@ def test_admin_create_trust_403_without_admin_permission(mock_perms, admin_id):
     mock_perms.assert_called_once()
 
 
+@pytest.mark.parametrize(
+    ("error", "code", "expected_status", "detail"),
+    [
+        (EmptyTrustNameError("Trust name is required."), "GSTT", status.HTTP_400_BAD_REQUEST, None),
+        # A whitespace-only code passes the schema's min_length but the service strips
+        # it to empty and rejects it — the wrapper maps that to 400, like an empty name.
+        (EmptyTrustCodeError("Trust code is required."), " ", status.HTTP_400_BAD_REQUEST, None),
+        (
+            DuplicateTrustError("A trust named 'GSTT' already exists."),
+            "GSTT",
+            status.HTTP_409_CONFLICT,
+            "already exists",
+        ),
+        (NoFreeKitSlotError("No FL kit slots available."), "GSTT", status.HTTP_409_CONFLICT, "FL kit slots"),
+        (SQLAlchemyError("db boom"), "GSTT", status.HTTP_500_INTERNAL_SERVER_ERROR, None),
+    ],
+    ids=["empty-name", "empty-code", "duplicate", "pool-exhausted", "db-error"],
+)
 @patch("flip_api.trusts_services.admin_create_trust.has_permissions", return_value=True)
 @patch("flip_api.trusts_services.admin_create_trust.register_trust")
-def test_admin_create_trust_400_on_empty_name(mock_register, mock_perms, admin_id):
-    mock_register.side_effect = EmptyTrustNameError("Trust name is required.")
+def test_admin_create_trust_maps_service_errors(
+    mock_register, mock_perms, error, code, expected_status, detail, admin_id
+):
+    mock_register.side_effect = error
     db = MagicMock()
 
     with pytest.raises(HTTPException) as exc_info:
-        admin_create_trust(body=ICreateTrust(name="GSTT", code="GSTT"), db=db, token_id=admin_id)
+        admin_create_trust(body=ICreateTrust(name="GSTT", code=code), db=db, token_id=admin_id)
 
-    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-    db.rollback.assert_called_once()
-
-
-@patch("flip_api.trusts_services.admin_create_trust.has_permissions", return_value=True)
-@patch("flip_api.trusts_services.admin_create_trust.register_trust")
-def test_admin_create_trust_400_on_empty_code(mock_register, mock_perms, admin_id):
-    # A whitespace-only code passes the schema's min_length but the service strips
-    # it to empty and rejects it — the wrapper maps that to 400, like an empty name.
-    mock_register.side_effect = EmptyTrustCodeError("Trust code is required.")
-    db = MagicMock()
-
-    with pytest.raises(HTTPException) as exc_info:
-        admin_create_trust(body=ICreateTrust(name="GSTT", code=" "), db=db, token_id=admin_id)
-
-    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert exc_info.value.status_code == expected_status
+    if detail:
+        assert detail in exc_info.value.detail
     db.rollback.assert_called_once()
 
 
@@ -119,44 +126,3 @@ def test_create_trust_schema_requires_code():
         ICreateTrust(name="GSTT")
     with pytest.raises(ValidationError):
         ICreateTrust(name="GSTT", code="")
-
-
-@patch("flip_api.trusts_services.admin_create_trust.has_permissions", return_value=True)
-@patch("flip_api.trusts_services.admin_create_trust.register_trust")
-def test_admin_create_trust_409_on_duplicate(mock_register, mock_perms, admin_id):
-    mock_register.side_effect = DuplicateTrustError("A trust named 'GSTT' already exists.")
-    db = MagicMock()
-
-    with pytest.raises(HTTPException) as exc_info:
-        admin_create_trust(body=ICreateTrust(name="GSTT", code="GSTT"), db=db, token_id=admin_id)
-
-    assert exc_info.value.status_code == status.HTTP_409_CONFLICT
-    assert "already exists" in exc_info.value.detail
-    db.rollback.assert_called_once()
-
-
-@patch("flip_api.trusts_services.admin_create_trust.has_permissions", return_value=True)
-@patch("flip_api.trusts_services.admin_create_trust.register_trust")
-def test_admin_create_trust_409_when_pool_exhausted(mock_register, mock_perms, admin_id):
-    mock_register.side_effect = NoFreeKitSlotError("No FL kit slots available.")
-    db = MagicMock()
-
-    with pytest.raises(HTTPException) as exc_info:
-        admin_create_trust(body=ICreateTrust(name="GSTT", code="GSTT"), db=db, token_id=admin_id)
-
-    assert exc_info.value.status_code == status.HTTP_409_CONFLICT
-    assert "FL kit slots" in exc_info.value.detail
-    db.rollback.assert_called_once()
-
-
-@patch("flip_api.trusts_services.admin_create_trust.has_permissions", return_value=True)
-@patch("flip_api.trusts_services.admin_create_trust.register_trust")
-def test_admin_create_trust_500_on_db_error(mock_register, mock_perms, admin_id):
-    mock_register.side_effect = SQLAlchemyError("db boom")
-    db = MagicMock()
-
-    with pytest.raises(HTTPException) as exc_info:
-        admin_create_trust(body=ICreateTrust(name="GSTT", code="GSTT"), db=db, token_id=admin_id)
-
-    assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    db.rollback.assert_called_once()

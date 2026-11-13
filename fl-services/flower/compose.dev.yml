@@ -40,7 +40,6 @@ services:
     environment:
       - ALLOWED_JOB_FOLDERS=${ALLOWED_JOB_FOLDERS:-xray_classification,3d_spleen_segmentation,3d_spleen_segmentation_evaluation}
       - SUPERLINK_ADDRESS=${SUPERLINK_ADDRESS:-superlink:8000}
-      - SUPERLINK_HEALTH_ADDRESS=${SUPERLINK_HEALTH_ADDRESS:-superlink:9097}
       - FLOWER_SRC_ROOT=/app/src
       - FL_API_KEY=${FL_API_KEY}
       # No BUNDLE_URL_ALLOWED_ORIGINS here on purpose: this harness has no hub, so nothing presigns
@@ -79,7 +78,7 @@ services:
       - ../../fl-tutorials/flower:/app/src
     # No runtime dependency installation on either side (FLIP#1418): the
     # ServerApp here and the ClientApps on the SuperNodes below run in the
-    # image's environment, where fl-base installs flip-utils[full] from
+    # image's environment, where fl-base installs flip-utils[flower,full] from
     # /opt/flip-utils (FLIP#767) — rebuild the images to pick up flip-utils
     # changes (see the README's runtime-dependency section).
     command:
@@ -89,8 +88,6 @@ services:
       # unless told otherwise, so other containers need --host 0.0.0.0.
       - --host
       - 0.0.0.0
-      - --health-server-address
-      - ${SUPERLINK_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9097}
     # No host port published by default; fl-api reaches the SuperLink over the
     # internal network (superlink:8000). To use the `flwr` CLI from the host,
     # publish port 8000 by editing this compose file and re-running
@@ -99,7 +96,7 @@ services:
       - flwr-dev-net
 
   # create two SuperNode services with different node configs
-  supernode-1:
+  supernode-1: &supernode
     image: flower-supernode:${DOCKER_FL_TAG:-dev}
     build:
       context: ../../fl-services/flower/supernode
@@ -124,14 +121,12 @@ services:
       # stack has no trusts, so no fleet proxy (FLIP#1517): the SuperNodes dial it directly.
       - --superlink
       - superlink:8000
-      - --health-server-address
-      - ${SUPERNODE_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9098}
       # No --allow-runtime-dependency-installation (FLIP#1418): Flower names the
       # per-run env after the run id, so every ClientApp launch in a run shares it,
       # and each launch's exit handler deletes it -- a later round's `uv sync` then
       # falls through to the base interpreter (Permission denied on setuptools) or
       # loses its env mid-round. The ClientApp runs in the image's environment,
-      # where fl-base installs flip-utils[full] from /opt/flip-utils (FLIP#767):
+      # where fl-base installs flip-utils[flower,full] from /opt/flip-utils (FLIP#767):
       # every package the template app code imports, and no package index needed at run time.
     deploy:
       resources:
@@ -143,46 +138,13 @@ services:
       - flwr-dev-net
 
   supernode-2:
-    image: flower-supernode:${DOCKER_FL_TAG:-dev}
-    build:
-      context: ../../fl-services/flower/supernode
-      dockerfile: Dockerfile
-      args:
-        BASE_REF: ${BASE_REF:-flower-fl-base:${DOCKER_FL_TAG:-dev}}
-    working_dir: /app
-    group_add: *host-gid
+    <<: *supernode
     environment:
       - SUPERNODE_NAME=Trust_2
       - LOCAL_DEV=true
       - DEV_IMAGES_DIR=/images
       - DEV_DATAFRAME=/dataframe_file
       - WORKING_DIR=/app/runs
-    volumes:
-      - ${DEV_IMAGES_DIR:-/tmp/flwr-dev-images}:/images
-      - ${DEV_DATAFRAME:-/tmp/flwr-dev-dataframe.csv}:/dataframe_file:ro
-      - ${WORKING_DIR:-/tmp/flwr-dev-runs}:/app/runs
-    command:
-      - --insecure
-      # The SuperLink's one listener, directly — see supernode-1.
-      - --superlink
-      - superlink:8000
-      - --health-server-address
-      - ${SUPERNODE_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9098}
-      # No --allow-runtime-dependency-installation (FLIP#1418): Flower names the
-      # per-run env after the run id, so every ClientApp launch in a run shares it,
-      # and each launch's exit handler deletes it -- a later round's `uv sync` then
-      # falls through to the base interpreter (Permission denied on setuptools) or
-      # loses its env mid-round. The ClientApp runs in the image's environment,
-      # where fl-base installs flip-utils[full] from /opt/flip-utils (FLIP#767):
-      # every package the template app code imports, and no package index needed at run time.
-    deploy:
-      resources:
-        limits:
-          cpus: "4"
-    depends_on:
-      - superlink
-    networks:
-      - flwr-dev-net
 
 networks:
   flwr-dev-net:

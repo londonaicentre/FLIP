@@ -105,23 +105,6 @@ const unstagedProject: IProject = {
     query: undefined
 };
 
-const stagedProjectWithQuery: IProject = {
-    ...unstagedProject,
-    status: "STAGED",
-    query: {
-        id: "query-1",
-        name: "Test Query",
-        query: "SELECT * FROM patients",
-        queriedTrustIds: ["trust-1", "trust-2"],
-        pendingTrustIds: [],
-        cancelledTrustIds: [],
-        respondedTrustIds: [],
-        erroredTrustIds: [],
-        emptyTrustIds: [],
-        totalCohort: 100
-    }
-};
-
 const unstagedProjectWithQuery: IProject = {
     ...unstagedProject,
     query: {
@@ -138,6 +121,51 @@ const unstagedProjectWithQuery: IProject = {
     }
 };
 
+const stagedProjectWithQuery: IProject = {
+    ...unstagedProjectWithQuery,
+    status: "STAGED"
+};
+
+// unstagedProjectWithQuery with some query fields overridden.
+const withQuery = (q: Partial<NonNullable<IProject["query"]>>): IProject => ({
+    ...unstagedProjectWithQuery,
+    query: {
+        ...unstagedProjectWithQuery.query!,
+        ...q
+    }
+});
+
+// A sendQuery reply in which the one trust accepted the query.
+const okResponse = (queryId = "new-query-id") => ({
+    queryId,
+    trust: [{
+        statusCode: 200,
+        name: "Trust A",
+        message: "OK"
+    }]
+});
+
+const piniaFor = (project?: IProject, permissions: string[] = ["CanCreateProjects"]) =>
+    createTestingPinia({
+        createSpy: vi.fn,
+        stubActions: false,
+        initialState: {
+            auth: {
+                user: {
+                    username: "testuser",
+                    userId: "1",
+                    attributes: {
+                        sub: "1",
+                        email: "test@example.com"
+                    },
+                    permissions
+                },
+                signInStep: "DONE"
+            },
+            project: { project }
+        }
+    });
+
 function mountCohortQuery(options: {
     project?: IProject;
     permissions?: string[];
@@ -146,25 +174,7 @@ function mountCohortQuery(options: {
 
     return mount(CohortQuery, {
         global: {
-            plugins: [createTestingPinia({
-                createSpy: vi.fn,
-                stubActions: false,
-                initialState: {
-                    auth: {
-                        user: {
-                            username: "testuser",
-                            userId: "1",
-                            attributes: {
-                                sub: "1",
-                                email: "test@example.com"
-                            },
-                            permissions
-                        },
-                        signInStep: "DONE"
-                    },
-                    project: { project }
-                }
-            })],
+            plugins: [piniaFor(project, permissions)],
             stubs
         }
     });
@@ -189,25 +199,7 @@ function mountCohortQueryPage(options: {
 
     return mount(CohortQueryPageWrapper, {
         global: {
-            plugins: [createTestingPinia({
-                createSpy: vi.fn,
-                stubActions: false,
-                initialState: {
-                    auth: {
-                        user: {
-                            username: "testuser",
-                            userId: "1",
-                            attributes: {
-                                sub: "1",
-                                email: "test@example.com"
-                            },
-                            permissions
-                        },
-                        signInStep: "DONE"
-                    },
-                    project: { project }
-                }
-            })],
+            plugins: [piniaFor(project, permissions)],
             stubs: pageStubs
         }
     });
@@ -423,14 +415,7 @@ describe("CohortQuery", () => {
 
     describe("runCohortQuery", () => {
         it("calls sendQuery with correct parameters on form submit", async () => {
-            mockSendQuery.mockResolvedValue({
-                queryId: "new-query-id",
-                trust: [{
-                    statusCode: 200,
-                    name: "Trust A",
-                    message: "OK"
-                }]
-            });
+            mockSendQuery.mockResolvedValue(okResponse());
 
             const wrapper = mountCohortQuery({ project: unstagedProject });
             const form = wrapper.find("form");
@@ -446,14 +431,7 @@ describe("CohortQuery", () => {
         });
 
         it("shows success snackbar on successful query", async () => {
-            mockSendQuery.mockResolvedValue({
-                queryId: "new-query-id",
-                trust: [{
-                    statusCode: 200,
-                    name: "Trust A",
-                    message: "OK"
-                }]
-            });
+            mockSendQuery.mockResolvedValue(okResponse());
 
             const wrapper = mountCohortQuery({ project: unstagedProject });
             const form = wrapper.find("form");
@@ -481,14 +459,7 @@ describe("CohortQuery", () => {
         });
 
         it("emits UpdateProject on successful query", async () => {
-            mockSendQuery.mockResolvedValue({
-                queryId: "new-query-id",
-                trust: [{
-                    statusCode: 200,
-                    name: "Trust A",
-                    message: "OK"
-                }]
-            });
+            mockSendQuery.mockResolvedValue(okResponse());
 
             const wrapper = mountCohortQuery({ project: unstagedProject });
             const form = wrapper.find("form");
@@ -560,25 +531,11 @@ describe("CohortQuery", () => {
             expect(mockSendQuery).toHaveBeenCalledTimes(1);
 
             // Resolve so the test doesn't leak an unfinished promise.
-            resolveFirst({
-                queryId: "q",
-                trust: [{
-                    statusCode: 200,
-                    name: "A",
-                    message: "OK"
-                }]
-            });
+            resolveFirst(okResponse("q"));
         });
 
         it("wires the success snackbar's View Project action to router.push", async () => {
-            mockSendQuery.mockResolvedValue({
-                queryId: "qid-ok",
-                trust: [{
-                    statusCode: 200,
-                    name: "Trust A",
-                    message: "OK"
-                }]
-            });
+            mockSendQuery.mockResolvedValue(okResponse("qid-ok"));
 
             const wrapper = mountCohortQuery({ project: unstagedProject });
             await wrapper.find("form").trigger("submit");
@@ -609,14 +566,10 @@ describe("CohortQuery", () => {
         it("renders 'today' when the query was created earlier in the day", () => {
             const now = new Date();
             now.setHours(14, 32, 0, 0);
-            const project: IProject = {
-                ...unstagedProjectWithQuery,
-                query: {
-                    ...unstagedProjectWithQuery.query!,
-                    created: now.toISOString(),
-                    createdBy: "R. Patel"
-                }
-            };
+            const project = withQuery({
+                created: now.toISOString(),
+                createdBy: "R. Patel"
+            });
             const wrapper = mountCohortQuery({ project });
             const cell = lastRunCell(wrapper);
             expect(cell).not.toBeNull();
@@ -625,13 +578,7 @@ describe("CohortQuery", () => {
         });
 
         it("shows the SQL file icon next to the run stamp", () => {
-            const project: IProject = {
-                ...unstagedProjectWithQuery,
-                query: {
-                    ...unstagedProjectWithQuery.query!,
-                    created: new Date().toISOString()
-                }
-            };
+            const project = withQuery({ created: new Date().toISOString() });
             const wrapper = mountCohortQuery({ project });
             const cell = lastRunCell(wrapper);
             expect(cell).not.toBeNull();
@@ -641,13 +588,7 @@ describe("CohortQuery", () => {
         it("renders 'yesterday' when the query was created on the previous calendar day", () => {
             const ts = new Date();
             ts.setDate(ts.getDate() - 1);
-            const project: IProject = {
-                ...unstagedProjectWithQuery,
-                query: {
-                    ...unstagedProjectWithQuery.query!,
-                    created: ts.toISOString()
-                }
-            };
+            const project = withQuery({ created: ts.toISOString() });
             const wrapper = mountCohortQuery({ project });
             const cell = lastRunCell(wrapper);
             expect(cell).not.toBeNull();
@@ -659,13 +600,7 @@ describe("CohortQuery", () => {
         it("renders an absolute date when the query is older than yesterday", () => {
             const ts = new Date();
             ts.setDate(ts.getDate() - 7);
-            const project: IProject = {
-                ...unstagedProjectWithQuery,
-                query: {
-                    ...unstagedProjectWithQuery.query!,
-                    created: ts.toISOString()
-                }
-            };
+            const project = withQuery({ created: ts.toISOString() });
             const wrapper = mountCohortQuery({ project });
             const cell = lastRunCell(wrapper);
             expect(cell).not.toBeNull();
@@ -675,13 +610,7 @@ describe("CohortQuery", () => {
         });
 
         it("renders nothing when created is an unparseable date string", () => {
-            const project: IProject = {
-                ...unstagedProjectWithQuery,
-                query: {
-                    ...unstagedProjectWithQuery.query!,
-                    created: "not-a-date"
-                }
-            };
+            const project = withQuery({ created: "not-a-date" });
             const wrapper = mountCohortQuery({ project });
             expect(lastRunCell(wrapper)).toBeNull();
         });
@@ -704,14 +633,7 @@ describe("CohortQuery", () => {
         });
 
         it("flips submittingChange back to false once the project store carries the just-submitted query id", async () => {
-            mockSendQuery.mockResolvedValue({
-                queryId: "qid-handshake",
-                trust: [{
-                    statusCode: 200,
-                    name: "Trust A",
-                    message: "OK"
-                }]
-            });
+            mockSendQuery.mockResolvedValue(okResponse("qid-handshake"));
             const { useProjectStore } = await import("@/store/project");
 
             const wrapper = mountCohortQuery({ project: unstagedProject });
@@ -721,13 +643,7 @@ describe("CohortQuery", () => {
             // After the success branch, formSubmitting stays `true` waiting for
             // the project store to surface the new query id. Inject it and the
             // watch should flip submitting → false.
-            useProjectStore().project = {
-                ...unstagedProject,
-                query: {
-                    ...unstagedProjectWithQuery.query!,
-                    id: "qid-handshake"
-                }
-            };
+            useProjectStore().project = withQuery({ id: "qid-handshake" });
             await wrapper.vm.$nextTick();
             await vi.waitFor(() => {
                 const events = wrapper.emitted("submittingChange") ?? [];

@@ -16,7 +16,7 @@ import json
 import logging
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -52,8 +52,12 @@ def console_backend():
 
 @pytest.fixture
 def ses_backend():
-    with patch("flip_api.utils.email_sender.get_settings", return_value=_settings("ses")):
-        yield
+    """Select the SES backend and yield the boto3 client factory; its return_value is the sesv2 client."""
+    with (
+        patch("flip_api.utils.email_sender.get_settings", return_value=_settings("ses")),
+        patch("flip_api.utils.email_sender.boto3.client") as mock_client_factory,
+    ):
+        yield mock_client_factory
 
 
 def test_console_backend_does_not_call_aws(console_backend, caplog):
@@ -177,17 +181,15 @@ def test_console_backend_truncates_unbounded_values(console_backend, caplog):
 
 def test_ses_backend_sends_templated_email(ses_backend):
     """The SES path builds a sesv2 client and sends the template with a JSON payload."""
-    with patch("flip_api.utils.email_sender.boto3.client") as mock_client_factory:
-        mock_client = MagicMock()
-        mock_client_factory.return_value = mock_client
+    mock_client = ses_backend.return_value
 
-        send_templated_email(
-            recipient="admin@example.com",
-            template_name="flip-access-request",
-            template_data={"email": "a@b.com", "name": "A B", "purpose": "research"},
-        )
+    send_templated_email(
+        recipient="admin@example.com",
+        template_name="flip-access-request",
+        template_data={"email": "a@b.com", "name": "A B", "purpose": "research"},
+    )
 
-    mock_client_factory.assert_called_once_with("sesv2", region_name="mock-region")
+    ses_backend.assert_called_once_with("sesv2", region_name="mock-region")
     mock_client.send_email.assert_called_once()
     kwargs = mock_client.send_email.call_args.kwargs
     assert kwargs["FromEmailAddress"] == "sender@example.com"
@@ -208,16 +210,14 @@ def test_ses_backend_serialises_values_json_cannot_encode(ses_backend):
     raises ``TypeError`` in prod — and both call sites swallow that, so it
     would surface as "emails silently stopped" rather than an error.
     """
-    with patch("flip_api.utils.email_sender.boto3.client") as mock_client_factory:
-        mock_client = MagicMock()
-        mock_client_factory.return_value = mock_client
+    mock_client = ses_backend.return_value
 
-        project_id = uuid4()
-        send_templated_email(
-            recipient="user1@test.com",
-            template_name="flip-xnat-invite",
-            template_data={"project_id": project_id, "when": datetime(2026, 1, 1)},
-        )
+    project_id = uuid4()
+    send_templated_email(
+        recipient="user1@test.com",
+        template_name="flip-xnat-invite",
+        template_data={"project_id": project_id, "when": datetime(2026, 1, 1)},
+    )
 
     payload = json.loads(mock_client.send_email.call_args.kwargs["Content"]["Template"]["TemplateData"])
     assert payload["project_id"] == str(project_id)
@@ -226,16 +226,13 @@ def test_ses_backend_serialises_values_json_cannot_encode(ses_backend):
 
 def test_ses_backend_propagates_client_error(ses_backend):
     """Send failures propagate: callers own the best-effort handling, not this module."""
-    with patch("flip_api.utils.email_sender.boto3.client") as mock_client_factory:
-        mock_client = MagicMock()
-        mock_client.send_email.side_effect = ClientError(
-            {"Error": {"Code": "MessageRejected", "Message": "Email address is not verified"}}, "SendEmail"
-        )
-        mock_client_factory.return_value = mock_client
+    ses_backend.return_value.send_email.side_effect = ClientError(
+        {"Error": {"Code": "MessageRejected", "Message": "Email address is not verified"}}, "SendEmail"
+    )
 
-        with pytest.raises(ClientError):
-            send_templated_email(
-                recipient="admin@example.com",
-                template_name="flip-access-request",
-                template_data={"email": "a@b.com"},
-            )
+    with pytest.raises(ClientError):
+        send_templated_email(
+            recipient="admin@example.com",
+            template_name="flip-access-request",
+            template_data={"email": "a@b.com"},
+        )

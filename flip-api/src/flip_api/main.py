@@ -34,7 +34,6 @@ from flip_api.file_services import (
     get_model_files_list,
     presigned_url_for_upload,
     retrieve_federated_results,
-    retrieve_model_files_list,
     retrieve_uploaded_file_info,
     uploaded_file,
 )
@@ -196,7 +195,6 @@ ROUTERS: tuple[APIRouter, ...] = (
     get_model_files_list.router,
     presigned_url_for_upload.router,
     retrieve_federated_results.router,
-    retrieve_model_files_list.router,
     retrieve_uploaded_file_info.router,
     uploaded_file.router,
     # FL services

@@ -49,21 +49,13 @@ or as part of the full platform:
 make up
 ```
 
-Before starting the platform, generate the internal service key:
-
-```bash
-make generate-internal-service-key            # from repo root (also invoked automatically by `make up`)
-```
-
-`generate-internal-service-key` writes `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` to the active env file (`MAIN_ENV_FILE`, default `.env.development`; used for fl-server-to-hub authentication).
-
 Trusts are registered on the **running hub** with `make register-trusts` (shipped dev roster; from the repo root) or `make register-trust KIT=<CODE>` (one trust). Each inserts a `trust` row with its `api_key_hash`, claims an FL kit slot, and fills that trust's kit file `trust/.env.<CODE>.<env>` carrying `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY` — neither plaintext is stored on the hub. `make up` runs `register-trusts` automatically once the hub is up.
 See [`.env.development.example`](../.env.development.example) for the expected format.
 
 The API is served on the port defined by `API_PORT` in [`.env.development.example`](../.env.development.example)
 (default: `8080`). Interactive API documentation (Swagger UI) is available at:
 
-```
+```text
 http://localhost:<API_PORT>/api/docs
 ```
 
@@ -111,10 +103,7 @@ the OMOP schema copy after a DDL change with
 
 ### Tunables
 
-A handful of scheduler and task-queue settings are absent from `.env.development.example` (all but
-`SCHEDULER_MALWARE_SCAN_RECONCILE_RATE`, which appears there commented out under the malware-scan
-block) because their `config.py` defaults are meant to be left alone in normal operation; override
-them only when diagnosing or deliberately changing that behaviour.
+These scheduler and task-queue settings have `config.py` defaults that should be left alone in normal operation. Override them only when diagnosing or deliberately changing that behaviour. For that reason they are not in `.env.development.example`, except `SCHEDULER_MALWARE_SCAN_RECONCILE_RATE`, which appears there commented out under the malware-scan block.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -138,9 +127,9 @@ them only when diagnosing or deliberately changing that behaviour.
 
 The PostgreSQL schema is owned by **Alembic**. At container boot the entrypoint runs
 `alembic upgrade head` (after Postgres is reachable, before seeding) — a non-zero
-migration exit fails fast and never starts the API. This replaces the old
-`SQLModel.metadata.create_all()`, which only ever created *missing* tables and never
-applied a schema *diff* to an existing database.
+migration exit fails fast and never starts the API. Do not reintroduce
+`SQLModel.metadata.create_all()`: it only creates *missing* tables and never
+applies a schema *diff* to an existing database.
 
 - Migration scripts live in `src/flip_api/db/migrations/` (so they ride the dev `src/`
   bind mount and the prod `COPY src/`); config is in `alembic.ini`.
@@ -192,7 +181,13 @@ The `queries.queried_trust_ids` column is an `ARRAY(UUID)` (`postgresql.ARRAY(sa
 
 ## Testing
 
-Tests are split into `tests/unit/` (no real backing services) and `tests/integration/` (real Postgres / Keycloak / Cognito / S3 / sibling APIs). See [Where does my test go?](../CONTRIBUTING.md#where-does-my-test-go) in `CONTRIBUTING.md` for the placement rule.
+Tests are split into `tests/unit/` (no real backing services) and `tests/integration/` (real Postgres / Keycloak / sibling APIs, with AWS services faked in-process by moto — see below). See [Where does my test go?](../CONTRIBUTING.md#where-does-my-test-go) in `CONTRIBUTING.md` for the placement rule.
+
+Run the full suite (lint + mypy + pytest, requires the dockerised dependencies):
+
+```bash
+make test
+```
 
 Run unit tests (no Docker / DB / network needed):
 
@@ -206,25 +201,29 @@ Run integration tests against a throwaway Postgres (Docker required, but no comp
 make integration_test
 ```
 
-Integration tests use [testcontainers-python](https://github.com/testcontainers/testcontainers-python) to start a `postgres:16-alpine` container per test session and tear it down at the end. The schema is built by running the **Alembic migrations** (`alembic upgrade head`, the same DDL dev/prod apply at boot) and then seeded with permissions / roles / role-permissions in `tests/integration/conftest.py`; per-test tables are truncated between tests. Building from migrations (not `create_all`) means `tests/integration/test_migrations.py` doubles as a **drift guard** — a model change shipped without a matching revision fails the suite. New integration tests just request the `session` (real DB) and/or `client` (FastAPI `TestClient` wired to the same DB) fixtures — no setup boilerplate.
+Integration tests use [testcontainers-python](https://github.com/testcontainers/testcontainers-python) to start a `postgres:16-alpine` container per test session and tear it down at the end. The schema is built by running the **Alembic migrations** (`alembic upgrade head`, the same DDL dev/prod apply at boot) and then seeded with permissions / roles / role-permissions in `tests/integration/conftest.py`; per-test tables are truncated between tests. Because the schema comes from migrations, `tests/integration/test_migrations.py` is the drift guard described under [Database migrations › Workflow](#workflow). New integration tests just request the `session` (real DB) and/or `client` (FastAPI `TestClient` wired to the same DB) fixtures — no setup boilerplate.
 
 ### AWS-touching tests (S3, Cognito, SES)
 
 A session-scoped autouse fixture (`aws_mock` in `tests/integration/conftest.py`) enters [`moto.mock_aws()`](https://github.com/getmoto/moto) for the whole test session, intercepting `boto3.client(...)` calls at the botocore layer. The flip-api production code paths in `src/flip_api/utils/s3_client.py`, the Cognito identity provider `src/flip_api/auth/identity/cognito.py`, and the `boto3.client("sesv2", ...)` construction in `src/flip_api/utils/email_sender.py` (used by `user_services/access_request.py` and `private_services/imaging_notifications.py`) all hit the moto fake with no test-only branches in source.
 
+`aws_mock` also pins `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` / `AWS_DEFAULT_REGION` to test-only stub values in the environment for the duration of the session, and clobbers any `AWS_PROFILE` from the developer's shell. Real-AWS credentials are never reachable while the fixture is active.
+
 Per-service helper fixtures bootstrap the state each test needs:
 
 - `s3_buckets` — creates the buckets configured in `Settings` (`UPLOADED_MODEL_FILES_BUCKET`, `SCANNED_MODEL_FILES_BUCKET`, `UPLOADED_FEDERATED_DATA_BUCKET`, `FL_APP_DESTINATION_BUCKET`). The base FL application templates are not an S3 bucket — they are read from the local `FL_APP_BASE_DIR` tree baked into the image (FLIP#724).
 - `cognito_user_pool` — creates a moto user pool + app client, pins `AUTH_BACKEND=cognito` and rebinds `Settings.AWS_COGNITO_USER_POOL_ID` / `AWS_COGNITO_APP_CLIENT_ID` to point at them, clearing the provider cache (`auth/identity/factory.py`) so the next request builds a Cognito provider against the fresh IDs.
-- `ses_send_email_recorder` — captures every `sesv2.send_email` call. moto v5 explicitly raises `NotImplementedError` on `send_email` with `Content.Template`, and every flip-api SES caller uses templated content; the recorder wraps the production-code path up to the SDK boundary so the test asserts the boto3 call shape (`FromEmailAddress`, `Destination.ToAddresses`, `TemplateName`, `TemplateData`). It's the closest approximation to a real SES round-trip moto's coverage allows today. It also pins `EMAIL_BACKEND="ses"`, since development defaults to the console backend (FLIP#919) — without that pin the SES path under test would never run. `tests/integration/test_console_email_backend.py` is the counterpart: it leaves the dev default alone and asserts the email paths succeed, and log rather than send, with no SES configuration at all.
+- `ses_send_email_recorder` — captures every `sesv2.send_email` call, so the test asserts the boto3 call shape (`FromEmailAddress`, `Destination.ToAddresses`, `TemplateName`, `TemplateData`). It exists because moto v5 raises `NotImplementedError` on `send_email` with `Content.Template`, and every flip-api SES caller uses templated content; the recorder runs the production-code path up to the SDK boundary. It's the closest approximation to a real SES round-trip moto's coverage allows today. It also pins `EMAIL_BACKEND="ses"`, since development defaults to the console backend (FLIP#919) — without that pin the SES path under test would never run. `tests/integration/test_console_email_backend.py` is the counterpart: it leaves the dev default alone and asserts the email paths succeed, and log rather than send, with no SES configuration at all.
 
-Why moto and not LocalStack: `cognito-idp` and `sesv2` are Pro-only on LocalStack — the free tier rejects `CreateUserPool` / `CreateEmailIdentity` outright. moto covers all three in OSS and runs in-process, so there's no container boot per test session.
+Why moto and not LocalStack: `cognito-idp` and `sesv2` are Pro-only on LocalStack — the free tier rejects `CreateUserPool` / `CreateEmailIdentity` outright. moto covers S3, Cognito and SES in OSS and runs in-process, so there's no container boot per test session.
 
 ### Keycloak-touching tests
 
-`tests/integration/test_keycloak_round_trips.py` is the twin of `test_cognito_round_trips.py` for the Keycloak provider (`src/flip_api/auth/identity/keycloak.py`): it boots the pinned Keycloak image (kept in step with `deploy/compose.development.yml`) under Testcontainers with the committed dev realm `deploy/keycloak/flip-realm.json` imported at boot, so `register_user` really creates a user, `delete_user` really removes one, and a token minted by Keycloak's password grant really passes `verify_token`. The same import proves the realm file's `${...}` placeholders resolve. Separately, `.github/workflows/local_auth_smoke.yml` boots flip-db, keycloak, the RustFS object store and flip-api from the dev compose on a runner with no AWS credentials, then runs `tests/local_auth_smoke.py` (sign in as the seeded admin) and `tests/local_storage_smoke.py` (a model file through the store, FLIP#1291, plus repeated model-sized presigned POSTs, FLIP#1534) — the CI proof that the hub starts, authenticates and stores files without AWS.
+`tests/integration/test_keycloak_round_trips.py` is the twin of `test_cognito_round_trips.py` for the Keycloak provider (`src/flip_api/auth/identity/keycloak.py`): it boots the pinned Keycloak image (kept in step with `deploy/compose.development.yml`) under Testcontainers with the committed dev realm `deploy/keycloak/flip-realm.json` imported at boot, so `register_user` really creates a user, `delete_user` really removes one, and a token minted by Keycloak's password grant really passes `verify_token`. The same import proves the realm file's `${...}` placeholders resolve.
 
-### Demo tooling (live stack)
+`.github/workflows/local_auth_smoke.yml` is the CI proof that the hub starts, authenticates and stores files without AWS. It boots flip-db, keycloak, the RustFS object store and flip-api from the dev compose on a runner with no AWS credentials, then runs `tests/local_auth_smoke.py` (sign in as the seeded admin) and `tests/local_storage_smoke.py` (a model file through the store, FLIP#1291, plus repeated model-sized presigned POSTs, FLIP#1534).
+
+## Demo tooling (live stack)
 
 Three developer utilities drive the **running dev stack** end to end (none run in CI):
 
@@ -244,14 +243,6 @@ Three developer utilities drive the **running dev stack** end to end (none run i
   boot seeding grants their roles. Before any write it names the target (pool name/region/AWS account, or
   Keycloak realm + URL) and requires an interactive `yes`, so a stale `AWS_COGNITO_USER_POOL_ID` or wrong SSO
   account can't plant a known-password admin in an unintended pool.
-
-`aws_mock` also pins `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` / `AWS_DEFAULT_REGION` to test-only stub values in the environment for the duration of the session, and clobbers any `AWS_PROFILE` from the developer's shell. Real-AWS credentials are never reachable while the fixture is active.
-
-Run the full suite (lint + mypy + pytest, requires the dockerised dependencies):
-
-```bash
-make test
-```
 
 ## Further Reading
 

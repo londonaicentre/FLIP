@@ -15,6 +15,7 @@
 from collections import OrderedDict
 
 import numpy as np
+import pytest
 import torch
 from nvflare.apis.dxo import DataKind, MetaKey
 
@@ -30,21 +31,21 @@ class TestGetModelWeightsDiff:
 
         assert result.data_kind == DataKind.WEIGHT_DIFF
 
-    def test_computes_correct_diff_with_numpy_arrays(self):
-        original = OrderedDict({"w": np.array([1.0, 2.0, 3.0])})
-        new = OrderedDict({"w": np.array([2.0, 4.0, 6.0])})
+    @pytest.mark.parametrize(
+        ("original", "new", "iterations", "expected"),
+        [
+            ([1.0, 2.0, 3.0], np.array([2.0, 4.0, 6.0]), 5, [1.0, 2.0, 3.0]),
+            ([1.0, 2.0], torch.tensor([3.0, 5.0]), 1, [2.0, 3.0]),
+            ([5.0, 10.0], np.array([5.0, 10.0]), 1, [0.0, 0.0]),
+        ],
+        ids=["numpy", "torch", "zero"],
+    )
+    def test_computes_correct_diff(self, original, new, iterations, expected):
+        result = get_model_weights_diff(
+            OrderedDict({"w": np.array(original)}), OrderedDict({"w": new}), iterations=iterations
+        )
 
-        result = get_model_weights_diff(original, new, iterations=5)
-
-        np.testing.assert_array_almost_equal(result.data["w"], [1.0, 2.0, 3.0])
-
-    def test_computes_correct_diff_with_torch_tensors(self):
-        original = OrderedDict({"w": np.array([1.0, 2.0])})
-        new = OrderedDict({"w": torch.tensor([3.0, 5.0])})
-
-        result = get_model_weights_diff(original, new, iterations=1)
-
-        np.testing.assert_array_almost_equal(result.data["w"], [2.0, 3.0])
+        np.testing.assert_array_almost_equal(result.data["w"], expected)
 
     def test_sets_num_steps_meta(self):
         original = OrderedDict({"w": np.array([0.0])})
@@ -64,10 +65,3 @@ class TestGetModelWeightsDiff:
         np.testing.assert_array_almost_equal(result.data["a"], [1.0])
         np.testing.assert_array_almost_equal(result.data["b"], [10.0])
         np.testing.assert_array_almost_equal(result.data["c"], [200.0])
-
-    def test_handles_zero_diff(self):
-        weights = OrderedDict({"w": np.array([5.0, 10.0])})
-
-        result = get_model_weights_diff(weights, OrderedDict({"w": np.array([5.0, 10.0])}), iterations=1)
-
-        np.testing.assert_array_almost_equal(result.data["w"], [0.0, 0.0])

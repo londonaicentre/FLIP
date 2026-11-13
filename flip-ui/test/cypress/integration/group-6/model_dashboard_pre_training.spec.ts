@@ -14,6 +14,32 @@
 
 
 
+const stubModelPage = (projectId: string, modelId: string, projectFixture: string, projectAlias: string) => {
+    cy.restoreLocalStorage();
+    cy.intercept("GET",
+        "/projects/" + projectId,
+        { fixture: projectFixture }
+    ).as(projectAlias);
+    cy.intercept("GET", `/model/${modelId}/logs`, [])
+        .as("getLogs");
+    // Intercept config.json file download for job type detection. The
+    // endpoint returns a presigned URL {url, fileName} rather than the
+    // file bytes directly (FLIP#784), so the byte fetch that follows
+    // needs its own intercept too.
+    cy.intercept("GET", `/files/model/${modelId}/config.json`, {
+        body: {
+            url: "https://fake-presigned.example.com/config.json",
+            fileName: "config.json"
+        }
+    }).as("getConfigJson");
+    cy.intercept("GET", "https://fake-presigned.example.com/config.json", { fixture: "model/configJsonStandard.json" }).as("getConfigJsonBytes");
+    // The page calls /model/job-types once, in onBeforeMount. globalIntercepts stubs it for
+    // every spec; this overrides that with the list these tests assert on. Without a usable
+    // map the watcher that gates `requiredFiles` / `allFilesUploaded` / `readyToTrain` never
+    // unlocks the initiate-training-btn.
+    cy.intercept("GET", "/model/job-types", { standard: ["trainer.py", "validator.py", "models.py", "config.json"] }).as("getJobTypes");
+};
+
 describe("Model Dashboard - Pre Training", () => {
     const projectId = "6fcbdd40-3675-45c9-899e-1a005e5245ba";
     const modelId = "6292d9ec-e821-4e4a-814e-3a315a4cb95e";
@@ -23,30 +49,7 @@ describe("Model Dashboard - Pre Training", () => {
     });
 
     beforeEach(() => {
-        cy.restoreLocalStorage();
-        cy.intercept("GET",
-            "/projects/" + projectId,
-            { fixture: "project/getProjectWithQuery" }
-        ).as("projectWithQuery");
-        cy.intercept("GET", `/model/${modelId}/logs`, [])
-            .as("getLogs");
-        // Intercept config.json file download for job type detection. The
-        // endpoint returns a presigned URL {url, fileName} rather than the
-        // file bytes directly (FLIP#784), so the byte fetch that follows
-        // needs its own intercept too.
-        cy.intercept("GET", `/files/model/${modelId}/config.json`, {
-            body: { url: "https://fake-presigned.example.com/config.json", fileName: "config.json" }
-        }).as("getConfigJson");
-        cy.intercept("GET", "https://fake-presigned.example.com/config.json", {
-            fixture: "model/configJsonStandard.json"
-        }).as("getConfigJsonBytes");
-        // The page calls /model/job-types once, in onBeforeMount. globalIntercepts stubs it for
-        // every spec; this overrides that with the list these tests assert on. Without a usable
-        // map the watcher that gates `requiredFiles` / `allFilesUploaded` / `readyToTrain` never
-        // unlocks the initiate-training-btn.
-        cy.intercept("GET", "/model/job-types", {
-            standard: ["trainer.py", "validator.py", "models.py", "config.json"]
-        }).as("getJobTypes");
+        stubModelPage(projectId, modelId, "project/getProjectWithQuery", "projectWithQuery");
     });
 
     it("redirects you back to the project if the model can not be found.", () => {
@@ -74,8 +77,6 @@ describe("Model Dashboard - Pre Training", () => {
         cy.getBySel("initiate-training-btn").should("be.disabled");
 
         cy.getBySel("data-enrichment-btn").click();
-        cy.getBySel("initiate-training-btn").should("be.disabled");
-
         cy.getBySel("initiate-training-btn").should("be.disabled");
 
         cy.getBySel("trust-selection-0").click();
@@ -134,62 +135,44 @@ describe("Model Dashboard - Pre Training", () => {
         cy.getBySel("initiate-training-btn").should("be.enabled");
     });
 
-    it("enables user to initiate training given all criteria is met", () => {
-        cy.intercept("POST", `/step/model/${modelId}`, { fixture: "model/getModelTrain" })
-            .as("getModel");
+    [
+        {
+            name: "enables user to initiate training given all criteria is met",
+            fixture: "model/getModelTrain"
+        },
+        {
+            name: "enables user to initiate training with additional files given all criteria is met",
+            fixture: "model/getModelTrainAdditionalFiles"
+        }
+    ].forEach(({ name, fixture }) => {
+        it(name, () => {
+            cy.intercept("POST", `/step/model/${modelId}`, { fixture })
+                .as("getModel");
 
-        cy.visit(`project/${projectId}/model/${modelId}`);
-        cy.wait("@getModel");
+            cy.visit(`project/${projectId}/model/${modelId}`);
+            cy.wait("@getModel");
 
-        cy.getBySel("data-enrichment-btn").click();
-        cy.getBySel("trust-selection-0").click();
-        cy.getBySel("trust-selection-1").click();
+            cy.getBySel("data-enrichment-btn").click();
+            cy.getBySel("trust-selection-0").click();
+            cy.getBySel("trust-selection-1").click();
 
-        cy.intercept("POST", `/fl/initiate/${modelId}`, { statusCode: 200 })
-            .as("initialiseTraining");
-        cy.getBySel("initiate-training-btn").click();
-        cy.wait("@initialiseTraining");
+            cy.intercept("POST", `/fl/initiate/${modelId}`, { statusCode: 200 })
+                .as("initialiseTraining");
+            cy.getBySel("initiate-training-btn").click();
+            cy.wait("@initialiseTraining");
 
-        cy.get("@initialiseTraining").its("request.body").should("deep.equal", {
-            "trust_ids": [
-                "SOMEIDFORKCH",
-                "SOMEIDFORUCLH"
-            ]
+            cy.get("@initialiseTraining").its("request.body").should("deep.equal", {
+                "trust_ids": [
+                    "SOMEIDFORKCH",
+                    "SOMEIDFORUCLH"
+                ]
+            });
+
+            // No option to change what was selected for training
+            cy.getBySel("data-enrichment-btn").should("not.exist");
+            cy.getBySel("trust-selection-0").should("not.exist");
+            cy.getBySel("trust-selection-1").should("not.exist");
         });
-
-        // No option to change what was selected for training
-        cy.getBySel("data-enrichment-btn").should("not.exist");
-        cy.getBySel("trust-selection-0").should("not.exist");
-        cy.getBySel("trust-selection-1").should("not.exist");
-    });
-
-    it("enables user to initiate training with additional files given all criteria is met", () => {
-        cy.intercept("POST", `/step/model/${modelId}`, { fixture: "model/getModelTrainAdditionalFiles" })
-            .as("getModel");
-
-        cy.visit(`project/${projectId}/model/${modelId}`);
-        cy.wait("@getModel");
-
-        cy.getBySel("data-enrichment-btn").click();
-        cy.getBySel("trust-selection-0").click();
-        cy.getBySel("trust-selection-1").click();
-
-        cy.intercept("POST", `/fl/initiate/${modelId}`, { statusCode: 200 })
-            .as("initialiseTraining");
-        cy.getBySel("initiate-training-btn").click();
-        cy.wait("@initialiseTraining");
-
-        cy.get("@initialiseTraining").its("request.body").should("deep.equal", {
-            "trust_ids": [
-                "SOMEIDFORKCH",
-                "SOMEIDFORUCLH"
-            ]
-        });
-
-        // No option to change what was selected for training
-        cy.getBySel("data-enrichment-btn").should("not.exist");
-        cy.getBySel("trust-selection-0").should("not.exist");
-        cy.getBySel("trust-selection-1").should("not.exist");
     });
 
     // The "displays correct cohort query value and results" test that lived
@@ -210,22 +193,7 @@ describe("Model Dashboard - Pre Training with only one approved trust", () => {
     });
 
     beforeEach(() => {
-        cy.restoreLocalStorage();
-        cy.intercept("GET",
-            "/projects/" + projectId,
-            { fixture: "project/getApprovedProjectOneTrust" }
-        ).as("project");
-        cy.intercept("GET", `/model/${modelId}/logs`, [])
-            .as("getLogs");
-        cy.intercept("GET", `/files/model/${modelId}/config.json`, {
-            body: { url: "https://fake-presigned.example.com/config.json", fileName: "config.json" }
-        }).as("getConfigJson");
-        cy.intercept("GET", "https://fake-presigned.example.com/config.json", {
-            fixture: "model/configJsonStandard.json"
-        }).as("getConfigJsonBytes");
-        cy.intercept("GET", "/model/job-types", {
-            standard: ["trainer.py", "validator.py", "models.py", "config.json"]
-        }).as("getJobTypes");
+        stubModelPage(projectId, modelId, "project/getApprovedProjectOneTrust", "project");
     });
 
     it("does not allow the user to initiate training if the approved trust is not selected", () => {
@@ -244,55 +212,41 @@ describe("Model Dashboard - Pre Training with only one approved trust", () => {
         cy.getBySel("initiate-training-btn").should("be.enabled");
     });
 
-    it("enables user to initiate training given all criteria is met", () => {
-        cy.intercept("POST", `/step/model/${modelId}`, { fixture: "model/getModelTrain" })
-            .as("getModel");
+    [
+        {
+            name: "enables user to initiate training given all criteria is met",
+            fixture: "model/getModelTrain"
+        },
+        {
+            name: "enables user to initiate training with additional files given all criteria is met",
+            fixture: "model/getModelTrainAdditionalFiles"
+        }
+    ].forEach(({ name, fixture }) => {
+        it(name, () => {
+            cy.intercept("POST", `/step/model/${modelId}`, { fixture })
+                .as("getModel");
 
-        cy.visit(`project/${projectId}/model/${modelId}`);
-        cy.wait("@getModel");
+            cy.visit(`project/${projectId}/model/${modelId}`);
+            cy.wait("@getModel");
 
-        cy.getBySel("data-enrichment-btn").click();
-        cy.getBySel("trust-selection-0").click();
+            cy.getBySel("data-enrichment-btn").click();
+            cy.getBySel("trust-selection-0").click();
 
-        cy.intercept("POST", `/fl/initiate/${modelId}`, { statusCode: 200 })
-            .as("initialiseTraining");
-        cy.getBySel("initiate-training-btn").click();
-        cy.wait("@initialiseTraining");
+            cy.intercept("POST", `/fl/initiate/${modelId}`, { statusCode: 200 })
+                .as("initialiseTraining");
+            cy.getBySel("initiate-training-btn").click();
+            cy.wait("@initialiseTraining");
 
-        cy.get("@initialiseTraining").its("request.body").should("deep.equal", {
-            "trust_ids": [
-                "SOMEIDFORKCH"
-            ]
+            cy.get("@initialiseTraining").its("request.body").should("deep.equal", {
+                "trust_ids": [
+                    "SOMEIDFORKCH"
+                ]
+            });
+
+            // No option to change what was selected for training
+            cy.getBySel("data-enrichment-btn").should("not.exist");
+            cy.getBySel("trust-selection-0").should("not.exist");
         });
-
-        // No option to change what was selected for training
-        cy.getBySel("data-enrichment-btn").should("not.exist");
-        cy.getBySel("trust-selection-0").should("not.exist");
     });
 
-    it("enables user to initiate training with additional files given all criteria is met", () => {
-        cy.intercept("POST", `/step/model/${modelId}`, { fixture: "model/getModelTrainAdditionalFiles" })
-            .as("getModel");
-
-        cy.visit(`project/${projectId}/model/${modelId}`);
-        cy.wait("@getModel");
-
-        cy.getBySel("data-enrichment-btn").click();
-        cy.getBySel("trust-selection-0").click();
-
-        cy.intercept("POST", `/fl/initiate/${modelId}`, { statusCode: 200 })
-            .as("initialiseTraining");
-        cy.getBySel("initiate-training-btn").click();
-        cy.wait("@initialiseTraining");
-
-        cy.get("@initialiseTraining").its("request.body").should("deep.equal", {
-            "trust_ids": [
-                "SOMEIDFORKCH"
-            ]
-        });
-
-        // No option to change what was selected for training
-        cy.getBySel("data-enrichment-btn").should("not.exist");
-        cy.getBySel("trust-selection-0").should("not.exist");
-    });
 });

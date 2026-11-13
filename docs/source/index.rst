@@ -17,7 +17,9 @@ inside each institution's security boundary.
    A Central Hub coordinating projects across two independently operated FLIP nodes.
 
 Start here
-==========
+----------
+
+New to FLIP? Read the :doc:`overview` first.
 
 .. list-table::
    :header-rows: 1
@@ -28,15 +30,16 @@ Start here
    * - A **researcher** or model developer
      - :doc:`user-guides/getting-started`, then :doc:`working-with-flip-apps`
    * - A **trust operator** installing FLIP at a hospital or TRE
-     - :doc:`deploy-flip/deploy-trust-node`, then :doc:`troubleshooting`
+     - :doc:`deploy-flip/trust-readiness-checklist`, then :doc:`deploy-flip/deploy-trust-node`; if something
+       fails, :doc:`troubleshooting`
    * - A **FLIP administrator** running the Central Hub
      - :doc:`deploy-flip/deploy-central-hub` and :doc:`sys-admin`
    * - An **information governance**, Caldicott or ethics reviewer
      - :doc:`governance-and-compliance` and :doc:`security`
+   * - A **Trust Admin** approving projects for a trust
+     - :doc:`user-guides/user-trust-admin`
    * - A **contributor** to FLIP
      - :doc:`deploy-flip/deploy-local-dev` and :gh:`CONTRIBUTING.md`
-
-New to FLIP? Read the :doc:`overview` first.
 
 .. toctree::
    :maxdepth: 2

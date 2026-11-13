@@ -37,11 +37,11 @@ def invoke_model_status_update_endpoint(
     _: None = Depends(authorise_job_callback),
 ) -> dict[str, str]:
     """
-    Update a model's status. Restricted to internal FL services via internal service key authentication.
+    Update a model's status. Restricted to the FL server of a job on that model.
 
     This endpoint is internal-only: it accepts requests from the fl-server on the
-    Central Hub (authenticated via INTERNAL_SERVICE_KEY_HEADER), and only for a model
-    that has a job still reporting (``authorise_job_callback``).
+    Central Hub, and only under the credential of a job still reporting on the model
+    (``authorise_job_callback``).
 
     Args:
         model_id (UUID): The ID of the model whose status is to be updated.
