@@ -59,7 +59,12 @@ Quick checks, in order
      -o jsonpath='{.items[0].metadata.name}')
    kubectl logs -n flip-trust "$FL_POD" --tail=50
 
-The entries below reuse ``$XNAT_POD``.
+Many entries below use ``$XNAT_POD``. If you jumped straight to one, set it first:
+
+.. code-block:: shell
+
+   XNAT_POD=$(kubectl get pods -n flip-trust -l app.kubernetes.io/component=xnat-web \
+     -o jsonpath='{.items[0].metadata.name}')
 
 **********************
 Pods and deployments
@@ -119,7 +124,7 @@ Start with the pod's events and logs:
 xnat-db crash-loops on upgrade: no ``postgres`` role
 ====================================================
 
-*Symptom.* ``helm upgrade`` reports success, then ``xnat-db-0`` goes ``CrashLoopBackOff``. The pod's events
+**Symptom.** ``helm upgrade`` reports success, then ``xnat-db-0`` goes ``CrashLoopBackOff``. The pod's events
 carry a ``FailedPostStartHook`` entry whose message ends in::
 
    psql: error: could not connect to server: FATAL:  role "postgres" does not exist
@@ -130,27 +135,27 @@ The ``postgres`` container log carries the server's own side of the same refusal
 
 ``xnat-web`` then fails its readiness check and every DICOM path stops with it.
 
-*Cause.* The volume was first initialised by a chart that rendered ``POSTGRES_USER``. The Postgres entrypoint
+**Cause.** The volume was first initialised by a chart that rendered ``POSTGRES_USER``. The Postgres entrypoint
 honours that variable only at the first initdb, so that database's single superuser is ``xnat`` and no
 ``postgres`` role exists. A data volume is never initialised twice, so the layout survives every later chart
 and only shows up when a release starts connecting to it.
 
-*Check.* Ask the database which roles it holds:
+**Check.** Ask the database which roles it holds:
 
 .. code-block:: shell
 
-   kubectl -n flip-trust exec <release>-flip-trust-xnat-db-0 -c postgres -- psql -X -U xnat -d postgres \
+   kubectl -n flip-trust exec trust-release-flip-trust-xnat-db-0 -c postgres -- psql -X -U xnat -d postgres \
      -tAc "select rolname, rolsuper from pg_roles where rolname in ('postgres','xnat')"
 
 ``xnat|t`` on its own is this layout. ``postgres|t`` alongside ``xnat|f`` is a current one.
 
-*Fix.* A release that carries FLIP#1658 probes both roles over the local socket and connects as whichever
+**Fix.** Releases from ``v0.14.0`` probe both roles over the local socket and connect as whichever
 answers, so the upgrade completes and the application role's password is re-synced either way. On an older
 release, create the missing role once, after dumping the database:
 
 .. code-block:: shell
 
-   kubectl -n flip-trust exec <release>-flip-trust-xnat-db-0 -c postgres -- \
+   kubectl -n flip-trust exec trust-release-flip-trust-xnat-db-0 -c postgres -- \
      psql -X -v ON_ERROR_STOP=1 -U xnat -d postgres -c "CREATE ROLE postgres SUPERUSER LOGIN"
 
 No password is needed: the statement runs over the container's local socket, where the image's authentication
@@ -220,14 +225,13 @@ Upgrade refused: ``rollingUpdate: Forbidden`` on a ``Recreate`` Deployment
 
 The release stays on its previous revision.
 
-**Cause.** The chart now renders as ``Recreate`` a Deployment the cluster created as ``RollingUpdate``. FLIP#857
-did this to data-access-api when its snapshot store is ReadWriteOnce. The API server filled in ``rollingUpdate``
+**Cause.** The chart now renders as ``Recreate`` a Deployment the cluster created as ``RollingUpdate``. It does this
+to data-access-api when its cohort snapshot store is ReadWriteOnce. The API server filled in ``rollingUpdate``
 defaults when the Deployment was created, and no field manager owns them, so Helm 4's server-side apply keeps them
 beside the new ``type: Recreate`` and the object is invalid.
 
-**Fix.** ``make deploy`` (and so ``deploy-trust-k8s`` and ``upgrade-trust-k8s``) switches such Deployments before
-the upgrade (FLIP#1524, ``scripts/migrate-strategy.sh``). A plain ``helm upgrade`` does not; patch the named
-Deployment once, then upgrade:
+**Fix.** The chart's ``make deploy`` (and so ``deploy-trust-k8s`` and ``upgrade-trust-k8s``) switches such
+Deployments before the upgrade. A plain ``helm upgrade`` does not; patch the named Deployment once, then upgrade:
 
 .. code-block:: shell
 
@@ -277,7 +281,7 @@ crashing:
 **Cause.** The image the pod runs pairs a plugin with the wrong XNAT core. A C-ECHO never reaches XNAT's importer, so
 it cannot detect this. Three reasons are common:
 
-#. **The pod runs an image built before the fix**: one pinned in your overrides or kit file, or a tag such as
+#. **The pod runs an outdated image**: one pinned in your overrides or kit file, or a tag such as
    ``stag`` that was rebuilt after the pod pulled it. A redeploy does not replace the pod while its tag is
    unchanged; restart it to pull the rebuilt image:
    ``kubectl -n flip-trust rollout restart deployment/trust-release-flip-trust-xnat-web``.
@@ -358,9 +362,8 @@ Studies arrive but land in the Unassigned prearchive
 ====================================================
 
 Retrieval works (the PACS sends), but no sessions appear in the project, and ``/data/xnat/prearchive/`` fills
-with top-level timestamp folders instead of ``<project>/<timestamp>/``. The request's ``FAILED`` and the
-``Received zero files for study ... in project ...`` warning in ``dqr.log`` do not tell this apart: DQR reports
-every import into FLIP's direct-archive receiver that way.
+with top-level timestamp folders instead of ``<project>/<timestamp>/``. A ``FAILED`` request status and the
+``Received zero files ...`` warning in ``dqr.log`` do not identify this fault; they are normal (see the note below).
 
 **Cause.** XNAT's DICOM receiver is the stock one. Routing studies to the requesting project, and relabelling them
 the way the FL client looks them up, needs the retrieval plugin's identifier on the receiver.
@@ -517,10 +520,10 @@ the pinned image in place, so every project's conversion trigger keeps working. 
 dcm2niix jobs swamp the node, or wait for a slot
 ================================================
 
-**Before the conversion cap (FLIP#1448):** during a cohort pull the namespace fills with Pending pods that are not
-the release's own, one per archived scan, each requesting a whole CPU. The node sits near 100% of its CPU requests
-and nothing else schedules: a restarted trust pod stays Pending, and on AKS ``az aks command invoke`` fails because
-its own pod cannot start.
+**Symptom (no conversion cap, or a backlog from before it):** during a cohort pull the namespace fills with Pending pods
+that are not the release's own, one per archived scan, each requesting a whole CPU. The node sits near 100% of its CPU
+requests and nothing else schedules: a restarted trust pod stays Pending, and on AKS ``az aks command invoke`` fails
+because its own pod cannot start.
 
 **Cause.** Each conversion job requested a whole CPU, and they all started at once. The chart now caps them
 (``xnat.containerService.maxConcurrentJobs``, see "Container Service jobs (dcm2niix)" in the
@@ -919,6 +922,8 @@ identifier=dqrObjectIdentifier``:
 
 Fix a wrong receiver through XNAT's API (:ref:`ts-k8s-unassigned`), not with SQL: XNAT caches the receiver, so a
 database-only change needs a restart.
+
+.. _ts-k8s-manual-dicom:
 
 Manual DICOM tests
 ==================

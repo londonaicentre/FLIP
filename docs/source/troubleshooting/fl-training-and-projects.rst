@@ -36,7 +36,7 @@ A Trust stays on "Awaiting creation…"
 
 *Who: FLIP admin, with the trust operator*
 
-**Cause.** The Trust has not yet created the project's imaging project in its XNAT. The Trust picks up the
+**Cause.** The Trust has not yet created the matching imaging project in its XNAT. The Trust picks up the
 request the next time it polls the hub; if that fails, the hub retries on a schedule. By default it looks for
 projects with unimported studies every 30 minutes and re-imports any one project at most once an hour, so a retry
 can take up to an hour and a half to appear.
@@ -72,7 +72,7 @@ are not the accession numbers the PACS knows.
 - On the AWS-hosted trust, see :ref:`ts-compose-orthanc-empty`.
 - On a real PACS, check the accession numbers with the data and PACS teams: :ref:`omop-accession-id` says what the
   column must hold.
-- On Kubernetes, :ref:`ts-k8s-pacs-not-storable` also stops every request from being stored.
+- On Kubernetes, also check :ref:`ts-k8s-pacs-not-storable`, which stops every request from being stored.
 
 .. _ts-stuck-processing:
 
@@ -102,14 +102,16 @@ Trust's FL client and services are reporting.
 Training fails with ``num_samples=0``
 =====================================
 
+*Who: trust operator*
+
 The model's log shows:
 
 .. code-block:: text
 
    ValueError: num_samples should be a positive integer value, but got num_samples=0
 
-The cohort itself is not empty, so this looks like a bug in the training code. It almost never is: the Trust's FL
-client found no images to train on. Find which of these applies before changing anything.
+This looks like a bug in the training code, but it almost never is. The cohort is not empty; the Trust's FL client
+found no images to train on. Find which of these applies before changing anything.
 
 .. list-table::
    :header-rows: 1
@@ -142,8 +144,8 @@ Calls from trust-api work; only the FL client's calls fail.
 **Cause.** Every call inside a Trust carries the Trust's internal service key, and data-access-api and imaging-api
 refuse a call without a matching one. An FL client image older than the trust APIs does not send the key at all.
 
-**Fix.** Run the same release on every service of the Trust. Move the whole site to the release its hub runs with
-the upgrade command for its deployment shape (:ref:`admin-upgrading-sites`).
+**Fix.** Run the same release on every service of the Trust: upgrade the whole site to the release its hub runs,
+using the upgrade command for your deployment shape (:ref:`admin-upgrading-sites`).
 
 .. seealso::
 
@@ -153,6 +155,8 @@ the upgrade command for its deployment shape (:ref:`admin-upgrading-sites`).
 
 A model stays on ``Model Queued``
 =================================
+
+*Who: researcher, with the FLIP admin*
 
 **Cause.** Each net trains one job at a time, first come, first served. The number in brackets is the model's
 place in the queue; position 1 starts next.
@@ -165,6 +169,8 @@ place in the queue; position 1 starts next.
 The activity feed shows "Waiting for resources · this trust cannot provide 1 GPU"
 =================================================================================
 
+*Who: researcher, with the trust operator*
+
 **Cause.** On NVIDIA FLARE, the job asked each Trust for more GPUs than that Trust's FL client declares. FLIP never
 lowers the request to fit. NVIDIA FLARE retries for about 40 minutes, then marks the model ``ERROR`` and frees the
 net.
@@ -176,6 +182,8 @@ net.
 
 The run never starts a round, or the Trust reports ``cannot sync with server Runner``
 =====================================================================================
+
+*Who: researcher*
 
 **Cause.** The app downloads something while it runs, typically pretrained weights (``pretrained=True``,
 ``torch.hub.load(...)``, ``from_pretrained(...)``). The FL server and Trust hosts have no internet route, so the
@@ -204,7 +212,7 @@ reconnects on its own, retrying every 10 seconds.
 - On an on-prem host, check that the host and network firewalls still allow outbound traffic on the FL port (see
   :ref:`deploy-trust-node-network`).
 - On Kubernetes, check the egress policy: :ref:`ts-k8s-fl-port-blocked`.
-- A FLIP admin can confirm the server sees the client:
+- A FLIP admin of an AWS-hosted hub can confirm the server sees the client:
 
   .. code-block:: shell
 
