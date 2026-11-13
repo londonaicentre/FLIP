@@ -36,7 +36,7 @@ the schema and the `data_analyst_reader` role (the compose file passes `DATA_ACC
 for that) — and then seeds this trust's slice of the default projects into it (see "Seeding a
 running trust" below). The seeded volume persists; a later `up` does nothing. The version is
 `trust/.data_version` — a git tag on that dataset, one pin for the OMOP and Orthanc data together;
-see "Data versions" in `trust/README.md`.
+see "Data versions" in [trust/README.md](../README.md).
 
 The OMOP database container is normally started as part of a full trust stack from the repository root:
 
@@ -49,8 +49,7 @@ make -C trust up-trust KIT=KCH     # KCH only
 The seeded databases carry **no licensed vocabulary**: after the stack is
 up, load the core vocabulary into each trust database once (idempotent — safe
 to re-run; needs the bundle, see "The core vocabulary bundle" below, and
-`psql` on the host). Unlike the stack commands above, these run from this
-directory — `make -C trust/omop-db …` from the repository root:
+`psql` on the host). These targets live in this directory's Makefile. From the repository root, run them with `make -C trust/omop-db`:
 
 ```sh
 make -C trust/omop-db load-omop-vocab                    # Trust_1 (GSTT, port 5434)
@@ -76,15 +75,15 @@ cd trust/omop-db && OMOP_DB_PORT=5434 OMOP_POSTGRES_USER=… OMOP_POSTGRES_PASSW
   OMOP_POSTGRES_DB=… ./files/load_core_vocab.sh --check
 ```
 
-### Seeding a running trust with datasets (FLIP#1100)
+### Seeding a running trust with datasets
 
-Seeding is how every trust gets its data: `up-trust` seeds the default projects at
-bring-up (`ensure-seeded`, which skips itself when the marker below already says
-so), and the same targets load any other published project into a **running**
-trust — a different set, a third trust. Idempotent, persisting in the bind-mounted
-volume; a `.data_version` bump makes the next `up-trust` re-seed at the new tag.
-Run from `trust/` with the kit, which supplies the slot number, the port and the
-credentials:
+Seeding is how every trust gets its data:
+
+- At bring-up, `up-trust` seeds the default projects (`ensure-seeded`, which skips itself when the marker below says the trust is already seeded). A `.data_version` bump makes the next `up-trust` re-seed at the new tag.
+- On a **running** trust, the targets below load any other published project: a different set, or a third trust.
+
+Seeding is idempotent and persists in the bind-mounted volume.
+Run from the repository root with `KIT=<CODE>`. The kit supplies the slot number, the port and the credentials:
 
 ```sh
 make -C trust seed-omop KIT=GSTT PROJECTS="spleen_project cxr_project"   # OMOP rows only
@@ -101,7 +100,7 @@ slice, one transaction per project. It works on the fresh, unconstrained databas
 trust starts as and on the constrained, vocab-loaded one it becomes after
 `load-omop-vocab`: the (Apache-licensed) DICOM vocabulary is loaded first
 (`load-dicom-vocab`, skipped when present), so the rows' imaging concepts resolve
-either way. `seed-orthanc` (see `trust/orthanc/README.md`) puts the same trust's
+either way. `seed-orthanc` (see [trust/orthanc/README.md](../orthanc/README.md)) puts the same trust's
 studies into its PACS, selected by the same column, so OMOP and PACS agree by
 construction rather than by keeping two snapshots in lockstep.
 
@@ -109,12 +108,17 @@ A seed writes a `.seeded` marker beside the trust's `db_data` recording projects
 partition and data version — what `ensure-seeded` compares to decide whether to
 re-seed. There is no `FORCE`: a re-seed replaces only the listed projects' rows.
 
-For database-only debugging (without the rest of the trust stack), `make -C trust/omop-db up-test-omop-trust1` will start just the first dev trust's OMOP container.
+#### Starting the database alone
 
-The container's first start on an empty data dir runs the image's init scripts (schema, primary keys,
-indices, the read-only role); later starts find `PG_VERSION` and skip them.
+For database-only debugging, without the rest of the trust stack, start just the first dev trust's OMOP container:
 
-### The Synthea EHR cohort (for the EHR risk-prediction tutorial)
+```sh
+make -C trust/omop-db up-test-omop-trust1
+```
+
+On its first start on an empty data dir the container runs the image's init scripts (schema, primary keys, indices, the read-only role). Later starts find `PG_VERSION` and skip them.
+
+### Tutorial cohorts: Synthea EHR and ADNI
 
 The shipped mock OMOP is built from the imaging projects and carries **no `condition_occurrence`
 rows**. The EHR risk-prediction tutorial
@@ -152,8 +156,8 @@ they never collide with the imaging cohorts' existing keys at insert time, and t
 transparently excluding the imaging-only persons. That offset is not what makes reloading safe,
 though: imaging `person_id` is derived from a real NHS number and scatters across the whole 9-digit
 range, so idempotency deletes by **provenance** (the `synthea-` prefix each loaded row carries in
-`person_source_value`) rather than by an id-range threshold — the latter was tried first and
-silently deleted a chunk of the imaging cohort (and its cascaded rows) on every reload. The load is
+`person_source_value`). Do not change this to an id-range threshold: that silently deletes part of the
+imaging cohort (and its cascaded rows) on every reload. The load is
 FK-safe (it keeps Synthea's standard gender concepts and zeroes the rest, matching conditions on
 their SNOMED `condition_source_value`) and idempotent. It is a dev/demo convenience: a real trust
 already holds real condition data, so `query.sql` runs against it unchanged.
@@ -199,12 +203,7 @@ FLIP's cohort queries and the licensing-relevant ones are:
 | OMOP structural vocabularies (Domain, Concept Class, Type Concept, Visit, ...) | — | Apache 2.0 (OHDSI) |
 
 Because of the licensed entries the bundle is **never tracked in git**, never
-part of the published image, and not fetchable in CI. Two ways to obtain it
-(not needed to build the image, but needed both to populate fresh datasets and
-to run the one-time `make load-omop-vocab` seeding of any stack — see
-"Using the database (dev trust stacks)" above; a stack whose vocabulary was never loaded
-starts cleanly but returns nothing from cohort queries that join
-`omop.concept`):
+part of the published image, and not fetchable in CI. You do not need it to build the image. You do need it to populate fresh datasets and to run the one-time `make load-omop-vocab` on any stack (see "Using the database (dev trust stacks)" above, including what happens if you skip it). Two ways to obtain it:
 
 1. **AI Centre developers** — `AWS_PROFILE=dev make fetch-vocab-core`:
    downloads `s3://flip-lza-stag-aicentre/vocab/vocab_aicentre_core_20240916.zip`
@@ -273,20 +272,14 @@ Populating runs from the host and needs `psql`/`pg_isready`
 trusts additionally needs an `omop-db-trust<N>` service in `compose.yml` and
 an `OMOP_DB_PORT_TRUST_<N>` in `.env.build` — `make populate NUM_TRUSTS=3
 PARTITION=modulo` fails fast until they exist (and `modulo` implies
-regenerating the matching imaging data). `populate` and `seed-omop` are the
-same loader (`omop_db_tools.import_tables`): `populate` passes `--clean all`
-(empty build databases), `seed-omop` uses the default `--clean projects`
-(`CLEAN=all` overrides — the one-time move off a re-cut project whose person
-ids all changed, e.g. spleen at the FLIP#1221 cut, since `projects` deletes by
-the *new* ids and would leave the old rows behind). `seed-omop` fetches the
-published tables at the pinned tag (`fetch-dataset --projects $(PROJECTS)`);
-`CANONICAL_DIR=<dir>` loads a local canonical tree (`<dir>/<project>/<table>.csv`,
-what `omop_db_tools.dataset build` writes) instead, which is how a project is
-proven on a running trust before its data version is tagged
-(`make -C fl-tutorials seed-brain-mri KIT=<CODE>`, FLIP#1221). `unseed-omop`
-(`import_tables --remove-only`) is the surgical reverse: it deletes the listed
-projects' rows by the person ids in the given tables — point it at the cut the
-trust actually holds, e.g. `HF_TRUST_DATA_REVISION=20260911` — and loads nothing.
+regenerating the matching imaging data).
+
+`populate` and `seed-omop` are the same loader (`omop_db_tools.import_tables`) with different defaults:
+
+- `populate` passes `--clean all` (empty build databases).
+- `seed-omop` uses the default `--clean projects`. `CLEAN=all` overrides it. You need that once when a project is re-cut and all its person ids change (e.g. spleen at the FLIP#1221 cut), because `projects` deletes by the *new* ids and would leave the old rows behind.
+- `seed-omop` fetches the published tables at the pinned tag (`fetch-dataset --projects $(PROJECTS)`). `CANONICAL_DIR=<dir>` loads a local canonical tree instead (`<dir>/<project>/<table>.csv`, what `omop_db_tools.dataset build` writes). This is how a project is proven on a running trust before its data version is tagged (`make -C fl-tutorials seed-brain-mri KIT=<CODE>`).
+- `unseed-omop` (`import_tables --remove-only`) is the surgical reverse: it deletes the listed projects' rows by the person ids in the given tables and loads nothing. Point it at the cut the trust actually holds, e.g. `HF_TRUST_DATA_REVISION=20260911`.
 
 ### Publishing the image and the canonical tables
 
