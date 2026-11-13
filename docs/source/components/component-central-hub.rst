@@ -286,7 +286,8 @@ An optional assistant on the cohort page that drafts cohort SQL from a researche
 every Trust still checks the query it receives with its own validator.
 
 ``flip-api`` makes one bounded model call per draft, to Claude on Amazon Bedrock through the official ``anthropic``
-SDK (``AnthropicBedrockMantle``), signed with the hub's ECS task role. No API key is used; a configured Bedrock API
+SDK's ``AnthropicBedrock`` client, which calls ``InvokeModel`` on ``bedrock-runtime``, signed with the hub's ECS
+task role. The guardrail, when configured, rides on every call as InvokeModel's guardrail request headers. No API key is used; a configured Bedrock API
 key is refused. The instructions are versioned files under ``flip_api/cohort_services/drafting/assets/``: the rules
 (including the Trusts' function allowlist and the vocabulary-free style), the OMOP schema summary generated from the
 Trusts' DDL, the concept ids FLIP's data uses (the safe list), and reviewed example queries. Before a draft is
@@ -402,7 +403,7 @@ The feature ships off. Terraform creates its AWS side only when ``cohort_draft_e
 ``deploy/providers/AWS/bedrock_cohort_draft.tf``): with it off the plan shows no change. Enabled, it creates a
 Bedrock Guardrail and a published version that block NHS numbers (the entity and a ten-digit regex), names,
 addresses, emails and phone numbers in the description; an inline policy on ``ecs-flip-api-task-role`` for the
-configured model and that guardrail only; and the ``COHORT_DRAFT_*`` variables in the ``flip-api`` task, guardrail
+configured model and that guardrail only (``bedrock:InvokeModel*`` and ``bedrock:ApplyGuardrail``); and the ``COHORT_DRAFT_*`` variables in the ``flip-api`` task, guardrail
 id and version included. Enabling it still needs:
 
 - **Model choice (information governance).** Checked on 2026-11-13: ``anthropic.claude-sonnet-5-5`` (the default) is
@@ -410,19 +411,20 @@ id and version included. Enabling it still needs:
 
   - ``eu.anthropic.claude-sonnet-5-5``, the EU profile: requests may be processed in another EU region;
   - ``global.anthropic.claude-sonnet-5-5``, the global profile: requests may be processed in any commercial region;
-  - an in-region model: ``anthropic.claude-opus-5-5``, ``anthropic.claude-sonnet-5`` or
-    ``anthropic.claude-sonnet-4-6``.
+  - an in-region model: ``anthropic.claude-opus-5-5`` or ``anthropic.claude-sonnet-5``. Not Claude Sonnet 4.6 or
+    older: the ``anthropic`` SDK release the hub ships sends API version ``2026-10-21``, which Bedrock accepts only
+    for Claude 4.7 and later.
 
   Set the choice as ``cohort_draft_bedrock_model_id``; the hub and the IAM accept either kind of id. For a profile,
   the policy grants the profile plus its foundation model in the regions it routes to, only when called through
   that profile (``bedrock:InferenceProfileArn``).
 - **Bootstrap.** The CI apply role needs the ``bedrock`` service prefix (``modules/terraform_ci_bootstrap``),
   applied by the platform repository first.
-- **Network.** A route from the hub's private subnets to the Bedrock endpoint the client calls: an interface VPC
-  endpoint with private DNS (``bedrock-mantle`` for the current ``AnthropicBedrockMantle`` client). On the LZA
-  estates the networking account provides it; this root does not create it.
-- **Guardrail headers.** The hub sends Bedrock InvokeModel's guardrail headers; confirm the Mantle endpoint honours
-  them, or move the client to ``bedrock-runtime``.
+- **Network.** A route from the hub's private subnets to ``bedrock-runtime``: an interface VPC endpoint
+  (``com.amazonaws.<region>.bedrock-runtime``) with private DNS. On the LZA estates the networking account provides
+  it; this root does not create it.
+- **Guardrail.** Confirm with a real call that the guardrail blocks an NHS number in a description; a block comes
+  back to the researcher as a decline.
 - **DPIA** and information-governance review of sending researcher free text to Bedrock.
 - **Benchmark.** The semantic benchmark of reviewed cohort descriptions, and the effort setting it supports.
 

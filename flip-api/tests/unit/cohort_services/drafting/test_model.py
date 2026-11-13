@@ -20,6 +20,7 @@ import pytest
 
 from flip_api.cohort_services.drafting import model as model_module
 from flip_api.cohort_services.drafting.model import (
+    GUARDRAIL_ACTION_FIELD,
     GUARDRAIL_ID_HEADER,
     GUARDRAIL_VERSION_HEADER,
     BedrockDraftModel,
@@ -30,7 +31,7 @@ from flip_api.cohort_services.drafting.model import (
 from flip_api.cohort_services.drafting.prompt import OUTPUT_SCHEMA, user_message
 from flip_api.config import get_settings
 
-_REQUEST = httpx2.Request("POST", "https://bedrock-mantle.eu-west-2.api.aws/anthropic/v1/messages")
+_REQUEST = httpx2.Request("POST", "https://bedrock-runtime.eu-west-2.amazonaws.com/model/m/invoke")
 
 
 def _fake(description: str, imaging: bool, clarifications=()) -> dict:
@@ -41,8 +42,9 @@ def _fake(description: str, imaging: bool, clarifications=()) -> dict:
     return json.loads(reply.text)
 
 
-def _message(stop_reason="end_turn", text='{"outcome": "decline"}', stop_details=None):
+def _message(stop_reason="end_turn", text='{"outcome": "decline"}', stop_details=None, model_extra=None):
     return SimpleNamespace(
+        model_extra=model_extra or {},
         stop_reason=stop_reason,
         stop_details=stop_details,
         content=[SimpleNamespace(type="thinking", thinking=""), SimpleNamespace(type="text", text=text)],
@@ -100,7 +102,7 @@ def test_bedrock_request_shape(monkeypatch):
 
 @pytest.mark.parametrize(
     "model_id",
-    ["eu.anthropic.claude-sonnet-5-5", "global.anthropic.claude-sonnet-5-5", "anthropic.claude-sonnet-4-6"],
+    ["eu.anthropic.claude-sonnet-5-5", "global.anthropic.claude-sonnet-5-5", "anthropic.claude-sonnet-5"],
 )
 def test_bedrock_sends_an_inference_profile_id_unchanged(monkeypatch, model_id):
     """eu-west-2 offers the default model only through a cross-region inference profile (FLIP#1556)."""
@@ -122,6 +124,15 @@ def test_bedrock_passes_the_guardrail_through(monkeypatch):
         GUARDRAIL_ID_HEADER: "gr-123",
         GUARDRAIL_VERSION_HEADER: "2",
     }
+
+
+def test_bedrock_guardrail_intervention_is_its_own_stop_reason():
+    client = MagicMock()
+    client.messages.create.return_value = _message(
+        text="Sorry, the model cannot answer this.", model_extra={GUARDRAIL_ACTION_FIELD: "INTERVENED"}
+    )
+    reply = BedrockDraftModel(client=client).create("S", [])
+    assert (reply.stop_reason, reply.text, reply.input_tokens) == ("guardrail_intervened", "", 1200)
 
 
 def test_bedrock_refusal_carries_its_category():
@@ -159,12 +170,13 @@ def test_bedrock_client_refuses_an_api_key(monkeypatch):
 
 def test_bedrock_client_signs_with_the_task_role(monkeypatch):
     model_module._bedrock_client.cache_clear()
-    for name in ("AWS_BEARER_TOKEN_BEDROCK", "ANTHROPIC_AWS_API_KEY", "ANTHROPIC_BEDROCK_MANTLE_BASE_URL"):
+    for name in ("AWS_BEARER_TOKEN_BEDROCK", "ANTHROPIC_BEDROCK_BASE_URL"):
         monkeypatch.delenv(name, raising=False)
     client = model_module._bedrock_client()
     model_module._bedrock_client.cache_clear()
+    assert type(client).__name__ == "AnthropicBedrock"
     assert client.api_key is None
-    assert str(client.base_url).startswith("https://bedrock-mantle.eu-west-2.api.aws/anthropic")
+    assert str(client.base_url).rstrip("/") == "https://bedrock-runtime.eu-west-2.amazonaws.com"
 
 
 def test_fake_description_lookup_is_linear_on_adversarial_input():

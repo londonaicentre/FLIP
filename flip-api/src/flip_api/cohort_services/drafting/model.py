@@ -26,15 +26,17 @@ from flip_api.cohort_services.drafting.prompt import ASSETS, OUTPUT_SCHEMA, stri
 from flip_api.config import get_settings
 
 if TYPE_CHECKING:
-    from anthropic import AnthropicBedrockMantle
+    from anthropic import AnthropicBedrock
 
-# Bedrock Guardrail headers, as on bedrock-runtime InvokeModel. Not yet verified on the Mantle endpoint:
-# confirm before attaching a guardrail in phase 2 (FLIP#1556).
+# The guardrail request headers of bedrock-runtime InvokeModel. The SDK has no guardrail parameter, so they
+# go in as extra headers, which the client signs with the rest of the request.
 GUARDRAIL_ID_HEADER = "X-Amzn-Bedrock-GuardrailIdentifier"
 GUARDRAIL_VERSION_HEADER = "X-Amzn-Bedrock-GuardrailVersion"
+# InvokeModel adds this field to the response body; "INTERVENED" means the guardrail blocked the call.
+GUARDRAIL_ACTION_FIELD = "amazon-bedrock-guardrailAction"
 
-# Environment variables that would switch the Mantle client from SigV4 to a Bedrock API key.
-_API_KEY_ENV_VARS = ("AWS_BEARER_TOKEN_BEDROCK", "ANTHROPIC_AWS_API_KEY")
+# The environment variable that would switch the client from SigV4 to a Bedrock API key.
+_API_KEY_ENV_VARS = ("AWS_BEARER_TOKEN_BEDROCK",)
 
 
 class ModelError(Exception):
@@ -124,7 +126,7 @@ def fake_sql(imaging: bool) -> str:
 
 
 class BedrockDraftModel:
-    """Claude on Amazon Bedrock, through the official SDK's Mantle client and the ECS task role.
+    """Claude on Amazon Bedrock InvokeModel (bedrock-runtime), through the official SDK and the ECS task role.
 
     No server-side refusal fallback: the ``fallbacks`` parameter is not offered on Amazon Bedrock, and the
     SDK's client-side fallback would send the description to a second model nobody has reviewed. A
@@ -167,6 +169,14 @@ class BedrockDraftModel:
             raise ModelError(f"status_{e.status_code}") from e
         except anthropic.APIConnectionError as e:
             raise ModelError("connection") from e
+        if (getattr(response, "model_extra", None) or {}).get(GUARDRAIL_ACTION_FIELD) == "INTERVENED":
+            return ModelReply(
+                stop_reason="guardrail_intervened",
+                text="",
+                content=[],
+                input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens,
+            )
         category = None
         if response.stop_reason == "refusal" and response.stop_details is not None:
             category = response.stop_details.category
@@ -181,14 +191,14 @@ class BedrockDraftModel:
 
 
 @cache
-def _bedrock_client() -> "AnthropicBedrockMantle":
-    """One Mantle client per process, signed with the default AWS credential chain (the ECS task role)."""
-    from anthropic import AnthropicBedrockMantle
+def _bedrock_client() -> "AnthropicBedrock":
+    """One bedrock-runtime client per process, signed with the default AWS credential chain (the ECS task role)."""
+    from anthropic import AnthropicBedrock
 
     if any(os.environ.get(name) for name in _API_KEY_ENV_VARS):
         raise ModelError("api_key_configured")  # the hub calls Bedrock with its task role only
     settings = get_settings()
-    return AnthropicBedrockMantle(
+    return AnthropicBedrock(
         aws_region=settings.COHORT_DRAFT_BEDROCK_REGION,
         timeout=settings.COHORT_DRAFT_TIMEOUT_SECONDS,
         max_retries=1,

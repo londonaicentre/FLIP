@@ -405,7 +405,7 @@ variable "ecs_exec_enabled" {
 # with safe defaults, like ecs_exec_enabled: off, nothing is created and the plan
 # is unchanged. The Bedrock Region is var.AWS_REGION, where the guardrail lives.
 variable "cohort_draft_enabled" {
-  description = "Create the cohort SQL drafting guardrail and IAM grant, and switch the assistant on in flip-api. Default false. Needs a Bedrock VPC endpoint from the networking account first (the CohortDraftNetworkPrerequisite output)."
+  description = "Create the cohort SQL drafting guardrail and IAM grant, and switch the assistant on in flip-api. Default false. Needs a bedrock-runtime VPC endpoint from the networking account first (the CohortDraftNetworkPrerequisite output)."
   type        = bool
   default     = false
 }
@@ -416,8 +416,9 @@ variable "cohort_draft_bedrock_model_id" {
     (COHORT_DRAFT_BEDROCK_MODEL_ID). The default matches flip-api's and is NOT
     offered on demand in eu-west-2: there it needs a profile
     (eu.anthropic.claude-sonnet-5-5 or global.anthropic.claude-sonnet-5-5), or an
-    in-Region model (anthropic.claude-opus-5-5, anthropic.claude-sonnet-5,
-    anthropic.claude-sonnet-4-6). Which one is an information-governance decision.
+    in-Region model (anthropic.claude-opus-5-5 or anthropic.claude-sonnet-5; not
+    Claude 4.6 or older, which reject the API version the SDK sends). Which one
+    is an information-governance decision.
   EOT
   type        = string
   default     = "anthropic.claude-sonnet-5-5"

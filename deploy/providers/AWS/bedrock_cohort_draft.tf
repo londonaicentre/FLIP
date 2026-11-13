@@ -26,9 +26,9 @@
 #
 # Not created here: the private route to Bedrock. On the LZA estates the hub's
 # app subnets have no internet egress, so the networking account must provide
-# an interface VPC endpoint for the Bedrock inference endpoint the client calls,
-# reachable from those subnets, before the feature is switched on (see the
-# CohortDraftNetworkPrerequisite output).
+# an interface VPC endpoint for bedrock-runtime, which flip-api's client calls
+# (InvokeModel), reachable from those subnets, before the feature is switched on
+# (see the CohortDraftNetworkPrerequisite output).
 
 locals {
   # A cross-Region inference profile ID is the foundation model ID behind a
@@ -129,20 +129,7 @@ data "aws_iam_policy_document" "cohort_draft" {
     }
   }
 
-  # flip-api's client (the SDK's AnthropicBedrockMantle) signs for the
-  # bedrock-mantle endpoint, which authorises CreateInference on the account's
-  # projects; the condition holds it to the configured model.
-  statement {
-    sid       = "BedrockMantleCohortDraftInference"
-    actions   = ["bedrock-mantle:CreateInference"]
-    resources = ["arn:aws:bedrock-mantle:${var.AWS_REGION}:${data.aws_caller_identity.current.account_id}:project/*"]
-    condition {
-      test     = "StringEquals"
-      variable = "bedrock-mantle:Model"
-      values   = [var.cohort_draft_bedrock_model_id]
-    }
-  }
-
+  # InvokeModel with the guardrail headers also needs ApplyGuardrail on it.
   statement {
     sid       = "BedrockApplyCohortDraftGuardrail"
     actions   = ["bedrock:ApplyGuardrail"]
@@ -170,5 +157,5 @@ output "CohortDraftGuardrailVersion" {
 
 output "CohortDraftNetworkPrerequisite" {
   description = "What the networking account must provide before cohort drafting can reach Bedrock (null while disabled)."
-  value       = var.cohort_draft_enabled ? "An interface VPC endpoint for the Bedrock inference endpoint flip-api calls in ${var.AWS_REGION} (bedrock-mantle for the current client, bedrock-runtime if it moves to InvokeModel), with private DNS, reachable from the hub's app subnets. Not created by this root." : null
+  value       = var.cohort_draft_enabled ? "An interface VPC endpoint for bedrock-runtime (com.amazonaws.${var.AWS_REGION}.bedrock-runtime), which flip-api calls with InvokeModel, with private DNS, reachable from the hub's app subnets. Not created by this root." : null
 }

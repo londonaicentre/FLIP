@@ -65,7 +65,7 @@ def test_the_task_env_is_unchanged_while_disabled():
 def test_the_grant_names_no_wildcard_resource():
     policy = hcl_block(DRAFT, 'data "aws_iam_policy_document" "cohort_draft"')
     statements = _statements(policy)
-    assert len(statements) == 4
+    assert len(statements) == 3
     for statement in statements:
         resources = re.search(r"resources\s*=\s*\[(.*?)\]", statement, re.S)
         assert resources, statement
@@ -82,9 +82,18 @@ def test_a_profile_grant_is_bound_to_the_profile():
     assert "for_each = local.cohort_draft_model_is_profile ? [1] : []" in via_profile
     assert 'variable = "bedrock:InferenceProfileArn"' in via_profile
     assert "values   = [local.cohort_draft_profile_arn]" in via_profile
-    mantle = next(s for s in _statements(policy) if "bedrock-mantle:CreateInference" in s)
-    assert 'variable = "bedrock-mantle:Model"' in mantle
 
 
 def test_no_account_id_is_written_down():
     assert not re.search(r"\b\d{12}\b", (AWS_DIR / "bedrock_cohort_draft.tf").read_text())
+
+
+def test_the_client_needs_bedrock_runtime_only():
+    """flip-api calls InvokeModel on bedrock-runtime: no bedrock-mantle grant, and the endpoint it needs is named."""
+    assert "bedrock-mantle" not in DRAFT
+    actions = {
+        a for block in re.findall(r"actions\s*=\s*\[(.*?)\]", DRAFT, re.S) for a in re.findall(r'"([^"]+)"', block)
+    }
+    assert actions == {"bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream", "bedrock:ApplyGuardrail"}
+    prerequisite = hcl_block(DRAFT, 'output "CohortDraftNetworkPrerequisite"')
+    assert "com.amazonaws.${var.AWS_REGION}.bedrock-runtime" in prerequisite

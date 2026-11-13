@@ -14,7 +14,7 @@ import json
 
 from flip_api.cohort_services.drafting.model import ModelError, ModelReply
 from flip_api.cohort_services.drafting.prompt import MAX_ITEM_CHARS, MAX_ITEMS, MAX_OPTIONS, MAX_TEXT_CHARS
-from flip_api.cohort_services.drafting.service import MAX_MODEL_CALLS, REFUSAL_MESSAGE, run_draft
+from flip_api.cohort_services.drafting.service import GUARDRAIL_MESSAGE, MAX_MODEL_CALLS, REFUSAL_MESSAGE, run_draft
 
 GOOD = "SELECT p.person_id FROM omop.person p"
 BAD = "SELECT p.person_id, p.nhs_number FROM omop.person p"
@@ -123,3 +123,9 @@ def test_unflagged_code_off_the_safe_list_is_fed_back():
     outcome = run_draft(model, "d", [], has_imaging=False)
     assert (outcome.status, outcome.retries) == ("draft", 1)
     assert "201826 is not on the safe list" in model.calls[1][2]["content"]
+
+
+def test_guardrail_block_is_a_decline():
+    reply = ModelReply(stop_reason="guardrail_intervened", text="", content=[])
+    outcome = run_draft(Scripted(reply), "d", [], has_imaging=False)
+    assert (outcome.status, outcome.explanation, outcome.model_calls) == ("decline", GUARDRAIL_MESSAGE, 1)

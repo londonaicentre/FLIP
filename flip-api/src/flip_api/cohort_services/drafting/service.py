@@ -35,6 +35,10 @@ MAX_VALIDATION_RETRIES = 2
 MAX_MODEL_CALLS = MAX_VALIDATION_RETRIES + 1
 
 REFUSAL_MESSAGE = "The assistant declined this description. Write the SQL by hand, or describe the cohort differently."
+GUARDRAIL_MESSAGE = (
+    "The description was blocked because it looks like it contains personal details, such as a name or an NHS "
+    "number. Describe the cohort without them."
+)
 
 
 class _ModelOutput(BaseModel):
@@ -106,6 +110,9 @@ def run_draft(
         if reply.stop_reason == "refusal":
             outcome.status, outcome.explanation = "decline", REFUSAL_MESSAGE
             outcome.refusal_category = reply.refusal_category
+            return outcome
+        if reply.stop_reason == "guardrail_intervened":
+            outcome.status, outcome.explanation = "decline", GUARDRAIL_MESSAGE
             return outcome
         if reply.stop_reason != "end_turn":
             outcome.error_code = f"stop_{reply.stop_reason}"
