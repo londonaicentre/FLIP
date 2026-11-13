@@ -432,3 +432,36 @@ def test_s3_public_endpoint_tolerates_an_empty_string():
     """The env-file trap of ``coerce_empty_email_backend``, for the public endpoint (#1291)."""
     assert DevSettings(S3_PUBLIC_ENDPOINT_URL="").S3_PUBLIC_ENDPOINT_URL == "http://localhost:9000"
     assert Settings(S3_PUBLIC_ENDPOINT_URL="").S3_PUBLIC_ENDPOINT_URL is None
+
+
+def test_cohort_draft_is_off_by_default_with_safe_defaults():
+    """FLIP#1556: the assistant ships off; Claude Sonnet 5.5 on Bedrock in London when turned on."""
+    fields = Settings.model_fields
+    assert fields["COHORT_DRAFT_ENABLED"].default is False
+    assert fields["COHORT_DRAFT_BEDROCK_MODEL_ID"].default == "anthropic.claude-sonnet-5-5"
+    assert fields["COHORT_DRAFT_BEDROCK_REGION"].default == "eu-west-2"
+    assert fields["COHORT_DRAFT_MONTHLY_ALLOWANCE"].default == 30
+    assert fields["COHORT_DRAFT_GUARDRAIL_ID"].default is None
+
+
+def test_cohort_draft_provider_is_pinned_per_environment_class():
+    """Development drafts from canned replies only; stag/prod only through Bedrock."""
+    assert DevSettings.model_fields["COHORT_DRAFT_PROVIDER"].default == "fake"
+    assert ProdSettings.model_fields["COHORT_DRAFT_PROVIDER"].default == "bedrock"
+    with pytest.raises(ValidationError, match="COHORT_DRAFT_PROVIDER"):
+        DevSettings(COHORT_DRAFT_PROVIDER="bedrock")
+    with pytest.raises(ValidationError, match="COHORT_DRAFT_PROVIDER"):
+        ProdSettings(ENV="production", COHORT_DRAFT_PROVIDER="fake", **_PROD_REQUIRED)
+
+
+def test_cohort_draft_empty_strings_fall_back_to_defaults():
+    settings = Settings(COHORT_DRAFT_ENABLED="", COHORT_DRAFT_MONTHLY_ALLOWANCE="", COHORT_DRAFT_GUARDRAIL_ID="")
+    assert (settings.COHORT_DRAFT_ENABLED, settings.COHORT_DRAFT_MONTHLY_ALLOWANCE) == (False, 30)
+    assert settings.COHORT_DRAFT_GUARDRAIL_ID is None
+
+
+def test_cohort_draft_guardrail_needs_id_and_version():
+    with pytest.raises(ValidationError, match="must be set together"):
+        Settings(COHORT_DRAFT_GUARDRAIL_ID="gr-123")
+    settings = Settings(COHORT_DRAFT_GUARDRAIL_ID="gr-123", COHORT_DRAFT_GUARDRAIL_VERSION="1")
+    assert settings.COHORT_DRAFT_GUARDRAIL_VERSION == "1"

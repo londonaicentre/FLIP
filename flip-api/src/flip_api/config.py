@@ -438,6 +438,62 @@ class Settings(BaseSettings):
             return normalised
         return v
 
+    # Cohort SQL drafting assistant (FLIP#1556, Beta). Off by default; with it off both draft routes
+    # answer 404. The provider follows the EMAIL_BACKEND pattern: each subclass pins one value, so
+    # development never calls a model and stag/prod never serve canned drafts.
+    COHORT_DRAFT_ENABLED: bool = False
+    COHORT_DRAFT_PROVIDER: Literal["fake", "bedrock"] = "bedrock"
+    # Claude on Amazon Bedrock through the ECS task role (no API key). Confirm the model is offered in
+    # the region, and what any cross-region inference profile implies, before enabling (FLIP#1556).
+    COHORT_DRAFT_BEDROCK_MODEL_ID: str = "anthropic.claude-sonnet-5-5"
+    COHORT_DRAFT_BEDROCK_REGION: str = "eu-west-2"
+    # Thinking depth for the draft call; tune with the benchmark.
+    COHORT_DRAFT_EFFORT: Literal["low", "medium", "high"] = "medium"
+    # Optional Bedrock Guardrail, passed through on every call when both are set.
+    COHORT_DRAFT_GUARDRAIL_ID: str | None = None
+    COHORT_DRAFT_GUARDRAIL_VERSION: str | None = None
+    COHORT_DRAFT_MAX_DESCRIPTION_CHARS: int = Field(default=2000, gt=0)
+    # Output tokens per model call, thinking included.
+    COHORT_DRAFT_MAX_TOKENS: int = Field(default=8000, gt=0)
+    # Per model call; the SDK retries a timed-out or throttled call once more.
+    COHORT_DRAFT_TIMEOUT_SECONDS: float = Field(default=45, gt=0)
+    # Successful drafts per user per UTC calendar month, across projects.
+    COHORT_DRAFT_MONTHLY_ALLOWANCE: int = Field(default=30, ge=0)
+    # Draft requests of any outcome per user per minute, counted in the database (all replicas).
+    COHORT_DRAFT_RATE_LIMIT_PER_MINUTE: int = Field(default=5, gt=0)
+    # A reservation older than this is treated as abandoned and released.
+    COHORT_DRAFT_RESERVATION_TTL_MINUTES: int = Field(default=10, gt=0)
+
+    @field_validator(
+        "COHORT_DRAFT_ENABLED",
+        "COHORT_DRAFT_PROVIDER",
+        "COHORT_DRAFT_BEDROCK_MODEL_ID",
+        "COHORT_DRAFT_BEDROCK_REGION",
+        "COHORT_DRAFT_EFFORT",
+        "COHORT_DRAFT_GUARDRAIL_ID",
+        "COHORT_DRAFT_GUARDRAIL_VERSION",
+        "COHORT_DRAFT_MAX_DESCRIPTION_CHARS",
+        "COHORT_DRAFT_MAX_TOKENS",
+        "COHORT_DRAFT_TIMEOUT_SECONDS",
+        "COHORT_DRAFT_MONTHLY_ALLOWANCE",
+        "COHORT_DRAFT_RATE_LIMIT_PER_MINUTE",
+        "COHORT_DRAFT_RESERVATION_TTL_MINUTES",
+        mode="before",
+    )
+    @classmethod
+    def coerce_empty_cohort_draft_setting(cls, v: object, info: ValidationInfo) -> object:
+        """Treat an empty-string drafting setting as the per-class default (same env-file trap as above)."""
+        if v is None or v == "":
+            return cls.model_fields[info.field_name].default  # type: ignore[index]
+        return v
+
+    @model_validator(mode="after")
+    def check_cohort_draft_guardrail(self) -> "Settings":
+        """A guardrail needs both its id and its version."""
+        if (self.COHORT_DRAFT_GUARDRAIL_ID is None) != (self.COHORT_DRAFT_GUARDRAIL_VERSION is None):
+            raise ValueError("COHORT_DRAFT_GUARDRAIL_ID and COHORT_DRAFT_GUARDRAIL_VERSION must be set together")
+        return self
+
     # Trust task queue settings
     HEARTBEAT_TIMEOUT_SECONDS: int = 30  # How long since last heartbeat before a trust is considered offline
     TASK_STALE_TIMEOUT_MINUTES: int = 30  # Tasks older than this in IN_PROGRESS are considered stale
@@ -492,6 +548,8 @@ class DevSettings(Settings):
     # stale .env.development still carrying (possibly commented-out)
     # AWS_SES_* lines can't fail EmailStr validation.
     EMAIL_BACKEND: Literal["console"] = "console"
+    # Development drafts from canned responses only and never calls a model (FLIP#1556).
+    COHORT_DRAFT_PROVIDER: Literal["fake"] = "fake"
     AWS_SES_ADMIN_EMAIL_ADDRESS: EmailStr = "flip-admin@example.com"
     AWS_SES_SENDER_EMAIL_ADDRESS: EmailStr = "flip-no-reply@example.com"
 
@@ -540,6 +598,8 @@ class ProdSettings(Settings):
     # accident (FLIP#919). The addresses are required with no defaults —
     # prod/stag keep failing fast at boot when the env vars are missing.
     EMAIL_BACKEND: Literal["ses"] = "ses"
+    # Stag/prod draft through Bedrock only: the canned drafter is a boot-time ValidationError (FLIP#1556).
+    COHORT_DRAFT_PROVIDER: Literal["bedrock"] = "bedrock"
     AWS_SES_ADMIN_EMAIL_ADDRESS: EmailStr  # e.g. admin@example.com
     AWS_SES_SENDER_EMAIL_ADDRESS: EmailStr  # e.g. no-reply@example.com, but can be same as admin email
 
