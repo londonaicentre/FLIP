@@ -113,7 +113,7 @@ def test_get_secret_returns_the_value_for_a_key(mock_settings, mock_boto3_sessio
 
     assert get_secret("aes_key") == "abc"
     # Name and region fall back to the settings when not given.
-    mock_client.get_secret_value.assert_called_once_with(SecretId="MY_SECRET")
+    mock_client.get_secret_value.assert_called_once_with(SecretId="MY_SECRET")  # pragma: allowlist secret
     mock_boto3_session[0].return_value.client.assert_called_once_with(
         service_name="secretsmanager", region_name="test-west-1"
     )
@@ -123,8 +123,8 @@ def test_get_secret_uses_an_explicit_name_and_region(mock_settings, mock_boto3_s
     _, mock_client = mock_boto3_session
     mock_client.get_secret_value.return_value = {"SecretString": '{"aes_key": "abc"}'}
 
-    assert get_secret("aes_key", secret_name="OTHER", region_name="eu-west-2") == "abc"
-    mock_client.get_secret_value.assert_called_once_with(SecretId="OTHER")
+    assert get_secret("aes_key", secret_name="OTHER", region_name="eu-west-2") == "abc"  # pragma: allowlist secret
+    mock_client.get_secret_value.assert_called_once_with(SecretId="OTHER")  # pragma: allowlist secret
     mock_boto3_session[0].return_value.client.assert_called_once_with(
         service_name="secretsmanager", region_name="eu-west-2"
     )
