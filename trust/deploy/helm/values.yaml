@@ -271,7 +271,6 @@ trustApi:
     # A mismatch makes the hub answer 401 "API key is missing".
     TRUST_API_KEY_HEADER: "Authorization"  # pragma: allowlist secret
     POLL_INTERVAL_SECONDS: "5"
-    # Internal service URLs (short names resolve via K8s DNS in same namespace)
 
 # ---------------------------------------------------------------------------
 # imaging-api — DICOM image retrieval from PACS / XNAT
@@ -634,10 +633,8 @@ omopDb:
   # pg_isready can take many seconds while the vocabulary COPY is running. The
   # Kubernetes defaults (timeoutSeconds 1, failureThreshold 3) restart Postgres
   # mid-load and abort the omop-vocab-load hook, so they are set explicitly here.
-  # initialDelaySeconds/periodSeconds carry the values that used to be hardcoded in
-  # templates/omop-db.yaml, so the default render is unchanged; they are here so this
-  # block honours the same four keys as every other service's probes block rather
-  # than silently ignoring two of them.
+  # initialDelaySeconds/periodSeconds are set too, so this block honours the same four
+  # keys as every other service's probes block.
   probes:
     liveness:
       initialDelaySeconds: 30

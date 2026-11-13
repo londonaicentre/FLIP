@@ -100,9 +100,7 @@ _SECRET_NAME_SUFFIX = "-flip-trust-secrets"
 
 def derive_release_name(secret_name: str) -> str:
     """Best-effort Helm release name from the chart Secret name (FLIP#595)."""
-    if secret_name.endswith(_SECRET_NAME_SUFFIX):
-        return secret_name[: -len(_SECRET_NAME_SUFFIX)]
-    return secret_name
+    return secret_name.removesuffix(_SECRET_NAME_SUFFIX)
 
 
 def _is_placeholder(value: str) -> bool:

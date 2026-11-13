@@ -489,13 +489,6 @@ template-egress-variants: ## Render the egress NetworkPolicy in default / harden
 clean: ## Clean up rendered output
 	@rm -f $(CHART_DIR)/*.rendered.yaml
 
-# Registration is done ONCE on the hub, not here:
-#   make new-trust TRUST_CODE=<KIT> TRUST_NAME="..."
-#   make -C deploy/providers/AWS register-trusts KIT=<KIT> HUB=<env>
-#   make sync-trust-kit KIT=<KIT> HUB=<env>           # fills the Hub-shared block
-# This target then reads trust/.env.<KIT>.<env>, patches the per-trust keys into the
-# chart's Kubernetes Secret, and writes a secret-free Helm override. Then deploy with
-# `make up OVERRIDES_FILE=k8s-trust-<KIT>.yaml`. Env from $(HUB).
 xnat-init: ## Run the XNAT post-install init job manually (use after XNAT web is ready, when initJob.enabled=false)
 	@# An earlier Job (a manual run, or a hook that failed) would make the apply "unchanged" and the
 	@# wait return at once, without running the configuration again.
@@ -553,6 +546,13 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 		$(KUBECTL) rollout status deployment/$(RELEASE_NAME)-flip-trust-$$svc -n $(NAMESPACE) --timeout=120s; \
 	done
 
+# Registration is done ONCE on the hub, not here:
+#   make new-trust TRUST_CODE=<KIT> TRUST_NAME="..."
+#   make -C deploy/providers/AWS register-trusts KIT=<KIT> HUB=<env>
+#   make sync-trust-kit KIT=<KIT> HUB=<env>           # fills the Hub-shared block
+# This target then reads trust/.env.<KIT>.<env>, patches the per-trust keys into the
+# chart's Kubernetes Secret, and writes a secret-free Helm override. Then deploy with
+# `make up OVERRIDES_FILE=k8s-trust-<KIT>.yaml`. Env from $(HUB).
 sync-kit: ## Sync a registered trust KIT into the cluster (patches Secret + writes k8s-trust-<KIT>.yaml override)
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit KIT=Trust_K8s HUB=stag"; exit 1)
 	@uv run --no-config $(CHART_DIR)/sync_k8s_kit.py \
