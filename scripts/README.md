@@ -13,16 +13,13 @@
 
 # scripts/
 
-Repo-root utility scripts: local environment/status checks, cross-service drift guards run by
-`make` targets or CI, release tooling (`release/`), and secret scanning. (The trust kit lifecycle
-scripts live in [`trust/deploy/scripts/`](../trust/deploy/scripts/README.md).) Most are invoked through `make` targets rather than run directly — see each section
-below for the wrapping target.
-
-## Trust kit scripts (moved)
+Repo-root utility scripts: local environment and status checks, cross-service drift guards,
+release tooling (`release/`) and secret scanning. Most run through a `make` target, a CI workflow
+or a pre-commit hook; each section below names it.
 
 The trust kit lifecycle scripts (`new_trust.py`, `trust_kit_lib.py`, `distribute_trust_kits.py`,
-`sync_trust_kit.py`, `onboard_onprem_trust.py`) and `site_upgrade.py` moved to
-[`trust/deploy/scripts/`](../trust/deploy/scripts/README.md) in FLIP#1438, with their tests.
+`sync_trust_kit.py`, `onboard_onprem_trust.py`) and `site_upgrade.py`, with their tests, live in
+[`trust/deploy/scripts/`](../trust/deploy/scripts/README.md) (moved in FLIP#1438).
 
 ## Status and environment checks
 
@@ -41,7 +38,7 @@ The trust kit lifecycle scripts (`new_trust.py`, `trust_kit_lib.py`, `distribute
 ## Drift guards
 
 None of these is a pre-commit hook. The first two are `make`-time guards that run in no CI
-workflow; the other two are CI-only:
+workflow; the other three are CI-only:
 
 - **`check-fl-provisioned.sh`** (the `make up` / `make up-no-trust` guard, via the root
   Makefile's `_check-fl-provisioned`) — fails fast when a backend's per-net FL credentials are
@@ -51,28 +48,28 @@ workflow; the other two are CI-only:
   understand the dependency cooldown (`exclude-newer = "3 days"`, which needs uv >= 0.10.0). An
   older uv silently discards the whole `[tool.uv]` table and resolves with no cooldown at all,
   rewriting `uv.lock` with no warning worth noticing.
-- **`check_fl_api_validation_sync.sh`** (CI: `fl-api-validation-sync.yml`) — verifies that
-  `safe_join` and `validate_bundle_url` (the SSRF and path-traversal guards in front of the
-  server-side bundle fetch) stay byte-identical between the FLARE and Flower fl-api services.
-  They're intentionally separate copies (different Docker build contexts, uv projects, and
+- **`check_fl_api_validation_sync.sh`** (CI: `fl-api-validation-sync.yml`) — verifies that the
+  code the FLARE and Flower fl-api services share stays in sync: `safe_join` and
+  `validate_bundle_url` (the SSRF and path-traversal guards in front of the server-side bundle
+  fetch) and the other shared bundle-URL helpers in `fl_api/utils/validation.py` stay
+  byte-identical, and `refusals.py`, `auth.py` and `job_credential.py` under `fl_api/utils/` match
+  byte for byte. They're intentionally separate copies (different Docker build contexts, uv projects, and
   images), so a fix applied to one and not the other would silently leave the second vulnerable.
 - **`check_tutorial_sync.sh`** (CI: `fl-apps-check-tutorial-sync.yml`) — verifies that tutorial
-  files kept as byte-identical copies of another file have not drifted. It holds two families of
-  hand-listed pairs: the Ark+ FLARE pair (`data_utils.py` and `arkplus_flat_models.py`, shared
-  between the two evaluation apps) and the EHR risk-prediction cross-backend pair
-  (`feature_engineering.py`, `models.py`, `query.sql`, with the FLARE copy as the reference).
-  The Flower tutorial-vs-`fl-apps/flower/` template pairs moved to
-  `fl-tutorials/tests/test_flower_platform_parity.py`, which derives them from the tree. These
-  can't be symlinks — `flwr build` excludes symlinks from the FAB — so each keeps a real copy that
-  must be resynced by hand when its reference changes.
+  files kept as byte-identical copies of another file have not drifted. Its pairs are hand-listed
+  and tutorial-to-tutorial: the Ark+ FLARE pair (`data_utils.py` and `arkplus_flat_models.py`,
+  shared between the two evaluation apps), and the Flower copies of tutorials that exist on both
+  backends, with the FLARE copy as the reference: the EHR risk-prediction and biomarker
+  causal-discovery app files, and every twin pair's `query.sql` / `query_novocab.sql`.
+  The copies can't be symlinks, because `flwr build` leaves symlinks out of the FAB (the Flower
+  app bundle). Each is a real file that must be resynced by hand when its reference changes.
+  Flower tutorial vs `fl-apps/flower/` template parity is not checked here:
+  `fl-tutorials/tests/test_flower_platform_parity.py` derives those pairs from the tree.
 - **`pr_paths_changed.py`** (CI: `pr_paths_changed.yml`, called by every gated service-test
   workflow) — implements the PR path gate: reads a service workflow's `paths:` filter, fetches the
   PR's changed files, and outputs `run=true` when the filter matches so the workflow's jobs
   gate on it. A PR into `main` always runs everything. `scripts/tests/test_pr_paths_changed.py`
   pins the gate against drift.
-- **`utils.sh`** — shared shell helpers (colour-coded `log_info` / `log_success` / etc.) sourced
-  only by the two secret-scanning scripts (`scan-secrets.sh`, `setup-secret-scanning.sh`); the
-  drift guards above are self-contained. Not run directly.
 
 ## fl_round_metrics/
 
@@ -83,10 +80,13 @@ platform run (CloudWatch logs) or a local FLARE simulator workspace. See
 
 ## tests/
 
-Stdlib-only tests for the scripts in this directory (`scripts/tests/test_*.py`), each following
-the same `if __name__ == "__main__": main()` contract — no pytest, no external services beyond
-`uv` itself (needed because `trust/deploy/scripts/tests/test_sync_trust_kit.py` drives
-`sync_trust_kit.py` through `uv run --no-config`). Run both directories:
+Tests for the scripts in this directory are in `scripts/tests/test_*.py`. They use only the
+standard library, not pytest, and each runs as a plain script (`if __name__ == "__main__": main()`).
+The only external tool needed is `uv`, because
+`trust/deploy/scripts/tests/test_sync_trust_kit.py` runs `sync_trust_kit.py` through
+`uv run --no-config`.
+
+Run the tests here and in `trust/deploy/scripts/tests/` together:
 
 ```bash
 for test_file in scripts/tests/test_*.py trust/deploy/scripts/tests/test_*.py; do
@@ -95,15 +95,18 @@ for test_file in scripts/tests/test_*.py trust/deploy/scripts/tests/test_*.py; d
 done
 ```
 
-CI runs the same loop in [`.github/workflows/test_trust_kit_scripts.yml`](../.github/workflows/test_trust_kit_scripts.yml),
-triggered on changes under `scripts/**` and on the hub/trust compose files that
-`test_container_identity.py` asserts against (so an edit to those triggers the guard even though
-it touches nothing under `scripts/`).
+CI runs the same loop in [`.github/workflows/test_trust_kit_scripts.yml`](../.github/workflows/test_trust_kit_scripts.yml)
+on every pull request into `develop`. On push to `develop` it triggers on `scripts/**`,
+`trust/deploy/scripts/**` and the files outside them that a guard checks, such as the hub and trust
+compose files `test_container_identity.py` asserts against, so a compose-only edit still runs it.
 
 ## Secret scanning
 
 This directory also contains scripts for detecting secrets and sensitive information in the FLIP
 monorepo.
+
+`utils.sh` holds shared shell helpers (colour-coded `log_info`, `log_success`, etc.). Only the two
+secret-scanning scripts (`scan-secrets.sh`, `setup-secret-scanning.sh`) source it. It is not run directly.
 
 ### Quick Start
 
@@ -117,7 +120,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 #### Initial Setup
 
-Run the setup script once to install and configure all secret scanning tools:
+Run the setup script once per clone. It installs the scanning tools and the pre-commit hooks:
 
 ```bash
 ./scripts/setup-secret-scanning.sh
@@ -140,6 +143,9 @@ To scan the entire monorepo for secrets:
 ./scripts/scan-secrets.sh
 ```
 
+Reports are written to `.security-reports/` (gitignored). They may contain the secrets found, so review them before
+sharing or attaching them to an issue.
+
 #### Pre-commit Checks
 
 Check staged files before committing:
@@ -157,7 +163,7 @@ pre-commit run --all-files
 **Available Pre-commit Hooks** (see [`.pre-commit-config.yaml`](../.pre-commit-config.yaml) for
 the authoritative list):
 
-- **check-env-vars**: Verifies that all variables in `.env.development.example` exist in `.env.development`. This ensures the example file stays up to date and developers are aware of new required environment variables.
+- **check-env-vars**: runs `check_env_vars.py`; see [Status and environment checks](#status-and-environment-checks).
 - **fl-apps-required-files**: Regenerates each backend's `fl-apps/<backend>/required_files.json` from its per-template `required_files.json` arrays. Rewrites-and-fails on drift (like `prettier`), so re-stage and commit again.
 - **xnat-dcm2niix-pin-sync**: Checks that the dcm2niix Container Service image pin (`ARG DCM2NIIX_VERSION` in its Dockerfile) agrees across the three deploy configs that reference it as a literal tag string. Report-only — the sites are hand-written, not generated.
 - **trufflehog**: Scans for high-entropy strings and verified secrets
@@ -179,35 +185,20 @@ cd flip-api
 trufflehog git file://. --only-verified
 ```
 
-## Emergency: Remove Secrets from Git History
+#### Running the tools directly
+
+```bash
+trufflehog git file://. --only-verified --json   # TruffleHog, from the repo root
+detect-secrets scan --all-files                 # detect-secrets
+```
+
+### Emergency: remove secrets from Git history
 
 If secrets were accidentally committed, follow the [GitHub guide on removing sensitive data](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository) using tools such as `git filter-repo` or BFG Repo-Cleaner.
 
 ⚠️ **WARNING**: This rewrites git history. Only use when absolutely necessary. Coordinate with all team members before force-pushing.
 
-## Tools Used
-
-### TruffleHog
-
-High-entropy string and secret scanner with built-in detector patterns.
-
-**Direct usage:**
-
-```bash
-trufflehog git file://. --only-verified --json
-```
-
-### detect-secrets
-
-Pattern-based scanner with baseline support.
-
-**Direct usage:**
-
-```bash
-detect-secrets scan --all-files
-```
-
-## CI/CD Integration
+### CI/CD Integration
 
 Secret scanning runs automatically on:
 
@@ -217,9 +208,9 @@ Secret scanning runs automatically on:
 
 See [.github/workflows/secret-scanning.yml](../.github/workflows/secret-scanning.yml) for details.
 
-## Managing False Positives
+### Managing False Positives
 
-### detect-secrets Baseline
+#### detect-secrets Baseline
 
 To update the baseline with new false positives:
 
@@ -233,39 +224,26 @@ To audit the baseline:
 detect-secrets audit .secrets.baseline
 ```
 
-## Troubleshooting
+### Troubleshooting
 
-### uv Not Found
+#### uv, pre-commit or detect-secrets not found
 
-This project uses `uv` for Python package management. Install it with:
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-After installation, ensure `~/.local/bin` is in your PATH:
+Install `uv` as in [Prerequisites](#prerequisites). Then make sure `~/.local/bin`, where uv puts itself and the
+tools it installs, is on your PATH:
 
 ```bash
 # Add to your ~/.bashrc, ~/.zshrc, or ~/.config/fish/config.fish
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-### Commands Not Found After Installation
-
-If `pre-commit` or `detect-secrets` aren't found after running the setup script, the uv tool directory may not be in your PATH. Add it:
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-Or reinstall the tools globally via Homebrew:
+If `pre-commit` or `detect-secrets` is still missing after fixing PATH, install them via Homebrew:
 
 ```bash
 brew install pre-commit
 pip install detect-secrets  # Only if using pipx or virtual environment
 ```
 
-### TruffleHog Not Found
+#### TruffleHog Not Found
 
 Install via Homebrew:
 
@@ -279,7 +257,7 @@ Or use Docker:
 docker pull trufflesecurity/trufflehog:latest
 ```
 
-### Pre-commit Hook Failures
+#### Pre-commit Hook Failures
 
 If pre-commit hooks fail due to missing tools:
 
@@ -287,7 +265,7 @@ If pre-commit hooks fail due to missing tools:
 2. Reinstall pre-commit hooks: `pre-commit install`
 3. Update pre-commit: `pre-commit autoupdate`
 
-## Best Practices
+### Best Practices
 
 1. **Run scans before committing**: Use `pre-commit run` to catch secrets early
 2. **Review scan results carefully**: Not all findings are real secrets
@@ -295,11 +273,7 @@ If pre-commit hooks fail due to missing tools:
 4. **Update baselines regularly**: Keep false positive baselines current
 5. **Scan the entire history**: Use full scans periodically to find historical secrets
 
-## Security Reports
-
-Scan reports are saved to `.security-reports/` (gitignored). Review these carefully before sharing or opening issues.
-
-## Support
+### Support
 
 For issues or questions about secret scanning:
 
