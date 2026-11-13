@@ -151,9 +151,10 @@ extractor and planner, adapted — produces both from the partitioned site folde
 **Prerequisite:** `make plan` needs the dcm2niix-converted site tree
 (`download-prostate-data` → `convert-prostate-to-dicom` → `convert-prostate-to-nifti` →
 `partition-prostate-data`; the NIfTI step runs the platform's own dcm2niix image in Docker). Without
-Docker, `prepare-prostate-local-data PROSTATE_SITE_TREE=data/prostate/local_sites` lays a
-SimpleITK-converted tree out in the same shape, and `make plan PLAN_SITES=…/local_sites/*` gives
-the same plan: the fingerprint reads only zooms, cropped shapes and intensities, none of which depend
+Docker, `make -C fl-tutorials prepare-prostate-local-data PROSTATE_SITE_TREE=data/prostate/local_sites`
+lays a SimpleITK-converted tree out in the same shape under `fl-tutorials/data/` (a relative path is
+taken from `fl-tutorials/`), and `make plan PLAN_SITES='../../../data/prostate/local_sites/*'`, run here,
+gives the same plan: the fingerprint reads only zooms, cropped shapes and intensities, none of which depend
 on the storage order.
 
 Then, from this tutorial's directory:
