@@ -86,7 +86,7 @@ services:
       # empty-allow-list warning at startup. Every hub deployment sets it — see deploy/compose.*.yml.
     ports:
       - "${FL_API_PORT}:8000"
-      - "5679:5679"
+      - "127.0.0.1:${FL_API_DEBUG_PORT:-5679}:5679"
     volumes:
       # Provisioned secrets from provision/workspace-dev/ (gitignored)
       - ./provision/workspace-dev/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/local:/app/admin/local
