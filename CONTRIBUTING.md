@@ -123,8 +123,7 @@ then the `.venv`), and run **Developer: Reload Window** if an import is still fl
 #### Coding-agent instructions (`AGENTS.md`)
 
 This repo's instructions for coding agents live in [`AGENTS.md`](AGENTS.md), with one more per service directory.
-`AGENTS.md` is the cross-tool standard and is now the only copy — the `CLAUDE.md` twin that used to sit beside each one
-has been removed.
+`AGENTS.md` is the cross-tool standard and the only copy: there is no `CLAUDE.md` beside any of them.
 
 Claude Code reads `AGENTS.md` only from **version 2.1.277** onward, so check `claude --version` and upgrade if you are
 behind. Three situations silently give a session **no project instructions at all** — no error, and nothing in the
@@ -134,13 +133,12 @@ output to say so:
 - the `instructionFiles` option set to `claude-md`, which turns the fallback off (`/config` → Project instructions). It
   is a user or organisation-managed setting and per-project settings are not read for it, so this repo cannot correct it
   for you;
-- Claude Code running via Bedrock, Vertex or Foundry, where `AGENTS.md` support does not exist at all. Those need a
-  `CLAUDE.md`, which this repo no longer carries.
+- Claude Code older than **2.1.281** on Amazon Bedrock, or with telemetry disabled, which reads `CLAUDE.md` only.
+  Upgrading fixes it.
 
-One trap is worth knowing about, because it looks like nothing is wrong: the fallback is decided per project, and *any*
-CLAUDE-named file satisfies it. Keep a personal `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md` inside your
-checkout and every `AGENTS.md` in the tree is skipped — you lose the repo's instructions wholesale, in favour of your own
-notes. Keep personal instructions in `~/.claude/` instead of in the working copy.
+One trap is worth knowing about, because it looks like nothing is wrong: *any* CLAUDE-named file takes the place of
+`AGENTS.md`. Keep a personal `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md` at the root of your checkout (or
+above it) and the root `AGENTS.md` is skipped — you lose the repo's main instructions in favour of your own notes. Keep personal instructions in `~/.claude/` instead of in the working copy.
 
 ### Python environment management
 
