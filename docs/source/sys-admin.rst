@@ -17,6 +17,7 @@ System administration
 
    - Deploying a FLIP node inside a TRE: :doc:`/deploy-flip/deploy-flip-node-in-tre`
    - Logging & observability stack: :doc:`/components/component-logging-stack`
+   - Cohort SQL drafting (Beta) settings and allowance: :ref:`cohort-sql-drafting`
 
 .. note::
 

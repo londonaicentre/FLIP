@@ -48,8 +48,9 @@ Researchers
    * - Project
      - What a researcher can do
    * - One they **own**
-     - Edit the project, stage it for approval at chosen trusts, create cohort queries, create models, upload the
-       models' files and start training.
+     - Edit the project, stage it for approval at chosen trusts, create cohort queries (and, where it is turned on,
+       draft them from a description — :ref:`cohort-sql-drafting`), create models, upload the models' files and
+       start training.
    * - One they are a **member** of
      - Contribute their own models: create them, upload their files and start training. They cannot edit, stage or
        delete the project, or change other researchers' models.
@@ -58,8 +59,8 @@ Viewers
 =======
 
 Viewers can see project details, cohort query results, model metrics and training results, and download model
-results. They cannot create or edit projects, run or save cohort queries, create or edit models, upload model files
-or start training.
+results. They cannot create or edit projects, run, save or draft cohort queries, create or edit models, upload model
+files or start training.
 
 Viewers hold no permissions of their own. Their access comes from **project membership**: being added to a project by
 its owner or an admin.

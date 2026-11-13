@@ -98,6 +98,17 @@ The flip-api is configured via environment variables. In development these are s
 
 See [`.env.development.example`](../.env.development.example) for the full list of required variables.
 
+### Cohort SQL drafting (Beta)
+
+`POST /api/cohort/draft` and `GET /api/cohort/draft/usage` draft cohort SQL from a description (FLIP#1556).
+Off by default (`COHORT_DRAFT_ENABLED=false`); the `COHORT_DRAFT_*` settings, the allowance and what is still
+needed before turning it on are in
+[the Central Hub page](../docs/source/components/component-central-hub.rst) ("Cohort SQL drafting (Beta)").
+It adds the `anthropic[bedrock]` dependency (the official SDK's `AnthropicBedrockMantle` client, signed with the
+ECS task role). The prompt is versioned files under `src/flip_api/cohort_services/drafting/assets/`; regenerate
+the OMOP schema copy after a DDL change with
+`uv run python -m flip_api.cohort_services.drafting.omop_schema ../trust/omop-db/files/OMOPCDM_postgresql_5.4_ddl.sql`.
+
 ### Tunables
 
 A handful of scheduler and task-queue settings are absent from `.env.development.example` (all but

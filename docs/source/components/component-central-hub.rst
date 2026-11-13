@@ -48,7 +48,8 @@ A FastAPI application serving everything under ``/api``. Its route groups map on
      - Project lifecycle: create, edit, stage, approve or decline per Trust, unstage, delete; imaging status and
        the cohort each Trust froze at approval.
    * - ``/cohort``
-     - Submit a cohort query to the project's Trusts and read back the aggregated results.
+     - Submit a cohort query to the project's Trusts and read back the aggregated results; draft cohort SQL from
+       a description (Beta, see `Cohort SQL drafting (Beta)`_).
    * - ``/model``, ``/models``
      - Models under a project, their job types, metrics, logs and per-Trust status.
    * - ``/files``
@@ -273,6 +274,129 @@ A researcher's upload **never passes through the hub**:
 
 Downloads, listings and the FL app bundler read only from the scanned area, so **an unscanned file cannot reach
 a Trust**.
+
+.. _cohort-sql-drafting:
+
+***************************
+Cohort SQL drafting (Beta)
+***************************
+
+An optional assistant on the cohort page that drafts cohort SQL from a researcher's description (FLIP#1556). It is
+**off by default**, and a draft only fills the editor: it never runs SQL, never changes a project's cohort query, and
+every Trust still checks the query it receives with its own validator.
+
+``flip-api`` makes one bounded model call per draft, to Claude on Amazon Bedrock through the official ``anthropic``
+SDK (``AnthropicBedrockMantle``), signed with the hub's ECS task role. No API key is used; a configured Bedrock API
+key is refused. The instructions are versioned files under ``flip_api/cohort_services/drafting/assets/``: the rules
+(including the Trusts' function allowlist and the vocabulary-free style), the OMOP schema summary generated from the
+Trusts' DDL, the concept ids FLIP's data uses, and tutorial queries as examples. Before a draft is returned it must
+pass the hub's fast pre-check, an OMOP schema check, and the project's output contract (``person_id`` and
+``accession_id`` for imaging projects, ``person_id`` for tabular ones). A rejected draft goes back to the model with
+the reason, at most twice. A refusal by the model is shown as a decline: Amazon Bedrock has no server-side fallback
+model, and the SDK's client-side fallback would send the description to a second model nobody has reviewed.
+
+Routes
+======
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Route
+     - Behaviour
+   * - ``POST /api/cohort/draft``
+     - Body ``{"project_id", "description", "clarifications": [{"question", "answer"}]}`` (at most three answers)
+       and an ``Idempotency-Key`` header. The caller must be able to edit the project, which must be ``UNSTAGED``;
+       the project's shape is read on the hub. Returns ``status`` ``draft`` (``sql``, ``explanation``,
+       ``assumptions``, ``concepts_used``), ``clarification`` (``question``, ``options``), ``decline``
+       (``message``) or ``error`` (``error_code``: ``allowance_exhausted``, ``request_cap_reached``,
+       ``rate_limited``, ``duplicate_request``, ``model_unavailable`` or ``invalid_draft``), always with ``usage``.
+       ``404`` while the feature is off.
+   * - ``GET /api/cohort/draft/usage``
+     - ``{"enabled", "used", "limit", "remaining", "resets_at"}`` for the caller, so the UI can hide the assistant
+       or draw the allowance ring before the first draft.
+
+Allowance and limits
+====================
+
+Each user has a monthly allowance of successful drafts across projects, reset at 00:00 UTC on the first of the
+month. A draft that passes the checks is charged; a clarification, decline or error is not. Uncharged requests still
+call the model, so a second, hidden cap bounds **model calls** per user per month whatever the outcome, validation
+retries included, and a per-minute rate limit applies to every request. All three are counted in the hub's database
+(``cohort_draft_allowance`` and ``cohort_draft_request``) under a per-user row lock, so they hold across replicas: a
+request reserves its place before the model call, and a repeated ``Idempotency-Key`` is never charged twice. A
+reservation left behind by a crashed request stops counting after ``COHORT_DRAFT_RESERVATION_TTL_MINUTES``.
+
+The hub logs metadata only: user, project, outcome, model calls, tokens and latency. The description and the
+model's output are never logged or stored.
+
+Settings
+========
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 15 45
+
+   * - Variable
+     - Default
+     - Meaning
+   * - ``COHORT_DRAFT_ENABLED``
+     - ``false``
+     - Turns the assistant and both routes on. Turning it off is the rollback.
+   * - ``COHORT_DRAFT_PROVIDER``
+     - per environment
+     - ``fake`` (canned drafts) is the only value in development; ``bedrock`` the only one in staging and
+       production.
+   * - ``COHORT_DRAFT_BEDROCK_MODEL_ID``
+     - ``anthropic.claude-sonnet-5-5``
+     - Bedrock model id.
+   * - ``COHORT_DRAFT_BEDROCK_REGION``
+     - ``eu-west-2``
+     - Bedrock region.
+   * - ``COHORT_DRAFT_EFFORT``
+     - ``medium``
+     - Model effort (``low``, ``medium``, ``high``).
+   * - ``COHORT_DRAFT_GUARDRAIL_ID``, ``COHORT_DRAFT_GUARDRAIL_VERSION``
+     - unset
+     - A Bedrock Guardrail passed through on every call; set both or neither.
+   * - ``COHORT_DRAFT_MAX_DESCRIPTION_CHARS``
+     - ``2000``
+     - Longest description, and the longest total of clarification answers.
+   * - ``COHORT_DRAFT_MAX_TOKENS``
+     - ``8000``
+     - Output tokens per model call, thinking included.
+   * - ``COHORT_DRAFT_TIMEOUT_SECONDS``
+     - ``45``
+     - Per model call; the SDK retries a timed-out or throttled call once.
+   * - ``COHORT_DRAFT_MONTHLY_ALLOWANCE``
+     - ``30``
+     - Successful drafts per user per UTC month, shown to the user.
+   * - ``COHORT_DRAFT_MONTHLY_REQUEST_CAP``
+     - ``90``
+     - Model calls per user per UTC month whatever the outcome, retries included. Not shown to the user.
+   * - ``COHORT_DRAFT_RATE_LIMIT_PER_MINUTE``
+     - ``5``
+     - Draft requests per user per minute.
+   * - ``COHORT_DRAFT_RESERVATION_TTL_MINUTES``
+     - ``10``
+     - Age after which an unsettled reservation is treated as abandoned.
+
+Before turning it on (phase 2)
+==============================
+
+Phase 1 ships the feature off, with no AWS changes. Enabling it in staging or production still needs:
+
+- **Model and region.** Confirm that ``anthropic.claude-sonnet-5-5`` is offered in ``eu-west-2``, and whether it is
+  served there or only through a cross-region inference profile, which may process requests in another region.
+  Information governance decides whether that is acceptable.
+- **IAM.** Invocation permission for the chosen model (and guardrail) on the hub's ``ecs_flip_api_task`` role only.
+- **Network.** A route from the hub's private subnets to Bedrock, normally a VPC interface endpoint. On the LZA estates
+  this is an account- or network-level change.
+- **Guardrail.** Create the Bedrock Guardrail for UK identifiers and set its id and version. The guardrail headers
+  the hub sends are those of Bedrock's InvokeModel API; confirm the Mantle endpoint honours them.
+- **DPIA** and information-governance review of sending researcher free text to Bedrock.
+- **Benchmark.** The semantic benchmark of reviewed cohort descriptions, and the effort setting it supports.
+- **Admin override** of a user's allowance, with audit records.
 
 *****
 Email
