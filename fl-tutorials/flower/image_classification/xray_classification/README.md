@@ -52,6 +52,7 @@ xray_classification/
 └── app/
     ├── __init__.py
     ├── config.json            # Per-tutorial hyperparameters (LOCAL_ROUNDS, splits, LESIONS, ...)
+    ├── config.toml            # Flower run-config for platform-submitted runs
     ├── client_app.py          # @app.train + @app.evaluate
     ├── task.py                # train_func / validate_func helpers
     ├── data_loading.py        # FLIP_BASE + lesion / row helpers

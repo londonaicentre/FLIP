@@ -130,7 +130,8 @@ both layouts.
 ## 6. Debug Scripts
 
 A collection of diagnostic scripts is available in `/tmp/` on the development
-machine and in `trust/deploy/helm/scripts/`. Key scripts:
+machine and in the chart: `sync_k8s_kit.py` and `check_status.py` at `trust/deploy/helm/`,
+the rest in `trust/deploy/helm/scripts/`. Key scripts:
 
 | Script | Purpose |
 |--------|---------|
@@ -335,105 +336,7 @@ source the script instead:
 command: ["/bin/sh", "-c", ". /opt/nvflare/startup/start.sh && wait"]
 ```
 
-### 7.7 AWS Credentials Expired in K8s Secret
-
-**Symptom:** fl-client pod logs show `AccessDenied` when trying to download
-participant kit from S3. (The chart's omop-db vocab-load Job holds no AWS credentials: it loads a
-folder staged onto the node with `make stage-vocab` — chart README, "OMOP core vocabulary".)
-
-**Root Cause:** The K8s Secret `aws-credentials` (mounted by init containers)
-contains stale AWS SSO credentials. SSO sessions expire after 12-24 hours.
-
-**Check:**
-```bash
-kubectl exec -n flip-trust <pod> -- aws sts get-caller-identity \
-  --profile flipstag 2>/dev/null || echo "Credentials expired"
-```
-
-**Fix:** Refresh credentials on the host and re-create the Secret:
-```bash
-aws sso login --profile flipstag
-
-# Re-create K8s secret with fresh credentials
-kubectl create secret generic aws-credentials \
-  -n flip-trust \
-  --from-file=$HOME/.aws/credentials \
-  --from-file=$HOME/.aws/config \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
-
-Pod init containers must be restarted after secret update (delete pods to
-force re-init).
-
-### 7.8 EFS Sync Permission Issues (Root vs UID 1001)
-
-**Symptom:** Certs are present on the EFS when written via the root access
-point (`fsap-...`, UID 0), but the fl-server container (running as UID 1001)
-cannot read them, or the running server picks up stale old certs.
-
-**Root Cause:** EFS has multiple access points for the same filesystem path.
-The root AP (`fsap-02c45969fbdf3d9c1`, UID 0) and the fl-server AP
-(`fsap-0ffebc76dcf840674`, UID 1001) both point to the same
-`/fl-server-net-1/startup/` path, but files written via one AP are visible
-from the other. However, if the fl-server caches the directory listing at
-startup, a new EFS sync while the server is running won't take effect until
-the server is restarted.
-
-**Check:**
-```bash
-# Verify cert content through fl-server's access point
-TASK_ARN=$(aws ecs run-task --task-definition efs-sync:1 ...)
-aws ecs execute-command --task $TASK --container app \
-  --command "md5sum /opt/nvflare/startup/rootCA.pem"
-```
-
-**Fix:** Always force a new deployment after EFS cert sync:
-```bash
-aws ecs update-service --cluster flip-cluster --service fl-server-net-1 \
-  --force-new-deployment
-```
-
-### 7.9 Container Image Pull from Private ECR
-
-**Symptom:** Pod in `ErrImagePull` / `ImagePullBackOff` status. Fl-server ECS
-task fails with `CannotPullContainerError`.
-
-**Root Cause:** The FLARE container images are hosted in a private ECR
-repository (the `<ecr-account-id>` account in `eu-west-2`). The K8s cluster or ECS
-task execution role lacks permissions to pull from this repository.
-
-**Fix (K8s):** Create an `imagePullSecret` with ECR credentials:
-```bash
-# Generate ECR auth token
-ecr_password=$(aws ecr get-login-password --profile flipstag --region eu-west-2)
-kubectl create secret docker-registry ecr-cred \
-  --docker-server=<ecr-account-id>.dkr.ecr.eu-west-2.amazonaws.com \
-  --docker-username=AWS \
-  --docker-password="$ecr_password" \
-  -n flip-trust
-```
-
-Then reference it in the Helm values:
-```yaml
-flClient:
-  imagePullSecrets:
-    - name: ecr-cred
-```
-
-**Fix (ECS):** Ensure the ECS task execution role has:
-```json
-{
-  "Effect": "Allow",
-  "Action": [
-    "ecr:GetDownloadUrlForLayer",
-    "ecr:BatchGetImage",
-    "ecr:BatchCheckLayerAvailability"
-  ],
-  "Resource": "arn:aws:ecr:eu-west-2:<ecr-account-id>:repository/*"
-}
-```
-
-### 7.10 gRPC Async Connect Fails on Kernel 7 (Ubuntu 26.04)
+### 7.7 gRPC Async Connect Fails on Kernel 7 (Ubuntu 26.04)
 
 **Symptom:** fl-client pod crash-loops with no FLARE registration output.
 The pod logs end at `STARTING CLIENT...` with no further output. After

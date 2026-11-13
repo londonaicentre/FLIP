@@ -105,6 +105,7 @@ flip/
 │   ├── components/    # Event handlers, persistors, privacy filters, locators, …
 │   ├── recipes/       # High-level FLARE job recipes
 │   ├── runtime.py     # Runtime helpers for FLARE apps
+│   ├── k8s_job_mode.py # Kubernetes job-pod mode for the FLARE client
 │   ├── site_policy.py # Client-side entrypoint (`python -m flip.nvflare.site_policy`):
 │   │                  # renders `local/privacy.json` from FL_SITE_PRIVACY_* env vars in the fl-client's init step
 │   ├── server_site_config.py # Server-side entrypoint (`python -m flip.nvflare.server_site_config`):
@@ -262,6 +263,7 @@ Paths below are relative to `../fl-tutorials/` (per-backend subdirectories):
 | nvflare | `standard` | `nvflare/image_classification/arkplus_fine_tuning` |
 | nvflare | `standard` | `nvflare/image_segmentation/3d_spleen_segmentation` |
 | nvflare | `standard` | `nvflare/tabular_classification/ehr_risk_prediction` |
+| nvflare | `standard` | `nvflare/tabular_causal_discovery/biomarker_causal_discovery` |
 | nvflare | `evaluation` | `nvflare/image_evaluation/3d_spleen_segmentation_evaluation` |
 | nvflare | `evaluation` | `nvflare/image_evaluation/arkplus_baseline_classification_evaluation` |
 | nvflare | `evaluation` | `nvflare/image_evaluation/arkplus_multimodel_classification_evaluation` |
@@ -270,7 +272,9 @@ Paths below are relative to `../fl-tutorials/` (per-backend subdirectories):
 | nvflare | `standard` | `nvflare/image_generation/brain_mri_ldm_stage2_diffusion` |
 | flower | `standard` | `flower/image_classification/xray_classification` |
 | flower | `standard` | `flower/image_segmentation/3d_spleen_segmentation` |
+| flower | `standard` | `flower/image_segmentation/3d_prostate_segmentation` |
 | flower | `standard` | `flower/tabular_classification/ehr_risk_prediction` |
+| flower | `standard` | `flower/tabular_causal_discovery/biomarker_causal_discovery` |
 | flower | `evaluation` | `flower/image_evaluation/3d_spleen_segmentation_evaluation` |
 
 Apps written against the old Executor syntax (`FLIP_TRAINER`-style classes) no longer run; every
@@ -325,7 +329,7 @@ make -C fl-services/nvflare provision NET_NUMBER=3
 ### Running a Network
 
 From ``fl-services/nvflare/`` (the per-backend Makefile that owns these targets — the
-``flip-utils/`` directory itself only ships ``lint``, ``mypy`` and ``unit-test``):
+``flip-utils/`` directory itself only ships ``lint``, ``format``, ``format-check``, ``mypy`` and ``unit-test``):
 
 ```bash
 make build                # Build the :dev FL images (flare-fl-{base,server,client,api})

@@ -21,6 +21,7 @@
 | `ecs_efs_provision.tf` | ECS provisioning task that pre-populates the FL EFS workspace (FLARE kit or Flower creds, by `fl_backend`) |
 | `ecs_flower.tf` | Flower-only register-supernode-keys one-shot task + run-task trigger (FLIP#566) |
 | `ecs_sg.tf` | ECS security groups |
+| `ecr.tf` | Repository creation template + lifecycle policy for the ECR pull-through cache repositories (FLIP#1796; the cache rules themselves are created out of band) |
 | `certificate.tf` | ACM certificate for the web listener where this account keeps the zone (`MANAGE_DNS=true`); on LZA the TLS web listener uses the one `aicentre-lza-iac` issues into the account (FLIP#1797) |
 | `cloudfront.tf` | flip-ui bucket and the edge distribution's cross-account OAC read (plus unused in-account CloudFront policies, kept for a separate cleanup) |
 | `iam_ecs.tf` | IAM roles, instance profiles, SSM policies |

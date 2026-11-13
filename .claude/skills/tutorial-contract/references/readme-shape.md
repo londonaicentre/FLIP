@@ -106,8 +106,8 @@ the method paper, nnU-Net and PI-CAI, and show a T2W slice with the gland and zo
 ## Record the demo video
 
 Each tutorial gets a walkthrough video recorded against the live dev stack by
-`make demo-video` (`flip-api/tests/demo_video.py` orchestrates six Cypress segments from
-`flip-ui/test/cypress/demo/` and assembles them with ffmpeg). The recorder is **app-profiled**:
+`make demo-video` (`flip-api/tests/demo_video.py` plays six Playwright segments from
+`flip-api/tests/demo_segments.py` and assembles them with ffmpeg). The recorder is **app-profiled**:
 `--app` choices come from the `APPS` dict in `demo_video.py`, so a tutorial becomes recordable by
 adding a profile there — `project_name`, `model_name`, `model_description`, `has_imaging: False`
 for tabular cohorts (skips the XNAT/OHIF segment), and per-backend `app_dir` / `query_file`
@@ -127,6 +127,6 @@ Segmentation tutorials add the same `--data-enrichment-cwd/-cmd` pair the e2e sm
 initiate training → live metrics → download); an `evaluation` tutorial needs a look at segments
 4–5 before it can be recorded faithfully — say so rather than record a misleading video. A tutorial on access-controlled data gets no
 video either: a recording would show derived values. Output lands in the gitignored
-`flip-ui/test/cypress/demo/out/flip-demo-<app>.mp4`; it is not committed. Where it is published
+`flip-api/demo-video/flip-demo-<app>.mp4`; it is not committed. Where it is published
 (and how the README links it) is decided per the repo's video policy — ask if none is set yet; the
 docs GIFs precedent is a versioned HF dataset (`aicentreflip/docs-gifs`, #1236).
