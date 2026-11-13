@@ -142,6 +142,7 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
   - **Rollback.** The old cluster stays where it was: rolling back is pinning `XNAT_TAG` to the previous
     release. After a rollback the way forward is `upgrade-trust` again, which takes a new dump and
     moves the `pg16/` the site rolled back from aside as `pg16.replaced-<timestamp>/`.
+
   `postgres/guard-xnat-db-data.sh` refuses to start next to an older cluster with no dump (it would
   start XNAT as an empty site), after a restore that did not finish, and when the older cluster has
   run again since the dump or the restore (they are out of date). A deploy that leaves `xnat-db` on

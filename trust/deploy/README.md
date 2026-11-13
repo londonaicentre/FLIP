@@ -28,7 +28,7 @@ make -C trust up-trust KIT=GSTT              # dev
 make -C trust up-trust KIT=<CODE> HUB=prod   # against a remote hub
 ```
 
-`up-trust` is the first-install verb: it re-seeds on a data-version bump and resets XNAT. To move a live site to a new release, use `make -C trust upgrade-trust` instead. See [Upgrading a site](../../docs/source/sys-admin/admin-upgrading-sites.rst).
+`up-trust` is the first-install verb: it re-seeds on a data-version bump and resets XNAT. To move a live site to a new release, run `make upgrade-onprem-trust KIT=<CODE>` from the repo root instead: it runs the readiness checklist, then the underlying `make -C trust upgrade-trust KIT=<CODE> HUB=<env>`. See [Upgrading a site](../../docs/source/sys-admin/admin-upgrading-sites.rst).
 
 ## File matrix
 

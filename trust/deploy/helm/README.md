@@ -175,7 +175,7 @@ evidence that the object landed. It polls for that evidence, strongest first:
 2. a new line in XNAT's `received.log` since the mark taken before the store;
 3. last resort, reported as such: a new prearchive object by arrival time alone. This counts as a pass only where `received.log` does not exist on the receiver.
 
-Where `received.log` exists and gained no line, the run exits **2 — inconclusive**. `make smoke-cstore` surfaces that as a loud warning rather than a Make failure; exit 1 stays a real failure. The `received.log` line is the normal path here: the
+When that last reading is the only evidence and `received.log` exists but gained no line, the run exits **2 — inconclusive**. `make smoke-cstore` surfaces that as a loud warning rather than a Make failure; exit 1 stays a real failure. The `received.log` line is the normal path here: the
 FLIP receiver runs with `anonymizationEnabled: true` and `anon_script.das` hashes the
 Study/Series/SOP UIDs, so the stored object does not carry the UIDs Orthanc holds and the UID
 match cannot fire. That line means *a new receipt during the window, preferring lines from

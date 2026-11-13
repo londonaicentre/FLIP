@@ -276,7 +276,7 @@ the [`flip` Python package](../../flip-utils/flip/)
 
 imaging-api is also a *sender*: it forwards the same key on every call to data-access-api `/cohort/accession-ids`, whose `/cohort` router runs the same auth check.
 
-Each trust has a distinct key. A trust's `TRUST_INTERNAL_SERVICE_KEY` is minted by `register_trust` (`make register-trust KIT=<CODE>` for one trust, `make register-trusts` for the dev roster) and written into that trust's kit file (`trust/.env.<CODE>.<env>`), which `trust/Makefile` `-include`s so every trust-internal container inherits it.
+Each trust has a distinct key. A trust's `TRUST_INTERNAL_SERVICE_KEY` is minted by `register_trust` (`make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<hub>` on a deployed hub, `make register-trusts` in dev) and written into that trust's kit file (`trust/.env.<CODE>.<env>`), which `trust/Makefile` `-include`s so every trust-internal container inherits it.
 
 For more on the threat model, see
 [Trust-internal service authentication](../../docs/source/security.rst#trust-internal-service-authentication).

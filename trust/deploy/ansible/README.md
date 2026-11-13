@@ -189,8 +189,8 @@ make provision-local-trust KIT=<CODE> HUB=<stag|prod>
 >   `<checkout>/trust/xnat/xnat-data`. If the kit omits it, the default is per-slot:
 >   `/opt/flip/xnat-trust$(TRUST_NUM)` under `HUB=stag|prod` (`TRUST_NUM` = the kit's
 >   `FL_KIT_SLOT_NUMBER`), `./xnat-data-trust<N>` in dev. This keeps two trusts on one host isolated.
-> - **What to chown:** `<XNAT_DATA_DIR>/xnat-data/{tomcat_logs,archive,build,cache,prearchive}` and
->   `<XNAT_DATA_DIR>/xnat-db-data`, to `1001:1001`. Compose, `xnat-reset` and the ownership check all
+> - **What to chown:** the kit's `XNAT_DATA_DIR` itself, to `1001:1001`. The live tree under it is
+>   `xnat-data/{tomcat_logs,archive,build,cache,prearchive}` plus `xnat-db-data`. Compose, `xnat-reset` and the ownership check all
 >   read the same variable. Set `XNAT_DATA_DIR` explicitly in the kit if you want one fixed path.
 > - **Destructive:** `up-xnat` runs `xnat-reset`, which **deletes and recreates** `XNAT_DATA_DIR` with
 >   the right owner, verifies it, and fails naming the exact `chown` if it is wrong. Do not use it to

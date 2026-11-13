@@ -16,7 +16,7 @@ calls: the first is always positive and deepest inside the spleen (located with
 `segmentation_spleen`); extra positive and negative clicks are searched, fewest first, until the
 slice's Dice against the session's ground-truth label (or `segmentation_spleen` when there is none)
 passes `TARGET_DICE` (default 0.95). The captions report that Dice after each click. Orientation
-matters to SAM: on the current (upright) spleen data one positive click already reaches a Dice of
+matters to SAM: on the spleen data written upright one positive click already reaches a Dice of
 about 0.95; a 180°-rotated copy of the same scan needed two extra negative clicks. `sam_3d` is not
 offered: on the spleen data it spread over the body and ignored negative clicks.
 

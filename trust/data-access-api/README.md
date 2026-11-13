@@ -33,7 +33,7 @@ the query execution to the data-access-api. The service:
 
 1. Receives a SQL query (restricted to `SELECT` operations on the OMOP schema)
 2. Executes it against the local [OMOP database](../omop-db/)
-3. Returns aggregated results (counts, statistics) on `/cohort`, which is all that reaches the hub. Row-level records are released only inside the trust, to the FL client training on the approved cohort (`/cohort/dataframe`; see [Row-level data and the disclosure threshold](#row-level-data-and-the-disclosure-threshold)).
+3. Returns aggregated results (counts, statistics) on `/cohort`. Only aggregates reach the hub. Row-level data stays inside the trust: records go to the FL client training on the approved cohort (`/cohort/dataframe`), and accession IDs go to imaging-api (`/cohort/accession-ids`; see [Row-level data and the disclosure threshold](#row-level-data-and-the-disclosure-threshold)).
 
 This service is not directly accessible from outside the Trust network.
 

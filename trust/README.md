@@ -285,7 +285,7 @@ A real trust, whose OMOP and PACS hold its own data, sets `TRUST_DATA_SEED=false
 `make -C trust/omop-db load-dicom-vocab` and the kit's `OMOP_*` values.
 
 **Upgrading a host seeded before FLIP#1187:** a PACS marker left *inside* the storage directory
-(`<storage dir>/.seeded`) is no longer read, so the first `up-trust` re-posts every instance
+(`<storage dir>/.seeded`) is no longer read (the marker now sits beside the directory, which Orthanc's uid owns), so the first `up-trust` re-posts every instance
 (Orthanc answers `AlreadyStored`; the DICOM cache under `trust/orthanc/volumes/dicom/` is keyed by
 data version, so nothing is re-downloaded) — a few minutes, once. The stale `.seeded` inside the
 storage directory can then be deleted.
