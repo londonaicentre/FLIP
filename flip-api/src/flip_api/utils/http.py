@@ -15,7 +15,8 @@
 Used exclusively by the FL service to communicate with FL Net API endpoints
 (e.g. the compose service name fl-api-net-1:8000, or fl-api-net-1.flip.local:8000
 on ECS). These are plain HTTP calls between co-located Docker services — no TLS
-required.
+required. Every call carries the FL API key (``FL_API_KEY`` in ``FL_API_KEY_HEADER``),
+which every FL API route but /health requires.
 
 NOT used for hub↔trust communication, which is handled via the task polling
 system (trusts poll the hub; see private_services/trust_tasks.py).
@@ -25,7 +26,19 @@ from typing import Any
 
 import httpx
 
+from flip_api.config import get_settings
 from flip_api.utils.logger import logger
+
+
+def _headers(request_id: str | None, json_body: bool = False) -> dict[str, str]:
+    """The FL API key, plus the tracing id and content type when the call carries them."""
+    settings = get_settings()
+    headers = {settings.FL_API_KEY_HEADER: settings.FL_API_KEY}
+    if request_id:
+        headers["x-request-id"] = request_id
+    if json_body:
+        headers["Content-Type"] = "application/json"
+    return headers
 
 
 def _researcher_refusal(response: httpx.Response) -> str | None:
@@ -67,7 +80,7 @@ def http_get(url: str, request_id: str | None = None, timeout: float | None = No
         httpx.RequestError: If the request cannot be sent (connection, timeout, etc.).
         httpx.HTTPStatusError: If the response status is 4xx/5xx (via ``raise_for_status``).
     """
-    headers = {"x-request-id": request_id} if request_id else {}
+    headers = _headers(request_id)
     with httpx.Client() as client:
         try:
             if timeout is None:
@@ -102,11 +115,7 @@ def http_post(url: str, request_id: str | None = None, data: dict | None = None,
         httpx.RequestError: If the request cannot be sent (connection, timeout, etc.).
         httpx.HTTPStatusError: If the response status is 4xx/5xx (via ``raise_for_status``).
     """
-    headers = (
-        {"Content-Type": "application/json", "x-request-id": request_id}
-        if request_id
-        else {"Content-Type": "application/json"}
-    )
+    headers = _headers(request_id, json_body=True)
     with httpx.Client() as client:
         try:
             if timeout is None:
@@ -139,7 +148,7 @@ def http_delete(url: str, request_id: str | None = None) -> Any:
         httpx.RequestError: If the request cannot be sent (connection, timeout, etc.).
         httpx.HTTPStatusError: If the response status is 4xx/5xx (via ``raise_for_status``).
     """
-    headers = {"x-request-id": request_id} if request_id else {}
+    headers = _headers(request_id)
     with httpx.Client() as client:
         try:
             response = client.delete(url, headers=headers)

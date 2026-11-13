@@ -10,9 +10,10 @@
 # limitations under the License.
 #
 
-.PHONY: build up down up-xnat down-xnat upgrade-xnat xnat-backup xnat-shell xnat-stack-down clean \
+.PHONY: build up down up-xnat down-xnat upgrade-xnat xnat-backup xnat-backup-writable xnat-shell xnat-stack-down clean \
+	xnat-db-migrate-dump xnat-db-drop-unused-dump xnat-db-remove-old-cluster \
 	xnat-war-download xnat-plugins-download xnat-plugins-check xnat-reset xnat-configure \
-	xnat-configure-export-mask \
+	xnat-configure-export-mask xnat-prepare-dirs xnat-web-dirs \
 	create-xnat-network test unit_test local_test
 
 # Mirrors trust/Makefile: no hub `.env.*` include. Runtime config (DOCKER_TAG,
@@ -153,14 +154,23 @@ XNAT_DATA_DIR ?= $(if $(IS_DEPLOYED),/opt/flip/xnat-trust$(TRUST_NUM),./xnat-dat
 XNAT_DATA_DIR := $(abspath $(XNAT_DATA_DIR))
 export XNAT_DATA_DIR
 
-# uid/gid every XNAT bind-mount source must be owned by. `xnat-web` runs as the
-# in-image `xnat` user, created with a fixed id in trust/xnat/xnat/Dockerfile
-# (`useradd --system --uid 1001 --gid xnat`). That is a property of the image,
-# not of the host, so it can neither be derived from $(USER) nor assumed to be
-# the conventional 1000 that the FLIP-built Python services use.
+include ../../deploy/portable.mk
+
+# Who XNAT's Container Service runs its jobs (dcm2niix, export-mask) as. Under FLIP_UID the
+# archive xnat-web writes is 640 to that uid, so the jobs must be the same uid or they can read
+# nothing; empty keeps each job image's own user (1001, xnat-web's default). Read by
+# docker-compose-stack.prod.yml and written into the Docker backend by configure-dcm2niix.sh (FLIP#1731).
+export XNAT_CS_CONTAINER_USER := $(if $(FLIP_UID),$(FLIP_UID):$(FLIP_GID))
+
+# uid/gid every XNAT bind-mount source must be owned by (XNAT_CONTAINER_UID/GID, from
+# deploy/portable.mk): the kit's FLIP_UID:FLIP_GID when set — xnat-web then runs as them
+# (FLIP#1731) — else the in-image `xnat` user, created with a fixed id in
+# trust/xnat/xnat/Dockerfile (`useradd --system --uid 1001 --gid xnat`). That default is a
+# property of the image, not of the host, so it can neither be derived from $(USER) nor
+# assumed to be the conventional 1000 that the FLIP-built Python services use.
 #
-# XNAT ingests DICOM into archive/, stages it through build/ and cache/, and
-# rotates its logs into tomcat_logs/. If any of those is not writable it accepts
+# XNAT ingests DICOM into prearchive/ and archive/, stages it through build/ and
+# cache/, and rotates its logs into tomcat_logs/. If any of those is not writable it accepts
 # the inbound association, fails the write, and aborts it — so the PACS reports a
 # *network* fault ("Peer aborted Association"), pointing at ports and AE titles
 # rather than at permissions. The same failure stops XNAT writing the application
@@ -170,8 +180,12 @@ export XNAT_DATA_DIR
 # Dockerfile sets no USER and the compose pins none, so the container starts as root
 # and the stock postgres entrypoint re-chowns PGDATA and drops to `postgres` itself.
 # That is what makes a 1001-owned xnat-db-data harmless, and it is what would go away
-# if someone pinned a `user:` on xnat-db. Its dir is included on stag/prod only, so
-# the whole tree carries one owner.
+# if someone pinned a `user:` on xnat-db. It keeps starting as root under FLIP_UID too: every
+# existing site's database is uid 70's (the image's postgres user), so a `user:` would first need
+# that data re-owned. Its dir is included on stag/prod only, so the whole tree carries
+# one owner when root or the operator wipes it; prepare-host-dirs leaves it root-created and
+# Postgres's first boot makes it uid 70's, which is why xnat-prepare-dirs never re-owns it and the
+# check-only reset branch, like upgrade-xnat, judges XNAT_WEB_DATA_DIRS alone.
 #
 # trust/deploy/ansible/aws-ec2-host.yml and onprem.yml
 # provision XNAT's bind mounts with this same id: the uid is the invariant all three
@@ -181,18 +195,15 @@ export XNAT_DATA_DIR
 # host stay isolated. Compose and xnat-reset read that same variable, so this recipe
 # provisions the tree XNAT actually writes to and the playbooks' one is not it — an
 # ownership change made there would look right and reach nothing.
-XNAT_CONTAINER_UID := 1001
-XNAT_CONTAINER_GID := 1001
 XNAT_DIR_OWNER := $(XNAT_CONTAINER_UID):$(XNAT_CONTAINER_GID)
 
-# The bind-mount sources xnat-reset provisions. xnat-db-data is stag/prod-only:
-# the development stack gives xnat-db no persistent bind mount.
-XNAT_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive build cache) \
-                  $(if $(IS_DEPLOYED),$(XNAT_DATA_DIR)/xnat-db-data)
-# The subset xnat-web itself writes — what upgrade-xnat checks on a LIVE site. xnat-db-data
+# The bind-mount sources xnat-web itself writes — what upgrade-xnat checks on a LIVE site. xnat-db-data
 # is excluded there: Postgres's entrypoint re-owns it to its own uid on first boot, so on
 # a running site it is legitimately not 1001 and the reset-time check does not apply.
-XNAT_WEB_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive build cache)
+XNAT_WEB_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archive build cache prearchive)
+# The bind-mount sources xnat-reset provisions: those, plus xnat-db-data. That one is stag/prod-only:
+# the development stack gives xnat-db no persistent bind mount.
+XNAT_DATA_DIRS := $(XNAT_WEB_DATA_DIRS) $(if $(IS_DEPLOYED),$(XNAT_DATA_DIR)/xnat-db-data)
 
 # Verify every bind-mount source is owned by the container uid, and fail naming
 # the exact remedy when it is not. Fatal rather than a warning because the
@@ -201,7 +212,8 @@ XNAT_WEB_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archiv
 # $(ensure_net_dirs) in trust/Makefile. Checked after the chown rather than
 # instead of it as defence in depth, not because the chown itself might be
 # refused: every branch chowns under sudo or as the owner itself, and `set -e`
-# aborts on one that fails outright before the guard is reached. What is left for the guard is a
+# aborts on one that fails outright before the guard is reached — except the non-root
+# local branch, which chowns nothing and relies on this guard alone (FLIP#1723). What is left for the guard is a
 # chown that did not cover what it was meant to — it applies recursively to
 # $(XNAT_DATA_DIR) while the guard stats each entry of $(XNAT_DATA_DIRS), so those
 # two drifting apart, or a later edit narrowing or dropping the chown on one
@@ -223,7 +235,6 @@ XNAT_WEB_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archiv
 # rejects `-c` — otherwise counts zero and is reported as wrong ownership, which
 # sends the reader after the wrong fault. A missing directory still counts zero
 # and still fires the guard, now with stat naming the path it could not read.
-include ../../deploy/portable.mk
 
 define check_xnat_dir_owner
 	owned="$$($(1) | grep -cx '$(XNAT_DIR_OWNER)' || true)"; \
@@ -233,8 +244,19 @@ define check_xnat_dir_owner
 		echo "    retrieval fails with the PACS reporting 'Peer aborted Association' and XNAT"; \
 		echo "    writes no logs to explain it (FLIP#1095)."; \
 		echo "    Fix: $(if $(2),$(2) ,)sudo chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)"; \
+		$(prepare_host_dirs_hint); \
 		exit 1; \
 	fi
+endef
+
+# True when the invoking user IS xnat-web's uid, holds its gid and owns every directory under
+# $(XNAT_DATA_DIR) (an absent tree qualifies): xnat-reset's wipe, mkdir and chown then all succeed
+# unprivileged. Development is there whenever the developer is uid 1001; a deployed kit gets there
+# by setting FLIP_UID/FLIP_GID to the operator (FLIP#1731).
+define operator_owns_xnat_tree
+	[ "$$(id -u)" = "$(XNAT_CONTAINER_UID)" ] \
+		&& case " $$(id -G) " in *" $(XNAT_CONTAINER_GID) "*) true;; *) false;; esac \
+		&& [ -z "$$(find $(XNAT_DATA_DIR) -type d ! -user $(XNAT_CONTAINER_UID) 2>/dev/null | head -n 1)" ]
 endef
 
 # Path to the dev XNAT folder on the Docker host (bind mounts resolve there, not locally).
@@ -313,12 +335,15 @@ endef
 
 # Build XNAT Docker images locally (mirrors CI workflow). Downloads the WAR and plugins from
 # upstream on first use (or copies them from ARTIFACTS_DIR=<dir>), verifying the pinned checksums.
+# xnat-web builds with --pull: its Tomcat base tag moves, and a stale local copy would differ from CI's.
+# XNAT_BUILD_PULL= builds on the local copy instead (a host with no registry route).
+XNAT_BUILD_PULL ?= --pull
 build:
 	@echo "🔧 Building XNAT Docker images..."
 	$(MAKE) xnat-war-download
 	$(MAKE) xnat-plugins-download
 	@echo "🐳 Building xnat-web image..."
-	docker build \
+	docker build $(XNAT_BUILD_PULL) \
 		--build-arg XNAT_VERSION=${XNAT_VERSION} \
 		--build-arg TOMCAT_XNAT_FOLDER=${TOMCAT_XNAT_FOLDER} \
 		--build-arg XNAT_ROOT=${XNAT_ROOT} \
@@ -469,6 +494,7 @@ upgrade-xnat: create-xnat-network
 	$(require_kit)
 	$(require_xnat_passwords)
 	@echo "⬆️  Upgrading XNAT stack $(XNAT_STACK) to $(XNAT_TAG) (data dir $(XNAT_DATA_DIR) kept)..."
+	$(MAKE) xnat-web-dirs KIT=$(KIT)
 	@# Check the directories where they are: on the trust host over ssh when the swarm is remote
 	@# (an EC2 node's upgrade runs this from the admin workstation), locally otherwise — the same
 	@# split the first-install reset target makes.
@@ -479,24 +505,29 @@ upgrade-xnat: create-xnat-network
 		*) $(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_WEB_DATA_DIRS),,$(words $(XNAT_WEB_DATA_DIRS))) ;; \
 	esac
 	$(MAKE) xnat-backup KIT=$(KIT)
+	$(MAKE) xnat-db-migrate-dump KIT=$(KIT)
 	XNAT_PATH=${XNAT_PATH} \
 	XNAT_PORT=$(XNAT_PORT_EFFECTIVE) \
 	XNAT_WEB_PORT=$(XNAT_WEB_PORT_EFFECTIVE) \
 	XNAT_AETITLE=$(XNAT_AETITLE_EFFECTIVE) \
 	PACS_UI_PORT=$(PACS_UI_PORT_EFFECTIVE) \
 	DOCKER_NETWORK_NAME=$(XNAT_NETWORK) \
-	docker stack deploy --with-registry-auth --resolve-image "$(XNAT_RESOLVE_IMAGE)" --detach=false ${STACK_FILES} $(XNAT_STACK)
+	docker stack deploy --with-registry-auth --resolve-image "$(XNAT_RESOLVE_IMAGE)" --detach=false ${STACK_FILES} $(XNAT_STACK) \
+	  || { $(xnat_db_drop_unused_dump); exit 1; }
+	$(MAKE) xnat-db-drop-unused-dump KIT=$(KIT)
 	$(MAKE) xnat-configure XNAT_PROJECT=$(XNAT_STACK)
 
 # pg_dumpall of the running xnat-db into $(XNAT_DATA_DIR)/backups/ — the rollback path for an
 # XNAT upgrade, whose schema migrations are forward-only, so no running xnat-db is a refusal, not
 # a skip. The dump is compressed inside the db container under pipefail, and the host pipeline
 # runs under bash + pipefail too, so pg_dumpall's own failure fails the recipe instead of leaving
-# gzip a valid stream. One throwaway container writes it into the (root- or 1001-owned) data dir
-# without sudo and keeps it only when it decompresses to pg_dumpall's completion trailer. The db
-# is found by the swarm labels, like xnat-web (FLIP#1210).
+# gzip a valid stream. One throwaway container writes it into the data dir without sudo and keeps
+# it only when it decompresses to pg_dumpall's completion trailer. The db is found by the swarm
+# labels, like xnat-web (FLIP#1210). The container runs as xnat-web's uid, the owner of the rest of
+# the tree, so the backups stay deletable by the operator under FLIP_UID and a later xnat-reset
+# still finds a tree it owns (FLIP#1731); xnat-backup-writable checks it can, before anything is dumped.
 xnat-backup: SHELL := /bin/bash
-xnat-backup:
+xnat-backup: xnat-backup-writable
 	$(require_kit)
 	@set -o pipefail; \
 	db=$$($(call xnat_service_container_ids,$(XNAT_STACK),xnat-db) | head -1); \
@@ -508,15 +539,97 @@ xnat-backup:
 	dump="backups/xnat-db-$$(date +%Y%m%d-%H%M%S).sql.gz"; \
 	echo "💾 Backing up the XNAT database to $(XNAT_DATA_DIR)/$$dump ..."; \
 	if docker exec "$$db" sh -c 'set -o pipefail; pg_dumpall -U postgres | gzip -c' \
-	     | docker run --rm -i -v "$(XNAT_DATA_DIR):/x" alpine:3.20 sh -c "set -o pipefail; \
+	     | docker run --rm -i --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" alpine:3.20 sh -c "set -o pipefail; \
 	         mkdir -p /x/backups && cat > /x/$$dump \
 	         && gzip -dc /x/$$dump | tail -n 5 | grep -q 'PostgreSQL database cluster dump complete' \
 	         && ls -l /x/$$dump"; then \
 	  exit 0; \
 	fi; \
-	docker run --rm -v "$(XNAT_DATA_DIR):/x" alpine:3.20 rm -f "/x/$$dump"; \
+	docker run --rm --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" alpine:3.20 rm -f "/x/$$dump"; \
 	echo "❌ The XNAT database dump failed or is incomplete — no backup was kept, and nothing was upgraded."; \
 	exit 1
+
+# The PostgreSQL major the xnat-db image runs (16 from PG_VERSION=16-alpine).
+XNAT_DB_PG_MAJOR := $(firstword $(subst ., ,$(subst -, ,$(PG_VERSION))))
+
+# Refuse when either major is not a number: the comparison below would read that as "already moved".
+xnat_db_majors_comparable = case "$(1):$(XNAT_DB_PG_MAJOR)" in *[!0-9:]*|:*|*:) \
+	echo "❌ Cannot compare xnat-db's PostgreSQL major ('$(1)') with the image's ('$(XNAT_DB_PG_MAJOR)', from PG_VERSION in trust/xnat/.env). Nothing was changed."; exit 1 ;; esac
+
+# Before a stack deploy that moves xnat-db to a newer PostgreSQL major (FLIP#1812): stop xnat-web,
+# then dump the xnat database beside the running cluster, where the new image restores it on first
+# start (trust/xnat/postgres/restore-xnat-dump.sh). The old cluster stays for a rollback until
+# xnat-db-remove-old-cluster. A no-op once the running cluster is on that major.
+xnat-db-migrate-dump:
+	$(require_kit)
+	@set -e; \
+	db=$$($(call xnat_service_container_ids,$(XNAT_STACK),xnat-db) | head -1); \
+	[ -n "$$db" ] || { echo "❌ No running $(XNAT_STACK)_xnat-db to dump."; exit 1; }; \
+	current=$$(docker exec "$$db" sh -c 'cat "$$PGDATA/PG_VERSION"'); \
+	$(call xnat_db_majors_comparable,$$current); \
+	[ "$$current" -lt $(XNAT_DB_PG_MAJOR) ] || exit 0; \
+	echo "⬆️  xnat-db moves from PostgreSQL $$current to $(XNAT_DB_PG_MAJOR): stopping xnat-web and dumping the xnat database for the new server to restore."; \
+	docker service scale --detach=false $(XNAT_STACK)_xnat-web=0; \
+	docker exec -i "$$db" sh -s $(XNAT_DB_PG_MAJOR) < scripts/xnat_db_migrate_dump.sh || { \
+	  echo "❌ The dump failed, so nothing was upgraded. Starting xnat-web again on PostgreSQL $$current."; \
+	  docker service scale --detach $(XNAT_STACK)_xnat-web=1; exit 1; }
+
+# After the deploy: a dump still inside the live data dir means xnat-db stayed on the old major (the
+# kit's XNAT_TAG pins an older release). The database goes on changing, so the dump must not wait
+# there for a later start of the new image to restore. upgrade-xnat runs it after a deploy that
+# failed too, which can leave the old server running.
+xnat_db_drop_unused_dump = db=$$($(call xnat_service_container_ids,$(XNAT_STACK),xnat-db) | head -1); \
+	[ -z "$$db" ] || docker exec -i "$$db" sh -s < scripts/xnat_db_drop_unused_dump.sh
+xnat-db-drop-unused-dump:
+	$(require_kit)
+	@$(xnat_db_drop_unused_dump)
+
+# Once XNAT is confirmed on the new major: list the older cluster an upgrade kept for a rollback,
+# and delete it with YES=1.
+xnat-db-remove-old-cluster:
+	$(require_kit)
+	@db=$$($(call xnat_service_container_ids,$(XNAT_STACK),xnat-db) | head -1); \
+	[ -n "$$db" ] || { echo "❌ No running $(XNAT_STACK)_xnat-db."; exit 1; }; \
+	docker exec -i "$$db" sh -s -- $(if $(YES),--delete) < scripts/xnat_db_remove_old_cluster.sh
+
+# Can xnat-backup's uid write $(XNAT_DATA_DIR)/backups (or create it)? Upgrades before FLIP#1731
+# wrote backups/ as root. A refusal names the one-time fix for the case it found. upgrade-trust
+# runs this before it pulls anything, so a refused upgrade leaves the whole site on its release.
+xnat-backup-writable:
+	$(require_kit)
+	@rc=0; docker run --rm --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" alpine:3.20 \
+	  sh -c 'if [ -e /x/backups ]; then [ -w /x/backups ] || exit 3; else [ -w /x/. ] || exit 4; fi' || rc=$$?; \
+	case $$rc in \
+	  0) ;; \
+	  3) echo "❌ $(XNAT_DATA_DIR)/backups is not writable by uid $(XNAT_DIR_OWNER), which writes the XNAT backup (an"; \
+	     echo "   upgrade before FLIP#1731 made it as root). Nothing was dumped or upgraded. As root on the host, once:"; \
+	     echo "   chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)/backups"; exit 1 ;; \
+	  4) echo "❌ $(XNAT_DATA_DIR) is not writable by uid $(XNAT_DIR_OWNER), which creates backups/ in it for the XNAT"; \
+	     echo "   backup. Nothing was dumped or upgraded. As root on the host, once:"; \
+	     echo "   mkdir $(XNAT_DATA_DIR)/backups && chown $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)/backups"; exit 1 ;; \
+	  *) echo "❌ Could not check that uid $(XNAT_DIR_OWNER) can write $(XNAT_DATA_DIR)/backups (docker run failed)."; exit 1 ;; \
+	esac
+
+# Create the xnat-web bind-mount sources a live site lacks, as xnat-web's uid: a Swarm task whose
+# mount source is missing fails to start. prearchive/ is the one sites installed before FLIP#1818
+# lack. A throwaway container, like xnat-backup's, needs no sudo and reaches a remote swarm host too.
+# upgrade-trust runs this before it pulls anything, like xnat-backup-writable.
+# A tree with no archive/ is not a live site's (every install makes it): refused, or the dirs made
+# here would pass upgrade-xnat's ownership check and XNAT would be redeployed onto an empty tree.
+xnat-web-dirs:
+	$(require_kit)
+	@rc=0; docker run --rm --user $(XNAT_DIR_OWNER) -v "$(XNAT_DATA_DIR):/x" alpine:3.20 \
+	  sh -c '[ -d /x/xnat-data/archive ] || exit 3; \
+	         mkdir -p $(patsubst $(XNAT_DATA_DIR)/%,/x/%,$(XNAT_WEB_DATA_DIRS)) || exit 4' || rc=$$?; \
+	case $$rc in \
+	  0) ;; \
+	  3) echo "❌ $(XNAT_DATA_DIR)/xnat-data/archive does not exist: the kit's XNAT_DATA_DIR is not this site's XNAT"; \
+	     echo "   tree. Nothing was upgraded. Point XNAT_DATA_DIR at the tree the site was installed with."; exit 1 ;; \
+	  4) echo "❌ uid $(XNAT_DIR_OWNER) could not create the XNAT data dirs under $(XNAT_DATA_DIR)/xnat-data."; \
+	     echo "   Nothing was upgraded. As root on the host, once:"; \
+	     echo "   chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)/xnat-data"; exit 1 ;; \
+	  *) echo "❌ Could not create the XNAT data dirs under $(XNAT_DATA_DIR)/xnat-data (docker run failed)."; exit 1 ;; \
+	esac
 
 # Get a shell in the running xnat-web container for the selected trust.
 xnat-shell:
@@ -565,13 +678,17 @@ xnat-plugins-check:
 	@./scripts/xnat_artifacts.sh check plugin xnat/plugins
 
 # Creates the data-volume directory structure for one trust's XNAT stack and
-# wipes any previous data. Docker Swarm requires host directories to exist
+# wipes any previous data where it may (the branches below). Docker Swarm requires host directories to exist
 # before bind-mounting; the wipe avoids stale bind mounts from a prior run
 # (the second xnat-web otherwise crash-loops on a locked SQLite index).
 # Data dir defaults vary by HUB — see the XNAT_DATA_DIR comment above
 # for the resolution rule and how to override per-host.
 #
-# The two deployed branches provision under sudo. The development branch does too,
+# The remote deployed branch provisions over ssh under sudo, on a host FLIP administers. The
+# local one does it directly as root, or unprivileged when the operator is the container uid and
+# owns the tree (the kit's FLIP_UID, FLIP#1731); any other non-root operator deletes nothing and
+# only checks the empty tree `make -C trust prepare-host-dirs` made as root, refusing one that
+# holds files (FLIP#1723). The development branch provisions under sudo,
 # unless the invoking user IS the container uid, holds its gid and already owns
 # every directory under the tree — then the wipe, mkdir and chown all succeed
 # unprivileged (unlink needs write on the parent directory, so files a root-running
@@ -621,17 +738,34 @@ xnat-reset:
 				;; \
 			*) \
 				echo "  💻 local docker context '$$xnat_ctx' ($$xnat_endpoint) — resetting XNAT dirs on this host"; \
-				sudo rm -rf $(XNAT_DATA_DIR); \
-				sudo mkdir -p $(XNAT_DATA_DIRS); \
-				sudo chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
-				$(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_DATA_DIRS)); \
+				if [ "$$(id -u)" = 0 ]; then \
+					rm -rf $(XNAT_DATA_DIR) && mkdir -p $(XNAT_DATA_DIRS) && chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR) \
+					  || { echo "❌  could not wipe and re-create $(XNAT_DATA_DIR) (a mount still in use?)"; exit 1; }; \
+				elif $(operator_owns_xnat_tree); then \
+					echo "  🔓 Operator is uid $(XNAT_CONTAINER_UID) and owns the tree — resetting it without root (FLIP#1731)"; \
+					rm -rf $(XNAT_DATA_DIR) && mkdir -p $(XNAT_DATA_DIRS) && chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR) \
+					  || { echo "❌  uid $$(id -u) could not wipe and re-create $(XNAT_DATA_DIR): its parent must be writable by you, or exist already."; \
+					       $(prepare_host_dirs_hint); exit 1; }; \
+				else \
+					echo "  👤 not root — deleting nothing, checking the tree prepare-host-dirs made (FLIP#1723)"; \
+					if [ -d $(XNAT_DATA_DIR) ] && [ -n "$$(find $(XNAT_DATA_DIR) -mindepth 1 ! -type d -print 2>&1 | head -n 1)" ]; then \
+						others=$$(find $(XNAT_DATA_DIR) ! -user $$(id -u) -print0 2>/dev/null | xargs -0 $(call stat_fmt,%u) 2>/dev/null | sort -un | paste -sd, -); \
+						echo "❌  $(XNAT_DATA_DIR) holds files, or directories uid $$(id -u) cannot read, from an earlier install. This first install"; \
+						echo "    starts XNAT fresh, and uid $$(id -u) cannot wipe and re-create the tree for uid $(XNAT_CONTAINER_UID)$${others:+ (files owned by uid $$others are in the way)}. As root on this host:"; \
+						if [ "$$(id -u)" = "$(XNAT_CONTAINER_UID)" ]; then \
+							echo "    rm -rf $(XNAT_DATA_DIR)    # then re-run this as yourself: an absent tree you re-create unprivileged"; \
+						else \
+							echo "    rm -rf $(XNAT_DATA_DIR) && make -C trust prepare-host-dirs KIT=$(KIT)$(if $(HUB), HUB=$(HUB))"; \
+						fi; \
+						exit 1; \
+					fi; \
+				fi; \
+				$(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_WEB_DATA_DIRS),,$(words $(XNAT_WEB_DATA_DIRS))); \
 				;; \
 		esac; \
 	else \
 		echo "  📍 Using dev data dir: $(XNAT_DATA_DIR)/"; \
-		if [ "$$(id -u)" = "$(XNAT_CONTAINER_UID)" ] \
-			&& case " $$(id -G) " in *" $(XNAT_CONTAINER_GID) "*) true;; *) false;; esac \
-			&& [ -z "$$(find $(XNAT_DATA_DIR) -type d ! -user $(XNAT_CONTAINER_UID) 2>/dev/null | head -n 1)" ]; then \
+		if $(operator_owns_xnat_tree); then \
 			echo "  🔓 Operator is uid $(XNAT_CONTAINER_UID) and owns every directory in the tree — no sudo needed"; \
 			priv=""; \
 		else \
@@ -642,6 +776,17 @@ xnat-reset:
 		$$priv chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
 		$(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_DATA_DIRS)); \
 	fi
+
+# The XNAT half of `make -C trust prepare-host-dirs` (FLIP#1723): the bind-mount sources, owned by
+# xnat-web's uid. Run as root; it deletes nothing (xnat-reset is the destructive first-install step).
+# xnat-db-data is created but never re-owned: Postgres's entrypoint takes it on first boot, and
+# re-owning it beside a running xnat-db would lock Postgres out of its own data (upgrade-xnat's
+# ownership guard points here from a live site).
+xnat-prepare-dirs:
+	$(require_kit)
+	mkdir -p $(XNAT_DATA_DIRS)
+	chown $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR) $(XNAT_DATA_DIR)/xnat-data $(XNAT_WEB_DATA_DIRS)
+	@$(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_WEB_DATA_DIRS),,$(words $(XNAT_WEB_DATA_DIRS)))
 
 # Configure an XNAT instance with initial settings and run dcm2niix setup.
 # Usage: make xnat-configure XNAT_PROJECT=<stack-name>

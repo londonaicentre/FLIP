@@ -46,10 +46,16 @@ def test_aks_overlay_renders_without_a_node_path():
 
 
 def test_aks_overlay_puts_postgres_data_below_lost_and_found():
+    """omop-db by PGDATA; xnat-db by mounting the subdirectory, below which its image keeps pg<major>/."""
     for doc in _docs():
         if doc["kind"] == "StatefulSet" and doc["metadata"]["name"].endswith(("omop-db", "xnat-db")):
-            env = {e["name"]: e.get("value") for e in doc["spec"]["template"]["spec"]["containers"][0]["env"]}
-            assert env.get("PGDATA") == "/var/lib/postgresql/data/pgdata", doc["metadata"]["name"]
+            container = doc["spec"]["template"]["spec"]["containers"][0]
+            env = {e["name"]: e.get("value") for e in container["env"]}
+            mount = next(m for m in container["volumeMounts"] if m["mountPath"] == "/var/lib/postgresql/data")
+            if doc["metadata"]["name"].endswith("xnat-db"):
+                assert ("PGDATA" not in env, mount.get("subPath")) == (True, "pgdata")
+            else:
+                assert env.get("PGDATA") == "/var/lib/postgresql/data/pgdata", doc["metadata"]["name"]
 
 
 def test_aks_overlay_keeps_the_metadata_endpoint_closed_even_when_the_kit_names_a_bucket(tmp_path):

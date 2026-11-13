@@ -20,6 +20,10 @@ a private container the node reads with its own identity. The same bootstrap lay
 module also carry a one-node AKS cluster for the `flip-trust` Helm chart: see
 [On AKS instead of a VM](#on-aks-instead-of-a-vm).
 
+Each root has its own Makefile, as the AWS roots do (FLIP#1787): the node's commands run in `vm/` and the
+cluster's in `aks/`. `bootstrap`, `destroy-bootstrap`, `test` and `lint` run here, because both roots share
+that layer. An old name run here (`make plan`, `make aks-join`) fails and prints the new command.
+
 ## What this builds
 
 | Layer | Directory | What it creates | Lifetime |
@@ -31,7 +35,7 @@ module also carry a one-node AKS cluster for the `flip-trust` Helm chart: see
 
 At first boot cloud-init installs `flip-node` (`vm/templates/flip-node.sh`). It mounts the data
 disk, clones FLIP at the commit you planned with, and runs `trust/deploy/ansible/azure.yml` on
-the VM itself. `make selftest-kit` packs an FL kit on your machine and puts it in the kit drop;
+the VM itself. `make selftest-kit` (in `vm/`) packs an FL kit on your machine and puts it in the kit drop;
 `make selftest` has the node fetch it and bring the trust stack up with no hub, then checks it.
 The node never provisions an FL kit, so it carries no provisioning tooling.
 
@@ -47,8 +51,8 @@ The node never provisions an FL kit, so it carries no provisioning tooling.
 - `yq` and `uv` on your machine, for `make selftest-kit` (it provisions the FL dev kit here).
 - `plan` looks up your public IP (api.ipify.org) for the kit drop's firewall; override it with
   `OPERATOR_IP=<ip>`. If your IP changes, `kit-upload` is refused until you plan and apply again.
-  The AKS API server admits only your IP too (`aks-plan` looks it up the same way); see
-  [On AKS instead of a VM](#on-aks-instead-of-a-vm). `destroy` and `aks-destroy` need no lookup.
+  The AKS API server admits only your IP too (`aks/`'s `plan` looks it up the same way); see
+  [On AKS instead of a VM](#on-aks-instead-of-a-vm). Neither root's `destroy` needs the lookup.
 
 **Cost.** Nothing here skips Terraform's confirmation: every `bootstrap`, `apply` and `destroy`
 shows the plan and asks. On a Free Trial with the spending limit on, running out of credit
@@ -62,12 +66,12 @@ at the end of a session removes the node and keeps the bootstrap layer.
 **Bootstrapped before this tree moved from `deploy/providers/azure` (FLIP#1438)?** The bootstrap's state is a
 local, gitignored file that the move left behind. Without it `init` cannot find the state storage and
 `make bootstrap` would create a second one. Move it (and any packed kits in `build/`) from the repo root;
-the vm and aks state is remote, so `init` / `aks-init` is all they need:
+the vm and aks state is remote, so each root's `init` is all they need:
 
 ```bash
 mv deploy/providers/azure/bootstrap/terraform.tfstate* trust/deploy/terraform/azure/bootstrap/
-[ -d deploy/providers/azure/build ] && mv deploy/providers/azure/build trust/deploy/terraform/azure/
-make -C trust/deploy/terraform/azure init AZ_SUBSCRIPTION="$SUB"       # aks-init for the AKS root
+[ -d deploy/providers/azure/build ] && mv deploy/providers/azure/build trust/deploy/terraform/azure/aks/
+make -C trust/deploy/terraform/azure/vm init AZ_SUBSCRIPTION="$SUB"       # and in aks/ for the AKS root
 ```
 
 ```bash
@@ -75,6 +79,7 @@ cd trust/deploy/terraform/azure
 SUB="Azure subscription 1"
 
 make bootstrap AZ_SUBSCRIPTION="$SUB" STATE_SA=flipaztfstate<random> ALERT_EMAIL=<you>
+cd vm
 make init      AZ_SUBSCRIPTION="$SUB"
 make plan      AZ_SUBSCRIPTION="$SUB"
 make apply     AZ_SUBSCRIPTION="$SUB"
@@ -86,35 +91,36 @@ make report    AZ_SUBSCRIPTION="$SUB" FL_BACKEND=nvflare
 make destroy   AZ_SUBSCRIPTION="$SUB"
 ```
 
-Repeat `selftest-kit` / `selftest` / `logs` / `report` with `FL_BACKEND=flower`. `make help`
-lists every target.
+Repeat `selftest-kit` / `selftest` / `logs` / `report` with `FL_BACKEND=flower`. `make help` in each
+directory lists its targets.
 
 ## On AKS instead of a VM
 
 The `aks/` root builds a one-node cluster for the `flip-trust` Helm chart on the same bootstrap
-layer. It shares the trial's 4 vCPUs with the VM, so `aks-apply` refuses while the node's
-resource group exists: `make destroy` first. `SUBNET_ID` works as for the VM (see
+layer. It shares the trial's 4 vCPUs with the VM, so its `apply` refuses while the node's
+resource group exists: `make -C ../vm destroy` first. `SUBNET_ID` works as for the VM (see
 [Network and outbound traffic](#network-and-outbound-traffic)); a site subnet also needs a route
 table sending outbound traffic to the site's firewall, which AKS checks before it creates the
-cluster, and `NODE_EGRESS_IPS=<ip>[,<ip>]` naming that firewall's public IPs on `aks-plan` (`aks-destroy`
+cluster, and `NODE_EGRESS_IPS=<ip>[,<ip>]` naming that firewall's public IPs on `plan` (`destroy`
 needs no addresses). The API server admits your IP and the nodes' egress (the NAT gateway's IP, or
 those addresses): AKS adds only a load balancer's outbound IP by itself, and a node that cannot
 reach its API server never joins.
 
 ```bash
-make aks-init        AZ_SUBSCRIPTION="$SUB"   # after bootstrap
-make aks-plan        AZ_SUBSCRIPTION="$SUB"
-make aks-apply       AZ_SUBSCRIPTION="$SUB"   # shows the plan, asks
-make aks-credentials AZ_SUBSCRIPTION="$SUB"   # kubectl through Entra (kubelogin)
-make aks-stop        AZ_SUBSCRIPTION="$SUB"   # the node stops billing; disks and any NAT gateway stay
-make aks-start       AZ_SUBSCRIPTION="$SUB"   # starts it, then admits your current IP
-make aks-allow-ip    AZ_SUBSCRIPTION="$SUB"   # your IP changed: admit the new one (no plan, free)
-make aks-destroy     AZ_SUBSCRIPTION="$SUB"
+cd trust/deploy/terraform/azure/aks       # after bootstrap
+make init        AZ_SUBSCRIPTION="$SUB"
+make plan        AZ_SUBSCRIPTION="$SUB"
+make apply       AZ_SUBSCRIPTION="$SUB"   # shows the plan, asks
+make credentials AZ_SUBSCRIPTION="$SUB"   # kubectl through Entra (kubelogin)
+make stop        AZ_SUBSCRIPTION="$SUB"   # the node stops billing; disks and any NAT gateway stay
+make start       AZ_SUBSCRIPTION="$SUB"   # starts it, then admits your current IP
+make allow-ip    AZ_SUBSCRIPTION="$SUB"   # your IP changed: admit the new one (no plan, free)
+make destroy     AZ_SUBSCRIPTION="$SUB"
 ```
 
 The API server admits one IP, and Azure refuses to change it while the cluster is stopped, which
-is why `aks-start` does it after starting. If that step fails the cluster is still running, and
-billing: retry with `aks-allow-ip`, or `aks-stop`.
+is why `start` does it after starting. If that step fails the cluster is still running, and
+billing: retry with `allow-ip`, or `stop`.
 
 Azure never upgrades the cluster on its own (no upgrade channel, and the node OS patches itself in
 place). An upgrade is yours to run with `az aks upgrade`, and on one node it surges a second
@@ -123,10 +129,10 @@ place). An upgrade is yours to run with `az aks upgrade`, and on one node it sur
 The trust goes onto the cluster from the hub admin's kit tarball (see [Joining a hub](#joining-a-hub)):
 
 ```bash
-make aks-join     TARBALL=<flip-trust-kit-…tar.gz> KIT=<CODE> HUB=<env>   # MOCK_PACS=1 on a test node
-make aks-selftest
-make aks-deploy   KIT=<CODE> HUB=<env>      # redeploy or upgrade from the installed kit
-make aks-clear-jobs                          # dcm2niix Jobs from before the conversion cap
+make join       TARBALL=<flip-trust-kit-…tar.gz> KIT=<CODE> HUB=<env>   # MOCK_PACS=1 on a test node
+make selftest
+make deploy     KIT=<CODE> HUB=<env>      # redeploy or upgrade from the installed kit
+make clear-jobs                            # dcm2niix Jobs from before the conversion cap
 ```
 
 These drive [`trust/deploy/helm`](../../helm/README.md) on the cluster's kube context,
@@ -136,7 +142,7 @@ with `values-aks.yaml`, `values-small-node.yaml` and no vocabulary load.
 
 The hub admin registers the trust and packages its kit exactly as for an on-prem trust
 (`new-trust`, `make -C deploy/providers/AWS register-trusts`, `sync-trust-kit`,
-`package-onprem-trust-kit`; see `docs/source/deploy-flip/deploy-flip-node-azure.rst`), then:
+`package-onprem-trust-kit`; see `docs/source/deploy-flip/deploy-flip-node-azure.rst`), then, in `vm/`:
 
 ```bash
 make kit-upload AZ_SUBSCRIPTION="$SUB" TARBALL=<flip-trust-kit-…tar.gz>
@@ -194,10 +200,12 @@ a fixed IP for it.
 
 ```bash
 make test   # terraform test (mocked azurerm) in every root and module, plus the static guards
-make lint   # terraform fmt and tflint with the azurerm ruleset
+make lint   # terraform fmt, tflint with the azurerm ruleset, and checkov (make checkov alone)
 ```
 
-CI runs both in `validate_terraform.yml`. The static guards (`tests/test_static_guards.py`)
+CI runs both in `validate_terraform.yml`. Checkov runs every Azure check, at the version the AWS
+lint pins; a deliberate exception is a `# checkov:skip=<ID>:<why>` inside the resource, and a
+skip without a reason fails the lint. The static guards (`tests/test_static_guards.py`)
 enforce the cost and safety rules: nothing skips Terraform's confirmation, every provider and `az` call names the
 subscription, no real subscription IDs in tracked files, no NSG rule that allows inbound traffic, and the
 VM's NIC always behind its own NSG, which denies all inbound.

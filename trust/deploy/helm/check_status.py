@@ -75,6 +75,21 @@ class StatusCounters:
 # Global counters
 counters = StatusCounters()
 
+# Every kubectl and helm call starts from these two, so the context is set in one place: a call
+# spelt with the bare binary checks kubectl's current context, whatever KUBE_CONTEXT said (FLIP#1807).
+KUBECTL = ["kubectl"]
+HELM = ["helm"]
+
+
+def use_context(context: str | None) -> None:
+    """Point every kubectl and helm call at one context.
+
+    Args:
+        context: kubeconfig context name; None or empty keeps kubectl's current context.
+    """
+    KUBECTL[1:] = ["--context", context] if context else []
+    HELM[1:] = ["--kube-context", context] if context else []
+
 
 def print_status(status: str, message: str) -> None:
     """Print a status message with color coding.
@@ -168,6 +183,25 @@ def run_command(args: list[str], timeout: int = 30) -> tuple[bool, str]:
         return False, str(e)
 
 
+def failure_reason(output: str) -> str:
+    """The line of a failed kubectl call's output that says why it failed.
+
+    kubectl's last line names the reason (unknown context, refused, expired token); the lines above
+    repeat retries. A call run_command stopped keeps its "timed out after Ns" prefix, which is on the
+    first line.
+
+    Args:
+        output: The output of a failed :func:`run_command`.
+
+    Returns:
+        That line, or "" for no output.
+    """
+    lines = output.strip().splitlines()
+    if len(lines) > 1 and lines[0].startswith("timed out after "):
+        return f"{lines[0].split(':', 1)[0]}: {lines[-1]}"
+    return lines[-1] if lines else ""
+
+
 def kubectl_get_condition(resource_type: str, resource_name: str, condition: str) -> bool:
     """Check a Kubernetes resource condition.
 
@@ -182,7 +216,7 @@ def kubectl_get_condition(resource_type: str, resource_name: str, condition: str
     try:
         result = subprocess.run(
             [
-                "kubectl",
+                *KUBECTL,
                 "get",
                 resource_type,
                 resource_name,
@@ -210,7 +244,7 @@ def kubectl_get(items: list[str], namespace: str, timeout: int = 15) -> tuple[bo
     Returns:
         Tuple of (success, output)
     """
-    args = ["kubectl", "get"] + items
+    args = [*KUBECTL, "get"] + items
     if namespace:
         args.extend(["-n", namespace])
     return run_command(args, timeout=timeout)
@@ -227,7 +261,7 @@ def kubectl_json(resource: str, namespace: str, timeout: int = 15) -> dict | Non
     Returns:
         Parsed JSON dict or None
     """
-    args = ["kubectl", "get", resource, "-n", namespace, "-o", "json"]
+    args = [*KUBECTL, "get", resource, "-n", namespace, "-o", "json"]
     try:
         result = subprocess.run(
             args,
@@ -252,7 +286,7 @@ def kubectl_list(items: list[str], namespace: str, timeout: int = 15) -> list[st
     Returns:
         List of resource names (e.g. ['pod/foo-xxx', 'pod/bar-yyy'])
     """
-    args = ["kubectl", "get"] + items + ["-o", "name"]
+    args = [*KUBECTL, "get"] + items + ["-o", "name"]
     if namespace:
         args.extend(["-n", namespace])
     success, output = run_command(args, timeout=timeout)
@@ -276,13 +310,13 @@ def _fl_client_kit_missing(pod: str, namespace: str) -> bool:
     Returns:
         True if the pod is not Running and a mount event names a hostPath failure.
     """
-    success, phase = run_command(["kubectl", "get", pod, "-n", namespace, "-o", "jsonpath={.status.phase}"])
+    success, phase = run_command([*KUBECTL, "get", pod, "-n", namespace, "-o", "jsonpath={.status.phase}"])
     if not success or phase.strip().strip("'\"") == "Running":
         return False
     # Events carry the diagnosis; the pod status only says ContainerCreating.
     success, events = run_command(
         [
-            "kubectl",
+            *KUBECTL,
             "get",
             "events",
             "-n",
@@ -329,7 +363,7 @@ class XnatAnswer:
 
     Attributes:
         plugins: ``{plugin id: version}`` from GET /xapi/plugins. The version is XNAT's own: the
-            plugin's declared one, else its jar name's suffix (``3.8.2-fat``).
+            plugin's declared one, else its jar name's suffix (``3.9.0-fat``).
         dqr_status: The HTTP status GET /xapi/dqr/settings answered.
         problem: Why the plugin list is unusable; empty when it is usable.
         answered: Whether XNAT replied at all. A wrong reply is a FAIL, no reply a WARN.
@@ -352,7 +386,7 @@ def ask_xnat_plugins(pod: str, namespace: str) -> XnatAnswer:
         An :class:`XnatAnswer`.
     """
     success, output = run_command(
-        ["kubectl", "exec", pod, "-n", namespace, "--", "sh", "-c", _FETCH_LOADED_PLUGINS], timeout=45
+        [*KUBECTL, "exec", pod, "-n", namespace, "--", "sh", "-c", _FETCH_LOADED_PLUGINS], timeout=45
     )
     if not success:
         # kubectl names the defaulted container on every exec into xnat-web; that is not the error.
@@ -390,11 +424,11 @@ def xnat_enabled(helm_release: str, namespace: str) -> tuple[bool | None, str]:
     if not check_command("helm"):
         return None, "helm is not on PATH"
     success, output = run_command(
-        ["helm", "get", "values", helm_release, "-n", namespace, "--all", "-o", "json"],
+        [*HELM, "get", "values", helm_release, "-n", namespace, "--all", "-o", "json"],
         timeout=30,
     )
     if not success:
-        return None, f"`helm get values {helm_release} -n {namespace}` failed: {output.strip()[:200]}"
+        return None, f"`{' '.join(HELM)} get values {helm_release} -n {namespace}` failed: {output.strip()[:200]}"
     try:
         values = json.loads(output)
     except json.JSONDecodeError as exc:
@@ -562,7 +596,7 @@ def forward_then_check(
         local_port = s.getsockname()[1]
 
     proc = subprocess.Popen(
-        ["kubectl", "port-forward", "-n", namespace, pod_name, f"{local_port}:{remote_port}"],
+        [*KUBECTL, "port-forward", "-n", namespace, pod_name, f"{local_port}:{remote_port}"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
@@ -597,6 +631,7 @@ def main(
     helm_release: str,
     skip_endpoints: bool,
     skip_gpu: bool,
+    context: str | None = None,
 ) -> None:
     """Main entry point for Kubernetes smoke tests.
 
@@ -605,7 +640,10 @@ def main(
         helm_release: Helm release name
         skip_endpoints: Skip port-forward + HTTP checks
         skip_gpu: Skip GPU allocation checks
+        context: kubeconfig context to check; None checks kubectl's current context
     """
+    use_context(context)
+
     # ── Prerequisites ────────────────────────────────────────────────────
     print_section("Checking Prerequisites")
 
@@ -622,9 +660,20 @@ def main(
     # ── K8s cluster connectivity ─────────────────────────────────────────
     print_section("Kubernetes Cluster Connectivity")
 
-    success, nodes = run_command(["kubectl", "get", "nodes", "-o", "name"])
+    if context:
+        print_status("INFO", f"Checking context '{context}'")
+    else:
+        success, current = run_command([*KUBECTL, "config", "current-context"])
+        if success:
+            print_status("INFO", f"Checking kubectl's current context ('{current}')")
+        else:
+            # Not fatal: in a pod, kubectl reaches the cluster through its service account without one.
+            print_status("INFO", f"kubectl's current context is unknown: {failure_reason(current)}")
+
+    success, nodes = run_command([*KUBECTL, "get", "nodes", "-o", "name"])
     if not success or not nodes.strip():
-        print_status("FAIL", "Cannot connect to Kubernetes cluster — check kubeconfig and context")
+        reason = failure_reason(nodes) or "no nodes listed"
+        print_status("FAIL", f"Cannot connect to Kubernetes cluster: {reason}")
         sys.exit(1)
 
     node_names = [n.replace("node/", "") for n in nodes.strip().split("\n")]
@@ -633,9 +682,11 @@ def main(
     # ── Namespace ─────────────────────────────────────────────────────────
     print_section("Namespace and Helm Release")
 
-    success, ns_output = run_command(["kubectl", "get", "ns", namespace])
+    success, ns_output = run_command([*KUBECTL, "get", "ns", namespace])
     if not success or "Active" not in ns_output:
-        print_status("FAIL", f"Namespace '{namespace}' not found. Deploy first with: helm install {helm_release} ...")
+        print_status(
+            "FAIL", f"Namespace '{namespace}' not found. Deploy first with: {' '.join(HELM)} install {helm_release} ..."
+        )
         sys.exit(1)
     print_status("PASS", f"Namespace '{namespace}' exists")
 
@@ -645,7 +696,7 @@ def main(
         # so we get the release list regardless of the exit code.
         try:
             result = subprocess.run(
-                ["helm", "list", "-n", namespace, "-o", "json"],
+                [*HELM, "list", "-n", namespace, "-o", "json"],
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -710,7 +761,7 @@ def main(
         ready = 0
         for pod_name in svc_pods:
             success, status = run_command(
-                ["kubectl", "get", pod_name, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].ready}"]
+                [*KUBECTL, "get", pod_name, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].ready}"]
             )
             if success and status.strip().strip("'\"").lower() == "true":
                 ready += 1
@@ -741,7 +792,7 @@ def main(
     for pod_name in all_pods:
         success, reason = run_command(
             [
-                "kubectl",
+                *KUBECTL,
                 "get",
                 pod_name,
                 "-n",
@@ -755,7 +806,7 @@ def main(
             continue
         # Also flag pods with excessive restarts (even if currently "running")
         success, restarts = run_command(
-            ["kubectl", "get", pod_name, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].restartCount}"]
+            [*KUBECTL, "get", pod_name, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].restartCount}"]
         )
         if success:
             try:
@@ -781,7 +832,7 @@ def main(
             gpu_count = "0"
             for pod_name in fl_pods:
                 field = "jsonpath={.spec.containers[0].env[?(@.name=='NUM_AVAILABLE_GPUS')].value}"
-                success, value = run_command(["kubectl", "get", pod_name, "-n", namespace, "-o", field])
+                success, value = run_command([*KUBECTL, "get", pod_name, "-n", namespace, "-o", field])
                 if success:
                     gpu_count = value.strip().strip("'\"")
                     break
@@ -797,7 +848,7 @@ def main(
 
         # Node-level allocatable GPUs
         success, gpu_alloc = run_command(
-            ["kubectl", "get", "nodes", "-o", "jsonpath={.items[0].status.allocatable.nvidia\\.com/gpu}"]
+            [*KUBECTL, "get", "nodes", "-o", "jsonpath={.items[0].status.allocatable.nvidia\\.com/gpu}"]
         )
         if success and gpu_alloc.strip().strip("'\"") and int(gpu_alloc.strip().strip("'\"")) > 0:
             node_gpu_count = gpu_alloc.strip().strip("'\"")
@@ -812,9 +863,7 @@ def main(
     else:
         for pvc_name in pvcs:
             pvc_short = pvc_name.replace("persistentvolumeclaim/", "")
-            success, phase = run_command(
-                ["kubectl", "get", pvc_name, "-n", namespace, "-o", "jsonpath={.status.phase}"]
-            )
+            success, phase = run_command([*KUBECTL, "get", pvc_name, "-n", namespace, "-o", "jsonpath={.status.phase}"])
             phase_str = phase.strip().strip("'\"") if success else "Unknown"
             if phase_str == "Bound":
                 print_status("PASS", f"PVC '{pvc_short}' is {phase_str}")
@@ -836,7 +885,7 @@ def main(
 
     for job_name, label in init_jobs:
         success, status_json = run_command(
-            ["kubectl", "get", "job", job_name, "-n", namespace, "-o", "json"], timeout=10
+            [*KUBECTL, "get", "job", job_name, "-n", namespace, "-o", "json"], timeout=10
         )
         if not success:
             print_status("INFO", f"Init job '{job_name}' not found (may not be configured)")
@@ -912,7 +961,7 @@ def main(
                 minio_local = s.getsockname()[1]
 
             minio_proc = subprocess.Popen(
-                ["kubectl", "port-forward", "service/minio", f"{minio_local}:9000", "-n", namespace],
+                [*KUBECTL, "port-forward", "service/minio", f"{minio_local}:9000", "-n", namespace],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -988,7 +1037,7 @@ def main(
             continue
 
         pod_name = pods[0]
-        success, logs = run_command(["kubectl", "logs", pod_name, "-n", namespace, "--tail=50"], timeout=15)
+        success, logs = run_command([*KUBECTL, "logs", pod_name, "-n", namespace, "--tail=50"], timeout=15)
         if not success:
             print_status("WARN", f"Could not retrieve logs for '{svc_name}'")
             continue
@@ -1109,6 +1158,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Skip GPU allocation checks",
     )
+    parser.add_argument(
+        "--context",
+        default=None,
+        help="kubeconfig context to check (default: kubectl's current context)",
+    )
 
     args = parser.parse_args()
 
@@ -1117,4 +1171,5 @@ if __name__ == "__main__":
         helm_release=args.helm_release,
         skip_endpoints=args.skip_endpoints,
         skip_gpu=args.skip_gpu,
+        context=args.context,
     )

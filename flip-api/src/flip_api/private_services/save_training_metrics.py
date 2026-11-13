@@ -15,7 +15,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session
 
-from flip_api.auth.access_manager import authenticate_internal_service
+from flip_api.auth.job_callback import authorise_job_callback
 from flip_api.db.database import get_session
 from flip_api.domain.schemas.private import TrainingMetrics
 from flip_api.model_services.services.model_service import resolve_trust_from_fl_client_name, validate_trust_ids
@@ -37,13 +37,14 @@ def save_training_metrics_endpoint(
     training_metrics: TrainingMetrics,
     request: Request,
     db: Session = Depends(get_session),
-    _: None = Depends(authenticate_internal_service),
+    _: None = Depends(authorise_job_callback),
 ) -> None:
     """
     Receives and saves training metrics for a given model ID and FL client.
 
     This endpoint is internal-only: it accepts requests from the fl-server on the
-    Central Hub (authenticated via INTERNAL_SERVICE_KEY_HEADER).
+    Central Hub (authenticated via INTERNAL_SERVICE_KEY_HEADER), and only for a model
+    that has a job still reporting (``authorise_job_callback``).
 
     Args:
         model_id (UUID): The unique identifier for the model.

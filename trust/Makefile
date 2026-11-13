@@ -13,8 +13,8 @@
 .PHONY: build up down prepare-artifacts up-trust down-trust create-trust-network selftest-node restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit onboard-onprem-trust \
 	create-networks remove-networks recreate-networks tests \
-	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
-	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance \
+	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr load-adni-cohort \
+	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance prepare-host-dirs \
 	reconvert-nifti
 # HUB selects the compose-file suffix (__DCKR_SUFFIX: every deployed environment
 # runs the prod compose) and the kit-file env token (ENV: .env.<CODE>.stag / .prod,
@@ -106,26 +106,28 @@ IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(IS_DEPLOYED),/opt/flip/dat
 include ../deploy/portable.mk
 
 # Pre-create the per-net images bind sources (keep in lockstep with the fl-client-net-*
-# compose services) owned like their base dir. A plain `mkdir -p` is not enough: the
-# documented on-prem bring-up runs this Makefile under sudo, and Docker root-creates any
-# missing source dir — either way a root-owned net-N means imaging-api (uid 1000,
-# CapDrop ALL) cannot write inside it, every download 500s, and training dies much later
-# with a misleading num_samples=0. The base dir's owner UID is authoritative (set by the
-# provisioning playbooks in prod, by this mkdir as the host user in dev) and imaging-api
-# runs as it on every path, so it always owns net-N.
+# compose services) owned like their base dir. A plain `mkdir -p` is not enough: a root
+# bring-up (the playbook host) or Docker root-creates any missing source dir, and a
+# root-owned net-N means imaging-api (uid 1000, CapDrop ALL) cannot write inside it, every
+# download 500s, and training dies much later with a misleading num_samples=0. With
+# FLIP_UID unset the base dir's owner UID is authoritative (set by the provisioning
+# playbooks or prepare-host-dirs in prod, by this mkdir as the host user in dev) and
+# imaging-api runs as it on every path, so it always owns net-N.
 #
 # The GROUP and MODE are backend-aware, because the fl-client writes inside net-N too
 # (flip.add_resource stages under net-N/upload/, FLARE CleanupImages deletes net-N's
 # children) and on Flower it does not share imaging-api's UID: the Flower client is built
 # on the upstream flwr/base image, which runs as `app` (uid/gid 49999). Mirrors the K8s
 # chart's images-init (trust/deploy/helm/templates/fl-client.yaml):
+#   * FLIP_UID set (a deployed kit's knob; the dev composes ignore it) — FLIP_UID:FLIP_GID,
+#     0755: imaging-api and the client are then the same user, whichever backend (FLIP#1731).
 #   * FLARE, any env      — the base dir's own owner:group, 0755. Its client shares
 #     imaging-api's UID, so owner write covers both writers.
 #   * Flower, prod/stag     — <base-uid>:49999, 0775. The prod compose adds no
-#     supplementary group, so 49999 has to be the dir's own group. Setting it needs root,
-#     which the documented on-prem/EC2 bring-up already has (sudo).
+#     supplementary group, so 49999 has to be the dir's own group. Setting it needs root:
+#     a root bring-up does it here, otherwise `prepare-host-dirs` must have (FLIP#1723).
 #   * Flower, development   — <base-uid>:$(DOCKER_GID), 0775. The development compose
-#     already hands the client the host GID (`group_add: ["$${DOCKER_GID:-1000}"]`, for
+#     already hands the client the explicit host GID through group_add (for
 #     the 640 TLS keys), so group write is all that is missing — and an unprivileged dev
 #     bring-up could not chown to 49999 anyway.
 #
@@ -137,7 +139,9 @@ include ../deploy/portable.mk
 define ensure_net_dirs
 	@base="$(IMAGES_BASE)"; \
 	mkdir -p "$$base/net-1" "$$base/net-2"; \
-	if [ "$(FL_BACKEND)" = "flower" ]; then \
+	if [ -n "$(FLIP_UID)" ]; then \
+	  owner="$(API_UID):$(API_GID)"; mode=755; \
+	elif [ "$(FL_BACKEND)" = "flower" ]; then \
 	  owner="$$($(call stat_fmt,%u) "$$base"):$(if $(IS_DEPLOYED),49999,$(DOCKER_GID))"; mode=775; \
 	else \
 	  owner="$$($(call stat_fmt,%u:%g) "$$base")"; mode=755; \
@@ -151,6 +155,7 @@ define ensure_net_dirs
 	    echo "    fl-client both write there, so every image download would 500 and training"; \
 	    echo "    would later fail with a misleading num_samples=0."; \
 	    echo "    Fix: sudo chown $$owner $$base/net-1 $$base/net-2 && sudo chmod $$mode $$base/net-1 $$base/net-2"; \
+	    $(prepare_host_dirs_hint); \
 	    exit 1; \
 	  done; \
 	fi
@@ -233,9 +238,10 @@ TRUST_PROJECT := $(INSTANCE_PREFIX)trust$(TRUST_NUM)
 # deployed default is absolute, like the OMOP and Orthanc dirs, so it names the same place on a
 # remote DOCKER_CONTEXT (EC2), and per slot like the images dir, so trusts sharing a host never
 # share a store (records are keyed by project alone). data-access-api runs as uid 1000 in the
-# production image and as the host user under the dev compose, so that is who must own it.
+# production image (or the kit's FLIP_UID, FLIP#1731) and as the host user under the dev compose,
+# so that is who must own it.
 COHORT_SNAPSHOT_DIR_HOST := $(or $(COHORT_SNAPSHOT_STORAGE_DIR),$(if $(filter prod,$(__DCKR_SUFFIX)),/opt/flip/cohort-snapshots/trust-$(TRUST_NUM),./data-access-api/.snapshots/Trust_$(TRUST_NUM)))
-COHORT_SNAPSHOT_OWNER := $(if $(filter prod,$(__DCKR_SUFFIX)),1000:1000,$(shell id -u):$(shell id -g))
+COHORT_SNAPSHOT_OWNER := $(if $(filter prod,$(__DCKR_SUFFIX)),$(API_UID):$(API_GID),$(shell id -u):$(shell id -g))
 # Dev only: expose this trust's APIs on the host. The override binds a single
 # fixed host-port set, so only the trust assigned slot Trust_1 claims it.
 TRUST_OVERRIDE := $(if $(filter Trust_1,$(FL_KIT_SLOT)),-f deploy/compose/compose_trust-1_override.yml,)
@@ -329,46 +335,53 @@ TRUST_BUILD_VARS = \
 #   CHOWN/FOWNER, so it takes ownership itself and initdb + the image's init scripts
 #   (schema, primary keys, indices, the data_analyst_reader role) run on the empty dir.
 #   The one thing it needs from us is DATA_ACCESS_POSTGRES_PASSWORD in its environment
-#   (compose passes it) — without it the role script aborts the init.
-# - Orthanc runs as uid 999 with CHOWN only (no DAC_OVERRIDE), so its storage dir must be
-#   owned by 999 before the first start or it exits at once. A plain chown works when
-#   this runs as root (the documented on-prem bring-up does); otherwise a throwaway
-#   alpine container does it, which needs no sudo. Only the top-level dir is touched.
+#   (compose passes it) — without it the role script aborts the init. Under a kit's FLIP_UID
+#   omop-db runs as that uid instead (FLIP#1731), so the dir must be its.
+# - Orthanc runs as uid 999 (or the kit's FLIP_UID) with CHOWN only (no DAC_OVERRIDE), so its
+#   storage dir must be owned by that uid before the first start or it exits at once. A plain chown works when
+#   this runs as root; a non-root operator needs it done beforehand by `prepare-host-dirs`,
+#   run as root by the host owner (FLIP#1723). Only development falls back to a throwaway
+#   container, on the developer's own machine. Only the top-level dir is touched.
 # Pass the two resolved paths (what the compose file will mount) as $1 (OMOP) and $2 (PACS).
 define ensure_data_dirs
 	@omop="$(1)"; pacs="$(2)"; \
-	mkdir -p "$$omop" "$$pacs" || { echo "❌ cannot create $$omop or $$pacs"; exit 1; }; \
-	if [ "$$($(call stat_fmt,%u) "$$pacs")" != "999" ]; then \
-	  chown 999:999 "$$pacs" 2>/dev/null || \
-	  docker run --rm -v "$$(cd "$$pacs" && pwd)":/d alpine chown 999:999 /d || { \
-	    echo "❌ $$pacs must be owned by uid 999 (Orthanc) and is $$($(call stat_fmt,%u:%g) "$$pacs")"; \
-	    echo "   Fix: sudo chown 999:999 $$pacs"; exit 1; }; \
+	mkdir -p "$$omop" "$$pacs" || { echo "❌ cannot create $$omop or $$pacs"; $(prepare_host_dirs_hint); exit 1; }; \
+	if [ "$$($(call stat_fmt,%u) "$$pacs")" != "$(ORTHANC_UID)" ]; then \
+	  chown $(ORTHANC_UID):$(ORTHANC_GID) "$$pacs" 2>/dev/null || \
+	  $(if $(IS_DEPLOYED),,docker run --rm -v "$$(cd "$$pacs" && pwd)":/d alpine:3.20 chown $(ORTHANC_UID):$(ORTHANC_GID) /d ||) { \
+	    echo "❌ $$pacs must be owned by uid $(ORTHANC_UID) (Orthanc) and is $$($(call stat_fmt,%u:%g) "$$pacs")"; \
+	    echo "   Fix: sudo chown $(ORTHANC_UID):$(ORTHANC_GID) $$pacs"; $(prepare_host_dirs_hint); exit 1; }; \
+	fi; \
+	if [ -n "$(FLIP_UID)" ] && [ "$$($(call stat_fmt,%u) "$$omop")" != "$(FLIP_UID)" ]; then \
+	  chown $(FLIP_UID):$(FLIP_GID) "$$omop" 2>/dev/null || { \
+	    echo "❌ $$omop must be owned by uid $(FLIP_UID) (FLIP_UID: omop-db runs as it) and is $$($(call stat_fmt,%u:%g) "$$omop")"; \
+	    echo "   Fix: sudo chown $(FLIP_UID):$(FLIP_GID) $$omop"; $(prepare_host_dirs_hint); exit 1; }; \
 	fi
 endef
 
 # Prepare the membership store before compose would create it root-owned (the non-root
-# data-access-api then fails every freeze and refuses every row-level request). An absolute path is
-# prepared by a throwaway container on the DOCKER HOST, so it works without sudo and over a remote
-# DOCKER_CONTEXT, where a local mkdir would touch the wrong machine — unless it is local and already
-# owned right (the provisioning playbooks create it), so a host without registry access still comes
-# up. A relative path is local by construction (compose resolves it on this machine), so mkdir it
-# here and fix the owner if needed.
+# data-access-api then fails every freeze and refuses every row-level request). Over a remote
+# DOCKER_CONTEXT (an EC2 trust driven from the operator's machine) an absolute path lives on the
+# docker host, where a local mkdir would touch the wrong machine, so a throwaway container there
+# prepares it. Locally it is created and owned here when this runs as root; a non-root operator
+# needs it done beforehand by `prepare-host-dirs` (FLIP#1723). Development falls back to a
+# throwaway container, on the developer's own machine.
 define ensure_snapshot_dir
 	@dir="$(COHORT_SNAPSHOT_DIR_HOST)"; owner="$(COHORT_SNAPSHOT_OWNER)"; \
-	case "$$dir" in \
-	  /*) name="$$(basename "$$dir")"; \
-	      if [ -z "$$DOCKER_CONTEXT" ] && [ "$$($(call stat_fmt,%u:%g) "$$dir" 2>/dev/null)" = "$$owner" ]; then exit 0; fi; \
-	      docker run --rm -v "$$(dirname "$$dir")":/parent alpine:3.20 \
-	        sh -c "mkdir -p /parent/$$name && chown $$owner /parent/$$name && chmod 0750 /parent/$$name" || { \
-	        echo "❌ could not prepare the cohort membership store $$dir (owner $$owner) on the docker host"; exit 1; } ;; \
-	  *) mkdir -p "$$dir" || { echo "❌ cannot create $$dir"; exit 1; }; \
-	     if [ "$$($(call stat_fmt,%u:%g) "$$dir")" != "$$owner" ]; then \
-	       chown "$$owner" "$$dir" 2>/dev/null || \
-	       docker run --rm -v "$$(cd "$$dir" && pwd)":/d alpine:3.20 chown "$$owner" /d || { \
-	         echo "❌ $$dir must be owned by $$owner (data-access-api) and is $$($(call stat_fmt,%u:%g) "$$dir")"; \
-	         echo "   Fix: sudo chown $$owner $$dir"; exit 1; }; \
-	     fi ;; \
-	esac
+	if [ -n "$$DOCKER_CONTEXT" ] && [ "$${dir#/}" != "$$dir" ]; then \
+	  name="$$(basename "$$dir")"; \
+	  docker run --rm -v "$$(dirname "$$dir")":/parent alpine:3.20 \
+	    sh -c "mkdir -p /parent/$$name && chown $$owner /parent/$$name && chmod 0750 /parent/$$name" || { \
+	    echo "❌ could not prepare the cohort membership store $$dir (owner $$owner) on the docker host"; exit 1; }; \
+	  exit 0; \
+	fi; \
+	mkdir -p "$$dir" || { echo "❌ cannot create $$dir"; $(prepare_host_dirs_hint); exit 1; }; \
+	if [ "$$($(call stat_fmt,%u:%g) "$$dir")" != "$$owner" ]; then \
+	  { chown "$$owner" "$$dir" && chmod 0750 "$$dir"; } 2>/dev/null || \
+	  $(if $(IS_DEPLOYED),,docker run --rm -v "$$(cd "$$dir" && pwd)":/d alpine:3.20 chown "$$owner" /d ||) { \
+	    echo "❌ $$dir must be owned by $$owner (data-access-api) and is $$($(call stat_fmt,%u:%g) "$$dir")"; \
+	    echo "   Fix: sudo chown $$owner $$dir"; $(prepare_host_dirs_hint); exit 1; }; \
+	fi
 endef
 
 # Guard: any KIT-selected target needs KIT set (it derives the project name,
@@ -376,6 +389,32 @@ endef
 define require_kit
 	@if [ -z "$(KIT)" ]; then \
 	    echo "❌ KIT is required. Usage: make $@ KIT=<name>  (e.g. KIT=Trust_1)"; exit 1; \
+	fi
+endef
+
+# The kit's TRUST_DATA_SEED (FLIP#1687), read as every other reader reads it (deploy/env_mode.mk).
+TRUST_DATA_SEED_EFFECTIVE = $(call trust_data_seed,$(TRUST_DATA_SEED))
+
+# Guard: any other value is refused before a container starts, rather than read as true.
+define require_trust_data_seed
+	@case "$(TRUST_DATA_SEED_EFFECTIVE)" in true|false) ;; *) \
+	    echo "❌ TRUST_DATA_SEED must be true or false in $(KIT_FILE_LABEL), not '$(TRUST_DATA_SEED_EFFECTIVE)'."; exit 1;; \
+	esac
+endef
+
+# Guard: the explicit (un)seed verbs refuse a trust whose kit turns the sample data off, unless FORCE_SEED=1:
+# its own name, as a plain FORCE=1 given to an outer make (upgrade-onprem-trust, release-instance) reaches every
+# sub-make. A DRY_RUN=1 of the two that honour it (seed-orthanc, unseed-orthanc) writes nothing, so it passes.
+# They need the kit file to tell, not a complete one: without it, or with a mistyped value, the setting would
+# read as true.
+define refuse_seed_when_off
+	$(require_kit)
+	@[ -f "$(KIT_FILE)" ] || { echo "❌ Kit file $(KIT_FILE_LABEL) not found: $@ reads TRUST_DATA_SEED from it."; exit 1; }
+	$(require_trust_data_seed)
+	@if [ "$(TRUST_DATA_SEED_EFFECTIVE)" = false ] && [ "$(FORCE_SEED)" != 1 ] && \
+	    [ "$(if $(filter seed-orthanc unseed-orthanc,$@),$(DRY_RUN))" != 1 ]; then \
+	    echo "❌ $(KIT) has TRUST_DATA_SEED=false: its OMOP and PACS hold its own data, which $@ would change. FORCE_SEED=1 runs it anyway."; \
+	    exit 1; \
 	fi
 endef
 
@@ -506,6 +545,36 @@ onboard-onprem-trust:
 prepare-artifacts:
 	$(MAKE) -C xnat xnat-plugins-download
 
+# Create every bind-mount source this trust's containers write, each owned by its container's uid
+# (FLIP#1723). Setting another uid's ownership needs root, so this is the one step of an on-prem
+# bring-up that does: whoever prepares the host runs it once, as root, on the host itself; a
+# non-root bring-up then only checks. It deletes nothing and never touches xnat-db's data dir,
+# so it is safe to re-run beside a live site. The on-prem Ansible playbook does the same for
+# /opt/flip. The images base hands its owner to the net dirs, so whoever created it (root, or
+# the operator before the first refusal) it goes to imaging-api's uid first. A kit whose
+# FLIP_UID/FLIP_GID are the operator's own ids needs none of this: its containers run as them (FLIP#1731).
+prepare-host-dirs:
+	$(require_kit_file)
+	@[ "$$(id -u)" = 0 ] || { \
+	  echo "❌ prepare-host-dirs sets directory owners to the containers' uids, which needs root."; \
+	  echo "   Run it as root on the trust host (sudo -E make -C trust prepare-host-dirs KIT=$(KIT)$(if $(HUB), HUB=$(HUB))),"; \
+	  echo "   or ask the host owner to."; exit 1; }
+	@# The seed markers are written beside the OMOP and Orthanc dirs by the operator's own bring-up
+	@# (OMOP_SEED_MARKER / ORTHANC_SEED_MARKER below), so that parent is theirs to create: made here
+	@# it would be root's, and ensure-seeded would fail on the marker after a complete seed.
+	@for d in "$(OMOP_DATA_ABS)" "$(ORTHANC_STORAGE_ABS)"; do \
+	  parent="$$(dirname "$$d")"; [ -d "$$parent" ] || { \
+	    echo "❌ $$parent does not exist. Create it as yourself first (mkdir -p $$parent): the bring-up writes"; \
+	    echo "   the seed markers beside the data dirs, and a parent made here would be root's."; exit 1; }; \
+	done
+	@base="$(IMAGES_BASE)"; mkdir -p "$$base"; \
+	[ "$$($(call stat_fmt,%u) "$$base")" = "$(API_UID)" ] || chown $(API_UID):$(API_GID) "$$base"
+	$(call ensure_data_dirs,$(OMOP_DATA_ABS),$(ORTHANC_STORAGE_ABS))
+	$(ensure_net_dirs)
+	$(ensure_snapshot_dir)
+	$(MAKE) --no-print-directory -C xnat xnat-prepare-dirs KIT=$(KIT) HUB=$(HUB)
+	@echo "✅ Host directories for $(KIT) are ready; the bring-up needs only Docker access from here."
+
 # Bring up the trust stack selected by KIT (e.g. KIT=Trust_1). Reads
 # trust/.env.<KIT>.<env> for that trust's ports / dirs / credentials. The
 # The trust's data comes from the seed pipeline (FLIP#1101/#1187): the containers start
@@ -519,11 +588,12 @@ prepare-artifacts:
 # is created or fetched.
 #
 # FIRST-INSTALL VERB. Its ensure-seeded step (re-)seeds the data volumes whenever the
-# seed markers differ from the kit's PROJECTS / data version, and its up-xnat step runs
-# xnat-reset, which wipes the XNAT archive and database — never run it, or
-# restart-trust, to move a live site to a release; that is upgrade-trust (FLIP#1204).
+# seed markers differ from the kit's PROJECTS / data version (never with TRUST_DATA_SEED=false),
+# and its up-xnat step runs xnat-reset, which wipes the XNAT archive and database — never run
+# it, or restart-trust, to move a live site to a release; that is upgrade-trust (FLIP#1204).
 up-trust: require-xnat-aetitle create-networks create-trust-network
 	$(require_kit_file)
+	$(require_trust_data_seed)
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
 	@echo "⚙️ Using kit file $(KIT_FILE_LABEL)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -648,14 +718,7 @@ reload-governance: check-governance
 	@echo "♻️  Re-applying the governance document to $(KIT)'s enforcing services (no data is touched)..."
 	@services="data-access-api"; \
 	  if [ -n "$(GOVERNANCE_INIT)" ]; then \
-	    clients=$$(${DOCKER_COMPOSE_CMD} config --services 2>/dev/null | grep -x 'fl-client-net-[0-9]*' | tr '\n' ' '); \
-	    if [ -z "$$clients" ]; then \
-	      echo "❌ Could not resolve this deployment's fl-client services from the composed config,"; \
-	      echo "   so the [fl_privacy] half would not be re-applied — refusing to half-apply a policy."; \
-	      echo "   Check the stack resolves: docker compose --env-file $(KIT_FILE) --project-directory . \\"; \
-	      echo "       -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) config --services"; \
-	      exit 1; \
-	    fi; \
+	    $(resolve_fl_clients); \
 	    services="$$services $(GOVERNANCE_INIT) $$clients"; \
 	  fi; \
 	  if [ -n "$(GOVERNANCE_INIT)" ] && [ -n "$(strip $(ACCESS_POLICY_FILE))" ] \
@@ -743,6 +806,27 @@ upgrade-trust: require-xnat-aetitle
 	uv run --no-config deploy/scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
 	$(MAKE) _upgrade-trust-apply KIT=$(KIT) HUB=$(HUB) DEBUG=$(DEBUG)
 
+# FLIP_UID is a first-install choice (FLIP#1731): a site's data dirs carry the ids its install
+# gave them, and a kit that turns FLIP_UID on, changes it or clears it afterwards recreates
+# Orthanc and the APIs as a uid that owns none of their files, so they crash-loop while the first
+# visible refusal is XNAT's. Refuse before anything is pulled, naming the directory that disagrees;
+# re-owning data is the operator's deliberate step, never this verb's. The Orthanc dir always
+# belongs to $(ORTHANC_UID) (FLIP_UID, else 999: every bring-up chowns it so), which catches all
+# three; the OMOP and net-1 dirs only have a fixed owner under FLIP_UID (without it, Postgres's
+# and the Ansible flip_owner's). Over a remote DOCKER_CONTEXT the dirs are on another host.
+define refuse_flip_uid_change
+	@[ -z "$$DOCKER_CONTEXT" ] || exit 0; \
+	for d in $(if $(FLIP_UID),"$(OMOP_DATA_ABS)") "$(ORTHANC_STORAGE_ABS)" $(if $(FLIP_UID),"$(IMAGES_BASE)/net-1"); do \
+	  [ -d "$$d" ] || continue; \
+	  owner="$$($(call stat_fmt,%u) "$$d")"; \
+	  [ "$$owner" = "$(ORTHANC_UID)" ] || { \
+	    echo "❌ The kit $(if $(FLIP_UID),sets FLIP_UID=$(FLIP_UID),leaves FLIP_UID unset (the image uids)), but $$d is owned by uid $$owner:"; \
+	    echo "   this site was installed under other ids. FLIP_UID is a first-install choice: put back the FLIP_UID the"; \
+	    echo "   site was installed with$(if $(FLIP_UID), (or unset it),), or, to move a live site, stop it and re-own its data dirs as"; \
+	    echo "   root first (chown -R, which this verb never does: they hold data)."; exit 1; }; \
+	done
+endef
+
 # Phase 2 of upgrade-trust — never call directly (the tag it applies is whatever the
 # kit says, which is only right after phase 1 wrote it). No ensure_net_dirs: the net
 # dirs of a running site already exist with the ownership its first install gave them,
@@ -750,6 +834,9 @@ upgrade-trust: require-xnat-aetitle
 _upgrade-trust-apply:
 	$(require_kit_file)
 	$(check_slot_not_taken)
+	$(refuse_flip_uid_change)
+	$(MAKE) --no-print-directory -C xnat xnat-backup-writable KIT=$(KIT) HUB=$(HUB)
+	$(MAKE) --no-print-directory -C xnat xnat-web-dirs KIT=$(KIT) HUB=$(HUB)
 	@echo "⬆️  Upgrading trust services (KIT=$(KIT)) to $(DOCKER_TAG) (FL client $(DOCKER_FL_TAG))..."
 	@echo "$(GPU_STATUS_MSG)"
 	# A site upgrading from before the membership store (FLIP#857) has no directory for it yet.
@@ -822,9 +909,23 @@ up: create-networks
 down:
 	@$(call old_kits_hint,)rc=0; for kit in $(call kit_codes,); do $(MAKE) down-trust KIT=$$kit || rc=1; done; exit $$rc
 
+# Sets the shell variable `clients` to the fl-client-net-N services the composed stack
+# defines: one per FL net in development, net-1 only in production (FLIP#1677). Same files
+# and overlays as the compose call it feeds; an empty list fails rather than act on every service.
+define resolve_fl_clients
+clients=$$($(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) \
+	  config --services | grep -x 'fl-client-net-[0-9]*' | tr '\n' ' '); \
+	if [ -z "$$clients" ]; then \
+	  echo "❌ No fl-client-net-N service in the composed config. Check it renders:"; \
+	  echo "   docker compose --env-file $(KIT_FILE) --project-directory . \\"; \
+	  echo "       -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) config --services"; \
+	  exit 1; \
+	fi
+endef
+
 # Start / stop only the FL client containers, leaving the rest of each trust stack up.
-# Each dev trust project (trust1, trust2) runs a client per FL net, hence both
-# net-1 and net-2. Per-trust delegation uses the same KIT machinery as up-trust:
+# Each dev trust project (trust1, trust2) runs a client per FL net, a deployed trust net-1
+# only, hence resolve_fl_clients. Per-trust delegation uses the same KIT machinery as up-trust:
 # the sub-make's `-include ../.env.<KIT>` re-resolves TRUST_VARS / TRUST_PROJECT /
 # TRUST_OVERRIDE for that kit alone, so Trust_1 picks up its host-port override
 # and Trust_2 stays on the network ports from its kit file.
@@ -837,7 +938,9 @@ up-fl-clients-kit:
 	$(check_slot_not_taken)
 	@echo "$(GPU_STATUS_MSG)"
 	$(ensure_net_dirs)
-	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d --no-deps $(UP_PULL_FLAGS) $(GOVERNANCE_INIT) fl-client-net-1 fl-client-net-2
+	@$(resolve_fl_clients); \
+	  $(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) \
+	    up -d --no-deps $(UP_PULL_FLAGS) $(GOVERNANCE_INIT) $$clients
 
 down-fl-clients:
 	@echo "🛑 Stopping and removing FL clients..."
@@ -846,7 +949,8 @@ down-fl-clients:
 down-fl-clients-kit:
 	$(require_kit)
 	$(check_slot_not_taken)
-	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) rm -fs fl-client-net-1 fl-client-net-2
+	@$(resolve_fl_clients); \
+	  $(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) rm -fs $$clients
 
 # The two data bind sources, resolved to what the compose file mounts, as absolute paths:
 # the sub-makes in omop-db/ and orthanc/ run from their own directories, so a relative
@@ -897,8 +1001,15 @@ wait-pacs:
 # there is no FORCE, because nothing here can clobber data a seed did not put there.
 # Run by up-trust; safe to call on its own after changing PROJECTS or the pin:
 #   make -C trust ensure-seeded KIT=GSTT PROJECTS="cxr_project prostate_project"
-ensure-seeded: wait-omop-db wait-pacs
+# A real trust, whose OMOP and PACS hold its own data, sets TRUST_DATA_SEED=false in its kit:
+# nothing is then fetched, loaded or marked, whatever the markers or the pin say. Any value but
+# true or false is refused rather than read as true, which would seed a real trust.
+ensure-seeded: $(if $(filter true,$(TRUST_DATA_SEED_EFFECTIVE)),wait-omop-db wait-pacs)
 	$(require_kit)
+	$(require_trust_data_seed)
+ifeq ($(TRUST_DATA_SEED_EFFECTIVE),false)
+	@echo "⏭️  Sample data is off for $(KIT) (TRUST_DATA_SEED=false): nothing loaded into OMOP or the PACS."
+else
 	@want=$$(printf 'projects=%s\nsource_trust=%s\nversion=%s\n' "$(PROJECTS)" "$(SOURCE_TRUST)" "$(TRUST_DATA_REVISION)"); \
 	if [ "$$(cat '$(OMOP_SEED_MARKER)' 2>/dev/null)" = "$$want" ]; then \
 	  echo "✅ OMOP ($(KIT)) already seeded: $(PROJECTS) @ $(TRUST_DATA_REVISION)"; \
@@ -911,6 +1022,7 @@ ensure-seeded: wait-omop-db wait-pacs
 	  clear=$$([ -f '$(ORTHANC_SEED_MARKER)' ] && echo 1); \
 	  $(MAKE) seed-orthanc KIT=$(KIT) HUB=$(HUB) PROJECTS="$(PROJECTS)" SOURCE_TRUST=$(SOURCE_TRUST) $${clear:+CLEAR=1} || exit 1; \
 	fi
+endif
 
 # Load the public Synthea-in-OMOP EHR cohort into a running trust omop-db — the populate step for
 # the EHR risk-prediction tutorial (fl-tutorials/.../ehr_risk_prediction; the shipped mock OMOP has
@@ -919,6 +1031,18 @@ ensure-seeded: wait-omop-db wait-pacs
 #   make -C trust load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH
 load-synthea-ehr:
 	$(OMOP_DB_CMD) load-synthea-ehr TRUST_INDEX=$(TRUST_INDEX) OMOP_DB_PORT=$(OMOP_DB_PORT)
+
+# Load a licence holder's converted ADNI biomarker cohort into a running trust omop-db — the populate
+# step for the biomarker causal-discovery tutorial on a LOCAL dev stack (nothing ADNI-derived may be
+# published). ADNI_COHORT defaults to fl-tutorials/data/ad_biomarkers/dataframe.csv, what
+# `make -C fl-tutorials convert-adni-cohort` writes. Run once per trust:
+#   make -C trust load-adni-cohort TRUST_INDEX=1 OMOP_DB_PORT=5434   # GSTT
+#   make -C trust load-adni-cohort TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH
+# A relative ADNI_COHORT is read from trust/ (make -C changes directory first); the loader names
+# the absolute path when it is missing.
+load-adni-cohort:
+	$(OMOP_DB_CMD) load-adni-cohort TRUST_INDEX=$(TRUST_INDEX) OMOP_DB_PORT=$(OMOP_DB_PORT) \
+		$(if $(ADNI_COHORT),ADNI_COHORT="$(abspath $(ADNI_COHORT))")
 
 # Seed a running trust with the listed projects (FLIP#1100) — OMOP rows into its
 # omop-db, keyed by `source_trust`, the same column the per-project DICOM sets
@@ -956,7 +1080,7 @@ SOURCE_TRUST ?= $(TRUST_NUM)
 # changed, e.g. spleen at the FLIP#1221 cut:
 #   make -C trust seed-omop KIT=GSTT PROJECTS="cxr_project spleen_project" CLEAN=all CANONICAL_DIR=…
 seed-omop:
-	$(require_kit)
+	$(refuse_seed_when_off)
 	$(OMOP_DB_CMD) seed-omop TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  OMOP_DB_PORT=$(OMOP_DB_PORT) \
 	  OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
@@ -973,7 +1097,7 @@ seed-omop:
 #   make -C trust seed-orthanc KIT=GSTT PROJECTS="cxr_project prostate_project"
 #   make -C trust seed-orthanc KIT=GSTT PROJECTS=brain_mri_project DICOM_SOURCE=/abs/dicom TABLES_DIR=/abs/canonical
 seed-orthanc:
-	$(require_kit)
+	$(refuse_seed_when_off)
 	$(ORTHANC_CMD) seed-orthanc TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  PACS_UI_PORT=$(PACS_UI_PORT) \
 	  ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
@@ -999,7 +1123,7 @@ seed-trusts:
 #   make -C trust unseed KIT=GSTT PROJECTS=spleen_project HF_TRUST_DATA_REVISION=20260911
 #   make -C fl-tutorials seed-spleen KIT=GSTT
 unseed-omop:
-	$(require_kit)
+	$(refuse_seed_when_off)
 	$(OMOP_DB_CMD) unseed-omop TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  OMOP_DB_PORT=$(OMOP_DB_PORT) \
 	  OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
@@ -1008,7 +1132,7 @@ unseed-omop:
 	  $(if $(and $(TRUST_NUM),$(OMOP_DATA_DIR)),OMOP_DATA_DIR_TRUST_$(TRUST_NUM)=$(OMOP_DATA_DIR))
 
 unseed-orthanc:
-	$(require_kit)
+	$(refuse_seed_when_off)
 	$(ORTHANC_CMD) unseed-orthanc TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  PACS_UI_PORT=$(PACS_UI_PORT) \
 	  ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \

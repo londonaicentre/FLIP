@@ -12,6 +12,7 @@
 
 import json
 import logging
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -163,6 +164,34 @@ def test_upload_app_success(
     assert "Application uploaded successfully" in response["message"]
     assert _URL_SECRET not in caplog.text
     assert [call.args[0] for call in mock_requests_get_success.call_args_list] == body.bundle_urls
+
+
+@patch("fl_api.utils.upload.configure_environment", MagicMock())
+@patch("fl_api.utils.upload.configure_meta", MagicMock())
+@patch("fl_api.utils.upload.configure_server", MagicMock())
+@patch("fl_api.utils.upload.configure_client", MagicMock())
+@patch("fl_api.utils.upload.configure_config", MagicMock())
+@patch("fl_api.utils.upload.validate_config", MagicMock())
+@patch("fl_api.utils.upload.read_config", MagicMock(return_value={}))
+@patch("fl_api.utils.upload.configure_flip_model_id", MagicMock())
+def test_upload_delivers_the_job_credential_outside_the_job(
+    mock_requests_get_success, mock_upload_correct_request, tmp_path, monkeypatch, caplog
+):
+    """The job folder is deployed to every trust, so the credential must not be in it."""
+    caplog.set_level(logging.INFO)
+    credential = "job-credential-sentinel"  # pragma: allowlist secret (synthetic sentinel)
+    monkeypatch.setenv("JOB_CREDENTIAL_DIR", str(tmp_path / ".job-credentials"))
+    body = mock_upload_correct_request.model_copy(update={"job_credential": credential})
+
+    response = upload_application(TEST_MODEL_ID, body, TMP_PATH_UPLOAD_DIR)
+
+    assert (tmp_path / ".job-credentials" / TEST_MODEL_ID).read_text() == credential
+    job_dir = Path(TMP_PATH_UPLOAD_DIR) / TEST_MODEL_ID
+    in_job = [path for path in job_dir.rglob("*") if path.is_file()]
+    assert in_job
+    assert all(credential not in path.read_text() for path in in_job)
+    assert credential not in str(response)
+    assert credential not in caplog.text
 
 
 @patch("fl_api.utils.upload.configure_environment", MagicMock())

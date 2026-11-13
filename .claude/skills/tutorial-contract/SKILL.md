@@ -68,6 +68,7 @@ comments in the copied structural files — each explains a trap that has bitten
 | New tutorial is… | NVFLARE | Flower |
 |------------------|---------|--------|
 | Tabular / OMOP-only, CPU | `tabular_classification/ehr_risk_prediction` (smallest; per-site partitioning) | `ehr_risk_prediction` |
+| Statistics through FedAvg (no training; the model is the result) | `tabular_causal_discovery/biomarker_causal_discovery` | `biomarker_causal_discovery` |
 | 2-D imaging classification | `image_classification/xray_classification` | `xray_classification` |
 | 3-D segmentation (NIfTI via XNAT, labels as enrichment) | `image_segmentation/3d_spleen_segmentation` | `3d_spleen_segmentation`; `3d_prostate_segmentation` for multi-series studies + an nnU-Net plan |
 | Evaluation of an uploaded checkpoint | `image_evaluation/3d_spleen_segmentation_evaluation`; `arkplus_*_evaluation` for several checkpoints | `3d_spleen_segmentation_evaluation` |
@@ -151,7 +152,7 @@ parity test refuses any difference.
 | `.env.app` + `Makefile` | Evaluation tutorials only: `MODEL_CHECKPOINT_URL=…` and a `download-checkpoints` target. Not a discovery marker on Flower. |
 
 `[tool.flwr.app.config]` must hold: `num-server-rounds`; the five `dp-*` keys with `dp-enabled =
-true` (`flip.flower.privacy.LocalDpConfig`); the `flip-model-id` / `flip-project-id` /
+true` (`flip.flower.privacy.LocalDpConfig`; a statistics app sets `false`, §5); the `flip-model-id` / `flip-project-id` /
 `flip-cohort-query` / `flip-job-dir` placeholders fl-api overrides at submit; `flip-min-clients = 2`
 as a TOML int ≥ 2 at line start (`sim-tutorial.sh` seds it for the site count, the min_clients guard
 asserts it, fl-api overrides it — it is a quorum, never a partition count); `best-model-metric` /
@@ -194,6 +195,27 @@ template, required files present, template files byte-identical), `test_flower_m
   with imaging **off** (FLIP#1071 — left on, the hub dispatches `create_imaging` and the run dies at
   the image-pull wait): the e2e target pins `--no-imaging`, the demo profile `has_imaging: False`.
   One dev CSV sliced per site; CPU; figure = feature set + label prevalence.
+- **Statistics through FedAvg.** A parameter-free module whose buffers are the exchanged arrays, so
+  the downloaded model *is* the result and a committed `summarise_results.py` reads it
+  (`biomarker_causal_discovery`: bootstrapped FCI as pooled sufficient statistics). Each site releases
+  **one** statistic per run, never one per bootstrap — reproducible resamples are a system of known
+  weighted sums that inverts to rows (the #1484 review). Floors the config can only raise (a hard row
+  floor above the trust's own `COHORT_QUERY_THRESHOLD`, which its data-access-api enforces before the app
+  sees a row, and a small-cell rule for discrete columns) and refusals that name neither count nor
+  column, since Flower forwards a client's exception text to the hub (NVFLARE's client API sends a
+  generic failure). The last round consumes and zeroes the statistics, so the job refuses
+  fewer than two rounds. Shape the payload so the NVFLARE percentile filter is a no-op; Flower's
+  clip-and-noise cannot be made one, so switch it off in both `pyproject.toml` and `config.toml`
+  (the exception to §4's `dp-enabled = true`), refuse a run config that turns it back on, and say
+  why. Say in the README which checks are app code and which the trust enforces. The README shows
+  the loop as a Mermaid block and an agreement table in place of a curve.
+- **Access-controlled dataset.** The dataset target is a converter from the licence holder's own
+  download (`convert-adni-cohort ADNI_DIR=`) into the gitignored data root, refusing any output path
+  git tracks; no rows, no synthetic stand-in, tests on invented tables of the same shape, and when the
+  agreement forbids third-party AI tools on the rows, never print a row into a session. The README
+  carries the application steps, the acknowledgement and the agreement's conditions; figures are
+  aggregates. Never seeded on the shared dev trusts: a `load-<cohort>` target for a licence holder's
+  local trusts, the e2e target documented with that prerequisite, and no demo video.
 - **Evaluation.** `evaluator.py` + `FlipEvalRecipe` / the `evaluation` template; the checkpoint is
   staged host-side (`download-checkpoints`, `prepare-checkpoint`) into the upload dir, never fetched
   at run time; the e2e target points `QUERY_FILE` at the training tutorial's query. The demo
@@ -204,8 +226,9 @@ template, required files present, template files byte-identical), `test_flower_m
   pickle host-side under `process_tools/`). Two-stage: two `standard` jobs, the second
   taking the first's result as a frozen `SERVER_CHECKPOINT` (`prepare-checkpoint` extracts it,
   `AGGREGATE_ONLY_REGEX` keeps it out of aggregation), perceptual-loss weights via `make weights`;
-  NVFLARE only (`image_generation/brain_mri_ldm_*`). Show
-  the loop as a Mermaid block in the README. `fed_opt` has a template and no tutorial yet.
+  NVFLARE only (`image_generation/brain_mri_ldm_*`). A flow diagram only where the loop cannot be
+  said in two sentences, in plain words (`references/readme-shape.md`). `fed_opt` has a template and
+  no tutorial yet.
 - **Weights and checkpoints** follow the root `AGENTS.md` security rule: no run-time download in
   app code, every `torch.load` with `weights_only=True`, uploads `.safetensors` preferred
   (`test_offline_apps.py` is the guard).
@@ -245,4 +268,6 @@ workflow's `paths:` if needed. Changing the dataset or job type: re-run §1 for 
 every registration that named the old value. Known drift to look for when auditing: a Flower client
 reading `SUPERNODE_NAME`, a README quoting a target the root Makefile does not forward, a tutorial
 missing from the docs catalogue or the recorder's `APPS`, a `torch.load` without `weights_only=True`,
-a README with no figure, no Expected performance, no citation. Fix what is small in place; file the rest.
+a README with no figure, no Expected performance, no citation; a title that names the backend or
+"FLIP tutorial" instead of the task, a "Compatible job type" section beside the at-a-glance table, a
+diagram that restates a sentence. Fix what is small in place; file the rest.

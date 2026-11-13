@@ -183,6 +183,13 @@ e2e_smoke:
 	@echo "🚀 Running e2e smoke (model files: $(MODEL_FILES_DIR), query: $(QUERY_FILE))..."
 	env DB_HOST=localhost uv run python -m tests.e2e_smoke --model-files-dir "$(MODEL_FILES_DIR)" --query-file "$(QUERY_FILE)" $(ENRICHMENT_ARGS) $(TARGET_ARGS) $(EXTRA_ARGS)
 
+# Capture one project's API responses as fixtures for the public demo (FLIP#1746):
+#   make capture_demo_project EXTRA_ARGS="--project-id <uuid> --slug ehr-risk"
+# Writes ../flip-ui/mocks/demo/projects/<slug>/data/*.json and prints the trusts to map in its register.
+capture_demo_project:
+	@echo "📸 Capturing demo fixtures ($(EXTRA_ARGS))..."
+	env DB_HOST=localhost uv run python -m tests.capture_demo_project $(EXTRA_ARGS)
+
 # Spleen-segmentation variant of e2e_smoke: same recipe, with the spleen tutorial
 # defaults plus a data-enrichment step that uploads segmentation labels into every
 # trust's XNAT between image pull and training. Target-specific vars override the
@@ -243,6 +250,17 @@ e2e_smoke_ehr: QUERY_FILE := $(if $(filter flower,$(FL_BACKEND)),$(EHR_FLOWER_DI
 e2e_smoke_ehr: TARGET_ARGS := --no-imaging
 e2e_smoke_ehr: e2e_smoke
 
+# Biomarker causal-discovery variant: the other tabular-only cohort. Its data is a licence
+# holder's own ADNI cohort, loaded into the LOCAL dev trusts first with
+# `make -C trust load-adni-cohort TRUST_INDEX=<1|2> OMOP_DB_PORT=<5434|5436>` (after
+# `make -C fl-tutorials convert-adni-cohort`). The FL images carry causal-learn (flip-utils' `full` extra).
+CAUSAL_FLOWER_DIR := ../fl-tutorials/flower/tabular_causal_discovery/biomarker_causal_discovery
+CAUSAL_NVFLARE_DIR := ../fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery
+e2e_smoke_causal: MODEL_FILES_DIR := $(if $(filter flower,$(FL_BACKEND)),$(CAUSAL_FLOWER_DIR)/app,$(CAUSAL_NVFLARE_DIR)/app_files)
+e2e_smoke_causal: QUERY_FILE := $(if $(filter flower,$(FL_BACKEND)),$(CAUSAL_FLOWER_DIR)/query.sql,$(CAUSAL_NVFLARE_DIR)/query.sql)
+e2e_smoke_causal: TARGET_ARGS := --no-imaging
+e2e_smoke_causal: e2e_smoke
+
 # Prostate variant: the PI-CAI cohort (prostate_project, seeded into the trusts by
 # `make -C trust seed-trusts PROJECTS=prostate_project`), with both picai_labels masks uploaded into
 # every trust's XNAT as the enrichment step, then the Flower 3d_prostate_segmentation app trained
@@ -270,5 +288,7 @@ _require_flower_backend:
 
 generate-internal-service-key:
 	uv run python -m flip_api.scripts.generate_internal_service_key $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)
+generate-fl-api-key:
+	uv run python -m flip_api.scripts.generate_fl_api_key $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)
 generate-xnat-credentials:
 	uv run python -m flip_api.scripts.generate_xnat_credentials $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)

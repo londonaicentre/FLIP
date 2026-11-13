@@ -34,6 +34,7 @@ services:
     environment:
       - DEBUG=${DEBUG}
       - SUPERLINK_ADDRESS=fl-server-net-1:8000
+      - FL_API_KEY=${FL_API_KEY}
       # Origin allow-list for the server-side bundle fetch (FLIP#905, #1291): the only origin the
       # FL API may download an app bundle from — the dev object store flip-api presigns bundle
       # URLs against (AWS_ENDPOINT_URL_S3 in its service block; path-style URLs, host exactly
@@ -42,6 +43,8 @@ services:
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
       - FLOWER_SRC_ROOT=/app/src
+      # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
+      - JOB_CREDENTIAL_DIR=/app/src/.job-credentials
     ports:
       - "${HUB_BIND_ADDRESS:-127.0.0.1}:${FL_API_PORT}:8000"
       # Loopback-only — an exposed debugpy port is arbitrary code execution for anyone
@@ -73,11 +76,14 @@ services:
     environment:
       - DEBUG=${DEBUG}
       - SUPERLINK_ADDRESS=fl-server-net-2:8000
+      - FL_API_KEY=${FL_API_KEY}
       # Bundle-fetch origin allow-list: the dev object store, like fl-api-net-1 (FLIP#905, #1291).
       - BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-2:9097
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
       - FLOWER_SRC_ROOT=/app/src
+      # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
+      - JOB_CREDENTIAL_DIR=/app/src/.job-credentials
     depends_on:
       - fl-server-net-2
     security_opt:
@@ -102,8 +108,8 @@ services:
     # (app, uid 49999) cannot read the host-provisioned 0640 TLS keys; root can, but
     # a root SuperLink rewrites every host-owned file it touches as root:root, which
     # is how the operator's AWS SSO token used to end up unreadable to their own CLI.
-    # That particular mount has since gone (results go to the dev object store with
-    # static keys, FLIP#1291), but the hazard applies to any host-owned bind mount,
+    # That particular mount has since gone (results go to the dev object store,
+    # FLIP#1291), but the hazard applies to any host-owned bind mount,
     # and matching flip-api (FLIP#1171) is the honest fix. The uid is the host's, so
     # the provisioned keys and the bundle dir shared with flip-api are readable and
     # writable; the gid stays the image's, so the rest of the image tree is readable
@@ -147,18 +153,13 @@ services:
       - FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION=1
       - LOCAL_DEV=false
       - IMAGES_DIR=/app/data/images
-      - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
-      # Results go to the dev object store (FLIP#1291) with its static keys — generic AWS
-      # env is right here, the fl-server has no other AWS use. Same variables as the store.
-      - AWS_ENDPOINT_URL_S3=http://object-store:9000
-      - AWS_ACCESS_KEY_ID=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
-      - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
-      - AWS_DEFAULT_REGION=${AWS_REGION:?AWS_REGION must be set in the env file}
+      # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
+      - JOB_CREDENTIAL_DIR=/app/src/.job-credentials
     depends_on:
-      # The store must serve before the first results upload (FLIP#1291).
+      # The store must serve before the first results upload, through URLs flip-api presigns (FLIP#1291).
       object-store:
         condition: service_healthy
     command:
@@ -203,7 +204,7 @@ services:
   # address and port the kits already dial. No capabilities: the host group reads the key.
   fl-fleet-proxy-net-1:
     image: ${DOCKER_FL_REGISTRY}flower-fleet-proxy:${DOCKER_FL_TAG}
-    group_add: ["${DOCKER_GID:-1000}"]
+    group_add: ["${DOCKER_GID:?DOCKER_GID must be the host user's gid; make up exports it}"]
     volumes:
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
     environment:
@@ -235,6 +236,7 @@ services:
       # 0, leaving SuperNode keys unlabelled and FL metrics attributed to unknown_client
       # (FLIP#957).
       - FL_API_ADDRESS=http://fl-api-net-1:8000
+      - FL_API_KEY=${FL_API_KEY}
       # The script reads ${TRUST_NAMES} as a label list, but the underlying identity it's
       # labelling is the per-slot SuperNode key — one entry per provisioned slot. Feed
       # FL_KIT_SLOT_NAMES through so trusts admin-created later (and bound to a slot via
@@ -282,18 +284,13 @@ services:
       - FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION=1
       - LOCAL_DEV=false
       - IMAGES_DIR=/app/data/images
-      - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
-      # Results go to the dev object store (FLIP#1291) with its static keys — generic AWS
-      # env is right here, the fl-server has no other AWS use. Same variables as the store.
-      - AWS_ENDPOINT_URL_S3=http://object-store:9000
-      - AWS_ACCESS_KEY_ID=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
-      - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
-      - AWS_DEFAULT_REGION=${AWS_REGION:?AWS_REGION must be set in the env file}
+      # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
+      - JOB_CREDENTIAL_DIR=/app/src/.job-credentials
     depends_on:
-      # The store must serve before the first results upload (FLIP#1291).
+      # The store must serve before the first results upload, through URLs flip-api presigns (FLIP#1291).
       object-store:
         condition: service_healthy
     command:
@@ -328,7 +325,7 @@ services:
   # The trusts' only route to the net-2 SuperLink — see fl-fleet-proxy-net-1 above.
   fl-fleet-proxy-net-2:
     image: ${DOCKER_FL_REGISTRY}flower-fleet-proxy:${DOCKER_FL_TAG}
-    group_add: ["${DOCKER_GID:-1000}"]
+    group_add: ["${DOCKER_GID:?DOCKER_GID must be the host user's gid; make up exports it}"]
     volumes:
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
     environment:
@@ -355,6 +352,7 @@ services:
       - SUPERLINK_ADDRESS=fl-server-net-2:8000
       # Service name — see net-1 above.
       - FL_API_ADDRESS=http://fl-api-net-2:8000
+      - FL_API_KEY=${FL_API_KEY}
       # See net-1 above — feed FL_KIT_SLOT_NAMES so all provisioned slots get labelled.
       - TRUST_NAMES=${FL_KIT_SLOT_NAMES}
     volumes:

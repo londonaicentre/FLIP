@@ -102,7 +102,7 @@ The kit also carries the trust's **disclosure floor**:
 COHORT_QUERY_THRESHOLD=10
 ```
 
-This is the minimum cohort size the trust will release anything about. Cohort statistics below it are privacy-suppressed (a genuine zero and a small count are indistinguishable), and both row-level routes refuse outright — `/cohort/dataframe`, which supplies FL training data, and `/cohort/accession-ids`, which decides whose imaging is pulled into XNAT. Raise it to release less. It is the operator's setting, not the hub's: trusts need not agree on a value, and the hub cannot lower it. See [`data-access-api/README.md`](data-access-api/README.md#row-level-data-and-the-disclosure-threshold). The same schema serves dev trusts (GSTT/KCH against a local hub), on-prem trusts (against a prod hub), and laptop-against-prod testing — operator picks the kit code (`trust/.env.<CODE>.<env>`) and `make -C trust up-trust KIT=<CODE> HUB=<env>` handles the rest.
+This is the minimum cohort size the trust will release anything about. Cohort statistics below it are privacy-suppressed (a genuine zero and a small count are indistinguishable), and both row-level routes refuse outright — `/cohort/dataframe`, which supplies FL training data, and `/cohort/accession-ids`, which decides whose imaging is pulled into XNAT. Raise it to release less. It is the operator's setting, not the hub's: trusts need not agree on a value, and the hub cannot lower it. The FL client receives the same value, so an app that releases site-level statistics rather than model weights (the biomarker causal-discovery tutorial) refuses below the trust's floor too. See [`data-access-api/README.md`](data-access-api/README.md#row-level-data-and-the-disclosure-threshold). The same schema serves dev trusts (GSTT/KCH against a local hub), on-prem trusts (against a prod hub), and laptop-against-prod testing — operator picks the kit code (`trust/.env.<CODE>.<env>`) and `make -C trust up-trust KIT=<CODE> HUB=<env>` handles the rest.
 
 #### Site-enforced FL privacy policy (optional, FLARE only)
 
@@ -195,10 +195,11 @@ make -C trust down-trust KIT=GSTT   # if a previous GSTT stack is running
 make -C trust up-trust KIT=GSTT
 ```
 
-On an on-prem host provisioned by the on-prem playbook, prefix these with `sudo -E` — the login
-user is deliberately not in the docker group (see
-[trust/deploy/ansible/README.md](deploy/ansible/README.md)). Dev workstations are
-unaffected.
+Run these as a user with Docker socket access. On a host provisioned by the on-prem playbook
+that means prefixing `sudo -E` — the login user is deliberately not in the docker group (see
+[trust/deploy/ansible/README.md](deploy/ansible/README.md)); what the stack needs from the
+account is listed under "Access the operator needs" in `docs/source/deploy-flip/deploy-flip-node-on-prem.rst`.
+Dev workstations are unaffected.
 
 The trust-api container authenticates with its `TRUST_API_KEY` and posts a heartbeat to `POST /trust/heartbeat` (no name segment — the hub resolves the trust's identity from the API key). The Connection status page flips the row online within ~30s.
 
@@ -275,6 +276,11 @@ the separate credentialed `make -C trust/omop-db load-omop-vocab` step.
 make -C trust ensure-seeded KIT=GSTT PROJECTS="cxr_project"                   # what up-trust runs; safe to repeat
 make -C trust seed KIT=GSTT PROJECTS="prostate_project"                       # add a project, unconditionally
 ```
+
+A real trust, whose OMOP and PACS hold its own data, sets `TRUST_DATA_SEED=false` in its kit:
+`ensure-seeded` then fetches, loads and marks nothing, and on Kubernetes `sync-kit` turns
+`trustData.seed.enabled` off. The explicit `seed*` / `unseed*` targets refuse that trust unless `FORCE_SEED=1`. If that trust's OMOP lacks the DICOM vocabulary, load it on its own with
+`make -C trust/omop-db load-dicom-vocab` and the kit's `OMOP_*` values.
 
 **A host seeded before FLIP#1187 re-seeds once.** The PACS marker used to live *inside* the
 storage directory (`<storage dir>/.seeded`) and now sits beside it, because the directory
@@ -499,11 +505,10 @@ Its heading and fix hints name that selected path. Pass `HUB=stag` to the checkl
 5. Start the stack:
    - EC2 trust: `make -C trust up-trust-ec2 KIT=<CODE> HUB=prod` (stop it with
      `make -C trust down-trust-ec2 KIT=<CODE> HUB=prod`)
-   - On-prem trust: `sudo -E make -C trust up-trust KIT=<CODE> HUB=prod`
-     (sudo: the provisioned login user is deliberately not in the docker group;
-     `-E` keeps `$HOME` so root's docker reuses your GHCR login)
-   - Laptop-against-prod: `make -C trust up-trust KIT=<CODE> HUB=prod` (no sudo —
-     your workstation isn't provisioned by the on-prem playbook)
+   - On-prem trust: `make -C trust up-trust KIT=<CODE> HUB=prod`, as a user with
+     Docker socket access (on a playbook-provisioned host: `sudo -E make …`, since
+     its login user has none; `-E` keeps `$HOME` so root's docker reuses your GHCR login)
+   - Laptop-against-prod: the same command, as yourself
 
    `HUB` names the hub you are joining, and with it the kit-file suffix the
    trust Makefiles read: `prod` → `.env.<CODE>.prod`, `stag` → `.env.<CODE>.stag`.
@@ -529,8 +534,8 @@ Its heading and fix hints name that selected path. Pass `HUB=stag` to the checkl
 
 ```bash
 git fetch --tags origin && git checkout vX.Y.Z              # the checkout first: compose files + this verb come from it
-sudo -E make upgrade-onprem-trust KIT=<CODE>              # → the release the hub runs
-sudo -E make upgrade-onprem-trust KIT=<CODE> TAG=vX.Y.Z   # → a named release
+make upgrade-onprem-trust KIT=<CODE>              # → the release the hub runs
+make upgrade-onprem-trust KIT=<CODE> TAG=vX.Y.Z   # → a named release
 ```
 
 Runs the readiness checklist, resolves the target (the hub's `/api/health`
@@ -560,7 +565,7 @@ channel. Replace **only the Hub-shared block** in your local copy (your
 Host-local profile and Trust-local credentials stay yours), then re-apply:
 
 ```bash
-sudo -E make upgrade-onprem-trust KIT=<CODE> YES=1
+make upgrade-onprem-trust KIT=<CODE> YES=1
 ```
 
 That recreates only the containers whose configuration changed and leaves the

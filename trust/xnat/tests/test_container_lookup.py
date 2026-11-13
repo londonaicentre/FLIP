@@ -62,7 +62,8 @@ ROLLING_UPDATE = [
 DOCKER_SHIM = r"""#!/bin/bash
 # `docker` stand-in: `ps` answers from $FAKE_DOCKER_PS (id|name|namespace|service per line) with
 # Docker's own filter semantics — `name=` is a regex search, `label=k=v` an exact match — and
-# `exec` appends its argv (tab-separated) to $FAKE_DOCKER_EXEC_LOG instead of running anything.
+# `exec` appends its argv (tab-separated) to $FAKE_DOCKER_EXEC_LOG instead of running anything, and
+# `run` (xnat-backup's writability check and dump container) succeeds without doing anything.
 set -u
 case "${1:-}" in
   ps)
@@ -93,6 +94,7 @@ case "${1:-}" in
     printf '%s\t' "$@" >> "$FAKE_DOCKER_EXEC_LOG"
     printf '\n' >> "$FAKE_DOCKER_EXEC_LOG"
     ;;
+  run) exit 0 ;;
   *) echo "docker shim: unexpected command: $*" >&2; exit 2 ;;
 esac
 """
@@ -212,7 +214,7 @@ class TestBackupFindsItsOwnStack:
                 (wanted_db, f"{STACK}_xnat-db.1.wantedwantedwanted", STACK, f"{STACK}_xnat-db"),
             ],
         )
-        # Past the dump, `docker run` is not modelled and the recipe fails; only the exec target matters here.
+        # `docker run` is a no-op here; only the exec target matters.
         host.run(_recipe("xnat-backup", "FL_KIT_SLOT_NUMBER=1"))
 
         execs = host.execs()

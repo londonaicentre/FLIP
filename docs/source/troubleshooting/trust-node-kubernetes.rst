@@ -357,15 +357,10 @@ Releases before the DICOM and web ports were split could send ``XNAT:8080``, the
 Studies arrive but land in the Unassigned prearchive
 ====================================================
 
-Retrieval works (the PACS sends, requests reach ``RECEIVED``), but no sessions appear in the project.
-``dqr.log`` shows:
-
-.. code-block:: text
-
-   WARN ... PacsDequeueThread - Cannot build session. 0 prearchive sessions found
-   for study 1.2.826... in project <imaging-project-id>.
-
-and ``/data/xnat/prearchive/`` fills with top-level timestamp folders instead of ``<project>/<timestamp>/``.
+Retrieval works (the PACS sends), but no sessions appear in the project, and ``/data/xnat/prearchive/`` fills
+with top-level timestamp folders instead of ``<project>/<timestamp>/``. The request's ``FAILED`` and the
+``Received zero files for study ... in project ...`` warning in ``dqr.log`` do not tell this apart: DQR reports
+every import into FLIP's direct-archive receiver that way.
 
 **Cause.** XNAT's DICOM receiver is the stock one. Routing studies to the requesting project, and relabelling them
 the way the FL client looks them up, needs the retrieval plugin's identifier on the receiver.
@@ -392,8 +387,9 @@ hand: delete the top-level timestamp folders and re-pull them (:ref:`ts-k8s-forc
 
 .. note::
 
-   With direct archiving on, the ``Cannot build session`` warning still appears on every pull and is harmless:
-   sessions skip the prearchive. Count the project's sessions with
+   With direct archiving on, DQR marks every request ``FAILED`` and logs the
+   ``Received zero files for study ... in project ...`` warning on every pull. Both are harmless: sessions skip the
+   prearchive, the only place DQR looks. Count the project's sessions with
    ``ls /data/xnat/archive/<imaging-project-id>/arc001 | wc -l`` in the pod.
 
 .. _ts-k8s-xnat-401:
@@ -798,6 +794,19 @@ If you manage the values by hand, add the port to ``networkPolicies.allowedEgres
 
    "FL client won't connect" in the :gh:`chart README <trust/deploy/helm/README.md>` for the kit path, kit owner
    and GPU checks.
+
+.. _ts-k8s-fl-reset:
+
+The FL client's connection to the FL server is reset after the TLS hello
+========================================================================
+
+A TCP connection to the FL server succeeds and the egress policy allows the port, but the connection drops with
+nothing read back once the TLS handshake starts.
+
+**Cause.** An application-aware firewall at the site's perimeter rejecting TLS on a non-default port. Nothing in the
+cluster changes it. Confirm with the ``openssl`` check on :ref:`deploy-trust-node-network`, from a pod or the admin
+host, then ask the network team to allow the ``ssl`` application to the FL endpoint on its port, or use a site-to-site
+VPN (:ref:`site-to-site-vpn`).
 
 **********
 Governance

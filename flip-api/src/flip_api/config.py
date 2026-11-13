@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     # Internal service auth (fl-server on the Central Hub)
     INTERNAL_SERVICE_KEY_HEADER: str
 
+    # FL API auth (flip-api → fl-api-net-N): sent on every FL API call, required by every FL API
+    # route but /health. Dedicated to that hop — never INTERNAL_SERVICE_KEY. Dev: minted into the
+    # env file by `make up`; prod: a `secrets` entry of the ECS task (FLIP_API secret, `fl_api_key`).
+    FL_API_KEY_HEADER: str = "X-FL-API-Key"
+    FL_API_KEY: str
+
     # AWS settings
     AWS_PROFILE: str | None = None
     AWS_REGION: str
@@ -123,6 +129,9 @@ class Settings(BaseSettings):
     # weights, ~1.5 GiB for the multimodel variant) can be uploaded; the FL API
     # stages such checkpoints server-side rather than bundling them into the app.
     MAX_MODEL_FILE_BYTES: int = 5 * 1024 * 1024 * 1024
+    # Hard cap on the results zip an FL job uploads (private_services/results_upload.py). The upper bound is
+    # what S3 takes in the 64 MiB parts the hub signs: 10,000 of them.
+    MAX_RESULTS_FILE_BYTES: int = Field(default=50 * 1024 * 1024 * 1024, gt=0, le=10_000 * 64 * 1024 * 1024)
     # Default equals the MAX_PRESIGNED_URL_TTL_SECONDS security ceiling in
     # utils/s3_client.py: anything higher would be silently clamped anyway,
     # with a per-call warning — so a default-configured deployment would log
@@ -340,19 +349,18 @@ class Settings(BaseSettings):
             return v.upper()
         return v
 
-    @field_validator("MAX_MODEL_FILE_BYTES", mode="before")
+    @field_validator("MAX_MODEL_FILE_BYTES", "MAX_RESULTS_FILE_BYTES", mode="before")
     @classmethod
-    def coerce_empty_max_model_file_bytes(cls, v: object) -> object:
-        """Treat empty-string MAX_MODEL_FILE_BYTES as the field default 5 GiB.
+    def coerce_empty_max_model_file_bytes(cls, v: object, info: ValidationInfo) -> object:
+        """Treat an empty-string size cap as the field's default.
 
         GitHub Actions environments inject empty-string env vars for every
         var that isn't explicitly set in the environment scope; Pydantic
         treats that as a real override and rejects it against ``int``.
-        Same shape as ``coerce_empty_env``. Must stay
-        in sync with the ``MAX_MODEL_FILE_BYTES`` field default above.
+        Same shape as ``coerce_empty_env``.
         """
         if v is None or v == "":
-            return 5 * 1024 * 1024 * 1024
+            return cls.model_fields[str(info.field_name)].default
         return v
 
     @field_validator("PRE_SIGNED_URL_EXPIRATION_SECONDS", mode="before")

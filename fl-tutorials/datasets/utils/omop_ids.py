@@ -19,7 +19,7 @@ image_occurrence_id) must not collide across projects, so each project gets a re
 ``image_feature_id`` is block-allocated for spleen but **derived** for cxr, which is why it is not in
 that list — see ``DERIVED_ID_BANDS`` for the band it lands in instead.
 
-``person_id`` is deliberately NOT covered here: it comes from ``nhs_number_to_integer(PatientID)``,
+``person_id`` is deliberately NOT covered here: it comes from ``person_id(PatientID)`` (below),
 the first nine digits of a random NHS number, so it is outside our control and scatters across the
 whole 9-digit range. Do not assume a person_id band is reserved — it is not.
 """
@@ -50,6 +50,21 @@ BLOCK_SIZE = 1_000_000
 DERIVED_ID_BANDS = {
     ("cxr_project", "image_feature_id"): (100_000_100, 200_000_099),
 }
+
+
+def person_id(nhs: str) -> int:
+    """The OMOP ``person_id`` the converters derive from a PatientID: the first nine digits of the NHS number.
+
+    The one definition every converter and the synthetic-identity generator share, so their
+    person_ids cannot drift apart.
+
+    Args:
+        nhs: The PatientID, an NHS number with or without spaces (e.g. ``"123 456 7890"``).
+
+    Returns:
+        int: The first nine digits as an integer.
+    """
+    return int(nhs.replace(" ", "")[:9])
 
 
 def surrogate_ids(project: str, count: int) -> range:

@@ -23,8 +23,8 @@ TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials sim-tutorial
 # Dataset targets are backend-agnostic: one download per dataset under the shared data root,
 # read by both harnesses (single copy in datasets/), so FL_BACKEND plays no part in them.
 DATASET_TARGETS := download-xray-data download-weights \
-	download-spleen-data download-spleen-checkpoint \
-	download-synthea-data upload-spleen-labels download-arkplus-finetuning-data \
+	download-spleen-data download-spleen-checkpoint download-spleen-msd-data \
+	download-synthea-data convert-adni-cohort upload-spleen-labels download-arkplus-finetuning-data \
 	download-arkplus-eval-data \
 	download-idc-pathology-data fetch-idc-pathology-manifest build-idc-pathology-omop \
 	verify-idc-pathology-omop-tables reproduce-idc-pathology-omop \
@@ -93,7 +93,7 @@ PYTEST ?= uv run --project ../flip-utils --extra full --group dev --group diffus
 # tests/datasets/utils/ is the shared contract and runs ONCE, in the first listed project's
 # environment. Any dataset environment can host it; re-running it per project would just repeat the
 # same assertions, and is not what catches the dependency drift above.
-DATASET_TEST_PROJECTS ?= spleen cxr synthea brain_mri prostate
+DATASET_TEST_PROJECTS ?= spleen cxr synthea brain_mri prostate ad_biomarkers
 DATASET_UTILS_PROJECT ?= $(firstword $(DATASET_TEST_PROJECTS))
 
 .PHONY: pytest pytest-datasets test unit_test

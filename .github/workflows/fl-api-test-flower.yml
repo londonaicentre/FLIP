@@ -26,6 +26,9 @@ on:
       - "fl-services/flower/fl-api-flower/**"
       - "fl-services/flower/fleet-proxy/**"
       - "fl-services/flower/register-supernode-keys.sh"
+      # The flwr/base tag and flip-utils' locked flwr, which tests/test_fleet_proxy_allowlist.py checks agree.
+      - "fl-services/flower/fl-base/Dockerfile"
+      - "flip-utils/uv.lock"
       - ".github/workflows/fl-api-test-flower.yml"
   pull_request:
     branches: [main, develop]
@@ -36,6 +39,9 @@ on:
       - "fl-services/flower/fl-api-flower/**"
       - "fl-services/flower/fleet-proxy/**"
       - "fl-services/flower/register-supernode-keys.sh"
+      # The flwr/base tag and flip-utils' locked flwr, which tests/test_fleet_proxy_allowlist.py checks agree.
+      - "fl-services/flower/fl-base/Dockerfile"
+      - "flip-utils/uv.lock"
       - ".github/workflows/fl-api-test-flower.yml"
 jobs:
   flip-fl-api:

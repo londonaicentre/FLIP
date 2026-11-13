@@ -26,8 +26,13 @@ failure that actually happened rather than a hypothetical:
   uid is absent from the image's ``/etc/passwd``: ``pwd.getpwuid()`` raises, ``HOME``
   falls back to ``/``, and the symptom surfaces three layers away as torch's
   "Artifact of type=precompile already registered in mega-cache artifact factory".
-- Prod composes must not override ``user:`` at all: prod runs as the image's
-  baked user, and EFS access points remap ownership regardless.
+- Host supplementary groups must require ``DOCKER_GID``: guessing 1000 can leave
+  provisioned keys unreadable or grant a different host group's access (FLIP#1404).
+- A prod service that writes a host bind mount runs as ``${FLIP_UID:-<image uid>}``: a kit's
+  FLIP_UID re-points it to the operator's own ids, unset leaves the image's baked user
+  (FLIP#1731). The defaults are pinned here so a compose edit cannot move a default site, and
+  the images those services run must tolerate a uid they do not know. Hub composes and
+  services with no host mount still set no ``user:``.
 
 Deliberately stdlib-only and executable as a plain script — ``test_trust_kit_scripts.yml``
 runs these with ``python <file>``, not pytest, and PyYAML is not installed there. The
@@ -73,7 +78,30 @@ NON_ROOT_DEV_SERVICES = {
 PROD_COMPOSE_GLOBS = (
     "deploy/compose.prod*.yml",
     "trust/deploy/compose/compose_trust.prod*.yml",
+    "trust/xnat/docker-compose-stack.prod.yml",
 )
+# The prod services that write a host bind mount, and each image's own uid:gid — what the service
+# runs as when the kit sets no FLIP_UID (FLIP#1731). omop-db's is root: its entrypoint re-owns the
+# data dir, then drops to postgres. xnat-db is absent on purpose: every existing site's database is
+# uid 70's, so it keeps the root entrypoint, which re-owns it, under FLIP_UID too.
+PROD_BIND_MOUNT_WRITERS = {
+    ("compose_trust.prod.yml", "omop-db"): "0:0",
+    ("compose_trust.prod.yml", "orthanc"): "999:999",
+    ("compose_trust.prod.yml", "imaging-api"): "1000:1000",
+    ("compose_trust.prod.yml", "data-access-api"): "1000:1000",
+    ("compose_trust.prod.nvflare.yml", "fl-governance-init"): "1000:1000",
+    ("compose_trust.prod.nvflare.yml", "fl-client-net-1"): "1000:1000",
+    ("compose_trust.prod.flower.yml", "fl-client-net-1"): "49999:49999",
+    ("docker-compose-stack.prod.yml", "xnat-web"): "1001:1001",
+}
+# What each image changes so a uid it does not know can run it (FLIP#1731): the line that does it.
+FOREIGN_UID_IMAGE_FIXES = {
+    "trust/orthanc/Dockerfile": ("chmod 666 /etc/hostid", "/usr/share/orthanc/plugins/"),
+    "trust/xnat/xnat/Dockerfile": ("chmod 1777", "${XNAT_HOME}/config", "${XNAT_ROOT}/prearchive"),
+    "fl-services/nvflare/fl-base/Dockerfile": ("chmod 1777 /app",),
+    "fl-services/nvflare/fl-client/fl-client/entrypoint.sh": ("id -un", "export HOME=/tmp USER=flip LOGNAME=flip"),
+    "fl-services/flower/fl-base/Dockerfile": ("chmod 1777 /app /app/.cache",),
+}
 
 IDENTITY_ENV_KEYS = ("HOME", "USER", "LOGNAME")
 
@@ -313,19 +341,83 @@ def check_dev_fl_services_are_non_root(failures: list[str]) -> None:
                     )
 
 
-def check_production_does_not_override_user(failures: list[str]) -> None:
-    """Production runs as the image's baked user; nothing should re-point it."""
+def check_production_user_follows_flip_uid(failures: list[str]) -> None:
+    """A prod bind-mount writer runs as `${FLIP_UID:-<uid>}:${FLIP_GID:-<gid>}`; no other service sets `user:`.
+
+    The defaults are the images' own users, so a kit without FLIP_UID is unchanged.
+    """
+    seen: set[tuple[str, str]] = set()
     for glob in PROD_COMPOSE_GLOBS:
         parent = REPO_ROOT / Path(glob).parent
         for path in sorted(parent.glob(Path(glob).name)):
             for svc in parse_services(path):
-                if svc.user is not None:
+                key = (path.name, svc.name)
+                expected = PROD_BIND_MOUNT_WRITERS.get(key)
+                if expected is None:
+                    if svc.user is not None:
+                        failures.append(
+                            f"{svc.where}: prod compose sets `user: {svc.user}`, but this service writes no host "
+                            f"bind mount. Prod runs as the image's baked user (GHSA-8465); only the services in "
+                            f"PROD_BIND_MOUNT_WRITERS follow the kit's FLIP_UID (FLIP#1731)."
+                        )
+                    continue
+                seen.add(key)
+                uid, gid = expected.split(":")
+                want = f"${{FLIP_UID:-{uid}}}:${{FLIP_GID:-{gid}}}"
+                if svc.user != want:
                     failures.append(
-                        f"{svc.where}: prod compose sets `user: {svc.user}`. "
-                        f"Prod runs as the image's baked non-root user (GHSA-8465) and EFS "
-                        f"access points remap ownership regardless; the uid override is a "
-                        f"dev-only accommodation for host-owned bind mounts (FLIP#1171)."
+                        f"{svc.where}: `user: {svc.user}` — expected `{want}`: the kit's FLIP_UID/FLIP_GID when "
+                        f"set, else the image's own user, so an unset kit changes nothing (FLIP#1731)."
                     )
+    for key in PROD_BIND_MOUNT_WRITERS.keys() - seen:
+        failures.append(f"{key[0]}:{key[1]}: listed in PROD_BIND_MOUNT_WRITERS but not found; update the table.")
+
+
+def check_images_tolerate_a_foreign_uid(failures: list[str]) -> None:
+    """Each image a prod compose may re-point still carries the change that lets an unknown uid run it."""
+    for rel, needles in FOREIGN_UID_IMAGE_FIXES.items():
+        path = REPO_ROOT / rel
+        if not path.exists():
+            failures.append(f"{rel}: expected file is missing")
+            continue
+        text = path.read_text()
+        for needle in needles:
+            if needle not in text:
+                failures.append(
+                    f"{rel}: no longer contains `{needle}`. The prod compose runs this image as the kit's "
+                    f"FLIP_UID, which owns nothing in it; this is what let that uid write what the service "
+                    f"writes at run time (FLIP#1731)."
+                )
+
+
+# Images that take a `USER root` step to apply those changes must hand back to their own user.
+IMAGES_ENDING_NON_ROOT = ("trust/orthanc/Dockerfile", "trust/xnat/xnat/Dockerfile")
+
+# XNAT's Container Service jobs run as the uid the backend's `container-user` names; under FLIP_UID
+# that must be xnat-web's uid, or dcm2niix cannot read the 640 files it archives (FLIP#1731).
+CS_CONTAINER_USER_PLUMBING = {
+    "trust/xnat/Makefile": "export XNAT_CS_CONTAINER_USER := $(if $(FLIP_UID),$(FLIP_UID):$(FLIP_GID))",
+    "trust/xnat/docker-compose-stack.prod.yml": "XNAT_CS_CONTAINER_USER=${XNAT_CS_CONTAINER_USER:-}",
+    "trust/xnat/xnat/config/configure-dcm2niix.sh": '.["container-user"] = $user',
+}
+
+
+def check_images_hand_back_to_their_user(failures: list[str]) -> None:
+    """A Dockerfile that steps to root for a mode change ends on a non-root USER."""
+    for rel in IMAGES_ENDING_NON_ROOT:
+        users = re.findall(r"^USER\s+(\S+)", (REPO_ROOT / rel).read_text(), re.M)
+        if not users or users[-1] in ("root", "0", "0:0"):
+            last = users[-1] if users else "missing"
+            failures.append(f"{rel}: the last USER directive is {last}; it must not be root.")
+
+
+def check_container_service_jobs_follow_flip_uid(failures: list[str]) -> None:
+    for rel, needle in CS_CONTAINER_USER_PLUMBING.items():
+        if needle not in (REPO_ROOT / rel).read_text():
+            failures.append(
+                f"{rel}: no longer contains `{needle}`: under FLIP_UID the Container Service jobs would run "
+                f"as 1001 and could not read the archive xnat-web writes (FLIP#1731)."
+            )
 
 
 def check_no_uname_runtime_paths(failures: list[str]) -> None:
@@ -348,14 +440,36 @@ def check_no_uname_runtime_paths(failures: list[str]) -> None:
                 )
 
 
+def check_host_gid_is_required(failures: list[str]) -> None:
+    """Never guess the host group that reads provisioned keys and writes shared dev directories."""
+    for glob in ("deploy/**/compose*.yml", "trust/deploy/**/compose*.yml", "fl-services/*/compose*.yml"):
+        paths = sorted(REPO_ROOT.glob(glob))
+        if not paths:
+            failures.append(f"{glob}: matched no compose files")
+        for path in paths:
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                # Any DOCKER_GID left once the required form is removed is a default, a bare or an unbraced use.
+                if "DOCKER_GID" in re.sub(r"\$\{DOCKER_GID:\?[^}]*\}", "", line):
+                    failures.append(
+                        f"{path.relative_to(REPO_ROOT)}:{number}: `{line.strip()}` must require a non-empty "
+                        "DOCKER_GID with ${DOCKER_GID:?...}; the Makefile exports the host gid (FLIP#1404)."
+                    )
+
+
 def main() -> int:
     failures: list[str] = []
     try:
         check_kit_mounters_run_as_host_uid(failures)
         check_user_override_names_the_user(failures)
         check_dev_fl_services_are_non_root(failures)
-        check_production_does_not_override_user(failures)
+        check_production_user_follows_flip_uid(failures)
+        check_images_tolerate_a_foreign_uid(failures)
+        check_images_hand_back_to_their_user(failures)
+        check_container_service_jobs_follow_flip_uid(failures)
         check_no_uname_runtime_paths(failures)
+        check_host_gid_is_required(failures)
     except ValueError as exc:
         failures.append(str(exc))
 

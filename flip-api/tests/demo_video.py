@@ -63,6 +63,7 @@ from tests import demo_segments, e2e_smoke, seed_demo_projects, xnat_seg_upload
 from tests.demo_recorder import take
 from tests.demo_segments import Persona
 from tests.e2e_smoke import SmokeFailure, _get, _log, describe_tutorial
+from tests.query_files import read_query_file
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ASSEMBLE_SCRIPT = REPO_ROOT / "flip-ui" / "scripts" / "assemble-demo-video.sh"
@@ -834,7 +835,7 @@ def main(argv: list[str] | None = None) -> int:
                 has_imaging=has_imaging,
                 project_name=project_name,
                 project_description=project_description,
-                query_sql=query_file.read_text(),
+                query_sql=read_query_file(query_file),
                 model_name=model_name,
                 model_description=model_description,
                 app_files=[app_dir / name for name in app_files_for(app_dir)],

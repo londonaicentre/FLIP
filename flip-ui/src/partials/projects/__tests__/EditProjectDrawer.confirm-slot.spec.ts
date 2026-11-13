@@ -52,7 +52,8 @@ describe("EditProjectDrawer delete-confirmation slot", () => {
         updating: false,
         users: [],
         ownerId: "owner-1",
-        dicomToNifti: true
+        dicomToNifti: true,
+        hasImaging: true
     };
 
     it("renders the delete-project warning markup in the confirmation slot", () => {

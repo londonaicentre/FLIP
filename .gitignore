@@ -42,8 +42,10 @@ MANIFEST
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
-# ...but the XNAT artifact roster (trust/xnat/README.md "Plugins") is source.
+# ...but the XNAT artifact roster (trust/xnat/README.md "Plugins") and the mirrored-image
+# roster (FLIP#1721) are source.
 !trust/xnat/artifacts.manifest
+!trust/deploy/mirror-images.manifest
 *.spec
 
 # Installer logs
@@ -479,6 +481,7 @@ fl-tutorials/datasets/spleen/uv.lock
 fl-tutorials/datasets/prostate/uv.lock
 fl-tutorials/datasets/cxr/uv.lock
 fl-tutorials/datasets/synthea/uv.lock
+fl-tutorials/datasets/ad_biomarkers/uv.lock
 fl-tutorials/datasets/brain_mri/uv.lock
 
 # Output of the spleen and cxr OMOP generation chains (FLIP#1092). Regenerated on demand and verified against

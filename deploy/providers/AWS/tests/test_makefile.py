@@ -139,6 +139,7 @@ COMPLETE_ENV = {
     "INTERNAL_SERVICE_KEY": "probe",  # pragma: allowlist secret
     "INTERNAL_SERVICE_KEY_HASH": "probe",  # pragma: allowlist secret
     "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
+    "FL_API_KEY": "probe",  # pragma: allowlist secret
 }
 
 
@@ -182,6 +183,7 @@ def test_a_complete_env_file_passes_every_guard(tmp_path: Path) -> None:
         ({"INTERNAL_SERVICE_KEY": None}, "INTERNAL_SERVICE_KEY must be set"),
         ({"INTERNAL_SERVICE_KEY_HASH": None}, "INTERNAL_SERVICE_KEY_HASH"),
         ({"INTERNAL_SERVICE_KEY_HEADER": None}, "INTERNAL_SERVICE_KEY_HEADER"),
+        ({"FL_API_KEY": None}, "FL_API_KEY must be set"),
         # No default: true is wrong on a zone-less estate, false wrong on one with a zone.
         ({"MANAGE_DNS": None}, "MANAGE_DNS must be true or false"),
         ({"MANAGE_DNS": "yes"}, "MANAGE_DNS must be true or false"),

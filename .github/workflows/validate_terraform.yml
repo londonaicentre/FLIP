@@ -284,16 +284,12 @@ jobs:
         working-directory: trust/deploy/terraform/azure
         run: make test
 
+      # fmt, tflint and checkov (pinned in the Makefile, run through uvx).
       - name: Lint
         working-directory: trust/deploy/terraform/azure
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: make lint
-
-      - name: Checkov
-        run: |
-          pip install checkov==3.3.14
-          checkov -d trust/deploy/terraform/azure --framework terraform --skip-download --compact --quiet
 
   # AWS EC2 trust node (FLIP#1528): fmt, validate and `terraform test` with a mocked aws provider in
   # the root and its network module, the Makefile and ssh-config pytest, tflint with the aws

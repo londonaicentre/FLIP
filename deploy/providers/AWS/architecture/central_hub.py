@@ -133,7 +133,6 @@ TERRAFORM_ADDRESSES: dict[str, tuple[str, ...]] = {
     "Model files bucket": ("module.flip_model_files_uploads_bucket",),
     "FL results bucket": ("module.flip_fl_results_bucket",),
     "App bundles bucket": ("module.flip_app_bundles_bucket",),
-    "Demo assets bucket": ("module.flip_demo_assets_bucket",),
     "Participant kits bucket": ("aws_s3_bucket.aicentre_bucket",),
     "Access logs buckets": ("aws_s3_bucket.flip_access_logs",),
     "CloudWatch Logs": (
@@ -347,9 +346,6 @@ def _draw_data(drawn: _Drawn) -> None:
         model_files = drawn.node("Model files bucket", S3, caption="Model files bucket\nuploaded → scanned")
         fl_results = drawn.node("FL results bucket", S3, caption="FL results\nbucket")
         drawn.node("Access logs buckets", S3, caption="Access logs\nbucket")
-        # Read by the networking account's edge over cross-account OAC, which is why it carries no edge of its own
-        # in this picture — the edge is in another repository.
-        drawn.node("Demo assets bucket", S3, caption="Ark+ demo bucket\n(public downloads)")
 
     with _cluster("Regional services"):
         cognito = drawn.node("Cognito", Cognito, caption="Cognito user pool\n(TOTP MFA)")

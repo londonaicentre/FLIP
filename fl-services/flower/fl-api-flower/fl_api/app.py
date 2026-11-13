@@ -22,7 +22,7 @@ from typing import Any
 from uuid import UUID
 
 import grpc
-from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, status
 from grpc_health.v1.health_pb2 import HealthCheckRequest, HealthCheckResponse
 from grpc_health.v1.health_pb2_grpc import HealthStub
 from tomlkit import TOMLDocument, document, dumps, parse
@@ -38,6 +38,7 @@ from fl_api.schemas import (
     UploadAppRequest,
     normalize_status,
 )
+from fl_api.utils.auth import require_fl_api_key, warn_if_fl_api_key_missing
 from fl_api.utils.refusals import ResearcherRefusal, researcher_refusal_handler
 from fl_api.utils.upload import upload_application
 from fl_api.utils.validation import safe_join, validate_tutorial_folder_name, warn_if_bundle_url_allow_list_empty
@@ -55,11 +56,15 @@ app = FastAPI(
 )
 app.add_exception_handler(ResearcherRefusal, researcher_refusal_handler)
 
+# Every route but /health requires the hub's FL API key (fl_api/utils/auth.py); included at the end of the module.
+router = APIRouter(dependencies=[Depends(require_fl_api_key)])
+
 
 @app.on_event("startup")
 def on_startup() -> None:
-    """Report an empty bundle-fetch allow-list where an operator looks first: the boot log (FLIP#905)."""
+    """Report an empty bundle-fetch allow-list and a missing FL API key where an operator looks first: the boot log."""
     warn_if_bundle_url_allow_list_empty()
+    warn_if_fl_api_key_missing()
 
 
 _state_lock = threading.Lock()
@@ -259,7 +264,7 @@ def health() -> HealthResponse:
     return HealthResponse(status="ok", version=build_identity() or "unknown")
 
 
-@app.get(
+@router.get(
     "/check_server_status",
     status_code=status.HTTP_200_OK,
     response_model=ServerInfoModel,
@@ -276,7 +281,7 @@ def check_server_status() -> ServerInfoModel:
     return ServerInfoModel(status="RUNNING" if is_running else "STOPPED")
 
 
-@app.post(
+@router.post(
     "/register_node",
     status_code=status.HTTP_200_OK,
 )
@@ -292,7 +297,7 @@ def register_node(body: NodeRegistrationRequest) -> dict[str, str]:
     return {"status": "registered"}
 
 
-@app.get(
+@router.get(
     "/check_client_status",
     status_code=status.HTTP_200_OK,
     response_model=list[ClientInfoModel],
@@ -339,8 +344,8 @@ def check_client_status(
     return result
 
 
-@app.get("/list_runs", status_code=status.HTTP_200_OK, response_model=list[JobMetadata])
-@app.get("/list_jobs", include_in_schema=False)  # alias, hide from docs
+@router.get("/list_runs", status_code=status.HTTP_200_OK, response_model=list[JobMetadata])
+@router.get("/list_jobs", include_in_schema=False)  # alias, hide from docs
 def list_runs() -> list[JobMetadata]:
     src_root = _get_src_root()
     command = ["flwr", "list", "local", "--format", "json"]
@@ -429,8 +434,8 @@ def _submit_from_job_dir(job_dir: Path, label: str, *, apply_config_toml: bool =
             os.unlink(run_config_path)
 
 
-@app.post("/submit_run/{job_folder}", status_code=status.HTTP_200_OK, response_model=str)
-@app.post("/submit_job/{job_folder}", include_in_schema=False)  # alias flip-api calls with a UUID
+@router.post("/submit_run/{job_folder}", status_code=status.HTTP_200_OK, response_model=str)
+@router.post("/submit_job/{job_folder}", include_in_schema=False)  # alias flip-api calls with a UUID
 def submit_run(job_folder: UUID) -> str:
     """Submit the uploaded application in ``job_folder`` to the Flower control plane.
 
@@ -447,7 +452,7 @@ def submit_run(job_folder: UUID) -> str:
     return _submit_from_job_dir(_resolve_job_dir(str(job_folder)), str(job_folder))
 
 
-@app.post("/submit_tutorial/{tutorial_name}", status_code=status.HTTP_200_OK, response_model=str)
+@router.post("/submit_tutorial/{tutorial_name}", status_code=status.HTTP_200_OK, response_model=str)
 def submit_tutorial(tutorial_name: str) -> str:
     # Tutorial path: pre-baked tutorial folders are submitted by name (not a UUID), e.g.
     # `xray_classification`. Charset/traversal-guarded, contained under the src root.
@@ -483,8 +488,8 @@ def _find_terminal_run(src_root: Path, run_id: str) -> JobMetadata | None:
     return None
 
 
-@app.delete("/abort_run/{run_id}", status_code=status.HTTP_200_OK, response_model=JobMetadata)
-@app.delete("/abort_job/{run_id}", include_in_schema=False)  # alias, hide from docs
+@router.delete("/abort_run/{run_id}", status_code=status.HTTP_200_OK, response_model=JobMetadata)
+@router.delete("/abort_job/{run_id}", include_in_schema=False)  # alias, hide from docs
 def abort_run(run_id: int) -> JobMetadata:
     # Flower run ids are integers (flwr Context.run_id: int). Typing the path param as int
     # makes FastAPI reject any non-numeric value with 422 before it can reach the `flwr
@@ -513,7 +518,7 @@ def abort_run(run_id: int) -> JobMetadata:
     )
 
 
-@app.post("/upload_app/{model_id}", status_code=status.HTTP_200_OK)
+@router.post("/upload_app/{model_id}", status_code=status.HTTP_200_OK)
 def upload_app(model_id: UUID, body: UploadAppRequest) -> dict[str, Any]:
     """
     Upload an application to the server.
@@ -527,3 +532,6 @@ def upload_app(model_id: UUID, body: UploadAppRequest) -> dict[str, Any]:
     """
     upload_dir = _get_src_root()
     return upload_application(str(model_id), body, upload_dir=upload_dir)
+
+
+app.include_router(router)

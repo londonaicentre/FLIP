@@ -12,7 +12,7 @@
 
 """Reads DQR's import queue and history, and XNAT's direct-archive and prearchive sessions, through XNAT's REST API.
 
-- ``GET /xapi/dqr/import/queue`` and ``GET /xapi/dqr/import/history`` (DQR 3.0.0) page through the
+- ``GET /xapi/dqr/import/queue`` and ``GET /xapi/dqr/import/history`` (DQR 3.1.0) page through the
   queued and the executed requests, ordered by id. Neither takes a project filter, so each page is
   filtered here by ``xnatProject``. ``all=true`` returns every user's requests; DQR allows it only to a
   user with all-data access, which the service account has as a site Administrator.
