@@ -925,13 +925,8 @@ def test_abs_or_relative_to_only_joins_relative_values(tmp_path: Path, value: st
     assert result.stdout.strip() == expected
 
 
-def test_a_trust_on_any_slot_gets_its_own_network(tmp_path: Path) -> None:
-    """up-trust attaches to deploy_trust-network-<slot>; create-networks only ever made 1 and 2.
-
-    A trust the hub gave slot Trust_3 (the Azure node on LZA stag, FLIP#1390) created every
-    container and then failed "network deploy_trust-network-3 not found". Driven against a stub
-    docker so the test proves the network is created, not that a recipe mentions it.
-    """
+def _slot3_tree(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
+    """A kit tree whose AZ1 kit is on slot Trust_3, plus a stub docker that records its calls."""
     trust_dir = _kit_tree(tmp_path)
     (trust_dir / ".env.AZ1.development").write_text("FL_KIT_SLOT=Trust_3\nFL_KIT_SLOT_NUMBER=3\n")
     bin_dir = tmp_path / "bin"
@@ -942,9 +937,12 @@ def test_a_trust_on_any_slot_gets_its_own_network(tmp_path: Path) -> None:
         f'#!/bin/sh\necho "$@" >> "{record}"\n[ "$1 $2" = "network inspect" ] && exit 1\nexit 0\n',
     )
     env = _make_env({**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"})
+    return trust_dir, record, env
 
-    result = subprocess.run(
-        ["make", "-f", str(REPO_ROOT / "trust" / "Makefile"), "create-trust-network", "KIT=AZ1", "FL_BACKEND=nvflare"],
+
+def _trust_make(trust_dir: Path, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["make", "-f", str(REPO_ROOT / "trust" / "Makefile"), *args, "FL_BACKEND=nvflare"],
         cwd=trust_dir,
         env=env,
         check=False,
@@ -952,6 +950,18 @@ def test_a_trust_on_any_slot_gets_its_own_network(tmp_path: Path) -> None:
         text=True,
         timeout=60,
     )
+
+
+def test_a_trust_on_any_slot_gets_its_own_network(tmp_path: Path) -> None:
+    """up-trust attaches to deploy_trust-network-<slot>; create-networks only ever made 1 and 2.
+
+    A trust the hub gave slot Trust_3 (the Azure node on LZA stag, FLIP#1390) created every
+    container and then failed "network deploy_trust-network-3 not found". Driven against a stub
+    docker so the test proves the network is created, not that a recipe mentions it.
+    """
+    trust_dir, record, env = _slot3_tree(tmp_path)
+
+    result = _trust_make(trust_dir, env, "create-trust-network", "KIT=AZ1")
 
     assert result.returncode == 0, result.stderr
     assert "network create --driver overlay --attachable deploy_trust-network-3" in record.read_text()
@@ -964,29 +974,9 @@ def test_a_trust_on_any_slot_gets_its_own_network(tmp_path: Path) -> None:
 
 def test_recreate_networks_brings_back_the_slot_network(tmp_path: Path) -> None:
     """remove-networks drops the kit's slot network and recreate-networks makes it again."""
-    trust_dir = _kit_tree(tmp_path)
-    (trust_dir / ".env.AZ1.development").write_text("FL_KIT_SLOT=Trust_3\nFL_KIT_SLOT_NUMBER=3\n")
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    record = tmp_path / "docker-calls"
-    _write_executable(
-        bin_dir / "docker",
-        f'#!/bin/sh\necho "$@" >> "{record}"\n[ "$1 $2" = "network inspect" ] && exit 1\nexit 0\n',
-    )
-    env = _make_env({**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"})
+    trust_dir, record, env = _slot3_tree(tmp_path)
 
-    def run(*args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            ["make", "-f", str(REPO_ROOT / "trust" / "Makefile"), *args, "FL_BACKEND=nvflare"],
-            cwd=trust_dir,
-            env=env,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-
-    result = run("recreate-networks", "KIT=AZ1")
+    result = _trust_make(trust_dir, env, "recreate-networks", "KIT=AZ1")
 
     assert result.returncode == 0, result.stderr
     calls = record.read_text().splitlines()
@@ -995,7 +985,7 @@ def test_recreate_networks_brings_back_the_slot_network(tmp_path: Path) -> None:
     assert "network create --driver overlay --attachable deploy_trust-network-3" in calls
 
     record.unlink()
-    result = run("recreate-networks")
+    result = _trust_make(trust_dir, env, "recreate-networks")
 
     assert result.returncode == 0, "without a KIT (the root Makefile's call) nothing slot-specific runs"
     assert "trust-network-3" not in record.read_text()
