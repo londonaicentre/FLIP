@@ -63,21 +63,21 @@
     font-family: 'Bai Jamjuree';
     font-weight: 400 500;
     font-display: swap;
-    src: local('Bai Jamjuree'), url(../fonts/BaiJamjuree/BaiJamjuree-Medium.ttf) format('truetype');
+    src: local('Bai Jamjuree'), url(../fonts/BaiJamjuree/BaiJamjuree-Medium.woff2) format('woff2');
 }
 
 @font-face {
     font-family: 'Bai Jamjuree';
     font-weight: 600 700;
     font-display: swap;
-    src: local('Bai Jamjuree'), url(../fonts/BaiJamjuree/BaiJamjuree-SemiBold.ttf) format('truetype');
+    src: local('Bai Jamjuree'), url(../fonts/BaiJamjuree/BaiJamjuree-SemiBold.woff2) format('woff2');
 }
 
 @font-face {
     font-family: 'Bai Jamjuree';
     font-weight: 800 900;
     font-display: swap;
-    src: local('Bai Jamjuree'), url(../fonts/BaiJamjuree/BaiJamjuree-Bold.ttf) format('truetype');
+    src: local('Bai Jamjuree'), url(../fonts/BaiJamjuree/BaiJamjuree-Bold.woff2) format('woff2');
 }
 
 @layer base {
