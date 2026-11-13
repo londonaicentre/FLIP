@@ -12,15 +12,15 @@
 -->
 <template>
     <!-- Project-type chip (FLIP#1071): every project gets one — imaging projects use OMOP data too,
-         so the labels are "Imaging + OMOP" (primary tint, scan icon) and "OMOP only" (steel blue,
-         database icon). Informational only. -->
+         so the labels are "Imaging + OMOP" (primary tint, x-ray + register-book icons) and "OMOP only"
+         (steel blue, register-book icon): the icons add up the way the data does. Informational only. -->
     <span
         class="inline-flex items-center gap-1 rounded-full px-2 py-px text-xs font-semibold whitespace-nowrap shrink-0"
         :class="hasImaging ? IMAGING_CLASS : OMOP_ONLY_CLASS"
         :data-test="`project-type-chip-${projectTypeId(hasImaging)}`"
     >
-        <icon-ph-scan v-if="hasImaging" class="w-3 h-3 shrink-0" aria-hidden="true" />
-        <icon-ph-database v-else class="w-3 h-3 shrink-0" aria-hidden="true" />
+        <icon-healthicons-xray-outline v-if="hasImaging" class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+        <icon-healthicons-register-book-outline class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
         {{ hasImaging ? IMAGING_LABEL : OMOP_ONLY_LABEL }}
     </span>
 </template>

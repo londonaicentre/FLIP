@@ -90,8 +90,12 @@
                             :data-test="`type-filter-${opt.id}`"
                             @click="selectType(opt.value)"
                         >
-                            <icon-ph-scan v-if="opt.id === 'imaging'" class="w-4 h-4 shrink-0" aria-hidden="true" />
-                            <icon-ph-database v-else-if="opt.id === 'omop-only'" class="w-4 h-4 shrink-0" aria-hidden="true" />
+                            <icon-healthicons-xray-outline v-if="opt.id === 'imaging'" class="w-4 h-4 shrink-0" aria-hidden="true" />
+                            <icon-healthicons-register-book-outline
+                                v-if="opt.id !== 'all'"
+                                class="w-4 h-4 shrink-0"
+                                aria-hidden="true"
+                            />
                             <span :class="opt.id === 'all' ? '' : 'hidden md:inline'">{{ opt.label }}</span>
                         </button>
                     </div>

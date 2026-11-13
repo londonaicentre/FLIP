@@ -77,8 +77,8 @@ const stubs = {
     "icon-ph-squares-four-duotone": { template: "<span />" },
     "icon-ph-archive-duotone": { template: "<span />" },
     "icon-ph-users-three-duotone": { template: "<span />" },
-    "icon-ph-scan": { template: "<span />" },
-    "icon-ph-database": { template: "<span />" }
+    "icon-healthicons-xray-outline": { template: "<span />" },
+    "icon-healthicons-register-book-outline": { template: "<span />" }
 };
 
 const trust = (id: string, code: string, status: TrustApprovalStatus): IProjectTrust => ({
