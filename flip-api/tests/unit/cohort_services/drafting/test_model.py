@@ -98,6 +98,19 @@ def test_bedrock_request_shape(monkeypatch):
     assert (reply.input_tokens, reply.output_tokens) == (1200, 300)
 
 
+@pytest.mark.parametrize(
+    "model_id",
+    ["eu.anthropic.claude-sonnet-5-5", "global.anthropic.claude-sonnet-5-5", "anthropic.claude-sonnet-4-6"],
+)
+def test_bedrock_sends_an_inference_profile_id_unchanged(monkeypatch, model_id):
+    """eu-west-2 offers the default model only through a cross-region inference profile (FLIP#1556)."""
+    monkeypatch.setattr(get_settings(), "COHORT_DRAFT_BEDROCK_MODEL_ID", model_id)
+    client = MagicMock()
+    client.messages.create.return_value = _message()
+    BedrockDraftModel(client=client).create("S", [])
+    assert client.messages.create.call_args.kwargs["model"] == model_id
+
+
 def test_bedrock_passes_the_guardrail_through(monkeypatch):
     settings = get_settings()
     monkeypatch.setattr(settings, "COHORT_DRAFT_GUARDRAIL_ID", "gr-123")

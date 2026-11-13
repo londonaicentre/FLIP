@@ -443,8 +443,9 @@ class Settings(BaseSettings):
     # development never calls a model and stag/prod never serve canned drafts.
     COHORT_DRAFT_ENABLED: bool = False
     COHORT_DRAFT_PROVIDER: Literal["fake", "bedrock"] = "bedrock"
-    # Claude on Amazon Bedrock through the ECS task role (no API key). Confirm the model is offered in
-    # the region, and what any cross-region inference profile implies, before enabling (FLIP#1556).
+    # Claude on Amazon Bedrock through the ECS task role (no API key). A model id or a cross-region
+    # inference profile id (eu.…, global.…), sent as it is. The default is not offered on demand in
+    # eu-west-2, only through a profile: the choice is an information-governance one (FLIP#1556).
     COHORT_DRAFT_BEDROCK_MODEL_ID: str = "anthropic.claude-sonnet-5-5"
     COHORT_DRAFT_BEDROCK_REGION: str = "eu-west-2"
     # Thinking depth for the draft call; tune with the benchmark.
