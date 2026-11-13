@@ -49,10 +49,12 @@ whether to take part:
   to the hub. Role changes and decisions are both recorded in the audit trail.
 
 **A trust that declines contributes no data.** The project proceeds with the trusts
-that approved it. The declining trust will already have answered the project's cohort
-query: that query runs at every registered trust when it is submitted, before staging,
-and returns only the aggregate statistics described below. The declining trust's data,
-however, is never pulled at row level, never imported, and never trained on. On Flower,
+that approved it. The declining trust's data is never pulled at row level, never
+imported, and never trained on.
+
+The declining trust will still have answered the project's cohort query, because that
+query runs at every registered trust when it is submitted, before staging. It returns
+only the aggregate statistics described below. On Flower,
 every trust connected to the training network still receives and runs the researcher's
 code, including one that declined, but its trust services refuse that code any data.
 
@@ -95,8 +97,8 @@ Neither is copied to the Central Hub.
   one;
 - operational telemetry such as task status.
 
-**Model updates deserve an honest treatment rather than a reassuring one.** They are
-parameter values, not patient records. But a trained model can, in adverse cases,
+**Model updates carry a residual disclosure risk.** They are parameter values, not
+patient records. But a trained model can, in adverse cases,
 memorise fragments of its training data, and inference attacks against model updates are
 an active research area. FLIP manages this as a residual risk rather than defining it
 away. The mitigations are:
@@ -214,8 +216,7 @@ For each deployment the items to record are:
   trust and documented alongside the data flow.
 
 Where these determinations have not yet been made for a given deployment, that is an
-open item to close before the deployment handles patient data. It is not a gap this page
-papers over.
+open item to close before the deployment handles patient data.
 
 *****************
 Access governance
@@ -229,11 +230,10 @@ Admin can access every project and a Trust Admin can read a project staged at th
 trust. See
 :ref:`User Roles <rbac-roles>` for the full permission matrix.
 
-**Multi-factor authentication is mandatory** for every user. Enrolment is verified at the
-application layer on every authenticated request, not only at login. So a session issued
-before enrolment, or after an administrative MFA reset, cannot reach any protected
-function. (The second factor is presented at sign-in; the per-request control is the
-enrolment check.)
+**Multi-factor authentication is mandatory** for every user. The second factor is
+presented at sign-in. In addition, the application checks MFA enrolment on every
+authenticated request, not only at login, so a session issued before enrolment, or after
+an administrative MFA reset, cannot reach any protected function.
 
 **Access review.** Access is granted by a FLIP administrator. Periodic review of accounts
 and removal of dormant access is an operating commitment of the organisation running the
@@ -250,14 +250,15 @@ cannot pull imaging on demand.
 Retention and deletion
 **********************
 
-What happens to project artefacts at project end is a question every IG review asks. Here
-is the position, stated plainly, including where deletion is a decision rather than an
-automatism.
+This section sets out what happens to each project artefact at project end, and where
+deletion is a manual decision rather than automatic.
 
 **On the hub, the cohort is held as a query, not an extract.** The hub stores the cohort
 definition as SQL text and re-executes it against the trust's own OMOP database at each
-stage that needs it. No row-level cohort data is retained on the hub. There is nothing
-hub-side to delete at project end beyond the query text and audit records.
+stage that needs it. No row-level cohort data is retained on the hub, so for the cohort
+there is nothing hub-side to delete at project end beyond the query text and audit
+records. Model files and training outputs are a separate matter (see *Hub-side artefacts*
+below).
 
 **Each approving trust keeps a record of the approved cohort.** At approval, the trust
 records the approved query and the patient and imaging-study identifiers it returned (no
@@ -278,8 +279,8 @@ considered position, not an omission:
 
 **Working copies at FL clients.** During training each FL client holds a working copy of
 its own net's converted imaging. On the FLARE backend the application cleans this up
-after the run. Bounded retention for the Flower backend's cache is open, tracked work
-(FLIP#1050).
+after the run. On the Flower backend there is no bounded retention for this cache yet;
+it is open, tracked work.
 
 **Hub-side artefacts persist until removed.** Uploaded model files, the bundled
 applications sent to trusts, and training outputs (including the trained model) live in
@@ -349,8 +350,7 @@ Assurance and independent scrutiny
 Clinical safety and procurement standards
 **********************************************
 
-Two standards frameworks sit adjacent to this page and are worth addressing before a
-trust asks.
+Two further standards frameworks often come up in a trust's assessment of FLIP.
 
 **DTAC.** Trusts procuring digital health technologies assess them against the Digital
 Technology Assessment Criteria. FLIP is a research platform rather than a patient-facing

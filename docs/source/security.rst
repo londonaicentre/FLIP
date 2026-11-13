@@ -4,15 +4,9 @@
 Security
 ########
 
-This page describes how FLIP addresses security at each layer of the platform:
-
-- the network;
-- the cloud estate the Central Hub runs on;
-- the identity of every user and service;
-- the boundary around clinical data;
-- the federated learning process itself;
-- the storage and transport of everything in between;
-- the software supply chain the platform is built from.
+This page describes how FLIP addresses security at each layer of the platform, from the
+network perimeter and cloud estate to clinical data, federated learning, and the software
+supply chain.
 
 It is written for partner trusts, information governance leads, and anyone assessing
 FLIP before deploying it. It deliberately contains no exploitation detail.
@@ -42,9 +36,8 @@ Session Manager, so port 22 is never opened.
 **The one inbound connection in the design** applies only where FLIP is connected to a
 trust's own PACS, which today means an on-premises deployment. FLIP asks the PACS for a
 study, and the PACS opens a connection back to XNAT to deliver it, on the DICOM port
-alone. It stays inside the trust's own network. AWS-hosted trusts have no such path. They
-run FLIP's own bundled Orthanc, which XNAT reaches over the container network, so their
-security groups keep no ingress rules at all.
+alone, and stays inside the trust's own network. AWS-hosted trusts have no such path: they
+run FLIP's own bundled Orthanc, which XNAT reaches over the container network.
 
 **Only the Central Hub is internet-facing.** It sits behind CloudFront with modern TLS,
 HSTS, AWS WAF managed rules, and an internal-only load balancer. Nothing
@@ -106,19 +99,16 @@ production configuration refuses it at boot. Access tokens are verified on every
 - the issuer and audience are checked;
 - ID tokens presented in place of access tokens are rejected.
 
-**Multi-factor authentication is mandatory.** MFA enrolment is verified at the
-application boundary on *every* authenticated request, not only at the moment of login.
-So a session cannot outlive the requirement:
+**Multi-factor authentication is mandatory.** The second factor is presented at sign-in.
+In addition, MFA enrolment is checked on *every* authenticated request, not only at
+login, so a session cannot outlive the requirement:
 
 - a user who has not enrolled cannot reach any protected function;
 - an administrative MFA reset takes effect immediately.
 
-(The second factor itself is presented at sign-in. What runs per-request is the
-enrolment check.)
-
 **Access is role-based and default-deny.** Users hold one of four defined roles:
-**Admin**, **Researcher**, **Viewer**, or **Trust Admin**. A Trust Admin is held for one
-trust, and its holder also has Researcher access. Each role carries an explicit permission set (see
+**Admin**, **Researcher**, **Viewer**, or **Trust Admin**. The Trust Admin role is granted
+for a single trust and includes Researcher access. Each role carries an explicit permission set (see
 :ref:`User Roles <rbac-roles>` for the full permission matrix). Permission is granted
 rather than assumed, so a request with no matching grant is refused.
 
@@ -167,7 +157,8 @@ unauthenticated, so orchestrator liveness probes do not need access to the secre
 - The key is minted during trust registration and written only to that trust's
   deployment kit.
 - It is shared by the services inside one trust and never stored by the Central Hub.
-- It is distinct from both the trust-to-hub API key and the hub-internal FL-server key.
+- It is distinct from both the trust-to-hub API key and the key the hub's FL server uses
+  to call back to the hub.
 - Each trust receives a different value, limiting the effect of disclosure to one trust.
 
 Key rotation is performed by issuing a new trust kit and restarting the trust-side
@@ -217,7 +208,7 @@ independent controls would each have to fail before anything unintended could ex
   disclosure floor (default 10), set by each trust in its deployment kit. Trusts need
   not agree on a shared value, and the hub cannot lower it.
 - **Row-level data only for the approved cohort.** Row-level data is released only for the
-  **cohort frozen at project approval**. Each Trust records the approved query and the
+  **cohort frozen at project approval**. Each trust records the approved query and the
   patient and study identifiers it returned (no clinical values). From then on it serves
   only that query, restricted to those identifiers, ignoring any SQL supplied at request
   time. No patient or imaging study outside the approved cohort can therefore reach
@@ -226,7 +217,7 @@ independent controls would each have to fail before anything unintended could ex
   The freeze is of patients, not records. An approved patient's records are read live, so
   one added after approval (a new measurement, visit or condition) is served. The
   national data opt-out is per patient, so it acts on that membership. A patient removed
-  from the Trust's database, for instance after an opt-out, drops out on the next fetch,
+  from the trust's database, for instance after an opt-out, drops out on the next fetch,
   and a cohort that falls below the disclosure threshold stops being served.
 
 This is achieved **without restricting researchers to a fixed menu of queries**:
@@ -254,28 +245,26 @@ matter:
 static-analysis scan above is advisory, not a gate: it does not stop obfuscated or
 otherwise-undetected code from running. The accepted control for this class of risk is
 uploader self-review, supported by RBAC on who can upload, rather than a
-platform-enforced review process. There is no GitHub-review step in the upload path
-today.
+platform-enforced review process. Nothing in the upload path requires a second person to
+review the code.
 
 This is a deliberate decision, not an oversight. Runtime enforcement options were
 weighed: an import allowlist, RestrictedPython, OS-level sandboxing. Each was rejected as
-either easily bypassed or a poor fit for legitimate ML code. The full reasoning is in
-FLIP#877 (tracking GHSA-8465), so it does not need re-deciding the next time this class
-of finding comes up.
+either easily bypassed or a poor fit for legitimate ML code. The full reasoning is
+recorded in the project's issue tracker (FLIP#877, tracking advisory GHSA-8465).
 
 **The FL API fetches app bundles only from the hub's object store.** When a job is
 submitted, the net's FL API downloads the bundled app server-side, from presigned S3 URLs
-handed to it by the Central Hub API. The FL API authenticates no caller of its own: it
-trusts its position on the hub's internal network. That download is therefore guarded as
-a server-side request forgery surface:
+handed to it by the Central Hub API. Because it fetches whatever URL it is handed, that
+download is guarded as a server-side request forgery surface:
 
 - URLs may never name a private, loopback or link-local address as an IP literal, in any
   spelling.
 - An explicit origin allow-list, ``BUNDLE_URL_ALLOWED_ORIGINS``, is consulted before any
   name is resolved. Every deployment derives it from the object store the hub presigns
   against: on AWS the regional S3 endpoint (``https://s3.<region>.amazonaws.com``), in
-  local development the RustFS container in the dev compose. So the FL API will fetch
-  from that one origin and nothing else.
+  local development the local object store. So the FL API will fetch from that one
+  origin and nothing else.
 - Without a list, the URL must be https on the default port. A DNS name is resolved with
   every answer held to the same range check, failing closed if it cannot be resolved.
 
@@ -339,7 +328,7 @@ be relied on:
   holder of the platform key produced the payload, not which participant did. A
   compromised participant could still forge payloads for another.
 
-**Per-trust keys are in delivery, not yet a shipped control.** The planned upgrade is:
+**Per-trust keys are being built and are not yet a shipped control.** The planned upgrade is:
 
 - each trust's traffic protected by its own key, so a compromise at one trust can neither
   read nor forge another's;
@@ -363,9 +352,8 @@ the bucket in either direction.
 **Credentials are designed to be rotated.** A trust's API key and its trust-internal
 service key are issued at registration and can be re-issued without redeploying the
 platform. Rotating the payload-encryption key currently means re-issuing the shared key
-to every participant at once. Removing that coordination is part of the per-trust key
-work described above: each trust is given its own identified key, so a new key can be
-introduced and an old one retired without a synchronised cutover.
+to every participant at once; the planned per-trust keys described above remove that
+coordination.
 
 **The trust imaging archive requires authentication to start.**
 
@@ -390,7 +378,7 @@ The platform's target here is a fixed client-facing message accompanied by a
   Diagnosability is preserved without disclosing internals.
 - Automated checks in CI keep raw exception text from reappearing in responses.
 
-**That mechanism is in delivery, not yet a shipped control.** Today some error paths still
+**That mechanism is being built and is not yet a shipped control.** Today some error paths still
 return the underlying exception text to the caller, and the CI guard does not yet exist.
 
 What holds today is narrower: log lines are written to avoid carrying sensitive values
