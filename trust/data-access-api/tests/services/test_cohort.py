@@ -223,45 +223,47 @@ def test_get_records_serves_cache_by_default(mock_read_sql):
     mock_read_sql.assert_not_called()
 
 
+def _pg(cls, msg):
+    """A psycopg error of ``cls`` carrying ``msg`` as its text."""
+    err = cls()
+    err.args = (msg,)
+    return err
+
+
+def _dbapi_error(orig, *, pandas_wrapped=False):
+    """The DBAPIError SQLAlchemy raises for ``orig``; pandas 3.x wraps it in its own DatabaseError."""
+    err = DBAPIError("statement", "params", orig)
+    if not pandas_wrapped:
+        return err
+    pandas_err = PandasDatabaseError(f"Execution failed on sql '...': {err}")
+    pandas_err.__cause__ = err
+    return pandas_err
+
+
+@pytest.mark.parametrize(
+    ("pg_cls", "message", "query", "expected"),
+    [
+        (
+            pg_errors.UndefinedTable,
+            'relation "missing_table" does not exist',
+            "SELECT * FROM missing_table",
+            "The table 'missing_table' does not exist",
+        ),
+        (
+            pg_errors.UndefinedColumn,
+            'column "missing_column" does not exist',
+            "SELECT missing_column FROM test_table",
+            "The column 'missing_column' does not exist",
+        ),
+    ],
+    ids=["table", "column"],
+)
 @patch("pandas.read_sql")
-def test_get_records_undefined_table_error(mock_read_sql):
-    """
-    Test get_records with UndefinedTable error.
-    """
-    # Create mock postgres error
-    mock_pg_error = pg_errors.UndefinedTable()
-    mock_pg_error.args = ('relation "missing_table" does not exist',)
+def test_get_records_undefined_identifier_error(mock_read_sql, pg_cls, message, query, expected):
+    """An UndefinedTable / UndefinedColumn error names the missing identifier."""
+    mock_read_sql.side_effect = _dbapi_error(_pg(pg_cls, message))
 
-    # Create mock DBAPIError with the postgres error as orig
-    mock_dbapi_error = DBAPIError("statement", "params", mock_pg_error)
-    mock_dbapi_error.orig = mock_pg_error
-
-    mock_read_sql.side_effect = mock_dbapi_error
-
-    query = "SELECT * FROM missing_table"
-
-    with pytest.raises(HTTPException, match="The table 'missing_table' does not exist"):
-        get_records(query)
-
-
-@patch("pandas.read_sql")
-def test_get_records_undefined_column_error(mock_read_sql):
-    """
-    Test get_records with UndefinedColumn error.
-    """
-    # Create mock postgres error
-    mock_pg_error = pg_errors.UndefinedColumn()
-    mock_pg_error.args = ('column "missing_column" does not exist',)
-
-    # Create mock DBAPIError with the postgres error as orig
-    mock_dbapi_error = DBAPIError("statement", "params", mock_pg_error)
-    mock_dbapi_error.orig = mock_pg_error
-
-    mock_read_sql.side_effect = mock_dbapi_error
-
-    query = "SELECT missing_column FROM test_table"
-
-    with pytest.raises(HTTPException, match="The column 'missing_column' does not exist"):
+    with pytest.raises(HTTPException, match=expected):
         get_records(query)
 
 
@@ -321,98 +323,51 @@ def test_get_records_generic_exception(mock_read_sql):
     assert "12345" not in str(exc_info.value.detail)
 
 
+@pytest.mark.parametrize(
+    ("pg_cls", "query", "expected"),
+    [
+        (pg_errors.UndefinedTable, "SELECT * FROM missing_table", "The table 'None' does not exist"),
+        (pg_errors.UndefinedColumn, "SELECT missing_column FROM test_table", "The column 'None' does not exist"),
+    ],
+    ids=["table", "column"],
+)
 @patch("data_access_api.services.cohort.extract_missing_identifier")
 @patch("pandas.read_sql")
-def test_get_records_undefined_table_with_extraction_failure(mock_read_sql, mock_extract):
-    """
-    Test get_records when table name extraction fails.
-    """
-    # Mock extraction to return None (extraction failure)
+def test_get_records_undefined_identifier_with_extraction_failure(mock_read_sql, mock_extract, pg_cls, query, expected):
+    """Test get_records when the identifier name cannot be extracted from the error."""
     mock_extract.return_value = None
+    mock_read_sql.side_effect = _dbapi_error(_pg(pg_cls, "malformed error message"))
 
-    # Create mock postgres error
-    mock_pg_error = pg_errors.UndefinedTable()
-    mock_pg_error.args = ("malformed error message",)
-
-    # Create mock DBAPIError with the postgres error as orig
-    mock_dbapi_error = DBAPIError("statement", "params", mock_pg_error)
-    mock_dbapi_error.orig = mock_pg_error
-
-    mock_read_sql.side_effect = mock_dbapi_error
-
-    query = "SELECT * FROM missing_table"
-
-    with pytest.raises(HTTPException, match="The table 'None' does not exist"):
+    with pytest.raises(HTTPException, match=expected):
         get_records(query)
 
 
-@patch("data_access_api.services.cohort.extract_missing_identifier")
+@pytest.mark.parametrize(
+    ("pg_cls", "message", "query"),
+    [
+        (
+            pg_errors.UndefinedTable,
+            'relation "omop.does_not_exist" does not exist',
+            "SELECT * FROM omop.does_not_exist",
+        ),
+        (pg_errors.UndefinedColumn, 'column "missing_col" does not exist', "SELECT missing_col FROM omop.person"),
+    ],
+    ids=["table", "column"],
+)
 @patch("pandas.read_sql")
-def test_get_records_undefined_column_with_extraction_failure(mock_read_sql, mock_extract):
-    """
-    Test get_records when column name extraction fails.
-    """
-    # Mock extraction to return None (extraction failure)
-    mock_extract.return_value = None
-
-    # Create mock postgres error
-    mock_pg_error = pg_errors.UndefinedColumn()
-    mock_pg_error.args = ("malformed error message",)
-
-    # Create mock DBAPIError with the postgres error as orig
-    mock_dbapi_error = DBAPIError("statement", "params", mock_pg_error)
-    mock_dbapi_error.orig = mock_pg_error
-
-    mock_read_sql.side_effect = mock_dbapi_error
-
-    query = "SELECT missing_column FROM test_table"
-
-    with pytest.raises(HTTPException, match="The column 'None' does not exist"):
-        get_records(query)
-
-
-@patch("pandas.read_sql")
-def test_get_records_pandas_wraps_undefined_table(mock_read_sql):
+def test_get_records_pandas_wraps_undefined_identifier(mock_read_sql, pg_cls, message, query):
     """pandas 3.x wraps SQLAlchemy errors in pandas.errors.DatabaseError.
 
     When pd.read_sql raises a PandasDatabaseError whose __cause__ is a
-    DBAPIError for an UndefinedTable, get_records must unwrap the chain and
-    return HTTP 400 with the table name — not a generic 500 internal_error.
-    This is a regression test for the pandas 3.x wrapping behaviour introduced
-    alongside the starlette >=1.0.1 bump.
+    DBAPIError for an UndefinedTable (or UndefinedColumn), get_records must unwrap
+    the chain and return HTTP 400 with the identifier name — not a generic 500
+    internal_error. This is a regression test for the pandas 3.x wrapping
+    behaviour introduced alongside the starlette >=1.0.1 bump.
     """
-    mock_pg_error = pg_errors.UndefinedTable()
-    mock_pg_error.args = ('relation "omop.does_not_exist" does not exist',)
-
-    mock_dbapi_error = DBAPIError("statement", "params", mock_pg_error)
-    mock_dbapi_error.orig = mock_pg_error
-
-    # Simulate the pandas 3.x wrapping: PandasDatabaseError with DBAPIError as __cause__
-    pandas_err = PandasDatabaseError(f"Execution failed on sql '...': {mock_dbapi_error}")
-    pandas_err.__cause__ = mock_dbapi_error
-    mock_read_sql.side_effect = pandas_err
+    mock_read_sql.side_effect = _dbapi_error(_pg(pg_cls, message), pandas_wrapped=True)
 
     with pytest.raises(HTTPException) as exc_info:
-        get_records("SELECT * FROM omop.does_not_exist")
-    assert exc_info.value.status_code == 400
-    assert "does not exist" in exc_info.value.detail.lower()
-
-
-@patch("pandas.read_sql")
-def test_get_records_pandas_wraps_undefined_column(mock_read_sql):
-    """pandas 3.x wrapping of UndefinedColumn surfaces as HTTP 400 with column name."""
-    mock_pg_error = pg_errors.UndefinedColumn()
-    mock_pg_error.args = ('column "missing_col" does not exist',)
-
-    mock_dbapi_error = DBAPIError("statement", "params", mock_pg_error)
-    mock_dbapi_error.orig = mock_pg_error
-
-    pandas_err = PandasDatabaseError(f"Execution failed on sql '...': {mock_dbapi_error}")
-    pandas_err.__cause__ = mock_dbapi_error
-    mock_read_sql.side_effect = pandas_err
-
-    with pytest.raises(HTTPException) as exc_info:
-        get_records("SELECT missing_col FROM omop.person")
+        get_records(query)
     assert exc_info.value.status_code == 400
     assert "does not exist" in exc_info.value.detail.lower()
 
@@ -1011,189 +966,66 @@ def test_validate_query_rejects_non_literal_limit_or_offset(query: str):
         validate_query(query)
 
 
-# Tests for get_counts
+# Tests for get_counts / get_null_counts
+
+_MIXED = {
+    "column_a": [1, 2, None, 4, 5],
+    "column_b": ["x", "y", "z", None, "w"],
+    "column_c": [1.1, 2.2, 3.3, 4.4, 5.5],
+}
+_ALL_NULL = {"all_null": [None, None, None], "some_data": [1, 2, 3]}
+_NO_NULLS = {
+    "column_a": [1, 2, 3, 4, 5],
+    "column_b": ["x", "y", "z", "w", "v"],
+    "column_c": [1.1, 2.2, 3.3, 4.4, 5.5],
+}
 
 
-def test_get_counts_with_data():
-    """
-    Test get_counts with a DataFrame containing various data types and null values.
-    """
-    df = pd.DataFrame(
-        {
-            "column_a": [1, 2, None, 4, 5],
-            "column_b": ["x", "y", "z", None, "w"],
-            "column_c": [1.1, 2.2, 3.3, 4.4, 5.5],
-        }
-    )
+@pytest.mark.parametrize(
+    ("func", "name", "data", "expected"),
+    [
+        # get_counts counts non-null values per column.
+        pytest.param(
+            get_counts, "Counts", _MIXED, [("column\na", 4), ("column\nb", 4), ("column\nc", 5)], id="counts-mixed"
+        ),
+        pytest.param(get_counts, "Counts", None, [], id="counts-empty"),
+        pytest.param(get_counts, "Counts", _ALL_NULL, [("all\nnull", 0), ("some\ndata", 3)], id="counts-all-null"),
+        # get_null_counts counts null values per column.
+        pytest.param(
+            get_null_counts, "Nulls", _MIXED, [("column\na", 1), ("column\nb", 1), ("column\nc", 0)], id="nulls-mixed"
+        ),
+        pytest.param(get_null_counts, "Nulls", None, [], id="nulls-empty"),
+        pytest.param(get_null_counts, "Nulls", _ALL_NULL, [("all\nnull", 3), ("some\ndata", 0)], id="nulls-all-null"),
+        pytest.param(
+            get_null_counts, "Nulls", _NO_NULLS, [("column\na", 0), ("column\nb", 0), ("column\nc", 0)], id="nulls-none"
+        ),
+    ],
+)
+def test_count_summaries(func, name, data, expected):
+    """get_counts / get_null_counts give one bar per column, its name split on underscores."""
+    result = func(pd.DataFrame(data))
 
-    result = get_counts(df)
-
-    expected = {
-        "name": "Counts",
-        "results": [
-            {"value": "column\na", "count": 4},  # 4 non-null values
-            {"value": "column\nb", "count": 4},  # 4 non-null values
-            {"value": "column\nc", "count": 5},  # 5 non-null values
-        ],
-    }
-
-    assert result == expected
-
-
-def test_get_counts_empty_dataframe():
-    """
-    Test get_counts with an empty DataFrame.
-    """
-    df = pd.DataFrame()
-
-    result = get_counts(df)
-
-    expected = {
-        "name": "Counts",
-        "results": [],
-    }
-
-    assert result == expected
+    assert result == {"name": name, "results": [{"value": v, "count": c} for v, c in expected]}
 
 
-def test_get_counts_all_null_column():
-    """
-    Test get_counts with a column containing all null values.
-    """
-    df = pd.DataFrame(
-        {
-            "all_null": [None, None, None],
-            "some_data": [1, 2, 3],
-        }
-    )
-
-    result = get_counts(df)
-
-    expected = {
-        "name": "Counts",
-        "results": [
-            {"value": "all\nnull", "count": 0},  # 0 non-null values
-            {"value": "some\ndata", "count": 3},  # 3 non-null values
-        ],
-    }
-
-    assert result == expected
+# Tests for get_sex_distribution / get_age_distribution without person_id
 
 
-# Tests for get_null_counts
+@pytest.mark.parametrize(
+    ("func", "name"),
+    [
+        pytest.param(get_sex_distribution, "Sex Distribution", id="sex"),
+        pytest.param(get_age_distribution, "Age Distribution", id="age"),
+    ],
+)
+def test_demographic_chart_is_empty_without_person_id(func, name):
+    """A DataFrame without a person_id column yields an empty chart."""
+    df = pd.DataFrame({"accession_id": ["id_1", "id_2"], "modality": ["CT", "MR"]})
 
-
-def test_get_null_counts_with_data():
-    """
-    Test get_null_counts with a DataFrame containing various data types and null values.
-    """
-    df = pd.DataFrame(
-        {
-            "column_a": [1, 2, None, 4, 5],
-            "column_b": ["x", "y", "z", None, "w"],
-            "column_c": [1.1, 2.2, 3.3, 4.4, 5.5],
-        }
-    )
-
-    result = get_null_counts(df)
-
-    expected = {
-        "name": "Nulls",
-        "results": [
-            {"value": "column\na", "count": 1},  # 1 null value
-            {"value": "column\nb", "count": 1},  # 1 null value
-            {"value": "column\nc", "count": 0},  # 0 null values
-        ],
-    }
-
-    assert result == expected
-
-
-def test_get_null_counts_empty_dataframe():
-    """
-    Test get_null_counts with an empty DataFrame.
-    """
-    df = pd.DataFrame()
-
-    result = get_null_counts(df)
-
-    expected = {
-        "name": "Nulls",
-        "results": [],
-    }
-
-    assert result == expected
-
-
-def test_get_null_counts_all_null_column():
-    """
-    Test get_null_counts with a column containing all null values.
-    """
-    df = pd.DataFrame(
-        {
-            "all_null": [None, None, None],
-            "some_data": [1, 2, 3],
-        }
-    )
-
-    result = get_null_counts(df)
-
-    expected = {
-        "name": "Nulls",
-        "results": [
-            {"value": "all\nnull", "count": 3},  # 3 null values
-            {"value": "some\ndata", "count": 0},  # 0 null values
-        ],
-    }
-
-    assert result == expected
-
-
-def test_get_null_counts_no_nulls():
-    """
-    Test get_null_counts with a DataFrame containing no null values.
-    """
-    df = pd.DataFrame(
-        {
-            "column_a": [1, 2, 3, 4, 5],
-            "column_b": ["x", "y", "z", "w", "v"],
-            "column_c": [1.1, 2.2, 3.3, 4.4, 5.5],
-        }
-    )
-
-    result = get_null_counts(df)
-
-    expected = {
-        "name": "Nulls",
-        "results": [
-            {"value": "column\na", "count": 0},  # 0 null values
-            {"value": "column\nb", "count": 0},  # 0 null values
-            {"value": "column\nc", "count": 0},  # 0 null values
-        ],
-    }
-
-    assert result == expected
+    assert func(df) == {"name": name, "results": []}
 
 
 # Tests for get_sex_distribution
-
-
-def test_get_sex_distribution_no_person_id():
-    """
-    Test get_sex_distribution when DataFrame doesn't have person_id column.
-    """
-    df = pd.DataFrame(
-        {
-            "accession_id": ["id_1", "id_2"],
-            "modality": ["CT", "MR"],
-        }
-    )
-
-    result = get_sex_distribution(df)
-
-    expected = {"name": "Sex Distribution", "results": []}
-
-    assert result == expected
 
 
 @patch("data_access_api.services.cohort.get_records")
@@ -1266,24 +1098,6 @@ def test_get_sex_distribution_reads_the_gender_concept_before_the_source_value()
 
 
 # Tests for get_age_distribution
-
-
-def test_get_age_distribution_no_person_id():
-    """
-    Test get_age_distribution when DataFrame doesn't have person_id column.
-    """
-    df = pd.DataFrame(
-        {
-            "accession_id": ["id_1", "id_2"],
-            "modality": ["CT", "MR"],
-        }
-    )
-
-    result = get_age_distribution(df)
-
-    expected = {"name": "Age Distribution", "results": []}
-
-    assert result == expected
 
 
 @patch("data_access_api.services.cohort.get_records")

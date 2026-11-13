@@ -56,27 +56,11 @@ class TestDocsGating:
             importlib.reload(main)
 
 
-def test_startup_logs_which_governance_policy_is_enforced(capsys):
+def test_startup_logs_the_governance_line_at_a_level_a_quiet_trust_still_prints():
     """reload-governance waits for this line: it is how an operator learns the document they
-    edited reached the service (and that the image is new enough to read one)."""
-    import logging
-
-    records: list[str] = []
-    handler = logging.Handler()
-    handler.emit = lambda record: records.append(record.getMessage())  # type: ignore[method-assign]
-    logger = logging.getLogger("data_access_api.utils.logger")
-    logger.addHandler(handler)
-    try:
-        importlib.reload(main)
-    finally:
-        logger.removeHandler(handler)
-
-    assert any(line.startswith("[governance] no policy configured") for line in records), records
-
-
-def test_the_governance_line_survives_a_quiet_log_level():
-    """A trust running at TRUST_LOG_LEVEL=WARNING must still print it, or reload-governance reports
-    an image that predates governance when the policy did apply."""
+    edited reached the service (and that the image is new enough to read one). A trust running at
+    TRUST_LOG_LEVEL=WARNING must still print it, or reload-governance reports an image that
+    predates governance when the policy did apply."""
     import logging
 
     records: list[logging.LogRecord] = []
@@ -89,8 +73,11 @@ def test_the_governance_line_survives_a_quiet_log_level():
     finally:
         logger.removeHandler(handler)
 
-    (line,) = [r for r in records if r.getMessage().startswith("[governance]")]
-    assert line.levelno >= logging.WARNING
+    lines = [r for r in records if r.getMessage().startswith("[governance]")]
+    assert len(lines) == 1, [r.getMessage() for r in records]
+    (line,) = lines
+    assert line.getMessage().startswith("[governance] no policy configured"), line.getMessage()
+    assert line.levelno >= logging.WARNING, logging.getLevelName(line.levelno)
 
 
 def test_startup_checks_the_snapshot_store():
