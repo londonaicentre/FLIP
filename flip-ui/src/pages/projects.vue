@@ -90,12 +90,12 @@
                             :data-test="`type-filter-${opt.id}`"
                             @click="selectType(opt.value)"
                         >
-                            <icon-healthicons-xray-outline v-if="opt.id === 'imaging'" class="w-4 h-4 shrink-0" aria-hidden="true" />
                             <icon-healthicons-register-book-outline
                                 v-if="opt.id !== 'all'"
                                 class="w-4 h-4 shrink-0"
                                 aria-hidden="true"
                             />
+                            <icon-healthicons-xray-outline v-if="opt.id === 'imaging'" class="w-4 h-4 shrink-0" aria-hidden="true" />
                             <span :class="opt.id === 'all' ? '' : 'hidden md:inline'">{{ opt.label }}</span>
                         </button>
                     </div>
@@ -224,7 +224,7 @@
                                         <span class="truncate">{{ ownerLabel(project) }} · {{ relativeUpdated(project) }}</span>
                                     </div>
                                 </div>
-                                <div class="hidden md:flex">
+                                <div class="hidden md:flex justify-start">
                                     <ProjectTypeChip :has-imaging="projectHasImaging(project)" size="lg" />
                                 </div>
                                 <!-- Below md the row is two columns: this drops under the name and

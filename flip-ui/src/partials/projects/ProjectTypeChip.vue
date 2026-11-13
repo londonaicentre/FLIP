@@ -12,7 +12,7 @@
 -->
 <template>
     <!-- Project type (FLIP#1071) as icons that add up the way the data does: every project has OMOP
-         records (register book), imaging projects add an x-ray. The name is kept for screen readers
+         records (register book, always first), imaging projects add an x-ray after it. The name is kept for screen readers
          and as a hover tooltip. Informational only. -->
     <span
         class="inline-flex items-center gap-1 shrink-0"
@@ -20,8 +20,8 @@
         :title="label"
         :data-test="`project-type-chip-${projectTypeId(hasImaging)}`"
     >
-        <icon-healthicons-xray-outline v-if="hasImaging" :class="SIZE_CLASS[size]" aria-hidden="true" />
         <icon-healthicons-register-book-outline :class="SIZE_CLASS[size]" aria-hidden="true" />
+        <icon-healthicons-xray-outline v-if="hasImaging" :class="SIZE_CLASS[size]" aria-hidden="true" />
         <span class="sr-only">{{ label }}</span>
     </span>
 </template>
