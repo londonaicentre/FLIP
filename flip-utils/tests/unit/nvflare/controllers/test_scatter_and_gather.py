@@ -42,6 +42,15 @@ def _ctx():
     return ctx
 
 
+def _metrics_ctx():
+    """An FLContext carrying a SEND_RESULT payload and no job meta."""
+    fl_ctx = MagicMock()
+    fl_ctx.get_prop.side_effect = lambda key, default=None: (
+        "metrics-shareable" if key == FLContextKey.EVENT_DATA else (None if key == FLContextKey.JOB_META else default)
+    )
+    return fl_ctx
+
+
 class TestInit:
     def test_stores_model_id_as_fallback(self):
         controller = ScatterAndGather(model_id=_VALID_MODEL_ID)
@@ -79,6 +88,19 @@ class TestResolveModelId:
 class TestAcceptTrainResult:
     """The FLIP-specific pass-through-to-aggregator semantics + failed-task reporting."""
 
+    @staticmethod
+    def _failing_controller():
+        """A controller ready for the non-OK result path, with the hub relay and panic mocked."""
+        controller = ScatterAndGather(model_id=_VALID_MODEL_ID, ignore_result_error=False)
+        controller.flip = MagicMock()
+        controller.system_panic = MagicMock()
+        controller.log_error = MagicMock()
+        controller.log_warning = MagicMock()
+        # Attrs the base class reads on the non-OK path (set during a real run's control_flow).
+        controller._current_failed_clients = set()
+        controller._current_num_targets = 1
+        return controller
+
     def _controller(self):
         controller = ScatterAndGather(model_id=_VALID_MODEL_ID)
         controller.aggregator = MagicMock(spec=Aggregator)
@@ -113,14 +135,7 @@ class TestAcceptTrainResult:
         controller.log_error.assert_not_called()
 
     def test_reports_handled_execution_exception_to_hub(self):
-        controller = ScatterAndGather(model_id=_VALID_MODEL_ID, ignore_result_error=False)
-        controller.flip = MagicMock()
-        controller.system_panic = MagicMock()
-        controller.log_error = MagicMock()
-        controller.log_warning = MagicMock()
-        # Attrs the base class reads on the non-OK path (set during a real run's control_flow).
-        controller._current_failed_clients = set()
-        controller._current_num_targets = 1
+        controller = self._failing_controller()
 
         result = Shareable()
         result.set_return_code(ReturnCode.EXECUTION_EXCEPTION)
@@ -136,13 +151,7 @@ class TestAcceptTrainResult:
         """A Client-API script that dies pre-flare.init returns a bare TASK_ABORTED with no
         "exception" header (only the retired legacy executors ever set one). The researcher must
         still get a hub-visible pointer at the trust-side logs, not just a generic panic."""
-        controller = ScatterAndGather(model_id=_VALID_MODEL_ID, ignore_result_error=False)
-        controller.flip = MagicMock()
-        controller.system_panic = MagicMock()
-        controller.log_error = MagicMock()
-        controller.log_warning = MagicMock()
-        controller._current_failed_clients = set()
-        controller._current_num_targets = 1
+        controller = self._failing_controller()
 
         result = Shareable()
         result.set_return_code(ReturnCode.TASK_ABORTED)
@@ -263,37 +272,6 @@ class TestZeroAcceptancePanic:
 
     @pytest.mark.parametrize("start_round", [0, 3])
     def test_no_panic_for_a_finished_sibling_controller_from_any_start_round(self, start_round):
-        """The finished-controller exemption is relative to _start_round, not to zero.
-
-        Parametrised because every other test here leaves _start_round at the constructor default,
-        so nothing pinned that term: dropping it entirely from the comparison still passed the
-        whole suite, while making a start_round=3 job read as 'finished' during its very first
-        round — silently disarming the zero-acceptance guard it must preserve.
-        """
-        controller = self._controller(round_no=start_round + 1)
-        controller._start_round = start_round
-        controller._num_rounds = 1
-        controller._round_acceptances[start_round] = {"site-1", "site-2"}
-
-        with patch.object(NVFlareScatterAndGather, "handle_event"):
-            controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
-
-        controller.system_panic.assert_not_called()
-
-    @pytest.mark.parametrize("start_round", [0, 3])
-    def test_still_panics_on_an_empty_round_from_any_start_round(self, start_round):
-        """Companion to the above: the guard must still fire mid-loop whatever _start_round is."""
-        controller = self._controller(round_no=start_round)
-        controller._start_round = start_round
-        controller._num_rounds = 3
-
-        with patch.object(NVFlareScatterAndGather, "handle_event"):
-            controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
-
-        controller.system_panic.assert_called_once()
-        assert "accepted 0 of 2" in controller.system_panic.call_args.args[0]
-
-    def test_no_panic_for_a_finished_sibling_controller(self):
         """A controller that has completed its round loop must not panic on a sibling's round.
 
         Stock's loop is ``while self._current_round < self._start_round + self._num_rounds`` with a
@@ -301,12 +279,18 @@ class TestZeroAcceptancePanic:
         a round its ``_round_acceptances`` can never have a key for. In the two-phase LDM job the
         finished ``train_ae`` controller still receives ``train_dm``'s BEFORE_AGGREGATION, looked
         its own stale round up, found nothing, and aborted the whole run (FLIP#1177).
+
+        The exemption is relative to _start_round, not to zero. Parametrised because every other test
+        here leaves _start_round at the constructor default, so nothing pinned that term: dropping it
+        entirely from the comparison still passed the whole suite, while making a start_round=3 job
+        read as 'finished' during its very first round — silently disarming the zero-acceptance guard
+        it must preserve.
         """
-        controller = self._controller(round_no=1)
-        controller._start_round = 0
+        controller = self._controller(round_no=start_round + 1)
+        controller._start_round = start_round
         controller._num_rounds = 1
-        # It ran round 0 and accepted both clients; the loop then left _current_round at 1.
-        controller._round_acceptances[0] = {"site-1", "site-2"}
+        # It ran its one round and accepted both clients; the loop then left _current_round one past it.
+        controller._round_acceptances[start_round] = {"site-1", "site-2"}
 
         with patch.object(NVFlareScatterAndGather, "handle_event"):
             controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
@@ -314,17 +298,17 @@ class TestZeroAcceptancePanic:
         controller.system_panic.assert_not_called()
         controller.flip.send_handled_exception.assert_not_called()
 
-    def test_still_panics_on_a_genuinely_empty_round_mid_loop(self):
+    @pytest.mark.parametrize(("start_round", "round_offset"), [(0, 0), (3, 0), (0, 1)], ids=["0", "3", "0-mid-loop"])
+    def test_still_panics_on_an_empty_round_from_any_start_round(self, start_round, round_offset):
         """The finished-controller exemption must not disarm the guard it exists for: a controller
-        INSIDE its loop with a real zero-acceptance round still aborts.
+        INSIDE its loop with a real zero-acceptance round still aborts, whatever _start_round is.
 
-        The guard was added by commit fee560241 and carries no issue number; it is cited by commit
-        here rather than by number, because an earlier revision of this test misattributed it to
-        FLIP#1001, which is an unrelated Flower run-visibility bug.
+        The guard was added by commit fee560241 and carries no issue number (not FLIP#1001, an
+        unrelated Flower run-visibility bug).
         """
-        controller = self._controller(round_no=1)
-        controller._start_round = 0
-        controller._num_rounds = 3  # round 1 of 3 — still running
+        controller = self._controller(round_no=start_round + round_offset)
+        controller._start_round = start_round
+        controller._num_rounds = 3
 
         with patch.object(NVFlareScatterAndGather, "handle_event"):
             controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
@@ -346,12 +330,7 @@ class TestHandleEvent:
         controller.log_error = MagicMock()
         controller._current_round = 2
 
-        fl_ctx = MagicMock()
-        fl_ctx.get_prop.side_effect = lambda key, default=None: (
-            "metrics-shareable"
-            if key == FLContextKey.EVENT_DATA
-            else (None if key == FLContextKey.JOB_META else default)
-        )
+        fl_ctx = _metrics_ctx()
 
         with patch("flip.nvflare.controllers.scatter_and_gather.handle_metrics_event") as mock_metrics:
             controller.handle_event(FlipEvents.SEND_RESULT, fl_ctx)
@@ -385,12 +364,7 @@ class TestHandleEvent:
         controller.log_error = MagicMock()
         controller._current_round = None  # this instance has not started its training loop
 
-        fl_ctx = MagicMock()
-        fl_ctx.get_prop.side_effect = lambda key, default=None: (
-            "metrics-shareable"
-            if key == FLContextKey.EVENT_DATA
-            else (None if key == FLContextKey.JOB_META else default)
-        )
+        fl_ctx = _metrics_ctx()
 
         with patch("flip.nvflare.controllers.scatter_and_gather.handle_metrics_event") as mock_metrics:
             controller.handle_event(FlipEvents.SEND_RESULT, fl_ctx)  # must not raise
