@@ -32,7 +32,7 @@ from flip_api.domain.schemas.status import ProjectStatus
 USER_ID = uuid.uuid4()
 PROJECT_ID = uuid.uuid4()
 RESERVATION = uuid.uuid4()
-SECRET = "Women over 60 SECRET-DESCRIPTION-TEXT"
+PRIVATE_DESCRIPTION = "Women over 60 PRIVATE-DESCRIPTION-TEXT"
 HEADERS = {"Idempotency-Key": "4b1f8a3c-key"}
 
 
@@ -176,11 +176,11 @@ def test_model_failure_releases_and_hides_detail(client, mocks, enabled):
 
 def test_logs_metadata_never_the_description_or_sql(client, mocks, enabled, caplog):
     with caplog.at_level(logging.INFO, logger="flip_api.cohort_draft"):
-        body = _post(client, description=SECRET).json()
+        body = _post(client, description=PRIVATE_DESCRIPTION).json()
     logged = " ".join(r.getMessage() for r in caplog.records if r.name == "flip_api.cohort_draft")
     assert "output_tokens" in logged
     assert str(PROJECT_ID) in logged
-    assert "SECRET-DESCRIPTION-TEXT" not in logged
+    assert "PRIVATE-DESCRIPTION-TEXT" not in logged
     assert body["sql"] not in logged
 
 
