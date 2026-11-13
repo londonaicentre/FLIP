@@ -66,7 +66,8 @@ class TestBestModelSelectorConsider:
     )
     def test_second_round(self, minimize, first, second, improved):
         key = "val_loss" if minimize else "val_f1"
-        selector = BestModelSelector(key, minimize=minimize)
+        # The maximize cases use the default, so they also pin that the selector maximizes by default.
+        selector = BestModelSelector(key, minimize=True) if minimize else BestModelSelector(key)
         selector.consider(1, {key: first}, ARRAYS_R1)
 
         assert selector.consider(2, {key: second}, ARRAYS_R2) is improved
