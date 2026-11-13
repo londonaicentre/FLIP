@@ -66,9 +66,11 @@ uses these values. In your own FLARE runs (the simulator, or a job exported with
 .. warning::
 
    **A high** ``percentile`` **sharply degrades training.** At 95, only the top 5 % of every update survives,
-   which stalls FedAvg convergence. On a frozen-backbone (head-only) fine-tune the filter would reset the global
-   head every round, so with ``AGGREGATE_ONLY_REGEX`` set (see :ref:`fl-training-configuration`) FLIP drops the
-   frozen parameters first and computes the percentile over the trainable ones only.
+   which stalls FedAvg convergence.
+
+   On a frozen-backbone (head-only) fine-tune the filter would reset the global head every round. With
+   ``AGGREGATE_ONLY_REGEX`` set (see :ref:`fl-training-configuration`), FLIP therefore drops the frozen
+   parameters first and computes the percentile over the trainable ones only.
 
 .. important::
 
@@ -133,7 +135,7 @@ Also worth knowing:
    The template values are placeholders, not a defensible privacy budget. The noise comes from ``dp-sensitivity``
    alone, so raising ``dp-clipping-norm`` does not raise it. A real budget calibrates the noise to the clipping norm
    and the local dataset, and accounts for composition across rounds, which this mod does not: every round spends
-   the budget again (FLIP#1760).
+   the budget again.
 
 ****************************************
 Site-enforced privacy policy (per trust)
@@ -146,7 +148,8 @@ different policies in the same federation, with no hub redeploy.
 **To enable it** (*Who: Trust operator*):
 
 #. Set the ``FL_SITE_PRIVACY_*`` variables in the Trust's kit file (``trust/.env.<CODE>.<env>``, Host-local
-   profile section), or the same settings in the Trust's governance document (see below), not both:
+   profile section), or the same settings in the Trust's governance document
+   (:ref:`trust-governance-document`), not both:
 
    .. list-table::
       :header-rows: 1
@@ -163,7 +166,7 @@ different policies in the same federation, with no hub redeploy.
           value, and a larger one only weakens the truncation.
         - ``10`` / ``0.01``
 
-#. Restart the Trust's FL clients:
+#. Restart the Trust's FL clients, between runs:
 
    .. code-block:: shell
 
@@ -187,7 +190,7 @@ How the site policy behaves (verified against FLARE 2.9.0):
 - **Job code is not isolated from the filter.** Every FLARE app template runs the Client API with
   ``"execution_mode": "in_process"``, so the job's code runs inside the FL client's job process, alongside the
   privacy service and the filter objects it is meant to be bound by. The filter therefore binds what a job
-  *declares*, not what its code can *do* at runtime. Code review remains the control (FLIP#1572).
+  *declares*, not what its code can *do* at runtime. Code review remains the control.
 - **The percentile covers the whole model.** The site filter runs before FLIP drops the frozen parameters of a
   head-only fine-tune, so its percentile includes their all-zero diffs. Keep site percentiles modest (the default
   ``10``); the convergence warning above applies doubly.
@@ -196,6 +199,8 @@ How the site policy behaves (verified against FLARE 2.9.0):
   audit trail. A filter that raises never sends the update unfiltered.
 - **FLARE only.** Flower has no site-side filter hook, so on Flower the review of uploaded training code remains
   the control.
+
+.. _trust-governance-document:
 
 *************************************
 Trust governance document (per trust)
