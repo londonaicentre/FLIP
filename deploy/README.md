@@ -363,12 +363,10 @@ docker inspect <container> --format '{{.HostConfig.SecurityOpt}}'
 
 ## Service Authentication
 
-FLIP uses three separate authentication mechanisms for service-to-service communication. The single
-hub-internal key is generated standalone; the two per-trust keys are minted together when you register each
-trust:
+FLIP uses separate authentication mechanisms for service-to-service communication. The two per-trust keys
+are minted together when you register each trust:
 
 ```bash
-make generate-internal-service-key   # fl-server → flip-api (single hub-internal secret)
 make register-trusts                 # mints each trust's TRUST_API_KEY + TRUST_INTERNAL_SERVICE_KEY into its kit file
 ```
 
@@ -379,16 +377,12 @@ only in that trust's kit file (`trust/.env.<CODE>.<env>`), sent in the `TRUST_AP
 only the SHA-256 hash, in the `trust` table's `api_key_hash` column — there is no hub-side env dict of trust keys.
 Used for task polling, cohort result submission, and heartbeat endpoints.
 
-### Internal Service Key (fl-server → flip-api)
+### Job Credential (fl-server → flip-api)
 
-The fl-server on the Central Hub authenticates to flip-api using `INTERNAL_SERVICE_KEY` (a plain string) sent
-in the `INTERNAL_SERVICE_KEY_HEADER` header. The hub validates it against `INTERNAL_SERVICE_KEY_HASH` (the
-SHA-256 hash of the key). Used for model status updates, training metrics, training log and results-upload
-endpoints. This is a **single, hub-internal** secret and is separate from the per-trust internal keys below.
-
-Those endpoints also require a **per-job credential** in the `X-Job-Credential` header. flip-api mints it
-when it dispatches a job, stores its SHA-256 hash on the `fl_job` row and sends the plaintext to the FL API
-with the app; the FL API writes it to `JOB_CREDENTIAL_DIR`, a directory on the volume it shares with the
+The fl-server on the Central Hub authenticates to flip-api with a **per-job credential** in the
+`X-Job-Credential` header, on the model status, training metrics, training log and results-upload
+endpoints. flip-api mints it when it dispatches a job, stores its SHA-256 hash on the `fl_job` row and
+sends the plaintext to the FL API with the app; the FL API writes it to `JOB_CREDENTIAL_DIR`, a directory on the volume it shares with the
 fl-server, and flip-utils reads it there for every callback. A callback is accepted only with the credential
 of the model's own job, while that job is still reporting. Nothing to configure beyond `JOB_CREDENTIAL_DIR`,
 which the compose files and the ECS task definitions set on the fl-api and the fl-server.
@@ -397,7 +391,7 @@ which the compose files and the ECS task definitions set on the fl-api and the f
 
 Every FL API route except `/health` requires `FL_API_KEY`, sent by flip-api in the `FL_API_KEY_HEADER` header
 (default `X-FL-API-Key`) and compared in constant time. On Flower the key-registration one-shot sends it on
-`/register_node` too. It is dedicated to this hop — the FL API never holds `INTERNAL_SERVICE_KEY`. `make up`
+`/register_node` too. It is dedicated to this hop. `make up`
 mints it into the hub env file; on ECS it is the `fl_api_key` field of the `FLIP_API` secret.
 
 ### Trust-Internal Service Keys (trust-api / imaging-api / fl-client → imaging-api / data-access-api)
@@ -449,19 +443,15 @@ Per-trust keys — a distinct key per trust, so a compromised trust can neither 
 are the follow-up in FLIP#845; they add keyring entries without changing the wire format.
 
 The fl-server must reach flip-api via `FLIP_API_INTERNAL_URL` — a Docker-network URL such as
-`http://flip-api:8000/api`. It must **not** go through the public `CENTRAL_HUB_API_URL` because the
-CloudFront distribution in front of flip-api whitelists only `Authorization`, `Content-Type`, and
-`Origin` and strips `X-Internal-Service-Key` at the edge, which would break this handshake. The
-public `CENTRAL_HUB_API_URL` is reserved for flip-ui and trust-side (trust-api) consumers that live
+`http://flip-api:8000/api`. It must **not** go through the public `CENTRAL_HUB_API_URL`: the FL
+server's callbacks stay on the hub's own network, and on a platform-managed estate the FL server has
+no route to the public edge at all. The public `CENTRAL_HUB_API_URL` is reserved for flip-ui and trust-side (trust-api) consumers that live
 outside the hub's Docker network.
 
 | Variable | Where used | Purpose |
 | --- | --- | --- |
 | `TRUST_API_KEY_HEADER` | flip-api, trust-api | Header name for trust auth |
 | `TRUST_API_KEY` | trust-side kit file | Per-trust plaintext key (hub stores its SHA-256 in the `trust` table's `api_key_hash`) |
-| `INTERNAL_SERVICE_KEY_HEADER` | flip-api, fl-server | Header name for internal service auth |
-| `INTERNAL_SERVICE_KEY` | fl-server | Internal service plaintext key (plain string) |
-| `INTERNAL_SERVICE_KEY_HASH` | flip-api | SHA-256 hash of internal service key (plain string) |
 | `FL_API_KEY` | flip-api, fl-api-net-N, Flower `register-supernode-keys-net-N` | Key every FL API route but `/health` requires (header `FL_API_KEY_HEADER`, default `X-FL-API-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | trust-api, imaging-api, data-access-api, fl-client | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | trust-side kit file | Per-trust plaintext key, minted by `register_trust`. The hub never sees it. |
@@ -476,9 +466,8 @@ mechanism: on ECS, Terraform sets it to the Cloud Map private-DNS name
 (`http://flip-api.flip.local:8000/api`, built in `locals.tf`); on the local compose harness it is the
 Docker-network URL (`http://flip-api:8000/api`).
 
-What it must not be: the public CloudFront URL. That's orthogonal to compute — CloudFront strips
-`X-Internal-Service-Key` at the edge. Internal ALBs preserve all request headers by default, so an
-internal-ALB value would also work; CloudFront doesn't.
+What it must not be: the public CloudFront URL. The callbacks never leave the hub's network; an
+internal-ALB value would also work.
 
 > **Note on troubleshooting**: AWS-deployment-specific failure modes (Terraform state drift, ECS
 > service stuck in `PENDING`, CloudFront cache invalidation, RDS connectivity) are documented in

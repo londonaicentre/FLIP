@@ -389,18 +389,6 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
         { name = k, value = v }
       ]
 
-      # INTERNAL_SERVICE_KEY is sourced from the FLIP_API Secrets Manager
-      # secret rather than passed as a plain env, so the raw key never lands
-      # in the task definition JSON or CloudFormation describe output. The
-      # JSON-key syntax (`:internal_service_key::`) extracts that single
-      # field from the multi-field secret payload.
-      secrets = [
-        {
-          name      = "INTERNAL_SERVICE_KEY"
-          valueFrom = "${module.flip_api_secret.secret_arn}:internal_service_key::"
-        },
-      ]
-
       # Container paths must match what the fl-server image expects.
       # FLARE: the kit's {local,startup,transfer} under /workspace (FL_WORKSPACE,
       # see the entrypoint), not compose.prod.nvflare.yml's /app; wrong paths ->

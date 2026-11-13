@@ -172,8 +172,6 @@ REQUIRED_KEYS=(
     # Secrets — stored as GitHub environment secrets
     ADMIN_USER_PASSWORD
     AES_KEY_BASE64
-    INTERNAL_SERVICE_KEY
-    INTERNAL_SERVICE_KEY_HASH
     FL_API_KEY
 
     # Database identifiers — configuration, stored as GitHub environment
@@ -186,7 +184,6 @@ REQUIRED_KEYS=(
     # Service wiring baked into the ECS task definitions (locals.tf)
     FL_ADMIN_DIRECTORY
     FL_SERVER_PORT
-    INTERNAL_SERVICE_KEY_HEADER
     SES_VERIFIED_EMAIL
     TRUST_API_KEY_HEADER
 

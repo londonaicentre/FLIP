@@ -284,8 +284,6 @@ e2e_smoke_prostate: _require_flower_backend e2e_smoke
 _require_flower_backend:
 	@[ "$(FL_BACKEND)" = flower ] || { echo "❌ e2e_smoke_prostate uploads a Flower app — run it with FL_BACKEND=flower (got '$(FL_BACKEND)')"; exit 1; }
 
-generate-internal-service-key:
-	uv run python -m flip_api.scripts.generate_internal_service_key $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)
 generate-fl-api-key:
 	uv run python -m flip_api.scripts.generate_fl_api_key $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)
 generate-xnat-credentials:

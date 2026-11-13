@@ -83,8 +83,6 @@ services:
       - LOCAL_DEV=false
       - IMAGES_DIR=/app/data/images
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
-      - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
-      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       # Per-job hub credentials, on the volume the FL API and the fl-server share (never deployed to clients).
       - JOB_CREDENTIAL_DIR=/app/src/.job-credentials
     command:

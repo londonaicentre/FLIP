@@ -66,8 +66,6 @@ from typing import Any
 SECRET_KEYS = {
     "ADMIN_USER_PASSWORD",
     "AES_KEY_BASE64",
-    "INTERNAL_SERVICE_KEY",
-    "INTERNAL_SERVICE_KEY_HASH",
     "FL_API_KEY",
 }
 
@@ -334,7 +332,6 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "POSTGRES_DB": api_env.get("POSTGRES_DB", ""),
         "POSTGRES_USER": api_env.get("POSTGRES_USER", ""),
         "FL_SERVER_PORT": first_port(fl_server),
-        "INTERNAL_SERVICE_KEY_HEADER": api_env.get("INTERNAL_SERVICE_KEY_HEADER", ""),
         "TRUST_API_KEY_HEADER": api_env.get("TRUST_API_KEY_HEADER", ""),
         "FL_BACKEND": api_env.get("FL_BACKEND", ""),
         "FL_ADMIN_DIRECTORY": fl_api_env.get("FL_ADMIN_DIRECTORY", ""),
@@ -349,8 +346,6 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "ENFORCE_MFA": api_env.get("ENFORCE_MFA", ""),
         "ADMIN_USER_PASSWORD": st.attrs("aws_cognito_user", "admin_user").get("password", ""),
         "AES_KEY_BASE64": secret.get("aes_key", ""),
-        "INTERNAL_SERVICE_KEY": secret.get("internal_service_key", ""),
-        "INTERNAL_SERVICE_KEY_HASH": secret.get("internal_service_key_hash", ""),
         "FL_API_KEY": secret.get("fl_api_key", ""),
         "JOB_RESOURCE_SPEC_NUM_GPUS": fl_api_env.get("JOB_RESOURCE_SPEC_NUM_GPUS", ""),
         # The keys every estate requires (compose-ci-env.sh's LZA_REQUIRED_KEYS).
@@ -370,7 +365,7 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
     for group, keys in (
         ("live ECS service", ("DOCKER_TAG", "DOCKER_FL_TAG")),
         ("live SSM parameter", ("FL_KIT_SLOT_NAMES",)),
-        ("live Secrets Manager", ("AES_KEY_BASE64", "INTERNAL_SERVICE_KEY", "INTERNAL_SERVICE_KEY_HASH", "FL_API_KEY")),
+        ("live Secrets Manager", ("AES_KEY_BASE64", "FL_API_KEY")),
     ):
         sources.update(dict.fromkeys(keys, group))
     return v, sources

@@ -123,8 +123,7 @@ placeholders:
      - A new 32-byte key:
        ``python3 -c "import base64, os; print(base64.b64encode(os.urandom(32)).decode())"``
 
-Leave these alone: ``INTERNAL_SERVICE_KEY``, ``INTERNAL_SERVICE_KEY_HASH`` and
-``FL_API_KEY`` (``make up`` generates them), the Cognito and SES settings (staging and
+Leave these alone: ``FL_API_KEY`` (``make up`` generates it), the Cognito and SES settings (staging and
 production only) and the object-store keys (defaults are in
 ``deploy/compose.development.yml``).
 
@@ -257,7 +256,7 @@ Step 6 — Start the platform
 
    make up
 
-In order, this generates the internal service key, creates the Docker networks
+In order, this generates the FL API key, creates the Docker networks
 and the object-store buckets, starts the hub, registers GSTT and KCH with it
 and writes their kit files. Then, one Trust at a time, it starts the Trust
 stack, seeds it with the mock data pinned in ``trust/.data_version`` and starts

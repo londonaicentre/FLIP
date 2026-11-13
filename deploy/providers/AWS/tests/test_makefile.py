@@ -136,9 +136,6 @@ COMPLETE_ENV = {
     "FLIP_FL_RESULTS_BUCKET_NAME": "probe-results",
     "FLIP_APP_BUNDLES_BUCKET_NAME": "probe-bundles",
     "AICENTRE_BUCKET_NAME": "probe-aicentre",
-    "INTERNAL_SERVICE_KEY": "probe",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY_HASH": "probe",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
     "FL_API_KEY": "probe",  # pragma: allowlist secret
 }
 
@@ -180,9 +177,6 @@ def test_a_complete_env_file_passes_every_guard(tmp_path: Path) -> None:
         ({"FLIP_FL_RESULTS_BUCKET_NAME": None}, "FLIP_FL_RESULTS_BUCKET_NAME"),
         ({"FLIP_APP_BUNDLES_BUCKET_NAME": "<your-bundles-bucket>"}, "FLIP_APP_BUNDLES_BUCKET_NAME"),
         ({"AICENTRE_BUCKET_NAME": None}, "AICENTRE_BUCKET_NAME"),
-        ({"INTERNAL_SERVICE_KEY": None}, "INTERNAL_SERVICE_KEY must be set"),
-        ({"INTERNAL_SERVICE_KEY_HASH": None}, "INTERNAL_SERVICE_KEY_HASH"),
-        ({"INTERNAL_SERVICE_KEY_HEADER": None}, "INTERNAL_SERVICE_KEY_HEADER"),
         ({"FL_API_KEY": None}, "FL_API_KEY must be set"),
         # No default: true is wrong on a zone-less estate, false wrong on one with a zone.
         ({"MANAGE_DNS": None}, "MANAGE_DNS must be true or false"),

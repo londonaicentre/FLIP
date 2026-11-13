@@ -158,8 +158,8 @@ Things worth knowing before touching any of it:
 - **An apply holds if the plan touches FL** (`scripts/check-fl-plan-impact.sh`):
   `fl-server-net-1` / `fl-api-net-1` task definitions or services, or any EFS
   deletion. `flip-api` is deliberately not watched. The hub cannot be asked
-  whether a run is in flight — `/fl/quiesce` is Cognito-gated, CloudFront strips
-  the internal key, and the DB is in a private subnet — so the plan is asked instead.
+  whether a run is in flight — `/fl/quiesce` is Cognito-gated and the DB is in a
+  private subnet — so the plan is asked instead.
   Release a held apply by re-dispatching `terraform_apply.yml` with the
   `fl_quiesced: true` input; a plain re-run reads the same plan and holds again.
 - **A plan that touches the LZA FL ingress gets an advisory, never a hold**

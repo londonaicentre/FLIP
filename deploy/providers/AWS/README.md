@@ -71,15 +71,14 @@ This command executes the following steps in order:
 1. **`github-login`**: Authenticate with GitHub CLI
 2. **`aws-login`**: Authenticate with AWS SSO
 3. **`init`**: Initialize Terraform with environment-specific S3 backend
-4. **`generate-internal-service-key`**: Check the fl-server → hub `INTERNAL_SERVICE_KEY` and its hash are in sync (re-syncing a stale hash). It cannot mint a first key from this directory — the Makefile refuses to parse at all while `INTERNAL_SERVICE_KEY` is unset in the env file — so mint it beforehand from the repo root: `make generate-internal-service-key ENV_FILE=$(pwd)/.env.<hub>`
-5. **`plan`**: Generate and review the initial Terraform execution plan
-6. **`apply`**: Apply infrastructure changes
-7. **`update-env`**: Refresh the root environment file with Terraform outputs
-8. **`ssh-config`**: Update `~/.ssh/config` with SSM-managed EC2 instance IDs
-9. **`ansible-init`**: Patch the Central Hub bastion and install `psql` on it
-10. **`deploy-centralhub`**: Deploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) at the tip of the env's branch via new task-definition revisions (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)) and sync the UI to S3
-11. **`register-trusts`**: Register every locally-present trust kit file (none yet is fine) (`trust/.env.<CODE>.<hub>`) on the running hub and write its credentials back, with the hub-shared block from the local `.env.<hub>` (see [Registering trusts against the ECS hub](#registering-trusts-against-the-ecs-hub))
-12. **`status`**: Run comprehensive health checks
+4. **`plan`**: Generate and review the initial Terraform execution plan
+5. **`apply`**: Apply infrastructure changes
+6. **`update-env`**: Refresh the root environment file with Terraform outputs
+7. **`ssh-config`**: Update `~/.ssh/config` with SSM-managed EC2 instance IDs
+8. **`ansible-init`**: Patch the Central Hub bastion and install `psql` on it
+9. **`deploy-centralhub`**: Deploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) at the tip of the env's branch via new task-definition revisions (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)) and sync the UI to S3
+10. **`register-trusts`**: Register every locally-present trust kit file (none yet is fine) (`trust/.env.<CODE>.<hub>`) on the running hub and write its credentials back, with the hub-shared block from the local `.env.<hub>` (see [Registering trusts against the ECS hub](#registering-trusts-against-the-ecs-hub))
+11. **`status`**: Run comprehensive health checks
 
 To provision only the minimal Central Hub bastion after a targeted Terraform
 change, run `make provision-bastion HUB=stag|prod`.
@@ -266,33 +265,28 @@ make aws-login
 # 3. Initialize Terraform (uses the configured S3 backend)
 make init
 
-# 4. Check the fl-server -> hub INTERNAL_SERVICE_KEY + hash are in sync (the key must already be
-#    set in the env file or the Makefile will not parse; mint it first from the repo root with
-#    `make generate-internal-service-key ENV_FILE=$(pwd)/.env.<hub>`)
-make generate-internal-service-key
-
-# 5. Plan changes
+# 4. Plan changes
 make plan
 
-# 6. Apply infrastructure
+# 5. Apply infrastructure
 make apply
 
-# 7. Refresh the root env file with Terraform outputs (the two Cognito IDs)
+# 6. Refresh the root env file with Terraform outputs (the two Cognito IDs)
 make update-env
 
-# 8. Configure SSH access
+# 7. Configure SSH access
 make ssh-config
 
-# 9. Configure the SSM bastion with Ansible
+# 8. Configure the SSM bastion with Ansible
 make ansible-init
 
-# 10. Deploy the Central Hub
+# 9. Deploy the Central Hub
 make deploy-centralhub
 
-# 11. Register every locally-present trust kit file on the hub and write its credentials back
+# 10. Register every locally-present trust kit file on the hub and write its credentials back
 make register-trusts
 
-# 12. Check status
+# 11. Check status
 make status
 ```
 
@@ -633,7 +627,7 @@ Maintainer notes the manual leaves out:
   so the environment's edge origin must be https-only (`origin_tls`, aicentre-lza-iac#99). The edge checks the
   certificate against the host it forwards, so `/api/*` answers on `ALB_SUBDOMAIN` only, never on the
   distribution's `*.cloudfront.net` name.
-- Secrets (`AES_KEY_BASE64`, `INTERNAL_SERVICE_KEY*`, `ADMIN_USER_PASSWORD`, …) were minted fresh for the account
+- Secrets (`AES_KEY_BASE64`, `ADMIN_USER_PASSWORD`, …) were minted fresh for the account
   during the WP3 bring-up and later replaced by the carried-over legacy **values** in the WP4 data migration (so
   existing trust kits and encrypted data stayed valid) — never reuse the legacy Secrets Manager secret itself.
 
@@ -999,8 +993,7 @@ Each holds `TF_PLAN_ROLE_ARN` and `TF_APPLY_ROLE_ARN` (the roles described in
 [Where the CI identity comes from](#where-the-ci-identity-comes-from) above, read from IAM by
 `scripts/setup-github-environments.sh`),
 the hub variable `TF_HUB`, and the Terraform inputs. Stored as environment
-*secrets*: `ADMIN_USER_PASSWORD`, `AES_KEY_BASE64`, `INTERNAL_SERVICE_KEY`,
-`INTERNAL_SERVICE_KEY_HASH`, `FL_API_KEY`. Everything else is a variable, including
+*secrets*: `ADMIN_USER_PASSWORD`, `AES_KEY_BASE64`, `FL_API_KEY`. Everything else is a variable, including
 `POSTGRES_DB` / `POSTGRES_USER` — they are configuration rather than credentials
 and are rendered in the clear into the public plan comment either way
 (`variables.tf` explains the decision). The authoritative lists are
@@ -1026,7 +1019,7 @@ plan job declares `environment: aws-stag`, because that is the only way a workfl
 can read environment secrets, and the plan needs real values to be truthful. It
 runs on the pull request's own code. So **anyone with write access to this
 repository can read the staging secrets** (`AES_KEY_BASE64`,
-`INTERNAL_SERVICE_KEY`, `ADMIN_USER_PASSWORD`) by adding a step that prints them.
+`FL_API_KEY`, `ADMIN_USER_PASSWORD`) by adding a step that prints them.
 GitHub masks registered secrets in logs, but base64 or splitting the string
 defeats masking trivially — do not count on it.
 
@@ -1067,7 +1060,7 @@ To revisit, gate the plan job on a maintainer-applied label — one line in
 ### Never publish a plan file as an artifact
 
 `tf-via-pr` defaults `upload-plan` to **true**, and a Terraform plan file is a
-zip containing the full `tfstate` — `AES_KEY_BASE64`, `INTERNAL_SERVICE_KEY` and
+zip containing the full `tfstate` — `AES_KEY_BASE64`, `FL_API_KEY` and
 `ADMIN_USER_PASSWORD` in plaintext. **This repository is public**, so an uploaded
 plan is a public download of live credentials.
 
@@ -1355,8 +1348,7 @@ only when a path that builds one of the two images actually changed.
 **It will not disturb a training run.** Replacing `fl-server-net-1` kills any
 in-flight run (FLIP#770). A runner cannot ask the hub whether one is in flight —
 `GET /fl/quiesce` needs a Cognito session (and prod runs `ENFORCE_MFA=true`),
-CloudFront strips `X-Internal-Service-Key` at the edge, and the scheduler state
-is in a private subnet. So `scripts/check-fl-plan-impact.sh` asks the plan
+and the scheduler state is in a private subnet. So `scripts/check-fl-plan-impact.sh` asks the plan
 instead: if the plan changes `fl-server-net-1` / `fl-api-net-1` (task definition
 or service), or deletes any EFS resource, the job **holds** and names what it
 found. Everything else — IAM, S3, SSM, and a plain `flip-api` roll — applies
@@ -1679,7 +1671,7 @@ commit a re-render whose only change is the graphviz that made it.
 - **RDS**: PostgreSQL 17 managed database (Terraform default, see `var.postgres_version`), in the **data subnets**. Subnet group + security group ingress restricted to the Central Hub bastion SG and the `flip-api` ECS task SG.
 - **CloudWatch**: Logging and monitoring for ECS tasks. The minimal Central Hub bastion does not run the CloudWatch agent.
 - **Secrets Manager**: Secure storage for API secrets and database credentials (`FLIP_API` secret).
-- **SSM Parameter Store**: Configuration values read by ECS tasks at startup — bucket URIs, internal service URL, internal-service-key header name.
+- **SSM Parameter Store**: Configuration values read by ECS tasks at startup — bucket URIs, internal service URL.
 - **S3 Backend**: Remote state storage with environment-specific buckets, using S3 native locking (`use_lockfile = true` in `backend.tf`; no DynamoDB lock table).
 
 ### Subnet placement at a glance

@@ -166,7 +166,7 @@ services:
       - LOCAL_DEV=false
       - IMAGES_DIR=/app/data/images
       # FL clients intentionally do not have access to Central Hub API credentials.
-      # Only the fl-server (on the Central Hub) communicates with flip-api via INTERNAL_SERVICE_KEY.
+      # Only the fl-server (on the Central Hub) communicates with flip-api, under each job's own credential.
       - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
       - IMAGING_API_URL=${IMAGING_API_URL}
       # Trust-internal service auth — fl-client must send this header on every imaging-api call

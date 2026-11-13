@@ -43,7 +43,7 @@ Do not reintroduce `secrets.*` for a value a test stack only needs to be self-co
 |---|---|---|
 | `CODECOV_TOKEN` | `flip` environment | coverage upload in the test workflows |
 | `HF_TOKEN` | `flip` environment | `regenerate_docs_gifs.yml` (publishes the docs GIFs, gated to `develop`); `release.yml` (tags the docs GIFs a release ships) |
-| Terraform inputs (`AES_KEY_BASE64`, `ADMIN_USER_PASSWORD`, `INTERNAL_SERVICE_KEY`, …) | `aws-stag` / `aws-prod` environments | `terraform_plan/apply/drift.yml` (see below) |
+| Terraform inputs (`AES_KEY_BASE64`, `ADMIN_USER_PASSWORD`, `FL_API_KEY`, …) | `aws-stag` / `aws-prod` environments | `terraform_plan/apply/drift.yml` (see below) |
 | `GITHUB_TOKEN` | provided by Actions | image publishing, releases, PR automation |
 
 The Terraform `AES_KEY_BASE64` is the platform's real hub↔trust key. It is unrelated to the throwaway test keys above

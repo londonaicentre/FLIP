@@ -120,19 +120,8 @@ variable "AES_KEY_BASE64" {
   type = string
 }
 
-variable "INTERNAL_SERVICE_KEY_HASH" {
-  description = "SHA-256 hash of the internal service key used for fl-server-to-hub auth"
-  type        = string
-}
-
-variable "INTERNAL_SERVICE_KEY" {
-  description = "Raw internal service key used by fl-server to authenticate callbacks to flip-api. Stored in Secrets Manager (FLIP_API secret) and consumed by the fl-server ECS task definition via the secrets block."
-  type        = string
-  sensitive   = true
-}
-
 variable "FL_API_KEY" {
-  description = "Key flip-api presents to the FL API (fl-api-net-1), which requires it on every route but /health. Stored in Secrets Manager (FLIP_API secret, key fl_api_key) and consumed via the secrets block by the flip-api, fl-api and Flower key-registration task definitions. Dedicated to that hop, never INTERNAL_SERVICE_KEY."
+  description = "Key flip-api presents to the FL API (fl-api-net-1), which requires it on every route but /health. Stored in Secrets Manager (FLIP_API secret, key fl_api_key) and consumed via the secrets block by the flip-api, fl-api and Flower key-registration task definitions. Dedicated to that hop."
   type        = string
   sensitive   = true
 }
@@ -390,11 +379,6 @@ variable "TRUST_API_KEY_HEADER" {
   description = "HTTP header name carrying per-trust API keys on trust-to-hub calls. Compose default: Authorization."
   type        = string
   default     = "Authorization"
-}
-
-variable "INTERNAL_SERVICE_KEY_HEADER" {
-  description = "HTTP header name carrying the internal service key on fl-server-to-flip-api callbacks. Required — no default so every env file must set it explicitly."
-  type        = string
 }
 
 variable "FL_ADMIN_DIRECTORY" {

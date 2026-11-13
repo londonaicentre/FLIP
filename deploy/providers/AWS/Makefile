@@ -126,8 +126,6 @@ export TF_VAR_flip_cognito_admin_email=aicentreflip@gmail.com
 export TF_VAR_flip_cognito_researcher_email=rafaelagd@gmail.com
 export TF_VAR_POSTGRES_DB=${POSTGRES_DB}
 export TF_VAR_AES_KEY_BASE64=${AES_KEY_BASE64}
-export TF_VAR_INTERNAL_SERVICE_KEY_HASH=${INTERNAL_SERVICE_KEY_HASH}
-export TF_VAR_INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
 export TF_VAR_FL_API_KEY=${FL_API_KEY}
 # ── Fail-fast env guards ────────────────────────────────────────────────────────────────────
 # Parse-time refusals of a deploy env file that cannot work. They stand aside only when every
@@ -159,13 +157,10 @@ $(if $(call unset_or_placeholder,$(FLIP_APP_BUNDLES_BUCKET_NAME)),$(error 🪶 F
 # AICENTRE_BUCKET_NAME is guarded on the same terms: `variable "AICENTRE_BUCKET_NAME"` has no
 # default, and it also names the bucket the FL participant-kit targets below read and write.
 $(if $(call unset_or_placeholder,$(AICENTRE_BUCKET_NAME)),$(error 🪶 AICENTRE_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),)
-# Fail fast with a useful message when these are missing — the variable is
+# Fail fast with a useful message when this is missing — the variable is
 # `sensitive` with no default, so otherwise Terraform errors out mid-plan
 # with a generic "no value for required variable" that gives no hint about
 # where the value should come from.
-$(if $(INTERNAL_SERVICE_KEY),,$(error 🔑 INTERNAL_SERVICE_KEY must be set in $(MAIN_ENV_FILE) — generate with `make -C ../../../flip-api generate-internal-service-key`))
-$(if $(INTERNAL_SERVICE_KEY_HASH),,$(error 🔑 INTERNAL_SERVICE_KEY_HASH must be set in $(MAIN_ENV_FILE) — must be sha256 of INTERNAL_SERVICE_KEY))
-$(if $(INTERNAL_SERVICE_KEY_HEADER),,$(error 📨 INTERNAL_SERVICE_KEY_HEADER must be set in $(MAIN_ENV_FILE)))
 $(if $(FL_API_KEY),,$(error 🔑 FL_API_KEY must be set in $(MAIN_ENV_FILE) — generate with `make -C ../../../flip-api generate-fl-api-key ENV_FILE=$(abspath $(MAIN_ENV_FILE))`))
 endif
 
@@ -235,7 +230,6 @@ export TF_VAR_FLIP_UI_BUCKET_NAME=${FLIP_UI_BUCKET_NAME}
 # compose files mirror a subset as the local prod-image harness only; the hub
 # no longer deploys on EC2+compose.
 export TF_VAR_TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
-export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 export TF_VAR_FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
 export TF_VAR_ENFORCE_MFA=${ENFORCE_MFA}
 # JSON list of FL kit-slot names; seeds the fl_kit_slot pool register_trust
@@ -333,7 +327,7 @@ init: ## Initialize Terraform configuration
 # Every line of stdout is consumed as KEY=value, so the recipe must print the
 # variables and nothing else — no @echo banner, and no `##` recipe-line comments
 # (those are echoed by make and would land in the file as garbage). Output carries
-# AES_KEY_BASE64, INTERNAL_SERVICE_KEY, ADMIN_USER_PASSWORD and the DB user, so
+# AES_KEY_BASE64, FL_API_KEY, ADMIN_USER_PASSWORD and the DB user, so
 # never pipe it anywhere it would be echoed. Values are single-line by construction
 # (scripts/compose-ci-env.sh rejects embedded newlines), which is what makes the
 # plain KEY=value form safe for $$GITHUB_ENV.
@@ -921,11 +915,6 @@ help: ## Show this help message
 	@echo ""
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?##"}; {printf "  \033[36m%-20s\033[0m %s\n", $$0, $$1, $$2}'
 
-.PHONY: generate-internal-service-key
-generate-internal-service-key: ## Generate a new internal service key (fl-server → flip-api auth)
-	@echo "🔑 Generating internal service key..."
-	@$(MAKE) -C ../../../flip-api generate-internal-service-key ENV_FILE=$(abspath $(MAIN_ENV_FILE))
-
 REGISTER_KIT_FILES = $(if $(KIT),$(KIT_FILE),$(sort $(wildcard $(REPO_ROOT)/trust/.env.*.$(ENV))))
 
 .PHONY: register-trusts
@@ -986,15 +975,14 @@ delete-trust: ## Hard-delete a trust on the hub (frees the name + FL kit slot; c
 full-deploy: ## Full AWS deployment of the Central Hub; trusts deploy from trust/deploy/ (honours HUB)
 	## Step order:
 	## 1. login + init: auth and Terraform init
-	## 2. generate-internal-service-key: mint the fl-server→hub key (idempotent)
-	## 3. plan+apply: provision the hub's AWS infrastructure (ECS, RDS, bastion, secrets)
-	## 4. update-env: refresh .env with Terraform outputs (the two Cognito IDs)
-	## 5. ssh-config + ansible-init: configure the SSM bastion
-	## 6. deploy-centralhub: deploy Central Hub ECS services at the env branch tip (new task-def revisions) + publish the UI
-	## 7. register-trusts: register every live trust/.env.*.<env> kit present (none yet is fine)
-	## 8. status: verify
+	## 2. plan+apply: provision the hub's AWS infrastructure (ECS, RDS, bastion, secrets)
+	## 3. update-env: refresh .env with Terraform outputs (the two Cognito IDs)
+	## 4. ssh-config + ansible-init: configure the SSM bastion
+	## 5. deploy-centralhub: deploy Central Hub ECS services at the env branch tip (new task-def revisions) + publish the UI
+	## 6. register-trusts: register every live trust/.env.*.<env> kit present (none yet is fine)
+	## 7. status: verify
 	## Each trust then joins with its kit, from its own shape under trust/deploy/ (on-prem, Helm,
 	## trust/deploy/terraform/aws/{ec2,eks}, trust/deploy/terraform/azure), FLIP#1438:
 	##   1. make new-trust TRUST_CODE=<CODE> ... HUB=$(HUB) && make register-trusts KIT=<CODE> HUB=$(HUB)
 	##   2. make package-onprem-trust-kit KIT=<CODE> HUB=$(HUB), and hand the tarball to its operator
-full-deploy: github-login aws-login init generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts status
+full-deploy: github-login aws-login init plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts status

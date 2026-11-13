@@ -25,7 +25,6 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, col, select
 
-from flip_api.auth.access_manager import authenticate_internal_service
 from flip_api.auth.job_callback import JOB_CREDENTIAL_HEADER, hash_job_credential
 from flip_api.db.models.main_models import FLJob, FLLogs, FLNets, FLScheduler, Model
 from flip_api.domain.schemas.status import JobStatus, ModelStatus, NetStatus, ProjectStatus
@@ -39,11 +38,9 @@ AUTH = {JOB_CREDENTIAL_HEADER: CREDENTIAL}
 
 @pytest.fixture
 def fl_server() -> Generator[TestClient, None, None]:
-    """A caller holding the internal service key, as every job's server-side process does today."""
-    app.dependency_overrides[authenticate_internal_service] = lambda: None
+    """A caller on the hub's internal network, as every job's server-side process is."""
     with TestClient(app) as client:
         yield client
-    app.dependency_overrides.pop(authenticate_internal_service, None)
 
 
 @pytest.fixture
@@ -142,7 +139,7 @@ def test_job_reports_on_its_own_model_and_no_other(fl_server, session, make_mode
     metric = {"fl_client_name": "Trust_1", "global_round": 1, "label": "loss", "value": 0.5}
     headers = {JOB_CREDENTIAL_HEADER: "mine"}
     assert fl_server.post(f"/api/model/{theirs.id}/metrics", json=metric, headers=headers).status_code == 403
-    # The internal service key alone, which every job's process holds, is not enough either.
+    # Nor does a caller with no credential at all.
     assert fl_server.put(f"/api/model/{theirs.id}/status/{ModelStatus.ERROR.value}").status_code == 403
 
     session.expire_all()

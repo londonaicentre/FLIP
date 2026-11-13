@@ -69,15 +69,12 @@ BASE_ENV=(
     FLIP_UI_BUCKET_NAME=flip-ui-stag
     ADMIN_USER_PASSWORD=not-a-real-password
     AES_KEY_BASE64=bm90LWEtcmVhbC1rZXk=
-    INTERNAL_SERVICE_KEY=not-a-real-service-key
-    INTERNAL_SERVICE_KEY_HASH=0000000000000000000000000000000000000000000000000000000000000000
     FL_API_KEY=not-a-real-fl-api-key
     POSTGRES_DB=flip
     POSTGRES_USER=flipuser
     ENFORCE_MFA=true
     FL_ADMIN_DIRECTORY=/workspace
     FL_SERVER_PORT=8002
-    INTERNAL_SERVICE_KEY_HEADER=X-Internal-Service-Key
     SES_VERIFIED_EMAIL=noreply@example.invalid
     TRUST_API_KEY_HEADER=X-Trust-API-Key
     ALB_SUBDOMAIN=api-stag
@@ -305,7 +302,7 @@ fi
 # 1e. NO WORKFLOW MAY PUBLISH A PLAN FILE AS AN ARTIFACT.
 #
 #     tf-via-pr defaults upload-plan to true, and a Terraform plan file is a zip
-#     containing the full tfstate — AES_KEY_BASE64, INTERNAL_SERVICE_KEY and
+#     containing the full tfstate — AES_KEY_BASE64, FL_API_KEY and
 #     ADMIN_USER_PASSWORD in plaintext. This repository is PUBLIC, so an uploaded
 #     plan is a public download of live credentials. It happened once: the first
 #     green CI plan (2026-09-01) left a 357 KB stag plan artifact behind, because

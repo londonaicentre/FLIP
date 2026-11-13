@@ -24,8 +24,7 @@
 #
 #   Hazard B — replacing fl-server-net-1 kills an in-flight training run (FLIP#770).
 #     A runner cannot ask the hub whether a run is in flight (GET /fl/quiesce is
-#     Cognito-gated, CloudFront strips the internal key, and the scheduler state
-#     is in a private subnet), so the gate asks the plan instead: if nothing on
+#     Cognito-gated and the scheduler state is in a private subnet), so the gate asks the plan instead: if nothing on
 #     the FL watch list changes, apply; otherwise hold for an operator. See
 #     scripts/check-fl-plan-impact.sh.
 #
@@ -327,7 +326,6 @@ jobs:
           FL_SERVER_PORT: ${{ vars.FL_SERVER_PORT }}
           ENFORCE_MFA: ${{ vars.ENFORCE_MFA }}
           FL_ADMIN_DIRECTORY: ${{ vars.FL_ADMIN_DIRECTORY }}
-          INTERNAL_SERVICE_KEY_HEADER: ${{ vars.INTERNAL_SERVICE_KEY_HEADER }}
           TRUST_API_KEY_HEADER: ${{ vars.TRUST_API_KEY_HEADER }}
           SES_VERIFIED_EMAIL: ${{ vars.SES_VERIFIED_EMAIL }}
           SES_SENDER_EMAIL: ${{ vars.SES_SENDER_EMAIL }}
@@ -354,8 +352,6 @@ jobs:
           LZA_WEB_EDGE_DISTRIBUTION_ARN: ${{ vars.LZA_WEB_EDGE_DISTRIBUTION_ARN }}
           ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
-          INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
-          INTERNAL_SERVICE_KEY_HASH: ${{ secrets.INTERNAL_SERVICE_KEY_HASH }}
           FL_API_KEY: ${{ secrets.FL_API_KEY }}
           POSTGRES_DB: ${{ vars.POSTGRES_DB }}
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}
@@ -404,7 +400,7 @@ jobs:
           preserve-plan: true
           # upload-plan is a different thing and MUST stay false: it publishes
           # the plan as a workflow artifact, and the plan file is a zip
-          # containing the full tfstate — AES_KEY_BASE64, INTERNAL_SERVICE_KEY
+          # containing the full tfstate — AES_KEY_BASE64, FL_API_KEY
           # and ADMIN_USER_PASSWORD in plaintext. This repository is public, so
           # that artifact would be a public download of production credentials.
           # An applied-plan audit trail is not worth that; the run log records

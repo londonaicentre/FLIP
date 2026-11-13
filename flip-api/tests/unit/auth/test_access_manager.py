@@ -20,8 +20,6 @@ from sqlmodel import Session
 
 from flip_api.auth import trust_key_cache
 from flip_api.auth.access_manager import (
-    _get_internal_service_key_hash,
-    authenticate_internal_service,
     authenticate_trust,
     can_access_project,
     can_contribute_to_project,
@@ -35,17 +33,10 @@ VALID_TEST_KEY_HASH = hashlib.sha256(VALID_TEST_KEY.encode()).hexdigest()
 WRONG_TEST_KEY = "wrong_secret_key_67890_invalid"
 TRUST_NAME = "Trust_1"
 
-INTERNAL_SERVICE_KEY = "internal_service_key_abc123"  # pragma: allowlist secret
-INTERNAL_SERVICE_KEY_HASH = hashlib.sha256(INTERNAL_SERVICE_KEY.encode()).hexdigest()
-
 PATCH_HAS_PERMISSIONS = "flip_api.auth.access_manager.has_permissions"
 PATCH_CAN_MODIFY_PROJECT = "flip_api.auth.access_manager.can_modify_project"
 PATCH_CAN_CONTRIBUTE_TO_PROJECT = "flip_api.auth.access_manager.can_contribute_to_project"
 PATCH_GET_SETTINGS = "flip_api.auth.access_manager.get_settings"
-
-
-PATCH_INTERNAL_KEY_HASH = "flip_api.auth.access_manager._get_internal_service_key_hash"
-PATCH_INTERNAL_KEY_HASH_CACHE = "flip_api.auth.access_manager._internal_service_key_hash_cache"
 
 
 def _db_with_trust_rows(rows: list[Trust]) -> MagicMock:
@@ -176,46 +167,6 @@ class TestAuthenticateTrust:
             authenticate_trust(api_key=VALID_TEST_KEY, db=empty_db)
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
         empty_db.exec.assert_called()  # sweep ran
-
-
-class TestAuthenticateInternalService:
-    """Tests for the authenticate_internal_service dependency."""
-
-    def test_valid_key_succeeds(self):
-        """Valid internal service key should not raise an exception."""
-        with patch(PATCH_INTERNAL_KEY_HASH, return_value=INTERNAL_SERVICE_KEY_HASH):
-            result = authenticate_internal_service(api_key=INTERNAL_SERVICE_KEY)
-        assert result is None
-
-    def test_missing_key_returns_401(self):
-        """Missing (None) key should raise 401."""
-        with pytest.raises(HTTPException) as exc_info:
-            authenticate_internal_service(api_key=None)
-        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
-        assert exc_info.value.detail == "Not authenticated: internal service key is missing."
-
-    def test_empty_key_returns_401(self):
-        """Empty string key should raise 401."""
-        with pytest.raises(HTTPException) as exc_info:
-            authenticate_internal_service(api_key="")
-        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
-        assert exc_info.value.detail == "Not authenticated: internal service key is missing."
-
-    def test_invalid_key_returns_401(self):
-        """Wrong key should raise 401."""
-        with patch(PATCH_INTERNAL_KEY_HASH, return_value=INTERNAL_SERVICE_KEY_HASH):
-            with pytest.raises(HTTPException) as exc_info:
-                authenticate_internal_service(api_key=WRONG_TEST_KEY)
-        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
-        assert exc_info.value.detail == "Invalid internal service key."
-
-    def test_unconfigured_hash_returns_401(self):
-        """Empty INTERNAL_SERVICE_KEY_HASH should raise 401."""
-        with patch(PATCH_INTERNAL_KEY_HASH, return_value=""):
-            with pytest.raises(HTTPException) as exc_info:
-                authenticate_internal_service(api_key=INTERNAL_SERVICE_KEY)
-        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
-        assert exc_info.value.detail == "Internal service auth not configured."
 
 
 class TestCanModifyProject:
@@ -594,33 +545,3 @@ class TestCanModifyModel:
             result = can_modify_model(user_id, model_id, db)
 
         assert result is False
-
-
-class TestGetInternalServiceKeyHash:
-    def test_dev_returns_hash_from_settings(self):
-        """In dev, should return hash from INTERNAL_SERVICE_KEY_HASH setting."""
-        mock = MagicMock()
-        mock.ENV = "development"
-        mock.INTERNAL_SERVICE_KEY_HASH = INTERNAL_SERVICE_KEY_HASH
-        with patch(PATCH_GET_SETTINGS, return_value=mock), patch(PATCH_INTERNAL_KEY_HASH_CACHE, None):
-            result = _get_internal_service_key_hash()
-        assert result == INTERNAL_SERVICE_KEY_HASH
-
-    def test_production_retrieves_from_secrets_manager(self):
-        """In production, should load hash from AWS Secrets Manager."""
-        mock = MagicMock()
-        mock.ENV = "production"
-        with (
-            patch(PATCH_GET_SETTINGS, return_value=mock),
-            patch(PATCH_INTERNAL_KEY_HASH_CACHE, None),
-            patch("flip_api.auth.access_manager.get_secret", return_value="abc123hash"),
-        ):
-            result = _get_internal_service_key_hash()
-        assert result == "abc123hash"
-
-    def test_cached_value_is_returned(self):
-        """When cache is already populated, should return cached value without calling get_settings."""
-        with patch(PATCH_INTERNAL_KEY_HASH_CACHE, "cached_hash"), patch(PATCH_GET_SETTINGS) as mock_settings:
-            result = _get_internal_service_key_hash()
-        assert result == "cached_hash"
-        mock_settings.assert_not_called()
