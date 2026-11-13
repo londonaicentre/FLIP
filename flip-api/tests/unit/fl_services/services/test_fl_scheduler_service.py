@@ -825,3 +825,77 @@ class TestLogQueuePositions:
         with patch.object(fl_scheduler_service, "log_queue_positions") as mock_positions:
             fl_scheduler_service.remove_job_from_queue(model_id, fake_session)
         mock_positions.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("function", "arg", "message", "rolls_back"),
+    [
+        ("remove_job", uuid4(), "Error reverting job pickup", True),
+        ("remove_job_from_queue", uuid4(), "Error removing job from queue", True),
+        ("revert_scheduler_pickup", uuid4(), "Error reverting scheduler pickup", True),
+        ("update_fl_scheduler", uuid4(), "Error updating FL scheduler", True),
+        ("get_net_by_model_id", uuid4(), "Error getting net by model ID", False),
+        ("get_net_by_name", "net-1", "Database error while getting net by name", False),
+        ("get_required_training_details", uuid4(), "Error getting required training details", False),
+    ],
+)
+def test_db_failure_is_raised_as_database_error(fake_session, function, arg, message, rolls_back):
+    """Writers roll back before raising; readers have nothing to roll back."""
+    fake_session.get.side_effect = SQLAlchemyError("db down")
+    fake_session.exec.side_effect = SQLAlchemyError("db down")
+
+    with pytest.raises(DatabaseError, match=message):
+        getattr(fl_scheduler_service, function)(arg, fake_session)
+
+    assert fake_session.rollback.called is rolls_back
+    fake_session.commit.assert_not_called()
+
+
+def test_get_nets_db_error(fake_session):
+    fake_session.exec.side_effect = SQLAlchemyError("db down")
+
+    with pytest.raises(DatabaseError, match="Error getting nets"):
+        fl_scheduler_service.get_nets(fake_session)
+
+
+def test_check_for_available_net_db_error_rolls_back(fake_session):
+    fake_session.exec.side_effect = SQLAlchemyError("db down")
+
+    with pytest.raises(DatabaseError, match="Error checking for available net"):
+        fl_scheduler_service.check_for_available_net(fake_session)
+
+    fake_session.rollback.assert_called_once()
+
+
+def test_check_for_queued_jobs_db_error_frees_the_scheduler(fake_session, scheduler_id):
+    """The net was marked BUSY for this pickup, so a failed lookup must hand it back."""
+    fake_session.exec.side_effect = SQLAlchemyError("db down")
+
+    with (
+        patch.object(fl_scheduler_service, "revert_scheduler_pickup") as mock_revert,
+        pytest.raises(DatabaseError, match="Error checking for queued jobs"),
+    ):
+        fl_scheduler_service.check_for_queued_jobs(scheduler_id, fake_session)
+
+    fake_session.rollback.assert_called_once()
+    mock_revert.assert_called_once_with(scheduler_id, fake_session)
+
+
+def test_resolve_backend_uses_the_given_net_without_querying(fake_session):
+    net = INetDetails(endpoint="endpoint", name="net-1", fl_backend=FLBackend.FLOWER)
+
+    assert fl_scheduler_service.resolve_backend(fake_session, net) == FLBackend.FLOWER
+    fake_session.exec.assert_not_called()
+
+
+def test_resolve_backend_reads_any_net_when_none_given(fake_session):
+    fake_session.exec.return_value.first.return_value = FLBackend.NVFLARE
+
+    assert fl_scheduler_service.resolve_backend(fake_session) == FLBackend.NVFLARE
+
+
+def test_resolve_backend_without_nets_raises(fake_session):
+    fake_session.exec.return_value.first.return_value = None
+
+    with pytest.raises(ValueError, match="no FL nets are registered"):
+        fl_scheduler_service.resolve_backend(fake_session)

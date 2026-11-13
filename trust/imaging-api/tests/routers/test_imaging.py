@@ -12,6 +12,8 @@
 
 from unittest.mock import patch
 
+import pytest
+
 from imaging_api.routers.schemas import ImportStudy, ImportStudyRequest, ImportStudyResponse, PacsStatus, Patient, Study
 from imaging_api.utils.exceptions import NotFoundError
 
@@ -206,3 +208,30 @@ def test_queue_image_import_request_not_found(client):
 
     assert response.status_code == 404
     assert "No studies found on PACS with the study instance UID(s) provided" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("service", "method", "url", "kwargs"),
+    [
+        ("ping_pacs", "get", "/imaging/ping_pacs/1", {}),
+        ("ping_registered_pacs", "get", "/imaging/ping_pacs", {}),
+        (
+            "query_by_accession_number",
+            "get",
+            "/imaging/query_by_accession_number",
+            {"params": {"accession_number": "A"}},
+        ),
+        (
+            "queue_image_import_request",
+            "post",
+            "/imaging/queue_image_import_request",
+            {"json": {"projectId": "P", "studies": [{"studyInstanceUid": "1.2.3", "accessionNumber": "A"}]}},
+        ),
+    ],
+)
+def test_unexpected_service_error_is_a_500_with_the_message(client, service, method, url, kwargs):
+    with patch(f"imaging_api.routers.imaging.{service}", side_effect=RuntimeError("XNAT unreachable")):
+        response = getattr(client, method)(url, **kwargs)
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "XNAT unreachable"

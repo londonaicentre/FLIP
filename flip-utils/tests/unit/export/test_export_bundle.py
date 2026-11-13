@@ -25,6 +25,7 @@ point, because every entry of the state dict is averaged as a float.
 from __future__ import annotations
 
 import json
+import runpy
 import subprocess
 import sys
 import zipfile
@@ -706,6 +707,43 @@ class TestCommandLine:
         _run_cli(checkpoint, app, tmp_path / "model.ts")
 
         assert "method            : script" in capsys.readouterr().out
+
+    def test_input_shape_is_parsed_and_enables_the_equivalence_report(self, checkpoint, app, tmp_path, capsys):
+        """The delta line appears only when a probe shape made the check possible."""
+        _run_cli(checkpoint, app, tmp_path / "model.ts", "--input-shape", "1,1,8,8")
+
+        assert "max|delta| vs eager: 0.000e+00" in capsys.readouterr().out
+
+    def test_no_input_shape_reports_no_equivalence_check(self, checkpoint, app, tmp_path, capsys):
+        """Without a probe shape nothing was compared, so no delta is claimed."""
+        _run_cli(checkpoint, app, tmp_path / "model.ts")
+
+        assert "max|delta|" not in capsys.readouterr().out
+
+    @pytest.mark.parametrize(
+        ("shape", "reason"),
+        [("1,x,8", "expected e.g. 1,1,96,96,96"), ("1,0,8", "dimensions must be positive"), ("", "expected e.g.")],
+    )
+    def test_a_bad_input_shape_is_a_usage_error(self, shape, reason, capsys):
+        """A malformed shape is refused by the parser, naming the value, before any export starts."""
+        with pytest.raises(SystemExit) as raised:
+            build_parser().parse_args(["--checkpoint", "c.pt", "--app-dir", "a", "--out", "o", "--input-shape", shape])
+
+        assert raised.value.code == 2
+        assert f"invalid input shape {shape!r}; {reason}" in capsys.readouterr().err
+
+    def test_running_the_module_exits_with_mains_return_code(self, checkpoint, app, tmp_path, monkeypatch):
+        """``python -m flip.export`` hands main()'s result to the shell."""
+        out = tmp_path / "bundle"
+        argv = ["flip.export", "--checkpoint", str(checkpoint), "--app-dir", str(app), "--out", str(out)]
+        monkeypatch.setattr(sys, "argv", [*argv, "--form", "directory"])
+        monkeypatch.delitem(sys.modules, "flip.export.__main__")
+
+        with pytest.raises(SystemExit) as raised:
+            runpy.run_module("flip.export", run_name="__main__")
+
+        assert raised.value.code == 0
+        assert (out / "models" / "model.pt").is_file()
 
 
 class TestBundleSize:

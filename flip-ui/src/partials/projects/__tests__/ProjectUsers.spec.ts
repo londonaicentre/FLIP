@@ -195,3 +195,52 @@ describe("ProjectUsers — add-user submit path", () => {
         expect(errorText(wrapper)).toContain("alice@e.com has already been added");
     });
 });
+
+describe("ProjectUsers — errors and removal", () => {
+    const alice = {
+        id: "u1",
+        email: "alice@e.com",
+        isDisabled: false
+    };
+
+    test("reports a lookup failure other than not-found generically, then clears the message after 5 s", async () => {
+        vi.useFakeTimers();
+        vi.mocked(lookupProjectUser).mockRejectedValue(new Error("Network Error"));
+        const wrapper = mountProjectUsers({ users: [] });
+
+        wrapper.findComponent({ name: "Form" }).vm.$emit("submit", { email: "new@e.com" }, { resetForm: vi.fn() });
+        await flushPromises();
+        expect(wrapper.text()).toContain("Something went wrong when retrieving the user");
+
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(wrapper.find("[data-test=\"invalid-user-project-list\"]").exists()).toBe(false);
+        vi.useRealTimers();
+    });
+
+    test("removes a user from the list and emits the remaining users", async () => {
+        const wrapper = mountProjectUsers({
+            users: [alice, {
+                id: "u2",
+                email: "bob@e.com",
+                isDisabled: false
+            }]
+        });
+
+        await wrapper.find("[data-test=remove-user-1-project-btn]").trigger("click");
+
+        expect(wrapper.text()).not.toContain("bob@e.com");
+        expect(wrapper.emitted("updatedUsers")?.at(-1)?.[0]).toEqual([alice]);
+    });
+
+    test("lists the users without add or remove controls when read-only", () => {
+        const wrapper = mountProjectUsers({
+            users: [alice],
+            readonly: true
+        });
+
+        expect(wrapper.text()).toContain("Additional Project Users");
+        expect(wrapper.text()).toContain("alice@e.com");
+        expect(wrapper.find("form").exists()).toBe(false);
+        expect(wrapper.find("[data-test=remove-user-0-project-btn]").exists()).toBe(false);
+    });
+});

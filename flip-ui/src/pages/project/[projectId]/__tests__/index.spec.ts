@@ -16,6 +16,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import type { IProject, ITrustDecisions } from "@/services/project-service";
+import { useErrorStore } from "@/store/error";
 
 import ProjectPage from "../index.vue";
 
@@ -738,5 +739,124 @@ describe("Project page (/project/[id]/index.vue)", () => {
             .toBe("false");
         // baseProject() carries no has_imaging at all — a hub predating the flag.
         expect(mountProjectPage().find("[data-test=stub-edit-drawer]").attributes("data-has-imaging")).toBe("true");
+    });
+});
+
+describe("Project page actions", () => {
+    const update = {
+        name: "Renamed",
+        description: "New",
+        users: ["u1"]
+    };
+    type Page = ReturnType<typeof mountProjectPage>;
+    const drawer = (wrapper: Page) => wrapper.findComponent(stubs.EditProjectDrawer);
+    const staging = (wrapper: Page) => wrapper.findComponent(stubs.ProjectStaging);
+    const stagedProject = (): IProject => ({
+        ...baseProject(),
+        status: "STAGED"
+    });
+
+    test("opens the edit drawer from the header button and closes it on the drawer's close", async () => {
+        const wrapper = mountProjectPage();
+        expect(drawer(wrapper).attributes("show")).toBe("false");
+
+        await wrapper.find("[data-test=edit-project-btn]").trigger("click");
+        expect(drawer(wrapper).attributes("show")).toBe("true");
+
+        await drawer(wrapper).vm.$emit("close");
+        expect(drawer(wrapper).attributes("show")).toBe("false");
+    });
+
+    test("saves an edit to this project, announces it and asks the parent to reload", async () => {
+        const wrapper = mountProjectPage();
+        await wrapper.find("[data-test=edit-project-btn]").trigger("click");
+
+        drawer(wrapper).vm.$emit("save", update);
+        await flushPromises();
+
+        expect(editProject).toHaveBeenCalledWith("/projects/p-123", update);
+        expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Project Updated" }));
+        expect(wrapper.emitted("UpdateProject")).toHaveLength(1);
+        expect(drawer(wrapper).attributes("show")).toBe("false");
+    });
+
+    test("reports a failed edit by project name and raises the error state", async () => {
+        editProject.mockRejectedValueOnce(new Error("boom"));
+        const wrapper = mountProjectPage();
+
+        drawer(wrapper).vm.$emit("save", update);
+        await flushPromises();
+
+        expect(snackbarError).toHaveBeenCalledWith({
+            title: "Unable to update project",
+            text: "Stroke triage has not been updated."
+        });
+        expect(useErrorStore().hasError).toBe(true);
+        expect(wrapper.emitted("UpdateProject")).toBeUndefined();
+    });
+
+    test("stages the project with the chosen trusts and asks the parent to reload", async () => {
+        const wrapper = mountProjectPage();
+
+        staging(wrapper).vm.$emit("staged", ["t1", "t2"]);
+        await flushPromises();
+
+        expect(stageProjectWithTrusts).toHaveBeenCalledWith("/projects/p-123/stage", ["t1", "t2"]);
+        expect(wrapper.emitted("UpdateProject")).toHaveLength(1);
+        expect(snackbarError).not.toHaveBeenCalled();
+    });
+
+    test("does not call the hub when no trust was chosen", async () => {
+        const wrapper = mountProjectPage();
+
+        staging(wrapper).vm.$emit("staged", []);
+        await flushPromises();
+
+        expect(stageProjectWithTrusts).not.toHaveBeenCalled();
+    });
+
+    test("reports a failed staging without asking for a reload", async () => {
+        stageProjectWithTrusts.mockRejectedValueOnce(new Error("boom"));
+        const wrapper = mountProjectPage();
+
+        staging(wrapper).vm.$emit("staged", ["t1"]);
+        await flushPromises();
+
+        expect(snackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "Unable to stage project" }));
+        expect(wrapper.emitted("UpdateProject")).toBeUndefined();
+    });
+
+    test("reports a failed unstage and closes the confirmation", async () => {
+        unstageProject.mockRejectedValueOnce(new Error("boom"));
+        const wrapper = mountProjectPage({ project: stagedProject() });
+
+        await wrapper.find("[data-test=unstage-project-btn]").trigger("click");
+        await wrapper.find("[data-test=stubbed-confirm-continue]").trigger("click");
+        await flushPromises();
+
+        expect(snackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "Unable to unstage project" }));
+        expect(snackbarSuccess).not.toHaveBeenCalled();
+        expect(wrapper.find("[data-test=stubbed-confirm-modal]").exists()).toBe(false);
+    });
+
+    test("sends one unstage request when the confirmation is clicked twice", async () => {
+        unstageProject.mockReturnValueOnce(new Promise(() => {}));
+        const wrapper = mountProjectPage({ project: stagedProject() });
+
+        await wrapper.find("[data-test=unstage-project-btn]").trigger("click");
+        await wrapper.find("[data-test=stubbed-confirm-continue]").trigger("click");
+        await wrapper.find("[data-test=stubbed-confirm-continue]").trigger("click");
+
+        expect(unstageProject).toHaveBeenCalledTimes(1);
+    });
+
+    test("closes the unstage confirmation when the modal asks to close", async () => {
+        const wrapper = mountProjectPage({ project: stagedProject() });
+        await wrapper.find("[data-test=unstage-project-btn]").trigger("click");
+
+        await wrapper.findComponent(stubs.AiConfirmModal).vm.$emit("closeModal");
+
+        expect(wrapper.find("[data-test=stubbed-confirm-modal]").exists()).toBe(false);
+        expect(unstageProject).not.toHaveBeenCalled();
     });
 });

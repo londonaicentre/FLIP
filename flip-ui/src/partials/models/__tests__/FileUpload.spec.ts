@@ -97,4 +97,37 @@ describe("FileUpload viewer-aware rendering", () => {
         expect(events).toBeTruthy();
         expect(events![0][0]).toContain(file);
     });
+
+    it("emits newFiles with the files dropped on the zone and clears the drag highlight", async () => {
+        const wrapper = mountFileUpload();
+        const file = new File(["x"], "trainer.py");
+        const zone = wrapper.find("div");
+
+        await zone.trigger("dragover");
+        expect(zone.classes()).toContain("ring-primary-600");
+
+        await zone.trigger("drop", { dataTransfer: { files: [file] } });
+
+        expect(wrapper.emitted("newFiles")![0][0]).toEqual([file]);
+        expect(zone.classes()).toContain("ring-transparent");
+    });
+
+    it("clears the drag highlight when the drag leaves the zone", async () => {
+        const wrapper = mountFileUpload();
+        const zone = wrapper.find("div");
+
+        await zone.trigger("dragover");
+        await zone.trigger("dragleave");
+
+        expect(zone.classes()).toContain("ring-transparent");
+    });
+
+    it("opens the native file dialog from the browse link", async () => {
+        const wrapper = mountFileUpload();
+        const click = vi.spyOn(wrapper.find<HTMLInputElement>("[data-test=upload-file-input]").element, "click");
+
+        await wrapper.find("[data-test=upload-file-btn]").trigger("click");
+
+        expect(click).toHaveBeenCalledTimes(1);
+    });
 });

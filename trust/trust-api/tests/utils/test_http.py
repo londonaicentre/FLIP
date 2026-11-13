@@ -63,3 +63,52 @@ async def test_make_request_http_status_error(mock_client):
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "Not Found"
+
+
+@pytest.mark.asyncio
+@patch("trust_api.utils.http.httpx.AsyncClient")
+async def test_make_request_error_with_empty_body_gets_a_default_detail(mock_client):
+    mock_response = AsyncMock()
+    mock_response.status_code = 503
+    mock_response.text = ""
+    mock_client.return_value.__aenter__.return_value.request.return_value = mock_response
+
+    with pytest.raises(HTTPException) as exc_info:
+        await make_request("GET", "http://example.com")
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "External API error"
+
+
+@pytest.mark.asyncio
+@patch("trust_api.utils.http.httpx.AsyncClient")
+async def test_make_request_non_json_response_is_a_502(mock_client):
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.text = "<html>gateway</html>"
+    mock_response.json = Mock(side_effect=ValueError("not JSON"))
+    mock_client.return_value.__aenter__.return_value.request.return_value = mock_response
+
+    with pytest.raises(HTTPException) as exc_info:
+        await make_request("GET", "http://example.com")
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "External API returned non-JSON response"
+
+
+@pytest.mark.asyncio
+@patch("trust_api.utils.http.httpx.AsyncClient")
+async def test_make_request_forwards_arguments_without_mutating_headers(mock_client):
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json = Mock(return_value={})
+    request = mock_client.return_value.__aenter__.return_value.request
+    request.return_value = mock_response
+    headers = {"X-Key": "k"}
+
+    await make_request("POST", "http://example.com", json_body={"a": 1}, params={"q": "1"}, headers=headers)
+
+    request.assert_called_once_with(
+        "POST", "http://example.com", json={"a": 1}, params={"q": "1"}, headers={"X-Key": "k"}
+    )
+    assert request.call_args.kwargs["headers"] is not headers

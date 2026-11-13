@@ -60,6 +60,15 @@ describe("Project Users Modal", () => {
         expect(addUserButton.exists()).toBeTruthy();
     });
 
+    it("Enables the Add button only once an address has been entered", async () => {
+        const addUserButton = component.find(AddProjectUsers.addUserButton);
+        expect(addUserButton.attributes("disabled")).toBeDefined();
+
+        await component.find(AddProjectUsers.addUserInput).setValue("new@e.com");
+
+        expect(addUserButton.attributes("disabled")).toBeUndefined();
+    });
+
     it("Does not initially display the element containing the list of invalid users", async () => {
         const invalidUsersList = component.find(AddProjectUsers.invalidUsersList);
         expect(invalidUsersList.exists()).toBeFalsy();
