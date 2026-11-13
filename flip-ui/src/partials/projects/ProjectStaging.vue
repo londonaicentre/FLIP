@@ -94,7 +94,6 @@
                     :close="true"
                 />
                 <div
-                    v-if="!hasQuery"
                     class="relative flex flex-col items-center justify-center"
                     data-test="models-unapproved-status"
                 >
@@ -109,8 +108,7 @@
                 </div>
             </template>
         </Form>
-        <AiLoader v-if="loadingTrusts" class="pb-4" />
-        <div v-else-if="!trustsToStage?.length">
+        <div v-if="!trustsToStage?.length">
             <AiAlert
                 v-if="trustsLoadedCount > 0"
                 :rounded="false"
@@ -137,7 +135,6 @@ import { array, object, string } from "yup";
 import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
-import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import { usePermissions } from "@/composables/usePermissions";
 import { ITrustResponse } from "@/services/trust-service";
 import { useTrustStore } from "@/store/trusts";
@@ -158,18 +155,13 @@ interface IFormValue {
     trusts: string[];
 }
 
-interface ITrustToStage extends ITrustResponse {
-    staged: boolean;
-}
-
 const props = defineProps<IProjectStagingProps>();
 
 const emits = defineEmits(["staged"]);
 
 const { isViewer } = usePermissions();
 
-const loadingTrusts = ref<boolean>(true);
-const trustsToStage = ref<ITrustToStage[]>();
+const trustsToStage = ref<ITrustResponse[]>();
 // Total trusts the store returned, before the stageable-set filter. Lets the
 // empty-state message tell "no trusts could be loaded" (a real error) apart
 // from "trusts loaded, but none have returned cohort results yet".
@@ -180,14 +172,8 @@ watch([trustStore, () => props.stageableTrustIds], () => {
     const trusts = Array.isArray(trustStore.getTrusts) ? trustStore.getTrusts : [];
     trustsLoadedCount.value = trusts.length;
 
-    trustsToStage.value = filterByQueriedTrustIds(trusts, props.stageableTrustIds)
-        .map((trust) => ({
-            ...trust,
-            staged: false
-        }))
+    trustsToStage.value = [...filterByQueriedTrustIds(trusts, props.stageableTrustIds)]
         .sort((a, b) => (a.code || a.name).localeCompare(b.code || b.name));
-
-    loadingTrusts.value = false;
 }, { immediate: true });
 
 const schema = object().shape({

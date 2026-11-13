@@ -24,18 +24,7 @@
                     :type="type"
                     :aria-label="ariaLabel"
                     :data-test="dataTest"
-                    :class="{
-                        'btn-sm': small,
-                        'btn-lg': large,
-                        'btn-primary': primary,
-                        'btn-text': text,
-                        'btn-light': light,
-                        'btn-disabled': loading || disabled,
-                        'btn-text-primary': textPrimary,
-                        'btn-text-secondary': textSecondary,
-                        'btn-text-error': error,
-                        'btn-block': block
-                    }"
+                    :class="buttonClass"
                     :tabindex="tabindex"
                     @click="navigate"
                 >
@@ -49,22 +38,10 @@
                 :type="type"
                 :aria-label="ariaLabel"
                 :data-test="dataTest"
-                :class="{
-                    'btn-sm': small,
-                    'btn-lg': large,
-                    'btn-primary': primary,
-                    'btn-text': text,
-                    'btn-light': light,
-                    'btn-clear': clear,
-                    'btn-disabled': loading || disabled,
-                    'btn-text-primary': textPrimary,
-                    'btn-text-secondary': textSecondary,
-                    'btn-text-error': error,
-                    'btn-block': block
-                }"
+                :class="buttonClass"
                 :disabled="loading || disabled"
                 :tabindex="tabindex"
-                @click.capture="() => !link && clickButton()"
+                @click.capture="emit('click')"
             >
                 <div v-if="loading" class="absolute">
                     <svg
@@ -95,6 +72,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
 import { directive as vTippy } from "vue-tippy";
 
 interface IAiButtonProps {
@@ -120,7 +98,7 @@ interface IAiButtonProps {
     ariaLabel?: string;
 }
 
-withDefaults(
+const props = withDefaults(
     defineProps<IAiButtonProps>(),
     {
         dataTest: "btn",
@@ -134,9 +112,20 @@ withDefaults(
 
 const emit = defineEmits(["click"]);
 
-const clickButton = () => {
-    emit("click");
-};
+// btn-clear only ever applied to the plain button, never the router-link one.
+const buttonClass = computed(() => ({
+    "btn-sm": props.small,
+    "btn-lg": props.large,
+    "btn-primary": props.primary,
+    "btn-text": props.text,
+    "btn-light": props.light,
+    "btn-clear": props.clear && !props.link,
+    "btn-disabled": props.loading || props.disabled,
+    "btn-text-primary": props.textPrimary,
+    "btn-text-secondary": props.textSecondary,
+    "btn-text-error": props.error,
+    "btn-block": props.block
+}));
 
 </script>
 
