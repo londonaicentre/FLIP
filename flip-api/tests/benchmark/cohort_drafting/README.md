@@ -66,8 +66,8 @@ prices differ; a Bedrock run is costed at the Claude API rates as an estimate.
 
 Filled in by hand after a run; numbers only. Full reports go in the PR.
 
-Claude Sonnet 5.5 at effort `medium` on the Claude API unless the row names another model or effort (Claude Opus
-5.5 is the hub's default since the UK-only decision), judged by Claude Opus 5.5. Prompt v1 is two runs pooled
+Claude Sonnet 5.5 at effort `medium` on the Claude API unless the row names another model or effort (the hub's
+default is Claude Sonnet 5.5 at effort `low`, through the EU profile), judged by Claude Opus 5.5. Prompt v1 is two runs pooled
 (n = 96); every prompt v2 row is one run (n = 48), judged on the updated rubric (grain and Beta scope), so the v1 and
 v2 rows are close, not identical, comparisons.
 

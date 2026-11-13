@@ -85,7 +85,7 @@ def test_bedrock_request_shape(monkeypatch):
 
     kwargs = client.messages.create.call_args.kwargs
     settings = get_settings()
-    assert kwargs["model"] == settings.COHORT_DRAFT_BEDROCK_MODEL_ID == "anthropic.claude-opus-5-5"
+    assert kwargs["model"] == settings.COHORT_DRAFT_BEDROCK_MODEL_ID == "eu.anthropic.claude-sonnet-5-5"
     assert kwargs["max_tokens"] == settings.COHORT_DRAFT_MAX_TOKENS
     assert kwargs["system"] == [{"type": "text", "text": "SYSTEM", "cache_control": {"type": "ephemeral"}}]
     assert kwargs["output_config"] == {

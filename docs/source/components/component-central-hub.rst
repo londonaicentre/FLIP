@@ -362,17 +362,18 @@ Settings
      - ``fake`` (canned drafts) is the only value in development; ``bedrock`` the only one in staging and
        production.
    * - ``COHORT_DRAFT_BEDROCK_MODEL_ID``
-     - ``anthropic.claude-opus-5-5``
+     - ``eu.anthropic.claude-sonnet-5-5``
      - Bedrock model id, or a cross-region inference profile id (``eu.…``, ``global.…``), passed to the SDK as it is.
-       The default is Claude Opus 5.5 on demand in ``eu-west-2``, so drafting is processed in the UK only; changing
-       it needs an information-governance check. See `Before turning it on (phase 2)`_.
+       The default is Claude Sonnet 5.5 through the EU cross-region profile, so requests are processed in EU
+       regions. ``anthropic.claude-opus-5-5`` is the UK-only alternative. Changing it needs an
+       information-governance check. See `Before turning it on (phase 2)`_.
    * - ``COHORT_DRAFT_BEDROCK_REGION``
      - ``eu-west-2``
      - Bedrock region.
    * - ``COHORT_DRAFT_EFFORT``
      - ``low``
-     - Model effort (``low``, ``medium``, ``high``). The benchmark showed Opus 5.5 at ``low`` matching
-       ``medium`` on quality, about 20% faster and cheaper.
+     - Model effort (``low``, ``medium``, ``high``). In the benchmark Sonnet 5.5 at ``low`` scored best and was the
+       fastest; ``high`` added nothing.
    * - ``COHORT_DRAFT_GUARDRAIL_ID``, ``COHORT_DRAFT_GUARDRAIL_VERSION``
      - unset
      - A Bedrock Guardrail passed through on every call; set both or neither.
@@ -408,23 +409,24 @@ addresses, emails and phone numbers in the description; an inline policy on ``ec
 configured model and that guardrail only (``bedrock:InvokeModel*`` and ``bedrock:ApplyGuardrail``); and the ``COHORT_DRAFT_*`` variables in the ``flip-api`` task, guardrail
 id and version included. Enabling it still needs:
 
-- **Model choice (decided: UK-only processing).** Researchers' descriptions must be processed in the UK only, so
-  the default is ``anthropic.claude-opus-5-5``, Claude Opus 5.5 on demand in ``eu-west-2`` (checked on 2026-11-13),
-  with no inference profile. Claude Sonnet 5.5 is not used: in ``eu-west-2`` it is offered only through the EU
-  (``eu.anthropic.claude-sonnet-5-5``) or global (``global.anthropic.claude-sonnet-5-5``) cross-region inference
-  profile, which may process requests in another EU region or any commercial region. With the default, the IAM
-  policy is a single grant on ``arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-opus-5-5``.
+- **Model choice (decided: Claude Sonnet 5.5, EU processing).** The default is ``eu.anthropic.claude-sonnet-5-5``
+  at effort ``low``: Claude Sonnet 5.5 through the EU cross-region inference profile, because in ``eu-west-2`` it is
+  not offered on demand (checked on 2026-11-13). Requests and the guardrail check may be processed in another EU
+  region. The case for that: the model receives only the researcher's description, the OMOP schema and example
+  queries, never patient data, and the guardrail blocks identifiers in the description. **This needs
+  information-governance sign-off** before the staging pilot; confirm on a real call that the guardrail applies
+  through the profile. ``anthropic.claude-opus-5-5`` (Claude Opus 5.5 on demand in ``eu-west-2``) is the UK-only
+  alternative, about 2.5× the cost per draft and slower; its safety classifier also refused two prompt-injection
+  items in the benchmark.
 
-  **Changing the model needs an information-governance check** first, above all for a profile id. The hub and the
-  IAM still accept one through ``cohort_draft_bedrock_model_id``: for a profile, the policy grants the profile plus
-  its foundation model in the regions it routes to, only when called through that profile
-  (``bedrock:InferenceProfileArn``). Not Claude Sonnet 4.6 or older: the ``anthropic`` SDK release the hub ships
-  sends API version ``2026-10-21``, which Bedrock accepts only for Claude 4.7 and later.
+  For a profile id the IAM policy grants the profile plus its foundation model in the regions it routes to, only
+  when called through that profile (``bedrock:InferenceProfileArn``); for an in-region model id it is a single
+  foundation-model grant. Not Claude Sonnet 4.6 or older: the ``anthropic`` SDK release the hub ships sends API
+  version ``2026-10-21``, which Bedrock accepts only for Claude 4.7 and later.
 
-  **Cost.** On the benchmark, Opus 5.5 costs about 3× Sonnet 5.5 per draft at Claude API list prices (and a
-  draft takes 6 s at the median rather than 3.4 s). Bedrock prices differ: check current Bedrock pricing for
-  ``eu-west-2`` before budgeting. Opus 5.5's safety classifier also refused two of the three prompt-injection items
-  in the benchmark; a refusal reaches the researcher as a decline.
+  **Benchmark (48 items, prompt 2026-11-13.2, Claude API prices).** Sonnet 5.5 low: 47 correct, 1 partly, 0
+  wrong; 3.2 s median. Opus 5.5 low: 44 / 4 / 0; 5.1 s. Bedrock prices differ: check current pricing for the
+  EU profile before budgeting.
 - **Bootstrap.** The CI apply role needs the ``bedrock`` service prefix (``modules/terraform_ci_bootstrap``),
   applied by the platform repository first.
 - **Network.** A route from the hub's private subnets to ``bedrock-runtime``: an interface VPC endpoint

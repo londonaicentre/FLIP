@@ -197,7 +197,7 @@ Where your FLIP administrator has turned it on, the cohort page offers **Draft f
 .. warning::
 
    - **Do not enter patient identifiers**, such as names, NHS numbers, dates of birth or addresses, in the
-     description. It is sent to an AI model (Claude on Amazon Bedrock, processed in the UK) to write the draft.
+     description. It is sent to an AI model (Claude on Amazon Bedrock, processed in the EU) to write the draft.
    - Drafts can be wrong. A draft passes the hub's checks, but the Trusts still check and run the query, and the
      results are yours to review.
 

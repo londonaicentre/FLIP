@@ -444,11 +444,12 @@ class Settings(BaseSettings):
     COHORT_DRAFT_ENABLED: bool = False
     COHORT_DRAFT_PROVIDER: Literal["fake", "bedrock"] = "bedrock"
     # Claude on Amazon Bedrock through the ECS task role (no API key). A model id or a cross-region
-    # inference profile id (eu.…, global.…), sent as it is. The default is Claude Opus 5.5 on demand in
-    # eu-west-2, so drafting is processed in the UK only; changing it is an information-governance decision.
-    COHORT_DRAFT_BEDROCK_MODEL_ID: str = "anthropic.claude-opus-5-5"
+    # inference profile id (eu.…, global.…), sent as it is. The default is Claude Sonnet 5.5 through the EU
+    # cross-region profile, so requests stay in the EU; only the description, schema and examples are sent, never
+    # patient data, and the guardrail blocks identifiers. Changing it is an information-governance decision.
+    COHORT_DRAFT_BEDROCK_MODEL_ID: str = "eu.anthropic.claude-sonnet-5-5"
     COHORT_DRAFT_BEDROCK_REGION: str = "eu-west-2"
-    # Thinking depth for the draft call; tune with the benchmark. Opus 5.5 at low matched medium, ~20% faster.
+    # Thinking depth for the draft call; tune with the benchmark. Sonnet 5.5 at low was best and fastest.
     COHORT_DRAFT_EFFORT: Literal["low", "medium", "high"] = "low"
     # Optional Bedrock Guardrail, passed through on every call when both are set.
     COHORT_DRAFT_GUARDRAIL_ID: str | None = None
