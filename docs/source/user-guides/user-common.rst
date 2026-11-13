@@ -1,6 +1,6 @@
-######################
-Common user functions
-######################
+#############################
+Using the FLIP web interface
+#############################
 
 .. admonition:: Before you start
    :class: note
@@ -36,9 +36,9 @@ life is:
 4. Create a model and upload its files: :doc:`user-models`.
 5. Start training, follow it and download the results: :doc:`user-training`.
 
-FLIP supports two FL frameworks, :term:`NVIDIA FLARE` and the :term:`Flower Framework`, and your app is written for
-the one your deployment runs (see :ref:`choosing-an-fl-framework`). The file requirements and job types for each are
-on the :ref:`FL nets component page <flip-fl-nets>`.
+FLIP supports two FL frameworks, :term:`NVIDIA FLARE` and the :term:`Flower Framework`. Write your app for the
+framework your FLIP deployment runs (see :ref:`choosing-an-fl-framework`). The file requirements and job types for
+each framework are on the :ref:`FL nets component page <flip-fl-nets>`.
 
 .. toctree::
    :maxdepth: 1

@@ -78,7 +78,7 @@ Create a project
 Edit a project
 **************
 
-1. Click **Edit Project**.
+1. On the project page, click **Edit Project**.
 2. Update the project details, such as the name, description and members.
 3. Click **Update Project**.
 
@@ -108,7 +108,7 @@ Only the project owner or a user with the ``admin`` role can delete a project. Y
    :width: 600
    :align: center
 
-   Deleting a new project.
+   Deleting a project.
 
 .. warning::
 
@@ -137,8 +137,8 @@ imaging tables. See :ref:`the schema reference <omop-schema>` for the tables you
 .. important::
 
    **Imaging projects must select** ``accession_id``. This column of ``image_occurrence`` identifies the DICOM study;
-   XNAT uses it to retrieve the images from PACS. An imaging project whose query lists its columns and leaves out
-   ``accession_id`` is rejected when you submit it, with a message naming the fix.
+   XNAT uses it to retrieve the images from PACS. If an imaging project's query names its columns explicitly and leaves
+   out ``accession_id``, the query is rejected when you submit it, and the message tells you how to fix it.
 
    A project created without imaging data needs no ``accession_id``. If an existing imaging project's cohort has no
    imaging, re-create the project with **Includes imaging data** turned off.
@@ -154,7 +154,7 @@ Create a cohort query
    .. code-block:: sql
 
        SELECT accession_id, concept_name, year_of_birth FROM omop.person p
-       JOIN omop.image_occurrence r ON r.Person_Id = p.Person_Id
+       JOIN omop.image_occurrence r ON r.person_id = p.person_id
        JOIN omop.concept c ON p.gender_concept_id = c.concept_id
        WHERE year_of_birth < 1980
 
@@ -180,14 +180,11 @@ Each Trust parses and checks the query itself, rather than matching keywords, so
 Edit a cohort query
 ===================
 
-You can change and re-run the query, for example after a timeout, until the project is staged.
+You can change and re-run the query, for example after a timeout, until the project is staged. After that, ask your
+FLIP administrator to un-stage the project first (see :ref:`stage-project`).
 
 1. On the project page, click **View Query**.
 2. Change the query and run it again, as in :ref:`create-cohort-query`.
-
-.. note::
-
-   After staging, ask your FLIP administrator to un-stage the project before you can change its query.
 
 .. _stage-project:
 
@@ -197,8 +194,8 @@ Stage a project
 
 Staging asks the Trusts to approve your project. You can stage once the project has a saved cohort query.
 
-1. Use the switch next to each Trust to include or exclude it. Included Trusts are asked for approval and take part in
-   training.
+1. On the project page, use the switch next to each Trust to include or exclude it. Included Trusts are asked for
+   approval and take part in training.
 2. Click **Stage Project**.
 
 .. figure:: ../assets/generated/gifs/flip/stage-project.gif
@@ -218,8 +215,8 @@ Staging asks the Trusts to approve your project. You can stage once the project 
 Project approval
 ****************
 
-Each staged Trust decides **offline** and in its own time. The decision is recorded in FLIP by the FLIP Central Hub
-admin or, if the Trust has one, by the Trust's own Trust Admin (see :ref:`trust-admin-guide`).
+Each staged Trust decides **offline** and in its own time. The decision is recorded in FLIP by your FLIP administrator
+or, if the Trust has one, by the Trust's own Trust Admin (see :ref:`trust-admin-guide`).
 
 The **Trust Approval** section of the project page shows each Trust as *Pending*, *Approved* or *Declined*, with who
 decided and when. The project is approved as soon as one Trust approves it.
@@ -243,7 +240,7 @@ progress at each Trust.
    :width: 600
    :align: center
 
-   Imaging status overview
+   Imaging status overview.
 
 Large imports from PACS can take a long time, and single studies can fail when the system is under strain. FLIP
 re-imports failed studies automatically; the **reimport count** shows how often.
@@ -261,7 +258,7 @@ The card returns to normal once the Trust reports again.
    :width: 600
    :align: center
 
-   Reimport cap has been reached
+   Reimport cap has been reached.
 
 .. important::
 

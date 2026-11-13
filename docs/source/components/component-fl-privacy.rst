@@ -66,9 +66,11 @@ uses these values. In your own FLARE runs (the simulator, or a job exported with
 .. warning::
 
    **A high** ``percentile`` **sharply degrades training.** At 95, only the top 5 % of every update survives,
-   which stalls FedAvg convergence. On a frozen-backbone (head-only) fine-tune the filter would reset the global
-   head every round, so with ``AGGREGATE_ONLY_REGEX`` set (see :ref:`fl-training-configuration`) FLIP drops the
-   frozen parameters first and computes the percentile over the trainable ones only.
+   which stalls FedAvg convergence.
+
+   On a frozen-backbone (head-only) fine-tune the filter would reset the global head every round. With
+   ``AGGREGATE_ONLY_REGEX`` set (see :ref:`fl-training-configuration`), FLIP therefore drops the frozen
+   parameters first and computes the percentile over the trainable ones only.
 
 .. important::
 
@@ -146,7 +148,8 @@ different policies in the same federation, with no hub redeploy.
 **To enable it** (*Who: Trust operator*):
 
 #. Set the ``FL_SITE_PRIVACY_*`` variables in the Trust's kit file (``trust/.env.<CODE>.<env>``, Host-local
-   profile section), or the same settings in the Trust's governance document (see below), not both:
+   profile section), or the same settings in the Trust's governance document
+   (:ref:`trust-governance-document`), not both:
 
    .. list-table::
       :header-rows: 1
@@ -163,7 +166,7 @@ different policies in the same federation, with no hub redeploy.
           value, and a larger one only weakens the truncation.
         - ``10`` / ``0.01``
 
-#. Restart the Trust's FL clients:
+#. Restart the Trust's FL clients, between runs:
 
    .. code-block:: shell
 
@@ -196,6 +199,8 @@ How the site policy behaves (verified against FLARE 2.9.0):
   audit trail. A filter that raises never sends the update unfiltered.
 - **FLARE only.** Flower has no site-side filter hook, so on Flower the review of uploaded training code remains
   the control.
+
+.. _trust-governance-document:
 
 *************************************
 Trust governance document (per trust)
