@@ -14,7 +14,7 @@
 # FLIP Trust — Kubernetes Helm Chart
 
 > **Deploys: trust only.** No Central Hub component is defined by this chart. The hub is still involved —
-> the trust must be registered on it (`make register-trust KIT=<CODE>`) to get its kit file. The same stack
+> the trust must be registered on it to get its kit file (see [Quickstart](#quickstart)). The same stack
 > as Docker Compose is [`../`](../README.md); the cluster itself is provisioned outside this repo. See
 > [where things live](../../../deploy/README.md#where-things-live) for the layout rule.
 
@@ -120,7 +120,7 @@ Error: UPGRADE FAILED: conflict occurred while applying object flip-trust/trust-
 
 That refusal is a **safety property, not a defect** — the release stays on its last working
 revision instead of overwriting live trust credentials — so the chart tooling removes the
-disagreement rather than silencing it: `sync-kit` and `patch-kit-secrets` now realign the
+disagreement rather than silencing it: `sync-kit` and `patch-kit-secrets` realign the
 matching `values-secrets.yaml` slots with exactly what they patched, which makes helm's
 apply a no-op on those fields. Nothing else in the file is touched (the hand-filled XNAT /
 Orthanc slots, the comments and the `0600` mode all survive), and the kit remains the single
@@ -155,10 +155,13 @@ share no code, so the operator guide has operators run both.
 
 `status` asks XNAT in every running `xnat-web` pod, as the service account (the credential on
 curl's stdin), which plugins it lists (`GET /xapi/plugins`) and whether its DQR route answers
-(`GET /xapi/dqr/settings`). It fails each plugin in `XNAT_PLUGIN_IDS` (`check_status.py`) that
-XNAT does not list, a DQR route that answers 404 (XNAT lists a plugin whose configuration failed
-to load), and an XNAT that answers wrongly (not 200, or not a JSON object); see the `tomcat`
-container's startup log. XNAT lists plugins by id, not by file name (`container-service` is
+(`GET /xapi/dqr/settings`). It fails on:
+
+- a plugin in `XNAT_PLUGIN_IDS` (`check_status.py`) that XNAT does not list;
+- a DQR route that answers 404 (XNAT lists a plugin whose configuration failed to load);
+- an XNAT that answers wrongly (not 200, or not a JSON object).
+
+For any of these, see the `tomcat` container's startup log. XNAT lists plugins by id, not by file name (`container-service` is
 `containers`), hence the map; a test keeps it in step with the manifest the image is built from.
 A pod nothing answers on is a warning, which does not fail `status`. A pass names each plugin's
 version as XNAT reports it. A plugin can load and still abort every C-STORE in the importer (a
@@ -167,13 +170,13 @@ object through the PACS rather than trusting `status` or a C-ECHO: C-ECHO never 
 importer and passes throughout.
 
 `smoke-cstore` passes when Orthanc reports 0 failed instances **and** XNAT shows receiver-side
-evidence that the object landed — polled, strongest first: a new prearchive object carrying the
-UID just sent (`SOPInstanceUID`, else `StudyInstanceUID`), else a new line in XNAT's
-`received.log` since the mark taken before the store, else (last resort, reported as such) a new
-prearchive object by arrival time alone. That last reading is a pass only where `received.log`
-does not exist on the receiver; where it exists and gained no line, the run exits **2 —
-inconclusive**, which `make smoke-cstore` surfaces as a loud warning rather than a Make failure
-(exit 1 stays a real failure). The `received.log` line is the normal path here: the
+evidence that the object landed. It polls for that evidence, strongest first:
+
+1. a new prearchive object carrying the UID just sent (`SOPInstanceUID`, else `StudyInstanceUID`);
+2. a new line in XNAT's `received.log` since the mark taken before the store;
+3. last resort, reported as such: a new prearchive object by arrival time alone. This counts as a pass only where `received.log` does not exist on the receiver.
+
+When that last reading is the only evidence and `received.log` exists but gained no line, the run exits **2 — inconclusive**. `make smoke-cstore` surfaces that as a loud warning rather than a Make failure; exit 1 stays a real failure. The `received.log` line is the normal path here: the
 FLIP receiver runs with `anonymizationEnabled: true` and `anon_script.das` hashes the
 Study/Series/SOP UIDs, so the stored object does not carry the UIDs Orthanc holds and the UID
 match cannot fire. That line means *a new receipt during the window, preferring lines from
@@ -225,12 +228,13 @@ site is confirmed.
 
 `xnat.db.persistence.pgdataSubdir` keeps its value: it now names the part of the volume xnat-db
 mounts (`subPath`) rather than setting `PGDATA`, so `pgdata` on AKS and EKS still finds the old
-cluster where it was. A plain `helm upgrade` takes no dump. The new xnat-db then refuses to start
-beside the old cluster, rather than start XNAT empty. To recover, roll back with `xnat.image.pin` (or
-`XNAT_TAG` in the kit) and redeploy, then delete the `xnat-db` pod: the StatefulSet is `OrderedReady`,
-so Kubernetes does not replace a crash-looping pod with the pinned image on its own. Once xnat-db is up
-on the old release, remove the pin and upgrade through `upgrade-trust-k8s`; with the pin left in, the
-upgrade keeps xnat-db on 12. The same holds after a rollback: the old cluster has run again, so
+cluster where it was. A plain `helm upgrade` takes no dump. The new xnat-db then refuses to start beside the old cluster, rather than start XNAT empty. To recover:
+
+1. Roll back with `xnat.image.pin` (or `XNAT_TAG` in the kit) and redeploy.
+2. Delete the `xnat-db` pod. The StatefulSet is `OrderedReady`, so Kubernetes does not replace a crash-looping pod with the pinned image on its own.
+3. Once xnat-db is up on the old release, remove the pin and upgrade through `upgrade-trust-k8s`. With the pin left in, the upgrade keeps xnat-db on 12.
+
+The same holds after a rollback: the old cluster has run again, so
 the earlier dump and `pg16/` are out of date, and xnat-db refuses them until `upgrade-trust-k8s`
 takes a new dump, moving that `pg16/` aside as `pg16.replaced-<timestamp>/` for
 `xnat-db-remove-old-cluster` to delete. Resume an upgrade that failed or was interrupted with
@@ -242,7 +246,7 @@ taken. The first start's restore runs inside the postStart hook's wait, which is
 **This is a breaking change to the chart's values interface.** `omopDb.initJob.dataVersion` and
 `orthanc.initJob.dataVersion` are gone, replaced by the single `trustData.version` — the data
 version is now one git tag covering OMOP *and* Orthanc, so two independently pinned values could
-no longer describe a coherent state. (They had already drifted: `20260729` against `20260106`.)
+no longer describe a coherent state.
 
 Helm ignores unknown keys silently, so a values file still pinning the old keys keeps installing —
 it simply stops taking effect, and the deployment follows the new default for both stores. That is
@@ -922,7 +926,7 @@ kubectl exec -it <xnat-db-pod> -- \
   psql -U postgres -c "ALTER ROLE postgres WITH PASSWORD '<xnat-datasource-admin-password>'"
 ```
 
-**Upgrading an install created before the roles were split (pre-`985563d8`):**
+**Upgrading an install created before the roles were split** (chart before commit `985563d8`):
 those deployments set `POSTGRES_USER=xnat`, so their single role is a superuser
 named `xnat` and there is no `postgres` role to authenticate as. Applying this
 chart over such a PVC fails the hook on every start (`FATAL: role "postgres"
@@ -1088,8 +1092,8 @@ there; the omop-db image CI asserts every published image carries it.
 
 ### Security Model
 
-- **NetworkPolicies**: Default-deny-ingress, allow-intra-namespace, allow-egress
-  to Central Hub and FL server only (audit and threat model: [NETWORK-POLICY.md](NETWORK-POLICY.md))
+- **NetworkPolicies**: Default-deny-ingress, allow-intra-namespace, and egress limited to the rules in
+  [Network Policies](#network-policies) (audit and threat model: [NETWORK-POLICY.md](NETWORK-POLICY.md))
 - **No LoadBalancer or NodePort** for application services (all ClusterIP), with one opt-in
   exception: the DICOM SCP has its own Service (`xnat-web-dicom`, separate from the web console's
   `xnat-web`), which `xnat.web.dicomService.type: NodePort` (with `xnat.web.dicomNodePort`) or
@@ -1175,6 +1179,9 @@ The chart is validated in CI via:
 5. kind-based e2e — deploys the chart to a kind cluster and verifies pods start
 
 ## Troubleshooting
+
+Chart-level quick checks. The full runbook is [TROUBLESHOOTING.md](TROUBLESHOOTING.md); the operator-facing
+page is [Trust node on Kubernetes](../../../docs/source/troubleshooting/trust-node-kubernetes.rst).
 
 ### Pods stuck in Pending
 
@@ -1288,10 +1295,12 @@ Include:
 
 ## Known Limitations
 
-1. **Pod Security for stateful services**: the namespace enforces the Baseline
-   profile and audits/warns against Restricted. The stateless APIs are hardened,
-   but `xnat-web`, `xnat-db`, `omop-db`, and `orthanc` still need image and
-   volume-permission work before the namespace can enforce Restricted.
+1. **Pod Security for stateful services**: when the chart creates the namespace
+   (`namespace.create: true`) it enforces the Baseline profile and audits/warns
+   against Restricted; `make deploy` creates the namespace with kubectl, without
+   those labels. Full `restricted` enforcement is blocked by the volume-owning
+   images and the fl-client's root `images-init` init container — see
+   [Security Model](#security-model).
 
 2. **XNAT Container Service — single-node by default**: DICOM-to-NIfTI
    conversion runs end-to-end on Kubernetes (FLIP#565). The Container Service

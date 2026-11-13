@@ -20,9 +20,9 @@ a private container the node reads with its own identity. The same bootstrap lay
 module also carry a one-node AKS cluster for the `flip-trust` Helm chart: see
 [On AKS instead of a VM](#on-aks-instead-of-a-vm).
 
-Each root has its own Makefile, as the AWS roots do (FLIP#1787): the node's commands run in `vm/` and the
-cluster's in `aks/`. `bootstrap`, `destroy-bootstrap`, `test` and `lint` run here, because both roots share
-that layer. An old name run here (`make plan`, `make aks-join`) fails and prints the new command.
+Each root has its own Makefile. Run the node's commands in `vm/` and the cluster's in `aks/`.
+`bootstrap`, `destroy-bootstrap`, `test` and `lint` run here in `azure/`, because both roots share that layer.
+An old target name run here (`make plan`, `make aks-join`) fails and prints the new command.
 
 ## What this builds
 
@@ -51,28 +51,19 @@ The node never provisions an FL kit, so it carries no provisioning tooling.
 - `yq` and `uv` on your machine, for `make selftest-kit` (it provisions the FL dev kit here).
 - `plan` looks up your public IP (api.ipify.org) for the kit drop's firewall; override it with
   `OPERATOR_IP=<ip>`. If your IP changes, `kit-upload` is refused until you plan and apply again.
-  The AKS API server admits only your IP too (`aks/`'s `plan` looks it up the same way); see
-  [On AKS instead of a VM](#on-aks-instead-of-a-vm). Neither root's `destroy` needs the lookup.
+  `aks/`'s `plan` does the same lookup for the API server's allowlist. Neither root's `destroy` needs it.
 
 **Cost.** Nothing here skips Terraform's confirmation: every `bootstrap`, `apply` and `destroy`
 shows the plan and asks. On a Free Trial with the spending limit on, running out of credit
 stops resources rather than billing you. A running `Standard_D4s_v5` uses roughly $0.20 an
-hour, and the NAT gateway with its IP roughly $0.05 an hour more, running or not; `make stop`
-deallocates the VM so only the disks and the NAT gateway cost anything; `make destroy`
-at the end of a session removes the node and keeps the bootstrap layer.
+hour, and the NAT gateway with its IP roughly $0.05 an hour more, running or not.
+`make stop` (in `vm/`) deallocates the VM, so only the disks and the NAT gateway cost anything.
+`make destroy` at the end of a session removes the node and keeps the bootstrap layer.
 
 ## Steps
 
-**Bootstrapped before this tree moved from `deploy/providers/azure` (FLIP#1438)?** The bootstrap's state is a
-local, gitignored file that the move left behind. Without it `init` cannot find the state storage and
-`make bootstrap` would create a second one. Move it (and any packed kits in `build/`) from the repo root;
-the vm and aks state is remote, so each root's `init` is all they need:
-
-```bash
-mv deploy/providers/azure/bootstrap/terraform.tfstate* trust/deploy/terraform/azure/bootstrap/
-[ -d deploy/providers/azure/build ] && mv deploy/providers/azure/build trust/deploy/terraform/azure/aks/
-make -C trust/deploy/terraform/azure/vm init AZ_SUBSCRIPTION="$SUB"       # and in aks/ for the AKS root
-```
+> Bootstrapped this tree when it lived in `deploy/providers/azure`? Do
+> [Moving an old bootstrap](#moving-an-old-bootstrap) first, or `make bootstrap` creates a second state store.
 
 ```bash
 cd trust/deploy/terraform/azure
@@ -98,13 +89,16 @@ directory lists its targets.
 
 The `aks/` root builds a one-node cluster for the `flip-trust` Helm chart on the same bootstrap
 layer. It shares the trial's 4 vCPUs with the VM, so its `apply` refuses while the node's
-resource group exists: `make -C ../vm destroy` first. `SUBNET_ID` works as for the VM (see
-[Network and outbound traffic](#network-and-outbound-traffic)); a site subnet also needs a route
-table sending outbound traffic to the site's firewall, which AKS checks before it creates the
-cluster, and `NODE_EGRESS_IPS=<ip>[,<ip>]` naming that firewall's public IPs on `plan` (`destroy`
-needs no addresses). The API server admits your IP and the nodes' egress (the NAT gateway's IP, or
-those addresses): AKS adds only a load balancer's outbound IP by itself, and a node that cannot
-reach its API server never joins.
+resource group exists: run `make -C ../vm destroy` first.
+
+`SUBNET_ID` works as for the VM (see [Network and outbound traffic](#network-and-outbound-traffic)).
+On a site subnet, AKS also needs:
+
+- a route table sending outbound traffic to the site's firewall (AKS checks this before it creates the cluster);
+- `NODE_EGRESS_IPS=<ip>[,<ip>]` on `plan`, naming that firewall's public IPs (`destroy` needs no addresses).
+
+The API server admits your IP and the nodes' egress (the NAT gateway's IP, or those addresses).
+AKS adds only a load balancer's outbound IP by itself, and a node that cannot reach its API server never joins.
 
 ```bash
 cd trust/deploy/terraform/azure/aks       # after bootstrap
@@ -126,13 +120,13 @@ Azure never upgrades the cluster on its own (no upgrade channel, and the node OS
 place). An upgrade is yours to run with `az aks upgrade`, and on one node it surges a second
 `node_size` node first: 8 vCPUs at the default size, so raise the quota before it.
 
-The trust goes onto the cluster from the hub admin's kit tarball (see [Joining a hub](#joining-a-hub)):
+The trust goes onto the cluster from the hub admin's kit tarball (see [Joining a hub](#joining-a-hub)). In `aks/`:
 
 ```bash
 make join       TARBALL=<flip-trust-kit-…tar.gz> KIT=<CODE> HUB=<env>   # MOCK_PACS=1 on a test node
 make selftest
 make deploy     KIT=<CODE> HUB=<env>      # redeploy or upgrade from the installed kit
-make clear-jobs                            # dcm2niix Jobs from before the conversion cap
+make clear-jobs                            # delete dcm2niix Jobs created before the conversion cap (asks first)
 ```
 
 These drive [`trust/deploy/helm`](../../helm/README.md) on the cluster's kube context,
@@ -142,7 +136,7 @@ with `values-aks.yaml`, `values-small-node.yaml` and no vocabulary load.
 
 The hub admin registers the trust and packages its kit exactly as for an on-prem trust
 (`new-trust`, `make -C deploy/providers/AWS register-trusts`, `sync-trust-kit`,
-`package-onprem-trust-kit`; see `docs/source/deploy-flip/deploy-flip-node-azure.rst`), then, in `vm/`:
+`package-onprem-trust-kit`; see [Deploy a FLIP node on an Azure VM](../../../../docs/source/deploy-flip/deploy-flip-node-azure.rst)), then, in `vm/`:
 
 ```bash
 make kit-upload AZ_SUBSCRIPTION="$SUB" TARBALL=<flip-trust-kit-…tar.gz>
@@ -158,7 +152,9 @@ edge itself (outbound); nothing listens on the node.
 ## Choosing a region
 
 `LOCATION` (default `uksouth`) is the node's region; the bootstrap's state storage stays in
-`BOOTSTRAP_LOCATION` (default `uksouth`), so the node can move without it. Free Trial subscriptions often cannot create 4-vCPU VMs in the busy UK
+`BOOTSTRAP_LOCATION` (default `uksouth`), so the node can move without it.
+
+Free Trial subscriptions often cannot create 4-vCPU VMs in the busy UK
 regions (`SkuNotAvailable` / `NotAvailableForSubscription`); check what yours allows with
 `az vm list-skus --subscription "$SUB" --location <region> --size Standard_D4 --all -o table`,
 then pass `LOCATION=<region>` to `plan`.
@@ -173,12 +169,14 @@ a fixed IP for it.
   uses the site's routes, normally through its firewall, and this tree creates no network, no NAT
   gateway and no public IP. This is how a trust deploys. The subnet needs the `Microsoft.Storage`
   service endpoint for the kit drop, and the site's firewall must allow the hosts every trust node
-  needs (the outbound table in `docs/source/deploy-flip/deploy-trust-node.rst`) plus the VM's
-  first-boot extras listed in `docs/source/deploy-flip/deploy-flip-node-azure.rst`.
+  needs (the outbound table in [Deploy a trust node](../../../../docs/source/deploy-flip/deploy-trust-node.rst)) plus the VM's
+  first-boot extras listed in [Deploy a FLIP node on an Azure VM](../../../../docs/source/deploy-flip/deploy-flip-node-azure.rst).
 - **No `SUBNET_ID`.** For a standalone or trial node: the tree creates a VNet whose subnet
   leaves through its own NAT gateway. The gateway's IP is created and destroyed with the node.
 
 ## When something goes wrong
+
+Apart from `bootstrap`, the targets below run in `vm/`.
 
 - **The budget alert is rejected.** Some trial offers do not support budgets. Rerun
   `make bootstrap` without `ALERT_EMAIL` (it sets `create_budget=false`); the spending limit
@@ -200,7 +198,7 @@ a fixed IP for it.
 
 ```bash
 make test   # terraform test (mocked azurerm) in every root and module, plus the static guards
-make lint   # terraform fmt, tflint with the azurerm ruleset, and checkov (make checkov alone)
+make lint   # terraform fmt, tflint with the azurerm ruleset, and checkov (`make checkov` runs checkov alone)
 ```
 
 CI runs both in `validate_terraform.yml`. Checkov runs every Azure check, at the version the AWS
@@ -209,3 +207,17 @@ skip without a reason fails the lint. The static guards (`tests/test_static_guar
 enforce the cost and safety rules: nothing skips Terraform's confirmation, every provider and `az` call names the
 subscription, no real subscription IDs in tracked files, no NSG rule that allows inbound traffic, and the
 VM's NIC always behind its own NSG, which denies all inbound.
+
+## Moving an old bootstrap
+
+If you bootstrapped before this tree moved from `deploy/providers/azure` (FLIP#1438), the bootstrap's state is a
+local, gitignored file that the move left behind. Without it `init` cannot find the state storage and
+`make bootstrap` would create a second one. From the repo root, move it (and any packed kits in `build/`);
+the vm and aks state is remote, so each root's `init` is all they need:
+
+```bash
+SUB="Azure subscription 1"
+mv deploy/providers/azure/bootstrap/terraform.tfstate* trust/deploy/terraform/azure/bootstrap/
+[ -d deploy/providers/azure/build ] && mv deploy/providers/azure/build trust/deploy/terraform/azure/aks/
+make -C trust/deploy/terraform/azure/vm init AZ_SUBSCRIPTION="$SUB"       # and in aks/ for the AKS root
+```
