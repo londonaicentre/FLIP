@@ -434,7 +434,7 @@ template-egress-variants: ## Render the egress NetworkPolicy in default / harden
 	@echo "=== Hardened (CIDR-scoped) egress ==="
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) $(VALUES_OPTS) \
 		--set networkPolicies.allowedEgressCIDRs[0]=10.20.0.0/24 \
-		--set networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=13.43.162.56/32 \
+		--set networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=203.0.113.10/32 \
 		--set networkPolicies.allowedEgressCIDRsWithPorts[0].port=8002 \
 		--show-only templates/network-policy.yaml > /dev/null
 	@echo "=== NetworkPolicies disabled ==="

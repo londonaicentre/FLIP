@@ -473,10 +473,12 @@ flClient:
     source: hostPath
     # The Secret's name; empty means <release fullname>-fl-kit.
     secretName: ""
-  hostAliases:
-    - ip: "13.43.162.56"
-      hostnames:
-        - "fl-server-net-1"
+  # Static /etc/hosts entries for the FL client (and its job pods). Empty by default: both
+  # backends dial the hub's public FL name from the kit, which DNS resolves.
+  hostAliases: []
+  #   - ip: "203.0.113.10"
+  #     hostnames:
+  #       - "fl.example.org"
   image:
     repository: ghcr.io/londonaicentre
     tag: stag
@@ -1147,8 +1149,7 @@ networkPolicies:
   # Each entry: cidrs (list of CIDR strings) + port (int) + optional protocol (default TCP)
   allowedEgressCIDRsWithPorts: []
   # - cidrs:
-  #     - 13.43.208.193/32
-  #     - 13.43.162.56/32
+  #     - 203.0.113.10/32
   #   port: 8002
   # Egress rules to allow (defaults include DNS/HTTP/HTTPS)
   allowedEgressPorts:

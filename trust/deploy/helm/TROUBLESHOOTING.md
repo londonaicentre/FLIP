@@ -235,9 +235,9 @@ DNS:fl-server-net-1, DNS:fl.stag.flip.aicentre.co.uk
 
 **Fix:** Add both SANs when regenerating the certificate (see §7.2 config above).
 
-The `hostAliases` in the fl-client deployment map `fl-server-net-1` to the
-NLB IPs, so clients resolve the hostname correctly but the server must present
-a cert that matches the hostname the client uses to connect.
+The client connects by the hub's public FL name from its kit, so the server must
+present a cert that carries that name. The chart sets no `hostAliases` by default;
+`flClient.hostAliases` is there for a site whose DNS cannot resolve the FL name.
 
 ### 7.4 Signature PSS Padding Mismatch
 

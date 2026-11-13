@@ -87,7 +87,7 @@ networkPolicies:
   allowedEgressCIDRs:
     - "10.20.0.0/24"                  # e.g. on-prem OMOP/PACS subnet
   allowedEgressCIDRsWithPorts:
-    - { cidrs: ["13.43.162.56/32", "13.43.208.193/32"], port: 8002 }  # fl-server NLB
+    - { cidrs: ["203.0.113.10/32"], port: 8002 }  # the hub's FL address (resolve the kit's NLB_SUBDOMAIN)
 ```
 
 ## CI coverage
