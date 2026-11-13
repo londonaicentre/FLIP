@@ -20,13 +20,13 @@ import os
 import re
 from dataclasses import dataclass
 from functools import cache
-from typing import Any, Protocol
-
-import anthropic
-from anthropic import AnthropicBedrockMantle
+from typing import TYPE_CHECKING, Any, Protocol
 
 from flip_api.cohort_services.drafting.prompt import ASSETS, OUTPUT_SCHEMA, strip_licence_header
 from flip_api.config import get_settings
+
+if TYPE_CHECKING:
+    from anthropic import AnthropicBedrockMantle
 
 # Bedrock Guardrail headers, as on bedrock-runtime InvokeModel. Not yet verified on the Mantle endpoint:
 # confirm before attaching a guardrail in phase 2 (FLIP#1556).
@@ -147,6 +147,8 @@ class BedrockDraftModel:
         self._client: Any = client if client is not None else _bedrock_client()
 
     def create(self, system: str, messages: list[dict[str, Any]]) -> ModelReply:
+        import anthropic  # imported here so the hub runs without the SDK (dev uses the fake)
+
         try:
             response = self._client.messages.create(
                 model=self._model,
@@ -179,8 +181,10 @@ class BedrockDraftModel:
 
 
 @cache
-def _bedrock_client() -> AnthropicBedrockMantle:
+def _bedrock_client() -> "AnthropicBedrockMantle":
     """One Mantle client per process, signed with the default AWS credential chain (the ECS task role)."""
+    from anthropic import AnthropicBedrockMantle
+
     if any(os.environ.get(name) for name in _API_KEY_ENV_VARS):
         raise ModelError("api_key_configured")  # the hub calls Bedrock with its task role only
     settings = get_settings()

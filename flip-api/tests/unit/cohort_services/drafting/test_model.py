@@ -160,3 +160,20 @@ def test_fake_description_lookup_is_linear_on_adversarial_input():
     started = time.perf_counter()
     model_module._between("<description>a" * 50_000, "<description>", "</description>")
     assert time.perf_counter() - started < 1
+
+
+def test_the_hub_and_the_fake_drafter_run_without_the_sdk(monkeypatch):
+    """The AWS-free hub boot runs the published image, which may predate the anthropic dependency."""
+    import importlib
+    import sys
+
+    monkeypatch.setitem(sys.modules, "anthropic", None)  # any import of it now raises ImportError
+    for name in [n for n in sys.modules if n == "flip_api.main" or n.startswith("flip_api.cohort_services.drafting")]:
+        monkeypatch.delitem(sys.modules, name)
+    importlib.import_module("flip_api.main")
+    drafting = importlib.import_module("flip_api.cohort_services.drafting.model")
+    prompt_module = importlib.import_module("flip_api.cohort_services.drafting.prompt")
+    reply = drafting.FakeDraftModel().create(
+        "system", [{"role": "user", "content": prompt_module.user_message("Chest X-rays", [], True)}]
+    )
+    assert json.loads(reply.text)["outcome"] == "draft"
