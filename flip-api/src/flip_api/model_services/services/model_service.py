@@ -38,11 +38,13 @@ from flip_api.domain.interfaces.model import (
     IModelMetrics,
     IModelMetricsData,
     IModelMetricsValue,
+    IModelProgress,
     IModelsProjectOption,
     ITrustSummary,
 )
 from flip_api.domain.schemas.actions import ModelAuditAction
 from flip_api.domain.schemas.status import JobStatus, ModelStatus, ProjectStatus
+from flip_api.domain.schemas.types import FLLogEvent
 from flip_api.fl_services.services import fl_scheduler_service
 from flip_api.model_services.utils.audit_helper import audit_model_action, audit_model_actions
 from flip_api.utils.logger import logger
@@ -480,6 +482,93 @@ def _run_trusts_by_model(model_ids: list[UUID], session: Session) -> dict[UUID, 
     return trusts_by_model
 
 
+def _finished_at_by_model(model_ids: list[UUID], session: Session) -> dict[UUID, datetime | None]:
+    """Map each model to its latest FL job's ``completed`` time (None while that job is unfinished).
+
+    Args:
+        model_ids (list[UUID]): Model ids to look up. Empty input short-circuits.
+        session (Session): The database session.
+
+    Returns:
+        dict[UUID, datetime | None]: ``model_id -> completed``. Models without a job are absent.
+    """
+    if not model_ids:
+        return {}
+    rows = session.exec(
+        select(FLJob.model_id, FLJob.completed)  # type: ignore[call-overload]
+        .where(col(FLJob.model_id).in_(model_ids))
+        .order_by(col(FLJob.created).asc(), col(FLJob.id).asc())
+    ).all()
+    # Ascending (created, id), so the latest job's value is the one left standing.
+    return {model_id: completed for model_id, completed in rows}
+
+
+def _count(value: Any) -> int | None:
+    """A ``details`` value when it is a genuine integer count (bools excluded), else None."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _progress_by_model(model_ids: list[UUID], session: Session) -> dict[UUID, IModelProgress]:
+    """How far each model's latest FL job got, from its newest round events.
+
+    ``fl_logs`` rows carry no job id, so the latest job's events are those logged since it was
+    created. One query returns, per model, the newest ``ROUND_STARTED`` (``details.total_rounds``)
+    and the newest ``ROUND_AGGREGATED`` (``details.returned`` / ``details.expected``).
+
+    Args:
+        model_ids (list[UUID]): Model ids to look up. Empty input short-circuits.
+        session (Session): The database session.
+
+    Returns:
+        dict[UUID, IModelProgress]: ``model_id -> progress``. Models without round events are absent.
+    """
+    if not model_ids:
+        return {}
+
+    latest_job = (
+        select(FLJob.model_id, func.max(FLJob.created).label("created"))  # type: ignore[call-overload]
+        .where(col(FLJob.model_id).in_(model_ids))
+        .group_by(col(FLJob.model_id))
+        .subquery()
+    )
+    newest_first = func.row_number().over(
+        partition_by=(col(FLLogs.model_id), col(FLLogs.event_type)),
+        order_by=(desc(col(FLLogs.log_date)), desc(col(FLLogs.global_round))),
+    )
+    ranked = (
+        select(  # type: ignore[call-overload]
+            FLLogs.model_id, FLLogs.event_type, FLLogs.global_round, FLLogs.details, newest_first.label("rank")
+        )
+        .join(latest_job, and_(latest_job.c.model_id == FLLogs.model_id, col(FLLogs.log_date) >= latest_job.c.created))
+        .where(col(FLLogs.event_type).in_([FLLogEvent.ROUND_STARTED, FLLogEvent.ROUND_AGGREGATED]))
+        .subquery()
+    )
+    rows = session.exec(
+        select(ranked.c.model_id, ranked.c.event_type, ranked.c.global_round, ranked.c.details).where(
+            ranked.c.rank == 1
+        )
+    ).all()
+
+    events: dict[UUID, dict[str, tuple[int | None, dict]]] = defaultdict(dict)
+    for model_id, event_type, global_round, details in rows:
+        events[model_id][event_type] = (global_round, details or {})
+
+    progress: dict[UUID, IModelProgress] = {}
+    for model_id, by_type in events.items():
+        started_round, started = by_type.get(FLLogEvent.ROUND_STARTED, (None, {}))
+        aggregated_round, aggregated = by_type.get(FLLogEvent.ROUND_AGGREGATED, (None, {}))
+        current = max((r for r in (started_round, aggregated_round) if r is not None), default=None)
+        # Returned/expected describe an aggregated round; a round still in flight has none yet.
+        counts = aggregated if aggregated_round == current else {}
+        progress[model_id] = IModelProgress(
+            round=current,
+            total_rounds=_count(started.get("total_rounds")),
+            trusts_returned=_count(counts.get("returned")),
+            trusts_expected=_count(counts.get("expected")),
+        )  # type: ignore[call-arg]
+    return progress
+
+
 def queued_positions_by_model(session: Session) -> dict[UUID, int]:
     """Map each queued model to its 1-based place in the FL training queue.
 
@@ -521,7 +610,8 @@ def get_all_models_service(
     models whose project the user owns or has a ``ProjectUserAccess`` row for; when ``user_id`` is
     ``None`` (a manager with ``CAN_MANAGE_PROJECTS``) no access filter is applied. Soft-deleted
     models and projects are always excluded. Search matches the model name or the owning project
-    name; results are newest-first and paginated.
+    name; results are ordered by most recent activity (model creation, FL job timestamps, logs) and
+    paginated.
 
     Alongside the page it returns per-status counts over the same access-scoped, search-filtered set
     but **without** the status filter — so the filter tiles keep their numbers while one is selected.
@@ -560,13 +650,22 @@ def get_all_models_service(
     # access OR-clause can match a granted project without fanning the row out per access record.
     access_join = and_(col(ProjectUserAccess.project_id) == Projects.id, ProjectUserAccess.user_id == user_id)
 
+    # Computed in SQL so the sort happens before LIMIT/OFFSET; GREATEST skips the NULLs of idle models.
+    log_activity = select(func.max(FLLogs.log_date)).where(FLLogs.model_id == Model.id).scalar_subquery()
+    job_activity = (
+        select(func.max(func.greatest(FLJob.created, FLJob.started, FLJob.completed)))
+        .where(FLJob.model_id == Model.id)
+        .scalar_subquery()
+    )
+    last_activity = func.greatest(Model.creation_timestamp, log_activity, job_activity).label("last_activity")
+
     rows_query = (
-        select(Model, Projects.name, UserProfile.name)  # type: ignore[call-overload]
+        select(Model, Projects.name, UserProfile.name, last_activity)  # type: ignore[call-overload]
         .join(Projects, col(Model.project_id) == Projects.id)
         .outerjoin(ProjectUserAccess, access_join)
         .outerjoin(UserProfile, col(UserProfile.user_id) == Model.owner_id)
         .where(and_(*list_conditions))
-        .order_by(desc(col(Model.creation_timestamp)))
+        .order_by(desc(last_activity), col(Model.id))
         .limit(paging.page_size)
         .offset(paging.offset)
     )
@@ -591,8 +690,11 @@ def get_all_models_service(
         for status, count in session.exec(status_counts_query).all()
     }
 
-    trusts_by_model = _run_trusts_by_model([model.id for model, _, _ in rows], session)
+    model_ids = [row[0].id for row in rows]
+    trusts_by_model = _run_trusts_by_model(model_ids, session)
     queue_positions = queued_positions_by_model(session)
+    finished_at = _finished_at_by_model(model_ids, session)
+    progress = _progress_by_model(model_ids, session)
 
     data = [
         IAllModelsResponse(
@@ -607,8 +709,11 @@ def get_all_models_service(
             creation_timestamp=model.creation_timestamp,
             trusts=trusts_by_model.get(model.id, []),
             queue_position=queue_positions.get(model.id),
+            last_activity=model_last_activity,
+            finished_at=finished_at.get(model.id),
+            progress=progress.get(model.id),
         )  # type: ignore[call-arg]
-        for model, project_name, owner_name in rows
+        for model, project_name, owner_name, model_last_activity in rows
     ]
 
     return IPagedResponse[IAllModelsResponse](data=data, total_rows=total_rows), status_counts, paging

@@ -45,6 +45,17 @@ class ITrustSummary(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class IModelProgress(BaseModel):
+    """How far a model's latest FL run got, from its newest round events in ``fl_logs``."""
+
+    round: int | None = None
+    total_rounds: int | None = Field(default=None, alias="totalRounds")
+    trusts_returned: int | None = Field(default=None, alias="trustsReturned")
+    trusts_expected: int | None = Field(default=None, alias="trustsExpected")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class IAllModelsResponse(BaseModel):
     """One row of the estate-wide Models list (issue #726).
 
@@ -67,6 +78,10 @@ class IAllModelsResponse(BaseModel):
     # The model's 1-based place in the FL training queue (position 1 = next to
     # be picked up); None unless the model has a QUEUED job waiting for a net.
     queue_position: int | None = Field(default=None, alias="queuePosition")
+    # Newest of the model's creation, its FL jobs' timestamps and its logs; the list's sort key.
+    last_activity: datetime = Field(..., alias="lastActivity")
+    finished_at: datetime | None = Field(default=None, alias="finishedAt")
+    progress: IModelProgress | None = None
 
     model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
 

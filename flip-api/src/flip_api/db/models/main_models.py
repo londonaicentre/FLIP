@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Column, UniqueConstraint
+from sqlalchemy import Column, Index, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlmodel import Field, Relationship, SQLModel
@@ -77,7 +77,7 @@ class FLJobTrust(SQLModel, table=True):
 class FLJob(SQLModel, table=True):
     __tablename__ = "fl_job"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    model_id: UUID = Field(foreign_key="model.id")
+    model_id: UUID = Field(foreign_key="model.id", index=True)
     status: JobStatus = Field(default=JobStatus.QUEUED)
     created: Annotated[datetime, Field(default_factory=datetime.utcnow)]
     started: datetime | None = Field(default=None)
@@ -124,6 +124,8 @@ class FLMetrics(SQLModel, table=True):
 
 class FLLogs(SQLModel, table=True):
     __tablename__ = "fl_logs"  # type: ignore
+    # The Models list sorts on each model's newest log and reads its latest round events.
+    __table_args__ = (Index("ix_fl_logs_model_id_log_date", "model_id", "log_date"),)
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     model_id: UUID = Field(foreign_key="model.id")
     log_date: Annotated[datetime | None, Field(default_factory=datetime.utcnow)]

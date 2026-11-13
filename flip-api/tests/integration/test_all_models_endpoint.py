@@ -28,6 +28,7 @@ from fastapi.testclient import TestClient
 
 from flip_api.db.models.main_models import (
     FLJob,
+    FLLogs,
     Model,
     ModelTrustIntersect,
     Projects,
@@ -36,6 +37,7 @@ from flip_api.db.models.main_models import (
 )
 from flip_api.db.models.user_models import UserProfile
 from flip_api.domain.schemas.status import JobStatus, ModelStatus, ProjectStatus, TrustIntersectStatus
+from flip_api.domain.schemas.types import FLLogEvent
 from tests.integration.conftest import admin_user, override_verify_token_as
 
 MODELS_URL = "/api/models"
@@ -646,3 +648,106 @@ def test_project_options_admin_sees_every_project(client: TestClient, session, p
 
     assert response.status_code == 200
     assert [option["name"] for option in response.json()] == ["Someone else's"]
+
+
+def _add_round_event(session, *, model_id: UUID, event: FLLogEvent, global_round: int, at: datetime, details=None):
+    session.add(
+        FLLogs(
+            model_id=model_id, success=True, event_type=event, global_round=global_round, log_date=at, details=details
+        )
+    )
+    session.commit()
+
+
+def test_rows_are_ordered_by_last_activity(client: TestClient, session, project_factory, model_factory):
+    """An old model with a recent log sorts above a newer idle one, and reports that log as its activity."""
+    user_id = uuid4()
+    project = _add_project(session, project_factory, owner_id=user_id, name="Activity")
+    old_busy = model_factory.build(
+        project_id=project.id,
+        owner_id=user_id,
+        name="old-busy",
+        deleted=False,
+        status=ModelStatus.RUNNING,
+        creation_timestamp=datetime(2026, 1, 1),
+    )
+    new_idle = model_factory.build(
+        project_id=project.id,
+        owner_id=user_id,
+        name="new-idle",
+        deleted=False,
+        status=ModelStatus.PREPARED,
+        creation_timestamp=datetime(2026, 6, 1),
+    )
+    session.add(old_busy)
+    session.add(new_idle)
+    session.commit()
+    session.add(FLJob(model_id=old_busy.id, status=JobStatus.IN_PROGRESS, created=datetime(2026, 1, 2)))
+    session.commit()
+    _add_round_event(
+        session, model_id=old_busy.id, event=FLLogEvent.ROUND_STARTED, global_round=1, at=datetime(2026, 7, 1)
+    )
+
+    override_verify_token_as(user_id)
+    rows = client.get(MODELS_URL, params={"pageSize": 1}).json()["data"]
+    page_two = client.get(MODELS_URL, params={"pageNumber": 2, "pageSize": 1}).json()["data"]
+
+    assert [r["name"] for r in rows + page_two] == ["old-busy", "new-idle"]
+    assert rows[0]["lastActivity"] == "2026-07-01T00:00:00"
+    assert page_two[0]["lastActivity"] == "2026-06-01T00:00:00"
+
+
+def test_progress_and_finished_at_come_from_the_latest_job(client: TestClient, session, project_factory, model_factory):
+    """Progress reads the latest job's newest round events; an earlier run's events are ignored."""
+    user_id = uuid4()
+    project = _add_project(session, project_factory, owner_id=user_id, name="Progress")
+    model = _add_model(session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.STOPPED)
+    session.add(FLJob(model_id=model.id, status=JobStatus.COMPLETED, created=datetime(2026, 1, 1)))
+    _add_round_event(
+        session,
+        model_id=model.id,
+        event=FLLogEvent.ROUND_AGGREGATED,
+        global_round=9,
+        at=datetime(2026, 1, 1, 1),
+        details={"returned": 1, "expected": 1},
+    )
+    finished = datetime(2026, 2, 1, 3)
+    session.add(FLJob(model_id=model.id, status=JobStatus.COMPLETED, created=datetime(2026, 2, 1), completed=finished))
+    session.commit()
+    _add_round_event(
+        session,
+        model_id=model.id,
+        event=FLLogEvent.ROUND_STARTED,
+        global_round=2,
+        at=datetime(2026, 2, 1, 1),
+        details={"total_rounds": 3},
+    )
+    _add_round_event(
+        session,
+        model_id=model.id,
+        event=FLLogEvent.ROUND_AGGREGATED,
+        global_round=2,
+        at=datetime(2026, 2, 1, 2),
+        details={"returned": 2, "expected": 3},
+    )
+
+    override_verify_token_as(user_id)
+    row = next(r for r in client.get(MODELS_URL).json()["data"] if r["id"] == str(model.id))
+
+    assert row["progress"] == {"round": 2, "totalRounds": 3, "trustsReturned": 2, "trustsExpected": 3}
+    assert row["finishedAt"] == "2026-02-01T03:00:00"
+    assert row["lastActivity"] == "2026-02-01T03:00:00"
+
+
+def test_model_without_jobs_has_no_progress(client: TestClient, session, project_factory, model_factory):
+    """No FL job means no progress and no finish time; last activity falls back to creation."""
+    user_id = uuid4()
+    project = _add_project(session, project_factory, owner_id=user_id, name="Idle")
+    model = _add_model(session, model_factory, project_id=project.id, owner_id=user_id)
+
+    override_verify_token_as(user_id)
+    row = next(r for r in client.get(MODELS_URL).json()["data"] if r["id"] == str(model.id))
+
+    assert row["progress"] is None
+    assert row["finishedAt"] is None
+    assert row["lastActivity"] == row["creationTimestamp"]
