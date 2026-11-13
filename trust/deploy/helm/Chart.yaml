@@ -13,8 +13,11 @@ apiVersion: v2
 name: flip-trust
 description: A Helm chart for deploying FLIP trust-side services on Kubernetes
 type: application
-version: 0.1.0
-appVersion: "1.0"
+# Deliberately un-versioned in-tree: a development checkout deploys what you built, not the last
+# release. Every platform release publishes a stamped copy to GHCR — scripts/package_chart.py
+# rewrites these two and global.image.tag from the release tag (FLIP#1646).
+version: 0.0.0-dev
+appVersion: "0.0.0-dev"
 keywords:
   - federated-learning
   - medical-imaging
