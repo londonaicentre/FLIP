@@ -78,8 +78,9 @@ Key environment variables. Most come from the trust kit file — template at [`.
 ### Query cache
 
 Executed cohort SQL is memoised in an **in-process, per-container** dictionary
-(`services/query_cache.py`), keyed by a SHA-256 of the whitespace-normalised, lower-cased query plus
-its bound parameters. The statistics route receives the same cohort SQL repeatedly, and the
+(`services/query_cache.py`), keyed by a SHA-256 of the exact query text (cohort SQL as re-emitted by
+`validate_query`, never case- or whitespace-folded, which would merge `'F'` with `'f'`) plus its
+bound parameters. The statistics route receives the same cohort SQL repeatedly, and the
 subject count resolves accession numbers through `omop.image_occurrence`; the cache spares OMOP the
 repeat scan. (The row-level routes never execute the caller's SQL — they run the query of record
 frozen below — and snapshot creation and both row-level routes, including their `image_occurrence`
