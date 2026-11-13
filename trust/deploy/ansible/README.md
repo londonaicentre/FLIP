@@ -25,22 +25,22 @@ Ansible playbook and supporting files to provision an on-premises Ubuntu host as
 
 ## Architecture
 
-```sh
+```text
          Internet
              │
              ▼
-     ┌───────────────┐
-     │    AWS CH      │
+     ┌────────────────┐
+     │     AWS CH     │
      │  (Central Hub) │
-     └───▲───────▲───┘
+     └───▲───────▲────┘
          │       │
   polls  │       │  polls
  (HTTPS) │       │ (HTTPS)
          │       │
-  ┌──────┴───┐ ┌─┴─────────┐
-  │ Trust A   │ │  Trust B   │
-  │ (AWS EC2) │ │  (local)   │
-  └──────────┘ └───────────┘
+  ┌──────┴────┐ ┌┴──────────┐
+  │ Trust A   │ │ Trust B   │
+  │ (AWS EC2) │ │ (local)   │
+  └───────────┘ └───────────┘
 
   Trusts poll the hub (outbound only)
 ```
@@ -54,7 +54,15 @@ Each local Trust host runs:
 | data-access-api | 8000 | HTTP (internal) |
 | fl-client | — | TCP (connects outbound to FL server via NLB) |
 
-The on-prem trust kit (`trust/.env.<CODE>.prod`) can default `IMAGING_API_PORT` / `DATA_ACCESS_API_PORT` / `TRUST_API_PORT` to host ports shifted off the first dev trust's allocation (`8005` / `8014` / `8024` vs the dev `8001` / `8010` / `8020`), so the prod-pointed stack coexists on a developer laptop with `make up` (whose first dev trust binds the original ports via `trust/deploy/compose/compose_trust-1_override.yml`). A real on-prem operator on a dedicated host can revert the kit-file values to standard `8001` / `8010` / `8020` if their tooling expects them.
+**Host ports.** The on-prem kit file (`trust/.env.<CODE>.prod`) can set these host ports:
+
+| Kit variable | On-prem kit | Dev (`make up`, first trust) |
+| --- | --- | --- |
+| `IMAGING_API_PORT` | `8005` | `8001` |
+| `DATA_ACCESS_API_PORT` | `8014` | `8010` |
+| `TRUST_API_PORT` | `8024` | `8020` |
+
+The shifted ports let a prod-pointed trust run on a developer laptop next to `make up`. The dev ports are bound by `trust/deploy/compose/compose_trust-1_override.yml`. On a dedicated host you can set the kit values back to `8001` / `8010` / `8020` if your tooling expects them.
 
 ## Prerequisites
 
@@ -98,14 +106,11 @@ Use the trust code you registered, whose kit file is `trust/.env.<CODE>.<stag|pr
 Any direct `docker`, `docker compose`, or
 `docker swarm` invocations on the trust host should likewise be prefixed with `sudo`.
 
-> **Hosts provisioned before this change are not remediated by re-running the
-> playbook.** `geerlingguy.docker`'s `docker_users` is additive — it only ever
-> adds to the `docker` group, never removes — so dropping the setting stops *new*
-> grants but leaves membership a host already picked up in place. Affected hosts
-> (the `Trust_2`/BDMS on-prem host among them) are remediated by the planned
-> trust reprovisioning, which rebuilds them from this playbook. To close the gap
-> sooner on a host that is already up, evict the user directly and have them log
-> back in for it to take effect:
+> **Re-running the playbook does not remove an existing docker-group grant.** Older
+> versions of this playbook added the login user to the `docker` group, and
+> `geerlingguy.docker`'s `docker_users` only ever adds members, never removes them.
+> On a host provisioned by an older version, remove the user yourself, then have
+> them log back in for it to take effect:
 >
 > ```bash
 > sudo gpasswd -d <login-user> docker   # verify with: id -nG <login-user>
@@ -113,13 +118,13 @@ Any direct `docker`, `docker compose`, or
 
 ### Provision the trust host
 
-Run this **on the trust host** — there is no SSH path. The target lives in the
-AWS provider Makefile (which orchestrates both cloud and local infrastructure),
-so run it from `deploy/providers/AWS/`:
+Run this **on the trust host**: `provision-local-trust` runs Ansible against the machine it runs on.
+To provision a remote host over SSH, use [Direct usage](#onpremyml) instead. The target lives in the
+AWS provider Makefile, so run it from `deploy/providers/AWS/`:
 
 ```bash
-# Set the sudo password (fish shell; bash: read -rsp ... && export ANSIBLE_BECOME_PASS)
-set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')
+# Set the sudo password (bash; fish: set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: '))
+read -rsp 'Sudo password: ' ANSIBLE_BECOME_PASS && export ANSIBLE_BECOME_PASS
 
 cd deploy/providers/AWS       # first time only, if you didn't `cd` earlier
 make provision-local-trust KIT=<CODE> HUB=<stag|prod>
@@ -175,49 +180,41 @@ make provision-local-trust KIT=<CODE> HUB=<stag|prod>
      compose reads it (`flip_observability_config`)
 2. Downloads the FL participant kit from S3 and stages it under `/tmp`, printing the `sudo rsync` commands to deploy it into `${FL_KIT_DIR}/net-1/...` (default `/opt/flip/fl-kit/net-1/...`).
 
-> **Warning — the playbook's XNAT directory is not the one XNAT uses.** Both this
-> playbook and `aws-ec2-host.yml` provision `/opt/flip/xnat/...`, but
-> the tree XNAT actually writes to is whatever `XNAT_DATA_DIR` resolves to in
-> `trust/xnat/Makefile`, and the kit file's value wins. Every scaffolded kit sets one
-> — `trust/.env.example`, which `make new-trust` copies, carries
-> `XNAT_DATA_DIR=./xnat-data`, resolved against `trust/xnat/` (so
-> `<checkout>/trust/xnat/xnat-data`). Only when the kit omits the key does the
-> Makefile fall back to the **per-slot** `/opt/flip/xnat-trust$(TRUST_NUM)` under
-> `HUB=stag|prod` (`TRUST_NUM` is the kit's `FL_KIT_SLOT_NUMBER`; `./xnat-data-trust<N>`
-> in dev) — a deliberate split so two trusts sharing a host stay isolated. Compose,
-> `xnat-reset` and the ownership check all read that same variable, so the live tree
-> is `<XNAT_DATA_DIR>/xnat-data/{tomcat_logs,archive,build,cache,prearchive}` plus
-> `<XNAT_DATA_DIR>/xnat-db-data`, and chowning `/opt/flip/xnat` looks right but changes
-> nothing. Check the kit's `XNAT_DATA_DIR` (set it explicitly there if you want one
-> fixed path) and chown **that** to `1001:1001`. `up-xnat` runs `xnat-reset`, which
-> **deletes and recreates** `XNAT_DATA_DIR` with the right owner for the value actually
-> in effect, then verifies it and fails naming the exact `chown` when it is wrong — so
-> treat it as destructive, not as a repair tool for a populated archive.
+> **Warning — the playbook's XNAT directory is not the one XNAT uses.** This playbook and
+> `aws-ec2-host.yml` create `/opt/flip/xnat/...`, but XNAT writes to `XNAT_DATA_DIR` as resolved
+> in `trust/xnat/Makefile`. Chowning `/opt/flip/xnat` looks right but changes nothing.
+>
+> - **Where it is:** the kit file's `XNAT_DATA_DIR` wins. Every scaffolded kit sets it:
+>   `trust/.env.example` (copied by `make new-trust`) has `XNAT_DATA_DIR=./xnat-data`, i.e.
+>   `<checkout>/trust/xnat/xnat-data`. If the kit omits it, the default is per-slot:
+>   `/opt/flip/xnat-trust$(TRUST_NUM)` under `HUB=stag|prod` (`TRUST_NUM` = the kit's
+>   `FL_KIT_SLOT_NUMBER`), `./xnat-data-trust<N>` in dev. This keeps two trusts on one host isolated.
+> - **What to chown:** `<XNAT_DATA_DIR>/xnat-data/{tomcat_logs,archive,build,cache,prearchive}` and
+>   `<XNAT_DATA_DIR>/xnat-db-data`, to `1001:1001`. Compose, `xnat-reset` and the ownership check all
+>   read the same variable. Set `XNAT_DATA_DIR` explicitly in the kit if you want one fixed path.
+> - **Destructive:** `up-xnat` runs `xnat-reset`, which **deletes and recreates** `XNAT_DATA_DIR` with
+>   the right owner, verifies it, and fails naming the exact `chown` if it is wrong. Do not use it to
+>   repair a populated archive.
 
 ### Post-provisioning manual steps
 
-1. **Start the trust stack** on the trust host. The login user is intentionally
-   **not** in the `docker` group (see the security note in the recommended
-   end-to-end target above), so use `sudo`:
+1. **Start the trust stack** on the trust host, with `sudo -E` as explained in
+   [Running docker on the trust host](#running-docker-on-the-trust-host):
 
    ```bash
-   cd ../../..
-   sudo -E make -C trust up-trust KIT=<CODE> HUB=stag   # the trust code you registered
+   cd ../../..   # back to the repo root from deploy/providers/AWS
+   sudo -E make -C trust up-trust KIT=<CODE> HUB=<stag|prod>   # the trust code you registered
    ```
 
 2. **Verify** the trust can poll the hub (check trust-api logs for successful task polling — `sudo docker compose logs trust-api`).
 
-## Communication Model
-
-Trusts poll the Central Hub for tasks over HTTPS — all communication is **outbound from the trust**. The hub never makes inbound requests to trusts. This simplifies networking: no inbound firewall rules or NAT port-forwarding are needed for the trust API or FL ports.
-
 ## Trust Authentication
 
-Any machine with the correct credentials can act as a trust — the hub identifies trusts by API key, not by IP address or hostname. The trust's `.env` file must have:
+Any machine with the correct credentials can act as a trust: the hub identifies trusts by API key, not by IP address or hostname. The trust's kit file (`trust/.env.<CODE>.<env>`) must have:
 
 | Variable | Purpose |
 | --- | --- |
-| `TRUST_API_KEY` | Per-trust secret key, from the trust's kit file written by `make register-trusts` |
+| `TRUST_API_KEY` | Per-trust secret key, written into the trust's kit file at registration (`make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<hub>` on a deployed hub) |
 | `CENTRAL_HUB_API_URL` | Hub URL the trust polls (e.g. `https://app.flip.aicentre.co.uk`) |
 | `AES_KEY_BASE64` | Shared encryption key for trust-hub payloads |
 
@@ -244,11 +241,10 @@ images tree). Roles are found beside the play, so no `roles_path` configuration 
 | `fl_backend` | `nvflare` | FL backend this trust will run. Sets the group/mode of the per-net images bind sources (`<flip_dir>/data/images/net-N`) — the Flower client runs as uid/gid 49999, not imaging-api's 1000, so it needs group 49999 + `0775` to write there. `provision-local-trust` passes the deployment's `FL_BACKEND` automatically. |
 | `fl_kit_precreate_slot` | `Trust_2` | The FLARE slot whose `net-1/services/<slot>/{local,startup,transfer}` tree is pre-created; must match the kit file's `FL_KIT_SLOT`. |
 
-**Data.** The playbook puts no data on the host. The OMOP and Orthanc stores start empty and
-`make -C trust up-trust` seeds them from the canonical dataset at bring-up (FLIP#1187,
-`ensure-seeded`) — there is no snapshot to restore any more. The licensed core vocabulary is not part
-of that either: its bundle comes from the hub's S3 bucket through an instance role, so on-prem it stays
-`make -C trust/omop-db load-omop-vocab`.
+**Data.** The playbook puts no data on the host. The OMOP and Orthanc stores start empty, and
+`make -C trust up-trust` seeds them from the canonical dataset at bring-up (`ensure-seeded`).
+The licensed core vocabulary is not seeded. On EC2 it is fetched from the hub's S3 bucket through an
+instance role. On-prem, load it yourself with `make -C trust/omop-db load-omop-vocab`.
 
 **Direct usage** (without the Makefile):
 
@@ -269,17 +265,13 @@ Ansible Galaxy dependencies:
 
 - `geerlingguy.docker` — Docker installation role
 
-Install with:
+Install it as shown in [Direct usage](#onpremyml) (from `deploy/providers/AWS/`, where `uv sync` installs Ansible); `provision-local-trust` does this for you.
 
-```bash
-uv run ansible-galaxy install -r trust/deploy/ansible/requirements.yml
-```
-
-## Home Network Firewall Configuration
+## Network and Firewall Configuration
 
 ### Port Forwarding (NAT)
 
-**No inbound port forwarding is needed.** Trusts poll the hub outbound for tasks, and FL clients connect outbound to the FL server through the networking account's edge NLB. All communication is trust-initiated.
+**No inbound port forwarding is needed.** Trusts poll the hub outbound for tasks, and FL clients connect outbound to the FL server through the networking account's edge NLB. All communication is trust-initiated; the hub never makes inbound requests to trusts.
 
 The host/network firewall must allow outbound to **two separate Central Hub hosts** (different load balancers — both must be allowlisted):
 
@@ -295,8 +287,7 @@ The hub keeps no per-trust allowlist, so a changed public IP (common with reside
 | Symptom | Check |
 | --- | --- |
 | Trust not polling hub | Trust stack running? (`sudo docker ps` on trust host). Check trust-api logs for polling errors. |
-| `Connection timed out` (FL) | Host/router firewall blocking outbound on port 8002? |
-| Firewall blocking outbound | Check host/router firewall allows outbound HTTPS (443) and gRPC (8002) |
+| `Connection timed out` (FL) or other outbound failures | Host/router firewall must allow outbound HTTPS (443) and gRPC (8002) to the two hosts in [Port Forwarding (NAT)](#port-forwarding-nat) |
 | Ansible `Permission denied` | SSH key correct? User has sudo? `ANSIBLE_BECOME_PASS` set for local mode? |
 
 ## Related Documentation
