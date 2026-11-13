@@ -99,7 +99,7 @@ services:
       - flwr-dev-net
 
   # create two SuperNode services with different node configs
-  supernode-1:
+  supernode-1: &supernode
     image: flower-supernode:${DOCKER_FL_TAG:-dev}
     build:
       context: ../../fl-services/flower/supernode
@@ -143,46 +143,13 @@ services:
       - flwr-dev-net
 
   supernode-2:
-    image: flower-supernode:${DOCKER_FL_TAG:-dev}
-    build:
-      context: ../../fl-services/flower/supernode
-      dockerfile: Dockerfile
-      args:
-        BASE_REF: ${BASE_REF:-flower-fl-base:${DOCKER_FL_TAG:-dev}}
-    working_dir: /app
-    group_add: *host-gid
+    <<: *supernode
     environment:
       - SUPERNODE_NAME=Trust_2
       - LOCAL_DEV=true
       - DEV_IMAGES_DIR=/images
       - DEV_DATAFRAME=/dataframe_file
       - WORKING_DIR=/app/runs
-    volumes:
-      - ${DEV_IMAGES_DIR:-/tmp/flwr-dev-images}:/images
-      - ${DEV_DATAFRAME:-/tmp/flwr-dev-dataframe.csv}:/dataframe_file:ro
-      - ${WORKING_DIR:-/tmp/flwr-dev-runs}:/app/runs
-    command:
-      - --insecure
-      # The SuperLink's one listener, directly — see supernode-1.
-      - --superlink
-      - superlink:8000
-      - --health-server-address
-      - ${SUPERNODE_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9098}
-      # No --allow-runtime-dependency-installation (FLIP#1418): Flower names the
-      # per-run env after the run id, so every ClientApp launch in a run shares it,
-      # and each launch's exit handler deletes it -- a later round's `uv sync` then
-      # falls through to the base interpreter (Permission denied on setuptools) or
-      # loses its env mid-round. The ClientApp runs in the image's environment,
-      # where fl-base installs flip-utils[flower,full] from /opt/flip-utils (FLIP#767):
-      # every package the template app code imports, and no package index needed at run time.
-    deploy:
-      resources:
-        limits:
-          cpus: "4"
-    depends_on:
-      - superlink
-    networks:
-      - flwr-dev-net
 
 networks:
   flwr-dev-net:

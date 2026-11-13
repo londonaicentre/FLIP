@@ -19,7 +19,6 @@ for the standard, evaluation, and fed_opt job types.
 
 import contextlib
 import json
-import logging
 import math
 import os
 import shutil
@@ -231,13 +230,6 @@ class FLIPStandardProd(FLIPBase):
         - ``get_by_accession_number()`` — download a study's images/resources from imaging-api
         - ``add_resource()`` — stage a per-accession resource under the client's images dir
     """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._name = self.__class__.__name__
-        self.logger = logging.getLogger(self._name)
-        self.logger.setLevel(logging.INFO)
-        self.logger.propagate = False
 
     @override
     def get_dataframe(self, project_id: str, query: str) -> pd.DataFrame:
@@ -687,13 +679,6 @@ class FLIPStandardProd(FLIPBase):
 
 class FLIPStandardDev(FLIPBase):
     """Development implementation of FLIP for standard job types."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._name = self.__class__.__name__
-        self.logger = logging.getLogger(self._name)
-        self.logger.setLevel(logging.INFO)
-        self.logger.propagate = False
 
     @override
     def get_dataframe(self, project_id: str, query: str) -> pd.DataFrame:

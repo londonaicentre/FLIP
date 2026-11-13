@@ -55,6 +55,15 @@ def flip_prod():
     return FLIPStandardProd()
 
 
+@pytest.mark.parametrize("cls", [FLIPStandardDev, FLIPStandardProd])
+def test_instance_logger_is_named_after_class(cls):
+    """Both classes take FLIPBase's logger: named after the class, INFO, not propagated to root."""
+    flip = cls()
+    assert flip.logger is logging.getLogger(cls.__name__)
+    assert flip.logger.level == logging.INFO
+    assert flip.logger.propagate is False
+
+
 class TestFLIPStandardDevGetDataframe:
     """Test FLIPStandardDev get_dataframe method."""
 

@@ -84,7 +84,7 @@ class PersistToS3AndCleanup(FLComponent):
                 return
 
             self.model_persistor = engine.get_component(self.persistor_id)
-            if self.model_persistor is None or not isinstance(self.model_persistor, PTFileModelPersistor):
+            if not isinstance(self.model_persistor, PTFileModelPersistor):
                 self.system_panic(
                     f"'persistor_id' component must be PTFileModelPersistor. But got: {type(self.model_persistor)}",
                     fl_ctx,
@@ -94,9 +94,7 @@ class PersistToS3AndCleanup(FLComponent):
             self.log_info(fl_ctx, "Beginning PersistToS3AndCleanup")
             self.model_inventory = self.model_persistor.get_model_inventory(fl_ctx)
 
-            if (self.model_inventory.get(PTConstants.PTFileModelName) is not None) and (
-                PTConstants.PTFileModelName in self.model_inventory
-            ):
+            if self.model_inventory.get(PTConstants.PTFileModelName) is not None:
                 self.model_dir = self.model_inventory[PTConstants.PTFileModelName].location
                 self.log_info(fl_ctx, f"Model dir: {self.model_dir}")
             else:
