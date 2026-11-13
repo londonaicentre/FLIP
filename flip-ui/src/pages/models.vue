@@ -68,33 +68,60 @@
                     </AiButton>
                 </header>
 
-                <!-- Filter tiles: one per lifecycle group, each a toggle. Click the active tile to reset. -->
-                <div class="flex flex-wrap gap-3 px-8 pb-4">
+                <!-- Status filter: one group at a time, shown as tiles from md up and as a segmented row on
+                     phones. Both drive the same selection; All keeps the hub's newest-activity order. -->
+                <div class="hidden md:flex flex-wrap gap-3 px-8 pb-4">
                     <button
-                        v-for="tile in TILES"
-                        :key="tile.key"
+                        v-for="group in groupOptions"
+                        :key="group.key"
                         type="button"
-                        :data-test="`filter-tile-${tile.key}`"
-                        :aria-pressed="activeTiles.has(tile.key)"
-                        class="flex-1 min-w-[150px] rounded-xl border bg-white px-4 py-3 text-left transition dark:bg-dark-surface"
-                        :class="activeTiles.has(tile.key)
-                            ? [tile.ring, 'ring-[3px]']
-                            : 'border-gray-200 hover:border-gray-300 dark:border-dark-border dark:hover:border-dark-border-strong'"
-                        @click="toggleTile(tile.key)"
+                        :data-test="`filter-tile-${group.key}`"
+                        :aria-pressed="statusFilter === group.key"
+                        class="flex-1 min-w-[120px] rounded-xl border px-4 py-3 text-left transition"
+                        :class="statusFilter === group.key
+                            ? [TILE_SELECTED_CLASS[group.key], 'ring-[3px]']
+                            : TILE_IDLE_CLASS"
+                        @click="selectStatus(statusFilter === group.key ? 'all' : group.key)"
                     >
                         <div class="flex items-center gap-2">
-                            <span class="inline-block w-2 h-2 rounded-full" :class="tile.dot" />
+                            <span class="inline-block w-2 h-2 rounded-full" :class="statusDotClass(group.statuses[0])" />
                             <span class="text-xs text-gray-500 dark:text-gray-300">
-                                {{ tile.label }}
+                                {{ group.label }}
                             </span>
                         </div>
                         <div
-                            :data-test="`filter-tile-count-${tile.key}`"
+                            :data-test="`filter-tile-count-${group.key}`"
                             class="mt-1 text-2xl font-bold tabular-nums text-gray-900 dark:text-gray-100"
                         >
-                            {{ tileCount(tile) }}
+                            {{ group.count }}
                         </div>
                     </button>
+                </div>
+                <div class="px-8 pb-4 md:hidden">
+                    <div
+                        role="tablist"
+                        aria-label="Model status"
+                        data-test="status-filter"
+                        :class="[SEGMENTED_GROUP_CLASS, 'flex-wrap']"
+                    >
+                        <button
+                            v-for="option in statusOptions"
+                            :key="option.key"
+                            type="button"
+                            role="tab"
+                            :aria-selected="statusFilter === option.key"
+                            :data-test="`status-filter-${option.key}`"
+                            :class="segmentClass(statusFilter === option.key)"
+                            @click="selectStatus(option.key)"
+                        >
+                            {{ option.label }}
+                            <span
+                                :data-test="`status-filter-count-${option.key}`"
+                                class="tabular-nums"
+                                :class="option.count ? 'text-gray-900 dark:text-gray-100' : 'font-normal'"
+                            >{{ option.count }}</span>
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Toolbar: search + project filter -->
@@ -203,8 +230,12 @@
                                     >
                                         {{ model.name }}
                                     </router-link>
-                                    <p data-test="model-owner-meta" class="mt-1 text-note text-gray-500 dark:text-gray-300">
-                                        {{ ownerLabel(model) }} · {{ relativeCreatedLabel(model.creationTimestamp) }}
+                                    <p
+                                        v-if="metaLine(model)"
+                                        data-test="model-owner-meta"
+                                        class="mt-1 text-note text-gray-500 dark:text-gray-300"
+                                    >
+                                        {{ metaLine(model) }}
                                     </p>
                                 </div>
                                 <!-- Project -->
@@ -250,96 +281,100 @@
                                         :class="statusPillClass(model.status)"
                                     >
                                         <span class="inline-block w-1.5 h-1.5 rounded-full" :class="statusDotClass(model.status)" />
-                                        {{ modelStatusLabelWithQueue(model.status, model.queuePosition) }}
+                                        {{ statusLabel(model.status) }}
                                     </span>
                                 </div>
                             </div>
 
-                            <!-- Mobile: stacked row (design 5a) — name + status chip, project ·
-                                 owner meta, then the green-dot trust chips. -->
-                            <div class="flex-1 px-4 py-3 sm:hidden">
-                                <div class="flex items-start gap-2.5">
-                                    <div class="flex-1 min-w-0">
-                                        <!-- Design 6a: the project reads as an eyebrow over the name. -->
-                                        <router-link
-                                            :to="`/project/${model.projectId}`"
-                                            data-test="model-project-eyebrow"
-                                            class="block text-xs mb-[3px]
-                                            truncate text-gray-500 dark:text-gray-300
-                                            hover:text-primary-600 dark:hover:text-primary-300"
-                                            @click.stop
-                                        >
-                                            {{ model.projectName }}
-                                        </router-link>
-                                        <router-link
-                                            :to="`/project/${model.projectId}/model/${model.id}`"
-                                            data-test="model-name-mobile"
-                                            class="text-sm font-semibold break-words
-                                            text-gray-900 dark:text-gray-100
-                                            hover:text-primary-600 dark:hover:text-primary-300"
-                                            @click.stop
-                                        >
-                                            {{ model.name }}
-                                        </router-link>
-                                        <p
-                                            v-if="model.description !== undefined"
-                                            data-test="model-description-mobile"
-                                            class="mt-1 text-note leading-snug break-words line-clamp-2
-                                            text-gray-500 dark:text-gray-300"
-                                        >
-                                            {{ model.description }}
-                                            <template v-if="!model.description">
-                                                <span class="text-gray-500 dark:text-gray-300">No description provided...</span>
-                                            </template>
-                                        </p>
-                                    </div>
-                                    <!-- Status and the trusts that ran it belong together: the chips
-                                         sit under the pill rather than running full width under the
-                                         description, which read as part of the description. -->
-                                    <div class="flex flex-col items-end gap-1.5 shrink-0">
-                                        <span
-                                            data-test="model-status-indicator-mobile"
-                                            class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
-                                            :class="statusPillClass(model.status)"
-                                        >
-                                            <span class="inline-block w-1.5 h-1.5 rounded-full" :class="statusDotClass(model.status)" />
-                                            {{ modelStatusLabelWithQueue(model.status, model.queuePosition) }}
-                                        </span>
-                                        <div
-                                            v-if="model.trusts.length"
-                                            class="flex flex-wrap items-center justify-end gap-1.5"
-                                        >
-                                            <span
-                                                v-for="t in model.trusts"
-                                                :key="t.id"
-                                                data-test="model-trust-chip-mobile"
-                                                :title="t.name"
-                                                :class="[TRUST_CHIP_CLASS, TRUST_CHIP_PLAIN_PADDING]"
-                                            >
-                                                {{ trustChipLabel(t) }}
-                                            </span>
-                                        </div>
-                                        <p
-                                            v-else
-                                            data-test="model-trusts-empty-mobile"
-                                            class="text-sm text-right text-gray-500 dark:text-gray-300"
-                                        >
-                                            Trusts assigned when training starts
-                                        </p>
-                                    </div>
+                            <!-- Mobile: one stacked column, so nothing is pushed past the card's edge: project
+                                 eyebrow, name, meta line and description, then the pill with the trust chips
+                                 wrapping after it. -->
+                            <div class="flex-1 min-w-0 px-4 py-3 sm:hidden">
+                                <router-link
+                                    :to="`/project/${model.projectId}`"
+                                    data-test="model-project-eyebrow"
+                                    class="block text-xs mb-[3px]
+                                    truncate text-gray-500 dark:text-gray-300
+                                    hover:text-primary-600 dark:hover:text-primary-300"
+                                    @click.stop
+                                >
+                                    {{ model.projectName }}
+                                </router-link>
+                                <router-link
+                                    :to="`/project/${model.projectId}/model/${model.id}`"
+                                    data-test="model-name-mobile"
+                                    class="text-sm font-semibold break-words
+                                    text-gray-900 dark:text-gray-100
+                                    hover:text-primary-600 dark:hover:text-primary-300"
+                                    @click.stop
+                                >
+                                    {{ model.name }}
+                                </router-link>
+                                <p
+                                    v-if="metaLine(model)"
+                                    data-test="model-owner-meta-mobile"
+                                    class="mt-1 text-note text-gray-500 dark:text-gray-300"
+                                >
+                                    {{ metaLine(model) }}
+                                </p>
+                                <p
+                                    v-if="model.description !== undefined"
+                                    data-test="model-description-mobile"
+                                    class="mt-1 text-note leading-snug break-words line-clamp-2
+                                    text-gray-500 dark:text-gray-300"
+                                >
+                                    {{ model.description || "No description provided..." }}
+                                </p>
+                                <div class="flex flex-wrap items-center gap-1.5 mt-2">
+                                    <span
+                                        data-test="model-status-indicator-mobile"
+                                        class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
+                                        :class="statusPillClass(model.status)"
+                                    >
+                                        <span class="inline-block w-1.5 h-1.5 rounded-full" :class="statusDotClass(model.status)" />
+                                        {{ statusLabel(model.status) }}
+                                    </span>
+                                    <span
+                                        v-for="t in model.trusts"
+                                        :key="t.id"
+                                        data-test="model-trust-chip-mobile"
+                                        :title="t.name"
+                                        :class="[TRUST_CHIP_CLASS, TRUST_CHIP_PLAIN_PADDING]"
+                                    >
+                                        {{ trustChipLabel(t) }}
+                                    </span>
+                                    <span
+                                        v-if="!model.trusts.length"
+                                        data-test="model-trusts-empty-mobile"
+                                        class="text-note text-gray-500 dark:text-gray-300"
+                                    >
+                                        Trusts assigned when training starts
+                                    </span>
                                 </div>
                             </div>
                         </div>
 
                         <div
                             v-if="!sortedModels.length"
-                            class="px-6 py-12 text-center text-sm text-gray-500 dark:text-gray-300"
+                            data-test="models-empty"
+                            class="flex flex-wrap items-center justify-center gap-x-1 px-6 py-12 text-sm
+                            text-gray-500 dark:text-gray-300"
                         >
-                            There are no models to show
+                            {{ emptyMessage }}
+                            <AiButton
+                                v-if="statusFilter !== 'all'"
+                                text-primary
+                                data-test="show-all-models"
+                                @click="selectStatus('all')"
+                            >
+                                Show all models
+                            </AiButton>
                         </div>
                     </AiCard>
 
+                    <!-- Nothing to page through on a single page. -->
                     <AiPagination
+                        v-if="(data?.totalPages ?? 1) > 1"
                         class="mt-4"
                         :total-pages="data?.totalPages ?? 1"
                         :current-page="data?.page ?? 1"
@@ -376,13 +411,16 @@ import { getAllModels,
     getModelProjectOptions,
     IModelProjectOption,
     IModelSummary,
-    isModelStatusError,
+    MODEL_STATUS_GROUPS,
     ModelStatus,
     modelStatusDotClass as statusDotClass,
-    modelStatusLabelWithQueue,
+    modelStatusGroup,
+    ModelStatusGroupKey,
+    modelStatusLabel,
     modelStatusPillClass as statusPillClass } from "@/services/model-service";
 import { useModalsStore } from "@/store/modals";
-import { apiTimestampMs, relativeCreatedLabel } from "@/utils/helpers";
+import { apiTimestampMs, relativeAgeLabel } from "@/utils/helpers";
+import { segmentClass, SEGMENTED_GROUP_CLASS } from "@/utils/segmented";
 import { Snackbar } from "@/utils/snackbar";
 import { TRUST_CHIP_CLASS, TRUST_CHIP_PLAIN_PADDING, trustChipLabel } from "@/utils/trust-chip";
 
@@ -411,80 +449,17 @@ const projectQueryParam = computed<string>(() =>
 const search = ref("");
 const pageNumber = ref(1);
 const searchQueryParam = ref("");
-const statusQueryParam = ref("");
 
-type GroupKey = "running" | "preparing" | "queued" | "completed" | "attention";
+type StatusFilter = ModelStatusGroupKey | "all";
+const statusFilter = ref<StatusFilter>("all");
+const activeGroup = computed(() => MODEL_STATUS_GROUPS.find(group => group.key === statusFilter.value));
+const statusQueryParam = computed<string>(() =>
+    activeGroup.value ? `&status=${activeGroup.value.statuses.join(",")}` : "");
 
-interface ITile {
-    key: GroupKey;
-    label: string;
-    statuses: ModelStatus[];
-    dot: string;
-    ring: string;
-}
-
-// Summary filter tiles — one per lifecycle group. `statuses` is the set a tile filters to;
-// `dot`/`ring` are whole literal Tailwind classes so the JIT compiler emits them.
-const TILES: ITile[] = [
-    {
-        key: "preparing",
-        label: "Preparing",
-        // PENDING ("Model Created") counts as preparing: the owner is still assembling the
-        // app/files, the model isn't waiting on the FL queue yet.
-        statuses: ["PENDING", "PREPARED"],
-        dot: "bg-amber-500",
-        ring: "border-amber-500 ring-amber-500/40"
-    },
-    {
-        key: "running",
-        label: "Running",
-        statuses: ["RUNNING"],
-        dot: "bg-fuchsia-500",
-        ring: "border-fuchsia-500 ring-fuchsia-500/40"
-    },
-    {
-        key: "queued",
-        label: "Queued",
-        statuses: ["INITIATED"],
-        dot: "bg-gray-400",
-        ring: "border-gray-400 ring-gray-400/40"
-    },
-    {
-        key: "completed",
-        label: "Completed",
-        statuses: ["RESULTS_UPLOADED"],
-        dot: "bg-emerald-500",
-        ring: "border-emerald-500 ring-emerald-500/40"
-    },
-    {
-        key: "attention",
-        label: "Needs attention",
-        statuses: ["ERROR", "RESULTS_UPLOAD_FAILED", "STOPPED"],
-        dot: "bg-red-500",
-        ring: "border-red-500 ring-red-500/40"
-    }
-];
-
-// Tiles are accumulative: each click toggles a group in or out of the selection
-// and the list shows the union. An empty selection means no status filter (all
-// models). The page opens on the active work: Running + Queued.
-const DEFAULT_TILES: GroupKey[] = ["running", "queued"];
-// Arriving already scoped — via "View All Models" or a bookmark — means "show everything in
-// this project", so the estate default of Running + Queued would hide most of what was asked
-// for. Used for the initial value (before syncStatusFilter() seeds the first SWRV key) and by the
-// arrival watcher below, so the two cannot drift.
-const tilesFor = (project: string | null): Set<GroupKey> => new Set<GroupKey>(project ? [] : DEFAULT_TILES);
-const activeTiles = ref<Set<GroupKey>>(tilesFor(projectFilter.value));
-
-const syncStatusFilter = (): void => {
-    const statuses = TILES.filter(t => activeTiles.value.has(t.key)).flatMap(t => t.statuses);
-    statusQueryParam.value = statuses.length ? `&status=${statuses.join(",")}` : "";
+const selectStatus = (key: StatusFilter): void => {
+    statusFilter.value = key;
     pageNumber.value = 1;
 };
-
-// Seed the query param before SWRV builds its first key, so the default
-// selection doesn't cost an extra unfiltered fetch.
-syncStatusFilter();
 
 // Which project the page believes it is showing. Changing the dropdown navigates, so the
 // watcher below would otherwise treat the page's own navigation as an arrival and wipe the
@@ -513,14 +488,13 @@ const applyProject = (id: string | null): void => {
 watch(projectFilter, next => {
     if (next === claimedProject.value) return;
     claimedProject.value = next;
-    activeTiles.value = tilesFor(next);
+    selectStatus("all");
     if (!next) {
         // Both, deliberately: the debouncedWatch on `search` fires 500ms later, far too late
         // for the key this reset is about to rebuild.
         search.value = "";
         searchQueryParam.value = "";
     }
-    syncStatusFilter();
 });
 
 // The filter's options, and the only place the scoped project's name and status come from — a
@@ -649,24 +623,49 @@ watch(
 
 const models = computed<IModelSummary[]>(() => data.value?.data ?? []);
 
-// A tile's number sums the per-status counts the backend returns for its group.
-const tileCount = (tile: ITile): number =>
-    tile.statuses.reduce((sum, s) => sum + (data.value?.statusCounts?.[s] ?? 0), 0);
+// Each option's count sums the backend's per-status totals, which ignore the active status filter.
+const groupOptions = computed(() => {
+    const counts = data.value?.statusCounts ?? {};
 
-// Toggle a tile's membership in the accumulative selection.
-const toggleTile = (key: GroupKey): void => {
-    const next = new Set(activeTiles.value);
-    if (next.has(key)) {
-        next.delete(key);
-    }
-    else {
-        next.add(key);
-    }
-    activeTiles.value = next;
-    syncStatusFilter();
+    return MODEL_STATUS_GROUPS.map(group => ({
+        ...group,
+        count: group.statuses.reduce((sum, s) => sum + (counts[s] ?? 0), 0)
+    }));
+});
+const statusOptions = computed<{ key: StatusFilter; label: string; count: number }[]>(() => [{
+    key: "all",
+    label: "All",
+    count: groupOptions.value.reduce((sum, group) => sum + group.count, 0)
+}, ...groupOptions.value]);
+
+const TILE_IDLE_CLASS = "bg-white border-gray-200 hover:border-gray-300 "
+    + "dark:bg-dark-surface dark:border-dark-border dark:hover:border-dark-border-strong";
+// A selected tile is filled as well as ringed, so it never reads as a focus ring. Whole literal
+// Tailwind classes so the JIT compiler emits them.
+const TILE_SELECTED_CLASS: Record<ModelStatusGroupKey, string> = {
+    preparing: "border-amber-500 ring-amber-500/40 bg-amber-50 dark:bg-amber-900/30",
+    running: "border-fuchsia-500 ring-fuchsia-500/40 bg-fuchsia-50 dark:bg-fuchsia-900/30",
+    queued: "border-gray-500 ring-gray-400/40 bg-gray-100 dark:bg-dark-raised",
+    attention: "border-red-500 ring-red-500/40 bg-red-50 dark:bg-red-900/30",
+    stopped: "border-gray-500 ring-gray-400/40 bg-gray-100 dark:bg-dark-raised",
+    completed: "border-emerald-500 ring-emerald-500/40 bg-emerald-50 dark:bg-emerald-900/30"
 };
 
-type SortKey = "created" | "name" | "project" | "trusts" | "status";
+const EMPTY_COPY: Record<ModelStatusGroupKey, string> = {
+    preparing: "No models being prepared.",
+    running: "No running models.",
+    queued: "No queued models.",
+    attention: "No models need attention.",
+    stopped: "No stopped models.",
+    completed: "No completed models."
+};
+const emptyMessage = computed<string>(() => {
+    if (activeGroup.value) return EMPTY_COPY[activeGroup.value.key];
+
+    return search.value ? "No models match your search." : "No models yet.";
+});
+
+type SortKey = "activity" | "name" | "project" | "trusts" | "status";
 type SortDir = "asc" | "desc";
 
 interface IColumn {
@@ -703,12 +702,10 @@ const columns: IColumn[] = [
     }
 ];
 
-// Default: newest first ("created" desc, no column header of its own — the
-// created time sits in the Model column's sub-line). When an older deployed
-// API sends no timestamps, every row ties at 0 and the stable sort keeps the
-// backend order (also newest-first); in a mixed page timestamp-less rows
-// would sink to the bottom.
-const sortKey = ref<SortKey>("created");
+// Default: latest activity first, the hub's own order (no column header of its own). An older hub
+// sends no lastActivity, so creation time stands in; with neither, every row ties and the stable
+// sort keeps the backend order.
+const sortKey = ref<SortKey>("activity");
 const sortDir = ref<SortDir>("desc");
 
 // First click on a column sorts ascending; subsequent clicks toggle direction.
@@ -735,12 +732,13 @@ const STATUS_RANK: Record<ModelStatus, number> = {
 };
 const statusRank = (s: ModelStatus | undefined): number => (s ? STATUS_RANK[s] ?? 99 : 99);
 
-const createdMs = (model: IModelSummary): number => apiTimestampMs(model.creationTimestamp) ?? 0;
+const activityMs = (model: IModelSummary): number =>
+    apiTimestampMs(model.lastActivity ?? model.creationTimestamp) ?? 0;
 
-// "created" deliberately has no tie-break: equal (or absent) timestamps keep
+// "activity" deliberately has no tie-break: equal (or absent) timestamps keep
 // the backend order under the stable sort.
 const SORT_COMPARATORS: Record<SortKey, (a: IModelSummary, b: IModelSummary) => number> = {
-    created: (a, b) => createdMs(a) - createdMs(b),
+    activity: (a, b) => activityMs(a) - activityMs(b),
     name: (a, b) => a.name.localeCompare(b.name),
     project: (a, b) => a.projectName.localeCompare(b.projectName) || a.name.localeCompare(b.name),
     trusts: (a, b) => a.trusts.length - b.trusts.length || a.name.localeCompare(b.name),
@@ -754,16 +752,11 @@ const sortedModels = computed<IModelSummary[]>(() => {
     return [...models.value].sort(sortDir.value === "asc" ? cmp : (a, b) => cmp(b, a));
 });
 
-// Status-toned left rail: magenta = running, amber = preparing (PENDING + PREPARED),
-// emerald = completed, red = needs attention, neutral = queued.
-const railClass = (status: ModelStatus | undefined): string => {
-    if (isModelStatusError(status)) return "bg-red-500";
-    if (status === "RESULTS_UPLOADED") return "bg-emerald-500";
-    if (status === "RUNNING") return "bg-fuchsia-500";
-    if (status === "PREPARED" || status === "PENDING") return "bg-amber-500";
+// The row says the same word as the filter it is counted under.
+const statusLabel = (status: ModelStatus): string => modelStatusGroup(status)?.label ?? modelStatusLabel(status);
 
-    return "bg-gray-300 dark:bg-gray-600";
-};
+// The left rail is the pill's dot colour, so the two cannot disagree.
+const railClass = statusDotClass;
 
 debouncedWatch(
     search,
@@ -781,8 +774,33 @@ const updateModelList = (pageNumberInt: number): void => {
     getSearchQuery();
 };
 
-// Owner display name (UserProfile.name from the backend). Falls back to an
-// em-dash when the owner has no profile row — the endpoint carries no email.
-const ownerLabel = (model: IModelSummary): string => model.ownerName || "—";
-// The sub-line's "created …" half is relativeCreatedLabel (utils/helpers), shared with the Projects list.
+const since = (verb: string, timestamp?: string | null): string => {
+    const ms = apiTimestampMs(timestamp);
+
+    return ms === null ? "" : `${verb} ${relativeAgeLabel((Date.now() - ms) / 1000)}`;
+};
+
+// What is happening to the model now; empty when the hub sent nothing to say it with.
+const activityLabel = (model: IModelSummary): string => {
+    const { round, totalRounds, trustsReturned, trustsExpected } = model.progress ?? {};
+    if (model.status === "RUNNING") {
+        const returned = trustsReturned != null && trustsExpected != null;
+        const parts = [
+            round != null ? `Round ${round}${totalRounds != null ? ` of ${totalRounds}` : ""}` : "",
+            returned ? `${trustsReturned} of ${trustsExpected} trusts returned` : ""
+        ].filter(Boolean);
+        if (parts.length) return parts.join(" · ");
+    }
+    if (model.status === "INITIATED" && model.queuePosition != null && model.queuePosition >= 1) {
+        return `Position ${model.queuePosition} in queue`;
+    }
+    const finished = model.finishedAt ?? model.lastActivity;
+    if (model.status === "RESULTS_UPLOADED" && finished) return since("Finished", finished);
+
+    return since("Updated", model.lastActivity ?? model.creationTimestamp);
+};
+
+// Owner · activity, leaving out whichever is unknown so no placeholder dash ever shows.
+const metaLine = (model: IModelSummary): string =>
+    [model.ownerName, activityLabel(model)].filter(Boolean).join(" · ");
 </script>

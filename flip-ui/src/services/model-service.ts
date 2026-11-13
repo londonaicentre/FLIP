@@ -191,12 +191,66 @@ export function modelStatusLabelWithQueue(status: ModelStatus | undefined, queue
     return queuePosition != null && queuePosition >= 1 ? `${label} (${queuePosition})` : label;
 }
 
-/** True for terminal failure / cancellation states (drives the red-cross icon). */
-export function isModelStatusError(status: ModelStatus | undefined): boolean {
-    return status === "ERROR" || status === "STOPPED" || status === "RESULTS_UPLOAD_FAILED";
+type ModelStatusTone = "error" | "uploaded" | "running" | "preparing" | "neutral";
+
+export type ModelStatusGroupKey = "preparing" | "running" | "queued" | "attention" | "stopped" | "completed";
+
+export interface IModelStatusGroup {
+    key: ModelStatusGroupKey;
+    label: string;
+    statuses: ModelStatus[];
+    tone: ModelStatusTone;
 }
 
-type ModelStatusTone = "error" | "uploaded" | "running" | "preparing" | "neutral";
+/**
+ * The plain-language groups the Models page filters by, in filter order. The group's label is also
+ * the word its rows' status pill shows, so the filter and the list use one vocabulary.
+ */
+export const MODEL_STATUS_GROUPS: IModelStatusGroup[] = [
+    // PENDING ("Model Created") counts as preparing: the owner is still assembling the files.
+    {
+        key: "preparing",
+        label: "Preparing",
+        statuses: ["PENDING", "PREPARED"],
+        tone: "preparing"
+    },
+    {
+        key: "running",
+        label: "Running",
+        statuses: ["RUNNING"],
+        tone: "running"
+    },
+    {
+        key: "queued",
+        label: "Queued",
+        statuses: ["INITIATED"],
+        tone: "neutral"
+    },
+    {
+        key: "attention",
+        label: "Needs attention",
+        statuses: ["ERROR", "RESULTS_UPLOAD_FAILED"],
+        tone: "error"
+    },
+    // Someone chose to stop it, so nothing is wrong: grey, not red.
+    {
+        key: "stopped",
+        label: "Stopped",
+        statuses: ["STOPPED"],
+        tone: "neutral"
+    },
+    {
+        key: "completed",
+        label: "Completed",
+        statuses: ["RESULTS_UPLOADED"],
+        tone: "uploaded"
+    }
+];
+
+/** The group a model status belongs to (undefined for a status this bundle does not know). */
+export function modelStatusGroup(status: ModelStatus | undefined): IModelStatusGroup | undefined {
+    return MODEL_STATUS_GROUPS.find(group => status && group.statuses.includes(status));
+}
 
 // Whole literal Tailwind classes so the JIT compiler emits them.
 const MODEL_STATUS_TONE_CLASSES: Record<ModelStatusTone, { pill: string; dot: string }> = {
@@ -222,17 +276,8 @@ const MODEL_STATUS_TONE_CLASSES: Record<ModelStatusTone, { pill: string; dot: st
     }
 };
 
-function modelStatusTone(status: ModelStatus | undefined): ModelStatusTone {
-    if (isModelStatusError(status)) return "error";
-    if (status === "RESULTS_UPLOADED") return "uploaded";
-    if (status === "RUNNING") return "running";
-    // PENDING ("Model Created") shares PREPARED's amber: both are the "preparing" phase the
-    // /models filter tile counts them under, and a row that reads grey while its own tile
-    // reads amber tells the user two different things about one model.
-    if (status === "PREPARED" || status === "PENDING") return "preparing";
-
-    return "neutral";
-}
+const modelStatusTone = (status: ModelStatus | undefined): ModelStatusTone =>
+    modelStatusGroup(status)?.tone ?? "neutral";
 
 /**
  * Pill classes for the model status chip (the /models-page idiom: coloured
@@ -477,18 +522,29 @@ export interface IModelSummary {
     projectName: string;
     ownerId: string;
     ownerName?: string | null;
-    // Optional only until the deployed API ships the field: the owner sub-line
-    // shows an em-dash and the default created-sort keeps the backend order
-    // when it is absent.
+    // Optional only until the deployed API ships the field.
     creationTimestamp?: string;
     trusts: IModelSummaryTrust[];
     // The model's 1-based place in the FL training queue (1 = next to be picked
     // up); null/absent unless the model has a queued job waiting for a net.
     queuePosition?: number | null;
+    // Optional so an older hub still renders: the latest thing that happened to the model (the
+    // list's order), when its results arrived, and how far a running job has got.
+    lastActivity?: string;
+    finishedAt?: string | null;
+    progress?: IModelProgress | null;
+}
+
+/** How far a running job has got; any part the hub cannot tell yet is null. */
+export interface IModelProgress {
+    round?: number | null;
+    totalRounds?: number | null;
+    trustsReturned?: number | null;
+    trustsExpected?: number | null;
 }
 
 /**
- * A page of the estate-wide Models list plus per-status totals for the filter tiles.
+ * A page of the estate-wide Models list plus per-status totals for the status filter.
  * ``statusCounts`` maps each ``ModelStatus`` to its count across the caller's
  * access-scoped set (honouring search, ignoring the active status filter). Statuses
  * with no models are omitted, so the map is partial.

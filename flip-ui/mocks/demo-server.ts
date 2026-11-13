@@ -137,7 +137,7 @@ const trustHealth = (): unknown => DEMO_SITES.map(site => ({
  * visitor lands on it directly; with no route registered it rendered the
  * generic "Something went wrong" error over a permanent spinner on the public
  * exhibit (FLIP#794 review). The shape is IModelsPage (services/model-service.ts):
- * a paginated IModelSummary list plus the per-status totals the filter tiles sum.
+ * a paginated IModelSummary list plus the per-status totals the status filter sums.
  * Like the real route, `search` and `project` narrow both the list and the counts,
  * while `status` narrows only the list, so the tiles keep their numbers when one is selected.
  */
@@ -161,6 +161,38 @@ const allProjects = (tables: Tables, query: Record<string, unknown>): unknown =>
     };
 };
 
+type Step = { creationTimestamp?: string; resultsUploadedAt?: string | null };
+type Log = { logDate: string; globalRound?: number | null; log: string };
+
+/**
+ * The /models activity fields for one model, read off its captured fixtures: the last log line is its
+ * latest activity, the step's upload time when it finished, and the last "Round N aggregated · a of b
+ * trusts returned" line (with the config's GLOBAL_ROUNDS, when it has one) how far it got.
+ */
+const activityFor = (tables: Tables, modelId: string): { lastActivity?: string } & Record<string, unknown> => {
+    const step = (tables.stepByModel[modelId] ?? {}) as Step;
+    const logs = (tables.logsByModel[modelId] ?? []) as Log[];
+    const config = (tables.configByModel[modelId] ?? {}) as { GLOBAL_ROUNDS?: number };
+    const latest = logs.map(log => log.logDate).sort().at(-1);
+    const rounds = logs.filter(log => log.globalRound != null)
+        .sort((a, b) => (a.globalRound as number) - (b.globalRound as number));
+    const returned = rounds.at(-1)?.log.match(/(\d+) of (\d+) trusts returned/);
+
+    return {
+        creationTimestamp: step.creationTimestamp,
+        lastActivity: latest ?? step.resultsUploadedAt ?? step.creationTimestamp,
+        finishedAt: step.resultsUploadedAt ?? null,
+        progress: rounds.length
+            ? {
+                round: rounds.at(-1)?.globalRound,
+                totalRounds: config.GLOBAL_ROUNDS ?? null,
+                trustsReturned: returned ? Number(returned[1]) : null,
+                trustsExpected: returned ? Number(returned[2]) : null
+            }
+            : null
+    };
+};
+
 const allModels = (tables: Tables, query: Record<string, unknown>): unknown => {
     const projectId = query.project as string | undefined;
     const search = String(query.search ?? "").toLowerCase();
@@ -181,11 +213,14 @@ const allModels = (tables: Tables, query: Record<string, unknown>): unknown => {
                 projectName: project.name,
                 ownerId: model.owner_id,
                 ownerName: DEMO_USER.name,
-                trusts: runTrusts
+                trusts: runTrusts,
+                ...activityFor(tables, String(model.id))
             }));
         })
         .filter(model => !search
-            || [model.name, model.projectName].some(s => String(s).toLowerCase().includes(search)));
+            || [model.name, model.projectName].some(s => String(s).toLowerCase().includes(search)))
+        // Newest activity first, as the hub orders the page.
+        .sort((a, b) => String(b.lastActivity ?? "").localeCompare(String(a.lastActivity ?? "")));
     const statusCounts = data.reduce<Record<string, number>>((counts, model) => {
         const status = String(model.status);
 

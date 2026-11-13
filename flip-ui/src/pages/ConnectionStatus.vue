@@ -49,6 +49,41 @@
                 <p class="mt-2 text-sm text-gray-500 dark:text-gray-300" data-test="subtitle">
                     {{ subtitle }}
                 </p>
+                <!-- Phones get one count line instead of the tiles. A trust in trouble is a link to its row;
+                     zero counts stay muted. -->
+                <p
+                    v-if="trusts"
+                    data-test="state-counts"
+                    class="flex flex-wrap items-center gap-x-2 mt-1 text-sm text-gray-500 dark:text-gray-300 md:hidden"
+                >
+                    <template v-for="(tile, i) in TILES" :key="tile.key">
+                        <span v-if="i" aria-hidden="true">·</span>
+                        <button
+                            v-if="tile.key !== 'online' && stateCounts[tile.key]"
+                            type="button"
+                            :data-test="`state-count-${tile.key}`"
+                            class="inline-flex items-center gap-1.5 font-bold hover:underline"
+                            :class="tile.text"
+                            @click="focusFirstTrust(tile.key)"
+                        >
+                            <span class="inline-block w-2 h-2 rounded-full" :class="tile.dot" aria-hidden="true" />
+                            {{ stateCounts[tile.key] }} {{ tile.label.toLowerCase() }}
+                        </button>
+                        <span
+                            v-else
+                            :data-test="`state-count-${tile.key}`"
+                            class="inline-flex items-center gap-1.5"
+                            :class="stateCounts[tile.key] ? 'text-gray-700 dark:text-gray-200' : ''"
+                        >
+                            <span
+                                class="inline-block w-2 h-2 rounded-full"
+                                :class="stateCounts[tile.key] ? tile.dot : 'bg-gray-300 dark:bg-gray-600'"
+                                aria-hidden="true"
+                            />
+                            {{ stateCounts[tile.key] }} {{ tile.label.toLowerCase() }}
+                        </span>
+                    </template>
+                </p>
             </div>
 
             <!-- View toggle: list (ConnectionA) vs radial (ConnectionD) -->
@@ -92,7 +127,7 @@
 
             <!-- Filter tiles: one per connection state, each a toggle (models-page idiom).
                  Click the active tile to reset. -->
-            <div v-if="viewMode === 'list'" class="flex flex-wrap gap-3 mb-4">
+            <div v-if="viewMode === 'list'" class="hidden md:flex flex-wrap gap-3 mb-4">
                 <button
                     v-for="tile in TILES"
                     :key="tile.key"
@@ -121,7 +156,7 @@
             </div>
 
             <!-- Status table (ConnectionA table) -->
-            <AiCard v-if="viewMode === 'list'">
+            <AiCard v-if="viewMode === 'list'" ref="trustList">
                 <div v-if="!trusts" class="p-8 text-center">
                     <AiLoader />
                 </div>
@@ -179,6 +214,7 @@
                                 v-for="t in displayedTrusts"
                                 :key="t.id"
                                 data-test="trust-row-mobile"
+                                :data-trust-state="t._state"
                                 role="button"
                                 tabindex="0"
                                 class="px-4 py-3 cursor-pointer focus-visible:outline focus-visible:outline-2
@@ -280,6 +316,7 @@
                                     v-for="(t, idx) in displayedTrusts"
                                     :key="t.id"
                                     data-test="trust-row"
+                                    :data-trust-state="t._state"
                                     role="button"
                                     tabindex="0"
                                     class="cursor-pointer group hover:bg-gray-50 dark:hover:bg-dark-surface/60
@@ -687,7 +724,7 @@
 
 <script setup lang="ts">
 import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/vue";
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
@@ -910,6 +947,8 @@ interface ITile {
     label: string;
     dot: string;
     ring: string;
+    // The phone count line's ink when a trust is in this state.
+    text: string;
 }
 
 const TILES: ITile[] = [
@@ -917,19 +956,22 @@ const TILES: ITile[] = [
         key: "online",
         label: "Online",
         dot: "bg-emerald-600",
-        ring: "border-emerald-600 ring-emerald-600/40"
+        ring: "border-emerald-600 ring-emerald-600/40",
+        text: ""
     },
     {
         key: "degraded",
         label: "Degraded",
         dot: "bg-amber-500",
-        ring: "border-amber-500 ring-amber-500/40"
+        ring: "border-amber-500 ring-amber-500/40",
+        text: "text-amber-700 dark:text-amber-300"
     },
     {
         key: "offline",
         label: "Offline",
         dot: "bg-red-500",
-        ring: "border-red-500 ring-red-500/40"
+        ring: "border-red-500 ring-red-500/40",
+        text: "text-red-700 dark:text-red-400"
     }
 ];
 
@@ -938,6 +980,19 @@ const activeTile = ref<TrustState | null>(null);
 // Toggle a tile: clicking the active tile clears the filter, otherwise filters to its state.
 const toggleTile = (key: TrustState): void => {
     activeTile.value = activeTile.value === key ? null : key;
+};
+
+// The list card, so a count on the phone line can take the user to the first trust in its state.
+const trustList = ref<InstanceType<typeof AiCard> | null>(null);
+
+const focusFirstTrust = async (state: TrustState): Promise<void> => {
+    viewMode.value = "list";
+    activeTile.value = null;
+    await nextTick();
+    const card = trustList.value?.$el as HTMLElement | undefined;
+    const rows = [...(card?.querySelectorAll<HTMLElement>(`[data-trust-state="${state}"]`) ?? [])];
+    // The phone and desktop lists are both in the DOM; focusing the visible row scrolls it into view.
+    (rows.find(row => row.offsetParent !== null) ?? rows[0])?.focus();
 };
 
 // Counted off the already-derived rows, not re-derived: a second derivation takes

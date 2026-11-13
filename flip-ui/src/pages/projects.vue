@@ -370,6 +370,7 @@ import { getProjects, IProject, ProjectStatus } from "@/services/project-service
 import { useAuthStore } from "@/store/auth";
 import { useModalsStore } from "@/store/modals";
 import { apiTimestampMs, relativeCreatedLabel } from "@/utils/helpers";
+import { segmentClass, SEGMENTED_GROUP_CLASS } from "@/utils/segmented";
 
 const pageSize = 20;
 const authStore = useAuthStore();
@@ -412,19 +413,6 @@ const viewMode = ref<ViewMode>("list");
 
 type SortKey = "created" | "status" | "name" | "cohort";
 const sortKey = ref<SortKey>("created");
-
-// All three toolbar controls (My/All, Type, and the list/grid view toggle) share one group look;
-// keep the class string in one place so they cannot drift apart. Only the group wrapper is shared —
-// the view toggle's buttons are icon-only and keep their own padding, so segmentClass is for the two
-// labelled controls.
-const SEGMENTED_GROUP_CLASS = "inline-flex bg-white dark:bg-dark-canvas border border-gray-200 "
-    + "dark:border-dark-border rounded-lg p-1";
-const segmentClass = (active: boolean): string[] => [
-    "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-semibold transition-colors",
-    active
-        ? "bg-gray-100 dark:bg-dark-surface text-gray-900 dark:text-gray-100"
-        : "bg-transparent text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200"
-];
 
 const accessOptions = [
     {
