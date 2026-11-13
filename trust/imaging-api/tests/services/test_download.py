@@ -664,6 +664,37 @@ class TestDownloadCache:
 
         mock_get_project.assert_not_called()
 
+    @pytest.mark.asyncio
+    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
+    async def test_cache_hit_refreshes_last_used(self, mock_get_project, headers, tmp_path):
+        """A hit must bump the sentinel's mtime — it is the last-used clock the TTL
+        retention sweeper expires on (FLIP#1050)."""
+        accession_dir = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+        sentinel = os.path.join(accession_dir, ".flip_complete-scan-NIFTI")
+        os.utime(sentinel, (1_000_000, 1_000_000))
+
+        with patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)):
+            result = await download_and_unzip_images("hub-proj-1", "ACC123", "net1", "scan", "NIFTI", headers)
+
+        assert result == accession_dir
+        assert os.stat(sentinel).st_mtime > 1_000_000
+        mock_get_project.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services.download.touch_sentinel", side_effect=OSError("read-only fs"))
+    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
+    async def test_cache_hit_survives_a_failing_last_used_touch(self, mock_get_project, mock_touch, headers, tmp_path):
+        """Last-used bookkeeping is best-effort: a failing touch must not turn a hit
+        into an error (worst case the entry just expires early and re-downloads)."""
+        accession_dir = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+
+        with patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)):
+            result = await download_and_unzip_images("hub-proj-1", "ACC123", "net1", "scan", "NIFTI", headers)
+
+        assert result == accession_dir
+        mock_touch.assert_called_once()
+        mock_get_project.assert_not_called()
+
 
 # ── a hit is checked against XNAT (FLIP#1456 F1) ──
 
@@ -696,6 +727,19 @@ def _file(accession_dir, resource):
 
 
 class TestHitCheckedAgainstXnat:
+    @pytest.mark.parametrize("answer", [{"return_value": STATS}, {"side_effect": XnatFetchError("502")}])
+    def test_a_checked_hit_refreshes_last_used(self, headers, tmp_path, xnat, resource_stats, answer):
+        """Unchanged in XNAT, or XNAT unable to answer: either way the copy is used, so its clock moves (FLIP#1050)."""
+        acc = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+        sentinel = os.path.join(acc, ".flip_complete-scan-NIFTI")
+        os.utime(sentinel, (1_000_000, 1_000_000))
+        resource_stats.configure_mock(**answer)
+
+        assert _fetch(headers) == acc
+
+        xnat.download.assert_not_called()
+        assert os.stat(sentinel).st_mtime > 1_000_000
+
     def test_a_change_replaces_only_that_resource(self, headers, tmp_path, xnat, resource_stats):
         """flip.get_by_accession_number([DICOM, NIFTI]) fetches each type into one folder: a stale NIFTI
         must not take the DICOM copy with it."""
