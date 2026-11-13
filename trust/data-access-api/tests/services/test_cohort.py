@@ -926,6 +926,8 @@ def test_validate_query_rejects_unqualified_table_functions_outside_the_allowlis
         "SELECT PG_READ_FILE('/etc/passwd')",
         # Any expression position will do — a predicate runs the function per row.
         "SELECT person_id FROM omop.person WHERE pg_read_file('/etc/passwd') IS NOT NULL",
+        # An allowed function nested inside a disallowed one does not exempt the outer call.
+        "SELECT person_id FROM omop.person WHERE pg_read_file(make_date(2000, 1, 1)::text) IS NOT NULL LIMIT 1",
     ],
 )
 def test_validate_query_rejects_unrecognised_functions_in_any_position(query: str):
@@ -951,6 +953,28 @@ def test_validate_query_allows_unrecognised_but_benign_scalar_functions():
     emitted = validate_query("SELECT age(CURRENT_DATE, p.birth_datetime) FROM person p")
 
     assert "age(" in emitted.lower()
+    assert "omop.person" in emitted
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        # Select list: a birth date built from OMOP's year/month/day columns.
+        "SELECT make_date(year_of_birth, coalesce(month_of_birth, 1), coalesce(day_of_birth, 1)) FROM omop.person",
+        # WHERE: the exact-age filter from FLIP#1908's acceptance criteria.
+        "SELECT person_id FROM omop.person WHERE make_date(year_of_birth, coalesce(month_of_birth, 1), "
+        "coalesce(day_of_birth, 1)) <= DATE '2008-01-01' LIMIT 100",
+    ],
+)
+def test_validate_query_allows_make_date(query: str):
+    """``make_date`` derives an exact birth date from OMOP's split date-of-birth columns.
+
+    Like ``age`` it parses as ``exp.Anonymous``, so it must be on the unrecognised-function
+    allowlist for exact-age cohort filters to work.
+    """
+    emitted = validate_query(query)
+
+    assert "make_date(" in emitted.lower()
     assert "omop.person" in emitted
 
 
