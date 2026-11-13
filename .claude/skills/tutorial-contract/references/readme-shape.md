@@ -61,7 +61,7 @@ out. Concretely:
   which mean nothing to a researcher and go stale at the next rename. An evaluation-only job gets
   none — "the server sends the model, each trust scores it" is a sentence. A Mermaid block renders
   on GitHub without an asset; the generic job-type figure already lives in the docs
-  (`docs/source/assets/fl/job_types.jpg`), so do not redraw that.
+  (`docs/source/assets/fl/job_types.svg`), so do not redraw that.
 - Link the **demo video** (below) once it has a published home.
 
 Place the figure in the "Data" / "The use case" section, with a one-line caption that states the
@@ -123,7 +123,7 @@ make demo-video DEMO_ARGS="--app <name> --fl-backend flower"
 
 Segmentation tutorials add the same `--data-enrichment-cwd/-cmd` pair the e2e smoke uses, plus
 `--publish-segmentations` for the DICOM-SEG overlay beat (copy the spleen invocation in
-`flip-ui/test/cypress/demo/README.md`). The segments assume a *training* job (create model →
+`flip-api/AGENTS.md`, "Demo Video Recorder"). The segments assume a *training* job (create model →
 initiate training → live metrics → download); an `evaluation` tutorial needs a look at segments
 4–5 before it can be recorded faithfully — say so rather than record a misleading video. A tutorial on access-controlled data gets no
 video either: a recording would show derived values. Output lands in the gitignored
