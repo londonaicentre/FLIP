@@ -15,7 +15,7 @@
 
 import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ref } from "vue";
 
 import { IProject, IProjectTrust, ProjectStatus, TrustApprovalStatus } from "@/services/project-service";
@@ -132,6 +132,10 @@ function mountPage(options: { permissions?: string[] } = {}) {
 
 beforeEach(() => {
     mockSwrvData.value = undefined;
+});
+
+afterEach(() => {
+    vi.useRealTimers();
 });
 
 describe("Projects Page", () => {
@@ -497,23 +501,18 @@ describe("Projects Page", () => {
         expect(mineTab.classes().join(" ")).toContain("text-gray-900");
     });
 
-    test("typing in the search input triggers a paginated reload (debouncedWatch → updateProjectList)", async () => {
+    test("typing in the search input puts the term on the request after the debounce", async () => {
+        // Fake timers: under the parallel coverage run the worker can stall past a wall-clock
+        // waitFor deadline, which then rejects without re-checking the key.
+        vi.useFakeTimers();
         setProject(makeProject("STAGED", []));
         const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
 
-        // The search input is the AiSearch stub — bound via v-model to `search`.
-        // Triggering input fires the debouncedWatch which calls updateProjectList(1).
-        // The SWRV mock just observes the new key; we assert via re-render not throwing.
         await wrapper.find("[data-test='project-search']").setValue("cancer");
-        // Allow the 500ms debounce to settle.
-        await new Promise((resolve) => setTimeout(resolve, 600));
-        await wrapper.vm.$nextTick();
+        expect(capturedKey?.()).not.toContain("search=");
 
-        // Nothing else to assert — exercising the path without throwing already
-        // covers getSearchQuery + updateProjectList. The store key change is
-        // observed via the SWRV mock continuing to return mockSwrvData.
-        expect(wrapper.exists()).toBe(true);
+        await vi.advanceTimersByTimeAsync(500);
+        expect(capturedKey?.()).toContain("search=cancer");
     });
 
     test("trust chips truncate stripped names longer than 16 chars to 14 + ellipsis", async () => {
