@@ -71,10 +71,24 @@ class FLLogEvent(StrEnum):
     # site cannot provide what its resource_spec asks for. One row per such site, attributed to it;
     # details = {"attempt", "max_attempts", "final", "requested": the site's resource request}.
     JOB_WAITING_FOR_RESOURCES = "JOB_WAITING_FOR_RESOURCES"
+    # Sent by the fl-server's event handler when FLARE deems a trust's FL client disconnected during a run,
+    # for example because the trust could not start its job pod. Attributed to the trust; global_round is
+    # the round in progress, None before the first one (FLIP#1428).
+    CLIENT_LOST = "CLIENT_LOST"
+    # Sent by the same handler when FLARE hears from that client again and the run carries on. Same
+    # attribution and global_round as CLIENT_LOST.
+    CLIENT_RETURNED = "CLIENT_RETURNED"
 
 
-# Events that describe a job before any round exists, so they carry no global_round.
-ROUND_LESS_EVENTS = frozenset({FLLogEvent.JOB_WAITING_FOR_RESOURCES.value})
+# Events that may carry no global_round: JOB_WAITING_FOR_RESOURCES describes a job before any round exists,
+# and CLIENT_LOST / CLIENT_RETURNED are round-less only before the first round.
+ROUND_LESS_EVENTS = frozenset(
+    {
+        FLLogEvent.JOB_WAITING_FOR_RESOURCES.value,
+        FLLogEvent.CLIENT_LOST.value,
+        FLLogEvent.CLIENT_RETURNED.value,
+    }
+)
 
 
 class TrainingMetrics(BaseModel):

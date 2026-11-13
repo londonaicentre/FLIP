@@ -263,3 +263,43 @@ def test_process_mode_keeps_the_app_workspace():
     assert {"/app/local", "/app/startup", "/app/transfer"} <= mount_paths
     assert WORKSPACE not in mount_paths
     assert "cd /app/startup" in container["command"][-1]
+
+
+# --- job-pod leftovers (FLIP#1428): a CPU/memory reservation, and finished pods deleted -------------------------
+
+
+def test_a_job_pod_reserves_cpu_and_memory_through_a_no_op_init_container():
+    """NVFLARE replaces the job container's resources, so the reservation sits on an init container, which also keeps
+    the pod out of BestEffort, the class the XNAT conversion quota counts."""
+    docs = _enabled("--set", f"{JOB_PODS}.requests.cpu=2", "--set", f"{JOB_PODS}.requests.memory=8Gi")
+    [reserve] = _job_pod(docs)["spec"]["initContainers"]
+
+    assert reserve["command"] == ["/bin/true"]
+    assert reserve["resources"] == {"requests": {"cpu": 2, "memory": "8Gi"}}
+    assert reserve["image"] == _env(_client_container(docs))["FL_K8S_JOB_IMAGE"]["value"]
+    assert reserve["securityContext"] == _client_container(docs)["securityContext"]
+
+
+def test_a_pruner_beside_the_parent_deletes_this_nets_finished_job_pods():
+    docs = _enabled("--set", f"{JOB_PODS}.keepFinishedHours=6")
+    containers = {c["name"]: c for c in _client(docs)["spec"]["template"]["spec"]["containers"]}
+    pruner = containers["job-pod-pruner"]
+    env = _env(pruner)
+
+    assert pruner["command"] == ["/app/.venv/bin/python", "-m", "flip.nvflare.prune_job_pods"]
+    assert pruner["image"] == containers["fl-client"]["image"]
+    assert pruner["resources"]["requests"], "a BestEffort container would count against the XNAT conversion quota"
+    assert env["FL_JOB_POD_KEEP_HOURS"]["value"] == "6"
+    assert env["FL_K8S_NAMESPACE"]["valueFrom"]["fieldRef"]["fieldPath"] == "metadata.namespace"
+    # The selector picks exactly this release's job pods on this net.
+    wanted = dict(pair.split("=") for pair in env["FL_JOB_POD_SELECTOR"]["value"].split(","))
+    job_labels = _job_pod(docs)["metadata"]["labels"]
+    assert wanted.items() <= job_labels.items()
+    assert wanted["app.kubernetes.io/component"] == "fl-job"
+    assert wanted["flip/network"] == "net-1"
+
+
+def test_process_mode_runs_no_pruner():
+    names = [c["name"] for c in _client(_docs())["spec"]["template"]["spec"]["containers"]]
+
+    assert names == ["fl-client"]

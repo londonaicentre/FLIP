@@ -736,6 +736,67 @@ class TestRoundEventRelay:
             details={"total_rounds": 5},
         )
 
+    def test_a_trust_lost_before_the_first_round_is_reported_against_it_without_a_round(self):
+        """FLARE deems a trust disconnected when, for example, its job pod never started (FLIP#1428)."""
+        from nvflare.apis.fl_constant import FLContextKey
+
+        handler, flip, fl_ctx = self._handler_and_ctx({FLContextKey.DISCONNECTED_CLIENT_NAME: "Trust_1"})
+
+        handler.handle_event(EventType.CLIENT_DISCONNECTED, fl_ctx)
+
+        flip.send_event.assert_called_once_with(
+            model_id=self.MODEL_ID,
+            event_type=FLLogEvent.CLIENT_LOST,
+            global_round=None,
+            client_name="Trust_1",
+            success=False,
+        )
+
+    def test_a_trust_lost_mid_run_is_reported_with_the_round_in_progress(self):
+        from nvflare.apis.fl_constant import FLContextKey
+        from nvflare.app_common.app_constant import AppConstants
+
+        handler, flip, fl_ctx = self._handler_and_ctx(
+            {FLContextKey.DISCONNECTED_CLIENT_NAME: "Trust_2", AppConstants.CURRENT_ROUND: 1}
+        )
+
+        handler.handle_event(EventType.CLIENT_DISCONNECTED, fl_ctx)
+
+        assert flip.send_event.call_args.kwargs["global_round"] == 2
+
+    def test_a_disconnect_naming_no_client_sends_nothing(self):
+        handler, flip, fl_ctx = self._handler_and_ctx({})
+
+        handler.handle_event(EventType.CLIENT_DISCONNECTED, fl_ctx)
+
+        flip.send_event.assert_not_called()
+
+    def test_a_trust_that_reconnects_is_reported_back_so_the_loss_is_not_held_against_it(self):
+        """FLARE's disconnect is provisional: a late job pod or a network blip recovers and the run goes on."""
+        from nvflare.apis.fl_constant import FLContextKey
+        from nvflare.app_common.app_constant import AppConstants
+
+        handler, flip, fl_ctx = self._handler_and_ctx(
+            {FLContextKey.RECONNECTED_CLIENT_NAME: "Trust_2", AppConstants.CURRENT_ROUND: 1}
+        )
+
+        handler.handle_event(EventType.CLIENT_RECONNECTED, fl_ctx)
+
+        flip.send_event.assert_called_once_with(
+            model_id=self.MODEL_ID,
+            event_type=FLLogEvent.CLIENT_RETURNED,
+            global_round=2,
+            client_name="Trust_2",
+            success=True,
+        )
+
+    def test_a_reconnect_naming_no_client_sends_nothing(self):
+        handler, flip, fl_ctx = self._handler_and_ctx({})
+
+        handler.handle_event(EventType.CLIENT_RECONNECTED, fl_ctx)
+
+        flip.send_event.assert_not_called()
+
     def test_round_started_seeds_the_counts_so_an_all_fail_round_reports_zero(self):
         """A round with zero accepted results must not report round N-1's counts on its
         ROUND_DONE — the sticky props are re-seeded to "0 of m" at every round start, so

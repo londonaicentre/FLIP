@@ -39,6 +39,24 @@ spec:
   hostAliases:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+  {{- /*
+  The job's CPU and memory reservation. NVFLARE 2.9's launcher replaces the job container's resources with the
+  job's own launcher_spec, which FLIP refuses, so the request rides on this no-op init container: Kubernetes
+  reserves the larger of a pod's init containers and containers. It also keeps the pod out of BestEffort, where
+  the XNAT conversion quota (xnat-container-jobs-quota.yaml) would count it and could refuse it.
+  */}}
+  initContainers:
+    - name: reserve
+      image: {{ include "flip-trust.flClientImage" . }}
+      imagePullPolicy: {{ .Values.flClient.image.pullPolicy }}
+      {{- with .Values.securityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      command: ["/bin/true"]
+      resources:
+        requests:
+          {{- toYaml .Values.flClient.nvflare.jobPods.requests | nindent 10 }}
   {{- if .Values.imagePullSecrets }}
   imagePullSecrets:
 {{ include "flip-trust.imagePullSecrets" . | indent 4 }}
