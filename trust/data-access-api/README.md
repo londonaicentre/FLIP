@@ -33,7 +33,7 @@ the query execution to the data-access-api. The service:
 
 1. Receives a SQL query (restricted to `SELECT` operations on the OMOP schema)
 2. Executes it against the local [OMOP database](../omop-db/)
-3. Returns aggregated results (counts, statistics) — **no individual patient records are returned**
+3. Returns aggregated results (counts, statistics) on `/cohort`, which is all that reaches the hub. Row-level records are released only inside the trust, to the FL client training on the approved cohort (`/cohort/dataframe`; see [Row-level data and the disclosure threshold](#row-level-data-and-the-disclosure-threshold)).
 
 This service is not directly accessible from outside the Trust network.
 
@@ -228,10 +228,9 @@ It performs a single parse-validate-emit pass and enforces:
 5. Every table reference pinned to `omop`. A qualified reference to another schema is rejected,
    as is a three-part `db.schema.table` reference; an *unqualified* reference is rewritten to
    `omop.<table>` in the AST before emission. The rewrite is the load-bearing part: Postgres
-   searches `pg_catalog` implicitly and first, whatever `search_path` says, so `FROM pg_class`
-   would otherwise read the catalog no matter how the database is configured (FLIP#879) — `pg_catalog`
-   is searched implicitly ahead of the `search_path` schemas unless `search_path` names it explicitly,
-   in which case at that position, so it is always on the effective path. Names
+   always has `pg_catalog` on the effective search path — implicitly ahead of the `search_path`
+   schemas, or at whatever position `search_path` names it — so `FROM pg_class` would otherwise read
+   the catalog no matter how the database is configured (FLIP#879). Names
    bound by a `WITH` clause are exempt — they are never schema-qualified — but only in the lexical
    SQL scope where the CTE is visible, so a nested CTE cannot exempt a table reference in its
    enclosing query, and only on Postgres-folded identifiers, so a quoted CTE name (`WITH "PG_CLASS"`)
@@ -297,15 +296,12 @@ regression. Neither is a security failure — which is a far cheaper invariant t
 The hub check does not use a keyword denylist, and neither does the UI. Both previously carried
 the same regex banning substrings including `substring` — which blocked every legitimate use of
 the standard `SUBSTRING()` function while stopping nothing an attacker would actually do. The
-blind-extraction technique it was aimed at is defeated properly here by rule 5 above, and DDL/DML
+blind-extraction technique it was aimed at is defeated properly here by rule 6 above (literal `LIMIT`/`OFFSET`), and DDL/DML
 is refused by the read-only database role.
 
-Two copies of one denylist across two services was also exactly the drift hazard this layering
-exists to avoid: a rule that is not authoritative anywhere still had to be maintained in both
-places. The UI now validates only that a query was entered, and reports SQL problems from the
-hub's response.
+The UI validates only that a query was entered, and reports SQL problems from the hub's response.
 
-### Row-level data and the disclosure threshold
+## Row-level data and the disclosure threshold
 
 The threshold counts **distinct subjects, not rows**. The floor exists to stop a response revealing
 that at least one *patient* matched, and rows only stood in for patients while every cohort was one
@@ -342,15 +338,20 @@ named by `ACCESS_POLICY_FILE` (worked example: [`../governance.example.toml`](..
 operator guide: [`../README.md`](../README.md#trust-governance-policy-optional)). The service loads it
 once, at import, and refuses to start on an invalid one (`data_access_api/policy/loader.py`); it logs
 one `[governance] policy ACTIVE from … sha256=…` line (or `[governance] no policy configured`) at
-startup. Each route asks the pure `policy.decide` (`/cohort` after `validate_query`; the two
-row-level routes, which ignore the caller's SQL, before reading the frozen membership; `/cohort/snapshot`
-as `cohort.statistics`, since it reports the same counts, before reading the frozen record): any matching deny
-denies, otherwise the strictest matching permit sets the threshold, otherwise — for a route the
-document mentions — the request is denied. A denial answers exactly as a below-threshold cohort does
+startup.
+
+Each route asks the pure `policy.decide`:
+
+- `/cohort` — after `validate_query`;
+- the two row-level routes — before reading the frozen membership (they ignore the caller's SQL);
+- `/cohort/snapshot` — as `cohort.statistics`, since it reports the same counts, before reading the frozen record.
+
+The decision: any matching deny denies; otherwise the strictest matching permit sets the threshold;
+otherwise, for a route the document mentions, the request is denied. A denial answers exactly as a below-threshold cohort does
 (the fixed 403, or a suppressed `/cohort` response) and never runs the query;
 the rule id goes to the log only. The decision is taken live on every call, so a rule added after
-approval applies to an already-frozen cohort. `/cohort/snapshot` has no action of its own: it is
-decided as `cohort.statistics` and freezes at that decision's threshold.
+approval applies to an already-frozen cohort. `/cohort/snapshot` freezes at the threshold of its
+`cohort.statistics` decision.
 
 ### Cohort charts
 
@@ -373,6 +374,8 @@ through `make_other_category`, so buckets below the threshold group into "Other"
 held to the same floor: it is emitted only when the folded total itself reaches the threshold,
 otherwise dropped, so no sub-threshold count is ever published (a lone small bucket relabelled
 "Other" would be that bucket's exact count).
+
+### What each route releases
 
 `/cohort` returns aggregate statistics and suppresses any count below `COHORT_QUERY_THRESHOLD`,
 including a genuine zero, so the response cannot reveal that at least one patient matched. A cohort
