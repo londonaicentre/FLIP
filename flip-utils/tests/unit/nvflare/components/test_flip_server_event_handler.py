@@ -12,6 +12,7 @@
 
 from unittest.mock import MagicMock, Mock, call, patch
 
+import pytest
 from nvflare.apis.event_type import EventType
 from nvflare.app_common.app_event_type import AppEventType
 
@@ -22,6 +23,40 @@ from flip.nvflare.components.flip_server_event_handler import ServerEventHandler
 from flip.nvflare.components.persist_and_cleanup import PersistToS3AndCleanup
 from flip.nvflare.components.validation_json_generator import ValidationJsonGenerator
 from flip.schemas import FLLogEvent
+
+_MODEL_ID = "123e4567-e89b-12d3-a456-426614174000"
+
+
+def _dispatch(event, *, fatal=False, preset=None, side_effect=None):
+    """Fire ``event`` at a fresh handler wired to a validation generator and a persist component.
+
+    ``fatal``/``preset`` set the handler's fatal_error/final_status first; ``side_effect`` is what
+    persist_cleanup.execute raises. Returns (flip, handler, fl_ctx, persist_cleanup).
+    """
+    flip = MagicMock()
+    handler = ServerEventHandler(model_id=_MODEL_ID, flip=flip)
+    if fatal:
+        handler.fatal_error = True
+    if preset is not None:
+        handler.final_status = preset
+
+    fl_ctx = MagicMock()
+    fl_ctx.get_peer_context.return_value = None
+    engine = MagicMock()
+    fl_ctx.get_engine.return_value = engine
+
+    json_generator = Mock(spec=ValidationJsonGenerator)
+    persist_cleanup = Mock(spec=PersistToS3AndCleanup)
+    if side_effect is not None:
+        persist_cleanup.execute.side_effect = side_effect
+    else:
+        persist_cleanup.execute.return_value = None
+    engine.get_component.side_effect = lambda comp_id: (
+        json_generator if comp_id == "json_generator" else persist_cleanup
+    )
+
+    handler.handle_event(event, fl_ctx)
+    return flip, handler, fl_ctx, persist_cleanup
 
 
 class TestServerEventHandler:
@@ -104,68 +139,20 @@ class TestServerEventHandler:
         json_generator.handle_evaluation_events.assert_called_once()
         flip.update_status.assert_called_with(model_id, ModelStatus.INITIATED)
 
-    def test_handle_event_initial_model_loaded(self):
-        """Test handle_event with INITIAL_MODEL_LOADED event"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        flip = MagicMock()
-        handler = ServerEventHandler(model_id=model_id, flip=flip)
+    @pytest.mark.parametrize(
+        ("event", "status"),
+        [
+            pytest.param(AppEventType.INITIAL_MODEL_LOADED, ModelStatus.PREPARED, id="initial_model_loaded"),
+            pytest.param(AppEventType.TRAINING_STARTED, ModelStatus.RUNNING, id="training_started"),
+            # Evaluation jobs signal start with TASK_INITIATED (#782).
+            pytest.param(FlipEvents.TASK_INITIATED, ModelStatus.RUNNING, id="task_initiated"),
+        ],
+    )
+    def test_handle_event_updates_status(self, event, status):
+        """handle_event relays each lifecycle event to the hub as its model status."""
+        flip, _, _, _ = _dispatch(event)
 
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        fl_ctx.get_engine.return_value = engine
-
-        json_generator = Mock(spec=ValidationJsonGenerator)
-        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
-        engine.get_component.side_effect = lambda comp_id: (
-            json_generator if comp_id == "json_generator" else persist_cleanup
-        )
-
-        handler.handle_event(AppEventType.INITIAL_MODEL_LOADED, fl_ctx)
-
-        flip.update_status.assert_called_with(model_id, ModelStatus.PREPARED)
-
-    def test_handle_event_training_started(self):
-        """Test handle_event with TRAINING_STARTED event"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        flip = MagicMock()
-        handler = ServerEventHandler(model_id=model_id, flip=flip)
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        fl_ctx.get_engine.return_value = engine
-
-        json_generator = Mock(spec=ValidationJsonGenerator)
-        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
-        engine.get_component.side_effect = lambda comp_id: (
-            json_generator if comp_id == "json_generator" else persist_cleanup
-        )
-
-        handler.handle_event(AppEventType.TRAINING_STARTED, fl_ctx)
-
-        flip.update_status.assert_called_with(model_id, ModelStatus.RUNNING)
-
-    def test_handle_event_task_initiated(self):
-        """Test handle_event with TASK_INITIATED event (evaluation jobs, #782)"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        flip = MagicMock()
-        handler = ServerEventHandler(model_id=model_id, flip=flip)
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        fl_ctx.get_engine.return_value = engine
-
-        json_generator = Mock(spec=ValidationJsonGenerator)
-        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
-        engine.get_component.side_effect = lambda comp_id: (
-            json_generator if comp_id == "json_generator" else persist_cleanup
-        )
-
-        handler.handle_event(FlipEvents.TASK_INITIATED, fl_ctx)
-
-        flip.update_status.assert_called_with(model_id, ModelStatus.RUNNING)
+        flip.update_status.assert_called_with(_MODEL_ID, status)
 
     def test_handle_event_fatal_system_error(self):
         """Test handle_event with FATAL_SYSTEM_ERROR event"""
@@ -210,232 +197,51 @@ class TestServerEventHandler:
 
         assert handler.final_status == ModelStatus.STOPPED
 
-    def test_handle_event_end_run_success(self):
-        """Test handle_event with END_RUN event - success case"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        flip = MagicMock()
-        handler = ServerEventHandler(model_id=model_id, flip=flip)
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        fl_ctx.get_engine.return_value = engine
-
-        json_generator = Mock(spec=ValidationJsonGenerator)
-        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
-        persist_cleanup.execute.return_value = None
-        engine.get_component.side_effect = lambda comp_id: (
-            json_generator if comp_id == "json_generator" else persist_cleanup
+    @pytest.mark.parametrize(
+        ("fatal", "preset", "side_effect", "expected"),
+        [
+            (False, None, None, ModelStatus.RESULTS_UPLOADED),
+            (True, None, None, ModelStatus.ERROR),
+            (False, ModelStatus.STOPPED, None, ModelStatus.STOPPED),
+            (False, None, Exception("Persist failed"), ModelStatus.ERROR),
+            (False, None, ResultsUploadError("S3 upload failed"), ModelStatus.RESULTS_UPLOAD_FAILED),
+            # A recorded fatal system error takes precedence over a trailing upload failure.
+            (True, None, ResultsUploadError("S3 upload failed"), ModelStatus.ERROR),
+            # A user-requested abort (STOPPED) is preserved over a trailing upload failure.
+            (False, ModelStatus.STOPPED, ResultsUploadError("S3 upload failed"), ModelStatus.STOPPED),
+        ],
+        ids=[
+            "success",
+            "fatal",
+            "stopped",
+            "persist_raises",
+            "upload_failed",
+            "upload_failed_fatal_wins",
+            "upload_failed_stopped_wins",
+        ],
+    )
+    def test_handle_event_end_run(self, fatal, preset, side_effect, expected):
+        """END_RUN maps the persist/upload outcome and any earlier fatal error or abort to the final status."""
+        flip, handler, fl_ctx, persist_cleanup = _dispatch(
+            EventType.END_RUN, fatal=fatal, preset=preset, side_effect=side_effect
         )
 
-        handler.handle_event(EventType.END_RUN, fl_ctx)
+        if side_effect is None and not fatal and preset is None:
+            persist_cleanup.execute.assert_called_once_with(fl_ctx)
+        assert handler.final_status == expected
+        flip.update_status.assert_called_with(_MODEL_ID, expected)
 
-        persist_cleanup.execute.assert_called_once_with(fl_ctx)
-        assert handler.final_status == ModelStatus.RESULTS_UPLOADED
-        flip.update_status.assert_called_with(model_id, ModelStatus.RESULTS_UPLOADED)
-
-    def test_handle_event_end_run_with_fatal_error(self):
-        """Test handle_event with END_RUN event when fatal error occurred"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        flip = MagicMock()
-        handler = ServerEventHandler(model_id=model_id, flip=flip)
-        handler.fatal_error = True
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        fl_ctx.get_engine.return_value = engine
-
-        json_generator = Mock(spec=ValidationJsonGenerator)
-        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
-        engine.get_component.side_effect = lambda comp_id: (
-            json_generator if comp_id == "json_generator" else persist_cleanup
-        )
-
-        handler.handle_event(EventType.END_RUN, fl_ctx)
-
-        assert handler.final_status == ModelStatus.ERROR
-        flip.update_status.assert_called_with(model_id, ModelStatus.ERROR)
-
-    def test_handle_event_end_run_with_stopped_status(self):
-        """Test handle_event with END_RUN event when already stopped"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        flip = MagicMock()
-        handler = ServerEventHandler(model_id=model_id, flip=flip)
-        handler.final_status = ModelStatus.STOPPED
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        fl_ctx.get_engine.return_value = engine
-
-        json_generator = Mock(spec=ValidationJsonGenerator)
-        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
-        engine.get_component.side_effect = lambda comp_id: (
-            json_generator if comp_id == "json_generator" else persist_cleanup
-        )
-
-        handler.handle_event(EventType.END_RUN, fl_ctx)
-
-        assert handler.final_status == ModelStatus.STOPPED
-        flip.update_status.assert_called_with(model_id, ModelStatus.STOPPED)
-
-    def test_handle_event_end_run_with_exception(self):
-        """Test handle_event with END_RUN event when persist_and_cleanup raises exception"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        flip = MagicMock()
-        handler = ServerEventHandler(model_id=model_id, flip=flip)
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        fl_ctx.get_engine.return_value = engine
-
-        json_generator = Mock(spec=ValidationJsonGenerator)
-        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
-        persist_cleanup.execute.side_effect = Exception("Persist failed")
-        engine.get_component.side_effect = lambda comp_id: (
-            json_generator if comp_id == "json_generator" else persist_cleanup
-        )
-
-        handler.handle_event(EventType.END_RUN, fl_ctx)
-
-        assert handler.final_status == ModelStatus.ERROR
-        flip.update_status.assert_called_with(model_id, ModelStatus.ERROR)
-
-    def test_handle_event_end_run_with_results_upload_error(self):
-        """Test handle_event with END_RUN when results upload specifically fails"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        flip = MagicMock()
-        handler = ServerEventHandler(model_id=model_id, flip=flip)
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        fl_ctx.get_engine.return_value = engine
-
-        json_generator = Mock(spec=ValidationJsonGenerator)
-        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
-        persist_cleanup.execute.side_effect = ResultsUploadError("S3 upload failed")
-        engine.get_component.side_effect = lambda comp_id: (
-            json_generator if comp_id == "json_generator" else persist_cleanup
-        )
-
-        handler.handle_event(EventType.END_RUN, fl_ctx)
-
-        assert handler.final_status == ModelStatus.RESULTS_UPLOAD_FAILED
-        flip.update_status.assert_called_with(model_id, ModelStatus.RESULTS_UPLOAD_FAILED)
-
-    def test_handle_event_end_run_results_upload_error_with_fatal_error(self):
-        """A recorded fatal system error takes precedence over a trailing upload failure."""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        flip = MagicMock()
-        handler = ServerEventHandler(model_id=model_id, flip=flip)
-        handler.fatal_error = True
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        fl_ctx.get_engine.return_value = engine
-
-        json_generator = Mock(spec=ValidationJsonGenerator)
-        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
-        persist_cleanup.execute.side_effect = ResultsUploadError("S3 upload failed")
-        engine.get_component.side_effect = lambda comp_id: (
-            json_generator if comp_id == "json_generator" else persist_cleanup
-        )
-
-        handler.handle_event(EventType.END_RUN, fl_ctx)
-
-        assert handler.final_status == ModelStatus.ERROR
-        flip.update_status.assert_called_with(model_id, ModelStatus.ERROR)
-
-    def test_handle_event_end_run_results_upload_error_with_stopped_status(self):
-        """A user-requested abort (STOPPED) is preserved over a trailing upload failure."""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        flip = MagicMock()
-        handler = ServerEventHandler(model_id=model_id, flip=flip)
-        handler.final_status = ModelStatus.STOPPED
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        fl_ctx.get_engine.return_value = engine
-
-        json_generator = Mock(spec=ValidationJsonGenerator)
-        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
-        persist_cleanup.execute.side_effect = ResultsUploadError("S3 upload failed")
-        engine.get_component.side_effect = lambda comp_id: (
-            json_generator if comp_id == "json_generator" else persist_cleanup
-        )
-
-        handler.handle_event(EventType.END_RUN, fl_ctx)
-
-        assert handler.final_status == ModelStatus.STOPPED
-        flip.update_status.assert_called_with(model_id, ModelStatus.STOPPED)
-
-    def test_handle_event_training_finished(self):
-        """Test handle_event with TRAINING_FINISHED event"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        flip = MagicMock()
-        handler = ServerEventHandler(model_id=model_id, flip=flip)
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        fl_ctx.get_engine.return_value = engine
-
-        json_generator = Mock(spec=ValidationJsonGenerator)
-        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
-        engine.get_component.side_effect = lambda comp_id: (
-            json_generator if comp_id == "json_generator" else persist_cleanup
-        )
-
-        handler.handle_event(AppEventType.TRAINING_FINISHED, fl_ctx)
-
-        # Should log info but not change status
-
-    def test_handle_event_results_upload_completed(self):
-        """Test handle_event with RESULTS_UPLOAD_COMPLETED event"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        flip = MagicMock()
-        handler = ServerEventHandler(model_id=model_id, flip=flip)
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        fl_ctx.get_engine.return_value = engine
-
-        json_generator = Mock(spec=ValidationJsonGenerator)
-        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
-        engine.get_component.side_effect = lambda comp_id: (
-            json_generator if comp_id == "json_generator" else persist_cleanup
-        )
-
-        handler.handle_event(FlipEvents.RESULTS_UPLOAD_COMPLETED, fl_ctx)
-
-        # Should log info but not change status
-
-    def test_handle_event_start_run(self):
-        """Test handle_event with START_RUN event"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        flip = MagicMock()
-        handler = ServerEventHandler(model_id=model_id, flip=flip)
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        fl_ctx.get_engine.return_value = engine
-
-        json_generator = Mock(spec=ValidationJsonGenerator)
-        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
-        engine.get_component.side_effect = lambda comp_id: (
-            json_generator if comp_id == "json_generator" else persist_cleanup
-        )
-
-        handler.handle_event(EventType.START_RUN, fl_ctx)
-
-        # Should log info but not change status
+    @pytest.mark.parametrize(
+        "event",
+        [
+            pytest.param(AppEventType.TRAINING_FINISHED, id="training_finished"),
+            pytest.param(FlipEvents.RESULTS_UPLOAD_COMPLETED, id="results_upload_completed"),
+            pytest.param(EventType.START_RUN, id="start_run"),
+        ],
+    )
+    def test_handle_event_informational(self, event):
+        """Informational events are dispatched without raising (they log, not change status)."""
+        _dispatch(event)
 
     def test_handle_event_invalid_json_generator_component(self):
         """Test handle_event when validation_json_generator is not correct type"""

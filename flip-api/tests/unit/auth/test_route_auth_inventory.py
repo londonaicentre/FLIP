@@ -24,7 +24,7 @@ from an existing one is a deliberate edit to the list below rather than a silent
 "Authenticated" here means the route's dependency tree (walked transitively, via ``dependant``,
 the same way ``test_mfa_gate`` checks the MFA wiring) reaches one of the four entry points:
 ``verify_token`` / ``verify_token_no_mfa`` (Cognito users), ``authenticate_trust`` (per-trust API
-key) or ``authenticate_internal_service`` (the fl-server key). Docs routes are not ``APIRoute``
+key) or ``authorise_job_callback`` (the FL server's per-job credential). Docs routes are not ``APIRoute``
 instances and are disabled outside development anyway, so they do not appear.
 
 The set is compared exactly, in both directions, and the total route count is floored: a FastAPI
@@ -36,15 +36,16 @@ from typing import Any
 
 from fastapi.routing import APIRoute
 
-from flip_api.auth.access_manager import authenticate_internal_service, authenticate_trust
+from flip_api.auth.access_manager import authenticate_trust
 from flip_api.auth.dependencies import verify_token, verify_token_no_mfa
+from flip_api.auth.job_callback import authorise_job_callback
 from flip_api.main import app
 
 AUTH_ENTRY_POINTS: tuple[Any, ...] = (
     verify_token,
     verify_token_no_mfa,
     authenticate_trust,
-    authenticate_internal_service,
+    authorise_job_callback,
 )
 
 # Every route that may be reached without credentials, and why. Adding to this list is a
@@ -92,7 +93,7 @@ def test_only_allowlisted_routes_are_unauthenticated() -> None:
     assert unauthenticated - allowed == set(), (
         "route(s) reachable with no credentials that are not on the public allowlist: "
         f"{sorted(unauthenticated - allowed)}. Add an auth dependency (verify_token for users, "
-        "authenticate_trust / authenticate_internal_service for machines), or — only if the route is "
+        "authenticate_trust / authorise_job_callback for machines), or — only if the route is "
         "genuinely public — add it to PUBLIC_ROUTES with the reason."
     )
     assert allowed - unauthenticated == set(), (

@@ -19,8 +19,10 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.domain.interfaces.fl import (
     IClientStatus,
+    INetDetails,
     INetStatus,
 )
+from flip_api.domain.interfaces.trust import ITrust
 from flip_api.domain.schemas.status import ClientStatus, ServerEngineStatus
 from flip_api.fl_services.services.fl_scheduler_service import get_nets, get_slot_names_by_trust_ids
 from flip_api.fl_services.services.fl_service import fetch_client_status, fetch_server_status
@@ -28,6 +30,45 @@ from flip_api.trusts_services.services.trust import get_trusts
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/fl", tags=["fl_services"])
+
+
+def _offline_net_status(net: INetDetails) -> INetStatus:
+    return INetStatus(
+        name=net.name,
+        fl_backend=net.fl_backend,
+        online=False,
+        registered_clients=0,
+        clients=[],
+        net_in_use=False,
+    )
+
+
+def match_trust_clients(
+    trusts: list[ITrust], slot_names_by_trust_id: dict[UUID, str], clients: list[IClientStatus]
+) -> list[IClientStatus]:
+    """Report each trust with the status of the FL client on its kit slot, or NO_REPLY.
+
+    Clients are matched on the FL kit slot name (not Trust.name): the FL net only ever sees the slot's
+    CN, which is independent of the trust's hub-side display name. The result still carries trust.name
+    so the UI shows the friendly name.
+    """
+    trust_client_statuses: list[IClientStatus] = []
+    for trust in trusts:
+        slot_name = slot_names_by_trust_id.get(trust.id)
+        matched = next((c for c in clients if slot_name and c.name == slot_name), None)
+        if matched is None:
+            logger.warning(f"Trust {trust.name} (slot={slot_name}) not found in client statuses")
+        else:
+            logger.debug(f"Trust {trust.name} matched slot {slot_name} → status {matched.status}")
+        trust_client_statuses.append(
+            IClientStatus(
+                name=trust.name,
+                code=trust.code,
+                status=matched.status if matched else ClientStatus.NO_REPLY,
+                fl_kit_slot=slot_name,
+            )
+        )
+    return trust_client_statuses
 
 
 # [#114] ✅
@@ -66,71 +107,29 @@ def get_status_endpoint(
 
             if not server_status:
                 logger.error(f"{net.name}: No response from FL API")
-                net_statuses.append(
-                    INetStatus(
-                        name=net.name,
-                        fl_backend=net.fl_backend,
-                        online=False,
-                        registered_clients=0,
-                        clients=[],
-                        net_in_use=False,
-                    )
-                )
+                net_statuses.append(_offline_net_status(net))
                 continue
-
-            # This 'online' used to be the API response status
-            # We assume the server is online if we get a response
-            online = True
-
-            # Report the canonical seeded backend (set from FL_BACKEND, never reconciled at runtime).
-            fl_backend = net.fl_backend
 
             # Fetch client statuses
             clients = fetch_client_status(net.endpoint)
 
             if not clients:
                 logger.error(f"{net.name}: No clients connected")
-                net_statuses.append(
-                    INetStatus(
-                        name=net.name,
-                        fl_backend=fl_backend,
-                        online=False,
-                        registered_clients=0,
-                        clients=[],
-                        net_in_use=False,
-                    )
-                )
+                net_statuses.append(_offline_net_status(net))
                 continue
 
             # For each net, we would like to know which Trusts are connected and their statuses.
-            # Match clients on the FL kit slot name (not Trust.name) — the FL net only ever
-            # sees the slot's CN, which is independent of the trust's hub-side display name.
-            # The response still surfaces trust.name so the UI shows the friendly name.
             trusts = get_trusts(db)
             slot_names_by_trust_id = get_slot_names_by_trust_ids([t.id for t in trusts], db)
-            trust_client_statuses: list[IClientStatus] = []
-            for trust in trusts:
-                slot_name = slot_names_by_trust_id.get(trust.id)
-                matched = next((c for c in clients if slot_name and c.name == slot_name), None)
-                if matched is None:
-                    logger.warning(f"Trust {trust.name} (slot={slot_name}) not found in client statuses")
-                    trust_client_statuses.append(
-                        IClientStatus(
-                            name=trust.name, code=trust.code, status=ClientStatus.NO_REPLY, fl_kit_slot=slot_name
-                        )
-                    )
-                    continue
-                logger.debug(f"Trust {trust.name} matched slot {slot_name} → status {matched.status}")
-                trust_client_statuses.append(
-                    IClientStatus(name=trust.name, code=trust.code, status=matched.status, fl_kit_slot=slot_name)
-                )
+            trust_client_statuses = match_trust_clients(trusts, slot_names_by_trust_id, clients)
 
             # Create net status response
             net_statuses.append(
                 INetStatus(
                     name=net.name,
-                    fl_backend=fl_backend,
-                    online=online,
+                    # Report the canonical seeded backend (set from FL_BACKEND, never reconciled at runtime).
+                    fl_backend=net.fl_backend,
+                    online=True,  # we got a response, so the server is online
                     registered_clients=len(trust_client_statuses),
                     net_in_use=server_status.status in [ServerEngineStatus.STARTING, ServerEngineStatus.STARTED],
                     clients=trust_client_statuses,

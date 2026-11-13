@@ -106,7 +106,7 @@ def save_model(
         for trust in approved_trusts:
             intersect = ModelTrustIntersect(
                 model_id=model.id,
-                trust_id=trust if trust else None,
+                trust_id=trust,
                 status=TrustIntersectStatus.PENDING,
             )
             db.add(intersect)

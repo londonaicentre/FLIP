@@ -17,6 +17,16 @@ output "sender_identity_arn" {
   value       = aws_ses_email_identity.flip_sender.arn
 }
 
+output "sender_domain_identity_arn" {
+  description = "ARN of the SES sender domain identity."
+  value       = aws_sesv2_email_identity.flip_domain.arn
+}
+
+output "dkim_tokens" {
+  description = "Easy DKIM tokens of the sender domain: each needs a CNAME <token>._domainkey.<domain> -> <token>.dkim.amazonses.com in the domain's zone."
+  value       = aws_sesv2_email_identity.flip_domain.dkim_signing_attributes[0].tokens
+}
+
 output "template_names" {
   description = "Map of logical name -> rendered SES template name, useful for callers that need to invoke the templates."
   value = {
@@ -24,4 +34,13 @@ output "template_names" {
     xnat_invite           = aws_ses_template.flip_xnat_invite.name
     xnat_added_to_project = aws_ses_template.flip_xnat_added_to_project.name
   }
+}
+
+output "template_arns" {
+  description = "ARNs of every SES template. A sender needs these beside the identity: SES authorises a templated send against both."
+  value = [
+    aws_ses_template.flip_access_request.arn,
+    aws_ses_template.flip_xnat_invite.arn,
+    aws_ses_template.flip_xnat_added_to_project.arn,
+  ]
 }

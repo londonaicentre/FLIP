@@ -27,6 +27,7 @@ from fl_api.utils.constants import (
     SERVER_CHECKPOINTS_PREFIX,
 )
 from fl_api.utils.io_utils import read_config
+from fl_api.utils.job_credential import deliver_job_credential
 from fl_api.utils.job_resources import JobMeta, default_job_resources, parse_job_meta, resolve_job_resources
 from fl_api.utils.logger import logger
 from fl_api.utils.prepare_config import (
@@ -92,27 +93,27 @@ def _stage_server_checkpoint(url: str, model_id: str, file_name: str) -> None:
 def _infer_app_folder_name(model_id: str, s3_file_dir: str) -> str:
     """
     Derive app folder name:
-      - If path contains '/<model_id>/.../app/<suffix>/...' -> 'app<suffix>'
+      - If path contains '/<model_id>/app<suffix>/...' (e.g. '/app_site-1/config') -> 'app<suffix>' ('app_site-1')
       - Else -> 'app'
     """
     s3_file_dir_model = s3_file_dir.split(model_id)[-1]
     if "/app" not in s3_file_dir_model:
         return "app"
 
-    suffix = s3_file_dir_model.split("/app")[-1].split("/")[0]  # '' or '/site-1'
-    return f"app{suffix}"  # e.g. 'app' or 'app/site-1' -> 'app' or 'app/site-1'? (see note below)
+    suffix = s3_file_dir_model.split("/app")[-1].split("/")[0]  # '' for app/, '_site-1' for app_site-1/
+    return f"app{suffix}"
 
 
 def _relative_dir_for_download(model_id: str, s3_file_dir: str, file_name: str) -> tuple[str, str]:
     """
     Returns (app_folder_name, relative_dir) where relative_dir is relative to job_dir.
 
-    For example, if the file is config_fed_client.json and is located in a path containing
-    "/app/site-1/config_fed_client.json", then this function will return
+    For example, if the file is config_fed_client.json and its S3 directory is '.../<model_id>/app_site-1/config',
+    this function returns
 
-        ("app_site-1", "app_site-1/config_fed_client.json")
+        ("app_site-1", "app_site-1/config")
 
-    so that the file will be downloaded to <job_dir>/app_site-1/config_fed_client.json.
+    so that the file will be downloaded to <job_dir>/app_site-1/config/config_fed_client.json.
 
     Args:
         model_id (str): the model ID, used to identify the app folder in the S3 path.
@@ -383,6 +384,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
 
     # The job's meta.json, with the run's sites and GPU count: job-level, so written once.
     configure_meta(job_dir, model_id, body.trusts, job_meta, resources)
+
+    deliver_job_credential(model_id, body.job_credential)
 
     response = {
         "message": f"Application uploaded successfully to: {job_dir}",

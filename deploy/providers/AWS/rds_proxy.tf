@@ -150,6 +150,19 @@ resource "aws_iam_role_policy" "rds_proxy" {
 # Proxy
 ############################
 
+# RDS Proxy writes to this group, creating it with no retention if it is
+# missing, so it exists in both estates already (FLIP#1155). The name can't
+# come from the proxy: the proxy must depend on the group, not the reverse.
+resource "aws_cloudwatch_log_group" "rds_proxy" {
+  name              = "/aws/rds/proxy/flip-database-proxy"
+  retention_in_days = local.log_retention_days
+}
+
+import {
+  to = aws_cloudwatch_log_group.rds_proxy
+  id = "/aws/rds/proxy/flip-database-proxy"
+}
+
 resource "aws_db_proxy" "flip_db" {
   name                = "flip-database-proxy"
   engine_family       = "POSTGRESQL"
@@ -168,6 +181,8 @@ resource "aws_db_proxy" "flip_db" {
     iam_auth    = "REQUIRED"
     secret_arn  = module.flip_db.db_instance_master_user_secret_arn
   }
+
+  depends_on = [aws_cloudwatch_log_group.rds_proxy]
 }
 
 resource "aws_db_proxy_default_target_group" "flip_db" {

@@ -127,13 +127,17 @@ upgrade refuses a release from a checkout at any other tag (exit code 6).
 
 .. note::
 
-   **Kits named before FLIP#1479.** A kit was named ``.env.<slot>.production``, ``.env.<slot>.lza-prod`` or a bare
-   ``.env.<slot>``, and the verbs took ``PROD=`` where they now take ``HUB=``. Run ``unset PROD`` first if your shell
-   still exports it (a ``sudo -E`` prefix passes it through too): any ``PROD`` now stops make. An old-named kit keeps working
-   for one release (the verbs find it and print the exact rename), but rename it to ``trust/.env.<slot>.prod`` before
-   the next one, and only once you will not roll back past this release: earlier releases know only the old names.
-   Move it (``mv``), never copy it: two names for one kit stop make. The running stack needs nothing, since the verbs
-   recognise it as this trust under either name, so never move the trust to another slot because of the rename.
+   **Kits with the old file names.** Older kits were named ``.env.<slot>.production``, ``.env.<slot>.lza-prod`` or a
+   bare ``.env.<slot>``, and the commands took ``PROD=`` where they now take ``HUB=``.
+
+   - Run ``unset PROD`` first if your shell still exports it (a ``sudo -E`` prefix passes it through too). Any
+     ``PROD`` now stops make.
+   - An old-named kit keeps working for one release. The commands find it and print the exact rename.
+   - Rename it to ``trust/.env.<slot>.prod`` before the next release, but only once you will not roll back past this
+     one. Earlier releases know only the old names.
+   - Move it (``mv``), never copy it. Two names for one kit stop make.
+   - The running stack needs nothing, because the commands recognise it as this trust under either name. Never move the
+     trust to another slot because of the rename.
 
 .. note::
 
@@ -173,7 +177,8 @@ playbook; see :ref:`onprem-operator-access`):
    * - ``YES=1``
      - Skip the prompts, for a scripted run.
    * - ``FL_TAG=<tag>``
-     - Pin the FL client apart from the rest (``sha-`` targets only).
+     - Pin the FL client apart from the rest (``sha-`` targets only). On NVFLARE, never to a build older than your
+       checkout's compose files (see the note below).
    * - ``ALLOW_CHECKOUT_DRIFT=1``
      - Skip the checkout-at-tag check. Only for testing a branch that is not a release.
 
@@ -192,6 +197,9 @@ playbook; see :ref:`onprem-operator-access`):
    tag, or at the kit's own ``OMOP_DB_TAG`` / ``ORTHANC_TAG`` / ``XNAT_TAG`` pin.
 #. **Confirm**, then write the tag into the kit's ``DOCKER_TAG`` and ``DOCKER_FL_TAG``, so the kit records what is
    installed.
+#. **Create XNAT's prearchive folder** (``$XNAT_DATA_DIR/xnat-data/prearchive/``) as xnat-web's uid if the site
+   lacks it. Older releases kept XNAT's prearchive inside the container, so sessions waiting there when you first
+   upgrade from one of them are lost.
 #. **Pull and recreate** only the containers whose image or configuration changed. OMOP, Orthanc and XNAT data stay on
    their bind mounts.
 #. **Upgrade XNAT in place**:
@@ -199,6 +207,9 @@ playbook; see :ref:`onprem-operator-access`):
    - dump ``xnat-db`` with ``pg_dumpall`` into ``$XNAT_DATA_DIR/backups/``, written as xnat-web's uid. Without a complete
      dump the upgrade stops before touching XNAT. An upgrade before this release made ``backups/`` as root; the first
      upgrade after it stops there and prints the one-time ``chown`` to run as root;
+   - when the release moves ``xnat-db`` to a newer PostgreSQL major (12 to 16 with FLIP#1812), stop ``xnat-web`` and
+     dump the ``xnat`` database beside the running cluster. The new ``xnat-db`` restores it into a fresh cluster on its
+     first start, before XNAT can connect, and leaves the old cluster where it was;
    - redeploy the XNAT stack on the new image (XNAT migrates its own schema on boot);
    - re-apply XNAT's configuration: DICOM receiver, DQR lockdown, PACS registration, PACS availability schedule (from
      the kit, see step 2), Container Service backend and the dcm2niix command.
@@ -207,12 +218,40 @@ The upgrade never re-seeds data and never resets XNAT.
 
 .. note::
 
+   **After a PostgreSQL major upgrade** the old XNAT database stays on disk, so going back to the previous release
+   (pin ``XNAT_TAG`` to it) still finds it. Once XNAT is confirmed on the new release, remove it:
+
+   .. code-block:: shell
+
+      make -C trust/xnat xnat-db-remove-old-cluster KIT=<CODE> HUB=<env>          # shows what would go
+      make -C trust/xnat xnat-db-remove-old-cluster KIT=<CODE> HUB=<env> YES=1    # deletes it
+
+   An upgrade after a rollback keeps the newer database the site rolled back from as ``pg16.replaced-<timestamp>/``,
+   until the command above removes it.
+
+.. important::
+
+   **Only the upgrade commands can move** ``xnat-db`` **across a PostgreSQL major.** ``xnat-db`` refuses to start
+   beside an older database it has no dump of, rather than starting XNAT empty. That happens when the new image is
+   deployed by anything other than ``make upgrade-onprem-trust`` or ``make -C trust upgrade-trust``. To recover, pin
+   ``XNAT_TAG`` back to the previous release, then upgrade with one of those commands. Resume an upgrade that failed or
+   was interrupted the same way, never with a plain deploy.
+
+.. note::
+
    **Release tags versus** ``sha-`` **tags.** A release tag is built for every image. A ``sha-`` tag only exists for
    the images that commit changed, so ``TAG=sha-…`` is refused when any image was never built at it. To move to a
    ``sha-`` tag anyway, hold the missing images at their own build: ``FL_TAG=sha-…`` for the FL client, and
    ``OMOP_DB_TAG`` / ``ORTHANC_TAG`` in the kit for those data services. ``XNAT_TAG`` pins all three XNAT images
    together, whose builds no longer share ``sha-`` tags. Set it to a release tag (or ``stag``/``prod``) published
-   for all three images.
+   for all three images. Never pin XNAT ahead of the trust APIs: from the release that ships DQR 3.1.0, xnat-web
+   needs imaging-api from the same release or later (see the Kubernetes note on ``xnat.image.pin`` below).
+
+   Never hold the NVFLARE FL client behind the compose files or chart either. From FLIP#1570 on they mount the
+   client's kit read-only and render it in a one-shot ``fl-client-init`` step that runs ``/app/fl-client-init.sh``
+   from the fl-client image, so ``FL_TAG`` (or ``flClient.image.pin``) must name an fl-client image from that change
+   or later. An older one stops the FL client: ``fl-client-init`` finds no script, and an older client entrypoint
+   cannot write its read-only kit.
 
 .. list-table:: Exit codes
    :header-rows: 1
@@ -244,8 +283,10 @@ The upgrade never re-seeds data and never resets XNAT.
      - The checkout is not at the target tag, or git could not read the checkout.
      - Check out the tag (step 3), or apply the printed ``safe.directory`` fix.
 
-Exit codes 2 to 6 all mean **nothing was changed**. Run through ``make``, the shell sees make's own exit status
-(2); the code above is in make's first ``*** … Error <code>`` line.
+Exit codes 2 to 6 all mean **nothing was changed**.
+
+Because the upgrade runs through ``make``, a failing run shows make's own exit status, 2, in your shell. Read the
+upgrade's code from make's first ``*** … Error <code>`` line.
 
 Step 5 — Verify
 ===============
@@ -297,21 +338,45 @@ populated data, and the API deployments roll onto the new images.
 
 ``KUBE_CONTEXT`` defaults to kubectl's current context; name it on a workstation with several clusters.
 
+**PostgreSQL major upgrades** (for example 12 to 16 with FLIP#1812). When a release moves ``xnat-db`` to a newer
+PostgreSQL major, the command:
+
+#. scales ``xnat-web`` to zero and dumps the ``xnat`` database onto the ``xnat-db`` volume;
+#. runs ``helm upgrade``, which starts the new ``xnat-db``. It restores the dump into a fresh cluster before XNAT can
+   connect, and ``xnat-web`` comes back.
+
+The old cluster stays on the volume for a rollback until
+``make -C trust/deploy/helm xnat-db-remove-old-cluster [YES=1]`` removes it.
+
+Always use ``upgrade-trust-k8s``, including to resume an upgrade that failed or was interrupted. A plain ``helm
+upgrade`` takes no dump, so the new ``xnat-db`` refuses to start beside the old cluster. It also refuses after a
+rollback, when the old cluster has run again since the dump was taken; run ``upgrade-trust-k8s`` again to take a new
+dump.
+
+If ``xnat-db`` has refused to start:
+
+#. Pin ``xnat.image.pin`` (or the kit's ``XNAT_TAG``) to the previous release and redeploy.
+#. Delete the ``xnat-db`` pod. Kubernetes does not replace a crash-looping StatefulSet pod on its own.
+#. When it is up on the old release, remove the pin and run ``upgrade-trust-k8s``.
+
 .. warning::
 
    Unlike Compose, the chart's mock-data seed also runs on upgrade. While ``trustData.seed.enabled`` is on, every
    upgrade re-applies the listed mock projects (only those projects' rows are replaced). For a site whose stores
    hold real data only, set ``TRUST_DATA_SEED=false`` in the kit; ``sync-kit`` carries it into the release.
 
-**Databases initialised before the role split.** A trust whose XNAT database volume was created by a chart
-older than the xnat-db role split holds a single superuser named ``xnat`` and no ``postgres`` role. Releases
-that carry FLIP#1658 connect as whichever of the two roles the volume has, so the upgrade completes and the
-application role's password is re-synced; on such a site the application role stays the database superuser
-until it is converged (see :ref:`ts-k8s-xnat-db-roles`). One related pre-flight check: a release from the
-``guard-xnat-db-passwords.sh`` era refuses to start xnat-db when the two XNAT passwords are equal
-(``XNAT_DATASOURCE_PASSWORD`` and ``XNAT_DATASOURCE_ADMIN_PASSWORD`` in the kit, ``xnat-datasource-password``
-and ``xnat-datasource-admin-password`` in ``values-secrets.yaml``; ``xnat-admin-password`` is a different
-secret, XNAT's web admin password), so a site that ever set them to the same value must
+**Databases initialised before the role split.** If your XNAT database volume was created by an older chart, it
+holds a single superuser named ``xnat`` and no ``postgres`` role. Releases from ``v0.14.0`` connect as whichever role
+the volume has, so the upgrade completes and re-syncs the application role's password. Until the roles are converged,
+the application role stays the database superuser (see :ref:`ts-k8s-xnat-db-roles`). The move to PostgreSQL 16
+converges them, because the database is restored into a cluster with the current two roles.
+
+**The two XNAT database passwords must differ.** xnat-db's ``guard-xnat-db-passwords.sh`` refuses to start it when these are equal:
+
+- in the kit: ``XNAT_DATASOURCE_PASSWORD`` and ``XNAT_DATASOURCE_ADMIN_PASSWORD``;
+- in ``values-secrets.yaml``: ``xnat-datasource-password`` and ``xnat-datasource-admin-password``.
+
+(``xnat-admin-password`` is a different secret, XNAT's web admin password.) If you ever set the two to the same value,
 rotate one of them before the upgrade, or the pod stops for that reason instead.
 
 **Per-image pins.** The kit's opt-outs reach the chart as pins that override ``global.image.tag`` for one image
@@ -329,7 +394,8 @@ rotate one of them before the upgrade, or the pod stops for that reason instead.
    * - ``XNAT_TAG``
      - ``xnat.image.pin``
    * - ``DOCKER_FL_TAG`` (when it names a release or ``sha-`` tag)
-     - ``flClient.image.pin``
+     - ``flClient.image.pin`` (on NVFLARE, an image from FLIP#1570 or later; see the note on release versus
+       ``sha-`` tags)
 
 A release tag never needs a pin. They are the only way to move a Kubernetes site to a ``sha-`` tag that some images
 were never built at: a StatefulSet rolled onto a tag that does not exist stays down. The three XNAT builds no longer
@@ -342,11 +408,15 @@ three.
    Older xnat-web images (v0.12.0, for example) carry a Docker-only script, and the Job refuses them by name. Hold
    XNAT back only to an xnat-web image from the release that ships your chart, or later.
 
+   Do not pin XNAT ahead of the trust APIs either. An xnat-web image that carries DQR 3.1.0 needs imaging-api from
+   the same release or later: DQR 3.1.0 marks every import ``FAILED`` as its C-MOVE ends, and an older imaging-api
+   reports the studies still arriving as failed, so the hub pulls them from the PACS again.
+
 AWS EC2 node
 ============
 
-*Who: whoever deployed the node*, from their workstation at the release tag. It uses the same SSH Docker context as
-the root's ``make deploy``.
+*Who: whoever deployed the node*, from their workstation, with the checkout at the release tag. It uses the same SSH
+Docker context as ``make deploy`` in ``trust/deploy/terraform/aws/ec2``.
 
 .. code-block:: shell
 
@@ -386,7 +456,8 @@ that release's commit:
 
 A ``sha-`` tag has no release order, so the command does not see this as a downgrade and needs no ``FORCE=1``: check the
 printed ``site <current> → target sha-…`` yourself. The old images then run under the newer checkout's compose files, a
-pairing no release was tested in. Use it to get back, not to stay.
+pairing no release was tested in. Use it to get back, not to stay. On NVFLARE the FL client does not start in that
+pairing at all: those images predate the read-only client kit (FLIP#1570) that the newer compose files expect.
 
 .. warning::
 
@@ -449,7 +520,7 @@ Upgrading the hub
 
 .. seealso::
 
-   ``deploy/providers/AWS/README.md`` and *Cutting a release* in ``CONTRIBUTING.md`` for the full hub procedure.
+   :gh:`deploy/providers/AWS/README.md` and *Cutting a release* in :gh:`CONTRIBUTING.md` for the full hub procedure.
 
 Approved cohorts after an upgrade
 =================================
@@ -503,9 +574,13 @@ What can go wrong
    Sites installed before XNAT ran as non-root have a root-owned archive that the new image cannot read. Run the
    printed ``chown -R`` once and re-run the upgrade.
 
-``cannot write /app/local/resources.json`` in the FL client's logs after an upgrade
-   The old root-running FL client left root-owned files in the kit's ``local/`` directory. ``chown`` them to the kit
-   directory's owner (uid 1000) and restart the client.
+``[fl-client-init] cannot write …/local`` after an upgrade
+   The kit's ``local/`` directory, or files the old root-running FL client left in it, are owned by root. ``chown``
+   them to the kit directory's owner (uid 1000), then re-run the step with ``make -C trust up-fl-clients-kit
+   KIT=<CODE>``, which starts ``fl-client-init`` before the clients. A plain restart of the client does not re-run
+   it, and the client refuses to start on a missing render. ``fl-client-init`` does every write into the kit; the
+   client itself mounts ``local/`` and ``startup/`` read-only (FLIP#1570). On Kubernetes the message is in
+   ``kubectl logs <fl-client pod> -c fl-client-init``, and the pod retries the step itself.
 
 .. seealso::
 

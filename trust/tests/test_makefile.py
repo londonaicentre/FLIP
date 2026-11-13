@@ -20,6 +20,7 @@ fails here rather than on a live site.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -106,6 +107,7 @@ class UpgradeTrust(unittest.TestCase):
         assert '"/nonexistent/omop"' in out, out
         assert out.index("FLIP_UID is a first-install choice") < out.index(" pull"), out
         assert out.index("which writes the XNAT backup") < out.index(" pull"), "the backup dir is checked first too"
+        assert out.index("could not create the XNAT data dirs") < out.index(" pull"), "and XNAT's mount sources made"
         unset = dry_run("_upgrade-trust-apply")
         assert '[ "$owner" = "999" ]' in unset, unset
         assert '"/nonexistent/omop"' not in unset, unset
@@ -265,7 +267,7 @@ class Governance(unittest.TestCase):
 
     def test_reload_governance_on_nvflare_re_extracts_for_the_clients(self):
         out = dry_run("reload-governance", kit=GOVERNED_KIT)
-        assert "fl-governance-init" in out, out
+        assert "fl-governance-init fl-client-init $clients" in out, out
         assert "--force-recreate --pull never" in out, out
         assert "[governance]" in out, out  # waits for the startup line
         assert_data_safe(out, "reload-governance")
@@ -274,6 +276,7 @@ class Governance(unittest.TestCase):
         """Nothing on Flower reads the document, so recreating its clients only killed their jobs."""
         out = dry_run("reload-governance", ON_FLOWER, kit=FLOWER_GOVERNED_KIT)
         assert "fl-governance-init" not in out, out
+        assert "fl-client-init" not in out, out
         assert 'services="data-access-api"' in out, out
         assert 'if [ -n "" ]' in out, out  # the client branch is compiled out
 
@@ -286,9 +289,18 @@ class Governance(unittest.TestCase):
     def test_up_fl_clients_kit_runs_the_extract_first(self):
         """--no-deps skips dependencies, so the init must be named or the clients start on a stale extract."""
         out = dry_run("up-fl-clients-kit", kit=GOVERNED_KIT)
-        # The clients are whichever the compose in use defines (FLIP#1852), listed after the init.
-        assert "fl-governance-init $(" in out, out
-        assert "config --services | grep '^fl-client-net-'" in out, out
+        assert "fl-governance-init fl-client-init $clients" in out, out
+
+    def test_up_fl_clients_kit_renders_an_ungoverned_kit_too(self):
+        """fl-client-init renders resources.json and the FL_SITE_PRIVACY_* policy with or without a document."""
+        out = dry_run("up-fl-clients-kit", kit=KIT)
+        assert "fl-governance-init fl-client-init $clients" in out, out
+
+    def test_up_fl_clients_kit_on_flower_names_no_flare_init(self):
+        """The Flower composes have no fl-client-init, and `up` would refuse an unknown service."""
+        out = dry_run("up-fl-clients-kit", ON_FLOWER, kit=KIT.replace("FL_BACKEND=nvflare", "FL_BACKEND=flower"))
+        assert "fl-client-init" not in out, out
+        assert "fl-governance-init" not in out, out
 
     def test_a_governance_document_is_refused_over_a_remote_daemon(self):
         """Compose resolves the document on this machine and the trust host would mount a path it
@@ -328,6 +340,15 @@ class Governance(unittest.TestCase):
         preflight = out.index("site_policy --help")
         recreate = out.index("--force-recreate")
         assert preflight < recreate, out
+
+    def test_reload_governance_refuses_an_fl_image_without_the_init_step_before_recreating(self):
+        """An FL client held back to an image from before FLIP#1570 would not start under these composes."""
+        for kit in (KIT, GOVERNED_KIT):
+            out = dry_run("reload-governance", kit=kit)
+            preflight = out.index("test -x /app/fl-client-init.sh")
+            assert "grep -q -- --assert-rendered" in out, out
+            assert preflight < out.index("--force-recreate"), out
+        assert "test -x" not in dry_run("reload-governance", ON_FLOWER, kit=FLOWER_GOVERNED_KIT)
 
     def test_a_remote_daemon_without_a_document_is_not_refused(self):
         out = run_target("upgrade-trust", "YES=1", dry=True, env={"DOCKER_HOST": "ssh://flip-trust"})
@@ -421,6 +442,48 @@ class ReconvertNifti(unittest.TestCase):
         """PROJECTS is the datasets to seed (default cxr_project), not XNAT projects."""
         out = dry_run("reconvert-nifti", "PROJECTS=cxr_project prostate_project")
         assert "--project" not in out, out
+
+
+@unittest.skipUnless(shutil.which("docker"), "docker CLI not installed")
+class FlClientList(unittest.TestCase):
+    """up/down-fl-clients-kit act on the fl-clients the composed stack defines (FLIP#1677).
+
+    Development runs one per FL net, a deployed trust only net-1: a hardcoded net-2 made both
+    targets fail on every deployed Compose trust. Renders the real compose files (config only).
+    """
+
+    PROBE = 'fl-clients: ; @$(resolve_fl_clients); echo "[$$clients]"\n'
+
+    def clients(self, hub: str, backend: str, gpus: str = "0") -> list[str]:
+        kit = KIT.replace("FL_BACKEND=nvflare", f"FL_BACKEND={backend}").replace(
+            "NUM_AVAILABLE_GPUS=0", f"NUM_AVAILABLE_GPUS={gpus}"
+        )
+        result = run_target("fl-clients", hub=hub, kit=kit, probe=self.PROBE)
+        assert result.returncode == 0, result.stdout + result.stderr
+        listed = next(line for line in result.stdout.splitlines() if line.startswith("["))
+        return sorted(listed.strip("[ ]").split())
+
+    def test_development_runs_a_client_per_net_and_production_one(self):
+        for backend in ("nvflare", "flower"):
+            for gpus in ("0", "1"):
+                with self.subTest(backend=backend, gpus=gpus):
+                    assert self.clients("", backend, gpus) == ["fl-client-net-1", "fl-client-net-2"]
+                    assert self.clients("prod", backend, gpus) == ["fl-client-net-1"]
+
+    def test_no_client_in_the_config_fails_instead_of_acting_on_every_service(self):
+        with tempfile.TemporaryDirectory() as stub_dir:
+            stub = Path(stub_dir) / "docker"
+            stub.write_text("#!/bin/sh\necho trust-api\n")
+            stub.chmod(0o755)
+            result = run_target("fl-clients", probe=self.PROBE, env={"PATH": f"{stub_dir}:{os.environ['PATH']}"})
+        assert result.returncode != 0, result.stdout
+        assert "No fl-client-net-N service" in result.stdout, result.stdout
+
+    def test_the_targets_take_the_list_from_the_config(self):
+        for target in ("up-fl-clients-kit", "down-fl-clients-kit"):
+            out = dry_run(target)
+            assert "config --services" in out, out
+            assert "fl-client-net-2" not in out.replace('"$base/net-2"', ""), out
 
 
 class DeployedPull(unittest.TestCase):

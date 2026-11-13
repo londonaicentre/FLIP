@@ -179,7 +179,7 @@ resource "aws_iam_role_policy" "plan_deny_data_reads" {
 #
 # This is not the widening it looks like. To plan at all the role must read the
 # state object, and state already stores this secret's value in clear — the same
-# AES_KEY_BASE64 and internal service key. The containment is unchanged: the
+# AES_KEY_BASE64 and FL API key. The containment is unchanged: the
 # role still cannot write anything, here or to state.
 data "aws_iam_policy_document" "plan_read_flip_api_secret" {
   # checkov:skip=CKV_AWS_356:the kms:Decrypt statement below cannot name the key without making this bootstrap depend on the FLIP root — see its comment; the kms:ViaService condition plus the scoped GetSecretValue above is the actual boundary

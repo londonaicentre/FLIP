@@ -14,8 +14,8 @@ Tests for XNAT bind-mount ownership (FLIP#1095).
 
 ``xnat-web`` runs as the in-image ``xnat`` user, whose id is fixed in
 ``trust/xnat/xnat/Dockerfile``. The host directories XNAT writes at runtime —
-``archive``, ``build``, ``cache`` and ``tomcat_logs``, the ``XNAT_DATA_DIRS`` this
-suite guards — must be owned by that id. When one is not, XNAT accepts the inbound
+``archive``, ``build``, ``cache``, ``prearchive`` and ``tomcat_logs``, the ``XNAT_DATA_DIRS``
+this suite guards — must be owned by that id. When one is not, XNAT accepts the inbound
 DICOM association, fails to write the object, and aborts — so the PACS reports a
 *network* fault ("Peer aborted Association") and the same permission failure stops
 XNAT writing the application logs that would name the real cause.
@@ -74,6 +74,7 @@ LOCAL_PLAYBOOK = XNAT_DIR.parent / "deploy" / "ansible" / "onprem.yml"
 # Both plays compose this role; it is the one place the XNAT bind-mount dirs are provisioned.
 DIRS_ROLE = "flip_trust_dirs"
 DIRS_ROLE_TASKS = XNAT_DIR.parent / "deploy" / "ansible" / "roles" / DIRS_ROLE / "tasks" / "main.yml"
+COMPOSE_OVERLAYS = [XNAT_DIR / "docker-compose-stack.prod.yml", XNAT_DIR / "docker-compose-stack.development.yml"]
 
 # Long enough for a `make -n` parse; short enough that a hang fails the suite
 # rather than wedging CI.
@@ -95,6 +96,17 @@ def _make_var(name: str) -> str:
         if match:
             return match.group(1)
     raise AssertionError(f"{name} is not assigned in {MAKEFILE} or {PORTABLE_MK}")
+
+
+def _xnat_data_subdirs() -> list[str]:
+    """Return the ``xnat-data/`` subdirs ``XNAT_WEB_DATA_DIRS`` lists (``XNAT_DATA_DIRS`` is derived from it)."""
+    match = re.search(
+        r"^XNAT_WEB_DATA_DIRS := \$\(addprefix \$\(XNAT_DATA_DIR\)/xnat-data/,([^)]+)\)",
+        MAKEFILE.read_text(),
+        re.MULTILINE,
+    )
+    assert match, f"XNAT_WEB_DATA_DIRS no longer lists the xnat-data/ subdirs in {MAKEFILE}"
+    return match.group(1).split()
 
 
 def _reset_recipe() -> str:
@@ -162,6 +174,23 @@ class TestUidIsConsistent:
         )
 
 
+class TestEveryPathHasTheSameDirs:
+    """xnat-web mounts exactly the dirs every path provisions (FLIP#1818).
+
+    A mount source that is missing fails the Swarm task; a dir left unmounted lives in the container and is lost
+    whenever Swarm replaces it, as the prearchive was.
+    """
+
+    @pytest.mark.parametrize("overlay", COMPOSE_OVERLAYS, ids=["prod", "development"])
+    def test_compose_mounts_every_dir(self, overlay: Path) -> None:
+        mounted = re.findall(r"\$\{XNAT_DATA_DIR\}/xnat-data/(\w+):", overlay.read_text())
+        assert sorted(mounted) == sorted(_xnat_data_subdirs()), overlay.name
+
+    def test_ansible_role_provisions_every_dir(self) -> None:
+        provisioned = re.findall(r'"\{\{ flip_dir \}\}/xnat/xnat-data/(\w+)"', DIRS_ROLE_TASKS.read_text())
+        assert sorted(provisioned) == sorted(_xnat_data_subdirs())
+
+
 class TestResetRecipeDerivesTheOwner:
     """`xnat-reset` must not reintroduce a hardcoded or host-derived owner."""
 
@@ -221,7 +250,7 @@ class TestOwnershipGuardFires:
     @staticmethod
     def _make_tree(root: Path) -> Path:
         data = root / "data"
-        for name in ("tomcat_logs", "archive", "build", "cache"):
+        for name in _xnat_data_subdirs():
             (data / "xnat-data" / name).mkdir(parents=True)
         return data
 
@@ -320,7 +349,7 @@ class TestDevBranchProvisionsTheContainerUid:
         assert result.returncode == 0, (
             f"development branch failed on an achievable uid:\n{result.stdout}{result.stderr}"
         )
-        for name in ("tomcat_logs", "archive", "build", "cache"):
+        for name in _xnat_data_subdirs():
             created = tmp_path / "data" / "xnat-data" / name
             assert created.is_dir(), f"{name} was not provisioned"
             assert created.stat().st_uid == os.getuid()

@@ -7,8 +7,7 @@ Deploy the Central Hub on AWS (LZA)
 The Central Hub deploys onto an AWS estate governed by the
 `Landing Zone Accelerator <https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/>`_
 (LZA). A platform team owns the network, the guardrails and a shared edge, and FLIP's workload account is not
-allowed to create network resources (FLIP#749). It is the only shape the Terraform root supports: the
-self-contained single-account mode was removed in FLIP#1479.
+allowed to create network resources. This is the only deployment shape FLIP's AWS Terraform supports.
 
 This page explains **the architecture, what the estate must provide, and how to bring a workload account up**.
 
@@ -37,9 +36,9 @@ Architecture
    At a glance: three zones and two paths. Every request crosses the platform team's inspected edge, and the
    workload account has no internet route of its own. The generated diagrams below show every resource.
 
-The diagrams are generated when this documentation is built, by a script kept next to the Terraform it depicts. A
-test in that tree pins every drawn node to a resource in the ``.tf`` files, and every load-bearing resource to a
-drawn node, so the diagrams cannot quietly fall out of step with the infrastructure. The networking account's edge
+The diagrams below are drawn each time this documentation is built, by a script kept next to the Terraform it
+depicts. A test pins every drawn node to a resource in the ``.tf`` files, and every load-bearing resource to a drawn
+node. The networking account's edge
 and the Transit Gateway belong to the platform team and are drawn from the handoff contract, not from FLIP's
 Terraform. The security controls are on :ref:`security`.
 
@@ -66,7 +65,8 @@ FL traffic (each Trust's FL client)
 Both paths then cross the estate's **Transit Gateway** and central **Network Firewall** into the workload account.
 
 **One internal NLB receives both.** The workload VPC has no internet gateway or NAT, so nothing in it can be
-public. A single internal network load balancer, with a fixed IP address in each subnet (``.251``), forwards
+public. A single internal network load balancer, with a fixed IP address in each subnet (the subnet's ``.251``
+address), forwards
 ``:443`` to ``flip-api`` and passes ``:8002`` (mutual-TLS gRPC) through untouched to the FL server. Because the
 addresses never change, the edge registers them once. A private hosted zone resolves the FL server's name to the
 same addresses inside the VPC.
@@ -94,7 +94,7 @@ outage. The database sits in the accelerator's isolated **data subnets**, which 
 share **EFS** access points for their workspaces, certificates and job directories; the provisioning task copies each
 net's participant kits there from the kits bucket. The **S3** buckets separate the model-file staging and scanned
 prefixes, FL results, bundled apps and participant kits, all encrypted with the hub's KMS key. **Cognito** is the user
-pool (with TOTP MFA); **Secrets Manager** holds the ``FLIP_API`` secret (AES key and internal service key);
+pool (with TOTP MFA); **Secrets Manager** holds the ``FLIP_API`` secret (AES key and FL API key);
 **Parameter Store** carries the plain configuration tasks read at start-up; **SES** sends the application's own
 emails. The interface endpoints are the estate's central ones, not resources in FLIP's account.
 
@@ -149,7 +149,7 @@ Before the first ``plan``, provide:
   port for this environment, and firewall rules admitting the edge's address ranges to the workload load
   balancer's web and FL ports.
 - **ECR pull-through cache rules:** ``ghcr/`` (backed by a read-only GHCR token in Secrets Manager) and
-  ``ecr-public/``. See :ref:`deploy-central-hub-aws-lza-account`.
+  ``ecr-public/``, created in the workload account. See :ref:`deploy-central-hub-aws-lza-account`.
 - **Terraform CI bootstrap:** the state bucket, the GitHub OIDC provider and the CI plan and apply roles, applied
   from FLIP's ``terraform_ci_bootstrap`` module pinned to a FLIP commit. FLIP's roles carry the accelerator's own
   permissions boundary, ``AICentre-WorkloadRoleBoundary``, which an SCP requires and the Makefile selects by
@@ -211,8 +211,7 @@ The Terraform state bucket comes from the platform's CI bootstrap; there is noth
 The environment file
 ====================
 
-``.env.prod`` (or ``.env.stag``) carries the keys of the shipped example env file; start from it. These values are
-specific to the estate:
+Create ``.env.prod`` (or ``.env.stag``) from the shipped example env file, then set these estate-specific values:
 
 .. code-block:: shell
 
@@ -254,7 +253,7 @@ specific to the estate:
   variable on the staging GitHub environment: the hub puts it in the kits downloaded from the FLIP UI, and without it
   they carry ``FL_SERVER_PORT``. FLARE kits take the port from the staging
   provisioning file instead (``connect_to`` in ``fl-services/nvflare/provision/net-1_project_stag.yml``).
-- Mint the secrets (``AES_KEY_BASE64``, the internal service key, ``ADMIN_USER_PASSWORD``) for the account. Do not
+- Mint the secrets (``AES_KEY_BASE64``, ``FL_API_KEY``, ``ADMIN_USER_PASSWORD``) for the account. Do not
   reuse another account's Secrets Manager secret.
 
 First bring-up without a hosted zone
@@ -292,10 +291,10 @@ Two-phase edge handoff
 
 The edge is built from the workload stack's outputs, so the two are always applied in this order:
 
-1. **Issue the web listener's certificate.** *Who: platform team.*
+1. **Issue the web listener's certificate** (only with ``MANAGE_DNS=false``). *Who: platform team.*
 
    A certificate for ``ALB_SUBDOMAIN`` in the workload account, validated in the zone they keep. The workload plan
-   fails until it is issued.
+   fails until it is issued. With ``MANAGE_DNS=true`` the stack issues its own certificate; skip this step.
 
 2. **Apply the workload stack.** *Who: FLIP admin (or CI).*
 
@@ -359,7 +358,7 @@ Break-glass deploy from a laptop
 
    cd deploy/providers/AWS
    export AWS_PROFILE=stag   # or: prod
-   export HUB=stag               # or: prod
+   export HUB=stag           # or: prod
 
    make init
    make plan
@@ -374,8 +373,8 @@ The Makefile refuses to run when ``AWS_PROFILE`` does not match ``HUB``, and nee
    On an account CI applies, the next pipeline run reverts a laptop ``apply``, and the nightly drift check reports
    it until then. Apply from a laptop only when:
 
-   - **CI is broken**, for example its role. The CI roles belong to the platform repositories, so a bad apply here
-     cannot lock CI out; a broken role is fixed there.
+   - **CI is broken.** If the fault is a CI role, fix it in the platform repositories, which own the CI roles;
+     an apply from here cannot lock CI out.
    - **The change must not go through CI**, such as a one-off targeted apply during account bring-up.
 
 .. note::
@@ -393,8 +392,7 @@ The Makefile refuses to run when ``AWS_PROFILE`` does not match ``HUB``, and nee
 
 .. note::
 
-   - ``full-deploy``, along with ``make status`` and ``make destroy``, are not yet
-     exercised on an LZA estate.
+   - ``make full-deploy``, ``make status`` and ``make destroy`` have not been tested on an LZA estate.
    - CI publishes the UI after each successful apply, so ``deploy-ui`` is only needed when that publish fails or
      the UI must be rolled back. It does not invalidate a CloudFront cache, because the edge distribution is in
      another account. Instead ``index.html`` is served uncached and the hashed assets as immutable.

@@ -171,6 +171,26 @@ describe("makeDemoServer route coverage", () => {
         expect(counted).toBe(res.data.totalRecords);
     });
 
+    it("filters the Models list by status and search, keeping the tile counts status-unfiltered", async () => {
+        const all = await client.get("/models");
+        const picked = Object.keys(all.data.statusCounts as Record<string, number>)[0];
+        const res = await client.get(`/models?status=${picked},ERROR`);
+        expect(res.data.data.length).toBeGreaterThan(0);
+        expect(res.data.data.every((m: { status: string }) => m.status === picked)).toBe(true);
+        expect(res.data.totalRecords).toBe(all.data.statusCounts[picked]);
+        expect(res.data.statusCounts).toEqual(all.data.statusCounts);
+
+        const absent = ["ERROR", "RUNNING", "PENDING"].find(s => !(s in all.data.statusCounts));
+        const none = await client.get(`/models?status=${absent}`);
+        expect(none.data.data).toEqual([]);
+        expect(none.data.totalRecords).toBe(0);
+
+        const name = (all.data.data[0] as { name: string }).name;
+        const searched = await client.get(`/models?search=${encodeURIComponent(name.toUpperCase())}`);
+        expect(searched.data.data.map((m: { name: string }) => m.name)).toContain(name);
+        expect(searched.data.totalRecords).toBeLessThan(all.data.totalRecords);
+    });
+
     it("answers the FL network status routes behind the Connection Status nets card", async () => {
         for (const path of ["/fl/status", "/fl/net-1/status"]) {
             const res = await client.get(path);

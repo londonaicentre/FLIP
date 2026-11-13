@@ -51,19 +51,7 @@ PROCESSORS: dict[str, dict] = {
         },
         "extract": lambda ckpt: ckpt["teacher"],
     },
-    # # Fine-tuned model processing is no longer needed — the training app
-    # # produces clean checkpoints directly.
-    # "arkplus_finetuned": {
-    #     "description": "Fine-tuned model (1 head: 5 classes)",
-    #     "model_cfg": {
-    #         "MODEL_NAME": "swin_large_384",
-    #         "INPUT_SIZE": 768,
-    #         "PROJECTOR_FEATURES": 1376,
-    #         "USE_MLP": False,
-    #         "NUM_CLASSES_LIST": [5],
-    #     },
-    #     "extract": lambda ckpt: ckpt.get("model", ckpt),
-    # },
+    # No fine-tuned entry: the training app produces clean checkpoints directly.
 }
 
 
@@ -85,7 +73,7 @@ def preprocess(src: Path, dst: Path, config_key: str) -> None:
     state_dict = proc["extract"](ckpt)
 
     print("  Processing weights ...")
-    load_arkplus_state_dict(model, state_dict, {"load_backbone_only": False})
+    load_arkplus_state_dict(model, state_dict, {"LOAD_BACKBONE_ONLY": False})
 
     torch.save(model.state_dict(), str(dst))
     n = len(torch.load(str(dst), map_location="cpu", weights_only=True))

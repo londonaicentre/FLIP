@@ -23,11 +23,9 @@ class HealthResponse(BaseModel):
     version: str
 
 
-class FlowerCommandResponse(BaseModel):
+class FlowerSubmitRunCommandResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-
-class FlowerSubmitRunCommandResponse(FlowerCommandResponse):
     run_id: str = Field(alias="run-id")
 
 
@@ -38,10 +36,6 @@ class ServerInfoModel(BaseModel):
 class ClientInfoModel(BaseModel):
     name: str
     status: str
-
-
-class ErrorResponse(BaseModel):
-    detail: str
 
 
 class NodeRegistrationRequest(BaseModel):
@@ -77,6 +71,8 @@ class UploadAppRequest(BaseModel):
     bundle_urls: list[str]
     # The researcher's GPU override at submission, if any (FLIP#70). Recorded, not enforced, on Flower.
     resources: JobResources | None = None
+    # The job's credential for its callbacks to the hub (utils/job_credential.py). None from a hub that mints none.
+    job_credential: str | None = Field(default=None, repr=False)
 
 
 class JobStatus(StrEnum):

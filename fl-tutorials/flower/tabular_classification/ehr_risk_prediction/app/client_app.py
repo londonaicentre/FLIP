@@ -185,13 +185,11 @@ def evaluate(msg: Message, context: Context) -> Message:
     test_metrics = validate_func(model, loaders["test"], torch.nn.BCEWithLogitsLoss(), device)
 
     # test_auroc is the one interpretable number this app is judged on, and what
-    # best-model selection scores (best-model-metric = "test_auroc"). The ".x_0" suffix
-    # plots the single test point at x=0 by convention.
+    # best-model selection scores (best-model-metric = "test_auroc"). Each point
+    # plots at the server round evaluated.
     metrics: dict[str, float] = {
         "test_loss": float(test_metrics["loss"]),
-        "test_loss.x_0": float(test_metrics["loss"]),
         "test_auroc": float(test_metrics["auroc"]),
-        "test_auroc.x_0": float(test_metrics["auroc"]),
         "test_accuracy": float(test_metrics["accuracy"]),
         "num-examples": len(loaders["test"].dataset),
     }

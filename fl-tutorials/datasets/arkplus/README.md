@@ -11,26 +11,35 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-# arkplus
+# Ark+ chest X-ray dataset
 
-Chest X-ray splits backing the three Ark+ tutorials (FLARE), sourced from the HF dataset
-`aicentreflip/tutorials-arkplus-cxr-classification`: the TRAIN splits (`site1`, `site2`) back
-`arkplus_fine_tuning`; the HOLD-OUT splits (`site1_holdoff`, `site2_holdoff`) back the two
-evaluation tutorials.
+Chest X-ray data for the three Ark+ tutorials (NVIDIA FLARE only), downloaded from the Hugging Face dataset
+`aicentreflip/tutorials-arkplus-cxr-classification`.
 
-No dedicated uv project — `download_arkplus_dataset.py`'s only dependency is
-`huggingface_hub`, so it runs via `uv run --no-project --with huggingface_hub`, the same way
-`upload-spleen-labels` runs against `flip-utils` without adopting `spleen/`'s env.
+| Splits | Folders | Used by | Make target |
+|--------|---------|---------|-------------|
+| TRAIN | `site1`, `site2` | [`arkplus_fine_tuning`](../../nvflare/image_classification/arkplus_fine_tuning/README.md) | `download-arkplus-finetuning-data` |
+| HOLD-OUT | `site1_holdoff`, `site2_holdoff` | [`arkplus_baseline_classification_evaluation`](../../nvflare/image_evaluation/arkplus_baseline_classification_evaluation/README.md), [`arkplus_multimodel_classification_evaluation`](../../nvflare/image_evaluation/arkplus_multimodel_classification_evaluation/README.md) | `download-arkplus-eval-data` |
 
-- `download_arkplus_dataset.py` — fetch the given site folders from Hugging Face and
-  normalise each into `<site>/{accession-resources/, sample_get_dataframe_response.csv}`.
-  One script, parameterised by `--sites`, backs both Makefile targets below; only the TRAIN
-  call passes `--write-marker` (`arkplus_fine_tuning/Makefile`'s `reproduce-overhead` checks
-  that marker — not just directory existence — before skipping a re-download).
+## Download
 
-Invoke via the fl-tutorials root Makefile (see [`../README.md`](../README.md)):
+Run from the repository root, through the fl-tutorials Makefile (see [`../README.md`](../README.md)):
 
 ```bash
-make -C fl-tutorials download-arkplus-finetuning-data  # large (~6.3 GB)
-make -C fl-tutorials download-arkplus-eval-data        # (~1.6 GB)
+make -C fl-tutorials download-arkplus-finetuning-data  # TRAIN splits, ~6.3 GB
+make -C fl-tutorials download-arkplus-eval-data        # HOLD-OUT splits, ~1.6 GB
 ```
+
+## How it works
+
+Both Make targets call one script, `download_arkplus_dataset.py`, with different `--sites`. It fetches each site folder from Hugging Face and lays it out as:
+
+```text
+<site>/
+├── accession-resources/
+└── sample_get_dataframe_response.csv
+```
+
+Only the TRAIN download passes `--write-marker`. Before skipping a re-download, `make reproduce-overhead` in `arkplus_fine_tuning` checks for that marker, not just for the directory.
+
+This directory has no uv project of its own. The script's only dependency is `huggingface_hub`, so the Make targets run it with `uv run --no-project --with huggingface_hub`.

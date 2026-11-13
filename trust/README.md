@@ -82,7 +82,7 @@ The kit also carries **XNAT's own AE title** and the **upstream PACS** block (se
 [`xnat/README.md`](xnat/README.md#pacs-configuration) for what each one does):
 
 ```sh
-XNAT_AETITLE=XNAT
+XNAT_AETITLE=FLIP_XNAT
 PACS_HOST=orthanc
 PACS_AETITLE=ORTHANC
 PACS_QR_PORT=4242
@@ -91,7 +91,7 @@ PACS_QR_PORT=4242
 `XNAT_AETITLE` is applied to XNAT's SCP receiver, its DQR calling AE and the C-MOVE destination it
 hands the PACS, so all three agree and the PACS's return-leg association is addressed correctly.
 `up-trust` / `up-trust-ec2` run a `require-xnat-aetitle` guard first: the variable may be absent
-(the default `XNAT` applies) but **must not be present-and-empty** — that fails the bring-up naming
+(the default `FLIP_XNAT` applies) but **must not be present-and-empty** — that fails the bring-up naming
 the kit file, before any data fixture is fetched. The remaining `PACS_*` and `DQR_*` variables
 (`PACS_LABEL`, `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS`, `PACS_AVAILABILITY_DAYS`/`_START`/`_END`,
 `PACS_THREADS`, `PACS_UTILIZATION_PERCENT`, `DQR_MAX_PACS_REQUEST_ATTEMPTS`,
@@ -109,8 +109,9 @@ This is the minimum cohort size the trust will release anything about. Cohort st
 #### Site-enforced FL privacy policy (optional, FLARE only)
 
 The kit file's Host-local profile can set `FL_SITE_PRIVACY_POLICY=percentile` (plus optional
-`FL_SITE_PRIVACY_*` parameters — see the commented block in `trust/.env.example`). The fl-client entrypoint
-renders these into the client's FLARE `local/privacy.json` at container start, so THIS trust's
+`FL_SITE_PRIVACY_*` parameters — see the commented block in `trust/.env.example`). A one-shot `fl-client-init`
+step renders these into the client's FLARE `local/privacy.json` before the client starts (the client mounts its
+kit's `local/` and `startup/` read-only and refuses a missing or stale render, FLIP#1570), so THIS trust's
 update-privacy filter is applied to every outgoing model update regardless of the researcher's app config
 (site filters run before app filters and a job's configuration cannot opt out or pick a weaker scope). The
 bound object is the job's *configuration*: every FLARE app template runs the Client API `in_process`, so job
@@ -561,7 +562,9 @@ and upgrades XNAT in place (database dump first, no reset); it never runs
 `ensure-seeded`, so the OMOP / Orthanc stores are left as they are. Before the kit is touched
 it asks the registry for every image at the target and refuses a tag any of them was
 never built at (each `sha-` build is path-filtered; a release tag builds them all —
-for a `sha-` move, `FL_TAG=` holds the FL client at its own build and `OMOP_DB_TAG` /
+for a `sha-` move, `FL_TAG=` holds the FL client at its own build — on NVFLARE never one older than
+this checkout's compose files, which from FLIP#1570 on need the fl-client image's `/app/fl-client-init.sh`
+and stop an older client — and `OMOP_DB_TAG` /
 `ORTHANC_TAG` in the kit do the same for those data services). `XNAT_TAG` pins all three
 XNAT images together; their builds no longer share `sha-` tags. Set it to a release tag
 (or `stag`/`prod`) published for all three images when moving a site to a `sha-` tag.
@@ -612,6 +615,6 @@ make -C trust-api integration_test
 make -C data-access-api integration_test
 ```
 
-The seed data lives in [`trust-api/tests/integration/fixtures/omop_seed.sql`](trust-api/tests/integration/fixtures/omop_seed.sql) and follows the MI-CDM shape — `image_occurrence` joined to `concept` for modality lookups. Counts there match the assertions in `test_cohort_query.py` and `test_cohort_endpoint.py` (16 patients, 24 image occurrences). When adjusting the seed, update both. The trust-api side mocks nothing on the HTTP boundary — the only stub is an in-process HTTP server that catches the trust-api → flip-api callback (B3 is intentionally scoped to exclude the hub leg, see issue #369).
+The seed data lives in [`trust-api/tests/integration/fixtures/omop_seed.sql`](trust-api/tests/integration/fixtures/omop_seed.sql) and follows the MI-CDM shape — `image_occurrence` joined to `concept` for modality lookups. Counts there match the assertions in `test_cohort_query.py` and `test_cohort_endpoint.py` (24 patients, 20 of them with imaging; 32 image occurrences). When adjusting the seed, update both. The trust-api side mocks nothing on the HTTP boundary — the only stub is an in-process HTTP server that catches the trust-api → flip-api callback (B3 is intentionally scoped to exclude the hub leg, see issue #369).
 
 Both Make targets are also wired into CI via dedicated jobs in `test_trust_trust_api.yml` and `test_trust_data_access_api.yml`.

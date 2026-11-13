@@ -32,7 +32,9 @@ other call stays on the Trust's private container network:
         |
    trust-api  ---- TRUST_INTERNAL_SERVICE_KEY ---->  imaging-api  ---- REST ---->  XNAT  <-- DICOM -- PACS
         |                                                 |                        (web + DB)
-        +------- TRUST_INTERNAL_SERVICE_KEY ---->  data-access-api  <---------------+
+        |                                                 | accession numbers
+        |                                                 v
+        +------- TRUST_INTERNAL_SERVICE_KEY ---->  data-access-api
                                                           |
                                                     omop-db (read-only role)
 
@@ -56,7 +58,7 @@ Trust's credentials can act as that Trust. Two keys protect two boundaries:
   ``data-access-api``. It never leaves the Trust. Only ``/health`` endpoints are exempt. The threat model is on
   :ref:`trust-internal-service-authentication`.
 
-The kit file carries these settings for it:
+The kit file carries the settings for both keys, and the other values the Trust needs to reach the hub:
 
 .. list-table::
    :header-rows: 1
@@ -105,10 +107,10 @@ Every ``POLL_INTERVAL_SECONDS`` (default 5) the poller:
 3. decrypts each task, runs it and posts the result back, one task at a time. Posting a result is retried with
    backoff if the hub does not accept it.
 
-The hub only ever answers this poll: a Trust never pushes progress on its own, and the hub never connects in.
+A Trust never pushes progress on its own; the hub only answers this poll.
 
-On its first exchange with the hub, the poller checks that the hub's view of its identity matches
-``EXPECTED_TRUST_ID`` in the kit file, and **exits if they differ**. A mis-copied kit file therefore cannot act
+If the kit file sets ``EXPECTED_TRUST_ID``, the poller checks it against the hub's view of its identity on its
+first exchange, and **exits if they differ**. A mis-copied kit file therefore cannot act
 as another Trust.
 
 .. list-table::
@@ -194,7 +196,8 @@ The ``create_imaging`` task runs these steps:
 1. Create the XNAT project and set its prearchive rules.
 2. Subscribe the project to the XNAT event that converts new DICOM scans to NIfTI. The subscription is active
    only when the project has DICOM-to-NIfTI conversion on, and it fires on new scans only; scans already archived
-   are converted with ``make -C trust reconvert-nifti`` (see :doc:`component-xnat`).
+   are converted with ``make -C trust reconvert-nifti KIT=<CODE> LAUNCH=1``; without ``LAUNCH=1`` it only reports
+   (see :doc:`component-xnat`).
 3. Create or add the hub project's members as XNAT users. The hub then emails each new user a link to set
    their XNAT password, and tells existing users they have been added.
 4. Start retrieval in the background. ``imaging-api`` asks ``data-access-api`` for the cohort's **accession
@@ -258,7 +261,7 @@ if it:
 
 There is **no keyword blocklist**. Instead, queries run as a **read-only database role** whose access is limited
 to the ``omop`` schema, under both Compose and Kubernetes, so a statement that got past the checks still cannot
-write. Rule 5 is enforced separately, on top of the role's limits.
+write. The schema rule (5) is still checked on the query itself, in addition to the role's limits.
 
 .. seealso::
 
@@ -284,12 +287,13 @@ The threshold is checked at approval and again on every request. A cohort that s
 served, and raising it affects projects that are already approved.
 
 Approved cohort membership
---------------------------
+==========================
 
-The row-level endpoints serve only the cohort **as it stood at project approval**. At approval, each Trust runs
-the approved query once (the ``persist_cohort`` task) and records which patients and studies it returned; it
-stores identifiers only, not their data. Recording a cohort needs proof of the hub's AES key as well as the
-Trust-internal key, so FL training code, which has no AES key, cannot change it. After that:
+The row-level endpoints serve only the cohort **as it stood at project approval**. At approval, each Trust runs the
+approved query once (the ``persist_cohort`` task) and records which patients and studies it returned; it stores
+identifiers only, not their data. Recording or deleting a cohort needs proof that the caller holds ``AES_KEY_BASE64``
+(the key shared with the hub) as well as the Trust-internal key. FL training code does not hold the AES key, so it
+cannot change the recorded cohort. After that:
 
 - ``/cohort/dataframe`` re-runs the approved query and keeps only the approved patients and studies.
 - ``/cohort/accession-ids`` serves the approved studies that are still in OMOP.

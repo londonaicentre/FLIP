@@ -609,3 +609,80 @@ def test_delete_object_if_match_wraps_other_failures(s3_client_with_mock_boto):
     )
     with pytest.raises(Exception, match="Unable to delete object"):
         s3.delete_object_if_match("s3://bucket/uploaded/k", '"etag"')
+
+
+def test_multipart_upload_is_created_signed_per_part_and_completed_in_part_order(s3_client_with_mock_boto):
+    s3, boto = s3_client_with_mock_boto
+    boto.create_multipart_upload.return_value = {"UploadId": "upload-1"}
+    boto.generate_presigned_url.return_value = _FAKE_SIGNED_URL
+
+    assert s3.create_multipart_upload("s3://bucket/results/model/a.zip") == "upload-1"
+    url = s3.get_upload_part_presigned_url(
+        "s3://bucket/results/model/a.zip", "upload-1", 2, 123, audience=PresignAudience.INTERNAL, expiration=600
+    )
+    s3.complete_multipart_upload("s3://bucket/results/model/a.zip", "upload-1", ['"one"', '"two"'])
+    s3.abort_multipart_upload("s3://bucket/results/model/a.zip", "upload-1")
+
+    assert url == _FAKE_SIGNED_URL
+    boto.create_multipart_upload.assert_called_once_with(Bucket="bucket", Key="results/model/a.zip")
+    boto.generate_presigned_url.assert_called_once_with(
+        "upload_part",
+        Params={
+            "Bucket": "bucket",
+            "Key": "results/model/a.zip",
+            "UploadId": "upload-1",
+            "PartNumber": 2,
+            "ContentLength": 123,
+        },
+        ExpiresIn=600,
+    )
+    boto.complete_multipart_upload.assert_called_once_with(
+        Bucket="bucket",
+        Key="results/model/a.zip",
+        UploadId="upload-1",
+        MultipartUpload={"Parts": [{"ETag": '"one"', "PartNumber": 1}, {"ETag": '"two"', "PartNumber": 2}]},
+    )
+    boto.abort_multipart_upload.assert_called_once_with(Bucket="bucket", Key="results/model/a.zip", UploadId="upload-1")
+
+
+def test_upload_part_url_signs_the_content_length(monkeypatch):
+    """Real botocore: the part's size is a signed header, so the store refuses a body of another size."""
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")  # pragma: allowlist secret
+    with patch("flip_api.utils.s3_client.get_settings", return_value=_settings(AWS_REGION="eu-west-2")):
+        s3 = S3Client()
+
+    url = s3.get_upload_part_presigned_url(
+        "s3://bucket/a.zip", "upload-1", 1, 123, audience=PresignAudience.INTERNAL, expiration=600
+    )
+
+    assert "X-Amz-SignedHeaders=content-length%3Bhost" in url
+
+
+def test_upload_part_url_ttl_is_clamped_to_the_ceiling(s3_client_with_mock_boto):
+    s3, boto = s3_client_with_mock_boto
+
+    s3.get_upload_part_presigned_url(
+        "s3://bucket/a.zip", "upload-1", 1, 1, audience=PresignAudience.INTERNAL, expiration=10**6
+    )
+
+    assert boto.generate_presigned_url.call_args.kwargs["ExpiresIn"] == MAX_PRESIGNED_URL_TTL_SECONDS
+
+
+def test_abort_multipart_uploads_aborts_every_upload_under_the_prefix(s3_client_with_mock_boto):
+    s3, boto = s3_client_with_mock_boto
+    boto.get_paginator.return_value.paginate.return_value = [
+        {"Uploads": [{"Key": "results/model/a.zip", "UploadId": "1"}]},
+        {"Uploads": [{"Key": "results/model/b.zip", "UploadId": "2"}]},
+        {},
+    ]
+
+    assert s3.abort_multipart_uploads("s3://bucket/results/model/") == 2
+
+    boto.get_paginator.assert_called_once_with("list_multipart_uploads")
+    boto.get_paginator.return_value.paginate.assert_called_once_with(Bucket="bucket", Prefix="results/model/")
+    assert boto.abort_multipart_upload.call_args_list == [
+        call(Bucket="bucket", Key="results/model/a.zip", UploadId="1"),
+        call(Bucket="bucket", Key="results/model/b.zip", UploadId="2"),
+    ]

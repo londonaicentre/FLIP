@@ -13,7 +13,7 @@
 
 import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { h } from "vue";
 
 import { IServiceHealth, ITrustResponse } from "@/services/trust-service";
@@ -66,6 +66,17 @@ const trust = (xnat: IServiceHealth["status"] = "healthy"): ITrustResponse => ({
     project_count: 3,
     services: services(xnat),
     services_updated_at: seconds(5)
+});
+
+// Pin the clock to the fixtures' `now`, so heartbeat ages are exact however long the run
+// takes. Only Date is faked, so promise flushing and timers stay real.
+beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now);
+});
+
+afterEach(() => {
+    vi.useRealTimers();
 });
 
 // The card is the drawer's body without the Dialog, so it mounts plainly — no teleport, no stubs.

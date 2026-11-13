@@ -5,8 +5,8 @@ User roles
 ##########
 
 FLIP has four roles. In the Admin Area each user gets **one role**: choosing a new role replaces the one they hold
-rather than adding to it. There is no need to stack roles, because ``admin`` already includes everything a
-``researcher`` can do.
+rather than adding to it. There is no need to stack roles, because ``admin`` and ``trust admin`` already include
+everything a ``researcher`` can do.
 
 .. note::
 
@@ -158,7 +158,7 @@ only read. Editing, staging or deleting the project itself stays with the owner 
 
    **A role change does not remove project ownership.** A user who created a project keeps write access to it
    (editing, staging, deleting, submitting cohort queries) even after being demoted to Viewer. Demotion only stops
-   them creating new projects or writing to projects they do not own.
+   them creating new projects, writing to projects they do not own, and adding members to their own projects.
 
    To fully remove a former owner's access, transfer the project to another user or delete it.
 
@@ -166,7 +166,8 @@ only read. Editing, staging or deleting the project itself stays with the owner 
 Who can see whose profile
 *************************
 
-Profile visibility follows the *Manage users* permission, not project ownership.
+Full profiles follow the *Manage users* permission. The email lookup follows the *Create projects* permission. Neither
+depends on project ownership.
 
 .. list-table::
    :header-rows: 1
@@ -193,7 +194,7 @@ Researchers need to look up an email address when adding someone to a project. T
 email address and whether the account is enabled, never their name or organisation. Without *Manage users*, nobody
 can list the users.
 
-The lookup follows the *Create projects* permission, not ownership. An owner demoted to Viewer keeps write access to
+An owner demoted to Viewer keeps write access to
 their projects but can no longer add members, because Viewers are not shown the add-member form.
 
 .. warning::

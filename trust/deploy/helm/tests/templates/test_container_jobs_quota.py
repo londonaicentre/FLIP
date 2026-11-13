@@ -69,7 +69,7 @@ RENDERS = {
         "--set",
         "omopDb.vocabLoad.enabled=true",
         "--set",
-        "omopDb.vocabLoad.s3Bucket=bucket",
+        "omopDb.vocabLoad.hostPath=/opt/flip/omop-vocab",
         "--set",
         "flClient.gpu.enabled=true",
         "--set",

@@ -24,7 +24,6 @@ import { createRouter,
 
 const routes = setupLayouts(generatedRoutes);
 
-// import { routes } from "@/router/routes";
 import { IS_DEMO } from "@/demo/bootstrap";
 import { doneRouteProgress, startRouteProgress } from "@/router/progress";
 import { authCheck } from "@/utils/auth";
@@ -39,8 +38,6 @@ const router = createRouter({
     routes,
     scrollBehavior(to) {
         if (to.hash) {
-            console.log(to);
-
             return document.querySelector(to.hash)?.scrollIntoView({ behavior: "smooth" });
         }
     }

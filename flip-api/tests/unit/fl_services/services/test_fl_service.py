@@ -22,6 +22,7 @@ import httpx
 import pytest
 from moto import mock_aws
 
+from flip_api.auth.job_callback import hash_job_credential
 from flip_api.config import Settings
 from flip_api.db.models.main_models import FLJob, Trust
 from flip_api.domain.interfaces.fl import (
@@ -110,6 +111,7 @@ def test_upload_app_calls_http_post(mock_post, model_id):
         cohort_query="query",
         trusts=["client1"],
         bundle_urls=["http://s3-presigned-url/file1", "http://s3-presigned-url/file2"],
+        job_credential="credential",
     )
     mock_post.return_value = {"status": "ok"}
     result = fl_service.upload_app(model_id, body, "endpoint")
@@ -123,7 +125,9 @@ def _refusal(status_code: int, body) -> httpx.HTTPStatusError:
 
 
 def _upload_body() -> IStartTrainingBody:
-    return IStartTrainingBody(project_id="proj", cohort_query="query", trusts=["client1"], bundle_urls=[])
+    return IStartTrainingBody(
+        project_id="proj", cohort_query="query", trusts=["client1"], bundle_urls=[], job_credential="credential"
+    )
 
 
 @pytest.mark.parametrize(
@@ -301,6 +305,44 @@ def test_start_training_with_config(
     mock_upload.assert_called_once()
     mock_submit.assert_called_once()
     mock_encrypt.assert_called_once_with("proj", context=PROJECT_ID_CONTEXT)
+
+
+@patch("flip_api.fl_services.services.fl_service.submit_job")
+@patch("flip_api.fl_services.services.fl_service.upload_app")
+@patch("flip_api.fl_services.services.fl_service.encrypt", return_value="encrypted")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_required_training_details")
+def test_start_training_mints_a_job_credential_and_keeps_only_its_hash(
+    mock_get_required,
+    mock_encrypt,
+    mock_upload,
+    mock_submit,
+    model_id,
+    fl_job_id,
+    fake_session,
+):
+    mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
+    job = FLJob(id=fl_job_id, model_id=model_id)
+    fake_session.get.return_value = job
+    fake_session.exec.return_value.one.return_value = job
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS
+    committed_before_upload = []
+    mock_upload.side_effect = lambda *_: committed_before_upload.append(fake_session.commit.called)
+
+    fl_service.start_training(
+        model_id=model_id,
+        fl_job_id=fl_job_id,
+        clients=["client1"],
+        endpoint="endpoint",
+        bundle_urls=["url"],
+        session=fake_session,
+    )
+
+    sent = mock_upload.call_args.args[1].job_credential
+    assert len(sent) >= 43  # token_urlsafe(32)
+    assert job.credential_hash == hash_job_credential(sent)
+    assert job.credential_hash != sent
+    # Stored before the FL API hears of the job, so its first callback already finds the hash.
+    assert committed_before_upload == [True]
 
 
 @patch("flip_api.fl_services.services.fl_service.submit_job")

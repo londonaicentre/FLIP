@@ -13,18 +13,14 @@ limitations under the License.
 
 # xrays_mini_300
 
-Reference x-ray dataset backing the `xray_classification` tutorial (both backends). Sourced
-from the `xrays_mini_300/` subtree of the HF dataset `aicentreflip/flip-fl-base-test-data`.
+Reference chest X-ray dataset behind the `xray_classification` tutorial, used by both the NVIDIA FLARE and Flower versions. Sourced from the `xrays_mini_300/` subtree of the Hugging Face dataset `aicentreflip/flip-fl-base-test-data`.
 
-No dedicated uv project — `download_xrays_dataset.py`'s only dependency is `huggingface_hub`,
-so it runs via `uv run --no-project --with huggingface_hub`, the same way
-`upload-spleen-labels` runs against `flip-utils` without adopting `spleen/`'s env.
-
-- `download_xrays_dataset.py` — fetch the Hugging Face snapshot and normalise it into
-  `accession-resources/` + `dataframe.csv` under the shared `fl-tutorials/data/xrays_mini_300/`.
-
-Invoke via the fl-tutorials root Makefile (see [`../README.md`](../README.md)):
+Download it from the repository root (the target is in the fl-tutorials Makefile; see [`../README.md`](../README.md)):
 
 ```bash
 make -C fl-tutorials download-xray-data
 ```
+
+This runs `download_xrays_dataset.py`. The script fetches the Hugging Face snapshot and normalises it into `accession-resources/` + `dataframe.csv` under the shared `fl-tutorials/data/xrays_mini_300/`.
+
+The script has no uv project of its own. Its only dependency is `huggingface_hub`, so it runs via `uv run --no-project --with huggingface_hub`.

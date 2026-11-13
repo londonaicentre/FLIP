@@ -43,7 +43,7 @@ configured alongside the AE title, not derived from it.
      - Search — "which study has accession number ABC123?"
      - XNAT to PACS
    * - ``C-MOVE``
-     - "Send that study to the system called ``FLIPXNAT``"
+     - "Send that study to the system called ``FLIP_XNAT``"
      - XNAT to PACS
    * - ``C-STORE``
      - The image transfer itself
@@ -135,7 +135,7 @@ turn out to matter.
 
 .. tip::
 
-   A trust PACS has many AE titles configured, so choose one that names the platform, for example ``FLIPXNAT``. It
+   A trust PACS has many AE titles configured, so choose one that names the platform, for example ``FLIP_XNAT``. It
    must be the same on both sides: the PACS opens the C-STORE with the AE title it has registered, and XNAT's
    receiver rejects any other.
 
@@ -168,7 +168,7 @@ From FLIP, to register on the PACS as a destination:
 .. code-block:: text
 
    Destination node (FLIP XNAT SCP receiver)
-     AE Title:  FLIPXNAT
+     AE Title:  FLIP_XNAT
      IP:        10.0.0.20
      Port:      8104
 
@@ -198,8 +198,8 @@ Configuring FLIP
 ================
 
 These are FLIP's own settings. The operator deploying the trust node sets them: in the trust's kit file for a
-Compose deployment, or in the Helm values for Kubernetes. The PACS team supplies the values they feed from (see
-above), not the settings themselves.
+Compose deployment, or in the Helm values for Kubernetes. The PACS team supplies the values (see
+`What the PACS team must register`_), not the settings themselves.
 
 .. important::
 
@@ -217,7 +217,7 @@ above), not the settings themselves.
    * - ``XNAT_AETITLE``
      - ``xnat.web.dicomAet``
      - XNAT's own AE title, used for the DICOM receiver, the DQR calling AE and the C-MOVE destination
-     - ``XNAT``
+     - ``FLIP_XNAT``
    * - ``XNAT_PORT``
      - ``xnat.web.dicomPort``
      - DICOM receiver port
@@ -284,7 +284,8 @@ The publication binds **every interface** of the host, not just loopback, and a 
 it: XNAT runs as a Docker Swarm service, and Docker forwards the port before the host firewall sees the traffic.
 Restrict the port on the network the host sits on.
 
-- The cloud-hosted mock trusts accept no inbound traffic at all, so the port reaches no further than the instance.
+- FLIP's cloud-hosted mock trusts, which retrieve from the mocked PACS (see `Development: the mocked PACS`_), accept
+  no inbound traffic at all, so the port reaches no further than the instance.
 - An on-prem trust host or a developer machine exposes the receiver to whatever network it is on.
 
 .. warning::
@@ -351,8 +352,11 @@ Scheduling and throughput
 A production PACS may limit how much can be retrieved before it refuses further connections, and bulk retrieval
 competes with clinical use. Agree a retrieval schedule with the trust's PACS manager, then set it in FLIP:
 
-- the DQR retry settings control how failed studies are retried;
-- the PACS's availability schedule sets the days, a daily window, a thread count and a utilisation percentage.
+- ``DQR_MAX_PACS_REQUEST_ATTEMPTS`` / ``DQR_RETRY_WAIT_SECONDS`` control how failed studies are retried;
+- ``PACS_AVAILABILITY_DAYS`` / ``_START`` / ``_END``, ``PACS_THREADS`` and ``PACS_UTILIZATION_PERCENT`` set the
+  days, a daily window, a thread count and a utilisation percentage.
+
+The Helm equivalents are in `Configuring FLIP`_.
 
 If the trust has a test or pre-production PACS, connect FLIP to that first. This is usually a separate service
 request.
@@ -375,8 +379,10 @@ Work outwards from the network layer:
 
 1. **C-ECHO in both directions**: from the PACS to XNAT's AE title and port, and from XNAT to the PACS. This proves
    both firewall directions before any images move.
-2. **Ping the PACS from XNAT**: ``GET /xapi/pacs/{id}/status`` should report the PACS as reachable and enabled.
-3. **Query one accession number**: ``POST /xapi/dqr/query/studies`` should return the matching study.
+2. **Ping the PACS from XNAT**: on XNAT's REST API, ``GET /xapi/pacs/{id}/status`` (``{id}`` is the PACS's ID in
+   XNAT) should report the PACS as reachable and enabled.
+3. **Query one accession number**: on XNAT's REST API, ``POST /xapi/dqr/query/studies`` should return the matching
+   study.
 4. **Import one study**, and check it archives into the expected project with anonymisation applied.
 5. **Run a full project import**, watching the import status counts.
 
@@ -400,7 +406,7 @@ C-STORE. Only the peer differs. That is why the development defaults name it:
 * ``PACS_QR_PORT=4242``: Orthanc's DICOM port
 
 The one material difference is the network. Orthanc shares the container network with XNAT; a real PACS is outside
-it. Publishing the receiver on every Compose deployment (see above) keeps the mocked setup on the same wiring.
+it. Publishing the receiver on every Compose deployment (see `Compose`_) keeps the mocked setup on the same wiring.
 
 .. note::
 

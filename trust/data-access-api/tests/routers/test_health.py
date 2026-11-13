@@ -27,14 +27,19 @@ def _pyproject_version() -> str:
 
 
 @pytest.fixture
-def unreadable_version(request, monkeypatch):
-    """Point the version lookup at ``path`` and clear its cache around the test.
+def unreadable_version(request, monkeypatch, tmp_path):
+    """Point the version lookup at ``request.param`` and clear its cache around the test.
 
+    The param is either a Path, or TOML text written to a pyproject.toml in tmp_path.
     The lookup is ``lru_cache``d, so a test that skips the clear either reads a
     cached real version (proving nothing) or poisons every later test with a
     cached None.
     """
-    monkeypatch.setattr(health_module, "_PYPROJECT_PATH", request.param)
+    path = request.param
+    if isinstance(path, str):
+        path = tmp_path / "pyproject.toml"
+        path.write_text(request.param)
+    monkeypatch.setattr(health_module, "_PYPROJECT_PATH", path)
     health_module._service_version.cache_clear()
     yield
     health_module._service_version.cache_clear()
@@ -80,6 +85,8 @@ async def test_health_reports_the_baked_release_over_the_package_version(client,
     [
         pytest.param(Path("/nonexistent/pyproject.toml"), id="file missing (broken image layout)"),
         pytest.param(Path(__file__), id="file unparsable as TOML"),
+        # A valid TOML without [project].version is the KeyError arm of the same guard.
+        pytest.param('[project]\nname = "data-access-api"\n', id="version key absent (partially-written pyproject)"),
     ],
     indirect=True,
 )
@@ -91,17 +98,3 @@ async def test_health_still_answers_when_the_version_cannot_be_read(client, unre
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "version": None}
-
-
-@pytest.mark.asyncio
-async def test_health_reports_null_version_when_the_key_is_absent(client, tmp_path, monkeypatch):
-    """A valid TOML without [project].version (a partially-written pyproject) is the
-    KeyError arm of the same guard."""
-    pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text('[project]\nname = "data-access-api"\n')
-    monkeypatch.setattr(health_module, "_PYPROJECT_PATH", pyproject)
-    health_module._service_version.cache_clear()
-    try:
-        assert client.get("/health/").json()["version"] is None
-    finally:
-        health_module._service_version.cache_clear()

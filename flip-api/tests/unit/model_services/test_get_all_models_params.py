@@ -72,3 +72,10 @@ class TestParseStatuses:
             _parse_statuses("RUNNING,NOT_A_STATUS")
 
         assert exc.value.status_code == 400
+
+    def test_rejects_the_legacy_training_started_name(self):
+        # No silent aliasing of the pre-rename status on the public filter (#803).
+        with pytest.raises(HTTPException) as exc:
+            _parse_statuses("TRAINING_STARTED")
+
+        assert exc.value.status_code == 400

@@ -16,7 +16,7 @@ Records a trust's kit being downloaded from the UI (FLIP#1852): KEYS_ISSUED and 
 CAN_MANAGE_TRUST_KIT permission needs no revision; the seeder inserts it and grants it to Trust Admin.
 
 Revision ID: a4c8e1f52d07
-Revises: 9d4b7a1c5e20
+Revises: a6174749cbb5
 Create Date: 2026-11-10 18:00:00.000000
 
 """
@@ -29,7 +29,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "a4c8e1f52d07"  # pragma: allowlist secret
-down_revision: str | None = "9d4b7a1c5e20"  # pragma: allowlist secret
+down_revision: str | None = "a6174749cbb5"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -14,7 +14,6 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Annotated
 
-import pandas as pd
 from fastapi import Depends, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
 from pydantic import ValidationError
@@ -55,9 +54,8 @@ XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 #   - queued/executed PACS requests (DQR plugin):  PacsRequest.FAILED_STATUS_TEXT == "FAILED"
 #   - directArchive sessions (XNAT prearchive):    PrearcUtils.PrearcStatus.ERROR
 # `PrearcStatus.ERROR` re-verified present in the XNAT 1.10.0 source. The DQR value IS verified for
-# DQR 3.0.0 (the 1.10-targeting major bump that also swaps dcm4che2 for dcm4che5): the released JAR
-# (public download on bitbucket.org/xnatdev/dicom-query-retrieve) keeps
-# `PacsRequest.FAILED_STATUS_TEXT == "FAILED"` (full vocabulary: QUEUED/PROCESSING/ISSUED/RECEIVED/FAILED).
+# DQR 3.1.0: the released JAR keeps `PacsRequest.FAILED_STATUS_TEXT == "FAILED"` (full vocabulary:
+# QUEUED/PROCESSING/ISSUED/RECEIVED/FAILED).
 # imaging-api reads these statuses from DQR's and XNAT's REST listings (services/import_requests.py), so
 # an upgrade re-checks those listings rather than database columns.
 # Any other status on a row that exists means the import is still in flight. A successful directArchive
@@ -209,9 +207,6 @@ async def _retrieve_images_for_project(project_id: str, query: str, headers: XNA
 
     total_accessions = len(accession_ids)
     for idx, accession_number in enumerate(accession_ids, 1):
-        # TODO Unlike in the old repo, accession numbers are now not encrypted in OMOP database.
-        # accession_number = decrypt(encrypted_accession_number)
-
         logger.info(f"Querying PACS for accession number {idx}/{total_accessions}")
 
         try:
@@ -296,14 +291,15 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
 
     Known limitation: only *terminal* failures (executed `FAILED`, directArchive or prearchive `ERROR`)
     are reported as `Failed`. A study wedged in a non-terminal state with no further transition — e.g.
-    executed `ISSUED` (the C-MOVE was issued but objects never arrive) or a directArchive stuck at
-    `RECEIVING`/`BUILDING` (a hung build that neither errors nor deletes its row) — stays `Processing`
-    indefinitely and is therefore never retried. Detecting "stuck" would need a staleness window
-    (the rows carry `timestamp`); not implemented here.
+    executed `ISSUED` (a C-MOVE that never returns; one that returns with no objects is `FAILED`) or a
+    directArchive stuck at `RECEIVING`/`BUILDING` (a hung build that neither errors nor deletes its row) —
+    stays `Processing` indefinitely and is therefore never retried. Such a row also masks an executed `FAILED`
+    for the same study, since a `FAILED` counts only when no session row in another status exists (FLIP#1816).
+    Detecting "stuck" would need a staleness window (the rows carry `timestamp`); not implemented here.
 
     1. Fetch the cohort's accession IDs from the data access API
     2. Get project experiments
-    3. Get project import status
+    3. Get project import status, reading the experiments again before an executed `FAILED` is called failed
 
     Args:
         project_id (str): The imaging project ID to retrieve the data about.
@@ -353,15 +349,8 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
             detail=f"{reason} Import status cannot be reported.",
         ) from e
 
-    # Fetches a list of XNAT experiments associated with a given XNAT project.
-    experiments = get_experiments(project_id, headers)
-    experiments_df = pd.DataFrame([exp.model_dump(by_alias=True) for exp in experiments])
-
-    # We need to check if there are any experiments at all in the dataframe
-    successfully_imported_accession_numbers: list[str] = (
-        experiments_df["label"].to_list() if "label" in experiments_df.columns else []
-    )
-    logger.debug("Successfully imported accession numbers")
+    # Accessions already archived as experiments of the XNAT project.
+    archived = {exp.label for exp in get_experiments(project_id, headers)}
 
     # TODO What if the XNAT project contains experiments that aren't actually in the cohort dataframe?
     # Could this even happen?
@@ -370,7 +359,6 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
     # `successful` whatever DQR holds for it, so when every accession is archived the DQR records
     # cannot change the answer, and a finished project polled by an open page reads none of them.
     # They are blocking calls, so they run off the event loop.
-    archived = set(successfully_imported_accession_numbers)
     records: _ImportRecords = ([], [], [], [])
     if not all(accession_number in archived for accession_number in accession_ids):
         records = await run_in_threadpool(_read_import_records, project_id, headers)
@@ -391,34 +379,35 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
     # A directArchive session's accession label is `name` (set for DQR imports); fall back to
     # `folder_name` (which carries the same label) when `name` is NULL, so a NULL-named archive
     # failure is still attributed to its accession rather than silently dropped. A prearchive ERROR is the
-    # same failure after XNAT has moved the session out of the direct archive, its DQR request still
-    # RECEIVED, so it is `failed` too (FLIP#1511).
-    failed_accessions = (
-        {
-            (session.name or session.folder_name)
-            for session in direct_archive_sessions
-            if session.status == _DIRECT_ARCHIVE_FAILED_STATUS
-        }
-        | {
-            (session.name or session.folder_name)
-            for session in prearchive_sessions
-            if session.status == _DIRECT_ARCHIVE_FAILED_STATUS
-        }
-        | {req.accession_number for req in executed_pacs_requests if req.status == _PACS_REQUEST_FAILED_STATUS}
-    )
-    # The prearchive read only adds failures: a session in any other prearchive status is in flight
-    # because its DQR request is, so it is counted below through `executed_pacs_requests`.
-    in_progress_accessions = {
-        (session.name or session.folder_name)
-        for session in direct_archive_sessions
-        if session.status != _DIRECT_ARCHIVE_FAILED_STATUS
-    } | {req.accession_number for req in executed_pacs_requests if req.status != _PACS_REQUEST_FAILED_STATUS}
+    # same failure after XNAT has moved the session out of the direct archive, so it is `failed` too
+    # (FLIP#1511).
+    # A session in any other status is the study still arriving. That includes a prearchive one: XNAT moves a
+    # direct-archive session whose build failed there as RECEIVING and rebuilds it.
+    sessions: list[DirectArchiveSession | PrearchiveSession] = [*direct_archive_sessions, *prearchive_sessions]
+    receiving = {
+        session.name or session.folder_name for session in sessions if session.status != _DIRECT_ARCHIVE_FAILED_STATUS
+    }
+    # An executed FAILED is a failure only when no session is receiving the study: DQR 3.1.0 looks for the
+    # received files in the prearchive alone, so it marks every request that reaches FLIP's direct-archive
+    # receiver FAILED ("Received zero files ...") as soon as its C-MOVE ends (FLIP#1816).
+    executed_failed = {
+        req.accession_number
+        for req in executed_pacs_requests
+        if req.status == _PACS_REQUEST_FAILED_STATUS and req.accession_number not in receiving
+    }
+    # A study that finished archiving after the experiments were read has that FAILED and no session left.
+    # XNAT saves the experiment before it deletes the direct-archive session, so one more read finds it.
+    if not executed_failed.isdisjoint(set(accession_ids) - archived):
+        archived |= {exp.label for exp in await run_in_threadpool(get_experiments, project_id, headers)}
+    failed_accessions = {
+        session.name or session.folder_name for session in sessions if session.status == _DIRECT_ARCHIVE_FAILED_STATUS
+    } | executed_failed
+    in_progress_accessions = receiving | {
+        req.accession_number for req in executed_pacs_requests if req.status != _PACS_REQUEST_FAILED_STATUS
+    }
     queued_accessions = {req.accession_number for req in queued_pacs_requests}
 
     for accession_number in accession_ids:
-        # TODO Unlike in the old repo, accession numbers are now not encrypted in OMOP database, so no need to decrypt
-        # here.
-
         # "successful" means archived as a queryable experiment — a directArchive that has only been
         # RECEIVED is not yet archived, so it stays `processing` until the experiment appears.
         if accession_number in archived:
@@ -499,11 +488,10 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
     2. If none have status failed (Failed or QueueFailed), return
     3. Create list of accession numbers that have failed, and re-archive those that failed in XNAT's
        prearchive; only the rest are pulled from the PACS again (FLIP#1511).
-    4. Unencrypt the accession numbers
-    5. Use Pacs Query request to find study for each accession ID -> put into a list
-    6. Make a ImportStudyRequest object with the list of studies
-    7. Check response gives all to QUEUED
-    8. Return success or failure
+    4. Use Pacs Query request to find study for each accession ID -> put into a list
+    5. Make a ImportStudyRequest object with the list of studies
+    6. Check response gives all to QUEUED
+    7. Return success or failure
 
     Args:
         project_id (str): The imaging project ID to retrieve the data about.
@@ -546,14 +534,11 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
     if not has_default_pacs(project_id, headers):
         return False
 
-    # For each accession ID, unencrypt it and find the study
+    # For each accession ID, find the study
     studies_list: list[ImportStudy] = []
 
     total_retries = len(failed_accession_numbers)
     for idx, accession_number in enumerate(failed_accession_numbers, 1):
-        # TODO Unlike in the old repo, accession numbers are now not encrypted in OMOP database.
-        # accession_number = decrypt(encrypted_accession_number)
-
         logger.info(f"Querying PACS for accession number {idx}/{total_retries}")
 
         try:

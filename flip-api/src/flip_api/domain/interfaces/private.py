@@ -44,37 +44,6 @@ class IResultsStats(TypedDict):
     client_visit: ICohortResponseClientVisit
 
 
-class ICohortResultsAge(TypedDict):
-    """Age statistics for the cohort response."""
-
-    mean: float
-
-
-class ICohortResultsGender(TypedDict):
-    """Gender statistics for the cohort response."""
-
-    male: int
-    female: int
-    missing_data: int
-
-
-class ICohortResultsClientVisit(TypedDict):
-    """Client visit statistics for the cohort response."""
-
-    inpatient: int
-    emergency: int
-    missing_data: int
-
-
-class IIncomingResultsStats(TypedDict):
-    """Statistics for incoming results."""
-
-    total_count: int
-    age: ICohortResultsAge
-    gender: ICohortResultsGender
-    client_visit: ICohortResultsClientVisit
-
-
 class ICohortResultDataResponse(TypedDict):
     """Cohort result data response."""
 

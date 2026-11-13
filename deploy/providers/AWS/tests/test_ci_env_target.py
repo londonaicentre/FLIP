@@ -56,9 +56,6 @@ STUB_ENV = {
     "FLIP_FL_RESULTS_BUCKET_NAME": "probe-results",
     "FLIP_APP_BUNDLES_BUCKET_NAME": "probe-bundles",
     "AICENTRE_BUCKET_NAME": "probe-aicentre",
-    "INTERNAL_SERVICE_KEY": "probe",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY_HASH": "probe",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
     "FL_API_KEY": "probe",  # pragma: allowlist secret
 }
 
@@ -227,13 +224,10 @@ COMPOSE_ENV = {
     "FLIP_UI_BUCKET_NAME": "probe-ui",
     "ADMIN_USER_PASSWORD": "probe",  # pragma: allowlist secret
     "AES_KEY_BASE64": "probe",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY": "probe",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY_HASH": "probe",  # pragma: allowlist secret
     "POSTGRES_DB": "flip",
     "POSTGRES_USER": "flip",
     "FL_ADMIN_DIRECTORY": "/app",
     "FL_SERVER_PORT": "8002",
-    "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
     "FL_API_KEY": "probe",  # pragma: allowlist secret
     "TRUST_API_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
     "SES_VERIFIED_EMAIL": "probe@example.com",

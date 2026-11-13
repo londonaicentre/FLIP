@@ -12,6 +12,7 @@
 
 import json
 import os
+import secrets
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
@@ -20,6 +21,7 @@ import httpx
 from sqlalchemy import Column
 from sqlmodel import Session, col, select
 
+from flip_api.auth.job_callback import hash_job_credential
 from flip_api.config import get_settings
 from flip_api.db.database import get_engine
 from flip_api.db.models.main_models import FLJob, Trust
@@ -495,6 +497,30 @@ def submit_job(fl_job_id: UUID, endpoint: str, model_id: UUID, session: Session)
     add_fl_backend_job_id(fl_job_id, fl_backend_job_id, session)
 
 
+def _get_fl_status(endpoint: str, subject: str, noun: str) -> Any | None:
+    """GET the FL API's ``check_<subject>_status`` route; ``None`` when unreachable, an error status or empty."""
+    url = f"{endpoint}/check_{subject}_status"
+    logger.debug(f"Checking {subject} status at '{url}'")
+    # NOTE the Flower FL API queries the SuperLink on each call (ControlServicer.ShowFederation for the
+    # clients), which can take ~9s — past httpx's 5s default — so a single check would time out and fail
+    # the whole run (run_jobs marks the model ERROR). Use the same generous timeout as Flower submit.
+    try:
+        response = http_get(url, timeout=30)
+    except httpx.HTTPError as e:
+        # HTTPError covers an unreachable FL API (RequestError) and an FL API that answers 4xx/5xx
+        # (HTTPStatusError), e.g. FLARE's FL API returning 500 while the fl-server behind it is down.
+        # Either way there is no status to report, so the caller shows the net offline. http_get has
+        # already logged a RequestError, so only an error response is logged here.
+        if isinstance(e, httpx.HTTPStatusError):
+            logger.error(f"HTTP GET failed for {url}: {e}")
+        return None
+    logger.debug(f"{subject.capitalize()} status response: {response}")
+    if not response:
+        logger.error(f"No response from FL API for {noun} at endpoint {endpoint}")
+        return None
+    return response
+
+
 def check_server_status(endpoint: str) -> IServerStatus | None:
     """
     Fetch the status of the server from the FL API.
@@ -506,26 +532,8 @@ def check_server_status(endpoint: str) -> IServerStatus | None:
         IServerStatus | None: The server status, or ``None`` when the FL API cannot be reached or
             answers with an error status.
     """
-    url = f"{endpoint}/check_server_status"
-    logger.debug(f"Checking server status at '{url}'")
-    # Same generous timeout as check_client_status: the Flower FL API hits the SuperLink and can
-    # be slower than httpx's 5s default.
-    try:
-        response = http_get(url, timeout=30)
-    except httpx.HTTPError as e:
-        # HTTPError covers an unreachable FL API (RequestError) and an FL API that answers 4xx/5xx
-        # (HTTPStatusError), e.g. FLARE's FL API returning 500 while the fl-server behind it is down.
-        # Either way there is no status to report, so the caller shows the net offline. http_get has
-        # already logged a RequestError, so only an error response is logged here.
-        if isinstance(e, httpx.HTTPStatusError):
-            logger.error(f"HTTP GET failed for {url}: {e}")
-        return None
-    logger.debug(f"Server status response: {response}")
-    if not response:
-        logger.error(f"No response from FL API for server at endpoint {endpoint}")
-        return None
-    server_status = IServerStatus.model_validate(response)
-    return server_status
+    response = _get_fl_status(endpoint, "server", "server")
+    return IServerStatus.model_validate(response) if response else None
 
 
 def check_client_status(endpoint: str) -> list[IClientStatus] | None:
@@ -539,27 +547,8 @@ def check_client_status(endpoint: str) -> list[IClientStatus] | None:
         list[IClientStatus] | None: A list of client statuses, or ``None`` when the FL API cannot be
             reached or answers with an error status.
     """
-    url = f"{endpoint}/check_client_status"
-    logger.debug(f"Checking client status at '{url}'")
-    # NOTE the Flower FL API queries the SuperLink (ControlServicer.ShowFederation) on each call,
-    # which can take ~9s — past httpx's 5s default — so a single check would time out and fail the
-    # whole run (run_jobs marks the model ERROR). Use the same generous timeout as Flower submit.
-    try:
-        response = http_get(url, timeout=30)
-    except httpx.HTTPError as e:
-        # HTTPError covers an unreachable FL API (RequestError) and an FL API that answers 4xx/5xx
-        # (HTTPStatusError), e.g. FLARE's FL API returning 500 while the fl-server behind it is down.
-        # Either way there is no status to report, so the caller shows the net offline. http_get has
-        # already logged a RequestError, so only an error response is logged here.
-        if isinstance(e, httpx.HTTPStatusError):
-            logger.error(f"HTTP GET failed for {url}: {e}")
-        return None
-    logger.debug(f"Client status response: {response}")
-    if not response:
-        logger.error(f"No response from FL API for clients at endpoint {endpoint}")
-        return None
-    client_statuses = [IClientStatus.model_validate(c) for c in response]
-    return client_statuses
+    response = _get_fl_status(endpoint, "client", "clients")
+    return [IClientStatus.model_validate(c) for c in response] if response else None
 
 
 def fetch_server_status(endpoint: str) -> IServerStatus | None:
@@ -708,6 +697,23 @@ def _job_gpu_override(fl_job_id: UUID, session: Session) -> IJobResources | None
     return IJobResources(num_gpus=job.num_gpus)
 
 
+def _mint_job_credential(fl_job_id: UUID, session: Session) -> str:
+    """Mint the credential the job's FL server presents on its callbacks, keeping only its hash.
+
+    Args:
+        fl_job_id (UUID): The FL job.
+        session (Session): SQLModel session.
+
+    Returns:
+        str: the plaintext, which goes to the FL API with the app and nowhere else.
+    """
+    credential = secrets.token_urlsafe(32)
+    job = session.exec(select(FLJob).where(FLJob.id == fl_job_id)).one()
+    job.credential_hash = hash_job_credential(credential)
+    session.commit()
+    return credential
+
+
 _RESOURCE_SOURCES = {
     "submission": "set for this run",
     "meta.json": "from the job's meta.json",
@@ -797,6 +803,7 @@ def start_training(
         trusts=clients,
         bundle_urls=bundle_urls,
         resources=_job_gpu_override(fl_job_id, session),
+        job_credential=_mint_job_credential(fl_job_id, session),
     )
 
     # Gate before the (up to 900s) app transfer, and again right before submission: submit_job

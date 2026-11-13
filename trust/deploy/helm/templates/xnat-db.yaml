@@ -76,6 +76,13 @@ spec:
         - name: postgres
           image: "{{ .Values.xnat.db.image.repository }}:{{ include "flip-trust.imageTag" (dict "pin" .Values.xnat.image.pin "global" .Values.global.image.tag "own" .Values.xnat.db.image.tag) }}"
           imagePullPolicy: {{ .Values.xnat.db.image.pullPolicy }}
+          # As Compose's xnat-db command (FLIP#662); args keep the image's guard entrypoint.
+          args:
+            - postgres
+            - -c
+            - max_connections={{ .Values.xnat.db.maxConnections }}
+            - -c
+            - shared_buffers={{ .Values.xnat.db.sharedBuffers }}
           ports:
             - name: postgres
               containerPort: 5432
@@ -84,11 +91,6 @@ spec:
             - configMapRef:
                 name: {{ include "flip-trust.fullname" . }}-xnat-db
           env:
-{{- with .Values.xnat.db.persistence.pgdataSubdir }}
-            # A fresh cloud disk has lost+found at its root, which initdb refuses (FLIP#1390).
-            - name: PGDATA
-              value: /var/lib/postgresql/data/{{ . }}
-{{- end }}
             # The Postgres superuser. Distinct from the xnat application role
             # below (FLIP-PT-056) — pointing both at one key would make the app
             # role's password superuser-equivalent, and the xnat-db entrypoint
@@ -120,11 +122,13 @@ spec:
                     # server. On a first init that means XNAT.sql has already created the role;
                     # on an already-populated PVC the entrypoint skips
                     # /docker-entrypoint-initdb.d altogether, so the role is whatever the volume
-                    # already held — the restore case the next block is here to cover.
+                    # already held — the restore case the next block is here to cover. The first
+                    # start after a major upgrade also restores the old cluster's dump before it
+                    # listens (FLIP#1812), and a hook that gives up kills that restore, hence an hour.
                     tries=0
                     until pg_isready -h 127.0.0.1 -p 5432 -U {{ .Values.xnat.db.datasourceUsername | quote }} >/dev/null 2>&1; do
                       tries=$((tries + 1))
-                      if [ "$tries" -ge 600 ]; then
+                      if [ "$tries" -ge 3600 ]; then
                         echo "xnat-db postStart: gave up waiting for postgres to accept TCP after ${tries} attempts;" \
                              "xnat role password NOT synced" >&2
                         exit 1
@@ -219,8 +223,14 @@ spec:
                       exit 1
                     fi
           volumeMounts:
+            # The image keeps its cluster in pg<major>/ under this mount (FLIP#1812). pgdataSubdir
+            # mounts one level down the volume instead: below a fresh cloud disk's lost+found,
+            # which initdb refuses (FLIP#1390), or where an older chart's PGDATA put the cluster.
             - name: data
               mountPath: /var/lib/postgresql/data
+              {{- with .Values.xnat.db.persistence.pgdataSubdir }}
+              subPath: {{ . }}
+              {{- end }}
           resources:
             {{- toYaml .Values.xnat.db.resources | nindent 12 }}
           livenessProbe:

@@ -13,7 +13,7 @@
 
 import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { reactive, ref } from "vue";
 
 import { FileUploadStatus } from "@/interfaces/model/types";
@@ -932,7 +932,20 @@ describe("pages/project/[projectId]/model/[modelId] — Initiate Training needs 
     });
 });
 
+// The job-types failure paths log to console.error. Silence it per test, and restore it even when a test fails.
+function silenceConsoleError() {
+    let consoleError: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+        consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    });
+    afterEach(() => {
+        consoleError.mockRestore();
+    });
+}
+
 describe("pages/project/[projectId]/model/[modelId] — job types unavailable", () => {
+    silenceConsoleError();
+
     const failingModel = () => makeModel(
         [
             {
@@ -952,7 +965,6 @@ describe("pages/project/[projectId]/model/[modelId] — job types unavailable", 
         // model below has every file the real map would ask for — the gate stays shut because we
         // do not know what to check, not because something is missing.
         fetchJobTypesMock.mockRejectedValue(new Error("503"));
-        const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
         mockSwrvData.value = failingModel();
 
         const wrapper = await mountPage();
@@ -962,26 +974,22 @@ describe("pages/project/[projectId]/model/[modelId] — job types unavailable", 
         expect(wrapper.find("[data-test='training']").attributes("data-job-types-error")).toBe("true");
         expect(wrapper.find("[data-test='model-upload']").attributes("data-job-types-error")).toBe("true");
         expect(wrapper.find("[data-test='initiate-training-btn']").attributes("disabled")).toBeDefined();
-        consoleError.mockRestore();
     });
 
     it("surfaces the failure inline only — no snackbar", async () => {
         // Deliberate: the blocked state persists, so a 12s toast would vanish long before the
         // condition it describes. The alert in the Training card is the whole signal.
         fetchJobTypesMock.mockRejectedValue(new Error("503"));
-        const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
         mockSwrvData.value = failingModel();
 
         await mountPage();
         await flushPromises();
 
         expect(mockSnackbarError).not.toHaveBeenCalled();
-        consoleError.mockRestore();
     });
 
     it("retry clears the cache, refetches, and recovers", async () => {
         fetchJobTypesMock.mockRejectedValueOnce(new Error("503"));
-        const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
         mockSwrvData.value = failingModel();
 
         const wrapper = await mountPage();
@@ -995,12 +1003,10 @@ describe("pages/project/[projectId]/model/[modelId] — job types unavailable", 
         expect(clearJobTypesCacheMock).toHaveBeenCalledTimes(1);
         expect(fetchJobTypesMock).toHaveBeenCalledTimes(2);
         expect(wrapper.find("[data-test='training']").attributes("data-job-types-error")).toBe("false");
-        consoleError.mockRestore();
     });
 
     it("a retry that fails again leaves the failure state in place", async () => {
         fetchJobTypesMock.mockRejectedValue(new Error("503"));
-        const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
         mockSwrvData.value = failingModel();
 
         const wrapper = await mountPage();
@@ -1012,16 +1018,16 @@ describe("pages/project/[projectId]/model/[modelId] — job types unavailable", 
 
         expect(wrapper.find("[data-test='training']").attributes("data-job-types-error")).toBe("true");
         expect(mockSnackbarError).not.toHaveBeenCalled();
-        consoleError.mockRestore();
     });
 });
 
 describe("pages/project/[projectId]/model/[modelId] — retry is guarded against double clicks", () => {
+    silenceConsoleError();
+
     it("ignores a second Retry while the first is still in flight", async () => {
         // AiAlert renders its action as a bare <span> with no disabled state, so without the
         // in-flight guard an impatient second click fires a second request.
         fetchJobTypesMock.mockRejectedValueOnce(new Error("503"));
-        const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
         mockSwrvData.value = makeModel(
             [{
                 name: "config.json",
@@ -1050,6 +1056,5 @@ describe("pages/project/[projectId]/model/[modelId] — retry is guarded against
         release(jobTypes);
         await flushPromises();
         expect(wrapper.find("[data-test='training']").attributes("data-job-types-error")).toBe("false");
-        consoleError.mockRestore();
     });
 });

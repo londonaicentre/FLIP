@@ -84,14 +84,19 @@ Does the hub need inbound access to the Trust?
 
 Why is the federated-learning connection not on port 443 like everything else?
    The FL client connects out to the hub's FL endpoint over mutual TLS on its own port (8002 on the production hub).
-   NVIDIA, whose framework carries that traffic, advises against 443 because the protocol is gRPC rather than
-   plain HTTPS and some inspection appliances reject it there. What matters is how the Trust's firewall decides:
-   one that filters by port needs one rule; one that classifies by application must allow ``ssl`` on that port;
-   one that decrypts outbound TLS must exempt the endpoint. :ref:`readiness-network` has the questions to ask.
+   NVIDIA, whose framework carries that traffic, advises against 443 because the protocol is gRPC rather than plain
+   HTTPS and some inspection appliances reject it there. What the Trust needs depends on how its firewall decides:
+
+   - a firewall that filters by port needs one rule;
+   - one that classifies by application must allow ``ssl`` on that port;
+   - one that decrypts outbound TLS must exempt the endpoint.
+
+   :ref:`readiness-network` has the questions to ask.
 
 Does a Trust need a site-to-site VPN?
-   Only when it cannot allow that one outbound connection over the internet, by policy or because its network team
-   will not write a per-port rule. Everything else FLIP does is ordinary outbound HTTPS. See :ref:`site-to-site-vpn`.
+   Only when it cannot allow the outbound federated-learning connection, on its own port, over the internet, by policy
+   or because its network team will not write a per-port rule. Everything else FLIP does is ordinary outbound HTTPS. See
+   :ref:`site-to-site-vpn`.
 
 Can the node sit behind the Trust's web proxy?
    Not yet. The node needs a direct route, through a firewall allow-list, to the destinations on
@@ -108,9 +113,9 @@ Can a Trust run both FL frameworks?
 
 What happens if the node goes offline during training?
    It depends on the framework. NVIDIA FLARE needs every selected Trust: the hub refuses to submit while one is
-   disconnected, and a Trust that drops out after submission but before the job starts leaves the model waiting
-   until someone aborts it. Flower trains on whichever SuperNodes are connected when the run starts. A Trust that
-   reconnects joins the next job. See :doc:`components/component-fl-nets`.
+   disconnected, and a Trust that drops out after submission but before the job starts leaves the model waiting until
+   someone aborts it. Flower trains on whichever Trusts' clients (Flower calls them SuperNodes) are connected when the
+   run starts. A Trust that reconnects joins the next job. See :doc:`components/component-fl-nets`.
 
 How is a Trust upgraded to a new release?
    The Trust's operator runs one upgrade command when ready; nothing on the hub pushes an upgrade. A site runs the
@@ -121,7 +126,7 @@ How is a Trust upgraded to a new release?
 For FLIP admins
 **************************
 
-Can a user have more than 1 role assigned to them?
+Can a user have more than one role?
    One platform role: ``admin``, ``researcher`` or ``viewer``. Changing it in the Admin Area replaces the old one, and
    there is no need to stack roles, since ``admin`` already includes everything a ``researcher`` can do. The exception
    is **Trust Admin**: it is held for one Trust, on top of the ``researcher`` role. See

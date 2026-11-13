@@ -167,7 +167,7 @@ def train(msg: Message, context: Context) -> Message:
 
 @app.evaluate()
 def evaluate(msg: Message, context: Context) -> Message:
-    """Evaluate the global model on the local test split (last round only)."""
+    """Evaluate the global model on the local test split."""
     config = _load_config()
     val_split = float(config["VAL_SPLIT"])
     test_split = float(config["TEST_SPLIT"])
@@ -208,22 +208,18 @@ def evaluate(msg: Message, context: Context) -> Message:
 
     test_metrics = validate_func(model, test_loader, device, lesions)
 
-    # Test metrics are a single point, plotted at x=0 by convention via the ".x_0" suffix
-    # so handle_client_metrics forwards one Hub point per metric.
+    # Bare keys plot at the server round evaluated, so per-round evaluation (best-model
+    # selection) draws a curve and a last-round-only evaluation a single point.
     metrics: dict[str, float] = {
         **_flatten_per_lesion(test_metrics, "test"),
         "num-examples": len(test_loader.dataset),
-        "test_loss.x_0": float(test_metrics["loss"]),
     }
     # Macro F1 across lesions — the one interpretable number this app is meant to be judged
     # on, and what best-model selection scores (best-model-metric = "test_f1-score"). The
-    # per-lesion F1s below stay for the breakdown; the server weight-averages whichever key
-    # it was configured with across clients by num-examples.
+    # per-lesion breakdown rides along as the "test_f1-score-<name>" keys flattened above; the
+    # server weight-averages whichever key it was configured with across clients by num-examples.
     macro_f1 = macro_mean(test_metrics, "f1-score", lesions)
     metrics["test_f1-score"] = macro_f1
-    metrics["test_f1-score.x_0"] = macro_f1
-    for name in lesions.get_lesion_list():
-        metrics[f"test_f1-{name}.x_0"] = float(test_metrics[f"f1-score-{name}"])
 
     site_config = ConfigRecord({"site": client_name})
     return Message(

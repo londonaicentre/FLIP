@@ -17,7 +17,6 @@ CONFIG_FED_CLIENT = "config_fed_client.json"
 CONFIG_FED_SERVER = "config_fed_server.json"
 META = "meta.json"
 ENVIRONMENT = "environment.json"
-MODELS = "models.py"
 
 # config.json key fl-api writes the hub's model id under, for FLIP's components on the FL server
 # (flip.nvflare.runtime.get_flip_model_id). The counterpart of the Flower fl-api's ``flip-model-id``

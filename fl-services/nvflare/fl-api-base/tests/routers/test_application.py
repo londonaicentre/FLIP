@@ -73,7 +73,7 @@ def test_upload_app_success(client, override_session):
         args, kwargs = mock_upload.call_args
         assert args[0] == MODEL_ID  # model_id
         # body is a Pydantic model, compare its dict representation
-        assert args[1].model_dump() == {**payload, "resources": None}
+        assert args[1].model_dump() == {**payload, "resources": None, "job_credential": None}
         assert kwargs["upload_dir"] == "/tmp/uploads"
 
 

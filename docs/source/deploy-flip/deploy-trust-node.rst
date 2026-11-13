@@ -19,11 +19,11 @@ A **trust node** is FLIP's footprint inside a participating trust: trust-api, im
 client, an OMOP database, XNAT, a PACS (mocked by Orthanc until you connect your own) and a logging stack. It polls
 the Central Hub for work over HTTPS. **All traffic to the hub is outbound**; no inbound port is opened for it.
 
-A trust deciding whether it can join, and the people who must prepare its data, PACS, network and host, start
-with :doc:`trust-readiness-checklist`: the prerequisites in plain language, by owner, in order.
+If your trust is still deciding whether it can join, start with :doc:`trust-readiness-checklist`. It lists the
+prerequisites for the data, PACS, network and host teams in plain language, by owner and in order.
 
-Read this page next. It covers what every trust node needs, whatever it runs on. Then follow
-:doc:`onboarding-a-trust`, which sends you to your platform's page for the install.
+Then read this page, which covers what every trust node needs whatever it runs on. Finally follow
+:doc:`onboarding-a-trust`, which sends you to your platform's install page.
 
 .. toctree::
    :maxdepth: 1
@@ -134,8 +134,8 @@ Choose your platform
        subset. The node itself installs as a Docker Compose host.
      - :doc:`deploy-flip-node-in-tre`
 
-A trust on AWS, in any account, is :doc:`deploy-flip-node-aws-ec2` or :doc:`deploy-flip-node-aws-eks`. The Central
-Hub deployment creates no trust of its own.
+To run a trust on AWS, in any account, use :doc:`deploy-flip-node-aws-ec2` or :doc:`deploy-flip-node-aws-eks`.
+Deploying the Central Hub does not create a trust node.
 
 ****************
 Before you start
@@ -173,8 +173,7 @@ Central Hub
 ===========
 
 The hub must be deployed in AWS (:doc:`deploy-central-hub-aws-lza`) before a trust can be registered and receive its
-FL participant kit. The FL entry point is the networking account's edge. Shared prerequisites are in
-:doc:`deploy-central-hub`.
+FL participant kit. Shared prerequisites are in :doc:`deploy-central-hub`.
 
 .. _deploy-trust-node-network:
 
@@ -261,8 +260,8 @@ from ``ghcr.io/londonaicentre/mirror/`` (:gh:`trust/deploy/mirror-images.manifes
 upstream's images).
 
 The hub identifies a trust by its kit's mTLS certificates and API key, not by its address, so the node needs no fixed
-public address. Still tell the FLIP team the public address the node's traffic leaves from, and when it changes: the
-hub's FL edge is restricted to declared trust addresses.
+public address. The hub's FL edge does, however, admit only declared trust addresses: **before going live, give the
+FLIP team the public address the node's traffic leaves from**, and tell them whenever it changes.
 
 A connection that opens and then drops is a different problem from a blocked port, and needs a different request.
 Check it from the node, with the FL endpoint and port from the kit:

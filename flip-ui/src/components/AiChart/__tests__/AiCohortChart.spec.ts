@@ -111,6 +111,15 @@ function mountChart(options: { withTrustStore?: boolean; data?: typeof DATA } = 
     });
 }
 
+// Mounts the chart and returns the first option object pushed to echarts.
+async function firstOption(options?: Parameters<typeof mountChart>[0]) {
+    mountChart(options);
+    await nextTick();
+    await flushPromises();
+
+    return setOption.mock.calls[0][0];
+}
+
 describe("AiCohortChart", () => {
     beforeEach(() => {
         setOption.mockReset();
@@ -128,11 +137,7 @@ describe("AiCohortChart", () => {
     });
 
     it("overlays the legend and toolbox inside the plot like the metrics chart", async () => {
-        mountChart();
-        await nextTick();
-        await flushPromises();
-
-        const opts = setOption.mock.calls[0][0];
+        const opts = await firstOption();
         // The grid takes the full width; only the title keeps a band above it.
         expect(opts.grid.right).toBeLessThanOrEqual(24);
         // Toolbox floats inside the plot below the title band; the legend floats
@@ -146,22 +151,14 @@ describe("AiCohortChart", () => {
     });
 
     it("titles the chart above the plot only, not again under the x axis", async () => {
-        mountChart();
-        await nextTick();
-        await flushPromises();
-
-        const opts = setOption.mock.calls[0][0];
+        const opts = await firstOption();
         expect(opts.title.text).toBeTruthy();
         // The same string used to repeat as the x-axis name below the plot.
         expect(opts.xAxis.name).toBeUndefined();
     });
 
     it("ships no persistent zoom UI, only the on-demand toolbox box-zoom", async () => {
-        mountChart();
-        await nextTick();
-        await flushPromises();
-
-        const opts = setOption.mock.calls[0][0];
+        const opts = await firstOption();
         // No dataZoom components: no slider bar under the plot. Zoom lives behind
         // the toolbox magnifier instead, matching the training metrics chart.
         expect(opts.dataZoom).toBeUndefined();
@@ -170,11 +167,7 @@ describe("AiCohortChart", () => {
     });
 
     it("emits a series per trust and uses the trust code as the legend label when available", async () => {
-        mountChart();
-        await nextTick();
-        await flushPromises();
-
-        const opts = setOption.mock.calls[0][0];
+        const opts = await firstOption();
         expect(opts.series).toHaveLength(2);
         // Trust One has a code in the trust store → label should be the code.
         expect(opts.series[0].name).toBe("T1");
@@ -184,26 +177,18 @@ describe("AiCohortChart", () => {
     });
 
     it("falls back to trustName when the trust store is empty", async () => {
-        mountChart({ withTrustStore: false });
-        await nextTick();
-        await flushPromises();
-
-        const opts = setOption.mock.calls[0][0];
+        const opts = await firstOption({ withTrustStore: false });
         expect(opts.series[0].name).toBe("Trust One");
     });
 
     it("builds the xAxis from the unique sorted union of result values", async () => {
-        mountChart();
-        await nextTick();
-        await flushPromises();
-
-        const opts = setOption.mock.calls[0][0];
+        const opts = await firstOption();
         expect(opts.xAxis.data).toEqual(["<50", "50-70"]);
     });
 
     it("orders numeric categories by number, so 20-29 comes before 100-109", async () => {
         const buckets = ["110-119", "20-29", "100-109", "10-19"];
-        mountChart({
+        const opts = await firstOption({
             data: {
                 name: "Age Distribution",
                 results: [{
@@ -216,10 +201,6 @@ describe("AiCohortChart", () => {
                 }]
             }
         });
-        await nextTick();
-        await flushPromises();
-
-        const opts = setOption.mock.calls[0][0];
         const ordered = ["10-19", "20-29", "100-109", "110-119"];
         expect(opts.xAxis.data).toEqual(ordered);
         expect(opts.series[0].data.map(([value]: [string, number]) => value)).toEqual(ordered);
@@ -248,11 +229,7 @@ describe("AiCohortChart", () => {
     });
 
     it("themes series and chrome from the shared chart theme", async () => {
-        mountChart();
-        await nextTick();
-        await flushPromises();
-
-        const opts = setOption.mock.calls[0][0];
+        const opts = await firstOption();
         expect(opts.color).toEqual([...CHART_SERIES_COLORS.light]);
         // The shared toolbox theme applies as-is; this chart adds its own
         // on-demand box-zoom feature on top (covered by the zoom test above).

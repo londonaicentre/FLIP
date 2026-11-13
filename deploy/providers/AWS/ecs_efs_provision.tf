@@ -12,16 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# One-shot provisioning task that syncs FL certificates and keys from S3
-# onto the EFS file system before the fl-api and fl-server ECS services
-# start. On EC2 this was done by Ansible (site.yml copying to
-# /opt/flip/services/...). On Fargate the EFS access points start empty,
-# so we need a bootstrap run that creates the required directory layout.
+# One-shot provisioning task that syncs the FL kit (FLARE) or creds (Flower)
+# from S3 onto the EFS access points before the fl-api and fl-server ECS
+# services start. The access points start empty, so this run creates the
+# directory layout and fills it.
 
 locals {
   # FLARE participant kits are produced by `nvflare provision` and uploaded
-  # to the AI Centre bucket - NOT the FLIP bucket. The path mirrors the
-  # source-of-truth used by site.yml's central-hub kit sync (lines 168-169).
+  # to the AI Centre bucket - NOT the FLIP bucket.
   # Bucket: aicentre_bucket; layout:
   #   fl-flare-participant-kits/{date}/net-1/services/fl-server-net-1/{startup,local}/...
   #   fl-flare-participant-kits/{date}/net-1/services/flip-fl-api-net-1/{startup,local}/...
@@ -55,16 +53,26 @@ resource "null_resource" "provision_efs_certs" {
 
   provisioner "local-exec" {
     command     = <<-EOT
-      TASK_ARN=$(aws ecs run-task \
-        --cluster ${aws_ecs_cluster.flip.name} \
-        --task-definition ${aws_ecs_task_definition.efs_provision[0].arn} \
-        --launch-type FARGATE \
-        --network-configuration "awsvpcConfiguration={subnets=[${join(",", local.app_subnet_ids)}],securityGroups=[${aws_security_group.ecs_fl_server.id}],assignPublicIp=DISABLED}" \
-        --count 1 \
-        --region ${var.AWS_REGION} \
-        --no-cli-pager \
-        --query 'tasks[0].taskArn' \
-        --output text)
+      # A task role created in this same apply is not assumable everywhere at once (FLIP#1878):
+      # that refusal alone is retried, for up to a minute.
+      RUN_TASK_ERR=$(mktemp)
+      for attempt in 1 2 3 4 5 6; do
+        TASK_ARN=$(aws ecs run-task \
+          --cluster ${aws_ecs_cluster.flip.name} \
+          --task-definition ${aws_ecs_task_definition.efs_provision[0].arn} \
+          --launch-type FARGATE \
+          --network-configuration "awsvpcConfiguration={subnets=[${join(",", local.app_subnet_ids)}],securityGroups=[${aws_security_group.ecs_fl_server.id}],assignPublicIp=DISABLED}" \
+          --count 1 \
+          --region ${var.AWS_REGION} \
+          --no-cli-pager \
+          --query 'tasks[0].taskArn' \
+          --output text 2>"$RUN_TASK_ERR") && break
+        cat "$RUN_TASK_ERR" >&2
+        grep -q "unable to assume the role" "$RUN_TASK_ERR" || exit 1
+        TASK_ARN=""
+        sleep 10
+      done
+      [ -n "$TASK_ARN" ] || { echo "ECS could not assume the EFS provisioning task's role after a minute."; exit 1; }
 
       echo "Provisioning task ARN: $TASK_ARN"
 
@@ -107,7 +115,8 @@ resource "aws_ecs_task_definition" "efs_provision" {
   cpu                      = "256"
   memory                   = "512"
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
-  task_role_arn            = aws_iam_role.ecs_fl_server_task.arn
+  # Its own role: the fl-server role runs FL job code and must not read the kits.
+  task_role_arn = aws_iam_role.ecs_fl_kit_provision_task.arn
 
   container_definitions = jsonencode([
     {
@@ -136,12 +145,13 @@ resource "aws_ecs_task_definition" "efs_provision" {
         # skips size+mtime-equivalent files, which can leave rotated creds
         # stale. certificates/ carries ca.crt + server.pem/server.key for the
         # SuperLink; keys/ the per-slot SuperNode public keys the
-        # register-supernode-keys one-shot (ecs_flower.tf) feeds to it.
+        # register-supernode-keys one-shot (ecs_flower.tf) feeds to it. Only
+        # the *.pub files: a SuperNode's private key belongs to its trust.
         mkdir -p /mnt/flower-certs /mnt/flower-keys /mnt/flower-jobs
         find /mnt/flower-certs -mindepth 1 -delete 2>/dev/null || true
         find /mnt/flower-keys -mindepth 1 -delete 2>/dev/null || true
         aws s3 sync "$S3_BASE/certificates/" /mnt/flower-certs/
-        aws s3 sync "$S3_BASE/keys/" /mnt/flower-keys/
+        aws s3 sync "$S3_BASE/keys/" /mnt/flower-keys/ --exclude "*" --include "*.pub"
 
         echo "EFS provisioning complete."
         SCRIPT
@@ -252,10 +262,9 @@ resource "aws_ecs_task_definition" "efs_provision" {
     name = "tmp"
   }
 
-  # Mount the same EFS access points as the runtime services. certs/keys
-  # access points still exist in efs.tf for state continuity, but the
-  # provisioning task no longer touches them (kit puts SSL files under
-  # local/site-1/ssl-*).
+  # Mount the same EFS access points as the runtime services. The FLARE
+  # branch does not mount the certs/keys access points (its kit carries the
+  # SSL files under local/site-1/ssl-*); the Flower branch syncs them.
   dynamic "volume" {
     for_each = var.fl_backend == "flower" ? {
       "efs-flower-certs" = "fl_server_certs"
