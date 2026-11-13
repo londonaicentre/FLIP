@@ -90,6 +90,10 @@ On the reference Synthea cohort the aggregated global model reaches roughly **0.
 AUROC** after the default 5 rounds. The shipped config (hidden 32, 8 local epochs × 5 rounds,
 LR 0.02 → 0.001) was tuned for this; a narrower layer or fewer rounds plateaus lower.
 
+The learning-rate decay restarts every round: `client_app.py` builds the optimizer and scheduler
+inside `train()`, so each round runs `LR_START` → `LR_END` over its `LOCAL_ROUNDS` local epochs. The
+NVFLARE twin follows the same schedule.
+
 ## Differential privacy
 
 Training updates are privatised **on the SuperNode**, before the reply leaves the trust. The

@@ -145,11 +145,16 @@ degenerate split stays visible rather than silently pinning "best".
 
 ## Expected performance
 
-On the reference Synthea cohort, the aggregated global model reaches roughly **0.85–0.92 held-out
-AUROC** after the default 5 rounds (measured across seeds; prediabetes is a strong, early predictor
-in Synthea's disease modules). Model capacity and training length matter here: the shipped config
-(hidden layer of 32, 8 local epochs × 5 global rounds, LR 0.02 → 0.001) was tuned for this — a
-narrower 16-unit layer or a single epoch/round plateaus markedly lower.
+On the reference Synthea cohort, the aggregated global model reaches roughly **0.87–0.99 held-out
+AUROC** after the default 5 rounds (mean 0.94 over five seeds, simulator, 2 sites; prediabetes is a
+strong, early predictor in Synthea's disease modules). Model capacity and training length matter
+here: the shipped config (hidden layer of 32, 8 local epochs × 5 global rounds, LR 0.02 → 0.001) was
+tuned for this — a narrower 16-unit layer or a single epoch/round plateaus markedly lower.
+
+The learning-rate decay restarts every global round: each round runs `LR_START` → `LR_END` over its
+`LOCAL_ROUNDS` local epochs, the same schedule as the Flower twin. The Adam optimizer is kept across
+rounds here, while the Flower twin builds a new one each round; on this cohort the two measure the
+same.
 
 ## How to run
 

@@ -102,6 +102,10 @@ per round); the staging validation in
 `GLOBAL_ROUNDS: 5` × `LOCAL_ROUNDS: 2`. On the platform `GLOBAL_ROUNDS` sets the round count; the local
 simulator takes its round count from `NUM_ROUNDS` instead (see [How to run](#how-to-run)).
 
+The learning rate follows one schedule for the whole job: it decays `LR_START` → `LR_END` over the
+first round's local epochs and then holds at `LR_FLOOR` for every later round, so later rounds keep
+training at a steady rate. It is not restarted per round.
+
 ## Dataset setup
 
 This app expects a DECAF-formatted chest X-ray dataset: a per-site CSV dataframe with `accession_id`

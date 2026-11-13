@@ -61,6 +61,12 @@ Binary Cross-Entropy loss with masking of don't-care labels (`-1`). Validation r
 each local round inside the trainer (`VALIDATE_EVERY` in `config.json`). Cross-site model evaluation
 is handled by the server workflow — no `validator.py` needed.
 
+The learning rate decays once over the whole job: `LR_START` → `LR_END` across the first round's
+`LOCAL_ROUNDS` epochs, then on below `LR_END`, so later rounds only fine-tune the aggregated model.
+The Flower twin instead restarts the decay every round. Restarting was measured here and not
+adopted: on the reference mini dataset it makes the first local epoch of each round unstable and
+gave no better test F1 (FLIP#1834).
+
 ### Best-model selection
 
 `BEST_MODEL_METRIC` in `config.json` enables saving the best global model alongside the final one

@@ -393,8 +393,9 @@ def main() -> None:
     # gamma_lr is sized so the LR decays LR_START -> LR_END over one global round's worth of local
     # epochs (LOCAL_ROUNDS steps). The optimizer/scheduler are created once and persist across the
     # whole flare.is_running() loop (never reset per global round), so from round 2 onwards the LR
-    # keeps decaying below LR_END (continuous decay). This matches the legacy xray_classification
-    # trainer's scheduler lifecycle.
+    # keeps decaying below LR_END (continuous decay): later rounds only fine-tune. Kept on purpose
+    # (FLIP#1834): restarting at LR_START every round makes the first local epoch of each round
+    # unstable on this model and measured no better on the reference dataset.
     gamma_lr = (config["LR_END"] / config["LR_START"]) ** (1 / config["LOCAL_ROUNDS"])
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma_lr)
 

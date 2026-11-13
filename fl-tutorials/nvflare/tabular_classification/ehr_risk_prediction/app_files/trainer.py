@@ -193,7 +193,8 @@ def local_train(
     model: torch.nn.Module,
     loaders: dict[str, DataLoader],
     optimizer: torch.optim.Optimizer,
-    scheduler: torch.optim.lr_scheduler.ExponentialLR,
+    lr_start: float,
+    lr_end: float,
     criterion: torch.nn.Module,
     val_criterion: torch.nn.Module,
     device: torch.device,
@@ -202,6 +203,12 @@ def local_train(
     global_round: int,
 ) -> int:
     """Train for ``epochs`` local epochs, streaming per-epoch metrics. Returns iteration count."""
+    # The decay restarts every global round: the LR runs lr_start -> lr_end over this round's
+    # local epochs. The optimizer itself (its Adam moments) carries over between rounds.
+    for group in optimizer.param_groups:
+        group["lr"] = lr_start
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=(lr_end / lr_start) ** (1 / epochs))
+
     n_iterations = 0
     for epoch in range(epochs):
         train_metrics = run_epoch(model, loaders["train"], device, criterion, optimizer)
@@ -270,11 +277,6 @@ def main() -> None:
 
     model = get_model().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config["LR_START"])
-    # gamma_lr is sized so the LR decays LR_START -> LR_END over one global round's worth of
-    # local epochs; created once and persisting across the flare.is_running() loop, so from
-    # round 2 onwards the LR keeps decaying below LR_END (matches the imaging tutorials).
-    gamma_lr = (config["LR_END"] / config["LR_START"]) ** (1 / config["LOCAL_ROUNDS"])
-    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma_lr)
 
     # pos_weight rebalances the ~6%-positive cohort in the training loss; validation/test
     # report the plain unweighted loss so sites with different prevalence stay comparable.
@@ -300,7 +302,8 @@ def main() -> None:
                 model,
                 loaders,
                 optimizer,
-                scheduler,
+                config["LR_START"],
+                config["LR_END"],
                 criterion,
                 val_criterion,
                 device,
