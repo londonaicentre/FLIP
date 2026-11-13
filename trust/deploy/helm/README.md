@@ -50,6 +50,7 @@ make sync-trust-kit KIT=<CODE> HUB=<env>
 python3 trust/deploy/helm/scripts/generate_values.py \
   --env-file trust/.env.<CODE>.<env> --output-dir trust/deploy/helm
 make -C trust/deploy/helm stage-kit KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
+make -C trust/deploy/helm stage-vocab VOCAB_DIR=<vocabulary folder> KUBE_CONTEXT=<ctx>  # "OMOP core vocabulary"
 make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
 make -C trust/deploy/helm status && make -C trust/deploy/helm smoke-cstore
 ```
@@ -274,7 +275,7 @@ file still installs, with the seed's defaults in force — so move any override 
 | `omopDb.initJob.enabled: false` (pre-seeded PVC) | `trustData.seed.omop: false` |
 | `orthanc.initJob.enabled: true` | `trustData.seed.orthanc: true` |
 | `omopDb.initJob.s3Bucket` / `archiveName` (S3 snapshot) | no equivalent — the mock data is fetched anonymously from Hugging Face; an air-gapped cluster pre-seeds the PVCs by hand |
-| `omopDb.initJob.awsProfile` / `.hostAwsMount` | `omopDb.vocabLoad.awsProfile` / `.hostAwsMount` — they only ever served the vocab-load hook |
+| `omopDb.initJob.awsProfile` / `.hostAwsMount` | none — they only ever served the vocab-load hook, which reads a staged folder since FLIP#923 |
 
 An existing PVC restored from a snapshot keeps working: the hook's OMOP half replaces only the
 listed projects' rows and its Orthanc half dedupes on `SOPInstanceUID`, so the first upgrade
@@ -481,96 +482,82 @@ the external host instead of deploying the service itself.
 
 The `omop-db` image and the database the `trust-seed` hook fills are both
 **vocab-free** (FLIP#842/843). The licensed core vocabulary — SNOMED CT, LOINC,
-Read v2, dm+d — is streamed in by the `omop-vocab-load`
-post-install/post-upgrade hook.
+Read v2, dm+d — is loaded by the `omop-vocab-load` post-install/post-upgrade
+hook, from a folder the operator stages onto the node (FLIP#923). The chart
+fetches nothing and needs no cloud credentials or egress for it, so the same
+route works for every site, including one with no AWS access.
 
-That bundle cannot be publicly mirrored, so unlike the mock-data seed there is **no
-anonymous fallback**. The hook runs only when `omopDb.vocabLoad.s3Bucket` names
-a bucket the cluster can read; the chart default is empty, so a default install
-succeeds with **no vocabulary loaded** (`helm install` prints a warning).
+That bundle cannot be publicly mirrored, so there is **no anonymous fallback**.
+The hook runs only when `omopDb.vocabLoad.hostPath` names the staged folder; the
+chart default is empty, so a default install succeeds with **no vocabulary
+loaded** (`helm install` prints a warning).
 
 > **Cohort queries that join `omop.concept` return nothing until the vocabulary
 > is loaded.** The stack passes every health check in this state — the only
 > symptom is empty cohorts.
 
-Two ways to load it:
+1. **Get the bundle as a folder of Athena CSVs** (`CONCEPT.csv`, `CONCEPT_ANCESTOR.csv`, …).
+   With read access to the AI Centre bucket, download it on your own machine with your
+   AWS CLI profile (nothing runs in the cluster):
 
-| You have… | Do this |
-| --- | --- |
-| Org S3 access | `make -C trust/deploy/helm sync-kit KIT=<CODE> HUB=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships it commented out (a still-`<placeholder>` value is treated as unset), and trust roles have no cross-account read. `sync-kit` skips the load, with a warning, when an older kit still carries the dev bucket (`flipdev-aicentre`) outside development (#881), and `NO_VOCAB_LOAD=1` keeps it out entirely on a cluster with no route to AWS (AKS, FLIP#1390). A bucket the cluster cannot read costs more than the vocabulary: the load is a `post-install,post-upgrade` hook, so its failure **fails and rolls back the whole release**. |
-| Your own licences | Build an equivalent bundle from [OHDSI Athena](https://athena.ohdsi.org/) / [NHS TRUD](https://isd.digital.nhs.uk/) (see `trust/omop-db/README.md`), put it in a bucket you control, and set `omopDb.vocabLoad.s3Bucket` / `bundleName`. Or run `trust/omop-db/files/load_core_vocab.sh` against the database directly. |
+   ```sh
+   make -C trust/deploy/helm download-vocab        # → trust/omop-db/data/vocab_aicentre_core_20240916/
+   ```
 
-Run both targets with `-C trust/deploy/helm` (or from that directory):
-the repo-root `make sync-kit` does not exist, and the root `deploy-trust-k8s`
-forwards to the chart's plain `deploy` target, so `KIT=` never reaches the
-per-trust override file.
+   `VOCAB_S3_BUCKET=<bucket>` names another environment's bucket. Without that access,
+   export the vocabularies from [OHDSI Athena](https://athena.ohdsi.org/) (plus
+   [NHS TRUD](https://isd.digital.nhs.uk/) for the UK ones) and unzip the export into a
+   folder — `trust/omop-db/README.md`, "The core vocabulary bundle".
+2. **Stage it onto the node** at `/opt/flip/omop-vocab` (`VOCAB_DEST=` to change it). On kind:
 
-AWS credentials for the fetch: `omopDb.vocabLoad.awsProfile` and
-`omopDb.vocabLoad.hostAwsMount` (a host `~/.aws` mount for clusters whose node *is*
-the machine holding your SSO session — k3s, minikube's `none` driver; IRSA on
-EKS). Note `awsProfile` only reaches this Job when `hostAwsMount` is enabled.
+   ```sh
+   make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<ctx>
+   ```
 
-#### Local clusters (kind): the mount is resolved on the node, not your workstation
+   On any other cluster (k3s, a VM) copy the folder there yourself, readable by every user.
+   `stage-vocab` empties the destination first, so a re-stage leaves no file of the previous
+   bundle behind.
+3. **Point the chart at it**: `OMOP_VOCAB_DIR=/opt/flip/omop-vocab` in the kit file
+   (`sync-kit` writes `omopDb.vocabLoad.hostPath` from it), or
+   `--set omopDb.vocabLoad.hostPath=/opt/flip/omop-vocab`, then deploy as usual.
 
-`hostAwsMount.hostPath` renders as a `hostPath` volume, which Kubernetes resolves
-**on the node**. On `kind` the node is itself a container and your `~/.aws` is
-not inside it: the path does not exist there, the volume's `type: Directory`
-check fails, and the Job pod never starts (`MountVolume.SetUp failed … is not a
-directory` in its events) while the release waits on the hook until
-`--timeout`. The chart cannot see this at render time, which is why
-`values.yaml` ships no `hostPath` default. Two ways through, neither of which
-puts long-lived keys in the cluster:
+`hostPath` resolves on whichever node runs the Job: with more than one node, pin the Job to the
+node holding the folder with `omopDb.vocabLoad.nodeSelector` (e.g. `kubernetes.io/hostname: <node>`).
+The folder is needed only for the first load. The Job first asks the database whether the vocabulary
+is already there and, if so, reads nothing from the folder, so upgrades pass once it is removed or the
+node is rebuilt. The volume is `DirectoryOrCreate` for that reason: the kubelet mounts volumes before
+any container runs, so with `Directory` a missing folder would hold the pod in `ContainerCreating`
+until `HELM_TIMEOUT`; instead it leaves an empty folder at the path. With the vocabulary not yet
+loaded and no `CONCEPT.csv` there, the Job fails with that message.
+`values-aks.yaml` and `values-eks.yaml` turn the load off (a managed node pool keeps nothing
+staged on a node), as does `NO_VOCAB_LOAD=1` on `sync-kit`; load the vocabulary by hand there
+(below), or run the trust without it.
 
-**Map `~/.aws` into the node when you create the cluster.** kind's
-`extraMounts` bind-mounts a host directory into the node container; point
-`hostAwsMount.hostPath` at the *node-side* path. The host path must be absolute:
-kind does not expand `~` or `$HOME` — `hostPath: ~/.aws` is taken as a
-*relative* path, resolved against the directory you ran `kind create` from, and
-Docker then creates that `./~/.aws` (root-owned, empty) rather than failing. An
-absolute path is also why this is a snippet and not a checked-in file — a
-committed one is a single developer's home directory, silently wrong on every
-other machine.
+#### Upgrading: the chart no longer fetches the vocabulary from S3
 
-```yaml
-# kind-config.yaml (per machine — do not commit)
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-nodes:
-  - role: control-plane
-    extraMounts:
-      - hostPath: /home/<you>/.aws   # absolute path on the workstation
-        containerPath: /host-aws
-        readOnly: true
-```
+`omopDb.vocabLoad.s3Bucket`, `bundleName`, `awsProfile`, `hostAwsMount`, `fetchResources` and
+`workDirSize` are gone (FLIP#923). A values file that still sets any of them — even to an empty value —
+**fails to render** with an error naming the new route, rather than installing without a
+vocabulary. To move a trust across:
 
-```sh
-kind create cluster --name <name> --config kind-config.yaml
-helm upgrade --install <release> . -n <ns> ... \
-  --set omopDb.vocabLoad.hostAwsMount.enabled=true \
-  --set omopDb.vocabLoad.hostAwsMount.hostPath=/host-aws
-```
+1. Delete those keys from your overrides. A `sync-kit` override regenerates without them; the
+   kit's `AICENTRE_BUCKET_NAME` no longer feeds the chart.
+2. Do steps 1–3 above (`download-vocab` or Athena, `stage-vocab`, `OMOP_VOCAB_DIR`).
+3. Upgrade. A trust whose database already holds the vocabulary loads nothing: the Job finds it
+   present, reads nothing from the staged folder and only re-applies the constraints.
 
-The Job sees the mount as `/root/.aws` with `AWS_PROFILE=<omopDb.vocabLoad.awsProfile>`,
-so that profile must exist in your `~/.aws/config` and its SSO session must be
-live on the host (`aws sso login`) before any install or upgrade that has to
-fetch — the mount is read-only, so the CLI inside the Job cannot refresh a
-token itself.
-
-**Or pre-seed the database from the host and leave the hook off.** Keep
-`omopDb.vocabLoad.s3Bucket` empty (the Job is then not rendered at all), fetch
-the bundle on the workstation, and run the loader the hook would have run over
-a port-forward. Needs `psql` on the host and either org S3 access
-(`make fetch-vocab-core`) or a self-built bundle — see `trust/omop-db/README.md`,
-"The core vocabulary bundle".
+**Or load it by hand and leave the hook off.** Keep `omopDb.vocabLoad.hostPath`
+empty (the Job is then not rendered at all) and run the loader the hook would
+have run over a port-forward, from the same folder. Needs `psql` on the host.
 
 ```sh
 kubectl -n <ns> port-forward svc/omop-db 5999:5432 &
 PW=$(kubectl -n <ns> get secret <secret> \
        -o jsonpath='{.data.omop-postgres-password}' | base64 -d)
-cd trust/omop-db && make fetch-vocab-core
+cd trust/omop-db
 OMOP_DB_HOST=127.0.0.1 OMOP_DB_PORT=5999 OMOP_POSTGRES_USER=postgres \
   OMOP_POSTGRES_PASSWORD="$PW" OMOP_POSTGRES_DB=trustomopdb \
-  ./files/load_core_vocab.sh data/vocab_aicentre_core_20240916 \
+  ./files/load_core_vocab.sh <folder> \
     files/OMOPCDM_postgresql_5.4_constraints.sql
 ```
 
@@ -580,8 +567,8 @@ chart creates it; the database is `dataAccessApi.env.OMOP_POSTGRES_DB` (default
 idempotent and takes ~25 min for the full bundle; afterwards
 `./files/load_core_vocab.sh --check` with the same environment exits 0. Restart
 `data-access-api` if any cohort query ran before the load — it caches results,
-so the empty answer would otherwise be replayed. Later `helm upgrade`s neither
-re-fetch nor undo the seeded vocabulary.
+so the empty answer would otherwise be replayed. Later `helm upgrade`s do not
+undo the loaded vocabulary.
 
 **The same route loads the Synthea EHR slice** that the EHR risk-prediction
 tutorial needs (`trust/omop-db/README.md`, "The Synthea EHR cohort"). The
@@ -607,20 +594,11 @@ The restart is not optional here either: the tutorial's `query.sql` is a fixed
 text, so an empty answer cached from a cohort submitted before the load would be
 replayed to every later project that submits it.
 
-The hook probes before it fetches: `probe-vocab` asks the database what is
-missing, and only if something is does `fetch-bundle` download the bundle. This
-matters because the hook is on the critical path of *every* `helm upgrade` and a
-failed hook fails the whole release — so an upgrade that changes an unrelated
-image tag costs two queries per vocabulary table (the probe's guards, then the
-loader's) plus a pass over the constraint catalogue, not a multi-GB download. The
-download lands in an `emptyDir` sized by `omopDb.vocabLoad.workDirSize` (10Gi,
-enough for the zip and its unpacked contents together); lower it, and the
-matching `fetchResources` / `loadResources` requests, for a cluster with small
-nodes. Keep the container `ephemeral-storage` limits above `workDirSize` too:
-emptyDir usage is charged to the pod, whose ceiling is the regular containers'
-limits summed with each init container's taken as a max against that total — so
-here it is 12Gi, not 3 × 12Gi. Limits below the work dir size would evict the pod
-before it had finished filling it.
+The hook is on the critical path of *every* `helm upgrade`, and a failed hook fails
+the whole release. A routine upgrade costs two queries per vocabulary table (the
+probe's and the loader's guards) plus a pass over the constraint catalogue, and reads
+nothing from the staged folder; on a first load the loader streams the CSVs from the
+read-only mount, so the Job needs no scratch volume.
 
 An external OMOP database (`omopDb.enabled: false`) already skips this Job. Set
 `omopDb.vocabLoad.enabled: false` only to keep an in-cluster `omop-db` while
@@ -805,7 +783,7 @@ model:
 
 - Deny all ingress from outside the namespace
 - Allow all intra-namespace communication
-- Allow egress to DNS (port 53), HTTPS (port 443), and AWS IMDS (169.254.169.254) only when the omop-db vocab-load Job reads S3 through a node role
+- Allow egress to DNS (port 53) and HTTPS (port 443)
 - Allow custom egress CIDRs via `networkPolicies.allowedEgressCIDRs`
 
 ```yaml
@@ -1126,7 +1104,9 @@ there; the omop-db image CI asserts every published image carries it.
   privilege by default).
 - **Pod Security & container hardening**: the chart-created namespace
   carries Pod Security Standards labels (`enforce=baseline`, `warn`/`audit=restricted`
-  by default — tune via `podSecurity.*`), and the stateless services
+  by default — tune via `podSecurity.*`; `baseline` does not admit `hostPath` volumes, which
+  `flClient.kitHostPath` and `omopDb.vocabLoad.hostPath` both use, so with either set
+  `podSecurity.enforce: privileged`), and the stateless services
   (trust-api, imaging-api, data-access-api, fl-client) plus `monailabel`
   apply a container `securityContext` (`allowPrivilegeEscalation: false`, drop
   `ALL` capabilities, `seccompProfile: RuntimeDefault`) from `.Values.securityContext`.
@@ -1214,7 +1194,7 @@ The chart is validated in CI via:
 | **Bad env vars** | `kubectl exec <pod> -n <ns> -- env` shows empty/wrong URLs | Check ConfigMap values. For trust-api, verify `CENTRAL_HUB_API_URL` is reachable. |
 | **DB unreachable** | data-access-api logs show DB connection errors | If using external DB: verify `external.host:port` is correct and firewall allows. For in-cluster DB: check the StatefulSet pod is running. |
 | **NVFLARE GPU count** | fl-client log shows `num_of_gpus specified (1) exceeds available GPUs: 0` | The pod does not see the GPU `flClient.gpu.count` promises. Check `kubectl exec <fl-client> -n <ns> -- nvidia-smi -L`; fix the node's NVIDIA runtime, or set `flClient.gpu.enabled: false`. |
-| **NVFLARE kit not writable** | fl-client log shows `cannot write /app/local/resources.json` | The client renders `resources.json` into the kit's `local/` at start. `chown` the staged kit's `local/` to uid 1000 on the node. |
+| **NVFLARE kit not writable** | the `fl-client-init` init container fails writing `/app/local/resources.json` | `fl-client-init` renders `resources.json` into the kit's `local/` before the client starts (the client mounts it read-only). `chown` the staged kit's `local/` to uid 1000 on the node. |
 | **Init container failed** | `kubectl logs <pod> -c <init-container> -n <ns>` | For fl-client (`images-init`): the shared images volume must be writable by the init's root user — check the PVC is bound. For omop-db-init: verify PVC is bound. |
 
 ### FL client won't connect
@@ -1274,40 +1254,25 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
 
 - Cohorts come back empty but every pod is healthy → the vocabulary was never loaded.
   Check with `kubectl get job -n <ns> -l app.kubernetes.io/component=omop-vocab-load`.
-  **No Job at all** means `omopDb.vocabLoad.s3Bucket` is empty and the hook was skipped
+  **No Job at all** means `omopDb.vocabLoad.hostPath` is empty and the hook was skipped
   by design — see "OMOP core vocabulary" above.
-- `aws s3 cp` denied in the `fetch-bundle` initContainer → wrong bucket for this
-  environment (each env reads its own; no cross-account read), or no credentials
-  (`omopDb.vocabLoad.hostAwsMount` for local clusters, IRSA on EKS).
-- Job pod stuck in `ContainerCreating` with `MountVolume.SetUp failed … is not a
-  directory` → `hostAwsMount.hostPath` names a workstation path the node cannot
-  see (the `kind` case). Map it in with `extraMounts` or pre-seed instead — see
-  "Local clusters (kind)" above.
+- Render fails with `omopDb.vocabLoad.<key> was removed` → a values file still sets one of
+  the S3 keys; see "Upgrading: the chart no longer fetches the vocabulary from S3".
+- `Core vocabulary not loaded and the staged folder … holds no CONCEPT.csv` → nothing is staged
+  at `hostPath` on the node the Job landed on. `make stage-vocab` (with several nodes, pin the
+  Job with `omopDb.vocabLoad.nodeSelector`), then re-run the upgrade.
+- `… CONCEPT.csv missing — is this a complete vocabulary bundle?` in `load-vocab` → the
+  folder is staged but is not the unpacked bundle (a zip, or one level too high or low).
 - `/flip/omop/load_core_vocab.sh: No such file or directory` → the `omopDb.image.tag`
   in use predates FLIP#842; repull a CI-published tag.
-- Re-running `helm upgrade` is safe *and* cheap. The Job runs three stages —
-  `probe-vocab` asks the database what is missing, `fetch-bundle` downloads the
-  bundle only if something is, then `load-vocab` loads it. On an upgrade where the
-  vocabulary is already loaded the probe logs `Core vocabulary already present in
-  every table`, the fetch logs `skipping bundle fetch`, and no multi-GB download
-  happens. The loader still runs (it re-applies the FK constraints, so a previous
-  run that died between the load and the constraints heals here).
-- `probe-vocab` fails with `omop-db not reachable after 60 attempts` → the database
-  never became ready within five minutes. This is a hard failure: the Pod fails,
-  and after `backoffLimit` so does the release. Check the `omop-db` pod. (`load-vocab` waits the same way and fails the
-  same way, which is what stops a database restart during a long download from
-  discarding the bundle that was just fetched.)
-- A database that *is* reachable but cannot answer the probe — wrong password,
-  `omop` schema absent — is treated differently: the probe leaves its marker
-  unwritten and the Job falls through to a full fetch-and-load rather than
-  failing, because a needless download is recoverable and a wrongly-skipped load
-  is silent. The loader then reports the real error.
-- The Job reaches no host but S3. All three containers run the `omop-db` image,
-  which bakes the AWS CLI and `unzip`, so nothing is installed at run time and no
-  package mirror has to be on the egress allowlist (FLIP#1721 retired the Docker
-  Hub `amazon/aws-cli` image the fetch used before). `aws: not found` in
-  `fetch-bundle`, or `unzip: not found` in `load-vocab`, means the `omopDb.image.tag`
-  in use predates this — repull a CI-published tag.
+- Re-running `helm upgrade` is safe *and* cheap, and needs no staged folder once the vocabulary
+  is loaded: the loader skips every table that already holds it and still re-applies the FK
+  constraints, so a previous run that died
+  between the load and the constraints heals here.
+- `omop-db not reachable after 60 attempts` → the database never became ready within five
+  minutes. This is a hard failure: the Pod fails, and after `backoffLimit` so does the
+  release. Check the `omop-db` pod.
+- The Job reaches no host: it reads the staged folder and talks to the in-cluster `omop-db`.
 
 ### Getting help
 

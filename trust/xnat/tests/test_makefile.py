@@ -29,6 +29,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tests"))
 from make_dry_run import KIT, dry_run, kit_with, main, run_target  # noqa: E402
 
 
+def _path_with(tmp: str, **stubs: str) -> str:
+    """A PATH whose ``<tmp>/bin`` holds each stub (name -> script body) ahead of the real one."""
+    bin_dir = Path(tmp) / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    for name, body in stubs.items():
+        (bin_dir / name).write_text(body)
+        (bin_dir / name).chmod(0o755)
+    return f"{bin_dir}:{os.environ['PATH']}"
+
+
 class UpgradeXnat(unittest.TestCase):
     recipe: str
 
@@ -101,16 +111,12 @@ class XnatDbMajorUpgrade(unittest.TestCase):
 
     def _run(self, target: str, *extra: str, current: str = "12", fails: bool = False, **env: str) -> list[str]:
         with tempfile.TemporaryDirectory() as tmp:
-            bin_dir = Path(tmp) / "bin"
-            bin_dir.mkdir()
-            (bin_dir / "docker").write_text(STUB_DOCKER_DB)
-            (bin_dir / "docker").chmod(0o755)
             calls = Path(tmp) / "calls"
             result = run_target(
                 target,
                 *extra,
                 subdir="trust/xnat",
-                env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "CALLS": str(calls), "CURRENT": current, **env},
+                env={"PATH": _path_with(tmp, docker=STUB_DOCKER_DB), "CALLS": str(calls), "CURRENT": current, **env},
             )
             assert (result.returncode != 0) == fails, result.stdout + result.stderr
             return calls.read_text().splitlines() if calls.exists() else []
@@ -205,11 +211,7 @@ class XnatBackup(unittest.TestCase):
 
     def _backup(self, *, locked_backups: bool = False, locked_data: bool = False, extra_kit: str = "", **env: str):
         with tempfile.TemporaryDirectory() as tmp:
-            bin_dir = Path(tmp) / "bin"
-            bin_dir.mkdir()
-            docker = bin_dir / "docker"
-            docker.write_text(STUB_DOCKER)
-            docker.chmod(0o755)
+            path = _path_with(tmp, docker=STUB_DOCKER)
             data = Path(tmp) / "xnat"
             data.mkdir()
             if locked_backups:  # a backups/ an earlier upgrade made as root: this uid cannot write it
@@ -222,7 +224,7 @@ class XnatBackup(unittest.TestCase):
                     "xnat-backup",
                     subdir="trust/xnat",
                     kit=kit_with("XNAT_DATA_DIR=/nonexistent/xnat", f"XNAT_DATA_DIR={data}") + extra_kit,
-                    env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "RUN_USERS": str(users), **env},
+                    env={"PATH": path, "RUN_USERS": str(users), **env},
                 )
                 backups = data / "backups"
                 kept = sorted(b.name for b in backups.glob("*.sql.gz")) if backups.exists() else []
@@ -292,16 +294,12 @@ class XnatWebDirs(unittest.TestCase):
     """xnat-web-dirs, run for real against a stub docker: a live site gets the mount sources it lacks (FLIP#1818)."""
 
     def _run(self, data: Path, tmp: str) -> subprocess.CompletedProcess[str]:
-        bin_dir = Path(tmp) / "bin"
-        bin_dir.mkdir()
-        (bin_dir / "docker").write_text(STUB_DOCKER)
-        (bin_dir / "docker").chmod(0o755)
         self.users = Path(tmp) / "run-users"
         return run_target(
             "xnat-web-dirs",
             subdir="trust/xnat",
             kit=kit_with("XNAT_DATA_DIR=/nonexistent/xnat", f"XNAT_DATA_DIR={data}"),
-            env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "RUN_USERS": str(self.users)},
+            env={"PATH": _path_with(tmp, docker=STUB_DOCKER), "RUN_USERS": str(self.users)},
         )
 
     def test_a_site_without_a_prearchive_gets_one_as_the_xnat_uid(self):
@@ -343,11 +341,8 @@ class XnatWebDirs(unittest.TestCase):
 
     def test_a_docker_failure_is_not_reported_as_an_ownership_problem(self):
         with tempfile.TemporaryDirectory() as tmp:
-            bin_dir = Path(tmp) / "bin"
-            bin_dir.mkdir()
-            (bin_dir / "docker").write_text("#!/bin/sh\nexit 125\n")
-            (bin_dir / "docker").chmod(0o755)
-            result = run_target("xnat-web-dirs", subdir="trust/xnat", env={"PATH": f"{bin_dir}:{os.environ['PATH']}"})
+            path = _path_with(tmp, docker="#!/bin/sh\nexit 125\n")
+            result = run_target("xnat-web-dirs", subdir="trust/xnat", env={"PATH": path})
             assert result.returncode != 0, result.stdout
             assert "docker run failed" in result.stdout, result.stdout
             assert "chown" not in result.stdout, result.stdout
@@ -452,18 +447,13 @@ class XnatDirsWithoutRoot(unittest.TestCase):
     tree itself; as anyone else it deletes nothing and only checks."""
 
     def _run(self, target: str, data: Path, tmp: str, uid: int | None = None) -> subprocess.CompletedProcess[str]:
-        bin_dir = Path(tmp) / "bin"
-        bin_dir.mkdir(exist_ok=True)
-        for name, body in REFUSING.items():
-            (bin_dir / name).write_text(body)
-            (bin_dir / name).chmod(0o755)
         return run_target(
             target,
             f"XNAT_DATA_DIR={data}",
             f"XNAT_CONTAINER_UID={os.getuid() if uid is None else uid}",
             f"XNAT_CONTAINER_GID={os.getgid() if uid is None else uid}",
             subdir="trust/xnat",
-            env={"PATH": f"{bin_dir}:{os.environ['PATH']}"},
+            env={"PATH": _path_with(tmp, **REFUSING)},
         )
 
     def setUp(self):

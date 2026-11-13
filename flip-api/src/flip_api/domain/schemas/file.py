@@ -55,20 +55,6 @@ def validate_safe_file_name(value: str) -> str:
 SafeFileName = Annotated[str, AfterValidator(validate_safe_file_name)]
 
 
-class ModelFiles(BaseModel):
-    """Model for file paths in the model."""
-
-    algo: str | None = None
-    opener: str | None = None
-    model: str | None = None
-
-
-class ModelFilesList(BaseModel):
-    """Model for list of model files."""
-
-    files: ModelFiles
-
-
 class UploadFileBody(BaseModel):
     """Model for file upload request body.
 

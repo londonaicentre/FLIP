@@ -321,7 +321,13 @@ def check_kit_file(kit: str, kit_file: Path, kit_path: str | None = None) -> Che
 def check_hub_shared(kit_vars: dict[str, str], kit_present: bool) -> Check:
     if not kit_present:
         return Check("Hub-shared block (10 keys)", Status.PENDING, "pending — needs kit file")
-    missing = [k for k in HUB_SHARED_KEYS if not is_filled(kit_vars.get(k))]
+    # The other backend's kit date may be empty (FLIP#1476): an NVFLARE hub has no FLOWER_KIT_DATE.
+    other_kit_date = {"nvflare": "FLOWER_KIT_DATE", "flower": "FLARE_KIT_DATE"}.get(kit_vars.get("FL_BACKEND", ""))
+    missing = [
+        k
+        for k in HUB_SHARED_KEYS
+        if not is_filled(kit_vars.get(k)) and not (k == other_kit_date and not kit_vars.get(k))
+    ]
     if not missing:
         hub_url = kit_vars.get("CENTRAL_HUB_API_URL", "").removesuffix("/api")
         return Check(

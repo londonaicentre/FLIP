@@ -70,6 +70,22 @@ $(error ❌  the kit at $(KIT_SRC) has both a FLARE shape (startup/) and a Flowe
 endif
 endif
 KIT_UID ?= $(if $(filter flower,$(KIT_BACKEND)),49999,1000)
+# The OMOP core vocabulary (FLIP#923): VOCAB_DIR is a folder of Athena CSVs (CONCEPT.csv, ...) and
+# VOCAB_DEST the node directory omopDb.vocabLoad.hostPath names (the kit's OMOP_VOCAB_DIR).
+# stage-vocab empties VOCAB_DEST first, as stage-kit does KIT_DEST and with the same guards.
+VOCAB_DEST ?= /opt/flip/omop-vocab
+VOCAB_BUNDLE ?= vocab_aicentre_core_20240916
+ifneq ($(filter stage-vocab,$(MAKECMDGOALS)),)
+ifeq ($(strip $(VOCAB_DEST)),)
+$(error ❌  VOCAB_DEST must not be empty — stage-vocab clears it before copying)
+endif
+ifeq ($(strip $(VOCAB_DEST)),/)
+$(error ❌  VOCAB_DEST must not be / — stage-vocab clears it before copying)
+endif
+ifeq ($(wildcard $(VOCAB_DIR)/CONCEPT.csv),)
+$(error ❌  VOCAB_DIR=<folder holding the unpacked bundle: CONCEPT.csv, ...> is required — make download-vocab, or an OHDSI Athena export)
+endif
+endif
 # Which cluster to act on. Defaults to kubectl's current context, but stage-kit
 # REQUIRES it explicitly: it writes to a node's filesystem, and a machine running
 # several kind clusters will otherwise silently stage into whichever one kubectl
@@ -158,7 +174,7 @@ ifneq ($(strip $(TAG)),)
 	VALUES_OPTS := $(VALUES_OPTS) --set global.image.tag=$(TAG)
 endif
 
-.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init kit-secret stage-kit preflight template-egress-variants smoke-cstore selftest xnat-db-migrate-dump xnat-db-remove-old-cluster
+.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init kit-secret stage-kit download-vocab stage-vocab preflight template-egress-variants smoke-cstore selftest xnat-db-migrate-dump xnat-db-remove-old-cluster
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -228,6 +244,34 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	  docker exec "$$node" mkdir -p $(addprefix "$(KIT_DEST)"/,$(KIT_SUBDIRS)) && \
 	  docker exec "$$node" sh -c 'chmod -R go-rwx "$(KIT_DEST)" && chown -R $(KIT_UID):$(KIT_UID) "$(KIT_DEST)"' && \
 	  echo "✅ Kit staged. Deploy with --set flClient.kitHostPath=$(KIT_DEST)"
+
+download-vocab: ## Download the OMOP core vocabulary from the AI Centre bucket to this host (your AWS CLI profile)
+	## For operators with access to the bucket (FLIP#923); everyone else exports the same
+	## folder from OHDSI Athena (trust/omop-db/README.md). Runs on this host, never in the
+	## cluster. VOCAB_S3_BUCKET overrides the bucket.
+	$(MAKE) -C $(REPO_ROOT)/trust/omop-db fetch-vocab-core VOCAB_CORE_BUNDLE=$(VOCAB_BUNDLE) $(if $(VOCAB_S3_BUCKET),VOCAB_S3_BUCKET=$(VOCAB_S3_BUCKET))
+	@echo "✅ Next: make stage-vocab VOCAB_DIR=$(REPO_ROOT)/trust/omop-db/data/$(VOCAB_BUNDLE) KUBE_CONTEXT=<ctx>"
+
+stage-vocab: ## Place the unpacked OMOP core vocabulary onto the node (omopDb.vocabLoad.hostPath; run BEFORE deploy)
+	## Like stage-kit, the kind case:
+	##
+	##   make stage-vocab VOCAB_DIR=<folder with CONCEPT.csv, ...> KUBE_CONTEXT=kind-flip-kch
+	##
+	## On any other cluster copy the folder to VOCAB_DEST on the node yourself (with several
+	## nodes, pin the Job there: omopDb.vocabLoad.nodeSelector). It is read only for the first
+	## load. World-readable, as the loader runs as the image user.
+	##
+	## VOCAB_DEST is emptied first: `docker cp` merges, so a narrower re-stage would otherwise
+	## leave the previous bundle's table files beside the new ones for the loader to read.
+	@[ -n "$(KUBE_CONTEXT)" ] || (echo "❌  KUBE_CONTEXT is required — this writes to a node's filesystem. e.g. KUBE_CONTEXT=kind-flip-kch"; exit 1)
+	@node=$$(kubectl --context $(KUBE_CONTEXT) get nodes -o jsonpath='{.items[0].metadata.name}') && \
+	  [ -n "$$node" ] || { echo "❌  no node found in context $(KUBE_CONTEXT) — is the cluster reachable?"; exit 1; }; \
+	  echo "📦 Staging $(VOCAB_DIR) → [$(KUBE_CONTEXT)] $$node:$(VOCAB_DEST)"; \
+	  docker exec "$$node" mkdir -p "$(VOCAB_DEST)" && \
+	  docker exec "$$node" find "$(VOCAB_DEST)" -mindepth 1 -delete && \
+	  docker cp "$(VOCAB_DIR)/." "$$node:$(VOCAB_DEST)/" && \
+	  docker exec "$$node" chmod -R a+rX "$(VOCAB_DEST)" && \
+	  echo "✅ Vocabulary staged. Deploy with --set omopDb.vocabLoad.hostPath=$(VOCAB_DEST) (or OMOP_VOCAB_DIR=$(VOCAB_DEST) in the kit)"
 
 # Deliberately NO --force-conflicts here. Helm 4 applies the release server-side, and
 # `patch-kit-secrets` writes the kit's per-trust keys into the same Secret with field
@@ -434,7 +478,7 @@ template-egress-variants: ## Render the egress NetworkPolicy in default / harden
 	@echo "=== Hardened (CIDR-scoped) egress ==="
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) $(VALUES_OPTS) \
 		--set networkPolicies.allowedEgressCIDRs[0]=10.20.0.0/24 \
-		--set networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=13.43.162.56/32 \
+		--set networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=203.0.113.10/32 \
 		--set networkPolicies.allowedEgressCIDRsWithPorts[0].port=8002 \
 		--show-only templates/network-policy.yaml > /dev/null
 	@echo "=== NetworkPolicies disabled ==="

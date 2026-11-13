@@ -277,31 +277,23 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
                 if ptd.suppressed:
                     trust_suppressed.append(trust_id_str)
 
-        all_field_names: set[str] = set()
-        for trust_data_item in parsed_trust_data_list:
-            if trust_data_item.error:
-                continue
-            if trust_data_item.data:
-                for datum in trust_data_item.data:
-                    all_field_names.add(datum.name)
+        all_field_names = {d.name for ptd in parsed_trust_data_list if not ptd.error for d in ptd.data or []}
 
         logger.debug(f"Found field names for aggregation: {all_field_names} for query_id: {query_id}")
 
         aggregated_field_results: list[AggregatedFieldResult] = []
 
         if total_record_count > 0:  # Only aggregate if there's data
-            for field_name in sorted(list(all_field_names)):  # Sort for consistent output
+            for field_name in sorted(all_field_names):  # Sort for consistent output
                 current_field_trust_results: list[AggregatedTrustFieldResult] = []
                 for i, trust_specific_data_item in enumerate(parsed_trust_data_list):
                     if trust_specific_data_item.error:
                         continue
                     # Only include trusts that contributed to the record count for this field
                     if trust_specific_data_item.record_count > 0 and trust_specific_data_item.data:
-                        matching_omop_datum = None
-                        for omop_datum in trust_specific_data_item.data:
-                            if omop_datum.name == field_name:
-                                matching_omop_datum = omop_datum
-                                break
+                        matching_omop_datum = next(
+                            (d for d in trust_specific_data_item.data if d.name == field_name), None
+                        )
 
                         if matching_omop_datum:
                             current_field_trust_results.append(

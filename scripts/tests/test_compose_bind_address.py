@@ -83,6 +83,13 @@ class ComposeBindAddress(unittest.TestCase):
     def test_trust_composes(self) -> None:
         self.check(TRUST_COMPOSES, "TRUST_BIND_ADDRESS")
 
+    def test_nvflare_harness_debug_port_on_loopback(self) -> None:
+        # The standalone FLARE harness publishes its FL API as the hub composes did; only the debugger is pinned.
+        debug = [s for s in published_ports(REPO / "fl-services/nvflare/compose.dev.yml") if "DEBUG_PORT" in s]
+        assert debug, "fl-services/nvflare/compose.dev.yml no longer publishes a debug port"
+        for spec in debug:
+            assert LOOPBACK.match(spec), f"{spec}: a debugpy port must publish on 127.0.0.1"
+
     def test_parser_sees_the_ports(self) -> None:
         assert len(published_ports(REPO / "trust/deploy/compose/compose_trust.prod.yml")) >= 7
         assert len(published_ports(REPO / "deploy/compose.development.yml")) >= 5

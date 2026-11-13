@@ -57,8 +57,8 @@ The `DEV_*` paths point at the shared, gitignored `fl-tutorials/data/spleen` dat
 simulator's client workers find the data. Evaluation settings (e.g. `num_classes`, the `models`
 checkpoint mapping) are in `app_files/config.json`.
 
-`make sim`/`make export`/`make run` run `job.py` in the **flip-utils** environment with the `full` ML
-extra — the same package set the `flare-fl-base` FL image installs (`uv sync --extra full`) — so a local
+`make sim`/`make export`/`make run` run `job.py` in the **flip-utils** environment with the `nvflare` and `full`
+extras — the same package set the `flare-fl-base` FL image installs (`uv sync --extra nvflare --extra full`) — so a local
 run matches the deployed image.
 
 ## Run the tutorial

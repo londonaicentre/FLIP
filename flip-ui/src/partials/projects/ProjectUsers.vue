@@ -143,7 +143,6 @@ const authStore = useAuthStore();
 const currentUserId = authStore.user?.userId;
 
 const formSubmit = ref<boolean>(false);
-let enteredEmail: string;
 // Copy rather than alias `props.users`: the list is mutated in place on add/remove, and newly
 // looked-up members are the narrower IProjectUserLookup shape, so writing them straight back into
 // the parent's IProjectUser[] would be unsound as well as a prop mutation.
@@ -157,12 +156,11 @@ const emit = defineEmits(["updatedUsers"]);
 const schema = object().shape({ email: emailValidation });
 
 const submit = async(v: unknown, { resetForm }: {resetForm: () => void} ): Promise<void> => {
+    const { email } = v as IAddUser;
+
     try {
         userIsDirty.value = false;
         formSubmit.value = true;
-        const { email } = v as IAddUser;
-
-        enteredEmail = email;
 
         if (userList.value.some(u => u.email === email)) {
             return handleError(`${email} has already been added to the list`);
@@ -184,7 +182,7 @@ const submit = async(v: unknown, { resetForm }: {resetForm: () => void} ): Promi
     } catch (e) {
         console.log(e);
         if ((e as AxiosError).response?.status === 404) {
-            return handleError(`${enteredEmail} cannot be found`);
+            return handleError(`${email} cannot be found`);
         }
 
         return handleError("Something went wrong when retrieving the user");
@@ -193,7 +191,7 @@ const submit = async(v: unknown, { resetForm }: {resetForm: () => void} ): Promi
     }
 };
 
-const removeUser = async(id: string): Promise<void> => {
+const removeUser = (id: string): void => {
     try {
         formSubmit.value = true;
 
@@ -201,7 +199,6 @@ const removeUser = async(id: string): Promise<void> => {
 
         if (index > -1) {
             userList.value.splice(index, 1);
-            formSubmit.value = false;
 
             emit("updatedUsers", userList.value);
         }
