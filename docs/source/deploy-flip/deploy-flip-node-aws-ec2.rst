@@ -119,7 +119,7 @@ On a subnet with no internet route to SSM, set ``SSM_ENDPOINTS=true`` to create 
 (~$24/month per AZ). They cover Session Manager only: CloudWatch, S3 and every other destination above still
 need the site's own route.
 
-Neither row has yet been tested behind a site firewall.
+Neither of the two rows in the table has been measured behind a firewall yet.
 
 **What the instance role may do**: open Session Manager sessions (no ``ssm:GetParameter``, so it cannot
 read parameters in its account), ship logs and metrics to CloudWatch, and, only when ``KIT_BUCKET`` is
