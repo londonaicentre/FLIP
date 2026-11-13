@@ -176,7 +176,7 @@ const CHOICE_BASE_CLASS =
     + "focus:z-10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-50";
 
 const CHOICE_CLASS = {
-    APPROVED: "bg-emerald-600 border-emerald-600 text-white",
+    APPROVED: "bg-emerald-700 border-emerald-700 text-white",
     DECLINED: "bg-red-600 border-red-600 text-white",
     idle: "text-gray-700 dark:text-gray-200 bg-white border-gray-300 hover:bg-gray-50 "
         + "dark:bg-dark-surface dark:border-dark-border dark:hover:bg-dark-border"

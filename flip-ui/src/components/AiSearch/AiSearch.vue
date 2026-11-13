@@ -15,14 +15,14 @@
     <div>
         <div class="relative">
             <div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                <icon-mdi-magnify class="w-5 h-5 text-gray-400 dark:text-gray-600" />
+                <icon-mdi-magnify class="w-5 h-5 text-gray-500 dark:text-gray-400" />
             </div>
             <input
                 :value="modelValue"
                 type="search"
                 :placeholder="placeholder"
                 :data-test="dataTest"
-                class="block w-full pl-10 text-sm transition duration-300 border-gray-300 dark:border-dark-border dark:bg-dark-surface rounded-md shadow-sm focus:border-primary-500 dark:focus:ring-primary-400 dark:focus:border-primary-400 focus:ring-primary-500 focus:ring-1 dark:text-gray-300"
+                class="block w-full pl-10 text-sm transition duration-300 border-gray-300 dark:border-dark-border dark:bg-dark-surface rounded-md shadow-sm focus:border-primary-500 dark:focus:ring-primary-400 dark:focus:border-primary-400 focus:ring-primary-500 focus:ring-1 dark:text-gray-300 placeholder:text-gray-500 dark:placeholder:text-gray-400"
                 @input="update"
             >
         </div>
