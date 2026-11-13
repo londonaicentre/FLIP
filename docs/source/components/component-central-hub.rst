@@ -315,6 +315,13 @@ Routes
    * - ``GET /api/cohort/draft/usage``
      - ``{"enabled", "used", "limit", "remaining", "resets_at"}`` for the caller, so the UI can hide the assistant
        or draw the allowance ring before the first draft.
+   * - ``GET``, ``PUT``, ``DELETE /api/cohort/draft/overrides/{user_id}``
+     - Admin only (*Manage users*; anyone else gets ``403``), and separate from the drafting routes. ``PUT`` body
+       ``{"monthly_allowance", "monthly_request_cap", "expires_at", "reason"}`` sets one user's monthly allowance and,
+       optionally, model-call cap (omitted keeps the configured cap) until an optional future ``expires_at`` (UTC),
+       replacing any earlier override. ``DELETE`` body ``{"reason"}`` returns the user to the configured limits.
+       ``reason`` is required. ``GET`` returns the override and whether it is ``active``. Available whether or not
+       the feature is on, so limits can be set before a pilot.
 
 Allowance and limits
 ====================
@@ -326,6 +333,10 @@ retries included, and a per-minute rate limit applies to every request. All thre
 (``cohort_draft_allowance`` and ``cohort_draft_request``) under a per-user row lock, so they hold across replicas: a
 request reserves its place before the model call, and a repeated ``Idempotency-Key`` is never charged twice. A
 reservation left behind by a crashed request stops counting after ``COHORT_DRAFT_RESERVATION_TTL_MINUTES``.
+
+An admin may override one user's allowance and model-call cap (``cohort_draft_override``); the usage route and the
+reservation both read it, and an expired override is ignored. Every set and clear appends a row to
+``cohort_draft_override_audit``: the admin, the user, the old and new values, the reason and the time.
 
 The hub logs metadata only: user, project, outcome, model calls, tokens and latency. The description and the
 model's output are never logged or stored.
@@ -349,7 +360,8 @@ Settings
        production.
    * - ``COHORT_DRAFT_BEDROCK_MODEL_ID``
      - ``anthropic.claude-sonnet-5-5``
-     - Bedrock model id.
+     - Bedrock model id, or a cross-region inference profile id (``eu.…``, ``global.…``), passed to the SDK as it is.
+       The default is not offered on demand in ``eu-west-2``; see `Before turning it on (phase 2)`_.
    * - ``COHORT_DRAFT_BEDROCK_REGION``
      - ``eu-west-2``
      - Bedrock region.
@@ -384,19 +396,33 @@ Settings
 Before turning it on (phase 2)
 ==============================
 
-Phase 1 ships the feature off, with no AWS changes. Enabling it in staging or production still needs:
+The feature ships off. Terraform creates its AWS side only when ``cohort_draft_enabled = true`` (default ``false``,
+``deploy/providers/AWS/bedrock_cohort_draft.tf``): with it off the plan shows no change. Enabled, it creates a
+Bedrock Guardrail and a published version that block NHS numbers (the entity and a ten-digit regex), names,
+addresses, emails and phone numbers in the description; an inline policy on ``ecs-flip-api-task-role`` for the
+configured model and that guardrail only; and the ``COHORT_DRAFT_*`` variables in the ``flip-api`` task, guardrail
+id and version included. Enabling it still needs:
 
-- **Model and region.** Confirm that ``anthropic.claude-sonnet-5-5`` is offered in ``eu-west-2``, and whether it is
-  served there or only through a cross-region inference profile, which may process requests in another region.
-  Information governance decides whether that is acceptable.
-- **IAM.** Invocation permission for the chosen model (and guardrail) on the hub's ``ecs_flip_api_task`` role only.
-- **Network.** A route from the hub's private subnets to Bedrock, normally a VPC interface endpoint. On the LZA estates
-  this is an account- or network-level change.
-- **Guardrail.** Create the Bedrock Guardrail for UK identifiers and set its id and version. The guardrail headers
-  the hub sends are those of Bedrock's InvokeModel API; confirm the Mantle endpoint honours them.
+- **Model choice (information governance).** Checked on 2026-11-13: ``anthropic.claude-sonnet-5-5`` (the default) is
+  **not** offered on demand in ``eu-west-2``, only through a cross-region inference profile. The choices are:
+
+  - ``eu.anthropic.claude-sonnet-5-5``, the EU profile: requests may be processed in another EU region;
+  - ``global.anthropic.claude-sonnet-5-5``, the global profile: requests may be processed in any commercial region;
+  - an in-region model: ``anthropic.claude-opus-5-5``, ``anthropic.claude-sonnet-5`` or
+    ``anthropic.claude-sonnet-4-6``.
+
+  Set the choice as ``cohort_draft_bedrock_model_id``; the hub and the IAM accept either kind of id. For a profile,
+  the policy grants the profile plus its foundation model in the regions it routes to, only when called through
+  that profile (``bedrock:InferenceProfileArn``).
+- **Bootstrap.** The CI apply role needs the ``bedrock`` service prefix (``modules/terraform_ci_bootstrap``),
+  applied by the platform repository first.
+- **Network.** A route from the hub's private subnets to the Bedrock endpoint the client calls: an interface VPC
+  endpoint with private DNS (``bedrock-mantle`` for the current ``AnthropicBedrockMantle`` client). On the LZA
+  estates the networking account provides it; this root does not create it.
+- **Guardrail headers.** The hub sends Bedrock InvokeModel's guardrail headers; confirm the Mantle endpoint honours
+  them, or move the client to ``bedrock-runtime``.
 - **DPIA** and information-governance review of sending researcher free text to Bedrock.
 - **Benchmark.** The semantic benchmark of reviewed cohort descriptions, and the effort setting it supports.
-- **Admin override** of a user's allowance, with audit records.
 
 *****
 Email

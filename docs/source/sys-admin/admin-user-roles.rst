@@ -132,6 +132,11 @@ Permissions
      - No
      - No
      - No
+   * - Override a user's cohort SQL drafting allowance (Beta), with a recorded reason
+     - Yes
+     - No
+     - No
+     - No
    * - Create projects; manage projects they own (edit, stage, delete, train); contribute models and train on projects
        they are a member of
      - Yes
