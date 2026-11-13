@@ -12,7 +12,7 @@
  */
 
 // Canned responses for the fake drafter, taken from real model outputs of the FLIP#1556 CLI
-// prototype (scripts/cohort_sql_drafting_prototype/results/eval_results.json). SQL is verbatim
+// prototype (results/eval_results.json, removed in history after 263a3c699). SQL is verbatim
 // except the CT draft, which is reflowed (whitespace only), and the MRI draft, which is the CT
 // draft with the MRI modality concept swapped in to answer the mock's clarification question.
 
