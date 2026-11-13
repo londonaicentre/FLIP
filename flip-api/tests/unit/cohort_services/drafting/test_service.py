@@ -114,3 +114,12 @@ def test_failures_are_errors():
     assert run_draft(Scripted("not json"), "d", [], False).error_code == "malformed_output"
     assert run_draft(Scripted(_out("clarification", "")), "d", [], False).error_code == "malformed_output"
     assert run_draft(Scripted(ModelError("timeout")), "d", [], False).error_code == "model_timeout"
+
+
+def test_unflagged_code_off_the_safe_list_is_fed_back():
+    guessed = _out(concepts_used=["201826 = type 2 diabetes"], assumptions=["a"])
+    flagged = _out(concepts_used=["201826 = type 2 diabetes"], assumptions=["201826 is unverified"])
+    model = Scripted(guessed, flagged)
+    outcome = run_draft(model, "d", [], has_imaging=False)
+    assert (outcome.status, outcome.retries) == ("draft", 1)
+    assert "201826 is not on the safe list" in model.calls[1][2]["content"]

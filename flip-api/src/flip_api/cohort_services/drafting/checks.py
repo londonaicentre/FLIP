@@ -14,15 +14,24 @@
 
 The trust's ``validate_query`` stays the authority on what may run and is deliberately not copied here
 (root AGENTS.md, cohort-query validation). These checks only keep an obviously broken draft out of the
-editor: the hub's existing fast pre-check, the OMOP schema and the project's output contract.
+editor: the hub's existing fast pre-check, the OMOP schema, the project's output contract, the identifier
+columns and the concept ids the draft says it used.
 """
 
+import re
+from functools import cache
+
 from sqlglot import exp
+from sqlglot.lineage import lineage
 
 from flip_api.cohort_services.drafting.draft_logger import logger
 from flip_api.cohort_services.drafting.omop_schema import check as check_schema
 from flip_api.cohort_services.drafting.omop_schema import load_schema
+from flip_api.cohort_services.drafting.prompt import ASSETS
 from flip_api.cohort_services.submit_cohort_query import validate_query
+
+# A code in a concepts_used entry, read from the text before its "=" (a concept id, SNOMED or LOINC code).
+_CODE = re.compile(r"\d+(?:-\d+)?")
 
 
 def required_columns(has_imaging: bool) -> tuple[str, ...]:
@@ -49,6 +58,79 @@ def _output_names(statement: exp.Expression) -> set[str] | None:
             continue
         names.add(identifier.name if identifier.quoted else identifier.name.lower())
     return names
+
+
+def _passes_through(column: str, statement: exp.Expression) -> bool:
+    """Whether the output ``column`` is the same-named table column, passed unchanged through every CTE.
+
+    Follows the column's lineage down to the tables it is read from: every step must be a plain column of
+    that name, and every path must end at a table, so a literal, a cast, a computed value or another column
+    renamed to it is rejected.
+    """
+    node = lineage(column, statement, schema={"omop": load_schema()}, dialect="postgres")
+    for step in node.walk():
+        if isinstance(step.expression, exp.Table):
+            if step.name.rsplit(".", 1)[-1].lower() != column:
+                return False
+            continue
+        value = step.expression.this if isinstance(step.expression, exp.Alias) else step.expression
+        if not isinstance(value, exp.Column) or value.name.lower() != column or not step.downstream:
+            return False
+    return True
+
+
+def check_identifier_columns(statement: exp.Expression, has_imaging: bool) -> str | None:
+    """Check that person_id (and accession_id) are read from OMOP as they are, never computed or renamed.
+
+    Args:
+        statement (exp.Expression): The parsed draft, which already names every required column.
+        has_imaging (bool): The project's shape.
+
+    Returns:
+        str | None: None when every identifier column passes, else a message the model can act on.
+    """
+    for column in required_columns(has_imaging):
+        try:
+            plain = _passes_through(column, statement)
+        except Exception as e:  # a gap in sqlglot's lineage must not block SQL the trust would run
+            logger.warning(f"Cohort draft identifier check skipped: {type(e).__name__}")
+            return None
+        if not plain:
+            return (
+                f"Output column {column} must be the {column} column of an OMOP table, selected as it is "
+                "(through any CTE): do not compute, cast, fill or rename it."
+            )
+    return None
+
+
+@cache
+def safe_concept_ids() -> frozenset[str]:
+    """The concept ids on the prompt's safe list."""
+    return frozenset(_CODE.findall((ASSETS / "concepts.md").read_text()))
+
+
+def check_concepts(concepts_used: list[str], assumptions: list[str]) -> str | None:
+    """Check that every code the draft used outside the safe list is flagged in its assumptions.
+
+    Args:
+        concepts_used (list[str]): The draft's ``"<id> = <meaning>"`` entries.
+        assumptions (list[str]): The draft's assumptions.
+
+    Returns:
+        str | None: None when every such code is named in an assumption, else a message the model can act on.
+    """
+    flagged = set(_CODE.findall(" ".join(assumptions)))
+    unflagged = []
+    for entry in concepts_used:
+        for code in _CODE.findall(entry.split("=", 1)[0]):
+            if code not in safe_concept_ids() and code not in flagged and code not in unflagged:
+                unflagged.append(code)
+    if unflagged:
+        return (
+            f"{', '.join(unflagged)} {'is' if len(unflagged) == 1 else 'are'} not on the safe list: add an "
+            "assumption naming each one as unverified, or use a code from the safe list."
+        )
+    return None
 
 
 def check_draft(sql: str, has_imaging: bool) -> str | None:
@@ -82,4 +164,4 @@ def check_draft(sql: str, has_imaging: bool) -> str | None:
         return (
             f"The outer SELECT must return {' and '.join(required_columns(has_imaging))}; missing {', '.join(missing)}."
         )
-    return None
+    return check_identifier_columns(statement, has_imaging)

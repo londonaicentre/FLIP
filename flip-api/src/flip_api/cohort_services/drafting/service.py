@@ -18,7 +18,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
 
-from flip_api.cohort_services.drafting.checks import check_draft
+from flip_api.cohort_services.drafting.checks import check_concepts, check_draft
 from flip_api.cohort_services.drafting.model import DraftModel, ModelError
 from flip_api.cohort_services.drafting.prompt import (
     MAX_ITEM_CHARS,
@@ -126,7 +126,7 @@ def run_draft(
             outcome.question = _clip(out.question, MAX_ITEM_CHARS)
             outcome.options = _clip_items(out.options, MAX_OPTIONS)
             return outcome
-        problem = check_draft(out.sql, has_imaging)
+        problem = check_draft(out.sql, has_imaging) or check_concepts(out.concepts_used, out.assumptions)
         if problem is None:
             outcome.status = "draft"
             outcome.sql, outcome.explanation = out.sql.strip(), _clip(out.explanation, MAX_TEXT_CHARS)

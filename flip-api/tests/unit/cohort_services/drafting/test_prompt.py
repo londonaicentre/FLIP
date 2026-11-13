@@ -25,7 +25,18 @@ def test_system_prompt_has_every_section():
     assert "8532 FEMALE" in text  # safe concept ids
     assert "<example name='imaging_xray_classification'>" in text
     assert "<example name='tabular_ehr_risk_prediction'>" in text
+    assert "12. Beta scope." in text
     assert "Licensed under the Apache License" not in text
+
+
+def test_reviewed_examples_cover_the_benchmark_gaps():
+    names = {p.stem for p in (prompt.ASSETS / "examples").glob("*.sql")}
+    assert {
+        "imaging_first_ct_per_patient",
+        "tabular_new_onset_t2dm_washout",
+        "imaging_cxr_without_effusion",
+        "tabular_psa_threshold_with_units",
+    } <= names
 
 
 def test_every_example_file_is_included():

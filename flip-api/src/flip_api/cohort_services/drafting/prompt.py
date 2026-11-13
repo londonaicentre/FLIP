@@ -23,7 +23,7 @@ from pathlib import Path
 
 from flip_api.cohort_services.drafting.omop_schema import load_schema, summary
 
-PROMPT_VERSION = "2026-11-13.1"
+PROMPT_VERSION = "2026-11-13.2"
 
 ASSETS = Path(__file__).parent / "assets"
 MAX_CLARIFICATIONS = 3

@@ -201,6 +201,16 @@ Where your FLIP administrator has turned it on, the cohort page offers **Draft f
    - Drafts can be wrong. A draft passes the hub's checks, but the Trusts still check and run the query, and the
      results are yours to review.
 
+What the Beta drafts well: imaging cohorts by modality, anatomy, age and sex; condition-based cohorts; time
+windows; first or latest occurrence; one study per patient; exclusions; imaging linked to a procedure or visit; and
+the three chest X-ray findings FLIP's data holds (effusion, edema, lungs in normal arrangement). Out of scope for the
+Beta, so the assistant asks you to narrow the request or declines it: drug cohorts, lab thresholds whose test or
+unit it has not been given, the era tables (``condition_era``, ``drug_era``), and any other imaging finding. Write
+those queries by hand.
+
+An imaging draft returns one row per patient and study (``person_id``, ``accession_id``), and "first", "latest" or
+"one per patient" returns exactly one row per patient.
+
 The ring beside **Generate SQL** shows how many drafts you have left this month (30 by default). Only a draft that
 lands in the editor counts; questions, declines and failures do not. The allowance resets at 00:00 UTC on the first
 day of each month. When it runs out, or the assistant is unavailable, write the SQL by hand as above.

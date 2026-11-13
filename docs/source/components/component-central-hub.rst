@@ -289,10 +289,12 @@ every Trust still checks the query it receives with its own validator.
 SDK (``AnthropicBedrockMantle``), signed with the hub's ECS task role. No API key is used; a configured Bedrock API
 key is refused. The instructions are versioned files under ``flip_api/cohort_services/drafting/assets/``: the rules
 (including the Trusts' function allowlist and the vocabulary-free style), the OMOP schema summary generated from the
-Trusts' DDL, the concept ids FLIP's data uses, and tutorial queries as examples. Before a draft is returned it must
-pass the hub's fast pre-check, an OMOP schema check, and the project's output contract (``person_id`` and
-``accession_id`` for imaging projects, ``person_id`` for tabular ones). A rejected draft goes back to the model with
-the reason, at most twice. A refusal by the model is shown as a decline: Amazon Bedrock has no server-side fallback
+Trusts' DDL, the concept ids FLIP's data uses (the safe list), and reviewed example queries. Before a draft is
+returned it must pass these quality checks: the hub's fast pre-check; an OMOP schema check; the project's output
+contract (``person_id`` and ``accession_id`` for imaging projects, ``person_id`` for tabular ones); a check that
+those identifier columns are read from OMOP as they are, never computed, cast or renamed; and a check that every
+concept id the draft lists outside the safe list is named in its assumptions as unverified. A rejected draft goes
+back to the model with the reason, at most twice. A refusal by the model is shown as a decline: Amazon Bedrock has no server-side fallback
 model, and the SDK's client-side fallback would send the description to a second model nobody has reviewed.
 
 Routes
