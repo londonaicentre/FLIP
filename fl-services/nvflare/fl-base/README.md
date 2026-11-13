@@ -11,10 +11,9 @@
     limitations under the License.
 -->
 
-# Base FL image
+# Base FL image (NVIDIA FLARE)
 
-FL base will be used as the base image for both FL client and FL server images. It contains all the common dependencies
-required for both the FL client and FL server to run.
+The base image for both the FLARE FL client and FL server images. It holds the dependencies both need.
 
 This image is built from [`flip-utils/pyproject.toml`](../../../flip-utils/pyproject.toml) and its
 `uv.lock` — the Dockerfile copies both in and runs `uv sync --frozen --no-cache --extra full`. To
