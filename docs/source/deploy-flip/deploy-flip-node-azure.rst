@@ -77,10 +77,11 @@ which travels over the VM agent's own outbound channel.
    needs an inbound allow for ``XNAT_PORT`` (8104) from its address only, which FLIP does not
    open yet (`FLIP#1561 <https://github.com/londonaicentre/FLIP/issues/1561>`_).
 
-**The hub admits the node by its credentials, never by its address.** Hub API calls carry the
+**The hub identifies the node by its credentials, not by its address.** Hub API calls carry the
 Trust's API key over HTTPS. FL traffic uses TLS, authenticated by the credentials in the Trust's
-FL kit (mutual TLS on NVFLARE).
-The hub does not allowlist Trust IP addresses, so the node needs no fixed public IP.
+FL kit (mutual TLS on NVFLARE), so the node needs no fixed public IP. The hub's FL edge does,
+however, admit only declared trust addresses: **before going live, give the FLIP team the public
+address the node's traffic leaves from**, and tell them whenever it changes.
 
 **Outbound traffic takes one of two paths.**
 
@@ -236,8 +237,8 @@ operator uploads it to the kit drop and installs it with ``join``:
 ``join`` fetches the kit with the node's identity, installs its kit file (owner-only) with the
 node's own settings appended, stages the FL kit for the client that reads it and runs
 ``up-onprem-trust``, whose readiness checklist must pass before anything starts. The node's FL
-client dials the hub's FL edge outbound; on the LZA estates that edge admits any address and the
-kit's mTLS certificates decide who gets in, so no allowlist change is needed.
+client dials the hub's FL edge outbound. The edge admits only declared trust addresses, so the FLIP
+team must have added the node's egress address first (see :ref:`deploy-flip-node-azure-network`).
 
 ******************
 Operate and remove
