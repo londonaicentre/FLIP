@@ -137,9 +137,7 @@ Cluster
      - 1Gi
      - No
 
-Every volume is ``ReadWriteOnce`` by default. The FL client is pinned to imaging-api's node so the two can share the
-images volume, and XNAT's DICOM-to-NIfTI conversion jobs mount the XNAT volume, so on a **multi-node** cluster see
-`Known limitations`_.
+Every volume is ``ReadWriteOnce`` by default. On a **multi-node** cluster, see `Known limitations`_.
 
 GPUs
 ====
@@ -282,7 +280,7 @@ On a managed cluster (AKS, EKS): the kit from a Secret
 ======================================================
 
 A managed node pool replaces nodes at will, so nothing may live on one. Put the kit in a Secret instead and deploy
-with ``flClient.kit.source=secret`` (FLIP#1390):
+with ``flClient.kit.source=secret``:
 
 .. code-block:: shell
 
@@ -392,8 +390,8 @@ neither implies the other.
 The trust self-test
 ===================
 
-``make -C trust/deploy/helm selftest KUBE_CONTEXT=<ctx>`` runs the acceptance checklist every trust shape shares
-(the VM node self-test's, FLIP#1406) against the deployed release:
+``make -C trust/deploy/helm selftest KUBE_CONTEXT=<ctx>`` runs the acceptance checklist that every trust shape
+shares, the same one as the VM node self-test, against the deployed release:
 
 .. list-table::
    :header-rows: 1
@@ -423,17 +421,24 @@ The trust self-test
    * - fl client running
      - The FL client is running, with no restart, at two samples 45 s apart.
 
-A check that needs sample data the release does not load passes as skipped, with the reason. With
-``trustData.seed.enabled`` off (``TRUST_DATA_SEED=false`` in the kit) that is ``omop seeded``, ``orthanc seeded``,
-``xnat c-store`` and ``dcm2niix conversion``; with only ``trustData.seed.orthanc`` off (the chart default), the last
-three. The last three skip only while Orthanc reports no instance: when it holds studies all the same, loaded
-another way or the trust's own, one is sent to XNAT and one series converted, as a cohort pull would. It needs no hub: an unreachable hub or FL server is not a failure. Every check runs in a pod the release
-already has, so it adds no RBAC or NetworkPolicy exception. The conversion check starts one dcm2niix job, as a cohort
-pull would, and deletes its ``FLIPSELFTEST`` project when it ends, pass or fail: a C-STORE alone shows XNAT received a
-study, not that this cluster can convert it. If other conversions are queued, its job waits for a slot under the
-cap (:ref:`ts-k8s-dcm2niix-jobs-cap`), so run it on an idle trust. It writes
-``selftest-k8s-<backend>-<stamp>.json`` and ``.md`` (and ``latest-k8s-<backend>.md``) under ``SELFTEST_OUT``
-(default ``build/selftest/`` in the checkout) and exits non-zero on any failure.
+A check that needs sample data the release does not load passes as *skipped*, with the reason:
+
+- With ``trustData.seed.enabled`` off (``TRUST_DATA_SEED=false`` in the kit): ``omop seeded``, ``orthanc seeded``,
+  ``xnat c-store`` and ``dcm2niix conversion`` skip.
+- With only ``trustData.seed.orthanc`` off (the chart default): the last three skip.
+
+Those three skip only while Orthanc holds no instance. If it holds studies anyway, loaded another way or the trust's
+own, the self-test sends one to XNAT and converts one series, as a cohort pull would.
+
+- **No hub needed.** An unreachable hub or FL server is not a failure.
+- **No extra permissions.** Every check runs in a pod the release already has, so it adds no RBAC or NetworkPolicy
+  exception.
+- **Conversion check.** A C-STORE alone shows XNAT received a study, not that this cluster can convert it. So the
+  check starts one dcm2niix job and deletes its ``FLIPSELFTEST`` project when it ends, pass or fail. If other
+  conversions are queued, its job waits for a slot under the cap (:ref:`ts-k8s-dcm2niix-jobs-cap`), so run the
+  self-test on an idle trust.
+- **Report.** It writes ``selftest-k8s-<backend>-<stamp>.json`` and ``.md`` (and ``latest-k8s-<backend>.md``) under
+  ``SELFTEST_OUT`` (default ``build/selftest/`` in the checkout) and exits non-zero on any failure.
 
 Continue at step 6 of :doc:`onboarding-a-trust`.
 
@@ -481,8 +486,8 @@ Key values
 **********
 
 Most values come from the kit through ``sync-kit``. Those you may set yourself are below. Keep them in a values file
-of your own; the deploy targets pass ``-f $(VALUES_FILE)`` first, so ``VALUES_FILE=<your file>`` layers it over the
-chart defaults, and the generated override still wins for the keys it sets. Do not pass settings with
+of your own and pass it to the deploy targets with ``VALUES_FILE=<your file>``: it is layered over the chart
+defaults, and the generated override still wins for the keys it sets. Do not pass settings with
 ``helm upgrade --set``: the next deploy does not reuse them, so they silently disappear.
 
 .. list-table::
@@ -576,7 +581,8 @@ When the admin refreshes your kit's hub-shared settings, see "Later — rotate h
 .. warning::
 
    While ``trustData.seed.enabled`` is on, every upgrade re-applies the mock projects. A site whose stores hold real
-   data only sets ``TRUST_DATA_SEED=false`` in the kit, which the upgrade carries into the release.
+   data must set ``TRUST_DATA_SEED=false`` in the kit (see `Step 1 — Check out the release and copy in the kit`_);
+   the upgrade carries it into the release.
 
 .. seealso::
 

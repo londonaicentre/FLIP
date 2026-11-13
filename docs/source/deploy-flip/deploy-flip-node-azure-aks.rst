@@ -16,9 +16,9 @@ Deploy a FLIP node on Azure AKS
 ###############################
 
 A FLIP node on AKS runs the trust-side stack as the ``flip-trust`` Helm chart on a one-node AKS cluster
-(``Standard_D4s_v5``, Free control-plane tier), built from code in ``trust/deploy/terraform/azure`` by its ``aks``
-root, on the same bootstrap layer as the Azure VM. Sign-in is through Entra. Its commands run in
-``trust/deploy/terraform/azure/aks``, as the EKS root's run in its own directory.
+(``Standard_D4s_v5``, Free control-plane tier). It shares its bootstrap layer (Terraform state and budget alert) with
+the Azure VM, and you sign in to it through Microsoft Entra ID. Unless a step says otherwise, run the commands on this
+page in ``trust/deploy/terraform/azure/aks``.
 
 For the same trust on one Azure VM under Docker Compose see :doc:`deploy-flip-node-azure`; for the chart itself, its
 values and known limits, :doc:`deploy-flip-node-kubernetes`. Its AWS twin is :doc:`deploy-flip-node-aws-eks`.
@@ -43,20 +43,23 @@ Architecture
 
    The one-node AKS cluster running the ``flip-trust`` chart.
 
-The diagram is generated when this documentation is built, by the script that draws the VM's
-(``trust/deploy/terraform/azure/architecture/``).
-
 ********************
 Network and security
 ********************
 
-Outbound traffic follows the same two paths as the VM (:ref:`deploy-flip-node-azure-network`): on the Trust's
-subnet (``SUBNET_ID``) the cluster uses the Trust's routes and creates no outbound IP, and that subnet needs a route
-table sending outbound traffic to the Trust's firewall, which AKS checks before it creates the cluster; without
-``SUBNET_ID`` it leaves through its own NAT gateway. The API server admits only your IP and the nodes' own egress:
-the NAT gateway's IP, or on the Trust's subnet the firewall's public IPs, which you pass as
-``NODE_EGRESS_IPS=<ip>[,<ip>]`` to ``plan`` (``destroy`` needs no addresses). A node that cannot reach its
-API server never joins the cluster.
+Outbound traffic takes one of the same two paths as on the VM (:ref:`deploy-flip-node-azure-network`):
+
+- **On the Trust's subnet** (``SUBNET_ID`` set): the cluster uses the Trust's routes and creates no outbound IP.
+  The subnet must have a route table that sends outbound traffic to the Trust's firewall. AKS checks this before it
+  creates the cluster.
+- **Standalone** (no ``SUBNET_ID``): traffic leaves through the cluster's own NAT gateway.
+
+The API server admits only your IP and the nodes' own egress IPs. A node that cannot reach its API server never joins
+the cluster, so:
+
+- standalone, the NAT gateway's IP is admitted for you;
+- on the Trust's subnet, pass the firewall's public IPs to ``plan`` as ``NODE_EGRESS_IPS=<ip>[,<ip>]``
+  (``destroy`` needs no addresses).
 
 Behind the Trust's firewall the cluster needs, on top of :ref:`deploy-trust-node-network`:
 
@@ -65,7 +68,7 @@ Behind the Trust's firewall the cluster needs, on top of :ref:`deploy-trust-node
   and the region's ``AzureCloud`` service tag on TCP/UDP 443, 1194 and 9000, plus NTP.
 - **The Helm chart's own:** the sample-data seed job, listed in :doc:`deploy-flip-node-kubernetes`.
 
-The AKS rules were measured on 17 Oct by running this chapter behind a deny-all Azure Firewall Basic.
+The AKS rules were measured on 17 October 2026 by running this chapter behind a deny-all Azure Firewall Basic.
 
 *************
 Prerequisites
@@ -74,9 +77,9 @@ Prerequisites
 - The subscription, region and tools of the VM's :ref:`prerequisites <deploy-flip-node-azure-prerequisites>`.
 - On your machine you also need ``kubectl``, ``kubelogin``, Helm 3.16 or newer, ``jq``,
   ``python3`` and ``uv``.
-- The trial's 4 vCPUs are the VM's too, so ``apply`` refuses while the VM exists: run ``make destroy`` in ``vm/``
-  first. A
-  running cluster costs roughly $0.25 an hour, plus the NAT gateway on a standalone cluster.
+- A trial subscription has a 4-vCPU quota, and the VM uses the same quota. ``apply`` therefore refuses while the Azure
+  VM node exists: run ``make destroy`` in ``trust/deploy/terraform/azure/vm`` first.
+- A running cluster costs roughly $0.25 an hour, plus the NAT gateway on a standalone cluster.
 
 *****************
 Build the cluster
@@ -90,7 +93,10 @@ Build the cluster
    make bootstrap   AZ_SUBSCRIPTION="$SUB" STATE_SA=<unique storage name> ALERT_EMAIL=<you>   # once
    cd aks
    make init        AZ_SUBSCRIPTION="$SUB"
-   make plan        AZ_SUBSCRIPTION="$SUB" LOCATION=<region> SUBNET_ID=<subnet resource id, or empty> NODE_EGRESS_IPS=<firewall IPs, with SUBNET_ID>
+   # Standalone cluster (own NAT gateway):
+   make plan        AZ_SUBSCRIPTION="$SUB" LOCATION=<region>
+   # Or, on the Trust's subnet behind its firewall:
+   make plan        AZ_SUBSCRIPTION="$SUB" LOCATION=<region> SUBNET_ID=<subnet resource id> NODE_EGRESS_IPS=<firewall public IPs>
    make apply       AZ_SUBSCRIPTION="$SUB"      # shows the plan and the subscription, asks for yes
    make credentials AZ_SUBSCRIPTION="$SUB"      # kube context flipaz-aks, signed in through Entra
 
@@ -106,24 +112,27 @@ the tarball in hand:
    make join TARBALL=flip-trust-kit-<slot>-<date>.tar.gz KIT=<CODE> HUB=<env>   # MOCK_PACS=1 on a test node
    make selftest
 
-``join`` unpacks the tarball under ``aks/build/kits/``, installs the kit file as
-``trust/.env.<CODE>.<env>``, generates the chart's ``values-secrets.yaml`` from it and puts the FL
-kit in a Secret, because a managed node can be replaced at any time. A Flower kit's Secret holds only
-``ca.crt`` and the slot's own SuperNode credential: the tarball's ``certificates/`` also carries the
-SuperLink's ``server.key``, which never belongs on a trust. It then deploys the chart with
-``values-aks.yaml`` and ``values-small-node.yaml``, and records them in the kit file as
-``K8S_PLATFORM_VALUES``, so a later deploy or upgrade of that slot keeps them. The first install takes up to half an
-hour, most of it XNAT's first start. ``MOCK_PACS=1`` seeds the published mock studies into the
-chart's Orthanc, which a test node needs for an imaging pull and for the self-test's C-STORE and conversion
-checks (skipped without it).
+``join``:
+
+#. unpacks the tarball under ``aks/build/kits/`` and installs the kit file as ``trust/.env.<CODE>.<env>``;
+#. generates the chart's ``values-secrets.yaml`` from the kit file;
+#. stores the FL kit in a Kubernetes Secret, because a managed node can be replaced at any time. For Flower, the Secret
+   holds only ``ca.crt`` and the slot's own SuperNode credential. The tarball's ``certificates/`` also contains the
+   SuperLink's ``server.key``, which must never be placed on a trust;
+#. deploys the chart with ``values-aks.yaml`` and ``values-small-node.yaml``, and records them in the kit file as
+   ``K8S_PLATFORM_VALUES`` so that later deploys and upgrades of that slot keep them. The first install takes up to half
+   an hour, most of it XNAT's first start. ``MOCK_PACS=1`` seeds the published mock studies into the chart's Orthanc,
+   which a test node needs for an imaging pull and for the self-test's C-STORE and conversion checks (skipped without
+   it).
 
 The chart loads no OMOP core vocabulary: it is licensed, so each site loads its own copy, as
 :ref:`onprem-core-vocabulary` describes. Until then, cohort queries that name concepts through
 ``omop.concept`` return nothing, so test with a query that does not.
 
-``selftest`` runs the VM self-test's checks against the release
-and writes its report under ``build/selftest/`` at the repo root; it needs no hub. The trust has joined when its
-heartbeat is answered:
+``selftest`` runs the same checks as the VM self-test against the deployed Helm release and writes its report under
+``build/selftest/`` at the repo root. It needs no hub.
+
+The trust has joined the hub once its heartbeat is answered. Look for ``200 OK`` in the trust-api log:
 
 .. code-block:: bash
 
@@ -133,20 +142,20 @@ heartbeat is answered:
 Operate and remove
 ******************
 
-- ``make stop`` stops the node billing; ``make start`` starts it and admits your current
-  IP. After your IP changes, ``make allow-ip`` admits the new one.
+- ``make stop`` stops the cluster so its node stops billing. ``make start`` starts it again and admits your current IP
+  to the API server.
+- After your IP changes, ``make allow-ip`` admits the new one.
 - ``make deploy KIT=<CODE> HUB=<env>`` redeploys or upgrades from the installed kit.
-- ``make destroy`` (with the same ``SUBNET_ID``) removes the cluster and its network and keeps
-  the bootstrap layer;
-  ``make destroy-bootstrap``, in the directory above, refuses while the cluster or a VM exists.
+- ``make destroy`` (with the same ``SUBNET_ID``) removes the cluster and its network, and keeps the bootstrap layer.
+- ``make destroy-bootstrap``, run in ``trust/deploy/terraform/azure``, removes the bootstrap layer. It refuses while the
+  cluster or a VM exists.
 
 ***************
 Troubleshooting
 ***************
 
 - **kubectl times out or is refused.** Your IP has changed: ``make allow-ip``.
-- **Pods stay Pending while the node is full of dcm2niix Jobs.** Jobs created before the
-  conversion cap still request a CPU each. ``make clear-jobs`` selects the Jobs whose pod
-  template carries a CPU limit at all (the capped registration sets none), lists them and deletes
-  them once you type ``yes``. Then relaunch dcm2niix on those scans from XNAT
-  (``trust/deploy/helm/TROUBLESHOOTING.md`` §2.3d).
+- **Pods stay Pending while the node is full of dcm2niix Jobs.** dcm2niix Jobs created before the chart capped
+  conversions each request a full CPU; the chart now registers the converter without a CPU limit. ``make clear-jobs``
+  lists every dcm2niix Job whose pod template sets a CPU limit and deletes them once you type ``yes``. Then relaunch
+  dcm2niix on those scans from XNAT (see :ref:`ts-k8s-dcm2niix-jobs-cap`).
