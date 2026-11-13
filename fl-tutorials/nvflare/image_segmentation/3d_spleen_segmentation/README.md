@@ -105,13 +105,13 @@ Produces a complete FLARE job directory under `./fl_job/flip_fedavg/` including:
 make export
 ```
 
-or equivalently — the Makefile runs `job.py` in the **flip-utils** environment with the `full` ML
-extra (the same package set the `flare-fl-base` FL image installs via `uv sync --extra full`), so a
+or equivalently — the Makefile runs `job.py` in the **flip-utils** environment with the `nvflare` and `full`
+extras (the same package set the `flare-fl-base` FL image installs via `uv sync --extra nvflare --extra full`), so a
 local run matches the deployed image and a bare `uv run` (repo-root venv, no torch/nvflare/monai) is
 avoided:
 
 ```bash
-uv run --project ../../../../flip-utils --extra full python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 2
+uv run --project ../../../../flip-utils --extra nvflare --extra full python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 2
 ```
 
 > **Note:** `make run` (invoked by the tutorial runner `run-tutorial`/`run-all-tutorials`)

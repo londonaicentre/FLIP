@@ -112,25 +112,8 @@ def run_jobs_core(db: Session) -> None:
 
         started = prepare_and_start_training(job.model_id, job.id, job.trust_ids, db)
 
-        if started:
-            logger.info(
-                {
-                    "message": "Training started successfully! 🚀",
-                    "net": scheduler.netId,
-                    "job": job.id,
-                    "model": job.model_id,
-                }
-            )
-        else:
-            logger.info(
-                {
-                    "message": "Job aborted before submission; net released. 🛑",
-                    "net": scheduler.netId,
-                    "job": job.id,
-                    "model": job.model_id,
-                }
-            )
-        return
+        message = "Training started successfully! 🚀" if started else "Job aborted before submission; net released. 🛑"
+        logger.info({"message": message, "net": scheduler.netId, "job": job.id, "model": job.model_id})
 
     except Exception as e:
         logger.exception("Error while running jobs")

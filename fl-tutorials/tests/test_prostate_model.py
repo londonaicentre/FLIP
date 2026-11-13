@@ -653,5 +653,6 @@ def test_client_evaluate_scores_the_test_split(client_run) -> None:
     assert metrics["num-examples"] == 1
     for key in ("test_loss", "test_dice_mean", "test_dice_wg", "test_dice_pz", "test_dice_tz"):
         assert np.isfinite(metrics[key]), key
-        assert metrics[f"{key}.x_0"] == metrics[key]
+    # Bare keys only: a ".x_0" twin stacks every round's point at x=0 (FLIP#928).
+    assert not any(".x_" in key for key in metrics.keys())
     assert 0.0 <= metrics["test_dice_mean"] <= 1.0

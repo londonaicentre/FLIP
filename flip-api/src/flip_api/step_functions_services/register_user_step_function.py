@@ -40,7 +40,6 @@ def _rollback_after_role_failure(
     *,
     user_id: UUID,
     user_email: str,
-    role_err: BaseException,
     request: Request,
     db: Session,
     token_id: UUID,
@@ -57,8 +56,6 @@ def _rollback_after_role_failure(
     Args:
         user_id (UUID): Cognito sub of the just-registered user.
         user_email (str): Email of the user, for forensic logging.
-        role_err (BaseException): The role-assignment error that triggered
-            the rollback.
         request (Request): FastAPI request, forwarded to ``delete_user``.
         db (Session): Database session.
         token_id (UUID): Authenticated caller's id.
@@ -161,7 +158,6 @@ def register_user_step_function_endpoint(
             raise _rollback_after_role_failure(
                 user_id=user_id,
                 user_email=user_data.email,
-                role_err=role_err,
                 request=request,
                 db=db,
                 token_id=token_id,

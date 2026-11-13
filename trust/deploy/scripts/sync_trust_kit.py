@@ -16,6 +16,7 @@
 
 Usage:
     uv run trust/deploy/scripts/sync_trust_kit.py --env-class <stag|prod> <CODE>.<env>
+    uv run trust/deploy/scripts/sync_trust_kit.py --env-class <stag|prod> --target <kit file>
 
 Picks the Hub-shared values out of the caller's environment and upserts each
 into trust/.env.<KIT> under the managed sentinel — credentials and operator
@@ -60,12 +61,14 @@ def die(msg: str) -> NoReturn:
 def main() -> None:
     """CLI entry point: refresh the Hub-shared block in trust/.env.<KIT>."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("kit", help="<CODE>.<env> (e.g. GSTT.prod). Selects trust/.env.<kit>.")
+    kit_arg = parser.add_mutually_exclusive_group(required=True)
+    kit_arg.add_argument("kit", nargs="?", help="<CODE>.<env> (e.g. GSTT.prod). Selects trust/.env.<kit>.")
+    kit_arg.add_argument("--target", type=Path, help="The kit file itself (register-trusts.sh passes its path).")
     parser.add_argument("--env-class", required=True, choices=("stag", "prod"), help="ENV_CLASS from env_mode.mk")
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[3]
-    target = repo_root / "trust" / f".env.{args.kit}"
+    target = args.target or repo_root / "trust" / f".env.{args.kit}"
     if not target.is_file():
         die(f"❌ Kit file {target} not found — create it from the matching .example first.")
 
@@ -73,7 +76,7 @@ def main() -> None:
     # does, except on LZA staging: its edge serves staging on :8003 and :8002 is production's.
     edge_port = os.environ.get("FL_EDGE_PORT", "").strip()
     if not edge_port:
-        if args.kit.endswith((".stag", ".lza-stag")):
+        if target.name.endswith((".stag", ".lza-stag")):
             die("❌ FL_EDGE_PORT is unset. Set FL_EDGE_PORT=8003 in .env.stag (the edge's staging listener).")
         edge_port = os.environ.get("FL_SERVER_PORT", "").strip()
     if edge_port and not edge_port.isdigit():
@@ -81,15 +84,23 @@ def main() -> None:
     if edge_port:
         os.environ["FL_EDGE_PORT"] = edge_port
 
-    # Require every hub-shared key: forgetting to source the env file leaves them unset.
-    missing = [k for k in tkl.HUB_SHARED_KEYS if not os.environ.get(k)]
+    # Require every hub-shared key: forgetting to source the env file leaves them unset. Only the
+    # running backend's kit date is required (an NVFLARE hub has no FLOWER_KIT_DATE, and the reverse).
+    # A `<...>` value is an unfilled placeholder, never a value, the other kit date's included.
+    other_kit_date = {"nvflare": "FLOWER_KIT_DATE", "flower": "FLARE_KIT_DATE"}.get(os.environ.get("FL_BACKEND", ""))
+    missing = [
+        k
+        for k in tkl.HUB_SHARED_KEYS
+        if os.environ.get(k, "").startswith("<") or (k != other_kit_date and not os.environ.get(k))
+    ]
     if missing:
+        source = os.environ.get("MAIN_ENV_FILE", "the matching .env.<env> file")
         die(
             f"❌ These Hub-shared keys are unset in the environment: {', '.join(missing)}\n"
-            f"   Make sure the matching .env.<env> file is present and populated."
+            f"   Set them in {source} (the hub's operator env file), then re-run."
         )
 
-    new_values = {k: os.environ[k] for k in tkl.HUB_SHARED_KEYS}
+    new_values = {k: os.environ.get(k, "") for k in tkl.HUB_SHARED_KEYS}
     # Most site images were never built at a sha- tag (path-filtered CI, see site_upgrade.py):
     # use its release, else the stag tag every image carries: staging and development (ENV_CLASS stag) only,
     # as prod sites pin releases.
@@ -111,7 +122,7 @@ def main() -> None:
     # would silently get the dev hub URL.
     source = os.environ.get("MAIN_ENV_FILE", "<environment>")
     hub_url = new_values["CENTRAL_HUB_API_URL"]
-    print(f"🔄 Syncing hub-shared block for trust/.env.{args.kit} from {source}")
+    print(f"🔄 Syncing hub-shared block for {target} from {source}")
     print(f"   CENTRAL_HUB_API_URL → {hub_url}")
     if "localhost" in hub_url or "127.0.0.1" in hub_url:
         print("   ⚠️  Hub URL points at localhost — this is the dev hub.")

@@ -67,7 +67,7 @@ RENDERS = {
     "vocab load and gpu": _sets(
         KIT_PATH,
         "omopDb.vocabLoad.enabled=true",
-        "omopDb.vocabLoad.s3Bucket=bucket",
+        "omopDb.vocabLoad.hostPath=/opt/flip/omop-vocab",
         "flClient.gpu.enabled=true",
         "flClient.gpu.count=1",
         "flClient.gpu.operator.enabled=true",

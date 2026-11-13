@@ -28,8 +28,9 @@ vi.mock("@/router", () => ({
 }));
 
 describe("Ai UserDropdown", () => {
-    it("Renders Component", () => {
-        const comp = mount(AiUserDropdown, {
+    const mountDropdown = (props?: InstanceType<typeof AiUserDropdown>["$props"]) =>
+        mount(AiUserDropdown, {
+            props,
             global: {
                 plugins: [createTestingPinia({
                     createSpy: vi.fn,
@@ -37,19 +38,15 @@ describe("Ai UserDropdown", () => {
                 })]
             }
         });
+
+    it("Renders Component", () => {
+        const comp = mountDropdown();
 
         expect(comp.exists()).toBe(true);
     });
 
     it("renders the account menu trigger as a native button for assistive tech", () => {
-        const comp = mount(AiUserDropdown, {
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
-            }
-        });
+        const comp = mountDropdown();
 
         const trigger = comp.find("[data-test='account-menu-btn']");
         expect(trigger.exists()).toBe(true);
@@ -59,14 +56,7 @@ describe("Ai UserDropdown", () => {
     });
 
     it("keeps a visible keyboard focus ring on the trigger button", () => {
-        const comp = mount(AiUserDropdown, {
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
-            }
-        });
+        const comp = mountDropdown();
 
         // Focus lands on the native button, so the ring utilities must live
         // there — focus:* classes on the inner div never fire.
@@ -75,15 +65,7 @@ describe("Ai UserDropdown", () => {
     });
 
     it("offers Light Mode with the sun icon while dark mode is active", async () => {
-        const comp = mount(AiUserDropdown, {
-            props: { isDark: true },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
-            }
-        });
+        const comp = mountDropdown({ isDark: true });
 
         await comp.find("[data-test='account-menu-btn']").trigger("click");
 
@@ -93,17 +75,9 @@ describe("Ai UserDropdown", () => {
     });
 
     it("drives the theme toggle, change-password and sign-out actions from the open menu", async () => {
-        const comp = mount(AiUserDropdown, {
-            props: {
-                isDark: false,
-                emailAddress: "ada@example.com"
-            },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
-            }
+        const comp = mountDropdown({
+            isDark: false,
+            emailAddress: "ada@example.com"
         });
         // headlessui closes the menu after each MenuItem click, so re-open per action.
         const openMenu = () => comp.find("[data-test='account-menu-btn']").trigger("click");

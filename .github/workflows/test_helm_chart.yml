@@ -45,6 +45,8 @@ on:
       # (tests/test_makefile.py, FLIP#1812).
       - "trust/xnat/.env"
       - "trust/xnat/scripts/xnat_db_*.sh"
+      # The fl-client-init script the chart's init container runs (tests/templates/test_fl_client_resources_render.py).
+      - "fl-services/nvflare/fl-client/fl-client/init.sh"
   push:
     branches: [develop, main]
     paths:
@@ -65,6 +67,7 @@ on:
       - "trust/deploy/scripts/trust_kit_lib.py"
       - "trust/xnat/.env"
       - "trust/xnat/scripts/xnat_db_*.sh"
+      - "fl-services/nvflare/fl-client/fl-client/init.sh"
   workflow_dispatch:
 
 jobs:
@@ -438,17 +441,17 @@ jobs:
             exit 1
           fi
 
-      # omopDb.vocabLoad.s3Bucket defaults to "" (the licensed bundle has no public
+      # omopDb.vocabLoad.hostPath defaults to "" (the licensed bundle has no public
       # mirror — FLIP#842/843), so every other render in this job skips the
-      # vocab-load Job. Without this step its ~110-line body is never rendered in
-      # CI and a broken .Values path there would merge green, only to fail the
-      # WHOLE Helm release of the first operator who configures a bucket.
+      # vocab-load Job. Without this step its body is never rendered in CI and a
+      # broken .Values path there would merge green, only to fail the WHOLE Helm
+      # release of the first operator who stages a bundle.
       - name: Render template (vocab-load enabled)
         run: |
           helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
-            --set omopDb.vocabLoad.s3Bucket=test-bucket > /tmp/vocab.yaml
+            --set omopDb.vocabLoad.hostPath=/opt/flip/omop-vocab > /tmp/vocab.yaml
           if ! grep -q "omop-vocab-load" /tmp/vocab.yaml; then
-            echo "::error::the vocab-load Job did not render with s3Bucket set — its body is now untested in CI"
+            echo "::error::the vocab-load Job did not render with hostPath set — its body is now untested in CI"
             exit 1
           fi
 
@@ -490,79 +493,39 @@ jobs:
             exit 1
           fi
 
-      # The probe stage is what keeps a routine `helm upgrade` from re-downloading
-      # the multi-GB bundle into a fresh emptyDir. Drop it and nothing breaks
-      # loudly — the Job still loads correctly, just slowly, on the critical path
-      # of a release hook. Scoped with --show-only so these strings have to appear
-      # in THIS Job and not merely somewhere in the release.
-      - name: Vocab-load probes before it fetches
+      # The Job loads the bundle the operator staged onto the node and reaches no host
+      # (FLIP#923). Scoped with --show-only so these strings have to appear in THIS Job.
+      - name: Vocab-load reads the staged bundle only
         run: |
           helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
-            --set omopDb.vocabLoad.s3Bucket=test-bucket \
+            --set omopDb.vocabLoad.hostPath=/opt/flip/omop-vocab \
             --show-only templates/omop-db-vocab-load-job.yaml > /tmp/vocabjob.yaml
-          # Every pattern is passed with -e: three of these begin with "-" and
-          # would otherwise be parsed as grep options rather than as patterns.
-          # fetch-bundle is asserted here as well as below, so that the ordering
-          # check cannot pass vacuously on an empty line number if it is renamed.
-          # load-vocab and its loader invocation are asserted because none of the
-          # probe/fetch strings would notice a Job that probes, fetches, and then
-          # never loads — which is green everywhere else and leaves empty cohorts.
-          #
-          # The marker patterns deliberately carry their whole `if` line rather
-          # than just the path. Asserting the bare token `-f /vocab-work/...`
-          # matches `! -f /vocab-work/...` too, so inverting the fetch guard —
-          # which makes every upgrade re-download the bundle, silently, the exact
-          # regression this step exists to catch — passed the earlier form. Same
-          # for the touch: asserted alone it survives `--check || true; touch`,
-          # which writes the marker unconditionally and only surfaces on the next
-          # fresh install, as a failed release.
           for want in \
-            '- name: probe-vocab' \
-            '- name: fetch-bundle' \
             '- name: load-vocab' \
-            'if /flip/omop/load_core_vocab.sh --check; then' \
-            '/flip/omop/load_core_vocab.sh "/vocab-work/' \
-            'touch /vocab-work/.vocab-present' \
-            'if [ -f /vocab-work/.vocab-present ]; then'
+            '/flip/omop/load_core_vocab.sh /vocab /flip/omop/constraints.sql' \
+            'path: "/opt/flip/omop-vocab"'
           do
             if ! grep -qF -e "${want}" /tmp/vocabjob.yaml; then
-              echo "::error::vocab-load Job no longer probes before fetching (missing: ${want})"
+              echo "::error::vocab-load Job no longer loads the staged bundle (missing: ${want})"
               exit 1
             fi
           done
-          # The probe is only worth anything if it runs BEFORE the fetch.
-          probe_at=$(grep -nF -m1 -e '- name: probe-vocab' /tmp/vocabjob.yaml | cut -d: -f1)
-          fetch_at=$(grep -nF -m1 -e '- name: fetch-bundle' /tmp/vocabjob.yaml | cut -d: -f1)
-          if [ "${probe_at}" -gt "${fetch_at}" ]; then
-            echo "::error::probe-vocab must be ordered before fetch-bundle in initContainers"
+          if grep -qE 's3://|aws |AWS_|microdnf|dnf |yum |apt-get |apt |apk add|pip install' /tmp/vocabjob.yaml; then
+            echo "::error::vocab-load Job fetches or installs at run time again — it must need no egress"
             exit 1
           fi
-          # unzip is baked into the omop-db image precisely so this Job never
-          # installs anything at run time: S3 must be the only host it needs to
-          # reach, or a trust behind an egress allowlist cannot load a vocabulary.
-          # The other half of that contract — that the image really does ship
-          # unzip — is asserted in test_trust_omop_db.yml, which is where it can
-          # actually fire: THIS workflow's pull_request trigger is path-filtered
-          # to trust/deploy/helm/**, so it does not run for a change to
-          # the Dockerfile it would be guarding.
-          if grep -qE 'microdnf|dnf |yum |apt-get |apt |apk add|pip install' /tmp/vocabjob.yaml; then
-            echo "::error::vocab-load Job installs packages at run time again — that needs egress to a package mirror"
-            exit 1
-          fi
-          # All three containers share the work dir. Drop the mount from
-          # fetch-bundle and its skip test reads a path that cannot exist, so
-          # every upgrade silently re-downloads the bundle it just skipped.
-          mounts=$(grep -cF -e 'mountPath: /vocab-work' /tmp/vocabjob.yaml)
-          if [ "${mounts}" -ne 3 ]; then
-            echo "::error::expected /vocab-work mounted in all 3 containers, found ${mounts}"
-            exit 1
-          fi
-          # A deleted resources value renders as `resources:` + `null`, which
-          # drops the ephemeral-storage bound the work dir relies on.
+          # A deleted resources value renders as `resources:` + `null`.
           if grep -A1 -E '^\s*resources:' /tmp/vocabjob.yaml | grep -qE '^\s*null\s*$'; then
-            echo "::error::a vocabLoad resources block rendered null — the emptyDir would be bounded only by the node"
+            echo "::error::the vocabLoad resources block rendered null"
             exit 1
           fi
+          # The removed S3 keys fail the render with directions, not a silent skip.
+          if helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+            --set omopDb.vocabLoad.s3Bucket=test-bucket > /dev/null 2>/tmp/vocab-err; then
+            echo "::error::omopDb.vocabLoad.s3Bucket must fail the render (removed in FLIP#923)"
+            exit 1
+          fi
+          grep -qF 'stage-vocab' /tmp/vocab-err || { echo "::error::the removed-key error must name stage-vocab"; exit 1; }
 
       # Asserted with an explicit `if`, not `! grep -q`: `set -e` exempts a
       # negated command, so that form only fails the step by virtue of being the
@@ -570,7 +533,7 @@ jobs:
       # The positive control matters too: `! grep -q` also passes on an empty
       # file, so without it "the Job is absent" and "nothing rendered at all"
       # would be indistinguishable.
-      - name: Render template (vocab-load skipped without a bucket)
+      - name: Render template (vocab-load skipped without a staged bundle)
         run: |
           helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit > /tmp/novocab.yaml
           if ! grep -q "omop-db" /tmp/novocab.yaml; then
@@ -578,7 +541,7 @@ jobs:
             exit 1
           fi
           if grep -q "omop-vocab-load" /tmp/novocab.yaml; then
-            echo "::error::the vocab-load Job rendered with no s3Bucket set — a failed hook fails the WHOLE Helm release"
+            echo "::error::the vocab-load Job rendered with no hostPath set — a failed hook fails the WHOLE Helm release"
             exit 1
           fi
 
@@ -700,8 +663,20 @@ jobs:
 
           # Nothing runs ahead of the client that could overwrite, --delete or chown the
           # staged kit: that is what the removed kit-init did to a node directory, as root.
+          # The one exception is fl-client-init (FLIP#1570): the client's own renders into
+          # local/ and startup/, moved out of the client so it can mount them read-only,
+          # as the client's user: non-root enforced, the container's settings over the pod's.
           for init in pod.get("initContainers", []):
-              if any(m.get("name") == KIT for m in init.get("volumeMounts", [])):
+              mounts = [m for m in init.get("volumeMounts", []) if m.get("name") == KIT]
+              if not mounts:
+                  continue
+              sc = {**(pod.get("securityContext") or {}), **(init.get("securityContext") or {})}
+              if (
+                  init["name"] != "fl-client-init"
+                  or sc.get("runAsUser") == 0
+                  or sc.get("runAsNonRoot") is not True
+                  or {m.get("subPath") for m in mounts} - {"local", "startup"}
+              ):
                   die(f"initContainer {init['name']!r} mounts {KIT} — it would write over the staged kit")
 
           # And the pod holds no FLIP AWS credentials: a trust never does (AGENTS.md, "FL
