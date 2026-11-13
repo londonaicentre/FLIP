@@ -39,7 +39,7 @@ By default MONAI's `LoadImaged` returns the array transposed: `(column, row)`, n
 Run one study through both paths and compare the arrays — do not reason about it. Dump what
 `DICOMSeriesToVolumeOperator` hands the operator, dump what your training chain's validation
 transforms produce for the same file, then find which of the eight rotation/flip combinations maps
-one onto the other (the loop prints 12 lines because some combinations repeat; any line that gives `0.0` is the answer):
+one onto the other (the loop tries 12 because some combinations repeat; any line that gives `0.0` is the answer):
 
 ```python
 import numpy as np

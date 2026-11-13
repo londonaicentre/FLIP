@@ -140,8 +140,8 @@ SIM_DATA_ROOT=/secure/flip-data make -C fl-tutorials run-tutorial TUTORIAL=bioma
 Every ClientApp slices its own `person_id`-modulo partition from that `dataframe.csv`. What the Data
 Use Agreement requires of you is in the NVFLARE README's "Data" section.
 
-On the platform the cohort is `query.sql`, run on each trust's OMOP database. Nothing ADNI-derived is
-seeded on the shared dev trusts; to use a local dev stack, load your own converted cohort first (see
+On the platform the cohort is `query.sql`, run on each trust's OMOP database. Nothing ADNI-derived may be
+published on the shared dev trusts. A licence holder loads their own converted cohort into a local dev stack (see
 [On the platform](#on-the-platform-or-make-e2e_smoke_causal)).
 
 ## Expected performance

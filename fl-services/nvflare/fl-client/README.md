@@ -17,7 +17,8 @@
 
 The client runs on the [FL base image](../fl-base/README.md), which installs the Python packages needed by the
 base application and by user-uploaded applications. These dependencies are baked into the image: a job cannot add
-its own dependencies on the FLARE backend. The Flower SuperNodes do the same; see the [Flower services README](../../flower/README.md).
+its own dependencies on the FLARE backend. The Flower SuperNodes do the same: the ClientApp runs in the image's environment, with no per-run
+`uv sync`. See the [Flower services README](../../flower/README.md).
 
 ## GPU resource management
 

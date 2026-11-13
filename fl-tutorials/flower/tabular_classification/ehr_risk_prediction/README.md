@@ -159,7 +159,7 @@ make -C fl-tutorials run-tutorial TUTORIAL=ehr_risk_prediction FL_BACKEND=flower
 
 ### On the platform (or `make e2e_smoke_ehr`)
 
-1. Load the Synthea data into each trust's OMOP database (see [Data](#data)).
+1. On the dev stack, load the Synthea data into each trust's OMOP database (see [Data](#data)).
 2. Create the project with **"Includes imaging data" turned off** (`has_imaging=false`). The hub then skips the imaging stage entirely: no XNAT project at the trusts, no PACS pull, and no imaging status on the project page. Turning it **on** would reject this cohort at submission, because an imaging project's cohort query must return an `accession_id` column and this one has none.
 3. Submit [`query.sql`](query.sql) as the project's cohort query.
 4. Upload [`app/`](app) as the model files of a **`standard`**-job-type model.

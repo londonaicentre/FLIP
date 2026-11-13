@@ -146,7 +146,7 @@ released by Tencent under the MIT licence
 ([`TencentMedicalNet/MedicalNet-Resnet50`](https://huggingface.co/TencentMedicalNet/MedicalNet-Resnet50)).
 Cite the paper if you publish results that use this loss.
 
-An FL app never downloads at run time: the FL server and a trust host may have no internet route, and a downloaded file bypasses the scanned upload path. So the weights ship as an
+An FL app never downloads at run time (FLIP#1206): the FL server and a trust host may have no internet route, and a downloaded file bypasses the scanned upload path. So the weights ship as an
 uploaded file, prepared by:
 
 ```bash

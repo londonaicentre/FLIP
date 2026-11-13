@@ -105,6 +105,8 @@ If `targets` are omitted, all registered trust names are returned.
 - `SUPERLINK_HEALTH_ADDRESS` (example: `superlink:9097`) — the SuperLink gRPC health service `/check_server_status` queries
 - `FL_API_KEY`, `FL_API_KEY_HEADER` — see [Authentication](#authentication)
 - `BUNDLE_URL_ALLOWED_ORIGINS` — see below
+- `JOB_CREDENTIAL_DIR` — where the job's hub credential is written for the fl-server; see
+  [`fl-services/AGENTS.md`](../../AGENTS.md#environment-variables)
 
 ## Bundle-fetch origin allow-list (`BUNDLE_URL_ALLOWED_ORIGINS`)
 

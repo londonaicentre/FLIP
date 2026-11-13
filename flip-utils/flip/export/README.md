@@ -52,7 +52,8 @@ Detail: the [packaging guide](../../../docs/source/working-with-flip-apps/wrap-m
 
 ## CLI: `python -m flip.export`
 
-No console script is installed, so invoke it as a module:
+No console script is installed, so invoke it as a module. A top-level `flip` command would be a separate decision
+about the package's public surface.
 
 ```bash
 python -m flip.export \

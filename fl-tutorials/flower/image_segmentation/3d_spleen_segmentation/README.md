@@ -54,7 +54,7 @@ the local data lives, and [data enrichment](#running-on-a-real-flip-project-data
 There are two ways to run this tutorial locally:
 
 - **The flwr simulator** (`make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower`,
-  alias `sim-tutorial`) runs everything in one process with no containers, as FLARE's tutorials do.
+  alias `sim-tutorial`) runs with no containers at all, as FLARE's tutorials do.
   It is what the release check runs.
 - **The Flower containers** (`fl-services/flower`) run the SuperLink and SuperNodes by hand.
 
@@ -105,7 +105,7 @@ command — `sim-tutorial.sh` handles all five:
    it is `finished:completed` — so a shell loop over `make run-tutorial` really does stop at the
    first failure.
 
-The data paths and `WORKING_DIR` are read once when the process starts. The script sets them for you; you cannot change them during a run.
+FLIP's `DevSettings` singleton reads the data paths and `WORKING_DIR` once, at import time. The script sets them for you; you cannot change them during a run.
 
 **Each site gets a disjoint slice.** `flip.flower.identity.partition_cohort` splits the fetched
 dataframe by this client's `partition-id`, so the split is the same under the simulator and under
@@ -202,7 +202,8 @@ It is wired in `app/client_app.py` as `@app.train(mods=[flip_local_dp_mod])`, so
 rounds only — `@app.evaluate` is untouched. That mirrors the scope of the FLARE apps'
 `PercentilePrivacy` result filter, though the mechanism is stronger: FLARE sparsifies by
 percentile and adds no noise, while this is a real (epsilon, delta) mechanism built on Flower's own
-`clip_inputs_inplace` / `add_gaussian_noise_inplace`.
+`clip_inputs_inplace` / `add_gaussian_noise_inplace`. These unroll Flower's `compute_clip_model_update` so the mod
+can log the pre-clip norm.
 
 | Key                | Default | Meaning |
 |--------------------|---------|---------|

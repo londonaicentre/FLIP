@@ -67,7 +67,7 @@ How it works: each round, the trainer evaluates the global model it *received* o
 
 `FLIP_PROJECT_ID` and `FLIP_QUERY` are read from environment variables. For local runs, set stubs in
 `.env.app` or export them before `make sim`. They are not CLI flags, because the SQL query contains
-spaces that argparse would split. `job.py` passes them to the recipe, which writes the query into the
+spaces and FLARE splits task arguments on whitespace. `job.py` passes them to the recipe, which writes the query into the
 generated `config_fed_client.json`. At run time the trainer reads it from there via `load_query()`.
 
 ## How to run

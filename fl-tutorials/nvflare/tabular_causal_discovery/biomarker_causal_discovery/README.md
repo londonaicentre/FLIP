@@ -96,7 +96,8 @@ ADAS-Cog13 and demographics of the centralised analysis's 560 participants — a
 your own ADNI licence. ADNI is access-controlled: every user signs a Data Use Agreement that forbids
 redistributing participant-level data in any form, so this repository ships no rows, no per-site
 split, no thinned fixture and no synthetic stand-in. What it ships is the **code** that turns an
-ADNI download into the cohort, and the summary results of running on it.
+ADNI download into the cohort, and the summary results of running on it. This is the
+access-controlled dataset rule of the repo's `tutorial-contract` skill.
 
 ### Running on real ADNI data
 
@@ -411,7 +412,7 @@ read the other's. A formal guarantee would add calibrated noise to that single m
 mechanism of Analyze Gauss (Dwork et al. 2014) or the Wishart mechanism (Jiang et al. 2016) — at
 little accuracy cost at this dimension ([FLIP#1779](https://github.com/londonaicentre/FLIP/issues/1779)).
 
-**Why the platform's update filters are off for this payload.** The NVFLARE percentile filter and Flower's per-update
+**Why the platform's update filters do nothing for this payload.** The NVFLARE percentile filter and Flower's per-update
 clip-and-noise are not that mechanism, both being calibrated for weight deltas: the payload is
 shaped so the former is a no-op (checked against the trust's effective clip *and* percentile, from
 its site policy), and the latter is switched off in `config.toml`, with the ClientApp refusing a run

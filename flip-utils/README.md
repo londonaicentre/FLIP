@@ -324,6 +324,8 @@ make down NET_NUMBER=1    # Stop the network — must match the NET_NUMBER used 
 
 ### CI/CD
 
+GitHub Actions workflows use OIDC to authenticate to AWS (no long-lived keys).
+
 The FL app templates in [`../fl-apps/`](../fl-apps/) are baked into the flip-api image at build time and
 read from a local directory (`FL_APP_BASE_DIR`, default `/app/fl-apps`). flip-api validates job types and
 bundles applications straight from that tree. Two CI checks guard the templates on every PR:

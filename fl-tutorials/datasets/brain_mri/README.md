@@ -87,7 +87,9 @@ metadata table's `Subject` column is recovered from the tree.
 | `person` | per case | `person_id` = the first nine digits of the synthetic NHS number |
 | `visit_occurrence`, `procedure_occurrence` | per study | concept 3037128 |
 | `image_occurrence` | per **series** | four rows share an `accession_id`; anatomic site 4133034 *Brain structure*, modality 4013636 |
-| `image_feature` + `measurement` | per series attribute | the same five DICOM attributes as the spleen dataset: Manufacturer, ManufacturerModelName, SliceThickness (mm), Rows, Columns | Surrogate keys come from `brain_mri_project`'s reserved block
+| `image_feature` + `measurement` | per series attribute | the same five DICOM attributes as the spleen dataset: Manufacturer, ManufacturerModelName, SliceThickness (mm), Rows, Columns |
+
+Surrogate keys come from `brain_mri_project`'s reserved block
 (`5_000_000`; `../utils/omop_ids.py`). The tumour labels are deliberately **not** in OMOP: the
 dataset's first use is unsupervised (latent diffusion), and a segmentation mask has nowhere to live in
 a cohort query anyway — it would reach a project by XNAT data enrichment, as the spleen labels do.

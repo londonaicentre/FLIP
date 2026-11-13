@@ -214,8 +214,9 @@ There is also a **reproducible path** that skips steps 1-2 entirely:
 `fetch-spleen-metadata-table` downloads the *published* metadata table for the pinned
 `trust/.data_version` (no 1.5GB MSD download) straight into `data/spleen_metadata.csv`, ready
 for step 4. `reproduce-spleen-omop` chains `fetch-spleen-metadata-table` →
-`build-spleen-omop-tables` → `verify-spleen-omop-tables` in one command. The published export
-*is* the deterministic chain's output, so the two paths agree.
+`build-spleen-omop-tables` → `verify-spleen-omop-tables` in one command. From the FLIP#1221 cut on, the
+published export *is* the deterministic chain's output, so the two paths agree. An earlier data version
+cannot be reproduced this way.
 
 **Faithfulness gate.** `verify-spleen-omop-tables` (`utils/verify_omop_tables.py --project
 spleen_project`) diffs the locally generated tables against the

@@ -142,9 +142,10 @@ make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation NUM_ROUNDS=10
 
 The standalone FLARE submit path (`make -C fl-services/nvflare submit`) is **not wired** (it is
 admin-API based, unlike Flower's HTTP submit), so run locally via the simulator instead. To exercise
-the full platform path, upload the app files through the FLIP UI (or `make e2e_smoke` with
-`MODEL_FILES_DIR` pointing at this tutorial's `app_files/`), where the FL API bundles the template
-and applies `config.json`'s `GLOBAL_ROUNDS` at submit time. Training fails with "No image/label pairs
+the full platform path, upload the app files through the FLIP UI and submit [`query.sql`](query.sql)
+as the cohort query. The FL API bundles the template and applies `config.json`'s `GLOBAL_ROUNDS` at
+submit time. No `make e2e_smoke` target runs this FLARE app yet: `make -C flip-api e2e_smoke_spleen`
+uploads the Flower spleen app. Training fails with "No image/label pairs
 found" until the labels are uploaded next to the pulled images in XNAT: see
 [data enrichment](#running-on-a-real-flip-project-data-enrichment).
 

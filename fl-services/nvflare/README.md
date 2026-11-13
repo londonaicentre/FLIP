@@ -72,7 +72,8 @@ compose pulls FL images by tag, so their build definitions live only in [`compos
 
 `fl-server`, `fl-client`, and `fl-base` run as a non-root user, `flip` (uid 1000, gid 1000), baked into the image. That identity
 is **fixed**, not taken from the building developer's environment. Build-time identity and runtime identity
-are two different things (FLIP#1171):
+are two different things. When the uid came from the builder, the published images crash-looped for anyone
+not on uid 1000 (FLIP#1171):
 
 - **Build time** — every image, whether built by CI as `:stag` or locally as `:dev`, contains the same
   `flip` user. This is what lets the composes name `/home/flip` literally, and it means a local build is a
