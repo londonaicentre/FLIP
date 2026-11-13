@@ -118,7 +118,9 @@ With `manage_state_bucket = true` (the default) the module declares the bucket a
 - encryption (`AES256`, or `aws:kms` with the AWS-managed key);
 - a lifecycle keeping the newest `state_noncurrent_versions_retained` previous versions, each for
   `state_noncurrent_version_days`;
-- a TLS-only bucket policy. `prevent_destroy` protects it; removing a caller's module block needs
+- a TLS-only bucket policy.
+
+`prevent_destroy` protects the bucket; removing a caller's module block needs
 `removed { from = … lifecycle { destroy = false } }`.
 
 `state_access_log_bucket` (empty by default, so off) turns on S3 server access logging (Security Hub S3.9) into a bucket

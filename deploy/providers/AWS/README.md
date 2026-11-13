@@ -1709,7 +1709,7 @@ Ports referenced internally only (no internet-facing ingress; reached only from 
 
 ### Security-group egress
 
-This root holds no trust, so it has no trust egress allowlist (it moved to the trust roots, FLIP#1438). A trust
+This root holds no trust, so it has no trust egress allowlist (GHSA-8465; it moved to the trust roots, FLIP#1438). A trust
 node's outbound destinations are listed under
 [Network requirements](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-trust-node.html#deploy-trust-node-network)
 (FLIP#1684).
