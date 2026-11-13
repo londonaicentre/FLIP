@@ -84,8 +84,8 @@ _NON_RESAMPLING_TRANSFORMS: tuple[type, ...] = (
 
 
 @contextlib.contextmanager
-def flower_client_app(tutorial_dir: Path) -> Iterator[ModuleType]:
-    """Import a Flower tutorial's ``app.client_app`` under the ``app`` package name it ships as.
+def app_package(tutorial_dir: Path) -> Iterator[None]:
+    """Make a Flower tutorial's code importable under the ``app`` package name it ships as.
 
     Every Flower tutorial ships its code as a package called ``app``, so whichever one is imported first
     would otherwise be served to the next test; this displaces any cached ``app*`` modules while the
@@ -96,13 +96,20 @@ def flower_client_app(tutorial_dir: Path) -> Iterator[ModuleType]:
         del sys.modules[name]
     sys.path.insert(0, str(tutorial_dir))
     try:
-        yield importlib.import_module("app.client_app")
+        yield
     finally:
         for name in [name for name in sys.modules if name == "app" or name.startswith("app.")]:
             del sys.modules[name]
         sys.modules.update(displaced)
         with contextlib.suppress(ValueError):
             sys.path.remove(str(tutorial_dir))
+
+
+@contextlib.contextmanager
+def flower_client_app(tutorial_dir: Path) -> Iterator[ModuleType]:
+    """Import a Flower tutorial's ``app.client_app`` inside :func:`app_package`."""
+    with app_package(tutorial_dir):
+        yield importlib.import_module("app.client_app")
 
 
 def simulated_site_context(partition_id: int, num_partitions: int = 2) -> SimpleNamespace:

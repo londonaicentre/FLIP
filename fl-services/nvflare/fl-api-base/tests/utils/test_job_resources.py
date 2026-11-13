@@ -169,29 +169,21 @@ def test_custom_props_are_kept_but_flip_no_longer_reads_a_model_id_from_them():
 # ── which GPU count wins ────────────────────────────────────────────────────────────
 
 
-def test_with_nothing_declared_the_fl_api_default_applies():
+@pytest.mark.parametrize(
+    ("override", "declared", "gpus", "expected_source"),
+    [
+        pytest.param(None, None, 0, ResourceSource.DEFAULT, id="nothing-declared-default-applies"),
+        pytest.param(None, 1, 1, ResourceSource.META, id="meta-beats-default"),
+        pytest.param(JobResources(num_gpus=2), 1, 2, ResourceSource.SUBMISSION, id="submission-beats-meta"),
+    ],
+)
+def test_which_gpu_count_wins(override, declared, gpus, expected_source):
     resources, source = resolve_job_resources(
-        override=None, declared_gpus=None, default=lambda: JobResources(num_gpus=0)
+        override=override, declared_gpus=declared, default=lambda: JobResources(num_gpus=0)
     )
 
-    assert resources == JobResources(num_gpus=0)
-    assert source is ResourceSource.DEFAULT
-
-
-def test_the_jobs_meta_json_beats_the_default():
-    resources, source = resolve_job_resources(override=None, declared_gpus=1, default=lambda: JobResources(num_gpus=0))
-
-    assert resources == JobResources(num_gpus=1)
-    assert source is ResourceSource.META
-
-
-def test_an_override_at_submission_beats_the_jobs_meta_json():
-    resources, source = resolve_job_resources(
-        override=JobResources(num_gpus=2), declared_gpus=1, default=lambda: JobResources(num_gpus=0)
-    )
-
-    assert resources == JobResources(num_gpus=2)
-    assert source is ResourceSource.SUBMISSION
+    assert resources == JobResources(num_gpus=gpus)
+    assert source is expected_source
 
 
 def test_zero_is_honoured_wherever_it_comes_from_not_mistaken_for_nothing():
