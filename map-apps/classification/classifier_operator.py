@@ -58,7 +58,7 @@ from monai.deploy.core import (
     OperatorSpec,
     OutputContext,
 )
-from monai.transforms import Activations, Compose, EnsureType, Resize, ScaleIntensity
+from monai.transforms import Compose, EnsureType, Resize, ScaleIntensity
 
 # Label semantics come from the training app's config.json LESIONS block. The trainer optimises a
 # binary cross-entropy loss, so the two outputs are independent binary labels read through a
@@ -241,11 +241,10 @@ class FlipXrayClassifierOperator(Operator):
 
         with torch.no_grad():
             logits = self.model(batch)
-        probabilities = Compose([EnsureType(), Activations(sigmoid=True)])(logits)[0].cpu().numpy()
+        probabilities = torch.sigmoid(logits)[0].cpu().numpy()
 
-        findings = {
-            label: float(probabilities[index]) for index, label in enumerate(LABELS) if index < len(probabilities)
-        }
+        # zip stops at the shorter input, so a model with fewer outputs than LABELS still scores.
+        findings = {label: float(score) for label, score in zip(LABELS, probabilities)}
         positives = [label for label, score in findings.items() if score >= POSITIVE_THRESHOLD]
 
         detail = ", ".join(f"{label} {score:.3f}" for label, score in findings.items())
