@@ -78,7 +78,7 @@ This command executes the following steps in order:
 8. **`ssh-config`**: Update `~/.ssh/config` with SSM-managed EC2 instance IDs
 9. **`ansible-init`**: Patch the Central Hub bastion and install `psql` on it
 10. **`deploy-centralhub`**: Deploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) at the tip of the env's branch via new task-definition revisions (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)) and sync the UI to S3
-11. **`register-trusts`**: Register every locally-present trust kit file (none yet is fine) (`trust/.env.<CODE>.<hub>`) on the running hub and write its credentials back. Only the two hub-shared values the ECS task env carries (`TRUST_API_KEY_HEADER`, `FL_BACKEND`) come back with it — the rest of the block needs `make sync-trust-kit KIT=<CODE> HUB=<hub>` from the repo root afterwards (see [Registering trusts against the ECS hub](#registering-trusts-against-the-ecs-hub))
+11. **`register-trusts`**: Register every locally-present trust kit file (none yet is fine) (`trust/.env.<CODE>.<hub>`) on the running hub and write its credentials back, with the hub-shared block from the local `.env.<hub>` (see [Registering trusts against the ECS hub](#registering-trusts-against-the-ecs-hub))
 12. **`status`**: Run comprehensive health checks
 
 To provision only the minimal Central Hub bastion after a targeted Terraform
@@ -107,7 +107,7 @@ two-trust port allocation).
 
 ### Registering trusts against the ECS hub
 
-The procedure, the kit-file suffixes, the mandatory `make sync-trust-kit` follow-up and what a failure looks like:
+The procedure, the kit-file suffixes and what a failure looks like:
 [Deploy the Central Hub → Registering trusts](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#deploy-central-hub-register-trusts).
 This section is how it works.
 
@@ -131,7 +131,9 @@ A waiter timeout warns and proceeds. Then, per kit, it:
    path and `sync-trust-kit` use: credentials on first registration only, operator host-local edits preserved, and
    the hub-shared block upserted with whatever the task's environment carried — on ECS only `TRUST_API_KEY_HEADER`
    and `FL_BACKEND` (`AES_KEY_BASE64` is a Secrets Manager value, never in the task env, and the other hub-shared
-   keys are not in the task definition at all). That gap is why the manual's `sync-trust-kit` step is mandatory.
+   keys are not in the task definition at all). So it then runs `trust/deploy/scripts/sync_trust_kit.py` on the kit,
+   as `make sync-trust-kit` does, filling the whole block from the operator env file the Makefile loaded; a key
+   missing there fails the run, naming it (FLIP#1476).
    It then mints the trust's XNAT stack passwords into the kit (`generate-xnat-credentials`), runtime-only
    trust-side secrets the hub never holds. That step runs locally through flip-api, so it needs flip-api's `uv`
    environment on the admin's machine.
@@ -141,7 +143,7 @@ there is nothing to re-emit); it never re-issues credentials. Delivery to a host
 EC2 node's own `make deploy` drives its Docker daemon over an SSH context, so the kit values reach the host only as
 container environment. For an on-prem operator, `make package-onprem-trust-kit
 KIT=<CODE>` tarballs `trust/.env.<CODE>.<hub>` (or the kit named by `KIT_FILE=<path>`) with the FL-kit slice of its
-`FL_KIT_SLOT`, once `sync-trust-kit` has filled it.
+`FL_KIT_SLOT`.
 
 #### Troubleshooting
 
@@ -289,8 +291,6 @@ make deploy-centralhub
 
 # 11. Register every locally-present trust kit file on the hub and write its credentials back
 make register-trusts
-#     ...then fill the rest of each kit's hub-shared block from the local env file (repo root):
-#     make sync-trust-kit KIT=<CODE> HUB=<hub>
 
 # 12. Check status
 make status

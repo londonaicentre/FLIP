@@ -104,10 +104,9 @@ Namespace name
 {{- end }}
 
 {{/*
-OMOP database connection environment, shared by the vocab-load Job's probe and
-loader containers. Both talk to the same database with the same credentials —
-keeping one definition means a rename here cannot leave the probe reading a
-different database than the loader writes to.
+OMOP database connection environment, shared by the vocab-load and trust-seed Jobs. Both
+talk to the same database with the same credentials — keeping one definition means a
+rename here cannot leave one Job reading a different database than the other writes to.
 */}}
 {{- define "flip-trust.omopVocabDbEnv" -}}
 - name: OMOP_DB_HOST
@@ -238,4 +237,18 @@ carry it, so whichever restarts follows the one still running; at install the fi
 {{- $_ := set $affinity "podAffinity" $podAffinity }}
 {{- end }}
 {{- with $affinity }}{{ toYaml . }}{{ end }}
+{{- end }}
+
+{{/*
+The NVFLARE site privacy policy (FLIP#851): fl-client-init renders it and the fl-client checks that render
+at start (FLIP#1570). In the pod template rather than only the ConfigMap, so a Helm value change rolls the
+Deployment.
+*/}}
+{{- define "flip-trust.flSitePrivacyEnv" -}}
+- name: FL_SITE_PRIVACY_POLICY
+  value: {{ .Values.flClient.nvflare.sitePrivacy.policy | quote }}
+- name: FL_SITE_PRIVACY_PERCENTILE
+  value: {{ .Values.flClient.nvflare.sitePrivacy.percentile | quote }}
+- name: FL_SITE_PRIVACY_GAMMA
+  value: {{ .Values.flClient.nvflare.sitePrivacy.gamma | quote }}
 {{- end }}

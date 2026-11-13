@@ -72,12 +72,12 @@ function mountMenu(status: ModelStatusEnum = ModelStatusEnum.RUNNING) {
     });
 }
 
-describe("TrainingActionsMenu responsive button labels", () => {
-    // Below lg the labels hide so the buttons shrink to icons and stop
-    // squashing the model title in the page header; title + aria-label keep
-    // the buttons named for tooltips and screen readers at every width.
-    const labelSelector = "span.hidden.lg\\:inline";
+// Below lg the labels hide so the buttons shrink to icons and stop
+// squashing the model title in the page header; title + aria-label keep
+// the buttons named for tooltips and screen readers at every width.
+const labelSelector = "span.hidden.lg\\:inline";
 
+describe("TrainingActionsMenu responsive button labels", () => {
     it("hides the Stop Training label below lg and keeps title + aria-label", () => {
         const wrapper = mountMenu();
 
@@ -103,8 +103,6 @@ describe("TrainingActionsMenu responsive button labels", () => {
 });
 
 describe("TrainingActionsMenu abort vs stop affordance", () => {
-    const labelSelector = "span.hidden.lg\\:inline";
-
     it.each([
         ["STOPPED", ModelStatusEnum.STOPPED],
         ["ERROR", ModelStatusEnum.ERROR],
@@ -183,9 +181,14 @@ describe("TrainingActionsMenu abort vs stop affordance", () => {
         expect(modal().props("dialog")).toBe(false);
     });
 
-    it("reports 'Failed to abort job' when the pre-running abort fails", async () => {
+    it.each([
+        ["the pre-running abort (INITIATED)", ModelStatusEnum.INITIATED, "Failed to abort job"],
+        ["stopping a running model (RUNNING)", ModelStatusEnum.RUNNING, "Failed to stop training"]
+    ])("reports the failure of %s as its own message", async (_name, status, text) => {
+        // Each row must see its own snackbar call, not the previous row's.
+        mockSnackbarError.mockClear();
         vi.mocked(stopTraining).mockRejectedValueOnce(new Error("network error"));
-        const wrapper = mountMenu(ModelStatusEnum.INITIATED);
+        const wrapper = mountMenu(status);
         const modal = () => wrapper.findComponent(AiConfirmModal);
 
         await wrapper.find("[data-test=stop-training-btn]").trigger("click");
@@ -193,22 +196,7 @@ describe("TrainingActionsMenu abort vs stop affordance", () => {
 
         expect(mockSnackbarError).toHaveBeenCalledWith({
             title: "Something went wrong!",
-            text: "Failed to abort job"
-        });
-        expect(modal().props("dialog")).toBe(false);
-    });
-
-    it("reports 'Failed to stop training' when stopping a running model fails", async () => {
-        vi.mocked(stopTraining).mockRejectedValueOnce(new Error("network error"));
-        const wrapper = mountMenu(ModelStatusEnum.RUNNING);
-        const modal = () => wrapper.findComponent(AiConfirmModal);
-
-        await wrapper.find("[data-test=stop-training-btn]").trigger("click");
-        await (modal().props("continueAction") as () => Promise<void>)();
-
-        expect(mockSnackbarError).toHaveBeenCalledWith({
-            title: "Something went wrong!",
-            text: "Failed to stop training"
+            text
         });
         expect(modal().props("dialog")).toBe(false);
     });

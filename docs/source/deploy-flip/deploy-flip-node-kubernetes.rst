@@ -176,8 +176,6 @@ On top of :ref:`deploy-trust-node-network`:
      - The sample-data seed job (``trustData.seed``) fetches its scripts from FLIP's repository, on install and on
        every upgrade while it is enabled. It also needs the sample-data hosts in the general table. Neither is needed
        with ``TRUST_DATA_SEED=false`` in the kit (see Step 1).
-   * - Your S3 vocabulary bucket
-     - The OMOP vocabulary load job, only if ``omopDb.vocabLoad.s3Bucket`` is set.
 
 To restrict egress further, see :gh:`NETWORK-POLICY.md <trust/deploy/helm/NETWORK-POLICY.md>`.
 
@@ -291,7 +289,7 @@ with ``flClient.kit.source=secret`` (FLIP#1390):
      PLATFORM_VALUES=values-aks.yaml KUBE_CONTEXT=<kube-context>
 
 - ``values-aks.yaml`` carries what belongs to a managed cluster rather than to the trust: the kit from the Secret,
-  Postgres data below the fresh disk's ``lost+found``, and the S3 vocabulary load off. ``PLATFORM_VALUES`` layers it
+  Postgres data below the fresh disk's ``lost+found``, and the vocabulary load off. ``PLATFORM_VALUES`` layers it
   after the per-trust override. Better, put ``K8S_PLATFORM_VALUES=values-aks.yaml`` in the kit file: every
   ``deploy``, ``deploy-trust-k8s`` and ``upgrade-trust-k8s`` with that ``KIT`` then applies it. A run without it
   moves PGDATA back to the volume root (both databases crash-loop) and looks for the kit on the node (the FL client
@@ -442,39 +440,46 @@ Load the OMOP core vocabulary
 *****************************
 
 *Who: trust operator.* Why the vocabulary is needed, and how to export it, is step 7 of :doc:`onboarding-a-trust`.
-After a default install, Helm prints a warning that it is not loaded. On Kubernetes you have two ways to load it:
+After a default install, Helm prints a warning that it is not loaded. The chart loads it from a folder you stage
+onto the node; it fetches nothing and needs no cloud credentials, so this works without AWS access:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - You have
-     - Do this
-   * - An S3 bucket holding the bundle that the cluster can read
-     - Set ``AICENTRE_BUCKET_NAME`` in the kit to your own environment's bucket and re-run Step 4. ``sync-kit`` writes
-       it into ``omopDb.vocabLoad.s3Bucket`` and a load job runs after each install or upgrade.
-   * - Your own Athena / TRUD export
-     - Leave ``omopDb.vocabLoad.s3Bucket`` empty and run the loader from :ref:`onprem-core-vocabulary` over a
-       ``kubectl port-forward`` to the ``omop-db`` service.
+1. Get the vocabulary as a folder of Athena CSVs. With access to the AI Centre bucket, run
+   ``make -C trust/deploy/helm download-vocab`` on your own machine (it uses your AWS CLI profile). Otherwise export
+   it from OHDSI Athena as step 7 of :doc:`onboarding-a-trust` describes, and unzip the export into a folder.
+2. Stage it onto the node: ``make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<kube-context>``
+   on kind; on any other cluster, copy the folder to ``/opt/flip/omop-vocab`` on the node yourself. With more than
+   one node, pin the load job to that node with ``omopDb.vocabLoad.nodeSelector`` (for example
+   ``kubernetes.io/hostname: <node>``). The folder is read only for the first load: once the database holds the
+   vocabulary, later upgrades skip it, so you may remove it.
+3. Set ``OMOP_VOCAB_DIR=/opt/flip/omop-vocab`` in the kit and re-run Step 4. ``sync-kit`` writes it into
+   ``omopDb.vocabLoad.hostPath`` and a load job runs after each install or upgrade, loading only what is missing.
 
 .. warning::
 
-   The S3 load runs as a Helm hook. If the cluster cannot read the bucket, the hook fails and **the whole release
-   is marked failed**, not just the vocabulary load. The deploy does not roll it back.
+   The load runs as a Helm hook. If the vocabulary is not loaded yet and nothing is staged at that path on the node
+   the job runs on, the hook fails and **the whole release is marked failed**, not just the vocabulary load. The
+   deploy does not roll it back.
 
-On a cluster with no route to AWS, ``values-aks.yaml`` keeps the S3 load out whatever bucket the kit names, and with
-it the metadata endpoint, which on Azure hands out managed-identity tokens; ``NO_VOCAB_LOAD=1`` does the same for
-``sync-kit`` on any other cluster. The trust then runs without the vocabulary until one is loaded another way, and
-cohort queries that name concepts through ``omop.concept`` return nothing. The x-ray tutorial ships
+``values-aks.yaml`` and ``values-eks.yaml`` keep the load off, because a managed node pool keeps nothing staged on a
+node; ``NO_VOCAB_LOAD=1`` does the same for ``sync-kit`` on any other cluster. Load the vocabulary there with the loader
+from :ref:`onprem-core-vocabulary` over a ``kubectl port-forward`` to the ``omop-db`` service, or run the trust
+without it: cohort queries that name concepts through ``omop.concept`` then return nothing. The x-ray tutorial ships
 ``query_novocab.sql`` for this, and ``make e2e_smoke`` on a dev stack (``HUB`` unset) smokes such a trust with it.
 With ``HUB`` set, pass it by hand:
 ``QUERY_FILE=fl-tutorials/nvflare/image_classification/xray_classification/query_novocab.sql`` (Flower:
 ``fl-tutorials/flower/image_classification/xray_classification/query_novocab.sql``).
 
+.. note::
+
+   Charts before FLIP#923 fetched the bundle from S3 inside the cluster. A values file that still sets
+   ``omopDb.vocabLoad.s3Bucket``, ``bundleName``, ``awsProfile``, ``hostAwsMount``, ``fetchResources`` or
+   ``workDirSize`` now fails to render; the chart README, "Upgrading: the chart no longer fetches the vocabulary from
+   S3", has the steps.
+
 .. seealso::
 
-   The chart README, "OMOP core vocabulary" and "Local clusters (kind)", for the port-forward commands, AWS
-   credentials for the load job, and loading the Synthea EHR cohort the same way.
+   The chart README, "OMOP core vocabulary", for the port-forward commands and loading the Synthea EHR cohort the
+   same way.
 
 **********
 Key values
@@ -515,9 +520,12 @@ chart defaults, and the generated override still wins for the keys it sets. Do n
    * - ``trustData.seed.orthanc``
      - ``false``
      - Also load the mock DICOM studies into Orthanc (about 2 GB per trust). ``smoke-cstore`` needs it.
-   * - ``omopDb.vocabLoad.s3Bucket``
+   * - ``omopDb.vocabLoad.hostPath``
      - ``""``
-     - Bucket for the OMOP vocabulary load; empty skips it (see above).
+     - Node folder holding the staged OMOP vocabulary; empty skips the load (see above).
+   * - ``omopDb.vocabLoad.nodeSelector``
+     - ``{}``
+     - Pins the vocabulary load job to the node holding that folder, on a cluster with more than one node.
    * - ``omopDb.enabled`` / ``omopDb.external.host``
      - ``true`` / ``""``
      - Use an external OMOP database instead of the in-cluster one.
@@ -536,7 +544,9 @@ chart defaults, and the generated override still wins for the keys it sets. Do n
    * - ``namespace.create``
      - ``false``
      - Let the chart create the namespace with Pod Security labels. ``make deploy`` creates the namespace itself,
-       without those labels.
+       without those labels. The ``baseline`` profile the labels enforce does not admit ``hostPath`` volumes, which
+       the FL kit (``flClient.kitHostPath``) and the vocabulary load (``omopDb.vocabLoad.hostPath``) both use: with
+       either, set ``podSecurity.enforce`` to ``privileged``.
 
 **Governance policy.** A trust's optional governance document is set through the kit, not as a value: point
 ``ACCESS_POLICY_FILE`` at it in the kit file, validate it with ``make -C trust check-governance KIT=<CODE>
@@ -653,6 +663,7 @@ Known limitations
 - **Pod Security.** The API services and FL client run hardened, but ``xnat-web``, ``xnat-db``, ``omop-db`` and
   ``orthanc`` cannot yet run under the ``restricted`` Pod Security profile.
 - **Multi-node clusters.** Volumes are ``ReadWriteOnce``. The FL client is pinned to imaging-api's node, and XNAT's
-  conversion jobs must land on the ``xnat-web`` node. Across several nodes, give the XNAT volume a ``ReadWriteMany``
+  conversion jobs must land on the ``xnat-web`` node, and the vocabulary load job on the node holding the staged
+  folder (``omopDb.vocabLoad.nodeSelector``). Across several nodes, give the XNAT volume a ``ReadWriteMany``
   storage class (``xnat.web.persistence.accessMode: ReadWriteMany``, for example NFS or EFS).
 - **Orthanc** runs a single replica on an embedded SQLite database.

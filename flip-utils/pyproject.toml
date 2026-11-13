@@ -47,8 +47,8 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
+# No FL backend here: each one is an extra (FLIP#1047), so an image carries only the backend it runs.
 dependencies = [
-    "nvflare==2.9.0",
     "pandas>=2.3.0",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
@@ -69,15 +69,25 @@ Documentation = "https://github.com/londonaicentre/FLIP/tree/main/flip-utils"
 Issues = "https://github.com/londonaicentre/FLIP/issues"
 
 [project.optional-dependencies]
-# Full dependencies for running FL jobs (includes ML frameworks)
-full = [
-    "einops==0.8.1",
-    "gdown>=5.2.2",
+# One extra per FL backend (FLIP#1047). `flip.nvflare` needs `nvflare`, `flip.flower` needs `flower`;
+# `import flip` and the backend-neutral modules need neither.
+nvflare = [
+    "nvflare==2.9.0",
     # NVFLARE's ClientK8sJobLauncher (FLIP#1428 job pods) imports it. Capped below 36: NVFLARE 2.9.0
     # passes the GPU count as an int, and the 37.x client validates request bodies and rejects a
     # non-string nvidia.com/gpu quantity, failing every GPU job at pod creation (NVFLARE itself
     # excludes 36.0.0).
     "kubernetes>=33.1.0,<36",
+]
+# Floor matches flwr/base:1.42.0 and fl-api-flower; the Flower fl-base keeps flwr/base's flwr, which the
+# locked version must equal.
+flower = [
+    "flwr>=1.42.0",
+]
+# Full dependencies for running FL jobs (includes ML frameworks); no FL backend, add one of the above.
+full = [
+    "einops==0.8.1",
+    "gdown>=5.2.2",
     "lpips==0.1.4",
     # monai[skimage,scipy,pyyaml] declares scikit-image / scipy / pyyaml at
     # MONAI-compatible versions (MONAI 1.5.x extras: skimage>=0.14.2,
@@ -180,12 +190,8 @@ exclude = [
 
 [dependency-groups]
 dev = [
-    # Test-only: lets tests/mypy exercise flip/flower/strategy.py and flip/flower/privacy.py
-    # against the real FedAvg and DP primitives. Matches the fl-server images' floor
-    # (flwr/base:1.42.0, fl-api-flower). Deliberately NOT a runtime dep — the flwr runtime is
-    # owned by the Flower images and each app's own pyproject; see the module docstring in
-    # flip/flower/strategy.py.
-    "flwr>=1.42.0",
+    # Both backends, so tests and mypy cover flip/nvflare and flip/flower in one environment.
+    "flip-utils[nvflare,flower]",
     "huggingface-hub>=1.6.0",
     "mypy>=1.18.2,<2.0",
     "pytest>=8.4.2",

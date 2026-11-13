@@ -62,7 +62,7 @@ prepended to `sys.path`. **FLIP turns this off on both sides** (FLIP#1418): the 
 `FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION=1` (every compose file, and the ECS task on every
 estate), and the SuperNodes do not pass `--allow-runtime-dependency-installation`, which is
 Flower's default. The ServerApp and the ClientApps run in the image's own environment: `flwr/base`
-plus `flip-utils[full]`, which `fl-base` installs from `/opt/flip-utils`. That environment carries
+plus `flip-utils[flower,full]`, which `fl-base` installs from `/opt/flip-utils`. That environment carries
 every package the template app code imports. Nothing checks it against the templates'
 `[project].dependencies`, whose version floors and extras (`pandas>=3.0.0`, `flwr[simulation]`) no
 longer apply at run time, so a package the image lacks fails as an import error when the app starts

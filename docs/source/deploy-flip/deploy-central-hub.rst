@@ -262,21 +262,10 @@ A trust's **kit file**, ``trust/.env.<CODE>.<hub>``, is its identity and its con
 
    Leave out ``KIT`` to register every kit file present for the environment. This writes the trust's
    **credentials** (API key, trust-internal service key and FL kit slot) into the kit file, and mints the trust's
-   XNAT passwords, trust-side runtime secrets that are not part of the hub's kit. Of the hub-shared
-   settings, only the API key header name and the FL backend are filled in.
-
-3. **Fill in the hub-shared settings.** From the repository root, with your local ``.env.<hub>`` present:
-
-   .. code-block:: shell
-
-      make sync-trust-kit KIT=<CODE> HUB=<hub>
-
-   ``make sync-trust-kits`` does the same for every local kit file.
-
-   .. important::
-
-      Do not skip this step. Without it the kit's encryption key, hub URL, kit dates and image tags stay unfilled,
-      and the trust can neither reach the hub nor decrypt a task.
+   XNAT passwords, trust-side runtime secrets that are not part of the hub's kit. It then fills the
+   **hub-shared settings** (encryption key, hub URL, kit date, image tags, FL ports) from your local ``.env.<hub>``,
+   as ``make sync-trust-kit KIT=<CODE> HUB=<hub>`` does. If any of them is missing there, the target fails and
+   names it; set it in ``.env.<hub>`` and run it again.
 
 Registration works the same for both FL backends: the kit takes ``FL_BACKEND`` from the hub, and the slot it claims
 maps onto the matching FLARE participant kit or Flower SuperNode key.
@@ -388,7 +377,7 @@ Deploying and rolling back the hub
 and publishes the UI. Every deploy pins an immutable image tag.
 
 1. **Pause FL activity.** Replacing the FL server kills any training run in progress and leaves its model stuck at
-   ``TRAINING_STARTED``. Enable Deployment Mode (*Admin → Deployments*): queued jobs hold, and only a running job
+   ``RUNNING``. Enable Deployment Mode (*Admin → Deployments*): queued jobs hold, and only a running job
    needs to finish. Wait until ``GET /fl/quiesce`` reports ``deployment_mode: true`` and ``fl_quiesced: true``.
 
 2. **Deploy.** From a clean checkout of the branch you are deploying:

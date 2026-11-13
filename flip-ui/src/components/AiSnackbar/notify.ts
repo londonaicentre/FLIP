@@ -31,16 +31,12 @@ export interface ISnackBarWithId extends ISnackbar {
 
 let count = 0;
 
-const generateId = () => {
-    return count++;
-};
-
 export const notify = (notification: ISnackbar, timeout: number): void => {
     const newNotification: ISnackBarWithId = {
         ...notification,
-        id: generateId()
+        group: notification.group || "",
+        id: count++
     };
-    newNotification.group = newNotification.group || "";
 
     events.emit("notify", {
         notification: newNotification,

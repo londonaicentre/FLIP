@@ -11,8 +11,7 @@
 
 """ArkSwinTransformer model definitions for Ark+.
 
-This file only contains the model class definitions.  Weight-loading
-utilities live in ``models.py``.
+This file only contains the model class definitions.
 """
 
 import timm.models.swin_transformer as swin

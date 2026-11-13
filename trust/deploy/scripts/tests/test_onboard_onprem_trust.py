@@ -1084,8 +1084,24 @@ def test_53_log_level_info_passes_and_unset_warns() -> None:
     _assert(unset.status == mod.Status.WARN, "unset level is a WARN", unset.detail)
 
 
-def test_54_hub_shared_keys_are_trust_kit_libs_minus_the_optional_ones() -> None:
-    print("54. The checklist's Hub-shared keys are trust_kit_lib's, minus FL_EDGE_PORT")
+def test_54_hub_shared_allows_the_other_backends_kit_date_empty() -> None:
+    """Only the running backend's kit date is required (FLIP#1476); a placeholder still fails."""
+    print("▶ hub-shared row: the other backend's kit date may be empty")
+    base = {k: "x" for k in mod.HUB_SHARED_KEYS}
+    for backend, other, own in (
+        ("nvflare", "FLOWER_KIT_DATE", "FLARE_KIT_DATE"),
+        ("flower", "FLARE_KIT_DATE", "FLOWER_KIT_DATE"),
+    ):
+        check = mod.check_hub_shared({**base, "FL_BACKEND": backend, other: ""}, True)
+        _assert(check.status == mod.Status.PASS, f"{backend}: empty {other} passes", check.detail)
+        check = mod.check_hub_shared({**base, "FL_BACKEND": backend, other: "<run-make-register-trust>"}, True)
+        _assert(check.status == mod.Status.FAIL, f"{backend}: placeholder {other} fails", check.detail)
+        check = mod.check_hub_shared({**base, "FL_BACKEND": backend, own: ""}, True)
+        _assert(check.status == mod.Status.FAIL and own in check.detail, f"{backend}: empty {own} fails", check.detail)
+
+
+def test_55_hub_shared_keys_are_trust_kit_libs_minus_the_optional_ones() -> None:
+    print("55. The checklist's Hub-shared keys are trust_kit_lib's, minus FL_EDGE_PORT")
     expected = (
         "AES_KEY_BASE64",
         "CENTRAL_HUB_API_URL",
@@ -1161,7 +1177,8 @@ def main() -> None:
     test_51_log_level_debug_fails_a_deployed_kit()
     test_52_log_level_debug_warns_a_development_kit()
     test_53_log_level_info_passes_and_unset_warns()
-    test_54_hub_shared_keys_are_trust_kit_libs_minus_the_optional_ones()
+    test_54_hub_shared_allows_the_other_backends_kit_date_empty()
+    test_55_hub_shared_keys_are_trust_kit_libs_minus_the_optional_ones()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
