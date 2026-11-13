@@ -37,7 +37,7 @@ the commented dev form):
 |---------|-------|-----------|
 | Host-local profile | Operator | hand-edit (ports, bind dirs, optional `FLIP_UID`/`FLIP_GID` to run the containers as the operator, optional `FL_SITE_PRIVACY_*` site privacy policy) |
 | Trust-local credentials | Operator | hand-edit (passwords, service URLs) |
-| Hub-shared (managed) | Hub admin | `register-trust KIT=<CODE>` (live in prod, commented in dev) / `sync-trust-kit KIT=<CODE>` (prod refresh) |
+| Hub-shared (managed) | Hub admin | `register-trust KIT=<CODE>` (live in prod, commented in dev; on a deployed hub `register-trusts` fills it from `.env.<hub>`) / `sync-trust-kit KIT=<CODE>` (prod refresh) |
 | Kit credentials (managed) | Hub | `register-trust` only — write-once; hub keeps only the hash |
 
 The Hub-shared block is delimited by a sentinel comment
@@ -72,8 +72,9 @@ workstation (prod AWS creds required):
    — scaffolds `trust/.env.<CODE>.prod` from the base template
    (`trust/.env.example`).
 2. `make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=prod` — registers
-   on the prod hub and fills the Kit credentials; then
-   `make sync-trust-kit KIT=<CODE> HUB=prod` fills the rest of the Hub-shared block.
+   on the prod hub, fills the Kit credentials and fills the Hub-shared block from
+   `.env.prod`. `make sync-trust-kit KIT=<CODE> HUB=prod` is only for a later refresh,
+   or to finish a run whose sync step failed after registering.
 
 Then `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod`
 tarballs the populated kit file as-is, as `.env.<CODE>.prod`, + the operator's

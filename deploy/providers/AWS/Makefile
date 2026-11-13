@@ -932,7 +932,7 @@ register-trusts: ## Register CODE-named trust kit(s) on the hub and write trust/
 	##   (no KIT)   → register every live trust/.env.*.<env> kit (an old-named one only with KIT=);
 	##                 none is a warning, not an error: a new hub registers its trusts later
 	@:$(if $(KIT),,$(call old_kits_hint,$(REPO_ROOT)/trust/))
-	@KIT=$(KIT) KIT_FILES="$(REGISTER_KIT_FILES)" bash scripts/register-trusts.sh
+	@KIT=$(KIT) ENV_CLASS=$(ENV_CLASS) MAIN_ENV_FILE=$(abspath $(MAIN_ENV_FILE)) KIT_FILES="$(REGISTER_KIT_FILES)" bash scripts/register-trusts.sh
 	@# The XNAT stack passwords are trust-side secrets the hub never mints, as in the dev register-trust.
 	@for kit in $(REGISTER_KIT_FILES); do $(MAKE) -C ../../../flip-api generate-xnat-credentials ENV_FILE="$$kit" FORCE= || exit 1; done
 
@@ -946,13 +946,13 @@ rotate-trust-keys: ## Reissue one trust's api + internal-service keys in place (
 	## EC2, or `package-onprem-trust-kit` for an on-prem site (copy the kit to trust/.env.<slot> first).
 	## NEVER that root's `deploy`: it is a first-install verb and re-seeds the site's data.
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=KCL)"; exit 1; }
-	@KIT=$(KIT) ROTATE_KEYS=1 KIT_FILES="$(KIT_FILE)" bash scripts/register-trusts.sh
+	@KIT=$(KIT) ENV_CLASS=$(ENV_CLASS) MAIN_ENV_FILE=$(abspath $(MAIN_ENV_FILE)) ROTATE_KEYS=1 KIT_FILES="$(KIT_FILE)" bash scripts/register-trusts.sh
 
 .PHONY: package-onprem-trust-kit
 package-onprem-trust-kit: ## Tarball trust/.env.<KIT>.<env> + FL kit slice for an on-prem operator
 	## Does NOT edit the kit file. The admin prepares it first (from the repo root):
-	##   1. register-trusts and sync-trust-kit with KIT=<CODE> HUB=prod fill
-	##      trust/.env.<CODE>.prod (register-trusts also mints its XNAT passwords);
+	##   1. register-trusts with KIT=<CODE> HUB=prod fills trust/.env.<CODE>.prod
+	##      (hub-shared block from the env file, and its XNAT passwords);
 	##   2. run this with KIT=<CODE> HUB=prod (KIT_FILE=<path> packs a kit kept elsewhere).
 	## This target then reads FL_BACKEND / FL_KIT_SLOT / etc. out of the populated
 	## kit file, slices the operator's portion of the FL participant kit out of

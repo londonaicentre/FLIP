@@ -773,9 +773,8 @@ new-trust:
 # $(MAIN_ENV_FILE) values. Preserves credentials. Safe to run repeatedly. Use
 # after rotating AES_KEY_BASE64 or bumping image tags on the hub side — does NOT
 # redistribute the updated kit file to remote operators (still out-of-band).
-# On prod this is REQUIRED after `register-trust`: register fills only the
-# hub-shared vars present in the flip-api task env (AES_KEY_BASE64,
-# TRUST_API_KEY_HEADER, FL_BACKEND); the rest come from the admin's local env here.
+# A deployed hub's `make -C deploy/providers/AWS register-trusts` runs this same refresh
+# itself (FLIP#1476): its flip-api task env carries only some of the hub-shared vars.
 #
 # Works identically for dev/stag/prod: the Hub-shared values live in
 # $(MAIN_ENV_FILE), which the root Makefile already `include`s + exports.

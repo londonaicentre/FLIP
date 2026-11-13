@@ -190,7 +190,6 @@ on-prem trust:
 
    make new-trust TRUST_CODE=<CODE> TRUST_NAME="<name>" HUB=<env>
    make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<env>
-   make sync-trust-kit KIT=<CODE> HUB=<env>
    make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=<env>
 
 .. note::
