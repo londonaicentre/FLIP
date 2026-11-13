@@ -55,16 +55,26 @@ resource "null_resource" "provision_efs_certs" {
 
   provisioner "local-exec" {
     command     = <<-EOT
-      TASK_ARN=$(aws ecs run-task \
-        --cluster ${aws_ecs_cluster.flip.name} \
-        --task-definition ${aws_ecs_task_definition.efs_provision[0].arn} \
-        --launch-type FARGATE \
-        --network-configuration "awsvpcConfiguration={subnets=[${join(",", local.app_subnet_ids)}],securityGroups=[${aws_security_group.ecs_fl_server.id}],assignPublicIp=DISABLED}" \
-        --count 1 \
-        --region ${var.AWS_REGION} \
-        --no-cli-pager \
-        --query 'tasks[0].taskArn' \
-        --output text)
+      # A task role created in this same apply is not assumable everywhere at once (FLIP#1878):
+      # that refusal alone is retried, for up to a minute.
+      RUN_TASK_ERR=$(mktemp)
+      for attempt in 1 2 3 4 5 6; do
+        TASK_ARN=$(aws ecs run-task \
+          --cluster ${aws_ecs_cluster.flip.name} \
+          --task-definition ${aws_ecs_task_definition.efs_provision[0].arn} \
+          --launch-type FARGATE \
+          --network-configuration "awsvpcConfiguration={subnets=[${join(",", local.app_subnet_ids)}],securityGroups=[${aws_security_group.ecs_fl_server.id}],assignPublicIp=DISABLED}" \
+          --count 1 \
+          --region ${var.AWS_REGION} \
+          --no-cli-pager \
+          --query 'tasks[0].taskArn' \
+          --output text 2>"$RUN_TASK_ERR") && break
+        cat "$RUN_TASK_ERR" >&2
+        grep -q "unable to assume the role" "$RUN_TASK_ERR" || exit 1
+        TASK_ARN=""
+        sleep 10
+      done
+      [ -n "$TASK_ARN" ] || { echo "ECS could not assume the EFS provisioning task's role after a minute."; exit 1; }
 
       echo "Provisioning task ARN: $TASK_ARN"
 
