@@ -25,12 +25,12 @@ network, the guardrails and a shared edge, and workload accounts are denied VPC-
 it is given instead of building one, and ingress arrives through the estate's own edge over a Transit Gateway, so you
 must coordinate with whoever runs the estate. See :doc:`deploy-central-hub-aws-lza`.
 
-The self-contained single-account mode, in which FLIP built its own VPC and in-account edge, is no longer supported
-and has been removed (`FLIP#1479 <https://github.com/londonaicentre/FLIP/issues/1479>`_). To move a hub off it,
-see :ref:`deploy-central-hub-migrating`.
+The self-contained single-account mode, in which FLIP built its own VPC and in-account edge, was removed in
+``v0.14.0``. To move a hub off it, see :ref:`deploy-central-hub-migrating`.
 
 .. toctree::
    :maxdepth: 1
+   :hidden:
 
    deploy-central-hub-aws-lza
 
@@ -132,7 +132,7 @@ Prerequisites
      - ``prod``
      - production
 
-Production gets the production-only database safeguard: a final snapshot when the instance is deleted.
+With ``HUB=prod``, deleting the database instance takes a final snapshot first; staging does not.
 
 ************************
 Required IAM permissions
@@ -279,8 +279,8 @@ file are kept.
 
 - For a node from ``trust/deploy/terraform/aws/ec2``, that root's ``make deploy KIT=<CODE> HUB=<hub>`` reads the kit
   locally and passes its values to the containers on the host (:doc:`deploy-flip-node-aws-ec2`).
-- For an on-prem trust, see step 4 of :doc:`onboarding-a-trust`. The packaging takes the trust's code, packs the FL
-  kit share of the kit's ``FL_KIT_SLOT``, and ships the kit as ``.env.<CODE>.<hub>``:
+- For an on-prem trust, package the kit file, ``.env.<CODE>.<hub>``, with the trust's share of the FL kit for its
+  ``FL_KIT_SLOT``, then hand the package to the operator as in step 4 of :doc:`onboarding-a-trust`:
 
   .. code-block:: shell
 
@@ -332,7 +332,7 @@ slots without a restart, so the next ``register-trusts`` can claim one.
 Rotating keys
 *************
 
-*Who: FLIP admin, with AWS access to the hub's account.* A trust's API key and internal service key are reissued in
+*Who: FLIP admin, with AWS access to the hub's account.* A trust's API key and trust-internal service key are reissued in
 place, without re-registering it:
 
 .. code-block:: shell
@@ -348,8 +348,8 @@ Three things to plan for:
 - **The trust goes offline the moment the rotation commits.** The hub re-checks the live hash on every request, so
   the old key is refused straight away; the trust comes back only once its containers are recreated from the new
   kit. Plan the rotation as a short outage for that site, not as an overlap window.
-- **The internal service key rotates with it**, so every trust-internal container has to restart together, not only
-  ``trust-api``. Deliver the kit and recreate them in one step:
+- **The trust-internal service key rotates with it**, so every trust-internal container has to restart together, not
+  only ``trust-api``. Deliver the kit and recreate them in one step:
 
   - AWS EC2 node: ``make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env>``.
   - On-prem: package the rotated kit and have the operator run their upgrade command:
@@ -388,8 +388,9 @@ and publishes the UI. Every deploy pins an immutable image tag.
 
    This deploys the build of the tip of ``origin/main`` (``HUB=prod``) or ``origin/develop`` (``HUB=stag``), tagged
    ``sha-<short7>``. It checks that every service has an image at that tag **before** changing anything, so a
-   missing image deploys nothing. With ``HUB=prod`` it asks you to confirm first. It finishes by building the UI from your working tree and publishing
-   it.
+   missing image deploys nothing (the check is skipped when the registry is the account's ECR pull-through cache).
+   With ``HUB=prod`` it asks you to confirm first. It finishes by building the UI from your working tree and
+   publishing it.
 
 3. **Resume.** Disable Deployment Mode.
 
@@ -401,7 +402,7 @@ then deploy its ``sha-`` tag.
 run for the services a merge touched, and the ``flip-api`` build waits for its tests, so right after a merge an image
 may be missing or still building. The message names the workflow: run it with ``gh workflow run`` as above, then
 deploy again. If the message reports a registry error rather than a missing image (an outage, or an authentication
-failure), do not trigger rebuilds. With the account's ECR pull-through cache as the registry, the check is skipped.
+failure), do not trigger rebuilds.
 
 Rolling back
 ============
@@ -438,14 +439,14 @@ rolled away from so a later Terraform apply cannot bring it back.
 Upgrading across the payload-encryption change
 **********************************************
 
-Task payloads between the hub and its trusts are encrypted with AES-256-GCM. Releases before this change used
+Task payloads between the hub and its trusts are encrypted with AES-256-GCM. Releases before ``v0.7.0`` used
 AES-CBC, and the two formats are **not compatible**. A hub and every trust registered to it must upgrade together, in
 one maintenance window.
 
 *Who: FLIP admin (hub) and every trust operator*
 
-1. **Pause FL activity.** In the UI, enable Deployment Mode (*Admin → Deployments*). Wait until ``GET /fl/quiesce``
-   reports ``deployment_mode: true`` and ``fl_quiesced: true``.
+1. **Pause FL activity** as in step 1 of :ref:`deploy-central-hub-deploys`: enable Deployment Mode and wait until
+   ``GET /fl/quiesce`` reports ``deployment_mode: true`` and ``fl_quiesced: true``.
 2. **Redeploy the hub and every trust** in the same window: ``deploy-centralhub`` for the hub (see
    :ref:`deploy-central-hub-deploys`), and the upgrade command for each trust's platform (``upgrade-onprem-trust``,
    ``upgrade-trust-k8s``, or an EC2 node's ``make upgrade``; see :ref:`admin-upgrading-sites`). Do not use a
@@ -481,8 +482,8 @@ schema it does not expect.
 
 - **Development**: ``make restart`` recreates the ``flip-api`` container (``deploy-flip-api-1``), which migrates on
   boot.
-- **Staging and production**: a normal redeploy, ``make deploy-centralhub`` from
-  ``deploy/providers/AWS/``, migrates before the new task serves traffic.
+- **Staging and production**: a normal redeploy (:ref:`deploy-central-hub-deploys`) migrates before the new task
+  serves traffic.
 
 Migrations alter the existing tables in place, so your data is preserved. There is **no** drop-and-recreate step for
 the hub database in routine operation.
@@ -597,9 +598,9 @@ console (``http://localhost:8180/admin``).
 Migrating from a single-account deployment
 *************************************************
 
-Before FLIP#1479 the hub could also run self-contained, in one AWS account that built its own VPC, internet gateway,
-NAT, CloudFront and WAF, and a public FL load balancer. On the Landing Zone Accelerator the FLIP stack is the same, but
-the platform team owns the edge and the network, and the hub's workload account has no internet route.
+Up to release ``v0.13.2`` the hub could also run self-contained, in one AWS account that built its own VPC, internet
+gateway, NAT, CloudFront and WAF, and a public FL load balancer. On the Landing Zone Accelerator the FLIP stack is the
+same, but the platform team owns the edge and the network, and the hub's workload account has no internet route.
 
 .. figure:: ../assets/deploy/central-hub-self-contained-vs-lza.svg
    :align: center
@@ -616,10 +617,10 @@ the platform team owns the edge and the network, and the hub's workload account 
 There is no in-place migration. The Terraform no longer describes the single-account network, so a plan against an
 old state would destroy it. Move the hub instead:
 
-1. **Archive the old hub's files.** Move the old hub env file and every kit file for it out of the checkout; do not
-   rename them. The old staging names (``.env.stag``, ``trust/.env.<CODE>.stag``) are already the new ones, and make
-   tells you to rename the old production names, so either way the retired hub's AES key and URLs would reach the new
-   hub's files.
+1. **Archive the old hub's files.** Move the old hub env file and every kit file for it out of the checkout. Do not
+   rename them in place: the old staging names (``.env.stag``, ``trust/.env.<CODE>.stag``) are already the new ones,
+   and ``make`` prompts you to rename the old production names. Either way, the retired hub's AES key and URLs would
+   end up in the new hub's files.
 2. **Stand up the new hub** in an LZA workload account, with a fresh ``.env.prod`` or ``.env.stag``. Agree the
    network, the edge and the hub's public URL and domain with the platform team first: see
    :ref:`deploy-central-hub-aws-lza-account`.

@@ -69,9 +69,9 @@ Credentials are correct (they work from the AWS CLI) and ``status`` is green. In
    x-amzn-ErrorType:    InvalidParameterException
    x-amzn-ErrorMessage: USER_PASSWORD_AUTH flow not enabled for this client
 
-**Cause.** The Cognito app client and the UI bundle are out of step. The app client accepts only SRP sign-in, which
-the current UI uses, but the bundle served from S3 is older. Terraform updates Cognito straight away. CI publishes the
-UI only after its apply succeeds, and a laptop ``apply`` or ``full-deploy`` does not rebuild it at all.
+**Cause.** The Cognito app client and the UI bundle are out of step. The app client accepts only SRP sign-in, which the
+current UI uses, but the bundle served from S3 is older. Terraform updates Cognito straight away. CI publishes the UI
+only after its apply succeeds, and an ``apply`` or ``full-deploy`` run from your workstation does not rebuild it at all.
 
 **Fix.** Rebuild and deploy the UI:
 
@@ -108,7 +108,7 @@ Compose service name.
      make -C deploy/providers/AWS apply HUB=<env>
      make -C deploy/providers/AWS deploy-centralhub HUB=<env>
 
-- **On a Compose hub:** set the service name in the hub env file and restart flip-api:
+- **On a Docker Compose hub:** set the Compose service name in the hub env file, then restart flip-api:
 
   .. code-block:: text
 
@@ -121,7 +121,7 @@ flip-api updates the stored endpoint from ``NET_ENDPOINTS`` every time it starts
 fl-api or fl-server crash-loops with ``LoadResult.INVALID_SIGNATURE``
 =====================================================================
 
-The same fault can show at a Trust as a TLS failure: ``SSLV3_ALERT_BAD_CERTIFICATE`` or
+The same fault can show at a trust as a TLS failure: ``SSLV3_ALERT_BAD_CERTIFICATE`` or
 ``CERTIFICATE_VERIFY_FAILED``.
 
 **Cause.** NVIDIA FLARE signs every file of a participant kit when it is provisioned. The signature breaks if a kit
@@ -130,8 +130,8 @@ older ``rootCA.pem``).
 
 **Fix.**
 
-#. **Never edit a kit after provisioning.** To change a hostname, provision the kit again with the right value
-   (:gh:`fl-services/nvflare/README.md`).
+#. If a kit file was edited, provision the kit again with the right value (for example, to change a hostname).
+   Never edit a kit after provisioning. See :gh:`fl-services/nvflare/README.md`.
 #. Copy the new kit into place. Both copies clear the destination first, so no stale file survives:
 
    .. code-block:: shell
@@ -141,8 +141,8 @@ older ``rootCA.pem``).
 
 .. warning::
 
-   Do not use a node's ``make deploy`` or ``full-deploy`` to recopy a kit on a live trust. They are first-install commands
-   that re-seed the trust's data and wipe its XNAT archive (see :ref:`admin-upgrading-sites`).
+   Do not use a node's ``make deploy`` to recopy a kit on a live trust. It is a first-install command that re-seeds
+   the trust's data and wipes its XNAT archive (see :ref:`admin-upgrading-sites`).
 
 .. _ts-hub-fl-clients-lost:
 
@@ -151,4 +151,4 @@ Trusts lose their FL connection after a hub deployment
 
 **Cause.** Deploying the hub restarts the FL server. NVIDIA FLARE clients reconnect on their own.
 
-**Fix.** Usually none. If a Trust does not come back, see :ref:`ts-fl-target-unreachable`.
+**Fix.** Usually none. If a trust does not come back, see :ref:`ts-fl-target-unreachable`.
