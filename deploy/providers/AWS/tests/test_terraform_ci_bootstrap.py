@@ -661,7 +661,7 @@ RESOURCE_SERVICES = [
     (r"aws_cloudfront_", "cloudfront"),
     (r"aws_wafv2_", "wafv2"),
     (r"aws_cognito_", "cognito-idp"),
-    (r"aws_ses_", "ses"),
+    (r"aws_ses(v2)?_", "ses"),
     (r"aws_sns_", "sns"),
     (r"aws_sqs_", "sqs"),
     (r"aws_service_discovery_", "servicediscovery"),

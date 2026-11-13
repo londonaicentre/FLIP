@@ -27,7 +27,7 @@
 | `parameter_store.tf` | SSM Parameter Store entries |
 | `backend.tf` | S3 backend with S3 native locking (`use_lockfile`) |
 | `variables.tf` | All Terraform variables with defaults |
-| `modules/` | Reusable child modules: `cognito` (user pool + client + domain + seed users), `flip_s3_bucket` (one bucket per tenant with per-caller CORS methods), `secgroup` (security group with egress managed entirely inline), `ses` (sender identity + transactional email templates), `terraform_ci_bootstrap` (the CI plan/apply roles, the permissions boundary and the state bucket — NOT used by this root; see below) |
+| `modules/` | Reusable child modules: `cognito` (user pool + client + domain + seed users), `flip_s3_bucket` (one bucket per tenant with per-caller CORS methods), `secgroup` (security group with egress managed entirely inline), `ses` (the verified address, the sender domain identity with DKIM and MAIL FROM, and the transactional email templates; FLIP#592), `terraform_ci_bootstrap` (the CI plan/apply roles, the permissions boundary and the state bucket — NOT used by this root; see below) |
 | `ci/` | Adopters' wrapper root around `modules/terraform_ci_bootstrap`, for an account you own: tfvars-driven, local state then `make migrate-state`. Never run in AI Centre's accounts — see `ci/README.md` |
 
 ## AWS Profiles

@@ -46,7 +46,8 @@ def _ses_statement_resources() -> str:
     sid = re.search(r'^\s*sid\s*=\s*"SesSend"', document, re.MULTILINE)
     assert sid, "SesSend statement not found in ecs_flip_api_task"
     statement = hcl_block(document[document.rindex("statement", 0, sid.start()) :], "statement")
-    resources = re.search(r"^\s*resources\s*=\s*(.*)$", statement, re.MULTILINE)
+    # The expression may span lines (a concat): read up to the next attribute or block.
+    resources = re.search(r"^\s*resources\s*=\s*(.*?)(?=^\s*\w+\s*(?:=|\{)|\Z)", statement, re.MULTILINE | re.DOTALL)
     assert resources, "SesSend statement has no resources"
     return resources.group(1)
 

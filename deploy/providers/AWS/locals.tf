@@ -24,6 +24,10 @@
 locals {
   flip_local_domain = "flip.local"
 
+  # The one address flip-api sends from (FLIP#592): on the sender domain once
+  # SES_SENDER_EMAIL is set, the verified address until then.
+  ses_sender_email = var.SES_SENDER_EMAIL != "" ? var.SES_SENDER_EMAIL : var.SES_VERIFIED_EMAIL
+
   # Permissions boundary carried by every IAM role in this root (FLIP#962).
   #
   # Composed rather than looked up: the policy is declared by
@@ -138,7 +142,7 @@ locals {
       INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
       AWS_SECRET_NAME                = "FLIP_API" # pragma: allowlist secret
       AWS_SES_ADMIN_EMAIL_ADDRESS    = var.SES_VERIFIED_EMAIL
-      AWS_SES_SENDER_EMAIL_ADDRESS   = var.SES_VERIFIED_EMAIL
+      AWS_SES_SENDER_EMAIL_ADDRESS   = local.ses_sender_email
       UPLOADED_MODEL_FILES_BUCKET    = local.uploaded_model_files_uri
       SCANNED_MODEL_FILES_BUCKET     = local.scanned_model_files_uri
       UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
