@@ -26,20 +26,22 @@ import * as helpers from "@/utils/helpers";
 import AiSwitch from "../AiSwitch.vue";
 
 describe("AiSwitch", () => {
+    const testingPinia = () => createTestingPinia({
+        createSpy: vi.fn,
+        stubActions: false
+    });
+    const mountSwitch = (props: InstanceType<typeof AiSwitch>["$props"]) =>
+        mount(AiSwitch, {
+            props,
+            global: { plugins: [testingPinia()] }
+        });
+
     it("Renders Component", () => {
         vi.spyOn(helpers, "getRandomId").mockImplementationOnce(() => "random-id");
 
-        const comp = mount(AiSwitch, {
-            props: {
-                name: "something",
-                value: "test"
-            },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
-            }
+        const comp = mountSwitch({
+            name: "something",
+            value: "test"
         });
 
         // Test functionality instead of snapshots
@@ -48,17 +50,9 @@ describe("AiSwitch", () => {
     });
 
     it("toggles on click, sliding the knob across — no tick, the position says it", async () => {
-        const comp = mount(AiSwitch, {
-            props: {
-                name: "flag",
-                value: "true"
-            },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
-            }
+        const comp = mountSwitch({
+            name: "flag",
+            value: "true"
         });
 
         expect(comp.get("[data-test=switch-knob]").classes()).toContain("translate-x-1");
@@ -87,14 +81,7 @@ describe("AiSwitch", () => {
                         <AiSwitch name="flag" :value="true" :label="{ enabled: 'On', disabled: 'Off' }" />
                     </VeeForm>`
             }),
-            {
-                global: {
-                    plugins: [createTestingPinia({
-                        createSpy: vi.fn,
-                        stubActions: false
-                    })]
-                }
-            }
+            { global: { plugins: [testingPinia()] } }
         );
 
     it("announces the state it draws: aria-checked follows the knob, not a private counter", async () => {
@@ -144,14 +131,7 @@ describe("AiSwitch", () => {
                         <button type="submit">go</button>
                     </VeeForm>`
             }),
-            {
-                global: {
-                    plugins: [createTestingPinia({
-                        createSpy: vi.fn,
-                        stubActions: false
-                    })]
-                }
-            }
+            { global: { plugins: [testingPinia()] } }
         );
         const kch = comp.get("[data-test=kch]");
         const uclh = comp.get("[data-test=uclh]");
@@ -173,20 +153,12 @@ describe("AiSwitch", () => {
     });
 
     it("drops its label on a narrow window — the knob's position already says it", () => {
-        const comp = mount(AiSwitch, {
-            props: {
-                name: "flag",
-                value: "true",
-                label: {
-                    enabled: "On",
-                    disabled: "Off"
-                }
-            },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
+        const comp = mountSwitch({
+            name: "flag",
+            value: "true",
+            label: {
+                enabled: "On",
+                disabled: "Off"
             }
         });
 
@@ -196,18 +168,10 @@ describe("AiSwitch", () => {
     });
 
     it("takes an aria-label to name a switch that has no visible label", () => {
-        const comp = mount(AiSwitch, {
-            props: {
-                name: "trust_ids",
-                value: "id-kch",
-                ariaLabel: "King's College Hospital (KCH)"
-            },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
-            }
+        const comp = mountSwitch({
+            name: "trust_ids",
+            value: "id-kch",
+            ariaLabel: "King's College Hospital (KCH)"
         });
 
         expect(comp.get("button[role=\"switch\"]").attributes("aria-label")).toBe("King's College Hospital (KCH)");
@@ -215,18 +179,10 @@ describe("AiSwitch", () => {
     });
 
     it("stays on screen when disabled, greyed out, so its position still reads", async () => {
-        const comp = mount(AiSwitch, {
-            props: {
-                name: "flag",
-                value: "true",
-                disabled: true
-            },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
-            }
+        const comp = mountSwitch({
+            name: "flag",
+            value: "true",
+            disabled: true
         });
 
         const control = comp.find("button[role=\"switch\"]");
@@ -237,18 +193,10 @@ describe("AiSwitch", () => {
     });
 
     it("a disabled switch cannot be toggled", async () => {
-        const comp = mount(AiSwitch, {
-            props: {
-                name: "flag",
-                value: "true",
-                disabled: true
-            },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
-            }
+        const comp = mountSwitch({
+            name: "flag",
+            value: "true",
+            disabled: true
         });
 
         // Off, and it must stay off: the knob does not move.
@@ -264,35 +212,19 @@ describe("AiSwitch", () => {
         // attribute makes the browser deliver no events at all and drops the dead
         // control from the tab order — jsdom dispatches events regardless, so this
         // pins the attribute rather than the resulting behaviour.
-        const comp = mount(AiSwitch, {
-            props: {
-                name: "flag",
-                value: "true",
-                disabled: true
-            },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
-            }
+        const comp = mountSwitch({
+            name: "flag",
+            value: "true",
+            disabled: true
         });
 
         expect(comp.find("button[role=\"switch\"]").attributes("disabled")).toBeDefined();
     });
 
     it("an enabled switch carries no native disabled attribute", async () => {
-        const comp = mount(AiSwitch, {
-            props: {
-                name: "flag",
-                value: "true"
-            },
-            global: {
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
-            }
+        const comp = mountSwitch({
+            name: "flag",
+            value: "true"
         });
 
         expect(comp.find("button[role=\"switch\"]").attributes("disabled")).toBeUndefined();

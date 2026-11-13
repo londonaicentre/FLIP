@@ -69,8 +69,8 @@ Step 2 — Register the trust on the hub
 
 This registers the trust with the hub and writes the trust's **credentials** into its kit file (API key, internal
 service key, FL slot and expected trust id), and mints the trust's XNAT database and message-broker passwords.
-No hub redeploy is needed. Most of the **hub-shared settings**,
-including the encryption key and the hub URL, are still placeholders afterwards; step 3 fills them.
+No hub redeploy is needed. It then fills the **hub-shared settings**, including the encryption key and the hub
+URL, from your local ``.env.prod``, and fails naming any setting missing there.
 
 .. important::
 
@@ -80,22 +80,19 @@ including the encryption key and the hub URL, are still placeholders afterwards;
    registered afresh — see :doc:`/sys-admin/admin-backup-and-restore`.
 
 *******************************************
-Step 3 — Fill in the hub-shared settings
+Step 3 — Check the hub-shared settings
 *******************************************
 
 *Who: FLIP admin, from the repo root with your local* ``.env.prod`` *present*
+
+Step 2 copied the hub-shared settings from your local env file into the kit. To refresh them later without
+registering again (after you change one in ``.env.prod``):
 
 .. code-block:: shell
 
    make sync-trust-kit KIT=<CODE> HUB=prod
 
-This copies the hub-shared settings from your local env file into the kit and leaves the credentials from step 2
-untouched.
-
-.. important::
-
-   Do not skip this step. Without it the kit's encryption key and hub URL stay as placeholders: the
-   trust can neither reach the hub nor decrypt a task, and the kit can be neither packaged nor started.
+This leaves the credentials from step 2 untouched.
 
 .. seealso::
 
@@ -212,8 +209,8 @@ the AI Centre cannot hand on its copy, because the licences do not clearly allow
         ./files/load_core_vocab.sh <export dir> files/OMOPCDM_postgresql_5.4_constraints.sql
 
    The full roster takes about 25 minutes. Re-running is safe: tables that already hold the vocabulary are skipped.
-   On Kubernetes, run it over a ``kubectl port-forward`` to the ``omop-db`` service, or let the chart load it from
-   an S3 bucket instead; see "Load the OMOP core vocabulary" on :doc:`deploy-flip-node-kubernetes`.
+   On Kubernetes, run it over a ``kubectl port-forward`` to the ``omop-db`` service, or stage the same folder onto
+   the node and let the chart load it; see "Load the OMOP core vocabulary" on :doc:`deploy-flip-node-kubernetes`.
 
 #. **Check it.** With the same variables, ``./files/load_core_vocab.sh --check`` loads nothing and exits 0 once every
    table is loaded.

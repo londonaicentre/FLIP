@@ -79,7 +79,7 @@ services:
       - ${FLOWER_TLS_CERTS_DIR:-./provision/creds/net-1/certificates}:/certs:ro
     # No runtime dependency installation on either side (FLIP#1418): the
     # ServerApp here and the ClientApps on the SuperNodes below run in the
-    # image's environment, where fl-base installs flip-utils[full] from
+    # image's environment, where fl-base installs flip-utils[flower,full] from
     # /opt/flip-utils (FLIP#767) — rebuild the images to pick up flip-utils
     # changes (see the README's runtime-dependency section).
     command:
@@ -191,7 +191,7 @@ services:
       # and each launch's exit handler deletes it -- a later round's `uv sync` then
       # falls through to the base interpreter (Permission denied on setuptools) or
       # loses its env mid-round. The ClientApp runs in the image's environment,
-      # where fl-base installs flip-utils[full] from /opt/flip-utils (FLIP#767):
+      # where fl-base installs flip-utils[flower,full] from /opt/flip-utils (FLIP#767):
       # every package the template app code imports, and no package index needed at run time.
     deploy:
       resources:
@@ -246,7 +246,7 @@ services:
       # and each launch's exit handler deletes it -- a later round's `uv sync` then
       # falls through to the base interpreter (Permission denied on setuptools) or
       # loses its env mid-round. The ClientApp runs in the image's environment,
-      # where fl-base installs flip-utils[full] from /opt/flip-utils (FLIP#767):
+      # where fl-base installs flip-utils[flower,full] from /opt/flip-utils (FLIP#767):
       # every package the template app code imports, and no package index needed at run time.
     deploy:
       resources:

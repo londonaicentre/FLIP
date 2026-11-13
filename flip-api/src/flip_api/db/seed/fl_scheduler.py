@@ -13,7 +13,6 @@
 
 from sqlmodel import Session, col, select
 
-from flip_api.db.database import get_engine
 from flip_api.db.models.main_models import FLNets, FLScheduler
 from flip_api.db.seed.seed_logger import logger
 from flip_api.domain.schemas.status import NetStatus
@@ -45,8 +44,3 @@ def seed_fl_scheduler(session: Session, nets: list[FLNets]) -> list[FLScheduler]
     # Return all scheduler entries
     schedulers = session.exec(select(FLScheduler)).all()
     return list(schedulers)
-
-
-if __name__ == "__main__":
-    with Session(get_engine()) as session:
-        nets = session.exec(select(FLNets)).all()

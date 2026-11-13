@@ -70,7 +70,7 @@ services:
       # and each launch's exit handler deletes it -- a later round's `uv sync` then
       # falls through to the base interpreter (Permission denied on setuptools) or
       # loses its env mid-round. The ClientApp runs in the image's environment,
-      # where fl-base installs flip-utils[full] from /opt/flip-utils (FLIP#767):
+      # where fl-base installs flip-utils[flower,full] from /opt/flip-utils (FLIP#767):
       # every package the template app code imports, and no package index needed at run time.
     networks:
       - default

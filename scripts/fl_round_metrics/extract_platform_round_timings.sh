@@ -723,17 +723,16 @@ if [[ "$BACKEND" == "nvflare" ]]; then
     ACCEPTED_TOTAL="$(grep -c $'^ACCEPTED\t' "$CONTRIB_FILE" || true)"
     REJECTED_TOTAL="$(grep -c $'^REJECTED\t' "$CONTRIB_FILE" || true)"
 
-    n_rounds="$(wc -l < "$ROUND_STARTS" | tr -d ' ')"
-    for i in $(seq 1 "$n_rounds"); do
-        round_num="$(awk -v i="$i" 'NR==i{print $1}' "$ROUND_STARTS")"
-        start_ms="$(awk -v i="$i" 'NR==i{print $2}' "$ROUND_STARTS")"
+    i=0
+    while IFS=$'\t' read -r round_num start_ms; do
+        i=$((i + 1))
         end_ms="$(awk -v r="$round_num" '$1==r{print $2; exit}' "$ROUND_ENDS")"
         agg_start="$(awk -v i="$i" 'NR==i{print}' "$AGG_STARTS")"
         agg_end="$(awk -v i="$i" 'NR==i{print}' "$AGG_ENDS")"
         acc_r="$(awk -F'\t' -v r="$round_num" '$1=="ACCEPTED" && $2==r{n++} END{print n+0}' "$CONTRIB_FILE")"
         rej_r="$(awk -F'\t' -v r="$round_num" '$1=="REJECTED" && $2==r{n++} END{print n+0}' "$CONTRIB_FILE")"
         printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$round_num" "$start_ms" "${end_ms:-}" "${agg_start:-}" "${agg_end:-}" "$acc_r" "$rej_r" >> "$ROUND_TABLE_FILE"
-    done
+    done < "$ROUND_STARTS"
 elif [[ "$BACKEND" == "flower" ]]; then
     # Flower: no round-boundary or aggregation-timing log lines exist in the platform code
     # (see flip-utils/flip/flower/metrics.py) — approximate each round's window from the

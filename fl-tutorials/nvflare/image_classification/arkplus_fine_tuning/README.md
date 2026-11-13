@@ -204,11 +204,11 @@ number of local epochs per round is not a sim knob — the simulator uses `LOCAL
 `config.json`, exactly as a deployed job does.
 
 or pass the flags directly using the recipe syntax (the Makefile's `uv` environment — flip-utils with
-the `full` extra — matches the deployed FL image; a bare `uv run` resolves to an env without
+the `nvflare` and `full` extras — matches the deployed FL image; a bare `uv run` resolves to an env without
 torch/nvflare):
 
 ```bash
-uv run --project ../../../../flip-utils --extra full python job.py --n_clients 3 --num_rounds 10
+uv run --project ../../../../flip-utils --extra nvflare --extra full python job.py --n_clients 3 --num_rounds 10
 ```
 
 > **Local knob only.** `--num_rounds` governs local simulation and export. In production the FL API

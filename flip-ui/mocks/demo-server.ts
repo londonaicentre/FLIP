@@ -31,7 +31,7 @@ import { DEMO_NET_NAME, DEMO_SITES, DEMO_USER } from "./demo/roster";
 const BASE = "/api";
 
 type Project = { id: string; name: string; query: { id: string }; approvedTrusts: { id: string }[] };
-type Models = { data: ({ status?: unknown; owner_id?: unknown } & Record<string, unknown>)[] };
+type Models = { data: ({ name?: unknown; status?: unknown; owner_id?: unknown } & Record<string, unknown>)[] };
 
 export { DEMO_PROJECTS };
 
@@ -131,8 +131,13 @@ const trustHealth = (): unknown => DEMO_SITES.map(site => ({
  * generic "Something went wrong" error over a permanent spinner on the public
  * exhibit (FLIP#794 review). The shape is IModelsPage (services/model-service.ts):
  * a paginated IModelSummary list plus the per-status totals the filter tiles sum.
+ * Like the real route, `search` and `project` narrow both the list and the counts,
+ * while `status` narrows only the list, so the tiles keep their numbers when one is selected.
  */
-const allModels = (tables: Tables, projectId?: string | null): unknown => {
+const allModels = (tables: Tables, query: Record<string, unknown>): unknown => {
+    const projectId = query.project as string | undefined;
+    const search = String(query.search ?? "").toLowerCase();
+    const statuses = String(query.status ?? "").split(",").filter(Boolean);
     const runTrusts = DEMO_SITES.map(({ id, name, code }) => ({
         id,
         name,
@@ -151,7 +156,9 @@ const allModels = (tables: Tables, projectId?: string | null): unknown => {
                 ownerName: DEMO_USER.name,
                 trusts: runTrusts
             }));
-        });
+        })
+        .filter(model => !search
+            || [model.name, model.projectName].some(s => String(s).toLowerCase().includes(search)));
     const statusCounts = data.reduce<Record<string, number>>((counts, model) => {
         const status = String(model.status);
 
@@ -160,13 +167,14 @@ const allModels = (tables: Tables, projectId?: string | null): unknown => {
             [status]: (counts[status] ?? 0) + 1
         };
     }, {});
+    const listed = statuses.length ? data.filter(model => statuses.includes(String(model.status))) : data;
 
     return {
         page: 1,
         pageSize: 20,
         totalPages: 1,
-        totalRecords: data.length,
-        data,
+        totalRecords: listed.length,
+        data: listed,
         statusCounts
     };
 };
@@ -234,7 +242,7 @@ export function makeDemoServer(options: { timing?: number; projects?: readonly D
                 byParam(tables.cohortByQuery, request.params.queryId));
 
             this.get(`${BASE}/models`, (_schema, request) =>
-                new Response(200, undefined, allModels(tables, request.queryParams?.project as string) as never));
+                new Response(200, undefined, allModels(tables, request.queryParams ?? {}) as never));
             this.get(`${BASE}/models/projects`, () => new Response(200, undefined, tables.projects.map(demo => ({
                 id: (demo.project as Project).id,
                 name: (demo.project as Project).name,

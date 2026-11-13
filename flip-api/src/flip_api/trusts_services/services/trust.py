@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-# app/crud.py
 from uuid import UUID
 
 from sqlmodel import Session, col, select

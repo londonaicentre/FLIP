@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     # XNAT's own AE title. Must match XNAT_AETITLE in configure-xnat.sh, because this value becomes
     # the C-MOVE destination handed to the PACS and DQR matches it against a registered SCP receiver
     # by exact AE title and port (FLIP#993).
-    XNAT_AETITLE: str = "XNAT"
+    XNAT_AETITLE: str = "FLIP_XNAT"
     # No PACS id setting. Queries name no PACS, so DQR uses its default query/retrieve PACS, and each
     # import reads that PACS's id from XNAT (services/imaging.py) — the id is XNAT's to assign, so a
     # configured one could only be a guess.

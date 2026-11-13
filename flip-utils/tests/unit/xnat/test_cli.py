@@ -163,6 +163,16 @@ class TestExitCode:
         assert cli.main(_argv(manifest, "--require-full-coverage")) == 1
 
 
+def _roster(tmp_path: Path) -> list[str]:
+    """Two Trusts' credentials files, as repeated --credentials-file flags."""
+    return [
+        "--credentials-file",
+        _credentials(tmp_path, "gstt.json"),
+        "--credentials-file",
+        _credentials(tmp_path, "kch.json"),
+    ]
+
+
 class TestMultipleTrusts:
     """One invocation covers the roster — each Trust holds only its own studies."""
 
@@ -173,15 +183,7 @@ class TestMultipleTrusts:
             resolvable_project_routes(["input_spleen_2.nii.gz"]),
         )
 
-        exit_code = cli.main(
-            _argv(
-                manifest,
-                "--credentials-file",
-                _credentials(tmp_path, "gstt.json"),
-                "--credentials-file",
-                _credentials(tmp_path, "kch.json"),
-            )
-        )
+        exit_code = cli.main(_argv(manifest, *_roster(tmp_path)))
 
         assert exit_code == 0
         assert [len(session.puts) for session in sessions] == [1, 1]
@@ -193,15 +195,7 @@ class TestMultipleTrusts:
             {"/data/projects": FakeResponse(status_code=401, text="denied")},
         )
 
-        exit_code = cli.main(
-            _argv(
-                manifest,
-                "--credentials-file",
-                _credentials(tmp_path, "gstt.json"),
-                "--credentials-file",
-                _credentials(tmp_path, "kch.json"),
-            )
-        )
+        exit_code = cli.main(_argv(manifest, *_roster(tmp_path)))
 
         # The healthy Trust is still enriched, and the run still reports failure.
         assert len(sessions[0].puts) == 1
@@ -214,15 +208,7 @@ class TestMultipleTrusts:
             resolvable_project_routes(["input_spleen_2.nii.gz"], flip_project_id=None),
         )
 
-        exit_code = cli.main(
-            _argv(
-                manifest,
-                "--credentials-file",
-                _credentials(tmp_path, "gstt.json"),
-                "--credentials-file",
-                _credentials(tmp_path, "kch.json"),
-            )
-        )
+        exit_code = cli.main(_argv(manifest, *_roster(tmp_path)))
 
         assert exit_code == 0
         assert [len(session.puts) for session in sessions] == [1, 0]
@@ -234,16 +220,7 @@ class TestMultipleTrusts:
             resolvable_project_routes(["input_spleen_2.nii.gz"], flip_project_id=None),
         )
 
-        exit_code = cli.main(
-            _argv(
-                manifest,
-                "--allow-no-op",
-                "--credentials-file",
-                _credentials(tmp_path, "gstt.json"),
-                "--credentials-file",
-                _credentials(tmp_path, "kch.json"),
-            )
-        )
+        exit_code = cli.main(_argv(manifest, "--allow-no-op", *_roster(tmp_path)))
 
         # Individually each not-at-this-Trust skip is legitimate, but the project existing at *no*
         # Trust means the image pull never ran — never a legitimate no-op, whatever the flags say.

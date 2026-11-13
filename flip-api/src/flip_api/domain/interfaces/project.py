@@ -193,12 +193,6 @@ class IModelsInfoResponse(BaseModel):
     )
 
 
-# These might already be defined in flip.domain.schemas.projects
-# If so, they should be imported from there to avoid duplication.
-# For this exercise, I'm redefining them based on the provided interfaces.ts.
-# Ensure these definitions are consistent with any existing ones or consolidate them.
-
-
 class IEditProject(BaseModel):
     name: str = Field(..., description="Project name")
     description: str = Field(default="", description="Project description")

@@ -36,6 +36,8 @@ def mock_project():
     )
 
 
+_CREATE_PARAMS = {"project_id": "PROJ1", "project_secondary_id": "hub-123", "project_name": "Test Project"}
+
 _SAMPLE_PROJECT = Project(
     pi_firstname="John",
     secondary_ID="hub-123",
@@ -112,60 +114,15 @@ def test_get_projects_success(client):
     assert response.json()[0]["ID"] == "PROJ1"
 
 
-def test_get_projects_error(client):
-    with patch("imaging_api.routers.projects.get_all_projects", side_effect=Exception("connection error")):
-        response = client.get("/projects/")
-
-    assert response.status_code == 500
-
-
 # ── POST /projects/ ──
 
 
 def test_create_project_success(client):
     with patch("imaging_api.routers.projects.create_project", return_value=_SAMPLE_PROJECT):
-        response = client.post(
-            "/projects/",
-            params={
-                "project_id": "PROJ1",
-                "project_secondary_id": "hub-123",
-                "project_name": "Test Project",
-            },
-        )
+        response = client.post("/projects/", params=_CREATE_PARAMS)
 
     assert response.status_code == 200
     assert response.json()["ID"] == "PROJ1"
-
-
-def test_create_project_already_exists(client):
-    with patch(
-        "imaging_api.routers.projects.create_project",
-        side_effect=AlreadyExistsError("Project already exists"),
-    ):
-        response = client.post(
-            "/projects/",
-            params={
-                "project_id": "PROJ1",
-                "project_secondary_id": "hub-123",
-                "project_name": "Test Project",
-            },
-        )
-
-    assert response.status_code == 400
-
-
-def test_create_project_error(client):
-    with patch("imaging_api.routers.projects.create_project", side_effect=Exception("XNAT error")):
-        response = client.post(
-            "/projects/",
-            params={
-                "project_id": "PROJ1",
-                "project_secondary_id": "hub-123",
-                "project_name": "Test Project",
-            },
-        )
-
-    assert response.status_code == 500
 
 
 # ── DELETE /projects/{project_id} ──
@@ -182,28 +139,6 @@ def test_delete_project_success(client):
     assert response.status_code == 200
 
 
-def test_delete_project_not_found(client):
-    with patch(
-        "imaging_api.routers.projects.delete_project",
-        new_callable=AsyncMock,
-        side_effect=NotFoundError("Project not found"),
-    ):
-        response = client.delete("/projects/BAD_PROJ")
-
-    assert response.status_code == 404
-
-
-def test_delete_project_error(client):
-    with patch(
-        "imaging_api.routers.projects.delete_project",
-        new_callable=AsyncMock,
-        side_effect=Exception("XNAT error"),
-    ):
-        response = client.delete("/projects/PROJ1")
-
-    assert response.status_code == 500
-
-
 # ── GET /projects/{project_id} ──
 
 
@@ -213,20 +148,6 @@ def test_get_project_success(client):
 
     assert response.status_code == 200
     assert response.json()["ID"] == "PROJ1"
-
-
-def test_get_project_not_found(client):
-    with patch("imaging_api.routers.projects.get_project", side_effect=NotFoundError("Not found")):
-        response = client.get("/projects/BAD_PROJ")
-
-    assert response.status_code == 404
-
-
-def test_get_project_error(client):
-    with patch("imaging_api.routers.projects.get_project", side_effect=Exception("error")):
-        response = client.get("/projects/PROJ1")
-
-    assert response.status_code == 500
 
 
 # ── GET /projects/{project_id}/subjects ──
@@ -246,20 +167,6 @@ def test_get_subjects_success(client):
 
     assert response.status_code == 200
     assert len(response.json()) == 1
-
-
-def test_get_subjects_not_found(client):
-    with patch("imaging_api.routers.projects.get_subjects", side_effect=NotFoundError("Not found")):
-        response = client.get("/projects/BAD_PROJ/subjects")
-
-    assert response.status_code == 404
-
-
-def test_get_subjects_error(client):
-    with patch("imaging_api.routers.projects.get_subjects", side_effect=Exception("error")):
-        response = client.get("/projects/PROJ1/subjects")
-
-    assert response.status_code == 500
 
 
 # ── GET /projects/{project_id}/experiments ──
@@ -282,20 +189,6 @@ def test_get_experiments_success(client):
     assert len(response.json()) == 1
 
 
-def test_get_experiments_not_found(client):
-    with patch("imaging_api.routers.projects.get_experiments", side_effect=NotFoundError("Not found")):
-        response = client.get("/projects/BAD_PROJ/experiments")
-
-    assert response.status_code == 404
-
-
-def test_get_experiments_error(client):
-    with patch("imaging_api.routers.projects.get_experiments", side_effect=Exception("error")):
-        response = client.get("/projects/PROJ1/experiments")
-
-    assert response.status_code == 500
-
-
 # ── GET /projects/{project_id}/experiment/{experiment_id_or_label} ──
 
 
@@ -307,15 +200,73 @@ def test_get_experiment_success(client):
     assert response.status_code == 200
 
 
-def test_get_experiment_not_found(client):
-    with patch("imaging_api.routers.projects.get_experiment", side_effect=NotFoundError("Not found")):
-        response = client.get("/projects/PROJ1/experiment/BAD_EXP")
+# ── Service errors map to HTTP status ──
 
-    assert response.status_code == 404
+_ERROR_CASES = [
+    pytest.param("get_all_projects", "GET", "/projects/", Exception("connection error"), 500, id="get_projects_error"),
+    pytest.param(
+        "create_project",
+        "POST",
+        "/projects/",
+        AlreadyExistsError("Project already exists"),
+        400,
+        id="create_project_already_exists",
+    ),
+    pytest.param("create_project", "POST", "/projects/", Exception("XNAT error"), 500, id="create_project_error"),
+    pytest.param(
+        "delete_project",
+        "DELETE",
+        "/projects/BAD_PROJ",
+        NotFoundError("Project not found"),
+        404,
+        id="delete_project_not_found",
+    ),
+    pytest.param(
+        "delete_project", "DELETE", "/projects/PROJ1", Exception("XNAT error"), 500, id="delete_project_error"
+    ),
+    pytest.param(
+        "get_project", "GET", "/projects/BAD_PROJ", NotFoundError("Not found"), 404, id="get_project_not_found"
+    ),
+    pytest.param("get_project", "GET", "/projects/PROJ1", Exception("error"), 500, id="get_project_error"),
+    pytest.param(
+        "get_subjects",
+        "GET",
+        "/projects/BAD_PROJ/subjects",
+        NotFoundError("Not found"),
+        404,
+        id="get_subjects_not_found",
+    ),
+    pytest.param("get_subjects", "GET", "/projects/PROJ1/subjects", Exception("error"), 500, id="get_subjects_error"),
+    pytest.param(
+        "get_experiments",
+        "GET",
+        "/projects/BAD_PROJ/experiments",
+        NotFoundError("Not found"),
+        404,
+        id="get_experiments_not_found",
+    ),
+    pytest.param(
+        "get_experiments", "GET", "/projects/PROJ1/experiments", Exception("error"), 500, id="get_experiments_error"
+    ),
+    pytest.param(
+        "get_experiment",
+        "GET",
+        "/projects/PROJ1/experiment/BAD_EXP",
+        NotFoundError("Not found"),
+        404,
+        id="get_experiment_not_found",
+    ),
+    pytest.param(
+        "get_experiment", "GET", "/projects/PROJ1/experiment/EXP1", Exception("error"), 500, id="get_experiment_error"
+    ),
+]
 
 
-def test_get_experiment_error(client):
-    with patch("imaging_api.routers.projects.get_experiment", side_effect=Exception("error")):
-        response = client.get("/projects/PROJ1/experiment/EXP1")
+@pytest.mark.parametrize(("target", "method", "path", "exc", "status"), _ERROR_CASES)
+def test_service_error_maps_to_status(client, target, method, path, exc, status):
+    # Same patch() as before: only delete_project (awaited by the router) is an explicit AsyncMock.
+    extra = {"new_callable": AsyncMock} if target == "delete_project" else {}
+    with patch(f"imaging_api.routers.projects.{target}", side_effect=exc, **extra):
+        response = client.request(method, path, params=_CREATE_PARAMS if method == "POST" else None)
 
-    assert response.status_code == 500
+    assert response.status_code == status

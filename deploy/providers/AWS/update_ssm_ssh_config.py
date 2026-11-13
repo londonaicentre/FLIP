@@ -28,22 +28,14 @@ import re
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 import click
 
-
-@dataclass(frozen=True)
-class HostConfig:
-    """Desired SSH config for a managed host."""
-
-    alias: str
-    instance_output: str
-
-
-HOST_CONFIGS: tuple[HostConfig, ...] = (HostConfig(alias="flip", instance_output="Ec2InstanceId"),)
+# The one managed host: the hub's SSM bastion, and the Terraform output naming its instance.
+ALIAS = "flip"
+INSTANCE_OUTPUT = "Ec2InstanceId"
 
 
 def _run(cmd: list[str], timeout: int = 20) -> str:
@@ -95,13 +87,10 @@ def _replace_or_append_host_block(content: str, alias: str, new_block: str) -> s
     Matches the optional comment line (# Managed by FLIP...), the Host line, and all
     indented configuration lines that follow.
     """
-    # Match: optional comment line + Host line + indented config lines
-    # (?:^# Managed by FLIP.*\n)? - optional comment line
-    # ^Host\s+{alias}\n - Host line
-    # (?:^[ \t][^\n]*\n)* - indented config lines
     host_regex = re.compile(rf"(?m)(?:^# Managed by FLIP[^\n]*\n)?^Host\s+{re.escape(alias)}\n(?:^[ \t][^\n]*\n)*")
-    if host_regex.search(content):
-        return host_regex.sub(new_block, content, count=1)
+    replaced, n = host_regex.subn(new_block, content, count=1)
+    if n:
+        return replaced
     suffix = "" if content.endswith("\n") else "\n"
     return f"{content}{suffix}\n{new_block}"
 
@@ -144,11 +133,9 @@ def main(ssh_config: Path, terraform_dir: Path, dry_run: bool, aws_profile: str 
         ssh_config.parent.mkdir(parents=True, exist_ok=True)
         current_content = ssh_config.read_text(encoding="utf-8") if ssh_config.exists() else ""
 
-        updated_content = current_content
-        for host in HOST_CONFIGS:
-            instance_id = _terraform_output(host.instance_output)
-            new_block = _build_host_block(host.alias, instance_id, region, resolved_profile)
-            updated_content = _replace_or_append_host_block(updated_content, host.alias, new_block)
+        instance_id = _terraform_output(INSTANCE_OUTPUT)
+        new_block = _build_host_block(ALIAS, instance_id, region, resolved_profile)
+        updated_content = _replace_or_append_host_block(current_content, ALIAS, new_block)
 
         if updated_content == current_content:
             click.echo("SSH config already up to date.")

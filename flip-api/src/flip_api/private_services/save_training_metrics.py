@@ -60,12 +60,6 @@ def save_training_metrics_endpoint(
         HTTPException: If an internal server error occurs during processing.
     """
 
-    # training_metrics.fl_client_name is the FL client's identity as the FL server reports it — the FL kit slot for
-    # FLARE, the SUPERNODE_NAME for Flower. resolve_trust_from_fl_client_name (below) maps it to the owning Trust so
-    # the metric is validated and stored against the trust, not the raw client name.
-    # The two backends report this name differently — see issue #538.
-    # NOTE this worked before because the trust name was the same as the FL client name (i.e. Trust_1, Trust_2, etc.).
-
     fl_client_name = training_metrics.fl_client_name
 
     logger.debug(f"Received request to save training metrics for model {model_id} from FL client {fl_client_name}")
@@ -74,6 +68,7 @@ def save_training_metrics_endpoint(
         # The FL client name the FL server reports differs per FL_BACKEND (FLARE: the FL kit slot;
         # Flower: SUPERNODE_NAME). resolve_trust_from_fl_client_name hides that discrepancy and
         # returns the trust to validate against the model's approved trusts — see issue #538.
+        # A plain name lookup used to work only because trust names matched the FL kit slots (Trust_1, Trust_2).
         trust = resolve_trust_from_fl_client_name(fl_client_name, db)
         if trust is None:
             error_msg = f"FL client '{fl_client_name}' could not be resolved to a trust (model: {model_id})"
