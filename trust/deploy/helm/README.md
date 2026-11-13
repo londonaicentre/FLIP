@@ -80,9 +80,10 @@ helm upgrade --install trust-release ./trust/deploy/helm/ \
   `make deploy-trust-k8s` forwards to.
 - **`deploy`** depends on `preflight` (`scripts/preflight.sh`: tools and versions, cluster reachability,
   the chart files, the kit when `KIT=` is given, `helm lint`) and passes `--timeout $(HELM_TIMEOUT)` but
-  **not** `--wait`. Helm 4 reimplemented `--wait` on
-  [kstatus](https://github.com/kubernetes-sigs/cli-utils/tree/master/pkg/kstatus), which is stricter than
-  Helm 3's readiness check; size `--timeout` for the slowest service if you add `--wait` yourself.
+  **not** `--wait`: the rollout is waited for afterwards by `scripts/rollout_wait.py`, scoped to the core
+  workloads, because `--wait` is all-or-nothing and one permanently-Pending optional pod (an idle GPU
+  `fl-client`) would fail every upgrade — see
+  [Why the rollout wait is scoped](#why-the-rollout-wait-is-scoped-and-not-helm---wait).
 - **`HELM_TIMEOUT`** (default `30m`) is the one budget for both ways of waiting on the `xnat-init` job:
   `deploy` (a post-upgrade hook) and `xnat-init` (`kubectl wait`). It bounds the wait, not the Job — the
   hook has no `activeDeadlineSeconds`, so when it expires Helm marks the release failed while the Job
@@ -1169,6 +1170,65 @@ make -C trust/deploy/helm update-deps
 make -C trust/deploy/helm test
 ```
 
+### What a failed `make deploy` means
+
+`helm upgrade` exiting non-zero used to be ambiguous: it was usually the `xnat-init`
+post-upgrade hook timing out (#565) on a release that had deployed perfectly well, but it
+could equally be a genuine failure where nothing reached the cluster. Telling the two apart
+meant reading the output. Since FLIP#1645 the ambiguity is removed at the source rather than
+classified after the fact: `xnat-init` is the one hook that produces it, so `make deploy`
+takes it out of helm's path (`--set xnat.initJob.enabled=false`) and runs the existing
+`xnat-init` target as a separate step afterwards. Rollout is then waited for explicitly. Each exit
+code then means exactly one thing:
+
+| Exit | Meaning | What to do |
+|------|---------|------------|
+| `0` | The upgrade landed: applied, every core workload rolled out, every hook succeeded and `xnat-init` completed. | Nothing. |
+| `1` | Helm failed, or a core workload did not roll out within `HELM_TIMEOUT`, or a hook (`omop-vocab-load`, `trust-seed`) failed. | Read the helm error; the failing hook is named for you. If helm rejected the apply the trust is on its previous release; after a rollout timeout or a failed hook the new spec is already live, so look at which workloads or hooks are short. |
+| `3` | The release is live and every core workload rolled out, but `xnat-init` did not complete. | The trust is on the new release; re-run `make -C trust/deploy/helm xnat-init`, raising `HELM_TIMEOUT` if the job simply needed longer. |
+
+`3` is still a failure as far as `make` is concerned — it just says something different from
+`1`, so unattended callers (the auto-upgrade agent, FLIP#1640) can report "upgraded, init
+incomplete" instead of guessing.
+
+#### Why the rollout wait is scoped, and not `helm --wait`
+
+Waiting matters because FLIP#1228 was a correct chart that never reached the running pod across
+five upgrades while the old pods stayed `Ready` throughout: an un-waited `helm upgrade` exits 0
+for exactly that.
+
+Helm's own `--wait` does that waiting correctly but is **all-or-nothing** — Helm 3 has no
+per-resource exclusion, and one unschedulable pod fails the entire upgrade. Verified against a
+live cluster: a single `Pending` pod alongside otherwise healthy workloads gives `UPGRADE
+FAILED: context deadline exceeded`, exit 1, and leaves the release in `failed` state. Two
+supported trust configurations sit in that state by design — an `flClient` on a scale-from-zero
+GPU node pool (`values-aks.yaml`, where Pending between FL jobs is the point of not billing an
+idle GPU), and one deployed before its kit is staged. Under `--wait` either turns *every*
+scheduled run of the auto-upgrade agent into a failed upgrade needing a human, inverting the
+agent's purpose.
+
+So `scripts/rollout_wait.py` waits on the workloads whose readiness means "the trust is
+serving", using `kubectl rollout status` — the same readiness semantics Helm applies
+(`observedGeneration` vs `generation`, the new ReplicaSet for a Deployment,
+`currentRevision == updateRevision` for a StatefulSet), so `Ready` old pods do not satisfy it
+either. The scope is a **deny list**: anything not named optional is waited on, because
+forgetting to exclude an optional workload is a loud timeout while forgetting to include a core
+one would silently stop checking it. Optional workloads that are unready are still **reported**,
+they just cannot change the exit code.
+
+| Not waited on | Why unready is a legitimate steady state |
+|---------------|------------------------------------------|
+| `fl-client` | Idle on a scale-from-zero GPU pool, or awaiting its kit |
+| `monailabel` | Optional annotation service, off by default |
+| `grafana`, `loki`, `alloy` | Observability; the trust serves while dashboards are down |
+
+On the failure path `scripts/failing_hooks.py` reads `helm status -o json` and names the hooks
+that did not succeed; it is diagnostics only and cannot change the exit code. All of this is
+tested without a cluster in `tests/test_deploy_split.py` and `tests/test_rollout_wait.py`.
+
+The hook annotation itself is unchanged, so a plain `helm install` of the chart still runs
+`xnat-init`; only the Makefile path opts out of it.
+
 ### Running the XNAT init job by hand
 
 XNAT's post-install init job normally runs as part of the chart. When it is
@@ -1183,6 +1243,18 @@ It re-renders only the `xnat-init` job from the chart (`--set
 xnat.initJob.enabled=true`, applied with the
 `app.kubernetes.io/component=xnat-init` selector), waits up to `HELM_TIMEOUT` (default
 `30m`) for it to complete, and on failure tails the job's logs before exiting non-zero.
+
+Two things worth knowing now that `make deploy` calls this target itself:
+
+- **It runs on every deploy**, including on a trust that set `xnat.initJob.enabled=false`
+  deliberately. That is intended: the setting controls whether *helm* runs the hook, and the
+  Makefile path keeps the init out of helm's hands so exit `1` stays unambiguous. There is no
+  way to opt out of the post-deploy step short of deploying with `helm` directly.
+- **On a trust with `xnat.enabled=false` it is a no-op.** The chart renders no init job at all
+  in that case, and an `apply` with no matching objects fails ("no objects passed to apply") —
+  which used to turn a perfectly good deploy of an XNAT-less trust into exit `3`. The target
+  now renders first, checks for the job's `app.kubernetes.io/component: xnat-init` label, and
+  prints `nothing to initialise` instead of applying.
 
 ### CI Validation
 
