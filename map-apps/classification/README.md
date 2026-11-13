@@ -39,7 +39,8 @@ By default MONAI's `LoadImaged` returns the array transposed: `(column, row)`, n
 Run one study through both paths and compare the arrays — do not reason about it. Dump what
 `DICOMSeriesToVolumeOperator` hands the operator, dump what your training chain's validation
 transforms produce for the same file, then find which of the eight rotation/flip combinations maps
-one onto the other (the loop tries 12 because some combinations repeat; any line that gives `0.0` is the answer):
+one onto the other (the loop tries 12 because some combinations repeat; any line that gives `0.0` is the answer,
+and on a non-square image the combinations that cannot match print their shape instead):
 
 ```python
 import numpy as np
@@ -48,10 +49,14 @@ import numpy as np
 # training_array: your validation transforms' output for the same file
 for k in range(4):
     for name, fn in (("", lambda x: x), ("+fliplr", np.fliplr), ("+flipud", np.flipud)):
-        print(k, name, np.abs(fn(np.rot90(map_array, k)) - training_array).max())
+        candidate = fn(np.rot90(map_array, k))
+        if candidate.shape != training_array.shape:  # odd k swaps rows and columns of a non-square image
+            print(k, name, "shape", candidate.shape)
+            continue
+        print(k, name, np.abs(candidate - training_array).max())
 ```
 
-The correct one gives `0.0` and every other is far from it, so the answer is unambiguous. Do this on
+Only the correct transform (and its repeats) gives `0.0`; every other is far from it, so the answer is unambiguous. Do this on
 a **non-square** image if you can: on a square one, a transpose and a rotation are indistinguishable
 by shape and it is easy to conclude the wrong thing. A mis-set orientation does not raise — it just
 degrades predictions, and for a chest radiograph a mirror also silently swaps left and right.
