@@ -69,13 +69,13 @@ describe("Upload Model Files", () => {
         cy.getBySel("upload-file-btn").scrollIntoView();
         cy.getBySel("upload-file-btn").selectFile("test/cypress/fixtures/files/trainer.py", { action: "drag-drop" });
 
-        cy.getBySel("file-upload-status-scanning").should("be.visible");
+        cy.getBySel("file-upload-status-scanning").scrollIntoView().should("be.visible");
 
         cy.intercept("POST", `/step/model/${modelId}`, { fixture: "model/getModelFileCompleted" })
             .as("getModelFile")
             .wait("@getModelFile", { requestTimeout: 20000 });
 
-        cy.getBySel("file-upload-status-completed").should("be.visible");
+        cy.getBySel("file-upload-status-completed").scrollIntoView().should("be.visible");
     });
 
     it("displays scanning status", () => {
@@ -90,7 +90,7 @@ describe("Upload Model Files", () => {
         cy.getBySel("upload-file-btn").scrollIntoView();
         cy.getBySel("upload-file-btn").selectFile("test/cypress/fixtures/files/trainer.py", { action: "drag-drop" });
 
-        cy.getBySel("file-upload-status-scanning").should("be.visible");
+        cy.getBySel("file-upload-status-scanning").scrollIntoView().should("be.visible");
     });
 
     // The two error-path tests below upload trainer.py rather than flip.py
@@ -104,7 +104,7 @@ describe("Upload Model Files", () => {
         cy.getBySel("upload-file-btn").scrollIntoView();
         cy.getBySel("upload-file-btn").selectFile("test/cypress/fixtures/files/trainer.py", { action: "drag-drop" });
 
-        cy.getBySel("file-upload-status-error").should("be.visible");
+        cy.getBySel("file-upload-status-error").scrollIntoView().should("be.visible");
     });
 
     it("handles error from get model call and displays error status", () => {
@@ -120,12 +120,12 @@ describe("Upload Model Files", () => {
         cy.getBySel("upload-file-btn").scrollIntoView();
         cy.getBySel("upload-file-btn").selectFile("test/cypress/fixtures/files/trainer.py", { action: "drag-drop" });
 
-        cy.getBySel("file-upload-status-scanning").should("be.visible");
+        cy.getBySel("file-upload-status-scanning").scrollIntoView().should("be.visible");
 
         cy.intercept("POST", `/step/model/${modelId}`, { fixture: "model/getModelFileError" })
             .as("getModelFile")
             .wait("@getModelFile", { requestTimeout: 20000 });
 
-        cy.getBySel("file-upload-status-error").should("be.visible");
+        cy.getBySel("file-upload-status-error").scrollIntoView().should("be.visible");
     });
 });
