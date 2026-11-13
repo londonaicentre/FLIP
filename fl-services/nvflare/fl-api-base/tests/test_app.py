@@ -17,15 +17,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fl_api.app import app
-from fl_api.core.dependencies import get_session
-
-
-@pytest.fixture(autouse=True)
-def override_session(client):
-    fake_session = MagicMock()
-    app.dependency_overrides[get_session] = lambda: fake_session
-    yield
-    app.dependency_overrides.clear()
 
 
 def test_index_endpoint(client):
@@ -63,6 +54,7 @@ def test_openapi_names_the_same_build(monkeypatch):
 
 def test_startup_session_is_created(client):
     """Confirm the session is created once on startup."""
+    # Re-resolve: test_openapi_names_the_same_build reloads fl_api.app, so the module-level name may be stale.
     from fl_api.app import app
 
     assert hasattr(app.state, "session")
