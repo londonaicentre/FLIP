@@ -20,7 +20,7 @@
  * chosen by maximising the minimum adjacent colour-vision-deficiency distance
  * (min adjacent deltaE 37.7 light / 35.9 dark under protan/deutan simulation,
  * target >= 12) and validated against the real chart surfaces (white /
- * dark-surface #0E0B13) for OKLCH lightness band, chroma floor and contrast.
+ * dark-surface, then #0E0B13, now #1A1622, where every dark slot is still >= 3.59:1) for OKLCH lightness band, chroma floor and contrast.
  * Light-mode aqua/yellow/magenta sit below 3:1 on white by design — the
  * legend, axis tooltip and "View Data" table are the mitigation.
  */
