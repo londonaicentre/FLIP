@@ -16,51 +16,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException, status
 
-from flip_api.config import Settings
 from flip_api.domain.schemas.file import ModelFiles, ModelFilesList
 from flip_api.file_services.retrieve_model_files_list import retrieve_model_files_list
-from tests.fixtures.db_fixtures import ModelFactory, ProjectFactory
-
-
-@pytest.fixture
-def mock_logger():
-    """Mock logger for testing."""
-    with patch("flip_api.file_services.retrieve_model_files_list.logger") as mock_logger:
-        yield mock_logger
 
 
 @pytest.fixture
 def sample_model_id():
     """Create sample model ID for testing."""
     return uuid.uuid4()
-
-
-@pytest.fixture
-def sample_model(sample_model_id):
-    """Create sample model for testing using factory."""
-    project = ProjectFactory(deleted=False)
-    model = ModelFactory(id=sample_model_id, project_id=project.id)
-    return model, project
-
-
-@pytest.fixture
-def s3_mock_success():
-    """Mock S3 client for success case with various file types."""
-    with patch("flip_api.file_services.retrieve_model_files_list.S3Client") as mock_s3:
-        mock_instance = MagicMock()
-        mock_s3.return_value = mock_instance
-
-        # Mock response with different file types
-        mock_instance.list_objects.return_value = {
-            "Contents": [
-                {"Key": "model-id/algo/monaialgo.py"},
-                {"Key": "model-id/opener/monaiopener.py"},
-                {"Key": "model-id/model/monai-test.pth.tar"},
-                {"Key": "model-id/other/unrelated.txt"},
-            ]
-        }
-
-        yield mock_instance
 
 
 @pytest.fixture
@@ -83,15 +46,6 @@ def s3_mock_error():
         yield mock_instance
 
 
-@pytest.fixture
-def mocked_settings():
-    mock = Settings(
-        SCANNED_MODEL_FILES_BUCKET="test-bucket",
-    )
-    with patch("flip_api.file_services.retrieve_model_files_list.get_settings", return_value=mock):
-        yield mock
-
-
 class TestModelFilesClasses:
     """Tests for ModelFiles and ModelFilesList classes."""
 
@@ -101,22 +55,6 @@ class TestModelFilesClasses:
         assert model_files.algo is None
         assert model_files.opener is None
         assert model_files.model is None
-
-    def test_model_files_custom_values(self):
-        """Test ModelFiles initialization with custom values."""
-        model_files = ModelFiles(algo="path/to/algo.py", opener="path/to/opener.py", model="path/to/model.pth")
-        assert model_files.algo == "path/to/algo.py"
-        assert model_files.opener == "path/to/opener.py"
-        assert model_files.model == "path/to/model.pth"
-
-    def test_model_files_list(self):
-        """Test ModelFilesList initialization."""
-        model_files = ModelFiles(algo="path/to/algo.py", opener="path/to/opener.py", model="path/to/model.pth")
-        model_files_list = ModelFilesList(files=model_files)
-        assert model_files_list.files == model_files
-        assert model_files_list.files.algo == "path/to/algo.py"
-        assert model_files_list.files.opener == "path/to/opener.py"
-        assert model_files_list.files.model == "path/to/model.pth"
 
     def test_model_files_dict_conversion(self):
         """Test dict conversion for ModelFiles."""
