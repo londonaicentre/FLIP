@@ -19,7 +19,7 @@ import requests
 
 from flip.exceptions import XnatError
 from flip.xnat.client import XnatClient, XnatScan
-from tests.unit.xnat.helpers import FakeResponse, FakeSession, make_client, scan_listing
+from tests.unit.xnat.helpers import FakeResponse, FakeSession, make_client, project_routes, scan_listing
 
 
 class TestFromEnv:
@@ -152,9 +152,8 @@ def _record_gets(client: XnatClient) -> list[tuple[str, dict[str, str]]]:
 class TestListScans:
     """Scans are flattened across experiments and keyed by the accession (experiment label)."""
 
-    def test_flattens_experiments_and_scans(self, project_session):
-        client = XnatClient(server="http://xnat.example", user="u", password="p")
-        client._session = project_session
+    def test_flattens_experiments_and_scans(self):
+        client = make_client(project_routes(["input_spleen_2.nii.gz"]))
 
         scans = client.list_scans("PROJ")
 
