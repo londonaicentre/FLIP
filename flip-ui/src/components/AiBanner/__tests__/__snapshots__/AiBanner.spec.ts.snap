@@ -34,15 +34,19 @@ exports[`AiBanner > Renders Component 1`] = `
           class="flex items-center flex-shrink-0 order-3 w-full mt-2 sm:order-2 sm:mt-0 sm:w-auto"
         >
           <!--v-if-->
-          <div
-            class="w-6 h-5 cursor-pointer"
+          <button
+            aria-label="Close for this session"
+            class="grid w-8 h-8 text-white transition rounded place-items-center hover:text-primary-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
             content="Close for this session"
+            data-test="banner-close"
+            type="button"
           >
             <svg
-              class="w-5 h-5 text-white transition rounded hover:text-primary-200"
+              aria-hidden="true"
+              class="w-5 h-5"
               data-icon="mdi:close"
             />
-          </div>
+          </button>
         </div>
       </div>
     </div>
