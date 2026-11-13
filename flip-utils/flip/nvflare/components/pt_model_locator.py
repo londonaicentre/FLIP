@@ -26,7 +26,9 @@ from flip.constants import FlipConstants, FlipMetaKey, PTConstants
 from flip.nvflare.runtime import get_flip_model_id
 
 
-class PTModelLocator(ModelLocator):
+class _AppModelLocator(ModelLocator):
+    """The constructor and model name shared by the two locators below."""
+
     def __init__(
         self, exclude_vars: list[str] | None = None, model: torch.nn.Module | dict[str, Any] | None = None
     ) -> None:
@@ -37,7 +39,7 @@ class PTModelLocator(ModelLocator):
                 recipe passes (FLARE's ComponentBuilder instantiates it before this locator is
                 built at run time). ``None`` builds it from the app's ``models.get_model()``.
         """
-        super(PTModelLocator, self).__init__()
+        super().__init__()
 
         if model is None:
             from models import get_model
@@ -50,6 +52,8 @@ class PTModelLocator(ModelLocator):
     def get_model_names(self, fl_ctx: FLContext) -> list[str]:
         return [PTConstants.PTServerName]
 
+
+class PTModelLocator(_AppModelLocator):
     def locate_model(self, model_name: str, fl_ctx: FLContext) -> DXO | None:
         if model_name == PTConstants.PTServerName:
             try:
@@ -90,30 +94,7 @@ class PTModelLocator(ModelLocator):
             return None
 
 
-class InitialPTModelLocator(ModelLocator):
-    def __init__(
-        self, exclude_vars: list[str] | None = None, model: torch.nn.Module | dict[str, Any] | None = None
-    ) -> None:
-        """
-        Args:
-            exclude_vars: Accepted for config compatibility with the stock locators; not applied here.
-            model: The server model object, or the ``{"path": ..., "args": ...}`` component config a
-                recipe passes (FLARE's ComponentBuilder instantiates it before this locator is
-                built at run time). ``None`` builds it from the app's ``models.get_model()``.
-        """
-        super(InitialPTModelLocator, self).__init__()
-
-        if model is None:
-            from models import get_model
-
-            model = get_model()
-
-        self.model = model
-        self.exclude_vars = exclude_vars
-
-    def get_model_names(self, fl_ctx: FLContext) -> list[str]:
-        return [PTConstants.PTServerName]
-
+class InitialPTModelLocator(_AppModelLocator):
     def locate_model(self, model_name: str, fl_ctx: FLContext) -> DXO | None:
         # We look for existing models
         self.log_info(fl_ctx, f"Trying to locate the model {model_name}")

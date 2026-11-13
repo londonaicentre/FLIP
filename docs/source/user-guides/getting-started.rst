@@ -80,9 +80,9 @@ imaging project, each approving Trust then imports the cohort's images into its 
 
    :ref:`stage-project`, :ref:`project-approval` and :ref:`imaging-status`.
 
-***************************************************
-Step 5 — Pick a framework and start from a tutorial
-***************************************************
+*************************************************
+Step 5 — Start from a tutorial for your framework
+*************************************************
 
 Your FLIP deployment runs either :term:`NVIDIA FLARE` or the :term:`Flower Framework`, and your app must be written for
 that one. :ref:`choosing-an-fl-framework` explains how to tell which and how the two compare.
@@ -98,7 +98,8 @@ describes the ``flip`` package your app uses to read the cohort and images.
 
 .. tip::
 
-   You can run the tutorial on your own machine before uploading anything. From the repo root:
+   You can run the tutorial on your own machine before uploading anything. From the root of a clone of the FLIP
+   repository:
 
    .. code-block:: shell
 
@@ -116,13 +117,13 @@ Step 6 — Create a model and upload its files
 ********************************************
 
 Once the project is approved, click **Create Model** on the project page. On the model page, drag your app's files
-into **Model Files**. Each file is checked before it can be used.
-
-The **Model Files** panel lists the files your app's job type requires and marks any still missing.
+into **Model Files**. The panel lists the files your app's job type requires and marks any still missing. Each file
+is checked before it can be used.
 
 .. important::
 
-   Your app must not download anything while it runs, such as pretrained weights. Upload every file it needs.
+   Your app must not download anything while it runs, including pretrained weights: the training machines may have no
+   internet access, and a downloaded file skips the checks applied to uploaded ones. Upload every file it needs.
 
 .. seealso::
 

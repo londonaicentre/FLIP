@@ -20,7 +20,7 @@ services:
   # so a mounted whole document would hand training code every [access] rule, other
   # projects' ids included. This one-shot step, in the fl-client's own image, reads the
   # document and writes only its [fl_privacy] table into each client's kit local/ dir,
-  # which that client already mounts (and writes privacy.json into), so the extract needs
+  # which that client already mounts (and fl-client-init renders privacy.json into), so the extract needs
   # no volume of its own and persists across restarts. An invalid document fails the step,
   # and the fl-client, which waits for it to complete successfully, does not start (fail
   # closed). With no document it removes any earlier extract and never calls Python, so a
@@ -65,6 +65,54 @@ services:
       - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/local:/extract/net-1
     restart: "no"
 
+  # Every write into the fl-clients' kits, once, before they start (FLIP#1570), so each client mounts its
+  # kit's local/ and startup/ read-only: the kit and the rendered site config are read-only to the running
+  # client. /app/fl-client-init.sh renders local/resources.json, log_config.json and the site privacy
+  # policy (from FL_SITE_PRIVACY_* or the extract above) into each kit. A kit it cannot render, an invalid
+  # configuration included, keeps only its own client from starting (fail closed); the step itself fails
+  # only when no kit rendered. Same image, uid and settings as the clients. Any target that starts the
+  # fl-clients with --no-deps must name it too: up-fl-clients-kit and reload-governance do.
+  fl-client-init:
+    image: ghcr.io/londonaicentre/${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
+    user: "${FLIP_UID:-1000}:${FLIP_GID:-1000}"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    network_mode: none
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -u
+        ok=
+        for kit in /kit/*/; do
+          # This kit's own extract, at the path its client reads it from.
+          if ACCESS_POLICY_FILE="$${ACCESS_POLICY_FILE:+$${kit}local/governance.fl_privacy.toml}" /app/fl-client-init.sh "$$kit"; then
+            ok=1
+          else
+            # Only this kit's client is stopped: it refuses the missing or stale render (fail closed).
+            echo "[fl-client-init] $$kit FAILED: its fl-client will refuse to start" >&2
+          fi
+        done
+        [ -n "$$ok" ]
+    environment:
+      - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
+      - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}
+      - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
+      - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
+      - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
+      # Set only when the kit names a governance document; the loop points it at each kit's extract.
+      - ACCESS_POLICY_FILE=${ACCESS_POLICY_FILE:+/app/local/governance.fl_privacy.toml}
+    volumes:
+      # Each client's kit, which that client mounts read-only at /app/local and /app/startup.
+      - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/local:/kit/net-1/local
+      - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/startup:/kit/net-1/startup
+    depends_on:
+      fl-governance-init:
+        condition: service_completed_successfully
+    restart: "no"
+
   fl-client-net-1:
     image: ghcr.io/londonaicentre/${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
     # A site must come back after a daemon restart or host reboot without an operator's
@@ -107,8 +155,9 @@ services:
       # pre-provisioned participant identity, e.g. Trust_1), NOT the trust's
       # display name — the two differ once a trust is registered under an
       # arbitrary name (name≠slot), and the nvflare material is slot-keyed.
-      - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/local:/app/local
-      - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/startup:/app/startup
+      # local/ and startup/ read-only: fl-client-init above did every write (FLIP#1570).
+      - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/local:/app/local:ro
+      - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/startup:/app/startup:ro
       - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/transfer:/app/transfer
     environment:
       - NET_ID=net-1
@@ -126,8 +175,8 @@ services:
       - TRUST_INTERNAL_SERVICE_KEY_HEADER=${TRUST_INTERNAL_SERVICE_KEY_HEADER}
       - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
       # Site-enforced FLARE privacy policy (FLIP#851) — set in the trust's kit file
-      # (Host-local profile) and rendered into /app/local/privacy.json by the fl-client
-      # entrypoint at container start. Unset/empty = no site policy (previous behavior).
+      # (Host-local profile) and rendered into /app/local/privacy.json by fl-client-init; the
+      # client checks that render at start. Unset/empty = no site policy (previous behavior).
       - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
       - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
       - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
@@ -137,41 +186,14 @@ services:
       # both set stops the client. Unset = the variables decide.
       - ACCESS_POLICY_FILE=${ACCESS_POLICY_FILE:+/app/local/governance.fl_privacy.toml}
     depends_on:
-      fl-governance-init:
+      fl-client-init:
         condition: service_completed_successfully
     shm_size: '8gb'
     # GPU passthrough via compose_trust.prod.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)
 
-  # TODO add second FL network when needed
-  # fl-client-net-2:
-  #   image: ghcr.io/londonaicentre/${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
-  #   security_opt:
-  #     - no-new-privileges:true
-  #   cap_drop:
-  #     - ALL
-  #   volumes:
-  #     # This net's slice of the images download directory (see fl-client-net-1 above)
-  #     - ${BASE_IMAGES_DOWNLOAD_DIR:-/opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}}/net-2:/app/data/images/net-2
-  #     # Provisioned FLARE secrets (certificates, fed_client.json)
-  #     - ${FL_KIT_DIR}/net-2/services/${FL_KIT_SLOT}/local:/app/local
-  #     - ${FL_KIT_DIR}/net-2/services/${FL_KIT_SLOT}/startup:/app/startup
-  #     - ${FL_KIT_DIR}/net-2/services/${FL_KIT_SLOT}/transfer:/app/transfer
-  #   environment:
-  #     - NET_ID=net-2
-  #     - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
-  #     - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}
-  #     - LOCAL_DEV=false
-  #     - IMAGES_DIR=/app/data/images
-  #     # FL clients intentionally do not have access to Central Hub API credentials.
-  #     # Only the fl-server (on the Central Hub) communicates with flip-api, under each job's own credential.
-  #     - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
-  #     - IMAGING_API_URL=${IMAGING_API_URL}
-  #     # Site-enforced FLARE privacy policy (FLIP#851) — see the fl-client-net-1 note.
-  #     - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
-  #     - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
-  #     - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
-  #   shm_size: '8gb'
-  #   # GPU passthrough: add fl-client-net-2 to compose_trust.prod.gpu.yml when enabling this net
+  # TODO add second FL network when needed: mirror fl-client-net-1 (user, restart, env, depends_on, read-only
+  # kit mounts), mount its kit into fl-client-init and fl-governance-init as well, and give it its own entry
+  # in compose_trust.prod.gpu.yml.
 
 
 networks:

@@ -58,32 +58,34 @@ class TestInitialCheckpointPTModelPersistor:
         assert p.model is None
         assert p.global_model_file_name == "g.pt"
 
-    @pytest.mark.parametrize("bad_config", ["absent", "malformed"])
-    def test_unreadable_config_json_is_stock_behaviour(self, bad_config):
-        """custom/config.json missing or malformed → no backbone resolution; delegates straight to
-        the stock persistor (safe for jobs that carry no config at all)."""
-        with tempfile.TemporaryDirectory() as tmp:
-            if bad_config == "malformed":
-                custom = os.path.join(tmp, "custom")
-                os.makedirs(custom)
-                with open(os.path.join(custom, "config.json"), "w") as f:
-                    f.write("{not json")
+    @pytest.mark.parametrize(
+        "config_text",
+        [None, "{not json", json.dumps({"GLOBAL_ROUNDS": 3})],
+        ids=["absent", "malformed", "no_server_checkpoint"],
+    )
+    def test_no_backbone_declared_is_stock_behaviour(self, tmp_path, config_text):
+        """custom/config.json missing, malformed, or readable without SERVER_CHECKPOINT → no backbone
+        resolution; delegates straight to the stock persistor (safe for jobs that carry no config at
+        all, and for every other standard training job)."""
+        if config_text is not None:
+            (tmp_path / "custom").mkdir()
+            (tmp_path / "custom" / "config.json").write_text(config_text)
 
-            p = _persistor_with_module()
-            fl_ctx = _fl_ctx(tmp)
+        p = _persistor_with_module()
+        fl_ctx = _fl_ctx(str(tmp_path))
 
-            with (
-                patch("flip.nvflare.components.pt_model_persistor.torch.load") as mock_load,
-                patch(
-                    "nvflare.app_opt.pt.file_model_persistor.PTFileModelPersistor.load_model", return_value="STOCK"
-                ) as mock_super,
-            ):
-                result = p.load_model(fl_ctx)
+        with (
+            patch("flip.nvflare.components.pt_model_persistor.torch.load") as mock_load,
+            patch(
+                "nvflare.app_opt.pt.file_model_persistor.PTFileModelPersistor.load_model", return_value="STOCK"
+            ) as mock_super,
+        ):
+            result = p.load_model(fl_ctx)
 
-            assert result == "STOCK"
-            mock_load.assert_not_called()
-            p.model.load_state_dict.assert_not_called()
-            mock_super.assert_called_once()
+        assert result == "STOCK"
+        mock_load.assert_not_called()
+        p.model.load_state_dict.assert_not_called()
+        mock_super.assert_called_once()
 
     @patch("flip.nvflare.components.pt_model_persistor.FlipConstants")
     def test_declared_but_missing_in_local_dev_logs_error_and_delegates(self, mock_constants):
@@ -154,28 +156,6 @@ class TestInitialCheckpointPTModelPersistor:
             mock_load.assert_called_once()
             assert mock_load.call_args[0][0] == shared
             p.model.load_state_dict.assert_called_once_with({"w": 1}, strict=False)
-
-    def test_no_server_checkpoint_is_stock_behaviour(self):
-        """No SERVER_CHECKPOINT declared → no backbone load; delegates straight to stock persistor
-        (safe for every other standard training job)."""
-        with tempfile.TemporaryDirectory() as tmp:
-            _write_config(tmp, {"GLOBAL_ROUNDS": 3})  # no SERVER_CHECKPOINT
-
-            p = _persistor_with_module()
-            fl_ctx = _fl_ctx(tmp)
-
-            with (
-                patch("flip.nvflare.components.pt_model_persistor.torch.load") as mock_load,
-                patch(
-                    "nvflare.app_opt.pt.file_model_persistor.PTFileModelPersistor.load_model", return_value="STOCK"
-                ) as mock_super,
-            ):
-                result = p.load_model(fl_ctx)
-
-            assert result == "STOCK"
-            mock_load.assert_not_called()
-            p.model.load_state_dict.assert_not_called()
-            mock_super.assert_called_once()
 
     @patch("flip.nvflare.components.pt_model_persistor.FlipConstants")
     def test_declared_but_missing_everywhere_logs_error_and_delegates(self, mock_constants):

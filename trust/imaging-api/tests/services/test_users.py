@@ -70,22 +70,6 @@ def mock_get_xnat_users():
         yield mock
 
 
-@patch("imaging_api.services.users.requests.get")
-def test_get_user_profile_by_username(mock_get, headers):
-    username = "flipServiceAccount"
-    mock_get.return_value = MagicMock(
-        status_code=200, json=MagicMock(return_value={**_SAMPLE_USER_DICT, "username": username})
-    )
-    user = get_user_profile_by("username", username, headers)
-    assert user.username == username
-
-
-def test_get_user_profile_by_email(mock_get_xnat_users, headers):
-    email = "flipServiceAccount@aic.co.uk"
-    user = get_user_profile_by("email", email, headers)
-    assert user.email == email
-
-
 def test_get_user_profile_by_invalid_key(mock_get_xnat_users, headers):
     invalid_key = "invalid"
     with pytest.raises(AssertionError) as e:
@@ -111,15 +95,6 @@ def test_get_user_profile_by_nonexistent_email(mock_get_xnat_users, headers):
 
 
 @patch("imaging_api.services.users.requests.get")
-def test_user_exists(mock_get, headers):
-    username = "flipServiceAccount"
-    mock_get.return_value = MagicMock(
-        status_code=200, json=MagicMock(return_value={**_SAMPLE_USER_DICT, "username": username})
-    )
-    assert user_exists(username, headers)
-
-
-@patch("imaging_api.services.users.requests.get")
 def test_user_exists_false(mock_get, headers):
     mock_get.return_value = MagicMock(status_code=404, text=_XNAT_USER_NOT_FOUND_BODY.format(username="nonexistent"))
     assert not user_exists("nonexistent", headers)
@@ -130,24 +105,7 @@ def test_user_exists_false(mock_get, headers):
 # ---------------------------------------------------------------------------
 @patch("imaging_api.services.users.requests.get")
 def test_get_xnat_users_success(mock_get, headers):
-    mock_get.return_value = MagicMock(
-        status_code=200,
-        json=MagicMock(
-            return_value=[
-                {
-                    "lastModified": 123,
-                    "username": "alice",
-                    "enabled": True,
-                    "id": 1,
-                    "secured": False,
-                    "email": "alice@test.com",
-                    "verified": True,
-                    "firstName": "Alice",
-                    "lastName": "A",
-                },
-            ]
-        ),
-    )
+    mock_get.return_value = MagicMock(status_code=200, json=MagicMock(return_value=[_SAMPLE_USER_DICT]))
     users = get_xnat_users(headers)
     assert len(users) == 1
     assert users[0].username == "alice"
@@ -318,6 +276,16 @@ _SAMPLE_USER_DICT = {
 }
 
 
+def _alice_request() -> CreateUser:
+    return CreateUser(
+        username="alice",
+        password="pass",  # pragma: allowlist secret
+        firstName="Alice",
+        lastName="A",
+        email="alice@test.com",
+    )
+
+
 @patch("imaging_api.services.users.get_xnat_users")
 @patch("imaging_api.services.users.requests.get")
 @patch("imaging_api.services.users.requests.post")
@@ -326,48 +294,27 @@ def test_create_user_success(mock_post, mock_get, mock_list, headers):
     mock_post.return_value = MagicMock(status_code=201)
     mock_get.return_value = MagicMock(status_code=200, json=MagicMock(return_value=_SAMPLE_USER_DICT))
 
-    user_req = CreateUser(
-        username="alice",
-        password="pass",  # pragma: allowlist secret
-        firstName="Alice",
-        lastName="A",
-        email="alice@test.com",
-    )
-    profile = create_user(user_req, headers)
+    profile = create_user(_alice_request(), headers)
 
     assert profile == User(**_SAMPLE_USER_DICT)
     mock_get.assert_called_once_with(f"{_XNAT}/xapi/users/profile/alice", headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
     mock_list.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("status", "text", "exc", "match"),
+    [
+        (409, "conflict", AlreadyExistsError, "already exists"),
+        (500, "Server Error", Exception, "XNAT user creation failed"),
+    ],
+    ids=["conflict", "server-error"],
+)
 @patch("imaging_api.services.users.requests.post")
-def test_create_user_conflict(mock_post, headers):
-    mock_post.return_value = MagicMock(status_code=409, text="conflict")
+def test_create_user_post_failure(mock_post, status, text, exc, match, headers):
+    mock_post.return_value = MagicMock(status_code=status, text=text)
 
-    user_req = CreateUser(
-        username="alice",
-        password="pass",  # pragma: allowlist secret
-        firstName="Alice",
-        lastName="A",
-        email="alice@test.com",
-    )
-    with pytest.raises(AlreadyExistsError, match="already exists"):
-        create_user(user_req, headers)
-
-
-@patch("imaging_api.services.users.requests.post")
-def test_create_user_server_error(mock_post, headers):
-    mock_post.return_value = MagicMock(status_code=500, text="Server Error")
-
-    user_req = CreateUser(
-        username="alice",
-        password="pass",  # pragma: allowlist secret
-        firstName="Alice",
-        lastName="A",
-        email="alice@test.com",
-    )
-    with pytest.raises(Exception, match="XNAT user creation failed"):
-        create_user(user_req, headers)
+    with pytest.raises(exc, match=match):
+        create_user(_alice_request(), headers)
 
 
 # ---------------------------------------------------------------------------

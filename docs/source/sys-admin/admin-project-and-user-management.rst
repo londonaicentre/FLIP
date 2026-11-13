@@ -17,8 +17,8 @@ users, the site banner and deployment mode.
 Projects
 ********
 
-Project un-staging
-==================
+Unstaging a project
+===================
 
 A model developer **stages** a project to ask for approval before training. Staging locks the project: neither the
 project nor its cohort query can be changed.
@@ -33,7 +33,7 @@ it), the developer asks a FLIP admin to **unstage** it. That re-enables editing.
 .. figure:: ../assets/generated/gifs/flip/unstage-project.gif
    :align: center
 
-   Un-staging a project.
+   Unstaging a project.
 
 
 Project approval
@@ -49,8 +49,7 @@ whether it came from the hub or the trust, in the project's audit trail.
 - A trust with **at least one Trust Admin** decides for itself, on its **My Trust** page (see
   :ref:`trust-admin-guide`). On the project page, a FLIP admin sees that trust's row read-only.
 
-Appointing a trust's first Trust Admin (see :ref:`assigning-a-trust-admin`) hands its decisions to the trust.
-Removing its last Trust Admin hands them back to the hub.
+To hand a trust's decisions to the trust, or back to the hub, see :ref:`assigning-a-trust-admin`.
 
 **Approving** a project lets training start and triggers image retrieval at each approved trust.
 
@@ -128,7 +127,8 @@ Register user
 ^^^^^^^^^^^^^
 
 1. Click **Register User**.
-2. Enter the new user's email address and select one role (``admin``, ``researcher`` or ``viewer``).
+2. Enter the new user's email address and select one role (``admin``, ``researcher`` or ``viewer``). To make
+   someone a Trust Admin, register them with one of these roles first, then see :ref:`assigning-a-trust-admin`.
 3. Click **Register User**.
 
 FLIP emails the user a one-time password for their :ref:`initial-login`.
@@ -150,12 +150,12 @@ FLIP does not delete user accounts. To revoke access, disable the account; re-en
 .. figure:: ../assets/generated/gifs/admin/user-enable-disable.gif
    :align: center
 
-   Enabling a user.
+   Disabling and re-enabling a user.
 
 Manage role
 ^^^^^^^^^^^
 
-You can change a user's role at any time. The new role replaces the old one.
+You can change a user's role at any time.
 
 1. Select the user in the user list.
 2. Choose the new role (``admin``, ``researcher``, ``viewer`` or ``trust admin``).
@@ -196,7 +196,7 @@ Reset password
 
 .. tip::
 
-  Users can reset their own password with :ref:`forgot-password` on the login page.
+   Users can reset their own password with :ref:`forgot-password` on the login page.
 
 1. Select the user in the user list.
 2. Click **...**.
@@ -210,7 +210,7 @@ their invitation again instead, with a new temporary password.
 
    Resetting a user's password.
 
-Reset User MFA
+Reset user MFA
 ^^^^^^^^^^^^^^
 
 Use this when a user has lost their authenticator device. The reset clears their authenticator (TOTP) setting and
@@ -227,9 +227,9 @@ signs them out everywhere. At their next sign-in they are taken to the MFA enrol
 
 .. warning::
 
-  You cannot reset **your own** MFA this way: the Admin Area needs a signed-in session, and you cannot sign in
-  without your authenticator. Another operator with AWS access follows :ref:`deploy-central-hub-mfa-recovery`. On a local Keycloak stack, clear the OTP credential in the Keycloak
-  admin console instead.
+   You cannot reset **your own** MFA this way: the Admin Area needs a signed-in session, and you cannot sign in without
+   your authenticator. Another operator with AWS access follows :ref:`deploy-central-hub-mfa-recovery`. On a local
+   Keycloak stack, clear the OTP credential in the Keycloak admin console instead.
 
 Site banner
 ===========
@@ -258,7 +258,7 @@ It also pauses federated training, so the Central Hub can be redeployed without 
   jobs are held.
 - Requests to start training are refused with ``503 Service Unavailable``.
 
-Before a planned hub redeploy, even mid-training:
+Before any planned hub redeploy, including one while training is running:
 
 1. Turn deployment mode on.
 2. Wait for the current run, if any, to finish.
@@ -269,8 +269,10 @@ The hub deploy command (``make -C deploy/providers/AWS deploy-centralhub``) prin
 
 .. tip::
 
-   ``GET /fl/quiesce`` on the hub API reports whether it is safe to redeploy: ``deployment_mode``, and
-   ``fl_quiesced``, which is true when no net's scheduler is busy.
+   ``GET /fl/quiesce`` on the hub API reports whether it is safe to redeploy. Two of its fields answer that:
+
+   - ``deployment_mode``: whether deployment mode is on;
+   - ``fl_quiesced``: true when no FL net's scheduler is busy.
 
 .. figure:: ../assets/generated/gifs/admin/deployment-mode.gif
    :align: center

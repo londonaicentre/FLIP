@@ -191,12 +191,16 @@ During training the FL server reports to the hub through three endpoints:
 - ``POST /api/model/{id}/metrics``
 - ``PUT /api/model/{id}/status/{status}``
 
-When a job finishes it uploads its results the same way. The FL server holds no object-store credentials: it
-asks the hub to start the upload of the model's results file, then for a short-lived URL for each part, then
-to complete it, or to abort it if a part cannot be sent. The hub signs only for an upload it started for that
-model, for the parts the declared size has and for each part's exact size. The size is capped
-(``MAX_RESULTS_FILE_BYTES``, 50 GiB by default), and a model has one upload in progress at a time: starting
-another discards the unfinished one.
+When a job finishes, it uploads its results through the hub the same way. The FL server holds no object-store
+credentials, so it asks the hub to:
+
+1. start the upload of the model's results file;
+2. issue a short-lived URL for each part;
+3. complete the upload, or abort it if a part cannot be sent.
+
+The hub signs a part URL only for an upload it started for that model, only for a part number within the
+declared file size, and only for that part's exact size. The file size is capped (``MAX_RESULTS_FILE_BYTES``,
+50 GiB by default). A model has one upload in progress at a time: starting another discards the unfinished one.
 
 - ``POST /api/model/{id}/results-upload``
 - ``POST /api/model/{id}/results-upload/part``

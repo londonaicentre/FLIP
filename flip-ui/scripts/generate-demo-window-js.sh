@@ -28,14 +28,9 @@
 
 set -eu
 
-# Both provenance inputs are REQUIRED, not best-effort. They previously fell
-# back to "unknown" / swallowed git's stderr, which contradicted the "cannot
-# drift" claim above: a rename of LATEST_CAPTURE_DATE, or a build from a directory
-# that is not a git checkout, silently stamped an unidentifiable
-# RELEASE_VERSION onto a published snapshot — exactly when knowing which
-# snapshot is being served matters most (FLIP#794 review). Fail the build
-# instead; every legitimate caller (npm prebuild:demo / postbuild:demo, run from
-# flip-ui/ in a checkout) satisfies both.
+# Both provenance inputs are required: a missing one fails the build rather than stamping an
+# unidentifiable RELEASE_VERSION on a published snapshot (FLIP#794 review). Every legitimate caller
+# (npm prebuild:demo / postbuild:demo, run from flip-ui/ in a git checkout) satisfies both.
 CAPTURE_DATE=$(sed -En 's/^export const LATEST_CAPTURE_DATE(: string)? = "(.*)";$/\2/p' mocks/demo/capture-window.ts)
 if [ -z "$CAPTURE_DATE" ]; then
     echo "generate-demo-window-js: ERROR — LATEST_CAPTURE_DATE not found in mocks/demo/capture-window.ts." >&2
@@ -43,7 +38,7 @@ if [ -z "$CAPTURE_DATE" ]; then
     exit 1
 fi
 
-SHORT_SHA=$(git rev-parse --short HEAD)
+SHORT_SHA=$(git rev-parse --short HEAD) || SHORT_SHA=
 if [ -z "$SHORT_SHA" ]; then
     echo "generate-demo-window-js: ERROR — could not resolve the current commit." >&2
     echo "  RELEASE_VERSION must identify the published snapshot; build from a git checkout." >&2

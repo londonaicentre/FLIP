@@ -93,7 +93,7 @@ UI and do any data enrichment.
 Login
 =====
 
-Open the XNAT URL. The landing page looks like this:
+Open the trust's XNAT address (ask its XNAT administrator if you do not have it). The landing page looks like this:
 
 .. figure:: ../assets/xnat/XNAT_login.png
     :width: 600
@@ -137,7 +137,7 @@ for more.
 Project
 ^^^^^^^
 
-An XNAT project created by FLIP is titled after its FLIP project: **`[FLIP Project Name]`:`[FLIP Project ID]`-FL-Project**.
+An XNAT project created by FLIP is titled after its FLIP project: ``[FLIP Project Name]:[FLIP Project ID]-FL-Project``.
 For example, **Ischemic Stroke Vessel Occlusion:2fd45bc9-861b-4467-9b78-813372a10682-FL-Project**.
 
 Open a project from the home page's project list or search.
@@ -204,15 +204,15 @@ on arrival and go straight into the project's archive. A session already in the 
 .. _dicom-anonymization:
 
 *******************
-DICOM anonymization
+DICOM anonymisation
 *******************
 
-XNAT has a built-in anonymization engine that removes protected health information (PHI) from DICOM headers. FLIP
-installs its own anonymization script site-wide, in place of XNAT's stock script, which only writes the XNAT
+XNAT has a built-in anonymisation engine that removes protected health information (PHI) from DICOM headers. FLIP
+installs its own anonymisation script site-wide, in place of XNAT's stock script, which only writes the XNAT
 project, subject and session labels into three header fields. FLIP's script runs on all data received through
 XNAT's DICOM receiver, before the session is archived.
 
-FLIP anonymization script
+FLIP anonymisation script
 =========================
 
 FLIP's script is built from DICOM PS3.15 Table E.1-1 (2026d edition), the list of attributes the Basic Application
@@ -235,11 +235,11 @@ Level Confidentiality Profile acts on. It takes none of the profile's options. I
 The images do not need dates, times or patient characteristics, because OMOP holds them. FL code joins an image to
 its OMOP row through the accession number it asked the imaging API for, never through the DICOM headers.
 
-**Archived file names.** By default XNAT names each file from its header as it arrived, before anonymization, starting
-with the original Study Instance UID, and the FL client receives those names. FLIP changes the naming to the series
-number, the instance number and a hash of the SOP Class and Instance UIDs. So
+**Archived file names.** XNAT's default file name starts with the original Study Instance UID, read from the header
+before anonymisation, and the FL client receives those names. FLIP instead names each file from the series number,
+the instance number and a hash of the SOP Class and Instance UIDs. So
 ``<original Study Instance UID>-602172-1-1a8m7ai.dcm`` is archived as ``602172-1-1a8m7ai.dcm``. Files archived before
-this setting keep their old names.
+FLIP changed the naming keep their old names.
 
 Limits of the profile
 ^^^^^^^^^^^^^^^^^^^^^
@@ -264,7 +264,8 @@ connects a real PACS (see :doc:`component-pacs`) sends it real patient data, so 
    ``Patient Identity Removed = YES`` is only as strong as the rules above. A trust connecting a real PACS should
    review the profile against its own information-governance requirements, not read the tag as an assurance.
 
-What the images lose:
+What the images lose
+^^^^^^^^^^^^^^^^^^^^
 
 - **Vendor fields that dcm2niix reads** for Siemens mosaic images (fMRI, diffusion), for diffusion directions, and
   for Philips' precise intensity scaling. These are private tags. CT, X-ray and structural MR convert without them.
@@ -335,20 +336,22 @@ from the repo root on the trust host:
 
 .. code-block:: shell
 
-   make -C trust reconvert-nifti KIT=<CODE>
+   make -C trust reconvert-nifti KIT=<CODE>             # report what would be converted
+   make -C trust reconvert-nifti KIT=<CODE> LAUNCH=1    # convert them
 
-Without ``LAUNCH=1`` it only reports what it would convert.
 See :ref:`ts-k8s-nifti-backlog` for what it selects and its options.
 
-*****************
-FLIP XNAT methods
-*****************
+******************************************
+Reading the cohort and imaging in training
+******************************************
 
-Training code can use these methods from the :gh:`flip-utils package <flip-utils/README.md>`:
+Training code reads the cohort and its imaging through these calls in the
+:gh:`flip-utils package <flip-utils/README.md>`:
 
 ``get_dataframe(project_id: str, query: str) -> DataFrame``
-    Returns the cohort's rows as a DataFrame, including the accession IDs for an imaging project. Takes the project
-    ID and the project query, both of which are already passed to the trainer.
+    Returns the approved cohort's rows as a DataFrame, including the accession IDs for an imaging project. Takes the
+    project ID and the project query, both of which are already passed to the trainer. The trust serves only the
+    membership frozen when the project was approved.
 
 ``get_by_accession_number(project_id: str, accession_id: str, resource_type: ResourceType | list[ResourceType] = ResourceType.NIFTI) -> Path``
     Downloads the scans of the requested resource type (``NIFTI`` by default) into a directory the FL training script
@@ -379,13 +382,13 @@ handle one of its rows. Setup uses these XNAT endpoints:
       - Description
     * - GET
       - ``/xapi/anonymize/default``
-      - Gets XNAT's stock anonymization script
+      - Gets XNAT's stock anonymisation script
     * - PUT
       - ``/xapi/anonymize/site``
-      - Sets the site-wide anonymization script
+      - Sets the site-wide anonymisation script
     * - PUT
       - ``/xapi/anonymize/site/enabled``
-      - Enables or disables the site-wide anonymization script
+      - Enables or disables the site-wide anonymisation script
 
 **Conversion triggers.** The imaging API creates each project's subscription, naming the ``dcm2niix-scan`` wrapper
 by the id ``GET /xapi/events/allactions`` lists. Setup keeps that id across redeploys by updating the command in

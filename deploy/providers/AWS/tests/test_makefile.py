@@ -254,6 +254,13 @@ def test_register_trusts_mints_the_xnat_credentials_into_the_kit(tmp_path: Path)
     )
 
 
+def test_register_trusts_passes_the_env_class_and_env_file_for_the_hub_shared_sync(tmp_path: Path) -> None:
+    """register-trusts.sh refreshes the hub-shared block from the env file (FLIP#1476), so it needs both."""
+    result = _make_dry_run("register-trusts", "KIT=AZ1", tmp_path=tmp_path, env_file=_env_file(tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert "ENV_CLASS=stag MAIN_ENV_FILE=/" in result.stdout, result.stdout
+
+
 def test_register_trusts_never_rotates_the_xnat_credentials(tmp_path: Path) -> None:
     """A FORCE=1 on the command line reaches sub-makes; it must not rotate a live trust's XNAT passwords."""
     result = _make_dry_run("register-trusts", "KIT=AZ1", "FORCE=1", tmp_path=tmp_path, env_file=_env_file(tmp_path))

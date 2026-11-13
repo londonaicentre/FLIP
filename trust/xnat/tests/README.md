@@ -6,6 +6,10 @@ protect the XNAT database credentials (FLIP-PT-056).
 
 ## What this covers
 
+The anonymisation and password-guard suites below. The other `test_*.py` modules here guard the XNAT
+deploy tooling (plugins, PACS and export-mask configuration, the Makefile, startup); each says what it
+pins in its docstring.
+
 - **Static checks** (`test_anon_script_static.py`) — parse the `.das` file
   and assert that PHI tags FLIP must handle on every study (Patient ID,
   Patient Name, SOP/Study/Series UIDs, etc.) all have an explicit rule.

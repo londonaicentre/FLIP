@@ -66,6 +66,15 @@ resource "aws_cognito_user_pool" "flip_user_pool" {
     email_message_by_link = file("${var.templates_dir}/password_reset_link.html")
   }
 
+  # Who sends the pool's emails. Cognito's built-in sender unless the caller
+  # passes an SES identity; that identity must be verified, and the SES account
+  # out of the sandbox, or users stop receiving invitations and reset codes.
+  email_configuration {
+    email_sending_account = var.ses_identity_arn == "" ? "COGNITO_DEFAULT" : "DEVELOPER"
+    source_arn            = var.ses_identity_arn == "" ? null : var.ses_identity_arn
+    from_email_address    = var.ses_identity_arn == "" ? null : "FLIP <${var.ses_from_email}>"
+  }
+
   # MFA is enforced at the application layer, not at the pool. The pool
   # is OPTIONAL because Cognito has no admin API to delete a user's
   # verified TOTP secret — with the pool set to ON, an admin reset

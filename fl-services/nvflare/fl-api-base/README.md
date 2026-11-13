@@ -13,20 +13,20 @@
 
 # FLARE FL API
 
-Base FastAPI service for the FLARE deployment runtime. It backs the per-net FL API instances
-(one `flare-fl-api` container per network).
+Base FastAPI service for the FLARE deployment runtime. Its image, `flare-fl-api`, runs as one FL API
+container per net (`fl-api-net-N`).
 
-The FL API wraps the NVIDIA FLARE admin `Session`: we subclass it as `FLIP_Session`
-([`fl_api/utils/flip_session.py`](./fl_api/utils/flip_session.py)), which wraps a handful of
-`Session` calls with minimal behavioural difference. This API is how the **Central Hub** drives a
-net — job submission, job monitoring, and status checks of the federated components (server and
-clients).
+The **Central Hub** drives a net through this API: it submits and monitors jobs and checks the
+status of the FL server and clients. Underneath, the API calls the NVIDIA FLARE admin `Session`
+through a thin subclass, `FLIP_Session`
+([`fl_api/utils/flip_session.py`](./fl_api/utils/flip_session.py)), which wraps a few `Session`
+calls with little change in behaviour.
 
 ## Ports
 
-The API listens on `8000` inside the container. The dev compose publishes it via `FL_API_PORT`
-(see [`../compose.dev.yml`](../compose.dev.yml)); in a full deployment it is reached over the
-Docker network rather than a host port.
+The API listens on `8000` inside the container. The standalone dev harness,
+[`../compose.dev.yml`](../compose.dev.yml), publishes it on the host as `FL_API_PORT`; in a full
+deployment it is reached over the Docker network rather than a host port.
 
 ## Authentication
 
@@ -64,9 +64,11 @@ The Hub drives a net **only** through these endpoints
 | `/check_server_status` | GET | FLARE server status. |
 | `/check_client_status` | GET | Per-client status; `?targets=<name>` (repeatable) to filter, otherwise all clients. |
 
-All of these wrap `FLIP_Session` except `upload_app` (file/config staging only). `/health/` reports
-liveness for container health checks, and `version` — the build the container runs: the baked
-`FLIP_RELEASE` image tag, or the pyproject version for a local build. It is not called by the Hub.
+All of these wrap `FLIP_Session` except `upload_app`, which only stages files and config.
+
+`/health/` is for container health checks and is not called by the Hub. Besides liveness it reports
+`version`, the build the container runs: the baked `FLIP_RELEASE` image tag, or the pyproject
+version for a local build.
 
 ### Debug / admin endpoints
 
@@ -76,8 +78,8 @@ net — `get_system_info`, `get_connected_client_list`, `get_working_directory`,
 `download_job`, `get_available_apps_to_upload`. These are **not** part of the Central Hub contract;
 see `/docs` for their signatures.
 
-When a job is running, the user's training code reaches the Central Hub through the `flip` package
-([`flip-utils/flip/`](../../../flip-utils/flip/)) **directly**, not through this API.
+Training code in a running job does not use this API: it reaches the Central Hub directly through
+the `flip` package ([`flip-utils/flip/`](../../../flip-utils/flip/)).
 
 ## Bundle-fetch origin allow-list (`BUNDLE_URL_ALLOWED_ORIGINS`)
 
@@ -113,11 +115,14 @@ a blind SSRF from anything holding the FL API key (or reaching the API should th
    address would need a custom transport and is deliberately not built; the allow-list is the
    control that matters. Redirects are refused on the fetch itself.
 
-**Empty is loud, not fatal.** The standalone harness in [`../compose.dev.yml`](../compose.dev.yml)
-has no hub and leaves the variable unset — nothing presigns bundle URLs for it — and the API logs a
-`WARNING` naming the variable once at startup (and again on the first validation if startup was
-bypassed) saying exactly what is disabled: fetches from *any* public https host, with only the
-range check and its rebinding window left. On a hub deployment that warning is a wiring regression.
+**Empty is loud, not fatal.** If the variable is unset, the API still starts but logs a `WARNING`
+naming it once at startup (and again on the first validation if startup was bypassed). The warning
+says what this means: bundles can be fetched from *any* public https host, guarded only by the range
+check and its rebinding window.
+
+The standalone harness in [`../compose.dev.yml`](../compose.dev.yml) leaves it unset on purpose: it
+has no hub, so nothing presigns bundle URLs for it. On a hub deployment the warning means a wiring
+regression.
 
 Bundle-fetch logs and errors show the URL's origin and file name, without credentials, query parameters
 or fragments. Download errors name the exception type rather than repeating its URL-bearing message.
@@ -125,13 +130,11 @@ The signed URL is preserved for the actual fetch.
 
 ## Testing
 
-The nvflare `local` and `startup` folders are created during the provisioning of each real network
-(server, client(s) and API). However, Python tests require `fed_admin.json` to exist within
-`admin/startup`, so this file is created dynamically in
-[`./tests/utils/test_flip_session.py`](./tests/utils/test_flip_session.py) for testing.
-`FL_ADMIN_DIRECTORY` is set to a temporary directory in
-[`./tests/conftest.py`](./tests/conftest.py) during testing to avoid conflicts with any existing
-admin directories.
+Provisioning a real net creates FLARE's `local` and `startup` folders for the server, clients and
+API. The tests only need `admin/startup/fed_admin.json`:
+[`./tests/utils/test_flip_session.py`](./tests/utils/test_flip_session.py) creates it on the fly, and
+[`./tests/conftest.py`](./tests/conftest.py) points `FL_ADMIN_DIRECTORY` at a temporary directory so
+existing admin directories are left alone.
 
 Run lint, type-check and the test suite (with coverage) from this directory:
 

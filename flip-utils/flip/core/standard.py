@@ -19,7 +19,6 @@ for the standard, evaluation, and fed_opt job types.
 
 import contextlib
 import json
-import logging
 import math
 import os
 import shutil
@@ -228,13 +227,6 @@ class FLIPStandardProd(FLIPBase):
         - ``add_resource()`` — stage a per-accession resource under the client's images dir
     """
 
-    def __init__(self) -> None:
-        super().__init__()
-        self._name = self.__class__.__name__
-        self.logger = logging.getLogger(self._name)
-        self.logger.setLevel(logging.INFO)
-        self.logger.propagate = False
-
     @override
     def get_dataframe(self, project_id: str, query: str) -> pd.DataFrame:
         """
@@ -267,7 +259,9 @@ class FLIPStandardProd(FLIPBase):
             headers=_trust_internal_headers(),
         )
 
-        self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+        # Do not log response.text: this body is the cohort's patient rows, and these INFO lines are
+        # shipped to the trust's shared log store where a later job could read them (FLIP-SR-051).
+        self.logger.info(f"Received response status code: {response.status_code}")
 
         response.raise_for_status()
 
@@ -275,7 +269,7 @@ class FLIPStandardProd(FLIPBase):
 
         df = pd.DataFrame(data=content)
 
-        self.logger.info("Successfully fetched dataframe")
+        self.logger.info(f"Successfully fetched dataframe ({len(df)} rows)")
 
         return df
 
@@ -327,7 +321,7 @@ class FLIPStandardProd(FLIPBase):
                 },
                 headers=_trust_internal_headers(),
             )
-            self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+            self.logger.info(f"Received response status code: {response.status_code}")
 
             response.raise_for_status()
 
@@ -425,7 +419,7 @@ class FLIPStandardProd(FLIPBase):
                 headers=_hub_internal_headers(model_id),
                 timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
-            self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+            self.logger.info(f"Received response status code: {response.status_code}")
             response.raise_for_status()
 
             self.logger.info(f"Successfully updated model status to [{new_model_status}]")
@@ -493,7 +487,7 @@ class FLIPStandardProd(FLIPBase):
                 headers=_hub_internal_headers(model_id),
                 timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
-            self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+            self.logger.info(f"Received response status code: {response.status_code}")
             response.raise_for_status()
 
             self.logger.info(f"Successfully sent metrics for {client_name}")
@@ -552,7 +546,7 @@ class FLIPStandardProd(FLIPBase):
                 headers=_hub_internal_headers(model_id),
                 timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
-            self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+            self.logger.info(f"Received response status code: {response.status_code}")
             response.raise_for_status()
 
             self.logger.info(f"Successfully sent the exception raised by {client_name}")
@@ -620,7 +614,7 @@ class FLIPStandardProd(FLIPBase):
                 # and then stalls would freeze result acceptance mid-round.
                 timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
-            self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+            self.logger.info(f"Received response status code: {response.status_code}")
             response.raise_for_status()
 
             self.logger.info(f"Successfully sent {event_type} for round {global_round}")
@@ -681,13 +675,6 @@ class FLIPStandardProd(FLIPBase):
 
 class FLIPStandardDev(FLIPBase):
     """Development implementation of FLIP for standard job types."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._name = self.__class__.__name__
-        self.logger = logging.getLogger(self._name)
-        self.logger.setLevel(logging.INFO)
-        self.logger.propagate = False
 
     @override
     def get_dataframe(self, project_id: str, query: str) -> pd.DataFrame:

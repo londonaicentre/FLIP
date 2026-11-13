@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from typing import Any
 
 from nvflare.apis.fl_constant import FLContextKey
@@ -62,8 +63,16 @@ def get_job_custom_props(fl_ctx: FLContext) -> dict[str, Any]:
     return props if isinstance(props, dict) else {}
 
 
-def _load_meta_from_workspace(fl_ctx: FLContext) -> dict[str, Any] | None:
-    """Read ``meta.json`` from the run dir if the FLContext doesn't carry it."""
+def _read_run_json(fl_ctx: FLContext, resolve: Callable[[Any, str], Any]) -> dict[str, Any] | None:
+    """Read a JSON object from a file in the current run's workspace.
+
+    Args:
+        fl_ctx: The FLARE FLContext.
+        resolve: Maps (workspace, job_id) to the file's path; called inside the guard, so its errors are swallowed too.
+
+    Returns:
+        The parsed object if it is a dict, else None (no engine/workspace/job id, unreadable file, or non-dict JSON).
+    """
     engine = fl_ctx.get_engine()
     if engine is None:
         return None
@@ -75,31 +84,26 @@ def _load_meta_from_workspace(fl_ctx: FLContext) -> dict[str, Any] | None:
         # open() takes any __index__-able object as a file descriptor, so normalise this duck-typed
         # engine's answer first: whatever reaches open() is a path, never something it would take for
         # fd 1 and close on exit.
-        meta_path = os.fspath(workspace.get_job_meta_path(job_id))
-        with open(meta_path) as f:
+        with open(os.fspath(resolve(workspace, job_id))) as f:
             data = json.load(f)
-            return data if isinstance(data, dict) else None
+        return data if isinstance(data, dict) else None
     except Exception:
         return None
 
 
+def _load_meta_from_workspace(fl_ctx: FLContext) -> dict[str, Any] | None:
+    """Read ``meta.json`` from the run dir if the FLContext doesn't carry it."""
+    return _read_run_json(fl_ctx, lambda ws, job_id: ws.get_job_meta_path(job_id))
+
+
 def get_app_config(fl_ctx: FLContext) -> dict[str, Any]:
     """Return the app's ``custom/config.json`` from the run's workspace, or ``{}`` if it cannot be read."""
-    engine = fl_ctx.get_engine()
-    if engine is None:
-        return {}
-    try:
-        workspace = engine.get_workspace()
-        job_id = fl_ctx.get_job_id()
-        if not workspace or not job_id:
-            return {}
-        # As for meta.json above: whatever reaches open() must be a path, never an fd-like object.
-        config_path = os.path.join(os.fspath(workspace.get_app_dir(job_id)), "custom", "config.json")
-        with open(config_path) as f:
-            data = json.load(f)
-            return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    return (
+        _read_run_json(
+            fl_ctx, lambda ws, job_id: os.path.join(os.fspath(ws.get_app_dir(job_id)), "custom", "config.json")
+        )
+        or {}
+    )
 
 
 def get_flip_model_id(fl_ctx: FLContext, fallback: str | None = None) -> str:

@@ -119,6 +119,7 @@ def test_a_pooled_run_fetches_once_and_reports_its_weight(client_app, monkeypatc
     assert np.any(final["pag"])
     evaluated = client_app.evaluate(message(client_app, final, 2), ctx)
     assert evaluated.content["metrics"]["num-examples"] == 120
+    assert not any(".x_" in key for key in evaluated.content["metrics"].keys())  # FLIP#928
     assert trust.fetches == 1  # one row-level cohort egress per run, not one per round
 
 

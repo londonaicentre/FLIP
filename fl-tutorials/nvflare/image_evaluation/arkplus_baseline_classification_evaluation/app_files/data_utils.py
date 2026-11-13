@@ -364,16 +364,13 @@ def _dicoms_for_accession(
         root_path = images_dir or os.environ.get("DEV_IMAGES_DIR")
         if root_path:
             root = Path(root_path)
-            candidates = []
-            for p in [root / str(accession_id), root / f"{accession_id}"]:
-                if p.exists():
-                    candidates.extend(p.rglob("*.dcm"))
+            accession_dir = root / str(accession_id)
+            candidates = list(accession_dir.rglob("*.dcm")) if accession_dir.exists() else []
             if not candidates and root.exists():
-                candidates.extend(root.rglob(f"*{accession_id}*.dcm"))
-            if not candidates and root.exists():
-                all_dicoms = list(root.rglob("*.dcm"))
-                if len(all_dicoms) <= 500:
-                    candidates = all_dicoms
+                candidates = list(root.rglob(f"*{accession_id}*.dcm"))
+                if not candidates:
+                    all_dicoms = list(root.rglob("*.dcm"))
+                    candidates = all_dicoms if len(all_dicoms) <= 500 else []
             return sorted(set(candidates))
         return []
 
