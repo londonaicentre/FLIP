@@ -46,28 +46,32 @@ beforeAll(() => {
         } as unknown as DOMRectList);
 });
 
+const mountEditor = (props: Record<string, unknown> = {}, pinia = createPinia()) =>
+    mountComponent(AiCodeTextArea, {
+        props: {
+            name: "test-code-textarea",
+            label: "Test Code Label",
+            ...props
+        },
+        global: { plugins: [pinia] }
+    });
+
+const stubClipboard = (writeText: unknown) =>
+    Object.defineProperty(navigator, "clipboard", {
+        value: { writeText },
+        configurable: true
+    });
+
 describe("Ai Code TextArea", () => {
     test("Renders Component", () => {
-        const comp = mountComponent(AiCodeTextArea, {
-            props: {
-                name: "test-code-textarea",
-                label: "Test Code Label"
-            },
-            global: { plugins: [createPinia()] }
-        });
+        const comp = mountEditor();
 
         expect(comp.exists()).toBe(true);
         expect(comp.find("label").text()).toBe("Test Code Label");
     });
 
     test("mounts the CodeMirror editor from its own import", () => {
-        const comp = mountComponent(AiCodeTextArea, {
-            props: {
-                name: "test-code-textarea",
-                label: "Test Code Label"
-            },
-            global: { plugins: [createPinia()] }
-        });
+        const comp = mountEditor();
 
         // Global registration in main.ts never reaches unit tests (or lazy
         // chunks) — the component must import the editor itself.
@@ -79,44 +83,24 @@ describe("Ai Code TextArea", () => {
         setActivePinia(pinia);
         useSiteSettings().darkMode = true;
 
-        const comp = mountComponent(AiCodeTextArea, {
-            props: {
-                name: "test-code-textarea",
-                label: "Test Code Label"
-            },
-            global: { plugins: [pinia] }
-        });
+        const comp = mountEditor({}, pinia);
 
         expect(comp.find(".CodeMirror").classes()).toContain("cm-s-flip-dark");
     });
 
     test("shows no copy button unless asked for one", () => {
-        const comp = mountComponent(AiCodeTextArea, {
-            props: {
-                name: "test-code-textarea",
-                label: "Test Code Label"
-            },
-            global: { plugins: [createPinia()] }
-        });
+        const comp = mountEditor();
 
         expect(comp.find("[data-test=copy-code-btn]").exists()).toBe(false);
     });
 
     test("copies the editor content to the clipboard from the overlay button", async () => {
         const writeText = vi.fn().mockResolvedValue(undefined);
-        Object.defineProperty(navigator, "clipboard", {
-            value: { writeText },
-            configurable: true
-        });
+        stubClipboard(writeText);
 
-        const comp = mountComponent(AiCodeTextArea, {
-            props: {
-                name: "test-code-textarea",
-                label: "Test Code Label",
-                copyable: true,
-                initialValue: "SELECT person_id FROM person;"
-            },
-            global: { plugins: [createPinia()] }
+        const comp = mountEditor({
+            copyable: true,
+            initialValue: "SELECT person_id FROM person;"
         });
 
         await comp.find("[data-test=copy-code-btn]").trigger("click");
@@ -126,19 +110,11 @@ describe("Ai Code TextArea", () => {
 
     test("swallows a clipboard failure and stays in its idle state", async () => {
         const writeText = vi.fn().mockRejectedValue(new Error("denied"));
-        Object.defineProperty(navigator, "clipboard", {
-            value: { writeText },
-            configurable: true
-        });
+        stubClipboard(writeText);
 
-        const comp = mountComponent(AiCodeTextArea, {
-            props: {
-                name: "test-code-textarea",
-                label: "Test Code Label",
-                copyable: true,
-                initialValue: "SELECT person_id FROM person;"
-            },
-            global: { plugins: [createPinia()] }
+        const comp = mountEditor({
+            copyable: true,
+            initialValue: "SELECT person_id FROM person;"
         });
 
         const button = comp.find("[data-test=copy-code-btn]");
@@ -152,14 +128,7 @@ describe("Ai Code TextArea", () => {
     });
 
     test("blocks focus entirely when readonly so mobile taps can't summon a caret", () => {
-        const comp = mountComponent(AiCodeTextArea, {
-            props: {
-                name: "test-code-textarea",
-                label: "Test Code Label",
-                inputProps: { readonly: true }
-            },
-            global: { plugins: [createPinia()] }
-        });
+        const comp = mountEditor({ inputProps: { readonly: true } });
 
         // CodeMirror 5 exposes its instance on the wrapper element. readOnly
         // "nocursor" (unlike plain true) refuses focus, so tapping the locked

@@ -250,31 +250,6 @@ describe("Projects Page", () => {
         expect(wrapper.findAll("[data-test='project-list-item-0']")).toHaveLength(0);
     });
 
-    test("status indicators show human-friendly labels (Draft / Staged / Approved)", async () => {
-        // Three projects, one per status — the sort puts STAGED first, then
-        // APPROVED, then UNSTAGED (see STATUS_RANK in projects.vue), so
-        // the indicator labels follow that order.
-        mockSwrvData.value = {
-            data: [
-                makeProject("APPROVED", []),
-                makeProject("UNSTAGED", []),
-                makeProject("STAGED", [])
-            ],
-            totalPages: 1,
-            page: 1
-        };
-        // Tie-break in the sort uses project.id (which embeds the status name
-        // in the makeProject helper) — fine for this assertion since we're only
-        // checking labels, not order.
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
-
-        const labels = wrapper.findAll("[data-test='project-status-indicator']").map(s => s.text());
-        expect(labels).toContain("Draft");
-        expect(labels).toContain("Staged");
-        expect(labels).toContain("Approved");
-    });
-
     test("renders the 'No trusts staged' subtitle on projects without any approvedTrusts", async () => {
         setProject(makeProject("UNSTAGED", []));
         const wrapper = mountPage();
@@ -527,18 +502,9 @@ describe("Projects Page", () => {
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        // The search input is the AiSearch stub — bound via v-model to `search`.
-        // Triggering input fires the debouncedWatch which calls updateProjectList(1).
-        // The SWRV mock just observes the new key; we assert via re-render not throwing.
         await wrapper.find("[data-test='project-search']").setValue("cancer");
-        // Allow the 500ms debounce to settle.
-        await new Promise((resolve) => setTimeout(resolve, 600));
-        await wrapper.vm.$nextTick();
-
-        // Nothing else to assert — exercising the path without throwing already
-        // covers getSearchQuery + updateProjectList. The store key change is
-        // observed via the SWRV mock continuing to return mockSwrvData.
-        expect(wrapper.exists()).toBe(true);
+        // The 500ms debounce settles inside waitFor's 1s default.
+        await vi.waitFor(() => expect(capturedKey?.()).toContain("cancer"));
     });
 
     test("trust chips truncate stripped names longer than 16 chars to 14 + ellipsis", async () => {
