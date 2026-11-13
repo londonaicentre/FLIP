@@ -57,8 +57,8 @@ describe("chartTheme", () => {
 
         expect(light.background).toBe("transparent");
         expect(dark.background).toBe("transparent");
-        expect(dark.gridLine).toBe("#2A2336"); // dark-border
-        expect(dark.axisLine).toBe("#3A3147"); // dark-border-strong
+        expect(dark.gridLine).toBe("#2E2E35"); // dark-border
+        expect(dark.axisLine).toBe("#6B6B72"); // dark-border-strong
         expect(light.axisLabel).toBe("#6B7280"); // gray-500 — 4.8:1 on white
 
         // The off-token fills/inks Lighthouse + dark-mode review flagged must not resurface.
@@ -85,8 +85,8 @@ describe("chartTheme", () => {
         // ECharts' dataView defaults (white panel, black text) don't follow
         // the chart theme — the colours must be set explicitly per mode.
         expect(light.feature.dataView.backgroundColor).toBe("#FFFFFF");
-        expect(dark.feature.dataView.backgroundColor).toBe("#201A29"); // dark-raised
-        expect(dark.feature.dataView.textareaColor).toBe("#070509"); // dark-inset
+        expect(dark.feature.dataView.backgroundColor).toBe("#1E1E23"); // dark-raised
+        expect(dark.feature.dataView.textareaColor).toBe("#050506"); // dark-inset
         expect(dark.feature.dataView.textColor).toBe("#D1D5DB"); // gray-300
         expect(dark.iconStyle.borderColor).toBe("#9CA3AF"); // gray-400 icon ink
     });
