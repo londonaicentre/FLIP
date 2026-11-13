@@ -133,7 +133,7 @@ XNAT_WEB_PORT_EFFECTIVE := $(or $(XNAT_WEB_PORT),$(XNAT_PORT_EFFECTIVE))
 # XNAT's AE title, applied to the SCP receiver, dqrCallingAe and the C-MOVE destination.
 # $(if $(filter undefined,...)) rather than $(or): $(or) treats an empty value as false and
 # would substitute the default, cancelling configure-xnat.sh's guard on an empty kit value.
-XNAT_AETITLE_EFFECTIVE := $(if $(filter undefined,$(origin XNAT_AETITLE)),XNAT,$(XNAT_AETITLE))
+XNAT_AETITLE_EFFECTIVE := $(if $(filter undefined,$(origin XNAT_AETITLE)),FLIP_XNAT,$(XNAT_AETITLE))
 PACS_UI_PORT_EFFECTIVE := $(or $(PACS_UI_PORT),8042)
 
 # Host path that backs this trust's XNAT bind mounts (parent of xnat-data/

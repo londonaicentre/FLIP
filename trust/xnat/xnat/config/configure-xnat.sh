@@ -47,7 +47,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/xnat-lib.sh"
 # C-STORE association addressed to the AE title it has registered, so a receiver configured under a
 # different title rejects it.
 XNAT_URL="${XNAT_URL:-http://xnat-web:8080}" # internal to the container network
-XNAT_AETITLE="${XNAT_AETITLE-XNAT}"
+XNAT_AETITLE="${XNAT_AETITLE-FLIP_XNAT}"
 PACS_HOST="${PACS_HOST-orthanc}"            # service name in compose / k8s, or a real PACS host
 PACS_AETITLE="${PACS_AETITLE-ORTHANC}"
 PACS_QR_PORT="${PACS_QR_PORT-4242}"

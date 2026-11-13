@@ -814,7 +814,7 @@ xnat:
     # destination. DQR matches that destination against a registered receiver by exact AE title and
     # port, so these must equal what the PACS has registered for us — no translation is possible on
     # that leg (FLIP#993).
-    dicomAet: XNAT
+    dicomAet: FLIP_XNAT
     dicomPort: 8104
     # Fixed NodePort for the DICOM receiver, used with dicomService.type: NodePort. Required when
     # the PACS is outside the cluster: after XNAT issues C-MOVE the PACS opens a *new* association

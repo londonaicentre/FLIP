@@ -452,12 +452,12 @@ endef
 #   - the XNAT stack (xnat/Makefile → configure-xnat.sh) passes an empty value through on purpose
 #     (XNAT_AETITLE_EFFECTIVE) so the script's own ${VAR-default} guard is what reports it;
 #   - the trust compose (Orthanc's DICOM_MODALITIES entry, imaging-api's XNAT_AETITLE) uses
-#     ${XNAT_AETITLE:-XNAT}, because those consumers default the value in code and have no
+#     ${XNAT_AETITLE:-FLIP_XNAT}, because those consumers default the value in code and have no
 #     empty-value check of their own — a bare-dash pass-through would register an empty AE title
 #     rather than fail (see the note above imaging-api's environment in deploy/compose/compose_trust.*.yml).
 # So the explicit empty is refused here, once, before compose or the stack runs, and both sides
 # keep agreeing on the AE title DQR matches the C-MOVE destination against. An undefined
-# XNAT_AETITLE (line absent or commented out in the kit) still takes the XNAT default in both
+# XNAT_AETITLE (line absent or commented out in the kit) still takes the FLIP_XNAT default in both
 # places. $(origin) rather than $(if $(XNAT_AETITLE),…): the latter cannot tell unset from empty,
 # which is exactly the distinction that matters. Evaluated in the recipe, not at parse time, so
 # down-trust / build / help still work against a kit that carries the bad value.
