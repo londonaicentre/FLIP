@@ -101,7 +101,10 @@
                                                                 {{ client.name }}<span
                                                                     v-if="client.code"
                                                                     class="font-normal text-gray-500 dark:text-gray-300"
-                                                                > ({{ client.code }})</span>
+                                                                > ({{ client.code }})</span><span
+                                                                    v-if="jobModes.get(client.name)"
+                                                                    class="font-normal text-gray-500 dark:text-gray-300"
+                                                                > · {{ jobModes.get(client.name) }}</span>
                                                             </p>
                                                             <p
                                                                 v-if="client.fl_kit_slot"
@@ -178,7 +181,16 @@ import AiCard from "@/components/AiCard/AiCard.vue";
 import AiCommand from "@/components/AiCommand/AiCommand.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import { getFLStatus, getNetDetailedStatus, IFLStatusClients } from "@/services/fl-service";
+import { ITrustResponse } from "@/services/trust-service";
+import { jobModeLabel } from "@/utils/connection-health";
 import { vHighlightjs } from "@/utils/highlightJson";
+
+// The trust list the page already fetches: its fl-client heartbeat entry says how each trust runs a job (FLIP#1739).
+const props = defineProps<{ trusts?: ITrustResponse[] }>();
+
+// Keyed by trust name, which is what the FL status reports each client under.
+const jobModes = computed(() =>
+    new Map((props.trusts ?? []).map(t => [t.name, jobModeLabel(t.services?.["fl-client"]?.job_mode)])));
 
 const showDetails = ref(false);
 const details = ref<string | undefined>(undefined);

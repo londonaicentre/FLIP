@@ -276,6 +276,44 @@ describe("ConnectionStatus", () => {
         expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
     });
 
+    it("shows a hub admin each trust's in-progress and queued jobs in the Jobs column, and a dash for none", () => {
+        // FLIP#1739: counts only, from the trust list the page already fetches.
+        mockSwrvData.value = [
+            {
+                ...fixture[0],
+                jobs_in_progress: 1,
+                jobs_queued: 2
+            },
+            fixture[1]
+        ];
+        const wrapper = mountPage();
+
+        expect(wrapper.findAll("thead th").map(th => th.text())).toContain("Jobs");
+        const cells = wrapper.findAll("[data-test='trust-jobs']").map(c => c.text());
+        expect(cells).toHaveLength(2);
+        expect(cells).toContain("1 in progress2 queued");
+        expect(cells).toContain("—");
+        // The stacked mobile row has no room for both lines, so it carries the total.
+        expect(wrapper.findAll("[data-test='trust-jobs-mobile']").map(c => c.text())).toEqual(["3 jobs"]);
+    });
+
+    it("shows no Jobs column to a user who is not a hub admin", () => {
+        // The counts span every project, so the hub sends them to hub admins only (null for everyone else).
+        mockSwrvData.value = [
+            {
+                ...fixture[0],
+                jobs_in_progress: null,
+                jobs_queued: null
+            },
+            fixture[1]
+        ];
+        const wrapper = mountPage({ permissions: [] });
+
+        expect(wrapper.findAll("thead th").map(th => th.text())).not.toContain("Jobs");
+        expect(wrapper.findAll("[data-test='trust-jobs']")).toHaveLength(0);
+        expect(wrapper.findAll("[data-test='trust-jobs-mobile']")).toHaveLength(0);
+    });
+
     it("shows an up arrow on the active ascending column and a down arrow on descending", async () => {
         mockSwrvData.value = fixture;
         const wrapper = mountPage();
@@ -609,18 +647,18 @@ describe("ConnectionStatus", () => {
         expect(nameCell?.className).toContain("max-w-0");
     });
 
-    it("renders seven columns — Services dots + drawer chevron, no sparkline", async () => {
+    it("renders eight columns — Services dots + Jobs + drawer chevron, no sparkline", async () => {
         mockSwrvData.value = fixture;
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        expect(wrapper.findAll("th")).toHaveLength(7);
+        expect(wrapper.findAll("th")).toHaveLength(8);
         // Pinned column widths keep Region/Services/Heartbeat from being squeezed
         // by the w-full Trust column (~ design grid 148/150/104px).
         expect(wrapper.find("[data-test='sort-header-region']").classes()).toContain("w-36");
         expect(wrapper.find("[data-test='sort-header-heartbeat']").classes()).toContain("w-28");
         const row = wrapper.find("[data-test='trust-row']");
-        expect(row.findAll("td")).toHaveLength(7);
+        expect(row.findAll("td")).toHaveLength(8);
         // The placeholder 7d-uptime sparkline is gone (replaced by real service dots).
         expect(wrapper.find("[data-test='trust-uptime']").exists()).toBe(false);
         expect(row.find("polyline").exists()).toBe(false);

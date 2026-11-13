@@ -18,6 +18,7 @@ import { ref } from "vue";
 
 import FLNetsCard from "@/partials/connection/FLNetsCard.vue";
 import { IFLStatus } from "@/services/fl-service";
+import { ITrustResponse } from "@/services/trust-service";
 
 const mockSwrvData = ref<IFLStatus[] | undefined>(undefined);
 
@@ -62,8 +63,9 @@ const stubs = {
     "icon-ph-archive-duotone": { template: "<span />" }
 };
 
-function mountFLNetsCard() {
+function mountFLNetsCard(trusts?: ITrustResponse[]) {
     return mount(FLNetsCard, {
+        props: { trusts },
         global: {
             plugins: [createTestingPinia({
                 createSpy: vi.fn,
@@ -156,6 +158,47 @@ describe("FLNetsCard", () => {
         ];
         const wrapper = mountFLNetsCard();
         expect(wrapper.find("[data-test='project-name']").text()).toContain("Demo EC2 Trust (DEMO)");
+    });
+
+    it("says how each client's trust runs a job, from the trust list's fl-client entry", () => {
+        // FLIP#1739: the mode rides on the heartbeat snapshot; a trust that reports none shows nothing.
+        const client = (name: string) => ({
+            name,
+            code: name,
+            online: true,
+            status: "no_jobs"
+        });
+        const trust = (name: string, job_mode?: string): ITrustResponse => ({
+            id: name,
+            name,
+            code: name,
+            region: null,
+            last_heartbeat: null,
+            project_count: 0,
+            services: {
+                "fl-client": {
+                    status: "unknown",
+                    version: "v0.15.0",
+                    response_ms: null,
+                    job_mode
+                }
+            }
+        });
+        mockSwrvData.value = [
+            {
+                name: "net-1",
+                fl_backend: "nvflare",
+                clients: [client("AKS"), client("GSTT"), client("OLD")]
+            }
+        ];
+        const wrapper = mountFLNetsCard([trust("AKS", "pods"), trust("GSTT", "process"), trust("OLD")]);
+
+        const names = wrapper.findAll("[data-test='project-name']").map(n => n.text().replace(/\s+/g, " "));
+        expect(names).toEqual([
+            "AKS (AKS) · a pod per job",
+            "GSTT (GSTT) · jobs run in the client container",
+            "OLD (OLD)"
+        ]);
     });
 
     it("omits parentheses when fl_backend is absent", () => {

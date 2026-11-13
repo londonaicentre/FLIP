@@ -18,11 +18,14 @@ from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
+from flip_api.auth.auth_utils import has_permissions
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.db.models.main_models import ProjectTrustIntersect, Trust
+from flip_api.db.models.main_models import FLJob, FLJobTrust, ProjectTrustIntersect, Trust
+from flip_api.db.models.user_models import PermissionRef
 from flip_api.domain.interfaces.trust import ITrustStatus
 from flip_api.domain.schemas.private import ServiceHealthEntry
+from flip_api.domain.schemas.status import JobStatus
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/trust", tags=["trusts_services"])
@@ -109,7 +112,8 @@ def get_trusts(
 
     Returns:
         list[ITrustStatus]: Every trust with name, code, region, last_heartbeat,
-        and project_count (count of rows in ``project_trust_intersect``).
+        project_count (count of rows in ``project_trust_intersect``) and, for a hub
+        admin only, its queued and in-progress FL job counts.
 
     Raises:
         HTTPException: 500 on database error.
@@ -125,6 +129,18 @@ def get_trusts(
         ).all()
         counts: dict[UUID, int] = {row[0]: row[1] for row in count_rows if row[0] is not None}
 
+        # And one for each trust's queued and in-progress FL jobs (FLIP#1739), for hub admins only: the
+        # counts span every project, and other callers must not learn of jobs on projects they cannot see.
+        jobs: dict[tuple[UUID, JobStatus], int] | None = None
+        if has_permissions(user_id, [PermissionRef.CAN_ACCESS_ADMIN_PANEL], db):
+            job_rows = db.exec(
+                select(FLJobTrust.trust_id, FLJob.status, func.count())  # type: ignore[call-overload]
+                .join(FLJob, col(FLJob.id) == FLJobTrust.fl_job_id)
+                .where(col(FLJob.status).in_((JobStatus.QUEUED, JobStatus.IN_PROGRESS)))
+                .group_by(col(FLJobTrust.trust_id), col(FLJob.status))
+            ).all()
+            jobs = {(row[0], row[1]): row[2] for row in job_rows}
+
         return [
             ITrustStatus(
                 id=t.id,
@@ -133,6 +149,8 @@ def get_trusts(
                 region=t.region,
                 last_heartbeat=_as_utc_iso(t.last_heartbeat),
                 project_count=counts.get(t.id, 0),
+                jobs_queued=jobs.get((t.id, JobStatus.QUEUED), 0) if jobs is not None else None,
+                jobs_in_progress=jobs.get((t.id, JobStatus.IN_PROGRESS), 0) if jobs is not None else None,
                 services=_as_service_entries(t.services_health, t.name),
                 services_updated_at=_as_utc_iso(t.services_health_at),
             )

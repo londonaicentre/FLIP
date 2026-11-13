@@ -22,7 +22,7 @@ admin-only.
 import json
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException, status
@@ -32,10 +32,18 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Trust
 from flip_api.domain.schemas.private import ServiceHealthEntry, ServiceHealthStatus
+from flip_api.domain.schemas.status import JobStatus
 from flip_api.main import app
 from flip_api.trusts_services.get_trusts import _as_utc_iso, get_trusts
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def is_hub_admin():
+    """The caller's admin check, mocked: False unless a test sets ``is_hub_admin.return_value``."""
+    with patch("flip_api.trusts_services.get_trusts.has_permissions", return_value=False) as check:
+        yield check
 
 
 def _make_trust(name: str = "GSTT", code: str = "GST", region: str = "London") -> Trust:
@@ -65,16 +73,18 @@ class TestAsUtcIso:
         assert out == "2026-05-27T12:34:56.789Z"
 
 
-def _db_with_trusts_and_counts(trusts, count_rows):
-    """Return a session mock whose two `.exec(...).all()` calls drive the
-    endpoint's two queries (trust list, then per-trust project counts).
+def _db_with_trusts_and_counts(trusts, count_rows, job_rows=()):
+    """Return a session mock whose three `.exec(...).all()` calls drive the
+    endpoint's three queries (trust list, per-trust project counts, per-trust job counts).
     """
     db = MagicMock()
     trust_exec = MagicMock()
     trust_exec.all.return_value = trusts
     count_exec = MagicMock()
     count_exec.all.return_value = count_rows
-    db.exec.side_effect = [trust_exec, count_exec]
+    job_exec = MagicMock()
+    job_exec.all.return_value = list(job_rows)
+    db.exec.side_effect = [trust_exec, count_exec, job_exec]
     return db
 
 
@@ -99,6 +109,36 @@ def test_get_trusts_returns_serialised_trusts_with_project_counts():
     assert by_id[trust_b.id].project_count == 0
 
 
+def test_get_trusts_counts_each_trusts_queued_and_in_progress_jobs_for_a_hub_admin(is_hub_admin):
+    """The Jobs column (FLIP#1739): counts across every project, so for hub admins only."""
+    is_hub_admin.return_value = True
+    busy = _make_trust("Busy", "BSY", "London")
+    idle = _make_trust("Idle", "IDL", "London")
+    db = _db_with_trusts_and_counts(
+        trusts=[busy, idle],
+        count_rows=[],
+        job_rows=[(busy.id, JobStatus.QUEUED, 2), (busy.id, JobStatus.IN_PROGRESS, 1)],
+    )
+
+    by_id = {r.id: r for r in get_trusts(db=db, user_id=uuid.uuid4())}
+
+    assert (by_id[busy.id].jobs_queued, by_id[busy.id].jobs_in_progress) == (2, 1)
+    assert (by_id[idle.id].jobs_queued, by_id[idle.id].jobs_in_progress) == (0, 0)
+
+
+def test_get_trusts_keeps_job_counts_from_a_caller_who_is_not_a_hub_admin():
+    """A researcher or viewer must not learn how many jobs other people's projects run on a trust."""
+    busy = _make_trust("Busy", "BSY", "London")
+    db = _db_with_trusts_and_counts(
+        trusts=[busy], count_rows=[], job_rows=[(busy.id, JobStatus.QUEUED, 2), (busy.id, JobStatus.IN_PROGRESS, 1)]
+    )
+
+    (result,) = get_trusts(db=db, user_id=uuid.uuid4())
+
+    assert (result.jobs_queued, result.jobs_in_progress) == (None, None)
+    assert db.exec.call_count == 2, "the job counts are not even queried"
+
+
 def test_get_trusts_tags_heartbeat_as_utc():
     trust = _make_trust("Beat", "BT", "London")
     trust.last_heartbeat = datetime(2026, 5, 27, 12, 0, 0)
@@ -116,6 +156,7 @@ def test_get_trusts_serialises_services_health():
     services = {
         "trust-api": {"status": "healthy", "version": "0.3.0", "response_ms": None},
         "xnat": {"status": "down", "version": None, "response_ms": None},
+        "fl-client": {"status": "unknown", "version": "sha-abc1234", "response_ms": None, "job_mode": "pods"},
     }
     trust.services_health = services
     trust.services_health_at = datetime(2026, 5, 27, 12, 0, 0)
@@ -124,6 +165,7 @@ def test_get_trusts_serialises_services_health():
     result = get_trusts(db=db, user_id=uuid.uuid4())
 
     assert result[0].services == {key: ServiceHealthEntry(**entry) for key, entry in services.items()}
+    assert result[0].services["fl-client"].job_mode == "pods"
     # The roster key stays free-form: the hub is roster-agnostic, so a trust can
     # report a service the hub has never heard of without a hub deploy.
     trust.services_health = {"brand-new-service": {"status": "healthy", "version": None, "response_ms": 12}}
@@ -136,10 +178,10 @@ def test_get_trusts_serialises_services_health():
 
 def test_services_contract_is_published_in_the_openapi_schema():
     """`services` is typed rather than `dict[str, Any]` so a generated client sees
-    the {status, version, response_ms} contract instead of arbitrary JSON."""
+    the {status, version, response_ms, job_mode} contract instead of arbitrary JSON."""
     entry = app.openapi()["components"]["schemas"]["ServiceHealthEntry"]["properties"]
 
-    assert set(entry) == {"status", "version", "response_ms"}
+    assert set(entry) == {"status", "version", "response_ms", "job_mode"}
     services = app.openapi()["components"]["schemas"]["ITrustStatus"]["properties"]["services"]
     assert "ServiceHealthEntry" in json.dumps(services)
 
@@ -247,6 +289,8 @@ def test_endpoint_is_accessible_to_authenticated_non_admin():
     assert body[0]["code"] == "RV"
     assert body[0]["region"] == "London"
     assert body[0]["project_count"] == 2
+    assert body[0]["jobs_queued"] is None
+    assert body[0]["jobs_in_progress"] is None
 
 
 def test_endpoint_returns_generic_500_detail_on_database_error():
