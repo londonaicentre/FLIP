@@ -23,6 +23,7 @@ from __future__ import annotations
 import importlib.util
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 
@@ -94,24 +95,26 @@ class FakeSession:
 
 
 @pytest.fixture
-def fast_retries(monkeypatch: pytest.MonkeyPatch, download_data: ModuleType) -> None:
+def install(monkeypatch: pytest.MonkeyPatch, download_data: ModuleType) -> Callable[[list[FakeResponse]], FakeSession]:
+    """Fast retries, then a function that serves ``responses`` from a recording fake session."""
     monkeypatch.setattr(download_data.time, "sleep", lambda _s: None)
     monkeypatch.setattr(download_data, "CHUNK", 4)
 
+    def _install(responses: list[FakeResponse]) -> FakeSession:
+        session = FakeSession(responses)
+        monkeypatch.setattr(download_data.requests, "Session", lambda: session)
+        return session
 
-def _install(monkeypatch: pytest.MonkeyPatch, download_data: ModuleType, responses: list[FakeResponse]) -> FakeSession:
-    session = FakeSession(responses)
-    monkeypatch.setattr(download_data.requests, "Session", lambda: session)
-    return session
+    return _install
 
 
 BODY = b"0123456789abcdef"
 
 
 def test_fresh_download_streams_with_timeouts_and_renames_when_complete(
-    download_data: ModuleType, monkeypatch: pytest.MonkeyPatch, fast_retries: None, tmp_path: Path
+    download_data: ModuleType, install: Callable[[list[FakeResponse]], FakeSession], tmp_path: Path
 ) -> None:
-    session = _install(monkeypatch, download_data, [FakeResponse(200, BODY, {"Content-Length": str(len(BODY))})])
+    session = install([FakeResponse(200, BODY, {"Content-Length": str(len(BODY))})])
     dest = tmp_path / "fold.zip"
 
     download_data.download("https://example/fold.zip", dest)
@@ -125,13 +128,11 @@ def test_fresh_download_streams_with_timeouts_and_renames_when_complete(
 
 
 def test_partial_file_is_resumed_with_a_range_request(
-    download_data: ModuleType, monkeypatch: pytest.MonkeyPatch, fast_retries: None, tmp_path: Path
+    download_data: ModuleType, install: Callable[[list[FakeResponse]], FakeSession], tmp_path: Path
 ) -> None:
     dest = tmp_path / "fold.zip"
     dest.with_name("fold.zip.part").write_bytes(BODY[:6])
-    session = _install(
-        monkeypatch,
-        download_data,
+    session = install(
         [FakeResponse(206, BODY[6:], {"Content-Range": f"bytes 6-{len(BODY) - 1}/{len(BODY)}"})],
     )
 
@@ -142,11 +143,11 @@ def test_partial_file_is_resumed_with_a_range_request(
 
 
 def test_server_ignoring_range_restarts_from_zero(
-    download_data: ModuleType, monkeypatch: pytest.MonkeyPatch, fast_retries: None, tmp_path: Path
+    download_data: ModuleType, install: Callable[[list[FakeResponse]], FakeSession], tmp_path: Path
 ) -> None:
     dest = tmp_path / "fold.zip"
     dest.with_name("fold.zip.part").write_bytes(b"stale")
-    _install(monkeypatch, download_data, [FakeResponse(200, BODY, {"Content-Length": str(len(BODY))})])
+    install([FakeResponse(200, BODY, {"Content-Length": str(len(BODY))})])
 
     download_data.download("https://example/fold.zip", dest)
 
@@ -154,13 +155,11 @@ def test_server_ignoring_range_restarts_from_zero(
 
 
 def test_stalled_transfer_is_retried_from_where_it_stopped(
-    download_data: ModuleType, monkeypatch: pytest.MonkeyPatch, fast_retries: None, tmp_path: Path
+    download_data: ModuleType, install: Callable[[list[FakeResponse]], FakeSession], tmp_path: Path
 ) -> None:
     """The fold-1 hang: bytes stop arriving short of the end. The next attempt resumes, not restarts."""
     dest = tmp_path / "fold.zip"
-    session = _install(
-        monkeypatch,
-        download_data,
+    session = install(
         [
             FakeResponse(200, BODY, {"Content-Length": str(len(BODY))}, truncate_after=10),
             FakeResponse(206, BODY[10:], {"Content-Range": f"bytes 10-{len(BODY) - 1}/{len(BODY)}"}),
@@ -174,14 +173,15 @@ def test_stalled_transfer_is_retried_from_where_it_stopped(
 
 
 def test_short_body_with_a_clean_close_is_not_accepted(
-    download_data: ModuleType, monkeypatch: pytest.MonkeyPatch, fast_retries: None, tmp_path: Path
+    download_data: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    install: Callable[[list[FakeResponse]], FakeSession],
+    tmp_path: Path,
 ) -> None:
     """A server that closes early without error still announced the size; the file must not be called done."""
     dest = tmp_path / "fold.zip"
     monkeypatch.setattr(download_data, "ATTEMPTS", 2)
-    _install(
-        monkeypatch,
-        download_data,
+    install(
         [
             FakeResponse(200, BODY[:12], {"Content-Length": str(len(BODY))}),
             FakeResponse(206, BODY[12:14], {"Content-Range": f"bytes 12-13/{len(BODY)}"}),
@@ -195,11 +195,11 @@ def test_short_body_with_a_clean_close_is_not_accepted(
 
 
 def test_range_not_satisfiable_means_already_complete(
-    download_data: ModuleType, monkeypatch: pytest.MonkeyPatch, fast_retries: None, tmp_path: Path
+    download_data: ModuleType, install: Callable[[list[FakeResponse]], FakeSession], tmp_path: Path
 ) -> None:
     dest = tmp_path / "fold.zip"
     dest.with_name("fold.zip.part").write_bytes(BODY)
-    _install(monkeypatch, download_data, [FakeResponse(416, b"", {"Content-Range": f"bytes */{len(BODY)}"})])
+    install([FakeResponse(416, b"", {"Content-Range": f"bytes */{len(BODY)}"})])
 
     download_data.download("https://example/fold.zip", dest)
 
@@ -207,11 +207,11 @@ def test_range_not_satisfiable_means_already_complete(
 
 
 def test_unknown_total_is_accepted_as_sent(
-    download_data: ModuleType, monkeypatch: pytest.MonkeyPatch, fast_retries: None, tmp_path: Path
+    download_data: ModuleType, install: Callable[[list[FakeResponse]], FakeSession], tmp_path: Path
 ) -> None:
     """GitHub's generated archive zip carries no Content-Length: nothing to verify against, take the body."""
     dest = tmp_path / "labels.zip"
-    _install(monkeypatch, download_data, [FakeResponse(200, BODY, {})])
+    install([FakeResponse(200, BODY, {})])
 
     download_data.download("https://example/main.zip", dest)
 
@@ -219,12 +219,12 @@ def test_unknown_total_is_accepted_as_sent(
 
 
 def test_existing_complete_file_is_not_fetched_again(
-    download_data: ModuleType, monkeypatch: pytest.MonkeyPatch, fast_retries: None, tmp_path: Path
+    download_data: ModuleType, install: Callable[[list[FakeResponse]], FakeSession], tmp_path: Path
 ) -> None:
     """If the zip is already there (unzip was interrupted), don't download it again."""
     dest = tmp_path / "fold.zip"
     dest.write_bytes(BODY)
-    session = _install(monkeypatch, download_data, [])
+    session = install([])
 
     download_data.download("https://example/fold.zip", dest)
 
