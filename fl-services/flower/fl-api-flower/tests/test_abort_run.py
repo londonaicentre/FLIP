@@ -11,6 +11,8 @@
 # limitations under the License.
 #
 
+import pytest
+
 from fl_api.schemas import JobMetadata
 
 # `flwr stop --format json` emits {"success": true, "run-id": ...} on success — there is
@@ -18,22 +20,14 @@ from fl_api.schemas import JobMetadata
 _FLWR_STOP_OK = '{"success": true, "run-id": "9478652229627629048"}'
 
 
-def test_abort_run_success(client, src_root, mock_flwr_run):
+@pytest.mark.parametrize("endpoint", ["/abort_run", "/abort_job"])
+def test_abort_run_success(client, src_root, mock_flwr_run, endpoint):
     mock_flwr_run(returncode=0, stdout=_FLWR_STOP_OK)
 
-    response = client.delete("/abort_run/9478652229627629048")
+    response = client.delete(f"{endpoint}/9478652229627629048")
 
     assert response.status_code == 200
     JobMetadata.model_validate(response.json())
-    assert response.json() == {"job_id": "9478652229627629048", "status": "STOPPED"}
-
-
-def test_abort_job_alias_returns_same_shape(client, src_root, mock_flwr_run):
-    mock_flwr_run(returncode=0, stdout=_FLWR_STOP_OK)
-
-    response = client.delete("/abort_job/9478652229627629048")
-
-    assert response.status_code == 200
     assert response.json() == {"job_id": "9478652229627629048", "status": "STOPPED"}
 
 
@@ -58,16 +52,25 @@ def test_abort_run_idempotent_for_terminal_run(client, src_root, mock_flwr_run):
     assert response.json() == {"job_id": "9478652229627629048", "status": "FINISHED"}
 
 
-def test_abort_run_failure_when_run_not_terminal(client, src_root, mock_flwr_run):
-    # `flwr stop` fails and the run is not in the list at all -> genuine failure, 500.
+@pytest.mark.parametrize(
+    ("run_id", "runs"),
+    [
+        # The run is not in `flwr list` at all -> genuine failure.
+        pytest.param("1234567890", "[]", id="not-listed"),
+        # The matching run is missing "status" -> the idempotency probe can't confirm terminality.
+        pytest.param("9478652229627629048", '[{"run-id": "9478652229627629048"}]', id="missing-status"),
+    ],
+)
+def test_abort_run_failure_when_run_not_confirmed_terminal(client, src_root, mock_flwr_run, run_id, runs):
+    # `flwr stop` fails and the run cannot be shown terminal -> a clean 500, not an idempotent 200.
     mock_flwr_run(
         by_command={
             "stop": {"returncode": 1, "stderr": "boom"},
-            "list": {"returncode": 0, "stdout": '{"success": true, "runs": []}'},
+            "list": {"returncode": 0, "stdout": f'{{"success": true, "runs": {runs}}}'},
         }
     )
 
-    response = client.delete("/abort_run/1234567890")
+    response = client.delete(f"/abort_run/{run_id}")
 
     assert response.status_code == 500
 
@@ -78,21 +81,3 @@ def test_abort_run_rejects_non_numeric_run_id(client, src_root):
     response = client.delete("/abort_run/not-a-number")
 
     assert response.status_code == 422
-
-
-def test_abort_run_failure_when_terminal_run_missing_status(client, src_root, mock_flwr_run):
-    # `flwr stop` fails and the matching run in `flwr list` is missing "status" -> the
-    # idempotency probe can't confirm terminality, so it falls through to a clean 500.
-    mock_flwr_run(
-        by_command={
-            "stop": {"returncode": 1, "stderr": "boom"},
-            "list": {
-                "returncode": 0,
-                "stdout": '{"success": true, "runs": [{"run-id": "9478652229627629048"}]}',
-            },
-        }
-    )
-
-    response = client.delete("/abort_run/9478652229627629048")
-
-    assert response.status_code == 500
