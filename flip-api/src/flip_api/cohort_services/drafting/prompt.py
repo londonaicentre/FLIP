@@ -27,6 +27,12 @@ PROMPT_VERSION = "2026-11-13.1"
 
 ASSETS = Path(__file__).parent / "assets"
 MAX_CLARIFICATIONS = 3
+MAX_CLARIFICATION_CHARS = 500
+# Caps on text returned to the researcher; longer model output is cut, and the response schema enforces them.
+MAX_TEXT_CHARS = 2000
+MAX_ITEM_CHARS = 500
+MAX_ITEMS = 20
+MAX_OPTIONS = 4
 
 # Structured output: one object, every field always present. ``outcome`` says which fields matter.
 OUTPUT_SCHEMA: dict = {
@@ -45,6 +51,14 @@ OUTPUT_SCHEMA: dict = {
 }
 
 _LICENCE_HEADER = re.compile(r"\A(--.*\n)+\n")
+# The tags that delimit researcher text in the user turn. Hygiene only: the controls are that a draft
+# is never run, and that the trust validator decides what may run.
+_DELIMITER_TAG = re.compile(r"<\s*/?\s*(description|clarifications|answer|question|reply)\b[^>]*>", re.IGNORECASE)
+
+
+def neutralise(text: str) -> str:
+    """Remove any of the prompt's own delimiter tags from researcher text, so it cannot close its wrapper."""
+    return _DELIMITER_TAG.sub("", text)
 
 
 def strip_licence_header(sql: str) -> str:
@@ -94,10 +108,14 @@ def user_message(description: str, clarifications: list[tuple[str, str]], has_im
     Returns:
         str: The user turn.
     """
-    parts = [output_contract(has_imaging), f"Cohort description:\n<description>\n{description}\n</description>"]
+    parts = [
+        output_contract(has_imaging),
+        f"Cohort description:\n<description>\n{neutralise(description)}\n</description>",
+    ]
     if clarifications:
         answers = "\n".join(
-            f"<answer>\n<question>{q}</question>\n<reply>{a}</reply>\n</answer>" for q, a in clarifications
+            f"<answer>\n<question>{neutralise(q)}</question>\n<reply>{neutralise(a)}</reply>\n</answer>"
+            for q, a in clarifications
         )
         parts.append(f"The researcher answered your earlier questions:\n<clarifications>\n{answers}\n</clarifications>")
     return "\n\n".join(parts)

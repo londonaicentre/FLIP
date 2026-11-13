@@ -16,6 +16,10 @@ Accounting lives in Postgres, so it holds across replicas. A reservation is take
 the user's ``cohort_draft_allowance`` row for the month, so concurrent requests cannot overshoot the
 allowance. Only a validated draft is consumed; a clarification, decline or error releases it, and a
 reservation older than ``COHORT_DRAFT_RESERVATION_TTL_MINUTES`` (a crashed request) no longer counts.
+
+Every request also counts towards ``COHORT_DRAFT_MONTHLY_REQUEST_CAP``, a hidden monthly cap on model
+calls whatever their outcome, retries included: a reservation holds the most calls one request can
+make, and is settled to the calls it made.
 Times are naive UTC, like the column type.
 """
 
@@ -24,10 +28,11 @@ from datetime import date, datetime, timedelta, timezone
 from enum import StrEnum
 from uuid import UUID
 
-from sqlalchemy import func, or_, update
+from sqlalchemy import case, func, or_, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlmodel import Session, and_, col, select
 
+from flip_api.cohort_services.drafting.service import MAX_MODEL_CALLS
 from flip_api.config import get_settings
 from flip_api.db.models.main_models import CohortDraftAllowance, CohortDraftRequest
 from flip_api.domain.schemas.status import CohortDraftStatus
@@ -37,6 +42,7 @@ class Refusal(StrEnum):
     """Why a reservation was not taken."""
 
     EXHAUSTED = "allowance_exhausted"
+    REQUEST_CAP = "request_cap_reached"
     RATE_LIMITED = "rate_limited"
     DUPLICATE = "duplicate_request"
 
@@ -128,7 +134,7 @@ def reserve(
                 col(CohortDraftRequest.status) == CohortDraftStatus.RESERVED,
                 col(CohortDraftRequest.created_at) < stale,
             )
-            .values(status=CohortDraftStatus.RELEASED, updated_at=now)
+            .values(status=CohortDraftStatus.RELEASED, model_calls=MAX_MODEL_CALLS, updated_at=now)
         )
 
         duplicate = db.exec(
@@ -151,8 +157,26 @@ def reserve(
             used = db.exec(
                 select(func.count()).select_from(CohortDraftRequest).where(_counts_against_allowance(user_id, now))
             ).one()
+            calls = db.exec(
+                select(
+                    func.coalesce(
+                        func.sum(
+                            case(
+                                (col(CohortDraftRequest.status) == CohortDraftStatus.RESERVED, MAX_MODEL_CALLS),
+                                else_=col(CohortDraftRequest.model_calls),
+                            )
+                        ),
+                        0,
+                    )
+                ).where(
+                    col(CohortDraftRequest.user_id) == user_id,
+                    col(CohortDraftRequest.period_start) == period,
+                )
+            ).one()
             if recent >= settings.COHORT_DRAFT_RATE_LIMIT_PER_MINUTE:
                 refusal = Refusal.RATE_LIMITED
+            elif calls + MAX_MODEL_CALLS > settings.COHORT_DRAFT_MONTHLY_REQUEST_CAP:
+                refusal = Refusal.REQUEST_CAP
             elif used >= settings.COHORT_DRAFT_MONTHLY_ALLOWANCE:
                 refusal = Refusal.EXHAUSTED
         if refusal is not None:
@@ -176,8 +200,8 @@ def reserve(
         raise
 
 
-def finish(db: Session, reservation_id: UUID, consumed: bool, now: datetime | None = None) -> bool:
-    """Consume the reservation for a validated draft, or release it for anything else.
+def finish(db: Session, reservation_id: UUID, consumed: bool, model_calls: int, now: datetime | None = None) -> bool:
+    """Consume the reservation for a validated draft, or release it for anything else, recording its model calls.
 
     Conditional on the reservation still being RESERVED, so a request is settled once. A reservation
     already released as abandoned stays released: that draft goes uncharged.
@@ -192,7 +216,9 @@ def finish(db: Session, reservation_id: UUID, consumed: bool, now: datetime | No
             col(CohortDraftRequest.status) == CohortDraftStatus.RESERVED,
         )
         .values(
-            status=CohortDraftStatus.CONSUMED if consumed else CohortDraftStatus.RELEASED, updated_at=now or utcnow()
+            status=CohortDraftStatus.CONSUMED if consumed else CohortDraftStatus.RELEASED,
+            model_calls=model_calls,
+            updated_at=now or utcnow(),
         )
     )
     db.commit()

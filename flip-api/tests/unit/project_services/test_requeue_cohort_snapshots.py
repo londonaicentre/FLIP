@@ -55,12 +55,12 @@ def db() -> MagicMock:
 
 
 @pytest.fixture
-def client(db: MagicMock) -> Generator[TestClient, None, None]:
+def client(db: MagicMock) -> TestClient:
     app = FastAPI()
     app.include_router(router, prefix="/api")
     app.dependency_overrides[get_session] = lambda: db
     app.dependency_overrides[verify_token] = lambda: USER_ID
-    yield TestClient(app)
+    return TestClient(app)
 
 
 @pytest.fixture

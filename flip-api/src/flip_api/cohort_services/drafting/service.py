@@ -20,9 +20,19 @@ from pydantic import BaseModel, ValidationError
 
 from flip_api.cohort_services.drafting.checks import check_draft
 from flip_api.cohort_services.drafting.model import DraftModel, ModelError
-from flip_api.cohort_services.drafting.prompt import rejection_message, system_prompt, user_message
+from flip_api.cohort_services.drafting.prompt import (
+    MAX_ITEM_CHARS,
+    MAX_ITEMS,
+    MAX_OPTIONS,
+    MAX_TEXT_CHARS,
+    rejection_message,
+    system_prompt,
+    user_message,
+)
 
 MAX_VALIDATION_RETRIES = 2
+# The most model calls one request can make; the ledger reserves this many up front.
+MAX_MODEL_CALLS = MAX_VALIDATION_RETRIES + 1
 
 REFUSAL_MESSAGE = "The assistant declined this description. Write the SQL by hand, or describe the cohort differently."
 
@@ -35,6 +45,14 @@ class _ModelOutput(BaseModel):
     concepts_used: list[str]
     question: str
     options: list[str]
+
+
+def _clip(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _clip_items(items: list[str], count: int = MAX_ITEMS) -> list[str]:
+    return [_clip(i, MAX_ITEM_CHARS) for i in items[:count]]
 
 
 @dataclass
@@ -50,6 +68,7 @@ class DraftOutcome:
     options: list[str] = field(default_factory=list)
     error_code: str | None = None
     retries: int = 0
+    model_calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
     refusal_category: str | None = None
@@ -75,6 +94,7 @@ def run_draft(
     outcome = DraftOutcome(status="error")
     for attempt in range(MAX_VALIDATION_RETRIES + 1):
         outcome.retries = attempt
+        outcome.model_calls += 1
         try:
             reply = model.create(system_prompt(), messages)
         except ModelError as e:
@@ -96,19 +116,21 @@ def run_draft(
             outcome.error_code = "malformed_output"
             return outcome
         if out.outcome == "decline":
-            outcome.status, outcome.explanation = "decline", out.explanation
+            outcome.status, outcome.explanation = "decline", _clip(out.explanation, MAX_TEXT_CHARS)
             return outcome
         if out.outcome == "clarification":
             if not out.question.strip():
                 outcome.error_code = "malformed_output"
                 return outcome
-            outcome.status, outcome.question, outcome.options = "clarification", out.question, out.options[:4]
+            outcome.status = "clarification"
+            outcome.question = _clip(out.question, MAX_ITEM_CHARS)
+            outcome.options = _clip_items(out.options, MAX_OPTIONS)
             return outcome
         problem = check_draft(out.sql, has_imaging)
         if problem is None:
             outcome.status = "draft"
-            outcome.sql, outcome.explanation = out.sql.strip(), out.explanation
-            outcome.assumptions, outcome.concepts_used = out.assumptions, out.concepts_used
+            outcome.sql, outcome.explanation = out.sql.strip(), _clip(out.explanation, MAX_TEXT_CHARS)
+            outcome.assumptions, outcome.concepts_used = _clip_items(out.assumptions), _clip_items(out.concepts_used)
             return outcome
         messages += [
             {"role": "assistant", "content": reply.content},

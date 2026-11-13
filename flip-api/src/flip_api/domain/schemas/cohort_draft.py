@@ -13,19 +13,28 @@
 """Request and response bodies of the cohort SQL drafting routes (FLIP#1556, Beta)."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from flip_api.cohort_services.drafting.prompt import MAX_CLARIFICATIONS
+from flip_api.cohort_services.drafting.prompt import (
+    MAX_CLARIFICATION_CHARS,
+    MAX_CLARIFICATIONS,
+    MAX_ITEM_CHARS,
+    MAX_ITEMS,
+    MAX_OPTIONS,
+    MAX_TEXT_CHARS,
+)
+
+_Item = Annotated[str, Field(max_length=MAX_ITEM_CHARS)]
 
 
 class CohortDraftClarification(BaseModel):
     """A question the assistant asked, and the researcher's answer."""
 
-    question: str = Field(max_length=500)
-    answer: str = Field(min_length=1, max_length=500)
+    question: str = Field(max_length=MAX_CLARIFICATION_CHARS)
+    answer: str = Field(min_length=1, max_length=MAX_CLARIFICATION_CHARS)
 
 
 class CohortDraftRequestBody(BaseModel):
@@ -51,12 +60,13 @@ class CohortDraftResponse(BaseModel):
 
     status: Literal["draft", "clarification", "decline", "error"]
     sql: str | None = None
-    explanation: str | None = None
-    assumptions: list[str] = Field(default_factory=list)
-    concepts_used: list[str] = Field(default_factory=list)
-    question: str | None = None
-    options: list[str] = Field(default_factory=list)
-    # For "error": allowance_exhausted, rate_limited, duplicate_request, model_unavailable or invalid_draft.
+    explanation: str | None = Field(default=None, max_length=MAX_TEXT_CHARS)
+    assumptions: list[_Item] = Field(default_factory=list, max_length=MAX_ITEMS)
+    concepts_used: list[_Item] = Field(default_factory=list, max_length=MAX_ITEMS)
+    question: str | None = Field(default=None, max_length=MAX_ITEM_CHARS)
+    options: list[_Item] = Field(default_factory=list, max_length=MAX_OPTIONS)
+    # For "error": allowance_exhausted, request_cap_reached, rate_limited, duplicate_request,
+    # model_unavailable or invalid_draft.
     error_code: str | None = None
-    message: str | None = None
+    message: str | None = Field(default=None, max_length=MAX_TEXT_CHARS)
     usage: CohortDraftUsage

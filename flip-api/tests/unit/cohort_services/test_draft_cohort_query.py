@@ -102,7 +102,7 @@ def test_draft_is_returned_and_charged(client, mocks, enabled):
     mocks.reserve.assert_called_once()
     assert mocks.reserve.call_args.args[1:] == (USER_ID, PROJECT_ID, HEADERS["Idempotency-Key"])
     mocks.finish.assert_called_once()
-    assert mocks.finish.call_args.kwargs == {"consumed": True}
+    assert mocks.finish.call_args.kwargs == {"consumed": True, "model_calls": 1}
 
 
 def test_wrong_project_is_forbidden(client, mocks, enabled):
@@ -155,7 +155,7 @@ def test_decline_releases(client, mocks, enabled, description, status):
     body = _post(client, description=description).json()
     assert body["status"] == status
     assert body["message"]
-    assert mocks.finish.call_args.kwargs == {"consumed": False}
+    assert mocks.finish.call_args.kwargs["consumed"] is False
 
 
 def test_clarification_releases(client, mocks, enabled, project):
@@ -164,14 +164,14 @@ def test_clarification_releases(client, mocks, enabled, project):
     assert body["status"] == "clarification"
     assert body["question"]
     assert body["options"]
-    assert mocks.finish.call_args.kwargs == {"consumed": False}
+    assert mocks.finish.call_args.kwargs["consumed"] is False
 
 
 def test_model_failure_releases_and_hides_detail(client, mocks, enabled):
     with patch.object(route, "run_draft", side_effect=RuntimeError("boom")):
         body = _post(client).json()
     assert (body["status"], body["error_code"]) == ("error", "model_unavailable")
-    assert mocks.finish.call_args.kwargs == {"consumed": False}
+    assert mocks.finish.call_args.kwargs["consumed"] is False
 
 
 def test_logs_metadata_never_the_description_or_sql(client, mocks, enabled, caplog):
@@ -186,3 +186,16 @@ def test_logs_metadata_never_the_description_or_sql(client, mocks, enabled, capl
 
 def test_usage_when_enabled(client, mocks, enabled):
     assert client.get("/api/cohort/draft/usage").json()["used"] == 3
+
+
+def test_clarification_answers_share_the_length_limit(client, mocks, enabled, monkeypatch):
+    monkeypatch.setattr(get_settings(), "COHORT_DRAFT_MAX_DESCRIPTION_CHARS", 40)
+    answers = [{"question": "Which modality?", "answer": "x" * 30}]
+    assert _post(client, description="CT", clarifications=answers).status_code == 400
+    assert _post(client, description="CT", clarifications=answers * 4).status_code == 422  # at most three
+
+
+def test_unexpected_failure_is_charged_the_worst_case_calls(client, mocks, enabled):
+    with patch.object(route, "run_draft", side_effect=RuntimeError("boom")):
+        _post(client)
+    assert mocks.finish.call_args.kwargs == {"consumed": False, "model_calls": 3}

@@ -490,5 +490,7 @@ class CohortDraftRequest(SQLModel, table=True):
     idempotency_key: str = Field(max_length=128)
     period_start: date = Field()
     status: CohortDraftStatus = Field(default=CohortDraftStatus.RESERVED)
+    # Model calls the request made, retries included (counted against COHORT_DRAFT_MONTHLY_REQUEST_CAP).
+    model_calls: int = Field(default=0)
     created_at: datetime = Field()
     updated_at: datetime = Field()

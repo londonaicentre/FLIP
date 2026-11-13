@@ -48,6 +48,7 @@ def upgrade() -> None:
     sa.Column('idempotency_key', sa.String(length=128), nullable=False),
     sa.Column('period_start', sa.Date(), nullable=False),
     sa.Column('status', sa.Enum('RESERVED', 'CONSUMED', 'RELEASED', name='cohortdraftstatus'), nullable=False),
+    sa.Column('model_calls', sa.Integer(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.ForeignKeyConstraint(['project_id'], ['projects.id'], ),

@@ -29,7 +29,7 @@ from flip_api.cohort_services.drafting import ledger
 from flip_api.cohort_services.drafting.draft_logger import logger
 from flip_api.cohort_services.drafting.model import get_draft_model
 from flip_api.cohort_services.drafting.prompt import PROMPT_VERSION
-from flip_api.cohort_services.drafting.service import DraftOutcome, run_draft
+from flip_api.cohort_services.drafting.service import MAX_MODEL_CALLS, DraftOutcome, run_draft
 from flip_api.config import get_settings
 from flip_api.db.database import get_session
 from flip_api.domain.schemas.cohort_draft import CohortDraftRequestBody, CohortDraftResponse, CohortDraftUsage
@@ -40,6 +40,7 @@ router = APIRouter(prefix="/cohort", tags=["cohort_services"])
 
 _REFUSAL_MESSAGES = {
     ledger.Refusal.EXHAUSTED: "You have used this month's drafts. Manual SQL and Run still work.",
+    ledger.Refusal.REQUEST_CAP: "You have reached this month's drafting request limit. Manual SQL and Run still work.",
     ledger.Refusal.RATE_LIMITED: "Too many draft requests in the last minute. Try again shortly.",
     ledger.Refusal.DUPLICATE: "This request was already received. Draft again to get a new draft.",
 }
@@ -115,11 +116,10 @@ def draft_cohort_query(
     settings = get_settings()
     if not settings.COHORT_DRAFT_ENABLED:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
-    if len(body.description) > settings.COHORT_DRAFT_MAX_DESCRIPTION_CHARS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Descriptions are limited to {settings.COHORT_DRAFT_MAX_DESCRIPTION_CHARS} characters.",
-        )
+    limit = settings.COHORT_DRAFT_MAX_DESCRIPTION_CHARS
+    answered = sum(len(c.question) + len(c.answer) for c in body.clarifications)
+    if len(body.description) > limit or answered > limit:
+        raise HTTPException(status_code=400, detail=f"Descriptions and answers are limited to {limit} characters.")
     if not can_modify_project(user_id, body.project_id, db):
         raise HTTPException(status_code=403, detail=f"User with ID: {user_id} is not allowed to modify this project")
     project = get_project_by_id(body.project_id, db)
@@ -147,8 +147,8 @@ def draft_cohort_query(
     except Exception as e:
         # Never leave the reservation held, and never log the description or the model's output.
         logger.error({"event": "cohort_draft", "outcome": "exception", "error": type(e).__name__, **meta})
-        outcome = DraftOutcome(status="error", error_code="unexpected")
-    ledger.finish(db, reservation, consumed=outcome.status == "draft")
+        outcome = DraftOutcome(status="error", error_code="unexpected", model_calls=MAX_MODEL_CALLS)
+    ledger.finish(db, reservation, consumed=outcome.status == "draft", model_calls=outcome.model_calls)
 
     logger.info(
         {
@@ -159,8 +159,10 @@ def draft_cohort_query(
             "model": model.name,
             "has_imaging": has_imaging,
             "retries": outcome.retries,
+            "model_calls": outcome.model_calls,
             "input_tokens": outcome.input_tokens,
             "output_tokens": outcome.output_tokens,
+            "total_tokens": outcome.input_tokens + outcome.output_tokens,
             "latency_ms": round((time.monotonic() - started) * 1000),
             **meta,
         }

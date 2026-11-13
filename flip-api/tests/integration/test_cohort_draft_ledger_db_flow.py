@@ -64,16 +64,16 @@ def test_reserve_consume_release(session, settings, owner, project):
     assert isinstance(second, UUID)
     assert ledger.get_usage(session, owner, NOW).used == 2  # in-flight reservations count
 
-    assert ledger.finish(session, first, consumed=True, now=NOW)
-    assert ledger.finish(session, second, consumed=False, now=NOW)
-    assert not ledger.finish(session, second, consumed=True, now=NOW)  # settled once
+    assert ledger.finish(session, first, consumed=True, model_calls=1, now=NOW)
+    assert ledger.finish(session, second, consumed=False, model_calls=1, now=NOW)
+    assert not ledger.finish(session, second, consumed=True, model_calls=1, now=NOW)  # settled once
     assert ledger.get_usage(session, owner, NOW).used == 1
     assert _statuses(session, owner) == sorted([CohortDraftStatus.CONSUMED, CohortDraftStatus.RELEASED])
 
 
 def test_duplicate_key_is_never_charged_twice(session, settings, owner, project):
     reservation = ledger.reserve(session, owner, project.id, "same", NOW)
-    ledger.finish(session, reservation, consumed=True, now=NOW)
+    ledger.finish(session, reservation, consumed=True, model_calls=1, now=NOW)
     assert ledger.reserve(session, owner, project.id, "same", NOW) is ledger.Refusal.DUPLICATE
     assert ledger.get_usage(session, owner, NOW).used == 1
     # Keys are per user.
@@ -82,7 +82,9 @@ def test_duplicate_key_is_never_charged_twice(session, settings, owner, project)
 
 def test_allowance_is_exhausted_then_resets_at_the_utc_month(session, settings, owner, project):
     for i in range(3):
-        ledger.finish(session, ledger.reserve(session, owner, project.id, f"k{i}", NOW), consumed=True, now=NOW)
+        ledger.finish(
+            session, ledger.reserve(session, owner, project.id, f"k{i}", NOW), consumed=True, model_calls=1, now=NOW
+        )
     assert ledger.reserve(session, owner, project.id, "k3", NOW) is ledger.Refusal.EXHAUSTED
 
     december = datetime(2026, 12, 1, 0, 0)
@@ -92,7 +94,9 @@ def test_allowance_is_exhausted_then_resets_at_the_utc_month(session, settings, 
 
 def test_released_drafts_do_not_count(session, settings, owner, project):
     for i in range(5):
-        ledger.finish(session, ledger.reserve(session, owner, project.id, f"k{i}", NOW), consumed=False, now=NOW)
+        ledger.finish(
+            session, ledger.reserve(session, owner, project.id, f"k{i}", NOW), consumed=False, model_calls=1, now=NOW
+        )
     assert ledger.get_usage(session, owner, NOW).used == 0
 
 
@@ -101,14 +105,16 @@ def test_abandoned_reservation_is_released(session, settings, owner, project):
     later = NOW + timedelta(minutes=settings.COHORT_DRAFT_RESERVATION_TTL_MINUTES + 1)
     assert ledger.get_usage(session, owner, later).used == 0
     assert isinstance(ledger.reserve(session, owner, project.id, "next", later), UUID)
-    assert not ledger.finish(session, abandoned, consumed=True, now=later)  # already released: uncharged
+    assert not ledger.finish(session, abandoned, consumed=True, model_calls=1, now=later)  # already released: uncharged
     assert CohortDraftStatus.RELEASED in _statuses(session, owner)
 
 
 def test_rate_limit_counts_every_request(session, settings, monkeypatch, owner, project):
     monkeypatch.setattr(settings, "COHORT_DRAFT_RATE_LIMIT_PER_MINUTE", 2)
     for i in range(2):
-        ledger.finish(session, ledger.reserve(session, owner, project.id, f"k{i}", NOW), consumed=False, now=NOW)
+        ledger.finish(
+            session, ledger.reserve(session, owner, project.id, f"k{i}", NOW), consumed=False, model_calls=1, now=NOW
+        )
     assert ledger.reserve(session, owner, project.id, "k2", NOW) is ledger.Refusal.RATE_LIMITED
     assert isinstance(ledger.reserve(session, owner, project.id, "k3", NOW + timedelta(minutes=1)), UUID)
 
@@ -162,3 +168,24 @@ def test_route_end_to_end_with_the_fake_drafter(client, session, settings, monke
         headers={"Idempotency-Key": "c"},
     )
     assert response.status_code == 400
+
+
+def test_request_cap_bounds_uncharged_model_calls(session, settings, monkeypatch, owner, project):
+    """Declines and clarifications cost no draft, but every model call counts towards the hidden cap."""
+    monkeypatch.setattr(settings, "COHORT_DRAFT_MONTHLY_REQUEST_CAP", 6)
+    for i in range(4):  # 4 calls made; 2 left, fewer than one request's worst case of 3
+        ledger.finish(
+            session, ledger.reserve(session, owner, project.id, f"k{i}", NOW), consumed=False, model_calls=1, now=NOW
+        )
+    assert ledger.get_usage(session, owner, NOW).used == 0  # the visible allowance is untouched
+    assert ledger.reserve(session, owner, project.id, "k4", NOW) is ledger.Refusal.REQUEST_CAP
+    assert isinstance(ledger.reserve(session, owner, project.id, "k5", datetime(2026, 12, 1)), UUID)  # resets monthly
+
+
+def test_retries_and_in_flight_requests_count_towards_the_cap(session, settings, monkeypatch, owner, project):
+    monkeypatch.setattr(settings, "COHORT_DRAFT_MONTHLY_REQUEST_CAP", 6)
+    retried = ledger.reserve(session, owner, project.id, "retried", NOW)
+    ledger.finish(session, retried, consumed=True, model_calls=3, now=NOW)  # a draft that took two retries
+    in_flight = ledger.reserve(session, owner, project.id, "in-flight", NOW)  # holds the worst case, 3
+    assert isinstance(in_flight, UUID)
+    assert ledger.reserve(session, owner, project.id, "third", NOW) is ledger.Refusal.REQUEST_CAP

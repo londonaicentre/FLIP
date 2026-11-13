@@ -459,6 +459,9 @@ class Settings(BaseSettings):
     COHORT_DRAFT_TIMEOUT_SECONDS: float = Field(default=45, gt=0)
     # Successful drafts per user per UTC calendar month, across projects.
     COHORT_DRAFT_MONTHLY_ALLOWANCE: int = Field(default=30, ge=0)
+    # Model calls per user per UTC month whatever the outcome (clarifications, declines and validation
+    # retries included), so uncharged requests cannot run up unbounded spend. Not shown to the user.
+    COHORT_DRAFT_MONTHLY_REQUEST_CAP: int = Field(default=90, ge=0)
     # Draft requests of any outcome per user per minute, counted in the database (all replicas).
     COHORT_DRAFT_RATE_LIMIT_PER_MINUTE: int = Field(default=5, gt=0)
     # A reservation older than this is treated as abandoned and released.
@@ -476,6 +479,7 @@ class Settings(BaseSettings):
         "COHORT_DRAFT_MAX_TOKENS",
         "COHORT_DRAFT_TIMEOUT_SECONDS",
         "COHORT_DRAFT_MONTHLY_ALLOWANCE",
+        "COHORT_DRAFT_MONTHLY_REQUEST_CAP",
         "COHORT_DRAFT_RATE_LIMIT_PER_MINUTE",
         "COHORT_DRAFT_RESERVATION_TTL_MINUTES",
         mode="before",

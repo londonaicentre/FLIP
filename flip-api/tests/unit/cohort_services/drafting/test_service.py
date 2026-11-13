@@ -13,7 +13,8 @@
 import json
 
 from flip_api.cohort_services.drafting.model import ModelError, ModelReply
-from flip_api.cohort_services.drafting.service import REFUSAL_MESSAGE, run_draft
+from flip_api.cohort_services.drafting.prompt import MAX_ITEM_CHARS, MAX_ITEMS, MAX_OPTIONS, MAX_TEXT_CHARS
+from flip_api.cohort_services.drafting.service import MAX_MODEL_CALLS, REFUSAL_MESSAGE, run_draft
 
 GOOD = "SELECT p.person_id FROM omop.person p"
 BAD = "SELECT p.person_id, p.nhs_number FROM omop.person p"
@@ -61,6 +62,25 @@ def test_gives_up_after_two_retries():
     model = Scripted(_out(sql=BAD), _out(sql=BAD), _out(sql=BAD))
     outcome = run_draft(model, "d", [], has_imaging=False)
     assert (outcome.status, outcome.error_code, len(model.calls)) == ("error", "invalid_draft", 3)
+    assert outcome.model_calls == MAX_MODEL_CALLS == 3
+
+
+def test_every_model_call_is_counted():
+    assert run_draft(Scripted(_out(sql=BAD), _out()), "d", [], False).model_calls == 2
+    assert run_draft(Scripted(ModelError("timeout")), "d", [], False).model_calls == 1
+
+
+def test_oversized_model_text_is_cut():
+    long = "x" * 5000
+    draft = run_draft(Scripted(_out(explanation=long, assumptions=[long] * 30, concepts_used=[long])), "d", [], False)
+    assert len(draft.explanation) == MAX_TEXT_CHARS
+    assert len(draft.assumptions) == MAX_ITEMS
+    assert {len(a) for a in draft.assumptions + draft.concepts_used} == {MAX_ITEM_CHARS}
+    clarification = run_draft(Scripted(_out("clarification", "", question=long, options=[long] * 9)), "d", [], True)
+    assert len(clarification.question) == MAX_ITEM_CHARS
+    assert [len(o) for o in clarification.options] == [MAX_ITEM_CHARS] * MAX_OPTIONS
+    decline = run_draft(Scripted(_out("decline", "", explanation=long)), "d", [], False)
+    assert len(decline.explanation) == MAX_TEXT_CHARS
 
 
 def test_output_contract_follows_the_shape():
