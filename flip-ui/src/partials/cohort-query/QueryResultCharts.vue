@@ -36,7 +36,7 @@
                     </div>
                 </div>
             </div>
-            <div v-else-if="!results.trustsResults.length" data-test="no-results-message">
+            <div v-else data-test="no-results-message">
                 <div class="py-4">
                     <div>
                         <p class="mt-2 text-lg text-gray-500 dark:text-gray-300">
@@ -69,7 +69,6 @@ withDefaults(defineProps<IProps>(), { submitting: false });
 const projectStore = useProjectStore();
 
 const results = ref();
-const getResults = ref("true");
 
 const { data } = useSWRV(
     () =>
@@ -90,11 +89,6 @@ const { data } = useSWRV(
 
 whenever(data, () => {
     results.value = data.value;
-    getResults.value = "";
-}, { immediate: true });
-
-watch(projectStore, () => {
-    getResults.value = "true";
 }, { immediate: true });
 
 // Drop cached results when the query id changes so a re-run starts from the

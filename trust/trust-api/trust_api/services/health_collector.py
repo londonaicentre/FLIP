@@ -147,15 +147,17 @@ def _version_from_body(response: httpx.Response) -> str | None:
     return version if isinstance(version, str) else None
 
 
-async def _probe_health_endpoint(client: httpx.AsyncClient, url: str) -> dict:
-    """Probe a sibling FastAPI service's unauthenticated ``/health`` endpoint.
+async def _probe_health_endpoint(client: httpx.AsyncClient, url: str, *, alive_statuses: tuple[int, ...] = ()) -> dict:
+    """Probe an endpoint whose 2xx proves liveness and whose JSON body may carry a ``version``.
 
     Args:
         client (httpx.AsyncClient): HTTP client for making requests.
-        url (str): Absolute URL of the ``/health`` endpoint.
+        url (str): Absolute URL to GET (a sibling FastAPI service's unauthenticated ``/health``).
+        alive_statuses (tuple[int, ...]): Non-2xx statuses that still prove the service is up;
+            they map to a version-less healthy/degraded entry. Default: none.
 
     Returns:
-        dict: Wire-shaped entry; ``down`` on transport error or non-2xx.
+        dict: Wire-shaped entry; ``down`` on transport error or any other non-2xx.
     """
     start = time.monotonic()
     try:
@@ -163,11 +165,13 @@ async def _probe_health_endpoint(client: httpx.AsyncClient, url: str) -> dict:
     except Exception as e:
         logger.warning(f"Health probe {url} failed: {type(e).__name__}: {e}")
         return _entry("down")
-    if not response.is_success:
-        logger.warning(f"Health probe {url} answered HTTP {response.status_code}")
-        return _entry("down")
     elapsed_ms = int((time.monotonic() - start) * 1000)
-    return _entry(_status_from_latency(elapsed_ms), _version_from_body(response), elapsed_ms)
+    if response.is_success:
+        return _entry(_status_from_latency(elapsed_ms), _version_from_body(response), elapsed_ms)
+    if response.status_code in alive_statuses:
+        return _entry(_status_from_latency(elapsed_ms), None, elapsed_ms)
+    logger.warning(f"Health probe {url} answered HTTP {response.status_code}")
+    return _entry("down")
 
 
 async def _probe_xnat(client: httpx.AsyncClient) -> dict:
@@ -184,20 +188,7 @@ async def _probe_xnat(client: httpx.AsyncClient) -> dict:
     Returns:
         dict: Wire-shaped entry.
     """
-    url = f"{XNAT_URL}/xapi/siteConfig/buildInfo"
-    start = time.monotonic()
-    try:
-        response = await client.get(url)
-    except Exception as e:
-        logger.warning(f"Health probe {url} failed: {type(e).__name__}: {e}")
-        return _entry("down")
-    elapsed_ms = int((time.monotonic() - start) * 1000)
-    if response.is_success:
-        return _entry(_status_from_latency(elapsed_ms), _version_from_body(response), elapsed_ms)
-    if response.status_code in (401, 403):
-        return _entry(_status_from_latency(elapsed_ms), None, elapsed_ms)
-    logger.warning(f"Health probe {url} answered HTTP {response.status_code}")
-    return _entry("down")
+    return await _probe_health_endpoint(client, f"{XNAT_URL}/xapi/siteConfig/buildInfo", alive_statuses=(401, 403))
 
 
 async def _probe_dicom(client: httpx.AsyncClient) -> dict:
@@ -326,28 +317,16 @@ async def collect_once(client: httpx.AsyncClient) -> dict:
     Returns:
         dict: ``{"services": {<key>: entry, ...}, "collected_at": <iso-utc>}``.
     """
-    results = await asyncio.gather(
-        _probe_health_endpoint(client, f"{IMAGING_API_URL}/health"),
-        _probe_health_endpoint(client, f"{DATA_ACCESS_API_URL}/health"),
-        _probe_xnat(client),
-        _pacs_ping.run(lambda: _probe_dicom(client)),
-        _probe_tcp(OMOP_DB_HOST, OMOP_DB_PORT),
-        return_exceptions=True,
-    )
-    # strict: a sixth probe added without a sixth name would otherwise be dropped
-    # silently while the five-way unpack still succeeded.
-    imaging, data_access, xnat, dicom, omop = (
-        _entry_or_unknown(result, service)
-        for result, service in zip(results, ("imaging-api", "data-access-api", "xnat", "dicom", "omop"), strict=True)
-    )
-    services = {
-        "trust-api": _entry("healthy", build_identity()),
-        "imaging-api": imaging,
-        "data-access-api": data_access,
-        "xnat": xnat,
-        "dicom": dicom,
-        "omop": omop,
+    probes = {
+        "imaging-api": _probe_health_endpoint(client, f"{IMAGING_API_URL}/health"),
+        "data-access-api": _probe_health_endpoint(client, f"{DATA_ACCESS_API_URL}/health"),
+        "xnat": _probe_xnat(client),
+        "dicom": _pacs_ping.run(lambda: _probe_dicom(client)),
+        "omop": _probe_tcp(OMOP_DB_HOST, OMOP_DB_PORT),
     }
+    results = await asyncio.gather(*probes.values(), return_exceptions=True)
+    services = {"trust-api": _entry("healthy", build_identity())}
+    services |= {name: _entry_or_unknown(result, name) for name, result in zip(probes, results, strict=True)}
     if FL_CLIENT_IMAGE_TAG:
         # An identity, not a probe: the fl-client has no health endpoint (its liveness is the
         # FL server's business), but which build it runs is what a release audit needs (FLIP#1204).

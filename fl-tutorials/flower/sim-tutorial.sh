@@ -31,7 +31,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 # Run in flip-utils' env so the app sees the same flip package a SuperNode image carries.
-FLIP_UV=(uv run --project "$REPO_ROOT/flip-utils" --extra full)
+FLIP_UV=(uv run --project "$REPO_ROOT/flip-utils" --extra flower --extra full)
 # flwr resolves the `local` connection to a SuperLink on this port (flwr/cli/constant.py) and
 # reuses whatever already answers its /health there — it does not check who started it. Since
 # flwr 1.37 the Control API is served over HTTP on this one port; the legacy gRPC control address

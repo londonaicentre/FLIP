@@ -315,7 +315,7 @@ rather than silently falling back.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `XNAT_AETITLE` | `XNAT` | XNAT's **own** AE title. Applied in three places that must agree: the SCP receiver, the DQR calling AE, and the C-MOVE destination handed to the PACS. DQR matches that destination against a registered receiver by exact `AE:port`, so no translation is possible on that leg. |
+| `XNAT_AETITLE` | `FLIP_XNAT` | XNAT's **own** AE title. Applied in three places that must agree: the SCP receiver, the DQR calling AE, and the C-MOVE destination handed to the PACS. DQR matches that destination against a registered receiver by exact `AE:port`, so no translation is possible on that leg. |
 | `XNAT_PORT` | `8104` | XNAT's **DICOM SCP receiver** port. Defaults to the Trust_1 allocation so a single-trust host need not set it. |
 | `XNAT_WEB_PORT` | — (required) | The host-published **web-UI** port. No default of its own: it falls back to `XNAT_PORT`, which collides, so every kit must set it. |
 | `PACS_HOST` | `orthanc` | Upstream PACS hostname — the compose/k8s service name, or a real PACS host. |
@@ -325,6 +325,7 @@ rather than silently falling back.
 | `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS` | `true` | Whether the PACS supports relational queries / extended negotiation. A capability of the PACS, not a preference — one that does not support it rejects the association outright. Validated as literally `true` or `false` before it reaches `jq`. |
 | `PACS_AVAILABILITY_DAYS` | all seven days | Retrieval window: which days retrieval may run. Comma-separated `MONDAY` … `SUNDAY`, in capitals. |
 | `PACS_AVAILABILITY_START` / `_END` | `00:00` / `24:00` | Retrieval window start/end, `HH:MM` from `00:00` to `23:59`, or `24:00` for the end of the day. The start must come before the end, so the window cannot cross midnight (see below). |
+| `XNAT_TZ` | `Europe/London` (in `.env`) | XNAT's time zone (`TZ`). DQR reads the window in it (`LocalTime.now()`), so it is UK local time, BST included. |
 | `PACS_THREADS` | `1` | Concurrent retrieval threads, from 1. |
 | `PACS_UTILIZATION_PERCENT` | `100` | Share of the window/threads DQR may use, from 1 to 100. |
 | `DQR_MAX_PACS_REQUEST_ATTEMPTS` | `100` | Retries before DQR gives up on a request. |

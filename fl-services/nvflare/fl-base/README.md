@@ -17,6 +17,6 @@ FL base will be used as the base image for both FL client and FL server images. 
 required for both the FL client and FL server to run.
 
 This image is built from [`flip-utils/pyproject.toml`](../../../flip-utils/pyproject.toml) and its
-`uv.lock` — the Dockerfile copies both in and runs `uv sync --frozen --no-cache --extra full`. To
+`uv.lock` — the Dockerfile copies both in and runs `uv sync --frozen --no-cache --extra nvflare --extra full`. To
 update the dependencies, edit `flip-utils/pyproject.toml`, refresh the lockfile with `make lock`
 (or `uv lock` from `flip-utils/`), then rebuild the FL images with `make build-fl`.

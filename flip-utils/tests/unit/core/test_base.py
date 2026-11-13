@@ -33,43 +33,33 @@ class TestFLIPBaseValidation:
         flip_instance.check_query("")
         flip_instance.check_query("complex query with 'quotes'")
 
-    def test_check_query_invalid_type(self, flip_instance):
-        """check_query should raise TypeError for non-string inputs."""
-        with pytest.raises(TypeError, match="expect query to be string"):
-            flip_instance.check_query(123)
-
-        with pytest.raises(TypeError, match="expect query to be string"):
-            flip_instance.check_query(None)
-
-        with pytest.raises(TypeError, match="expect query to be string"):
-            flip_instance.check_query(["query"])
-
     def test_check_project_id_valid_string(self, flip_instance):
         """check_project_id should accept valid string project IDs."""
         flip_instance.check_project_id("project-123")
         flip_instance.check_project_id("abc-def-ghi")
         flip_instance.check_project_id("")
 
-    def test_check_project_id_invalid_type(self, flip_instance):
-        """check_project_id should raise TypeError for non-string inputs."""
-        with pytest.raises(TypeError, match="expect project_id to be string"):
-            flip_instance.check_project_id(123)
-
-        with pytest.raises(TypeError, match="expect project_id to be string"):
-            flip_instance.check_project_id(None)
-
     def test_check_accession_id_valid_string(self, flip_instance):
         """check_accession_id should accept valid string accession IDs."""
         flip_instance.check_accession_id("ACC123")
         flip_instance.check_accession_id("accession-456")
 
-    def test_check_accession_id_invalid_type(self, flip_instance):
-        """check_accession_id should raise TypeError for non-string inputs."""
-        with pytest.raises(TypeError, match="expect accession_id to be string"):
-            flip_instance.check_accession_id(123)
-
-        with pytest.raises(TypeError, match="expect accession_id to be string"):
-            flip_instance.check_accession_id(None)
+    @pytest.mark.parametrize(
+        ("field", "bad"),
+        [
+            ("query", 123),
+            ("query", None),
+            ("query", ["query"]),
+            ("project_id", 123),
+            ("project_id", None),
+            ("accession_id", 123),
+            ("accession_id", None),
+        ],
+    )
+    def test_check_string_field_invalid_type(self, flip_instance, field, bad):
+        """check_query/check_project_id/check_accession_id raise TypeError for non-string inputs."""
+        with pytest.raises(TypeError, match=f"expect {field} to be string"):
+            getattr(flip_instance, f"check_{field}")(bad)
 
     def test_check_resource_type_single_resource(self, flip_instance):
         """check_resource_type should convert single ResourceType to list."""

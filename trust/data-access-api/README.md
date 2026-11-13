@@ -78,8 +78,9 @@ Key environment variables. Most come from the trust kit file — template at [`.
 ### Query cache
 
 Executed cohort SQL is memoised in an **in-process, per-container** dictionary
-(`services/query_cache.py`), keyed by a SHA-256 of the whitespace-normalised, lower-cased query plus
-its bound parameters. The statistics route receives the same cohort SQL repeatedly, and the
+(`services/query_cache.py`), keyed by a SHA-256 of the exact query text (cohort SQL as re-emitted by
+`validate_query`, never case- or whitespace-folded, which would merge `'F'` with `'f'`) plus its
+bound parameters. The statistics route receives the same cohort SQL repeatedly, and the
 subject count resolves accession numbers through `omop.image_occurrence`; the cache spares OMOP the
 repeat scan. (The row-level routes never execute the caller's SQL — they run the query of record
 frozen below — and snapshot creation and both row-level routes, including their `image_occurrence`
@@ -426,12 +427,12 @@ of a raw HTTP error.
 trust's kit file (`trust/.env.<CODE>.<env>`) to raise it. It is not a hub setting and trusts need
 not agree on a value.
 
-It must be a **positive integer**; `0` or a negative value is rejected at startup rather than
-accepted. A threshold of `0` would disable every check that reads it in one stroke — both row-level
-gates (a subject count is never below `0`, so `/cohort/dataframe` and `/cohort/accession-ids` would
-release a cohort of any size) and the statistics suppression on `/cohort`. Settings are built at import, so
-a bad value stops the service starting instead of leaving it running with no floor. Requiring the
-value to be at least the shipped `10`, rather than merely positive, is tracked in FLIP#870.
+It may only be raised: a value below `10` is rejected at startup rather than accepted (FLIP#870). A
+threshold of `0` would disable every check that reads it in one stroke — both row-level gates (a
+subject count is never below `0`, so `/cohort/dataframe` and `/cohort/accession-ids` would release a
+cohort of any size) and the statistics suppression on `/cohort` — and `1` would release a cohort of one
+patient. Settings are built at import, so a bad value stops the service starting instead of leaving it
+running below the floor.
 
 Note for anyone adding settings here: the service Makefile exports kit-file names with
 `sed 's/=.*//'`, which strips the value from *every* line including commented ones, so a

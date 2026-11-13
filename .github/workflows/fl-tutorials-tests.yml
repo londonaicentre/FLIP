@@ -19,9 +19,7 @@
 # that actually runs. Without this filter the guard never fires on the files that matter most.
 # Path filters cover BOTH backends, plus the flip-utils environment AND source: the Ark+ apps
 # import `flip` at module-exec time, so a flip-utils source change can break the tutorial-app
-# suite and must trigger it. The pre-existing tutorial workflow (fl-apps-check-tutorial-sync.yml)
-# was filtered to flower only until this PR, so nothing in CI fired on an nvflare-only tutorial
-# change. See fl-tutorials/tests/README.md.
+# suite and must trigger it. See fl-tutorials/tests/README.md.
 name: FL Tutorials CI
 
 on:
@@ -76,13 +74,15 @@ jobs:
       - name: Lint fl-tutorials
         run: make lint
 
-      # Tutorial-app tests run in flip-utils' environment (`flip-utils[full]`), which is what
-      # the FL images give these apps at runtime, plus the `diffusion` group for the image-generation
-      # tutorials' local plotting helpers. Synced as its own step so an environment
+      # Tutorial-app tests run in flip-utils' environment (`flip-utils[nvflare,flower,full]`), a
+      # superset of either FL image (each installs only its own backend, so this does not catch an
+      # app importing the other one; flip-utils' test_backend_extras.py checks that for flip
+      # itself), plus the `diffusion` group for the
+      # image-generation tutorials' local plotting helpers. Synced as its own step so an environment
       # failure is distinguishable from a test failure in the log.
       - name: Sync the flip-utils environment
         working-directory: ./flip-utils
-        run: uv sync --extra full --group dev --group diffusion
+        run: uv sync --extra nvflare --extra flower --extra full --group dev --group diffusion
 
       - name: Run the tutorial transform tests
         run: make pytest
