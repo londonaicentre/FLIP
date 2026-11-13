@@ -45,16 +45,16 @@ From this directory, with `uv sync` done in `flip-api/` and `trust/data-access-a
 
 ```bash
 export ANTHROPIC_API_KEY=...                # the Claude API, for drafting (default provider) and the judge
-./run_bench.sh --model claude-sonnet-5-5 --out results/claude-sonnet-5-5.json
-uv run --no-project --with anthropic python judge.py results/claude-sonnet-5-5.json
-python3 summarise.py results/claude-sonnet-5-5.json
+./run_bench.sh --model claude-opus-5-5 --out results/claude-opus-5-5.json
+uv run --no-project --with anthropic python judge.py results/claude-opus-5-5.json
+python3 summarise.py results/claude-opus-5-5.json
 ```
 
 Against Amazon Bedrock, as the hub calls it (bedrock-runtime InvokeModel, AWS credentials from the
-environment, region `COHORT_DRAFT_BEDROCK_REGION`), pass a Bedrock model or inference-profile id:
+environment, region `COHORT_DRAFT_BEDROCK_REGION`), pass the Bedrock model id (the hub default, on demand in eu-west-2):
 
 ```bash
-./run_bench.sh --provider bedrock --model eu.anthropic.claude-sonnet-5-5 --out results/bedrock-sonnet-5-5.json
+./run_bench.sh --provider bedrock --model anthropic.claude-opus-5-5 --out results/bedrock-opus-5-5.json
 ```
 
 `--split heldout` or `--ids img-01,tab-01` run a subset. Results land under `results/` (gitignored).
@@ -66,11 +66,16 @@ prices differ; a Bedrock run is costed at the Claude API rates as an estimate.
 
 Filled in by hand after a run; numbers only. Full reports go in the PR.
 
-Claude Sonnet 5.5 on the Claude API, judged by Claude Opus 5.5. Prompt v1 is two runs pooled (n = 96), prompt v2
-one run (n = 48). v2 is judged on the updated rubric (grain and Beta scope), so the rows are close, not identical,
-comparisons.
+Claude Sonnet 5.5 at effort `medium` on the Claude API unless the row names another model or effort (Claude Opus
+5.5 is the hub's default since the UK-only decision), judged by Claude Opus 5.5. Prompt v1 is two runs pooled
+(n = 96); every prompt v2 row is one run (n = 48), judged on the updated rubric (grain and Beta scope), so the v1 and
+v2 rows are close, not identical, comparisons.
 
 | Prompt | Trust validator | Outcome type | Correct / partly / wrong | Held-out correct / partly / wrong | Clarifications | Latency p50 / p90 | Cost per request / per draft |
 |---|---|---|---|---|---|---|---|
 | 2026-11-13.1 | 54/54 | 89/96 (93%) | 71 / 25 / 0 | 18 / 12 / 0 | 32/96 (33%) | 3.7 s / 6.3 s | $0.0053 / $0.0094 |
 | 2026-11-13.2 | 31/31 | 47/48 (98%) | 45 / 3 / 0 | 15 / 0 / 0 | 6/48 (13%) | 3.4 s / 4.4 s | $0.0056 / $0.0087 |
+| 2026-11-13.2, Sonnet 5.5 effort high | 32/32 | 47/48 (98%) | 46 / 2 / 0 | 15 / 0 / 0 | 6/48 (13%) | 4.2 s / 7.5 s | $0.0072 / $0.0108 |
+| 2026-11-13.2, Sonnet 5.5 effort low | 29/29 | 48/48 (100%) | 47 / 1 / 0 | 15 / 0 / 0 | 5/48 (10%) | 3.2 s / 4.0 s | $0.0051 / $0.0085 |
+| 2026-11-13.2, Opus 5.5 effort medium | 30/30 | 47/48 (98%) | 44 / 4 / 0 | 13 / 2 / 0 | 6/48 (13%) | 6.0 s / 10.8 s | $0.0168 / $0.0269 |
+| 2026-11-13.2, Opus 5.5 effort low | 30/30 | 47/48 (98%) | 44 / 4 / 0 | 14 / 1 / 0 | 5/48 (10%) | 5.1 s / 8.3 s | $0.0135 / $0.0215 |
