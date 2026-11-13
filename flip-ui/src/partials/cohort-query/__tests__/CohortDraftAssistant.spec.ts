@@ -25,6 +25,7 @@ const RESETS = "2026-12-01T00:00:00.000Z";
 /** A drafter whose responses the test releases by hand. */
 function controlledDrafter(used = 12) {
     const usage: IDraftUsage = {
+        enabled: true,
         limit: 30,
         used,
         resetsAt: RESETS
@@ -290,7 +291,10 @@ describe("CohortDraftAssistant", () => {
 
         await wrapper.findAll("button[data-test='draft-clarification-option']")[0].trigger("click");
         await flushPromises();
-        expect(calls[1].request.clarifications).toEqual(["CT"]);
+        expect(calls[1].request.clarifications).toEqual([{
+            question: "Which modality: CT or MRI?",
+            answer: "CT"
+        }]);
     });
 
     it("shows a decline and drafts nothing", async () => {

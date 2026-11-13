@@ -44,7 +44,7 @@ const has = (text: string, pattern: RegExp): boolean => pattern.test(text);
 
 /** Picks the canned response for a request. Pure, so the mapping can be tested directly. */
 export const pickResult = (request: IDraftRequest, scenario?: DraftScenario): DraftResult | "error" => {
-    const text = [request.description, ...(request.clarifications ?? [])].join(" ").toLowerCase();
+    const text = [request.description, ...(request.clarifications ?? []).map((c) => c.answer)].join(" ").toLowerCase();
     const shapeDraft = request.hasImaging ? CHEST_XRAY_DRAFT : T2DM_TABULAR_DRAFT;
 
     switch (scenario) {
@@ -112,6 +112,7 @@ export const createFakeDrafter = (options: IFakeDrafterOptions = {}): ICohortDra
     let used = scenario === "exhausted" ? MONTHLY_LIMIT : Math.min(options.used ?? 12, MONTHLY_LIMIT);
 
     const usage = (): IDraftUsage => ({
+        enabled: true,
         limit: MONTHLY_LIMIT,
         used,
         resetsAt: nextMonthlyReset(now())

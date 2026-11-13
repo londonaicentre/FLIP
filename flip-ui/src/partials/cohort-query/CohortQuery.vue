@@ -37,8 +37,10 @@
                             {{ lastRunLine }}
                         </div>
                         <CohortDraftAssistant
-                            v-if="CohortDraftAssistant && !queryLocked && !isViewer"
+                            v-if="drafter && !queryLocked && !isViewer"
+                            :key="project.id"
                             :has-imaging="projectHasImaging(project)"
+                            :drafter="drafter"
                         />
                         <AiCodeTextArea
                             :initial-value="project?.query?.query"
@@ -73,7 +75,7 @@
 
 <script setup lang="ts">
 import { Form } from "vee-validate";
-import { computed, defineAsyncComponent, onBeforeMount, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeMount, ref, shallowRef, watch } from "vue";
 import { useRoute } from "vue-router";
 import { object, string } from "yup";
 
@@ -81,6 +83,8 @@ import AiCodeTextArea from "@/components/AiTextArea/AiCodeTextArea.vue";
 import { usePermissions } from "@/composables/usePermissions";
 import { projectHasImaging } from "@/partials/projects/projectType";
 import router from "@/router";
+import { createApiDrafter } from "@/services/cohort-draft/api-drafter";
+import type { ICohortDrafter } from "@/services/cohort-draft/types";
 import { ICohortQueryCreate, sendQuery } from "@/services/cohort-query-service";
 import { IProject } from "@/services/project-service";
 import { useProjectStore } from "@/store/project";
@@ -94,12 +98,27 @@ const route = useRoute();
 const projectStore = useProjectStore();
 const { isViewer } = usePermissions();
 
-// SQL drafting assistant (FLIP#1556), a UI mock on a fake drafter. The literal flag is
-// defined in vite.config.mts, so every build folds this to null and drops the chunk.
-const draftAssistantEnabled = import.meta.env.VITE_COHORT_DRAFT_ASSISTANT === "true";
-const CohortDraftAssistant = draftAssistantEnabled
-    ? defineAsyncComponent(() => import("./CohortDraftAssistant.vue"))
-    : null;
+// SQL drafting assistant (FLIP#1556, Beta). Shown only when the hub reports drafting enabled; a hub
+// without it, or with it off, leaves manual SQL exactly as before. The VITE_LOCAL mock drafts from
+// canned replies instead (the flag is defined in vite.config.mts and folds away in every build).
+const CohortDraftAssistant = defineAsyncComponent(() => import("./CohortDraftAssistant.vue"));
+const drafter = shallowRef<ICohortDrafter | null>(null);
+
+const pickDrafter = async (projectId: string) => {
+    drafter.value = null;
+    if (import.meta.env.VITE_COHORT_DRAFT_ASSISTANT === "true") {
+        const { getPageDrafter } = await import("@/services/cohort-draft/fake-drafter");
+        drafter.value = getPageDrafter();
+
+        return;
+    }
+    const candidate = createApiDrafter(projectId);
+    try {
+        if ((await candidate.getUsage()).enabled && project.value?.id === projectId) drafter.value = candidate;
+    } catch {
+        // No drafting routes on this hub: manual SQL only.
+    }
+};
 
 const queryId = ref<string>("");
 const project = ref<IProject>();
@@ -114,6 +133,10 @@ onBeforeMount(() => {
 });
 
 watch(projectStore, () => project.value = projectStore.project);
+
+watch(() => project.value?.id, (id) => {
+    if (id) void pickDrafter(id);
+}, { immediate: true });
 
 // Required-field validation only. SQL validity is checked by the hub, which
 // answers synchronously before fanning the query out to any trust, and the

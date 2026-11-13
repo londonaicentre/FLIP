@@ -13,7 +13,7 @@
 
 import { computed, onBeforeUnmount, ref } from "vue";
 
-import type { ICohortDraft, ICohortDrafter, IDraftClarification, IDraftUsage } from "@/services/cohort-draft/types";
+import type { ICohortDraft, ICohortDrafter, IDraftAnswer, IDraftClarification, IDraftUsage } from "@/services/cohort-draft/types";
 
 export type DraftPhase =
     | "idle"
@@ -47,7 +47,7 @@ export function useCohortDraft(drafter: ICohortDrafter, editor: IEditor, hasImag
     const phase = ref<DraftPhase>("idle");
     const usage = ref<IDraftUsage | null>(null);
     const clarification = ref<IDraftClarification | null>(null);
-    const answers = ref<string[]>([]);
+    const answers = ref<IDraftAnswer[]>([]);
     const message = ref("");
     // The draft whose SQL was last placed in the editor, for its assumptions.
     const inserted = ref<ICohortDraft | null>(null);
@@ -57,12 +57,12 @@ export function useCohortDraft(drafter: ICohortDrafter, editor: IEditor, hasImag
 
     let latest = 0;
     let controller: AbortController | null = null;
-    let pendingRequest: { description: string; clarifications: string[] } | null = null;
+    let pendingRequest: { description: string; clarifications: IDraftAnswer[] } | null = null;
     let phaseBeforeConfirm: DraftPhase = "idle";
 
     void drafter.getUsage().then((u) => { usage.value = u; }).catch(() => undefined);
 
-    const start = async (description: string, clarifications: string[]) => {
+    const start = async (description: string, clarifications: IDraftAnswer[]) => {
         const token = ++latest;
         controller?.abort();
         controller = new AbortController();
@@ -116,7 +116,7 @@ export function useCohortDraft(drafter: ICohortDrafter, editor: IEditor, hasImag
     };
 
     /** Generate, asking first when the editor already holds SQL. */
-    const generate = (description: string, clarifications: string[] = []) => {
+    const generate = (description: string, clarifications: IDraftAnswer[] = []) => {
         if (exhausted.value || phase.value === "drafting" || !description.trim()) return;
 
         if (editor.get().trim()) {
@@ -145,7 +145,14 @@ export function useCohortDraft(drafter: ICohortDrafter, editor: IEditor, hasImag
     };
 
     const answer = (description: string, reply: string) => {
-        if (reply.trim()) generate(description, [...answers.value, reply.trim()]);
+        if (!reply.trim()) return;
+        generate(description, [
+            ...answers.value,
+            {
+                question: clarification.value?.question ?? "",
+                answer: reply.trim()
+            }
+        ]);
     };
 
     /** Abandon the in-flight request; its response, if it still arrives, is ignored. */

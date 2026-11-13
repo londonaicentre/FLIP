@@ -11,15 +11,23 @@
  * limitations under the License.
  */
 
-// Shapes of the FLIP#1556 drafting contract (POST /cohort/draft, GET /cohort/draft/usage),
-// as proposed in the issue. Only the fake drafter implements them so far.
+// The UI side of the FLIP#1556 drafting contract (POST /cohort/draft, GET /cohort/draft/usage).
+// api-drafter.ts maps the hub's responses onto it; fake-drafter.ts serves the VITE_LOCAL mock.
 
 /** Server-authoritative monthly allowance. Only a returned draft is charged. */
 export interface IDraftUsage {
+    /** False when the hub has drafting switched off: the assistant is hidden. */
+    enabled: boolean;
     limit: number;
     used: number;
     /** ISO timestamp of the next reset: 00:00 UTC on the 1st of next month. */
     resetsAt: string;
+}
+
+/** A question the assistant asked, with the researcher's answer. */
+export interface IDraftAnswer {
+    question: string;
+    answer: string;
 }
 
 export interface IDraftRequest {
@@ -27,7 +35,7 @@ export interface IDraftRequest {
     /** Picks the output contract: accession_id + person_id (imaging) or person_id only. */
     hasImaging: boolean;
     /** Answers to earlier clarification questions, oldest first. */
-    clarifications?: string[];
+    clarifications?: IDraftAnswer[];
 }
 
 export interface ICohortDraft {
@@ -64,6 +72,7 @@ export interface IDraftResponse {
 }
 
 export interface ICohortDrafter {
+    /** Rejects when the hub has no drafting routes (the assistant is then hidden). */
     getUsage(): Promise<IDraftUsage>;
     /** Rejects on failure or when `signal` aborts. Never runs SQL. */
     draft(request: IDraftRequest, signal: AbortSignal): Promise<IDraftResponse>;

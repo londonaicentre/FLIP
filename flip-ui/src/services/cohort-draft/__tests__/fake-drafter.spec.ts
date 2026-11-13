@@ -43,7 +43,10 @@ describe("fake cohort drafter", () => {
         });
         expect(pickResult({
             ...request,
-            clarifications: ["MRI"]
+            clarifications: [{
+                question: "Which modality: CT or MRI?",
+                answer: "MRI"
+            }]
         })).toMatchObject({
             status: "draft",
             sql: expect.stringContaining("4013636")

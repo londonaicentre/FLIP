@@ -18,6 +18,7 @@ import DraftUsageIndicator from "../DraftUsageIndicator.vue";
 const mountIndicator = (used: number) => mount(DraftUsageIndicator, {
     props: {
         usage: {
+            enabled: true,
             limit: 30,
             used,
             resetsAt: "2026-12-01T00:00:00.000Z"

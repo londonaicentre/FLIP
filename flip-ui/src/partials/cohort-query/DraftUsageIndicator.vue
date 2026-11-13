@@ -65,7 +65,9 @@ const RADIUS = 15;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
 const remaining = computed(() => Math.max(props.usage.limit - props.usage.used, 0));
-const filled = computed(() => CIRCUMFERENCE * Math.min(props.usage.used / props.usage.limit, 1));
+// A zero allowance reads as full, not NaN.
+const filled = computed(() =>
+    CIRCUMFERENCE * (props.usage.limit ? Math.min(props.usage.used / props.usage.limit, 1) : 1));
 
 const resetDate = computed(() => formatDraftReset(props.usage.resetsAt));
 

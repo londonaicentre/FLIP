@@ -285,7 +285,7 @@ import DraftUsageIndicator from "./DraftUsageIndicator.vue";
 
 const props = defineProps<{
     hasImaging: boolean;
-    /** Injected in tests; the page uses the session's fake drafter. */
+    /** The hub's routes, or the canned drafter in the VITE_LOCAL mock; defaults to the latter. */
     drafter?: ICohortDrafter;
 }>();
 
