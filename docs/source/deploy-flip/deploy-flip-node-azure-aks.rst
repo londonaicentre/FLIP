@@ -157,5 +157,5 @@ Troubleshooting
 - **kubectl times out or is refused.** Your IP has changed: ``make allow-ip``.
 - **Pods stay Pending while the node is full of dcm2niix Jobs.** dcm2niix Jobs created before the chart capped
   conversions each request a full CPU; the chart now registers the converter without a CPU limit. ``make clear-jobs``
-  lists every dcm2niix Job whose pod template sets a CPU limit and deletes them once you type ``yes``. Then relaunch
+  lists every Container Service Job (label ``XNAT_PROJECT``) whose pod template sets a CPU limit and deletes them once you type ``yes``. Then relaunch
   dcm2niix on those scans from XNAT (see :ref:`ts-k8s-dcm2niix-jobs-cap`).

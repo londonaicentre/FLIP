@@ -102,7 +102,7 @@ Trust's FL client and services are reporting.
 Training fails with ``num_samples=0``
 =====================================
 
-*Who: trust operator*
+*Who: trust operator, or the researcher for missing labels*
 
 The model's log shows:
 

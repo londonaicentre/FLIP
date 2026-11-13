@@ -36,8 +36,9 @@ Architecture
    At a glance: three zones and two paths. Every request crosses the platform team's inspected edge, and the
    workload account has no internet route of its own. The generated diagrams below show every resource.
 
-The diagrams below are generated from FLIP's Terraform each time this documentation is built, and a test keeps them
-in step with it. The networking account's edge
+The diagrams below are drawn each time this documentation is built, by a script kept next to the Terraform it
+depicts. A test pins every drawn node to a resource in the ``.tf`` files, and every load-bearing resource to a drawn
+node. The networking account's edge
 and the Transit Gateway belong to the platform team and are drawn from the handoff contract, not from FLIP's
 Terraform. The security controls are on :ref:`security`.
 

@@ -191,12 +191,8 @@ loads no OMOP vocabulary, so cohort queries use the vocabulary-free form.
 To check the node has joined:
 
 1. On the hub's *Trusts* page, the trust shows as online.
-2. On the node, the trust-api health check reports ``hub_key_match: true``:
-
-   .. code-block:: bash
-
-      make shell
-      curl -s localhost:<TRUST_API_PORT>/health
+2. On the node, the trust-api health check reports ``hub_key_match: true``. Open a shell with ``make shell``, then
+   run ``curl -s localhost:<TRUST_API_PORT>/health`` in it.
 
 Before ``deploy``:
 
@@ -234,7 +230,7 @@ Not yet supported
 *****************
 
 - **The node self-test before join** (``selftest_node.sh`` over SSM, as the Azure node runs it through Run
-  Command) and **the running-stack check after join** are not yet available for EC2 nodes.
+  Command) and **the running-stack check after join** (FLIP#1449) are not yet available for EC2 nodes.
 - **GPU hosts**: provisioning installs the NVIDIA driver and checks a container can see the GPU (the
   ``flip_gpu_host`` role; it does nothing on a CPU host), but ``make deploy`` still starts the FL client
   CPU-only. GPU instances have not been tested.

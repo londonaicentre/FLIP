@@ -164,7 +164,8 @@ The ``FLIP_API`` secret
    its values survive only in the admin's env file and the GitHub environment. If the AES key changes, every site needs
    a refreshed kit: see :ref:`admin-upgrading-sites`, "Refreshing site kits".
 
-A lost hub env file Rebuild the Terraform inputs from the deployed environment with
+A lost hub env file
+   Rebuild the Terraform inputs from the deployed environment with
    ``deploy/providers/AWS/scripts/reconcile_ci_env.py`` (see the :gh:`AWS deployment README
    <deploy/providers/AWS/README.md>`, "Recovering an environment's true values"). It recovers Terraform inputs only, not
    trust, XNAT, Orthanc or OMOP settings.

@@ -487,7 +487,8 @@ Key values
 
 Most values come from the kit through ``sync-kit``. Those you may set yourself are below. Keep them in a values file
 of your own and pass it to the deploy targets with ``VALUES_FILE=<your file>``: it is layered over the chart
-defaults, and the generated override still wins for the keys it sets. Do not pass settings with
+defaults. It is passed first, so ``values-secrets.yaml``, the generated override and any ``PLATFORM_VALUES``
+overlay win for the keys they set. Do not pass settings with
 ``helm upgrade --set``: the next deploy does not reuse them, so they silently disappear.
 
 .. list-table::

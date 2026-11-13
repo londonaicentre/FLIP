@@ -343,7 +343,7 @@ slots without a restart, so the next ``register-trusts`` can claim one.
 Rotating keys
 *************
 
-*Who: FLIP admin, with AWS access to the hub's account.* A trust's API key and internal service key are reissued in
+*Who: FLIP admin, with AWS access to the hub's account.* A trust's API key and trust-internal service key are reissued in
 place, without re-registering it:
 
 .. code-block:: shell

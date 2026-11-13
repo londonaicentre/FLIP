@@ -269,7 +269,7 @@ The hub deploy command (``make -C deploy/providers/AWS deploy-centralhub``) prin
 
 .. tip::
 
-   ``GET /fl/quiesce`` on the hub API reports whether it is safe to redeploy. It returns two fields:
+   ``GET /fl/quiesce`` on the hub API reports whether it is safe to redeploy. Two of its fields answer that:
 
    - ``deployment_mode``: whether deployment mode is on;
    - ``fl_quiesced``: true when no FL net's scheduler is busy.

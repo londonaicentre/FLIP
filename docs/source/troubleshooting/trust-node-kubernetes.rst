@@ -231,7 +231,7 @@ defaults when the Deployment was created, and no field manager owns them, so Hel
 beside the new ``type: Recreate`` and the object is invalid.
 
 **Fix.** The chart's ``make deploy`` (and so ``deploy-trust-k8s`` and ``upgrade-trust-k8s``) switches such
-Deployments before the upgrade. A plain ``helm upgrade`` does not; patch the named Deployment once, then upgrade:
+Deployments before the upgrade, with ``scripts/migrate-strategy.sh``. A plain ``helm upgrade`` does not; patch the named Deployment once, then upgrade:
 
 .. code-block:: shell
 

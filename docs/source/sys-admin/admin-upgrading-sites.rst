@@ -266,8 +266,8 @@ The upgrade never re-seeds data and never resets XNAT.
 
 Exit codes 2 to 6 all mean **nothing was changed**.
 
-Because the upgrade runs through ``make``, your shell always sees make's own exit status, 2. Read the upgrade's code
-from make's first ``*** … Error <code>`` line.
+Because the upgrade runs through ``make``, a failing run shows make's own exit status, 2, in your shell. Read the
+upgrade's code from make's first ``*** … Error <code>`` line.
 
 Step 5 — Verify
 ===============
@@ -352,7 +352,7 @@ the volume has, so the upgrade completes and re-syncs the application role's pas
 the application role stays the database superuser (see :ref:`ts-k8s-xnat-db-roles`). The move to PostgreSQL 16
 converges them, because the database is restored into a cluster with the current two roles.
 
-**The two XNAT database passwords must differ.** xnat-db refuses to start when these are equal:
+**The two XNAT database passwords must differ.** xnat-db's ``guard-xnat-db-passwords.sh`` refuses to start it when these are equal:
 
 - in the kit: ``XNAT_DATASOURCE_PASSWORD`` and ``XNAT_DATASOURCE_ADMIN_PASSWORD``;
 - in ``values-secrets.yaml``: ``xnat-datasource-password`` and ``xnat-datasource-admin-password``.
