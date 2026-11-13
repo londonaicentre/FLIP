@@ -409,13 +409,13 @@ addresses, emails and phone numbers in the description; an inline policy on ``ec
 configured model and that guardrail only (``bedrock:InvokeModel*`` and ``bedrock:ApplyGuardrail``); and the ``COHORT_DRAFT_*`` variables in the ``flip-api`` task, guardrail
 id and version included. Enabling it still needs:
 
-- **Model choice (decided: Claude Sonnet 5.5, EU processing).** The default is ``eu.anthropic.claude-sonnet-5-5``
+- **Model choice (decided 2026-11-13: Claude Sonnet 5.5, EU processing accepted).** The default is ``eu.anthropic.claude-sonnet-5-5``
   at effort ``low``: Claude Sonnet 5.5 through the EU cross-region inference profile, because in ``eu-west-2`` it is
   not offered on demand (checked on 2026-11-13). Requests and the guardrail check may be processed in another EU
   region. The case for that: the model receives only the researcher's description, the OMOP schema and example
-  queries, never patient data, and the guardrail blocks identifiers in the description. **This needs
-  information-governance sign-off** before the staging pilot; confirm on a real call that the guardrail applies
-  through the profile. ``anthropic.claude-opus-5-5`` (Claude Opus 5.5 on demand in ``eu-west-2``) is the UK-only
+  queries, never patient data: it turns text into an OMOP query against the data model. On that basis EU
+  processing was accepted on 2026-11-13. The guardrail still blocks identifiers a researcher might type into the
+  description; confirm on a real call that it applies through the profile. ``anthropic.claude-opus-5-5`` (Claude Opus 5.5 on demand in ``eu-west-2``) is the UK-only
   alternative, about 2.5× the cost per draft and slower; its safety classifier also refused two prompt-injection
   items in the benchmark.
 
