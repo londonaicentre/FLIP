@@ -14,7 +14,7 @@
 <template>
     <AiCard class="flex flex-col h-full">
         <div class="p-4 shrink-0">
-            <h2 class="text-lg font-semibold font-heading grow leading-loose">
+            <h2 class="text-lg font-semibold grow leading-loose">
                 Project Staging
             </h2>
         </div>

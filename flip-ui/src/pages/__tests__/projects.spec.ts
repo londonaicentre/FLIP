@@ -77,8 +77,8 @@ const stubs = {
     "icon-ph-squares-four-duotone": { template: "<span />" },
     "icon-ph-archive-duotone": { template: "<span />" },
     "icon-ph-users-three-duotone": { template: "<span />" },
-    "icon-ph-scan": { template: "<span />" },
-    "icon-ph-database": { template: "<span />" }
+    "icon-healthicons-xray-outline": { template: "<span />" },
+    "icon-healthicons-register-book-outline": { template: "<span />" }
 };
 
 const trust = (id: string, code: string, status: TrustApprovalStatus): IProjectTrust => ({
@@ -267,7 +267,7 @@ describe("Projects Page", () => {
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
         const header = wrapper.find("[data-test='projects-list-header']");
-        expect(header.findAll(".grid > div").map(c => c.text())).toEqual(["Project", "Description", "Trusts", "Status"]);
+        expect(header.findAll(".grid > div").map(c => c.text())).toEqual(["Project", "Type", "Description", "Trusts", "Status"]);
     });
 
     test("toggles between list and grid views via the view-mode buttons", async () => {
@@ -597,16 +597,17 @@ describe("Projects Page", () => {
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        const omop = wrapper.find("[data-test='project-type-chip-omop-only']");
-        const imaging = wrapper.find("[data-test='project-type-chip-imaging']");
+        const omop = wrapper.find("[data-test='projects-list-view'] [data-test='project-type-chip-omop-only']");
+        const imaging = wrapper.find("[data-test='projects-list-view'] [data-test='project-type-chip-imaging']");
         expect(omop.text()).toBe("OMOP only");
         expect(imaging.text()).toBe("Imaging + OMOP");
-        // Design tokens: steel blue for OMOP only, the primary tint for imaging.
-        expect(omop.classes()).toContain("bg-steel-100");
-        expect(imaging.classes()).toContain("bg-primary-100");
+        // Icons only on screen; the name stays for screen readers and the tooltip.
+        expect(omop.attributes("title")).toBe("OMOP only");
+        expect(omop.classes()).toContain("text-gray-800");
+        expect(imaging.classes()).toContain("text-gray-800");
     });
 
-    test("grid cards carry the type chip beside the status pill", async () => {
+    test("grid cards carry the type icons beside the status pill", async () => {
         setProject({
             ...makeProject("APPROVED", []),
             has_imaging: false

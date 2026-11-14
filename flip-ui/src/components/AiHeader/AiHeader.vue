@@ -52,7 +52,7 @@
                 <span
                     v-if="item.badge"
                     data-test="nav-badge"
-                    class="ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-2xs font-bold bg-primary-500 text-white"
+                    class="ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-xs font-bold bg-primary-500 text-white"
                     :aria-label="`${item.badge} awaiting your decision`"
                 >{{ item.badge }}</span>
                 <span
@@ -147,7 +147,7 @@
                                         {{ item.name }}
                                         <span
                                             v-if="item.badge"
-                                            class="ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-2xs font-bold bg-primary-500 text-white"
+                                            class="ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-xs font-bold bg-primary-500 text-white"
                                         >{{ item.badge }}</span>
                                     </router-link>
                                 </div>

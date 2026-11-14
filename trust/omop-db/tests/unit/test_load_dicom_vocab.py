@@ -12,6 +12,7 @@
 """Unit tests for the DICOM vocabulary loader helpers (no database required)."""
 
 import zipfile
+from datetime import date
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -22,6 +23,8 @@ from omop_db_tools.load_dicom_vocab import (
     REQUIRED_VOCAB_FILES,
     dicom_vocabulary_loaded,
     ensure_vocab_dir,
+    load_concepts,
+    load_relationships,
     load_vocabulary_metadata,
     main,
     safe_insert,
@@ -161,3 +164,99 @@ class TestAlreadyLoadedGuard:
     def test_skip_if_loaded_and_force_are_exclusive(self, tmp_path):
         with pytest.raises(SystemExit):
             main(["--vocab-dir", str(tmp_path), "--skip-if-loaded", "--force"])
+
+
+class TestLoadFromCsv:
+    """The CSV loaders, with safe_insert captured so no database is needed."""
+
+    @pytest.fixture
+    def inserted(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            "omop_db_tools.load_dicom_vocab.safe_insert", lambda table, df, engine: calls.append((table, df))
+        )
+        return calls
+
+    def _staging_csv(self, tmp_path, start_date):
+        pd.DataFrame(
+            {
+                "concept_id": [2128000010],
+                "valid_start_date": [start_date],
+                "valid_end_date": [20991231],
+                "standard_concept": ["S"],
+                "invalid_reason": ["D"],
+            }
+        ).to_csv(tmp_path / "omop_table_staging_v5.csv", index=False)
+
+    def test_concepts_get_parsed_dates_and_null_flags(self, tmp_path, inserted):
+        self._staging_csv(tmp_path, 19930101)
+
+        load_concepts(MagicMock(), tmp_path)
+
+        [(table, df)] = inserted
+        assert table == "CONCEPT"
+        assert df["valid_start_date"].tolist() == [pd.Timestamp("1993-01-01")]
+        assert df["valid_end_date"].tolist() == [pd.Timestamp("2099-12-31")]
+        assert df["standard_concept"].tolist() == [None]
+        assert df["invalid_reason"].tolist() == [None]
+
+    def test_malformed_concept_date_raises_before_any_insert(self, tmp_path, inserted):
+        self._staging_csv(tmp_path, "not-a-date")
+
+        with pytest.raises(ValueError, match="not-a-date"):
+            load_concepts(MagicMock(), tmp_path)
+
+        assert inserted == []
+
+    def test_relationships_merge_three_files_without_index_columns(self, tmp_path, inserted):
+        # to_csv's default index is the "Unnamed: 0" column the upstream bundle ships.
+        pd.DataFrame({"concept_id_1": [1], "concept_id_2": [2]}).to_csv(
+            tmp_path / "part3_to_part16_relationship_via_CID.csv"
+        )
+        pd.DataFrame({"concept_id_1": [3], "concept_id_2": [4]}).to_csv(
+            tmp_path / "cs_values_maps_to_value.csv", index=False
+        )
+        pd.DataFrame({"concept_id_1": [5], "concept_id_2": [6]}).to_csv(tmp_path / "cs_values_maps_to.csv")
+
+        load_relationships(MagicMock(), tmp_path)
+
+        [(table, df)] = inserted
+        assert table == "CONCEPT_RELATIONSHIP"
+        assert df.columns.tolist() == ["concept_id_1", "concept_id_2", "valid_start_date", "valid_end_date"]
+        assert df["concept_id_1"].tolist() == [1, 3, 5]
+        assert set(df["valid_start_date"]) == {date(1993, 1, 1)}
+        assert set(df["valid_end_date"]) == {date(2099, 12, 31)}
+
+
+class TestMain:
+    def _run(self, monkeypatch, tmp_path, loaded, *flags):
+        engine = MagicMock()
+        engine.connect.return_value.__enter__.return_value.execute.return_value.first.return_value = loaded
+        monkeypatch.setattr("omop_db_tools.load_dicom_vocab.create_engine", lambda *a, **k: engine)
+        monkeypatch.setattr("omop_db_tools.load_dicom_vocab.get_settings", lambda: MagicMock())
+        steps = MagicMock()
+        for name in ("ensure_vocab_dir", "load_vocabulary_metadata", "load_concepts", "load_relationships"):
+            monkeypatch.setattr(f"omop_db_tools.load_dicom_vocab.{name}", getattr(steps, name))
+
+        main(["--vocab-dir", str(tmp_path), *flags])
+
+        return engine, steps
+
+    @pytest.mark.parametrize(
+        ("loaded", "flags"),
+        [(None, ["--skip-if-loaded"]), ((1,), ["--force"]), ((1,), [])],
+        ids=["fresh-database", "forced", "unguarded"],
+    )
+    def test_loads_in_order_from_the_vocab_dir(self, monkeypatch, tmp_path, capsys, loaded, flags):
+        engine, steps = self._run(monkeypatch, tmp_path, loaded, *flags)
+
+        assert [call[0] for call in steps.mock_calls] == [
+            "ensure_vocab_dir",
+            "load_vocabulary_metadata",
+            "load_concepts",
+            "load_relationships",
+        ]
+        steps.ensure_vocab_dir.assert_called_once_with(tmp_path)
+        steps.load_concepts.assert_called_once_with(engine, tmp_path)
+        steps.load_relationships.assert_called_once_with(engine, tmp_path)
+        assert "load complete" in capsys.readouterr().out

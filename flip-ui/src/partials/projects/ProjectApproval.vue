@@ -15,13 +15,13 @@
     <AiCard class="flex flex-col h-full">
         <div class="p-4 shrink-0">
             <div class="flex items-baseline justify-between gap-3">
-                <h2 class="text-lg font-semibold font-heading grow leading-loose">
+                <h2 class="text-lg font-semibold grow leading-loose">
                     Trust Approval
                 </h2>
                 <span
                     v-if="sortedTrusts.length"
                     data-test="trust-approval-count"
-                    class="font-mono text-2xs uppercase tracking-wide text-gray-500 dark:text-gray-300 shrink-0"
+                    class="text-xs tabular-nums text-gray-500 dark:text-gray-300 shrink-0"
                 >
                     {{ countLabel }}
                 </span>
@@ -42,7 +42,7 @@
                                     {{ label(trust) }}
                                 </p>
                                 <p
-                                    class="mt-0.5 text-2xs truncate text-gray-500 dark:text-gray-300"
+                                    class="mt-0.5 text-note truncate text-gray-500 dark:text-gray-300"
                                     :data-test="`trust-decision-${idx}`"
                                 >
                                     {{ decisionLine(trust) }}
@@ -91,7 +91,7 @@
                             </div>
                             <span
                                 v-else
-                                :class="['inline-flex items-center gap-1 px-2 py-1 rounded-md text-2xs font-semibold shrink-0', chipFor(trust).class]"
+                                :class="['inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold shrink-0', chipFor(trust).class]"
                                 :data-test="`trust-status-chip-${idx}`"
                                 :data-status="trust.status"
                                 :title="decisionTitle(trust)"
@@ -106,7 +106,7 @@
                 <p
                     v-if="allDeclined"
                     data-test="trust-all-declined"
-                    class="px-4 py-3 text-xs text-gray-600 dark:text-gray-300"
+                    class="px-4 py-3 text-sm text-gray-600 dark:text-gray-300"
                 >
                     Every trust declined, so the project stays staged until a decision changes or it is unstaged.
                 </p>
@@ -172,7 +172,7 @@ const chipFor = (trust: IProjectTrust) =>
     (closedWithoutDecision(trust) ? NOT_APPROVED_CHIP : STATUS_CHIP[trust.status]);
 
 const CHOICE_BASE_CLASS =
-    "relative inline-flex items-center gap-1 px-2 py-1 text-2xs font-semibold border transition "
+    "relative inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold border transition "
     + "focus:z-10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-50";
 
 const CHOICE_CLASS = {

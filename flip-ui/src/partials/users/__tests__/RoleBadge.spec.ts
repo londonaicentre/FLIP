@@ -57,7 +57,7 @@ describe("RoleBadge", () => {
             }
         });
 
-        expect(dense.get("[data-test=role-badge]").classes()).toContain("text-2xs");
-        expect(normal.get("[data-test=role-badge]").classes()).not.toContain("text-2xs");
+        expect(dense.get("[data-test=role-badge]").classes()).toContain("text-xs");
+        expect(normal.get("[data-test=role-badge]").classes()).not.toContain("text-xs");
     });
 });

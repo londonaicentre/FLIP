@@ -15,7 +15,7 @@
     <div class="overflow-hidden bg-white border border-gray-200 rounded-xl dark:bg-dark-canvas dark:border-dark-border">
         <div class="flex items-center justify-between px-5 py-4">
             <div>
-                <div class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 dark:text-gray-300">
+                <div class="text-xs font-semibold text-gray-500 dark:text-gray-300">
                     Aggregated cohort {{ anyRunning ? "(live)" : "" }}
                 </div>
                 <div class="mt-1.5 flex items-baseline gap-2">
@@ -26,7 +26,7 @@
                         {{ anyRunning ? "records so far" : "records" }}
                     </span>
                 </div>
-                <div class="mt-1.5 text-xs text-gray-500 dark:text-gray-300">
+                <div class="mt-1.5 text-note text-gray-500 dark:text-gray-300">
                     {{ subtitle }}
                 </div>
             </div>

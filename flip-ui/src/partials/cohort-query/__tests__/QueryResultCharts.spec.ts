@@ -20,13 +20,23 @@ import { vi } from "vitest";
 import { nextTick } from "vue";
 
 import QueryResultCharts from "@/partials/cohort-query/QueryResultCharts.vue";
+import { useProjectStore } from "@/store/project";
 
-const swrvMock = vi.hoisted(() => ({ value: null as unknown }));
+const swrvMock = vi.hoisted(() => ({
+    value: null as unknown,
+    key: undefined as string | undefined
+}));
 
 vi.mock("swrv", async () => {
     const { ref } = await import("vue");
 
-    return { default: () => ({ data: ref(swrvMock.value) }) };
+    return {
+        default: (key: () => string) => {
+            swrvMock.key = key();
+
+            return { data: ref(swrvMock.value) };
+        }
+    };
 });
 
 const RESULTS_WITH_PLOTS = {
@@ -143,6 +153,44 @@ describe("QueryResultCharts", () => {
         expect(grid.classes()).toContain("grid");
         expect(grid.classes()).toContain("grid-cols-[repeat(auto-fill,minmax(min(100%,420px),1fr))]");
         expect(grid.classes()).not.toContain("lg:columns-2");
+    });
+
+    test("polls the results of the project's current query, and nothing while it has none", () => {
+        mountCharts();
+        expect(swrvMock.key).toBe("/cohort/q-1");
+
+        mountCharts({
+            project: {
+                id: "p-1",
+                status: "UNSTAGED"
+            }
+        });
+        expect(swrvMock.key).toBe("");
+    });
+
+    test("says so when the query returned too few records to plot", async () => {
+        const wrapper = mountCharts({
+            data: {
+                recordCount: 0,
+                trustsResults: []
+            }
+        });
+        await flushPromises();
+
+        expect(wrapper.find("[data-test='no-results-message']").text()).toContain("did not return enough records");
+        expect(wrapper.find("[data-test='ai-chart']").exists()).toBe(false);
+    });
+
+    test("drops the plots for the loader when the query is re-run under a new id", async () => {
+        const wrapper = mountCharts({ data: RESULTS_WITH_PLOTS });
+        await flushPromises();
+        expect(wrapper.find("[data-test='ai-chart']").exists()).toBe(true);
+
+        useProjectStore().project!.query!.id = "q-2";
+        await flushPromises();
+
+        expect(wrapper.find("[data-test='ai-loader']").exists()).toBe(true);
+        expect(wrapper.find("[data-test='ai-chart']").exists()).toBe(false);
     });
 
     test("frames each plot as a flat border box, not a shadowed card", async () => {

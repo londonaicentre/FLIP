@@ -46,7 +46,7 @@
                             <DialogPanel class="flex flex-col h-full bg-white dark:bg-dark-surface divide-y divide-gray-100 dark:divide-dark-border shadow-xl dark:ring-1 dark:ring-white/20">
                                 <div class="p-4 bg-primary-500 dark:bg-dark-canvas sm:px-6">
                                     <div class="flex items-center justify-between">
-                                        <DialogTitle class="text-xl font-bold font-heading text-primary-100 dark:text-gray-300">
+                                        <DialogTitle class="text-xl font-bold text-primary-100 dark:text-gray-300">
                                             Create Model
                                         </DialogTitle>
                                         <div class="flex items-start ml-3 h-7 text-primary-300 dark:text-gray-300">

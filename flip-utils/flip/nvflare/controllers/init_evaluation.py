@@ -67,10 +67,10 @@ class InitEvaluation(Controller):
         return self._model_id
 
     def start_controller(self, fl_ctx: FLContext) -> None:
-        self.log_info(fl_ctx, "Initializing InitTraining workflow.")
+        self.log_info(fl_ctx, "Initializing InitEvaluation workflow.")
         engine = fl_ctx.get_engine()
         if not engine:
-            self.system_panic("Engine not found. InitTraining exiting.", fl_ctx)
+            self.system_panic("Engine not found. InitEvaluation exiting.", fl_ctx)
             return
 
     def control_flow(self, abort_signal: Signal, fl_ctx: FLContext) -> None:
@@ -130,12 +130,12 @@ class InitEvaluation(Controller):
                 return
         except BaseException as e:
             traceback.print_exc()
-            error_msg = f"Exception in InitTraining control_flow: {e}"
+            error_msg = f"Exception in InitEvaluation control_flow: {e}"
             self.log_exception(fl_ctx, error_msg)
             self.system_panic(str(e), fl_ctx)
 
     def stop_controller(self, fl_ctx: FLContext) -> None:
-        self.log_info(fl_ctx, "Stopping InitTraining controller")
+        self.log_info(fl_ctx, "Stopping InitEvaluation controller")
         self.cancel_all_tasks()
 
     def process_result_of_unknown_task(
@@ -196,7 +196,9 @@ class InitEvaluation(Controller):
                     model_id=self._resolve_model_id(fl_ctx),
                 )
 
-            self.system_panic("Execution Exception initiating client training. InitTraining exiting.", fl_ctx=fl_ctx)
+            self.system_panic(
+                "Execution Exception initiating client evaluation. InitEvaluation exiting.", fl_ctx=fl_ctx
+            )
             return False
 
         return None

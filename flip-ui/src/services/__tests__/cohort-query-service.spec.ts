@@ -14,10 +14,15 @@
 import { describe, expect, test, vi } from "vitest";
 
 import { _http } from "@/services/api";
-import { getOMOPResults } from "@/services/cohort-query-service";
+import { getOMOPResults, sendQuery } from "@/services/cohort-query-service";
 
 vi.mock("@/services/api", () => {
-    return { _http: { get: vi.fn() } };
+    return {
+        _http: {
+            get: vi.fn(),
+            post: vi.fn()
+        }
+    };
 });
 
 describe("getOMOPResults", () => {
@@ -61,5 +66,28 @@ describe("getOMOPResults", () => {
         expect(config?.validateStatus?.(202)).toBe(true);
         expect(config?.validateStatus?.(200)).toBe(true);
         expect(config?.validateStatus?.(404)).toBe(false);
+    });
+});
+
+describe("sendQuery", () => {
+    test("POSTs the cohort query and returns the hub's per-trust dispatch result", async () => {
+        const body = {
+            name: "q",
+            projectId: "p-1",
+            query: "SELECT 1"
+        };
+        const response = {
+            queryId: "q-1",
+            trust: [{
+                name: "Trust_1",
+                statusCode: 200
+            }]
+        };
+        vi.mocked(_http.post).mockResolvedValueOnce({ data: response });
+
+        const result = await sendQuery("/cohort", body);
+
+        expect(_http.post).toHaveBeenCalledWith("/cohort", body);
+        expect(result).toEqual(response);
     });
 });

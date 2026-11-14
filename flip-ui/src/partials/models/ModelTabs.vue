@@ -24,7 +24,7 @@
             :data-test="`tab-${tab.id}`"
             :disabled="tab.locked"
             :aria-current="tab.id === modelValue ? 'page' : undefined"
-            class="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-[13px] font-semibold
+            class="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-note font-semibold
                    transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500
                    focus-visible:ring-offset-2 dark:focus-visible:ring-offset-dark-canvas"
             :class="tabClass(tab)"
@@ -54,7 +54,7 @@
 
             <span
                 v-if="tab.locked"
-                class="font-mono text-2xs font-normal tracking-[0.04em]"
+                class="text-xs font-normal"
             >after start</span>
         </button>
     </nav>

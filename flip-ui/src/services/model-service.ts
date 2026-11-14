@@ -191,48 +191,108 @@ export function modelStatusLabelWithQueue(status: ModelStatus | undefined, queue
     return queuePosition != null && queuePosition >= 1 ? `${label} (${queuePosition})` : label;
 }
 
-/** True for terminal failure / cancellation states (drives the red-cross icon). */
-export function isModelStatusError(status: ModelStatus | undefined): boolean {
-    return status === "ERROR" || status === "STOPPED" || status === "RESULTS_UPLOAD_FAILED";
-}
-
 type ModelStatusTone = "error" | "uploaded" | "running" | "preparing" | "neutral";
 
+export type ModelStatusGroupKey = "preparing" | "running" | "queued" | "attention" | "stopped" | "completed";
+
+interface IModelStatusGroup {
+    key: ModelStatusGroupKey;
+    label: string;
+    statuses: ModelStatus[];
+    tone: ModelStatusTone;
+    /** What the list says when this filter matches nothing. */
+    empty: string;
+}
+
+/**
+ * The plain-language groups the Models page filters by, in filter order (also the Status sort's
+ * order). The group's label is also the word its rows' status pill shows, so the filter and the
+ * list use one vocabulary.
+ */
+export const MODEL_STATUS_GROUPS: IModelStatusGroup[] = [
+    // PENDING ("Model Created") counts as preparing: the owner is still assembling the files.
+    {
+        key: "preparing",
+        label: "Preparing",
+        statuses: ["PENDING", "PREPARED"],
+        tone: "preparing",
+        empty: "No models being prepared."
+    },
+    {
+        key: "running",
+        label: "Running",
+        statuses: ["RUNNING"],
+        tone: "running",
+        empty: "No running models."
+    },
+    {
+        key: "queued",
+        label: "Queued",
+        statuses: ["INITIATED"],
+        tone: "neutral",
+        empty: "No queued models."
+    },
+    {
+        key: "attention",
+        label: "Needs attention",
+        statuses: ["ERROR", "RESULTS_UPLOAD_FAILED"],
+        tone: "error",
+        empty: "No models need attention."
+    },
+    // Someone chose to stop it, so nothing is wrong: grey, not red.
+    {
+        key: "stopped",
+        label: "Stopped",
+        statuses: ["STOPPED"],
+        tone: "neutral",
+        empty: "No stopped models."
+    },
+    {
+        key: "completed",
+        label: "Completed",
+        statuses: ["RESULTS_UPLOADED"],
+        tone: "uploaded",
+        empty: "No completed models."
+    }
+];
+
+/** The group a model status belongs to (undefined for a status this bundle does not know). */
+export function modelStatusGroup(status: ModelStatus | undefined): IModelStatusGroup | undefined {
+    return MODEL_STATUS_GROUPS.find(group => status && group.statuses.includes(status));
+}
+
 // Whole literal Tailwind classes so the JIT compiler emits them.
-const MODEL_STATUS_TONE_CLASSES: Record<ModelStatusTone, { pill: string; dot: string }> = {
+// `tile` is a selected filter tile: filled as well as ringed, so it never reads as a focus ring.
+export const MODEL_STATUS_TONE_CLASSES: Record<ModelStatusTone, { pill: string; dot: string; tile: string }> = {
     error: {
         pill: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200",
-        dot: "bg-red-500"
+        dot: "bg-red-500",
+        tile: "border-red-500 ring-red-500/40 bg-red-50 dark:bg-red-900/30"
     },
     uploaded: {
         pill: "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100",
-        dot: "bg-emerald-500"
+        dot: "bg-emerald-500",
+        tile: "border-emerald-500 ring-emerald-500/40 bg-emerald-50 dark:bg-emerald-900/30"
     },
     running: {
         pill: "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/40 dark:text-fuchsia-200",
-        dot: "bg-fuchsia-500"
+        dot: "bg-fuchsia-500",
+        tile: "border-fuchsia-500 ring-fuchsia-500/40 bg-fuchsia-50 dark:bg-fuchsia-900/30"
     },
     preparing: {
         pill: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
-        dot: "bg-amber-500"
+        dot: "bg-amber-500",
+        tile: "border-amber-500 ring-amber-500/40 bg-amber-50 dark:bg-amber-900/30"
     },
     neutral: {
         pill: "bg-gray-200 text-gray-700 dark:bg-dark-raised dark:text-gray-300",
-        dot: "bg-gray-400"
+        dot: "bg-gray-400",
+        tile: "border-gray-500 ring-gray-400/40 bg-gray-100 dark:bg-dark-raised"
     }
 };
 
-function modelStatusTone(status: ModelStatus | undefined): ModelStatusTone {
-    if (isModelStatusError(status)) return "error";
-    if (status === "RESULTS_UPLOADED") return "uploaded";
-    if (status === "RUNNING") return "running";
-    // PENDING ("Model Created") shares PREPARED's amber: both are the "preparing" phase the
-    // /models filter tile counts them under, and a row that reads grey while its own tile
-    // reads amber tells the user two different things about one model.
-    if (status === "PREPARED" || status === "PENDING") return "preparing";
-
-    return "neutral";
-}
+const modelStatusTone = (status: ModelStatus | undefined): ModelStatusTone =>
+    modelStatusGroup(status)?.tone ?? "neutral";
 
 /**
  * Pill classes for the model status chip (the /models-page idiom: coloured
@@ -245,6 +305,11 @@ export function modelStatusPillClass(status: ModelStatus | undefined): string {
 /** Dot classes for the model status chip, in the same tone as modelStatusPillClass. */
 export function modelStatusDotClass(status: ModelStatus | undefined): string {
     return MODEL_STATUS_TONE_CLASSES[modelStatusTone(status)].dot;
+}
+
+/** The word the status pill shows: its filter group's label, so the pill and the filter agree. */
+export function modelStatusPillLabel(status: ModelStatus | undefined): string {
+    return modelStatusGroup(status)?.label ?? modelStatusLabel(status);
 }
 
 /**
@@ -477,9 +542,7 @@ export interface IModelSummary {
     projectName: string;
     ownerId: string;
     ownerName?: string | null;
-    // Optional only until the deployed API ships the field: the owner sub-line
-    // shows an em-dash and the default created-sort keeps the backend order
-    // when it is absent.
+    // Optional only until the deployed API ships the field.
     creationTimestamp?: string;
     trusts: IModelSummaryTrust[];
     // The model's 1-based place in the FL training queue (1 = next to be picked
@@ -488,7 +551,7 @@ export interface IModelSummary {
 }
 
 /**
- * A page of the estate-wide Models list plus per-status totals for the filter tiles.
+ * A page of the estate-wide Models list plus per-status totals for the status filter.
  * ``statusCounts`` maps each ``ModelStatus`` to its count across the caller's
  * access-scoped set (honouring search, ignoring the active status filter). Statuses
  * with no models are omitted, so the map is partial.

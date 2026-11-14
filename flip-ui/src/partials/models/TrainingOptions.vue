@@ -29,7 +29,7 @@
                     <div
                         data-test="required-files-summary"
                         class="mr-2 text-sm"
-                        :class="requiredReady ? 'text-gray-400 dark:text-gray-300' : 'text-amber-800 dark:text-amber-300'"
+                        :class="requiredReady ? 'text-gray-500 dark:text-gray-300' : 'text-amber-800 dark:text-amber-300'"
                     >
                         {{ requiredSummary }}
                     </div>
@@ -37,7 +37,7 @@
                 <div class="mt-1 text-right sm:mt-0 sm:col-span-1">
                     <span
                         data-test="required-files-status"
-                        class="inline-flex px-2.5 py-1 text-[13px] font-semibold rounded-full"
+                        class="inline-flex px-2.5 py-1 text-note font-semibold rounded-full"
                         :class="requiredReady
                             ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300'
                             : 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'"
@@ -49,7 +49,7 @@
             <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:pt-5">
                 <label for="enriched" class="block text-sm font-medium text-gray-700 dark:text-gray-300 sm:col-span-2 sm:mt-px sm:pt-2">
                     Dataset enriched
-                    <div class="mr-2 text-sm text-gray-400 dark:text-gray-300">
+                    <div class="mr-2 text-sm text-gray-500 dark:text-gray-300">
                         {{ hasImaging
                             ? "Confirm your dataset has been enriched as required before training"
                             : "This project has no imaging to enrich. Confirm your data is ready before training" }}
@@ -69,7 +69,7 @@
             <div class="sm:grid sm:grid-cols-5 sm:gap-4 sm:items-start sm:pt-5">
                 <label class="block space-y-2 text-sm font-medium text-gray-700 dark:text-gray-300 sm:col-span-2 sm:mt-px sm:pt-2">
                     Participating Trusts
-                    <div class="mr-2 text-sm text-gray-400 dark:text-gray-300">
+                    <div class="mr-2 text-sm text-gray-500 dark:text-gray-300">
                         A minimum of 1 Trust must be selected for training
                     </div>
                 </label>
@@ -114,7 +114,7 @@
             <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-start sm:pt-5">
                 <label for="gpu_override" class="block text-sm font-medium text-gray-700 dark:text-gray-300 sm:col-span-2 sm:mt-px sm:pt-2">
                     GPUs per trust
-                    <div class="mr-2 text-sm text-gray-400 dark:text-gray-300">
+                    <div class="mr-2 text-sm text-gray-500 dark:text-gray-300">
                         Off, the GPUs in the job's <code>meta.json</code> apply, or the platform default. On, this run
                         asks every selected trust for the number you set here. A trust that cannot provide it holds
                         the run until it can; the request is never lowered to fit.

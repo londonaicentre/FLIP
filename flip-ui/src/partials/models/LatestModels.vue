@@ -15,7 +15,7 @@
     <AiCard class="flex flex-col h-full">
         <div class="px-6 py-4 shrink-0">
             <div class="flex items-center justify-between">
-                <h2 class="text-lg font-semibold font-heading grow leading-loose">
+                <h2 class="text-lg font-semibold grow leading-loose">
                     Models
                 </h2>
                 <div v-if="!isViewer && !readOnly && projectStore.project?.status === 'APPROVED'">
@@ -65,24 +65,24 @@
                             :class="readOnly ? '' : 'cursor-pointer hover:bg-gray-50 dark:hover:bg-dark-surface'"
                             @click="readOnly || navigate()"
                         >
-                            <div class="flex flex-col gap-0.5 w-full text-xs min-w-0">
+                            <div class="flex flex-col gap-0.5 w-full text-note min-w-0">
                                 <div class="flex items-center justify-between gap-2 min-w-0">
                                     <p class="font-semibold leading-tight text-primary-600 dark:text-primary-200 truncate">
                                         {{ model.name }}
                                     </p>
                                     <span
                                         data-test="latest-model-status-chip"
-                                        class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-2xs font-medium shrink-0"
+                                        class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium shrink-0"
                                         :class="modelStatusPillClass(model.status)"
                                     >
                                         <span class="inline-block w-1.5 h-1.5 rounded-full" :class="modelStatusDotClass(model.status)" />
-                                        {{ modelStatusLabel(model.status) }}
+                                        {{ modelStatusPillLabel(model.status) }}
                                     </span>
                                 </div>
                                 <p class="leading-tight text-gray-500 dark:text-gray-300 truncate">
                                     {{ model.description }}
                                     <template v-if="!model.description">
-                                        <span class="italic text-gray-400 dark:text-gray-300">No description provided...</span>
+                                        <span class="text-gray-500 dark:text-gray-300">No description provided...</span>
                                     </template>
                                 </p>
                             </div>
@@ -143,8 +143,8 @@ import useErrorHandler from "@/composables/useErrorHandler";
 import { usePermissions } from "@/composables/usePermissions";
 import { getModels,
     modelStatusDotClass,
-    modelStatusLabel,
-    modelStatusPillClass } from "@/services/model-service";
+    modelStatusPillClass,
+    modelStatusPillLabel } from "@/services/model-service";
 import { useModalsStore } from "@/store/modals";
 import { useProjectStore } from "@/store/project";
 

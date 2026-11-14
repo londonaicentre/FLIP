@@ -20,15 +20,15 @@
         <div class="px-[22px] pt-[22px] pb-[18px] border-b border-gray-200 dark:border-dark-border">
             <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
-                    <p class="text-2xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                    <p class="text-xs text-gray-500 dark:text-gray-300">
                         Trust detail
                     </p>
                     <slot name="title" :trust-name="trust.name">
-                        <h2 class="font-heading font-semibold text-[19px] mt-1 text-gray-900 dark:text-gray-100 truncate">
+                        <h2 class="font-semibold text-[19px] mt-1 text-gray-900 dark:text-gray-100 truncate">
                             {{ trust.name }}
                         </h2>
                     </slot>
-                    <p class="font-mono text-xs text-gray-600 dark:text-gray-300 mt-0.5 truncate">
+                    <p class="text-note text-gray-600 dark:text-gray-300 mt-0.5 truncate">
                         {{ codeAndRegion }}
                     </p>
                 </div>
@@ -43,7 +43,7 @@
                 </span>
                 <span
                     data-test="drawer-heartbeat"
-                    class="font-mono text-xs"
+                    class="text-xs tabular-nums"
                     :class="state === 'offline'
                         ? 'text-red-600 dark:text-red-400'
                         : 'text-gray-600 dark:text-gray-300'"
@@ -59,7 +59,7 @@
         <div v-if="state !== 'online'" class="px-[14px] pt-[14px]">
             <div
                 data-test="drawer-banner"
-                class="flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[12.5px] font-semibold"
+                class="flex items-start gap-2 rounded-lg border px-3 py-2.5 text-note font-semibold"
                 :class="state === 'offline'
                     ? 'bg-red-500/[0.08] border-red-500/25 text-red-800 dark:text-red-300'
                     : 'bg-amber-500/10 border-amber-500/30 text-amber-800 dark:text-amber-300'"
@@ -71,7 +71,7 @@
 
         <!-- Container list -->
         <div class="flex-1 overflow-y-auto px-[22px] pb-[22px] pt-2">
-            <p class="text-2xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300 pt-4 pb-1">
+            <p class="text-xs text-gray-500 dark:text-gray-300 pt-4 pb-1">
                 Containers · {{ services.length }}
             </p>
             <div
@@ -88,26 +88,26 @@
                 />
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center justify-between gap-2">
-                        <span class="font-mono text-[13px] font-semibold text-gray-900 dark:text-gray-100 truncate">
+                        <span class="font-mono text-note font-semibold text-gray-900 dark:text-gray-100 truncate">
                             {{ svc.label }}
                         </span>
                         <span
                             data-test="container-chip"
-                            class="shrink-0 px-2 py-0.5 rounded-full text-2xs font-bold whitespace-nowrap"
+                            class="shrink-0 px-2 py-0.5 rounded-full text-xs font-bold whitespace-nowrap"
                             :class="CHIP_CLASSES[svc.status]"
                         >
                             {{ CHIP_LABELS[svc.status] }}
                         </span>
                     </div>
-                    <p class="text-[11.5px] text-gray-600 dark:text-gray-300 mt-0.5">
+                    <p class="text-note text-gray-600 dark:text-gray-300 mt-0.5">
                         {{ svc.role }}
                     </p>
-                    <p data-test="container-meta" class="font-mono text-2xs text-gray-500 dark:text-gray-300 mt-1.5">
+                    <p data-test="container-meta" class="font-mono text-xs text-gray-500 dark:text-gray-300 mt-1.5">
                         <span>{{ svc.version ?? "—" }}</span>
                         <span
                             v-if="driftsFromHub(svc)"
                             data-test="version-drift"
-                            class="ml-1.5 px-1.5 py-0.5 rounded-full text-2xs font-bold whitespace-nowrap bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+                            class="ml-1.5 px-1.5 py-0.5 rounded-full text-xs font-bold whitespace-nowrap bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
                             :title="`This container runs ${svc.version}; the hub runs ${hubVersion}. Move the site with: make upgrade-onprem-trust KIT=<CODE>`"
                         >≠ hub {{ hubVersion }}</span>
                         <span class="mx-2 text-gray-300 dark:text-gray-600">·</span>

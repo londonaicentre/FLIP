@@ -50,4 +50,13 @@ describe("Project Users Modal", () => {
     ] as const)("%s is rendered initially: %s", (key, present) => {
         expect(component.find(AddProjectUsers[key]).exists()).toBe(present);
     });
+
+    it("Enables the Add button only once an address has been entered", async () => {
+        const addUserButton = component.find(AddProjectUsers.addUserButton);
+        expect(addUserButton.attributes("disabled")).toBeDefined();
+
+        await component.find(AddProjectUsers.addUserInput).setValue("new@e.com");
+
+        expect(addUserButton.attributes("disabled")).toBeUndefined();
+    });
 });
