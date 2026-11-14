@@ -14,23 +14,29 @@
 # Trust host roles
 
 One set of Ansible roles prepares any host for the trust Compose stack. A play per host type composes
-them and states only what differs: [`../onprem.yml`](../onprem.yml) for a site-owned host,
-[`../aws-ec2-host.yml`](../aws-ec2-host.yml) for an EC2 node (which adds its own AWS-only plays: AWS CLI,
-CloudWatch, the S3 kit and vocabulary), and [`../azure.yml`](../azure.yml) for the Azure VM.
+them and states only what differs:
+
+- [`../onprem.yml`](../onprem.yml): a site-owned host.
+- [`../aws-ec2-host.yml`](../aws-ec2-host.yml): an EC2 node, imported by [`../aws-ec2.yml`](../aws-ec2.yml). It adds AWS-only steps: AWS CLI, CloudWatch, the S3 kit source and the OMOP vocabulary.
+- [`../azure.yml`](../azure.yml): the Azure VM.
 
 | Role | Does | Varies by host type through |
 | ---- | ---- | --------------------------- |
 | `flip_base_packages` | apt-installs curl, unzip, tar, openssl | `flip_base_packages` |
-| `flip_docker` | Docker via `geerlingguy.docker` | `flip_docker_users` — empty by default; **docker group = root**. EC2 opts `ubuntu` in (SSM-only host); on-prem never does |
+| `flip_docker` | Docker via `geerlingguy.docker` | `flip_docker_users` — empty by default, because docker-group membership is root-equivalent. EC2 adds `ubuntu` (SSM-only host); on-prem never adds anyone |
 | `flip_trust_dirs` | `/opt/flip`, the images trees and their per-net slices (backend-aware ownership), the XNAT bind mounts (uid 1001), the approved-cohort membership stores (uid 1000, FLIP#857), optional Loki/Grafana host dirs | `flip_app_dirs`, `flip_images_base_dirs` (on-prem: one tree; EC2: one per FL kit slot), `flip_cohort_snapshot_dirs` (slots 1 and 2; EC2 adds its registered slot), `fl_backend`, `flip_observability_volume_dirs` |
 | `flip_fl_kit` | `fl_kit_dir`, then by `fl_kit_source`: `s3` syncs this host's slot out of the hub's bucket (the FLIP#965 guards — wipe first, assert the result), `precreate` lays down the tree for a hand-extracted tarball, `local` copies the slot's kit from a directory on the controller (`fl_kit_local_src`), `none` does nothing more | `fl_kit_source`, `trust_num`, `flip_aicentre_bucket`, `fl_kit_date`, `fl_kit_local_src` |
 | `flip_observability_config` | copies `trust/observability/**` into the dir the prod compose mounts (`/opt/flip/config/observability`) | `observability_dest_dir` |
 | `flip_omop_vocab` | streams the licensed core vocabulary into the seeded cluster; bundle from the hub's S3 bucket via an instance role, so EC2-only | `vocab_s3_bucket`, `omop_postgres_*`, `omop_db_tag` |
 
+Three more roles serve only `aws-ec2-host.yml`: `flip_aws_cli` (AWS CLI v2), `flip_cloudwatch_agent`
+(the CloudWatch agent) and `flip_gpu_host` (holds the NVIDIA driver through the apt upgrade, then wires
+the container runtime into Docker on a GPU host).
+
 The `flip_trust_seed` role seeds the OMOP and Orthanc stores. Since FLIP#1187 they start empty and are seeded
 from the canonical dataset by the one procedure in `trust/seed_trust.sh`: on-prem at `make -C trust up-trust`
 (`ensure-seeded`), on an EC2 node by `flip_trust_seed` in `aws-ec2-host.yml` (it runs the procedure in
-throwaway containers against the stopped stack; guards `deploy/providers/AWS/tests/test_trust_seed_*.py`
+throwaway containers against the stopped stack; guards `../tests/test_trust_seed_*.py`
 assert over the role's tasks). Tags on the EC2 play are `flkit`, `data`, `seed`, `omop`, `omop-vocab`,
 `bastion` — play-level tags reach every task a role brings in, and the two image-dir tasks inside
 `flip_trust_dirs` carry `flkit` themselves so a re-stage lays them down again.
@@ -38,21 +44,26 @@ assert over the role's tasks). Tags on the EC2 play are `flkit`, `data`, `seed`,
 Role lookup: every play finds `./roles` beside itself. Galaxy-style `namespace.role` dirs here are
 gitignored, and the test walker skips them.
 
-Inputs every play must set: `fl_backend` (`nvflare` | `flower`) and `fl_kit_source` (`s3` |
-`local` | `precreate` | `none`) have no role default, and `flip_fl_kit` / `flip_trust_dirs` check them in their
-first task, so a missing or misspelt value stops the play instead of re-owning the net-N dirs, staging
-the wrong kit, or staging none.
-`flip_owner` / `flip_group` default to `ubuntu` in four roles; set them at play level for any other
-login user (the Azure play does). `flip_dir` (`/opt/flip`) roots every host path in `flip_trust_dirs`,
-`flip_fl_kit` and `flip_observability_config`, so one play-level value moves them all — the kit file's
-`FL_KIT_DIR`, `OBSERVABILITY_CONFIG_DIR` and `BASE_IMAGES_DOWNLOAD_DIR` must then follow it.
+## Play-level inputs
+
+**Required.** These have no role default:
+
+- `fl_backend`: `nvflare` | `flower`
+- `fl_kit_source`: `s3` | `local` | `precreate` | `none`
+
+`flip_fl_kit` and `flip_trust_dirs` check both in their first task. A missing or misspelt value stops the play instead of re-owning the net-N dirs, staging the wrong kit, or staging none.
+
+**Defaults you may override:**
+
+- `flip_owner` / `flip_group`: default `ubuntu` in four roles. Set them at play level for any other login user (the Azure play does).
+- `flip_dir`: default `/opt/flip`. It roots every host path in `flip_trust_dirs`, `flip_fl_kit` and `flip_observability_config`, so one play-level value moves them all. If you change it, the kit file's `FL_KIT_DIR`, `OBSERVABILITY_CONFIG_DIR` and `BASE_IMAGES_DOWNLOAD_DIR` must follow.
 
 Guards over this tree (all static, no host needed): `../tests/test_onprem_playbook.py` walks the
 on-prem play *through* its roles (docker-group grant, per-net dir ownership);
 `../tests/test_roles_contract.py` pins the input checks above and holds `flip_observability_config`'s
 file list to the `trust/observability` tree;
-`deploy/providers/AWS/tests/test_site_roles.py` pins how `site.yml` composes the roles (EC2 docker group,
+`../tests/test_aws_ec2_host_roles.py` pins how `aws-ec2-host.yml` composes the roles (EC2 docker group,
 S3 kit source under the `flkit` tag, per-slot images trees, galaxy installs outside the checkout);
 `trust/xnat/tests/test_data_dir_ownership.py` pins the XNAT bind-mount uid in `flip_trust_dirs` to
-`trust/xnat/Makefile`; `deploy/providers/AWS/tests/test_trust_kit_staging.py` pins the FLIP#965
+`trust/xnat/Makefile`; `../tests/test_fl_kit_s3_staging.py` pins the FLIP#965
 properties of the two S3 stages in `flip_fl_kit/tasks/s3.yml`.

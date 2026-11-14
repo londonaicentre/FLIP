@@ -24,6 +24,6 @@
 # <kind>  <sha256>  <url>
 war     29e91a66aaf38706fe8c539072d00f9f4208ea7853cbedbd8bd88670d5ba451e  https://github.com/NrgXnat/xnat/releases/download/1.10.2.1/xnat-web-1.10.2.1.war
 plugin  3783f9f5e19db5d7a7c45c5e0314fe79ecf45ef4742baac27eec4dfa43533c6e  https://api.bitbucket.org/2.0/repositories/xnatx/xnatx-batch-launch-plugin/downloads/batch-launch-0.9.0-xpl.jar
-plugin  7d6abad013dadb323bb19d6ac32af6f600bcce91dbcde6e7c9e959fb8eb9f641  https://github.com/NrgXnat/container-service/releases/download/3.8.2/container-service-3.8.2-fat.jar
+plugin  809042a18dfea8383b7bd5f53b367eb8ea05c2a8c3f35b519841aa17b93cd207  https://github.com/NrgXnat/container-service/releases/download/3.9.0/container-service-3.9.0-fat.jar
 plugin  1d657eaeb31200dfa4445cb90be15cc7609e41b395cf2a5040c6a4d3c912dcb1  https://github.com/NrgXnat/dicom-query-retrieve/releases/download/3.1.0/dicom-query-retrieve-3.1.0-xpl.jar
 plugin  c8fa0b6f2f479dc1311dd7a3de6c5728b6bfb79dcc46a2f7e7e3929103f19f08  https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.8.0-fat.jar

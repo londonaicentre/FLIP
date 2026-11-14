@@ -20,9 +20,14 @@ Install the published package from PyPI:
 
 .. code-block:: bash
 
-   pip install flip-utils
+   pip install "flip-utils[nvflare,full]"   # an NVFLARE app
+   pip install "flip-utils[flower,full]"    # a Flower app
    # or with uv
-   uv add flip-utils
+   uv add "flip-utils[nvflare,full]"
+
+Each FL backend is an optional extra: ``nvflare`` (needed by ``flip.nvflare``) and ``flower`` (needed by
+``flip.flower``). ``full`` is the ML stack (torch, MONAI, ...) and carries no backend. ``import flip`` and the
+backend-neutral modules work with neither; a bare ``flip-utils`` install no longer includes NVFLARE.
 
 To use the latest development version, clone the monorepo and install from source:
 
@@ -30,9 +35,9 @@ To use the latest development version, clone the monorepo and install from sourc
 
    git clone https://github.com/londonaicentre/FLIP.git
    cd FLIP/flip-utils
-   uv sync
+   uv sync                           # dev group: both backends + the test tools
    # or
-   pip install .
+   pip install ".[nvflare,full]"     # or ".[flower,full]"
 
 To build a distributable wheel for development:
 

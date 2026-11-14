@@ -20,8 +20,7 @@
 #
 # The obvious pre-check — ask the hub — is not available to a GitHub runner:
 # GET /fl/quiesce is gated on `verify_token` (a Cognito session, and prod runs
-# ENFORCE_MFA=true), CloudFront strips X-Internal-Service-Key at the edge, and the
-# scheduler state lives in Postgres inside private subnets. So instead of asking
+# ENFORCE_MFA=true), and the scheduler state lives in Postgres inside private subnets. So instead of asking
 # whether a run is in flight, this asks whether the apply could disturb one — which
 # is answerable offline, from the plan itself, and is the stricter of the two
 # questions when the answer is "no".

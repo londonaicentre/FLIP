@@ -37,9 +37,10 @@ README for what it does and what its `required_files.json` requires:
 [`nvflare/fed_opt`](nvflare/fed_opt/README.md),
 [`flower/standard`](flower/standard/README.md), [`flower/evaluation`](flower/evaluation/README.md).
 
-All FLARE templates are **Client API** apps (`ClientAPIExecutor`, in-process mode) — the legacy
-Executor-based templates are retired, though the pre-rename `*_client_api` job-type names still
-resolve as aliases for models created before the rename (`flip_api/fl_services/services/fl_service.py`).
+All FLARE templates are **Client API** apps (`ClientAPIExecutor`, in-process mode); the legacy
+Executor-based templates are retired. Models created under the old `*_client_api` job-type names
+(for example `standard_client_api`) still work: flip-api resolves those names as aliases
+(`flip_api/fl_services/services/fl_service.py`).
 
 ## `required_files.json`: per-template source, per-backend generated manifest
 
@@ -54,13 +55,13 @@ keyed by template name, with sorted keys for a byte-stable diff. Edit a template
 bash fl-apps/check_required_files.sh
 ```
 
-This is enforced two ways, matching the pattern in `.pre-commit-config.yaml`:
+Two checks enforce this:
 
 - The `fl-apps-required-files` pre-commit hook runs the script and fails the commit if it changed
   anything — re-stage and commit again, no need to remember to run it by hand.
-- The `fl-apps-check-required-files.yml` CI workflow re-runs the same script and `git diff
-  --exit-code`s the committed manifests, as the backstop for a commit made without pre-commit
-  installed.
+- The `fl-apps-check-required-files.yml` CI workflow re-runs the same script and fails if
+  `git diff --exit-code` shows the committed manifests changed. It catches commits made without
+  pre-commit installed.
 
 There is deliberately **no cross-backend combined file** — each backend owns its own job-type
 keyspace, so template names never collide across `nvflare/` and `flower/`.
@@ -81,7 +82,7 @@ two things ever ship —
 Everything else in the template directory — `recipe.py`, `README.md`, the per-template
 `required_files.json`, dev tool caches — is excluded and logged at debug level, never shipped to a
 trust. The allowlist fails **closed**: for an operator-provided `FL_APP_BASE_DIR`, an unrecognised
-file is silently omitted rather than shipped, so a hotfix to a base template ships by rebuilding
+file is omitted (logged only at debug level) rather than shipped, so a hotfix to a base template ships by rebuilding
 (and, in prod, redeploying) the flip-api image, not by editing files in place at a trust.
 
 ## The tutorial-sync guards
@@ -90,18 +91,19 @@ Some tutorial files are kept as byte-identical copies of another file, and two g
 — one derived from the tree, one hand-listed:
 
 - **Flower tutorials vs. the `fl-apps/flower/` templates.** Every `fl-tutorials/flower/*/*/app` ships
-  its own copy of the platform-owned `app/*.py` (`server_app.py`, `strategy.py`) of the template its
-  `config.json` job type selects: `flwr build` excludes symlinks from a FAB, so these have to be
-  real copies rather than links, and since the bundler discards an uploaded copy in favour of the
-  base file (see above), the tutorial must carry what the platform will actually run.
+  its own copy of the platform-owned `app/*.py` (`server_app.py`, `strategy.py`) from the template
+  its `config.json` job type selects. They must be real copies, not symlinks, because `flwr build`
+  leaves symlinks out of a FAB. They must also match the template, because the bundler replaces an
+  uploaded copy with the base file (see above), so the tutorial must carry what the platform
+  actually runs.
   [`fl-tutorials/tests/test_flower_platform_parity.py`](../fl-tutorials/tests/test_flower_platform_parity.py)
   **derives** the pairs from the tree — every tutorial app against its template's `app/*.py` — and
-  fails if a copy differs (a module that is inert in both trees, such as a docstring-only
-  `__init__.py`, may). It runs under `make -C fl-tutorials test` and the `fl-tutorials-tests.yml`
+  fails if a copy differs. The exception is a module that is inert in both trees, such as a
+  docstring-only `__init__.py`, which may differ. It runs under `make -C fl-tutorials test` and the `fl-tutorials-tests.yml`
   CI workflow (paths `fl-apps/flower/**`, `fl-tutorials/**`), so a new Flower tutorial is covered
   the moment it exists — there is no list and no path filter to extend. Resync by copying the
   template file over the drifted copy.
-- **Tutorial-to-tutorial pairs still hand-listed.** Two families remain in
+- **Tutorial-to-tutorial pairs, hand-listed.** These families are listed in
   [`scripts/check_tutorial_sync.sh`](../scripts/check_tutorial_sync.sh) (`PAIRS`), run by the
   `fl-apps-check-tutorial-sync.yml` CI workflow on any push/PR touching the paths on either side:
   - **The Ark+ FLARE pair.** The two Ark+ evaluation tutorials share `data_utils.py` and
@@ -114,13 +116,18 @@ Some tutorial files are kept as byte-identical copies of another file, and two g
     FLARE copy is the reference; resync by copying it over the Flower copy. Watched paths
     include `fl-tutorials/nvflare/tabular_classification/**` and
     `fl-tutorials/flower/tabular_classification/ehr_risk_prediction/**`.
+  - **The twin pairs' cohort queries.** The x-ray and spleen twin pairs share `query.sql`, and the
+    x-ray pair also shares `query_novocab.sql`. The FLARE copy is the reference.
+  - **The biomarker causal-discovery cross-backend pair.** It shares `federated_fci.py`,
+    `models.py`, `config.json`, `query.sql` and `summarise_results.py`. The FLARE copy is the
+    reference; its tree is `fl-tutorials/nvflare/tabular_causal_discovery/**`.
 
-  Adding another hand-listed pair means extending that workflow's path filters too, or drift
-  on the new path goes uncaught.
+  When you add a hand-listed pair, also extend `fl-apps-check-tutorial-sync.yml`'s path filters,
+  or drift on the new path goes uncaught.
 
-`pyproject.toml` files are deliberately **not** paired — the template's `[tool.uv]` tables pin
-`flip-utils` to the in-image `/opt/flip-utils` source and torch to the cu130 index, neither of which
-apply to a tutorial's workstation venv.
+`pyproject.toml` files are deliberately **not** paired. The template's `[tool.uv]` tables pin
+`flip-utils` to the in-image `/opt/flip-utils` source and torch to the cu130 index; neither applies
+to a tutorial's workstation venv.
 
 ## Where to look next
 
@@ -128,5 +135,6 @@ apply to a tutorial's workstation venv.
   with datasets and Makefile targets).
 - [`docs/source/working-with-flip-apps.rst`](../docs/source/working-with-flip-apps.rst) — the guides
   for adapting or building an app to upload to FLIP.
-- `flip-api/AGENTS.md` and the root `AGENTS.md` (`FL_APP_BASE_DIR`) — how flip-api discovers,
-  validates and bundles these templates at runtime.
+- [`fl-services/AGENTS.md`](../fl-services/AGENTS.md#environment-variables) (`FL_APP_BASE_DIR`) and
+  [`flip-api/AGENTS.md`](../flip-api/AGENTS.md) — how flip-api discovers, validates and bundles these
+  templates at runtime.

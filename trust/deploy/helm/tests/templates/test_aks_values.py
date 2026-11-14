@@ -58,12 +58,12 @@ def test_aks_overlay_puts_postgres_data_below_lost_and_found():
                 assert env.get("PGDATA") == "/var/lib/postgresql/data/pgdata", doc["metadata"]["name"]
 
 
-def test_aks_overlay_keeps_the_metadata_endpoint_closed_even_when_the_kit_names_a_bucket(tmp_path):
-    """sync-kit writes the kit's vocab bucket into the per-trust override; the overlay, applied after
-    it, must still keep the vocab load out and with it every route to 169.254.169.254 (on Azure, the
-    managed-identity token endpoint)."""
+def test_aks_overlay_keeps_the_vocab_load_out_even_when_the_kit_names_a_staged_vocabulary(tmp_path):
+    """sync-kit writes the kit's OMOP_VOCAB_DIR into the per-trust override; the overlay, applied after
+    it, must still keep the vocab load out (a managed node pool keeps nothing staged on a node), and
+    the metadata endpoint stays closed."""
     override = tmp_path / "k8s-trust-X.yaml"
-    override.write_text("omopDb:\n  vocabLoad:\n    s3Bucket: flipstag-aicentre\n")
+    override.write_text("omopDb:\n  vocabLoad:\n    hostPath: /opt/flip/omop-vocab\n")
     args = ["helm", "template", "trust-release", str(CHART_DIR), "-f", str(override)]
     args += ["-f", str(CHART_DIR / "values-aks.yaml")]
     rendered = subprocess.run(args, capture_output=True, text=True, check=True, timeout=120).stdout

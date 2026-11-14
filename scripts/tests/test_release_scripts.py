@@ -54,8 +54,6 @@ MINTED = {
     "POSTGRES_PASSWORD": "pg-SECRET",  # pragma: allowlist secret
     "AES_KEY_BASE64": "aes-SECRET",  # pragma: allowlist secret
     "ADMIN_USER_PASSWORD": "admin-SECRET",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY": "isk-SECRET",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY_HASH": "hash",  # pragma: allowlist secret
     "FL_API_KEY": "flk-SECRET",  # pragma: allowlist secret
 }
 
@@ -97,10 +95,8 @@ class Instance(unittest.TestCase):
     def test_minted_secrets_are_real(self):
         env = read_env_text(instance.hub_env(HUB_EXAMPLE, "x", 10000))
         import base64
-        import hashlib
 
         assert len(base64.b64decode(env["AES_KEY_BASE64"])) == 32
-        assert env["INTERNAL_SERVICE_KEY_HASH"] == hashlib.sha256(env["INTERNAL_SERVICE_KEY"].encode()).hexdigest()
         assert len(env["FL_API_KEY"]) >= 32
 
     def test_unknown_placeholder_is_refused(self):

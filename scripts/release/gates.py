@@ -121,9 +121,7 @@ def own_simulator_pids(ps_lines: list[str], repo: Path) -> list[int]:
 
 def stop_own_simulators() -> list[str]:
     """Stop this checkout's Flower simulator processes; never another checkout's."""
-    ps = subprocess.run(
-        ["pgrep", "-af", "flower-superlink|flwr-simulation|flwr-serverapp"], capture_output=True, text=True
-    )
+    ps = subprocess.run(["pgrep", "-af", SIMULATOR.pattern], capture_output=True, text=True)
     stopped = []
     for pid in own_simulator_pids(ps.stdout.splitlines(), REPO):
         with contextlib.suppress(ProcessLookupError):

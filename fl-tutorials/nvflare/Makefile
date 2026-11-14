@@ -12,7 +12,7 @@
 # FLARE tutorial runner. Each tutorial under <category>/<name>/ carries a Makefile
 # + .env.app whose `make run` delegates to `make sim` — the tutorial's job.py driving a
 # FLIP recipe on the FLARE simulator (SimEnv), run in the flip-utils venv with the
-# `full` ML extra. Requires a GPU, and the tutorial's dataset downloaded first (see each
+# `nvflare` and `full` extras. Requires a GPU, and the tutorial's dataset downloaded first (see each
 # tutorial's README); `make export` inside a tutorial needs neither.
 #
 #   make list-tutorials

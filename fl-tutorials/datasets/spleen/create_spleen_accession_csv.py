@@ -37,17 +37,12 @@ def create_accession_csv(images_dir: Path, output_csv: Path) -> int:
     if not images_dir.is_dir():
         raise NotADirectoryError(f"Images path is not a directory: {images_dir}")
 
-    images_dir_str = str(images_dir)
-    subject_ids = []
-    for name in os.listdir(images_dir_str):
-        if name.startswith("."):
-            continue
-        if not os.path.isdir(os.path.join(images_dir_str, name)):
-            continue
-        if _is_valid_subject_folder(images_dir_str, name):
-            subject_ids.append(name)
-
-    subject_ids = natsorted(subject_ids)
+    # _is_valid_subject_folder requires <name>/scans to be a directory, so a non-directory never passes.
+    subject_ids = natsorted(
+        name
+        for name in os.listdir(images_dir)
+        if not name.startswith(".") and _is_valid_subject_folder(str(images_dir), name)
+    )
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     df = pd.DataFrame(subject_ids, columns=["accession_id"])
     df.to_csv(output_csv, index=False)

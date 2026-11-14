@@ -254,7 +254,7 @@ them, and the tutorial matches them by exact string against the ``LESIONS`` map 
    :start-after: -- limitations under the License.
    :caption: ``fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/query.sql``
 
-Four lines, because there is nothing to pivot. A segmentation mask is a 3D volume and OMOP has no column for
+The query is short because there is nothing to pivot. A segmentation mask is a 3D volume and OMOP has no column for
 one, so the query only names the studies (``modality_concept_id = 4300757`` is *Computed tomography*) and lets
 ``SELECT *`` carry ``accession_id`` through. The masks reach the model separately: they are uploaded into XNAT
 alongside the converted images during :doc:`data enrichment </user-guides/user-data-enrichment>`.
@@ -303,15 +303,15 @@ The Data Access API runs cohort queries as a **read-only database user** (``DATA
 - ``INSERT``, ``UPDATE``, ``DELETE``, ``TRUNCATE`` and ``CREATE`` explicitly revoked;
 - at most five connections and a 300-second statement timeout.
 
-This is the database half of the Data Access API's query validation. Compose and Kubernetes deployments apply
-the same grants. Compose applies them when the database is first initialised; the Kubernetes chart re-applies
-them on every pod start, so an upgrade also narrows a role created by an older chart.
+This is the database half of the Data Access API's query validation. Compose and Kubernetes apply the same
+grants, at different times: Compose when the database is first initialised, the Kubernetes chart on every pod
+start, so an upgrade also narrows a role created by an older chart.
 
 .. note::
 
-   On Kubernetes, the narrowing comes from the ``omop-db`` image. An image tag older than the fix leaves an
-   existing role's wider access in place, and logs a warning saying so. The upgrade path is in the
-   :gh:`chart README <trust/deploy/helm/README.md>`. The query validator's ``omop``-schema pin applies either way.
+   On Kubernetes, the narrowing comes from the ``omop-db`` image. An ``omop-db`` image older than the release that added
+   this narrowing leaves an existing role's wider access in place, and logs a warning saying so. The upgrade path is in
+   the :gh:`chart README <trust/deploy/helm/README.md>`. The query validator's ``omop``-schema pin applies either way.
 
 **Results are also gated on the Trust's disclosure threshold** (``COHORT_QUERY_THRESHOLD``, default 10), and a
 project's cohort membership is fixed at approval. Both are described on :doc:`component-trust-apis`;
@@ -349,7 +349,7 @@ To seed by hand:
    make -C trust ensure-seeded KIT=GSTT             # seed unless already seeded at this version
    make -C trust seed KIT=GSTT PROJECTS="…"         # load further published projects
 
-Every row carries a ``source_trust`` column, and N Trusts are a deterministic split of the one dataset.
+Every row carries a ``source_trust`` column, its OMOP partition: N Trusts are a deterministic split of the one dataset.
 
 .. seealso::
 
@@ -376,23 +376,44 @@ Run it once per Trust, with the stack up:
 - The loader is safe to re-run: it tags its rows in ``person_source_value`` and replaces only those, leaving the
   imaging cohorts untouched.
 
-The biomarker causal-discovery tutorial's cohort is ADNI, which is access-controlled, so its seed step
-downloads nothing: ``make -C trust load-adni-cohort TRUST_INDEX=<1|2> OMOP_DB_PORT=<5434|5436>`` reads the
-cohort the licence holder built from their own ADNI download (``make -C fl-tutorials convert-adni-cohort``)
-and appends this Trust's slice the same way — for a local development stack only; nothing derived from
-ADNI may be loaded into a shared Trust.
-
 .. tip::
 
    A Trust on Kubernetes publishes no host port. Port-forward ``svc/omop-db``, pass the connection as ``make``
    variables, then restart its data-access-api. The recipe is in the
    :gh:`chart README <trust/deploy/helm/README.md>`, "OMOP core vocabulary".
 
+The ADNI cohort for the causal-discovery tutorial
+=================================================
+
+The biomarker causal-discovery tutorial uses ADNI, which is access-controlled, so this seed step downloads
+nothing. The licence holder first converts their own ADNI download
+(``make -C fl-tutorials convert-adni-cohort``), then appends each Trust's slice the same way as the EHR loader:
+
+.. code-block:: shell
+
+   make -C trust load-adni-cohort TRUST_INDEX=<1|2> OMOP_DB_PORT=<5434|5436>
+
+.. warning::
+
+   Use this on a local development stack only. Nothing derived from ADNI may be loaded into a shared Trust.
+
 Seeding the vocabulary
 ======================
 
 The published image and trust data contain **no licensed vocabulary**. SNOMED CT, LOINC, Read v2 and dm+d are
-licensed, so each environment loads the bundle it is licensed to use into its own running database, once:
+licensed, so each environment loads the bundle it is licensed to use into its own running database, once.
+
+``load-omop-vocab`` needs the bundle unpacked in ``trust/omop-db/data/vocab_aicentre_core_20240916/``. Get it
+first, in one of two ways:
+
+- **AI Centre developers**: ``AWS_PROFILE=dev make -C trust/omop-db fetch-vocab-core``, with the ``dev`` profile
+  set up as in Step 3 of :doc:`/deploy-flip/deploy-local-dev`. It reads the AI Centre staging bucket by default
+  (``VOCAB_S3_BUCKET`` names another). ``load-omop-vocab`` runs this for you; it skips the download if the
+  directory exists, and fails without AWS access if it does not.
+- **Every other site**: build an equivalent export from `OHDSI Athena <https://athena.ohdsi.org/>`_ under your
+  own licences and unpack it into that directory, as :ref:`onprem-core-vocabulary` describes.
+
+With the bundle in place, load it:
 
 .. code-block:: shell
 
@@ -411,16 +432,6 @@ licensed, so each environment loads the bundle it is licensed to use into its ow
 
    The spleen query still works on an unseeded stack: it filters on a concept id but never joins
    ``omop.concept``.
-
-``load-omop-vocab`` needs the bundle unpacked in ``trust/omop-db/data/vocab_aicentre_core_20240916/``. Get it
-first, in one of two ways:
-
-- **AI Centre developers**: ``AWS_PROFILE=dev make -C trust/omop-db fetch-vocab-core``, with the ``dev`` profile
-  set up as in Step 3 of :doc:`/deploy-flip/deploy-local-dev`. It reads the AI Centre staging bucket by default
-  (``VOCAB_S3_BUCKET`` names another). ``load-omop-vocab`` runs this for you; it skips the download if the
-  directory exists, and fails without AWS access if it does not.
-- **Every other site**: build an equivalent export from `OHDSI Athena <https://athena.ohdsi.org/>`_ under your
-  own licences and unpack it into that directory, as :ref:`onprem-core-vocabulary` describes.
 
 The DICOM vocabulary is freely redistributable and the trust-data seed already loads it, so it needs no step of
 its own.

@@ -14,21 +14,23 @@ limitations under the License.
 
 # Biomarker causal discovery — FLIP tutorial (Flower)
 
+> **Read the [NVFLARE README](../../../nvflare/tabular_causal_discovery/biomarker_causal_discovery/README.md) first.**
+> This is the Flower twin of that tutorial. The method, the data and the results are documented
+> there once; this page covers only what differs on Flower.
+
 Federated **bootstrapped FCI** over tabular Alzheimer's-disease biomarkers (plasma markers, brain
 volumes, cognition, demographics; one row per person, no imaging), as a Flower app on FLIP's
 `standard` template. Nothing is trained: the sites exchange the sufficient statistics of a
 conditional-independence test — or, in the second mode, their votes on the graph skeleton — and
 the template's FedAvg turns those into the pooled analysis. The result is a partial ancestral
-graph with a bootstrap frequency on every edge. This is the Flower twin of the NVFLARE tutorial
-of the same name; the method, the data and the results are documented once, in
-[its README](../../../nvflare/tabular_causal_discovery/biomarker_causal_discovery/README.md), and
-this page covers what differs on Flower.
+graph with a bootstrap frequency on every edge.
 
 ![Recovered PAG from the federated run on the ADNI cohort](docs/recovered_pag.png)
 
 *The output: the partial ancestral graph the two simulated sites recover from the real ADNI
 cohort (560 participants, 50 bootstraps), edges labelled with their bootstrap frequency. The
-repository ships this summary figure and the converter, never data (NVFLARE README, "Data").*
+repository ships this summary figure and the converter, never data (see the NVFLARE README's
+[Data](../../../nvflare/tabular_causal_discovery/biomarker_causal_discovery/README.md#data) section).*
 
 ```mermaid
 flowchart LR
@@ -57,12 +59,14 @@ biomarker_causal_discovery/
 ```
 
 `federated_fci.py`, `models.py`, `config.json`, `query.sql` and `summarise_results.py` are
-byte-identical to the NVFLARE tutorial's copies
-(`scripts/check_tutorial_sync.sh`; the NVFLARE side is the reference). `server_app.py` and
+byte-identical to the NVFLARE tutorial's copies. The NVFLARE copies are the reference;
+`scripts/check_tutorial_sync.sh` fails if the two drift. `server_app.py` and
 `strategy.py` are the template's: flip-api keeps its own copy of those and discards an uploaded
 one, so editing them here would make the simulator run something the platform does not.
 
 ## Configuration: two files
+
+`FEDERATION` in `app/config.json` selects one of two modes: `pooled_statistics` ("pooled mode" below) or `layer_voting` ("voting mode").
 
 - `app/config.json` — everything that defines the analysis (`FEDERATION`, `N_BOOTSTRAPS`,
   `ALPHA`, `VARIABLES`, `LOG_TRANSFORM`, `SCALE`, `KNOWLEDGE`, …; the table in the NVFLARE README).
@@ -73,9 +77,10 @@ one, so editing them here would make the simulator run something the platform do
   and `dp-enabled = false`. On the simulator the same values come from `pyproject.toml`'s
   `[tool.flwr.app.config]`.
 
-`flip-utils` is deliberately not declared in `pyproject.toml` (FLIP#767: a declared copy would
-shadow the checkout's); `causal-learn` *is*, because the per-run environment the simulator builds
-needs it the same way it needs torch, and the FL image carries it through flip-utils' `full` extra.
+`pyproject.toml` deliberately does not declare `flip-utils`: a declared copy would shadow the one
+from your checkout (FLIP#767). It does declare `causal-learn`, because the per-run environment the
+simulator builds needs it, just as it needs torch. On the platform, the FL image already carries
+`causal-learn` through flip-utils' `full` extra.
 
 ## How the ClientApp maps onto the template
 
@@ -103,8 +108,9 @@ and is not protected. What is Flower-specific:
   run whose run config turns the mod on, reading it as the mod does (`LocalDpConfig.from_run_config`:
   a missing key means on).
 - Flower forwards a client's exception text to the hub, which is why every refusal in
-  `federated_fci` names neither a count nor a column nor a statistic. A round that fails after the
-  statistics were released still sends its zeroing payload and fails the job on the next task.
+  `federated_fci` names neither a count nor a column nor a statistic. If a round fails after a site
+  has released its statistics, the ClientApp still sends the payload that zeroes them, and the job
+  fails at the next task.
 - The ClientApp fetches the cohort once per run and keeps it in `context.state`, so a trust logs one
   row-level egress per run, not one per round.
 - Flower's FedAvg sums exactly, so a finished run's statistics buffers are exactly zero (NVFLARE's
@@ -115,53 +121,69 @@ and is not protected. What is Flower-specific:
 The cohort is real ADNI data, which you obtain under your own licence: apply for access, download
 the five IDA tables and convert them exactly as the NVFLARE README's
 ["Running on real ADNI data"](../../../nvflare/tabular_causal_discovery/biomarker_causal_discovery/README.md#running-on-real-adni-data)
-describes. `make -C fl-tutorials convert-adni-cohort ADNI_DIR=~/adni_tables` writes
-`dataframe.csv` to the gitignored `fl-tutorials/data/ad_biomarkers/`, which is where
-`sim-tutorial.sh` maps `DEV_DATAFRAME` (`<data root>/ad_biomarkers/dataframe.csv`). To keep the
-cohort elsewhere, pass `OUT=/secure/flip-data/ad_biomarkers` and run with
-`SIM_DATA_ROOT=/secure/flip-data`:
+describes:
 
 ```bash
+make -C fl-tutorials convert-adni-cohort ADNI_DIR=~/adni_tables
+```
+
+This writes `dataframe.csv` to the gitignored `fl-tutorials/data/ad_biomarkers/`, which is where
+`sim-tutorial.sh` points `DEV_DATAFRAME` (`<data root>/ad_biomarkers/dataframe.csv`).
+
+To keep the cohort elsewhere, convert with `OUT=` and run with `SIM_DATA_ROOT=` set to its parent:
+
+```bash
+make -C fl-tutorials convert-adni-cohort ADNI_DIR=~/adni_tables OUT=/secure/flip-data/ad_biomarkers
 SIM_DATA_ROOT=/secure/flip-data make -C fl-tutorials run-tutorial TUTORIAL=biomarker_causal_discovery FL_BACKEND=flower
 ```
 
 Every ClientApp slices its own `person_id`-modulo partition from that `dataframe.csv`. What the Data
 Use Agreement requires of you is in the NVFLARE README's "Data" section.
 
-On the platform the cohort is `query.sql` on each trust's OMOP. It is never seeded on the shared dev
-trusts (nothing ADNI-derived can be published there); a licence holder loads their own converted cohort
-into their local dev trusts instead, see "On the platform" below.
+On the platform the cohort is `query.sql`, run on each trust's OMOP database. Nothing ADNI-derived may be
+published on the shared dev trusts. A licence holder loads their own converted cohort into a local dev stack (see
+[On the platform](#on-the-platform-or-make-e2e_smoke_causal)).
 
 ## Expected performance
 
-Same reference run as the NVFLARE README (the 560-participant ADNI cohort over two sites of 280,
-50 bootstraps, pooled mode): 16 edges at frequency ≥ 0.5 — all 14 stable edges of the centralised
-analysis plus two pTau217 orientations near 0.5 — with the frequencies listed there, in well under a minute of compute once the per-run environment
-exists (the first `flwr run` builds it, which downloads torch and takes several minutes). The two
-backends compute the same statistics and the same PAGs — the module is byte-identical and the
-test suite pins the pooled result to centralised FCI — so the edge table from
-`summarise_results.py` matches the NVFLARE one (the pooled bootstrap stream is `[SEED, 104729]`,
-with no site term) except where a test sits at α: NVFLARE's float32 aggregation moves the pooled
-statistics by ulps, which on this cohort flips one of 50 bootstraps of one weak edge (Aβ42/40 →
-ADAS-Cog13, 0.32 on NVFLARE, 0.34 here). The stable edges are the same.
+Reference run: the same as the NVFLARE README's (the 560-participant ADNI cohort over two sites of 280,
+50 bootstraps, pooled mode).
+
+- **Result:** 16 edges at frequency ≥ 0.5. These are all 14 stable edges of the centralised analysis,
+  plus two pTau217 orientations near 0.5. The NVFLARE README lists the frequencies.
+- **Time:** well under a minute of compute once the per-run environment exists.
+- **Match with NVFLARE:** both backends compute the same statistics and the same PAGs. The module is
+  byte-identical, the test suite pins the pooled result to centralised FCI, and the pooled bootstrap
+  stream is `[SEED, 104729]` with no site term. So the `summarise_results.py` edge table matches the
+  NVFLARE one, except where a test sits at α.
+- **The one known difference:** NVFLARE's float32 aggregation moves the pooled statistics by ulps. On this
+  cohort that flips one of 50 bootstraps of one weak edge (Aβ42/40 → ADAS-Cog13: 0.32 on NVFLARE,
+  0.34 here). The stable edges are the same.
 
 The NVFLARE README's "Graph metrics" scores the final graph against two centralised references
 (SHD and skeleton / oriented precision, recall and F1); `summarise_results.py --reference <edges.csv>`
 computes the same block for a Flower run.
 
-Failure signatures are the NVFLARE README's; one is Flower-specific: `stable_edges` of 0 at the
-end of a run whose `num-server-rounds` is right means the sites' `num-examples` was not forwarded
-(the template's weighted mean then degenerates) — check that the reply's `MetricRecord` carries it.
+## Troubleshooting
+
+The failure signatures in the NVFLARE README apply here too. One is Flower-specific:
+
+- **`stable_edges` is 0 at the end of a run with the correct `num-server-rounds`.** The sites'
+  `num-examples` was not forwarded, so the template's weighted mean degenerates. Check that the reply's
+  `MetricRecord` carries `num-examples`.
 
 ## How to run
 
 ### Local run (the flwr simulator)
 
+The first `flwr run` builds the per-run environment, which downloads torch and takes several minutes.
+
 ```bash
 make -C fl-tutorials convert-adni-cohort ADNI_DIR=~/adni_tables   # once, from your own ADNI download (see Data)
 make -C fl-tutorials run-tutorial TUTORIAL=biomarker_causal_discovery FL_BACKEND=flower
-# layer_voting (after setting FEDERATION in app/config.json): the harness takes no extra arguments,
-# so call the runner script, which passes anything after the tutorial name to `flwr run`:
+# layer_voting mode: set FEDERATION in app/config.json, then call the runner script directly.
+# `run-tutorial` takes no extra arguments; sim-tutorial.sh passes everything after the tutorial
+# name to `flwr run`. The round count depends on the mode (rounds formula: NVFLARE README config table).
 bash fl-tutorials/flower/sim-tutorial.sh biomarker_causal_discovery --run-config 'num-server-rounds=6'
 ```
 
@@ -170,18 +192,24 @@ The ServerApp writes `FL_global_model.pt` under `$WORKING_DIR/<model-id>/trainin
 
 ```bash
 cd fl-tutorials/flower/tabular_causal_discovery/biomarker_causal_discovery
+# add --reference <edges.csv> to score the final graph against another run's edge table
 uv run --project ../../../../flip-utils --extra full --group dev python summarise_results.py \
     ../../../../fl-services/flower/runs/<model-id>/training_outputs/FL_global_model.pt --figure docs/recovered_pag.png
-    # add --reference <edges.csv> to score the final graph against another run's edge table
 ```
 
-### On the platform (or `make e2e_smoke`)
+### On the platform (or `make e2e_smoke_causal`)
 
 Upload `app/` as a `standard` job with imaging **off** (`has_imaging=false`), paste `query.sql` as
 the cohort query, and keep `num-server-rounds` in `config.toml` at the mode's round count (2 for
 `pooled_statistics`; the rounds formula is in the NVFLARE README's config table).
 `make e2e_smoke_causal FL_BACKEND=flower` runs it on a local dev stack once your converted cohort is
-loaded into the two dev trusts (`make -C trust load-adni-cohort …`, NVFLARE README "On the platform").
+loaded into the two dev trusts (details: the NVFLARE README's "On the platform"):
+
+```bash
+make -C trust load-adni-cohort TRUST_INDEX=1 OMOP_DB_PORT=5434   # GSTT
+make -C trust load-adni-cohort TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH
+```
+
 That run's downloaded model summarises to the same 16 stable edges, with identical frequencies, as
 the simulator run.
 

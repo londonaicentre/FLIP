@@ -15,26 +15,33 @@ limitations under the License.
 
 Shared download/derive/enrich tooling for the FL tutorial datasets. Datasets are
 **backend-agnostic** — a tutorial's FLARE and Flower twins train on the same data — and
-**many-to-one** — one dataset serves several tutorials (spleen alone backs segmentation,
-evaluation and diffusion) — so their tooling lives here once instead of duplicated per
+**many-to-one** — one dataset serves several tutorials (spleen alone backs segmentation and
+evaluation) — so their tooling lives here once instead of duplicated per
 backend tree. Everything downloads at run time; nothing is committed.
 
-All outputs land under the shared, gitignored [`fl-tutorials/data/`](../) root, so one
+All outputs land under the shared, gitignored `fl-tutorials/data/` root, so one
 download serves both backends' harnesses (the FLARE simulator via each tutorial's
 `.env.app`, Flower's via `flower/sim-tutorial.sh`).
 
 Invoke the targets through the fl-tutorials root Makefile (which forwards here):
 
 ```bash
+# x-ray
 make -C fl-tutorials download-xray-data
+# spleen
 make -C fl-tutorials download-spleen-data              # MSD build (NUM_CASES=<1-41>, default 10)
 make -C fl-tutorials download-spleen-checkpoint        # evaluation-tutorial checkpoint only
+make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrichment
+# brain MRI
+make -C fl-tutorials download-brain-mri-data NUM_CASES=10  # MSD Task01 brain MRI, simulator layout (7.6 GB download)
+# Ark+
 make -C fl-tutorials download-arkplus-finetuning-data  # large (~6.3 GB)
 make -C fl-tutorials download-arkplus-eval-data        # (~1.6 GB)
+# EHR (Synthea)
 make -C fl-tutorials download-synthea-data             # EHR tabular dataset (~5 MB, backend-agnostic)
-make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrichment
+# pretrained weights
 make -C fl-tutorials download-weights ARCH=medicalnet_resnet50   # a pretrained backbone a tutorial ships beside its app
-make -C fl-tutorials download-brain-mri-data NUM_CASES=10  # MSD Task01 brain MRI, simulator layout (7.6 GB download)
+# prostate
 make -C fl-tutorials download-prostate-data            # PI-CAI (FOLDS="0 1 2 3 4" by default, ~5GB/fold)
 make -C fl-tutorials convert-prostate-to-dicom
 make -C fl-tutorials convert-prostate-to-nifti
@@ -64,8 +71,8 @@ for why the plan is pooled and the measured per-center figures.
 | prostate | Zenodo PI-CAI + `picai_labels` (GitHub) | `prostate/{images/, labels/, zonal_labels/, clinical_information/, dicom/, nifti/, sites/<CENTER>/}` | 3d_prostate_segmentation (Flower) |
 | weights | `download.pytorch.org` and the Hugging Face hub (sha256-checked; `weights/fetch_weights.py` lists them) | `weights/<hash-named filename>` (flat, e.g. `medicalnet_resnet50_23datasets-ff48a622.pth`) | autoencoder via its own `make weights`, which copies the file into `app_files/` to be uploaded with the app — FL apps never download at run time (FLIP#1206) |
 
-One spleen tree serves both backends. `download-spleen-data` refuses to overwrite an
-existing `data/spleen/images` — remove it first to rebuild at a different `NUM_CASES`.
+`download-spleen-data` refuses to overwrite an existing `data/spleen/images` — remove it first
+to rebuild at a different `NUM_CASES`.
 
 ## Per-dataset scripts
 
@@ -79,7 +86,8 @@ pandas, natsort; `uv.lock` is gitignored):
 - `upload_spleen_labels_to_xnat.py` — the data-enrichment step: push `label_*.nii.gz` files
   into a real FLIP project's XNAT (see the
   [spleen tutorial README](../nvflare/image_segmentation/3d_spleen_segmentation/README.md)
-  for the full walkthrough, and the repo-root `AGENTS.md` for its `e2e_smoke` wiring). Runs
+  for the full walkthrough, and [`flip-api/AGENTS.md`](../../flip-api/AGENTS.md#end-to-end-smoke-test)
+for its `e2e_smoke` wiring). Runs
   against the in-tree `flip-utils`, not `spleen/`'s env.
 - `download_spleen_checkpoint.py` — fetch the evaluation-tutorial checkpoint from Hugging
   Face. A pure Hugging Face fetch, so like the xray/arkplus scripts it runs via
@@ -90,16 +98,12 @@ pandas, pandera, sqlglot, tqdm; `uv.lock` is gitignored). It has no download scr
 come from the private `londonaicentre/xraycat`, not from a public dataset. See
 [OMOP mock-data generation](#omop-mock-data-generation-flip1092) below.
 
-[`xrays_mini_300/`](xrays_mini_300/) owns the single x-ray script — no dedicated uv project,
-it runs via `uv run --no-project --with huggingface_hub`, the same way `upload-spleen-labels`
-runs against `flip-utils` without adopting `spleen/`'s env:
+[`xrays_mini_300/`](xrays_mini_300/) and [`arkplus/`](arkplus/) each own a single Hugging Face
+download script with no dedicated uv project; both run via
+`uv run --no-project --with huggingface_hub`:
 
 - `download_xrays_dataset.py` — fetch the Hugging Face snapshot and normalise it into
   `accession-resources/` + `dataframe.csv`.
-
-[`arkplus/`](arkplus/) owns the single arkplus script — no dedicated uv project, it runs via
-`uv run --no-project --with huggingface_hub`, the same way `upload-spleen-labels` runs
-against `flip-utils` without adopting `spleen/`'s env:
 
 - `download_arkplus_dataset.py` — fetch the given site folders (TRAIN or HOLD-OUT) from
   Hugging Face and normalise each into `accession-resources/` +
@@ -120,10 +124,11 @@ script imports, like the others):
   same tiny tables and diffs it against `derive_features` row for row.
 
 [`ad_biomarkers/`](ad_biomarkers/) owns the biomarker causal-discovery tutorial's cohort, in a uv
-project as small as synthea's (numpy + pandas). The data is ADNI, which is **access-controlled** (what
-its Data Use Agreement requires: the tutorial README's "Data" section), so there is no download target
-and no synthetic stand-in: the user applies for ADNI access
-(the tutorial README's "Running on real ADNI data" has the steps), downloads five study tables, and
+project as small as synthea's (numpy + pandas). The data is ADNI, which is **access-controlled**, so
+there is no download target and no synthetic stand-in. You apply for ADNI access yourself, download
+five study tables, and convert them with the script below. The
+[tutorial README](../nvflare/tabular_causal_discovery/biomarker_causal_discovery/README.md) covers what
+the Data Use Agreement requires ("Data") and the access steps ("Running on real ADNI data").
 
 - `make_adni_cohort.py` — *converts* (`convert-adni-cohort ADNI_DIR=<IDA downloads> [OUT=…]`) that
   download — the `PTDEMOG`, `APOERES`, `ADAS`, `UCSFFSX7` and `UPENN_PLASMA_FUJIREBIO_QUANTERIX`
@@ -155,6 +160,7 @@ reads this data lives with the tutorial instead, at
   tables for the trust seed pipeline (see "Prostate" under the OMOP section below), and
   `upload_prostate_labels_to_xnat.py` — the data-enrichment step that puts both PI-CAI masks
   beside every pulled image in XNAT.
+
 ## OMOP mock-data generation (FLIP#1092)
 
 The mock OMOP CDM data that backs the tutorials — and the trust `omop-db` seed data it feeds —
@@ -188,18 +194,16 @@ them.
 
 ### Spleen: the full chain
 
-Generated by a four-step chain (the metadata and OMOP steps vendored from
-`flip_project_spleen_segmentation` and `flip-omop-mock-data`; the DICOM step on the shared writer)
-plus the MSD download itself:
+Generated by a four-step chain that starts from the MSD download (the metadata and OMOP steps
+vendored from `flip_project_spleen_segmentation` and `flip-omop-mock-data`; the DICOM step on the
+shared writer):
 
 1. **Download** the raw MSD Task09_Spleen archive (`download-spleen-msd-raw` — NOT the same
    download as `download-spleen-data` above; this one reads/writes the raw MSD layout
    `data/Task09_Spleen/imagesTr`, not the FLIP accession-resources layout).
 2. **NIfTI → DICOM** (`convert-spleen-to-dicom`), one CT series per subject under
    `dicom_output/<subject>/`, with a synthetic patient identity derived from the subject id
-   (`utils/synthetic_identity.py`). Deterministic, no root, no binaries: it used to call
-   plastimatch, which needed root to install and minted fresh UIDs on every run — the reason the
-   spleen DICOMs had to be re-hosted before FLIP#1221.
+   (`utils/synthetic_identity.py`). Deterministic, no root, no binaries.
 3. **DICOM → metadata table** (`create-spleen-metadata-table`), writing
    `tables/dicom_metadata.csv` and copying it to `data/spleen_metadata.csv` where the next
    step expects it — this copy stands in for a manual step upstream.
@@ -210,11 +214,12 @@ There is also a **reproducible path** that skips steps 1-2 entirely:
 `fetch-spleen-metadata-table` downloads the *published* metadata table for the pinned
 `trust/.data_version` (no 1.5GB MSD download) straight into `data/spleen_metadata.csv`, ready
 for step 4. `reproduce-spleen-omop` chains `fetch-spleen-metadata-table` →
-`build-spleen-omop-tables` → `verify-spleen-omop-tables` in one command. Since the FLIP#1221 cut
-the published export *is* the deterministic chain's output, so the two paths agree; before it, the
-regeneration path could not reproduce the plastimatch-era export and was only good for exercising
-the DICOM stage. `verify-spleen-omop-tables` (`utils/verify_omop_tables.py --project
-spleen_project`) is the faithfulness check: it diffs the locally generated tables against the
+`build-spleen-omop-tables` → `verify-spleen-omop-tables` in one command. From the FLIP#1221 cut on, the
+published export *is* the deterministic chain's output, so the two paths agree. An earlier data version
+cannot be reproduced this way.
+
+**Faithfulness gate.** `verify-spleen-omop-tables` (`utils/verify_omop_tables.py --project
+spleen_project`) diffs the locally generated tables against the
 published ones for the pinned data version and prints a `MATCH`/`DIFF` per table, exiting non-zero
 on any divergence. Re-run it after a `.data_version` bump or after any change to the converter or
 the shared schemas. The gate excuses a published-only column only when it is empty in the published
@@ -239,6 +244,8 @@ make -C fl-tutorials seed-spleen KIT=GSTT           # both halves of a RUNNING d
 are exactly the per-trust layout `trust/omop-db`'s `build_canonical` (assembles the canonical
 dataset from per-trust project directories) and `import_tables` (loads a trust's slice into
 its OMOP database) expect as input — see `trust/omop-db/README.md`.
+
+#### Moving a trust from an older spleen cut
 
 **Moving a trust that holds the pre-FLIP#1221 spleen cut.** Every spleen identity, accession and
 UID changed at that cut, so `seed-omop`'s default `--clean projects` (which deletes by the *new*
@@ -269,8 +276,8 @@ spleen's, with `download-brain-mri-msd-raw` → `convert-brain-mri-to-dicom` →
 [`cxr/`](cxr/) carries `omop_convert_cxr.py` and its own uv project. Only the **conversion** is
 here: the chest X-rays themselves are generated by a synthetic model that lives outside this
 repo, in [`londonaicentre/xraycat`](https://github.com/londonaicentre/xraycat) (private — org
-members only), along with the DICOM write and the metadata extraction. That is the scope
-FLIP#1092 set, since those images do not come from a public dataset the way MSD spleen does.
+members only), along with the DICOM write and the metadata extraction, because those images do
+not come from a public dataset the way MSD spleen does.
 
 So the provenance chain recorded here starts at the DICOM metadata table, published beside its
 outputs at `omop-csv/cxr_project/source/dicom_metadata.csv` on `aicentreflip/trust-data`, read at
@@ -301,10 +308,9 @@ Two shape differences from spleen, both inherited from what the dataset is:
 
 ### Prostate: a cohort published from the fold download
 
-[`prostate/`](prostate/) is the third converter and the first cohort published for the trust
-**seed pipeline** alone (`make -C trust seed`, FLIP#1100) — there is no pgdata/Orthanc snapshot of
-it, the trusts load it from `omop-csv/prostate_project/` and `dicom/prostate_project.tar.gz` on
-the dataset. The chain starts at a public download (PI-CAI fold 0, 300 bpMRI studies) rather than
+[`prostate/`](prostate/) is published for the trust **seed pipeline** (`make -C trust seed`,
+FLIP#1100): the trusts load it from `omop-csv/prostate_project/` and `dicom/prostate_project.tar.gz`
+on the dataset. The chain starts at a public download (PI-CAI fold 0, 300 bpMRI studies) rather than
 at a private generator, so unlike cxr every stage is in-tree and reproducible:
 
 ```bash
@@ -319,7 +325,7 @@ make -C fl-tutorials build-prostate-canonical             # the source_trust for
 make -C fl-tutorials package-prostate-dicom               # verified both ways against those tables -> tar.gz
 ```
 
-Three shape differences from the other two, each inherited from what the dataset is:
+Three shape differences from spleen and cxr, each inherited from what the dataset is:
 
 - **`source_trust` is one contributing center per trust** (ZGT → 1, PCNN → 2, RUMC → 3), decided
   in the metadata table from `ClinicalTrialSiteID`, never by row index and never by merging

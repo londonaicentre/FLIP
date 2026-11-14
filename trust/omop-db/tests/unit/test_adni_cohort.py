@@ -211,6 +211,10 @@ class TestReloadByProvenance:
             ).scalars()
             assert sorted(loaded) == [PERSON_ID_OFFSET + 1, PERSON_ID_OFFSET + 3]
 
+    def _query(self, engine) -> pd.DataFrame:
+        with engine.connect() as conn:
+            return pd.read_sql_query(text(QUERY_SQL.read_text()), conn)
+
     def test_query_sql_returns_the_loaded_cohort(self, engine, cohort: pd.DataFrame):
         """The tutorial's actual query.sql, run over what this loader writes, gives the cohort back.
 
@@ -218,36 +222,27 @@ class TestReloadByProvenance:
         year), so this is the check that the copy still produces rows the query selects, value for value.
         """
         load_adni_cohort(engine, cohort, num_trusts=2, trust_index=1)
-        with engine.connect() as conn:
-            result = pd.read_sql_query(text(QUERY_SQL.read_text()), conn)
+        result = self._query(engine)
         assert list(result.columns) == COHORT_COLUMNS
         result["person_id"] -= PERSON_ID_OFFSET
         result = result.sort_values("person_id").reset_index(drop=True)
         expected = split_for_trust(cohort, 2, 1, mode="modulo").sort_values("person_id").reset_index(drop=True)
         pd.testing.assert_frame_equal(result.astype(float), expected.astype(float), check_exact=False, atol=1e-9)
 
-    def _query(self, engine) -> pd.DataFrame:
-        with engine.connect() as conn:
-            return pd.read_sql_query(text(QUERY_SQL.read_text()), conn)
-
-    def test_query_sql_drops_a_person_missing_any_measurement(self, engine, cohort: pd.DataFrame):
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            "DELETE FROM omop.measurement WHERE person_id = :p AND measurement_source_value = 'PLASMA_NFL'",
+            # Returned, a NULL education value would make the whole site refuse its release (it refuses, not drops).
+            "UPDATE omop.observation SET value_as_number = NULL WHERE person_id = :p",
+        ],
+        ids=["missing_measurement", "null_education"],
+    )
+    def test_query_sql_drops_an_incomplete_person(self, engine, cohort: pd.DataFrame, mutation: str):
         load_adni_cohort(engine, cohort, num_trusts=1, trust_index=1)
         victim = PERSON_ID_OFFSET + int(cohort["person_id"].iloc[0])
         with engine.begin() as conn:
-            conn.execute(
-                text("DELETE FROM omop.measurement WHERE person_id = :p AND measurement_source_value = 'PLASMA_NFL'"),
-                {"p": victim},
-            )
-        result = self._query(engine)
-        assert victim not in set(result["person_id"])
-        assert len(result) == len(cohort) - 1
-
-    def test_query_sql_drops_a_person_with_null_education(self, engine, cohort: pd.DataFrame):
-        """Returned, a NULL education value would make the whole site refuse its release (it refuses, not drops)."""
-        load_adni_cohort(engine, cohort, num_trusts=1, trust_index=1)
-        victim = PERSON_ID_OFFSET + int(cohort["person_id"].iloc[0])
-        with engine.begin() as conn:
-            conn.execute(text("UPDATE omop.observation SET value_as_number = NULL WHERE person_id = :p"), {"p": victim})
+            conn.execute(text(mutation), {"p": victim})
         result = self._query(engine)
         assert victim not in set(result["person_id"])
         assert len(result) == len(cohort) - 1

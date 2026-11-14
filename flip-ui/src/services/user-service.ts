@@ -69,10 +69,10 @@ export interface IProjectUser {
 }
 
 /**
- * What `GET /users/lookup` returns when resolving an email to a prospective project member.
+ * A project member as `GET /users/lookup` and `GET /projects/{id}` return it.
  *
  * Deliberately narrower than IProjectUser: the hub withholds `name` and `organisation` from
- * everyone who lacks CAN_MANAGE_USERS, so the add-member flow never sees them (FLIP#907).
+ * everyone who lacks CAN_MANAGE_USERS, so project members never carry them (FLIP#907, FLIP#996).
  */
 export interface IProjectUserLookup {
     id: string;

@@ -15,8 +15,8 @@
 Training and results
 ######################
 
-FLIP trains several models at several Trusts at the same time, using :term:`NVIDIA FLARE` or the
-:term:`Flower Framework` to train, test and aggregate at each site. This page covers starting and stopping a run,
+FLIP trains your model at several Trusts at once, using :term:`NVIDIA FLARE` or the :term:`Flower Framework`: each Trust
+trains and tests locally, and the Central Hub aggregates the results. This page covers starting and stopping a run,
 following it, and downloading what it produces.
 
 .. contents:: On this page
@@ -67,12 +67,14 @@ Before you start, the model's required files must all be uploaded and checked (s
 
 5. Click **Initiate Training**.
 
-The model page has two tabs. Once training starts it opens **Run**, where the **Live activity** feed lists each step
-with a timestamp (queuing, net assignment, training in progress, training complete) and the stop and download buttons
-sit at the top. The **Prepare** tab keeps a progress bar of the stages.
+Once training starts, the model page switches from the **Prepare** tab to the **Run** tab:
 
-If **Live activity** says the platform team has the details, send them the job reference from that message.
-An administrator can use it to find the matching error in the Central Hub logs.
+- **Run** has the stop and download buttons at the top, and a **Live activity** feed that lists each step with a
+  timestamp (queuing, net assignment, training in progress, training complete).
+- **Prepare** keeps a progress bar of the stages.
+
+If a **Live activity** message says the platform team has the details, copy the job reference it gives and send it to
+the platform team. They use it to find the matching error in the Central Hub logs.
 
 .. figure:: ../assets/generated/gifs/flip/initiate-training.gif
    :width: 600
@@ -85,9 +87,10 @@ Stop training
 *************
 
 The stop button appears at the top of the **Run** tab while the model is queued or training. Once training has ended it
-disappears.
+disappears. While the model is still queued (status *Model Queued*), the button reads **Abort job** instead of
+**Stop Training**.
 
-1. Click **Stop Training**.
+1. Click **Stop Training** (or **Abort job**).
 2. Confirm.
 
 The progress bar on the **Prepare** tab shows the stage at which training stopped.
@@ -98,8 +101,8 @@ The progress bar on the **Prepare** tab shows the stage at which training stoppe
 
    Stopping model training.
 
-While the model is still queued (status *Model Queued*), the same button reads **Abort job**. Aborting removes the job
-from the queue, marks the model as *Stopped* and frees its net for the next job straight away.
+Aborting a queued job removes it from the queue, marks the model as *Stopped* and frees its net for the next job
+straight away.
 
 A stopped model produces no results, so **Download Results** stays disabled. It cannot be started again; to train
 again, create a new model.
@@ -110,8 +113,8 @@ again, create a new model.
 View results
 ************
 
-**Download Results**, at the top of the model page, becomes available once training has finished and its results have
-been uploaded.
+**Download Results**, at the top of the model's **Run** tab, becomes available once training has finished and its
+results have been uploaded.
 
 1. Click **Download Results**.
 2. Open the downloaded ``.zip`` file to view the results.

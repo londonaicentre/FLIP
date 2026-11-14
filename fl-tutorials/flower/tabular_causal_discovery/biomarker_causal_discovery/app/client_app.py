@@ -176,7 +176,7 @@ def train(msg: Message, context: Context) -> Message:
 
 @app.evaluate()
 def evaluate(msg: Message, context: Context) -> Message:
-    """Report the final state's edge counts (the ".x_0" suffix plots a single point by convention)."""
+    """Report the final state's edge counts, plotted at the server round evaluated."""
     _raise_pending_error(context)
     config = _load_config()
     client_name = client_identity(context)
@@ -185,7 +185,7 @@ def evaluate(msg: Message, context: Context) -> Message:
     assert_site_may_release(matrix, config, person_ids, dropped_rows, client_name)
     metrics = evaluate_state(decode(_received_arrays(msg)), config)
     log(INFO, f"Final state at {client_name}: {metrics}")
-    record = {**{k: float(v) for k, v in metrics.items()}, **{f"{k}.x_0": float(v) for k, v in metrics.items()}}
+    record = {k: float(v) for k, v in metrics.items()}
     record["num-examples"] = int(matrix.shape[0])
     return Message(
         content=RecordDict({"metrics": MetricRecord(record), "config": ConfigRecord({"site": client_name})}),

@@ -22,6 +22,8 @@
 
 import { createServer, Response, Server } from "miragejs";
 
+import { projectHasImaging } from "@/partials/projects/projectType";
+
 import filesList from "./demo/estate/files_list.json";
 import jobTypes from "./demo/estate/job_types.json";
 import siteDetails from "./demo/estate/site_details.json";
@@ -30,8 +32,15 @@ import { DEMO_NET_NAME, DEMO_SITES, DEMO_USER } from "./demo/roster";
 
 const BASE = "/api";
 
-type Project = { id: string; name: string; query: { id: string }; approvedTrusts: { id: string }[] };
-type Models = { data: ({ status?: unknown; owner_id?: unknown } & Record<string, unknown>)[] };
+type Project = {
+    id: string;
+    name: string;
+    description?: string;
+    has_imaging?: boolean;
+    query: { id: string };
+    approvedTrusts: { id: string }[];
+};
+type Models = { data: ({ name?: unknown; status?: unknown; owner_id?: unknown } & Record<string, unknown>)[] };
 
 export { DEMO_PROJECTS };
 
@@ -50,6 +59,7 @@ interface Tables {
     projectCount: (siteId: string) => number;
 }
 
+type Step = { creationTimestamp?: string };
 /** Projects approving a site: a site's `project_count` describes the exhibit, not the platform. */
 export const projectCountFor = (siteId: string, projects: readonly DemoProject[]): number =>
     projects.filter(demo => (demo.project as Project).approvedTrusts.some(trust => trust.id === siteId)).length;
@@ -122,6 +132,29 @@ const trustHealth = (): unknown => DEMO_SITES.map(site => ({
     online: true
 }));
 
+// The paginated envelope, holding everything on one page.
+const onePage = (data: unknown[]): Record<string, unknown> => ({
+    page: 1,
+    pageSize: 20,
+    totalPages: 1,
+    totalRecords: data.length,
+    data
+});
+
+// The Projects list's Type filter and search, as the hub applies them: an unknown type means every
+// type, an absent has_imaging means imaging, and search matches the name or description.
+const allProjects = (tables: Tables, query: Record<string, unknown>): unknown => {
+    const type = query.projectType;
+    const search = String(query.search ?? "").toLowerCase();
+    const data = tables.projects
+        .map(demo => demo.project as Project)
+        .filter(project => (type !== "imaging" && type !== "omop_only")
+            || projectHasImaging(project) === (type === "imaging"))
+        .filter(project => !search || `${project.name} ${project.description ?? ""}`.toLowerCase().includes(search));
+
+    return onePage(data);
+};
+
 /**
  * The estate-wide Models list, derived from the per-project model payloads
  * rather than captured separately — one register, one source of truth.
@@ -130,9 +163,14 @@ const trustHealth = (): unknown => DEMO_SITES.map(site => ({
  * visitor lands on it directly; with no route registered it rendered the
  * generic "Something went wrong" error over a permanent spinner on the public
  * exhibit (FLIP#794 review). The shape is IModelsPage (services/model-service.ts):
- * a paginated IModelSummary list plus the per-status totals the filter tiles sum.
+ * a paginated IModelSummary list plus the per-status totals the status filter sums.
+ * Like the real route, `search` and `project` narrow both the list and the counts,
+ * while `status` narrows only the list, so the status filter keeps its counts when one is selected.
  */
-const allModels = (tables: Tables, projectId?: string | null): unknown => {
+const allModels = (tables: Tables, query: Record<string, unknown>): unknown => {
+    const projectId = query.project as string | undefined;
+    const search = String(query.search ?? "").toLowerCase();
+    const statuses = String(query.status ?? "").split(",").filter(Boolean);
     const runTrusts = DEMO_SITES.map(({ id, name, code }) => ({
         id,
         name,
@@ -149,9 +187,15 @@ const allModels = (tables: Tables, projectId?: string | null): unknown => {
                 projectName: project.name,
                 ownerId: model.owner_id,
                 ownerName: DEMO_USER.name,
-                trusts: runTrusts
+                trusts: runTrusts,
+                // The hub sends it; the captured model rows don't, so read it off the step.
+                creationTimestamp: (tables.stepByModel[String(model.id)] as Step | undefined)?.creationTimestamp
             }));
-        });
+        })
+        .filter(model => !search
+            || [model.name, model.projectName].some(s => String(s).toLowerCase().includes(search)))
+        // Newest first, as the hub orders the page.
+        .sort((a, b) => String(b.creationTimestamp ?? "").localeCompare(String(a.creationTimestamp ?? "")));
     const statusCounts = data.reduce<Record<string, number>>((counts, model) => {
         const status = String(model.status);
 
@@ -160,13 +204,10 @@ const allModels = (tables: Tables, projectId?: string | null): unknown => {
             [status]: (counts[status] ?? 0) + 1
         };
     }, {});
+    const listed = statuses.length ? data.filter(model => statuses.includes(String(model.status))) : data;
 
     return {
-        page: 1,
-        pageSize: 20,
-        totalPages: 1,
-        totalRecords: data.length,
-        data,
+        ...onePage(listed),
         statusCounts
     };
 };
@@ -215,13 +256,8 @@ export function makeDemoServer(options: { timing?: number; projects?: readonly D
             this.get(`${BASE}/users/:email`, () => new Response(200, undefined, DEMO_USER));
             this.get(`${BASE}/users/:userId/permissions`, () => new Response(200, undefined, { permissions: [] }));
 
-            this.get(`${BASE}/projects`, () => new Response(200, undefined, {
-                page: 1,
-                pageSize: 20,
-                totalPages: 1,
-                totalRecords: tables.projects.length,
-                data: tables.projects.map(demo => demo.project)
-            } as never));
+            this.get(`${BASE}/projects`, (_schema, request) =>
+                new Response(200, undefined, allProjects(tables, request.queryParams ?? {}) as never));
             this.get(`${BASE}/projects/:projectId`, (_schema, request) =>
                 byParam(tables.projectsById, request.params.projectId));
             this.get(`${BASE}/projects/:projectId/models`, (_schema, request) =>
@@ -234,7 +270,7 @@ export function makeDemoServer(options: { timing?: number; projects?: readonly D
                 byParam(tables.cohortByQuery, request.params.queryId));
 
             this.get(`${BASE}/models`, (_schema, request) =>
-                new Response(200, undefined, allModels(tables, request.queryParams?.project as string) as never));
+                new Response(200, undefined, allModels(tables, request.queryParams ?? {}) as never));
             this.get(`${BASE}/models/projects`, () => new Response(200, undefined, tables.projects.map(demo => ({
                 id: (demo.project as Project).id,
                 name: (demo.project as Project).name,

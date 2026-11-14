@@ -88,6 +88,10 @@ describe("relativeCreatedLabel", () => {
         expect(relativeCreatedLabel(null)).toBe("—");
         expect(relativeCreatedLabel("not-a-date")).toBe("—");
     });
+
+    it("takes the fallback the Models list uses", () => {
+        expect(relativeCreatedLabel(undefined, "")).toBe("");
+    });
 });
 
 describe("safeExternalUrl", () => {

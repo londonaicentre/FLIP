@@ -44,7 +44,9 @@ images, no autoencoder, and the diffusion model works on the pixels directly.
 
 ## Debugging
 
-**Sample images.** A generative model's losses say little about its images, so in a local run the
+### Sample images
+
+A generative model's losses say little about its images, so in a local run the
 tutorials can save them: reconstructions (autoencoder) or generated samples (both diffusion
 tutorials). They are written only when all three hold:
 
@@ -55,11 +57,14 @@ tutorials). They are written only when all three hold:
 | `DEBUG_SAMPLES_DIR` set | `make run` / `make sim` only |
 
 On a trust the last two never hold, so nothing is written whatever `config.json` says, and the
-plotting code (`dev/plot_utils.py`) is not even there: it is staged into simulator runs only, never
+plotting code (`dev/plot_utils.py` in this directory, shared by all three tutorials) is not even there: it is staged into simulator runs only, never
 uploaded. Images land in `fl-tutorials/data/debug_samples/<tutorial>/` (gitignored); nothing sends
 them anywhere.
 
-**Loss curves.** After or during a local run, from the tutorial's directory:
+### Loss curves
+
+After or during a local run, from the tutorial's directory (replace `<tutorial>` with its name, e.g.
+`xray_diffusion`):
 
 ```bash
 DEBUG_SAMPLES_DIR=../../../data/debug_samples/<tutorial> python ../dev/plot_utils.py

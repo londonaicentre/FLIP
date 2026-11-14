@@ -133,7 +133,7 @@ XNAT_WEB_PORT_EFFECTIVE := $(or $(XNAT_WEB_PORT),$(XNAT_PORT_EFFECTIVE))
 # XNAT's AE title, applied to the SCP receiver, dqrCallingAe and the C-MOVE destination.
 # $(if $(filter undefined,...)) rather than $(or): $(or) treats an empty value as false and
 # would substitute the default, cancelling configure-xnat.sh's guard on an empty kit value.
-XNAT_AETITLE_EFFECTIVE := $(if $(filter undefined,$(origin XNAT_AETITLE)),XNAT,$(XNAT_AETITLE))
+XNAT_AETITLE_EFFECTIVE := $(if $(filter undefined,$(origin XNAT_AETITLE)),FLIP_XNAT,$(XNAT_AETITLE))
 PACS_UI_PORT_EFFECTIVE := $(or $(PACS_UI_PORT),8042)
 
 # Host path that backs this trust's XNAT bind mounts (parent of xnat-data/
@@ -275,6 +275,9 @@ else
 # In development, mount plugins and config from the host for hot-reload
 STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.development.yml
 XNAT_PLUGINS_FROM_HOST = 1
+# The development overlay caps xnat-web at 8G, which .env's 8192m heap would fill: keep the heap to
+# three quarters of it, leaving the rest for the JVM's own memory (FLIP#1880).
+XNAT_MAX_HEAP = 6144m
 endif
 
 # Guard: a KIT-selected target needs KIT set.

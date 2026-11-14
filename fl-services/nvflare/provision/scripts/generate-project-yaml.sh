@@ -61,12 +61,13 @@ fi
 TEMPLATE="$(yq -o=json '[.participants[] | select(.type == "client")][0] | del(.name)' "${BASE_YAML}" | yq -P '.' -)"
 
 # Build the expanded client sequence (Trust_1 .. Trust_N) as YAML text: a
-# sequence entry per client, with the comment-free template indented two spaces
-# beneath its name.
+# sequence entry per client, with the comment-free template (indented two spaces
+# once, here) beneath its name.
+INDENTED_TEMPLATE="$(printf '%s\n' "${TEMPLATE}" | sed 's/^/  /')"
 CLIENTS=""
 for ((i = 1; i <= NUM_CLIENTS; i++)); do
     CLIENTS+="- name: Trust_${i}"$'\n'
-    CLIENTS+="$(printf '%s\n' "${TEMPLATE}" | sed 's/^/  /')"$'\n'
+    CLIENTS+="${INDENTED_TEMPLATE}"$'\n'
 done
 # CLIENTS is read by yq below via strenv(), so it must live in the process
 # environment. The environment block counts against the OS ARG_MAX ceiling

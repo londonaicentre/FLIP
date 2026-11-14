@@ -678,17 +678,27 @@ class TestLogQueuePositions:
         mock_add_log.assert_not_called()
         fake_session.commit.assert_not_called()
 
-    def test_new_job_gets_its_position_logged(self, fake_session):
-        job = _queued_job()
-        fake_session.exec.side_effect = _exec_returning([job], [])
+    @pytest.mark.parametrize(
+        ("n_jobs", "prior", "emitted_index", "position"),
+        [
+            pytest.param(1, [], 0, 1, id="new_job_gets_its_position_logged"),
+            pytest.param(1, [(0, 2)], 0, 1, id="moved_job_logs_its_new_position"),
+            pytest.param(2, [(0, 1)], 1, 2, id="second_of_two_queued_jobs_gets_position_two"),
+        ],
+    )
+    def test_changed_position_is_logged(self, fake_session, n_jobs, prior, emitted_index, position):
+        # prior: (job_index, position) pairs, each the job's OWN latest row (keyed by job id).
+        jobs = [_queued_job() for _ in range(n_jobs)]
+        fake_session.exec.side_effect = _exec_returning(jobs, [_position_details(jobs[i].id, p) for i, p in prior])
         with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
             fl_scheduler_service.log_queue_positions(fake_session)
+        emitted = jobs[emitted_index]
         mock_add_log.assert_called_once_with(
-            job.model_id,
+            emitted.model_id,
             None,
             fake_session,
             event_type=FLLogEvent.QUEUE_POSITION.value,
-            details={"position": 1, "job_id": str(job.id)},
+            details={"position": position, "job_id": str(emitted.id)},
             transaction=fake_session,
         )
         # The rows are batched: one commit for the whole emission, not one per row.
@@ -701,34 +711,6 @@ class TestLogQueuePositions:
             fl_scheduler_service.log_queue_positions(fake_session)
         mock_add_log.assert_not_called()
         fake_session.commit.assert_not_called()
-
-    def test_moved_job_logs_its_new_position(self, fake_session):
-        job = _queued_job()
-        fake_session.exec.side_effect = _exec_returning([job], [_position_details(job.id, 2)])
-        with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
-            fl_scheduler_service.log_queue_positions(fake_session)
-        mock_add_log.assert_called_once_with(
-            job.model_id,
-            None,
-            fake_session,
-            event_type=FLLogEvent.QUEUE_POSITION.value,
-            details={"position": 1, "job_id": str(job.id)},
-            transaction=fake_session,
-        )
-
-    def test_second_of_two_queued_jobs_gets_position_two(self, fake_session):
-        first, second = _queued_job(), _queued_job()
-        fake_session.exec.side_effect = _exec_returning([first, second], [_position_details(first.id, 1)])
-        with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
-            fl_scheduler_service.log_queue_positions(fake_session)
-        mock_add_log.assert_called_once_with(
-            second.model_id,
-            None,
-            fake_session,
-            event_type=FLLogEvent.QUEUE_POSITION.value,
-            details={"position": 2, "job_id": str(second.id)},
-            transaction=fake_session,
-        )
 
     def test_two_queued_jobs_of_the_same_model_do_not_oscillate(self, fake_session):
         # FLJob has no uniqueness on model_id, so a double initiate can queue the
@@ -825,3 +807,77 @@ class TestLogQueuePositions:
         with patch.object(fl_scheduler_service, "log_queue_positions") as mock_positions:
             fl_scheduler_service.remove_job_from_queue(model_id, fake_session)
         mock_positions.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("function", "arg", "message", "rolls_back"),
+    [
+        ("remove_job", uuid4(), "Error reverting job pickup", True),
+        ("remove_job_from_queue", uuid4(), "Error removing job from queue", True),
+        ("revert_scheduler_pickup", uuid4(), "Error reverting scheduler pickup", True),
+        ("update_fl_scheduler", uuid4(), "Error updating FL scheduler", True),
+        ("get_net_by_model_id", uuid4(), "Error getting net by model ID", False),
+        ("get_net_by_name", "net-1", "Database error while getting net by name", False),
+        ("get_required_training_details", uuid4(), "Error getting required training details", False),
+    ],
+)
+def test_db_failure_is_raised_as_database_error(fake_session, function, arg, message, rolls_back):
+    """Writers roll back before raising; readers have nothing to roll back."""
+    fake_session.get.side_effect = SQLAlchemyError("db down")
+    fake_session.exec.side_effect = SQLAlchemyError("db down")
+
+    with pytest.raises(DatabaseError, match=message):
+        getattr(fl_scheduler_service, function)(arg, fake_session)
+
+    assert fake_session.rollback.called is rolls_back
+    fake_session.commit.assert_not_called()
+
+
+def test_get_nets_db_error(fake_session):
+    fake_session.exec.side_effect = SQLAlchemyError("db down")
+
+    with pytest.raises(DatabaseError, match="Error getting nets"):
+        fl_scheduler_service.get_nets(fake_session)
+
+
+def test_check_for_available_net_db_error_rolls_back(fake_session):
+    fake_session.exec.side_effect = SQLAlchemyError("db down")
+
+    with pytest.raises(DatabaseError, match="Error checking for available net"):
+        fl_scheduler_service.check_for_available_net(fake_session)
+
+    fake_session.rollback.assert_called_once()
+
+
+def test_check_for_queued_jobs_db_error_frees_the_scheduler(fake_session, scheduler_id):
+    """The net was marked BUSY for this pickup, so a failed lookup must hand it back."""
+    fake_session.exec.side_effect = SQLAlchemyError("db down")
+
+    with (
+        patch.object(fl_scheduler_service, "revert_scheduler_pickup") as mock_revert,
+        pytest.raises(DatabaseError, match="Error checking for queued jobs"),
+    ):
+        fl_scheduler_service.check_for_queued_jobs(scheduler_id, fake_session)
+
+    fake_session.rollback.assert_called_once()
+    mock_revert.assert_called_once_with(scheduler_id, fake_session)
+
+
+def test_resolve_backend_uses_the_given_net_without_querying(fake_session):
+    net = INetDetails(endpoint="endpoint", name="net-1", fl_backend=FLBackend.FLOWER)
+
+    assert fl_scheduler_service.resolve_backend(fake_session, net) == FLBackend.FLOWER
+    fake_session.exec.assert_not_called()
+
+
+def test_resolve_backend_reads_any_net_when_none_given(fake_session):
+    fake_session.exec.return_value.first.return_value = FLBackend.NVFLARE
+
+    assert fl_scheduler_service.resolve_backend(fake_session) == FLBackend.NVFLARE
+
+
+def test_resolve_backend_without_nets_raises(fake_session):
+    fake_session.exec.return_value.first.return_value = None
+
+    with pytest.raises(ValueError, match="no FL nets are registered"):
+        fl_scheduler_service.resolve_backend(fake_session)

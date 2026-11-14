@@ -65,8 +65,8 @@ preparation, and it takes far longer than the install.
    * - 1
      - Decide and govern
      - Sponsoring director, information governance lead
-     - The trust has decided to take part, named its two roles and closed the data protection items in
-       :ref:`readiness-governance`.
+     - The trust has decided to take part, named its Trust Admin and trust operator, and closed the data protection
+       items in :ref:`readiness-governance`.
      - Weeks to months, driven by the DPIA and lawful-basis work
    * - 2
      - Prepare the clinical data
@@ -166,14 +166,14 @@ Model. A trust whose records are not in OMOP cannot answer any cohort query, so 
     countries and the UK is one, so the affiliate licence is free; LOINC is free with a registered account; the
     OHDSI vocabularies themselves are free. The UK editions (SNOMED CT UK, dm+d) come from NHS England's TRUD
     service, where most subscriptions are accepted automatically.
-  - **Lead time:** days, not months. Three free accounts (OHDSI Athena, TRUD and, if the trust wants LOINC's own
-    release, LOINC) and the acceptance of each vocabulary's licence on sign-up. Athena assembles the chosen
+  - **Lead time:** days, not months. The trust needs up to three free accounts (OHDSI Athena, TRUD and, if it wants
+    LOINC's own release, LOINC) and accepts each vocabulary's licence on sign-up. Athena assembles the chosen
     vocabularies into one bundle and emails a download link, which is valid for 72 hours. The bundle FLIP uses is
     about 600 MB zipped and 3.6 GB unpacked, and loading it into the node takes about 25 minutes.
   - **Owner:** the data team, since the same vocabularies are what their OMOP conversion maps to. Start it in
     phase 2, not at install time.
 
-  The roster FLIP's queries need, and the load itself, are described in step 7 of :doc:`onboarding-a-trust`.
+  The list of vocabularies FLIP's queries need, and how to load them, are in step 7 of :doc:`onboarding-a-trust`.
 
 .. _readiness-imaging:
 
@@ -207,9 +207,9 @@ Network and IT
 
 *Owner: network and security team.*
 
-The node only ever connects outwards. No port is opened to the internet, and the Central Hub cannot start a
-connection into the trust. What the firewall must allow is a short list of outbound destinations, given in full,
-with which ones have been measured behind a deny-everything firewall, on :ref:`deploy-trust-node-network`.
+The node only ever connects outwards. No port is opened to the internet, and the Central Hub cannot start a connection
+into the trust. The firewall must allow a short list of outbound destinations. The full list, noting which destinations
+have been tested behind a deny-everything firewall, is on :ref:`deploy-trust-node-network`.
 
 - ☐ **Outbound HTTPS to the Central Hub**, and to the hub's separate federated-learning endpoint on its own port.
   The addresses and port come with the trust's kit. The federated-learning connection is mutual TLS on a
@@ -220,10 +220,10 @@ with which ones have been measured behind a deny-everything firewall, on :ref:`d
   :doc:`deploy-flip-node-in-tre`.
 - ☐ **A secure channel to receive the kit.** The kit is a small file holding the trust's keys and must not travel by
   plain email.
-- ☐ **The trust's outbound address is known.** The hub identifies a trust by its certificates and API key, not by
-  its address, and the node needs no fixed public address of its own. The FLIP team still asks for the address the
-  node's traffic leaves the trust from, so the hub's federated-learning edge can admit declared trusts only, and
-  needs to hear when it changes.
+- ☐ **The FLIP team has the trust's outbound address.** The hub identifies a trust by its certificates and API key,
+  not by its address, and the node needs no fixed public address of its own. The FLIP team still needs the address
+  the node's traffic leaves the trust from, so the hub's federated-learning edge admits declared trusts only. Tell
+  them whenever it changes.
 
 .. rubric:: Questions for your network team
 
@@ -245,10 +245,13 @@ network team has. Settle them before the node is built:
 - **How long may an idle connection live?** The FL client holds a long-lived connection to the FL server. A firewall
   that drops idle flows after a few minutes forces reconnects. It does not break training, but it is worth knowing.
 
-The request itself, in the form a firewall team can copy: *from the FLIP node to the FL endpoint host, at its fixed
-address, TCP on the FL port, mutually authenticated TLS, exempt from decryption, allowed as the* ``ssl`` *application
-on that non-default port.* On a Compose node ``make onboard-onprem-trust KIT=<CODE>`` probes every destination from
-the host and prints what it cannot reach, and :ref:`deploy-trust-node-network` has the check that tells a blocked
+The request itself, in a form a firewall team can copy:
+
+   From the FLIP node to the FL endpoint host, at its fixed address, TCP on the FL port, mutually authenticated
+   TLS, exempt from decryption, allowed as the ``ssl`` application on that non-default port.
+
+On a Compose node, the trust operator can run ``make onboard-onprem-trust KIT=<CODE>`` to probe every destination
+from the host and list what it cannot reach. :ref:`deploy-trust-node-network` has the check that tells a blocked
 port from a firewall that resets the handshake.
 
 .. _readiness-hardware:
@@ -259,9 +262,9 @@ Hardware
 
 *Owner: IT infrastructure.*
 
-The common case is one Linux server inside the trust. A trust that would rather build in its own cloud
-subscription, or that runs Kubernetes, has a supported route for each ("Choose your platform" on
-:doc:`deploy-trust-node`); the governance and data items are the same whichever it picks.
+The common case is one Linux server inside the trust. Cloud, Kubernetes and TRE alternatives are listed after the
+checklist below, and compared under "Choose your platform" on :doc:`deploy-trust-node`. The governance and data
+items are the same whichever the trust picks.
 
 How big the server must be depends on the kind of projects the trust wants to take part in, so decide that first:
 
@@ -300,16 +303,20 @@ Whatever the tier:
 - ☐ **For GPU tiers, an NVIDIA GPU with driver version 580 or newer, and the NVIDIA Container Toolkit.** FLIP's
   training images bring their own CUDA runtime, so the host needs no CUDA toolkit. A trust can start CPU-only and
   add a GPU later.
-- ☐ **Or one of the alternatives:** the Helm chart on the trust's Kubernetes (:doc:`deploy-flip-node-kubernetes`),
-  or, built from FLIP's own infrastructure code in the trust's account, an AWS EC2 instance
+
+Instead of a single server, a trust can use:
+
+- the Helm chart on its own Kubernetes (:doc:`deploy-flip-node-kubernetes`);
+- FLIP's own infrastructure code in the trust's cloud account: an AWS EC2 instance
   (:doc:`deploy-flip-node-aws-ec2`) or EKS cluster (:doc:`deploy-flip-node-aws-eks`), or an Azure VM
-  (:doc:`deploy-flip-node-azure`) or AKS cluster (:doc:`deploy-flip-node-azure-aks`).
-- ☐ **Or a Trusted Research Environment**, where governance bars live access to the hospital systems. The node then
-  runs inside the TRE against a project-specific extract that the TRE operator loads (:doc:`deploy-flip-node-in-tre`).
+  (:doc:`deploy-flip-node-azure`) or AKS cluster (:doc:`deploy-flip-node-azure-aks`);
+- a Trusted Research Environment, where governance bars live access to the hospital systems. The node then runs
+  inside the TRE against a project-specific extract that the TRE operator loads (:doc:`deploy-flip-node-in-tre`).
 
 **********
 Next steps
 **********
 
-When every item above is ticked, tell the FLIP team which platform the trust has chosen and which release the hub
-runs. They start the runbook on :doc:`onboarding-a-trust`; the trust operator picks it up at step 5.
+When every item above is ticked, tell the FLIP team which platform the trust has chosen. They start the runbook on
+:doc:`onboarding-a-trust` and tell the trust operator which release the hub runs; the operator picks the runbook
+up at step 5.
