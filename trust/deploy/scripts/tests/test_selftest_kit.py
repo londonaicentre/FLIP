@@ -48,13 +48,13 @@ def _assert(condition: bool, label: str, detail: str = "") -> None:
         FAIL += 1
 
 
-def _run(out: Path, *extra: str) -> subprocess.CompletedProcess:
+def _run(out: Path, *extra: str, backend: str = "nvflare") -> subprocess.CompletedProcess:
     return subprocess.run(
         [
             sys.executable,
             str(SCRIPT),
             "--backend",
-            "nvflare",
+            backend,
             "--fl-kit-dir",
             "/opt/kit",
             "--data-root",
@@ -152,22 +152,7 @@ def main() -> int:
     _assert(_kv(out).get("TRUST_API_KEY") != kv.get("TRUST_API_KEY"), "secrets are fresh on each run")
 
     print("rejects_unknown_backend")
-    bad = subprocess.run(
-        [
-            sys.executable,
-            str(SCRIPT),
-            "--backend",
-            "pytorch",
-            "--fl-kit-dir",
-            "/k",
-            "--data-root",
-            "/d",
-            "--out",
-            str(tmp / "x"),
-        ],
-        capture_output=True,
-        text=True,
-    )
+    bad = _run(tmp / "x", backend="pytorch")
     _assert(bad.returncode != 0, "unknown backend rejected")
 
     print("leftover_placeholder_is_an_error")

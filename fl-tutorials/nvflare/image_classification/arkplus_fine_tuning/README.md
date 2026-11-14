@@ -14,10 +14,8 @@
 # Fine-tuning a chest X-ray foundation model (Ark+)
 
 FLIP tutorial for **federated fine-tuning** of an Ark+ Swin foundation model on chest X-ray
-classification, using the FLARE **Client API** (`nvflare.client`). It replaces the earlier
-Executor-based implementation that used to live here: the finetuning semantics are unchanged (frozen
-backbone, fresh 5-class head, local teacher/student EMA), only the FL plumbing was ported from the
-legacy Executor API to the Client API. The job is defined entirely in Python via
+classification, using the FLARE **Client API** (`nvflare.client`): a frozen backbone, a fresh 5-class
+head and local teacher/student EMA. The job is defined entirely in Python via
 [`FlipFedAvgRecipe`](../../../../flip-utils/flip/nvflare/recipes/flip_fedavg_recipe.py) in
 [`job.py`](job.py) — no hand-written server/client JSON.
 
@@ -60,14 +58,13 @@ row are treated as negative. Labels come from the per-site dataframe (see Datase
 
 ## Model & Ark+ integration
 
-FLARE's persistor loads `models.get_model` from [`app_files/models.py`](app_files/models.py).
-`get_model()` builds an `ArkSwinTransformer` (in [`app_files/arkplus_flat_models.py`](app_files/arkplus_flat_models.py))
-sized from the `ARKPLUS` block, loads the backbone-only checkpoint that `make prepare-checkpoint` derives
-from the raw Ark6 file (`preprocess_checkpoints.py` strips `omni_heads.*` unconditionally, so the heads
-start fresh), and wraps it in `ArkPlusNVFlareWrapper` (which adapts Ark+'s
-`model(images, head_id) -> (features, logits)` to the `model(images) -> logits` interface, and exposes
-`forward_with_features` for the teacher/student loop). The trainer freezes every parameter that is not
-under `ark_model.omni_heads`, so only the classifier head trains.
+FLARE's persistor loads `models.get_model` from [`app_files/models.py`](app_files/models.py). `get_model()`:
+
+1. builds an `ArkSwinTransformer` (in [`app_files/arkplus_flat_models.py`](app_files/arkplus_flat_models.py)) sized from the `ARKPLUS` block;
+2. loads the backbone-only checkpoint that `make prepare-checkpoint` derives from the raw Ark6 file. `preprocess_checkpoints.py` always strips `omni_heads.*`, so the heads start fresh;
+3. wraps it in `ArkPlusNVFlareWrapper`. The wrapper adapts Ark+'s `model(images, head_id) -> (features, logits)` to the `model(images) -> logits` interface and exposes `forward_with_features` for the teacher/student loop.
+
+The trainer freezes every parameter outside `ark_model.omni_heads`, so only the classifier head trains.
 
 ### Teacher/student training
 
@@ -97,9 +94,8 @@ round 0.
 Training settings live in [`app_files/config.json`](app_files/config.json): `GLOBAL_ROUNDS`,
 `LOCAL_ROUNDS`, `LR_START`/`LR_END`, `VAL_SPLIT`/`SPLIT_SEED`, `BATCH_SIZE`, plus the `LESIONS`
 and `ARKPLUS` blocks. The shipped file sets `GLOBAL_ROUNDS: 50` and `LOCAL_ROUNDS: 5` (local epochs
-per round); the staging validation in
-[`ARKPLUS_EXPERIMENTS_GUIDE.md`](../../ARKPLUS_EXPERIMENTS_GUIDE.md) ran a reduced
-`GLOBAL_ROUNDS: 5` × `LOCAL_ROUNDS: 2`. On the platform `GLOBAL_ROUNDS` sets the round count; the local
+per round). A reduced `GLOBAL_ROUNDS: 5` × `LOCAL_ROUNDS: 2` was used for staging validation (see
+[`ARKPLUS_EXPERIMENTS_GUIDE.md`](../../ARKPLUS_EXPERIMENTS_GUIDE.md)). On the platform `GLOBAL_ROUNDS` sets the round count; the local
 simulator takes its round count from `NUM_ROUNDS` instead (see [How to run](#how-to-run)).
 
 ## Dataset setup
@@ -111,15 +107,17 @@ The quickest path uses the published reference dataset on Hugging Face. From the
 
 ```bash
 make -C fl-tutorials download-arkplus-finetuning-data   # fetch + lay out data/arkplus/site{1,2}/
-make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning
 ```
+
+Then run it as in [How to run](#how-to-run).
 
 `download-arkplus-finetuning-data` pulls the `site1`/`site2` training splits of
 [`aicentreflip/tutorials-arkplus-cxr-classification`](https://huggingface.co/datasets/aicentreflip/tutorials-arkplus-cxr-classification)
 and normalises them into `fl-tutorials/data/arkplus/site{1,2}/` (gitignored), matching this
-tutorial's `.env.app` defaults (`SITE{1,2}_IMAGES_DIR` / `SITE{1,2}_DATAFRAME`). Requires a GPU + the
-`flare-fl-base` image to run the simulator. To use your own data instead, point the per-site
-`.env.app` values at it.
+tutorial's `.env.app` defaults (`SITE{1,2}_IMAGES_DIR` / `SITE{1,2}_DATAFRAME`). To use your own data
+instead, point the per-site `.env.app` values at it.
+
+Running the simulator requires a GPU.
 
 - **Simulator (`LOCAL_DEV=true`):** the two clients (`site-1`, `site-2`) train on distinct local data.
   The trainer selects a client's data by `flare.get_site_name()`; `app_files/data_utils.py` resolves
@@ -127,8 +125,8 @@ tutorial's `.env.app` defaults (`SITE{1,2}_IMAGES_DIR` / `SITE{1,2}_DATAFRAME`).
   env. The per-site env vars are set in [`.env.app`](.env.app).
 - **Real deployment (`LOCAL_DEV=false`):** the cohort dataframe comes from
   `FLIP().get_dataframe(project_id, query)` and DICOMs from `FLIP().get_by_accession_number(...)`.
-  `project_id` is passed to the trainer as `--project_id`; the cohort `query` is read from
-  `config_fed_client.json` (see [`query.sql`](query.sql)).
+  `project_id` is passed to the trainer as `--project_id`; the cohort `query` is read from the job's
+  generated `config_fed_client.json` (see [`query.sql`](query.sql)).
 
 ### Example images
 
@@ -151,19 +149,23 @@ it checks each panel's lesion against `config.json` and each accession's labels 
 cohort dataframe, so a mislabelled figure fails rather than ships.
 
 > **What this figure is and is not evidence of.** The panels are drawn from `pydicom`'s `PixelData`,
-> not by running the app's transform chain. It once showed perfectly upright radiographs while the
-> model was being fed the transpose of them (FLIP#821), so a figure that looks right is not by
-> itself evidence that the model sees the same thing. The two are now tied together deliberately:
+> not by running the app's transform chain, so a figure that looks right is not by itself evidence
+> that the model sees the same thing (it once showed upright radiographs while the model was fed
+> their transpose, FLIP#821). The two are tied together deliberately:
 > `get_xray_transforms()` pins its reader to `PydicomReader(swap_ij=False)`, which returns the array
 > exactly as `PixelData` stores it, and `fl-tutorials/tests/` asserts that bit-for-bit on every app
 > on this path. **That test suite — not this figure — is what makes the panels representative.**
 
 ## Checkpoint setup
 
-`make run`/`make export` require the backbone checkpoint at `app_files/pretrained_weights.pt`, produced
-from the raw Ark6 output (`Ark6_swinLarge768_ep50.pth.tar`) by `make prepare-checkpoint` (a no-op if it
-already exists). Fetch the raw checkpoint with `make download-raw-checkpoint`, or request access via
-[this form](https://forms.gle/qkoDGXNiKRPTDdCe8); see [`process_tools/README.md`](process_tools/README.md).
+`make run` and `make export` need the backbone checkpoint at `app_files/pretrained_weights.pt`:
+
+1. Get the raw Ark6 checkpoint (`Ark6_swinLarge768_ep50.pth.tar`) with `make download-raw-checkpoint`,
+   or request access via [this form](https://forms.gle/qkoDGXNiKRPTDdCe8).
+2. Derive the backbone checkpoint with `make prepare-checkpoint` (it does nothing if
+   `app_files/pretrained_weights.pt` already exists).
+
+See [`process_tools/README.md`](process_tools/README.md) for detail.
 
 ## How to run
 
@@ -187,7 +189,7 @@ make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning NUM_ROUNDS=10
 ```
 
 `MAX_SAMPLES` (default `128`) caps how many dataframe rows each simulated site reads, so a plain
-`make run`/`make sim` is a quick smoke test of the whole round-trip — a few minutes on a GPU instead
+`make run` (which prepares the checkpoint, then runs `make sim`) is a quick smoke test of the whole round-trip — a few minutes on a GPU instead
 of the ~1,900 studies per site the full dataset holds. The subset is deterministic and
 class-balanced (`cap_dataframe` in [`app_files/data_utils.py`](app_files/data_utils.py)), so the
 label-aware train/val split and the per-lesion AUCs still compute. `MAX_SAMPLES=0` (or empty) reads
@@ -204,26 +206,27 @@ number of local epochs per round is not a sim knob — the simulator uses `LOCAL
 `config.json`, exactly as a deployed job does.
 
 or pass the flags directly using the recipe syntax (the Makefile's `uv` environment — flip-utils with
-the `full` extra — matches the deployed FL image; a bare `uv run` resolves to an env without
+the `nvflare` and `full` extras — matches the deployed FL image; a bare `uv run` resolves to an env without
 torch/nvflare):
 
 ```bash
-uv run --project ../../../../flip-utils --extra full python job.py --n_clients 3 --num_rounds 10
+uv run --project ../../../../flip-utils --extra nvflare --extra full python job.py --n_clients 3 --num_rounds 10
 ```
 
 > **Local knob only.** `--num_rounds` governs local simulation and export. In production the FL API
 > reads `GLOBAL_ROUNDS` from `config.json` at submit time and overrides whatever `job.py` baked into
 > the exported config — deployed round counts come from `config.json`, never from these flags.
-> (The standalone FLARE submit path, `make -C fl-services/nvflare submit`, is not wired — run
-> locally via the simulator, or exercise the platform path through the FLIP UI / `make e2e_smoke`.)
+
+To test the platform path, use the FLIP UI or `make e2e_smoke`. The standalone FLARE submit path
+(`make -C fl-services/nvflare submit`) is not wired; run locally via the simulator instead.
 
 ## Round metrics & platform comparison
 
-After a simulator run, `make round-metrics` parses the FLIP `ScatterAndGather` controller events
-(`Round N started/finished`, `Start/End aggregation`, `Contribution ... ACCEPTED`) from the
-simulator server log — the same lines `scripts/fl_round_metrics/extract_platform_round_timings.sh` pulls from CloudWatch for
-a deployed run — and writes the same artefacts (`rounds.tsv`, `summary.md`, a timing boxplot) under
-`round_metrics/` in this directory:
+After a simulator run, `make round-metrics` writes `rounds.tsv`, `summary.md` and a timing boxplot
+under `round_metrics/` in this directory. It parses the `ScatterAndGather` controller events
+(`Round N started/finished`, `Start/End aggregation`, `Contribution ... ACCEPTED`) from the simulator
+server log. These are the same lines and artefacts that
+`scripts/fl_round_metrics/extract_platform_round_timings.sh` produces from CloudWatch for a deployed run.
 
 ```bash
 make run NUM_ROUNDS=50 MAX_SAMPLES=0   # full-length, full-dataset replica (GPU, hours; smoke-test with the defaults first)
@@ -251,8 +254,12 @@ checkpoint if missing, run the full-length simulator replica on the full dataset
 extract the metrics, and pack
 everything to send back:
 
+**Prerequisites:** Linux with an NVIDIA GPU + drivers, [`uv`](https://docs.astral.sh/uv/) on `PATH`
+(the first run builds the flip-utils environment automatically), internet access (Hugging Face +
+Dropbox), and ~15 GB free disk.
+
 ```bash
-git clone <repo> && cd FLIP/fl-tutorials/nvflare/image_classification/arkplus_fine_tuning
+git clone https://github.com/londonaicentre/FLIP && cd FLIP/fl-tutorials/nvflare/image_classification/arkplus_fine_tuning
 make reproduce-overhead          # hours on GPU; produces arkplus_sim_experiment_<host>_<stamp>.zip here
 ```
 
@@ -260,9 +267,7 @@ The bundle contains the metrics artefacts (`rounds.tsv`, `summary.md`, boxplot),
 logs (model files excluded), and a `provenance/` folder (`config.json`, `.env.app`,
 `host_info.txt` with GPU/OS/git-commit) so runs from different sites can be compared like-for-like.
 
-Prerequisites: Linux with an NVIDIA GPU + drivers, [`uv`](https://docs.astral.sh/uv/) on `PATH`
-(the first run builds the flip-utils environment automatically), internet access (Hugging Face +
-Dropbox), and ~15 GB free disk. On a multi-GPU host pick a device with
+On a multi-GPU host pick a device with
 `CUDA_VISIBLE_DEVICES=<n> make reproduce-overhead`. Knobs: `OVERHEAD_ROUNDS` (default `50`, the deployed
 run's `GLOBAL_ROUNDS`). If the simulation finished but packing failed (or you want to re-send),
 `make package-overhead-bundle` re-bundles the last run without re-simulating.

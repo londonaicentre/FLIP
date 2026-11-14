@@ -80,12 +80,12 @@
                                     </span>
                                     <span
                                         v-if="row.isDisabled"
-                                        class="flex-shrink-0 rounded-full bg-red-100 px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-red-800 dark:bg-red-900/50 dark:text-red-200"
+                                        class="flex-shrink-0 rounded-full bg-red-100 px-1.5 py-px text-xs font-bold text-red-800 dark:bg-red-900/50 dark:text-red-200"
                                     >
                                         Disabled
                                     </span>
                                 </div>
-                                <div class="text-xs text-gray-500 truncate dark:text-gray-300">
+                                <div class="text-note text-gray-500 truncate dark:text-gray-300">
                                     {{ row.organisation || "—" }}
                                 </div>
                             </div>
@@ -153,7 +153,7 @@
                             :size="48"
                         />
                         <div class="min-w-0 grow">
-                            <h2 class="text-xl font-semibold text-gray-900 truncate font-heading dark:text-gray-100">
+                            <h2 class="text-xl font-semibold text-gray-900 truncate dark:text-gray-100">
                                 {{ selectedUser.name }}
                             </h2>
                             <p class="text-sm text-gray-500 truncate dark:text-gray-300">
@@ -199,13 +199,13 @@
                     </div>
                     <div
                         class="flex flex-col overflow-y-auto grow"
-                        :class="selectedUser.dirty ? 'pb-28 lg:pb-0' : ''"
+                        :class="isDirty ? 'pb-28 lg:pb-0' : ''"
                     >
                         <div class="grid gap-4 p-6 border-b border-gray-100 md:grid-cols-3 dark:border-dark-border">
                             <div>
                                 <label
                                     for="selected-user-name"
-                                    class="block text-xs font-bold tracking-wide text-gray-700 uppercase dark:text-gray-300"
+                                    class="block text-xs font-bold text-gray-700 dark:text-gray-300"
                                 >
                                     Name
                                 </label>
@@ -220,7 +220,7 @@
                             <div>
                                 <label
                                     for="selected-user-organisation"
-                                    class="block text-xs font-bold tracking-wide text-gray-700 uppercase dark:text-gray-300"
+                                    class="block text-xs font-bold text-gray-700 dark:text-gray-300"
                                 >
                                     Organisation
                                 </label>
@@ -233,7 +233,7 @@
                                 >
                             </div>
                             <div>
-                                <div class="text-xs font-bold tracking-wide text-gray-700 uppercase dark:text-gray-300">
+                                <div class="text-xs font-bold text-gray-700 dark:text-gray-300">
                                     Email
                                 </div>
                                 <div
@@ -246,7 +246,7 @@
                         </div>
                         <div class="p-6 space-y-3 border-b border-gray-100 dark:border-dark-border">
                             <div>
-                                <h3 class="text-base font-bold text-gray-900 font-heading dark:text-gray-100">
+                                <h3 class="text-base font-bold text-gray-900 dark:text-gray-100">
                                     Role
                                 </h3>
                                 <p class="text-sm text-gray-500 dark:text-gray-300">
@@ -307,7 +307,7 @@
                                             </select>
                                             <span
                                                 v-if="!selectedTrustId"
-                                                class="text-xs text-gray-500 dark:text-gray-300"
+                                                class="text-sm text-gray-500 dark:text-gray-300"
                                             >
                                                 Choose the trust this Trust Admin approves or declines projects for.
                                             </span>
@@ -327,10 +327,10 @@
                                 <div class="flex items-start gap-2.5 text-red-700 dark:text-red-300">
                                     <icon-mdi-alert-outline class="flex-shrink-0 w-5 h-5 mt-px" />
                                     <div>
-                                        <h3 class="text-sm font-bold font-heading">
+                                        <h3 class="text-sm font-bold">
                                             Danger Zone
                                         </h3>
-                                        <p class="text-xs text-gray-600 dark:text-gray-300">
+                                        <p class="text-sm text-gray-600 dark:text-gray-300">
                                             Account-level operations. Each action is irreversible without user action.
                                         </p>
                                     </div>
@@ -381,7 +381,7 @@
                     <div
                         data-test="mobile-save-bar"
                         class="fixed inset-x-0 bottom-0 z-10 px-4 py-3 bg-white/95 dark:bg-dark-surface/95 border-t border-gray-200 dark:border-dark-border shadow-[0_-4px_12px_rgba(0,0,0,0.04)] transition-transform duration-[250ms] ease-out lg:hidden"
-                        :class="selectedUser.dirty ? 'translate-y-0' : 'translate-y-[130%]'"
+                        :class="isDirty ? 'translate-y-0' : 'translate-y-[130%]'"
                     >
                         <AiButton
                             primary
@@ -476,7 +476,6 @@ import { canAccessRoute } from "@/utils/route-validator";
 import { Snackbar } from "@/utils/snackbar";
 
 interface IManagedUser extends IUser {
-    dirty: boolean,
     profileDirty: boolean,
     rolesDirty: boolean
 }
@@ -578,7 +577,6 @@ const setSelectedUser = (user: IUser) => {
     selectedUser.value = {
         ...user,
         roles: user.roles ?? [], // Ensure it's not undefined
-        dirty: false,
         profileDirty: false,
         rolesDirty: false
     };
@@ -591,7 +589,6 @@ const openUser = (user: IUser) => {
 
 const markProfileDirty = () => {
     if (selectedUser.value) {
-        selectedUser.value.dirty = true;
         selectedUser.value.profileDirty = true;
     }
 };
@@ -604,14 +601,13 @@ const roleSlug = (rolename: string | undefined) => (rolename || "").toLowerCase(
 // The trust a Trust Admin administers; required before a Trust Admin can be saved.
 const selectedTrustId = ref<string | null>(null);
 const trustAdminSelected = computed(() => selectedUser.value?.roles?.[0]?.rolename === TRUST_ADMIN_ROLE_NAME);
-const canSave = computed(() =>
-    !!selectedUser.value?.dirty && !(trustAdminSelected.value && !selectedTrustId.value));
+const isDirty = computed(() => !!(selectedUser.value?.profileDirty || selectedUser.value?.rolesDirty));
+const canSave = computed(() => isDirty.value && !(trustAdminSelected.value && !selectedTrustId.value));
 
 const selectTrust = (trustId: string) => {
     if (!selectedUser.value || selectedTrustId.value === trustId) return;
 
     selectedTrustId.value = trustId;
-    selectedUser.value.dirty = true;
     selectedUser.value.rolesDirty = true;
 };
 
@@ -619,7 +615,6 @@ const selectRole = (role: IRole) => {
     if (!selectedUser.value || selectedRoleId.value === role.id) return;
 
     selectedUser.value.roles = [role];
-    selectedUser.value.dirty = true;
     selectedUser.value.rolesDirty = true;
 };
 
@@ -654,7 +649,6 @@ const saveUser = async () => {
                 trustAdminSelected.value ? selectedTrustId.value : null
             );
         }
-        selectedUser.value.dirty = false;
         selectedUser.value.profileDirty = false;
         selectedUser.value.rolesDirty = false;
         // Revalidate the SWRV list so the left rail (and the re-selected

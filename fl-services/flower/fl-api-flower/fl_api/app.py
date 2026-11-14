@@ -14,17 +14,17 @@
 import json
 import logging
 import os
+import ssl
 import subprocess
 import tempfile
 import threading
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-import grpc
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, status
-from grpc_health.v1.health_pb2 import HealthCheckRequest, HealthCheckResponse
-from grpc_health.v1.health_pb2_grpc import HealthStub
 from tomlkit import TOMLDocument, document, dumps, parse
 
 from fl_api.schemas import (
@@ -78,8 +78,17 @@ def _get_src_root() -> Path:
     return Path(os.getenv("FLOWER_SRC_ROOT", "/app/src"))
 
 
-def _get_superlink_health_address() -> str:
-    return os.getenv("SUPERLINK_HEALTH_ADDRESS", "").strip()
+def _get_superlink_health_url() -> str:
+    """The SuperLink's own /health route, on the one HTTP listener that serves every API (flwr>=1.40).
+
+    Same address and trust anchor as the `flwr` CLI connection the entrypoint configures: TLS when
+    SUPERLINK_ROOT_CERTIFICATES is set, plain HTTP otherwise (the standalone insecure dev stack).
+    """
+    address = os.getenv("SUPERLINK_ADDRESS", "").strip()
+    if not address:
+        return ""
+    scheme = "https" if os.getenv("SUPERLINK_ROOT_CERTIFICATES", "").strip() else "http"
+    return f"{scheme}://{address}/health"
 
 
 def _get_healthcheck_timeout_seconds() -> float:
@@ -97,21 +106,15 @@ def _get_healthcheck_timeout_seconds() -> float:
         return 1.0
 
 
-def _check_health(address: str, timeout: float) -> bool:
-    if not address:
-        logger.warning("Health check address is empty.")
-        return False
-
+def _check_health(url: str, timeout: float) -> bool:
     try:
-        with grpc.insecure_channel(address) as channel:
-            stub = HealthStub(channel)
-            response = stub.Check(HealthCheckRequest(), timeout=timeout)
-        return bool(response.status == HealthCheckResponse.SERVING)
-    except grpc.RpcError as err:
-        logger.info("Health check failed for %s: %s", address, err)
-        return False
-    except Exception as err:  # pragma: no cover - defensive guard
-        logger.warning("Unexpected error while checking health for %s: %s", address, err)
+        context = None
+        if url.startswith("https://"):
+            context = ssl.create_default_context(cafile=os.environ["SUPERLINK_ROOT_CERTIFICATES"].strip())
+        with urllib.request.urlopen(url, timeout=timeout, context=context) as response:
+            return bool(response.status == status.HTTP_200_OK)
+    except (urllib.error.URLError, OSError) as err:
+        logger.info("Health check failed for %s: %s", url, err)
         return False
 
 
@@ -270,14 +273,14 @@ def health() -> HealthResponse:
     response_model=ServerInfoModel,
 )
 def check_server_status() -> ServerInfoModel:
-    superlink_health_address = _get_superlink_health_address()
+    superlink_health_url = _get_superlink_health_url()
     timeout_seconds = _get_healthcheck_timeout_seconds()
 
-    if not superlink_health_address:
-        logger.warning("SUPERLINK_HEALTH_ADDRESS is not configured.")
+    if not superlink_health_url:
+        logger.warning("SUPERLINK_ADDRESS is not configured.")
         return ServerInfoModel(status="STOPPED")
 
-    is_running = _check_health(superlink_health_address, timeout_seconds)
+    is_running = _check_health(superlink_health_url, timeout_seconds)
     return ServerInfoModel(status="RUNNING" if is_running else "STOPPED")
 
 

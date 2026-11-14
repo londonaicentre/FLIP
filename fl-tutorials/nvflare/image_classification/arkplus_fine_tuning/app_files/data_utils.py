@@ -35,8 +35,6 @@ import torch
 from flip import FLIP
 from flip.constants import FlipConstants, ResourceType
 from monai.config import KeysCollection
-
-# from monai.data import DataLoader, Dataset
 from monai.transforms.transform import MapTransform
 
 

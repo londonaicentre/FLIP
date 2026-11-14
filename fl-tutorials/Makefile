@@ -24,7 +24,7 @@ TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials sim-tutorial
 # read by both harnesses (single copy in datasets/), so FL_BACKEND plays no part in them.
 DATASET_TARGETS := download-xray-data download-weights \
 	download-spleen-data download-spleen-checkpoint download-spleen-msd-data \
-	download-synthea-data upload-spleen-labels download-arkplus-finetuning-data \
+	download-synthea-data convert-adni-cohort upload-spleen-labels download-arkplus-finetuning-data \
 	download-arkplus-eval-data \
 	fetch-spleen-metadata-table download-spleen-msd-raw convert-spleen-to-dicom \
 	create-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables \
@@ -72,11 +72,13 @@ format:
 # halves of that tree need different dependencies.
 #
 # Tutorial-app tests (everything under tests/ except tests/datasets/) run in flip-utils'
-# environment (`flip-utils[full]`: monai, pydicom, torch), which is what the FL images give
-# these apps at runtime, rather than in a per-tutorial venv — arkplus_fine_tuning/pyproject.toml
-# does not even declare monai, so that env cannot import its own data_utils.py. See
-# tests/README.md.
-PYTEST ?= uv run --project ../flip-utils --extra full --group dev --group diffusion pytest
+# environment (`flip-utils[nvflare,flower,full]`: both FL backends, monai, pydicom, torch) rather
+# than in a per-tutorial venv. It is a superset of either FL image, each of which installs only its
+# own backend, so it does not catch an app importing the other backend (flip-utils'
+# tests/unit/test_backend_extras.py checks that for flip itself) —
+# arkplus_fine_tuning/pyproject.toml does not even declare monai, so that env cannot import its
+# own data_utils.py. See tests/README.md.
+PYTEST ?= uv run --project ../flip-utils --extra nvflare --extra flower --extra full --group dev --group diffusion pytest
 
 # Dataset-tooling tests (tests/datasets/) exercise datasets/**, which is workstation tooling,
 # not FL-runtime code — flip-utils has no use for pandera/sqlglot — so each dataset's tests run
@@ -90,7 +92,7 @@ PYTEST ?= uv run --project ../flip-utils --extra full --group dev --group diffus
 # tests/datasets/utils/ is the shared contract and runs ONCE, in the first listed project's
 # environment. Any dataset environment can host it; re-running it per project would just repeat the
 # same assertions, and is not what catches the dependency drift above.
-DATASET_TEST_PROJECTS ?= spleen cxr synthea brain_mri prostate
+DATASET_TEST_PROJECTS ?= spleen cxr synthea brain_mri prostate ad_biomarkers
 DATASET_UTILS_PROJECT ?= $(firstword $(DATASET_TEST_PROJECTS))
 
 .PHONY: pytest pytest-datasets test unit_test

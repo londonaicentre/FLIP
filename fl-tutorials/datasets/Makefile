@@ -58,7 +58,7 @@ PROSTATE_UV := uv run --project prostate
 .PHONY: download-xray-data download-weights \
 	download-spleen-data download-spleen-msd-data \
 	download-spleen-checkpoint download-arkplus-finetuning-data \
-	download-arkplus-eval-data download-synthea-data upload-spleen-labels \
+	download-arkplus-eval-data download-synthea-data convert-adni-cohort upload-spleen-labels \
 	fetch-spleen-metadata-table download-spleen-msd-raw convert-spleen-to-dicom \
 	create-spleen-metadata-table build-spleen-omop-tables verify-spleen-omop-tables \
 	reproduce-spleen-omop build-spleen-canonical verify-spleen-dicom seed-spleen \
@@ -151,6 +151,22 @@ download-synthea-data:
 	@$(SYNTHEA_UV) python synthea/build_synthea_dataframe.py --output-dir $(DATA_DIR)/synthea
 	@echo "✅ Synthea data ready at $(abspath $(DATA_DIR))/synthea/ — make -C fl-tutorials run-tutorial TUTORIAL=ehr_risk_prediction"
 
+# Build the biomarker_causal_discovery tutorial's cohort from the user's OWN ADNI download: the five
+# IDA study tables in ADNI_DIR (PTDEMOG, APOERES, ADAS, UCSFFSX7, UPENN_PLASMA_FUJIREBIO_QUANTERIX,
+# matched by prefix) become dataframe.csv + site1/ + site2/ (person_id-modulo splits) + a counts-only
+# summary under OUT (an absolute path; default: the gitignored data/ad_biomarkers/, where both
+# simulators look). ADNI is access-controlled (the tutorial README's "Data" section), so the repository
+# ships the converter, never the cohort: the converter refuses an OUT inside a git checkout that git does
+# not ignore (symlinks resolved), and prints counts, never a row. Runs in ad_biomarkers/'s own uv project.
+AD_BIOMARKERS_UV := uv run --project ad_biomarkers
+convert-adni-cohort: OUT ?= $(DATA_DIR)/ad_biomarkers
+convert-adni-cohort:
+	@test -n "$(ADNI_DIR)" || { echo "❌ ADNI_DIR=<directory of the five IDA table downloads> is required"; exit 2; }
+	@echo "🧬 Building the biomarker cohort from the ADNI tables in $(ADNI_DIR)..."
+	@$(AD_BIOMARKERS_UV) python ad_biomarkers/make_adni_cohort.py --adni-dir "$(ADNI_DIR)" --output-dir "$(OUT)" \
+		$(if $(NUM_SITES),--num-sites $(NUM_SITES))
+	@echo "✅ Cohort ready at $(abspath $(OUT))/ (never commit it) — make -C fl-tutorials run-tutorial TUTORIAL=biomarker_causal_discovery"
+
 # Download the PI-CAI bpMRI dataset (images + whole-gland/zonal labels + clinical marksheet)
 # and convert/partition it for the 3d_prostate_segmentation tutorial (Flower). Script + README
 # live in prostate/ (see its README). Runs in prostate/'s own uv project for MONAI/SimpleITK.
@@ -189,12 +205,14 @@ partition-prostate-data:
 # image — plus dataframe.csv with query.sql's columns, written straight from the .mha download (no
 # dcm2niix, no Docker). Downloads PROSTATE_LOCAL_FOLDS first (fold 0 = 300 studies, 5 GB) and takes
 # the first NUM_CASES complete studies. PROSTATE_SITE_TREE=<dir> also lays the same files out per
-# contributing centre in the PicaiDataset layout `make plan` reads.
+# contributing centre in the PicaiDataset layout `make plan` reads; a relative path is taken from
+# fl-tutorials/, like DATA_DIR, wherever make was called from.
 PROSTATE_LOCAL_FOLDS ?= 0
+PROSTATE_SITE_TREE_ABS = $(abspath $(if $(filter /%,$(PROSTATE_SITE_TREE)),,../)$(PROSTATE_SITE_TREE))
 prepare-prostate-local-data:
 	@$(MAKE) --no-print-directory download-prostate-data FOLDS="$(PROSTATE_LOCAL_FOLDS)"
 	@PYTHONPATH=. $(PROSTATE_UV) python prostate/prepare_prostate_local_data.py --data-dir $(abspath $(DATA_DIR))/prostate \
-		$(if $(NUM_CASES),--num-cases $(NUM_CASES)) $(if $(PROSTATE_SITE_TREE),--site-tree $(abspath $(PROSTATE_SITE_TREE)))
+		$(if $(NUM_CASES),--num-cases $(NUM_CASES)) $(if $(PROSTATE_SITE_TREE),--site-tree $(PROSTATE_SITE_TREE_ABS))
 	@echo "✅ prostate simulator data ready — make -C fl-tutorials sim-tutorial TUTORIAL=3d_prostate_segmentation FL_BACKEND=flower"
 
 # Data enrichment for a real FLIP project: both picai_labels masks (whole gland -> label_*, zonal

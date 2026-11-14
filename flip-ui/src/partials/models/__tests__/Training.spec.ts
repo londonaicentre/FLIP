@@ -500,46 +500,47 @@ describe("Training reports whether the run options are complete", () => {
     });
 });
 
+function mountWithRealForm(props: Partial<InstanceType<typeof Training>["$props"]> = {}) {
+    return mount(Training, {
+        global: {
+            plugins: [
+                createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false,
+                    initialState: {
+                        project: {
+                            project: {
+                                id: "p-1",
+                                approvedTrusts: [{
+                                    id: "trust-a",
+                                    name: "KCH",
+                                    status: "APPROVED"
+                                }]
+                            }
+                        }
+                    }
+                })
+            ],
+            stubs: {
+                AiCard: { template: "<div><slot /></div>" },
+                AiAlert: alertStub
+            }
+        },
+        props: {
+            canTrain: true,
+            status: "PENDING" as const,
+            requiredFiles: [],
+            uploadedFiles: [],
+            view: "prepare" as const,
+            ...props
+        }
+    });
+}
+
 // The tests above stub the vee-validate Form. This one drives the real one, because
 // `optionsComplete` rests on Form exposing a reactive `values` off its ref — an
 // assumption a stub cannot check.
 describe("Training reads the real vee-validate form", () => {
-    function mountWithRealForm() {
-        return mount(Training, {
-            global: {
-                plugins: [
-                    createTestingPinia({
-                        createSpy: vi.fn,
-                        stubActions: false,
-                        initialState: {
-                            project: {
-                                project: {
-                                    id: "p-1",
-                                    approvedTrusts: [{
-                                        id: "trust-a",
-                                        name: "KCH",
-                                        status: "APPROVED"
-                                    }]
-                                }
-                            }
-                        }
-                    })
-                ],
-                stubs: {
-                    AiCard: { template: "<div><slot /></div>" },
-                    AiAlert: alertStub
-                }
-            },
-            props: {
-                canTrain: true,
-                status: "PENDING" as const,
-                requiredFiles: [],
-                uploadedFiles: [],
-                view: "prepare" as const
-            }
-        });
-    }
-
     const complete = (wrapper: ReturnType<typeof mountWithRealForm>) =>
         (wrapper.vm as unknown as { optionsComplete: boolean }).optionsComplete;
 
@@ -595,42 +596,6 @@ describe("Training reads the real vee-validate form", () => {
 });
 
 describe("Training sends a GPU override only when one is set (FLIP#70)", () => {
-    function mountWithRealForm() {
-        return mount(Training, {
-            global: {
-                plugins: [
-                    createTestingPinia({
-                        createSpy: vi.fn,
-                        stubActions: false,
-                        initialState: {
-                            project: {
-                                project: {
-                                    id: "p-1",
-                                    approvedTrusts: [{
-                                        id: "trust-a",
-                                        name: "KCH",
-                                        status: "APPROVED"
-                                    }]
-                                }
-                            }
-                        }
-                    })
-                ],
-                stubs: {
-                    AiCard: { template: "<div><slot /></div>" },
-                    AiAlert: alertStub
-                }
-            },
-            props: {
-                canTrain: true,
-                status: "PENDING" as const,
-                requiredFiles: [],
-                uploadedFiles: [],
-                view: "prepare" as const
-            }
-        });
-    }
-
     async function readyToSubmit() {
         const { initialiseTraining } = await import("@/services/model-service");
         vi.mocked(initialiseTraining).mockReset();
@@ -659,33 +624,21 @@ describe("Training sends a GPU override only when one is set (FLIP#70)", () => {
         expect(initialiseTraining.mock.calls[0][1]).toEqual({ trust_ids: ["trust-a"] });
     });
 
-    it("sends the GPU count when the override is on", async () => {
+    it.each([
+        ["1", 1],
+        ["0", 0]
+    ])("sends %s GPUs as an override (zero included, not dropped as no override)", async (input, n) => {
         const { wrapper, switches, initialiseTraining } = await readyToSubmit();
 
         await switches[2].trigger("click");
         await flushPromises();
-        await wrapper.get("[data-test=gpu-count-input]").setValue("1");
+        await wrapper.get("[data-test=gpu-count-input]").setValue(input);
         await wrapper.find("form").trigger("submit");
 
         await vi.waitFor(() => expect(initialiseTraining).toHaveBeenCalled());
         expect(initialiseTraining.mock.calls[0][1]).toEqual({
             trust_ids: ["trust-a"],
-            resources: { num_gpus: 1 }
-        });
-    });
-
-    it("sends zero GPUs as an override, not as no override", async () => {
-        const { wrapper, switches, initialiseTraining } = await readyToSubmit();
-
-        await switches[2].trigger("click");
-        await flushPromises();
-        await wrapper.get("[data-test=gpu-count-input]").setValue("0");
-        await wrapper.find("form").trigger("submit");
-
-        await vi.waitFor(() => expect(initialiseTraining).toHaveBeenCalled());
-        expect(initialiseTraining.mock.calls[0][1]).toEqual({
-            trust_ids: ["trust-a"],
-            resources: { num_gpus: 0 }
+            resources: { num_gpus: n }
         });
     });
 
@@ -708,40 +661,10 @@ describe("Training sends a GPU override only when one is set (FLIP#70)", () => {
 
 describe("Training shows a dispatched run's GPU override in the real form", () => {
     it("fills the locked inputs with what the run asked for, not blanks", async () => {
-        const wrapper = mount(Training, {
-            global: {
-                plugins: [
-                    createTestingPinia({
-                        createSpy: vi.fn,
-                        stubActions: false,
-                        initialState: {
-                            project: {
-                                project: {
-                                    id: "p-1",
-                                    approvedTrusts: [{
-                                        id: "trust-a",
-                                        name: "KCH",
-                                        status: "APPROVED"
-                                    }]
-                                }
-                            }
-                        }
-                    })
-                ],
-                stubs: {
-                    AiCard: { template: "<div><slot /></div>" },
-                    AiAlert: alertStub
-                }
-            },
-            props: {
-                canTrain: true,
-                status: "RUNNING" as const,
-                requiredFiles: [],
-                uploadedFiles: [],
-                view: "prepare" as const,
-                runTrusts: ["trust-a"],
-                runResources: { num_gpus: 1 }
-            }
+        const wrapper = mountWithRealForm({
+            status: "RUNNING",
+            runTrusts: ["trust-a"],
+            runResources: { num_gpus: 1 }
         });
         await flushPromises();
 

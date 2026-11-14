@@ -23,9 +23,10 @@
 #
 # The validation files are NOT compared -- they legitimately differ (copyright header, and the Flower
 # copy carries a flower-only validate_tutorial_folder_name plus its _SAFE_NAME constant). Only the
-# shared function bodies are compared. The refusal and auth modules are wholly shared and compared
-# byte-for-byte: refusals.py is the researcher-facing error contract, auth.py the service-key guard
-# in front of every route but /health.
+# shared function bodies are compared. The refusal, auth and job-credential modules are wholly shared
+# and compared byte-for-byte: refusals.py is the researcher-facing error contract, auth.py the
+# service-key guard in front of every route but /health, job_credential.py where a job's hub
+# credential is delivered.
 #
 # Paths are relative to the repo root (this script lives in scripts/, so cd up one).
 cd "$(dirname "$0")/.." || exit 1
@@ -53,6 +54,13 @@ fi
 if ! cmp -s "fl-services/nvflare/fl-api-base/fl_api/utils/auth.py" \
     "fl-services/flower/fl-api-flower/fl_api/utils/auth.py"; then
     echo "ERROR: FL API service-key guard has drifted between the two fl-api copies."
+    status=1
+fi
+
+# Where a job's hub credential is written; the two backends must deliver it the same way.
+if ! cmp -s "fl-services/nvflare/fl-api-base/fl_api/utils/job_credential.py" \
+    "fl-services/flower/fl-api-flower/fl_api/utils/job_credential.py"; then
+    echo "ERROR: job credential delivery has drifted between the two fl-api copies."
     status=1
 fi
 
