@@ -52,7 +52,7 @@
                     ]"
                     v-bind="inputProps"
                     @input="handleChangeEvent"
-                    @blur="handleBlur($event, true)"
+                    @blur="handleBlur($event, meta.dirty)"
                 >
                 <slot name="inputButton" />
             </div>
@@ -170,7 +170,9 @@ export default defineComponent({
     },
     methods: {
         handleChangeEvent(event: Event) {
-            // Validate on blur/submit; while typing, only re-validate to clear a shown error.
+            // Validate on submit, and on blur once the value has changed: leaving an untouched field
+            // (the browser focuses the sign-in email by itself) is not an error yet. While typing, only
+            // re-validate to clear a shown error.
             this.handleChange(event, !!this.errorMessage);
             this.$emit("change", event);
         }
