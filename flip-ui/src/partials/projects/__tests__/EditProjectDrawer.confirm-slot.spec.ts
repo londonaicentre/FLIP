@@ -13,11 +13,16 @@
 
 import { createTestingPinia } from "@pinia/testing";
 import { mountComponent } from "@test/helper";
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
 import AiSwitch from "@/components/AiSwitch/AiSwitch.vue";
 import EditProjectDrawer from "@/partials/projects/EditProjectDrawer.vue";
+import ProjectUsers from "@/partials/projects/ProjectUsers.vue";
+import router from "@/router";
+import { deleteProject } from "@/services/project-service";
+import { useErrorStore } from "@/store/error";
+import { Snackbar } from "@/utils/snackbar";
 
 vi.mock("vue-router", async (importOriginal) => {
     const actual = await importOriginal<typeof import("vue-router")>();
@@ -39,6 +44,13 @@ vi.mock("@/router", () => ({
 }));
 
 vi.mock("@/services/project-service", () => ({ deleteProject: vi.fn() }));
+
+vi.mock("@/utils/snackbar", () => ({
+    Snackbar: {
+        success: vi.fn(),
+        error: vi.fn()
+    }
+}));
 
 const confirmModalStub = { template: "<div data-test=\"confirm-modal-stub\"><slot name=\"confirmation\" /></div>" };
 
@@ -200,5 +212,135 @@ describe("EditProjectDrawer read-only creation-time fields", () => {
         expect(wrapper.find("[data-test=has-imaging-toggle]").exists()).toBe(true);
         expect(wrapper.find("[data-test=dicom-to-nifti-toggle]").exists()).toBe(false);
         expect(wrapper.html()).not.toContain("Convert DICOMs to NIfTI");
+    });
+});
+
+describe("EditProjectDrawer editing and deleting", () => {
+    const alice = {
+        id: "u1",
+        email: "alice@e.com",
+        name: "Alice",
+        organisation: "Org",
+        isDisabled: false
+    };
+    const baseProps = {
+        show: true,
+        name: "Acme",
+        id: "proj-1",
+        description: "desc",
+        projectUnstaged: true,
+        updating: false,
+        users: [alice],
+        ownerId: "owner-1",
+        dicomToNifti: true,
+        hasImaging: true
+    };
+    // Exposes the continue action so the delete flow runs without the typed confirmation.
+    const confirmStub = {
+        props: ["dialog", "continueAction"],
+        template: "<div v-if=\"dialog\" data-test=\"confirm-open\">"
+            + "<button data-test=\"confirm-delete\" @click=\"continueAction\" /></div>"
+    };
+
+    const mountDrawer = (props = {}, permissions: string[] = []) => mount(EditProjectDrawer, {
+        global: {
+            renderStubDefaultSlot: true,
+            directives: { tippy: () => {} },
+            stubs: { AiConfirmModal: confirmStub },
+            plugins: [createTestingPinia({
+                createSpy: vi.fn,
+                stubActions: false,
+                initialState: {
+                    auth: {
+                        user: {
+                            attributes: { sub: "owner-1" },
+                            permissions
+                        }
+                    }
+                }
+            })]
+        },
+        props: {
+            ...baseProps,
+            ...props
+        }
+    });
+
+    it("emits save with the edited details and the project's current users", async () => {
+        const wrapper = mountDrawer();
+
+        await wrapper.find("[data-test=project-name]").setValue("Renamed");
+        await wrapper.find("form").trigger("submit");
+
+        await vi.waitFor(() => expect(wrapper.emitted("save")).toEqual([[{
+            name: "Renamed",
+            description: "desc",
+            users: ["u1"]
+        }]]));
+    });
+
+    it("saves the user list as last changed in the users section", async () => {
+        const wrapper = mountDrawer();
+
+        wrapper.findComponent(ProjectUsers).vm.$emit("updatedUsers", [alice, {
+            id: "u2",
+            email: "bob@e.com",
+            isDisabled: false
+        }]);
+        await wrapper.find("form").trigger("submit");
+
+        await vi.waitFor(() => expect(wrapper.emitted("save")?.[0][0]).toMatchObject({ users: ["u1", "u2"] }));
+    });
+
+    it("emits close from the header close button", async () => {
+        const wrapper = mountDrawer();
+
+        await wrapper.find("button[type=button]").trigger("click");
+
+        expect(wrapper.emitted("close")).toHaveLength(1);
+    });
+
+    it("locks the details once the project is staged", () => {
+        const wrapper = mountDrawer({ projectUnstaged: false });
+
+        expect(wrapper.find("[data-test=project-name]").attributes("disabled")).toBeDefined();
+        expect(wrapper.find("[data-test=update-project-btn]").exists()).toBe(false);
+    });
+
+    it("offers Delete Project to a non-owner holding CanDeleteAnyProject", () => {
+        const wrapper = mountDrawer({ ownerId: "someone-else" }, ["CanDeleteAnyProject"]);
+
+        expect(wrapper.find("[data-test=delete-project-btn]").exists()).toBe(true);
+    });
+
+    it("deletes the project, returns to the project list and confirms", async () => {
+        vi.mocked(deleteProject).mockResolvedValueOnce(undefined as never);
+        const wrapper = mountDrawer();
+
+        await wrapper.find("[data-test=delete-project-btn]").trigger("click");
+        await wrapper.find("[data-test=confirm-delete]").trigger("click");
+        await flushPromises();
+
+        expect(deleteProject).toHaveBeenCalledWith("/projects/proj-1");
+        expect(router.push).toHaveBeenCalledWith({ path: "/projects" });
+        expect(Snackbar.success).toHaveBeenCalledWith(expect.objectContaining({ title: "Project deleted" }));
+        expect(wrapper.find("[data-test=confirm-open]").exists()).toBe(false);
+    });
+
+    it("reports a failed delete, closes the drawer and stays on the page", async () => {
+        vi.mocked(deleteProject).mockRejectedValueOnce(new Error("boom"));
+        const wrapper = mountDrawer();
+
+        await wrapper.find("[data-test=delete-project-btn]").trigger("click");
+        await wrapper.find("[data-test=confirm-delete]").trigger("click");
+        await flushPromises();
+
+        expect(Snackbar.error).toHaveBeenCalledWith({
+            title: "Unable to delete this project",
+            text: "The project \"Acme\" has not been deleted."
+        });
+        expect(useErrorStore().hasError).toBe(true);
+        expect(wrapper.emitted("close")).toHaveLength(1);
+        expect(router.push).not.toHaveBeenCalled();
     });
 });

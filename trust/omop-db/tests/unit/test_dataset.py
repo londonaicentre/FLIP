@@ -26,6 +26,7 @@ from omop_db_tools.dataset import (
     build_canonical,
     canonical_table_url,
     fetch_canonical,
+    main,
     split_for_trust,
 )
 
@@ -336,3 +337,32 @@ class TestFetchCanonical:
 
         with pytest.raises(RuntimeError, match="HTML, not CSV"):
             fetch_canonical("v1", tmp_path, projects=["cxr_project"])
+
+
+class TestMain:
+    def test_build_merges_the_named_projects(self, tmp_path):
+        trust_dirs = TestBuildCanonical()._write_trust_dirs(tmp_path)
+        dest = tmp_path / "canonical"
+
+        main(["build", "--trust-dirs", *map(str, trust_dirs), "--dest", str(dest), "--projects", "cxr_project"])
+
+        merged = pd.read_csv(dest / "cxr_project" / "person.csv")
+        assert merged[SOURCE_TRUST_COLUMN].tolist() == [1, 1, 2, 2]
+
+    def test_fetch_uses_the_given_revision_and_repo(self, tmp_path, monkeypatch):
+        seen: list[str] = []
+
+        def opener(url, timeout=0):
+            seen.append(url)
+            return _fake_response(TestFetchCanonical.CSV)
+
+        monkeypatch.setattr(urllib.request, "urlopen", opener)
+
+        main(["fetch", "--revision", "v7", "--dest", str(tmp_path), "--projects", "cxr_project", "--repo", "org/other"])
+
+        assert seen[0] == canonical_table_url("v7", "cxr_project", "person", repo="org/other")
+        assert (tmp_path / "cxr_project" / "person.csv").read_bytes() == TestFetchCanonical.CSV
+
+    def test_a_command_is_required(self):
+        with pytest.raises(SystemExit):
+            main([])

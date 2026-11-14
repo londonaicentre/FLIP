@@ -12,12 +12,12 @@
  */
 
 
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
 import TrainingActionsMenu from "@/partials/models/TrainingActionsMenu.vue";
-import { ModelStatusEnum, stopTraining } from "@/services/model-service";
+import { getDownloadUrlForResults, ModelStatusEnum, stopTraining } from "@/services/model-service";
 
 vi.mock("vue-router", async (importOriginal) => {
     const actual = await importOriginal<typeof import("vue-router")>();
@@ -199,5 +199,57 @@ describe("TrainingActionsMenu abort vs stop affordance", () => {
             text
         });
         expect(modal().props("dialog")).toBe(false);
+    });
+});
+
+describe("TrainingActionsMenu download results", () => {
+    const download = async () => {
+        const wrapper = mountMenu(ModelStatusEnum.RESULTS_UPLOADED);
+        await wrapper.find("[data-test=download-results-btn]").trigger("click");
+        await flushPromises();
+    };
+
+    it("fetches this model's result URLs and opens each one", async () => {
+        const opened: string[] = [];
+        const click = vi.spyOn(HTMLElement.prototype, "click")
+            .mockImplementation(function (this: HTMLElement) {
+                opened.push(this.getAttribute("href") ?? "");
+            });
+        vi.mocked(getDownloadUrlForResults).mockResolvedValueOnce(["https://s3/a.zip", "https://s3/b.zip"]);
+
+        await download();
+
+        expect(getDownloadUrlForResults).toHaveBeenCalledWith("model-1");
+        expect(opened).toEqual(["https://s3/a.zip", "https://s3/b.zip"]);
+        expect(mockSnackbarError).not.toHaveBeenCalled();
+        click.mockRestore();
+    });
+
+    it("says no results are available when the hub returns no URLs", async () => {
+        vi.mocked(getDownloadUrlForResults).mockResolvedValueOnce([]);
+
+        await download();
+
+        expect(mockSnackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "No results available" }));
+    });
+
+    it("reports a failed download", async () => {
+        vi.mocked(getDownloadUrlForResults).mockRejectedValueOnce(new Error("boom"));
+
+        await download();
+
+        expect(mockSnackbarError)
+            .toHaveBeenCalledWith(expect.objectContaining({ title: "Unable to download results" }));
+    });
+
+    it("closes the stop confirmation when the modal asks to close", async () => {
+        const wrapper = mountMenu(ModelStatusEnum.RUNNING);
+        const modal = () => wrapper.findComponent(AiConfirmModal);
+        await wrapper.find("[data-test=stop-training-btn]").trigger("click");
+
+        await modal().vm.$emit("closeModal");
+
+        expect(modal().props("dialog")).toBe(false);
+        expect(stopTraining).not.toHaveBeenCalled();
     });
 });

@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from botocore.exceptions import ClientError
 
-from flip_api.utils.get_secrets import get_secrets
+from flip_api.utils.get_secrets import get_secret, get_secrets
 
 
 @pytest.fixture
@@ -88,3 +88,34 @@ def test_get_secrets_non_object_json_secret_string(mock_settings, mock_boto3_ses
 
     with pytest.raises(ValueError, match="must be a JSON object"):
         get_secrets()
+
+
+def test_get_secret_returns_the_value_for_a_key(mock_settings, mock_boto3_session):
+    _, mock_client = mock_boto3_session
+    mock_client.get_secret_value.return_value = {"SecretString": '{"aes_key": "abc"}'}
+
+    assert get_secret("aes_key") == "abc"
+    # Name and region fall back to the settings when not given.
+    mock_client.get_secret_value.assert_called_once_with(SecretId="MY_SECRET")  # pragma: allowlist secret
+    mock_boto3_session[0].return_value.client.assert_called_once_with(
+        service_name="secretsmanager", region_name="test-west-1"
+    )
+
+
+def test_get_secret_uses_an_explicit_name_and_region(mock_settings, mock_boto3_session):
+    _, mock_client = mock_boto3_session
+    mock_client.get_secret_value.return_value = {"SecretString": '{"aes_key": "abc"}'}
+
+    assert get_secret("aes_key", secret_name="OTHER", region_name="eu-west-2") == "abc"  # pragma: allowlist secret
+    mock_client.get_secret_value.assert_called_once_with(SecretId="OTHER")  # pragma: allowlist secret
+    mock_boto3_session[0].return_value.client.assert_called_once_with(
+        service_name="secretsmanager", region_name="eu-west-2"
+    )
+
+
+def test_get_secret_missing_key_names_the_key_and_secret(mock_settings, mock_boto3_session):
+    _, mock_client = mock_boto3_session
+    mock_client.get_secret_value.return_value = {"SecretString": '{"other": "abc"}'}
+
+    with pytest.raises(KeyError, match="Secret key 'aes_key' not found in secret 'MY_SECRET'"):
+        get_secret("aes_key")
