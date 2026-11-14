@@ -63,16 +63,6 @@ class ModelStatus(Enum):
     # between fresh databases and ones migrated via ALTER TYPE ... ADD VALUE.
     RESULTS_UPLOAD_FAILED = "RESULTS_UPLOAD_FAILED"
 
-    @classmethod
-    def _missing_(cls, value: object) -> "ModelStatus | None":
-        # Back-compat alias: fl-server images deploy separately from flip-api, so a
-        # pre-rename fl-server may still report "TRAINING_STARTED" (#782). Accept it
-        # as RUNNING until every deployed FL image is post-rename — removal is
-        # tracked in #803.
-        if value == "TRAINING_STARTED":
-            return cls.RUNNING
-        return None
-
 
 class NetStatus(Enum):
     """Status of the net."""

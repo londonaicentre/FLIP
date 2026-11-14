@@ -66,7 +66,7 @@ COPY flip-utils/flip/ ./flip/
 # Sync dependencies using uv, then chown the result in the same layer.
 # If LOCAL_DEV is set to true, install dev dependencies as well, else --no-dev
 # --frozen ensures exact versions from uv.lock are used
-# Install with full optional dependencies for ML frameworks
+# Install the nvflare extra (this image's FL backend; FLIP#1047) and the full ML extra
 # --compile-bytecode ships the venv's .pyc files (FLIP#1782). PYTHONDONTWRITEBYTECODE
 # stops runtime writes only, so without them every FL job process compiled torch,
 # MONAI and NVFLARE from source on each start (~7-11 s, 2.6 s with them).
@@ -87,6 +87,6 @@ COPY flip-utils/flip/ ./flip/
 # permission grant this does not need and should not make.
 # /app itself is also world-writable, sticky: a kit's FLIP_UID (FLIP#1731) is neither this
 # user nor in its group and still has to create those entries. The files under it are untouched.
-RUN uv sync --frozen --no-cache --compile-bytecode --extra full $(if [ "$LOCAL_DEV" = "true" ]; then echo "--dev"; else echo "--no-dev"; fi) && \
+RUN uv sync --frozen --no-cache --compile-bytecode --extra nvflare --extra full $(if [ "$LOCAL_DEV" = "true" ]; then echo "--dev"; else echo "--no-dev"; fi) && \
     chown -R ${UNAME}:${UNAME} /app && \
     chmod 1777 /app && chmod g+rwX /home/${UNAME}

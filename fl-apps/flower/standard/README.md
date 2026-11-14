@@ -26,9 +26,9 @@ per-client metrics for the results JSON and to evaluate on the final round only.
 The required files (see [`required_files.json`](./required_files.json)) are:
 
 - `client_app.py` — the Flower `ClientApp`, defining `@app.train` and `@app.evaluate`.
-- `config.json` — declares `job_type`. The Central Hub reads this key and nothing else from the
-  file, to pick which base application to bundle; omit the key and you get `standard`, but the file
-  itself is required. Run configuration lives in `config.toml`, not here.
+- `config.json` — declares `job_type`, which the Central Hub uses to pick the base application to
+  bundle. It is the only key the hub reads. The file is required, but the key is optional: without
+  it you get `standard`. Run configuration lives in `config.toml`, not here.
 - `models.py` — defines the model; `models.get_model` is what `server_app.py` instantiates to seed
   the initial global arrays.
 
@@ -39,10 +39,10 @@ app, the strategy or the project config.
 
 ## Differential privacy: expected in the uploaded `client_app.py`
 
-`client_app.py` is **uploaded, not templated**, so this template cannot wire the privacy filter
-itself the way the FLARE templates do (theirs is a `task_result_filters` entry in the
-FLIP-owned `config_fed_client.json`). An uploaded Flower training app is expected to privatise its
-update by registering FLIP's DP mod on its training handler:
+`client_app.py` is **uploaded, not templated**, so this template cannot add the privacy filter for
+you. (The FLARE templates can, through a `task_result_filters` entry in their FLIP-owned
+`config_fed_client.json`.) Your `client_app.py` must therefore register FLIP's DP mod on its
+training handler:
 
 ```python
 from flip.flower.privacy import flip_local_dp_mod
@@ -60,18 +60,20 @@ The mod clips the local update to `dp-clipping-norm` and adds Gaussian noise cal
 for the mechanism and the shipped tutorials for worked examples:
 [`xray_classification`](../../../fl-tutorials/flower/image_classification/xray_classification/README.md) and
 [`3d_spleen_segmentation`](../../../fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/README.md).
-The template's `dp-clipping-norm = 1.0` is a placeholder: set it near the pre-clip norm the mod logs
-for your model (FLIP#1754).
+
+**Tune the clipping norm.** The template's `dp-clipping-norm = 1.0` is a placeholder. Set it near the
+pre-clip norm the mod logs for your model (FLIP#1754).
 
 > ⚠️ **This is a convention enforced by code review before upload, not by the platform.** An
-> uploaded `client_app.py` that omits the mod will train and aggregate perfectly happily while
-> sharing raw model updates. Making it un-bypassable needs a FLIP-owned ClientApp shim that
+> uploaded `client_app.py` that omits the mod trains and aggregates normally, but shares raw model
+> updates. Making it un-bypassable needs a FLIP-owned ClientApp shim that
 > `pyproject.toml`'s `clientapp = …` points at — base files win over uploads, so such a shim could
 > not be overridden. That is not built yet.
 
 ## Run it
 
-The chest-X-ray and 3D spleen-segmentation Flower tutorials both use this job type:
+The chest-X-ray and 3D spleen-segmentation Flower tutorials both use this job type. To run the
+X-ray one from the repository root:
 
 ```bash
 make -C fl-tutorials download-xray-data FL_BACKEND=flower

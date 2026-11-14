@@ -22,6 +22,9 @@ on:
       # line make cannot read stops the suite before a test runs, and its values land in the
       # environment Settings reads. The KCH twin exists but no Makefile reads it.
       - "trust/.env.GSTT.development.example"
+      # tests/unit/test_adni_cohort.py runs the biomarker tutorial's cohort query over the ADNI
+      # loader's rows (the Flower copy is byte-identical, scripts/check_tutorial_sync.sh).
+      - "fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery/query.sql"
   pull_request:
     branches: [main, develop]
 
@@ -43,6 +46,7 @@ jobs:
         trust/omop-db/**
         .github/workflows/test_trust_omop_db.yml
         trust/.env.GSTT.development.example
+        fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery/query.sql
 
   omop-db:
     needs: changes

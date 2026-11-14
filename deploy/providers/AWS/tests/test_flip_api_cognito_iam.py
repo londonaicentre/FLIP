@@ -12,7 +12,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-"""Static guard: the flip-api task role grants every Cognito action flip-api calls (FLIP#1367).
+"""Static guard: the flip-api task role grants exactly the Cognito actions flip-api calls (FLIP#1367, #1373).
 
 ``flip_api/auth/identity/cognito.py`` drives the user pool through a boto3 ``cognito-idp``
 client, and the ``CognitoUserPool`` statement of ``data.aws_iam_policy_document.ecs_flip_api_task``
@@ -20,7 +20,8 @@ in ``iam_ecs.tf`` is what lets it. The two drifted once: ``admin_disable_user``,
 ``admin_enable_user`` and ``admin_set_user_mfa_preference`` were called but never granted, so
 Disable User answered a 500 (AccessDenied) on every AWS estate. This test derives the required
 actions from the ``client.<method>(`` calls (and the operations behind ``get_paginator``) so a
-newly used Cognito call cannot ship without its IAM action.
+newly used Cognito call cannot ship without its IAM action, and checks the reverse too: an action
+granted with no caller (``AdminInitiateAuth`` once let the task role mint tokens for any user) fails.
 """
 
 import re
@@ -54,6 +55,9 @@ EXPECTED_SUBSET = {
     "cognito-idp:AdminSetUserMFAPreference",
     "cognito-idp:ListUsers",
 }
+
+# Actions granted without a client call in cognito.py, each with its reason.
+GRANTED_WITHOUT_CALL: dict[str, str] = {}
 
 
 def _iam_action(method: str) -> str:
@@ -112,3 +116,11 @@ def test_cognito_statement_stays_scoped_to_the_user_pool() -> None:
     resources = re.search(r"^\s*resources\s*=\s*\[(.*?)\]", _cognito_statement(), re.MULTILINE | re.DOTALL)
     assert resources
     assert resources.group(1).strip() == "module.cognito.user_pool_arn"
+
+
+def test_cognito_statement_grants_nothing_uncalled() -> None:
+    unused = _cognito_statement_actions() - _required_actions() - GRANTED_WITHOUT_CALL.keys()
+    assert not unused, (
+        f"The CognitoUserPool statement grants actions cognito.py never calls: {sorted(unused)}. "
+        "Remove them from deploy/providers/AWS/iam_ecs.tf, or list them in GRANTED_WITHOUT_CALL with a reason."
+    )

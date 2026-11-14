@@ -109,7 +109,9 @@ def read_series(dicom_dir: Path) -> list[dict[str, str]]:
         )
     for series_uid, row in rows.items():
         row["NumberOfInstances"] = str(counts[series_uid])
-    return sorted(rows.values(), key=lambda r: (natsorted([r["Subject"]])[0], int(r["SeriesNumber"] or 0)))
+    # Plain string order on Subject, not natural order: row order fixes the surrogate ids the OMOP
+    # conversion assigns, so changing this key re-numbers the published tables.
+    return sorted(rows.values(), key=lambda r: (r["Subject"], int(r["SeriesNumber"] or 0)))
 
 
 def assign_source_trust(rows: list[dict[str, str]], num_trusts: int) -> list[dict[str, str]]:
@@ -136,10 +138,8 @@ def quality_checks(rows: list[dict[str, str]], series_per_study: int | None, min
         counts = Counter(row["AccessionNumber"] for row in rows)
         if wrong := {a: n for a, n in counts.items() if n != series_per_study}:
             raise SystemExit(f"❌ expected {series_per_study} series per study, but: {wrong}")
-    studies_per_trust = Counter()
-    for accession, subjects in subjects_by_accession.items():
-        trust = next(row["source_trust"] for row in rows if row["AccessionNumber"] == accession)
-        studies_per_trust[trust] += 1
+    # One trust per accession: the check above leaves one case per accession, and a case has one trust.
+    studies_per_trust = Counter({row["AccessionNumber"]: row["source_trust"] for row in rows}.values())
     if short := {t: n for t, n in studies_per_trust.items() if n < min_studies_per_trust}:
         raise SystemExit(
             f"❌ trust(s) below the {min_studies_per_trust}-study floor (the trusts' COHORT_QUERY_THRESHOLD): {short}"

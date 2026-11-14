@@ -7,9 +7,8 @@ before training. The job is defined entirely in Python via `FlipFedAvgRecipe` â€
 JSON configs required. It stands alone, and is the simplest of the
 [image-generation tutorials](../README.md) to read.
 
-The network, noise scheduler and inferer are MONAI's generative-model components: Pinaya *et al.*,
-"Generative AI for Medical Imaging: extending the MONAI Framework",
-[arXiv:2307.15208](https://arxiv.org/abs/2307.15208).
+The network, noise scheduler and inferer are MONAI's generative-model components (Pinaya *et al.*,
+2023; see [References](#references)).
 
 ## At a glance
 
@@ -104,10 +103,12 @@ connections line up; `fl-tutorials/tests/` pins the latter.
 ## Training for real
 
 The shipped `config.json` runs 2 rounds of 3 epochs, like the other tutorials: enough to run the
-whole job end to end in minutes, not to learn to generate X-rays. We ran it with 2 rounds of 300
-epochs on Ark+ (about 1.9k images per site), the learning rate decaying over the first 200, and
-sample images saved every 25 epochs: they looked like chest X-rays from about epoch 150, much like
-the ones at the top, and the run took 5 h 05 min on one RTX 5090. It is published in
+whole job end to end in minutes, not to learn to generate X-rays.
+
+For a real model we ran 2 rounds of 300 epochs on Ark+ (about 1.9k images per site), with the learning
+rate decaying over the first 200 epochs and sample images saved every 25. The samples looked like
+chest X-rays from about epoch 150, much like the ones at the top. The run took 5 h 05 min on one
+RTX 5090. It is published in
 [`aicentreflip/tutorials-xray-diffusion`](https://huggingface.co/aicentreflip/tutorials-xray-diffusion). The settings:
 
 ```json
@@ -120,17 +121,18 @@ the ones at the top, and the run took 5 h 05 min on one RTX 5090. It is publishe
 
 ## Debugging
 
-Sample images and loss curves for local runs: see [Debugging](../README.md#debugging) in the
-image-generation index.
-Here both go to `fl-tutorials/data/debug_samples/xray_diffusion/`.
+For sample images and loss curves from local runs, see [Debugging](../README.md#debugging) in the
+image-generation index. For this tutorial both are written to
+`fl-tutorials/data/debug_samples/xray_diffusion/`.
 
 ## FLIP-specific values
 
-`FLIP_PROJECT_ID` and `FLIP_QUERY` are read from environment variables (stubs in `.env.app`).
-They are NOT passed as CLI flags because the SQL query contains spaces that don't survive
-argparse whitespace-splitting. The trainer reads the query from `config_fed_client.json` at
-runtime via `load_query()`. `.env.app` ships `FLIP_PROJECT_ID=dev`: LOCAL_DEV ignores the value,
-but the `--project_id {project_id}` task arg needs a non-empty token to substitute.
+`job.py` reads `FLIP_PROJECT_ID` and `FLIP_QUERY` from environment variables (stubs in `.env.app`)
+and writes them into the exported job's `config_fed_client.json`. The query is not passed as a CLI
+flag, because FLARE splits task arguments on whitespace and SQL contains spaces: the trainer reads it
+from `config_fed_client.json` at run time via `load_query()`. `.env.app` ships `FLIP_PROJECT_ID=dev`:
+a local run (`LOCAL_DEV`) ignores the value, but the `--project_id {project_id}` task argument needs a
+non-empty token to substitute.
 
 ## How to run
 
@@ -141,27 +143,35 @@ make export
 ```
 
 Writes a complete FLARE job to `./fl_job/flip_fedavg/` (`make clean` removes it). The Makefile runs
-`job.py` in the **flip-utils** environment (`full` extra, `diffusion` group), equivalent to:
+`job.py` in the **flip-utils** environment (`nvflare` and `full` extras, `diffusion` group), equivalent to:
 
 ```bash
-uv run --project ../../../../flip-utils --extra full --group diffusion python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 1
+uv run --project ../../../../flip-utils --extra nvflare --extra full --group diffusion python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 1
 ```
 
 ### Local simulation (requires a GPU + the dataset)
 
+From the repository root, download the data once:
+
 ```bash
-make -C fl-tutorials download-arkplus-finetuning-data   # from the repository root, once
-make sim                                                # trains on Ark+
-make sim DATASET=mini                                   # testing code only
+make -C fl-tutorials download-arkplus-finetuning-data   # Ark+ (default)
+make -C fl-tutorials download-xray-data                 # only for DATASET=mini
 ```
 
-`DATASET=mini` needs `make -C fl-tutorials download-xray-data` first. `make run` runs `make sim`.
+Then, from this tutorial's directory:
+
+```bash
+make sim                 # trains on Ark+
+make sim DATASET=mini    # testing code only
+```
+
+`make run` runs `make sim`.
 
 ### Overriding rounds and clients
 
 `config.json` carries `GLOBAL_ROUNDS` (federated rounds, 2) and `LOCAL_ROUNDS` (local epochs per
-round, 3). Keep the name `LOCAL_ROUNDS`: with a single local-rounds key the FL API requires that
-exact name and rejects the job otherwise.
+round, 3). Do not rename `LOCAL_ROUNDS`: when the config has a single local-rounds key, the FL API
+requires it to be called exactly `LOCAL_ROUNDS` and rejects the job otherwise.
 
 `NUM_ROUNDS` (default `2`) and `N_CLIENTS` (default `2`) parameterise `make export` and `make sim`,
 and propagate through the harness. They are **local knobs only**: on the platform the FL API applies
@@ -176,9 +186,9 @@ make -C fl-tutorials run-tutorial TUTORIAL=xray_diffusion NUM_ROUNDS=3
 
 ### On the platform
 
-Use `query.sql` as the project's cohort query, then upload **everything in `app_files/`**
-(`trainer.py`, `config.json`, `models.py`, `transforms.py`) through the FLIP UI as a model with job
-type `standard`.
+Create the project with `query.sql` as its cohort query, imaging on and **DICOM to NIfTI** off. Then
+upload **everything in `app_files/`** (`trainer.py`, `config.json`, `models.py`, `transforms.py`)
+through the FLIP UI as a model with job type `standard`.
 
 ## References
 

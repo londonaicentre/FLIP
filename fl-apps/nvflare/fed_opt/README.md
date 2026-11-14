@@ -22,22 +22,21 @@ that optimizer on the averaged client weight-diffs (treated as a pseudo-gradient
 replacing the global weights with the aggregate.
 
 It is based on the paper "Adaptive Federated Optimization" by Reddi S. et al. (2020), and on
-FLARE's implementation in their CIFAR10 tutorial available at:
+FLARE's implementation in its CIFAR10 tutorial (FLARE 2.4 branch):
 <https://github.com/NVIDIA/NVFlare/tree/2.4/examples/advanced/cifar10/cifar10-sim/jobs/cifar10_fedopt/cifar10_fedopt>.
 
-It replaced the retired Executor-based `fed_opt` template. The **client contract is identical to
-`standard`**: a Client API `trainer.py` that sends its update as
-`FLModel(params=diff, params_type="DIFF")` — any `standard` app or tutorial runs under `fed_opt`
-unchanged (upload the same files with `"job_type": "fed_opt"` in `config.json`).
+The **client contract is identical to `standard`**: a Client API `trainer.py` that sends its update as
+`FLModel(params=diff, params_type="DIFF")`. Any `standard` app or tutorial runs under `fed_opt` unchanged
+(see [Run / test it](#run--test-it)).
 
 The base configs (`app/config/config_fed_server.json`, `app/config/config_fed_client.json`) and
 `meta.json` are **recipe-generated** from `flip.nvflare.recipes.FlipFedOptRecipe`. Do not
-hand-edit them — regenerate via `recipe.py` after any recipe change and commit the result.
+hand-edit them. After any recipe change, regenerate them with `recipe.py` and commit the result.
 
 ## How the aggregation differs from `standard`
 
 - The aggregator accepts the clients' `WEIGHT_DIFF` DXOs directly (stock
-  `InTimeAccumulateWeightedAggregator` default) — as every FLIP job type now does; the difference
+  `InTimeAccumulateWeightedAggregator` default), as every FLIP job type does; the difference
   is purely in how the averaged diff is applied.
 - The shareable generator is `flip.nvflare.components.FlipFedOptShareableGenerator` (stock
   `PTFedOptModelShareableGenerator` extended to source the model from the user's
@@ -74,6 +73,6 @@ client-local models are not collected for an all-to-all matrix.
 ## Run / test it
 
 `fed_opt` has no tutorial of its own, but every `standard` tutorial's app is compatible. To
-exercise it on the platform, upload e.g. the spleen tutorial's `app_files/` with `config.json`'s
-`job_type` set to `fed_opt`. Locally, build the job with `FlipFedOptRecipe` in place of
+exercise it on the platform, upload a `standard` tutorial's app (for example the spleen tutorial's `app_files/`) with
+`"job_type": "fed_opt"` in `config.json`. Locally, build the job with `FlipFedOptRecipe` in place of
 `FlipFedAvgRecipe` in any `standard` tutorial's `job.py`.

@@ -13,15 +13,20 @@
 
 # Federated Learning Client
 
-> See also the README under [fl-server/README.md](../fl-server/README.md)
+> See also: [Federated Learning Server](../fl-server/README.md) and the [FLARE services overview](../README.md).
 
-The FL base image installs the python packages required by the base application and the user-uploaded application.
-The FLARE client dependencies come pre-baked into the image; users cannot add per-job dependencies on the FLARE
-backend. The Flower SuperNodes do the same: the ClientApp runs in the image's environment, with no per-run
-`uv sync` (FLIP#1418) — see `fl-services/flower/README.md`.
+The client runs on the [FL base image](../fl-base/README.md), which installs the Python packages needed by the
+base application and by user-uploaded applications. These dependencies are baked into the image: a job cannot add
+its own dependencies on the FLARE backend. The Flower SuperNodes do the same: the ClientApp runs in the image's environment, with no per-run
+`uv sync`. See the [Flower services README](../../flower/README.md).
 
 ## GPU resource management
 
 The resources allocated to the FL client are configured in a resources.json file.
 
-They can be changed using environment variables when starting the FL client container.
+They are set by `NUM_AVAILABLE_GPUS` and `MEMORY_PER_GPU_IN_GIB` on the `fl-client-init` step (Compose) or
+`flClient.gpu` (Helm), not on the client container, which no longer writes them. A kit without
+`resources.template.json` keeps provisioning's values, and the step warns that the two were not applied. The one-shot
+`fl-client-init` step (`fl-client/init.sh`, baked in as `/app/fl-client-init.sh`) renders `resources.json`,
+`log_config.json` and the site privacy policy into the kit's `local/` before the client starts; the client mounts
+`local/` and `startup/` read-only and refuses to start on a missing or stale render (FLIP#1570).

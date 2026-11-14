@@ -178,28 +178,16 @@ describe("SiteBanner", () => {
         expect(link!.attributes("rel")).toBe("noopener noreferrer");
     });
 
-    it("toggleBanner() short-circuits when details.banner is null", async () => {
+    it("toggleBanner() short-circuits when details.banner is null, without leaving the button loading", async () => {
+        // The modal sits outside the v-if, so it is mounted while the banner is still loading.
         const wrapper = mountBanner({ bannerOverride: null });
         const store = useSiteDetailsStore();
+        const modal = wrapper.findComponent({ name: "AiConfirmModal" });
 
-        // With banner=null the loader is rendered and the modal isn't mounted —
-        // so we cannot invoke continueAction via findComponent. Instead, mount
-        // with a banner present to obtain the action reference, then re-assert
-        // via store.banner override before invocation.
-        const present = mountBanner();
-        const modal = present.findComponent({ name: "AiConfirmModal" });
-        const action = modal.props("continueAction");
-
-        // Now wipe the store's banner and invoke the action with no banner.
-        useSiteDetailsStore().banner = undefined;
-        await action();
+        await modal.props("continueAction")();
         await flushPromises();
 
-        // Once banner is undefined the action must short-circuit; the present
-        // wrapper's store was reset, so updateBanner was never called for the
-        // null-banner case.
         expect(store.updateBanner).not.toHaveBeenCalled();
-        wrapper.unmount();
-        present.unmount();
+        expect(modal.props("submitting")).toBe(false);
     });
 });

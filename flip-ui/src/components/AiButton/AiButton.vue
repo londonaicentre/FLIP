@@ -24,18 +24,7 @@
                     :type="type"
                     :aria-label="ariaLabel"
                     :data-test="dataTest"
-                    :class="{
-                        'btn-sm': small,
-                        'btn-lg': large,
-                        'btn-primary': primary,
-                        'btn-text': text,
-                        'btn-light': light,
-                        'btn-disabled': loading || disabled,
-                        'btn-text-primary': textPrimary,
-                        'btn-text-secondary': textSecondary,
-                        'btn-text-error': error,
-                        'btn-block': block
-                    }"
+                    :class="buttonClass"
                     :tabindex="tabindex"
                     @click="navigate"
                 >
@@ -49,22 +38,10 @@
                 :type="type"
                 :aria-label="ariaLabel"
                 :data-test="dataTest"
-                :class="{
-                    'btn-sm': small,
-                    'btn-lg': large,
-                    'btn-primary': primary,
-                    'btn-text': text,
-                    'btn-light': light,
-                    'btn-clear': clear,
-                    'btn-disabled': loading || disabled,
-                    'btn-text-primary': textPrimary,
-                    'btn-text-secondary': textSecondary,
-                    'btn-text-error': error,
-                    'btn-block': block
-                }"
+                :class="buttonClass"
                 :disabled="loading || disabled"
                 :tabindex="tabindex"
-                @click.capture="() => !link && clickButton()"
+                @click.capture="emit('click')"
             >
                 <div v-if="loading" class="absolute">
                     <svg
@@ -95,6 +72,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
 import { directive as vTippy } from "vue-tippy";
 
 interface IAiButtonProps {
@@ -120,7 +98,7 @@ interface IAiButtonProps {
     ariaLabel?: string;
 }
 
-withDefaults(
+const props = withDefaults(
     defineProps<IAiButtonProps>(),
     {
         dataTest: "btn",
@@ -134,9 +112,20 @@ withDefaults(
 
 const emit = defineEmits(["click"]);
 
-const clickButton = () => {
-    emit("click");
-};
+// btn-clear only ever applied to the plain button, never the router-link one.
+const buttonClass = computed(() => ({
+    "btn-sm": props.small,
+    "btn-lg": props.large,
+    "btn-primary": props.primary,
+    "btn-text": props.text,
+    "btn-light": props.light,
+    "btn-clear": props.clear && !props.link,
+    "btn-disabled": props.loading || props.disabled,
+    "btn-text-primary": props.textPrimary,
+    "btn-text-secondary": props.textSecondary,
+    "btn-text-error": props.error,
+    "btn-block": props.block
+}));
 
 </script>
 
@@ -157,7 +146,7 @@ const clickButton = () => {
 }
 
 .btn-base.btn-text {
-    @apply border-0 shadow-none bg-transparent outline-none focus:ring-0 focus:bg-none focus:shadow-none focus:ring-offset-0 dark:hover:bg-transparent;
+    @apply border-0 shadow-none bg-transparent outline-none focus:ring-0 focus:bg-none focus:shadow-none focus:ring-offset-0 dark:hover:bg-transparent focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-primary-400 dark:focus-visible:ring-offset-dark-canvas;
 }
 
 .btn-base.btn-text-primary {
@@ -165,11 +154,11 @@ const clickButton = () => {
 }
 
 .btn-base.btn-text-secondary {
-    @apply border-0 shadow-none bg-transparent outline-none focus:ring-0 focus:bg-none focus:shadow-none focus:ring-offset-0 dark:hover:bg-dark-surface hover:bg-gray-100;
+    @apply border-0 shadow-none bg-transparent outline-none focus:ring-0 focus:bg-none focus:shadow-none focus:ring-offset-0 dark:hover:bg-dark-surface hover:bg-gray-100 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-primary-400 dark:focus-visible:ring-offset-dark-canvas;
 }
 
 .btn-base.btn-text-error {
-    @apply text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-500;
+    @apply text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-500;
 }
 
 .btn-base.btn-primary {

@@ -14,7 +14,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { _http } from "@/services/api";
-import { getTrustDecisions, getTrusts, getTrustStatuses } from "@/services/trust-service";
+import { getHubHealth, getTrustDecisions, getTrusts, getTrustStatuses, isImageTag } from "@/services/trust-service";
 
 vi.mock("@/services/api", () => ({
     _http: {
@@ -137,6 +137,31 @@ describe("trust-service", () => {
             vi.mocked(_http.get).mockResolvedValue({ data: { error: "oops" } } as never);
 
             expect(await getTrustDecisions("t-1")).toEqual([]);
+        });
+    });
+
+    describe("getHubHealth", () => {
+        it("GETs the hub's /health and returns its status and version", async () => {
+            const health = {
+                status: "ok",
+                version: "v0.15.0"
+            };
+            vi.mocked(_http.get).mockResolvedValue({ data: health } as never);
+
+            const result = await getHubHealth();
+
+            expect(_http.get).toHaveBeenCalledWith("/health");
+            expect(result).toEqual(health);
+        });
+    });
+
+    describe("isImageTag", () => {
+        it.each(["v0.15.0", "v0.15.0-rc.1", "sha-1a2b3c4"])("accepts the CI image tag %s", (tag) => {
+            expect(isImageTag(tag)).toBe(true);
+        });
+
+        it.each(["0.6.0", "sha-xyz", "", null, undefined])("rejects %s, which is not a CI image tag", (tag) => {
+            expect(isImageTag(tag)).toBe(false);
         });
     });
 });

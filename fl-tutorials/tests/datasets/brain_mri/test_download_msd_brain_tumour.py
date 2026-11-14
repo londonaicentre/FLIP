@@ -15,16 +15,11 @@ from __future__ import annotations
 
 import hashlib
 import io
-import sys
 import tarfile
 from pathlib import Path
 
 import pytest
-
-DATASETS_DIR = Path(__file__).resolve().parents[3] / "datasets"
-sys.path.insert(0, str(DATASETS_DIR))
-
-from brain_mri import download_msd_brain_tumour as dl  # noqa: E402
+from brain_mri import download_msd_brain_tumour as dl
 
 MEMBERS = {
     "Task01_BrainTumour/dataset.json": b'{"modality": {"0": "FLAIR"}}',

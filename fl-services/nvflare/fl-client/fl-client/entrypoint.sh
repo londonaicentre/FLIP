@@ -20,53 +20,23 @@ if ! id -un >/dev/null 2>&1 || [ ! -w "${HOME:-/}" ]; then
     export HOME=/tmp USER=flip LOGNAME=flip
 fi
 
-# Make scripts executable
-chmod +x /app/startup/start.sh
-chmod +x /app/startup/sub_start.sh
-chmod +x /app/startup/stop_fl.sh
-
 #################################################################
-###### GPU config ###############################################
+###### Kit check ################################################
 #################################################################
-# Default values (override via env vars)
-export NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS:-1}
-export MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB:-16}
-
-CFG_DIR="/app/local"
-TEMPLATE="$CFG_DIR/resources.template.json"
-CFG_PATH="$CFG_DIR/resources.json"
-
-# Use envsubst to replace environment variables in the template
-echo "🔧 Generating resources.json from template..."
-envsubst < "$TEMPLATE" > "$CFG_PATH" || { echo "❌ cannot write ${CFG_PATH}"; exit 1; }
-echo "✅ resources.json written to ${CFG_PATH}"
-#################################################################
-
-#################################################################
-###### Log config ###############################################
-#################################################################
-# Define default log level if not set
+# The kit's local/ and startup/ are mounted read-only (FLIP#1570): fl-client-init
+# (/app/fl-client-init.sh) rendered resources.json, log_config.json and the site
+# privacy policy before this container started. Start without writing to the kit,
+# and refuse to start on a render that is missing or does not match this container's
+# configuration (fail closed): an unfiltered client must never run.
 export LOG_LEVEL=${LOG_LEVEL:-INFO}
-
-LOG_TEMPLATE="/app/local/log_config.template.json"
-LOG_CFG="/app/local/log_config.json"
-
-# Use envsubst to replace environment variables in the template
-echo "🔧 Generating log_config.json from template..."
-envsubst < "$LOG_TEMPLATE" > "$LOG_CFG" || { echo "❌ cannot write ${LOG_CFG}"; exit 1; }
-echo "✅ log_config.json written to ${LOG_CFG}"
-#################################################################
-
-#################################################################
-###### Site privacy policy #####################################
-#################################################################
-# Renders /app/local/privacy.json from FL_SITE_PRIVACY_* or the governance
-# document's [fl_privacy.nvflare] section (or removes a stale render when neither
-# is set). An invalid configuration must NOT fall through to an unfiltered
-# client: fail closed and stop the container.
-echo "🔧 Rendering site privacy policy..."
-if ! python -m flip.nvflare.site_policy /app/local/privacy.json; then
-    echo "❌ [entrypoint] invalid site privacy configuration (FL_SITE_PRIVACY_* or the governance document) — refusing to start fl-client (fail closed)" >&2
+for cfg in /app/local/resources.json /app/local/log_config.json; do
+    if [ ! -f "$cfg" ]; then
+        echo "❌ [entrypoint] ${cfg} is missing — fl-client-init did not render this kit (see its log); refusing to start" >&2
+        exit 1
+    fi
+done
+if ! python -m flip.nvflare.site_policy --assert-rendered /app/local/privacy.json; then
+    echo "❌ [entrypoint] the site privacy policy in /app/local is missing, stale or invalid (FL_SITE_PRIVACY_* or the governance document) — refusing to start fl-client (fail closed)" >&2
     exit 1
 fi
 #################################################################
@@ -76,11 +46,9 @@ echo "[entrypoint] Cleaning up stale processes and files..."
 pkill -f "nvflare" || true
 rm -f /app/pid.fl /app/daemon_pid.fl
 
-# Start FL client
-echo "[entrypoint] Starting FL client with:"
-echo "  NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}"
-echo "  MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}"
-echo "  LOG_LEVEL=${LOG_LEVEL}"
+# Start FL client. The GPU count and memory it advertises are in local/resources.json, as fl-client-init
+# rendered them.
+echo "[entrypoint] Starting FL client (LOG_LEVEL=${LOG_LEVEL})"
 cd /app/startup
 
 # Call the startup script with the provided parameters

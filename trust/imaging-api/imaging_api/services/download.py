@@ -215,10 +215,7 @@ async def download_and_unzip_images(
     # Only now — after a fully successful extraction — mark this (assessor, resource)
     # download complete, with the record a later hit is checked by.
     write_sentinel(accession_dir_abs, assessor_type, resource_type, CachedDownload(experiment_id, resource_stats))
-    logger.info(
-        f"Marked download complete for net={net_id} project={central_hub_project_id} "
-        f"accession={accession_id} ({assessor_type}/{resource_type})"
-    )
+    logger.info(f"Marked download complete for {context}")
 
     return extracted_folder
 
