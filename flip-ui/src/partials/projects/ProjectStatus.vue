@@ -16,12 +16,12 @@
         <div class="p-4 shrink-0">
             <div class="flex flex-row items-center">
                 <div class="grow">
-                    <h2 class="text-lg font-semibold leading-loose font-heading grow">
+                    <h2 class="text-lg font-semibold leading-loose grow">
                         Imaging project status
                     </h2>
                     <p
                         v-if="canLoad"
-                        class="mt-1 text-[13px] leading-snug text-gray-500 dark:text-gray-300"
+                        class="mt-1 text-note leading-snug text-gray-500 dark:text-gray-300"
                     >
                         When this project was approved, an XNAT project was created at each trust.
                         Live import counts below.
@@ -42,62 +42,62 @@
                 <div v-else class="flex flex-col flex-1 min-h-0">
                     <div class="grid grid-cols-5 shrink-0 overflow-hidden border-t border-b border-gray-200 divide-x divide-gray-200 dark:border-dark-border dark:divide-dark-border">
                         <div class="min-w-0 p-2.5">
-                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
+                            <p class="text-xs leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Trusts onboarded
                             </p>
-                            <p class="mt-1.5 text-xl font-semibold leading-none font-heading text-gray-900 dark:text-gray-100" data-test="overview-project-creation">
+                            <p class="mt-1.5 text-xl font-semibold leading-none tabular-nums text-gray-900 dark:text-gray-100" data-test="overview-project-creation">
                                 {{ overview.projectCreationCompleted }}/{{ overview.projectCreationTotal }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300">
+                            <p class="mt-1.5 text-xs leading-tight text-gray-500 dark:text-gray-300">
                                 imaging projects created
                             </p>
                         </div>
                         <div class="min-w-0 p-2.5">
-                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
+                            <p class="text-xs leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Studies retrieved
                             </p>
-                            <p class="mt-1.5 text-xl font-semibold leading-none font-heading text-gray-900 dark:text-gray-100" data-test="overview-image-retrieval">
+                            <p class="mt-1.5 text-xl font-semibold leading-none tabular-nums text-gray-900 dark:text-gray-100" data-test="overview-image-retrieval">
                                 {{ formatCount(overview.studyRetrievalTotal) }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300" data-test="overview-retrieval-percent">
+                            <p class="mt-1.5 text-xs leading-tight text-gray-500 dark:text-gray-300" data-test="overview-retrieval-percent">
                                 {{ overviewRetrievalPercent }}% of expected {{ expectedCohortLabel }}
                             </p>
                         </div>
                         <div class="min-w-0 p-2.5">
-                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
+                            <p class="text-xs leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Processing
                             </p>
-                            <p class="mt-1.5 text-xl font-semibold leading-none font-heading text-gray-900 dark:text-gray-100">
+                            <p class="mt-1.5 text-xl font-semibold leading-none tabular-nums text-gray-900 dark:text-gray-100">
                                 {{ formatCount(overview.processingTotal) }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300">
+                            <p class="mt-1.5 text-xs leading-tight text-gray-500 dark:text-gray-300">
                                 in flight at trusts
                             </p>
                         </div>
                         <div class="min-w-0 p-2.5">
-                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
+                            <p class="text-xs leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Queued
                             </p>
-                            <p class="mt-1.5 text-xl font-semibold leading-none font-heading text-gray-900 dark:text-gray-100">
+                            <p class="mt-1.5 text-xl font-semibold leading-none tabular-nums text-gray-900 dark:text-gray-100">
                                 {{ formatCount(overview.queuedTotal) }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300">
+                            <p class="mt-1.5 text-xs leading-tight text-gray-500 dark:text-gray-300">
                                 waiting on import workers
                             </p>
                         </div>
                         <div class="min-w-0 p-2.5">
-                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
+                            <p class="text-xs leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Failed
                             </p>
                             <p
-                                class="mt-1.5 text-xl font-semibold leading-none font-heading"
+                                class="mt-1.5 text-xl font-semibold leading-none tabular-nums"
                                 :class="overview.failedTotal > 0
                                     ? 'text-red-600 dark:text-red-400'
                                     : 'text-gray-900 dark:text-gray-100'"
                             >
                                 {{ formatCount(overview.failedTotal) }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300">
+                            <p class="mt-1.5 text-xs leading-tight text-gray-500 dark:text-gray-300">
                                 {{ overview.failedTotal > 0 ? "requires attention" : "no errors" }}
                             </p>
                         </div>
@@ -126,7 +126,7 @@
                             <div class="flex flex-col gap-3">
                                 <!-- Top row: trust name + reimport count -->
                                 <div class="flex items-center justify-between gap-3">
-                                    <h2 class="font-bold font-heading text-base text-gray-900 dark:text-gray-100" :data-test="`trust-name-${project.trustId}`">
+                                    <h2 class="font-bold text-base text-gray-900 dark:text-gray-100" :data-test="`trust-name-${project.trustId}`">
                                         {{ project.trustName }}
                                     </h2>
                                     <div
@@ -144,7 +144,7 @@
                                             class="w-4 h-4 text-yellow-500"
                                         />
                                         <span
-                                            class="font-mono text-xs text-gray-500 dark:text-gray-300"
+                                            class="text-xs tabular-nums text-gray-500 dark:text-gray-300"
                                             :data-test="`project-reimport-status-${project.trustId}`"
                                         >
                                             {{ project.reimportCount }} / {{ maxReimportCount }}
@@ -161,9 +161,9 @@
                                     <div class="flex items-baseline justify-between gap-2">
                                         <span class="inline-flex items-baseline gap-2 min-w-0">
                                             <span
-                                                class="font-heading font-semibold text-2xl leading-none"
+                                                class="font-semibold text-2xl leading-none tabular-nums"
                                                 :class="rowTotal(project) === 0
-                                                    ? 'text-gray-400 dark:text-gray-300'
+                                                    ? 'text-gray-500 dark:text-gray-300'
                                                     : 'text-gray-900 dark:text-gray-100'"
                                                 :data-test="`pct-retrieved-${project.trustId}`"
                                             >
@@ -175,14 +175,14 @@
                                                  the number rather than letting it read as live. -->
                                             <span
                                                 v-if="isImportStale(project) && rowTotal(project) > 0"
-                                                class="font-mono text-[9px] uppercase tracking-[0.08em] rounded px-1.5 py-0.5 border border-red-200 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300"
+                                                class="text-xs rounded px-1.5 py-0.5 border border-red-200 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300"
                                                 :data-test="`last-known-tag-${project.trustId}`"
                                             >
                                                 Last known
                                             </span>
                                         </span>
                                         <span
-                                            class="font-mono text-[11px] text-gray-500 dark:text-gray-300 shrink-0"
+                                            class="text-xs tabular-nums text-gray-500 dark:text-gray-300 shrink-0"
                                             :data-test="`import-count-${project.trustId}`"
                                         >
                                             {{ importCountLabel(project) }}
@@ -204,7 +204,7 @@
                                         </template>
                                     </div>
                                     <div
-                                        class="flex justify-between font-mono text-[9px] uppercase tracking-wide text-gray-500 dark:text-gray-300"
+                                        class="flex justify-between text-xs tabular-nums text-gray-500 dark:text-gray-300"
                                         :class="{ 'opacity-[0.65]': isImportStale(project) }"
                                     >
                                         <span v-for="seg in IMPORT_SEGMENTS" :key="seg.key" class="inline-flex items-center gap-1">
@@ -234,10 +234,10 @@
                                         class="w-4 h-4 shrink-0 mt-px text-red-600 dark:text-red-400"
                                     />
                                     <span class="flex flex-col gap-0.5 min-w-0">
-                                        <span class="text-xs font-bold text-red-700 dark:text-red-300">
+                                        <span class="text-sm font-bold text-red-700 dark:text-red-300">
                                             {{ importError(project)?.title }}
                                         </span>
-                                        <span class="text-[11px] leading-[1.4] text-red-600 dark:text-red-400">
+                                        <span class="text-sm leading-[1.4] text-red-600 dark:text-red-400">
                                             {{ importError(project)?.detail }}
                                         </span>
                                     </span>

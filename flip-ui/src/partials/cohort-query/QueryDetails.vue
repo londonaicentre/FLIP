@@ -16,7 +16,7 @@
         <AiCard>
             <div v-if="!queryDetails" data-test="empty-cohort-query">
                 <div class="p-4">
-                    <h2 class="text-lg font-semibold font-heading leading-loose">
+                    <h2 class="text-lg font-semibold leading-loose">
                         Cohort Query
                     </h2>
                     <div
@@ -24,7 +24,7 @@
                     >
                         <div class="relative block w-full text-center">
                             <icon-ph-chart-bar-duotone class="w-12 h-12 mx-auto text-primary-500 dark:text-primary-400" />
-                            <div class="mt-2 text-xs leading-snug">
+                            <div class="mt-2 text-sm leading-snug">
                                 There is no cohort query assigned to this project.
                             </div>
                         </div>
@@ -36,7 +36,7 @@
             </div>
             <div v-else data-test="cohort-query-exists">
                 <div class="flex items-center justify-between p-4">
-                    <h2 class="text-lg font-semibold font-heading leading-loose">
+                    <h2 class="text-lg font-semibold leading-loose">
                         Cohort Query
                     </h2>
                     <AiButton

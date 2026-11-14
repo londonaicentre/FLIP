@@ -20,7 +20,7 @@
  * chosen by maximising the minimum adjacent colour-vision-deficiency distance
  * (min adjacent deltaE 37.7 light / 35.9 dark under protan/deutan simulation,
  * target >= 12) and validated against the real chart surfaces (white /
- * dark-surface, then #0E0B13, now #1A1622, where every dark slot is still >= 3.59:1) for OKLCH lightness band, chroma floor and contrast.
+ * dark-surface, then #0E0B13, now #141417, where every dark slot is still >= 3.59:1) for OKLCH lightness band, chroma floor and contrast.
  * Light-mode aqua/yellow/magenta sit below 3:1 on white by design — the
  * legend, axis tooltip and "View Data" table are the mitigation.
  */
@@ -91,9 +91,9 @@ export const chartToolbox = (darkMode: boolean) => ({
             show: true,
             title: "View Data",
             readOnly: true,
-            backgroundColor: darkMode ? "#201A29" : "#FFFFFF", // dark-raised / white
-            textareaColor: darkMode ? "#070509" : "#FFFFFF", // dark-inset / white
-            textareaBorderColor: darkMode ? "#3A3147" : "#D1D5DB", // dark-border-strong / gray-300
+            backgroundColor: darkMode ? "#1E1E23" : "#FFFFFF", // dark-raised / white
+            textareaColor: darkMode ? "#050506" : "#FFFFFF", // dark-inset / white
+            textareaBorderColor: darkMode ? "#6B6B72" : "#D1D5DB", // dark-border-strong / gray-300
             textColor: darkMode ? "#D1D5DB" : "#374151", // gray-300 / gray-700
             buttonColor: darkMode ? "#9452A8" : "#61366e", // primary-400 / primary-500
             buttonTextColor: "#FFFFFF"
@@ -129,8 +129,8 @@ export const chartToolbox = (darkMode: boolean) => ({
 export const chartChrome = (darkMode: boolean): IChartChrome => darkMode
     ? {
         background: "transparent",
-        gridLine: "#2A2336", // dark-border
-        axisLine: "#3A3147", // dark-border-strong
+        gridLine: "#2E2E35", // dark-border
+        axisLine: "#6B6B72", // dark-border-strong
         axisLabel: "#9CA3AF", // gray-400 (dark fg-3)
         ink: "#D1D5DB" // gray-300 (dark fg-2)
     }

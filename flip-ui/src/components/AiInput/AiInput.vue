@@ -44,8 +44,8 @@
                     class="block w-full text-sm text-gray-700 dark:text-gray-300 dark:bg-dark-raised transition duration-300 border-gray-500 dark:border-gray-500 rounded-md shadow-sm focus:ring-1"
                     :class="[
                         !!errorMessage
-                            ? 'ring-1 ring-red-500 focus:ring-red-500 text-red-600 focus:border-red-500 border-red-500 placeholder:text-gray-500'
-                            : 'placeholder:text-gray-500 focus:border-primary-500 focus:ring-primary-500 dark:focus:ring-primary-400 dark:focus:border-primary-400',
+                            ? 'ring-1 ring-red-500 focus:ring-red-500 text-red-600 focus:border-red-500 border-red-500 placeholder:text-gray-500 dark:placeholder:text-gray-300/70'
+                            : 'placeholder:text-gray-500 dark:placeholder:text-gray-300/70 focus:border-primary-500 focus:ring-primary-500 dark:focus:ring-primary-400 dark:focus:border-primary-400',
                         preIcon && 'pl-10',
                         postIcon && 'pr-10',
 

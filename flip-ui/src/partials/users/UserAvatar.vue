@@ -13,7 +13,7 @@
 
 <template>
     <span
-        class="inline-flex items-center justify-center font-bold rounded-full shrink-0 font-heading"
+        class="inline-flex items-center justify-center font-bold rounded-full shrink-0"
         :style="avatarStyle"
         data-test="user-avatar"
         aria-hidden="true"

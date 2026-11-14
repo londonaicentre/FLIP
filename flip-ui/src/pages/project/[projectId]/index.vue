@@ -25,7 +25,7 @@
             <header class="px-6 pt-4 shrink-0">
                 <router-link
                     to="/projects"
-                    class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-300 dark:hover:text-primary-300"
+                    class="text-xs font-semibold text-gray-500 hover:text-primary-500 dark:text-gray-300 dark:hover:text-primary-300"
                 >
                     Projects
                 </router-link>

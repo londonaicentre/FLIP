@@ -18,7 +18,11 @@ from fastapi.testclient import TestClient
 
 from flip_api.domain.schemas.trusts import UpdateTrustStatusSchema
 from flip_api.main import app
-from flip_api.trusts_services.update_trust_status import update_trust_status
+from flip_api.trusts_services.update_trust_status import (
+    check_model_exists,
+    check_trust_exists,
+    update_trust_status,
+)
 from flip_api.utils.constants import SERVICE_UNAVAILABLE_MESSAGE
 
 client = TestClient(app)
@@ -216,3 +220,12 @@ def test_update_status_404(model_exists, trust_exists, detail, mock_request, moc
 
     assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
     assert detail in exc_info.value.detail
+
+
+@pytest.mark.parametrize("check", [check_model_exists, check_trust_exists])
+@pytest.mark.parametrize(("row", "expected"), [(MagicMock(), True), (None, False)])
+def test_check_exists_reflects_whether_a_row_was_found(check, row, expected):
+    db = MagicMock()
+    db.exec.return_value.first.return_value = row
+
+    assert check("some-id", db) is expected

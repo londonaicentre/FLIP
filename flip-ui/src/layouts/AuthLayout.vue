@@ -13,8 +13,8 @@
 
 <template>
     <AiErrorAlert v-if="errorStore.hasError" class="absolute z-10" />
-    <div class="bg-body dark:bg-dark-canvas">
-        <div class="flex items-center justify-center h-screen supports-[height:100dvh]:h-dvh">
+    <div class="h-full bg-body dark:bg-dark-canvas">
+        <div class="flex items-center justify-center h-full">
             <div class="absolute top-6 left-8 z-10 flex items-center gap-4">
                 <a
                     href="https://www.aicentre.co.uk/"
@@ -87,7 +87,7 @@
             </div>
             <footer
                 data-test="auth-footer-links"
-                class="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-row items-center justify-center gap-6 text-xs text-center font-heading text-gray-500 dark:text-gray-300 z-10"
+                class="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-row items-center justify-center gap-6 text-xs text-center text-gray-500 dark:text-gray-300 z-10"
             >
                 <a
                     v-for="link in footerLinks"

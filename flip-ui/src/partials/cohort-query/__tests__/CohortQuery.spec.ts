@@ -553,7 +553,7 @@ describe("CohortQuery", () => {
         // class on other muted-mono labels, but the run-stamp is the only one
         // whose text starts with "Last run".
         const lastRunCell = (wrapper: ReturnType<typeof mountCohortQuery>) => {
-            const candidates = wrapper.findAll(".uppercase.font-mono");
+            const candidates = wrapper.findAll(".tabular-nums");
 
             return candidates.find(c => c.text().startsWith("Last run")) ?? null;
         };

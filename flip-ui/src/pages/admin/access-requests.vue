@@ -54,22 +54,22 @@ name: Access Requests
                         <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
                             <thead class="bg-gray-50 dark:bg-gray-900">
                                 <tr>
-                                    <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
+                                    <th scope="col" class="px-6 py-3 text-xs font-semibold text-left text-gray-500 dark:text-gray-300">
                                         Name
                                     </th>
-                                    <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
+                                    <th scope="col" class="px-6 py-3 text-xs font-semibold text-left text-gray-500 dark:text-gray-300">
                                         Email
                                     </th>
-                                    <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
+                                    <th scope="col" class="px-6 py-3 text-xs font-semibold text-left text-gray-500 dark:text-gray-300">
                                         Reason
                                     </th>
-                                    <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
+                                    <th scope="col" class="px-6 py-3 text-xs font-semibold text-left text-gray-500 dark:text-gray-300">
                                         Submitted
                                     </th>
-                                    <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
+                                    <th scope="col" class="px-6 py-3 text-xs font-semibold text-left text-gray-500 dark:text-gray-300">
                                         Status
                                     </th>
-                                    <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-right text-gray-500 uppercase dark:text-gray-300">
+                                    <th scope="col" class="px-6 py-3 text-xs font-semibold text-right text-gray-500 dark:text-gray-300">
                                         Actions
                                     </th>
                                 </tr>
@@ -106,7 +106,7 @@ name: Access Requests
                                                 Dismiss
                                             </AiButton>
                                         </div>
-                                        <span v-else class="text-xs text-gray-400 dark:text-gray-300">—</span>
+                                        <span v-else class="text-xs text-gray-500 dark:text-gray-300">—</span>
                                     </td>
                                 </tr>
                             </tbody>

@@ -28,16 +28,16 @@
                                     class="w-9 h-9 transition shrink-0"
                                     :class="[details.banner.enabled ? 'text-primary-600 dark:text-green-400' : 'text-gray-300']"
                                 />
-                                <h3 class="text-3xl font-semibold font-heading">
+                                <h3 class="text-3xl font-semibold">
                                     Site Banner is <span
-                                        class="font-black underline uppercase transition decoration-4 decoration-solid underline-offset-8"
+                                        class="font-black underline transition decoration-4 decoration-solid underline-offset-8"
                                         :class="[details.banner.enabled ? 'decoration-primary-600 dark:decoration-green-400' : 'decoration-transparent']"
                                     >
                                         {{ details.banner.enabled ? 'Enabled' : 'Disabled' }}
                                     </span>
                                 </h3>
                             </div>
-                            <p class="my-6 text-gray-400 dark:text-gray-300">
+                            <p class="my-6 text-gray-500 dark:text-gray-300">
                                 Enabling the <strong class="font-bold">site banner</strong> will show a message on every
                                 page to all users across the platform.
                                 You can edit and preview the banner below.

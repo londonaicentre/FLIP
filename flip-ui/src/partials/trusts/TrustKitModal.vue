@@ -46,13 +46,13 @@
                             </DialogTitle>
                             <div class="px-8 py-4 space-y-4 text-sm font-normal leading-5 dark:text-gray-300">
                                 <div
-                                    class="border-l-4 border-red-500 bg-red-50 dark:bg-red-900/20 p-3"
+                                    class="p-3 border border-red-200 rounded-md bg-red-50 dark:border-red-500/40 dark:bg-red-900/20"
                                     data-test="kit-warning"
                                 >
                                     <p class="text-sm font-bold text-red-800 dark:text-red-200">
                                         You won't see this again.
                                     </p>
-                                    <p class="text-xs text-red-700 dark:text-red-300 mt-1">
+                                    <p class="text-sm text-red-700 dark:text-red-300 mt-1">
                                         FLIP does not keep the passphrase. Without it, the downloaded file cannot be
                                         opened.
                                     </p>
@@ -60,7 +60,7 @@
 
                                 <div>
                                     <div class="flex items-center justify-between mb-1">
-                                        <span class="text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                                        <span class="text-xs font-bold text-gray-500 dark:text-gray-300">
                                             Downloaded file
                                         </span>
                                         <button
@@ -82,7 +82,7 @@
 
                                 <div>
                                     <div class="flex items-center justify-between mb-1">
-                                        <span class="text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                                        <span class="text-xs font-bold text-gray-500 dark:text-gray-300">
                                             Passphrase
                                         </span>
                                         <button
@@ -103,7 +103,7 @@
                                 </div>
 
                                 <div>
-                                    <div class="text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-300 mb-1">
+                                    <div class="text-xs font-bold text-gray-500 dark:text-gray-300 mb-1">
                                         On the trust host
                                     </div>
                                     <div
@@ -112,12 +112,12 @@
                                     >
                                         make -C trust install-kit FILE={{ kit?.file_name }}
                                     </div>
-                                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-300">
+                                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-300">
                                         Copy the file to the trust host first. The command asks for the passphrase.
                                     </p>
                                     <p
                                         v-if="kit?.kind === 'full'"
-                                        class="mt-1 text-xs text-gray-500 dark:text-gray-300"
+                                        class="mt-1 text-sm text-gray-500 dark:text-gray-300"
                                         data-test="kit-public-ip-note"
                                     >
                                         A new site must also send its public IP to the FLIP hub team, so the FL

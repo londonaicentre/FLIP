@@ -20,12 +20,12 @@
         <div class="w-full px-8 pt-8 pb-8 overflow-y-auto">
             <!-- Header — design ref: ConnectionA (CSHeader) in design_handoff_full/05_connection/connection.jsx -->
             <div class="mb-4">
-                <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                <p class="text-xs text-gray-500 dark:text-gray-300">
                     Federation · {{ trusts?.length ?? 0 }} {{ (trusts?.length ?? 0) === 1 ? "trust" : "trusts" }}
                     <span class="mx-1 text-gray-300 dark:text-gray-600">·</span>
                     <!-- The release the hub runs (FLIP#1204) — what a site's `make upgrade-onprem-trust`
                          moves it to, and what the drawer compares each trust's build against. -->
-                    <span data-test="hub-version" class="normal-case tracking-normal">Hub {{ hubVersion ?? "—" }}</span>
+                    <span data-test="hub-version">Hub {{ hubVersion ?? "—" }}</span>
                 </p>
                 <div class="flex items-center justify-between gap-4">
                     <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100">
@@ -49,11 +49,39 @@
                 <p class="mt-2 text-sm text-gray-500 dark:text-gray-300" data-test="subtitle">
                     {{ subtitle }}
                 </p>
+                <!-- Phones get one count line instead of the tiles. A trust in trouble is a link to its row;
+                     zero counts stay muted. -->
+                <p
+                    v-if="trusts"
+                    data-test="state-counts"
+                    class="flex flex-wrap items-center gap-x-2 mt-1 text-sm text-gray-500 dark:text-gray-300 md:hidden"
+                >
+                    <template v-for="(tile, i) in TILES" :key="tile.key">
+                        <span v-if="i" aria-hidden="true">·</span>
+                        <component
+                            :is="isCountLink(tile) ? 'button' : 'span'"
+                            :type="isCountLink(tile) ? 'button' : undefined"
+                            :data-test="`state-count-${tile.key}`"
+                            class="inline-flex items-center gap-1.5"
+                            :class="isCountLink(tile)
+                                ? ['font-bold hover:underline', tile.text]
+                                : stateCounts[tile.key] ? 'text-gray-700 dark:text-gray-200' : ''"
+                            @click="isCountLink(tile) && focusFirstTrust(tile.key)"
+                        >
+                            <span
+                                class="inline-block w-2 h-2 rounded-full"
+                                :class="stateCounts[tile.key] ? tile.dot : 'bg-gray-300 dark:bg-gray-600'"
+                                aria-hidden="true"
+                            />
+                            {{ stateCounts[tile.key] }} {{ tile.label.toLowerCase() }}
+                        </component>
+                    </template>
+                </p>
             </div>
 
             <!-- View toggle: list (ConnectionA) vs radial (ConnectionD) -->
             <div class="flex items-center justify-end mb-3 gap-2">
-                <span class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">View</span>
+                <span class="text-xs text-gray-500 dark:text-gray-300">View</span>
                 <div
                     role="tablist"
                     aria-label="Connection view"
@@ -92,7 +120,7 @@
 
             <!-- Filter tiles: one per connection state, each a toggle (models-page idiom).
                  Click the active tile to reset. -->
-            <div v-if="viewMode === 'list'" class="flex flex-wrap gap-3 mb-4">
+            <div v-if="viewMode === 'list'" class="hidden md:flex flex-wrap gap-3 mb-4">
                 <button
                     v-for="tile in TILES"
                     :key="tile.key"
@@ -107,13 +135,13 @@
                 >
                     <div class="flex items-center gap-2">
                         <span class="inline-block w-2 h-2 rounded-full" :class="tile.dot" />
-                        <span class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                        <span class="text-xs text-gray-500 dark:text-gray-300">
                             {{ tile.label }}
                         </span>
                     </div>
                     <div
                         :data-test="`filter-tile-count-${tile.key}`"
-                        class="mt-1 text-2xl font-heading font-bold text-gray-900 dark:text-gray-100"
+                        class="mt-1 text-2xl font-bold tabular-nums text-gray-900 dark:text-gray-100"
                     >
                         {{ stateCounts[tile.key] }}
                     </div>
@@ -121,7 +149,7 @@
             </div>
 
             <!-- Status table (ConnectionA table) -->
-            <AiCard v-if="viewMode === 'list'">
+            <AiCard v-if="viewMode === 'list'" ref="trustList">
                 <div v-if="!trusts" class="p-8 text-center">
                     <AiLoader />
                 </div>
@@ -134,7 +162,7 @@
                             class="flex items-center gap-2 px-4 py-2 bg-gray-50 border-b border-gray-200
                             dark:bg-dark-surface dark:border-dark-border"
                         >
-                            <span class="flex-1 text-[10.5px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                            <span class="flex-1 text-xs text-gray-500 dark:text-gray-300">
                                 Trusts
                             </span>
                             <Menu as="div" class="relative">
@@ -179,6 +207,7 @@
                                 v-for="t in displayedTrusts"
                                 :key="t.id"
                                 data-test="trust-row-mobile"
+                                :data-trust-state="t._state"
                                 role="button"
                                 tabindex="0"
                                 class="px-4 py-3 cursor-pointer focus-visible:outline focus-visible:outline-2
@@ -191,32 +220,32 @@
                                 <div class="flex items-start gap-2.5">
                                     <span class="inline-block w-2 h-2 mt-[5px] rounded-full shrink-0" :class="dotClass(t._state)" />
                                     <div class="flex-1 min-w-0">
-                                        <div class="font-heading font-semibold text-sm text-gray-900 dark:text-gray-100">
+                                        <div class="font-semibold text-sm text-gray-900 dark:text-gray-100">
                                             {{ t.name }}
                                         </div>
                                         <div
                                             v-if="t.code && t.code !== t.name"
                                             data-test="trust-code-mobile"
-                                            class="font-mono text-[11px] text-gray-500 dark:text-gray-300 mt-0.5"
+                                            class="font-mono text-xs text-gray-500 dark:text-gray-300 mt-0.5"
                                         >
                                             {{ t.code }}
                                         </div>
                                     </div>
                                     <span
-                                        class="inline-block px-2 py-0.5 rounded text-[11px] font-medium shrink-0"
+                                        class="inline-block px-2 py-0.5 rounded text-xs font-medium shrink-0"
                                         :class="pillClass(t._state)"
                                     >
                                         {{ stateLabel(t._state) }}
                                     </span>
                                 </div>
                                 <div class="flex items-center gap-1.5 mt-2 pl-[18px]">
-                                    <span class="font-mono text-[11px] text-gray-600 dark:text-gray-300">
+                                    <span class="text-note text-gray-600 dark:text-gray-300">
                                         {{ t.region ?? "—" }}
                                     </span>
                                     <span class="text-gray-300 dark:text-gray-600">·</span>
                                     <span
                                         data-test="trust-heartbeat-mobile"
-                                        class="font-mono text-[11px]"
+                                        class="text-note tabular-nums"
                                         :class="t._state === 'offline'
                                             ? 'text-red-600 dark:text-red-400'
                                             : 'text-gray-600 dark:text-gray-300'"
@@ -224,7 +253,7 @@
                                         {{ heartbeatText(t.last_heartbeat) }}
                                     </span>
                                     <span class="text-gray-300 dark:text-gray-600">·</span>
-                                    <span class="font-mono text-[11px] text-gray-600 dark:text-gray-300">
+                                    <span class="text-note tabular-nums text-gray-600 dark:text-gray-300">
                                         {{ t.project_count }} {{ t.project_count === 1 ? "project" : "projects" }}
                                     </span>
                                     <span class="flex-1" />
@@ -266,7 +295,7 @@
                                         v-for="col in columns"
                                         :key="col.key ?? col.label"
                                         :data-test="col.key ? `sort-header-${col.key}` : undefined"
-                                        class="px-4 py-3 text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300 font-medium select-none"
+                                        class="px-4 py-3 text-xs text-gray-500 dark:text-gray-300 font-medium select-none"
                                         :class="[
                                             col.align === 'right' ? 'text-right' : 'text-left',
                                             col.width ?? '',
@@ -287,6 +316,7 @@
                                     v-for="(t, idx) in displayedTrusts"
                                     :key="t.id"
                                     data-test="trust-row"
+                                    :data-trust-state="t._state"
                                     role="button"
                                     tabindex="0"
                                     class="cursor-pointer group hover:bg-gray-50 dark:hover:bg-dark-surface/60
@@ -320,7 +350,7 @@
                                     <td class="px-4 py-4 align-middle max-w-0">
                                         <div class="flex flex-col min-w-0">
                                             <span
-                                                class="font-semibold font-heading text-base text-gray-900 dark:text-gray-100 truncate"
+                                                class="font-semibold text-base text-gray-900 dark:text-gray-100 truncate"
                                                 data-test="trust-name"
                                             >
                                                 {{ t.name }}
@@ -335,7 +365,7 @@
                                             <span
                                                 v-if="t._failing.length"
                                                 data-test="trust-failing"
-                                                class="font-mono text-[11px] mt-0.5 truncate"
+                                                class="text-note mt-0.5 truncate"
                                                 :class="t._state === 'offline'
                                                     ? 'text-red-600 dark:text-red-400'
                                                     : 'text-amber-600 dark:text-amber-400'"
@@ -347,11 +377,11 @@
                                     <td class="px-4 py-4 align-middle text-base text-gray-600 dark:text-gray-300 whitespace-nowrap">
                                         {{ t.region ?? "—" }}
                                     </td>
-                                    <td class="px-4 py-4 align-middle text-right font-mono text-base text-gray-900 dark:text-gray-100">
+                                    <td class="px-4 py-4 align-middle text-right text-base tabular-nums text-gray-900 dark:text-gray-100">
                                         {{ t.project_count }}
                                     </td>
                                     <td
-                                        class="px-4 py-4 align-middle font-mono text-sm"
+                                        class="px-4 py-4 align-middle text-sm tabular-nums"
                                         :class="t._state === 'offline' ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-300'"
                                         data-test="trust-heartbeat"
                                     >
@@ -395,10 +425,10 @@
                     class="relative overflow-hidden h-[560px]"
                 >
                     <div class="absolute top-4 left-5 z-10">
-                        <div class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                        <div class="text-xs text-gray-500 dark:text-gray-300">
                             Federation topology · Live
                         </div>
-                        <div class="mt-1 text-xs text-gray-500 dark:text-gray-300">
+                        <div class="mt-1 text-note text-gray-500 dark:text-gray-300">
                             {{ trusts?.length ?? 0 }}
                             {{ (trusts?.length ?? 0) === 1 ? "trust" : "trusts" }} connected to FLIP
                         </div>
@@ -412,7 +442,7 @@
                         <span
                             v-for="tile in TILES"
                             :key="tile.key"
-                            class="inline-flex items-center gap-1.5 text-[11px] text-gray-700 dark:text-gray-300"
+                            class="inline-flex items-center gap-1.5 text-xs text-gray-700 dark:text-gray-300"
                         >
                             <span class="inline-block w-2 h-2 rounded-full" :class="tile.dot" />
                             {{ tile.label }}
@@ -577,7 +607,7 @@
                                     :y="node.labelY + 1"
                                     :text-anchor="node.anchor"
                                     font-family="ui-monospace, monospace"
-                                    font-size="11"
+                                    font-size="12"
                                     font-weight="600"
                                     class="fill-gray-700 dark:fill-gray-100"
                                     letter-spacing="0.04em"
@@ -586,9 +616,9 @@
                                 </text>
                                 <text
                                     :x="node.labelX"
-                                    :y="node.labelY + 14"
+                                    :y="node.labelY + 15"
                                     :text-anchor="node.anchor"
-                                    font-size="10"
+                                    font-size="12"
                                     class="fill-gray-500 dark:fill-gray-300"
                                 >
                                     {{ node.project_count }} {{ node.project_count === 1 ? "project" : "projects" }}
@@ -601,7 +631,7 @@
                     <div class="absolute bottom-4 left-5 z-10 flex gap-4 items-center">
                         <span class="inline-flex items-center gap-2">
                             <span class="inline-block w-2 h-2 rounded-full bg-fuchsia-500 animate-pulse" />
-                            <span class="font-mono text-[11px] uppercase tracking-widest text-gray-700 dark:text-gray-300">
+                            <span class="text-xs tabular-nums text-gray-700 dark:text-gray-300">
                                 {{ onlineCount }} online
                             </span>
                         </span>
@@ -611,7 +641,7 @@
                 <!-- Side panel: incidents + hover detail -->
                 <AiCard class="p-0 flex flex-col overflow-hidden">
                     <div class="px-5 py-4 border-b border-gray-200 dark:border-dark-border">
-                        <div class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                        <div class="text-xs text-gray-500 dark:text-gray-300">
                             Incidents · open
                         </div>
                     </div>
@@ -622,15 +652,15 @@
                             class="px-5 py-3.5 border-b border-gray-100 dark:border-dark-border flex flex-col gap-1.5"
                         >
                             <div class="flex justify-between items-center">
-                                <span class="font-heading font-semibold text-[13px] text-gray-900 dark:text-gray-100">
+                                <span class="font-semibold text-note text-gray-900 dark:text-gray-100">
                                     {{ t.code || t.name }}
                                 </span>
-                                <span class="inline-block px-2 py-0.5 rounded text-[11px] font-medium" :class="pillClass(t._state)">
+                                <span class="inline-block px-2 py-0.5 rounded text-xs font-medium" :class="pillClass(t._state)">
                                     {{ stateLabel(t._state) }}
                                 </span>
                             </div>
                             <span
-                                class="text-xs"
+                                class="text-note"
                                 :class="t._state === 'offline' ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'"
                             >
                                 {{ t._state === "offline" ? "Unreachable" : "Heartbeat" }} ·
@@ -638,12 +668,12 @@
                             </span>
                         </div>
                     </div>
-                    <div v-else class="px-5 py-4 text-xs text-gray-500 dark:text-gray-300">
+                    <div v-else class="px-5 py-4 text-sm text-gray-500 dark:text-gray-300">
                         No open incidents.
                     </div>
 
                     <div class="px-5 py-4 border-t border-gray-200 dark:border-dark-border mt-auto">
-                        <div class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                        <div class="text-xs text-gray-500 dark:text-gray-300">
                             Trust detail
                         </div>
                     </div>
@@ -652,16 +682,16 @@
                         class="px-5 py-3 flex flex-col gap-1 border-t border-gray-100 dark:border-dark-border"
                         data-test="radial-hover-detail"
                     >
-                        <span class="font-heading font-semibold text-[13px] text-gray-900 dark:text-gray-100">
+                        <span class="font-semibold text-note text-gray-900 dark:text-gray-100">
                             {{ hoveredTrust.code || hoveredTrust.name }}
                         </span>
-                        <span class="font-mono text-[11px] text-gray-500 dark:text-gray-300">
+                        <span class="text-note text-gray-500 dark:text-gray-300">
                             {{ hoveredTrust.region ?? "—" }} · {{ heartbeatText(hoveredTrust.last_heartbeat) }}
                         </span>
                     </div>
                     <div
                         v-else
-                        class="px-5 py-3 text-[11px] text-gray-400 dark:text-gray-300 border-t border-gray-100 dark:border-dark-border"
+                        class="px-5 py-3 text-sm text-gray-500 dark:text-gray-300 border-t border-gray-100 dark:border-dark-border"
                     >
                         Hover a trust on the topology to see details.
                     </div>
@@ -691,7 +721,7 @@
 
 <script setup lang="ts">
 import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/vue";
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
@@ -921,6 +951,8 @@ interface ITile {
     label: string;
     dot: string;
     ring: string;
+    // The phone count line's ink when a trust is in this state; set only on states worth a link.
+    text?: string;
 }
 
 const TILES: ITile[] = [
@@ -934,13 +966,15 @@ const TILES: ITile[] = [
         key: "degraded",
         label: "Degraded",
         dot: "bg-amber-500",
-        ring: "border-amber-500 ring-amber-500/40"
+        ring: "border-amber-500 ring-amber-500/40",
+        text: "text-amber-700 dark:text-amber-300"
     },
     {
         key: "offline",
         label: "Offline",
         dot: "bg-red-500",
-        ring: "border-red-500 ring-red-500/40"
+        ring: "border-red-500 ring-red-500/40",
+        text: "text-red-700 dark:text-red-400"
     }
 ];
 
@@ -949,6 +983,21 @@ const activeTile = ref<TrustState | null>(null);
 // Toggle a tile: clicking the active tile clears the filter, otherwise filters to its state.
 const toggleTile = (key: TrustState): void => {
     activeTile.value = activeTile.value === key ? null : key;
+};
+
+// The list card, so a count on the phone line can take the user to the first trust in its state.
+const trustList = ref<InstanceType<typeof AiCard> | null>(null);
+
+const isCountLink = (tile: ITile): boolean => !!tile.text && stateCounts.value[tile.key] > 0;
+
+const focusFirstTrust = async (state: TrustState): Promise<void> => {
+    viewMode.value = "list";
+    activeTile.value = null;
+    await nextTick();
+    const card = trustList.value?.$el as HTMLElement | undefined;
+    const rows = [...(card?.querySelectorAll<HTMLElement>(`[data-trust-state="${state}"]`) ?? [])];
+    // The phone and desktop lists are both in the DOM; focusing the visible row scrolls it into view.
+    (rows.find(row => row.offsetParent !== null) ?? rows[0])?.focus();
 };
 
 // Counted off the already-derived rows, not re-derived: a second derivation takes

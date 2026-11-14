@@ -82,7 +82,7 @@
                         :class="liveActivityDotClass"
                     />
                 </span>
-                <h2 class="text-base font-heading font-semibold text-gray-900 dark:text-gray-100">
+                <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">
                     Live activity
                 </h2>
             </div>
