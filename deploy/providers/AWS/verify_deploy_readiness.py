@@ -27,6 +27,7 @@ Exit Codes:
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -117,8 +118,7 @@ def check_makefile_dependency_absent(target: str, dependency: str, description: 
 
 def check_command_available(command: str, min_version: str | None = None) -> bool:
     """Check if a command is available in PATH."""
-    result = subprocess.run(["which", command], capture_output=True, text=True, timeout=5)
-    if result.returncode != 0:
+    if shutil.which(command) is None:
         return False
 
     if min_version:
@@ -222,7 +222,7 @@ def main() -> int:
 
     # Check unit tests
     print("🧪 UNIT TESTS")
-    uv_available, _ = run_command(["which", "uv"])
+    uv_available = shutil.which("uv") is not None
     if not uv_available:
         print("   ⚠️  Unit tests skipped (uv not installed)")
     else:

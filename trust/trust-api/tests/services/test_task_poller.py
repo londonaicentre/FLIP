@@ -281,13 +281,19 @@ async def test_send_heartbeat_logs_non_2xx_response(caplog):
 # ---- _report_task_result ----
 
 
-@pytest.mark.asyncio
-async def test_report_task_result_success():
-    """Should POST result to hub."""
+def _ok_client() -> AsyncMock:
+    """An httpx-like client whose POST answers 200."""
     mock_response = AsyncMock()
     mock_response.status_code = 200
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
+    return mock_client
+
+
+@pytest.mark.asyncio
+async def test_report_task_result_success():
+    """Should POST result to hub."""
+    mock_client = _ok_client()
 
     await _report_task_result(mock_client, "task-123", {"success": True, "result": "data"})
 
@@ -324,33 +330,24 @@ async def test_report_task_result_non_200_retries_then_gives_up():
 
 
 @pytest.mark.asyncio
-async def test_report_task_result_includes_error_in_result():
-    """Should include error details in result field for failed tasks."""
-    mock_response = AsyncMock()
-    mock_response.status_code = 200
-    mock_client = AsyncMock()
-    mock_client.post.return_value = mock_response
+async def test_report_task_result_failure_carries_error_and_no_null_status_code():
+    """A failed task's error reaches the hub in the result field, and a handler that reports
+    no status code must not gain a null one."""
+    mock_client = _ok_client()
 
-    await _report_task_result(
-        mock_client,
-        "task-123",
-        {"success": False, "error": "Something went wrong"},
-    )
+    await _report_task_result(mock_client, "task-123", {"success": False, "error": "Something went wrong"})
 
-    call_args = mock_client.post.call_args
-    payload = call_args[1]["json"]
+    payload = mock_client.post.call_args[1]["json"]
     assert payload["success"] is False
     assert "Something went wrong" in payload["result"]
+    assert "status_code" not in json.loads(payload["result"])
 
 
 @pytest.mark.asyncio
 async def test_report_task_result_forwards_status_code():
     """The hub classifies a failed imaging-status refresh on the upstream status code (FLIP#1022),
     so it has to survive the trip through the result payload."""
-    mock_response = AsyncMock()
-    mock_response.status_code = 200
-    mock_client = AsyncMock()
-    mock_client.post.return_value = mock_response
+    mock_client = _ok_client()
 
     await _report_task_result(
         mock_client,
@@ -361,24 +358,6 @@ async def test_report_task_result_forwards_status_code():
     payload = json.loads(mock_client.post.call_args[1]["json"]["result"])
     assert payload["status_code"] == 404
     assert payload["error"] == "404: Project not found"
-
-
-@pytest.mark.asyncio
-async def test_report_task_result_omits_absent_status_code():
-    """Handlers that report no status code must not gain a null one."""
-    mock_response = AsyncMock()
-    mock_response.status_code = 200
-    mock_client = AsyncMock()
-    mock_client.post.return_value = mock_response
-
-    await _report_task_result(
-        mock_client,
-        "task-123",
-        {"success": False, "error": "Something went wrong"},
-    )
-
-    payload = json.loads(mock_client.post.call_args[1]["json"]["result"])
-    assert "status_code" not in payload
 
 
 # ---- _process_task ----
@@ -517,20 +496,13 @@ async def test_process_task_rejects_a_payload_sealed_for_another_task_type():
 @pytest.mark.asyncio
 async def test_run_poller_processes_tasks_and_reports_results():
     """Should poll for tasks, process them, report results, then loop."""
-    call_count = 0
-
-    async def fake_sleep(seconds):
-        nonlocal call_count
-        call_count += 1
-        if call_count >= 1:
-            raise asyncio.CancelledError()  # Break the infinite loop after one iteration
-
     with (
         patch("trust_api.services.task_poller._send_heartbeat", new_callable=AsyncMock) as mock_heartbeat,
         patch("trust_api.services.task_poller._poll_for_tasks", new_callable=AsyncMock) as mock_poll,
         patch("trust_api.services.task_poller._process_task", new_callable=AsyncMock) as mock_process,
         patch("trust_api.services.task_poller._report_task_result", new_callable=AsyncMock) as mock_report,
-        patch("trust_api.services.task_poller.asyncio.sleep", side_effect=fake_sleep),
+        # The first sleep raises, breaking the infinite loop after one iteration.
+        patch("trust_api.services.task_poller.asyncio.sleep", side_effect=asyncio.CancelledError),
     ):
         mock_poll.return_value = [
             {"id": "task-1", "task_type": "cohort_query", "payload": "{}"},
@@ -549,14 +521,6 @@ async def test_run_poller_processes_tasks_and_reports_results():
 @pytest.mark.asyncio
 async def test_run_poller_reports_error_on_task_exception():
     """Should report error result when a task processing raises an exception."""
-    call_count = 0
-
-    async def fake_sleep(seconds):
-        nonlocal call_count
-        call_count += 1
-        if call_count >= 1:
-            raise asyncio.CancelledError()
-
     with (
         patch("trust_api.services.task_poller._send_heartbeat", new_callable=AsyncMock),
         patch("trust_api.services.task_poller._poll_for_tasks", new_callable=AsyncMock) as mock_poll,
@@ -566,7 +530,7 @@ async def test_run_poller_reports_error_on_task_exception():
             side_effect=Exception("handler crashed"),
         ),
         patch("trust_api.services.task_poller._report_task_result", new_callable=AsyncMock) as mock_report,
-        patch("trust_api.services.task_poller.asyncio.sleep", side_effect=fake_sleep),
+        patch("trust_api.services.task_poller.asyncio.sleep", side_effect=asyncio.CancelledError),
     ):
         mock_poll.return_value = [{"id": "task-1", "task_type": "cohort_query", "payload": "{}"}]
 
@@ -583,21 +547,13 @@ async def test_run_poller_reports_error_on_task_exception():
 @pytest.mark.asyncio
 async def test_run_poller_continues_on_polling_error():
     """Should catch errors in the polling loop and continue."""
-    call_count = 0
-
-    async def fake_sleep(seconds):
-        nonlocal call_count
-        call_count += 1
-        if call_count >= 1:
-            raise asyncio.CancelledError()
-
     with (
         patch(
             "trust_api.services.task_poller._send_heartbeat",
             new_callable=AsyncMock,
             side_effect=Exception("heartbeat failed"),
         ),
-        patch("trust_api.services.task_poller.asyncio.sleep", side_effect=fake_sleep),
+        patch("trust_api.services.task_poller.asyncio.sleep", side_effect=asyncio.CancelledError),
     ):
         # Should not raise (exception is caught), but CancelledError from sleep breaks the loop
         with pytest.raises(asyncio.CancelledError):

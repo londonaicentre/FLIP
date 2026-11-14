@@ -63,6 +63,16 @@ def _fl_ctx(meta, reqs, results, max_schedule_count=10, scheduler_readable=True,
     return fl_ctx
 
 
+@pytest.fixture
+def flip():
+    return MagicMock()
+
+
+@pytest.fixture
+def reporter(flip):
+    return JobSchedulingReporter(flip=flip)
+
+
 # ── the verdict ─────────────────────────────────────────────────────────────────────
 
 
@@ -125,9 +135,7 @@ def test_a_meta_without_min_clients_needs_one_site_as_nvflare_assumes():
 # ── relaying it ─────────────────────────────────────────────────────────────────────
 
 
-def test_a_refused_attempt_tells_the_hub_who_fell_short_and_which_try_it_was():
-    flip = MagicMock()
-    reporter = JobSchedulingReporter(flip=flip)
+def test_a_refused_attempt_tells_the_hub_who_fell_short_and_which_try_it_was(flip, reporter):
     fl_ctx = _fl_ctx(
         _meta(schedule_count=1), {"GSTT": GPU_REQ, "AZ1": GPU_REQ}, {"GSTT": (True, "t"), "AZ1": (False, "")}
     )
@@ -145,10 +153,8 @@ def test_a_refused_attempt_tells_the_hub_who_fell_short_and_which_try_it_was():
     flip.update_status.assert_not_called()
 
 
-def test_each_site_that_fell_short_gets_its_own_row_so_the_hub_names_the_trust():
+def test_each_site_that_fell_short_gets_its_own_row_so_the_hub_names_the_trust(flip, reporter):
     """The hub resolves an event's FL client name to the trust and shows that trust beside the row."""
-    flip = MagicMock()
-    reporter = JobSchedulingReporter(flip=flip)
     reqs = {"GSTT": GPU_REQ, "AZ1": GPU_REQ, "KCH": {"num_of_gpus": 2, "mem_per_gpu_in_GiB": 16}}
     meta = _meta(sites=("GSTT", "AZ1", "KCH"))
     fl_ctx = _fl_ctx(meta, reqs, {"GSTT": (True, "t"), "AZ1": (False, ""), "KCH": (False, "")})
@@ -159,11 +165,9 @@ def test_each_site_that_fell_short_gets_its_own_row_so_the_hub_names_the_trust()
     assert sent == {"AZ1": GPU_REQ, "KCH": reqs["KCH"]}
 
 
-def test_the_last_attempt_the_scheduler_will_make_fails_the_model():
+def test_the_last_attempt_the_scheduler_will_make_fails_the_model(flip, reporter):
     """After max_schedule_count tries FLARE marks the job FINISHED:CAN_NOT_SCHEDULE without firing any event,
     and the job never starts, so nothing inside it can tell the hub. The last refused try has to."""
-    flip = MagicMock()
-    reporter = JobSchedulingReporter(flip=flip)
     fl_ctx = _fl_ctx(
         _meta(schedule_count=4), {"GSTT": GPU_REQ, "AZ1": GPU_REQ}, {"AZ1": (False, "")}, max_schedule_count=5
     )
@@ -190,11 +194,9 @@ def waits(monkeypatch):
     return recorded
 
 
-def test_the_models_error_is_retried_until_the_hub_accepts_it(waits):
+def test_the_models_error_is_retried_until_the_hub_accepts_it(flip, reporter, waits):
     """That ERROR is all that frees the model's net, and the reporter gets no later chance to send it."""
-    flip = MagicMock()
     flip.update_status.side_effect = [False, False, True]
-    reporter = JobSchedulingReporter(flip=flip)
 
     reporter.handle_event(EventType.AFTER_CHECK_CLIENT_RESOURCES, _last_attempt_ctx())
 
@@ -202,10 +204,8 @@ def test_the_models_error_is_retried_until_the_hub_accepts_it(waits):
     assert waits == list(FINAL_STATUS_RETRY_DELAYS_SECONDS[:2])
 
 
-def test_a_hub_that_never_accepts_it_is_given_up_on_with_the_way_to_free_the_net(waits):
-    flip = MagicMock()
+def test_a_hub_that_never_accepts_it_is_given_up_on_with_the_way_to_free_the_net(flip, reporter, waits):
     flip.update_status.return_value = False
-    reporter = JobSchedulingReporter(flip=flip)
     reporter.log_error = MagicMock()
 
     reporter.handle_event(EventType.AFTER_CHECK_CLIENT_RESOURCES, _last_attempt_ctx())
@@ -217,14 +217,12 @@ def test_a_hub_that_never_accepts_it_is_given_up_on_with_the_way_to_free_the_net
     assert "Abort job" in message
 
 
-def test_a_last_try_that_names_no_site_still_says_why_the_model_failed():
+def test_a_last_try_that_names_no_site_still_says_why_the_model_failed(flip, reporter):
     """With nothing checked there is no site to name; the model must not fail with an empty activity feed.
 
     Left without ``requested``, the hub renders the row as "Training could not start · FLARE gave up after 5
     tries"; an empty ``requested`` would read "this trust did not confirm its resources", naming no trust.
     """
-    flip = MagicMock()
-    reporter = JobSchedulingReporter(flip=flip)
     fl_ctx = _fl_ctx(_meta(schedule_count=4), {}, {}, max_schedule_count=5)
 
     reporter.handle_event(EventType.AFTER_CHECK_CLIENT_RESOURCES, fl_ctx)
@@ -240,10 +238,7 @@ def test_a_last_try_that_names_no_site_still_says_why_the_model_failed():
     flip.update_status.assert_called_once_with(MODEL_ID, ModelStatus.ERROR)
 
 
-def test_an_earlier_try_that_names_no_site_is_reported_against_the_model():
-    flip = MagicMock()
-    reporter = JobSchedulingReporter(flip=flip)
-
+def test_an_earlier_try_that_names_no_site_is_reported_against_the_model(flip, reporter):
     reporter.handle_event(EventType.AFTER_CHECK_CLIENT_RESOURCES, _fl_ctx(_meta(), {}, {}))
 
     assert flip.send_event.call_args.kwargs["client_name"] is None
@@ -251,11 +246,9 @@ def test_an_earlier_try_that_names_no_site_is_reported_against_the_model():
     flip.update_status.assert_not_called()
 
 
-def test_the_model_is_found_by_the_job_name_the_fl_api_gives_every_job():
+def test_the_model_is_found_by_the_job_name_the_fl_api_gives_every_job(flip, reporter):
     """The job's config.json is not deployed until the job starts, and custom_props no longer carries the id
     (FLIP#70), so the meta's ``name`` is the one place the scheduler's context holds it."""
-    flip = MagicMock()
-    reporter = JobSchedulingReporter(flip=flip)
     meta = {**_meta(), "custom_props": {"team": "radiology"}}
 
     reporter.handle_event(EventType.AFTER_CHECK_CLIENT_RESOURCES, _fl_ctx(meta, {"AZ1": GPU_REQ}, {"AZ1": (False, "")}))
@@ -263,9 +256,7 @@ def test_the_model_is_found_by_the_job_name_the_fl_api_gives_every_job():
     assert flip.send_event.call_args.kwargs["model_id"] == MODEL_ID
 
 
-def test_a_job_that_will_be_scheduled_reports_nothing():
-    flip = MagicMock()
-    reporter = JobSchedulingReporter(flip=flip)
+def test_a_job_that_will_be_scheduled_reports_nothing(flip, reporter):
     fl_ctx = _fl_ctx(_meta(), {"GSTT": GPU_REQ, "AZ1": GPU_REQ}, {"GSTT": (True, "a"), "AZ1": (True, "b")})
 
     reporter.handle_event(EventType.AFTER_CHECK_CLIENT_RESOURCES, fl_ctx)
@@ -275,10 +266,8 @@ def test_a_job_that_will_be_scheduled_reports_nothing():
 
 
 @pytest.mark.parametrize("model_id", [None, "hello-pt", "not-a-uuid"])
-def test_a_job_flip_did_not_submit_is_left_alone(model_id):
+def test_a_job_flip_did_not_submit_is_left_alone(flip, reporter, model_id):
     """An admin can submit a plain FLARE job to the same server; it has no FLIP model to report to."""
-    flip = MagicMock()
-    reporter = JobSchedulingReporter(flip=flip)
     fl_ctx = _fl_ctx(_meta(model_id=model_id), {"AZ1": GPU_REQ}, {"AZ1": (False, "")})
 
     reporter.handle_event(EventType.AFTER_CHECK_CLIENT_RESOURCES, fl_ctx)
@@ -286,9 +275,7 @@ def test_a_job_flip_did_not_submit_is_left_alone(model_id):
     flip.send_event.assert_not_called()
 
 
-def test_other_events_are_ignored():
-    flip = MagicMock()
-    reporter = JobSchedulingReporter(flip=flip)
+def test_other_events_are_ignored(flip, reporter):
     fl_ctx = _fl_ctx(_meta(), {"AZ1": GPU_REQ}, {"AZ1": (False, "")})
 
     reporter.handle_event(EventType.BEFORE_CHECK_CLIENT_RESOURCES, fl_ctx)
@@ -296,9 +283,7 @@ def test_other_events_are_ignored():
     flip.send_event.assert_not_called()
 
 
-def test_without_a_readable_scheduler_nvflares_default_retry_count_applies():
-    flip = MagicMock()
-    reporter = JobSchedulingReporter(flip=flip)
+def test_without_a_readable_scheduler_nvflares_default_retry_count_applies(flip, reporter):
     fl_ctx = _fl_ctx(_meta(schedule_count=0), {"AZ1": GPU_REQ}, {"AZ1": (False, "")}, scheduler_readable=False)
 
     reporter.handle_event(EventType.AFTER_CHECK_CLIENT_RESOURCES, fl_ctx)
@@ -307,10 +292,8 @@ def test_without_a_readable_scheduler_nvflares_default_retry_count_applies():
 
 
 @pytest.mark.parametrize("lookup", ["no engine", "raises"])
-def test_a_scheduler_lookup_that_fails_still_reports_and_fails_the_model_on_nvflares_last_try(lookup):
+def test_a_scheduler_lookup_that_fails_still_reports_and_fails_the_model_on_nvflares_last_try(flip, reporter, lookup):
     """A failed lookup must not skip the pass: on the last try the model's ERROR is all that frees its net."""
-    flip = MagicMock()
-    reporter = JobSchedulingReporter(flip=flip)
     fl_ctx = _fl_ctx(_meta(schedule_count=9), {"AZ1": GPU_REQ}, {"AZ1": (False, "")}, engine=lookup != "no engine")
     if lookup == "raises":
         fl_ctx.get_engine().get_component.side_effect = RuntimeError("engine shutting down")
@@ -321,11 +304,9 @@ def test_a_scheduler_lookup_that_fails_still_reports_and_fails_the_model_on_nvfl
     flip.update_status.assert_called_once_with(MODEL_ID, ModelStatus.ERROR)
 
 
-def test_a_failure_while_reporting_never_reaches_the_scheduler():
+def test_a_failure_while_reporting_never_reaches_the_scheduler(flip, reporter):
     """This runs inside FLARE's scheduling pass: raising would abort scheduling for every queued job."""
-    flip = MagicMock()
     flip.send_event.side_effect = RuntimeError("hub down")
-    reporter = JobSchedulingReporter(flip=flip)
     fl_ctx = _fl_ctx(_meta(), {"AZ1": GPU_REQ}, {"AZ1": (False, "")})
 
     reporter.handle_event(EventType.AFTER_CHECK_CLIENT_RESOURCES, fl_ctx)  # does not raise

@@ -109,21 +109,20 @@ async def test_probe_health_endpoint_down_on_non_2xx():
 
 
 @pytest.mark.asyncio
-async def test_probe_health_endpoint_tolerates_missing_version():
-    """Older service images answer {"status": "ok"} with no version — still healthy."""
+@pytest.mark.parametrize(
+    ("body", "json_error"),
+    [
+        # Older service images answer {"status": "ok"} with no version — still healthy.
+        pytest.param({"status": "ok"}, False, id="missing_version"),
+        pytest.param(None, True, id="non_json_body"),
+        # A 2xx whose JSON body is not an object (proxy/gateway interposition) must
+        # degrade to version-less healthy, not raise out of the probe.
+        pytest.param(["not", "an", "object"], False, id="non_object_json_body"),
+    ],
+)
+async def test_probe_health_endpoint_tolerates_unversioned_2xx(body, json_error):
     mock_client = AsyncMock()
-    mock_client.get.return_value = _response(200, {"status": "ok"})
-
-    result = await _probe_health_endpoint(mock_client, "http://imaging-api:8000/health")
-
-    assert result["status"] == "healthy"
-    assert result["version"] is None
-
-
-@pytest.mark.asyncio
-async def test_probe_health_endpoint_tolerates_non_json_body():
-    mock_client = AsyncMock()
-    mock_client.get.return_value = _response(200, json_error=True)
+    mock_client.get.return_value = _response(200, body, json_error=json_error)
 
     result = await _probe_health_endpoint(mock_client, "http://imaging-api:8000/health")
 
@@ -138,19 +137,6 @@ async def test_probe_health_endpoint_ignores_non_string_version():
 
     result = await _probe_health_endpoint(mock_client, "http://imaging-api:8000/health")
 
-    assert result["version"] is None
-
-
-@pytest.mark.asyncio
-async def test_probe_health_endpoint_tolerates_non_object_json_body():
-    """A 2xx whose JSON body is not an object (proxy/gateway interposition) must
-    degrade to version-less healthy, not raise out of the probe."""
-    mock_client = AsyncMock()
-    mock_client.get.return_value = _response(200, ["not", "an", "object"])
-
-    result = await _probe_health_endpoint(mock_client, "http://imaging-api:8000/health")
-
-    assert result["status"] == "healthy"
     assert result["version"] is None
 
 

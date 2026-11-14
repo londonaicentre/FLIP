@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# tflint configuration for the aws-ec2 root (FLIP#1528), used by `make lint`.
+# tflint configuration for the aws-eks root (FLIP#1439), used by `make lint`.
 
 config {
   call_module_type = "local"

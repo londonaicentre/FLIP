@@ -18,8 +18,8 @@ registration one-shot. Every router except health depends on ``require_fl_api_ke
 sends the plaintext ``FL_API_KEY`` in the ``FL_API_KEY_HEADER`` header (default ``X-FL-API-Key``)
 and the API compares it to its own copy in constant time.
 
-The key is dedicated to this hop. It is not ``INTERNAL_SERVICE_KEY`` (fl-server → flip-api), so
-the FL API never holds a credential that opens the hub, and a trust-side key opens nothing here.
+The key is dedicated to this hop: the FL API never holds a credential that opens the hub, and
+a trust-side key opens nothing here.
 
 Fail closed: with no key configured every protected route answers 401 while ``/health`` keeps
 serving liveness, and the boot log says so once.

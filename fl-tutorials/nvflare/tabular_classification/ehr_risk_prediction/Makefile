@@ -11,11 +11,11 @@
 
 APP_DIR := $(CURDIR)
 
-# Run job.py in the flip-utils environment with the `full` ML extra — the same package set the
-# flare-fl-base FL image installs (`uv sync --extra full`), so a local SimEnv run matches the deployed
+# Run job.py in the flip-utils environment with the `nvflare` and `full` extras — the same package set the
+# flare-fl-base FL image installs (`uv sync --extra nvflare --extra full`), so a local SimEnv run matches the deployed
 # image. A bare `uv run` would resolve to the repo-root venv, which has no torch/nvflare.
 FLIP_UTILS := $(abspath $(APP_DIR)/../../../../flip-utils)
-UV_RUN := uv run --project $(FLIP_UTILS) --extra full
+UV_RUN := uv run --project $(FLIP_UTILS) --extra nvflare --extra full
 
 # --- Load app-specific env ---
 # Comment lines must be dropped before building the export list: a leading `#` token would start a

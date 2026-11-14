@@ -278,29 +278,24 @@ def delete_models(project_id: UUID, user_id: str, session: Session, ensure_delet
 
     models = session.exec(select(Model).where(Model.project_id == project_id, not Model.deleted)).all()
 
-    if ensure_deletion and not models:
-        raise ValueError(f"Failed to delete models for project: {project_id}")
+    if not models:
+        if ensure_deletion:
+            raise ValueError(f"Failed to delete models for project: {project_id}")
+        logger.warning("No models deleted")
+        return 0
 
-    model_ids = [m.id for m in models]
     for model in models:
         model.deleted = True
 
-    if model_ids:
-        audits = [
-            IModelAuditAction(model_id=model_id, action=ModelAuditAction.DELETE, userid=user_id)
-            for model_id in model_ids
-        ]
-        audit_response = audit_model_actions(audits, session)
-        logger.info(f"Output: {audit_response}")
-    else:
-        logger.warning("No models deleted")
-        return 0
+    audits = [IModelAuditAction(model_id=m.id, action=ModelAuditAction.DELETE, userid=user_id) for m in models]
+    audit_response = audit_model_actions(audits, session)
+    logger.info(f"Output: {audit_response}")
 
     session.commit()
 
     logger.info(f"Models for project {project_id} soft-deleted and audit logs recorded.")
 
-    return len(model_ids)
+    return len(models)
 
 
 def get_model_status(model_id: UUID, session: Session) -> IDetailedModelStatus | None:

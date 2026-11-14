@@ -1,13 +1,21 @@
 # Keycloak: the local identity provider
 
-`flip-realm.json` is the FLIP development realm (FLIP#919): what the Cognito user
-pool is in staging and production. The `keycloak` service in
-`deploy/compose.development.yml` imports it at every boot (`start-dev --import-realm`)
-and keeps no volume, so this file in git is the whole state of the dev identity
-provider. flip-api verifies its tokens through the same generic OIDC verifier that
-verifies Cognito's, and administers users through its Admin REST API
-(`flip-api/src/flip_api/auth/identity/keycloak.py`); the UI signs in with the OIDC
-password grant, so the login form is the same under both backends.
+> **Development only.** Never load this realm anywhere but a laptop: every credential in it is shared dev
+> state, and `ProdSettings` refuses `AUTH_BACKEND=keycloak` at boot.
+
+`flip-realm.json` is the FLIP development realm (FLIP#919). It is the local stand-in for the
+Cognito user pool used in staging and production.
+
+The `keycloak` service in `deploy/compose.development.yml` imports it at every boot
+(`start-dev --import-realm`) and keeps no volume. This file in git is therefore the whole state
+of the dev identity provider.
+
+How FLIP uses it:
+
+- flip-api verifies Keycloak's tokens with the same generic OIDC verifier it uses for Cognito.
+- flip-api administers users through Keycloak's Admin REST API
+  (`flip-api/src/flip_api/auth/identity/keycloak.py`).
+- The UI signs in with the OIDC password grant, so the login form is the same under both backends.
 
 ## What the realm carries
 
@@ -26,15 +34,22 @@ service sets from the hub env file (`ADMIN_USER_PASSWORD`, `KEYCLOAK_ADMIN_CLIEN
 ## Editing it
 
 `--import-realm` skips a realm that already exists, so an edit only applies to a fresh
-container: `make reset-keycloak` (or `make down && make up`). Users registered from the
-Admin Area since the last import live only in that container and go with it.
+container. Recreate it with:
+
+```bash
+make reset-keycloak    # or: make down && make up
+```
+
+Recreating the container deletes every user registered from the Admin Area since the last
+import: they live only in that container.
+
+## Admin console
 
 The admin console is `http://localhost:${KEYCLOAK_PORT:-8180}/admin` (`admin`/`admin`
-unless `KEYCLOAK_ADMIN_USERNAME` / `KEYCLOAK_ADMIN_PASSWORD` are set). It is where a
-developer completes what the password grant cannot do in-app: enrol or clear a TOTP
-credential, or reset a password. (A user registered from the Admin Area needs none of
-that: dev has no mail server, so they get `ADMIN_USER_PASSWORD` as a temporary password
-and choose a new one at first sign-in.)
+unless `KEYCLOAK_ADMIN_USERNAME` / `KEYCLOAK_ADMIN_PASSWORD` are set). Use it for what the password grant cannot do in the app:
 
-Never load this realm anywhere but a laptop: every credential in it is shared dev
-state, and `ProdSettings` refuses `AUTH_BACKEND=keycloak` at boot.
+- enrol or clear a TOTP credential;
+- reset a password.
+
+A user registered from the Admin Area does not need the console. Dev has no mail server, so
+they get `ADMIN_USER_PASSWORD` as a temporary password and choose a new one at first sign-in.

@@ -44,7 +44,8 @@ INK = "#0b0b0b"
 INK_2 = "#52514e"
 GRID = "#e4e3e0"
 
-METRIC_ORDER = ["Round duration", "Aggregation", "Inter-round gap"]
+# rounds.tsv-derived column -> panel label, in panel order.
+METRICS = {"round_duration_s": "Round duration", "aggregation_s": "Aggregation", "inter_round_gap_s": "Inter-round gap"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -96,17 +97,11 @@ def load_metrics(rounds_tsv: str) -> tuple[pd.DataFrame, pd.DataFrame]:
 
     long = df.melt(
         id_vars=["round"],
-        value_vars=["round_duration_s", "aggregation_s", "inter_round_gap_s"],
+        value_vars=list(METRICS),
         var_name="metric",
         value_name="seconds",
     ).dropna(subset=["seconds"])
-    long["metric"] = long["metric"].map(
-        {
-            "round_duration_s": "Round duration",
-            "aggregation_s": "Aggregation",
-            "inter_round_gap_s": "Inter-round gap",
-        }
-    )
+    long["metric"] = long["metric"].map(METRICS)
     if long.empty:
         sys.exit("No finite timing values in rounds.tsv — nothing to plot.")
     return df, long
@@ -116,7 +111,7 @@ def main() -> None:
     args = parse_args()
     df, long = load_metrics(args.rounds_tsv)
 
-    order = [m for m in METRIC_ORDER if m in set(long["metric"])]
+    order = [m for m in METRICS.values() if m in set(long["metric"])]
 
     sns.set_theme(style="whitegrid", rc={"axes.facecolor": SURFACE, "figure.facecolor": SURFACE})
     fig, axes = plt.subplots(1, len(order), figsize=(3.4 * len(order) + 0.6, 4.8))

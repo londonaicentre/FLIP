@@ -11,14 +11,14 @@
 
 APP_DIR := $(CURDIR)
 
-# Run job.py in the flip-utils environment with the `full` ML extra — the same package set the
-# flare-fl-base FL image installs (`uv sync --extra full`), so a local SimEnv run matches the deployed
+# Run job.py in the flip-utils environment with the `nvflare` and `full` extras — the same package set the
+# flare-fl-base FL image installs (`uv sync --extra nvflare --extra full`), so a local SimEnv run matches the deployed
 # image. A bare `uv run` would resolve to the repo-root venv, which has no torch/nvflare/monai.
 REPO_ROOT := $(abspath $(APP_DIR)/../../../..)
 FLIP_UTILS := $(REPO_ROOT)/flip-utils
 FL_TUTORIALS := $(REPO_ROOT)/fl-tutorials
 # `diffusion` adds matplotlib for ../dev/plot_utils.py; no FL image has it.
-UV_RUN := uv run --project $(FLIP_UTILS) --extra full --group diffusion
+UV_RUN := uv run --project $(FLIP_UTILS) --extra nvflare --extra full --group diffusion
 
 # --- Load app-specific env ---
 # Comment lines must be dropped before building the export list: a leading `#` token would start a

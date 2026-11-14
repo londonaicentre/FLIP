@@ -15,7 +15,7 @@
     <section>
         <AiCard>
             <div>
-                <h2 class="p-4 text-lg leading-loose font-semibold font-heading grow">
+                <h2 class="p-4 text-lg leading-loose font-semibold grow">
                     Model Details
                 </h2>
                 <div class="px-4 py-3 border-t border-gray-200 dark:border-dark-border sm:p-0">
@@ -41,7 +41,7 @@
                             >
                                 {{ model.modelDescription }}
                                 <template v-if="!model.modelDescription">
-                                    <span class="italic text-gray-400 dark:text-gray-300">No description provided...</span>
+                                    <span class="text-gray-500 dark:text-gray-300">No description provided...</span>
                                 </template>
                             </dd>
                         </div>

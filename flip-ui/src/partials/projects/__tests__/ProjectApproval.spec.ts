@@ -256,6 +256,15 @@ describe("ProjectApproval", () => {
     // each time. An approver who takes longer than that must not lose their unsaved choices.
     describe("when the project is re-fetched mid-edit", () => {
         const refetched = (trusts: IProjectTrust[]) => trusts.map(t => ({ ...t }));
+        // The second trust declined by another approver while this one was editing.
+        const uchDeclinedByOther: IProjectTrust[] = [
+            { ...PENDING_TRUSTS[0] },
+            {
+                ...PENDING_TRUSTS[1],
+                status: "DECLINED",
+                decidedByName: "Other Approver"
+            }
+        ];
 
         test("keeps unsaved choices when nothing was saved in between", async () => {
             const wrapper = mountProjectApproval();
@@ -294,16 +303,7 @@ describe("ProjectApproval", () => {
             await flushPromises();
 
             await wrapper.find("[data-test=trust-approve-0]").trigger("click");
-            await wrapper.setProps({
-                approvedTrusts: [
-                    { ...PENDING_TRUSTS[0] },
-                    {
-                        ...PENDING_TRUSTS[1],
-                        status: "DECLINED",
-                        decidedByName: "Other Approver"
-                    }
-                ]
-            });
+            await wrapper.setProps({ approvedTrusts: refetched(uchDeclinedByOther) });
 
             expect(wrapper.find("[data-test=trust-approve-0]").attributes("aria-pressed")).toBe("true");
             expect(wrapper.find("[data-test=trust-decline-1]").attributes("aria-pressed")).toBe("true");
@@ -314,16 +314,7 @@ describe("ProjectApproval", () => {
             await flushPromises();
 
             await wrapper.find("[data-test=trust-approve-1]").trigger("click");
-            await wrapper.setProps({
-                approvedTrusts: [
-                    { ...PENDING_TRUSTS[0] },
-                    {
-                        ...PENDING_TRUSTS[1],
-                        status: "DECLINED",
-                        decidedByName: "Other Approver"
-                    }
-                ]
-            });
+            await wrapper.setProps({ approvedTrusts: refetched(uchDeclinedByOther) });
 
             expect(wrapper.find("[data-test=trust-approve-1]").attributes("aria-pressed")).toBe("false");
             expect(wrapper.find("[data-test=trust-decline-1]").attributes("aria-pressed")).toBe("true");

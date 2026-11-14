@@ -121,13 +121,18 @@ provision-add-client-prod:
 # net-N/services/<slot>/). Run with HUB=stag|prod so AICENTRE_BUCKET_NAME + FLARE_KIT_DATE
 # load from the matching .env. Defaults to a dry run — pass DRYRUN= to upload for real. The
 # workspace follows ENV_CLASS whatever the network mode (same FQDN + CA by design, FLIP#749).
+# state/ holds the root CA's private key, so it goes to its own prefix, which no ECS task
+# role can read, never among the kits.
 FL_KIT_WORKSPACE := $(if $(filter prod,$(ENV_CLASS)),$(PROD_WORKSPACE_DIR),$(STAG_WORKSPACE_DIR))
+FL_KIT_S3 = s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/net-$(NET_NUMBER)
+FL_CA_STATE_S3 = s3://$(AICENTRE_BUCKET_NAME)/fl-flare-ca-state/$(FLARE_KIT_DATE)/net-$(NET_NUMBER)
 DRYRUN ?= --dryrun
 upload-kits-to-s3:
 	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with HUB=stag|prod"; exit 1; }
 	@[ -n "$(FLARE_KIT_DATE)" ] || { echo "❌ FLARE_KIT_DATE not set — run with HUB=stag|prod"; exit 1; }
-	@echo "⬆️  Uploading FLARE kits (net-$(NET_NUMBER), $(FL_KIT_WORKSPACE)) → s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/net-$(NET_NUMBER) $(DRYRUN)"
-	aws s3 sync ./$(FL_KIT_WORKSPACE)/net-$(NET_NUMBER) s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/net-$(NET_NUMBER) --delete $(DRYRUN)
+	@echo "⬆️  Uploading FLARE kits (net-$(NET_NUMBER), $(FL_KIT_WORKSPACE)) → $(FL_KIT_S3), CA state → $(FL_CA_STATE_S3) $(DRYRUN)"
+	aws s3 sync ./$(FL_KIT_WORKSPACE)/net-$(NET_NUMBER) $(FL_KIT_S3) --delete --exclude "state/*" $(DRYRUN)
+	aws s3 sync ./$(FL_KIT_WORKSPACE)/net-$(NET_NUMBER)/state $(FL_CA_STATE_S3) --delete $(DRYRUN)
 
 # Standalone FL services for one net (fl-server + fl-api + 2 clients), no hub/trusts.
 # Needs `make fl-provision` first; runs on the local :$(FL_BUILD_TAG) images.

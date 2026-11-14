@@ -32,6 +32,7 @@ services:
       - ${XNAT_DATA_DIR}/xnat-data/archive:${XNAT_ROOT}/archive
       - ${XNAT_DATA_DIR}/xnat-data/build:${XNAT_ROOT}/build
       - ${XNAT_DATA_DIR}/xnat-data/cache:${XNAT_ROOT}/cache
+      - ${XNAT_DATA_DIR}/xnat-data/prearchive:${XNAT_ROOT}/prearchive
 
   xnat-db:
     volumes:

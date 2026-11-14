@@ -133,40 +133,6 @@ describe("project list", () => {
         cy.contains("Another project we have mocked").should("be.visible");
     });
 
-    it.skip("displays only the projects that the user has created when they apply the filter", () => {
-        cy.intercept("GET", "/projects?pageNumber=1&pageSize=20", { fixture: "project/getProjects" })
-            .as("getProjects");
-        cy.visit("/projects");
-        cy.wait("@getProjects");
-
-        cy.intercept("GET", "/projects?pageNumber=1&pageSize=20&owner=e7d81ffa-aacd-4548-8622-2da50b2fd3e1",
-            { fixture: "project/getUserProjects" }
-        )
-            .as("getUserProjects");
-        cy.getBySel("filter-input").first().check();
-        cy.wait("@getUserProjects");
-
-        cy.getBySel("project-name").should("contain", "Another project");
-        // assert one of the projects that the user did not create is not visible
-        cy.contains("Example project").should("not.exist");
-    });
-
-    it.skip("displays all projects after the filter has been removed", () => {
-        cy.intercept("GET", "/projects?pageNumber=1&pageSize=20", { fixture: "project/getProjects" })
-            .as("getProjects");
-        cy.visit("/projects");
-        cy.wait("@getProjects");
-
-        cy.intercept("GET", "/projects?pageNumber=1&pageSize=20&owner=e7d81ffa-aacd-4548-8622-2da50b2fd3e1",
-            { fixture: "project/getUserProjects" }
-        )
-            .as("getUserProjects");
-        cy.getBySel("filter-input").first().check();
-        cy.wait("@getUserProjects");
-
-        cy.getBySel("project-name").should("not.contain", "Example project");
-    });
-
     // The facts this guards — column x-offsets, rendered font weight, the dot's actual hue
     // — are all computed style. jsdom compiles no Tailwind, so the unit tests can only
     // assert classes; this is the only layer that sees the real thing. All three are

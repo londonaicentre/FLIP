@@ -161,15 +161,13 @@ jobs:
   # (e.g. the Cognito callback_urls / CORS allowlist invariants, which no runtime
   # suite can see — flip-api reads that list from live Cognito, not from this
   # tree; and reconcile_ci_env.py's state mining, which decides what a CI plan is
-  # handed). No AWS calls, no init, no plan. Deps are named explicitly rather than
-  # synced from the lockfile: the tests need only pytest, jinja2 and click,
-  # while the project's dev group pulls ansible-core and pyqt5.
+  # handed). No AWS calls, no init, no plan. Deps are named explicitly rather
+  # than synced from the lockfile: the project's dev group pulls ansible-core
+  # and pyqt5, which this suite does not need.
   #
   # This is the only place the suite runs: the root `make unit_test` does not
-  # reach here — deploy/providers/AWS is not one of the service directories it
-  # walks — and `make -C deploy/providers/AWS test` cannot be used either, since
-  # that Makefile errors at parse time unless AWS_PROFILE matches the target
-  # environment.
+  # reach deploy/providers/AWS, and that directory's Makefile has no `test`
+  # target.
   python-tests:
     name: AWS deploy tests
     runs-on: ubuntu-latest
@@ -284,16 +282,12 @@ jobs:
         working-directory: trust/deploy/terraform/azure
         run: make test
 
+      # fmt, tflint and checkov (pinned in the Makefile, run through uvx).
       - name: Lint
         working-directory: trust/deploy/terraform/azure
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: make lint
-
-      - name: Checkov
-        run: |
-          pip install checkov==3.3.14
-          checkov -d trust/deploy/terraform/azure --framework terraform --skip-download --compact --quiet
 
   # AWS EC2 trust node (FLIP#1528): fmt, validate and `terraform test` with a mocked aws provider in
   # the root and its network module, the Makefile and ssh-config pytest, tflint with the aws
