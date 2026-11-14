@@ -108,9 +108,9 @@ describe("Delete Model: With Permissions", () => {
         cy.intercept(
             "GET",
             "/projects/*/models?pageSize=5", {
-            fixture: "model/getLatestModels",
-            statusCode: 200
-        }
+                fixture: "model/getLatestModels",
+                statusCode: 200
+            }
         ).as("getLatestModels");
         cy.visit(`project/${validProject.id}/model/${validModel.id}`);
         cy.wait("@getModel");

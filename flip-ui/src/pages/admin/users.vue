@@ -80,12 +80,12 @@
                                     </span>
                                     <span
                                         v-if="row.isDisabled"
-                                        class="flex-shrink-0 rounded-full bg-red-100 px-1.5 py-px text-2xs font-bold uppercase tracking-wide text-red-800 dark:bg-red-900/50 dark:text-red-200"
+                                        class="flex-shrink-0 rounded-full bg-red-100 px-1.5 py-px text-xs font-bold text-red-800 dark:bg-red-900/50 dark:text-red-200"
                                     >
                                         Disabled
                                     </span>
                                 </div>
-                                <div class="text-xs text-gray-500 truncate dark:text-gray-300">
+                                <div class="text-note text-gray-500 truncate dark:text-gray-300">
                                     {{ row.organisation || "—" }}
                                 </div>
                             </div>
@@ -153,7 +153,7 @@
                             :size="48"
                         />
                         <div class="min-w-0 grow">
-                            <h2 class="text-xl font-semibold text-gray-900 truncate font-heading dark:text-gray-100">
+                            <h2 class="text-xl font-semibold text-gray-900 truncate dark:text-gray-100">
                                 {{ selectedUser.name }}
                             </h2>
                             <p class="text-sm text-gray-500 truncate dark:text-gray-300">
@@ -205,7 +205,7 @@
                             <div>
                                 <label
                                     for="selected-user-name"
-                                    class="block text-xs font-bold tracking-wide text-gray-700 uppercase dark:text-gray-300"
+                                    class="block text-xs font-bold text-gray-700 dark:text-gray-300"
                                 >
                                     Name
                                 </label>
@@ -220,7 +220,7 @@
                             <div>
                                 <label
                                     for="selected-user-organisation"
-                                    class="block text-xs font-bold tracking-wide text-gray-700 uppercase dark:text-gray-300"
+                                    class="block text-xs font-bold text-gray-700 dark:text-gray-300"
                                 >
                                     Organisation
                                 </label>
@@ -233,7 +233,7 @@
                                 >
                             </div>
                             <div>
-                                <div class="text-xs font-bold tracking-wide text-gray-700 uppercase dark:text-gray-300">
+                                <div class="text-xs font-bold text-gray-700 dark:text-gray-300">
                                     Email
                                 </div>
                                 <div
@@ -246,7 +246,7 @@
                         </div>
                         <div class="p-6 space-y-3 border-b border-gray-100 dark:border-dark-border">
                             <div>
-                                <h3 class="text-base font-bold text-gray-900 font-heading dark:text-gray-100">
+                                <h3 class="text-base font-bold text-gray-900 dark:text-gray-100">
                                     Role
                                 </h3>
                                 <p class="text-sm text-gray-500 dark:text-gray-300">
@@ -307,7 +307,7 @@
                                             </select>
                                             <span
                                                 v-if="!selectedTrustId"
-                                                class="text-xs text-gray-500 dark:text-gray-300"
+                                                class="text-sm text-gray-500 dark:text-gray-300"
                                             >
                                                 Choose the trust this Trust Admin approves or declines projects for.
                                             </span>
@@ -327,10 +327,10 @@
                                 <div class="flex items-start gap-2.5 text-red-700 dark:text-red-300">
                                     <icon-mdi-alert-outline class="flex-shrink-0 w-5 h-5 mt-px" />
                                     <div>
-                                        <h3 class="text-sm font-bold font-heading">
+                                        <h3 class="text-sm font-bold">
                                             Danger Zone
                                         </h3>
-                                        <p class="text-xs text-gray-600 dark:text-gray-300">
+                                        <p class="text-sm text-gray-600 dark:text-gray-300">
                                             Account-level operations. Each action is irreversible without user action.
                                         </p>
                                     </div>

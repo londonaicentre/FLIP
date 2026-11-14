@@ -42,7 +42,7 @@
                 v-model="activeChartId"
                 data-test="metrics-plot-select"
                 aria-label="Training plot"
-                class="flex-1 min-w-0 px-2 py-1.5 sm:hidden rounded-lg border text-[13px] font-semibold
+                class="flex-1 min-w-0 px-2 py-1.5 sm:hidden rounded-lg border text-note font-semibold
                        bg-white dark:bg-dark-canvas border-gray-200 dark:border-dark-border
                        text-gray-700 dark:text-gray-300"
             >
@@ -64,7 +64,7 @@
                     role="tab"
                     :aria-selected="activeChartId === chartId(chart)"
                     :data-test="`training-plot-tab-${chart.yLabel}-${chart.xLabel}`"
-                    class="inline-flex items-center px-3 py-1.5 rounded-full text-[13px] font-semibold whitespace-nowrap transition-all"
+                    class="inline-flex items-center px-3 py-1.5 rounded-full text-note font-semibold whitespace-nowrap transition-all"
                     :class="activeChartId === chartId(chart)
                         ? 'bg-primary-500 text-white shadow-sm'
                         : 'text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
@@ -73,7 +73,7 @@
                     {{ tabLabel(chart) }}
                 </button>
             </div>
-            <p v-else class="flex-1 min-w-0 text-[13px] text-gray-500 dark:text-gray-300">
+            <p v-else class="flex-1 min-w-0 text-note text-gray-500 dark:text-gray-300">
                 {{ charts.length }} {{ charts.length === 1 ? "plot" : "plots" }}
             </p>
 

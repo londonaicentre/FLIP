@@ -12,7 +12,7 @@
  */
 
 import { createTestingPinia } from "@pinia/testing";
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 
@@ -295,6 +295,49 @@ describe("ConnectionStatus", () => {
         await wrapper.vm.$nextTick();
         expect(wrapper.text()).toContain("1 trust");
         expect(wrapper.text()).not.toContain("1 trusts");
+    });
+
+    describe("phone count line", () => {
+        it("replaces the tiles below md with one count per state", async () => {
+            const wrapper = await mountLoaded();
+
+            const line = wrapper.find("[data-test='state-counts']");
+            expect(line.classes()).toContain("md:hidden");
+            expect(line.findAll("[data-test^='state-count-']").map(c => c.text()))
+                .toEqual(["1 online", "1 degraded", "1 offline"]);
+            expect(wrapper.find("[data-test='filter-tile-online']").element.parentElement!.className)
+                .toContain("hidden md:flex");
+        });
+
+        it("makes a non-zero problem count a bold link and leaves zero counts muted text", async () => {
+            const wrapper = await mountLoaded([fixture[0], fixture[1]]);
+
+            const offline = wrapper.find("[data-test='state-count-offline']");
+            expect(offline.element.tagName).toBe("BUTTON");
+            expect(offline.classes()).toEqual(expect.arrayContaining(["font-bold", "text-red-700"]));
+            expect(wrapper.find("[data-test='state-count-degraded']").element.tagName).toBe("SPAN");
+            expect(wrapper.find("[data-test='state-count-online']").element.tagName).toBe("SPAN");
+        });
+
+        it("takes the user to the first trust in that state", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mount(ConnectionStatus, {
+                attachTo: document.body,
+                global: {
+                    plugins: [createTestingPinia({ createSpy: vi.fn })],
+                    stubs
+                }
+            });
+            await wrapper.vm.$nextTick();
+
+            await wrapper.find("[data-test='state-count-degraded']").trigger("click");
+            await flushPromises();
+
+            const focused = document.activeElement as HTMLElement;
+            expect(focused.dataset.trustState).toBe("degraded");
+            expect(focused.textContent).toContain("Maple NHS Trust");
+            wrapper.unmount();
+        });
     });
 
     it("hides the Add Trust button for non-admins", async () => {

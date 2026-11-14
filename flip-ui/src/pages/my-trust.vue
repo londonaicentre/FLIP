@@ -21,11 +21,11 @@
     <div class="flex flex-col w-full h-full">
         <div class="w-full overflow-y-auto">
             <div class="max-w-[1440px] mx-auto px-8 pt-8 pb-12">
-                <!-- Header — the Models page's spine: mono eyebrow, underlined title, description. -->
+                <!-- Header — the Models page's spine: eyebrow, underlined title, description. -->
                 <header class="mb-6">
                     <p
                         data-test="my-trust-eyebrow"
-                        class="text-2xs font-mono uppercase tracking-[0.16em] text-gray-500 dark:text-gray-300"
+                        class="text-xs text-gray-500 dark:text-gray-300"
                     >
                         Trust admin · {{ trustAdminOf?.code ?? trustAdminOf?.name }}
                     </p>
@@ -46,10 +46,10 @@
                         <section>
                             <h2
                                 data-test="pending-heading"
-                                class="flex items-baseline gap-2.5 mb-3 text-lg font-bold text-gray-900 font-heading dark:text-gray-100"
+                                class="flex items-baseline gap-2.5 mb-3 text-lg font-bold text-gray-900 dark:text-gray-100"
                             >
                                 Awaiting your decision
-                                <span data-test="pending-count" class="font-medium text-gray-400 dark:text-gray-300">{{ pending.length }}</span>
+                                <span data-test="pending-count" class="font-medium text-gray-500 dark:text-gray-300">{{ pending.length }}</span>
                             </h2>
                             <div
                                 v-if="decisionsError"
@@ -74,7 +74,7 @@
                                 <p class="text-sm font-semibold text-gray-700 dark:text-gray-100">
                                     There are no requests awaiting your decision
                                 </p>
-                                <p class="text-[13px] text-gray-500 dark:text-gray-300">
+                                <p class="text-note text-gray-500 dark:text-gray-300">
                                     New project requests for this Trust will appear here.
                                 </p>
                             </div>
@@ -90,9 +90,9 @@
                         </section>
 
                         <section>
-                            <h2 class="flex items-baseline gap-2.5 mb-3 text-lg font-bold text-gray-900 font-heading dark:text-gray-100">
+                            <h2 class="flex items-baseline gap-2.5 mb-3 text-lg font-bold text-gray-900 dark:text-gray-100">
                                 Decided
-                                <span data-test="decided-count" class="font-medium text-gray-400 dark:text-gray-300">{{ decided.length }}</span>
+                                <span data-test="decided-count" class="font-medium text-gray-500 dark:text-gray-300">{{ decided.length }}</span>
                             </h2>
                             <p
                                 v-if="decisions && !decided.length"

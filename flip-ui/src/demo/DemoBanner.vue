@@ -18,12 +18,12 @@
     snapshot rather than a live platform. Unlike AiBanner (the site-wide
     announcement banner in MainLayout.vue), this carries no close control: it
     must stay on screen for the whole session, on every page, not just the
-    pages MainLayout wraps — mounted once in App.vue, outside <router-view>.
+    pages MainLayout wraps — mounted once in App.vue, above <router-view>.
 -->
 
 <template>
     <div
-        class="w-full py-1.5 px-3 text-sm font-medium text-center text-white bg-amber-600 dark:bg-amber-700"
+        class="w-full py-1.5 px-3 text-sm font-medium text-center text-white bg-amber-700"
         data-test="demo-banner"
     >
         Read-only demo of FLIP on example data — {{ PROJECT_COUNT }} federated projects,
@@ -49,3 +49,4 @@ const captureWindow = EARLIEST_CAPTURE_DATE === LATEST_CAPTURE_DATE
     ? asDate(LATEST_CAPTURE_DATE)
     : `between ${asDate(EARLIEST_CAPTURE_DATE)} and ${asDate(LATEST_CAPTURE_DATE)}`;
 </script>
+

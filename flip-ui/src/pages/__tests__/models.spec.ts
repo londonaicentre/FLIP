@@ -95,7 +95,7 @@ const stubs = {
         emits: ["update:modelValue"],
         template: "<input data-test='model-search' :value='modelValue' @input='$emit(\"update:modelValue\", $event.target.value)' />"
     },
-    AiPagination: { template: "<div />" },
+    AiPagination: { template: "<div data-test='pagination' />" },
     // Expose `to` as an attribute so tests can assert the link target.
     "router-link": {
         template: "<a :data-to='to'><slot /></a>",
@@ -131,10 +131,10 @@ const projectOption = (
     status
 });
 
-const setModels = (models: IModelSummary[], statusCounts: Record<string, number> = {}): void => {
+const setModels = (models: IModelSummary[], statusCounts: Record<string, number> = {}, totalPages = 1): void => {
     mockSwrvData.value = {
         data: models,
-        totalPages: 1,
+        totalPages,
         page: 1,
         statusCounts
     };
@@ -246,7 +246,7 @@ describe("Models Page", () => {
         expect(wrapper.find("[data-test='model-status-indicator']").text()).toBe("Running");
     });
 
-    test("a queued model's status pill carries its queue position", async () => {
+    test("a queued model says Queued and gives its place in the queue on the meta line", async () => {
         setModels([makeModel({
             status: "INITIATED",
             queuePosition: 2
@@ -254,16 +254,25 @@ describe("Models Page", () => {
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        expect(wrapper.find("[data-test='model-status-indicator']").text()).toBe("Model Queued (2)");
-        expect(wrapper.find("[data-test='model-status-indicator-mobile']").text()).toBe("Model Queued (2)");
+        expect(wrapper.find("[data-test='model-status-indicator']").text()).toBe("Queued");
+        expect(wrapper.find("[data-test='model-status-indicator-mobile']").text()).toBe("Queued");
+        expect(wrapper.find("[data-test='model-owner-meta']").text()).toBe("Dr Ada · Position 2 in queue");
     });
 
-    test("a queued model without a position keeps the plain label", async () => {
-        setModels([makeModel({ status: "INITIATED" })]);
+    test("any other model says when it was created, leaving it out when unknown", async () => {
+        const hoursAgo = (h: number): string => new Date(Date.now() - h * 3_600_000).toISOString().slice(0, 19);
+        setModels([
+            makeModel({
+                status: "RUNNING",
+                creationTimestamp: hoursAgo(3)
+            }),
+            makeModel({ id: "m2" })
+        ]);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        expect(wrapper.find("[data-test='model-status-indicator']").text()).toBe("Model Queued");
+        expect(wrapper.findAll("[data-test='model-owner-meta']").map(m => m.text()))
+            .toEqual(["Dr Ada · created 3h ago", "Dr Ada"]);
     });
 
     test("stacks mobile rows with the status pill and code-only trust chips below sm", async () => {
@@ -282,7 +291,7 @@ describe("Models Page", () => {
         const mobile = row.find(".sm\\:hidden");
         expect(mobile.exists()).toBe(true);
 
-        // Same status chip idiom (pill + dot) pinned beside the name…
+        // Same status chip idiom (pill + dot), under the name so nothing overflows the card…
         const pill = mobile.find("[data-test='model-status-indicator-mobile']");
         expect(pill.classes()).toContain("rounded-full");
         expect(pill.classes().join(" ")).toContain("bg-fuchsia-100");
@@ -300,7 +309,7 @@ describe("Models Page", () => {
         expect(headerStrip).toBeTruthy();
     });
 
-    test("mobile rows carry a capitals project eyebrow above the name and the description below (design 6a)", async () => {
+    test("mobile rows carry a project eyebrow above the name and the description below (design 6a)", async () => {
         setModels([
             makeModel({ description: "Predicts stroke outcomes" }),
             makeModel({
@@ -320,7 +329,7 @@ describe("Models Page", () => {
         const rows = wrapper.findAll("[data-test='models-list-item-0'], [data-test='models-list-item-1'], [data-test='models-list-item-2']");
 
         const eyebrow = rows[0].find("[data-test='model-project-eyebrow']");
-        expect(eyebrow.classes()).toContain("uppercase");
+        expect(eyebrow.classes()).not.toContain("uppercase");
         expect(eyebrow.text()).toBe("Stroke triage");
         // Eyebrow precedes the name link in the stacked column.
         const mobile = rows[0].find(".sm\\:hidden");
@@ -337,8 +346,33 @@ describe("Models Page", () => {
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        expect(wrapper.text()).toContain("There are no models to show");
+        expect(wrapper.find("[data-test='models-empty']").text()).toBe("No models yet.");
+        expect(wrapper.find("[data-test='show-all-models']").exists()).toBe(false);
         expect(wrapper.findAll("[data-test='models-list-item-0']")).toHaveLength(0);
+    });
+
+    test("an empty filtered list names the filter and offers to show every model", async () => {
+        setModels([]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        await wrapper.find("[data-test='status-filter-running']").trigger("click");
+        expect(wrapper.find("[data-test='models-empty']").text()).toContain("No running models.");
+
+        await wrapper.find("[data-test='show-all-models']").trigger("click");
+        expect(wrapper.find("[data-test='status-filter-all']").attributes("aria-selected")).toBe("true");
+        expect(swrvKey.fn!()).not.toContain("status=");
+    });
+
+    test("hides the pagination bar when there is only one page", async () => {
+        setModels([makeModel()]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        expect(wrapper.find("[data-test='pagination']").exists()).toBe(false);
+
+        setModels([makeModel()], {}, 2);
+        await wrapper.vm.$nextTick();
+        expect(wrapper.find("[data-test='pagination']").exists()).toBe(true);
     });
 
     test("renders a filter tile per group with counts summed from statusCounts", async () => {
@@ -347,70 +381,78 @@ describe("Models Page", () => {
             PENDING: 1,
             INITIATED: 2,
             ERROR: 1,
-            RESULTS_UPLOAD_FAILED: 1
+            RESULTS_UPLOAD_FAILED: 1,
+            STOPPED: 4
         });
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        expect(wrapper.find("[data-test='filter-tile-running']").exists()).toBe(true);
         expect(wrapper.find("[data-test='filter-tile-count-running']").text()).toBe("3");
-        // Preparing groups PENDING + PREPARED = 1 (a just-created model is being prepared, not queued).
+        // Preparing groups PENDING + PREPARED.
         expect(wrapper.find("[data-test='filter-tile-count-preparing']").text()).toBe("1");
-        // Queued is INITIATED only = 2.
         expect(wrapper.find("[data-test='filter-tile-count-queued']").text()).toBe("2");
-        // Needs attention groups ERROR + RESULTS_UPLOAD_FAILED + STOPPED = 2.
+        // Needs attention is ERROR + RESULTS_UPLOAD_FAILED; a stopped model is its own group.
         expect(wrapper.find("[data-test='filter-tile-count-attention']").text()).toBe("2");
+        expect(wrapper.find("[data-test='filter-tile-count-stopped']").text()).toBe("4");
+        expect(wrapper.find("[data-test='filter-tile-count-completed']").text()).toBe("0");
+        // The phone row carries the same counts, plus All.
+        expect(wrapper.find("[data-test='status-filter-count-all']").text()).toBe("12");
+        expect(wrapper.find("[data-test='status-filter-count-stopped']").text()).toBe("4");
     });
 
-    test("orders the tiles with Preparing before Running", async () => {
+    test("orders the tiles and the phone row the same way, the row led by All", async () => {
         setModels([makeModel()]);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        const keys = wrapper.findAll("button[data-test^='filter-tile-']").map(b => b.attributes("data-test"));
-        expect(keys).toEqual([
-            "filter-tile-preparing",
-            "filter-tile-running",
-            "filter-tile-queued",
-            "filter-tile-completed",
-            "filter-tile-attention"
-        ]);
+        const groups = ["preparing", "running", "queued", "attention", "stopped", "completed"];
+        expect(wrapper.findAll("button[data-test^='filter-tile-']").map(b => b.attributes("data-test")))
+            .toEqual(groups.map(g => `filter-tile-${g}`));
+        expect(wrapper.findAll("button[data-test^='status-filter-']").map(b => b.attributes("data-test")))
+            .toEqual(["all", ...groups].map(g => `status-filter-${g}`));
+        expect(wrapper.find("[data-test='status-filter']").attributes("role")).toBe("tablist");
+        expect(wrapper.find("[data-test='status-filter-stopped']").text()).toBe("Stopped 0");
     });
 
-    test("opens with Running + Queued selected and unions further tile clicks", async () => {
+    test("opens on All with no status filter", async () => {
         setModels([makeModel()]);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        expect(wrapper.find("[data-test='filter-tile-running']").attributes("aria-pressed")).toBe("true");
-        expect(wrapper.find("[data-test='filter-tile-queued']").attributes("aria-pressed")).toBe("true");
-        expect(wrapper.find("[data-test='filter-tile-completed']").attributes("aria-pressed")).toBe("false");
-        expect(swrvKey.fn!()).toContain("status=RUNNING,INITIATED");
-
-        // Adding a tile unions its statuses into the filter…
-        await wrapper.find("[data-test='filter-tile-completed']").trigger("click");
-        expect(swrvKey.fn!()).toContain("status=RUNNING,INITIATED,RESULTS_UPLOADED");
-
-        // …and deselecting everything clears the status filter entirely.
-        await wrapper.find("[data-test='filter-tile-running']").trigger("click");
-        await wrapper.find("[data-test='filter-tile-queued']").trigger("click");
-        await wrapper.find("[data-test='filter-tile-completed']").trigger("click");
         expect(swrvKey.fn!()).not.toContain("status=");
+        expect(wrapper.find("[data-test='status-filter-all']").attributes("aria-selected")).toBe("true");
+        expect(wrapper.findAll("[aria-pressed='true']")).toHaveLength(0);
     });
 
-    test("clicking a filter tile activates it, and clicking it again clears the filter", async () => {
-        setModels([makeModel({ status: "RESULTS_UPLOADED" })], { RESULTS_UPLOADED: 1 });
+    test("tiles and the phone row share one single selection; a selected tile clicked again returns to All", async () => {
+        setModels([makeModel()]);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        const tile = wrapper.find("[data-test='filter-tile-completed']");
-        expect(tile.attributes("aria-pressed")).toBe("false");
+        await wrapper.find("[data-test='filter-tile-completed']").trigger("click");
+        expect(swrvKey.fn!()).toContain("status=RESULTS_UPLOADED");
+        expect(wrapper.find("[data-test='status-filter-completed']").attributes("aria-selected")).toBe("true");
 
-        await tile.trigger("click");
-        expect(tile.attributes("aria-pressed")).toBe("true");
+        // Picking another replaces it rather than adding to it.
+        await wrapper.find("[data-test='status-filter-stopped']").trigger("click");
+        expect(swrvKey.fn!()).toContain("status=STOPPED");
+        expect(swrvKey.fn!()).not.toContain("RESULTS_UPLOADED");
+        expect(wrapper.find("[data-test='filter-tile-stopped']").attributes("aria-pressed")).toBe("true");
+        expect(wrapper.find("[data-test='filter-tile-completed']").attributes("aria-pressed")).toBe("false");
 
+        await wrapper.find("[data-test='filter-tile-stopped']").trigger("click");
+        expect(swrvKey.fn!()).not.toContain("status=");
+        expect(wrapper.find("[data-test='status-filter-all']").attributes("aria-selected")).toBe("true");
+    });
+
+    test("a selected tile is filled as well as ringed", async () => {
+        setModels([makeModel()]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const tile = wrapper.find("[data-test='filter-tile-queued']");
         await tile.trigger("click");
-        expect(tile.attributes("aria-pressed")).toBe("false");
+        expect(tile.classes()).toEqual(expect.arrayContaining(["bg-gray-100", "ring-[3px]"]));
     });
 
     test("typing in the search input triggers a paginated reload (debouncedWatch)", async () => {
@@ -464,7 +506,7 @@ describe("Models Page", () => {
         await wrapper.vm.$nextTick();
 
         await wrapper.find("[data-test='sort-header-status']").trigger("click");
-        // PENDING (earliest lifecycle) sorts before RESULTS_UPLOADED.
+        // Filter order: Preparing (PENDING) sorts before Completed (RESULTS_UPLOADED).
         expect(wrapper.findAll("[data-test='model-name']").map(n => n.text())).toEqual(["created", "done"]);
     });
 
@@ -557,66 +599,27 @@ describe("Models Page", () => {
         expect(chip.text().slice(0, -1)).toHaveLength(14);
     });
 
-    test("the owner sub-line shows an em-dash when ownerName is unset", async () => {
-        setModels([makeModel({ ownerName: null })]);
+    test("the meta line leaves out what is unknown, so no placeholder dash shows", async () => {
+        setModels([makeModel({ ownerName: null }), makeModel({ id: "m2" })]);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        // Exact match: the created half also falls back to an em-dash here, so
-        // a bare toContain("—") could no longer catch an ownerLabel regression.
-        expect(wrapper.find("[data-test='model-owner-meta']").text()).toBe("— · —");
+        // No owner and no times: no line at all. Owner only: just the owner.
+        expect(wrapper.findAll("[data-test='model-owner-meta']").map(m => m.text())).toEqual(["Dr Ada"]);
     });
 
-    test("the owner sub-line shows the relative created time next to the owner (as on Projects)", async () => {
-        // Offset-less naive-UTC string — the wire format the API actually sends
-        // (see test_all_models_endpoint.py) — so local-time parsing regressions
-        // fail here on any non-UTC machine.
-        setModels([makeModel({ creationTimestamp: new Date(Date.now() - 2 * 3_600_000).toISOString().slice(0, 19) })]);
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
-
-        expect(wrapper.find("[data-test='model-owner-meta']").text()).toBe("Dr Ada · created 2h ago");
-    });
-
-    test("the created time falls back to an em-dash when the API omits the timestamp", async () => {
-        setModels([makeModel()]);
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
-
-        expect(wrapper.find("[data-test='model-owner-meta']").text()).toBe("Dr Ada · —");
-    });
-
-    test("rows default-sort by creation date, most recent first", async () => {
+    test("rows keep the backend order until a header is clicked", async () => {
+        // The hub already sends the rows in order; the page must not re-sort them.
         setModels([
             makeModel({
                 id: "m1",
-                name: "older",
-                creationTimestamp: "2026-01-01T00:00:00"
+                name: "backend-first",
+                creationTimestamp: "2025-01-01T00:00:00"
             }),
             makeModel({
                 id: "m2",
-                name: "newer",
+                name: "backend-second",
                 creationTimestamp: "2026-06-01T00:00:00"
-            })
-        ]);
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
-
-        expect(wrapper.findAll("[data-test='model-name']").map(n => n.text())).toEqual(["newer", "older"]);
-    });
-
-    test("rows from an older API without timestamps keep the backend order under the default sort", async () => {
-        // The rollout-skew case: a UI deployed ahead of the API gets no
-        // creationTimestamp on ANY row — all tie at 0 and the stable sort must
-        // preserve the backend's newest-first order.
-        setModels([
-            makeModel({
-                id: "m1",
-                name: "backend-first"
-            }),
-            makeModel({
-                id: "m2",
-                name: "backend-second"
             })
         ]);
         const wrapper = mountPage();
@@ -625,7 +628,7 @@ describe("Models Page", () => {
         expect(wrapper.findAll("[data-test='model-name']").map(n => n.text())).toEqual(["backend-first", "backend-second"]);
     });
 
-    test("a just-created model reads amber, matching the Preparing tile it is counted under", async () => {
+    test("a just-created model reads Preparing in amber, matching the filter it is counted under", async () => {
         // PENDING ("Model Created") is grouped with PREPARED by the Preparing tile, which is
         // amber — but the row used to render a grey pill and rail, so the same model read as
         // two different states depending on where you looked.
@@ -634,20 +637,31 @@ describe("Models Page", () => {
         await wrapper.vm.$nextTick();
 
         const pill = wrapper.find("[data-test='model-status-indicator']");
-        expect(pill.text()).toBe("Model Created");
+        expect(pill.text()).toBe("Preparing");
         expect(pill.classes().some(c => c.includes("amber"))).toBe(true);
         expect(wrapper.find("[data-test='model-status-rail']").classes()).toContain("bg-amber-500");
     });
 
-    test("an error/terminal status renders a red pill and a red rail", async () => {
+    test("a failed model reads Needs attention with a red pill and rail", async () => {
+        setModels([makeModel({ status: "ERROR" })]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const pill = wrapper.find("[data-test='model-status-indicator']");
+        expect(pill.text()).toBe("Needs attention");
+        expect(pill.classes().some(c => c.includes("red"))).toBe(true);
+        expect(wrapper.find("[data-test='model-status-rail']").classes()).toContain("bg-red-500");
+    });
+
+    test("a stopped model is its own grey group, not an error", async () => {
         setModels([makeModel({ status: "STOPPED" })]);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
         const pill = wrapper.find("[data-test='model-status-indicator']");
         expect(pill.text()).toBe("Stopped");
-        expect(pill.classes().some(c => c.includes("red"))).toBe(true);
-        expect(wrapper.find("[data-test='model-status-rail']").classes()).toContain("bg-red-500");
+        expect(pill.html()).not.toContain("red");
+        expect(wrapper.find("[data-test='model-status-rail']").classes()).toContain("bg-gray-400");
     });
 
     describe("project filter", () => {
@@ -678,9 +692,7 @@ describe("Models Page", () => {
             );
         });
 
-        test("arriving scoped puts the project in the fetch key and clears the status tiles", async () => {
-            // "View All Models" promises all of the project's models, so an arrival must not
-            // inherit the estate default of Running + Queued.
+        test("arriving scoped puts the project in the fetch key with no status filter", async () => {
             mockRoute.query = { project: "p1" };
             setModels([makeModel()]);
             mockProjectOptions.value = options;
@@ -928,7 +940,7 @@ describe("Models Page", () => {
             expect(wrapper.find("[data-test='add-model-btn']").exists()).toBe(false);
         });
 
-        test("navigating back to the estate view restores the default tiles and clears search", async () => {
+        test("navigating back to the estate view returns to All and clears search", async () => {
             // The sidebar Models link is a query-only change on the same route, so the component
             // is never remounted — only a watcher can reset it.
             mockRoute.query = { project: "p1" };
@@ -936,13 +948,14 @@ describe("Models Page", () => {
             mockProjectOptions.value = options;
             const wrapper = mountPage();
             await wrapper.vm.$nextTick();
+            await wrapper.find("[data-test='filter-tile-running']").trigger("click");
 
             mockRoute.query = {};
             await wrapper.vm.$nextTick();
 
             const key = swrvKey.fn!();
             expect(key).not.toContain("project=");
-            expect(key).toContain("status=RUNNING,INITIATED");
+            expect(key).not.toContain("status=");
         });
     });
 

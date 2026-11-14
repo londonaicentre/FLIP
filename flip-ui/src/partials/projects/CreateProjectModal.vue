@@ -48,7 +48,7 @@
                             <DialogPanel class="flex flex-col h-full bg-white dark:bg-dark-surface divide-y divide-gray-100 dark:divide-dark-border shadow-xl dark:ring-white/20 dark:ring-1">
                                 <div class="p-4 bg-primary-500 dark:bg-dark-canvas sm:px-6">
                                     <div class="flex items-center justify-between">
-                                        <DialogTitle class="text-xl font-bold font-heading text-primary-100 dark:text-gray-300">
+                                        <DialogTitle class="text-xl font-bold text-primary-100 dark:text-gray-300">
                                             Create Project
                                         </DialogTitle>
                                         <div class="flex items-start ml-3 h-7 text-primary-300 dark:text-gray-300">
@@ -91,13 +91,13 @@
                                                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                                                     Includes imaging data
                                                 </label>
-                                                <p class="text-xs text-gray-500 dark:text-gray-300 mb-1">
+                                                <p class="text-sm text-gray-500 dark:text-gray-300 mb-1">
                                                     Turn this off for a tabular-only cohort (for example
                                                     EHR data): no imaging is pulled from PACS, no XNAT
                                                     project is created at the trusts, and the project page
                                                     shows no imaging status.
                                                 </p>
-                                                <p class="text-xs italic text-gray-400 dark:text-gray-300 mb-2">
+                                                <p class="text-sm text-gray-500 dark:text-gray-300 mb-2">
                                                     This option is set when the project is created and cannot be
                                                     changed.
                                                 </p>
@@ -113,15 +113,15 @@
                                                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                                                     Convert DICOMs to NIfTI
                                                 </label>
-                                                <p class="text-xs text-gray-500 dark:text-gray-300 mb-1">
+                                                <p class="text-sm text-gray-500 dark:text-gray-300 mb-1">
                                                     Automatically convert DICOM scans to NIfTI format when images are
                                                     imported from PACS into XNAT.
                                                 </p>
-                                                <p class="text-xs text-gray-500 dark:text-gray-300 mb-1">
+                                                <p class="text-sm text-gray-500 dark:text-gray-300 mb-1">
                                                     When enabled, NIfTI files can be requested using the ResourceType
                                                     parameter.
                                                 </p>
-                                                <p class="text-xs text-gray-500 dark:text-gray-300 mb-2">
+                                                <p class="text-sm text-gray-500 dark:text-gray-300 mb-2">
                                                     Disable this if you will be working with DICOM files directly.
                                                 </p>
                                                 <AiSwitch

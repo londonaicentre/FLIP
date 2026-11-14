@@ -21,7 +21,7 @@
     >
         <div class="hidden sm:flex items-stretch bg-gray-50 border-b border-gray-200 dark:bg-dark-surface dark:border-dark-border">
             <div class="w-[3px] shrink-0" aria-hidden="true" />
-            <div :class="GRID_CLASS" class="grid flex-1 gap-4 px-6 py-2.5 font-mono text-2xs uppercase tracking-[0.1em] text-gray-500 dark:text-gray-300">
+            <div :class="GRID_CLASS" class="grid flex-1 gap-4 px-6 py-2.5 text-xs text-gray-500 dark:text-gray-300">
                 <span>Project</span>
                 <span>Cohort</span>
                 <span>Decision</span>
@@ -49,11 +49,11 @@
                         <span class="block text-sm font-bold truncate text-primary-600 dark:text-primary-200">
                             {{ decision.projectName }}
                         </span>
-                        <span class="block mt-0.5 text-xs text-gray-500 truncate dark:text-gray-300">
+                        <span class="block mt-0.5 text-note text-gray-500 truncate dark:text-gray-300">
                             {{ decision.ownerName ?? "Unknown owner" }}<template v-if="decision.stagedAt"> · staged {{ shortDate(decision.stagedAt) }}</template>
                         </span>
                     </span>
-                    <span class="text-[13px] text-gray-700 dark:text-gray-200">
+                    <span class="text-note text-gray-700 dark:text-gray-200">
                         <b class="font-semibold text-gray-900 dark:text-gray-100">{{ cohortSummary(decision.cohort).value }}</b>
                         {{ cohortSummary(decision.cohort).note }} · {{ decision.hasImaging ? "imaging" : "tabular" }}
                     </span>
@@ -66,11 +66,11 @@
                             <span class="w-1.5 h-1.5 rounded-full" :class="toneOf(decision).rail" aria-hidden="true" />
                             {{ toneOf(decision).label }}
                         </span>
-                        <span class="block mt-1 text-[11.5px] text-gray-500 dark:text-gray-300">
+                        <span class="block mt-1 text-note text-gray-500 dark:text-gray-300">
                             {{ decidedBy(decision) }}
                         </span>
                     </span>
-                    <icon-heroicons-outline-chevron-down
+                    <icon-ph-caret-down
                         class="w-[18px] h-[18px] text-gray-400 dark:text-gray-300 transition-transform duration-150 ease-in-out justify-self-end"
                         :class="isOpen(decision) && 'rotate-180'"
                         aria-hidden="true"
@@ -81,7 +81,7 @@
                 <p v-if="decision.description" class="text-sm text-gray-700 dark:text-gray-200">
                     {{ decision.description }}
                 </p>
-                <p class="text-[13px] text-gray-500 dark:text-gray-300">
+                <p class="text-note text-gray-500 dark:text-gray-300">
                     Imaging:
                     {{ decision.hasImaging ? "Yes — approving starts the imaging pull" : "No — tabular data only" }}
                 </p>
@@ -89,7 +89,7 @@
                     v-if="decision.query"
                     data-test="view-query-btn"
                     :to="`/project/${decision.projectId}/cohort-query`"
-                    class="inline-flex items-center gap-1.5 px-2 py-1.5 -ml-2 text-[13.5px] font-semibold rounded text-primary-500 hover:bg-primary-100 dark:text-primary-300 dark:hover:bg-dark-raised focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+                    class="inline-flex items-center gap-1.5 px-2 py-1.5 -ml-2 text-note font-semibold rounded text-primary-500 hover:bg-primary-100 dark:text-primary-300 dark:hover:bg-dark-raised focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
                 >
                     View query
                 </router-link>

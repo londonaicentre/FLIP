@@ -59,11 +59,11 @@ describe("SecondaryLayout", () => {
         expect(mountLayout().find(".bg-body").exists()).toBe(true);
     });
 
-    test("sizes the page to the dynamic viewport (dvh) with a 100vh fallback for browsers without dvh", () => {
-        const sizer = mountLayout().find(".h-screen");
+    test("fills the height App.vue gives it rather than sizing itself to the viewport", () => {
+        const comp = mountLayout();
 
-        expect(sizer.exists()).toBe(true);
-        expect(sizer.classes()).toContain("supports-[height:100dvh]:h-dvh");
+        expect(comp.find(".h-full").exists()).toBe(true);
+        expect(comp.find(".h-screen").exists()).toBe(false);
     });
 
     test("fades the corner artwork's letterbox-facing cut edges (iOS-scoped via main.css)", () => {

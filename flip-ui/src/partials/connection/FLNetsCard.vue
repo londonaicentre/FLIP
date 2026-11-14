@@ -18,7 +18,7 @@
             <AiCard v-else class="w-full space-y-2">
                 <div class="relative p-4 overflow-hidden transition">
                     <div class="relative">
-                        <h3 class="flex items-center gap-4 mt-2 text-3xl font-semibold font-heading">
+                        <h3 class="flex items-center gap-4 mt-2 text-3xl font-semibold">
                             <icon-ph-plugs-connected-duotone
                                 v-if="healthyPlatform"
                                 class="w-10 h-10 transition text-green-600 shrink-0"
@@ -29,7 +29,7 @@
                             />
                             <span>
                                 The FL nets are <span
-                                    class="font-black underline uppercase transition decoration-4 decoration-solid underline-offset-8"
+                                    class="font-black underline transition decoration-4 decoration-solid underline-offset-8"
                                     :class="[healthyPlatform ? 'decoration-green-600' : 'decoration-red-900 dark:decoration-red-400']"
                                 >
                                     {{ healthyPlatform ? 'Healthy' : 'Unhealthy' }}
@@ -55,8 +55,8 @@
                             <div class="px-4 py-2 bg-white border-b border-gray-200 dark:border-dark-border dark:bg-dark-canvas">
                                 <div class="flex flex-wrap items-center justify-between -mt-2 -ml-4 sm:flex-nowrap">
                                     <div class="mt-2 ml-4">
-                                        <h3 class="text-lg font-medium leading-6 text-gray-900 uppercase dark:text-gray-300">
-                                            {{ net.name }}<span v-if="net.fl_backend" class="normal-case"> ({{ formatBackend(net.fl_backend) }})</span>
+                                        <h3 class="text-lg font-medium leading-6 text-gray-900 dark:text-gray-300">
+                                            {{ net.name }}<span v-if="net.fl_backend"> ({{ formatBackend(net.fl_backend) }})</span>
                                         </h3>
                                     </div>
                                     <div class="flex-shrink-0 mt-2 ml-4">
@@ -105,7 +105,7 @@
                                                             </p>
                                                             <p
                                                                 v-if="client.fl_kit_slot"
-                                                                class="text-xs font-normal text-gray-400 dark:text-gray-300 shrink line-clamp-1"
+                                                                class="text-xs font-normal text-gray-500 dark:text-gray-300 shrink line-clamp-1"
                                                                 data-test="client-fl-kit-slot"
                                                             >
                                                                 FL kit slot: {{ client.fl_kit_slot }}
