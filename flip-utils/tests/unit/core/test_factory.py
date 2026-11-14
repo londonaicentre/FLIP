@@ -24,29 +24,16 @@ from flip.core.standard import FLIPStandardDev, FLIPStandardProd
 class TestFLIPFactory:
     """Test the FLIP factory function."""
 
+    @pytest.mark.parametrize(
+        "job_type",
+        [JobType.STANDARD, JobType.EVALUATION, JobType.FED_OPT, "standard", "evaluation", "fed_opt"],
+    )
     @patch("flip.core.factory.FlipConstants")
-    def test_factory_creates_standard_dev(self, mock_constants):
-        """Factory should create FLIPStandardDev for standard job type in dev mode."""
+    def test_factory_creates_dev(self, mock_constants, job_type):
+        """Factory should create FLIPStandardDev in dev mode for every job type, enum or string."""
         mock_constants.LOCAL_DEV = True
 
-        result = FLIP(JobType.STANDARD)
-        assert isinstance(result, FLIPStandardDev)
-
-    @patch("flip.core.factory.FlipConstants")
-    def test_factory_creates_evaluation_dev(self, mock_constants):
-        """Factory should create FLIPStandardDev for evaluation job type."""
-        mock_constants.LOCAL_DEV = True
-
-        result = FLIP(JobType.EVALUATION)
-        assert isinstance(result, FLIPStandardDev)
-
-    @patch("flip.core.factory.FlipConstants")
-    def test_factory_creates_fed_opt_dev(self, mock_constants):
-        """Factory should create FLIPStandardDev for fed_opt job type."""
-        mock_constants.LOCAL_DEV = True
-
-        result = FLIP(JobType.FED_OPT)
-        assert isinstance(result, FLIPStandardDev)
+        assert isinstance(FLIP(job_type), FLIPStandardDev)
 
     @patch("flip.core.factory.FlipConstants")
     def test_factory_creates_prod_when_not_local_dev(self, mock_constants):
@@ -57,27 +44,11 @@ class TestFLIPFactory:
         result = FLIP(JobType.STANDARD)
         assert isinstance(result, FLIPStandardProd)
 
-    def test_factory_rejects_invalid_job_type(self):
-        """Factory should raise ValueError for invalid job type string."""
+    # diffusion_model was a two-stage job type that is gone: naming it fails rather than running standard.
+    @pytest.mark.parametrize(
+        "job_type", ["invalid_job_type", "diffusion_model"], ids=["unknown", "removed-diffusion-model"]
+    )
+    def test_factory_rejects_unknown_job_type(self, job_type):
+        """Factory should raise ValueError for an unknown job type string."""
         with pytest.raises(ValueError, match="Unknown job_type"):
-            FLIP("invalid_job_type")
-
-    def test_factory_rejects_the_removed_diffusion_model_job_type(self):
-        """The two-stage diffusion_model job type is gone; naming it fails rather than running standard."""
-        with pytest.raises(ValueError, match="Unknown job_type"):
-            FLIP("diffusion_model")
-
-    @patch("flip.core.factory.FlipConstants")
-    def test_factory_accepts_string_job_types(self, mock_constants):
-        """Factory should accept job type as string."""
-
-        mock_constants.LOCAL_DEV = True
-
-        result = FLIP("standard")
-        assert isinstance(result, FLIPStandardDev)
-
-        result = FLIP("evaluation")
-        assert isinstance(result, FLIPStandardDev)
-
-        result = FLIP("fed_opt")
-        assert isinstance(result, FLIPStandardDev)
+            FLIP(job_type)

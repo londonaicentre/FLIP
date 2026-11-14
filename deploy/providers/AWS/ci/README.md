@@ -1,7 +1,7 @@
 # Terraform CI bootstrap (for your own AWS account)
 
-Everything FLIP's Terraform CI needs in an AWS account before its first run, for anyone deploying FLIP into an
-account they own. The rights it grants are public on purpose: the module is kept in FLIP, not in AI Centre's platform
+This root creates everything FLIP's Terraform CI needs in an AWS account before its first run. Use it if you deploy
+FLIP into an account you own. The rights it grants are public on purpose: the module is kept in FLIP, not in AI Centre's platform
 repository, so that you can read exactly what FLIP's CI may do before you create it. This root is a thin wrapper around
 [`../modules/terraform_ci_bootstrap`](../modules/terraform_ci_bootstrap): it adds a provider with an account guard,
 looks up the account's GitHub OIDC provider, and keeps its own state.
@@ -34,7 +34,8 @@ The names are inputs; the defaults are the ones the FLIP workflows and scripts e
 
 ## Bootstrapping an account
 
-One tfvars file per account. `TFVARS` selects it (default `terraform.tfvars`).
+One tfvars file per account. `TFVARS` selects it (default `terraform.tfvars`). The account ID you set there becomes
+`allowed_account_ids`, the provider's account guard: with the wrong profile, Terraform stops before planning.
 
 ```bash
 cp terraform.tfvars.example terraform.tfvars   # fill in: region, account ID, org/repo, environment, bucket name
@@ -52,14 +53,12 @@ make migrate-state                              # move the state into the bucket
 Use one copy of this directory per account: the local state, and then `backend.tf`, belong to the account they were
 created for.
 
-`allowed_account_ids` is the provider's account guard: with the wrong profile, Terraform stops before planning.
-
 ## Wiring it into GitHub
 
 `make output` prints the role ARNs and the OIDC claims they expect. On the matching GitHub environment
 (`aws-stag` / `aws-prod`) set `TF_PLAN_ROLE_ARN` and `TF_APPLY_ROLE_ARN` to the two ARNs, and point the FLIP root's
 `FLIP_TFSTATE_BUCKET_NAME` at the state bucket. `../scripts/setup-github-environments.sh` seeds the environments and
-verifies the roles' trust policies against the mode before it writes anything.
+verifies the roles' trust policies against the target environment (`aws-stag` / `aws-prod`) before it writes anything.
 
 The Terraform workflows (`terraform_plan.yml`, `terraform_apply.yml`, `terraform_drift.yml`) only run in
 `londonaicentre/FLIP` unless you opt in: set the repository variable `TF_CI_ON_FORK` to `true` in your fork or copy
@@ -68,9 +67,10 @@ The Terraform workflows (`terraform_plan.yml`, `terraform_apply.yml`, `terraform
 ## Changing it
 
 The roles are not managed by the pipeline they authorise, so a change reaches AWS only when you apply it: after
-pulling a FLIP change to the module, `make plan && make apply`. **Order matters when FLIP adds an IAM role**: add it to
-`managed_role_names` and apply here *before* the FLIP change that creates it, or the CI apply cannot pass or re-trust
-it.
+pulling a FLIP change to the module, `make plan && make apply`. **Order matters when FLIP adds an IAM role or uses a
+new AWS service**: add the role to `managed_role_names` (or the service to `apply_service_prefixes`) and apply here
+*before* the FLIP change that needs it, or the CI apply cannot pass or re-trust it. The coupling is deliberate: a human
+is in the loop on every new principal or service the pipeline can use.
 
 ## Roles that already exist
 
@@ -123,13 +123,14 @@ no push trigger, so no run can present it.
 
 **`drift_branch` is not `apply_branch`, and conflating them breaks prod drift.**
 `job_workflow_ref` names the branch the workflow *file was loaded from*. GitHub
-only fires a `schedule` from the repository default branch, so a scheduled run
-always presents `@refs/heads/develop` whatever environment it targets. Deriving
+only fires a `schedule` from the repository default branch (`develop` in FLIP),
+so a scheduled run always presents `@refs/heads/develop` whatever environment it
+targets. Deriving
 the drift entry from `apply_branch` would leave a production drift job presenting
 `@refs/heads/develop` against a policy trusting `@refs/heads/main`, able to assume
-nothing at all. Production sets `drift_branch = main` and the
-workflow earns it: the develop-scheduled run dispatches
-`terraform_drift.yml --ref main`, and the production leg runs from there.
+nothing at all. Production therefore sets `drift_branch = main`: the run
+scheduled on develop dispatches `terraform_drift.yml --ref main`, so the
+production leg is loaded from main and presents `@refs/heads/main`.
 
 The environment's own deployment branch policy is a second, independent control
 on the same thing, and it is the one that gates the *secrets* rather than AWS.
@@ -137,7 +138,7 @@ Keep `aws-prod` restricted to **`main` alone** — a GitHub environment's secret
 are readable by any workflow that names the environment and runs on an admitted
 branch, before it makes any AWS call, so admitting the default branch would hand
 the production secrets to every workflow merged to develop. `aws-stag` must stay
-open so PRs can plan; that exposure is recorded in `../README.md`.
+open so PRs can plan; that exposure is recorded in the [AWS README](../README.md).
 
 ## The plan role reads one secret, on purpose
 
@@ -180,20 +181,18 @@ explained in [`iam_apply.tf`](../modules/terraform_ci_bootstrap/iam_apply.tf):
    boundary.
 3. **State access** (`apply_state`): the state object and its lock.
 
-**What this still does not prevent, stated plainly rather than claimed away:** an
+**What this still does not prevent:** an
 apply can change the trust policy of one of FLIP's named roles, and so hand what
 that role holds to another principal. The control for that is the one that
 authorises the apply at all: review on the environment's branch, plus the trust
 policy pinning `job_workflow_ref` to `terraform_apply.yml` at that branch.
 
-**Adding to the FLIP root** means updating the module first: a new role's name in
-`managed_role_names`, a resource from a new AWS service in `apply_service_prefixes`.
-Apply the bootstrap, *then* merge the change that needs it — deliberate coupling,
-so a human is in the loop on every new principal or service the pipeline can use.
+**Adding to the FLIP root** follows the order in [Changing it](#changing-it): update the module first, apply it here, then merge the FLIP change that needs it.
 
 ## Debugging an AssumeRole denial
 
-`Not authorized to perform sts:AssumeRoleWithWebIdentity` carries no detail about which condition failed. Compare
+`Not authorized to perform sts:AssumeRoleWithWebIdentity` carries no detail about which condition failed (the claims
+are explained in [The OIDC claims, and the two easy mistakes](#the-oidc-claims-and-the-two-easy-mistakes)). Compare
 `make output` (`expected_oidc_sub`, `expected_apply_job_workflow_ref`, `plan_job_workflow_refs`) against the job: it
 must declare the GitHub environment (the `sub` claim carries the environment, not the branch), and the workflow file
 and branch must match `job_workflow_ref` exactly.

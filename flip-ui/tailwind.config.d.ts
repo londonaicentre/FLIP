@@ -11,9 +11,6 @@
  * limitations under the License.
  */
 
-
-const colors = require('tailwindcss/colors');
-
 // Types for tailwind.config.js, a plain CommonJS file, so a TypeScript test can import its colour tokens
 // (useThemeColorMeta.spec.ts). Only the shape that test reads is declared.
 declare const config: {

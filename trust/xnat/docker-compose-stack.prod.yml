@@ -10,8 +10,8 @@
 services:
   xnat-web:
     # The kit's FLIP_UID:FLIP_GID when set, else the image's xnat user (FLIP#1731). xnat-db keeps
-    # the stack file's root entrypoint: its pinned postgres:12.2-alpine predates nss_wrapper, so it
-    # cannot run as a uid it does not know.
+    # the stack file's root entrypoint: every existing site's database is uid 70's, the image's
+    # postgres user, which the entrypoint keeps it.
     user: "${FLIP_UID:-1001}:${FLIP_GID:-1001}"
     environment:
       - DATA_PATH=${XNAT_DATA_DIR}/xnat-data
@@ -24,6 +24,7 @@ services:
       - ${XNAT_DATA_DIR}/xnat-data/archive:${XNAT_ROOT}/archive
       - ${XNAT_DATA_DIR}/xnat-data/build:${XNAT_ROOT}/build
       - ${XNAT_DATA_DIR}/xnat-data/cache:${XNAT_ROOT}/cache
+      - ${XNAT_DATA_DIR}/xnat-data/prearchive:${XNAT_ROOT}/prearchive
 
   xnat-db:
     volumes:

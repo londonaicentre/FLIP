@@ -122,8 +122,13 @@ def test_get_project_details_invalid_id(client, mock_db):
 
 def test_get_project_details_returns_users_as_objects(client, mock_db, mock_project, fake_idp):
     """Test that users are returned as objects with id, email, and isDisabled — and nothing more."""
-    owner_user = CognitoUser(id=TEST_OWNER_ID, email="owner@example.com", is_disabled=False)
-    access_user = CognitoUser(id=TEST_USER_ID, email="user@example.com", is_disabled=False)
+    # Profile fields populated on purpose: the response must drop them, not merely leave them empty.
+    owner_user = CognitoUser(
+        id=TEST_OWNER_ID, email="owner@example.com", name="Owner", organisation="Org A", is_disabled=False
+    )
+    access_user = CognitoUser(
+        id=TEST_USER_ID, email="user@example.com", name="Member", organisation="Org B", is_disabled=False
+    )
 
     mock_project.description = "Test description"
     mock_project.creation_timestamp = datetime(2023, 1, 1)
@@ -155,18 +160,10 @@ def test_get_project_details_returns_users_as_objects(client, mock_db, mock_proj
     user_emails = {u["email"] for u in data["users"]}
     assert user_emails == {"owner@example.com", "user@example.com"}
     for user in data["users"]:
-        assert "id" in user
-        assert "email" in user
-        assert "isDisabled" in user
+        # Members are typed ProjectMemberLookup: no name or organisation for project co-members
+        # (FLIP#907, FLIP#996). Enriching this path with profile fields fails here.
+        assert set(user) == {"id", "email", "isDisabled"}
         assert user["isDisabled"] is False
-        # A project co-member must not learn anyone's name or organisation — that is the
-        # disclosure FLIP#907 closed on `/users/{user_id}`, and this path is currently narrow only
-        # because it never calls `apply_user_profile` (see the comment on IReturnedProject.users).
-        # The keys are still on the wire because CognitoUser defaults them to "", so assert they
-        # are empty rather than absent; enriching this path would populate them and fail here.
-        # FLIP#996 tracks making the response model enforce it instead.
-        assert user.get("name", "") == ""
-        assert user.get("organisation", "") == ""
 
 
 def test_get_project_details_filters_disabled_users(client, mock_db, mock_project, fake_idp):

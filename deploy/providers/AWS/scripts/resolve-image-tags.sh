@@ -63,7 +63,7 @@
 # The `:v<X.Y.Z>` images (same source, FLIP_RELEASE=v<X.Y.Z>) are a *separate*
 # set of builds dispatched at the tag, and they do not exist yet when that apply
 # runs — so the resolver cannot discover the release by looking. It has to be
-# told, by a later dispatch fired once those builds are green (PR 2 of FLIP#1283).
+# told, by a later dispatch fired once those builds are green (release.yml, FLIP#1283).
 #
 # When RELEASE_TAG is set, the resolver:
 #
@@ -95,8 +95,7 @@
 # fleet-proxy sidecar (FLIP#1517) is a repository of its own: DOCKER_FL_PROXY_TAG,
 # Terraform's `fl_fleet_proxy_image_tag`, empty on NVFLARE.
 #
-# When RELEASE_TAG is unset, nothing below behaves differently — the release path
-# is entirely additive and ships dark until a caller sets it.
+# When RELEASE_TAG is unset or empty the release path is skipped entirely.
 #
 # Usage:
 #     resolve-image-tags.sh

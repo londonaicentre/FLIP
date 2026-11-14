@@ -66,7 +66,8 @@ for attempt in $(seq 1 "${SUPERLINK_READY_ATTEMPTS:-60}"); do
 done
 echo "SuperLink Control API is ready."
 
-# TRUST_NAMES names each key's node (one per /keys/*.pub, sorted; required); FL_API_ADDRESS is optional.
+# TRUST_NAMES names each key's node (one per /keys/*.pub, sorted; required); FL_API_ADDRESS is optional
+# and, when set, needs FL_API_KEY (every FL API route but /health requires it; FL_API_KEY_HEADER renames the header).
 # TRUST_NAMES accepts both JSON list (["Trust_1", "Trust_2"]) and comma-separated (Trust_1,Trust_2).
 raw_trust_names="${TRUST_NAMES:-}"
 # Strip JSON brackets and quotes, then split on commas
@@ -177,7 +178,7 @@ if [ -n "$fl_api_address" ] && [ ${#trust_names[@]} -gt 0 ]; then
         if err=$(python -c "
 import urllib.request, json
 data = json.dumps({'name': '${tname}', 'node_id': '${nid}'}).encode()
-req = urllib.request.Request('${fl_api_address}/register_node', data=data, headers={'Content-Type': 'application/json'}, method='POST')
+req = urllib.request.Request('${fl_api_address}/register_node', data=data, headers={'Content-Type': 'application/json', '${FL_API_KEY_HEADER:-X-FL-API-Key}': '${FL_API_KEY:-}'}, method='POST')
 urllib.request.urlopen(req, timeout=5)
 " 2>&1); then
             echo "    OK: ${tname} → ${nid}"

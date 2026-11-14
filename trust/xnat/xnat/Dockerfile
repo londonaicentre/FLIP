@@ -8,8 +8,9 @@
 
 # XNAT 1.10.0 is the first release compiled against JDK 21 (it will not run on JDK 8).
 # Tomcat stays on the 9.x line — 1.10 still targets Tomcat 9, matching upstream's
-# reference stack (NrgXnat/xnat-docker-compose, branch 1.10.0-update).
-FROM tomcat:9.0.108-jdk21-temurin-noble AS development
+# reference stack (NrgXnat/xnat-docker-compose, branch 1.10.0-update). The 9.0 tag follows every
+# Tomcat and JDK release; a patch tag stops being rebuilt once the next patch ships.
+FROM tomcat:9.0-jdk21-temurin-noble AS development
 
 # Non-secret build args only. Datasource credentials, SMTP credentials, and
 # the admin password are loaded at container start from the runtime
@@ -64,7 +65,8 @@ RUN groupadd --system --gid 1001 xnat \
 # runs as a kit's FLIP_UID (FLIP#1731), which owns nothing here: config/ is written by
 # make-xnat-config.sh at start, work/, logs/ and ROOT/logs by XNAT and Turbine, prearchive/ by
 # every DICOM receipt, ftp/ and pipeline/ by the matching XNAT features when a site turns them on.
-# archive/, build/, cache/ and tomcat_logs/ are bind mounts the host owns.
+# archive/, build/, cache/ and tomcat_logs/ are bind mounts the host owns. So is prearchive/ on Compose
+# and Helm, where the mount hides the mode set here; it is kept for a container run without that mount.
 RUN mkdir -p ${TOMCAT_XNAT_FOLDER_PATH}/logs \
     && chmod 1777 ${TOMCAT_XNAT_FOLDER_PATH}/logs ${XNAT_HOME}/config ${XNAT_HOME}/logs ${XNAT_HOME}/work \
          ${XNAT_ROOT}/ftp ${XNAT_ROOT}/pipeline ${XNAT_ROOT}/prearchive

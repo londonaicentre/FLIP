@@ -14,7 +14,7 @@
 
 
 import { mount } from "@vue/test-utils";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import type { ILog } from "@/services/model-service";
 
@@ -64,11 +64,18 @@ vi.mock("vue-router", async (importOriginal) => {
 });
 
 describe("Timeline", () => {
+    const mountTimeline = () => mount(Timeline, {
+        props: { complete: true },
+        global: { stubs: { AiLoader: true } }
+    });
+
+    // Runs even when an assertion fails, so the shared fixture never leaks a trustCode.
+    afterEach(() => {
+        delete mockLogs.logs[1].trustCode;
+    });
+
     test("renders a list entry per log with the Hub/trust label", () => {
-        const comp = mount(Timeline, {
-            props: { complete: true },
-            global: { stubs: { AiLoader: true } }
-        });
+        const comp = mountTimeline();
 
         expect(comp.findAll("li")).toHaveLength(mockLogs.logs.length);
         expect(comp.text()).toContain("Training started");
@@ -79,22 +86,14 @@ describe("Timeline", () => {
     test("prefers the trust short code over the full name when the API sends one", () => {
         mockLogs.logs[1].trustCode = "KCH";
 
-        const comp = mount(Timeline, {
-            props: { complete: true },
-            global: { stubs: { AiLoader: true } }
-        });
+        const comp = mountTimeline();
 
         expect(comp.text()).toContain("KCH");
         expect(comp.text()).not.toContain("Trust A");
-
-        delete mockLogs.logs[1].trustCode;
     });
 
     test("fills the parent card width instead of forcing a fixed-width horizontal scroll", () => {
-        const comp = mount(Timeline, {
-            props: { complete: true },
-            global: { stubs: { AiLoader: true } }
-        });
+        const comp = mountTimeline();
 
         // Fixed inner widths (w-64 / 2xl:w-96) overflow the Live activity
         // card's content box and produce a horizontal scrollbar — the panel
@@ -105,10 +104,7 @@ describe("Timeline", () => {
     });
 
     test("renders timestamps with AA-contrast text tokens in both modes", () => {
-        const comp = mount(Timeline, {
-            props: { complete: true },
-            global: { stubs: { AiLoader: true } }
-        });
+        const comp = mountTimeline();
 
         const stamps = comp.findAll("[data-test='log-timestamp']");
         expect(stamps).toHaveLength(mockLogs.logs.length);

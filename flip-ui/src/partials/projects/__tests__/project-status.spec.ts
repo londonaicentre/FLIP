@@ -252,20 +252,6 @@ describe("ProjectStatus", () => {
 
             expect(wrapper.find("[data-test=import-status-warning-trust-3]").exists()).toBe(false);
         });
-
-        it("displays reimport count when available and project is created", () => {
-            const wrapper = mountProjectStatus(true);
-
-            expect(wrapper.find("[data-test=project-reimport-status-trust-1]").text()).toBe("2 / 5");
-        });
-
-        it("shows exclamation icon when reimport count reaches max limit", () => {
-            const wrapper = mountProjectStatus(true);
-            const trust3Li = wrapper.find("[data-test=project-reimport-status-trust-3]");
-
-            expect(trust3Li.exists()).toBe(true);
-            expect(trust3Li.text()).toBe("5 / 5");
-        });
     });
 
     describe("overview sidebar", () => {
@@ -353,21 +339,23 @@ describe("ProjectStatus", () => {
             mockSwrvData.value = mockTrustData;
         });
 
-        it("shows green icon when reimport count is below max", () => {
+        it("shows the reimport count against the max with a green icon when below max", () => {
             const wrapper = mountProjectStatus(true);
             const trust1ReimportStatus = wrapper.find("[data-test=project-reimport-status-trust-1]");
 
             expect(trust1ReimportStatus.exists()).toBe(true);
+            expect(trust1ReimportStatus.text()).toBe("2 / 5");
             // The reimport icon (sibling SVG) should be green for below-max counts
             const icon = trust1ReimportStatus.element.parentElement!.querySelector("svg");
             expect(icon!.classList.contains("text-green-500")).toBe(true);
         });
 
-        it("shows yellow icon when reimport count reaches max", () => {
+        it("shows the reimport count against the max with a yellow icon when it reaches max", () => {
             const wrapper = mountProjectStatus(true);
             const trust3ReimportStatus = wrapper.find("[data-test=project-reimport-status-trust-3]");
 
             expect(trust3ReimportStatus.exists()).toBe(true);
+            expect(trust3ReimportStatus.text()).toBe("5 / 5");
             const icon = trust3ReimportStatus.element.parentElement!.querySelector("svg");
             expect(icon!.classList.contains("text-yellow-500")).toBe(true);
         });

@@ -51,7 +51,6 @@ locals {
   # trusts reach only the fleet proxy sidecar on its own port (FLIP#1517).
   flower_fleet_proxy_port       = 9092
   flower_superlink_control_port = 8000
-  flower_superlink_health_port  = 9097
 
   # The container the NLB target group binds: the proxy on Flower, the server on NVFLARE.
   fl_server_lb_container = var.fl_backend == "flower" ? "fleet-proxy" : "fl-server-net-1"
@@ -152,7 +151,15 @@ resource "aws_ecs_task_definition" "flip_api" {
         ],
       )
 
-      secrets = []
+      # The key flip-api presents on every FL API call; the fl-api task below reads the same
+      # field, so the two cannot drift. Never plain env: the raw key would land in the task
+      # definition JSON.
+      secrets = [
+        {
+          name      = "FL_API_KEY"
+          valueFrom = "${module.flip_api_secret.secret_arn}:fl_api_key::"
+        },
+      ]
 
       # Read-only root filesystem (ECS.5, FLIP#1795): /tmp is the one path the API
       # writes, and a VOLUME in its image (see local.fl_api_scratch_volumes for why).
@@ -216,6 +223,15 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
       environment = [
         for k, v in(var.fl_backend == "flower" ? local.ecs_task_env.fl_api_flower : local.ecs_task_env.fl_api) :
         { name = k, value = v }
+      ]
+
+      # Every FL API route but /health requires this key (fl_api/utils/auth.py); flip-api's
+      # task reads the same Secrets Manager field.
+      secrets = [
+        {
+          name      = "FL_API_KEY"
+          valueFrom = "${module.flip_api_secret.secret_arn}:fl_api_key::"
+        },
       ]
 
       # Container paths must match what the fl-api image expects. FLARE
@@ -355,17 +371,15 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
         # flwr>=1.37: the Control API is HTTP on port 8000, loopback-only
         # unless --host says otherwise; fl-api reaches it over Cloud Map.
         "--host", "0.0.0.0",
-        "--health-server-address", "0.0.0.0:${local.flower_superlink_health_port}",
       ] : null
       linuxParameters = var.fl_backend == "flower" ? { initProcessEnabled = true } : null
 
       # FLARE serves client gRPC + admin multiplexed on one port. Flower's
       # SuperLink serves its HTTP APIs on 8000 (fl-api submits runs to the
-      # Control API there) and health on 9097; the NLB's 9092 is the fleet
+      # Control API there and reads /health); the NLB's 9092 is the fleet
       # proxy's, below.
       portMappings = var.fl_backend == "flower" ? [
         { containerPort = local.flower_superlink_control_port, protocol = "tcp" },
-        { containerPort = local.flower_superlink_health_port, protocol = "tcp" },
         ] : [
         { containerPort = var.FL_SERVER_PORT, protocol = "tcp" },
       ]
@@ -373,18 +387,6 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
       environment = [
         for k, v in(var.fl_backend == "flower" ? local.ecs_task_env.fl_server_flower : local.ecs_task_env.fl_server) :
         { name = k, value = v }
-      ]
-
-      # INTERNAL_SERVICE_KEY is sourced from the FLIP_API Secrets Manager
-      # secret rather than passed as a plain env, so the raw key never lands
-      # in the task definition JSON or CloudFormation describe output. The
-      # JSON-key syntax (`:internal_service_key::`) extracts that single
-      # field from the multi-field secret payload.
-      secrets = [
-        {
-          name      = "INTERNAL_SERVICE_KEY"
-          valueFrom = "${module.flip_api_secret.secret_arn}:internal_service_key::"
-        },
       ]
 
       # Container paths must match what the fl-server image expects.

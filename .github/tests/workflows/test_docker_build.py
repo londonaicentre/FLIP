@@ -35,6 +35,7 @@ from image_workflows import (  # noqa: E402
     WORKFLOWS,
     ReleaseTagContract,
     code_text,
+    step_block,
 )
 from pr_paths_changed import glob_to_regex  # noqa: E402
 
@@ -103,6 +104,7 @@ class XnatBuildTriggers(unittest.TestCase):
             (["trust/xnat/postgres/Dockerfile"], {"db", "web"}),
             (["trust/xnat/postgres/XNAT.sql"], {"db", "web"}),
             (["trust/xnat/postgres/guard-xnat-db-passwords.sh"], {"db", "web"}),
+            (["trust/xnat/scripts/xnat_db_migrate_dump.sh"], {"db", "web"}),
             (["trust/xnat/nginx/custom-nginx.conf"], {"nginx", "web"}),
             (["trust/xnat/xnat/Dockerfile"], {"web"}),
             (["trust/xnat/xnat/config/anon_script.das"], {"web"}),
@@ -138,6 +140,21 @@ class XnatBuildTriggers(unittest.TestCase):
             with self.subTest(changed_paths=changed_paths):
                 assert selected == expected, f"selected={selected}, expected={expected}"
 
+    def test_published_base_images_match_the_local_build(self) -> None:
+        """CI builds from the workflow's build args, a local build and the upgrade verbs read .env.
+
+        The xnat-db major upgrade (FLIP#1812) decides from .env whether to dump the old cluster, so
+        a workflow publishing another PostgreSQL major would skip the dump the image then needs.
+        """
+        env = (GITHUB_DIR.parent / "trust/xnat/.env").read_text()
+        for image, arg in (("db", "PG_VERSION"), ("nginx", "NGINX_VERSION")):
+            local = re.search(rf"^{arg}=(\S+)$", env, re.M)
+            published = re.search(rf"--build-arg {arg}=(\S+)", code_text(WORKFLOWS / f"docker_build_xnat_{image}.yml"))
+            with self.subTest(image=image):
+                assert local, arg
+                assert published, image
+                assert local[1] == published[1], (local[1], published[1])
+
     def test_own_workflow_edits_still_trigger_each_build(self) -> None:
         for image in self.workflows:
             name = f"docker_build_xnat_{image}.yml"
@@ -151,6 +168,11 @@ class XnatBuildTriggers(unittest.TestCase):
             with self.subTest(image=image):
                 assert "workflow_run" not in text, image
                 assert "GH_WR_" not in text, image
+
+    def test_xnat_web_pulls_its_moving_base(self) -> None:
+        """The Tomcat base tag moves: without --pull a runner holding an old copy would build on it."""
+        build = step_block(code_text(WORKFLOWS / "docker_build_xnat_web.yml"), "Build Docker image")
+        assert "docker build --pull " in build, build
 
 
 if __name__ == "__main__":

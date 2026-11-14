@@ -292,6 +292,12 @@ def main() -> int:
     _assert(_check(report, "orthanc requires auth").get("ok") is True, "orthanc auth is still checked")
     _assert("/modalities/XNAT/store" not in calls.read_text(), "no store is attempted")
 
+    print("seeded_orthanc_with_no_instance_fails_without_storing")
+    result, report, calls, _ = _run("seeded-empty", instances="[]")
+    cstore = _check(report, "xnat c-store")
+    _assert(cstore.get("ok") is False and "did seeding run?" in cstore.get("detail", ""), "fails", str(cstore))
+    _assert("/modalities/XNAT/store" not in calls.read_text(), "and no store is attempted")
+
     print("sample_data_off_still_stores_an_instance_orthanc_holds")
     # Orthanc's answer decides, not the setting: a broken DICOM import must not hide behind a skip.
     result, report, calls, _ = _run("noseed-held", seed="false", write_markers=False)

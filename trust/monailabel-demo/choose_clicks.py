@@ -58,18 +58,17 @@ def candidates(oracle: np.ndarray, first_result: np.ndarray) -> list[tuple[bool,
         negative.append(deepest(leaks == label + 1))
     ring = ndimage.binary_dilation(oracle, iterations=14) & ~ndimage.binary_dilation(oracle, iterations=10)
     rows, cols = np.nonzero(ring)
-    centre_row, centre_col = np.nonzero(oracle)[0].mean(), np.nonzero(oracle)[1].mean()
+    centre_row, centre_col = (axis.mean() for axis in np.nonzero(oracle))
     angle = np.arctan2(rows - centre_row, cols - centre_col)
     for target in np.linspace(-np.pi, np.pi, 8, endpoint=False):
         i = np.argmin(np.abs(np.angle(np.exp(1j * (angle - target)))))
         negative.append((int(cols[i]), int(rows[i])))
     positive: list[Point] = []
     inner = ndimage.binary_erosion(oracle, iterations=3)
-    rows, cols = np.nonzero(inner)
+    rows = np.nonzero(inner)[0]
     if rows.size:
-        for half in (rows < np.median(rows), rows >= np.median(rows)):
-            part = np.zeros_like(oracle)
-            part[rows[half], cols[half]] = True
+        above = np.arange(inner.shape[0])[:, None] < np.median(rows)
+        for part in (inner & above, inner & ~above):
             if part.any():
                 positive.append(deepest(part))
     return [(True, p) for p in dict.fromkeys(positive)] + [(False, p) for p in dict.fromkeys(negative)]
@@ -95,7 +94,7 @@ def choose(infer: Infer, oracle: np.ndarray, reference: np.ndarray, target: floa
     def score(extra: tuple[tuple[bool, Point], ...]) -> float:
         return dice(run(extra), reference)
 
-    pool = candidates(oracle, infer([first], []))
+    pool = candidates(oracle, run(()))
     for size in range(0, max_extra + 1):
         scored = [(score(combo), combo) for combo in itertools.combinations(pool, size)]
         best_dice, best = max(scored, key=lambda s: s[0])

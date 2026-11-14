@@ -42,7 +42,8 @@ Three checks narrow most problems down to one component:
 
 #. **Connection Status page.** Any signed-in user can see whether each Trust is online and which of its services
    is failing (:ref:`connection-status`).
-#. **Hub health.** A FLIP admin runs the deployment check from the repo root:
+#. **Hub health (AWS).** A FLIP admin runs the deployment check from the root of a FLIP checkout that holds the
+   hub's env file:
 
    .. code-block:: shell
 
@@ -50,10 +51,17 @@ Three checks narrow most problems down to one component:
 
 #. **Trust health.** The trust operator checks the services on the trust host:
 
+   On Docker Compose, every service should be ``Up``:
+
    .. code-block:: shell
 
-      docker ps                              # Compose: every service should be Up
-      make -C trust/deploy/helm status       # Kubernetes: release status, XNAT plugins and smoke tests
+      docker ps
+
+   On Kubernetes, check the release status, XNAT plugins and smoke tests:
+
+   .. code-block:: shell
+
+      make -C trust/deploy/helm status
 
 .. seealso::
 
@@ -64,6 +72,8 @@ Three checks narrow most problems down to one component:
    - :doc:`deploy-flip/deploy-flip-node-kubernetes` — the short list for a Kubernetes deployment
    - :ref:`enrichment-troubleshooting` — label upload before training
    - :doc:`components/component-logging-stack` — Grafana and Loki
+
+All symptoms, by page:
 
 .. toctree::
    :maxdepth: 2
