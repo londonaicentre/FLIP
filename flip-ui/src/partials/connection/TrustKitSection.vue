@@ -40,13 +40,13 @@
         class="px-[22px] pt-4 pb-[18px] border-b border-gray-200 dark:border-dark-border bg-primary-100/60 dark:bg-dark-canvas"
     >
         <div class="flex items-center justify-between gap-2">
-            <p class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+            <p class="text-xs text-gray-500 dark:text-gray-300">
                 Trust kit
             </p>
             <span
                 v-if="status?.update_available"
                 data-test="kit-update-chip"
-                class="px-1.5 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+                class="px-1.5 py-0.5 rounded-full text-xs font-bold whitespace-nowrap bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
             >Kit update available</span>
         </div>
 
