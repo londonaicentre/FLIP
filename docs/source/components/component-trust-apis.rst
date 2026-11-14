@@ -83,7 +83,9 @@ The kit file carries the settings for both keys, and the other values the Trust 
        as the wrong one (see `Task poller`_).
 
 A Trust must be **registered on the hub** before it can connect, by step 2 of :doc:`/deploy-flip/onboarding-a-trust`
-or through the Add-Trust admin flow. Registration writes the API key and internal service key into the kit file. No
+or through the Add-Trust admin flow. Command-line registration writes the API key and internal service key into the
+kit file. A Trust added in the UI has no keys until its kit is first downloaded from its card; ``make -C trust
+install-kit`` then writes them into the kit file on the trust host (:ref:`onboarding-kit-from-ui`). No
 hub redeploy is needed: the hub reads its Trust list live on every request.
 
 *********

@@ -19,10 +19,7 @@ export interface ICreatedTrust {
     code: string | null;
     region: string | null;
     created_at: string | null;
-    // Plaintext keys returned once by POST /admin/trusts — never persisted on
-    // the hub past the response. Surface to the admin in a one-time modal.
-    trust_api_key: string;
-    trust_internal_service_key: string;
+    // No keys here: they are minted by the first kit download from the trust's card (FLIP#1852).
     // FL kit slot the hub claimed for this trust from the pre-provisioned pool.
     // The operator's fl-clients mount the matching workspace/net-N/services/<slot>
     // provisioned kit dirs; fl_kit_slot_number picks the Flower supernode key.

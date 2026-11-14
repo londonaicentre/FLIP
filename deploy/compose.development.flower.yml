@@ -24,6 +24,14 @@
 # Control, Fleet and Runtime on one port, so the SuperLink stays off `fl-net-<N>` and the proxy
 # forwards the Fleet API alone. Hub-side, on `default`, the name is still the SuperLink.
 services:
+  # The provisioned FL kits, read-only, so a trust's kit can be downloaded from the UI (FLIP#1852).
+  # Here rather than in the base file, which also runs alone (hub-only stacks, CI) with no kits.
+  flip-api:
+    volumes:
+      - ${FL_PROVISIONED_DIR}:/fl-kits:ro
+    environment:
+      - FL_KITS_URI=/fl-kits
+
   #################### CENTRAL HUB FL ####################
 
   fl-api-net-1:

@@ -230,6 +230,15 @@ variable "flower_kit_date" {
   default     = ""
 }
 
+# The port trusts dial for FL, where the edge remaps it (LZA staging listens on
+# :8003 and forwards to FL_SERVER_PORT). It only reaches the trust kits flip-api
+# issues (FLIP#1852); no resource here listens on it.
+variable "fl_edge_port" {
+  description = "Port trusts dial for FL when it differs from FL_SERVER_PORT; empty means FL_SERVER_PORT"
+  type        = string
+  default     = ""
+}
+
 # The GPUs the fl-api writes into a FLARE job's meta when the job declares
 # none (mirrors JOB_RESOURCE_SPEC_NUM_GPUS in compose.prod.nvflare.yml).
 # A job declares its own in its meta.json (the Ark+ tutorials do), and a
