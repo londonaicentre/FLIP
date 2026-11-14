@@ -538,7 +538,7 @@ describe("Models Page", () => {
         await wrapper.vm.$nextTick();
 
         await wrapper.find("[data-test='sort-header-status']").trigger("click");
-        // PENDING (earliest lifecycle) sorts before RESULTS_UPLOADED.
+        // Filter order: Preparing (PENDING) sorts before Completed (RESULTS_UPLOADED).
         expect(wrapper.findAll("[data-test='model-name']").map(n => n.text())).toEqual(["created", "done"]);
     });
 
@@ -640,38 +640,18 @@ describe("Models Page", () => {
         expect(wrapper.findAll("[data-test='model-owner-meta']").map(m => m.text())).toEqual(["Dr Ada"]);
     });
 
-    test("rows default-sort by latest activity, falling back to creation, most recent first", async () => {
+    test("rows keep the backend order until a header is clicked", async () => {
+        // The hub already sends the rows latest activity first; the page must not re-sort them.
         setModels([
             makeModel({
                 id: "m1",
-                name: "older",
-                creationTimestamp: "2026-01-01T00:00:00"
+                name: "backend-first",
+                creationTimestamp: "2025-01-01T00:00:00"
             }),
             makeModel({
                 id: "m2",
-                name: "newer",
-                creationTimestamp: "2025-01-01T00:00:00",
+                name: "backend-second",
                 lastActivity: "2026-06-01T00:00:00"
-            })
-        ]);
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
-
-        expect(wrapper.findAll("[data-test='model-name']").map(n => n.text())).toEqual(["newer", "older"]);
-    });
-
-    test("rows from an older API without timestamps keep the backend order under the default sort", async () => {
-        // The rollout-skew case: a UI deployed ahead of the API gets no
-        // creationTimestamp on ANY row — all tie at 0 and the stable sort must
-        // preserve the backend's newest-first order.
-        setModels([
-            makeModel({
-                id: "m1",
-                name: "backend-first"
-            }),
-            makeModel({
-                id: "m2",
-                name: "backend-second"
             })
         ]);
         const wrapper = mountPage();

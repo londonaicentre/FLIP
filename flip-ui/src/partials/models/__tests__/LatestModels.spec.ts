@@ -241,6 +241,21 @@ describe("LatestModels — defensive data access", () => {
         expect(nameRow?.textContent).toContain("Alpha");
     });
 
+    test("the status chip uses the Models page's group word", async () => {
+        setData({
+            data: [{
+                id: "m1",
+                name: "Alpha",
+                description: "",
+                status: "PENDING"
+            }]
+        });
+        const wrapper = mountLatestModels();
+        await flushPromises();
+
+        expect(wrapper.find("[data-test='latest-model-status-chip']").text()).toBe("Preparing");
+    });
+
     test("lists models and shows the View All button when data.data is populated", async () => {
         setData({
             data: [

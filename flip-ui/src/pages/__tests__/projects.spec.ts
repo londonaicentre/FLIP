@@ -597,8 +597,8 @@ describe("Projects Page", () => {
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        const omop = wrapper.find("[data-test='project-type-chip-omop-only']");
-        const imaging = wrapper.find("[data-test='project-type-chip-imaging']");
+        const omop = wrapper.find("[data-test='projects-list-view'] [data-test='project-type-chip-omop-only']");
+        const imaging = wrapper.find("[data-test='projects-list-view'] [data-test='project-type-chip-imaging']");
         expect(omop.text()).toBe("OMOP only");
         expect(imaging.text()).toBe("Imaging + OMOP");
         // Icons only on screen; the name stays for screen readers and the tooltip.

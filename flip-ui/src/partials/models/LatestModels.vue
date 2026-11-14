@@ -76,7 +76,7 @@
                                         :class="modelStatusPillClass(model.status)"
                                     >
                                         <span class="inline-block w-1.5 h-1.5 rounded-full" :class="modelStatusDotClass(model.status)" />
-                                        {{ modelStatusLabel(model.status) }}
+                                        {{ modelStatusPillLabel(model.status) }}
                                     </span>
                                 </div>
                                 <p class="leading-tight text-gray-500 dark:text-gray-300 truncate">
@@ -143,8 +143,8 @@ import useErrorHandler from "@/composables/useErrorHandler";
 import { usePermissions } from "@/composables/usePermissions";
 import { getModels,
     modelStatusDotClass,
-    modelStatusLabel,
-    modelStatusPillClass } from "@/services/model-service";
+    modelStatusPillClass,
+    modelStatusPillLabel } from "@/services/model-service";
 import { useModalsStore } from "@/store/modals";
 import { useProjectStore } from "@/store/project";
 

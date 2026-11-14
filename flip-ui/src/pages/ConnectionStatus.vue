@@ -58,22 +58,15 @@
                 >
                     <template v-for="(tile, i) in TILES" :key="tile.key">
                         <span v-if="i" aria-hidden="true">·</span>
-                        <button
-                            v-if="tile.key !== 'online' && stateCounts[tile.key]"
-                            type="button"
-                            :data-test="`state-count-${tile.key}`"
-                            class="inline-flex items-center gap-1.5 font-bold hover:underline"
-                            :class="tile.text"
-                            @click="focusFirstTrust(tile.key)"
-                        >
-                            <span class="inline-block w-2 h-2 rounded-full" :class="tile.dot" aria-hidden="true" />
-                            {{ stateCounts[tile.key] }} {{ tile.label.toLowerCase() }}
-                        </button>
-                        <span
-                            v-else
+                        <component
+                            :is="isCountLink(tile) ? 'button' : 'span'"
+                            :type="isCountLink(tile) ? 'button' : undefined"
                             :data-test="`state-count-${tile.key}`"
                             class="inline-flex items-center gap-1.5"
-                            :class="stateCounts[tile.key] ? 'text-gray-700 dark:text-gray-200' : ''"
+                            :class="isCountLink(tile)
+                                ? ['font-bold hover:underline', tile.text]
+                                : stateCounts[tile.key] ? 'text-gray-700 dark:text-gray-200' : ''"
+                            @click="isCountLink(tile) && focusFirstTrust(tile.key)"
                         >
                             <span
                                 class="inline-block w-2 h-2 rounded-full"
@@ -81,7 +74,7 @@
                                 aria-hidden="true"
                             />
                             {{ stateCounts[tile.key] }} {{ tile.label.toLowerCase() }}
-                        </span>
+                        </component>
                     </template>
                 </p>
             </div>
@@ -947,8 +940,8 @@ interface ITile {
     label: string;
     dot: string;
     ring: string;
-    // The phone count line's ink when a trust is in this state.
-    text: string;
+    // The phone count line's ink when a trust is in this state; set only on states worth a link.
+    text?: string;
 }
 
 const TILES: ITile[] = [
@@ -956,8 +949,7 @@ const TILES: ITile[] = [
         key: "online",
         label: "Online",
         dot: "bg-emerald-600",
-        ring: "border-emerald-600 ring-emerald-600/40",
-        text: ""
+        ring: "border-emerald-600 ring-emerald-600/40"
     },
     {
         key: "degraded",
@@ -984,6 +976,8 @@ const toggleTile = (key: TrustState): void => {
 
 // The list card, so a count on the phone line can take the user to the first trust in its state.
 const trustList = ref<InstanceType<typeof AiCard> | null>(null);
+
+const isCountLink = (tile: ITile): boolean => !!tile.text && stateCounts.value[tile.key] > 0;
 
 const focusFirstTrust = async (state: TrustState): Promise<void> => {
     viewMode.value = "list";

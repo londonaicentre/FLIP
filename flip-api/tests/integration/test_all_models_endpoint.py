@@ -38,7 +38,6 @@ from flip_api.db.models.main_models import (
 )
 from flip_api.db.models.user_models import UserProfile
 from flip_api.domain.schemas.status import JobStatus, ModelStatus, ProjectStatus, TrustIntersectStatus
-from flip_api.domain.schemas.types import FLLogEvent
 from tests.integration.conftest import admin_user, override_verify_token_as
 
 MODELS_URL = "/api/models"
@@ -649,15 +648,6 @@ def test_project_options_admin_sees_every_project(client: TestClient, session, p
     assert [option["name"] for option in response.json()] == ["Someone else's"]
 
 
-def _add_round_event(session, *, model_id: UUID, event: FLLogEvent, global_round: int, at: datetime, details=None):
-    session.add(
-        FLLogs(
-            model_id=model_id, success=True, event_type=event, global_round=global_round, log_date=at, details=details
-        )
-    )
-    session.commit()
-
-
 def test_rows_are_ordered_by_last_activity(client: TestClient, session, project_factory, model_factory):
     """An old model with a recent log sorts above a newer idle one, and reports that log as its activity."""
     user_id = uuid4()
@@ -683,9 +673,8 @@ def test_rows_are_ordered_by_last_activity(client: TestClient, session, project_
     session.commit()
     session.add(FLJob(model_id=old_busy.id, status=JobStatus.IN_PROGRESS, created=datetime(2026, 1, 2)))
     session.commit()
-    _add_round_event(
-        session, model_id=old_busy.id, event=FLLogEvent.ROUND_STARTED, global_round=1, at=datetime(2026, 7, 1)
-    )
+    session.add(FLLogs(model_id=old_busy.id, success=True, log_date=datetime(2026, 7, 1)))
+    session.commit()
 
     override_verify_token_as(user_id)
     rows = client.get(MODELS_URL, params={"pageSize": 1}).json()["data"]

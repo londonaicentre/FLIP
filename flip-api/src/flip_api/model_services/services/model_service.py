@@ -480,27 +480,6 @@ def _run_trusts_by_model(model_ids: list[UUID], session: Session) -> dict[UUID, 
     return trusts_by_model
 
 
-def _finished_at_by_model(model_ids: list[UUID], session: Session) -> dict[UUID, datetime | None]:
-    """Map each model to its latest FL job's ``completed`` time (None while that job is unfinished).
-
-    Args:
-        model_ids (list[UUID]): Model ids to look up. Empty input short-circuits.
-        session (Session): The database session.
-
-    Returns:
-        dict[UUID, datetime | None]: ``model_id -> completed``. Models without a job are absent.
-    """
-    if not model_ids:
-        return {}
-    rows = session.exec(
-        select(FLJob.model_id, FLJob.completed)  # type: ignore[call-overload]
-        .where(col(FLJob.model_id).in_(model_ids))
-        .order_by(col(FLJob.created).asc(), col(FLJob.id).asc())
-    ).all()
-    # Ascending (created, id), so the latest job's value is the one left standing.
-    return {model_id: completed for model_id, completed in rows}
-
-
 def queued_positions_by_model(session: Session) -> dict[UUID, int]:
     """Map each queued model to its 1-based place in the FL training queue.
 
@@ -582,20 +561,33 @@ def get_all_models_service(
     # access OR-clause can match a granted project without fanning the row out per access record.
     access_join = and_(col(ProjectUserAccess.project_id) == Projects.id, ProjectUserAccess.user_id == user_id)
 
-    # Computed in SQL so the sort happens before LIMIT/OFFSET; GREATEST skips the NULLs of idle models.
-    log_activity = select(func.max(FLLogs.log_date)).where(FLLogs.model_id == Model.id).scalar_subquery()
+    # Newest log and job time per model, each aggregated once and joined, so the sort happens in SQL
+    # before LIMIT/OFFSET; GREATEST skips the NULLs of models with no logs or jobs.
+    log_activity = (
+        select(FLLogs.model_id, func.max(FLLogs.log_date).label("at")).group_by(col(FLLogs.model_id)).subquery()
+    )
     job_activity = (
-        select(func.max(func.greatest(FLJob.created, FLJob.started, FLJob.completed)))
+        select(FLJob.model_id, func.max(func.greatest(FLJob.created, FLJob.started, FLJob.completed)).label("at"))
+        .group_by(col(FLJob.model_id))
+        .subquery()
+    )
+    last_activity = func.greatest(Model.creation_timestamp, log_activity.c.at, job_activity.c.at).label("last_activity")
+    # The latest job's completion (None while it runs); only evaluated for the rows on the page.
+    finished_at = (
+        select(FLJob.completed)
         .where(FLJob.model_id == Model.id)
+        .order_by(desc(FLJob.created), desc(FLJob.id))
+        .limit(1)
         .scalar_subquery()
     )
-    last_activity = func.greatest(Model.creation_timestamp, log_activity, job_activity).label("last_activity")
 
     rows_query = (
-        select(Model, Projects.name, UserProfile.name, last_activity)  # type: ignore[call-overload]
+        select(Model, Projects.name, UserProfile.name, last_activity, finished_at)  # type: ignore[call-overload]
         .join(Projects, col(Model.project_id) == Projects.id)
         .outerjoin(ProjectUserAccess, access_join)
         .outerjoin(UserProfile, col(UserProfile.user_id) == Model.owner_id)
+        .outerjoin(log_activity, log_activity.c.model_id == Model.id)
+        .outerjoin(job_activity, job_activity.c.model_id == Model.id)
         .where(and_(*list_conditions))
         .order_by(desc(last_activity), col(Model.id))
         .limit(paging.page_size)
@@ -625,7 +617,6 @@ def get_all_models_service(
     model_ids = [row[0].id for row in rows]
     trusts_by_model = _run_trusts_by_model(model_ids, session)
     queue_positions = queued_positions_by_model(session)
-    finished_at = _finished_at_by_model(model_ids, session)
 
     data = [
         IAllModelsResponse(
@@ -641,9 +632,9 @@ def get_all_models_service(
             trusts=trusts_by_model.get(model.id, []),
             queue_position=queue_positions.get(model.id),
             last_activity=model_last_activity,
-            finished_at=finished_at.get(model.id),
+            finished_at=model_finished_at,
         )  # type: ignore[call-arg]
-        for model, project_name, owner_name, model_last_activity in rows
+        for model, project_name, owner_name, model_last_activity, model_finished_at in rows
     ]
 
     return IPagedResponse[IAllModelsResponse](data=data, total_rows=total_rows), status_counts, paging

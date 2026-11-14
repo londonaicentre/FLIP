@@ -12,12 +12,15 @@
 -->
 
 <template>
-    <AiRouteProgress />
-    <DemoBanner v-if="isDemoBuild">
-        <router-view />
-    </DemoBanner>
-    <router-view v-else />
-    <AiSnackbar />
+    <!-- One column at the viewport's height: the layouts fill what the demo banner leaves. -->
+    <div class="flex flex-col h-screen supports-[height:100dvh]:h-dvh">
+        <AiRouteProgress />
+        <DemoBanner v-if="isDemoBuild" class="shrink-0" />
+        <div class="relative flex-1 min-h-0">
+            <router-view />
+        </div>
+        <AiSnackbar />
+    </div>
 </template>
 
 <script lang="ts" setup>

@@ -18,24 +18,16 @@
     snapshot rather than a live platform. Unlike AiBanner (the site-wide
     announcement banner in MainLayout.vue), this carries no close control: it
     must stay on screen for the whole session, on every page, not just the
-    pages MainLayout wraps — mounted once in App.vue, wrapping <router-view>.
-    The layouts fill the viewport (h-screen), so the page goes in the slot
-    below the banner and is held to the remaining height; otherwise the banner
-    pushes the layout's bottom off screen with no way to scroll to it.
+    pages MainLayout wraps — mounted once in App.vue, above <router-view>.
 -->
 
 <template>
-    <div class="flex flex-col h-screen supports-[height:100dvh]:h-dvh">
-        <div
-            class="w-full py-1.5 px-3 text-sm font-medium text-center text-white bg-amber-700 shrink-0"
-            data-test="demo-banner"
-        >
-            Read-only demo of FLIP on example data — {{ PROJECT_COUNT }} federated projects,
-            snapshots captured {{ captureWindow }}.
-        </div>
-        <div class="relative flex-1 min-h-0 demo-page">
-            <slot />
-        </div>
+    <div
+        class="w-full py-1.5 px-3 text-sm font-medium text-center text-white bg-amber-700"
+        data-test="demo-banner"
+    >
+        Read-only demo of FLIP on example data — {{ PROJECT_COUNT }} federated projects,
+        snapshots captured {{ captureWindow }}.
     </div>
 </template>
 
@@ -58,10 +50,3 @@ const captureWindow = EARLIEST_CAPTURE_DATE === LATEST_CAPTURE_DATE
     : `between ${asDate(EARLIEST_CAPTURE_DATE)} and ${asDate(LATEST_CAPTURE_DATE)}`;
 </script>
 
-<style>
-/* The layout roots size themselves to the viewport; inside the demo frame they take the slot instead. */
-.demo-page > .h-screen,
-.demo-page > * > .h-screen {
-    height: 100% !important;
-}
-</style>

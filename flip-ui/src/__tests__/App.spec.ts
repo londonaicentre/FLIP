@@ -119,3 +119,13 @@ describe("App hub polling (FLIP#702)", () => {
         wrapper.unmount();
     });
 });
+
+describe("App root", () => {
+    beforeEach(() => setActivePinia(createPinia()));
+
+    it("sizes the page to the dynamic viewport (dvh) with a 100vh fallback for browsers without dvh", () => {
+        const root = mountApp().find(".h-screen");
+
+        expect(root.classes()).toEqual(expect.arrayContaining(["supports-[height:100dvh]:h-dvh", "flex", "flex-col"]));
+    });
+});

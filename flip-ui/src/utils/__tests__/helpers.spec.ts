@@ -88,6 +88,11 @@ describe("relativeCreatedLabel", () => {
         expect(relativeCreatedLabel(null)).toBe("—");
         expect(relativeCreatedLabel("not-a-date")).toBe("—");
     });
+
+    it("takes the verb and fallback the Models list uses", () => {
+        expect(relativeCreatedLabel("2026-06-01T09:00:00", "Updated", "")).toBe("Updated 3h ago");
+        expect(relativeCreatedLabel(undefined, "Updated", "")).toBe("");
+    });
 });
 
 describe("safeExternalUrl", () => {

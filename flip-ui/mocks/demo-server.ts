@@ -22,6 +22,8 @@
 
 import { createServer, Response, Server } from "miragejs";
 
+import { projectHasImaging } from "@/partials/projects/projectType";
+
 import filesList from "./demo/estate/files_list.json";
 import jobTypes from "./demo/estate/job_types.json";
 import siteDetails from "./demo/estate/site_details.json";
@@ -54,8 +56,28 @@ interface Tables {
     logsByModel: Record<string, unknown>;
     filesByModel: Record<string, unknown>;
     configByModel: Record<string, unknown>;
+    activityByModel: Record<string, Activity>;
     projectCount: (siteId: string) => number;
 }
+
+type Step = { creationTimestamp?: string; resultsUploadedAt?: string | null };
+type Log = { logDate: string };
+type Activity = { creationTimestamp?: string; lastActivity?: string; finishedAt: string | null };
+
+/**
+ * The /models activity fields for one model, read off its captured fixtures: the last log line is its
+ * latest activity and the step's upload time when it finished.
+ */
+const activityFor = (step: Step = {}, logs: Log[] = []): Activity => {
+    const latest = logs.reduce<string | undefined>(
+        (max, log) => (max && max >= log.logDate ? max : log.logDate), undefined);
+
+    return {
+        creationTimestamp: step.creationTimestamp,
+        lastActivity: latest ?? step.resultsUploadedAt ?? step.creationTimestamp,
+        finishedAt: step.resultsUploadedAt ?? null
+    };
+};
 
 /** Projects approving a site: a site's `project_count` describes the exhibit, not the platform. */
 export const projectCountFor = (siteId: string, projects: readonly DemoProject[]): number =>
@@ -74,6 +96,7 @@ const buildTables = (projects: readonly DemoProject[]): Tables => {
         logsByModel: {},
         filesByModel: {},
         configByModel: {},
+        activityByModel: {},
         projectCount: siteId => projectCountFor(siteId, projects)
     };
     for (const demo of projects) {
@@ -89,6 +112,7 @@ const buildTables = (projects: readonly DemoProject[]): Tables => {
             tables.logsByModel[modelId] = fixtures.logs;
             tables.filesByModel[modelId] = fixtures.files;
             tables.configByModel[modelId] = fixtures.config;
+            tables.activityByModel[modelId] = activityFor(fixtures.step as Step, fixtures.logs as Log[]);
         }
     }
 
@@ -129,6 +153,29 @@ const trustHealth = (): unknown => DEMO_SITES.map(site => ({
     online: true
 }));
 
+// The paginated envelope, holding everything on one page.
+const onePage = (data: unknown[]): Record<string, unknown> => ({
+    page: 1,
+    pageSize: 20,
+    totalPages: 1,
+    totalRecords: data.length,
+    data
+});
+
+// The Projects list's Type filter and search, as the hub applies them: an unknown type means every
+// type, an absent has_imaging means imaging, and search matches the name or description.
+const allProjects = (tables: Tables, query: Record<string, unknown>): unknown => {
+    const type = query.projectType;
+    const search = String(query.search ?? "").toLowerCase();
+    const data = tables.projects
+        .map(demo => demo.project as Project)
+        .filter(project => (type !== "imaging" && type !== "omop_only")
+            || projectHasImaging(project) === (type === "imaging"))
+        .filter(project => !search || `${project.name} ${project.description ?? ""}`.toLowerCase().includes(search));
+
+    return onePage(data);
+};
+
 /**
  * The estate-wide Models list, derived from the per-project model payloads
  * rather than captured separately — one register, one source of truth.
@@ -139,47 +186,8 @@ const trustHealth = (): unknown => DEMO_SITES.map(site => ({
  * exhibit (FLIP#794 review). The shape is IModelsPage (services/model-service.ts):
  * a paginated IModelSummary list plus the per-status totals the status filter sums.
  * Like the real route, `search` and `project` narrow both the list and the counts,
- * while `status` narrows only the list, so the tiles keep their numbers when one is selected.
+ * while `status` narrows only the list, so the status filter keeps its counts when one is selected.
  */
-// The Projects list's Type filter and search, as the hub applies them: an unknown type means every
-// type, an absent has_imaging means imaging, and search matches the name or description.
-const allProjects = (tables: Tables, query: Record<string, unknown>): unknown => {
-    const type = query.projectType;
-    const search = String(query.search ?? "").toLowerCase();
-    const data = tables.projects
-        .map(demo => demo.project as Project)
-        .filter(project => (type !== "imaging" && type !== "omop_only")
-            || (project.has_imaging ?? true) === (type === "imaging"))
-        .filter(project => !search || `${project.name} ${project.description ?? ""}`.toLowerCase().includes(search));
-
-    return {
-        page: 1,
-        pageSize: 20,
-        totalPages: 1,
-        totalRecords: data.length,
-        data
-    };
-};
-
-type Step = { creationTimestamp?: string; resultsUploadedAt?: string | null };
-type Log = { logDate: string };
-
-/**
- * The /models activity fields for one model, read off its captured fixtures: the last log line is its
- * latest activity and the step's upload time when it finished.
- */
-const activityFor = (tables: Tables, modelId: string): { lastActivity?: string } & Record<string, unknown> => {
-    const step = (tables.stepByModel[modelId] ?? {}) as Step;
-    const logs = (tables.logsByModel[modelId] ?? []) as Log[];
-    const latest = logs.map(log => log.logDate).sort().at(-1);
-
-    return {
-        creationTimestamp: step.creationTimestamp,
-        lastActivity: latest ?? step.resultsUploadedAt ?? step.creationTimestamp,
-        finishedAt: step.resultsUploadedAt ?? null
-    };
-};
-
 const allModels = (tables: Tables, query: Record<string, unknown>): unknown => {
     const projectId = query.project as string | undefined;
     const search = String(query.search ?? "").toLowerCase();
@@ -201,7 +209,7 @@ const allModels = (tables: Tables, query: Record<string, unknown>): unknown => {
                 ownerId: model.owner_id,
                 ownerName: DEMO_USER.name,
                 trusts: runTrusts,
-                ...activityFor(tables, String(model.id))
+                ...tables.activityByModel[String(model.id)]
             }));
         })
         .filter(model => !search
@@ -219,11 +227,7 @@ const allModels = (tables: Tables, query: Record<string, unknown>): unknown => {
     const listed = statuses.length ? data.filter(model => statuses.includes(String(model.status))) : data;
 
     return {
-        page: 1,
-        pageSize: 20,
-        totalPages: 1,
-        totalRecords: listed.length,
-        data: listed,
+        ...onePage(listed),
         statusCounts
     };
 };

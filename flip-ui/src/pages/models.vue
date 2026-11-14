@@ -79,12 +79,12 @@
                         :aria-pressed="statusFilter === group.key"
                         class="flex-1 min-w-[120px] rounded-xl border px-4 py-3 text-left transition"
                         :class="statusFilter === group.key
-                            ? [TILE_SELECTED_CLASS[group.key], 'ring-[3px]']
+                            ? [MODEL_STATUS_TONE_CLASSES[group.tone].tile, 'ring-[3px]']
                             : TILE_IDLE_CLASS"
                         @click="selectStatus(statusFilter === group.key ? 'all' : group.key)"
                     >
                         <div class="flex items-center gap-2">
-                            <span class="inline-block w-2 h-2 rounded-full" :class="statusDotClass(group.statuses[0])" />
+                            <span class="inline-block w-2 h-2 rounded-full" :class="MODEL_STATUS_TONE_CLASSES[group.tone].dot" />
                             <span class="text-xs text-gray-500 dark:text-gray-300">
                                 {{ group.label }}
                             </span>
@@ -213,11 +213,11 @@
                             :data-test="`models-list-item-${index}`"
                             class="flex items-stretch bg-white border-t border-gray-100 transition-colors first:border-t-0 hover:bg-gray-50 dark:bg-dark-canvas dark:border-dark-border dark:hover:bg-dark-surface"
                         >
-                            <!-- Status rail -->
+                            <!-- Status rail: the pill's dot colour, so the two cannot disagree -->
                             <div
                                 data-test="model-status-rail"
                                 class="w-[3px] shrink-0"
-                                :class="railClass(model.status)"
+                                :class="statusDotClass(model.status)"
                             />
                             <div :class="GRID_CLASS" class="hidden sm:grid flex-1 items-center gap-4 px-6 py-4">
                                 <!-- Model -->
@@ -412,14 +412,15 @@ import { getAllModels,
     IModelProjectOption,
     IModelSummary,
     MODEL_STATUS_GROUPS,
+    MODEL_STATUS_TONE_CLASSES,
     ModelStatus,
     modelStatusDotClass as statusDotClass,
     modelStatusGroup,
     ModelStatusGroupKey,
-    modelStatusLabel,
-    modelStatusPillClass as statusPillClass } from "@/services/model-service";
+    modelStatusPillClass as statusPillClass,
+    modelStatusPillLabel as statusLabel } from "@/services/model-service";
 import { useModalsStore } from "@/store/modals";
-import { apiTimestampMs, relativeAgeLabel } from "@/utils/helpers";
+import { relativeCreatedLabel } from "@/utils/helpers";
 import { segmentClass, SEGMENTED_GROUP_CLASS } from "@/utils/segmented";
 import { Snackbar } from "@/utils/snackbar";
 import { TRUST_CHIP_CLASS, TRUST_CHIP_PLAIN_PADDING, trustChipLabel } from "@/utils/trust-chip";
@@ -640,32 +641,14 @@ const statusOptions = computed<{ key: StatusFilter; label: string; count: number
 
 const TILE_IDLE_CLASS = "bg-white border-gray-200 hover:border-gray-300 "
     + "dark:bg-dark-surface dark:border-dark-border dark:hover:border-dark-border-strong";
-// A selected tile is filled as well as ringed, so it never reads as a focus ring. Whole literal
-// Tailwind classes so the JIT compiler emits them.
-const TILE_SELECTED_CLASS: Record<ModelStatusGroupKey, string> = {
-    preparing: "border-amber-500 ring-amber-500/40 bg-amber-50 dark:bg-amber-900/30",
-    running: "border-fuchsia-500 ring-fuchsia-500/40 bg-fuchsia-50 dark:bg-fuchsia-900/30",
-    queued: "border-gray-500 ring-gray-400/40 bg-gray-100 dark:bg-dark-raised",
-    attention: "border-red-500 ring-red-500/40 bg-red-50 dark:bg-red-900/30",
-    stopped: "border-gray-500 ring-gray-400/40 bg-gray-100 dark:bg-dark-raised",
-    completed: "border-emerald-500 ring-emerald-500/40 bg-emerald-50 dark:bg-emerald-900/30"
-};
 
-const EMPTY_COPY: Record<ModelStatusGroupKey, string> = {
-    preparing: "No models being prepared.",
-    running: "No running models.",
-    queued: "No queued models.",
-    attention: "No models need attention.",
-    stopped: "No stopped models.",
-    completed: "No completed models."
-};
 const emptyMessage = computed<string>(() => {
-    if (activeGroup.value) return EMPTY_COPY[activeGroup.value.key];
+    if (activeGroup.value) return activeGroup.value.empty;
 
     return search.value ? "No models match your search." : "No models yet.";
 });
 
-type SortKey = "activity" | "name" | "project" | "trusts" | "status";
+type SortKey = "name" | "project" | "trusts" | "status";
 type SortDir = "asc" | "desc";
 
 interface IColumn {
@@ -702,11 +685,9 @@ const columns: IColumn[] = [
     }
 ];
 
-// Default: latest activity first, the hub's own order (no column header of its own). An older hub
-// sends no lastActivity, so creation time stands in; with neither, every row ties and the stable
-// sort keeps the backend order.
-const sortKey = ref<SortKey>("activity");
-const sortDir = ref<SortDir>("desc");
+// No sort until a header is clicked: the hub already sends the rows latest activity first.
+const sortKey = ref<SortKey | null>(null);
+const sortDir = ref<SortDir>("asc");
 
 // First click on a column sorts ascending; subsequent clicks toggle direction.
 const toggleSort = (key: SortKey): void => {
@@ -719,26 +700,14 @@ const toggleSort = (key: SortKey): void => {
     }
 };
 
-// Lifecycle rank so a Status sort groups models by stage in a sensible order.
-const STATUS_RANK: Record<ModelStatus, number> = {
-    PENDING: 0,
-    INITIATED: 1,
-    PREPARED: 2,
-    RUNNING: 3,
-    RESULTS_UPLOADED: 4,
-    RESULTS_UPLOAD_FAILED: 5,
-    ERROR: 6,
-    STOPPED: 7
+// A Status sort groups models in filter order; an unknown status sorts last.
+const statusRank = (s: ModelStatus | undefined): number => {
+    const group = modelStatusGroup(s);
+
+    return group ? MODEL_STATUS_GROUPS.indexOf(group) : MODEL_STATUS_GROUPS.length;
 };
-const statusRank = (s: ModelStatus | undefined): number => (s ? STATUS_RANK[s] ?? 99 : 99);
 
-const activityMs = (model: IModelSummary): number =>
-    apiTimestampMs(model.lastActivity ?? model.creationTimestamp) ?? 0;
-
-// "activity" deliberately has no tie-break: equal (or absent) timestamps keep
-// the backend order under the stable sort.
 const SORT_COMPARATORS: Record<SortKey, (a: IModelSummary, b: IModelSummary) => number> = {
-    activity: (a, b) => activityMs(a) - activityMs(b),
     name: (a, b) => a.name.localeCompare(b.name),
     project: (a, b) => a.projectName.localeCompare(b.projectName) || a.name.localeCompare(b.name),
     trusts: (a, b) => a.trusts.length - b.trusts.length || a.name.localeCompare(b.name),
@@ -747,16 +716,11 @@ const SORT_COMPARATORS: Record<SortKey, (a: IModelSummary, b: IModelSummary) => 
 
 // Client-side sort of the current page (mirrors the Connection Status trusts table).
 const sortedModels = computed<IModelSummary[]>(() => {
+    if (!sortKey.value) return models.value;
     const cmp = SORT_COMPARATORS[sortKey.value];
 
     return [...models.value].sort(sortDir.value === "asc" ? cmp : (a, b) => cmp(b, a));
 });
-
-// The row says the same word as the filter it is counted under.
-const statusLabel = (status: ModelStatus): string => modelStatusGroup(status)?.label ?? modelStatusLabel(status);
-
-// The left rail is the pill's dot colour, so the two cannot disagree.
-const railClass = statusDotClass;
 
 debouncedWatch(
     search,
@@ -774,21 +738,15 @@ const updateModelList = (pageNumberInt: number): void => {
     getSearchQuery();
 };
 
-const since = (verb: string, timestamp?: string | null): string => {
-    const ms = apiTimestampMs(timestamp);
-
-    return ms === null ? "" : `${verb} ${relativeAgeLabel((Date.now() - ms) / 1000)}`;
-};
-
 // What is happening to the model now; empty when the hub sent nothing to say it with.
 const activityLabel = (model: IModelSummary): string => {
     if (model.status === "INITIATED" && model.queuePosition != null && model.queuePosition >= 1) {
         return `Position ${model.queuePosition} in queue`;
     }
     const finished = model.finishedAt ?? model.lastActivity;
-    if (model.status === "RESULTS_UPLOADED" && finished) return since("Finished", finished);
+    if (model.status === "RESULTS_UPLOADED" && finished) return relativeCreatedLabel(finished, "Finished", "");
 
-    return since("Updated", model.lastActivity ?? model.creationTimestamp);
+    return relativeCreatedLabel(model.lastActivity ?? model.creationTimestamp, "Updated", "");
 };
 
 // Owner · activity, leaving out whichever is unknown so no placeholder dash ever shows.

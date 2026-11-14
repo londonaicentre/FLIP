@@ -13,10 +13,10 @@
 <template>
     <!-- Project type (FLIP#1071) as icons that add up the way the data does: every project has
          OMOP records (register book, always first); imaging projects add an x-ray after it. The
-         name is kept for screen readers and as a hover tooltip. Informational only. -->
+         name is kept for screen readers and as a hover tooltip. The icons take the caller's text
+         colour, so the Type filter can mute them. Informational only. -->
     <span
         class="inline-flex items-center gap-1 shrink-0"
-        :class="ICON_CLASS"
         :title="label"
         :data-test="`project-type-chip-${projectTypeId(hasImaging)}`"
     >
@@ -34,7 +34,7 @@ import { IMAGING_LABEL, OMOP_ONLY_LABEL, projectTypeId } from "@/partials/projec
 interface IProjectTypeChipProps {
     // Resolved by the caller (see `projectHasImaging`), so the "absent means imaging" rule lives in one place.
     hasImaging: boolean;
-    size?: "sm" | "md" | "lg";
+    size?: "sm" | "md" | "lg" | "xl";
 }
 
 const props = withDefaults(defineProps<IProjectTypeChipProps>(), { size: "md" });
@@ -44,9 +44,7 @@ const label = computed(() => (props.hasImaging ? IMAGING_LABEL : OMOP_ONLY_LABEL
 const SIZE_CLASS = {
     sm: "w-[18px] h-[18px]",
     md: "w-5 h-5",
-    lg: "w-8 h-8"
+    lg: "w-6 h-6",
+    xl: "w-8 h-8"
 } as const;
-
-// One ink for both types: the icons tell them apart, colour does not.
-const ICON_CLASS = "text-gray-800 dark:text-gray-100";
 </script>

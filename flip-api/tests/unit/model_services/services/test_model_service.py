@@ -21,7 +21,6 @@ from flip_api.domain.interfaces.model import IModelDetails
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.domain.schemas.types import FLLogEvent
 from flip_api.model_services.services.model_service import (
-    _finished_at_by_model,
     _run_trusts_by_model,
     add_log,
     delete_model,
@@ -708,19 +707,3 @@ def test_queued_positions_by_model_empty_queue():
     session.exec.return_value.all.return_value = []
 
     assert queued_positions_by_model(session) == {}
-
-
-def test_finished_at_by_model_keeps_the_latest_jobs_completion():
-    """Rows arrive oldest job first, so a re-initiated model reports its newest job (still running: None)."""
-    session = MagicMock()
-    model_id = uuid4()
-    session.exec.return_value.all.return_value = [(model_id, datetime(2026, 1, 2)), (model_id, None)]
-
-    assert _finished_at_by_model([model_id], session) == {model_id: None}
-
-
-def test_finished_at_by_model_empty_input_short_circuits():
-    session = MagicMock()
-
-    assert _finished_at_by_model([], session) == {}
-    session.exec.assert_not_called()

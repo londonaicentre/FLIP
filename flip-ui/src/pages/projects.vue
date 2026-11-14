@@ -91,13 +91,9 @@
                             :data-test="`type-filter-${opt.id}`"
                             @click="selectType(opt.value)"
                         >
-                            <icon-healthicons-register-book-outline
-                                v-if="opt.id !== 'all'"
-                                class="w-6 h-6 shrink-0"
-                                aria-hidden="true"
-                            />
-                            <icon-healthicons-xray-outline v-if="opt.id === 'imaging'" class="w-6 h-6 shrink-0" aria-hidden="true" />
-                            <span :class="opt.id === 'all' ? '' : 'sr-only'">{{ opt.label }}</span>
+                            <!-- The chip carries the type's name for screen readers. -->
+                            <ProjectTypeChip v-if="opt.id !== 'all'" :has-imaging="opt.id === 'imaging'" size="lg" />
+                            <span v-else>{{ opt.label }}</span>
                         </button>
                     </div>
 
@@ -221,12 +217,12 @@
                                         {{ project.name }}
                                     </div>
                                     <div class="flex items-center gap-2 mt-0.5 min-w-0 text-note text-gray-500 dark:text-gray-300">
-                                        <ProjectTypeChip :has-imaging="projectHasImaging(project)" size="sm" class="md:hidden" />
+                                        <ProjectTypeChip :has-imaging="projectHasImaging(project)" size="sm" :class="[INK, 'md:hidden']" />
                                         <span class="truncate">{{ ownerLabel(project) }} · {{ relativeUpdated(project) }}</span>
                                     </div>
                                 </div>
                                 <div class="hidden md:flex justify-start">
-                                    <ProjectTypeChip :has-imaging="projectHasImaging(project)" size="lg" />
+                                    <ProjectTypeChip :has-imaging="projectHasImaging(project)" size="xl" :class="INK" />
                                 </div>
                                 <!-- Below md the row is two columns: this drops under the name and
                                      its meta line, while the status block spans both rows to its
@@ -292,7 +288,7 @@
                                 >
                                     {{ statusLabel(project.status) }}
                                 </span>
-                                <ProjectTypeChip :has-imaging="projectHasImaging(project)" />
+                                <ProjectTypeChip :has-imaging="projectHasImaging(project)" :class="INK" />
                             </div>
                         </div>
 
@@ -591,4 +587,7 @@ const userCountLabel = (project: IProject): string => {
 // proxy for the design's "updated 2h ago". Real updated-at tracking is a
 // separate backend change. Formatting is shared with the Models list.
 const relativeUpdated = (project: IProject): string => relativeCreatedLabel(project.creationtimestamp);
+
+// One ink for both project types on the list: the icons tell them apart, colour does not.
+const INK = "text-gray-800 dark:text-gray-100";
 </script>
