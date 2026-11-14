@@ -459,14 +459,6 @@ class ExperimentPlanner:
 
         self.plans = None
 
-        # if isfile(join(self.raw_dataset_folder, 'splits_final.json')):
-        #     _maybe_copy_splits_file(join(self.raw_dataset_folder, 'splits_final.json'),
-        #                             join(preprocessed_folder, 'splits_final.json'))
-
-    # def determine_reader_writer(self):
-    #     example_image = self.dataset[self.dataset.keys().__iter__().__next__()]['images'][0]
-    #     return determine_reader_writer_from_dataset_json(self.dataset_json, example_image)
-
     @staticmethod
     def static_estimate_vram_usage(
         patch_size: tuple[int, ...],
@@ -481,7 +473,6 @@ class ExperimentPlanner:
         """
         a = torch.get_num_threads()
         torch.set_num_threads(get_allowed_n_proc_DA())
-        # print(f'instantiating network, patch size {patch_size}, pool op: {arch_kwargs["strides"]}')
         net = get_network_from_plans(
             arch_class_name,
             arch_kwargs,
@@ -599,11 +590,7 @@ class ExperimentPlanner:
             Tuple[List[str], List[bool]]: The name of the normalization scheme for each channel,
                 and whether the nonzero mask should be used for normalization for each channel.
         """
-        # if 'channel_names' not in self.dataset_json.keys():
-        #     print('WARNING: "modalities" should be renamed to "channel_names" in dataset.json. This will be '
-        #           'enforced soon!')
-        # modalities = self.dataset_json['channel_names'] if 'channel_names' in self.dataset_json.keys() else \
-        #     self.dataset_json['modality']
+        # Upstream nnU-Net reads the channels from dataset.json's channel_names; this tutorial plans one T2 channel.
         modalities = {0: "T2"}
         normalization_schemes = [get_normalization_scheme(m) for m in modalities.values()]
         if self.dataset_fingerprint["median_relative_size_after_cropping"] < (3 / 4.0):
@@ -704,14 +691,11 @@ class ExperimentPlanner:
             return str(patch_size) + "_" + str(strides)
 
         assert all(i > 0 for i in spacing), f"Spacing must be > 0! Spacing: {spacing}"
-        # num_input_channels = len(self.dataset_json['channel_names'].keys()
-        #                          if 'channel_names' in self.dataset_json.keys()
-        #                          else self.dataset_json['modality'].keys())
+        # Upstream counts input channels from dataset.json; here the caller passes num_channels.
         num_input_channels = self.num_channels
         max_num_features = self.unet_max_features_2d if len(spacing) == 2 else self.unet_max_features_3d
         unet_conv_op = convert_dim_to_conv_op(len(spacing))
 
-        # print(spacing, median_shape, approximate_n_voxels_dataset)
         # find an initial patch size
         # we first use the spacing to get an aspect ratio
         tmp = 1 / np.array(spacing)
@@ -745,41 +729,22 @@ class ExperimentPlanner:
             patch_size,
             shape_must_be_divisible_by,
         ) = get_pool_and_conv_props(spacing, initial_patch_size, self.unet_featuremap_min_edge_length, 999999)
-        num_stages = len(pool_op_kernel_sizes)
-
         norm = get_matching_instancenorm(unet_conv_op)
+        # ResidualEncoderUNet and PlainConvUNet name their encoder block count differently.
+        blocks_key = "n_blocks_per_stage" if self.resnet else "n_conv_per_stage"
 
-        if self.resnet:
-            architecture_kwargs = {
+        def _architecture_kwargs(conv_kernel_sizes: list, strides: list) -> dict[str, Any]:
+            """The network class and its kwargs for this topology."""
+            num_stages = len(strides)
+            return {
                 "network_class_name": self.unet_class.__module__ + "." + self.unet_class.__name__,
                 "arch_kwargs": {
                     "n_stages": num_stages,
                     "features_per_stage": _features_per_stage(num_stages, max_num_features),
                     "conv_op": unet_conv_op.__module__ + "." + unet_conv_op.__name__,
                     "kernel_sizes": conv_kernel_sizes,
-                    "strides": pool_op_kernel_sizes,
-                    "n_blocks_per_stage": self.unet_blocks_per_stage_encoder[:num_stages],
-                    "n_conv_per_stage_decoder": self.unet_blocks_per_stage_decoder[: num_stages - 1],
-                    "conv_bias": True,
-                    "norm_op": norm.__module__ + "." + norm.__name__,
-                    "norm_op_kwargs": {"eps": 1e-5, "affine": True},
-                    "dropout_op": None,
-                    "dropout_op_kwargs": None,
-                    "nonlin": "torch.nn.LeakyReLU",
-                    "nonlin_kwargs": {"inplace": True},
-                },
-                "_kw_requires_import": ("conv_op", "norm_op", "dropout_op", "nonlin"),
-            }
-        else:
-            architecture_kwargs = {
-                "network_class_name": self.unet_class.__module__ + "." + self.unet_class.__name__,
-                "arch_kwargs": {
-                    "n_stages": num_stages,
-                    "features_per_stage": _features_per_stage(num_stages, max_num_features),
-                    "conv_op": unet_conv_op.__module__ + "." + unet_conv_op.__name__,
-                    "kernel_sizes": conv_kernel_sizes,
-                    "strides": pool_op_kernel_sizes,
-                    "n_conv_per_stage": self.unet_blocks_per_stage_encoder[:num_stages],
+                    "strides": strides,
+                    blocks_key: self.unet_blocks_per_stage_encoder[:num_stages],
                     "n_conv_per_stage_decoder": self.unet_blocks_per_stage_decoder[: num_stages - 1],
                     "conv_bias": True,
                     "norm_op": norm.__module__ + "." + norm.__name__,
@@ -792,19 +757,23 @@ class ExperimentPlanner:
                 "_kw_requires_import": ("conv_op", "norm_op", "dropout_op", "nonlin"),
             }
 
+        def _estimate_vram(patch_size: Any, strides: list, arch: dict[str, Any]) -> float:
+            """Return the cached VRAM estimate for this (patch_size, strides), computing it on a miss."""
+            key = _keygen(patch_size, strides)
+            if key not in _cache:
+                _cache[key] = self.static_estimate_vram_usage(
+                    patch_size,
+                    num_input_channels,
+                    self.num_output_channels,
+                    arch["network_class_name"],
+                    arch["arch_kwargs"],
+                    arch["_kw_requires_import"],
+                )
+            return _cache[key]
+
+        architecture_kwargs = _architecture_kwargs(conv_kernel_sizes, pool_op_kernel_sizes)
         # now estimate vram consumption
-        if _keygen(patch_size, pool_op_kernel_sizes) in _cache.keys():
-            estimate = _cache[_keygen(patch_size, pool_op_kernel_sizes)]
-        else:
-            estimate = self.static_estimate_vram_usage(
-                patch_size,
-                num_input_channels,
-                self.num_output_channels,
-                architecture_kwargs["network_class_name"],
-                architecture_kwargs["arch_kwargs"],
-                architecture_kwargs["_kw_requires_import"],
-            )
-            _cache[_keygen(patch_size, pool_op_kernel_sizes)] = estimate
+        estimate = _estimate_vram(patch_size, pool_op_kernel_sizes, architecture_kwargs)
 
         # how large is the reference for us here (batch size etc)?
         # adapt for our vram target
@@ -842,41 +811,8 @@ class ExperimentPlanner:
                 shape_must_be_divisible_by,
             ) = get_pool_and_conv_props(spacing, patch_size, self.unet_featuremap_min_edge_length, 999999)
 
-            num_stages = len(pool_op_kernel_sizes)
-            if self.resnet:
-                architecture_kwargs["arch_kwargs"].update(
-                    {
-                        "n_stages": num_stages,
-                        "kernel_sizes": conv_kernel_sizes,
-                        "strides": pool_op_kernel_sizes,
-                        "features_per_stage": _features_per_stage(num_stages, max_num_features),
-                        "n_blocks_per_stage": self.unet_blocks_per_stage_encoder[:num_stages],
-                        "n_conv_per_stage_decoder": self.unet_blocks_per_stage_decoder[: num_stages - 1],
-                    }
-                )
-            else:
-                architecture_kwargs["arch_kwargs"].update(
-                    {
-                        "n_stages": num_stages,
-                        "kernel_sizes": conv_kernel_sizes,
-                        "strides": pool_op_kernel_sizes,
-                        "features_per_stage": _features_per_stage(num_stages, max_num_features),
-                        "n_conv_per_stage": self.unet_blocks_per_stage_encoder[:num_stages],
-                        "n_conv_per_stage_decoder": self.unet_blocks_per_stage_decoder[: num_stages - 1],
-                    }
-                )
-            if _keygen(patch_size, pool_op_kernel_sizes) in _cache.keys():
-                estimate = _cache[_keygen(patch_size, pool_op_kernel_sizes)]
-            else:
-                estimate = self.static_estimate_vram_usage(
-                    patch_size,
-                    num_input_channels,
-                    self.num_output_channels,
-                    architecture_kwargs["network_class_name"],
-                    architecture_kwargs["arch_kwargs"],
-                    architecture_kwargs["_kw_requires_import"],
-                )
-                _cache[_keygen(patch_size, pool_op_kernel_sizes)] = estimate
+            architecture_kwargs = _architecture_kwargs(conv_kernel_sizes, pool_op_kernel_sizes)
+            estimate = _estimate_vram(patch_size, pool_op_kernel_sizes, architecture_kwargs)
 
         # alright now let's determine the batch size. This will give self.unet_min_batch_size if the while loop was
         # executed. If not, additional vram headroom is used to increase batch size
@@ -953,9 +889,7 @@ class ExperimentPlanner:
         new_median_shape = np.median(new_shapes, 0)
         new_median_shape_transposed = new_median_shape[transpose_forward]
 
-        # approximate_n_voxels_dataset = float(np.prod(new_median_shape_transposed, dtype=np.float64) *
-        #                                      self.dataset_json['numTraining'])
-
+        # Upstream multiplies by dataset.json's numTraining; here the case count is the dataloader's length.
         approximate_n_voxels_dataset = float(
             np.prod(new_median_shape_transposed, dtype=np.float64) * len(self.dataloader)
         )
@@ -1097,15 +1031,11 @@ class ExperimentPlanner:
         # we don't want to overwrite potentially existing custom configurations every time this is executed. So let's
         # read the plans file if it already exists and keep any non-default configurations
         if isfile(plans_file):
-            old_plans = load_json(plans_file)
-            old_configurations = old_plans["configurations"]
-            for c in plans["configurations"].keys():
-                if c in old_configurations.keys():
-                    del old_configurations[c]
-            plans["configurations"].update(old_configurations)
+            for c, cfg in load_json(plans_file)["configurations"].items():
+                plans["configurations"].setdefault(c, cfg)
 
         save_json(plans, plans_file, sort_keys=False)
-        print(f"Plans were saved to {join(self.output_folder, self.plans_identifier + '.json')}")
+        print(f"Plans were saved to {plans_file}")
 
     def generate_data_identifier(self, configuration_name: str) -> str:
         """
@@ -1114,14 +1044,6 @@ class ExperimentPlanner:
         config but also the plans it originates from
         """
         return self.plans_identifier + "_" + configuration_name
-
-    def load_plans(self, fname: str) -> None:
-        """Load a plans json file into self.plans.
-
-        Args:
-            fname (str): Path to the plans json file to load.
-        """
-        self.plans = load_json(fname)
 
 
 def patch_collate_fingerprint(

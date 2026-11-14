@@ -69,16 +69,15 @@ local_lint:
 	$(lint_command)
 local_mypy:
 	$(mypy_command)
+# The unit suite only: the integration suite needs Docker for Testcontainers.
 local_test:
-	$(lint_command) && $(mypy_command) && $(test_coverage_html_command) --skip-client --skip-db
+	$(lint_command) && $(mypy_command) && $(test_coverage_html_command_unit)
 unit_test:
-	$(lint_command) && $(mypy_command) && $(test_coverage_html_command_unit) --skip-client
+	$(lint_command) && $(mypy_command) && $(test_coverage_html_command_unit)
 # Integration tests boot a throwaway Postgres via Testcontainers (see
-# tests/integration/conftest.py). --skip-client stays so the AWS-Cognito tests
-# (out of scope for B1, see tests/integration/test_user_registration_real_api.py)
-# don't try to call boto3.
+# tests/integration/conftest.py).
 integration_test:
-	$(lint_command) && $(mypy_command) && $(test_coverage_html_command_integration) --skip-client
+	$(lint_command) && $(mypy_command) && $(test_coverage_html_command_integration)
 build:
 	$(docker_command) build $(service_name)
 restart: down up
@@ -146,18 +145,10 @@ demo_video:
 # waits for results, downloads them. Intended for PR sanity checks — replaces
 # the manual UI clickthrough.
 #
-# Defaults pick the chest-xray tutorial that matches FL_BACKEND so the same
-# `make e2e_smoke` invocation works against either stack. Both tutorials are
-# now in-tree under fl-tutorials/<backend>/ (FLARE at fl-tutorials/nvflare/,
-# Flower at fl-tutorials/flower/). Both reuse the same query.sql
-# against the trust mock OMOP data. Default backend matches
-# deploy/fl_backend.mk (nvflare). Override either path explicitly:
+# Defaults pick the chest-xray tutorial matching FL_BACKEND (default nvflare, as deploy/fl_backend.mk);
+# the query follows HUB (see XRAY_QUERY_NAME). Override either explicitly:
 #     make e2e_smoke MODEL_FILES_DIR=/path/to/app_files
 #     make e2e_smoke QUERY_FILE=/path/to/your_cohort.sql
-# The x-ray query is picked automatically from HUB (see XRAY_QUERY_NAME below): a test trust
-# deployed without the OMOP vocabulary (the Helm chart's NO_VOCAB_LOAD=1, FLIP#1390) gets the
-# vocabulary-free copy, because there query.sql's concept joins return nothing and staging refuses
-# the project. Pass QUERY_FILE explicitly to override.
 # Anything else passed via EXTRA_ARGS goes straight to the script:
 #     make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5"
 #
@@ -168,9 +159,10 @@ demo_video:
 # TARGET_ARGS is the same idea for any other flag a variant target must pin (e.g. --no-imaging).
 FL_BACKEND ?= nvflare
 # A development stack (HUB unset) smokes the vocabulary-free copy of the cohort query: its trusts
-# carry only the DICOM vocabulary unless the licensed core vocabulary was loaded by hand, and
-# query.sql looks every concept up in omop.concept. Where the vocabulary is loaded the two return
-# the same rows. A deployed hub (HUB set) smokes query.sql.
+# carry only the DICOM vocabulary unless the licensed core vocabulary was loaded by hand, as does a
+# Helm trust deployed with NO_VOCAB_LOAD=1 (FLIP#1390), and query.sql looks every concept up in
+# omop.concept, so its joins return nothing and staging refuses the project. Where the vocabulary is
+# loaded the two return the same rows. A deployed hub (HUB set) smokes query.sql.
 XRAY_QUERY_NAME := $(if $(strip $(HUB)),query.sql,query_novocab.sql)
 ifeq ($(FL_BACKEND),flower)
 MODEL_FILES_DIR ?= ../fl-tutorials/flower/image_classification/xray_classification/app
@@ -182,6 +174,13 @@ endif
 e2e_smoke:
 	@echo "🚀 Running e2e smoke (model files: $(MODEL_FILES_DIR), query: $(QUERY_FILE))..."
 	env DB_HOST=localhost uv run python -m tests.e2e_smoke --model-files-dir "$(MODEL_FILES_DIR)" --query-file "$(QUERY_FILE)" $(ENRICHMENT_ARGS) $(TARGET_ARGS) $(EXTRA_ARGS)
+
+# Capture one project's API responses as fixtures for the public demo (FLIP#1746):
+#   make capture_demo_project EXTRA_ARGS="--project-id <uuid> --slug ehr-risk"
+# Writes ../flip-ui/mocks/demo/projects/<slug>/data/*.json and prints the trusts to map in its register.
+capture_demo_project:
+	@echo "📸 Capturing demo fixtures ($(EXTRA_ARGS))..."
+	env DB_HOST=localhost uv run python -m tests.capture_demo_project $(EXTRA_ARGS)
 
 # Spleen-segmentation variant of e2e_smoke: same recipe, with the spleen tutorial
 # defaults plus a data-enrichment step that uploads segmentation labels into every
@@ -209,25 +208,31 @@ e2e_smoke:
 # resolve there.
 SPLEEN_ENRICHMENT_CWD := ../fl-tutorials/datasets/spleen
 SPLEEN_XNAT_URLS ?= http://127.0.0.1:8105 http://127.0.0.1:8107
-# The MSD build by default even though the uploaded app is Flower's: enrichment is
+# The MSD build by default whichever backend's app is uploaded: enrichment is
 # backend-agnostic, and only the MSD download can reach all 41 mapped cases.
 SPLEEN_LABELS_DIR ?= $(abspath ../fl-tutorials/data/spleen/images)
 SPLEEN_ENRICHMENT_CMD := uv run --no-project --with $(abspath ../flip-utils) python upload_spleen_labels_to_xnat.py --flip-project-id $$FLIP_PROJECT_ID --labels-dir $(SPLEEN_LABELS_DIR) $(foreach url,$(SPLEEN_XNAT_URLS),--xnat-url $(url))
 SPLEEN_ENRICHMENT_ARGS := --data-enrichment-cwd $(SPLEEN_ENRICHMENT_CWD) --data-enrichment-cmd '$(SPLEEN_ENRICHMENT_CMD)'
 
-e2e_smoke_spleen: MODEL_FILES_DIR := ../fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/app
-e2e_smoke_spleen: QUERY_FILE := ../fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/query.sql
+# The tutorial matching FL_BACKEND, as for e2e_smoke_ehr. Both backends share one cohort query.
+SPLEEN_FLOWER_DIR := ../fl-tutorials/flower/image_segmentation/3d_spleen_segmentation
+SPLEEN_NVFLARE_DIR := ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation
+SPLEEN_EVAL_FLOWER_DIR := ../fl-tutorials/flower/image_evaluation/3d_spleen_segmentation_evaluation
+SPLEEN_EVAL_NVFLARE_DIR := ../fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation
+SPLEEN_QUERY_FILE := $(if $(filter flower,$(FL_BACKEND)),$(SPLEEN_FLOWER_DIR),$(SPLEEN_NVFLARE_DIR))/query.sql
+
+e2e_smoke_spleen: MODEL_FILES_DIR := $(if $(filter flower,$(FL_BACKEND)),$(SPLEEN_FLOWER_DIR)/app,$(SPLEEN_NVFLARE_DIR)/app_files)
+e2e_smoke_spleen: QUERY_FILE := $(SPLEEN_QUERY_FILE)
 e2e_smoke_spleen: ENRICHMENT_ARGS := $(SPLEEN_ENRICHMENT_ARGS)
 e2e_smoke_spleen: e2e_smoke
 
 # Spleen-segmentation evaluation variant of e2e_smoke_spleen: same cohort query
 # and same data-enrichment step, but uploads the evaluation tutorial's app dir
-# instead of the training one. That dir bundles a pre-trained model.pt
-# alongside the code -- the e2e smoke uploads it as part of the model files;
-# the fl-api writes it into /app/src/<model_id>/app/ on the shared FL_JOBS_DIR
-# mount; the evaluation ServerApp reads it via flip-job-dir at submit time.
-e2e_smoke_spleen_evaluation: MODEL_FILES_DIR := ../fl-tutorials/flower/image_evaluation/3d_spleen_segmentation_evaluation/app
-e2e_smoke_spleen_evaluation: QUERY_FILE := ../fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/query.sql
+# instead of the training one. That dir must hold the pre-trained model.pt
+# (the tutorial's `make download-checkpoints`) -- the e2e smoke uploads it as
+# part of the model files, and the evaluation server loads it at submit time.
+e2e_smoke_spleen_evaluation: MODEL_FILES_DIR := $(if $(filter flower,$(FL_BACKEND)),$(SPLEEN_EVAL_FLOWER_DIR)/app,$(SPLEEN_EVAL_NVFLARE_DIR)/app_files)
+e2e_smoke_spleen_evaluation: QUERY_FILE := $(SPLEEN_QUERY_FILE)
 e2e_smoke_spleen_evaluation: ENRICHMENT_ARGS := $(SPLEEN_ENRICHMENT_ARGS)
 e2e_smoke_spleen_evaluation: e2e_smoke
 
@@ -242,6 +247,17 @@ e2e_smoke_ehr: MODEL_FILES_DIR := $(if $(filter flower,$(FL_BACKEND)),$(EHR_FLOW
 e2e_smoke_ehr: QUERY_FILE := $(if $(filter flower,$(FL_BACKEND)),$(EHR_FLOWER_DIR)/query.sql,$(EHR_NVFLARE_DIR)/query.sql)
 e2e_smoke_ehr: TARGET_ARGS := --no-imaging
 e2e_smoke_ehr: e2e_smoke
+
+# Biomarker causal-discovery variant: the other tabular-only cohort. Its data is a licence
+# holder's own ADNI cohort, loaded into the LOCAL dev trusts first with
+# `make -C trust load-adni-cohort TRUST_INDEX=<1|2> OMOP_DB_PORT=<5434|5436>` (after
+# `make -C fl-tutorials convert-adni-cohort`). The FL images carry causal-learn (flip-utils' `full` extra).
+CAUSAL_FLOWER_DIR := ../fl-tutorials/flower/tabular_causal_discovery/biomarker_causal_discovery
+CAUSAL_NVFLARE_DIR := ../fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery
+e2e_smoke_causal: MODEL_FILES_DIR := $(if $(filter flower,$(FL_BACKEND)),$(CAUSAL_FLOWER_DIR)/app,$(CAUSAL_NVFLARE_DIR)/app_files)
+e2e_smoke_causal: QUERY_FILE := $(if $(filter flower,$(FL_BACKEND)),$(CAUSAL_FLOWER_DIR)/query.sql,$(CAUSAL_NVFLARE_DIR)/query.sql)
+e2e_smoke_causal: TARGET_ARGS := --no-imaging
+e2e_smoke_causal: e2e_smoke
 
 # Prostate variant: the PI-CAI cohort (prostate_project, seeded into the trusts by
 # `make -C trust seed-trusts PROJECTS=prostate_project`), with both picai_labels masks uploaded into
@@ -268,7 +284,7 @@ e2e_smoke_prostate: _require_flower_backend e2e_smoke
 _require_flower_backend:
 	@[ "$(FL_BACKEND)" = flower ] || { echo "❌ e2e_smoke_prostate uploads a Flower app — run it with FL_BACKEND=flower (got '$(FL_BACKEND)')"; exit 1; }
 
-generate-internal-service-key:
-	uv run python -m flip_api.scripts.generate_internal_service_key $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)
+generate-fl-api-key:
+	uv run python -m flip_api.scripts.generate_fl_api_key $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)
 generate-xnat-credentials:
 	uv run python -m flip_api.scripts.generate_xnat_credentials $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)

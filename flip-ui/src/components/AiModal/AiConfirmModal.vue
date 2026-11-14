@@ -142,7 +142,6 @@ interface IAiConfirmModalProps {
 const props = withDefaults(
     defineProps<IAiConfirmModalProps>(),
     {
-        continue: false,
         submitting: false,
         confirmationText: "Are you sure you want to continue?",
         placeholder: "",

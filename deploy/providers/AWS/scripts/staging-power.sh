@@ -76,6 +76,8 @@ die() {
     exit "${2:-1}"
 }
 usage_die() { die "$1" 2; }
+# Print key=value lines to stdout and, in Actions, append them to the step outputs.
+emit_outputs() { tee -a "${GITHUB_OUTPUT:-/dev/null}"; }
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -447,9 +449,9 @@ EC2_SETTLED_STATES="stopped running"
 
 # The start path is split in two because the apply needs it split (FLIP#1596).
 #
-#   start-data      RDS and the hub host, and the wait for RDS. Terraform
-#                   refreshes RDS on every plan, so this much has to happen
-#                   BEFORE terraform_apply.yml plans.
+#   start-data      RDS and the hub host, and the wait for RDS. A stopped RDS
+#                   instance cannot be modified, so this much has to happen
+#                   BEFORE terraform_apply.yml applies.
 #   start-services  the ECS desired counts. This must happen AFTER the plan is
 #                   gated, because the gate's whole reason for passing a develop
 #                   apply unattended is that the FL services are at 0. Restore
@@ -672,21 +674,8 @@ do_status() {
         stopped=true
     fi
 
-    printf 'stopped=%s\n' "${stopped}"
-    printf 'fl_stopped=%s\n' "${fl_stopped}"
-    printf 'ecs_all_zero=%s\n' "${all_zero}"
-    printf 'ec2_stopped=%s\n' "${ec2_stopped}"
-    printf 'rds_status=%s\n' "${rds}"
-
-    if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-        {
-            printf 'stopped=%s\n' "${stopped}"
-            printf 'fl_stopped=%s\n' "${fl_stopped}"
-            printf 'ecs_all_zero=%s\n' "${all_zero}"
-            printf 'ec2_stopped=%s\n' "${ec2_stopped}"
-            printf 'rds_status=%s\n' "${rds}"
-        } >>"${GITHUB_OUTPUT}"
-    fi
+    printf 'stopped=%s\nfl_stopped=%s\necs_all_zero=%s\nec2_stopped=%s\nrds_status=%s\n' \
+        "${stopped}" "${fl_stopped}" "${all_zero}" "${ec2_stopped}" "${rds}" | emit_outputs
 }
 
 # ---------------------------------------------------------------------------
@@ -722,14 +711,7 @@ do_hold_minutes() {
         minutes="${MAX_HOLD_MINUTES}"
     fi
 
-    printf 'minutes=%s\n' "${minutes}"
-    printf 'seconds=%s\n' "$((minutes * 60))"
-    if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-        {
-            printf 'minutes=%s\n' "${minutes}"
-            printf 'seconds=%s\n' "$((minutes * 60))"
-        } >>"${GITHUB_OUTPUT}"
-    fi
+    printf 'minutes=%s\nseconds=%s\n' "${minutes}" "$((minutes * 60))" | emit_outputs
     log "Hold window: ${minutes} minute(s), from ${source}." >&2
 }
 

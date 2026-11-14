@@ -14,8 +14,8 @@
 The chain runs without any ``httpx`` / ``make_request`` mocks: data-access-api is a real
 process talking to a real Postgres seeded from ``fixtures/omop_seed.sql`` (MI-CDM shape —
 ``image_occurrence`` joined to ``concept`` for modality lookups). Counts in the seed are
-stable, so assertions read like SQL: "12 CT scans in the dataset, expect modality counts
-to add up to 12". When a count assertion drifts you should update the seed and the
+stable, so assertions read like SQL: "20 CT scans in the dataset, expect modality counts
+to add up to 20". When a count assertion drifts you should update the seed and the
 test together — the comments at the top of the seed call out the expected totals.
 """
 
@@ -73,26 +73,25 @@ async def test_happy_path_image_counts_and_age_sex(stub_hub_received):
     body = json.loads(callback["body"])
     assert body["query_id"] == "qid-1"
     assert body["trust_id"] == "trust_test"
-    assert body["record_count"] == 24
+    assert body["record_count"] == 32
 
-    # Counts aggregate: every column counted once per non-null row. All 24 rows have
-    # values for the three projected columns, so each entry is 24. cohort.py replaces
+    # Counts aggregate: every column counted once per non-null row. All 32 rows have
+    # values for the three projected columns, so each entry is 32. cohort.py replaces
     # underscores in column names with newlines for plot rendering.
     counts = _aggregate(body, "Counts")
-    assert counts == {"person\nid": 24, "modality\nconcept\nid": 24, "accession\nid": 24}
+    assert counts == {"person\nid": 32, "modality\nconcept\nid": 32, "accession\nid": 32}
 
-    # Sex Distribution: persons 1-12 appear in image_occurrence; 6 M, 6 F. The SQL
-    # groups by gender_source_value of distinct person_id. The compose stack runs
-    # with COHORT_QUERY_THRESHOLD=5 (see trust/deploy/compose/compose.test.yml), so 6 clears the
-    # bucket-rollup threshold and neither value collapses into "Other".
+    # Sex Distribution: persons 1-20 appear in image_occurrence; 10 M, 10 F. The SQL
+    # groups by gender_source_value of distinct person_id. The compose stack runs at the
+    # platform floor, COHORT_QUERY_THRESHOLD=10 (see trust/deploy/compose/compose.test.yml),
+    # so each sex clears the bucket-rollup threshold and neither collapses into "Other".
     sex = _aggregate(body, "Sex Distribution")
-    assert sex == {"M": 6, "F": 6}
+    assert sex == {"M": 10, "F": 10}
 
-    # Age Distribution: 12 distinct person_ids, decade-bucketed. The largest bucket
-    # holds 3 patients, all below the threshold of 5, so every bucket rolls into
-    # the single "Other" row.
+    # Age Distribution: 20 distinct person_ids, decade-bucketed. The seed's birth years are
+    # spread so no bucket reaches 10, so every bucket rolls into the single "Other" row.
     age = _aggregate(body, "Age Distribution")
-    assert age == {"Other": 12}
+    assert age == {"Other": 20}
 
 
 @pytest.mark.asyncio
@@ -109,7 +108,7 @@ async def test_multiple_aggregates_join_returns_all_groups(stub_hub_received):
     assert result == {"success": True}
     body = json.loads(stub_hub_received[0]["body"])
     assert body["query_id"] == "qid-join"
-    assert body["record_count"] == 24  # one row per image_occurrence
+    assert body["record_count"] == 32  # one row per image_occurrence
 
     # Both Counts and Nulls groups should be present.
     aggregate_names = {g["name"] for g in body["data"]}
@@ -130,9 +129,9 @@ async def test_realistic_cte_multi_join_shaped_query(stub_hub_received):
     The simpler tests above cover the SQL plumbing for a single-table SELECT; this one
     exercises the patterns FLIP users actually write: a procedure-concept CTE, the
     canonical person → visit → procedure → image join, and a ``WHERE`` on
-    ``concept_name`` to project a specific cohort. Seed has 6 CT Spleen procedures
-    (persons 1-6) and 6 CT Head procedures (persons 7-12) so the filter returns a
-    deterministic 6-row result that clears the threshold.
+    ``concept_name`` to project a specific cohort. Seed has 10 CT Spleen procedures
+    (persons 1-6, 13-16) and 10 CT Head procedures (the rest of 1-20) so the filter returns
+    a deterministic 10-row result that clears the threshold of 10.
     """
     query = """
         WITH procedure_concept AS (
@@ -167,18 +166,18 @@ async def test_realistic_cte_multi_join_shaped_query(stub_hub_received):
     assert result == {"success": True}
     body = json.loads(stub_hub_received[0]["body"])
     assert body["query_id"] == "qid-realistic"
-    # Six persons (1-6) had a CT Spleen procedure in the seed; the CTE filter must drop
-    # the other six (CT Head) plus the four imaging-less persons (13-16) plus the MR/XR
+    # Ten persons (1-6, 13-16) had a CT Spleen procedure in the seed; the CTE filter must
+    # drop the other ten (CT Head) plus the four imaging-less persons (21-24) plus the MR/XR
     # rows whose procedure_occurrence_id is NULL.
-    assert body["record_count"] == 6
+    assert body["record_count"] == 10
     aggregate_names = {g["name"] for g in body["data"]}
     assert {"Counts", "Nulls", "Sex Distribution", "Age Distribution"}.issubset(aggregate_names)
 
-    # Counts: every projected column has 6 non-null values (column names get
+    # Counts: every projected column has 10 non-null values (column names get
     # underscores → newlines for chart rendering, see services/cohort.get_counts).
     counts = _aggregate(body, "Counts")
-    assert counts.get("accession\nid") == 6
-    assert counts.get("procedure\nname") == 6
+    assert counts.get("accession\nid") == 10
+    assert counts.get("procedure\nname") == 10
 
 
 # ---------------------------------------------------------------------------

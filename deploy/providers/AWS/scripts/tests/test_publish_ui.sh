@@ -16,10 +16,10 @@
 # both run to put a flip-ui build in its bucket (FLIP#1186).
 #
 # Drives the REAL script with `aws` stubbed on PATH (no credentials, no network). The stub records every
-# call, so a test can check the cache-control split and the ark_demo/ exclusion.
+# call, so a test can check the cache-control split and the demo/ exclusion.
 #
 # The invariants under test: hashed bundles are cached for a year and index.html / js/window.js never;
-# --delete never reaches ark_demo/; the entry points are written after the bundles they reference; a build
+# --delete never reaches demo/; the entry points are written after the bundles they reference; a build
 # missing its entry points publishes nothing.
 #
 # Usage:
@@ -126,8 +126,8 @@ run_publish "a complete build" "${DIST}" flip-ui-bucket
 expect_rc 0 "succeeds"
 expect_call "s3 sync ${DIST}/ s3://flip-ui-bucket/ --delete --cache-control public, max-age=31536000, immutable" \
     "syncs the bundles with --delete and a one-year immutable cache"
-expect_call '--exclude index.html --exclude js/window.js --exclude ark_demo/*' \
-    "keeps the entry points and the Ark+ demo out of the sync"
+expect_call '--exclude index.html --exclude js/window.js --exclude demo/*' \
+    "keeps the entry points and the public demo out of the sync"
 expect_call "s3 cp ${DIST}/index.html s3://flip-ui-bucket/index.html --cache-control no-cache, no-store, must-revalidate --content-type text/html; charset=utf-8" \
     "writes index.html uncached, as HTML"
 expect_call "s3 cp ${DIST}/js/window.js s3://flip-ui-bucket/js/window.js --cache-control no-cache, no-store, must-revalidate --content-type application/javascript; charset=utf-8" \

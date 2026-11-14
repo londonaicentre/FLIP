@@ -71,10 +71,7 @@ def get_project_approved_trusts_endpoint(
         )
     logger.debug(f"User {current_user_id} has access to project {project_id}.")
 
-    # 2. Validate project ID (FastAPI handles UUID format validation automatically)
-    # The original TS code had a projectIdSchema.validate, but FastAPI's UUID path param handles this.
-
-    # 3. Validate whether project has APPROVED status
+    # 2. Validate whether project has APPROVED status
     project = get_project(project_id, session)
     if not project:
         logger.error(f"Project {project_id} not found.")
@@ -90,28 +87,14 @@ def get_project_approved_trusts_endpoint(
         )
     logger.debug(f"Project {project_id} status is APPROVED.")
 
-    # 4. Fetch approved trusts
+    # 3. Fetch approved trusts
     try:
         approved_trusts = get_approved_trusts_for_project(project_id, session)
         logger.info(f"Successfully retrieved {len(approved_trusts)} approved trusts for project {project_id}.")
         return approved_trusts
-    except (
-        ValueError
-    ) as ve:  # Assuming get_approved_trusts_for_project might raise ValueError if none found (as per original TS)
+    except ValueError as ve:  # treated as 'no approved trusts' rather than an error
         logger.warn(f"ValueError while fetching approved trusts for project {project_id}: {ve}")
-        # Depending on the desired behavior, you might return an empty list or re-raise as HTTPException
-        # The original TS code threw an error if the DB response was empty.
-        # If get_approved_trusts_for_project returns an empty list when none are found, this try/except might not be
-        # needed for that case.
-        # For now, let's assume it returns an empty list if none, and raises other ValueErrors for actual issues.
-        # If it's critical that an error is raised if the list would be empty:
-        # if not approved_trusts:
-        #     logger.warn(f"No approved trusts found for project {project_id}, though project is APPROVED.")
-        #     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No approved trusts found for this
-        # project.")
-        # This behavior should be consistent with how get_approved_trusts_for_project is implemented.
-        # If it can return an empty list, then no error here.
-        return []  # Or handle specific errors from the service call
+        return []
     except Exception as e:
         logger.error(f"Unhandled error fetching approved trusts for project {project_id}: {e}", exc_info=True)
         raise HTTPException(

@@ -1,0 +1,32 @@
+[
+  {
+    "connectionState": "ok",
+    "importStatus": {
+      "failed": 0,
+      "processing": 0,
+      "queueFailed": 0,
+      "queued": 0,
+      "successful": 21
+    },
+    "lastSeenAt": "2026-11-02T15:37:09.403992",
+    "projectCreationCompleted": true,
+    "reimportCount": 0,
+    "trustId": "00000000-0000-4000-8000-00000000a001",
+    "trustName": "Guy's and St Thomas' Trust"
+  },
+  {
+    "connectionState": "ok",
+    "importStatus": {
+      "failed": 0,
+      "processing": 1,
+      "queueFailed": 0,
+      "queued": 0,
+      "successful": 19
+    },
+    "lastSeenAt": "2026-11-02T15:37:05.888958",
+    "projectCreationCompleted": true,
+    "reimportCount": 0,
+    "trustId": "00000000-0000-4000-8000-00000000a002",
+    "trustName": "King's College Hospital"
+  }
+]

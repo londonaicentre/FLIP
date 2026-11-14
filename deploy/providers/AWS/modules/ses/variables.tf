@@ -17,6 +17,11 @@ variable "sender_email" {
   description = "Email address that SES verifies as the FLIP sender identity."
 }
 
+variable "sender_domain" {
+  type        = string
+  description = "Domain SES verifies (DKIM) as the FLIP sender domain, e.g. the hub's own hostname."
+}
+
 variable "templates_dir" {
   type        = string
   description = "Path to the directory containing the flip-* .html/.txt template pairs."

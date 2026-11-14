@@ -34,21 +34,39 @@ def _clear_cache():
     _cache.clear()
 
 
+@pytest.fixture
+def cache_settings():
+    """The cache's settings, at the service defaults; a test overrides only what it varies."""
+    with patch("data_access_api.services.query_cache.get_settings") as mock_settings:
+        settings = mock_settings.return_value
+        settings.CACHE_TTL_DAYS = 60
+        settings.CACHE_MAX_RESULT_ROWS = 50_000
+        settings.CACHE_MAX_ENTRIES = 64
+        yield settings
+
+
 class TestMakeCacheKey:
     def test_deterministic(self):
         key1 = _make_cache_key("SELECT * FROM table")
         key2 = _make_cache_key("SELECT * FROM table")
         assert key1 == key2
 
-    def test_normalizes_whitespace(self):
-        key1 = _make_cache_key("SELECT  *   FROM   table")
-        key2 = _make_cache_key("SELECT * FROM table")
-        assert key1 == key2
-
-    def test_case_insensitive(self):
-        key1 = _make_cache_key("SELECT * FROM table")
-        key2 = _make_cache_key("select * from table")
-        assert key1 == key2
+    @pytest.mark.parametrize(
+        ("query_a", "query_b"),
+        [
+            (
+                "SELECT person_id FROM omop.person WHERE gender_source_value = 'F'",
+                "SELECT person_id FROM omop.person WHERE gender_source_value = 'f'",
+            ),
+            (
+                "SELECT person_id FROM omop.person WHERE gender_source_value = 'A  B'",
+                "SELECT person_id FROM omop.person WHERE gender_source_value = 'A B'",
+            ),
+        ],
+    )
+    def test_queries_differing_only_inside_a_literal_get_different_keys(self, query_a, query_b):
+        """A literal's case and internal whitespace are part of the question asked (FLIP#859)."""
+        assert _make_cache_key(query_a) != _make_cache_key(query_b)
 
     def test_different_queries_different_keys(self):
         key1 = _make_cache_key("SELECT * FROM table_a")
@@ -79,17 +97,11 @@ class TestMakeCacheKey:
 
 
 class TestGetCachedResult:
-    @patch("data_access_api.services.query_cache.get_settings")
-    def test_returns_none_on_miss(self, mock_settings):
-        mock_settings.return_value.CACHE_TTL_DAYS = 60
+    def test_returns_none_on_miss(self, cache_settings):
         result = get_cached_result("SELECT 1")
         assert result is None
 
-    @patch("data_access_api.services.query_cache.get_settings")
-    def test_returns_cached_dataframe(self, mock_settings):
-        mock_settings.return_value.CACHE_TTL_DAYS = 60
-        mock_settings.return_value.CACHE_MAX_RESULT_ROWS = 50_000
-        mock_settings.return_value.CACHE_MAX_ENTRIES = 64
+    def test_returns_cached_dataframe(self, cache_settings):
         df = pd.DataFrame({"col": [1, 2, 3]})
         set_cached_result("SELECT 1", df)
 
@@ -97,11 +109,7 @@ class TestGetCachedResult:
         assert result is not None
         pd.testing.assert_frame_equal(result, df)
 
-    @patch("data_access_api.services.query_cache.get_settings")
-    def test_returns_copy_not_reference(self, mock_settings):
-        mock_settings.return_value.CACHE_TTL_DAYS = 60
-        mock_settings.return_value.CACHE_MAX_RESULT_ROWS = 50_000
-        mock_settings.return_value.CACHE_MAX_ENTRIES = 64
+    def test_returns_copy_not_reference(self, cache_settings):
         df = pd.DataFrame({"col": [1, 2, 3]})
         set_cached_result("SELECT 1", df)
 
@@ -112,9 +120,7 @@ class TestGetCachedResult:
         result2 = get_cached_result("SELECT 1")
         pd.testing.assert_frame_equal(result2, df)
 
-    @patch("data_access_api.services.query_cache.get_settings")
-    def test_expired_entry_returns_none(self, mock_settings):
-        mock_settings.return_value.CACHE_TTL_DAYS = 60
+    def test_expired_entry_returns_none(self, cache_settings):
         query = "SELECT 1"
         df = pd.DataFrame({"col": [1]})
         key = _make_cache_key(query)
@@ -126,22 +132,32 @@ class TestGetCachedResult:
         assert result is None
         assert key not in _cache  # Expired entry should be removed
 
-
-class TestSetCachedResult:
     @patch("data_access_api.services.query_cache.get_settings")
-    def test_stores_entry(self, mock_settings):
+    def test_literal_case_does_not_share_a_cached_result(self, mock_settings):
+        """Caching the 'F' cohort must not answer the 'f' query with it (FLIP#859)."""
         mock_settings.return_value.CACHE_TTL_DAYS = 60
         mock_settings.return_value.CACHE_MAX_RESULT_ROWS = 50_000
         mock_settings.return_value.CACHE_MAX_ENTRIES = 64
+        upper = "SELECT person_id FROM omop.person WHERE gender_source_value = 'F'"
+        lower = "SELECT person_id FROM omop.person WHERE gender_source_value = 'f'"
+        upper_df = pd.DataFrame({"person_id": [1, 2]})
+        lower_df = pd.DataFrame({"person_id": [3]})
+
+        set_cached_result(upper, upper_df)
+        assert get_cached_result(lower) is None
+
+        set_cached_result(lower, lower_df)
+        pd.testing.assert_frame_equal(get_cached_result(upper), upper_df)
+        pd.testing.assert_frame_equal(get_cached_result(lower), lower_df)
+
+
+class TestSetCachedResult:
+    def test_stores_entry(self, cache_settings):
         df = pd.DataFrame({"col": [1, 2]})
         set_cached_result("SELECT 1", df)
         assert len(_cache) == 1
 
-    @patch("data_access_api.services.query_cache.get_settings")
-    def test_stores_copy(self, mock_settings):
-        mock_settings.return_value.CACHE_TTL_DAYS = 60
-        mock_settings.return_value.CACHE_MAX_RESULT_ROWS = 50_000
-        mock_settings.return_value.CACHE_MAX_ENTRIES = 64
+    def test_stores_copy(self, cache_settings):
         df = pd.DataFrame({"col": [1, 2]})
         set_cached_result("SELECT 1", df)
 
@@ -150,29 +166,20 @@ class TestSetCachedResult:
         result = get_cached_result("SELECT 1")
         assert list(result["col"]) == [1, 2]
 
-    @patch("data_access_api.services.query_cache.get_settings")
-    def test_skips_caching_when_exceeding_max_rows(self, mock_settings):
-        mock_settings.return_value.CACHE_TTL_DAYS = 60
-        mock_settings.return_value.CACHE_MAX_RESULT_ROWS = 5
-        mock_settings.return_value.CACHE_MAX_ENTRIES = 64
+    def test_skips_caching_when_exceeding_max_rows(self, cache_settings):
+        cache_settings.CACHE_MAX_RESULT_ROWS = 5
         df = pd.DataFrame({"col": range(10)})  # 10 rows > limit of 5
         set_cached_result("SELECT big", df)
         assert len(_cache) == 0
 
-    @patch("data_access_api.services.query_cache.get_settings")
-    def test_caches_dataframe_within_row_limit(self, mock_settings):
-        mock_settings.return_value.CACHE_TTL_DAYS = 60
-        mock_settings.return_value.CACHE_MAX_RESULT_ROWS = 10
-        mock_settings.return_value.CACHE_MAX_ENTRIES = 64
+    def test_caches_dataframe_within_row_limit(self, cache_settings):
+        cache_settings.CACHE_MAX_RESULT_ROWS = 10
         df = pd.DataFrame({"col": range(5)})  # 5 rows <= limit of 10
         set_cached_result("SELECT small", df)
         assert len(_cache) == 1
 
-    @patch("data_access_api.services.query_cache.get_settings")
-    def test_evicts_oldest_when_max_entries_reached(self, mock_settings):
-        mock_settings.return_value.CACHE_TTL_DAYS = 60
-        mock_settings.return_value.CACHE_MAX_RESULT_ROWS = 50_000
-        mock_settings.return_value.CACHE_MAX_ENTRIES = 2
+    def test_evicts_oldest_when_max_entries_reached(self, cache_settings):
+        cache_settings.CACHE_MAX_ENTRIES = 2
 
         set_cached_result("SELECT 1", pd.DataFrame({"col": [1]}))
         set_cached_result("SELECT 2", pd.DataFrame({"col": [2]}))
@@ -187,11 +194,8 @@ class TestSetCachedResult:
         assert key1 not in _cache  # oldest evicted
         assert key3 in _cache  # newest present
 
-    @patch("data_access_api.services.query_cache.get_settings")
-    def test_max_entries_config_value_read_from_settings(self, mock_settings):
-        mock_settings.return_value.CACHE_TTL_DAYS = 60
-        mock_settings.return_value.CACHE_MAX_RESULT_ROWS = 50_000
-        mock_settings.return_value.CACHE_MAX_ENTRIES = 3  # Not the old hardcoded 256
+    def test_max_entries_config_value_read_from_settings(self, cache_settings):
+        cache_settings.CACHE_MAX_ENTRIES = 3  # Not the old hardcoded 256
 
         for i in range(5):
             set_cached_result(f"SELECT {i}", pd.DataFrame({"col": [i]}))

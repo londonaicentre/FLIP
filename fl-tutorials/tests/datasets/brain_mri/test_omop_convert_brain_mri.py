@@ -65,10 +65,13 @@ def metadata_csv(tmp_path: Path) -> Path:
     return path
 
 
-class TestTransform:
-    def test_tables_are_deduplicated_to_the_right_level(self, metadata_csv):
-        tables = omop.transform_metadata_to_omop_tables(omop.read_metadata(metadata_csv))
+@pytest.fixture
+def tables(metadata_csv: Path) -> dict:
+    return omop.transform_metadata_to_omop_tables(omop.read_metadata(metadata_csv))
 
+
+class TestTransform:
+    def test_tables_are_deduplicated_to_the_right_level(self, tables):
         assert set(tables) == {
             "person",
             "visit_occurrence",
@@ -84,9 +87,8 @@ class TestTransform:
         assert len(tables["image_feature"]) == 12 * 5, "five DICOM attributes per series"
         assert len(tables["measurement"]) == 12 * 5
 
-    def test_the_surrogate_id_is_the_first_column_of_every_table(self, metadata_csv):
+    def test_the_surrogate_id_is_the_first_column_of_every_table(self, tables):
         """The verify gate sorts both sides by the first column, so it must be the unique key."""
-        tables = omop.transform_metadata_to_omop_tables(omop.read_metadata(metadata_csv))
         expected_first = {
             "person": "person_id",
             "visit_occurrence": "visit_occurrence_id",
@@ -99,16 +101,14 @@ class TestTransform:
             assert table.columns[0] == expected_first[name], name
             assert table[table.columns[0]].is_unique, name
 
-    def test_ids_come_from_the_brain_mri_block(self, metadata_csv):
-        tables = omop.transform_metadata_to_omop_tables(omop.read_metadata(metadata_csv))
+    def test_ids_come_from_the_brain_mri_block(self, tables):
         for name in ("visit_occurrence", "procedure_occurrence", "image_occurrence", "image_feature", "measurement"):
             ids = tables[name][tables[name].columns[0]]
             assert ids.min() == BLOCK + 1, name
             assert ids.max() <= BLOCK + 1_000_000, name
         assert tables["person"]["person_id"].tolist() == [111111111, 222222222, 333333333]
 
-    def test_image_occurrence_rows_point_at_their_study_and_carry_the_brain_concepts(self, metadata_csv):
-        tables = omop.transform_metadata_to_omop_tables(omop.read_metadata(metadata_csv))
+    def test_image_occurrence_rows_point_at_their_study_and_carry_the_brain_concepts(self, tables):
         image = tables["image_occurrence"]
         procedure = tables["procedure_occurrence"]
 
@@ -123,8 +123,7 @@ class TestTransform:
         assert (joined["person_id"] == joined["person_id_p"]).all()
         assert (joined["visit_occurrence_id"] == joined["visit_occurrence_id_p"]).all()
 
-    def test_slice_thickness_measurements_carry_the_millimetre_unit(self, metadata_csv):
-        tables = omop.transform_metadata_to_omop_tables(omop.read_metadata(metadata_csv))
+    def test_slice_thickness_measurements_carry_the_millimetre_unit(self, tables):
         measurement = tables["measurement"]
         thickness = measurement[measurement["measurement_source_value"] == "00180050"]
         assert len(thickness) == 12
@@ -133,22 +132,19 @@ class TestTransform:
         others = measurement[measurement["measurement_source_value"] != "00180050"]
         assert set(others["unit_concept_id"]) == {0}
 
-    def test_image_features_link_to_their_measurement_and_occurrence(self, metadata_csv):
-        tables = omop.transform_metadata_to_omop_tables(omop.read_metadata(metadata_csv))
+    def test_image_features_link_to_their_measurement_and_occurrence(self, tables):
         feature, measurement = tables["image_feature"], tables["measurement"]
         assert feature["image_feature_id"].tolist() == measurement["measurement_id"].tolist()
         assert feature["image_feature_event_id"].tolist() == measurement["measurement_id"].tolist()
         assert set(feature["image_occurrence_id"]) == set(tables["image_occurrence"]["image_occurrence_id"])
 
-    def test_trust_column_follows_source_trust(self, metadata_csv):
-        tables = omop.transform_metadata_to_omop_tables(omop.read_metadata(metadata_csv))
+    def test_trust_column_follows_source_trust(self, tables):
         assert tables["person"]["trust"].tolist() == ["trust_1", "trust_2", "trust_1"]
         assert tables["image_occurrence"]["trust"].value_counts().to_dict() == {"trust_1": 8, "trust_2": 4}
 
 
 class TestWrite:
-    def test_writes_the_combined_and_per_trust_layout_the_gate_reads(self, metadata_csv, tmp_path):
-        tables = omop.transform_metadata_to_omop_tables(omop.read_metadata(metadata_csv))
+    def test_writes_the_combined_and_per_trust_layout_the_gate_reads(self, tables, tmp_path):
         omop.write_tables(tables, tmp_path)
 
         combined = tmp_path / "omop" / "brain_mri_project"

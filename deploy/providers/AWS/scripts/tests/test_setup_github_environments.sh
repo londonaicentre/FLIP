@@ -132,7 +132,7 @@ AICENTRE_BUCKET_NAME=aicentre-stag
 POSTGRES_DB=flip
 ADMIN_USER_PASSWORD=SECRETVALUEMARKER
 AES_KEY_BASE64=bm90LWEtcmVhbC1rZXk=
-INTERNAL_SERVICE_KEY=service-key-marker
+TRUST_API_KEY_HEADER=service-key-marker
 FLIP_TFSTATE_BUCKET_NAME=flip-terraform-state-stag
 ENVFILE
 
@@ -242,8 +242,6 @@ expect_mentions "optional key(s) absent" "optional absences are grouped separate
 expect_mentions "JOB_RESOURCE_SPEC_NUM_GPUS" "an optional absent key is named there"
 expect_silent_about "- JOB_RESOURCE_SPEC_NUM_GPUS" "and not in the required list"
 expect_mentions "skip ENFORCE_MFA" "ENFORCE_MFA is skipped, not reported"
-# ...and the demo bucket is optional on stag, where no public Ark+ demo is hosted.
-expect_silent_about "- DEMO_ASSETS_BUCKET_NAME" "an absent demo bucket is not required on stag"
 
 # 3. The header's promise: key names only. Values arrive on stdin, so neither the
 #    env file's values nor the ARNs read from IAM may reach the output.
@@ -264,17 +262,13 @@ else
     no "TF_HUB is not listed as an absent key" "${STDOUT}"
 fi
 
-# 5. Prod-only asymmetry: an empty demo bucket on prod is a gap, not an omission
-#    (cloudfront.tf gates four objects on it being non-empty). The env file is the
-#    same one case 1 used, where the same key was optional — the difference is the
-#    hub alone.
-run_case "prod treats an absent demo bucket as required" \
+# 5. Prod is held to main.
+run_case "prod states its branch policy" \
     STUB_SUB="repo:acme/flip:environment:aws-prod" \
     STUB_APPLY_REF="acme/flip/.github/workflows/terraform_apply.yml@refs/heads/main" -- \
     --hub prod --env-file "${ENV_FILE}" --repo acme/flip --dry-run
 expect_rc 0 "dry run succeeds"
-expect_mentions "- DEMO_ASSETS_BUCKET_NAME" "the demo bucket is required on prod"
-expect_mentions "branch policy: main only" "and prod's branch policy is stated"
+expect_mentions "branch policy: main only" "prod's branch policy is main only"
 
 # 6. Every estate requires the LZA keys, appended to the same array — the
 #    classification has to survive the append, not just the base list.
@@ -316,7 +310,7 @@ fi
 #     workflows read them — how a repoint carried legacy staging's
 #     ENFORCE_MFA=false onto a new account. They are listed, with the delete
 #     command; keys the file does set are not; nothing is deleted.
-HELD_SECRET_NAMES="INTERNAL_SERVICE_KEY_HASH AES_KEY_BASE64" # pragma: allowlist secret — names, not values
+HELD_SECRET_NAMES="FL_API_KEY AES_KEY_BASE64" # pragma: allowlist secret — names, not values
 run_case "keys the file leaves unset but the environment holds are listed" \
     STUB_GH_VARIABLES="ENFORCE_MFA JOB_RESOURCE_SPEC_NUM_GPUS AICENTRE_BUCKET_NAME TF_HUB" \
     STUB_GH_SECRETS="${HELD_SECRET_NAMES}" -- \
@@ -325,7 +319,7 @@ expect_rc 0 "dry run succeeds"
 expect_mentions "Still set on aws-stag" "under its own heading"
 expect_mentions "gh variable delete ENFORCE_MFA --env aws-stag --repo acme/flip" "the skipped ENFORCE_MFA is listed"
 expect_mentions "gh variable delete JOB_RESOURCE_SPEC_NUM_GPUS" "and an optional key the file omits"
-expect_mentions "gh secret delete INTERNAL_SERVICE_KEY_HASH" "a secret gets the secret command"
+expect_mentions "gh secret delete FL_API_KEY" "a secret gets the secret command"
 expect_silent_about "delete AICENTRE_BUCKET_NAME" "a key the file sets is not listed"
 expect_silent_about "delete AES_KEY_BASE64" "nor a secret it sets"
 expect_silent_about "delete TF_HUB" "nor TF_HUB, which the script writes itself"

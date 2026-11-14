@@ -27,7 +27,7 @@
             />
         </div>
         <p
-            class="mt-5 text-[11px] font-black uppercase tracking-[0.06em] text-primary-600/70 dark:text-primary-300"
+            class="mt-5 text-xs font-black text-primary-600/70 dark:text-primary-300"
             data-test="eyebrow"
         >
             Error 404
@@ -54,7 +54,7 @@
         </div>
         <a
             href="mailto:aicentreflip@gmail.com"
-            class="mt-5 text-[13px] font-semibold transition-colors text-primary-500 hover:text-primary-400
+            class="mt-5 text-note font-semibold transition-colors text-primary-500 hover:text-primary-400
             dark:text-primary-200 dark:hover:text-primary-100"
             data-test="service-desk-link"
         >

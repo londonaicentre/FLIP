@@ -12,9 +12,9 @@
 
 .PHONY: build build-fl clean clean-object-store up down up-no-trust up-trusts central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks \
-		check-aws-access generate-internal-service-key generate-xnat-credentials _check-compose-project-owner \
-		register-trust register-trusts rotate-trust-keys new-trust _wait-for-hub integration_test \
-		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint aws-diagram \
+		check-aws-access generate-fl-api-key generate-xnat-credentials _check-compose-project-owner \
+		register-trust register-trusts rotate-trust-keys new-trust _wait-for-hub _refuse-deployed-hub integration_test \
+		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint mirror-images aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
 		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
 		demo-video demo-users seed-demo-projects reset-keycloak \
@@ -99,35 +99,14 @@ $(error OBJECT_STORE_DIR=/ is not a directory of its own)
 endif
 export OBJECT_STORE_DIR
 
-# Service configuration
-define SERVICE_CONFIG
-data-access-api:trust
-imaging-api:trust
-trust-api:trust
-flip-api
-fl-api
-endef
-
-# Function to get service type (trust or central)
-get_service_type = $(word 2,$(subst :, ,$(filter $1:%,$(SERVICE_CONFIG))))
-
-# Function to get service display name
-get_service_name = $(subst -api,, $(subst flip-,central hub ,$(subst fl-,central FL ,$1)))
-
 export COMPOSE_BAKE=true
 DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
-# The pair is exported at parse time, before `up`'s generate-internal-service-key can rewrite it,
+# FL_API_KEY is exported at parse time, before `up`'s generator can rewrite it,
 # so `up`/`up-no-trust` re-read it from KEY_ENV_FILE when compose runs (FLIP#1501).
 KEY_ENV_FILE = $(abspath $(or $(ENV_FILE),$(MAIN_ENV_FILE)))
 read_key_env = $$(sed -n 's/^$1=//p' '$(KEY_ENV_FILE)' | head -n 1 | tr -d '\r')
-FRESH_INTERNAL_SERVICE_KEY = INTERNAL_SERVICE_KEY="$(call read_key_env,INTERNAL_SERVICE_KEY)" \
-	INTERNAL_SERVICE_KEY_HASH="$(call read_key_env,INTERNAL_SERVICE_KEY_HASH)"
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.development.debug.override.yml
-# Through compose, addressing the service rather than the container: the containers are
-# named by the project (deploy-flip-api-1, or <instance>-deploy-flip-api-1), so a literal
-# `docker logs flip-api` names nothing on any stack.
-SHOW_LOGS_CENTRAL_HUB=$(DOCKER_COMMAND) logs --follow --tail 100 --timestamps flip-api
-GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
+FRESH_FL_API_KEY = FL_API_KEY="$(call read_key_env,FL_API_KEY)"
+DEBUG_OVERRIDE_COMPOSE_COMMAND=$(DOCKER_COMMAND) -f deploy/compose.development.debug.override.yml
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the `up` targets.
 #
@@ -183,11 +162,11 @@ build-fl:
 # Run all services
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
 # when DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op otherwise.
-up: _check-compose-project-owner generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
+up: _check-compose-project-owner generate-fl-api-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	$(FRESH_INTERNAL_SERVICE_KEY) ${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
+	$(FRESH_FL_API_KEY) ${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
 	@echo "🔑 Registering trusts and writing kit files..."
 	$(MAKE) register-trusts
 	@echo "🚢 Starting trust services (each trust brings up its own XNAT)..."
@@ -236,7 +215,7 @@ _check-fl-provisioned:
 # working_dir label); both sides are compared with symlinks resolved, an unlabelled container
 # counts as foreign, and `ps -a` because a stopped stack still owns the name. The first
 # prerequisite of every target here that drives the project. ALLOW_FOREIGN_PROJECT=1 skips
-# it: deliberately not FORCE, which `up` hands on to generate-internal-service-key, where it
+# it: deliberately not FORCE, which `up` hands on to generate-fl-api-key, where it
 # rotates the key.
 _check-compose-project-owner:
 	@mine=$$(cd deploy && pwd -P); \
@@ -256,10 +235,10 @@ _check-compose-project-owner:
 	fi
 
 # Minimal $(MAKE) up
-up-no-trust: _check-compose-project-owner generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
+up-no-trust: _check-compose-project-owner generate-fl-api-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	$(FRESH_INTERNAL_SERVICE_KEY) ${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
+	$(FRESH_FL_API_KEY) ${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
 
 up-trusts: create-networks
 	@echo "🔑 Registering trusts and writing kit files (hub must already be up)..."
@@ -269,8 +248,6 @@ up-trusts: create-networks
 	@echo "✅ Trust services started successfully!"
 
 up-trust-ec2: create-networks
-	@echo "Hey! HUB="$(HUB)
-	@echo "Hey! UI_PORT="$(UI_PORT)
 	@echo "🚢 Starting Trust services..."
 	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=$(KIT) HUB=${HUB}
 	@echo "✅ Trust services started successfully!"
@@ -341,6 +318,9 @@ down: _check-compose-project-owner
 	@echo "🛑 Stopping all services..."
 	$(MAKE) -C trust down
 
+	@# `down` leaves anonymous volumes behind, and these services' images declare their scratch
+	@# paths as volumes (FLIP#1795): remove those with their containers first.
+	${DOCKER_COMMAND} rm -fsv flip-api fl-api-net-1 fl-api-net-2 $(FL_SERVER_SERVICES)
 	${DOCKER_COMMAND} down --remove-orphans
 	@echo "🛌 All services stopped successfully!"
 
@@ -374,8 +354,7 @@ clean-object-store: _check-compose-project-owner
 # Clean Docker resources
 clean: _check-compose-project-owner
 	${DOCKER_COMMAND} down --rmi local && \
-	docker system prune -f && \
-	rm -rf ./flip-fl-api/*/transfer/*/
+	docker system prune -f
 
 # Stop all services and remove the containers
 restart: down up
@@ -403,6 +382,10 @@ restart: down up
 #       to NVFLARE a proxy still answering to that alias would take some of the NVFLARE
 #       clients' connections. Orphans are scoped to this compose project, whose files define
 #       every shared service (flip-db, object-store, keycloak), so nothing else is touched.
+# NOTE: each service is removed with `rm -fsv` and then started, not recreated in place. The hub
+#       images declare the paths they write as volumes (FLIP#1795), and a recreate hands the new
+#       container its predecessor's: the FLARE server's job store, or on a backend switch the
+#       other backend's /tmp. `rm -v` takes those anonymous volumes with the container.
 FL_SERVER_SERVICES := fl-server-net-1 fl-server-net-2 \
 	$(if $(filter flower,$(FL_BACKEND)),fl-fleet-proxy-net-1 fl-fleet-proxy-net-2)
 restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir _ensure-object-store-dir
@@ -410,12 +393,15 @@ restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir _ensure-object-stor
 	@echo "🔄 Step 1: Stopping and removing old FL clients..."
 	$(MAKE) -C trust down-fl-clients
 	@echo "🔄 Step 2: Recreating flip-api to re-seed FLNets.fl_backend=$(FL_BACKEND)..."
-	${DOCKER_COMMAND} up -d --force-recreate --no-deps $(UP_PULL_FLAGS) flip-api
+	${DOCKER_COMMAND} rm -fsv flip-api
+	${DOCKER_COMMAND} up -d --no-deps $(UP_PULL_FLAGS) flip-api
 	@echo "🔄 Step 3: Restarting FL APIs and servers..."
-	${DOCKER_COMMAND} up -d --force-recreate --no-deps --remove-orphans $(UP_PULL_FLAGS) fl-api-net-1 fl-api-net-2 $(FL_SERVER_SERVICES)
+	${DOCKER_COMMAND} rm -fsv fl-api-net-1 fl-api-net-2 $(FL_SERVER_SERVICES)
+	${DOCKER_COMMAND} up -d --no-deps --remove-orphans $(UP_PULL_FLAGS) fl-api-net-1 fl-api-net-2 $(FL_SERVER_SERVICES)
 	@if [ "$(FL_BACKEND)" = "flower" ]; then \
 		echo "🔄 Step 4: Registering new client keys with FL servers (Flower only)..."; \
-		${DOCKER_COMMAND} up --force-recreate $(UP_PULL_FLAGS) register-supernode-keys-net-1 register-supernode-keys-net-2; \
+		${DOCKER_COMMAND} rm -fsv register-supernode-keys-net-1 register-supernode-keys-net-2; \
+		${DOCKER_COMMAND} up $(UP_PULL_FLAGS) register-supernode-keys-net-1 register-supernode-keys-net-2; \
 	fi
 	@echo "🔄 Step 5: Starting new FL clients..."
 	$(MAKE) -C trust up-fl-clients
@@ -438,6 +424,12 @@ checkov-lint:
 # ruleset plugin on first run. Runs the script directly, like checkov-lint.
 tflint-lint:
 	bash deploy/providers/AWS/scripts/tflint_lint.sh
+# Copy the third-party images a trust node runs (trust/deploy/mirror-images.manifest) into
+# ghcr.io/londonaicentre/mirror/ by digest (FLIP#1721). CI does this on develop/main
+# (.github/workflows/mirror_images.yml); locally it needs a GHCR login with write:packages.
+# CHECK=1 pushes nothing and fails on a missing or drifted mirror.
+mirror-images:
+	bash scripts/mirror_images.sh $(if $(CHECK),--check)
 # Re-render the two committed Central Hub AWS diagrams under deploy/providers/AWS/docs/
 # (central-hub-aws-lza-{network,data}.png) from deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
 # build time instead). Uses the local graphviz when `dot` is installed; the dev hosts have none,
@@ -618,6 +610,9 @@ e2e_smoke:
 e2e_smoke_ehr:
 	$(MAKE) -C flip-api e2e_smoke_ehr $(if $(FL_BACKEND),FL_BACKEND=$(FL_BACKEND)) $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
+e2e_smoke_causal:
+	$(MAKE) -C flip-api e2e_smoke_causal $(if $(FL_BACKEND),FL_BACKEND=$(FL_BACKEND)) $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
+
 # Record the end-to-end demo video against the running dev stack: six
 # Playwright segments over the live UI (real sign-ins, trusts, uploads,
 # FL training) with the slow waits handled off-camera between segments, then
@@ -630,6 +625,11 @@ demo-video:
 # DEMO_RESEARCHER_PASSWORD / DEMO_ADMIN_PASSWORD / DEMO_TRUST_ADMIN_PASSWORD env vars, never committed).
 demo-users:
 	$(MAKE) -C flip-api create_demo_users
+
+# Capture a project from the running hub as public-demo fixtures (FLIP#1746):
+#   make capture-demo-project EXTRA_ARGS="--project-id <uuid> --slug ehr-risk"
+capture-demo-project:
+	$(MAKE) -C flip-api capture_demo_project $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
 # Recreate the dev identity provider from deploy/keycloak/flip-realm.json. The
 # keycloak service keeps no volume and `--import-realm` skips a realm that
@@ -648,10 +648,11 @@ reset-keycloak: _check-compose-project-owner
 seed-demo-projects:
 	$(MAKE) -C flip-api seed_demo_projects $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
-# The key goes into the env file this stack runs from (MAIN_ENV_FILE, or an explicit ENV_FILE),
-# made absolute here because the sub-make runs in flip-api/ (FLIP#1603).
-generate-internal-service-key:
-	$(MAKE) -C flip-api generate-internal-service-key ENV_FILE=$(KEY_ENV_FILE) $(if $(FORCE),FORCE=$(FORCE))
+# The key flip-api presents to the FL APIs (every FL API route but /health requires it). It goes into
+# the env file this stack runs from (MAIN_ENV_FILE, or an explicit ENV_FILE), made absolute here
+# because the sub-make runs in flip-api/ (FLIP#1603).
+generate-fl-api-key:
+	$(MAKE) -C flip-api generate-fl-api-key ENV_FILE=$(KEY_ENV_FILE) $(if $(FORCE),FORCE=$(FORCE))
 
 # Poll flip-api /api/health before registering. The entrypoint seeds the DB —
 # including the FL kit-slot pool that register_trust claims from — *before* the
@@ -666,13 +667,19 @@ _wait-for-hub:
 	  sleep 2; \
 	done
 
+# A deployed hub runs on ECS, out of reach of the local flip-api these targets exec into: they
+# would mint keys in the local database and write them into the real kit (FLIP#938).
+_refuse-deployed-hub:
+	@[ -z "$(IS_DEPLOYED)" ] || { echo "❌ HUB=$(HUB) is the ECS hub: run 'make -C deploy/providers/AWS $(AWS_TARGET) KIT=$(or $(KIT),<CODE>) HUB=$(HUB)'"; exit 1; }
+
 # Register one trust on the running hub from its kit file. KIT is the trust
 # CODE (the kit-file handle). Seeds trust/.env.<CODE>.<env> from its .example on
 # first run, reads TRUST_NAME/CODE/REGION from it, registers (idempotent — an
 # already-registered name is skipped, credentials preserved), then writes the
 # minted credentials + assigned FL kit slot + hub-shared block back into the
 # kit. The hub keeps no trust list — the kit files ARE the list.
-register-trust: _check-compose-project-owner _wait-for-hub
+register-trust: AWS_TARGET := register-trusts
+register-trust: _check-compose-project-owner _refuse-deployed-hub _wait-for-hub
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1; }
 	@kit='$(call kit_file,trust/,$(KIT))'; ex="trust/.env.$(KIT).$(ENV).example"; \
 	  if [ ! -f "$$kit" ]; then \
@@ -699,7 +706,8 @@ register-trust: _check-compose-project-owner _wait-for-hub
 # Only the two hub keys rotate here; XNAT credentials have their own caveat
 # (Postgres applies XNAT_DATASOURCE_* only on first initdb, see
 # generate-xnat-credentials).
-rotate-trust-keys: _check-compose-project-owner _wait-for-hub
+rotate-trust-keys: AWS_TARGET := rotate-trust-keys
+rotate-trust-keys: _check-compose-project-owner _refuse-deployed-hub _wait-for-hub
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1; }
 	@kit='$(call kit_file,trust/,$(KIT))'; \
 	  [ -f "$$kit" ] || { echo "❌ $$kit not found. Register the trust first."; exit 1; }; \
@@ -739,9 +747,8 @@ new-trust:
 # $(MAIN_ENV_FILE) values. Preserves credentials. Safe to run repeatedly. Use
 # after rotating AES_KEY_BASE64 or bumping image tags on the hub side — does NOT
 # redistribute the updated kit file to remote operators (still out-of-band).
-# On prod this is REQUIRED after `register-trust`: register fills only the
-# hub-shared vars present in the flip-api task env (AES_KEY_BASE64,
-# TRUST_API_KEY_HEADER, FL_BACKEND); the rest come from the admin's local env here.
+# A deployed hub's `make -C deploy/providers/AWS register-trusts` runs this same refresh
+# itself (FLIP#1476): its flip-api task env carries only some of the hub-shared vars.
 #
 # Works identically for dev/stag/prod: the Hub-shared values live in
 # $(MAIN_ENV_FILE), which the root Makefile already `include`s + exports.

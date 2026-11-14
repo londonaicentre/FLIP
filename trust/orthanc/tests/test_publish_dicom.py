@@ -110,6 +110,11 @@ class TestPackage:
             assert tar.extractfile("10000_1000000/1.2.dcm").read() == b"DICMadc"
 
 
+# (accession, StudyInstanceUID, person) of the two published studies in canonical_tree.
+_A = ("10000_1000000", "1.2.3", "10000")
+_B = ("10001_1000001", "1.2.4", "10001")
+
+
 class TestVerify:
     def test_exact_match_passes_and_reports_the_split(self, pub, tmp_path):
         tables = pub.load_tables("prostate_project", None, canonical_tree(tmp_path))
@@ -122,31 +127,20 @@ class TestVerify:
         assert ok
         assert per_trust == {"1": 1, "2": 1}
 
-    def test_a_published_study_missing_from_the_source_fails(self, pub, tmp_path, capsys):
+    @pytest.mark.parametrize(
+        ("studies", "message"),
+        [
+            pytest.param([(*_A, "s1")], "1 published accession(s) have no DICOM", id="published-missing"),
+            pytest.param(
+                [(*_A, "s1"), (*_B, "s2"), ("10002_1000002", "1.2.5", "10002", "s3")],
+                "StudyInstanceUID(s) not published",
+                id="unpublished",
+            ),
+            pytest.param([(*_A, "same"), (*_B, "same")], "duplicate SOPInstanceUID", id="duplicate-sop"),
+        ],
+    )
+    def test_a_mismatch_fails_and_says_why(self, pub, tmp_path, capsys, studies, message):
         tables = pub.load_tables("prostate_project", None, canonical_tree(tmp_path))
-        ok, _ = pub.verify([instance(pub, "10000_1000000", "1.2.3", "10000", "s1")], tables)
+        ok, _ = pub.verify([instance(pub, *s) for s in studies], tables)
         assert not ok
-        assert "1 published accession(s) have no DICOM" in capsys.readouterr().out
-
-    def test_an_unpublished_study_in_the_source_fails(self, pub, tmp_path, capsys):
-        tables = pub.load_tables("prostate_project", None, canonical_tree(tmp_path))
-        instances = [
-            instance(pub, "10000_1000000", "1.2.3", "10000", "s1"),
-            instance(pub, "10001_1000001", "1.2.4", "10001", "s2"),
-            instance(pub, "10002_1000002", "1.2.5", "10002", "s3"),
-        ]
-        ok, _ = pub.verify(instances, tables)
-        assert not ok
-        out = capsys.readouterr().out
-        assert "not published" in out
-        assert "StudyInstanceUID(s) not published" in out
-
-    def test_a_duplicate_sop_fails(self, pub, tmp_path, capsys):
-        tables = pub.load_tables("prostate_project", None, canonical_tree(tmp_path))
-        instances = [
-            instance(pub, "10000_1000000", "1.2.3", "10000", "same"),
-            instance(pub, "10001_1000001", "1.2.4", "10001", "same"),
-        ]
-        ok, _ = pub.verify(instances, tables)
-        assert not ok
-        assert "duplicate SOPInstanceUID" in capsys.readouterr().out
+        assert message in capsys.readouterr().out

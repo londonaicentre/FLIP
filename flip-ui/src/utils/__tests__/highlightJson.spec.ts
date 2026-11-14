@@ -12,6 +12,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import type { ObjectDirective } from "vue";
 
 import { vHighlightjs } from "@/utils/highlightJson";
 
@@ -21,7 +22,7 @@ describe("highlightJson directive", () => {
         el.innerHTML = "<pre><code class=\"json\">{ \"net\": \"net-1\", \"online\": true }</code></pre>";
 
         // mounted returns the lazy-import promise, so tests can await the work.
-        await (vHighlightjs.mounted as (element: HTMLElement) => Promise<void>)(el);
+        await ((vHighlightjs as ObjectDirective<HTMLElement>).mounted as (element: HTMLElement) => Promise<void>)(el);
 
         // highlight.js wraps tokens in hljs-* spans once it has run.
         expect(el.querySelector("code")?.innerHTML).toContain("hljs-");
