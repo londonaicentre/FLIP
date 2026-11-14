@@ -90,6 +90,9 @@ class FLJob(SQLModel, table=True):
     # The researcher's GPU override for this run, per trust (FLIP#70). NULL = no override: the job's
     # meta.json resource_spec, or the fl-api default, applies.
     num_gpus: int | None = None
+    # SHA-256 of the credential minted when the job is dispatched; its FL server presents the plaintext on
+    # every callback about the model (auth/job_callback.py). NULL until then.
+    credential_hash: str | None = None
 
     scheduler: Optional["FLScheduler"] = Relationship(back_populates="job")
     trusts: list["Trust"] = Relationship(link_model=FLJobTrust)

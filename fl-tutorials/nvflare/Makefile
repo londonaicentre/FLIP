@@ -12,7 +12,7 @@
 # FLARE tutorial runner. Each tutorial under <category>/<name>/ carries a Makefile
 # + .env.app whose `make run` delegates to `make sim` — the tutorial's job.py driving a
 # FLIP recipe on the FLARE simulator (SimEnv), run in the flip-utils venv with the
-# `full` ML extra. Requires a GPU, and the tutorial's dataset downloaded first (see each
+# `nvflare` and `full` extras. Requires a GPU, and the tutorial's dataset downloaded first (see each
 # tutorial's README); `make export` inside a tutorial needs neither.
 #
 #   make list-tutorials
@@ -47,8 +47,11 @@ run-tutorial:
 # path. Having both on both backends means `sim-tutorial` always means "no containers".
 sim-tutorial: run-tutorial
 
+# An access-controlled tutorial (biomarker_causal_discovery, ADNI) whose data is absent reports
+# "⏭️ tutorial <name> skipped" and exits 0 under TUTORIAL_SKIP_RESTRICTED_IF_ABSENT, so the release
+# loop goes on; run alone (run-tutorial), a missing dataset still fails.
 run-all-tutorials:
-	@for d in $(TUTORIAL_DIRS); do \
+	@export TUTORIAL_SKIP_RESTRICTED_IF_ABSENT=1; for d in $(TUTORIAL_DIRS); do \
 		echo "🚀 Running FLARE tutorial $$(basename $$d)"; \
 		$(MAKE) -C "$$d" run || { echo "❌ tutorial $$(basename $$d) failed"; exit 1; }; \
 	done

@@ -610,8 +610,9 @@ fi
 
 # 21. A malformed RELEASE_TAG is rejected by name. Letting it through would
 #     produce "release image absent", which reads as a failed build and sends
-#     someone to re-run one that was fine.
-for bad in v1.2 1.2.3 v1.2.3-rc1 latest; do
+#     someone to re-run one that was fine. That includes surrounding whitespace
+#     and a tag spelled as a git ref — the review asked for both shapes explicitly.
+for bad in v1.2 1.2.3 v1.2.3-rc1 latest " v1.2.3" "v1.2.3 " "refs/tags/v1.2.3" "V1.2.3" "v1.2.3.4"; do
     fixture "" "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
         "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
     run_resolve "malformed RELEASE_TAG '${bad}' is rejected" RELEASE_TAG="${bad}"
@@ -811,20 +812,6 @@ run_resolve "an absent FL API service takes the configured tag"
 expect_rc 0 "exits 0"
 expect_tag DOCKER_FL_TAG "sha-8888888"
 expect_tag DOCKER_FL_API_TAG "stag"
-
-# 30. A RELEASE_TAG with surrounding whitespace, or spelled as a git ref, is a
-#     named error rather than a confusing "release image absent" — the review
-#     asked for both shapes explicitly.
-for bad in " v1.2.3" "v1.2.3 " "refs/tags/v1.2.3" "V1.2.3" "v1.2.3.4"; do
-    fixture "" "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
-        "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
-    run_resolve "RELEASE_TAG '${bad}' is rejected" RELEASE_TAG="${bad}"
-    if [[ "${RC}" -ne 0 && "${STDERR}" == *"RELEASE_TAG"* ]]; then
-        ok "rejects RELEASE_TAG='${bad}'"
-    else
-        no "rejects RELEASE_TAG='${bad}'" "exit ${RC}, stderr: ${STDERR}"
-    fi
-done
 
 # 31. RESOLVE_SHA_TAG=false IGNORES RELEASE_TAG. Plan and drift must read what is
 #     deployed: probing the release would both report a diff no apply has written

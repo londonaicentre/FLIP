@@ -61,7 +61,7 @@ def _dataframe_payload(query: str, project_id: str = _PROJECT_A) -> dict:
 
 
 def test_cohort_endpoint_returns_aggregates_for_image_occurrences(http_client):
-    """All 24 image_occurrence rows clear the threshold and come back with the full aggregate set."""
+    """All 32 image_occurrence rows clear the threshold and come back with the full aggregate set."""
     response = http_client.post(
         "/cohort",
         json=_cohort_payload("SELECT person_id, modality_concept_id, accession_id FROM omop.image_occurrence"),
@@ -69,7 +69,7 @@ def test_cohort_endpoint_returns_aggregates_for_image_occurrences(http_client):
     assert response.status_code == 200, response.text
 
     body = response.json()
-    assert body["record_count"] == 24
+    assert body["record_count"] == 32
     aggregate_names = {g["name"] for g in body["data"]}
     assert {"Counts", "Nulls", "Sex Distribution", "Age Distribution"} <= aggregate_names
 
@@ -178,7 +178,7 @@ def test_snapshot_then_dataframe_serves_the_frozen_cohort(http_client):
     created = _create_snapshot(http_client, _SEED_COHORT_QUERY, _PROJECT_A)
     assert created.status_code == 200, created.text
     body = created.json()
-    assert body["row_count"] == 24
+    assert body["row_count"] == 32
     assert body["has_accessions"] is True
     assert set(body["columns"]) == {"modality", "accession_id"}
 
@@ -190,11 +190,11 @@ def test_snapshot_then_dataframe_serves_the_frozen_cohort(http_client):
     assert response.status_code == 200, response.text
     frame = response.json()
     assert set(frame.keys()) == {"modality", "accession_id"}
-    assert len(frame["modality"]) == 24
-    assert frame["modality"].count("CT") == 12
+    assert len(frame["modality"]) == 32
+    assert frame["modality"].count("CT") == 20
     assert frame["modality"].count("MR") == 8
     assert frame["modality"].count("XR") == 4
-    assert len(set(frame["accession_id"])) == 24
+    assert len(set(frame["accession_id"])) == 32
 
     # And the frozen accession pointer set serves from the same artefact.
     ids_response = http_client.post(
@@ -203,7 +203,7 @@ def test_snapshot_then_dataframe_serves_the_frozen_cohort(http_client):
     )
     assert ids_response.status_code == 200, ids_response.text
     accession_ids = ids_response.json()["accession_ids"]
-    assert len(accession_ids) == 24
+    assert len(accession_ids) == 32
     assert "ACC-1001" in accession_ids
 
 
@@ -229,7 +229,7 @@ def test_accession_ids_releases_only_values_that_are_imaging_accessions(http_cli
     )
     assert response.status_code == 200, response.text
     accession_ids = response.json()["accession_ids"]
-    assert len(accession_ids) == 24
+    assert len(accession_ids) == 32
     assert all(value.startswith("ACC-") for value in accession_ids), accession_ids
 
 
@@ -256,7 +256,7 @@ def test_below_threshold_snapshot_is_refused_and_persists_nothing(http_client):
     """The disclosure floor is enforced at freeze time; a refused freeze leaves no artefact.
 
     modality_concept_id 4013632 = 'XR'; the seed has 4 such rows, under the stack's
-    COHORT_QUERY_THRESHOLD of 5. The refusal text matches the row-level routes' fixed
+    COHORT_QUERY_THRESHOLD of 10. The refusal text matches the row-level routes' fixed
     below-threshold string, and a zero-row cohort refuses byte-identically so the snapshot
     route cannot act as a row-count oracle either.
     """
@@ -284,13 +284,13 @@ def test_below_threshold_snapshot_is_refused_and_persists_nothing(http_client):
 
 
 def test_snapshot_gates_on_distinct_subjects_not_rows(http_client):
-    """Six imaging rows from three patients is three subjects — under the stack's floor of 5
+    """Sixteen imaging rows from eight patients is eight subjects — under the stack's floor of 10
     even though the row count clears it — so nothing is frozen; and a cohort exposing neither
     person_id nor accession_id is refused as a 400 naming the column, never persisted."""
     project_id = "97fca5ab-0000-4000-8000-000000000005"
     few_subjects = _create_snapshot(
         http_client,
-        "SELECT person_id, accession_id FROM omop.image_occurrence WHERE person_id IN (1, 2, 3)",
+        "SELECT person_id, accession_id FROM omop.image_occurrence WHERE person_id BETWEEN 1 AND 8",
         project_id,
     )
     assert few_subjects.status_code == 403, few_subjects.text

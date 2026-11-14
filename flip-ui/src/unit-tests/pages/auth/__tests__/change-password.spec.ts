@@ -18,6 +18,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { makeMockAuthProvider, NO_CAPABILITIES } from "@/auth/__tests__/mock-provider";
 import ChangePassword from "@/pages/auth/change-password.vue";
 import { useAuthStore } from "@/store/auth";
+import { useErrorStore } from "@/store/error";
 
 const mockGotoLogin = vi.fn();
 
@@ -101,6 +102,65 @@ describe("change-password page", () => {
         await flushPromises();
 
         expect(authStore.resetPassword).toHaveBeenCalledWith("u@e.com");
+        expect(wrapper.find("[data-test='changePassword-btn']").exists()).toBe(true);
+    });
+
+    test("stays on the request form and raises the error state when the code request fails", async () => {
+        const wrapper = mountChangePassword();
+        vi.mocked(useAuthStore().resetPassword).mockRejectedValueOnce(new Error("boom"));
+
+        await wrapper.find("form").trigger("submit");
+        await flushPromises();
+
+        expect(useErrorStore().setError).toHaveBeenCalled();
+        expect(wrapper.find("[data-test='requestCode-btn']").exists()).toBe(true);
+    });
+
+    test("switches between the two forms with 'I have a code' and 'I need a code'", async () => {
+        const wrapper = mountChangePassword();
+
+        await wrapper.find("[data-test='iHaveACode-btn']").trigger("click");
+        expect(wrapper.find("h1").text()).toBe("Change your password");
+
+        await wrapper.find("[data-test='iNeedACode-btn']").trigger("click");
+        expect(wrapper.find("h1").text()).toBe("Request password change");
+    });
+
+    test("changes the password through the store, confirms it and returns to login", async () => {
+        const wrapper = mountChangePassword();
+        await wrapper.find("[data-test='iHaveACode-btn']").trigger("click");
+
+        await wrapper.find("form").trigger("submit");
+        await flushPromises();
+
+        expect(useAuthStore().updateForgottenPassword).toHaveBeenCalledWith({ email: "u@e.com" });
+        expect(mockSnackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Password Changed" }));
+        expect(mockGotoLogin).toHaveBeenCalledTimes(1);
+    });
+
+    test("reports a failed change and sends the user back to request a new code", async () => {
+        const wrapper = mountChangePassword();
+        vi.mocked(useAuthStore().updateForgottenPassword).mockRejectedValueOnce(new Error("boom"));
+        await wrapper.find("[data-test='iHaveACode-btn']").trigger("click");
+
+        await wrapper.find("form").trigger("submit");
+        await flushPromises();
+
+        expect(mockSnackbarShow).toHaveBeenCalledWith(expect.objectContaining({ type: "error" }), 8_000);
+        expect(useErrorStore().setError).toHaveBeenCalled();
+        expect(mockGotoLogin).not.toHaveBeenCalled();
+        expect(wrapper.find("[data-test='requestCode-btn']").exists()).toBe(true);
+    });
+
+    test("sends one change request when the form is submitted twice", async () => {
+        const wrapper = mountChangePassword();
+        vi.mocked(useAuthStore().updateForgottenPassword).mockReturnValueOnce(new Promise(() => {}));
+        await wrapper.find("[data-test='iHaveACode-btn']").trigger("click");
+
+        await wrapper.find("form").trigger("submit");
+        await wrapper.find("form").trigger("submit");
+
+        expect(useAuthStore().updateForgottenPassword).toHaveBeenCalledTimes(1);
     });
 
     test("bounces to login with a notice when the backend has no in-app reset flow", async () => {

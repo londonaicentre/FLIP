@@ -20,7 +20,7 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.fl_services.services.fl_service import abort_model_training
-from flip_api.model_services.services.model_service import update_model_status
+from flip_api.model_services.services.model_service import add_log, update_model_status
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/fl", tags=["fl_services"])
@@ -56,6 +56,8 @@ def stop_training(
     try:
         abort_model_training(model_id, db)
         update_model_status(model_id, ModelStatus.STOPPED, db)
+        # Written here because the FL server's own STOPPED report arrives after its job is gone, and is refused.
+        add_log(model_id, "The job for this model has been stopped.", db, success=False)
 
     except Exception as e:
         logger.exception("Error while stopping model training")

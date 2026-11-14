@@ -37,6 +37,7 @@ EXIT CODES:
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import urllib.request
@@ -121,31 +122,22 @@ def check_command(command: str) -> bool:
     Returns:
         True if command exists, False otherwise
     """
-    try:
-        subprocess.run(
-            ["which", command],
-            capture_output=True,
-            check=True,
-            timeout=5,
-        )
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+    return shutil.which(command) is not None
 
 
 def unexpected_exits(listing: str) -> list[str]:
     """Names of exited containers worth a warning, from ``docker ps --format '{{.Names}}\t{{.Status}}'``.
 
-    A trust's ``fl-governance-init`` is a one-shot that exits 0 once it has extracted the
-    fl-clients' section of the governance document (FLIP#1259); a completed one is expected, a
-    failed one is not.
+    A trust's ``fl-governance-init`` and ``fl-client-init`` are one-shots that exit 0 once they have
+    extracted the fl-clients' section of the governance document (FLIP#1259) and rendered their kits
+    (FLIP#1570); a completed one is expected, a failed one is not.
     """
     names = []
     for line in listing.splitlines():
         name, _, status = line.partition("\t")
         if not name.strip():
             continue
-        if "fl-governance-init" in name and status.startswith("Exited (0)"):
+        if ("fl-governance-init" in name or "fl-client-init" in name) and status.startswith("Exited (0)"):
             continue
         names.append(name.strip())
     return names
@@ -213,44 +205,6 @@ def check_http_endpoint(url: str, name: str, expected_status: int | list[int] = 
             return False
     except Exception as e:
         print_status("FAIL", f"{name} not responding: {e}")
-        return False
-
-
-def check_https_loopback_insecure(url: str, name: str, expected_status: int = 200) -> bool:
-    """Check HTTPS endpoint with certificate verification disabled (--insecure, -k).
-
-    DIAGNOSTIC EXCEPTION: This function uses insecure (-k) mode ONLY for localhost/loopback
-    checks where the certificate SAN does not cover 'localhost' (e.g. it was issued for the
-    machine's public IP). This is acceptable for local health diagnostics.
-
-    WARNING: Do NOT use this pattern for general HTTPS checks or non-loopback endpoints.
-    See CONTRIBUTING.md for guidance on secure transport validation.
-
-    Args:
-        url: The URL to check (should be localhost/127.0.0.1)
-        name: Descriptive name of the endpoint
-        expected_status: Expected HTTP status code (default 200)
-
-    Returns:
-        True if endpoint responds with expected status, False otherwise
-    """
-    print_status("INFO", f"Checking {name} (HTTPS insecure) at {url}...")
-
-    success, output = run_command(
-        ["curl", "-sk", "-o", "/dev/null", "-w", "%{http_code}", url],
-        timeout=15,
-    )
-
-    if not success:
-        print_status("FAIL", f"{name} HTTPS check failed: {output}")
-        return False
-
-    status = output.strip()
-    if status == str(expected_status):
-        print_status("PASS", f"{name} is responding over HTTPS (HTTP {status})")
-        return True
-    else:
-        print_status("FAIL", f"{name} returned HTTP {status} over HTTPS (expected {expected_status})")
         return False
 
 
@@ -575,9 +529,6 @@ def main(
         sys.exit(1)
     print_status("PASS", "docker command found")
 
-    if not check_command("docker-compose") and not check_command("docker"):
-        print_status("FAIL", "Required command 'docker-compose' or 'docker compose' not found.")
-        sys.exit(1)
     print_status("PASS", "docker-compose command found")
 
     # Check if Docker daemon is running
@@ -629,7 +580,7 @@ def main(
         configured_nets = list(net_endpoints.keys())
         configured_net_numbers = [int(net.split("-")[-1]) for net in configured_nets if net.startswith("net-")]
     except (json.JSONDecodeError, ValueError):
-        configured_net_numbers = [1, 2]  # Default to net-1 only
+        configured_net_numbers = [1, 2]  # Default to net-1 and net-2 (the dev NET_ENDPOINTS)
 
     # Docker container checks
     if not skip_docker:
@@ -748,13 +699,9 @@ def main(
                 _, running = run_command(["docker", "ps", "--format", "{{.Names}}:{{.Status}}"])
 
                 for container in xnat_compose_containers:
-                    container_found = False
-                    for line in running.split("\n"):
-                        if line.startswith(f"{container}:") and "Up" in line:
-                            print_status("PASS", f"XNAT container '{container}' is running")
-                            container_found = True
-                            break
-                    if not container_found:
+                    if any(line.startswith(f"{container}:") and "Up" in line for line in running.split("\n")):
+                        print_status("PASS", f"XNAT container '{container}' is running")
+                    else:
                         print_status("WARN", f"XNAT container '{container}' is not running")
         except Exception as e:
             print_status("WARN", f"Could not check Docker Swarm services: {e}")
@@ -964,15 +911,8 @@ def main(
     print_section("Database Connectivity")
 
     print_status("INFO", "Checking PostgreSQL connectivity...")
-    # Try to connect using docker exec. Resolve the container through hub_containers rather than
-    # naming it: with no container_name the db is `deploy-flip-db-1` on the default stack and
-    # `<instance>-deploy-flip-db-1` on a second one (FLIP#957).
-    # db = hub_containers.get("flip-db")
-    # success, output = run_command(["docker", "exec", db.name, "psql", "-U", "local_user", "-c", "SELECT 1;"])
-    # if success:
-    #     print_status("PASS", "PostgreSQL database is accessible")
-    # else:
-    #     print_status("FAIL", f"Cannot connect to PostgreSQL database: {output}")
+    # TODO: no flip-db check yet. When added, resolve the container through hub_containers, never by
+    # name: it is `deploy-flip-db-1` on the default stack, `<instance>-deploy-flip-db-1` on a second one (FLIP#957).
 
     # Container logs check
     print_section("Container Logs")
@@ -989,11 +929,7 @@ def main(
             success, logs = run_command(["docker", "logs", "--tail", "50", container], timeout=10)
             if success:
                 # Check for common error patterns
-                error_patterns = ["ERROR", "CRITICAL", "Exception", "Traceback"]
-                found_errors = []
-                for pattern in error_patterns:
-                    if pattern in logs:
-                        found_errors.append(pattern)
+                found_errors = [p for p in ("ERROR", "CRITICAL", "Exception", "Traceback") if p in logs]
 
                 if found_errors:
                     print_status("WARN", f"Container '{container}' has errors in logs: {', '.join(found_errors)}")
@@ -1016,39 +952,33 @@ def main(
         ["docker", "ps", "--filter", "name=xnat", "--filter", "name=db", "--format", "{{.Names}}"], timeout=5
     )
 
-    if success and db_containers_output:
-        found_db = False
-        for db_container_name in db_containers_output.strip().split("\n"):
-            if "xnat-db" in db_container_name and db_container_name.strip():
-                found_db = True
-                try:
-                    # Try to query the database
-                    success, output = run_command(
-                        [
-                            "docker",
-                            "exec",
-                            db_container_name,
-                            "psql",
-                            "-U",
-                            "xnat",
-                            "-d",
-                            "xnat",
-                            "-c",
-                            "SELECT version();",
-                        ],
-                        timeout=10,
-                    )
-                    if success and "PostgreSQL" in output:
-                        print_status("PASS", f"XNAT database '{db_container_name}' is accessible and responsive")
-                    else:
-                        print_status("WARN", f"XNAT database '{db_container_name}' connection failed")
-                except Exception as e:
-                    print_status("WARN", f"Could not check XNAT database '{db_container_name}': {e}")
-
-        if not found_db:
-            print_status("INFO", "No XNAT database containers found (this is OK if XNAT is not deployed)")
-    else:
+    db_names = [n for n in db_containers_output.splitlines() if "xnat-db" in n and n.strip()] if success else []
+    if not db_names:
         print_status("INFO", "No XNAT database containers found (this is OK if XNAT is not deployed)")
+    for db_container_name in db_names:
+        try:
+            # Try to query the database
+            success, output = run_command(
+                [
+                    "docker",
+                    "exec",
+                    db_container_name,
+                    "psql",
+                    "-U",
+                    "xnat",
+                    "-d",
+                    "xnat",
+                    "-c",
+                    "SELECT version();",
+                ],
+                timeout=10,
+            )
+            if success and "PostgreSQL" in output:
+                print_status("PASS", f"XNAT database '{db_container_name}' is accessible and responsive")
+            else:
+                print_status("WARN", f"XNAT database '{db_container_name}' connection failed")
+        except Exception as e:
+            print_status("WARN", f"Could not check XNAT database '{db_container_name}': {e}")
 
     # Final summary
     print_section("Summary")

@@ -45,4 +45,3 @@ def pytest_sessionstart(session):
     os.environ.setdefault("IMAGING_API_URL", "https://imaging.example.com")
     os.environ.setdefault("IMAGES_DIR", "/images")
     os.environ.setdefault("NET_ID", "net-1")
-    os.environ.setdefault("UPLOADED_FEDERATED_DATA_BUCKET", "s3://test-bucket")

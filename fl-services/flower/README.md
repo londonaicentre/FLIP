@@ -48,7 +48,7 @@ make up FL_BACKEND=flower DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev   # run the hub 
 ### Containers run as a non-root user (GHSA-8465), with capabilities hardened
 
 `flower-supernode` and `flower-fl-base` inherit the non-root `app` user from the upstream `flwr/base`
-image. The trust-deployment `fl-client-net-*` services (`trust/deploy/compose/compose_trust.{production,development}.flower.yml`)
+image. The trust-deployment `fl-client-net-*` services (`trust/deploy/compose/compose_trust.{prod,development}.flower.yml`)
 also set `security_opt: [no-new-privileges:true]` and `cap_drop: [ALL]`, matching every other trust-side
 service — the `flower-supernode` entrypoint does no chmod/chown at all, so no capability needs adding
 back in either environment. See [`deploy/README.md`](../../deploy/README.md#linux-capability-restrictions)
@@ -62,7 +62,7 @@ prepended to `sys.path`. **FLIP turns this off on both sides** (FLIP#1418): the 
 `FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION=1` (every compose file, and the ECS task on every
 estate), and the SuperNodes do not pass `--allow-runtime-dependency-installation`, which is
 Flower's default. The ServerApp and the ClientApps run in the image's own environment: `flwr/base`
-plus `flip-utils[full]`, which `fl-base` installs from `/opt/flip-utils`. That environment carries
+plus `flip-utils[flower,full]`, which `fl-base` installs from `/opt/flip-utils`. That environment carries
 every package the template app code imports. Nothing checks it against the templates'
 `[project].dependencies`, whose version floors and extras (`pandas>=3.0.0`, `flwr[simulation]`) no
 longer apply at run time, so a package the image lacks fails as an import error when the app starts
@@ -86,30 +86,51 @@ With nothing installed at run time, no FL host needs a route to PyPI or `downloa
 during a run, which is what the LZA estate's sealed egress (FLIP#749) already required.
 
 The `[tool.uv]` tables in the `fl-apps/flower/*` template pyprojects stay as a guard for anything
-that does run `uv sync` against a template inside an FL image (per-run install re-enabled; the
-`/opt/flip-utils` path exists nowhere else, so a template cannot be synced on a workstation):
-`[tool.uv.sources] flip-utils = { path = "/opt/flip-utils" }` stops uv resolving flip-utils from
-**PyPI**, which would shadow the in-repo copy baked into the images
-([#767](https://github.com/londonaicentre/FLIP/issues/767)), and `torch`/`torchvision` are pinned
-to PyTorch's cu130 index (NVIDIA driver ≥580).
+that does run `uv sync` against a template inside an FL image (for example, with per-run install
+re-enabled). A template cannot be synced on a workstation, because `/opt/flip-utils` exists only in
+the images. The tables do two things:
 
-**Testing an unpublished flip-utils** therefore needs no PyPI release and no version bump: rebuild
-the images from your branch (`make build-fl FL_BACKEND=flower` — the source lands at
-`/opt/flip-utils`) and restart the flower services onto the rebuilt `:dev` images
-(`make restart-fl FL_BACKEND=flower DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev` for the hub stack).
-Every flip-utils change ships via an image rebuild — the containers run whatever their image bakes,
-so confirm the running container carries your change by inspecting the file you edited
-(`docker exec <supernode> cat /opt/flip-utils/flip/<changed file>`) before trusting a run.
+- `[tool.uv.sources] flip-utils = { path = "/opt/flip-utils" }` stops uv resolving flip-utils from
+  **PyPI**, which would shadow the in-repo copy baked into the images
+  ([#767](https://github.com/londonaicentre/FLIP/issues/767)).
+- `torch`/`torchvision` are pinned to PyTorch's cu130 index (NVIDIA driver ≥580).
 
-> ⚠️ The tutorials under `fl-tutorials/flower/` **do not declare flip-utils at all**. A tutorial
-> pyproject cannot carry the template's `/opt/flip-utils` pin (the path does not exist on a
-> workstation, so a local `uv sync` would fail), and declaring flip-utils without the pin would make
-> any `uv sync` resolve it from **PyPI**, a release that can drift from the in-repo `flip-utils/`.
-> That includes a local `flwr run` (`sim-tutorial`), whose SuperLink still runtime-installs an app's
-> declared dependencies into a per-run environment prepended to `sys.path`. Undeclared, `import flip`
-> resolves to the environment running the app and never to PyPI: the image's baked-in copy on the
-> compose stacks, where a flip-utils change arrives only via an image rebuild
-> (`make build-fl FL_BACKEND=flower`), and the checkout's `flip-utils/` under `sim-tutorial`.
+### Testing an unpublished flip-utils
+
+No PyPI release or version bump is needed. The containers run whatever their image bakes, so:
+
+1. Rebuild the images from your branch (the source lands at `/opt/flip-utils`):
+
+   ```bash
+   make build-fl FL_BACKEND=flower
+   ```
+
+2. Restart the Flower services onto the rebuilt `:dev` images (hub stack):
+
+   ```bash
+   make restart-fl FL_BACKEND=flower DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev
+   ```
+
+3. Before trusting a run, confirm the running container carries your change:
+
+   ```bash
+   docker exec <supernode> cat /opt/flip-utils/flip/<changed file>
+   ```
+
+> ⚠️ The tutorials under `fl-tutorials/flower/` **do not declare flip-utils at all**, on purpose:
+>
+> - They cannot carry the template's `/opt/flip-utils` pin. That path does not exist on a
+>   workstation, so a local `uv sync` would fail.
+> - Declaring flip-utils without the pin would make any `uv sync` resolve it from **PyPI**, a
+>   release that can drift from the in-repo `flip-utils/`. That includes a local `flwr run`
+>   (`sim-tutorial`), whose SuperLink still runtime-installs an app's declared dependencies into a
+>   per-run environment prepended to `sys.path`.
+>
+> Undeclared, `import flip` never resolves to PyPI. It resolves to the environment running the app:
+>
+> - on the compose stacks, the image's baked-in copy (a flip-utils change arrives only via an image
+>   rebuild, `make build-fl FL_BACKEND=flower`);
+> - under `sim-tutorial`, the checkout's `flip-utils/`.
 
 ## Step-by-step provisioning
 
@@ -128,12 +149,13 @@ provision/creds/net-<N>/
 └── keys/           supernode_credentials_<i>{,.pub}          # SuperNode auth key pairs, one per kit slot
 ```
 
-How many key pairs: `make provision` mints one per entry in this environment's `FL_KIT_SLOT_NAMES`,
-falling back to 2 where no pool is named (a dev env file). A trust staged into slot *N* fetches
-`keys/supernode_credentials_N`, so a kit that stops short of the pool leaves the later slots unable
-to start — and there is no add-a-node path, unlike FLARE's `provision --add_client`: a re-run
-regenerates the CA and invalidates every node already holding credentials. Override with
-`NUM_SUPERNODES=<n>` (or `FLOWER_NUM_SUPERNODES=<n>` when calling the script directly).
+`make provision` mints one key pair per entry in this environment's `FL_KIT_SLOT_NAMES`, or 2 when
+no pool is named (a dev env file). Override with `NUM_SUPERNODES=<n>` (or `FLOWER_NUM_SUPERNODES=<n>`
+when calling the script directly).
+
+A trust staged into slot *N* fetches `keys/supernode_credentials_N`, so a kit that stops short of the
+pool leaves the later slots unable to start. Unlike FLARE's `provision --add_client`, there is no
+add-a-node path: a re-run regenerates the CA and invalidates every node already holding credentials.
 
 > ⚠️ These are development credentials. Configure validity, organization or the server SANs
 > (`SERVER_SAN_IPS`) by editing the globals at the top of
@@ -152,9 +174,9 @@ FLOWER_EXTRA_SERVER_SANS="fl-server-net-1.flip.local,fl.stag.flip.aicentre.co.uk
   make -C fl-services/flower provision NET_NUMBER=1 HUB=stag
 ```
 
-`make generate-tls-certificates-net-1` / `-net-2` are direct shortcuts for `provision
-NET_NUMBER=1` / `=2` — same script, same `NUM_SUPERNODES` derivation, just without having to pass
-`NET_NUMBER` — handy when a Makefile or script targets one net by name.
+`make -C fl-services/flower generate-tls-certificates-net-1` and `-net-2` are shortcuts for
+`provision NET_NUMBER=1` and `=2` (same script, same `NUM_SUPERNODES` derivation), for a Makefile or
+script that targets one net by name.
 
 `creds/` is the gitignored `FL_PROVISIONED_DIR` for Flower (see
 [`deploy/fl_backend.mk`](../../deploy/fl_backend.mk)); the dev compose overlays and the standalone
@@ -181,17 +203,19 @@ subprocess isolation (FLIP's mode) ignores; SuperNode auth signs Fleet requests 
 could submit its own ServerApp, stop another project's run or forge instructions to other trusts'
 SuperNodes — and there is no flag to serve Fleet on its own listener.
 
-Trusts therefore never reach port 8000. They reach `flower-fleet-proxy`, an nginx that listens on
-the trust-facing port 9092 with the SuperLink's own server certificate (so trust kits, SANs and
-`FL_SERVER_PORT` are unchanged), forwards only the 12 Fleet routes in
-[`fleet-proxy/fleet-routes.map`](fleet-proxy/fleet-routes.map) — POST only, matched on the method
-and raw request URI — to the SuperLink over TLS, and answers everything else 404. When it cannot
-reach or verify the SuperLink it answers 503, which the SuperNode retries, and its health check
-(`fleet-proxy/healthcheck.sh`, also on the ECS sidecar) fails, since the NLB's TCP check alone would
-still pass. The access log's `upstream=` field tells the two apart.
-The proxy refuses a request body over `FLEET_PROXY_MAX_BODY_SIZE` (default `64m`, against
-flwr's 5 MiB array chunks) with 413, which the SuperNode does not retry; raise it alongside any
-`FLWR_PRIVATE_MAX_ARRAY_CHUNK_SIZE` override.
+Trusts therefore never reach port 8000. They reach `flower-fleet-proxy`, an nginx that:
+
+- listens on the trust-facing port 9092 with the SuperLink's own server certificate, so trust kits,
+  SANs and `FL_SERVER_PORT` are unchanged;
+- forwards only the 12 Fleet routes in [`fleet-proxy/fleet-routes.map`](fleet-proxy/fleet-routes.map)
+  (POST only, matched on the method and raw request URI) to the SuperLink over TLS, and answers
+  everything else 404;
+- answers 503 when it cannot reach or verify the SuperLink, which the SuperNode retries. Its health
+  check (`fleet-proxy/healthcheck.sh`, also on the ECS sidecar) then fails, since the NLB's TCP
+  check alone would still pass. The access log's `upstream=` field tells the two apart;
+- refuses a request body over `FLEET_PROXY_MAX_BODY_SIZE` (default `64m`, against flwr's 5 MiB
+  array chunks) with 413, which the SuperNode does not retry. Raise it alongside any
+  `FLWR_PRIVATE_MAX_ARRAY_CHUNK_SIZE` override.
 
 | Where | Shape |
 |---|---|
@@ -207,6 +231,10 @@ renames or drops a Fleet route fails CI instead of breaking SuperNodes mid-round
 
 ## Running a network standalone (no hub / trusts)
 
+> **Fetch the dataset before `up`** if you will submit the default `APP=xray_classification`.
+> Otherwise it trains on empty placeholder mounts with no sign that the data is missing; see
+> the steps below the command list.
+
 ```bash
 make -C fl-services/flower up                 # INSECURE stack (1 SuperLink + 2 SuperNodes + fl-api)
 make -C fl-services/flower up-secure          # SECURE stack (TLS + SuperNode auth); needs `provision` first
@@ -215,7 +243,7 @@ make -C fl-services/flower down
 ```
 
 `APP=` is the tutorial's bare name: the stack mounts `fl-tutorials/flower/` at `/app/src`, and the fl-api
-resolves the name under `/app/src/<category>/<name>` (the tree's layout since #1500) — exactly one match.
+resolves the name under `/app/src/<category>/<name>` and expects exactly one match.
 
 **Fetch the dataset before `up`.** The default `APP=xray_classification` is not self-contained: it
 reads images and a dataframe from the SuperNodes' bind mounts, and `up` only creates *placeholder*

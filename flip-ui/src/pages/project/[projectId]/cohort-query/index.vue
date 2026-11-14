@@ -23,7 +23,7 @@
                 <router-link
                     v-if="project"
                     :to="`/project/${project.id}`"
-                    class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-300 dark:hover:text-primary-300"
+                    class="text-xs font-semibold text-gray-500 hover:text-primary-500 dark:text-gray-300 dark:hover:text-primary-300"
                 >
                     {{ project.name }}
                 </router-link>

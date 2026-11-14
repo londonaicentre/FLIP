@@ -147,11 +147,14 @@ class TestPersistToS3AndCleanup:
         assert "Unable to retrieve" in str(component.log_warning.call_args)
 
     @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
+    @patch("shutil.copytree")
     @patch("shutil.move")
     @patch("shutil.rmtree")
     @patch("os.path.isfile")
     @patch("os.path.isdir")
-    def test_upload_results_to_s3_bucket(self, mock_isdir, mock_isfile, mock_rmtree, mock_move, mock_constants):
+    def test_upload_results_to_s3_bucket(
+        self, mock_isdir, mock_isfile, mock_rmtree, mock_move, mock_copytree, mock_constants
+    ):
         """Test upload_results_to_s3_bucket in production mode"""
         mock_constants.LOCAL_DEV = False
         model_id = "123e4567-e89b-12d3-a456-426614174000"
@@ -171,18 +174,20 @@ class TestPersistToS3AndCleanup:
 
         flip.upload_results_to_s3.assert_called_once()
 
-        # Should move global model, best model, trainer.py, and validator.py if they exist
-        assert mock_move.call_count == 4
+        # Moves the global and best models, and copies the app's files (FLIP#634)
+        assert mock_move.call_count == 2
+        mock_copytree.assert_called_once()
         # Two dirs are pruned before zipping: app_server + cross_site_val/model_shareables.
         assert mock_rmtree.call_count == 2
 
     @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
+    @patch("shutil.copytree")
     @patch("shutil.move")
     @patch("shutil.rmtree")
     @patch("os.path.isfile")
     @patch("os.path.isdir")
     def test_upload_results_ships_no_best_model_when_none_was_saved(
-        self, mock_isdir, mock_isfile, mock_rmtree, mock_move, mock_constants
+        self, mock_isdir, mock_isfile, mock_rmtree, mock_move, mock_copytree, mock_constants
     ):
         """A best model appears in the results only when selection actually saved one.
 
@@ -208,17 +213,18 @@ class TestPersistToS3AndCleanup:
 
         component.upload_results_to_s3_bucket(fl_ctx)
 
-        assert mock_move.call_count == 3
+        assert mock_move.call_count == 1
         assert not any("best" in str(c.args[0]) for c in mock_move.call_args_list)
         flip.upload_results_to_s3.assert_called_once()
 
     @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
+    @patch("shutil.copytree")
     @patch("shutil.move")
     @patch("shutil.rmtree")
     @patch("os.path.isfile")
     @patch("os.path.isdir")
     def test_upload_results_prunes_cross_site_val_models(
-        self, mock_isdir, mock_isfile, mock_rmtree, mock_move, mock_constants
+        self, mock_isdir, mock_isfile, mock_rmtree, mock_move, mock_copytree, mock_constants
     ):
         """The cross-site-eval model artefacts must be pruned from the results zip.
 
@@ -239,7 +245,7 @@ class TestPersistToS3AndCleanup:
         fl_ctx.get_job_id.return_value = "job-123"
         fl_ctx.get_engine.return_value.get_workspace.return_value.get_run_dir.return_value = run_dir
 
-        mock_isfile.return_value = False  # no global model / trainer / validator to move
+        mock_isfile.return_value = False  # no global model to move
         # Only the cross-site-eval model dir "exists" (not app_server), isolating the prune under test.
         mock_isdir.side_effect = lambda p: p == cross_val_models_dir
 
@@ -249,12 +255,13 @@ class TestPersistToS3AndCleanup:
         flip.upload_results_to_s3.assert_called_once()
 
     @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
+    @patch("shutil.copytree")
     @patch("shutil.move")
     @patch("shutil.rmtree")
     @patch("os.path.isfile")
     @patch("os.path.isdir")
     def test_upload_results_training_job_has_no_cross_site_val(
-        self, mock_isdir, mock_isfile, mock_rmtree, mock_move, mock_constants
+        self, mock_isdir, mock_isfile, mock_rmtree, mock_move, mock_copytree, mock_constants
     ):
         """Training jobs have no ``cross_site_val`` dir, so the prune is a safe no-op there."""
         mock_constants.LOCAL_DEV = False
@@ -445,3 +452,39 @@ def test_the_model_id_is_read_before_app_server_is_removed(mock_constants, tmp_p
 
     flip.upload_results_to_s3.assert_called_once_with(str(run_dir), model_id)
     assert not (run_dir / "app_server").exists()
+
+
+@patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
+def test_the_results_carry_the_whole_app(mock_constants, tmp_path):
+    """Every file the researcher uploaded reaches the results under app/, not just trainer.py and
+    validator.py (FLIP#634); caches, bundled checkpoints and FLIP's job config are left behind."""
+    mock_constants.LOCAL_DEV = False
+    run_dir = tmp_path / "job-1"
+    custom = run_dir / "app_server" / "custom"
+    for rel in ("trainer.py", "validator.py", "models.py", "config.json", "utils/transforms.py", "notes.txt"):
+        (custom / rel).parent.mkdir(parents=True, exist_ok=True)
+        (custom / rel).write_text(rel)
+    (custom / "__pycache__").mkdir()
+    (custom / "__pycache__" / "models.cpython-312.pyc").write_bytes(b"")
+    for weights in ("pretrained.pt", "model.pkl"):
+        (custom / weights).write_bytes(b"weights")
+    (run_dir / "app_server" / "config").mkdir()
+    (run_dir / "app_server" / "config" / "config_fed_client.json").write_text("{}")
+    flip = MagicMock()
+    component = PersistToS3AndCleanup(model_id="123e4567-e89b-12d3-a456-426614174000", flip=flip)
+    fl_ctx = MagicMock()
+    fl_ctx.get_peer_context.return_value = None
+    fl_ctx.get_engine.return_value.get_workspace.return_value.get_run_dir.return_value = str(run_dir)
+
+    component.upload_results_to_s3_bucket(fl_ctx)
+
+    shipped = sorted(str(p.relative_to(run_dir)) for p in run_dir.rglob("*") if p.is_file())
+    assert shipped == [
+        "app/config.json",
+        "app/models.py",
+        "app/notes.txt",
+        "app/trainer.py",
+        "app/utils/transforms.py",
+        "app/validator.py",
+    ]
+    flip.upload_results_to_s3.assert_called_once()

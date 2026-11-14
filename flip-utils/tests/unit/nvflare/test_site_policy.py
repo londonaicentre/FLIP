@@ -21,6 +21,7 @@ from flip.nvflare.site_policy import (
     SCOPE_NAME,
     SitePolicy,
     SitePolicyError,
+    assert_rendered,
     build_policy_json,
     main,
     parse_env,
@@ -587,6 +588,54 @@ class TestMain:
 
         assert main([str(out_path)]) == 0
         assert json.loads(out_path.read_text())["default_scope"] == SCOPE_NAME
+
+
+class TestAssertRendered:
+    """The fl-client mounts local/ read-only and starts only on a render matching its configuration (FLIP#1570)."""
+
+    POLICY = {"FL_SITE_PRIVACY_POLICY": "percentile"}
+
+    def test_a_fresh_render_passes_without_writing(self, tmp_path):
+        out_path = tmp_path / "privacy.json"
+        render(self.POLICY, out_path)
+        before = out_path.stat().st_mtime_ns
+
+        assert assert_rendered(self.POLICY, out_path)[0] == "written"
+        assert main(["--assert-rendered", str(out_path)], env=self.POLICY) == 0
+        assert out_path.stat().st_mtime_ns == before
+
+    def test_no_policy_and_no_file_passes(self, tmp_path):
+        assert main(["--assert-rendered", str(tmp_path / "privacy.json")], env={}) == 0
+
+    @pytest.mark.parametrize(
+        ("content", "message"),
+        [(None, "is missing"), ("{", "not valid JSON"), ('{"scopes": []}', "does not match")],
+    )
+    def test_a_missing_or_stale_render_fails(self, tmp_path, capsys, content, message):
+        out_path = tmp_path / "privacy.json"
+        if content is not None:
+            out_path.write_text(content)
+
+        assert main(["--assert-rendered", str(out_path)], env=self.POLICY) == 1
+        assert message in capsys.readouterr().err
+
+    def test_a_render_left_by_a_removed_policy_fails_and_is_kept(self, tmp_path, capsys):
+        out_path = tmp_path / "privacy.json"
+        render(self.POLICY, out_path)
+
+        assert main(["--assert-rendered", str(out_path)], env={}) == 1
+        assert out_path.exists(), "the check must never write"
+        assert "no site privacy policy is configured" in capsys.readouterr().err
+
+    def test_a_render_for_other_parameters_fails(self, tmp_path):
+        out_path = tmp_path / "privacy.json"
+        render({**self.POLICY, "FL_SITE_PRIVACY_GAMMA": "0.5"}, out_path)
+
+        with pytest.raises(SitePolicyError, match="does not match"):
+            assert_rendered(self.POLICY, out_path)
+
+    def test_an_invalid_configuration_fails(self, tmp_path):
+        assert main(["--assert-rendered", str(tmp_path / "p.json")], env={"FL_SITE_PRIVACY_POLICY": "bogus"}) == 1
 
 
 class TestModuleEntryPoint:

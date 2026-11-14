@@ -66,57 +66,6 @@ def real_client() -> requests.Session:
     return real_client
 
 
-def pytest_addoption(parser):
-    parser.addoption(
-        "--skip-client",
-        action="store_true",
-        default=False,
-        help="Call api endpoints with the client, which does not if the api is not running",
-    )
-    parser.addoption(
-        "--skip-db",
-        action="store_true",
-        default=False,
-        help="Skip tests that require a database connection",
-    )
-
-
-def pytest_configure(config):
-    config.addinivalue_line("markers", "skip-client: mark test to run only if --skip-client is given")
-    config.addinivalue_line("markers", "skip-db: mark test to run only if --skip-db is given")
-
-
-def pytest_collection_modifyitems(config, items):
-    # Check if the --skip-client flag IS provided
-    if config.getoption("--skip-client"):
-        # Create the skip marker instance
-        skip_marker = pytest.mark.skip(reason="skipped because --skip-client was provided")
-        # Iterate through all collected test items
-        for item in items:
-            # Check if the item is marked with 'skip_client'
-            if "skip_client" in item.keywords:
-                # Add the skip marker to this item
-                item.add_marker(skip_marker)
-    # Check if the --skip-db flag IS provided
-    if config.getoption("--skip-db"):
-        # Create the skip marker instance
-        skip_marker = pytest.mark.skip(reason="skipped because --skip-db was provided")
-        # Iterate through all collected test items
-        for item in items:
-            # Check if the item is marked with 'skip_db'
-            if "skip_db" in item.keywords:
-                # Add the skip marker to this item
-                item.add_marker(skip_marker)
-
-    if config.getoption("--skip-client"):
-        # --skip-client given in cli: do not skip slow tests
-        return
-    skip_client = pytest.mark.skip(reason="need --skip-client option to run")
-    for item in items:
-        if "slow" in item.keywords:
-            item.add_marker(skip_client)
-
-
 @pytest.fixture(autouse=True)
 def _reset_auth_caches():
     """Clear the process-wide identity-provider and JWKS caches around every test.

@@ -98,6 +98,8 @@ def test_training_refusal_reaches_activity_feed(net, failed_path, body):
         patch.object(httpx.Client, "request", side_effect=respond),
         patch.object(fl_scheduler_service, "_raise_if_job_aborted"),
         patch.object(fl_service, "_raise_if_job_aborted"),
+        # Its own commit would blur the feed row's below.
+        patch.object(fl_service, "_mint_job_credential", return_value="credential"),
         patch.object(fl_scheduler_service, "get_net_by_model_id", return_value=net),
         patch.object(fl_scheduler_service, "bundle_nvflare_application", return_value="s3://bundle"),
         patch.object(fl_scheduler_service, "bundle_flower_application", return_value="s3://bundle"),

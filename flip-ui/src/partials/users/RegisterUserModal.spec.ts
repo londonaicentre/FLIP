@@ -346,6 +346,71 @@ describe("Register User Modal", () => {
             });
         });
 
+        // FLIP#1854: clearing the role on close used to write an empty role
+        // after the form reset; that write validated the field, so Role turned
+        // red while the dialog faded out.
+        describe("closing the dialog", () => {
+            // vee-validate runs schema validation on a short timer, so the late
+            // error only lands a few ms after close(); wait past it.
+            const settle = () => new Promise(resolve => setTimeout(resolve, 30));
+            const roleButtonIsRed = () =>
+                document.body.querySelector("[data-test='role-select']")?.parentElement?.className.includes("ring-red-500");
+            const openFilled = async () => {
+                mockRegisterUser.mockResolvedValue({ email: "typed@example.test" });
+                const component = mountAndOpen({});
+                await component.setProps({ dialog: true });
+                const setupState = setupStateOf(component);
+                setupState.setFieldValue("name", "Typed Name");
+                setupState.setFieldValue("email", "typed@example.test");
+                setupState.setFieldValue("organisation", "Typed Org");
+                await selectRole(setupState);
+                await settle();
+
+                return {
+                    component,
+                    setupState
+                };
+            };
+
+            it("shows no role error after a successful Register", async () => {
+                const { component, setupState } = await openFilled();
+
+                await setupState.submitAction();
+                await settle();
+
+                expect(mockRegisterUser).toHaveBeenCalledTimes(1);
+                expect(setupState.errors.role).toBeUndefined();
+                expect(roleButtonIsRed()).toBe(false);
+                component.unmount();
+            });
+
+            it("shows no role error after Cancel", async () => {
+                const { component, setupState } = await openFilled();
+
+                setupState.close();
+                await settle();
+
+                expect(setupState.errors.role).toBeUndefined();
+                expect(roleButtonIsRed()).toBe(false);
+                component.unmount();
+            });
+        });
+
+        it("still shows the required-role error when Register is clicked with no role", async () => {
+            const component = mountAndOpen({});
+            await component.setProps({ dialog: true });
+            const setupState = setupStateOf(component);
+            setupState.setFieldValue("name", "Typed Name");
+            setupState.setFieldValue("email", "typed@example.test");
+            setupState.setFieldValue("organisation", "Typed Org");
+
+            await setupState.submitAction();
+
+            expect(mockRegisterUser).not.toHaveBeenCalled();
+            expect(setupState.errors.role).toBe("Please select a role");
+            component.unmount();
+        });
+
         it("does not call registerUser when required fields are missing", async () => {
             const component = mountAndOpen({});
             const setupState = setupStateOf(component);

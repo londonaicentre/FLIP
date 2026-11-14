@@ -18,6 +18,7 @@ Components include event handlers, model locators, JSON generators, and persiste
 Exports:
     - ClientEventHandler: Client-side event handler
     - ServerEventHandler: Server-side event handler
+    - FlipFedOptShareableGenerator: FedOpt shareable generator that also accepts a dict-config source_model
     - PTModelLocator: PyTorch model locator
     - InitialPTModelLocator: PyTorch model locator for initial models
     - EvaluationModelLocator: Single-model checkpoint locator for Client-API evaluation (standard interface)

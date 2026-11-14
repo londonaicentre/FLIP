@@ -45,7 +45,9 @@ mkdir -p "${MOCKBIN}"
 #   nets                  — one top-level prefix per line (s3 ls of the kit date prefix)
 #   <net>.services        — one Trust_*/fl-server-* per line (s3 ls of a net's services/)
 #   <net>.<name>.keycount — override the never-overwrite KeyCount probe; default 0 (empty)
+#   ca-state / kit-state  — the CA state exists under fl-flare-ca-state/ / among the kits
 #   uploads               — written by the mock: one line per upload to s3, with its args
+#   cp.log                — written by the mock: every `s3 cp` as "<src> <dst>"
 cat > "${MOCKBIN}/aws" <<'MOCK_AWS'
 #!/usr/bin/env bash
 if [[ "$1" == "s3" && "$2" == "ls" ]]; then
@@ -72,8 +74,17 @@ if [[ "$1" == "s3" && "$2" == "cp" ]]; then
         [[ -z "$src" ]] && { src="$a"; continue; }
         dst="$a"
     done
+    echo "${src} ${dst}" >> "${FIXTURE_DIR}/cp.log"
     if [[ "$dst" == s3://*/services/* ]]; then
         echo "${dst#*/fl-flare-participant-kits/*/} $*" >> "${FIXTURE_DIR}/uploads"
+    elif [[ "$dst" != s3://* && "$src" == */ ]]; then  # recursive download: only a CA state the fixture holds
+        marker=""
+        [[ "$src" == */fl-flare-ca-state/* ]] && marker="ca-state"
+        [[ "$src" == */state/ ]] && marker="kit-state"
+        if [[ -n "$marker" && -f "${FIXTURE_DIR}/${marker}" ]]; then
+            mkdir -p "$dst"
+            echo '{}' > "${dst}cert.json"
+        fi
     elif [[ "$dst" != s3://* ]]; then  # download: create the destination so later reads work
         mkdir -p "$(dirname "$dst")"
         : > "$dst"
@@ -111,6 +122,7 @@ FAIL=0
 KEYCOUNT_OVERRIDES=()  # "net Trust_X <count>" lines, reset per case
 UNMINTED=""  # startup files the mock mint leaves out of each kit, reset per case
 YES_MODE=""
+STATE_FIXTURES=()  # ca-state and/or kit-state: where the mocked bucket holds the CA state
 ENV_MODE=""  # ENV_NAME for the next run_case (default stag; the Makefile passes it from HUB via deploy/env_mode.mk)
 
 # run_case <label> <N> <top-level prefixes> <net=services...>...
@@ -125,6 +137,9 @@ run_case() {
     for ov in "${KEYCOUNT_OVERRIDES[@]:-}"; do
         [[ -n "${ov}" ]] && echo "${ov##* }" > "${FX}/$(echo "${ov}" | awk '{print $1"."$2}').keycount"
     done
+    for ov in "${STATE_FIXTURES[@]:-}"; do
+        [[ -n "${ov}" ]] && : > "${FX}/${ov}"
+    done
     printf '%s\n' ${UNMINTED} > "${FX}/unminted"
     LAST_OUT="$(printf 'n\n' | env PATH="${MOCKBIN}:${PATH}" \
         N="${N}" ENV_NAME="${ENV_MODE:-stag}" AICENTRE_BUCKET_NAME=testbucket FLARE_KIT_DATE=2026-01-01 \
@@ -134,6 +149,7 @@ run_case() {
     echo "── ${name}"
     KEYCOUNT_OVERRIDES=()
     UNMINTED=""
+    STATE_FIXTURES=()
     YES_MODE=""
     ENV_MODE=""
 }
@@ -241,6 +257,51 @@ run_case "kit missing a required startup file is not uploaded (N=1)" 1 "net-1 ne
     "net-1=Trust_1 Trust_2 fl-server-net-1" "net-2=Trust_1 Trust_2 fl-server-net-2"
 check_contains "names the missing file" 1 "the minted Trust_3 kit has no startup/sub_start.sh"
 check_contains "nothing reached S3" 1 "Nothing was uploaded"
+
+# --- CA state location: its own prefix, never among the kits ---------------------------
+
+check_cp_log() {  # assert the last run's `s3 cp` log does (want=0) or does not (want=1) match a pattern
+    local label="$1" want="$2" pattern="$3"
+    grep -qE "${pattern}" "${FX}/cp.log"
+    if [[ $? -eq "${want}" ]]; then
+        echo "   ✅ ${label}"
+        PASS=$((PASS + 1))
+    else
+        echo "   ❌ ${label}"
+        echo "      cp log: $(cat "${FX}/cp.log")"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+# 11. A fresh checkout restores the CA state from fl-flare-ca-state/ and refreshes it there.
+rm -rf "${WORKSPACE_PARENT}"
+STATE_FIXTURES=(ca-state)
+YES_MODE=1
+run_case "CA state read from and written to its own prefix (N=1)" 1 "net-1" \
+    "net-1=Trust_1 Trust_2 fl-server-net-1"
+check_contains "run succeeds" 0 "Minted Trust_3"
+check_cp_log "cert.json refreshed under fl-flare-ca-state/" 0 \
+    '/state/cert\.json s3://testbucket/fl-flare-ca-state/2026-01-01/net-1/cert\.json$'
+check_cp_log "nothing read from or written to state/ among the kits" 1 'fl-flare-participant-kits/[^ ]*/state/'
+
+# 12. An estate uploaded before the move: read from among the kits, said in one line, written to the new prefix.
+rm -rf "${WORKSPACE_PARENT}"
+STATE_FIXTURES=(kit-state)
+YES_MODE=1
+run_case "CA state still among the kits is read with a notice (N=1)" 1 "net-1" \
+    "net-1=Trust_1 Trust_2 fl-server-net-1"
+check_contains "falls back and says so" 0 \
+    "none there — reading s3://testbucket/fl-flare-participant-kits/2026-01-01/net-1/state/"
+check_cp_log "cert.json refreshed under fl-flare-ca-state/" 0 \
+    '/state/cert\.json s3://testbucket/fl-flare-ca-state/2026-01-01/net-1/cert\.json$'
+check_cp_log "nothing written to state/ among the kits" 1 ' s3://testbucket/fl-flare-participant-kits/[^ ]*/state/'
+
+# 13. No CA state in either place: refuse to mint.
+rm -rf "${WORKSPACE_PARENT}"
+YES_MODE=1
+run_case "no CA state anywhere is refused (N=1)" 1 "net-1" \
+    "net-1=Trust_1 Trust_2 fl-server-net-1"
+check_contains "refuses to mint without the CA state" 1 "the S3 mirror has no cert.json"
 
 # --- ENV_NAME (FLIP#749): the environment CLASS the Makefile derives from HUB (deploy/env_mode.mk's
 # --- ENV_CLASS); anything else is refused ---

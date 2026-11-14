@@ -38,33 +38,15 @@ describe("extractErrorDetail", () => {
             .toBe("User with email alice@example.com already exists.");
     });
 
-    it("returns the fallback when the response body has no detail", () => {
-        const err = axiosErrorWithBody({ message: "nope" });
-
+    it.each([
+        ["the response body has no detail", axiosErrorWithBody({ message: "nope" })],
+        ["detail is not a string", axiosErrorWithBody({ detail: ["a", "b"] })],
+        ["detail is the empty string", axiosErrorWithBody({ detail: "" })],
+        ["there is no response (e.g. network error)", new AxiosError("Network Error")],
+        ["a plain Error", new Error("boom")],
+        ["a string", "string error"],
+        ["undefined", undefined]
+    ])("returns the fallback when %s", (_case, err) => {
         expect(extractErrorDetail(err, FALLBACK)).toBe(FALLBACK);
-    });
-
-    it("returns the fallback when detail is not a string", () => {
-        const err = axiosErrorWithBody({ detail: ["a", "b"] });
-
-        expect(extractErrorDetail(err, FALLBACK)).toBe(FALLBACK);
-    });
-
-    it("returns the fallback when detail is the empty string", () => {
-        const err = axiosErrorWithBody({ detail: "" });
-
-        expect(extractErrorDetail(err, FALLBACK)).toBe(FALLBACK);
-    });
-
-    it("returns the fallback when there is no response (e.g. network error)", () => {
-        const err = new AxiosError("Network Error");
-
-        expect(extractErrorDetail(err, FALLBACK)).toBe(FALLBACK);
-    });
-
-    it("returns the fallback for non-axios errors", () => {
-        expect(extractErrorDetail(new Error("boom"), FALLBACK)).toBe(FALLBACK);
-        expect(extractErrorDetail("string error", FALLBACK)).toBe(FALLBACK);
-        expect(extractErrorDetail(undefined, FALLBACK)).toBe(FALLBACK);
     });
 });

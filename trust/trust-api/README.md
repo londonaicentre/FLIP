@@ -27,11 +27,15 @@ management — without exposing patient data externally.
 The trust-api acts as the local orchestrator at each Trust:
 
 1. **Cohort queries** — polls for and executes OMOP SQL queries from the Central Hub, delegates to [data-access-api](../data-access-api/), and returns aggregated statistics
-2. **Imaging projects** — creates projects in XNAT via [imaging-api](../imaging-api/) in response to approved FL studies
-3. **Service health** — a background collector probes the trust stack every `HEALTH_COLLECT_INTERVAL_SECONDS` (imaging-api + data-access-api `/health`, XNAT via its anonymous `buildInfo` endpoint, the PACS connector transitively via imaging-api's `ping_pacs` DIMSE echo, the OMOP database via a raw TCP connect) and attaches the snapshot to the heartbeat; the hub surfaces it on the Connection Status page's per-container drawer. Each PACS echo opens an association to the hospital PACS, so it runs at most every five minutes, the cycles in between report its last result, and a PACS outage can show up to five minutes late
-4. **Audit** — logs all operations locally for governance purposes
+2. **Imaging projects** — creates projects in XNAT via [imaging-api](../imaging-api/) when a FLIP project is approved
+3. **Service health** — a background collector probes the trust stack every `HEALTH_COLLECT_INTERVAL_SECONDS` and attaches the snapshot to the heartbeat. The hub shows it in the per-container drawer of the Connection Status page. What is probed:
+   - imaging-api and data-access-api: their `/health` endpoints
+   - XNAT: its anonymous `buildInfo` endpoint
+   - PACS connector: indirectly, through imaging-api's `ping_pacs` DIMSE echo
+   - OMOP database: a raw TCP connect
 
-The trust-api polls the [flip-api](../../flip-api/) (Central Hub) for tasks. It does not accept inbound requests from the hub or expose an external user interface.
+   Each PACS echo opens an association to the hospital PACS, so it runs at most every five minutes. The cycles in between report its last result, so a PACS outage can show up to five minutes late.
+4. **Audit** — logs all operations locally for governance purposes
 
 ## Deployment
 
@@ -47,11 +51,11 @@ or the full stack:
 make up
 ```
 
-API documentation (Swagger UI) is available at the port defined by `TRUST_API_PORT` in this
-trust's kit file (`trust/.env.<CODE>.<env>`; templates: `trust/.env.GSTT.development.example`,
-`trust/.env.KCH.development.example`, default `8020`):
+API documentation (Swagger UI) is served on `TRUST_API_PORT` (default `8020`), set in this trust's
+kit file `trust/.env.<CODE>.<env>`. The dev templates are `trust/.env.GSTT.development.example` and
+`trust/.env.KCH.development.example`.
 
-```
+```text
 http://localhost:<TRUST_API_PORT>/docs
 ```
 
@@ -68,8 +72,8 @@ trust's kit file (`trust/.env.<CODE>.<env>`); hub-shared values (`AES_KEY_BASE64
 | `DATA_ACCESS_API_URL` | Internal URL of the data-access-api |
 | `IMAGING_API_URL` | Internal URL of the imaging-api |
 | `CENTRAL_HUB_API_URL` | URL of the Central Hub API (for task polling) |
-| `TRUST_API_KEY` | Per-trust API key for authenticating with the Central Hub. Lives in this trust's kit file (`trust/.env.<CODE>.<env>`), written by `make register-trust KIT=<CODE>` |
-| `AES_KEY_BASE64` | Base64-encoded AES-256 key shared with the hub; task payloads arrive as AES-256-GCM envelopes (FLIP#1179). Must be byte-identical to the hub's key: a mismatch fails closed, reporting every task as `Invalid payload: failed authentication` |
+| `TRUST_API_KEY` | Per-trust API key for authenticating with the Central Hub. Written into the kit file by `make register-trust KIT=<CODE>` |
+| `AES_KEY_BASE64` | Base64-encoded AES-256 key shared with the hub; task payloads arrive as AES-256-GCM envelopes. Must be byte-identical to the hub's key: a mismatch fails closed, reporting every task as `Invalid payload: failed authentication` |
 | `POLL_INTERVAL_SECONDS` | Polling frequency in seconds (default: 5) |
 | `COHORT_QUERY_TIMEOUT_SECONDS` | Timeout on trust-api's one cohort-query request, `POST /cohort` to data-access-api (default: 300). A cohort re-runs against OMOP at every later stage too, but those are other services' calls (imaging-api → `/cohort/accession-ids`, fl-client → `/cohort/dataframe`) and this setting does not reach them |
 | `HEALTH_COLLECT_INTERVAL_SECONDS` | How often the health collector probes the trust services (default: 30) |
@@ -77,30 +81,32 @@ trust's kit file (`trust/.env.<CODE>.<env>`); hub-shared values (`AES_KEY_BASE64
 | `XNAT_URL` | Internal URL of XNAT for the health probe (default `http://xnat-web:8080`) |
 | `OMOP_DB_HOST` / `OMOP_DB_PORT` | OMOP PostgreSQL address for the TCP health probe (defaults `omop-db` / 5432) |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
-| `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Forwarded outbound on every call to imaging-api and data-access-api so those services can authenticate the caller. Minted by `register_trust` (`make register-trust KIT=<CODE>`) into this trust's kit file (`trust/.env.<CODE>.<env>`). |
+| `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Forwarded outbound on every call to imaging-api and data-access-api so those services can authenticate the caller. Minted into the kit file by `make register-trust KIT=<CODE>` |
 
 `XNAT_URL`, `OMOP_DB_HOST`/`OMOP_DB_PORT`, `DATA_ACCESS_API_URL`, `IMAGING_API_URL` and
-`TRUST_INTERNAL_SERVICE_KEY_HEADER` are internal-topology constants fixed by the compose network,
-so they default in `trust_api/config.py` and none of them is injected into trust-api's own compose
-`environment:` block — injecting them would let an empty `${VAR}` from a kit that omits the line
-override the code default. `XNAT_URL` and `OMOP_DB_HOST` appear in no kit file at all (the kit's
-`OMOP_DB_PORT` is a different variable, see below). The last three *are* in
-every kit file (`trust/.env.example`, the GSTT/KCH examples) and in the fl-client's compose block,
-because the fl-client reads them from env too and its own code defaults are `localhost` URLs, not
-the trust-network names; the Helm chart also injects them into trust-api itself
-(`trust/deploy/helm/templates/trust-api.yaml`). Override them through the environment
-only for a non-standard deployment. Note the kit's own `OMOP_DB_PORT` is a different variable: it
-is the *host*-published port for the omop-db container, while trust-api probes the container port
-over the trust network.
+`TRUST_INTERNAL_SERVICE_KEY_HEADER` are internal-topology constants fixed by the compose network.
+Override them through the environment only for a non-standard deployment.
+
+- They default in `trust_api/config.py` and are deliberately **not** injected into trust-api's own
+  compose `environment:` block. If they were, an empty `${VAR}` from a kit that omits the line would
+  override the code default.
+- `XNAT_URL` and `OMOP_DB_HOST` appear in no kit file.
+- `DATA_ACCESS_API_URL`, `IMAGING_API_URL` and `TRUST_INTERNAL_SERVICE_KEY_HEADER` *are* in every kit
+  file (`trust/.env.example`, the GSTT/KCH examples) and in the fl-client's compose block. The
+  fl-client reads them from env, and its own code defaults are `localhost` URLs, not the
+  trust-network names. The Helm chart also injects them into trust-api itself
+  (`trust/deploy/helm/templates/trust-api.yaml`).
+- The kit's own `OMOP_DB_PORT` is a different variable: it is the *host*-published port of the
+  omop-db container. trust-api probes the container port over the trust network.
 
 ## Authentication
 
 trust-api authenticates **outbound** in two directions:
 
-- **To the Central Hub**: every request carries `TRUST_API_KEY` in the `TRUST_API_KEY_HEADER`. The hub validates against the `api_key_hash` column on the trust's row in the `trust` table.
+- **To the Central Hub**: every request carries `TRUST_API_KEY` in the header named by `TRUST_API_KEY_HEADER`. The hub validates against the `api_key_hash` column on the trust's row in the `trust` table.
 - **To sibling trust services** (imaging-api, data-access-api): every request carries `TRUST_INTERNAL_SERVICE_KEY` in the configured header. Receivers compare with `hmac.compare_digest` against their own copy of the same per-trust key. See the [public security model](../../docs/source/security.rst#trust-internal-service-authentication) for the threat model.
 
-trust-api itself does **not** receive inbound requests from the hub or any external caller — it only polls outbound — so it does not validate an inbound trust-internal header.
+trust-api only polls the [flip-api](../../flip-api/) (Central Hub) outbound. It accepts no inbound requests from the hub or any external caller and exposes no external user interface, so it does not validate an inbound trust-internal header.
 
 ## Scaling Assumptions
 
