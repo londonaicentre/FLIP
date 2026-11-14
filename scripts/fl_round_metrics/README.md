@@ -1,10 +1,13 @@
 # FL round-timing metrics
 
-Tooling for extracting and comparing **per-round FL timings** — how long each
-global round and aggregation took — from the two places a FLIP training run can
-happen. Not to be confused with FLIP's *model metrics* (the `FLMetrics` training
-curves served by `/model/{id}/metrics` and plotted in the UI): everything here
-measures wall-clock platform behaviour, not model performance.
+Tooling to extract and compare **per-round FL timings** (how long each global
+round and its aggregation took) from either place a FLIP training run can
+happen: a platform run, read from the Central Hub's logs, or a local FLARE
+simulator.
+
+These are wall-clock platform timings, not model performance. They are separate
+from FLIP's *model metrics* (the `FLMetrics` training curves served by
+`/model/{id}/metrics` and plotted in the UI).
 
 | Tool | Source | Needs |
 |------|--------|-------|
@@ -12,21 +15,22 @@ measures wall-clock platform behaviour, not model performance.
 | `extract_simulator_round_timings.sh` | A local FLARE simulator workspace (FLIP `ScatterAndGather` controller events in the server log) | nothing beyond the workspace |
 | `plot_round_timings.py` | A `rounds.tsv` from either extractor | `uv run` (matplotlib) |
 
-The arkplus fine-tuning tutorial wraps the simulator side as
-`make round-metrics` / `make reproduce-overhead`
-(`fl-tutorials/nvflare/image_classification/arkplus_fine_tuning/`); the full
-cross-site protocol is documented in
-`docs/source/paper/reproducing-platform-overhead.rst`.
+The Ark+ fine-tuning tutorial
+([`fl-tutorials/nvflare/image_classification/arkplus_fine_tuning/`](../../fl-tutorials/nvflare/image_classification/arkplus_fine_tuning/))
+wraps the simulator side as `make round-metrics` / `make reproduce-overhead`.
+The full cross-site protocol is in
+[Reproducing the FLIP platform-overhead experiment](../../docs/source/paper/reproducing-platform-overhead.rst).
 
 ## The `rounds.tsv` schema is the contract
 
-Both extractors emit an identical `rounds.tsv`, which is what makes a simulator
-baseline directly comparable against a platform run (`--compare`), and what
-`plot_round_timings.py` consumes. **If you change these columns, change both
+Both extractors emit the same `rounds.tsv`. That is what lets a simulator
+baseline be compared directly with a platform run
+(`extract_simulator_round_timings.sh --compare`), and it is the file
+`plot_round_timings.py` reads. **If you change these columns, change both
 extractors, the plotter, and the `--compare` header validation together** —
 they live in one directory precisely so that drift is a one-directory diff:
 
-```
+```text
 round  started_utc  finished_utc  duration_s  agg_started_utc  agg_finished_utc  agg_duration_s  accepted  rejected  start_ms  end_ms  agg_start_ms  agg_end_ms
 ```
 
@@ -50,7 +54,7 @@ bash scripts/fl_round_metrics/tests/run_extractor_tests.sh
 
 Needs only `bash` + coreutils — no AWS, no GPU, no simulator run. CI runs it on
 `ubuntu-latest` (`.github/workflows/fl_round_metrics_tests.yml`), where the default
-`awk` is **mawk**; that is deliberate, see below.
+`awk` is **mawk**; that is deliberate (see *Why a golden diff rather than unit tests*).
 
 `tests/fixtures/` holds synthetic simulator logs and the golden `rounds.tsv` each
 should produce. `--log` is the injection point, so a test is "run the extractor
@@ -67,8 +71,9 @@ epoch milliseconds, and a `grep` filename prefix that passed raw log lines
 through as round data. Neither is visible by reading the code; both die instantly
 against a known-good table.
 
-**Regenerating a golden** (only when a schema or parsing change is *intended* —
-read the diff line by line first, it is the whole point of the test):
+**Regenerating a golden.** Do this only when a schema or parsing change is
+*intended*. Before committing, read the golden's diff line by line: reviewing
+that diff is the whole point of the test.
 
 ```bash
 TZ=UTC scripts/fl_round_metrics/extract_simulator_round_timings.sh \

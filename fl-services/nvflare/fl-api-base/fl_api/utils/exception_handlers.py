@@ -23,10 +23,6 @@ def http_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
 
 
-def bad_request_handler(request: Request, exc: ValueError) -> JSONResponse:
-    return JSONResponse(status_code=400, content={"detail": str(exc)})
-
-
 def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 

@@ -13,7 +13,6 @@
 
 import { createTestingPinia } from "@pinia/testing";
 import { flushPromises, mount } from "@vue/test-utils";
-import { nextTick } from "vue";
 
 import CohortAggregateCard from "@/partials/cohort-query/CohortAggregateCard.vue";
 
@@ -74,6 +73,14 @@ function mountCard(options: { data?: unknown; submitting?: boolean; queriedTrust
     });
 }
 
+// Mounts and lets the pending updates settle.
+async function mountSettled(options: Parameters<typeof mountCard>[0]) {
+    const wrapper = mountCard(options);
+    await flushPromises();
+
+    return wrapper;
+}
+
 describe("CohortAggregateCard", () => {
     beforeEach(() => {
         swrvMock.value = null;
@@ -104,9 +111,7 @@ describe("CohortAggregateCard", () => {
                 "trust-2": 3
             }
         };
-        const wrapper = mountCard({ data });
-        await nextTick();
-        await flushPromises();
+        const wrapper = await mountSettled({ data });
 
         // 7 + 3 = 10
         expect(wrapper.text()).toContain("10");
@@ -121,9 +126,7 @@ describe("CohortAggregateCard", () => {
             trustRecordCounts: { "trust-1": 5 },
             trustErrors: { "trust-2": "boom" }
         };
-        const wrapper = mountCard({ data });
-        await nextTick();
-        await flushPromises();
+        const wrapper = await mountSettled({ data });
 
         expect(wrapper.text()).toContain("1 trusts complete");
         expect(wrapper.text()).toContain("1 running");
@@ -143,9 +146,7 @@ describe("CohortAggregateCard", () => {
             },
             trustSuppressed: ["trust-2"]
         };
-        const wrapper = mountCard({ data });
-        await nextTick();
-        await flushPromises();
+        const wrapper = await mountSettled({ data });
 
         expect(wrapper.text()).toContain("2 trusts complete");
         expect(wrapper.text()).toContain("1 running");
@@ -162,9 +163,7 @@ describe("CohortAggregateCard", () => {
                 "trust-3": 3
             }
         };
-        const wrapper = mountCard({ data });
-        await nextTick();
-        await flushPromises();
+        const wrapper = await mountSettled({ data });
 
         expect(wrapper.text()).toContain("12");
         expect(wrapper.text()).toContain("Aggregated cohort");
@@ -184,12 +183,10 @@ describe("CohortAggregateCard", () => {
                 "trust-3": 3
             }
         };
-        const wrapper = mountCard({
+        const wrapper = await mountSettled({
             data,
             submitting: true
         });
-        await nextTick();
-        await flushPromises();
 
         expect(wrapper.text()).toContain("0 trusts complete");
         expect(wrapper.text()).toContain("3 running");
@@ -208,12 +205,10 @@ describe("CohortAggregateCard", () => {
             },
             trustSuppressed: ["trust-2"]
         };
-        const wrapper = mountCard({
+        const wrapper = await mountSettled({
             data,
             queriedTrustIds: ["trust-1", "trust-2"]
         });
-        await nextTick();
-        await flushPromises();
 
         expect(wrapper.text()).toContain("2 trusts complete");
         expect(wrapper.text()).toContain("1 suppressed");
@@ -246,9 +241,7 @@ describe("CohortAggregateCard", () => {
                 }
             ]
         };
-        const wrapper = mountCard({ data });
-        await nextTick();
-        await flushPromises();
+        const wrapper = await mountSettled({ data });
 
         // trust-1: 4 + 3 = 7; trust-2: 5; total 12.
         expect(wrapper.text()).toContain("12");

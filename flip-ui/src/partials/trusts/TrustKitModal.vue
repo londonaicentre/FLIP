@@ -46,13 +46,13 @@
                             </DialogTitle>
                             <div class="px-8 py-4 space-y-4 text-sm font-normal leading-5 dark:text-gray-300">
                                 <div
-                                    class="border-l-4 border-red-500 bg-red-50 dark:bg-red-900/20 p-3"
+                                    class="p-3 border border-red-200 rounded-md bg-red-50 dark:border-red-500/40 dark:bg-red-900/20"
                                     data-test="kit-warning"
                                 >
                                     <p class="text-sm font-bold text-red-800 dark:text-red-200">
                                         You won't see these again.
                                     </p>
-                                    <p class="text-xs text-red-700 dark:text-red-300 mt-1">
+                                    <p class="text-sm text-red-700 dark:text-red-300 mt-1">
                                         Once this dialog closes, the plaintext keys are unrecoverable. The hub only
                                         stores their hashes. Save them in a password manager and hand them to the
                                         trust operator over a secure channel (Signal, encrypted email).
@@ -60,17 +60,17 @@
                                 </div>
 
                                 <div>
-                                    <div class="text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-300 mb-1">
+                                    <div class="text-xs font-bold text-gray-500 dark:text-gray-300 mb-1">
                                         Trust name
                                     </div>
-                                    <div class="font-mono text-sm bg-gray-50 dark:bg-dark-canvas p-2 rounded">
+                                    <div class="text-sm bg-gray-50 dark:bg-dark-canvas p-2 rounded">
                                         {{ trust?.name ?? "—" }}
                                     </div>
                                 </div>
 
                                 <div data-test="all-credentials-section">
                                     <div class="flex items-center justify-between mb-1">
-                                        <span class="text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                                        <span class="text-xs font-bold text-gray-500 dark:text-gray-300">
                                             Kit credentials — paste into
                                             <code>trust/.env.&lt;CODE&gt;.&lt;env&gt;</code>
                                         </span>
@@ -87,7 +87,7 @@
                                         class="font-mono text-xs bg-gray-50 dark:bg-dark-canvas p-3 rounded whitespace-pre-wrap break-all"
                                         data-test="all-credentials-block"
                                     >{{ allCredentialsBlock }}</pre>
-                                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-300">
+                                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-300">
                                         <code>FL_KIT_SLOT</code> is the FL identity clients register under;
                                         <code>EXPECTED_TRUST_ID</code> is an optional startup self-check.
                                     </p>

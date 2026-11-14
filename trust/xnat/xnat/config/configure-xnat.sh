@@ -47,7 +47,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/xnat-lib.sh"
 # C-STORE association addressed to the AE title it has registered, so a receiver configured under a
 # different title rejects it.
 XNAT_URL="${XNAT_URL:-http://xnat-web:8080}" # internal to the container network
-XNAT_AETITLE="${XNAT_AETITLE-XNAT}"
+XNAT_AETITLE="${XNAT_AETITLE-FLIP_XNAT}"
 PACS_HOST="${PACS_HOST-orthanc}"            # service name in compose / k8s, or a real PACS host
 PACS_AETITLE="${PACS_AETITLE-ORTHANC}"
 PACS_QR_PORT="${PACS_QR_PORT-4242}"
@@ -84,7 +84,7 @@ esac
 
 # The availability schedule is validated before XNAT is touched: the converge at the end removes
 # intervals before it writes, so a value DQR refused part-way would leave days with no window. The
-# accepted forms are DQR 3.0.0's: DayOfWeek names in capitals, HH:MM / H:MM / 24:00, and threads and
+# accepted forms are DQR 3.1.0's: DayOfWeek names in capitals, HH:MM / H:MM / 24:00, and threads and
 # utilisation of at least 1 (DQR stores 0 for both if either is 0, and 0% never runs). Commas and
 # spaces both separate days.
 read -r -a avail_day_list <<< "${PACS_AVAILABILITY_DAYS//,/ }"
@@ -616,11 +616,8 @@ if [[ -n "$foreign_pacs" ]]; then
     echo "       PACS_HOST are still the mocked-Orthanc defaults. Refusing to delete a registration" >&2
     echo "       this deployment may not own. Set PACS_AETITLE/PACS_HOST to the trust's PACS, or" >&2
     echo "       remove the unwanted registration in XNAT's admin UI. Found:" >&2
-    printf '%s\n' "$foreign_pacs" | while read -r entry; do
-      [[ -n "$entry" ]] || continue
-      printf '         %s\n' "$(printf '%s' "$entry" | base64 -d \
-        | jq -r '"\(.aeTitle) at \(.host):\(.queryRetrievePort) (id \(.id))"')" >&2
-    done
+    printf '%s' "$existing_pacs" | jq -r --arg ae "${PACS_AETITLE}" \
+      '.[] | select(.aeTitle != $ae) | "         \(.aeTitle) at \(.host):\(.queryRetrievePort) (id \(.id))"' >&2
     exit 1
   fi
   while read -r entry; do
@@ -678,7 +675,7 @@ PACS_ID=$(xnat_curl -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$XNAT_URL/xa
 # it: one window per listed day. Removals come first (days no longer listed, extra intervals on a
 # listed day), then in-place updates of drifted intervals, then creations, so a run that fails
 # part-way leaves less retrieval scheduled, never more. A day that matches is not written, and the
-# schedule is read back whenever something was. DQR 3.0.0 behaviour this relies on (DqrPacsApi):
+# schedule is read back whenever something was. DQR 3.1.0 behaviour this relies on (DqrPacsApi):
 #   - PUT {pacsId}/availability/{id} answers 304 when nothing it copies has changed;
 #   - PUT takes the day and pacsId from the body, so both are sent (without pacsId the interval would
 #     move to PACS 0);

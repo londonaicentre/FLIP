@@ -42,7 +42,7 @@
                             <Form :validation-schema="schema" class="flex flex-col h-full bg-white divide-y divide-gray-100 shadow-xl dark:bg-dark-surface dark:divide-dark-border dark:ring-1 dark:ring-white/20" @submit="update">
                                 <div class="p-4 bg-primary-500 dark:bg-dark-canvas sm:px-6">
                                     <div class="flex items-center justify-between">
-                                        <DialogTitle class="text-xl font-bold font-heading text-primary-100">
+                                        <DialogTitle class="text-xl font-bold text-primary-100">
                                             Edit model details
                                         </DialogTitle>
                                         <div class="flex items-start ml-3 h-7 text-primary-300 dark:text-gray-300">

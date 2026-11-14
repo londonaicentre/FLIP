@@ -64,6 +64,19 @@ class IPagedData(BaseModel, Generic[T]):
     )
 
 
+def _positive_int(raw: str, name: str, default: int) -> int:
+    """Parse a positive int query parameter, logging and falling back to `default` otherwise."""
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.error(f"Could not parse {name} '{raw}', setting default value {default}.")
+        return default
+    if value <= 0:
+        logger.warning(f"Invalid {name} '{raw}', defaulting to {default}.")
+        return default
+    return value
+
+
 def get_paging_details(query_string_parameters: dict[str, str | int | float] | None = None) -> PagingInfo:
     """
     Parses query string parameters for pagination details.
@@ -77,31 +90,10 @@ def get_paging_details(query_string_parameters: dict[str, str | int | float] | N
     if query_string_parameters is None:
         query_string_parameters = {}
 
-    page_number_str = str(query_string_parameters.get("pageNumber", "1"))
-    page_size_str = str(query_string_parameters.get("pageSize", "20"))
+    page_number_int = _positive_int(str(query_string_parameters.get("pageNumber", "1")), "pageNumber", 1)
+    page_size_int = _positive_int(str(query_string_parameters.get("pageSize", "20")), "pageSize", 20)
     search_val = query_string_parameters.get("search", "")
     search_str = str(search_val) if search_val is not None else ""
-
-    page_number_int: int
-    page_size_int: int
-
-    try:
-        page_number_int = int(page_number_str)
-        if page_number_int <= 0:
-            logger.warning(f"Invalid pageNumber '{page_number_str}', defaulting to 1.")
-            page_number_int = 1
-    except ValueError:
-        logger.error(f"Could not parse pageNumber '{page_number_str}', setting default value 1.")
-        page_number_int = 1
-
-    try:
-        page_size_int = int(page_size_str)
-        if page_size_int <= 0:
-            logger.warning(f"Invalid pageSize '{page_size_str}', defaulting to 20.")
-            page_size_int = 20
-    except ValueError:
-        logger.error(f"Could not parse pageSize '{page_size_str}', setting default value 20.")
-        page_size_int = 20
 
     offset = (page_number_int - 1) * page_size_int
 
@@ -129,7 +121,6 @@ def get_filter_details(query_string_parameters: dict[str, str | UUID] | None = N
     owner_param = query_string_parameters.get("owner")
     if owner_param is None:
         logger.debug("No owner parameter provided, defaulting to None.")
-        owner_param = None
     else:
         try:
             # Attempt to convert the owner parameter to a UUID

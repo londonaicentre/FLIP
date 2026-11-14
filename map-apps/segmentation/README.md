@@ -11,7 +11,7 @@ You may obtain a copy of the License at
 Packages a FLIP segmentation model as a MAP that reads a DICOM study and writes a **DICOM
 Segmentation** object referencing the source series.
 
-```
+```text
 DICOMDataLoader → DICOMSeriesSelector → DICOMSeriesToVolume
                 → MonaiBundleInferenceOperator → DICOMSegmentationWriterOperator → DICOM SEG
                                                ↘ STLConversionOperator → surface mesh
@@ -40,10 +40,10 @@ Your bundle's `inference.json` must declare the **same preprocessing the model w
 trained with** — orientation, spacing, intensity window, channel handling — and the inferer ROI
 must match the patch size used in training.
 
-This is the highest-risk step in the whole path. A mismatch does not raise: the MAP runs, emits a
-well-formed DICOM SEG, and segments slightly (or entirely) wrongly. For a worked example of how
-easily this happens, the FLIP spleen tutorial windows CT at `a_max=250` while the MONAI Model Zoo
-spleen bundle — same architecture — uses `a_max=164`.
+This is the highest-risk step in the whole path. A mismatch does not raise an error: the MAP runs,
+emits a well-formed DICOM SEG, and segments slightly (or entirely) wrongly. It is easy to get wrong:
+the FLIP spleen tutorial windows CT at `a_max=250`, while the MONAI Model Zoo spleen bundle (same
+architecture) uses `a_max=164`.
 
 See [`fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/export/`](../../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/export)
 for a worked pair of bundle configs, and the
@@ -55,11 +55,10 @@ transcribe transforms from a training application.
 The DICOM SEG this template writes is accepted as-is — deepcOS forwards DICOM artefacts written to
 the output directory, so nothing about the pixel output needs to change.
 
-What is missing is the other half. A deepcOS submission must also express, in machine-readable
-form, whatever the engine encoded in pixel data. A mask is exactly that case, and the enriched
-output model has no dense mask representation to restate it into — so what a submission carries is
-the mask's **derived clinical content**: the segmented volume, as a quantity with coded units and
-an anatomical attribute.
+What is missing is the other half. A deepcOS submission must also restate, in machine-readable
+form, anything the engine encoded in pixel data. A mask is pixel data, and the enriched output
+model cannot represent a dense mask. The submission therefore carries the mask's **derived clinical
+content** instead: the segmented volume, as a quantity with coded units and an anatomical attribute.
 
 **Nothing in this template computes that.** `DICOMSegmentationWriterOperator` emits pixels and
 stops. Adding it means counting foreground voxels and scaling by the volume's spacing, then

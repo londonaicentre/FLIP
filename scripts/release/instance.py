@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import hashlib
 import secrets
 import subprocess
 import sys
@@ -88,13 +87,10 @@ TRUST_HOST_PORTS = (
 
 def _mint() -> dict[str, str]:
     """Fresh values for the secrets the hub example leaves as placeholders."""
-    internal_key = secrets.token_urlsafe(32)
     return {
         "POSTGRES_PASSWORD": secrets.token_hex(16),
         "AES_KEY_BASE64": base64.b64encode(secrets.token_bytes(32)).decode(),
         "ADMIN_USER_PASSWORD": secrets.token_urlsafe(18),
-        "INTERNAL_SERVICE_KEY": internal_key,
-        "INTERNAL_SERVICE_KEY_HASH": hashlib.sha256(internal_key.encode()).hexdigest(),
         "FL_API_KEY": secrets.token_urlsafe(32),
     }
 

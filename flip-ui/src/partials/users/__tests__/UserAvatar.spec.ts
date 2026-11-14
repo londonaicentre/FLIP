@@ -16,34 +16,28 @@ import { mount } from "@vue/test-utils";
 import UserAvatar from "@/partials/users/UserAvatar.vue";
 
 describe("UserAvatar", () => {
-    it("renders initials derived from the user's name", () => {
-        const wrapper = mount(UserAvatar, {
-            props: {
+    it.each<[string, InstanceType<typeof UserAvatar>["$props"], string]>([
+        [
+            "renders initials derived from the user's name",
+            {
                 name: "Priya Raghavan",
                 email: "p.raghavan@kcl.ac.uk",
                 roleName: "Researcher"
-            }
-        });
-
-        expect(wrapper.text()).toBe("PR");
-    });
-
-    it("strips honorifics from the name", () => {
-        const wrapper = mount(UserAvatar, {
-            props: {
+            },
+            "PR"
+        ],
+        [
+            "strips honorifics from the name",
+            {
                 name: "Dr Amara Okonkwo",
                 email: "a.okonkwo@gstt.nhs.uk",
                 roleName: "Admin"
-            }
-        });
-
-        expect(wrapper.text()).toBe("AO");
-    });
-
-    it("falls back to the email when no name is given", () => {
-        const wrapper = mount(UserAvatar, { props: { email: "tomas.ribeiro@nhs.uk" } });
-
-        expect(wrapper.text()).toBe("TR");
+            },
+            "AO"
+        ],
+        ["falls back to the email when no name is given", { email: "tomas.ribeiro@nhs.uk" }, "TR"]
+    ])("%s", (_title, props, initials) => {
+        expect(mount(UserAvatar, { props }).text()).toBe(initials);
     });
 
     it("sizes the avatar from the size prop", () => {
