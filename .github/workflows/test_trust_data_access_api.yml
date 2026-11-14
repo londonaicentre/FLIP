@@ -32,6 +32,9 @@ on:
       # tests/test_check_governance_script.py runs the shipped example document through the
       # service's own governance loader, so the suite consumes this file as an input too.
       - "trust/governance.example.toml"
+      # tests/services/test_cohort_draft_contract.py runs the hub's drafting examples and canned
+      # drafts through this service's validator (FLIP#1556).
+      - "flip-api/src/flip_api/cohort_services/drafting/assets/**"
   pull_request:
     branches: [main, develop]
 
@@ -59,6 +62,7 @@ jobs:
         .env.development.example
         trust/.env.GSTT.development.example
         trust/governance.example.toml
+        flip-api/src/flip_api/cohort_services/drafting/assets/**
 
   data-access-api:
     needs: changes

@@ -143,6 +143,7 @@ jobs:
           FLARE_KIT_DATE: ${{ vars.FLARE_KIT_DATE }}
           FLOWER_KIT_DATE: ${{ vars.FLOWER_KIT_DATE }}
           JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
+          FL_EDGE_PORT: ${{ vars.FL_EDGE_PORT }}
           # The LZA keys (FLIP#749), required — see compose-ci-env.sh. The last three have no
           # `export TF_VAR_…` line in the Makefile, so the script writes them into
           # the env file as raw exports. The two web-edge values are optional on

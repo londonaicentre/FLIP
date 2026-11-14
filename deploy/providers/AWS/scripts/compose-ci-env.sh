@@ -206,6 +206,7 @@ REQUIRED_KEYS=(
 # variables.tf already has a defined fallback.
 OPTIONAL_KEYS=(
     JOB_RESOURCE_SPEC_NUM_GPUS
+    FL_EDGE_PORT
 
     # Not stored in either GitHub environment and not normally in an env file:
     # CI's resolve-image-tags.sh emits it into $GITHUB_ENV, and the Makefile

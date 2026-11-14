@@ -36,7 +36,7 @@ Roles
      - Read-only access to the projects they have been added to.
    * - ``trust admin``
      - Everything a ``researcher`` can do, plus approving or declining projects for **one trust**, chosen when the
-       role is assigned (see :ref:`assigning-a-trust-admin`).
+       role is assigned (see :ref:`assigning-a-trust-admin`), and downloading that trust's kit.
 
 Researchers
 ===========
@@ -48,8 +48,9 @@ Researchers
    * - Project
      - What a researcher can do
    * - One they **own**
-     - Edit the project, stage it for approval at chosen trusts, create cohort queries, create models, upload the
-       models' files and start training.
+     - Edit the project, stage it for approval at chosen trusts, create cohort queries (and, where it is turned on,
+       draft them from a description — :ref:`cohort-sql-drafting`), create models, upload the models' files and
+       start training.
    * - One they are a **member** of
      - Contribute their own models: create them, upload their files and start training. They cannot edit, stage or
        delete the project, or change other researchers' models.
@@ -58,8 +59,8 @@ Viewers
 =======
 
 Viewers can see project details, cohort query results, model metrics and training results, and download model
-results. They cannot create or edit projects, run or save cohort queries, create or edit models, upload model files
-or start training.
+results. They cannot create or edit projects, run, save or draft cohort queries, create or edit models, upload model
+files or start training.
 
 Viewers hold no permissions of their own. Their access comes from **project membership**: being added to a project by
 its owner or an admin.
@@ -75,6 +76,9 @@ Trust Admins
 - **Where their authority stops.** The approval right applies at their one trust only. They see nothing of projects
   staged only at other trusts and have no say over them.
 - **Where they decide.** On the **My Trust** page (see :ref:`trust-admin-guide`).
+- **Their trust's kit.** A Trust Admin can download their trust's kit and issue it new keys, from the **Trust kit**
+  section of the same page (see :ref:`onboarding-kit-from-ui`). An ``admin`` can do the same for any trust, from its
+  card on the Connection Status page. Each download and each key change is written to the trust's audit log.
 
 Every change to who is a trust's Trust Admin is written to that trust's audit log.
 
@@ -106,6 +110,11 @@ Permissions
      - No
      - No
      - Yes
+   * - Download a trust's kit and issue it new keys
+     - Yes
+     - No
+     - No
+     - For their own trust
    * - Unstage projects
      - Yes
      - No
@@ -127,6 +136,11 @@ Permissions
      - No
      - No
    * - Manage users
+     - Yes
+     - No
+     - No
+     - No
+   * - Override a user's cohort SQL drafting allowance (Beta), with a recorded reason
      - Yes
      - No
      - No

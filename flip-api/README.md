@@ -49,7 +49,7 @@ or as part of the full platform:
 make up
 ```
 
-Trusts are registered on the **running hub** with `make register-trusts` (shipped dev roster; from the repo root) or `make register-trust KIT=<CODE>` (one trust). Each inserts a `trust` row with its `api_key_hash`, claims an FL kit slot, and fills that trust's kit file `trust/.env.<CODE>.<env>` carrying `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY` — neither plaintext is stored on the hub. `make up` runs `register-trusts` automatically once the hub is up.
+Trusts are registered on the **running hub** with `make register-trusts` (shipped dev roster; from the repo root) or `make register-trust KIT=<CODE>` (one trust). Each inserts a `trust` row with its `api_key_hash`, claims an FL kit slot, and fills that trust's kit file `trust/.env.<CODE>.<env>` carrying `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY` — neither plaintext is stored on the hub. `make up` runs `register-trusts` automatically once the hub is up. A trust added with **Add Trust** in the UI (`POST /admin/trusts`) gets its row and slot but no keys: they are minted when its kit is first downloaded (`POST /trust/{trust_id}/kit`; status on `GET`, new keys on `POST .../kit/rotate`), open to that trust's Trust Admin and hub admins. The kit is built on request from the hub-shared values in flip-api's environment and the FL kits under `FL_KITS_URI`, returned encrypted with a one-time passphrase, and not stored.
 See [`.env.development.example`](../.env.development.example) for the expected format.
 
 The API is served on the port defined by `API_PORT` in [`.env.development.example`](../.env.development.example)
@@ -89,6 +89,17 @@ The flip-api is configured via environment variables. In development these are s
 | `UPLOADED_FEDERATED_DATA_BUCKET` | S3 bucket for storing models and artefacts |
 
 See [`.env.development.example`](../.env.development.example) for the full list of required variables.
+
+### Cohort SQL drafting (Beta)
+
+`POST /api/cohort/draft` and `GET /api/cohort/draft/usage` draft cohort SQL from a description (FLIP#1556).
+Off by default (`COHORT_DRAFT_ENABLED=false`); the `COHORT_DRAFT_*` settings, the allowance and what is still
+needed before turning it on are in
+[the Central Hub page](../docs/source/components/component-central-hub.rst) ("Cohort SQL drafting (Beta)").
+It adds the `anthropic[bedrock]` dependency (the official SDK's `AnthropicBedrock` client, which calls InvokeModel on
+`bedrock-runtime`, signed with the ECS task role). The prompt is versioned files under `src/flip_api/cohort_services/drafting/assets/`; regenerate
+the OMOP schema copy after a DDL change with
+`uv run python -m flip_api.cohort_services.drafting.omop_schema ../trust/omop-db/files/OMOPCDM_postgresql_5.4_ddl.sql`.
 
 ### Tunables
 

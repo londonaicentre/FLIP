@@ -46,6 +46,13 @@ a re-run.
   Hub-shared block in `trust/.env.<CODE>.<env>` from the caller's environment (the root Makefile
   `include`s the right `.env.<env>` and exports it first). Credentials and operator edits are left
   untouched. Portable across dev/stag/prod — no docker compose exec, no ECS round-trip.
+- **`install_kit.py`** (`make -C trust install-kit FILE=<path> [HUB=stag] [KIT=<CODE>] [DELETE=1]`) — installs
+  a kit downloaded from the FLIP UI on a Docker Compose trust host. Decrypts it with `openssl`
+  (the passphrase is prompted for or read from stdin, never an argument), checks every file
+  against the kit's own checksums, then creates the kit file as `new_trust.py` does (also minting
+  the XNAT credentials) or merges into the existing one through `write_kit`, and stages the FL
+  files under the kit file's `FL_KIT_DIR`, owned by the FL client's uid. An update kit leaves the
+  trust's keys alone; on an installed trust `DOCKER_TAG` / `DOCKER_FL_TAG` are left to the upgrade.
 - **`onboard_onprem_trust.py`** (`make onboard-onprem-trust KIT=<CODE>`) — a readiness checklist
   for an on-prem trust host, run as a precheck by `up-onprem-trust`. Diagnoses what's missing
   before `make up-onprem-trust` will succeed: public IP, docker swarm state, kit file presence,

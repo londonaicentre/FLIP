@@ -83,7 +83,9 @@ export const makeServer = ({ environment = "development" } = {}): Server<AppRegi
         },
 
         routes() {
-            const baseUrl = process.env.CENTRAL_HUB_API_URL;
+            // The axios client's own base (src/services/api.ts). process.env carries only VITE_* keys,
+            // so CENTRAL_HUB_API_URL was undefined here and no route matched.
+            const baseUrl = window.AWS_BASE_URL;
 
             // #region Project Routes
 

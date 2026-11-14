@@ -21,6 +21,8 @@ from slowapi.errors import RateLimitExceeded
 
 from flip_api.auth.identity import build_identity_provider
 from flip_api.cohort_services import (
+    draft_allowance_override,
+    draft_cohort_query,
     get_cohort_query_results,
     save_cohort_query,
     submit_cohort_query,
@@ -89,6 +91,7 @@ from flip_api.trusts_services import (
     admin_create_trust,
     get_trust_decisions,
     get_trusts,
+    trust_kit,
     trusts_health_check,
     update_trust_status,
 )
@@ -182,6 +185,8 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 ROUTERS: tuple[APIRouter, ...] = (
     # Cohort services
+    draft_allowance_override.router,
+    draft_cohort_query.router,
     get_cohort_query_results.router,
     save_cohort_query.router,
     submit_cohort_query.router,
@@ -244,6 +249,7 @@ ROUTERS: tuple[APIRouter, ...] = (
     admin_create_trust.router,
     get_trust_decisions.router,
     get_trusts.router,
+    trust_kit.router,
     trusts_health_check.router,
     update_trust_status.router,
     # User services

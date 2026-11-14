@@ -48,7 +48,8 @@ A FastAPI application serving everything under ``/api``. Its route groups map on
      - Project lifecycle: create, edit, stage, approve or decline per Trust, unstage, delete; imaging status and
        the cohort each Trust froze at approval.
    * - ``/cohort``
-     - Submit a cohort query to the project's Trusts and read back the aggregated results.
+     - Submit a cohort query to the project's Trusts and read back the aggregated results; draft cohort SQL from
+       a description (Beta, see `Cohort SQL drafting (Beta)`_).
    * - ``/model``, ``/models``
      - Models under a project, their job types, metrics, logs and per-Trust status.
    * - ``/files``
@@ -59,6 +60,10 @@ A FastAPI application serving everything under ``/api``. Its route groups map on
      - Users, access requests, MFA status and roles; site banner and deployment mode.
    * - ``/trust``, ``/admin/trusts``
      - Trust roster, connection health and registration; a Trust's project decisions, for its Trust Admin.
+       ``POST /admin/trusts`` (Add Trust) registers a Trust and assigns its FL slot but creates no keys. The kit
+       routes, for the Trust's Trust Admin and hub admins: ``GET /trust/{trust_id}/kit`` (download status),
+       ``POST /trust/{trust_id}/kit`` (download; the first one creates the Trust's keys) and
+       ``POST /trust/{trust_id}/kit/rotate`` (issue new keys and download).
    * - ``/step``
      - Multi-step workflows the UI drives: approve a project and start imaging at its Trusts, submit a cohort
        query to them, register a user, and retrieve a model.
@@ -246,7 +251,7 @@ Four other keys each secure one connection:
      - Where it lives
    * - Trust API key
      - Trust → hub
-     - The Trust's kit file; hashed on the hub
+     - The Trust's kit file; hashed on the hub. A kit downloaded from the UI is built on request and not stored
    * - Job credential
      - One job's FL server → hub, for that job's model
      - The hub only, minted per job; hashed in the database
@@ -274,6 +279,168 @@ A researcher's upload **never passes through the hub**:
 
 Downloads, listings and the FL app bundler read only from the scanned area, so **an unscanned file cannot reach
 a Trust**.
+
+.. _cohort-sql-drafting:
+
+***************************
+Cohort SQL drafting (Beta)
+***************************
+
+An optional assistant on the cohort page that drafts cohort SQL from a researcher's description (FLIP#1556). It is
+**off by default**, and a draft only fills the editor: it never runs SQL, never changes a project's cohort query, and
+every Trust still checks the query it receives with its own validator.
+
+``flip-api`` makes one bounded model call per draft, to Claude on Amazon Bedrock through the official ``anthropic``
+SDK's ``AnthropicBedrock`` client, which calls ``InvokeModel`` on ``bedrock-runtime``, signed with the hub's ECS
+task role. The guardrail, when configured, rides on every call as InvokeModel's guardrail request headers. No API key is used; a configured Bedrock API
+key is refused. The instructions are versioned files under ``flip_api/cohort_services/drafting/assets/``: the rules
+(including the Trusts' function allowlist and the vocabulary-free style), the OMOP schema summary generated from the
+Trusts' DDL, the concept ids FLIP's data uses (the safe list), and reviewed example queries. Before a draft is
+returned it must pass these quality checks: the hub's fast pre-check; an OMOP schema check; the project's output
+contract (``person_id`` and ``accession_id`` for imaging projects, ``person_id`` for tabular ones); a check that
+those identifier columns are read from OMOP as they are, never computed, cast or renamed; and a check that every
+concept id the draft lists outside the safe list is named in its assumptions as unverified. A rejected draft goes
+back to the model with the reason, at most twice. A refusal by the model is shown as a decline: Amazon Bedrock has no server-side fallback
+model, and the SDK's client-side fallback would send the description to a second model nobody has reviewed.
+
+Routes
+======
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Route
+     - Behaviour
+   * - ``POST /api/cohort/draft``
+     - Body ``{"project_id", "description", "clarifications": [{"question", "answer"}]}`` (at most three answers)
+       and an ``Idempotency-Key`` header. The caller must be able to edit the project, which must be ``UNSTAGED``;
+       the project's shape is read on the hub. Returns ``status`` ``draft`` (``sql``, ``explanation``,
+       ``assumptions``, ``concepts_used``), ``clarification`` (``question``, ``options``), ``decline``
+       (``message``) or ``error`` (``error_code``: ``allowance_exhausted``, ``request_cap_reached``,
+       ``rate_limited``, ``duplicate_request``, ``model_unavailable`` or ``invalid_draft``), always with ``usage``.
+       ``404`` while the feature is off.
+   * - ``GET /api/cohort/draft/usage``
+     - ``{"enabled", "used", "limit", "remaining", "resets_at"}`` for the caller, so the UI can hide the assistant
+       or draw the allowance ring before the first draft.
+   * - ``GET``, ``PUT``, ``DELETE /api/cohort/draft/overrides/{user_id}``
+     - Admin only (*Manage users*; anyone else gets ``403``), and separate from the drafting routes. ``PUT`` body
+       ``{"monthly_allowance", "monthly_request_cap", "expires_at", "reason"}`` sets one user's monthly allowance and,
+       optionally, model-call cap (omitted keeps the configured cap) until an optional future ``expires_at`` (UTC),
+       replacing any earlier override. ``DELETE`` body ``{"reason"}`` returns the user to the configured limits.
+       ``reason`` is required. ``GET`` returns the override and whether it is ``active``. Available whether or not
+       the feature is on, so limits can be set before a pilot.
+
+Allowance and limits
+====================
+
+Each user has a monthly allowance of successful drafts across projects, reset at 00:00 UTC on the first of the
+month. A draft that passes the checks is charged; a clarification, decline or error is not. Uncharged requests still
+call the model, so a second, hidden cap bounds **model calls** per user per month whatever the outcome, validation
+retries included, and a per-minute rate limit applies to every request. All three are counted in the hub's database
+(``cohort_draft_allowance`` and ``cohort_draft_request``) under a per-user row lock, so they hold across replicas: a
+request reserves its place before the model call, and a repeated ``Idempotency-Key`` is never charged twice. A
+reservation left behind by a crashed request stops counting after ``COHORT_DRAFT_RESERVATION_TTL_MINUTES``.
+
+An admin may override one user's allowance and model-call cap (``cohort_draft_override``); the usage route and the
+reservation both read it, and an expired override is ignored. Every set and clear appends a row to
+``cohort_draft_override_audit``: the admin, the user, the old and new values, the reason and the time.
+
+The hub logs metadata only: user, project, outcome, model calls, tokens and latency. The description and the
+model's output are never logged or stored.
+
+Settings
+========
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 15 45
+
+   * - Variable
+     - Default
+     - Meaning
+   * - ``COHORT_DRAFT_ENABLED``
+     - ``false``
+     - Turns the assistant and both routes on. Turning it off is the rollback.
+   * - ``COHORT_DRAFT_PROVIDER``
+     - per environment
+     - ``fake`` (canned drafts) is the only value in development; ``bedrock`` the only one in staging and
+       production.
+   * - ``COHORT_DRAFT_BEDROCK_MODEL_ID``
+     - ``eu.anthropic.claude-sonnet-5-5``
+     - Bedrock model id, or a cross-region inference profile id (``eu.…``, ``global.…``), passed to the SDK as it is.
+       The default is Claude Sonnet 5.5 through the EU cross-region profile, so requests are processed in EU
+       regions. ``anthropic.claude-opus-5-5`` is the UK-only alternative. Changing it needs an
+       information-governance check. See `Before turning it on (phase 2)`_.
+   * - ``COHORT_DRAFT_BEDROCK_REGION``
+     - ``eu-west-2``
+     - Bedrock region.
+   * - ``COHORT_DRAFT_EFFORT``
+     - ``low``
+     - Model effort (``low``, ``medium``, ``high``). In the benchmark Sonnet 5.5 at ``low`` scored best and was the
+       fastest; ``high`` added nothing.
+   * - ``COHORT_DRAFT_GUARDRAIL_ID``, ``COHORT_DRAFT_GUARDRAIL_VERSION``
+     - unset
+     - A Bedrock Guardrail passed through on every call; set both or neither.
+   * - ``COHORT_DRAFT_MAX_DESCRIPTION_CHARS``
+     - ``2000``
+     - Longest description, and the longest total of clarification answers.
+   * - ``COHORT_DRAFT_MAX_TOKENS``
+     - ``8000``
+     - Output tokens per model call, thinking included.
+   * - ``COHORT_DRAFT_TIMEOUT_SECONDS``
+     - ``45``
+     - Per model call; the SDK retries a timed-out or throttled call once.
+   * - ``COHORT_DRAFT_MONTHLY_ALLOWANCE``
+     - ``30``
+     - Successful drafts per user per UTC month, shown to the user.
+   * - ``COHORT_DRAFT_MONTHLY_REQUEST_CAP``
+     - ``90``
+     - Model calls per user per UTC month whatever the outcome, retries included. Not shown to the user.
+   * - ``COHORT_DRAFT_RATE_LIMIT_PER_MINUTE``
+     - ``5``
+     - Draft requests per user per minute.
+   * - ``COHORT_DRAFT_RESERVATION_TTL_MINUTES``
+     - ``10``
+     - Age after which an unsettled reservation is treated as abandoned.
+
+Before turning it on (phase 2)
+==============================
+
+The feature ships off. Terraform creates its AWS side only when ``cohort_draft_enabled = true`` (default ``false``,
+``deploy/providers/AWS/bedrock_cohort_draft.tf``): with it off the plan shows no change. Enabled, it creates a
+Bedrock Guardrail and a published version that block NHS numbers (the entity and a ten-digit regex), names,
+addresses, emails and phone numbers in the description; an inline policy on ``ecs-flip-api-task-role`` for the
+configured model and that guardrail only (``bedrock:InvokeModel*`` and ``bedrock:ApplyGuardrail``); and the ``COHORT_DRAFT_*`` variables in the ``flip-api`` task, guardrail
+id and version included. Enabling it still needs:
+
+- **Model choice (decided 2026-11-13: Claude Sonnet 5.5, EU processing accepted).** The default is ``eu.anthropic.claude-sonnet-5-5``
+  at effort ``low``: Claude Sonnet 5.5 through the EU cross-region inference profile, because in ``eu-west-2`` it is
+  not offered on demand (checked on 2026-11-13). Requests and the guardrail check may be processed in another EU
+  region. The case for that: the model receives only the researcher's description, the OMOP schema and example
+  queries, never patient data: it turns text into an OMOP query against the data model. On that basis EU
+  processing was accepted on 2026-11-13. The guardrail still blocks identifiers a researcher might type into the
+  description; confirm on a real call that it applies through the profile. ``anthropic.claude-opus-5-5`` (Claude Opus 5.5 on demand in ``eu-west-2``) is the UK-only
+  alternative, about 2.5× the cost per draft and slower; its safety classifier also refused two prompt-injection
+  items in the benchmark.
+
+  For a profile id the IAM policy grants the profile plus its foundation model in the regions it routes to, only
+  when called through that profile (``bedrock:InferenceProfileArn``); for an in-region model id it is a single
+  foundation-model grant. Not Claude Sonnet 4.6 or older: the ``anthropic`` SDK release the hub ships sends API
+  version ``2026-10-21``, which Bedrock accepts only for Claude 4.7 and later.
+
+  **Benchmark (48 items, prompt 2026-11-13.2, Claude API prices).** Sonnet 5.5 low: 47 correct, 1 partly, 0
+  wrong; 3.2 s median. Opus 5.5 low: 44 / 4 / 0; 5.1 s. Bedrock prices differ: check current pricing for the
+  EU profile before budgeting.
+- **Bootstrap.** The CI apply role needs the ``bedrock`` service prefix (``modules/terraform_ci_bootstrap``),
+  applied by the platform repository first.
+- **Network.** A route from the hub's private subnets to ``bedrock-runtime``: an interface VPC endpoint
+  (``com.amazonaws.<region>.bedrock-runtime``) with private DNS. On the LZA estates the networking account provides
+  it; this root does not create it.
+- **Guardrail.** Confirm with a real call that the guardrail blocks an NHS number in a description; a block comes
+  back to the researcher as a decline.
+- **DPIA** and information-governance review of sending researcher free text to Bedrock.
+- **Benchmark.** The semantic benchmark of reviewed cohort descriptions, and the effort setting it supports.
 
 *****
 Email

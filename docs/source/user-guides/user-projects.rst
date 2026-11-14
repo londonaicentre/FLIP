@@ -177,6 +177,44 @@ What a query may contain:
 Each Trust parses and checks the query itself, rather than matching keywords, so ordinary read-only functions such as
 ``SUBSTRING()`` are allowed. The Trust also runs the query as a read-only database user, so it cannot change any data.
 
+.. _draft-cohort-query:
+
+Draft a query from a description (Beta)
+=======================================
+
+Where your FLIP administrator has turned it on, the cohort page offers **Draft from a description**, marked
+**Beta**, above the SQL editor. It drafts the SQL from a plain-English description of the cohort.
+
+1. Click **Draft from a description** and describe the cohort, for example *All CT scans of women aged over 60*.
+2. Click **Generate SQL**. If the description leaves something open that changes who is included, such as the
+   modality, the assistant asks a question first; answer it to continue.
+3. The draft goes into the SQL editor. If the editor already holds SQL, you are asked before it is replaced, and
+   edits you make while the draft is being written are never overwritten.
+4. Read the SQL and open **assumptions behind this draft**: they list every choice your description did not settle.
+5. Edit the SQL as you need, then click **Run on all trusts** as usual. Drafting never runs a query or changes your
+   saved cohort; only **Run** does.
+
+.. warning::
+
+   - **Do not enter patient identifiers**, such as names, NHS numbers, dates of birth or addresses, in the
+     description. It is sent to an AI model (Claude on Amazon Bedrock, processed in the EU) to write the draft.
+   - Drafts can be wrong. A draft passes the hub's checks, but the Trusts still check and run the query, and the
+     results are yours to review.
+
+What the Beta drafts well: imaging cohorts by modality, anatomy, age and sex; condition-based cohorts; time
+windows; first or latest occurrence; one study per patient; exclusions; imaging linked to a procedure or visit; and
+the three chest X-ray findings FLIP's data holds (effusion, edema, lungs in normal arrangement). Out of scope for the
+Beta, so the assistant asks you to narrow the request or declines it: drug cohorts, lab thresholds whose test or
+unit it has not been given, the era tables (``condition_era``, ``drug_era``), and any other imaging finding. Write
+those queries by hand.
+
+An imaging draft returns one row per patient and study (``person_id``, ``accession_id``), and "first", "latest" or
+"one per patient" returns exactly one row per patient.
+
+The ring beside **Generate SQL** shows how many drafts you have left this month (30 by default). Only a draft that
+lands in the editor counts; questions, declines and failures do not. The allowance resets at 00:00 UTC on the first
+day of each month. When it runs out, or the assistant is unavailable, write the SQL by hand as above.
+
 Edit a cohort query
 ===================
 

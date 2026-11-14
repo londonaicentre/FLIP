@@ -56,7 +56,7 @@ def _registered(name: str = "GSTT", slot_name: str = "Trust_007", slot_number: i
 
 @patch("flip_api.trusts_services.admin_create_trust.has_permissions", return_value=True)
 @patch("flip_api.trusts_services.admin_create_trust.register_trust")
-def test_admin_create_trust_returns_registered_kit(mock_register, mock_perms, admin_id):
+def test_admin_create_trust_registers_without_keys(mock_register, mock_perms, admin_id):
     mock_register.return_value = _registered()
     db = MagicMock()
 
@@ -66,12 +66,15 @@ def test_admin_create_trust_returns_registered_kit(mock_register, mock_perms, ad
         token_id=admin_id,
     )
 
-    mock_register.assert_called_once_with(name="GSTT", code="GSTT", region="London", session=db, audit_user_id=admin_id)
+    # No keys at Add Trust: the first kit download mints them (FLIP#1852).
+    mock_register.assert_called_once_with(
+        name="GSTT", code="GSTT", region="London", session=db, audit_user_id=admin_id, issue_keys=False
+    )
     assert result.name == "GSTT"
     assert result.fl_kit_slot == "Trust_007"
     assert result.fl_kit_slot_number == 7
-    assert result.trust_api_key == "plain-api"  # pragma: allowlist secret
-    assert result.trust_internal_service_key == "plain-internal"  # pragma: allowlist secret
+    assert "trust_api_key" not in result.model_dump()
+    assert "trust_internal_service_key" not in result.model_dump()
     db.rollback.assert_not_called()
     mock_perms.assert_called_once()
 
@@ -117,6 +120,17 @@ def test_admin_create_trust_maps_service_errors(
     if detail:
         assert detail in exc_info.value.detail
     db.rollback.assert_called_once()
+
+
+@patch("flip_api.trusts_services.admin_create_trust.has_permissions", return_value=True)
+def test_admin_create_trust_400_on_a_code_no_kit_file_could_be_named_after(mock_perms, admin_id):
+    db = MagicMock()
+
+    with pytest.raises(HTTPException) as exc_info:
+        admin_create_trust(body=ICreateTrust(name="St Thomas", code="ST T"), db=db, token_id=admin_id)
+
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    db.add.assert_not_called()
 
 
 def test_create_trust_schema_requires_code():

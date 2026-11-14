@@ -59,8 +59,8 @@
                             </div>
                             <div class="px-8 py-4 space-y-4 text-sm font-normal leading-5 dark:text-gray-300">
                                 <p>
-                                    Registers a trust with the Central Hub. An API key and an internal service key
-                                    will be generated and shown <strong>once</strong> on the next screen.
+                                    Registers a trust with the Central Hub. Its keys are created when its kit is
+                                    first downloaded from the trust's card.
                                 </p>
                                 <AiInput
                                     class="mt-2"
@@ -168,7 +168,7 @@ const submitAction = async () => {
         });
         Snackbar.success({
             title: "Trust created",
-            text: `${created.name} has been registered. Save the keys on the next screen.`
+            text: `${created.name} has been registered. Download its kit from the trust's card.`
         });
         emit("onSuccess", created);
         resetForm();

@@ -89,6 +89,18 @@ If you were sent a refreshed kit, open the new ``.env.<CODE>.prod`` and copy **o
 profile (ports, data directories, ``FL_KIT_DIR``) and your Trust-local credentials. Do not copy the whole file over
 yours.
 
+On a Docker Compose host you can fetch the refreshed kit yourself. The trust's card in the FLIP UI shows *Kit update
+available*; its Trust Admin clicks **Download kit**, and on the trust host, with no FL job running:
+
+.. code-block:: shell
+
+   make -C trust install-kit FILE=<path to the downloaded file>
+   make -C trust down-fl-clients-kit KIT=<CODE> HUB=prod   # so the FL client remounts the new FL files
+
+``install-kit`` asks for the file's passphrase, then replaces the Hub-shared block and the FL files and keeps the rest
+of your kit file. It leaves ``DOCKER_TAG`` and ``DOCKER_FL_TAG`` alone: the image tags move only with the upgrade
+command in step 4, which also recreates the containers on the new values.
+
 .. important::
 
    **Put any agreed PACS retrieval window in the kit before you upgrade.** The upgrade sets XNAT's PACS availability
@@ -490,6 +502,11 @@ until it is re-keyed. On the admin workstation:
 Then mark *Refreshed kit needed: yes* in the release's Site upgrade section, with the keys that changed, so operators
 replace the block before upgrading.
 
+A site on a Docker Compose host needs none of these three steps. Once the hub runs the new values, the site's Trust
+Admin downloads an update kit from the trust's card and the operator installs it with ``make -C trust install-kit``
+(step 2 of the operator's part). A kit downloaded from the UI is built from the deployed hub's own settings, not from
+your env file.
+
 .. _upgrade-hub:
 
 Upgrading the hub
@@ -537,7 +554,7 @@ What can go wrong
 
 ``this kit's AES key differs from the hub's``
    Your Hub-shared block is stale. Ask the admin for a refreshed kit (see `Refreshing site kits`_) and replace the
-   block. Once the kit carries the hub's key, the row becomes a warning that trust-api still runs the old key, and the
+   block, or download an update kit from the trust's card and install it (step 2). Once the kit carries the hub's key, the row becomes a warning that trust-api still runs the old key, and the
    upgrade recreates it.
 
 ``Could not ask the registry whether … is published``

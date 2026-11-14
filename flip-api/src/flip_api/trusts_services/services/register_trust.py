@@ -20,11 +20,13 @@ Two callers:
   Makefile's ``register-trust`` target (the trust's name comes from its kit
   file; the hub keeps no trust list of its own).
 
-Both produce the same on-disk state: one ``Trust`` row with ``api_key_hash``
-set, one ``FLKitSlot`` assigned, plaintext api/internal-service keys returned
-once for distribution to the trust host (then unrecoverable).
+Both produce one ``Trust`` row with one ``FLKitSlot`` assigned. The CLI also
+mints the trust's keys: ``api_key_hash`` set, plaintext api/internal-service keys
+returned once (then unrecoverable). The UI path does not (FLIP#1852): its keys are
+minted by ``issue_trust_keys`` when the trust's kit is first downloaded.
 """
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
@@ -40,6 +42,11 @@ from flip_api.scripts.generate_trust_key import generate_trust_key
 from flip_api.trusts_services.utils.audit_helper import audit_trust_action
 from flip_api.utils.logger import logger
 
+# A trust code names the kit file on the trust host (``trust/.env.<CODE>.<hub>``).
+TRUST_CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+# What install-kit refuses in a value: the kit file is read by make and compose, which both expand `$`.
+KIT_UNSAFE = re.compile(r"[\r\n$`\\]")
+
 
 class TrustRegistrationError(Exception):
     """Base for trust registration failures."""
@@ -51,6 +58,10 @@ class EmptyTrustNameError(TrustRegistrationError):
 
 class EmptyTrustCodeError(TrustRegistrationError):
     """Caller supplied a blank (or missing) trust code — code is required."""
+
+
+class InvalidTrustError(TrustRegistrationError):
+    """The code, name or region could not go in the trust's kit file."""
 
 
 class DuplicateTrustError(TrustRegistrationError):
@@ -67,13 +78,14 @@ class RegisteredTrust:
 
     Plaintext ``trust_api_key`` and ``trust_internal_service_key`` are returned
     exactly once: the hub stores only the api-key's SHA-256 hash, and the
-    internal-service key is never persisted hub-side.
+    internal-service key is never persisted hub-side. Both are ``None`` for a
+    trust registered without keys (``issue_keys=False``).
     """
 
     trust: Trust
     fl_kit_slot: FLKitSlot
-    trust_api_key: str
-    trust_internal_service_key: str
+    trust_api_key: str | None
+    trust_internal_service_key: str | None
 
 
 def _claim_free_slot(session: Session) -> FLKitSlot | None:
@@ -103,8 +115,9 @@ def register_trust(
     region: str | None,
     session: Session,
     audit_user_id: UUID | None = None,
+    issue_keys: bool = True,
 ) -> RegisteredTrust:
-    """Atomically register a trust: mint keys, claim an FL kit slot, insert the row.
+    """Atomically register a trust: claim an FL kit slot, insert the row and, unless told not to, mint its keys.
 
     Args:
         name (str): Friendly display name (any non-empty string after strip).
@@ -117,15 +130,19 @@ def register_trust(
             the UI path, or ``None`` for the deploy-CLI path (which runs under
             operator IAM, not a FLIP user). Stamped on the ``trusts_audit`` row
             written in the same transaction as the trust insert.
+        issue_keys (bool): False leaves the trust without keys (``api_key_hash`` NULL) for
+            ``issue_trust_keys`` to mint when its kit is first downloaded.
 
     Returns:
         RegisteredTrust: The persisted trust, its assigned FL kit slot, and the
         plaintext api / internal-service keys (returned once — discard from memory
-        immediately after handing them to the operator).
+        immediately after handing them to the operator), or ``None`` for both
+        with ``issue_keys=False``.
 
     Raises:
         EmptyTrustNameError: ``name.strip()`` is empty.
         EmptyTrustCodeError: ``code`` is missing or empty after strip.
+        InvalidTrustError: The code, name or region could not go in a kit file.
         DuplicateTrustError: A trust with this name already exists.
         NoFreeKitSlotError: The ``fl_kit_slot`` pool has no unassigned rows, even
             after the on-miss reconcile from the configured slot names.
@@ -137,16 +154,25 @@ def register_trust(
     if not code:
         raise EmptyTrustCodeError("Trust code is required.")
     region = region.strip() if region else None
+    # Checked here because a trust that fails it could never be given a kit, and so never keys.
+    if not TRUST_CODE.fullmatch(code):
+        raise InvalidTrustError("Trust code must be letters, digits, - or _, starting with a letter or digit.")
+    if KIT_UNSAFE.search(f"{name}{region or ''}"):
+        raise InvalidTrustError("Trust name and region cannot hold $, `, \\ or a line break.")
 
     if session.exec(select(Trust).where(Trust.name == name)).first() is not None:
         raise DuplicateTrustError(f"A trust named {name!r} already exists.")
 
-    api_key, api_key_hash = generate_trust_key()
-    # The internal-service key is per-trust and lives only on the trust side
-    # (protects imaging-api / data-access-api from sibling containers). The hub
-    # never validates it, so the hash is intentionally discarded — only the
-    # plaintext is returned to the admin, once.
-    internal_key, _ = generate_trust_key()
+    api_key: str | None = None
+    api_key_hash: str | None = None
+    internal_key: str | None = None
+    if issue_keys:
+        api_key, api_key_hash = generate_trust_key()
+        # The internal-service key is per-trust and lives only on the trust side
+        # (protects imaging-api / data-access-api from sibling containers). The hub
+        # never validates it, so the hash is intentionally discarded — only the
+        # plaintext is returned to the admin, once.
+        internal_key, _ = generate_trust_key()
 
     trust = Trust(
         name=name,
@@ -249,20 +275,45 @@ def rotate_trust_keys(session: Session, *, name: str) -> RegisteredTrust:
             "Reclaiming a slot is a separate operation; do not rotate the api key without one."
         )
 
+    kit = issue_trust_keys(session, trust=trust, slot=slot, action=TrustAuditAction.ROTATED, user_id=None)
+
+    logger.info("Rotated api and internal-service keys for trust %r (id=%s).", trust.name, trust.id)
+
+    return kit
+
+
+def issue_trust_keys(
+    session: Session,
+    *,
+    trust: Trust,
+    slot: FLKitSlot,
+    action: TrustAuditAction,
+    user_id: UUID | None,
+) -> RegisteredTrust:
+    """Mint a trust's api and internal-service keys, replacing any it had, and commit.
+
+    The one place a registered trust's keys change: its first issue (KEYS_ISSUED, FLIP#1852) and every
+    rotation (ROTATED). ``api_key_hash`` moves in one transaction with the audit row, so the hub refuses
+    the old key, if there was one, from the moment this commits.
+
+    Args:
+        session (Session): SQLModel session; the function commits before returning.
+        trust (Trust): The trust, loaded in this session.
+        slot (FLKitSlot): Its FL kit slot.
+        action (TrustAuditAction): KEYS_ISSUED or ROTATED.
+        user_id (UUID | None): The acting user, or ``None`` from the deploy CLI.
+
+    Returns:
+        RegisteredTrust: The trust, its FL kit slot, and the new plaintext keys.
+    """
     api_key, api_key_hash = generate_trust_key()
     # Per-trust and trust-side only: the hub never validates this key, so its hash is discarded.
     internal_key, _ = generate_trust_key()
 
     trust.api_key_hash = api_key_hash
 
-    # Same transaction as the hash change: a rolled-back rotation leaves no audit claim behind.
-    audit_trust_action(
-        trust_id=trust.id,
-        trust_name=trust.name,
-        action=TrustAuditAction.ROTATED,
-        user_id=None,
-        session=session,
-    )
+    # Same transaction as the hash change: a rolled-back issue leaves no audit claim behind.
+    audit_trust_action(trust_id=trust.id, trust_name=trust.name, action=action, user_id=user_id, session=session)
 
     session.add(trust)
     session.commit()
@@ -270,8 +321,6 @@ def rotate_trust_keys(session: Session, *, name: str) -> RegisteredTrust:
 
     # Drop this process's entry; serving workers re-check the live hash on every cache hit.
     trust_key_cache.invalidate()
-
-    logger.info("Rotated api and internal-service keys for trust %r (id=%s).", trust.name, trust.id)
 
     return RegisteredTrust(
         trust=trust,

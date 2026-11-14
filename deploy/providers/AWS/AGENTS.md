@@ -20,6 +20,7 @@
 | `efs.tf` | EFS file system, mount targets, and access points (FL workspace) |
 | `ecs_efs_provision.tf` | ECS provisioning task that pre-populates the FL EFS workspace (FLARE kit or Flower creds, by `fl_backend`) |
 | `ecs_flower.tf` | Flower-only register-supernode-keys one-shot task + run-task trigger (FLIP#566) |
+| `bedrock_cohort_draft.tf` | Cohort SQL drafting (Beta, FLIP#1556), opt-in via `cohort_draft_enabled` (default false, a plain variable like `ecs_exec_enabled`; off = no resources, no task-env change): the Bedrock Guardrail + published version, the flip-api task role's scoped `bedrock` grant (InvokeModel on the model or profile, ApplyGuardrail on the guardrail), the `COHORT_DRAFT_*` task env. The `bedrock-runtime` VPC endpoint is the networking account's (output `CohortDraftNetworkPrerequisite`), and the bootstrap module's `bedrock` apply prefix must be applied first |
 | `ecs_sg.tf` | ECS security groups |
 | `ecr.tf` | Repository creation template + lifecycle policy for the ECR pull-through cache repositories (FLIP#1796; the cache rules themselves are created out of band) |
 | `certificate.tf` | ACM certificate for the web listener where this account keeps the zone (`MANAGE_DNS=true`); on LZA the TLS web listener uses the one `aicentre-lza-iac` issues into the account (FLIP#1797) |
@@ -97,6 +98,13 @@ Things worth knowing before touching any of it:
   Adding an `export TF_VAR_…` line therefore also means adding the key to that
   script's manifest, to all three workflow `env:` blocks, and to both GitHub
   environments — `scripts/tests/test_compose_ci_env.sh` fails the build otherwise.
+  `FL_EDGE_PORT` (`TF_VAR_fl_edge_port`, FLIP#1852) is an optional key there: unset,
+  the kits flip-api issues carry `FL_SERVER_PORT`, so the staging environment must set it.
+- **flip-api's task env carries the hub-shared kit values** (`locals.tf`, FLIP#1852):
+  `FL_KITS_URI` (the kit bucket prefix of the active backend's kit date),
+  `CENTRAL_HUB_API_URL`, both kit dates, `DOCKER_TAG`, `DOCKER_FL_TAG`, `NLB_SUBDOMAIN`,
+  `FL_SERVER_PORT` and `FL_EDGE_PORT`. flip-api builds a trust's downloadable kit from
+  them; `AES_KEY_BASE64` still comes from Secrets Manager.
 - **`TF_HUB` is the one mode input, a GitHub variable.** Each workflow passes
   `vars.TF_HUB` (`stag` | `prod`) to `compose-ci-env.sh` as `HUB`, with no fallback —
   unset fails the run. From it the script derives the env file and the profile the

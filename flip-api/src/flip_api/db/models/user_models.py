@@ -55,6 +55,8 @@ class PermissionRef(Enum):
     # (see TRUST_SCOPED_PERMISSIONS below and `has_trust_permissions`).
     CAN_APPROVE_FOR_TRUST = UUID("3f9c5d21-7a64-4f0e-9b1d-2c8e6a4b7f35")
     CAN_MANAGE_TRUST_GOVERNANCE = UUID("b7e41a68-0d2f-4c95-8e37-5a1b9c6d4e82")
+    # Download the trust's kit and reissue its keys (FLIP#1852).
+    CAN_MANAGE_TRUST_KIT = UUID("c5d2e9a1-4b73-4f86-9a0c-7e1d3b5f8246")
 
 
 # Permissions that are only ever granted against a specific trust. A holder of
@@ -70,6 +72,7 @@ TRUST_SCOPED_PERMISSIONS: frozenset[UUID] = frozenset(
     {
         PermissionRef.CAN_APPROVE_FOR_TRUST.value,
         PermissionRef.CAN_MANAGE_TRUST_GOVERNANCE.value,
+        PermissionRef.CAN_MANAGE_TRUST_KIT.value,
     }
 )
 

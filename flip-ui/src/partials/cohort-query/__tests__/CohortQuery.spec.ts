@@ -12,7 +12,7 @@
  */
 
 import { createTestingPinia } from "@pinia/testing";
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { reactive } from "vue";
 
 import CohortQueryPageWrapper from "@/pages/project/[projectId]/cohort-query/index.vue";
@@ -51,6 +51,24 @@ vi.mock("@/services/cohort-query-service", async (importOriginal) => {
         sendQuery: (...args: unknown[]) => mockSendQuery(...args)
     };
 });
+
+// The drafting assistant (FLIP#1556) appears only when the hub reports drafting enabled.
+const mockGetUsage = vi.fn();
+const mockCreateApiDrafter = vi.fn((projectId: string) => ({
+    projectId,
+    getUsage: () => mockGetUsage(),
+    draft: vi.fn()
+}));
+
+vi.mock("@/services/cohort-draft/api-drafter", () => ({ createApiDrafter: (id: string) => mockCreateApiDrafter(id) }));
+vi.mock("../CohortDraftAssistant.vue", () => ({
+    __esModule: true,
+    default: {
+        name: "CohortDraftAssistant",
+        props: ["hasImaging", "drafter"],
+        template: "<div data-test='draft-assistant' />"
+    }
+}));
 
 const mockSnackbarShow = vi.fn();
 const mockSnackbarError = vi.fn();
@@ -193,6 +211,53 @@ describe("CohortQuery", () => {
         mockSnackbarShow.mockReset();
         mockSnackbarError.mockReset();
         mockRouterPush.mockReset();
+        mockGetUsage.mockReset();
+        mockGetUsage.mockRejectedValue(new Error("no drafting routes"));
+    });
+
+    describe("drafting assistant", () => {
+        const usage = (enabled: boolean) => ({
+            enabled,
+            used: 3,
+            limit: 30,
+            resetsAt: "2026-12-01T00:00:00Z"
+        });
+
+        it("is shown when the hub reports drafting enabled, with a drafter for this project", async () => {
+            mockGetUsage.mockResolvedValue(usage(true));
+            const wrapper = mountCohortQuery({ project: unstagedProject });
+            await flushPromises();
+
+            const assistant = wrapper.findComponent({ name: "CohortDraftAssistant" });
+            expect(assistant.exists()).toBe(true);
+            expect(mockCreateApiDrafter).toHaveBeenLastCalledWith("test-project-id");
+            expect(assistant.props("drafter")).toMatchObject({ projectId: "test-project-id" });
+        });
+
+        it("is hidden when drafting is off, or the hub has no drafting routes", async () => {
+            mockGetUsage.mockResolvedValue(usage(false));
+            const off = mountCohortQuery({ project: unstagedProject });
+            await flushPromises();
+            expect(off.find("[data-test='draft-assistant']").exists()).toBe(false);
+
+            mockGetUsage.mockRejectedValue(new Error("404"));
+            const missing = mountCohortQuery({ project: unstagedProject });
+            await flushPromises();
+            expect(missing.find("[data-test='draft-assistant']").exists()).toBe(false);
+            expect(missing.find("[data-test='cohort-query']").exists()).toBe(true);
+        });
+
+        it("is hidden once the project is staged, and from viewers", async () => {
+            mockGetUsage.mockResolvedValue(usage(true));
+            const staged = mountCohortQuery({ project: stagedProjectWithQuery });
+            const viewer = mountCohortQuery({
+                project: unstagedProject,
+                permissions: []
+            });
+            await flushPromises();
+            expect(staged.find("[data-test='draft-assistant']").exists()).toBe(false);
+            expect(viewer.find("[data-test='draft-assistant']").exists()).toBe(false);
+        });
     });
 
     describe("rendering", () => {

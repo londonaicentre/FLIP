@@ -51,13 +51,15 @@ The kit files (`trust/.env.<CODE>.<env>`) are the roster; each is registered on 
 
 * **`make register-trusts`** (from the repo root) — registers the shipped dev roster (every `trust/.env.*.development.example`, currently GSTT and KCH; run automatically by `make up`), or
 * **`make register-trust KIT=<CODE>`** — registers one trust (after `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..."` scaffolds its kit), or
-* the **Add Trust** button on the **Connection status** page — enter the friendly name, code, and region. This registers the trust on the hub; to produce a deliverable kit file use the `make register-trust` flow above.
+* the **Add Trust** button on the **Connection status** page — enter the friendly name, code, and region. This registers the trust on the hub and claims its FL kit slot, but mints no keys: they are minted when the trust's kit is first downloaded from its card (**Trust kit** → **Download kit**), and `make -C trust install-kit` installs that download on a stag/prod Docker Compose host (see [Standalone-operator quick-start](#one-time-setup)). For a dev kit file use the `make register-trust` flow above.
 
-Registration (`register_trust` service, `POST /admin/trusts`):
+Registration from the command line (`register_trust` service):
 
 * mints a `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY` (random tokens),
 * stores only the SHA-256 of the API key on `trust.api_key_hash`,
 * claims the next free `fl_kit_slot` row and binds it to the new trust id.
+
+`POST /admin/trusts` (Add Trust) does only the last of these; `POST /trust/{trust_id}/kit` does the first two on the first download.
 
 `make register-trust` / `register-trusts` are idempotent and write the resulting credentials straight into the per-trust kit file — the hub never stores either plaintext again.
 
@@ -210,10 +212,7 @@ The trust-api container authenticates with its `TRUST_API_KEY` and posts a heart
 
 ### Cleanup / lost kit
 
-The plaintext keys aren't recoverable — only the hash is on disk. If you didn't save the kit, the only options are:
-
-* delete the row (`DELETE FROM trust WHERE name='<name>';` against `flip-db`, after freeing the slot: `UPDATE fl_kit_slot SET assigned_to_trust_id = NULL, assigned_at = NULL WHERE assigned_to_trust_id = '<trust-id>';`) and re-register, or
-* re-register with `make register-trust KIT=<CODE>`, which mints fresh keys and rewrites the kit file — this also rotates the keys.
+The plaintext keys aren't recoverable — only the hash is on disk. If you didn't save the kit, issue the trust new keys: **Issue new keys** on its card in the FLIP UI, or `make rotate-trust-keys KIT=<CODE>`. Both keep the trust's id and its FL kit slot. Deleting the trust and registering it again is not a way to get new keys: it gives the trust a new id.
 
 ## Data versions
 
@@ -490,6 +489,21 @@ Its heading and fix hints name that selected path. Pass `HUB=stag` to the checkl
 
 ### One-time setup
 
+**Kit downloaded from the FLIP UI (Docker Compose host).** If the hub admin added your trust in the UI and made
+you its Trust Admin, download the kit yourself: **My Trust** → **Trust kit** → **Download kit**, and save the
+passphrase the dialog shows once. Copy the file to the trust host and run, from a checkout of the release the hub runs:
+
+```bash
+make -C trust install-kit FILE=<downloaded file>   # HUB=stag for the staging hub; DELETE=1 removes the download
+```
+
+It asks for the passphrase, writes `trust/.env.<CODE>.prod` (keys, hub-shared values, freshly minted trust-local
+and XNAT passwords) and stages the FL files under the kit's `FL_KIT_DIR`. It then prints what is left: your site's
+own settings, sending the host's public egress IP to the hub team, and `make onboard-onprem-trust` /
+`make up-onprem-trust`. This replaces steps 1 to 4 below. Kubernetes, EC2 and Azure nodes keep the route below.
+
+**Kit sent by the hub admin.**
+
 1. The hub admin scaffolds and registers your kit
    (`make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." HUB=prod`
    then `make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=prod` and
@@ -569,6 +583,17 @@ Host-local profile and Trust-local credentials stay yours), then re-apply:
 ```bash
 make upgrade-onprem-trust KIT=<CODE> YES=1
 ```
+
+On a Docker Compose host you can fetch the new values yourself instead: when the trust's card shows *Kit update
+available*, download the kit again (an update kit: no keys, yours are kept) and, with no FL job running:
+
+```bash
+make -C trust install-kit FILE=<downloaded file>
+make -C trust down-fl-clients-kit KIT=<CODE> HUB=prod   # so the FL client remounts the new FL files
+make upgrade-onprem-trust KIT=<CODE> YES=1
+```
+
+`install-kit` never changes `DOCKER_TAG` / `DOCKER_FL_TAG` on an installed trust; the upgrade verb moves them.
 
 That recreates only the containers whose configuration changed and leaves the
 data alone. `restart-trust` would also work for the API containers but re-runs

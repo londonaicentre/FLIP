@@ -356,6 +356,9 @@ services:
       - FL_BACKEND=${FL_BACKEND}
       - ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
       - FL_KIT_SLOT_NAMES=${FL_KIT_SLOT_NAMES}
+      # Cohort SQL drafting (FLIP#1556, Beta): off unless the env file turns it on. Development
+      # always drafts from canned replies (DevSettings pins COHORT_DRAFT_PROVIDER=fake), so no model is called.
+      - COHORT_DRAFT_ENABLED=${COHORT_DRAFT_ENABLED:-false}
       # Hub-shared kit values — must be readable inside the container by
       # flip-api/src/flip_api/scripts/register_trust.py::_hub_shared_from_env() so that
       # `make register-trusts` populates the per-trust kit file's managed
