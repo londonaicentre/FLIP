@@ -172,15 +172,11 @@ describe("makeDemoServer route coverage", () => {
         }
     });
 
-    it("carries each model's activity, newest first", async () => {
-        const { data } = (await client.get("/models")).data as {
-            data: { lastActivity: string; finishedAt: string | null }[]
-        };
-        const activity = data.map(model => model.lastActivity);
-        expect(activity.every(Boolean)).toBe(true);
-        expect(activity).toEqual([...activity].sort().reverse());
-        // Every demo model finished, so each carries its upload time.
-        expect(data.every(model => model.finishedAt)).toBe(true);
+    it("carries each model's creation time, newest first", async () => {
+        const { data } = (await client.get("/models")).data as { data: { creationTimestamp: string }[] };
+        const created = data.map(model => model.creationTimestamp);
+        expect(created.every(Boolean)).toBe(true);
+        expect(created).toEqual([...created].sort().reverse());
     });
 
     it("filters the estate-wide Models list by project and sums statusCounts to totalRecords", async () => {

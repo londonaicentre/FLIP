@@ -56,29 +56,10 @@ interface Tables {
     logsByModel: Record<string, unknown>;
     filesByModel: Record<string, unknown>;
     configByModel: Record<string, unknown>;
-    activityByModel: Record<string, Activity>;
     projectCount: (siteId: string) => number;
 }
 
-type Step = { creationTimestamp?: string; resultsUploadedAt?: string | null };
-type Log = { logDate: string };
-type Activity = { creationTimestamp?: string; lastActivity?: string; finishedAt: string | null };
-
-/**
- * The /models activity fields for one model, read off its captured fixtures: the last log line is its
- * latest activity and the step's upload time when it finished.
- */
-const activityFor = (step: Step = {}, logs: Log[] = []): Activity => {
-    const latest = logs.reduce<string | undefined>(
-        (max, log) => (max && max >= log.logDate ? max : log.logDate), undefined);
-
-    return {
-        creationTimestamp: step.creationTimestamp,
-        lastActivity: latest ?? step.resultsUploadedAt ?? step.creationTimestamp,
-        finishedAt: step.resultsUploadedAt ?? null
-    };
-};
-
+type Step = { creationTimestamp?: string };
 /** Projects approving a site: a site's `project_count` describes the exhibit, not the platform. */
 export const projectCountFor = (siteId: string, projects: readonly DemoProject[]): number =>
     projects.filter(demo => (demo.project as Project).approvedTrusts.some(trust => trust.id === siteId)).length;
@@ -96,7 +77,6 @@ const buildTables = (projects: readonly DemoProject[]): Tables => {
         logsByModel: {},
         filesByModel: {},
         configByModel: {},
-        activityByModel: {},
         projectCount: siteId => projectCountFor(siteId, projects)
     };
     for (const demo of projects) {
@@ -112,7 +92,6 @@ const buildTables = (projects: readonly DemoProject[]): Tables => {
             tables.logsByModel[modelId] = fixtures.logs;
             tables.filesByModel[modelId] = fixtures.files;
             tables.configByModel[modelId] = fixtures.config;
-            tables.activityByModel[modelId] = activityFor(fixtures.step as Step, fixtures.logs as Log[]);
         }
     }
 
@@ -209,13 +188,14 @@ const allModels = (tables: Tables, query: Record<string, unknown>): unknown => {
                 ownerId: model.owner_id,
                 ownerName: DEMO_USER.name,
                 trusts: runTrusts,
-                ...tables.activityByModel[String(model.id)]
+                // The hub sends it; the captured model rows don't, so read it off the step.
+                creationTimestamp: (tables.stepByModel[String(model.id)] as Step | undefined)?.creationTimestamp
             }));
         })
         .filter(model => !search
             || [model.name, model.projectName].some(s => String(s).toLowerCase().includes(search)))
-        // Newest activity first, as the hub orders the page.
-        .sort((a, b) => String(b.lastActivity ?? "").localeCompare(String(a.lastActivity ?? "")));
+        // Newest first, as the hub orders the page.
+        .sort((a, b) => String(b.creationTimestamp ?? "").localeCompare(String(a.creationTimestamp ?? "")));
     const statusCounts = data.reduce<Record<string, number>>((counts, model) => {
         const status = String(model.status);
 

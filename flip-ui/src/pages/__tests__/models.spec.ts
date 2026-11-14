@@ -259,52 +259,20 @@ describe("Models Page", () => {
         expect(wrapper.find("[data-test='model-owner-meta']").text()).toBe("Dr Ada · Position 2 in queue");
     });
 
-    test("a running model's meta line says when it was last updated", async () => {
-        setModels([makeModel({
-            status: "RUNNING",
-            lastActivity: new Date(Date.now() - 3 * 3_600_000).toISOString().slice(0, 19)
-        })]);
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
-
-        expect(wrapper.find("[data-test='model-owner-meta']").text()).toBe("Dr Ada · Updated 3h ago");
-    });
-
-    test("a completed model says when it finished, falling back to its last activity", async () => {
+    test("any other model says when it was created, leaving it out when unknown", async () => {
         const hoursAgo = (h: number): string => new Date(Date.now() - h * 3_600_000).toISOString().slice(0, 19);
         setModels([
             makeModel({
-                status: "RESULTS_UPLOADED",
-                finishedAt: hoursAgo(5),
-                lastActivity: hoursAgo(1)
+                status: "RUNNING",
+                creationTimestamp: hoursAgo(3)
             }),
-            makeModel({
-                id: "m2",
-                status: "RESULTS_UPLOADED",
-                lastActivity: hoursAgo(3)
-            })
+            makeModel({ id: "m2" })
         ]);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
         expect(wrapper.findAll("[data-test='model-owner-meta']").map(m => m.text()))
-            .toEqual(["Dr Ada · Finished 5h ago", "Dr Ada · Finished 3h ago"]);
-    });
-
-    test("any other model says when it was last updated, from its last activity or else its creation", async () => {
-        const hoursAgo = (h: number): string => new Date(Date.now() - h * 3_600_000).toISOString().slice(0, 19);
-        setModels([
-            makeModel({ lastActivity: hoursAgo(1) }),
-            makeModel({
-                id: "m2",
-                creationTimestamp: hoursAgo(2)
-            })
-        ]);
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
-
-        expect(wrapper.findAll("[data-test='model-owner-meta']").map(m => m.text()))
-            .toEqual(["Dr Ada · Updated 1h ago", "Dr Ada · Updated 2h ago"]);
+            .toEqual(["Dr Ada · created 3h ago", "Dr Ada"]);
     });
 
     test("stacks mobile rows with the status pill and code-only trust chips below sm", async () => {
@@ -641,7 +609,7 @@ describe("Models Page", () => {
     });
 
     test("rows keep the backend order until a header is clicked", async () => {
-        // The hub already sends the rows latest activity first; the page must not re-sort them.
+        // The hub already sends the rows in order; the page must not re-sort them.
         setModels([
             makeModel({
                 id: "m1",
@@ -651,7 +619,7 @@ describe("Models Page", () => {
             makeModel({
                 id: "m2",
                 name: "backend-second",
-                lastActivity: "2026-06-01T00:00:00"
+                creationTimestamp: "2026-06-01T00:00:00"
             })
         ]);
         const wrapper = mountPage();

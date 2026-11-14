@@ -738,15 +738,13 @@ const updateModelList = (pageNumberInt: number): void => {
     getSearchQuery();
 };
 
-// What is happening to the model now; empty when the hub sent nothing to say it with.
+// A queued model's place in the queue, otherwise when it was created; empty when unknown.
 const activityLabel = (model: IModelSummary): string => {
     if (model.status === "INITIATED" && model.queuePosition != null && model.queuePosition >= 1) {
         return `Position ${model.queuePosition} in queue`;
     }
-    const finished = model.finishedAt ?? model.lastActivity;
-    if (model.status === "RESULTS_UPLOADED" && finished) return relativeCreatedLabel(finished, "Finished", "");
 
-    return relativeCreatedLabel(model.lastActivity ?? model.creationTimestamp, "Updated", "");
+    return relativeCreatedLabel(model.creationTimestamp, "");
 };
 
 // Owner · activity, leaving out whichever is unknown so no placeholder dash ever shows.

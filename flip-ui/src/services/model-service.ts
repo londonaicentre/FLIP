@@ -548,10 +548,6 @@ export interface IModelSummary {
     // The model's 1-based place in the FL training queue (1 = next to be picked
     // up); null/absent unless the model has a queued job waiting for a net.
     queuePosition?: number | null;
-    // Optional so an older hub still renders: the latest thing that happened to the model (the
-    // list's order) and when its results arrived.
-    lastActivity?: string;
-    finishedAt?: string | null;
 }
 
 /**

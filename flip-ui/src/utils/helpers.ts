@@ -81,14 +81,14 @@ export const relativeAgeLabel = (sec: number): string => {
 /**
  * "created 2h ago"-style meta label for a list row, from an API timestamp.
  *
- * Shared by the Projects list ("created …") and the Models list ("Updated …", "Finished …").
- * Returns `fallback` when the timestamp is missing or unparseable.
+ * Shared by the Projects and Models lists (owner · created … ago). Returns `fallback` when the
+ * timestamp is missing or unparseable.
  */
-export const relativeCreatedLabel = (timestamp?: string | null, verb = "created", fallback = "—"): string => {
-    const ms = apiTimestampMs(timestamp);
-    if (ms === null) return fallback;
+export const relativeCreatedLabel = (timestamp?: string | null, fallback = "—"): string => {
+    const created = apiTimestampMs(timestamp);
+    if (created === null) return fallback;
 
-    return `${verb} ${relativeAgeLabel((Date.now() - ms) / 1000)}`;
+    return `created ${relativeAgeLabel((Date.now() - created) / 1000)}`;
 };
 
 export const getOrderedLogs = (logs: ILog[] | undefined, reverse = false): ILog[] => {

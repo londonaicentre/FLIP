@@ -30,8 +30,6 @@ const model = (id: string, name: string, projectId: string, projectName: string,
     ownerId: "u1",
     ownerName: "Riya Patel",
     creationTimestamp: "2026-08-01T10:00:00",
-    lastActivity: "2026-08-02T10:00:00",
-    finishedAt: status === "RESULTS_UPLOADED" ? "2026-08-02T10:00:00" : null,
     status,
     trusts: status === "RUNNING" ? [trust("GSTT")] : []
 });
@@ -182,7 +180,7 @@ describe("models page", () => {
         cy.getBySel("filter-tile-running").click();
         cy.wait("@getRunning");
         cy.getBySel("filter-tile-running").should("have.attr", "aria-pressed", "true");
-        cy.getBySel("model-owner-meta").should("contain", "Updated");
+        cy.getBySel("model-owner-meta").should("contain", "created");
 
         cy.getBySel("filter-tile-running").click();
         cy.getBySel("filter-tile-running").should("have.attr", "aria-pressed", "false");
