@@ -627,7 +627,8 @@ class TerraformApplyTakesTheReleaseTag(unittest.TestCase):
             for line in block["body"].splitlines()
             if line.strip()
         }
-        assert granted == {"contents": "read", "id-token": "write", "packages": "read"}, granted
+        # actions: read lets the wait step read this commit's image build runs (FLIP#1811).
+        assert granted == {"contents": "read", "id-token": "write", "packages": "read", "actions": "read"}, granted
 
 
 if __name__ == "__main__":
