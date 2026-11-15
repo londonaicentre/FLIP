@@ -632,3 +632,79 @@ class TerraformApplyTakesTheReleaseTag(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FlipUtilsReleaseNotesCoverThePackageOnly(unittest.TestCase):
+    """The flip-utils release lists the PRs that changed flip-utils/, not the platform's notes."""
+
+    SCRIPT = WORKFLOWS.parent / "scripts" / "flip-utils-release-notes.sh"
+    GENERATED = "\n".join(f"* PR {n} by @someone in https://github.com/o/r/pull/{n}" for n in (11, 12, 13, 113))
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        self.repo = self.tmp / "repo"
+        self.repo.mkdir()
+        self.git("init", "-q", "-b", "main")
+        self.commit("README.md", "start")
+        self.git("tag", "flip-utils-v1.0.0")
+        self.merge_pr(11, "flip-utils/flip/a.py")
+        self.merge_pr(12, "flip-api/b.py")
+        self.commit("flip-utils/flip/c.py", "squashed change (#13)")
+
+    def git(self, *args: str) -> str:
+        identity = ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"]
+        return subprocess.run(
+            ["git", *identity, *args], cwd=self.repo, check=True, capture_output=True, text=True
+        ).stdout
+
+    def commit(self, path: str, message: str) -> None:
+        target = self.repo / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(message)
+        self.git("add", path)
+        self.git("commit", "-q", "-m", message)
+
+    def merge_pr(self, number: int, path: str) -> None:
+        self.git("checkout", "-q", "-b", f"pr-{number}")
+        self.commit(path, f"work for {number}")
+        self.git("checkout", "-q", "main")
+        self.git("merge", "-q", "--no-ff", "-m", f"Merge pull request #{number} from o/pr-{number}", f"pr-{number}")
+
+    def notes(self, gh: str) -> str:
+        stub = self.bin / "gh"
+        stub.write_text(f"#!/usr/bin/env bash\n{gh}\n")
+        stub.chmod(0o755)
+        env = {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}", "GITHUB_REPOSITORY": "o/r"}
+        head = self.git("rev-parse", "HEAD").strip()
+        result = subprocess.run(
+            ["bash", str(self.SCRIPT), "1.1.0", "flip-utils-v1.1.0", "flip-utils-v1.0.0", head],
+            cwd=self.repo,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    def test_only_prs_that_changed_the_package_are_listed(self) -> None:
+        notes = self.notes(f"cat <<'NOTES'\n{self.GENERATED}\nNOTES")
+        assert "/pull/11\n" in notes, notes
+        assert "/pull/13\n" in notes, notes
+        assert "/pull/12" not in notes, notes
+        assert "/pull/113" not in notes, notes
+
+    def test_an_api_failure_after_the_pypi_publish_still_yields_notes(self) -> None:
+        notes = self.notes("exit 1")
+        assert "* #11\n" in notes, notes
+        assert "* #13\n" in notes, notes
+        assert "#12" not in notes, notes
+
+    def test_the_workflow_publishes_those_notes_and_never_takes_latest(self) -> None:
+        text = code_text(WORKFLOWS / "release-pypi.yml")
+        assert "flip-utils-release-notes.sh" in step_block(text, "Prepare release notes")
+        assert "RELEASE_NOTES_TEMPLATE" not in text
+        assert "--latest=false" in step_block(text, "Create GitHub Release")
