@@ -99,4 +99,4 @@ lint: fmt validate ## The static checks CI runs: fmt, validate, tflint, checkov
 	$(CHECKOV) --directory . --framework terraform --quiet --compact
 
 test: ## Run the credential-free static test suite
-	uv run --no-project --with pytest pytest tests/ -v
+	uv run --no-project --with pytest --with diagrams pytest tests/ -v

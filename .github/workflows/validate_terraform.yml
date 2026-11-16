@@ -159,7 +159,7 @@ jobs:
         run: checkov --directory . --framework terraform --quiet --compact
 
       - name: Static guards
-        run: pip install pytest && pytest tests/ -v
+        run: pip install pytest diagrams && pytest tests/ -v
 
   # Black-box harnesses for the deploy scripts, every external tool stubbed on
   # PATH — no credentials, no network, no checkov install. add_fl_kits.sh mints
