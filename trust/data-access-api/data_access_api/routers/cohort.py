@@ -386,8 +386,6 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
     minimum_cohort_size = decision.effective_threshold
     logger.info(f"Minimum cohort size needed to return statistics: {minimum_cohort_size}")
 
-    # On the original implementation get_records was invoked within get_statistics. However, to better handle
-    # exceptions and log the query execution, we separate the two calls here.
     try:
         logger.info("Executing cohort query")
 
@@ -402,7 +400,7 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
         df = df.loc[:, ~df.columns.duplicated()]
     except Exception as e:
         logger.error(f"Error executing query: {str(e)}")
-        raise e
+        raise
 
     try:
         results = get_statistics(df, query_input=query_input, threshold=minimum_cohort_size)

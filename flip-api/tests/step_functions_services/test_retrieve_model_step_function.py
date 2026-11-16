@@ -32,16 +32,6 @@ def model_id():
 
 
 @pytest.fixture
-def mock_db():
-    return MagicMock()
-
-
-@pytest.fixture
-def mock_user_id():
-    return uuid4()
-
-
-@pytest.fixture
 def mock_model_response(model_id):
     return IModelResponse(
         model_id=model_id,
@@ -52,16 +42,6 @@ def mock_model_response(model_id):
         query=None,
         files=[],
     ).model_dump(mode="json", by_alias=True)
-
-
-# Fixture to patch retrieve_model_status_from_logs
-# @pytest.fixture
-# def mock_retrieve_model_status_from_logs():
-#     with patch(
-#         "flip_api.step_functions_services.retrieve_model_step_function.retrieve_model_status_from_logs"
-#     ) as mock:
-#         mock.return_value = {"modelStatus": "RUNNING"}
-#         yield mock
 
 
 @pytest.fixture(autouse=True)

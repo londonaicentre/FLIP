@@ -21,7 +21,7 @@ import re
 import subprocess
 
 import pytest
-from conftest import AZURE_DIR
+from conftest import AZURE_DIR, REPO_ROOT
 from tf_blocks import hcl_block
 
 # One Makefile per root (FLIP#1787), plus the tree's own for what they share.
@@ -31,7 +31,7 @@ TESTS_DIR = AZURE_DIR / "tests"
 GUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 ROOTS = ["bootstrap", "vm", "aks"]
 TARGETS = {
-    ".": ["bootstrap", "destroy-bootstrap", "test", "lint", "help"],
+    ".": ["bootstrap", "destroy-bootstrap", "test", "lint", "checkov", "help"],
     "vm": [
         "init",
         "plan",
@@ -279,3 +279,29 @@ def test_outbound_ip_reports_parse_in_bash():
         script = line.replace("$$", "$").replace("$(TF)", "terraform")
         result = subprocess.run(["bash", "-n", "-c", script], capture_output=True, text=True)
         assert result.returncode == 0, f"{line}\n{result.stderr}"
+
+
+def test_checkov_pin_matches_the_aws_lint():
+    aws = (REPO_ROOT / "deploy/providers/AWS/scripts/checkov_lint.sh").read_text()
+    pin = re.search(r'^CHECKOV_VERSION="([^"]+)"', aws, re.M).group(1)
+    assert f"CHECKOV_VERSION := {pin}\n" in MAKEFILES["."].read_text()
+
+
+def test_lint_runs_checkov():
+    assert "checkov" in _target(".", "lint")
+
+
+@pytest.mark.parametrize(
+    ("skip", "ok"),
+    [
+        ("# checkov:skip=CKV_AZURE_1:on purpose", True),
+        ("# checkov:skip=CKV_AZURE_1", False),
+        ("// checkov:skip=CKV_AZURE_1:", False),
+    ],
+)
+def test_checkov_refuses_a_skip_without_a_reason(tmp_path, skip, ok):
+    for name in ("Makefile", "common.mk"):
+        (tmp_path / name).write_text((AZURE_DIR / name).read_text())
+    (tmp_path / "main.tf").write_text(f'resource "x" "y" {{\n  {skip}\n}}\n')
+    result = subprocess.run(["make", "-C", str(tmp_path), "checkov", "CHECKOV=true"], capture_output=True, text=True)
+    assert (result.returncode == 0) is ok, result.stdout + result.stderr

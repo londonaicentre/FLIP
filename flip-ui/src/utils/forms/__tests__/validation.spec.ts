@@ -16,41 +16,16 @@ import { describe, expect, test } from "vitest";
 import { emailValidation, passwordValidation } from "../validation";
 
 describe("passwordValidation", () => {
-    test("rejects an empty string with the user-facing required message", async () => {
-        // The custom message is what login / change-password / reset-password
-        // forms surface — yup's default ("this is a required field") would
-        // regress the UX silently if a future refactor drops the override.
-        await expect(passwordValidation.validate("")).rejects.toThrow(
-            "A password is required"
-        );
-    });
-
-    test("rejects a too-short password before the character-class matchers", async () => {
-        // The character-class matchers run before `min(8)` in yup's order,
-        // so a short string like "Aa1!" trips min(8) only when the
-        // character-class checks pass. Use a string that satisfies all
-        // matchers but is under 8 chars to pin the min(8) message.
-        await expect(passwordValidation.validate("Aa1!")).rejects.toThrow(
-            "Your password must be at least 8 characters"
-        );
-    });
-
-    test("rejects a password without a digit", async () => {
-        await expect(passwordValidation.validate("Password!")).rejects.toThrow(
-            "Your password must contain a number"
-        );
-    });
-
-    test("rejects a password without an uppercase letter", async () => {
-        await expect(passwordValidation.validate("password1!")).rejects.toThrow(
-            "Your password must contain an uppercase character"
-        );
-    });
-
-    test("rejects a password without a special character", async () => {
-        await expect(passwordValidation.validate("Password1")).rejects.toThrow(
-            "Your password must contain a special character"
-        );
+    // "" pins the custom required message (yup's default would regress the forms'
+    // UX); "Aa1!" passes every character-class matcher, so only min(8) fires.
+    test.each([
+        ["", "A password is required"],
+        ["Aa1!", "Your password must be at least 8 characters"],
+        ["Password!", "Your password must contain a number"],
+        ["password1!", "Your password must contain an uppercase character"],
+        ["Password1", "Your password must contain a special character"]
+    ])("rejects %j with \"%s\"", async (input, message) => {
+        await expect(passwordValidation.validate(input)).rejects.toThrow(message);
     });
 
     test("accepts a fully-valid password", async () => {
@@ -61,16 +36,11 @@ describe("passwordValidation", () => {
 });
 
 describe("emailValidation", () => {
-    test("rejects an empty string with the required message", async () => {
-        await expect(emailValidation.validate("")).rejects.toThrow(
-            "An email address is required"
-        );
-    });
-
-    test("rejects a malformed address with the format message", async () => {
-        await expect(emailValidation.validate("not-an-email")).rejects.toThrow(
-            "Please enter a valid email address"
-        );
+    test.each([
+        ["", "An email address is required"],
+        ["not-an-email", "Please enter a valid email address"]
+    ])("rejects %j with \"%s\"", async (input, message) => {
+        await expect(emailValidation.validate(input)).rejects.toThrow(message);
     });
 
     test("accepts a well-formed address", async () => {

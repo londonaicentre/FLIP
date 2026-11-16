@@ -119,3 +119,24 @@ describe("App hub polling (FLIP#702)", () => {
         wrapper.unmount();
     });
 });
+
+describe("App root", () => {
+    beforeEach(() => setActivePinia(createPinia()));
+    afterEach(() => vi.unstubAllEnvs());
+
+    it("sizes the page to the dynamic viewport (dvh) with a 100vh fallback for browsers without dvh", () => {
+        const root = mountApp().find(".h-screen");
+
+        expect(root.classes()).toEqual(expect.arrayContaining(["supports-[height:100dvh]:h-dvh", "flex", "flex-col"]));
+    });
+
+    it("shows the demo banner above the page only on a demo build", () => {
+        expect(mountApp().find("[data-test='demo-banner']").exists()).toBe(false);
+
+        vi.stubEnv("VITE_DEMO", "true");
+        const banner = mountApp().find("[data-test='demo-banner']");
+
+        expect(banner.exists()).toBe(true);
+        expect(banner.classes()).toContain("shrink-0");
+    });
+});

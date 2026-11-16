@@ -15,7 +15,10 @@
 
 
 import { mount } from "@vue/test-utils";
-import { expect } from "vitest";
+import { Form } from "vee-validate";
+import { expect, vi } from "vitest";
+import { h } from "vue";
+import { object, string } from "yup";
 
 import AiTextArea from "../AiTextArea.vue";
 
@@ -32,5 +35,64 @@ describe("Ai TextArea", () => {
         expect(comp.exists()).toBe(true);
         expect(comp.find("textarea").exists()).toBe(true);
         expect(comp.find("label").text()).toBe("Test Label");
+    });
+
+    test("starts from the initial value and shows the hint and required marker", () => {
+        const comp = mount(AiTextArea, {
+            props: {
+                name: "description",
+                label: "Description",
+                initialValue: "Existing text",
+                hint: "Up to 250 characters",
+                required: true
+            }
+        });
+
+        expect(comp.find("textarea").element.value).toBe("Existing text");
+        expect(comp.text()).toContain("Up to 250 characters");
+        expect(comp.find("label span").exists()).toBe(true);
+    });
+
+    test("renders the footer slot only when the footer is enabled", () => {
+        const slots = { footer: "<span data-test='footer'>Footer</span>" };
+        const props = {
+            name: "description",
+            label: "Description"
+        };
+
+        expect(mount(AiTextArea, {
+            props,
+            slots
+        }).find("[data-test=footer]").exists()).toBe(false);
+        expect(mount(AiTextArea, {
+            props: {
+                ...props,
+                footer: true
+            },
+            slots
+        }).find("[data-test=footer]").exists()).toBe(true);
+    });
+
+    test("replaces the hint with the form's validation error once the field is emptied", async () => {
+        const schema = object({ description: string().required("A description is required") });
+        const comp = mount(Form, {
+            props: { validationSchema: schema },
+            slots: {
+                default: () => h(AiTextArea, {
+                    name: "description",
+                    label: "Description",
+                    hint: "Up to 250 characters",
+                    initialValue: "Existing text"
+                })
+            }
+        });
+        const textarea = comp.find("textarea");
+
+        await textarea.setValue("");
+        await textarea.trigger("blur");
+
+        await vi.waitFor(() => expect(comp.find(".error_message").text()).toBe("A description is required"));
+        expect(comp.text()).not.toContain("Up to 250 characters");
+        expect(comp.find("label").classes()).toContain("text-red-500");
     });
 });

@@ -129,11 +129,7 @@ def validate_func(
 
     if len(val_loader) == 0:
         log(INFO, "Validation loader is empty, skipping validation")
-        empty_metrics: dict = {"loss": float("nan")}
-        for name in lesions.get_lesion_list():
-            for kind in ("precision", "recall", "f1-score"):
-                empty_metrics[f"{kind}-{name}"] = float("nan")
-        return empty_metrics
+        return _aggregate(metrics, lesions)  # every value NaN
 
     with torch.no_grad():
         for i, batch in enumerate(val_loader):

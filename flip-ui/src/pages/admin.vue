@@ -72,30 +72,33 @@ onBeforeMount(() => {
     routeChange.viewProjects();
 });
 
-const subNavigation = computed(() => [
+const SECTIONS = [
     {
         name: "Users",
         icon: UsersIcon,
-        current: router.currentRoute.value.fullPath === "/admin/users",
         href: "/admin/users"
     },
     {
         name: "Access Requests",
         icon: AccessRequestIcon,
-        current: router.currentRoute.value.fullPath === "/admin/access-requests",
         href: "/admin/access-requests"
     },
     {
         name: "Banner",
         icon: BannerIcon,
-        current: router.currentRoute.value.fullPath === "/admin/banner",
         href: "/admin/banner"
     },
     {
         name: "Deployments",
         icon: DeploymentIcon,
-        current: router.currentRoute.value.fullPath === "/admin/deployments",
         href: "/admin/deployments"
     }
-]);
+];
+
+const subNavigation = computed(() =>
+    SECTIONS.map(s => ({
+        ...s,
+        current: router.currentRoute.value.fullPath === s.href
+    }))
+);
 </script>

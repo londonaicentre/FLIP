@@ -15,9 +15,7 @@
 
 
 import { _http, IPaginatedResponse } from "@/services/api";
-import type { IProjectUser } from "@/services/user-service";
-
-export type { IProjectUser };
+import type { IProjectUserLookup } from "@/services/user-service";
 
 // A trust's decision on a staged project. Every trust starts PENDING when the project is staged.
 export type TrustApprovalStatus = "PENDING" | "APPROVED" | "DECLINED";
@@ -88,7 +86,7 @@ export type IProject = {
     stagedAt?: string | null;
     query?: IProjectQuery;
     approvedTrusts?: IProjectTrust[];
-    users: IProjectUser[]
+    users: IProjectUserLookup[]
     status: ProjectStatus
     // Whether DICOMs are converted to NIfTI on import. Set at creation and
     // immutable thereafter. Only the project-detail endpoint surfaces it, so

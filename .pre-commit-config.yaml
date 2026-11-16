@@ -15,7 +15,7 @@ repos:
         always_run: false
 
       # Regenerate each backend's fl-apps/<backend>/required_files.json from its per-template
-      # required_files.json arrays (the manifest flip-api pulls from S3). Like prettier/
+      # required_files.json arrays (the manifest flip-api reads from FL_APP_BASE_DIR). Like prettier/
       # end-of-file-fixer, it rewrites the file and fails the commit when it changed, so you
       # re-stage and commit again — no need to remember to run the script. The
       # check-required-files CI workflow re-runs the same script + `git diff --exit-code` as the

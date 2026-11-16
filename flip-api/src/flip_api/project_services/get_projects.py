@@ -51,6 +51,15 @@ from flip_api.utils.paging_utils import (
 router = APIRouter(prefix="/projects", tags=["project_services"])
 
 
+def _utc_iso(dt: datetime) -> str:
+    """Naive UTC column -> ISO string the browser parses as UTC.
+
+    The columns default to ``datetime.utcnow``, so the value is already UTC, just untagged; the ``Z``
+    suffix stops the browser reading it as local time. See trust.last_heartbeat for the same fix.
+    """
+    return dt.isoformat(timespec="milliseconds") + "Z"
+
+
 def get_projects_paginated_orm(
     session: Session,
     user_id: UUID | None,
@@ -149,8 +158,7 @@ def get_projects_paginated_orm(
             owner_id=project.owner_id,
             owner_name=owner_name or None,
             user_count=user_count_by_project.get(project.id, 0),
-            # `Z` suffix so the browser treats the naive UTC value as UTC.
-            creation_timestamp=project.creation_timestamp.isoformat(timespec="milliseconds") + "Z",
+            creation_timestamp=_utc_iso(project.creation_timestamp),
             staged_at=staged_at_by_project.get(project.id),
             status=project.status,
             has_imaging=project.has_imaging,
@@ -282,8 +290,7 @@ def _load_latest_query_per_project(
             errored_trust_ids=errored_trust_ids_by_query.get(qid, []),
             empty_trust_ids=empty_trust_ids_by_query.get(qid, []),
             total_cohort=total_cohort_by_query.get(qid, 0),
-            # `Z` suffix so the browser parses as UTC (naive UTC column).
-            created=(qcreated.isoformat(timespec="milliseconds") + "Z") if qcreated else None,
+            created=_utc_iso(qcreated) if qcreated else None,
             created_by=qcreated_by or None,
         )  # type: ignore[call-arg]
         for pid, (qid, qname, qsql, qcreated, qcreated_by, persisted_queried) in latest_per_project.items()
@@ -317,9 +324,7 @@ def _load_latest_audit_at_per_project(
     for pid, audit_date in rows:
         if pid is None or audit_date is None or pid in latest:
             continue
-        # `Z` suffix so the browser parses the naive UTC value as UTC, matching
-        # creation_timestamp / query.created above (audit_date defaults to datetime.utcnow).
-        latest[pid] = audit_date.isoformat(timespec="milliseconds") + "Z"
+        latest[pid] = _utc_iso(audit_date)
 
     return latest
 

@@ -43,7 +43,7 @@ class TestBestModelSelectorInitialState:
         assert selector.minimize is True
 
 
-class TestBestModelSelectorMaximize:
+class TestBestModelSelectorConsider:
     def test_first_metric_becomes_best(self):
         selector = BestModelSelector("val_f1")
 
@@ -54,61 +54,26 @@ class TestBestModelSelectorMaximize:
         assert selector.best_metric == 0.4
         assert selector.best_arrays is ARRAYS_R1
 
-    def test_higher_value_replaces_best(self):
-        selector = BestModelSelector("val_f1")
-        selector.consider(1, {"val_f1": 0.4}, ARRAYS_R1)
+    @pytest.mark.parametrize(
+        ("minimize", "first", "second", "improved"),
+        [
+            pytest.param(False, 0.4, 0.6, True, id="maximize-higher-value-replaces-best"),
+            pytest.param(False, 0.6, 0.4, False, id="maximize-lower-value-keeps-previous-best"),
+            pytest.param(False, 0.5, 0.5, False, id="maximize-equal-value-is-not-an-improvement"),
+            pytest.param(True, 0.9, 0.3, True, id="minimize-lower-value-replaces-best"),
+            pytest.param(True, 0.3, 0.9, False, id="minimize-higher-value-keeps-previous-best"),
+        ],
+    )
+    def test_second_round(self, minimize, first, second, improved):
+        key = "val_loss" if minimize else "val_f1"
+        # The maximize cases use the default, so they also pin that the selector maximizes by default.
+        selector = BestModelSelector(key, minimize=True) if minimize else BestModelSelector(key)
+        selector.consider(1, {key: first}, ARRAYS_R1)
 
-        improved = selector.consider(2, {"val_f1": 0.6}, ARRAYS_R2)
-
-        assert improved is True
-        assert selector.best_round == 2
-        assert selector.best_metric == 0.6
-        assert selector.best_arrays is ARRAYS_R2
-
-    def test_lower_value_keeps_previous_best(self):
-        selector = BestModelSelector("val_f1")
-        selector.consider(1, {"val_f1": 0.6}, ARRAYS_R1)
-
-        improved = selector.consider(2, {"val_f1": 0.4}, ARRAYS_R2)
-
-        assert improved is False
-        assert selector.best_round == 1
-        assert selector.best_metric == 0.6
-        assert selector.best_arrays is ARRAYS_R1
-
-    def test_equal_value_is_not_an_improvement(self):
-        selector = BestModelSelector("val_f1")
-        selector.consider(1, {"val_f1": 0.5}, ARRAYS_R1)
-
-        improved = selector.consider(2, {"val_f1": 0.5}, ARRAYS_R2)
-
-        assert improved is False
-        assert selector.best_round == 1
-        assert selector.best_arrays is ARRAYS_R1
-
-
-class TestBestModelSelectorMinimize:
-    def test_lower_value_replaces_best(self):
-        selector = BestModelSelector("val_loss", minimize=True)
-        selector.consider(1, {"val_loss": 0.9}, ARRAYS_R1)
-
-        improved = selector.consider(2, {"val_loss": 0.3}, ARRAYS_R2)
-
-        assert improved is True
-        assert selector.best_round == 2
-        assert selector.best_metric == 0.3
-        assert selector.best_arrays is ARRAYS_R2
-
-    def test_higher_value_keeps_previous_best(self):
-        selector = BestModelSelector("val_loss", minimize=True)
-        selector.consider(1, {"val_loss": 0.3}, ARRAYS_R1)
-
-        improved = selector.consider(2, {"val_loss": 0.9}, ARRAYS_R2)
-
-        assert improved is False
-        assert selector.best_round == 1
-        assert selector.best_metric == 0.3
-        assert selector.best_arrays is ARRAYS_R1
+        assert selector.consider(2, {key: second}, ARRAYS_R2) is improved
+        assert selector.best_round == (2 if improved else 1)
+        assert selector.best_metric == (second if improved else first)
+        assert selector.best_arrays is (ARRAYS_R2 if improved else ARRAYS_R1)
 
 
 class TestBestModelSelectorIgnoredInputs:

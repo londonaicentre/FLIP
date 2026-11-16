@@ -236,46 +236,26 @@ def test_check_pacs_success(mock_ping):
 
 
 # ---------------------------------------------------------------------------
-# check_pacs — not found
+# check_pacs — failures
 # ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("ping", "error", "match"),
+    [
+        (NotFoundError("PACS with ID '1' not found."), NotFoundError, "not found"),
+        (Exception("connection refused"), Exception, "Failed to ping PACS"),
+        (MagicMock(successful=False, enabled=True), Exception, "is not reachable"),
+        (MagicMock(successful=True, enabled=False), Exception, "is disabled"),
+    ],
+    ids=["not_found", "ping_error", "not_reachable", "disabled"],
+)
 @patch("imaging_api.services.imaging.ping_pacs")
-def test_check_pacs_not_found(mock_ping):
-    mock_ping.side_effect = NotFoundError("PACS with ID '1' not found.")
+def test_check_pacs_failure(mock_ping, ping, error, match):
+    if isinstance(ping, BaseException):
+        mock_ping.side_effect = ping
+    else:
+        mock_ping.return_value = ping
 
-    with pytest.raises(NotFoundError, match="not found"):
-        check_pacs({}, pacs_id=1)
-
-
-# ---------------------------------------------------------------------------
-# check_pacs — ping fails with generic error
-# ---------------------------------------------------------------------------
-@patch("imaging_api.services.imaging.ping_pacs")
-def test_check_pacs_ping_error(mock_ping):
-    mock_ping.side_effect = Exception("connection refused")
-
-    with pytest.raises(Exception, match="Failed to ping PACS"):
-        check_pacs({}, pacs_id=1)
-
-
-# ---------------------------------------------------------------------------
-# check_pacs — pacs not reachable (successful=False)
-# ---------------------------------------------------------------------------
-@patch("imaging_api.services.imaging.ping_pacs")
-def test_check_pacs_not_reachable(mock_ping):
-    mock_ping.return_value = MagicMock(successful=False, enabled=True)
-
-    with pytest.raises(Exception, match="is not reachable"):
-        check_pacs({}, pacs_id=1)
-
-
-# ---------------------------------------------------------------------------
-# check_pacs — pacs disabled
-# ---------------------------------------------------------------------------
-@patch("imaging_api.services.imaging.ping_pacs")
-def test_check_pacs_disabled(mock_ping):
-    mock_ping.return_value = MagicMock(successful=True, enabled=False)
-
-    with pytest.raises(Exception, match="is disabled"):
+    with pytest.raises(error, match=match):
         check_pacs({}, pacs_id=1)
 
 
@@ -295,96 +275,56 @@ def test_query_by_accession_number_no_content(mock_post, headers):
 
 
 # ---------------------------------------------------------------------------
-# query_by_accession_number — 401 Unauthorized
+# query_by_accession_number — DQR error responses
 # ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("status", "text", "reason", "match"),
+    [
+        pytest.param(401, "Unauthorized", "Unauthorized", "Unauthorized", id="unauthorized"),
+        # The status is kept: with no pacsId in the query, it is the only trace of DQR lacking a default PACS
+        pytest.param(
+            500,
+            "Server Error",
+            "Internal Server Error",
+            re.escape("Failed to query PACS via DQR (HTTP 500)"),
+            id="server_error",
+        ),
+    ],
+)
 @patch("imaging_api.services.imaging.requests.post")
-def test_query_by_accession_number_unauthorized(mock_post, headers):
-    mock_response = MagicMock()
-    mock_response.status_code = 401
-    mock_response.text = "Unauthorized"
-    mock_response.reason = "Unauthorized"
-    mock_post.return_value = mock_response
+def test_query_by_accession_number_error(mock_post, headers, status, text, reason, match):
+    mock_post.return_value = MagicMock(status_code=status, text=text, reason=reason)
 
-    with pytest.raises(Exception, match="Unauthorized"):
+    with pytest.raises(Exception, match=match):
         query_by_accession_number("ACC123", headers)
 
 
 # ---------------------------------------------------------------------------
-# query_by_accession_number — 500 Server Error
+# queue_image_import_request — DQR refuses or finds nothing (one study requested)
 # ---------------------------------------------------------------------------
-@patch("imaging_api.services.imaging.requests.post")
-def test_query_by_accession_number_server_error(mock_post, headers):
-    mock_response = MagicMock()
-    mock_response.status_code = 500
-    mock_response.text = "Server Error"
-    mock_response.reason = "Internal Server Error"
-    mock_post.return_value = mock_response
-
-    # The status is kept: with no pacsId in the query, it is the only trace of DQR lacking a default PACS
-    with pytest.raises(Exception, match=re.escape("Failed to query PACS via DQR (HTTP 500)")):
-        query_by_accession_number("ACC123", headers)
-
-
-# ---------------------------------------------------------------------------
-# queue_image_import_request — 404 Not Found from DQR
-# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("status", "text", "error", "match"),
+    [
+        (404, "Not found", NotFoundError, "Not found error"),
+        (500, "Server Error", Exception, "Failed to queue image import"),
+        (200, "[]", NotFoundError, "No studies found on PACS"),
+    ],
+    ids=["dqr-404", "dqr-500", "no-studies"],
+)
 @patch("imaging_api.services.imaging.check_pacs")
 @patch("imaging_api.services.imaging.requests.post")
 @patch("imaging_api.services.imaging.get_project")
-def test_queue_image_import_request_dqr_404(
-    mock_get_project, mock_post, mock_check_pacs, default_pacs_resolved, headers
+def test_queue_image_import_request_dqr_failures(
+    mock_get_project, mock_post, mock_check_pacs, status, text, error, match, default_pacs_resolved, headers
 ):
     mock_get_project.return_value = None
     mock_check_pacs.return_value = None
-
-    mock_post.return_value = MagicMock(status_code=404, text="Not found")
+    mock_post.return_value = MagicMock(status_code=status, text=text)
 
     studies = [{"studyInstanceUid": "1.2.3.4", "accessionNumber": "ACC1"}]
     import_request = ImportStudyRequest(projectId="test", studies=studies)
 
-    with pytest.raises(NotFoundError, match="Not found error"):
-        queue_image_import_request(import_request, headers)
-
-
-# ---------------------------------------------------------------------------
-# queue_image_import_request — 500 Server Error from DQR
-# ---------------------------------------------------------------------------
-@patch("imaging_api.services.imaging.check_pacs")
-@patch("imaging_api.services.imaging.requests.post")
-@patch("imaging_api.services.imaging.get_project")
-def test_queue_image_import_request_dqr_500(
-    mock_get_project, mock_post, mock_check_pacs, default_pacs_resolved, headers
-):
-    mock_get_project.return_value = None
-    mock_check_pacs.return_value = None
-
-    mock_post.return_value = MagicMock(status_code=500, text="Server Error")
-
-    studies = [{"studyInstanceUid": "1.2.3.4", "accessionNumber": "ACC1"}]
-    import_request = ImportStudyRequest(projectId="test", studies=studies)
-
-    with pytest.raises(Exception, match="Failed to queue image import"):
-        queue_image_import_request(import_request, headers)
-
-
-# ---------------------------------------------------------------------------
-# queue_image_import_request — empty response (no studies found on PACS)
-# ---------------------------------------------------------------------------
-@patch("imaging_api.services.imaging.check_pacs")
-@patch("imaging_api.services.imaging.requests.post")
-@patch("imaging_api.services.imaging.get_project")
-def test_queue_image_import_request_empty_response(
-    mock_get_project, mock_post, mock_check_pacs, default_pacs_resolved, headers
-):
-    mock_get_project.return_value = None
-    mock_check_pacs.return_value = None
-
-    mock_post.return_value = MagicMock(status_code=200, text="[]")
-
-    studies = [{"studyInstanceUid": "1.2.3.4", "accessionNumber": "ACC1"}]
-    import_request = ImportStudyRequest(projectId="test", studies=studies)
-
-    with pytest.raises(NotFoundError, match="No studies found on PACS"):
+    with pytest.raises(error, match=match):
         queue_image_import_request(import_request, headers)
 
 
