@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, event
 from sqlglot import exp
 
 from data_access_api.config import OMOP_BACKEND_SNOWFLAKE, Settings, get_settings
@@ -286,15 +286,18 @@ class SnowflakeOmopBackend(OmopBackend):
         cosmetic: a warehouse that auto-suspends drops idle sessions, so a pooled connection
         handed out after an idle period is dead and the first cohort query of the day would
         fail on a stale socket.
+
+        The credential is resolved in a ``do_connect`` hook, not passed as ``connect_args``:
+        those are evaluated once, and SPCS rotates the token file under a running service.
         """
-        settings = get_settings()
-        return create_engine(
-            settings.SNOWFLAKE_DATABASE_URL,
+        engine = create_engine(
+            get_settings().SNOWFLAKE_DATABASE_URL,
             echo=False,
             pool_pre_ping=True,
             pool_recycle=3600,
-            connect_args=snowflake_connect_args(settings),
         )
+        event.listen(engine, "do_connect", _snowflake_do_connect)
+        return engine
 
     def allows_catalog(self, catalog: exp.Identifier) -> bool:
         """Only this trust's own configured database.
@@ -404,7 +407,7 @@ def snowflake_connect_args(settings: Settings) -> dict[str, Any]:
         settings (Settings): The resolved service settings.
 
     Returns:
-        dict[str, Any]: Arguments for ``create_engine(connect_args=...)``.
+        dict[str, Any]: Arguments for the driver's ``connect``.
 
     Raises:
         RuntimeError: When neither an OAuth token nor a private key is available, so there is
@@ -445,6 +448,11 @@ def snowflake_connect_args(settings: Settings) -> dict[str, Any]:
         f"{settings.SNOWFLAKE_TOKEN_FILE} or a key-pair via SNOWFLAKE_PRIVATE_KEY_FILE. "
         "Password authentication is deliberately not supported."
     )
+
+
+def _snowflake_do_connect(_dialect: object, _conn_rec: object, _cargs: object, cparams: dict[str, Any]) -> None:
+    """SQLAlchemy ``do_connect`` hook: resolve the Snowflake credential for this connection."""
+    cparams.update(snowflake_connect_args(get_settings()))
 
 
 def _read_spcs_token(path: str) -> str | None:

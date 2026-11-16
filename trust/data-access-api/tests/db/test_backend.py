@@ -105,7 +105,7 @@ def test_the_snowflake_url_names_account_database_schema_warehouse_and_role():
 
 
 def test_the_snowflake_url_carries_no_credential():
-    """Credentials travel in connect_args, never in a URL string that could reach a log line."""
+    """Credentials are supplied per connection, never in a URL string that could reach a log line."""
     url = snowflake_settings(SNOWFLAKE_USER="svc").SNOWFLAKE_DATABASE_URL
 
     assert url.password is None
@@ -127,7 +127,7 @@ def test_the_snowflake_engine_pre_pings_and_recycles(snowflake_backend):
     backend, _ = snowflake_backend
     with (
         patch.object(backend_module, "create_engine") as create,
-        patch.object(backend_module, "snowflake_connect_args", return_value={}),
+        patch.object(backend_module, "event") as event,
     ):
         backend.create_engine()
 
@@ -135,6 +135,9 @@ def test_the_snowflake_engine_pre_pings_and_recycles(snowflake_backend):
     assert kwargs["pool_pre_ping"] is True
     assert kwargs["pool_recycle"] > 0
     assert kwargs["echo"] is False
+    # Evaluated once, so a credential here would outlive a rotated token.
+    assert "connect_args" not in kwargs
+    event.listen.assert_called_once_with(create.return_value, "do_connect", backend_module._snowflake_do_connect)
 
 
 def test_the_postgres_engine_is_unchanged():
@@ -176,6 +179,28 @@ def test_the_token_is_read_at_connect_time_not_cached(tmp_path):
     assert snowflake_connect_args(settings)["token"] == "first"
     token_file.write_text("second", encoding="utf-8")
     assert snowflake_connect_args(settings)["token"] == "second"
+
+
+def test_every_new_connection_reads_the_token_file_again(tmp_path):
+    """The engine outlives the token: SPCS rotates the file under a running service."""
+    token_file = tmp_path / "token"
+    token_file.write_text("first", encoding="utf-8")
+    settings = snowflake_settings(SNOWFLAKE_TOKEN_FILE=str(token_file))
+    with patch.object(backend_module, "get_settings", return_value=settings):
+        engine = SnowflakeOmopBackend().create_engine()
+        # Stop at the driver: the dialect's own connect is what do_connect feeds, and
+        # initialize is the first-connect introspection, which needs a real session.
+        with (
+            patch.object(engine.dialect, "connect", return_value=MagicMock()) as connect,
+            patch.object(engine.dialect, "initialize"),
+        ):
+            engine.raw_connection().close()
+            token_file.write_text("second", encoding="utf-8")
+            engine.dispose()
+            engine.raw_connection().close()
+
+    assert [call.kwargs["token"] for call in connect.call_args_list] == ["first", "second"]
+    assert all(call.kwargs["authenticator"] == "oauth" for call in connect.call_args_list)
 
 
 def test_key_pair_auth_is_used_off_spcs(tmp_path):
