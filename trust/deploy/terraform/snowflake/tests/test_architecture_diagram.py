@@ -30,8 +30,8 @@ from architecture.trust_snowflake import DIAGRAMS, DRAWN_RESOURCE_TYPES, TERRAFO
 
 TERRAFORM_DIR = Path(__file__).resolve().parent.parent.parent
 
-#: Every directory of ``.tf`` files the pictures draw from: the platform tier and the workload tier.
-ROOTS: tuple[str, ...] = ("snowflake-platform", "snowflake")
+#: Every directory of ``.tf`` files the pictures draw from: the identity, platform and workload tiers.
+ROOTS: tuple[str, ...] = ("snowflake-identity", "snowflake-platform", "snowflake")
 
 _RESOURCE_HEADER = re.compile(r'^resource\s+"([A-Za-z0-9_]+)"\s+"([A-Za-z0-9_-]+)"\s*\{', re.MULTILINE)
 _MODULE_HEADER = re.compile(r'^module\s+"([A-Za-z0-9_-]+)"\s*\{', re.MULTILINE)

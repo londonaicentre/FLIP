@@ -16,14 +16,16 @@
 
 Diagram-as-code in the style of ``../../aws/eks/architecture/trust_eks.py``: nodes, clusters and edges are declared
 with the ``diagrams`` library and rendered through graphviz, and ``TERRAFORM_ADDRESSES`` maps every drawn label to
-the Terraform addresses it stands for, written ``<root>/<address>`` over the two roots (``snowflake-platform`` and
-``snowflake``). ``tests/test_architecture_diagram.py`` checks that map against the ``.tf`` files in both directions,
-so a resource cannot be removed, renamed or added without the diagrams changing with it.
+the Terraform addresses it stands for, written ``<root>/<address>`` over the three roots (``snowflake-identity``,
+``snowflake-platform`` and ``snowflake``). ``tests/test_architecture_diagram.py`` checks that map against the
+``.tf`` files in both directions, so a resource cannot be removed, renamed or added without the diagrams changing
+with it.
 
-Two pictures. The account picture shows who applies what: the platform tier (a person, break glass) and the workload
-tier (the deploy user). The workload picture shows what runs: one SPCS service per container, the stage each one
-mounts and the role every service is created as. Dashed nodes exist only in some configurations: the hub egress
-integration (``enable_hub_egress``, impossible on a trial account) and the GPU pool (``enable_gpu_pool``).
+Two pictures. The account picture shows who applies what: the identity tier (a person, USERADMIN), the platform tier
+(a person, SYSADMIN) and the workload tier (the deploy user). The workload picture shows what runs: one SPCS service
+per container, the stage each one mounts and the role each service is created as. Dashed nodes exist only in some
+configurations: the hub egress integration (``enable_hub_egress``, impossible on a trial account) and the GPU pool
+(``enable_gpu_pool``).
 
 Graphviz is not installed on the dev hosts; without ``dot`` this module refuses to render. Run it in docker::
 
@@ -52,6 +54,7 @@ from diagrams.onprem.vcs import Github
 from diagrams.programming.flowchart import Database, Document, MultipleDocuments, PredefinedProcess
 from diagrams.saas.analytics import Snowflake
 
+_I = "snowflake-identity"
 _P = "snowflake-platform"
 _W = "snowflake"
 
@@ -64,19 +67,21 @@ TERRAFORM_ADDRESSES: dict[str, tuple[str, ...]] = {
     "Central Hub": (),
     "GHCR": (),
     "Hugging Face": (),
-    # ---- platform tier (snowflake-platform, break glass) ---------------------------------------------
+    # ---- identity tier (snowflake-identity, USERADMIN) ------------------------------------------------
     "Trust roles": (
-        f"{_P}/snowflake_account_role.deploy",
-        f"{_P}/snowflake_account_role.svc",
-        f"{_P}/snowflake_account_role.omop_reader",
-        f"{_P}/snowflake_account_role.omop_loader",
-        f"{_P}/snowflake_account_role.observer",
-        f"{_P}/snowflake_account_role.converter",
-        f"{_P}/snowflake_grant_account_role.to_deploy",
-        f"{_P}/snowflake_grant_account_role.omop_reader_to_svc",
-        f"{_P}/snowflake_grant_account_role.deploy_to_sysadmin",
+        f"{_I}/snowflake_account_role.deploy",
+        f"{_I}/snowflake_account_role.svc",
+        f"{_I}/snowflake_account_role.fl",
+        f"{_I}/snowflake_account_role.omop_reader",
+        f"{_I}/snowflake_account_role.omop_loader",
+        f"{_I}/snowflake_account_role.observer",
+        f"{_I}/snowflake_account_role.converter",
+        f"{_I}/snowflake_grant_account_role.to_deploy",
+        f"{_I}/snowflake_grant_account_role.omop_reader_to_svc",
+        f"{_I}/snowflake_grant_account_role.deploy_to_sysadmin",
     ),
-    "Deploy user": (f"{_P}/snowflake_service_user.deploy", f"{_P}/snowflake_grant_account_role.deploy_to_user"),
+    "Deploy user": (f"{_I}/snowflake_service_user.deploy", f"{_I}/snowflake_grant_account_role.deploy_to_user"),
+    # ---- platform tier (snowflake-platform, SYSADMIN) -------------------------------------------------
     "Account grant": (f"{_P}/snowflake_grant_privileges_to_account_role.deploy_account",),
     "Account policies": (
         f"{_P}/snowflake_network_policy.admin",
@@ -153,6 +158,7 @@ TERRAFORM_ADDRESSES: dict[str, tuple[str, ...]] = {
     "One-shot jobs": (),
     "OMOP tables": (),
     "Secrets": (),
+    "FL role": (),
     "Service role": (),
 }
 
@@ -192,7 +198,7 @@ DEFAULT_NAME = "trust-node-snowflake"
 
 #: The pictures ``render`` produces, as ``<DEFAULT_NAME>-<suffix>.png``.
 DIAGRAMS: tuple[tuple[str, str, str], ...] = (
-    ("account", "FLIP trust node on Snowflake — the two tiers and the account objects", "TB"),
+    ("account", "FLIP trust node on Snowflake — the three tiers and the account objects", "TB"),
     ("workload", "FLIP trust node on Snowflake — services, stages and data on Snowpark Container Services", "TB"),
 )
 
@@ -248,27 +254,33 @@ class _Drawn:
 
 
 def _draw_account(drawn: _Drawn) -> None:
-    """Who applies what: the break-glass platform tier, the routine workload tier, and what each one owns."""
-    admin = drawn.node("Account admin", Users, caption="Account admin\n(person, MFA)")
+    """Who applies what: the identity and platform tiers (a person), the workload tier, and what each one owns."""
+    admin = drawn.node("Account admin", Users, caption="Administrator\n(person, USERADMIN\nand SYSADMIN)")
     operator = drawn.node("Operator", Users, caption="Operator\n(tofu, snow, docker)")
     ghcr = drawn.node("GHCR", Github, caption="GHCR\n(trust images)")
     hf = drawn.node("Hugging Face", Internet, caption="Hugging Face\n(seed data)")
     hub = drawn.node("Central Hub", Server, caption="Central Hub\n(any FLIP hub)")
 
     with _cluster("Snowflake account (one region: clinical data never leaves it)"):
-        with _cluster("Platform tier — snowflake-platform, own state, applied by a person"):
+        with _cluster("Identity tier — snowflake-identity, own state, applied by a person as USERADMIN"):
             roles = drawn.node(
                 "Trust roles",
                 Vault,
-                caption="Six trust roles\n(DEPLOY, SVC,\nOMOP_READER, ...)",
+                caption="Seven trust roles\n(DEPLOY, SVC, FL,\nOMOP_READER, ...)",
             )
             deploy_user = drawn.node("Deploy user", Users, caption="Deploy user\n(SERVICE, key pair)")
+        with _cluster("Platform tier — snowflake-platform, own state, applied by a person as SYSADMIN"):
             grant = drawn.node(
                 "Account grant",
                 Document,
-                caption="Account grant\n(four privileges,\ndeploy role only)",
+                caption="Account grant\n(create database and\ncompute pool, deploy\nrole only)",
             )
-            drawn.node("Account policies", Document, caption="Account policies\nnetwork · password\nsession")
+            drawn.node(
+                "Account policies",
+                Document,
+                caption="Account policies\nnetwork · password\nsession (off by default)",
+                style="dashed",
+            )
             warehouse = drawn.node("Warehouse", Snowflake, caption="Warehouse\nFLIP_<CODE>_WH")
             monitor = drawn.node("Resource monitor", Document, caption="Resource monitor\n(warehouse only)")
             egress = drawn.node(
@@ -278,9 +290,7 @@ def _draw_account(drawn: _Drawn) -> None:
                 style="dashed",
             )
             with _cluster(drawn.mark("Platform database") + " FLIP_PLATFORM (outlives a workload destroy)"):
-                events = drawn.node(
-                    "Event table", Database, caption="Event table\nOBS.FLIP_EVENTS\n(account EVENT_TABLE)"
-                )
+                events = drawn.node("Event table", Database, caption="Event table\nOBS.FLIP_EVENTS")
                 views = drawn.node(
                     "Observability views",
                     MultipleDocuments,
@@ -302,7 +312,8 @@ def _draw_account(drawn: _Drawn) -> None:
             job_pool = drawn.node("Job pool", Snowflake, caption="Job pool\nFLIP_<CODE>_JOB_POOL")
             drawn.node("GPU pool", Snowflake, caption="GPU pool\n(optional)", style="dashed")
 
-    admin >> Edge(label="tofu apply\n(just-in-time grant)") >> roles
+    admin >> Edge(label="tofu apply\n(identity)") >> roles
+    admin >> Edge(label="tofu apply\n(platform)") >> warehouse
     roles - Edge(style="dotted", label="DEPLOY granted") - deploy_user
     grant - Edge(style="dotted") - roles
     monitor - Edge(style="dotted", label="caps") - warehouse
@@ -322,7 +333,7 @@ def _draw_account(drawn: _Drawn) -> None:
 
 
 def _draw_workload(drawn: _Drawn) -> None:
-    """What runs: one SPCS service per container, the stage each mounts, and the role they all share."""
+    """What runs: one SPCS service per container, the stage each mounts, and the role that owns each."""
     hub = drawn.node("Central Hub", Server, caption="Central Hub\n(any FLIP hub)")
     egress = drawn.node("Hub egress", Internet, caption="External access\nintegration\n(optional)", style="dashed")
 
@@ -330,8 +341,9 @@ def _draw_workload(drawn: _Drawn) -> None:
         role = drawn.node(
             "Service role",
             Vault,
-            caption="FLIP_<CODE>_SVC\n(owns every service)",
+            caption="FLIP_<CODE>_SVC\n(owns every service\nbut the FL client)",
         )
+        fl_role = drawn.node("FL role", Vault, caption="FLIP_<CODE>_FL\n(owns the FL client:\nno OMOP, no warehouse)")
         secrets = drawn.node("Secrets", Vault, caption="SECRET objects\n(from sync-kit)")
         with _cluster(drawn.mark("Service pool") + ": one service per container, no public endpoint"):
             trust_api = drawn.node("trust-api", Docker)
@@ -376,7 +388,8 @@ def _draw_workload(drawn: _Drawn) -> None:
     xnat_web >> Edge(label="DQR: C-MOVE / C-STORE", dir="both") >> orthanc
     xnat_web - Edge(style="dotted", label="archive") - archive
     orthanc - Edge(style="dotted", label="seed-orthanc job") - seed
-    role - Edge(style="dotted", label="owner of all services") - trust_api
+    role - Edge(style="dotted", label="owner of the other services") - trust_api
+    fl_role - Edge(style="dotted", label="owner") - fl_client
     secrets - Edge(style="dotted", label="mapped per service") - trust_api
     trust_api >> Edge(label="logs") >> events
     trust_api >> Edge(style="dashed", label="HTTPS :443 poll tasks, heartbeat") >> egress
