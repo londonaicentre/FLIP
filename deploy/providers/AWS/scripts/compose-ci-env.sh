@@ -198,7 +198,6 @@ REQUIRED_KEYS=(
 
     # FL
     FL_BACKEND
-    FL_KIT_SLOT_NAMES
 )
 
 # Keys the Makefile exports only when set, or supplies a `?=` default for. Passed

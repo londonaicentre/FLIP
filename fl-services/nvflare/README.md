@@ -286,17 +286,20 @@ single source per environment (`resolve_fl_kit_slot_names`):
   `FLARE_KITS_S3_URI`). There is deliberately no fallback: if the listing fails no slot
   can be claimed, loudly, and a kit left out as incomplete is named in a warning with the
   files it lacks. **No restart, no Terraform**: the next registration reads the kits
-  from S3. (A Flower hub reads the `/flip/fl_kit_slot_names` SSM parameter, rendered
-  from `FL_KIT_SLOT_NAMES` by Terraform.)
+  from S3.
+- **Stag/prod Flower (ECS)**: the same, for SuperNode key pairs under
+  `fl-flower-participant-kits/<FLOWER_KIT_DATE>/` — see
+  [the Flower README](../flower/README.md#adding-supernode-keys-to-a-deployed-hub).
 
 Then `make register-trust KIT=<CODE>` (see
 [Joining as a new trust](../../trust/README.md#joining-as-a-new-trust-dev-hub)) claims the slot — registration writes
 the claimed `FL_KIT_SLOT` / `FL_KIT_SLOT_NUMBER` into the trust's kit file, and the
 trust-host deploy pulls that kit from the S3 path above.
 
-> Flower caveat: the dynamic path is FLARE-only. Flower's per-slot SuperNode key
-> labelling reads `TRUST_NAMES` at net startup, so a slot added at runtime isn't usable
-> on a running Flower net until its containers are recreated.
+> Flower caveat: on the compose stacks the per-slot SuperNode key labelling reads
+> `TRUST_NAMES` at net startup, so a slot added at runtime isn't usable on a running Flower
+> net until its containers are recreated. A stag/prod hub on ECS has the dynamic path:
+> `add-fl-kits` registers the new keys with the running SuperLink.
 
 ## Standalone targets
 

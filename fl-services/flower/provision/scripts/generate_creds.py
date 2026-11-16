@@ -139,6 +139,45 @@ def generate_server_cert(
     return private_key, cert
 
 
+def write_supernode_key(number: int) -> None:
+    """Generate one generic ECDSA key pair, ``supernode_credentials_<number>{,.pub}``."""
+    # Generate ECDSA key (P-384 to match -b 384)
+    private_key = ec.generate_private_key(ec.SECP384R1())
+
+    # Serialize Private Key (OpenSSH format)
+    # Note: The original script used ssh-keygen Use OpenSSH format for both
+    private_bytes = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.OpenSSH,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+
+    # Serialize Public Key (OpenSSH format)
+    public_bytes = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.OpenSSH,
+        format=serialization.PublicFormat.OpenSSH,
+    )
+
+    # Write files
+    priv_path = KEY_DIR / f"supernode_credentials_{number}"
+    pub_path = KEY_DIR / f"supernode_credentials_{number}.pub"
+
+    # Write private key
+    with open(priv_path, "wb") as f:
+        f.write(private_bytes)
+    # Set permissions for private key (600) - mainly for Unix, but good practice
+    try:
+        os.chmod(priv_path, 0o600)
+    except Exception:
+        pass
+
+    # Write public key
+    with open(pub_path, "wb") as f:
+        f.write(public_bytes)
+
+    print(f"  - SuperNode {number}: {priv_path}, {pub_path}")
+
+
 def generate_supernode_keys(num_supernodes: int) -> None:
     """Generate generic ECDSA key pairs for supernodes."""
     KEY_DIR.mkdir(exist_ok=True)
@@ -151,41 +190,19 @@ def generate_supernode_keys(num_supernodes: int) -> None:
     print(f"Generating keys for {num_supernodes} supernodes...")
 
     for i in range(1, num_supernodes + 1):
-        # Generate ECDSA key (P-384 to match -b 384)
-        private_key = ec.generate_private_key(ec.SECP384R1())
+        write_supernode_key(i)
 
-        # Serialize Private Key (OpenSSH format)
-        # Note: The original script used ssh-keygen Use OpenSSH format for both
-        private_bytes = private_key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.OpenSSH,
-            encryption_algorithm=serialization.NoEncryption(),
-        )
 
-        # Serialize Public Key (OpenSSH format)
-        public_bytes = private_key.public_key().public_bytes(
-            encoding=serialization.Encoding.OpenSSH,
-            format=serialization.PublicFormat.OpenSSH,
-        )
+def add_supernode_key(number: int) -> None:
+    """Add one SuperNode key pair beside the existing ones (FLIP#1942).
 
-        # Write files
-        priv_path = KEY_DIR / f"supernode_credentials_{i}"
-        pub_path = KEY_DIR / f"supernode_credentials_{i}.pub"
-
-        # Write private key
-        with open(priv_path, "wb") as f:
-            f.write(private_bytes)
-        # Set permissions for private key (600) - mainly for Unix, but good practice
-        try:
-            os.chmod(priv_path, 0o600)
-        except Exception:
-            pass
-
-        # Write public key
-        with open(pub_path, "wb") as f:
-            f.write(public_bytes)
-
-        print(f"  - SuperNode {i}: {priv_path}, {pub_path}")
+    A SuperNode key is not signed by the CA, so nothing else is regenerated and every
+    credential already handed out stays valid.
+    """
+    KEY_DIR.mkdir(exist_ok=True)
+    if any(KEY_DIR.glob(f"supernode_credentials_{number}*")):
+        raise SystemExit(f"{KEY_DIR}/supernode_credentials_{number} already exists: refusing to overwrite it.")
+    write_supernode_key(number)
 
 
 def main() -> None:
@@ -196,7 +213,17 @@ def main() -> None:
         default=2,
         help="Number of SuperNode key pairs to generate",
     )
+    parser.add_argument(
+        "--add-supernode",
+        type=int,
+        metavar="NUMBER",
+        help="Only add the key pair supernode_credentials_<NUMBER>; certificates and other keys are left alone",
+    )
     args = parser.parse_args()
+
+    if args.add_supernode is not None:
+        add_supernode_key(args.add_supernode)
+        return
 
     # --- TLS Certificates ---
     CERT_DIR.mkdir(exist_ok=True)

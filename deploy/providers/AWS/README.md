@@ -414,8 +414,6 @@ If S3 cannot be listed, registration answers that the slot source could not be r
 first object. To add a net to a hub that already has kits, provision it with every existing slot name and upload
 it whole, in a window with no registration: until each slot's kit is complete on the new net, none is claimable
 (flip-api warns once per kit), and `add-fl-kits` cannot fill the gap, since it only mints new names.
-(A Flower hub still reads `FL_KIT_SLOT_NAMES` through the `/flip/fl_kit_slot_names`
-SSM parameter: its SuperLink labels SuperNodes from the same list at startup.)
 
 `make add-fl-kits N=<n>` runs `scripts/add_fl_kits.sh`: discovers the deployment's nets from S3, restores +
 fingerprint-verifies each net's CA workspace (`fl-services/nvflare/provision/workspace-<env>/`), mints the next
@@ -425,7 +423,29 @@ uploads **only** the new kits additively (never `aws s3 sync --delete`), the fiv
 half-uploaded kit never counts, and refreshes each net's mirrored CA state (`cert.json` under `fl-flare-ca-state/`,
 a prefix no ECS task role can read; see the nvflare README for estates that still hold it among the kits).
 
-The script has a black-box test harness (`scripts/tests/test_add_fl_kits.sh`, `aws`/`make`/`openssl`
+**On a Flower hub the SuperNode keys are the pool (FLIP#1942).** flip-api's slot pool is every slot `Trust_<N>`
+whose key pair `keys/supernode_credentials_<N>` and `.pub` is complete on every net under
+`fl-flower-participant-kits/<FLOWER_KIT_DATE>/` (task env `FLOWER_KITS_S3_URI`), with the same read at every
+registration, the same warning for a pair left out and the same 503 when S3 cannot be listed. There is no
+`FL_KIT_SLOT_NAMES` Terraform variable and no `/flip/fl_kit_slot_names` SSM parameter any more: the registration
+one-shot (`ecs_flower.tf`) names each node from its key's file name.
+
+There, `make add-fl-kits N=<n>` hands over to `scripts/add_fl_kits_flower.sh`: it numbers the new keys past every
+key in S3 and every name in `fl-flower-kit-state/<FLOWER_KIT_DATE>/minted_slot_names` (a prefix no ECS task role
+can read; Flower has no CA registry, so this record is what keeps a withdrawn name from being minted twice), mints
+the pairs (`make -C fl-services/flower provision-add-supernode`; the CA and existing keys are untouched), uploads
+the **public** keys, runs the `efs-provision-certs` task definition with the key sync alone as its command and
+then the `flower-register-supernode-keys` task definition as Terraform defines it (`aws ecs run-task`, in the
+subnets and security groups of the live `fl-server-net-1` and `fl-api-net-1` services), and uploads the
+**private** keys last, once the registration task's exit code and its log both say every key is registered.
+Nothing is replaced or restarted, and a running job is not disturbed. It needs `ecs:RunTask` and `iam:PassRole`
+for those two task definitions, as `register-trusts` does for flip-api's.
+
+The SuperLink keeps registrations in memory. Terraform replays the one-shot on every new SuperLink task
+definition; a task ECS replaces by itself has none until it runs again (see the
+[Flower README](../../../fl-services/flower/README.md#adding-supernode-keys-to-a-deployed-hub)).
+
+The scripts have a black-box test harness (`scripts/tests/test_add_fl_kits.sh`, `aws`/`make`/`openssl`
 stubbed — no credentials or network) that CI runs in the `Deploy script tests` job of
 `validate_terraform.yml` on any `deploy/providers/AWS/**` change; it also runs standalone with plain `bash`.
 
@@ -1107,8 +1127,7 @@ absent, everything else stops the run.
 The operator `.env` files drift, and seeding GitHub from a stale one bakes that
 drift into every future CI plan. `scripts/reconcile_ci_env.py` rebuilds the
 Terraform inputs from what is actually deployed — live state, plus the things
-state cannot answer (the running image tags, the FL kit-slot list, the live
-secret material):
+state cannot answer (the running image tags, the live secret material):
 
 ```bash
 python3 scripts/reconcile_ci_env.py --env prod --compare ../../../.env.prod
@@ -1133,7 +1152,7 @@ Run against staging this found a batch of differences from the checked-out
 plans as `must be replaced` against a `prevent_destroy` lifecycle rule, a stale
 `FLARE_KIT_DATE`, and rotated service keys. Several
 were not stale but **absent**, which is worse: the Makefile exports
-`JOB_RESOURCE_SPEC_*` and `FL_KIT_SLOT_NAMES` either
+`JOB_RESOURCE_SPEC_*` either
 unconditionally or behind a `?=` default, so an absent key arrives at Terraform as
 `""` or as the Makefile's own default and **does not** fall back to the
 `variables.tf` one.

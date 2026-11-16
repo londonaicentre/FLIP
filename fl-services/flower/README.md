@@ -150,12 +150,13 @@ provision/creds/net-<N>/
 ```
 
 `make provision` mints one key pair per entry in this environment's `FL_KIT_SLOT_NAMES`, or 2 when
-no pool is named (a dev env file). Override with `NUM_SUPERNODES=<n>` (or `FLOWER_NUM_SUPERNODES=<n>`
-when calling the script directly).
+no pool is named (a dev env file, or a stag/prod one, which no longer needs the key). Override with
+`NUM_SUPERNODES=<n>` (or `FLOWER_NUM_SUPERNODES=<n>` when calling the script directly).
 
 A trust staged into slot *N* fetches `keys/supernode_credentials_N`, so a kit that stops short of the
-pool leaves the later slots unable to start. Unlike FLARE's `provision --add_client`, there is no
-add-a-node path: a re-run regenerates the CA and invalidates every node already holding credentials.
+pool leaves the later slots unable to start. Never re-run `provision` to grow a deployed kit: it
+regenerates the CA and every key, and invalidates every node already holding credentials. Add keys
+instead ([below](#adding-supernode-keys-to-a-deployed-hub)).
 
 > ⚠️ These are development credentials. Configure validity, organization or the server SANs
 > (`SERVER_SAN_IPS`) by editing the globals at the top of
@@ -190,7 +191,64 @@ SuperNode's `.pub` key is registered with the SuperLink (and, in the hub, mapped
 by [`register-supernode-keys.sh`](register-supernode-keys.sh) — it runs `flwr supernode register`
 for every `/keys/*.pub`, naming each node after its trust (`--name`, flwr ≥ 1.38, so the ServerApp
 sees the trust behind every node id through `Grid.get_nodes()`), skipping already-registered
-keys. This is the Flower analogue of claiming a participant slot.
+keys. This is the Flower analogue of claiming a participant slot. The names come from `TRUST_NAMES`,
+paired with the sorted keys by position (the compose stacks); with `TRUST_NAMES` unset each key
+names its own slot, `supernode_credentials_<N>.pub` being `Trust_<N>` (the ECS hub).
+
+### Adding SuperNode keys to a deployed hub
+
+A SuperNode key pair is not signed by the CA, so more can be minted at any time without touching the
+CA, the server certificate or any key already handed out. This is the Flower analogue of FLARE's
+`provision --add_client`:
+
+```bash
+make -C fl-services/flower provision-add-supernode KEY_NUMBER=<n> OUT_DIR=<dir>   # → <dir>/keys/supernode_credentials_<n>{,.pub}
+```
+
+On a stag/prod hub, do not call it by hand. One command mints the next `N` key pairs and makes them
+claimable, with no Terraform apply and no SuperLink restart (FLIP#1942):
+
+```bash
+make -C deploy/providers/AWS add-fl-kits N=<n> HUB=<stag|prod>
+```
+
+**The keys are the pool.** On a Flower hub flip-api's slot pool is every slot `Trust_<N>` whose pair
+`keys/supernode_credentials_<N>` and `.pub` is complete on every net under
+`s3://<AICENTRE_BUCKET_NAME>/fl-flower-participant-kits/<FLOWER_KIT_DATE>/` (its `FLOWER_KITS_S3_URI`),
+read at every registration. The registration one-shot on ECS names each node the same way, from the
+key's file name, so there is no separate slot list to keep in step (`FL_KIT_SLOT_NAMES` is no longer
+a Terraform input; the compose stacks still pass it as `TRUST_NAMES`).
+
+`add-fl-kits` (`deploy/providers/AWS/scripts/add_fl_kits_flower.sh`) works in this order, and the
+order is what keeps a slot from being claimed before its SuperNode would be admitted:
+
+1. Numbers the new keys past every key in S3 and every name already minted, and records the new
+   names in `s3://<AICENTRE_BUCKET_NAME>/fl-flower-kit-state/<FLOWER_KIT_DATE>/minted_slot_names`.
+   Flower has no CA registry of issued identities, so this record is what stops a name being reused
+   after its key is deleted from S3. No ECS task role reads that prefix.
+2. Mints the key pairs into a temporary directory and uploads the **public** keys (additive
+   `aws s3 cp`).
+3. Runs the `efs-provision-certs` task definition with the key sync alone as its command, which
+   copies the public keys to the hub's EFS beside the existing ones, then the
+   `flower-register-supernode-keys` task definition as it is, which registers every key with the
+   running SuperLink and maps the node ids on the fl-api. Keys already registered are skipped, and a
+   running job is not disturbed.
+4. Uploads the **private** keys, only once that task's exit code and its log both say every key was
+   registered. Until then flip-api leaves the slot out, with a warning naming the missing key.
+
+If a run stops before step 4, the private keys are gone with it: delete the public keys it names
+from S3 and run it again for the slots still needed. The numbering skips the spent names.
+
+To withdraw a slot that no trust holds, delete its private key from S3: flip-api stops handing it
+out at the next registration. `upload-creds-to-s3` is for a **new** kit date only, since its
+`--delete` removes every key added under a live one.
+
+**Registrations do not survive the SuperLink.** It runs without `--database`, so it holds registered
+SuperNodes in memory. Terraform runs the registration one-shot again whenever it registers a new
+SuperLink task definition, from the keys on EFS, which `add-fl-kits` keeps in step with S3. A task
+that ECS replaces by itself (a crash, a Fargate retirement) comes back with no registered SuperNode
+until the one-shot runs again: `terraform taint 'null_resource.flower_register_supernode_keys[0]'`
+and apply, or any `add-fl-kits` run.
 
 ## The fleet proxy: what a trust can reach (FLIP#1517)
 

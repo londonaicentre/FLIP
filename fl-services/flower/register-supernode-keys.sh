@@ -66,8 +66,11 @@ for attempt in $(seq 1 "${SUPERLINK_READY_ATTEMPTS:-60}"); do
 done
 echo "SuperLink Control API is ready."
 
-# TRUST_NAMES names each key's node (one per /keys/*.pub, sorted; required); FL_API_ADDRESS is optional
-# and, when set, needs FL_API_KEY (every FL API route but /health requires it; FL_API_KEY_HEADER renames the header).
+# TRUST_NAMES names each key's node (one per /keys/*.pub, sorted). Unset, each key names its own:
+# supernode_credentials_<N>.pub is Trust_<N>, the slot flip-api derives from the same file name
+# (FLIP#1942), so the keys are the only list and one added later never renames another.
+# FL_API_ADDRESS is optional and, when set, needs FL_API_KEY (every FL API route but /health
+# requires it; FL_API_KEY_HEADER renames the header).
 # TRUST_NAMES accepts both JSON list (["Trust_1", "Trust_2"]) and comma-separated (Trust_1,Trust_2).
 raw_trust_names="${TRUST_NAMES:-}"
 # Strip JSON brackets and quotes, then split on commas
@@ -82,10 +85,28 @@ done
 fl_api_address="${FL_API_ADDRESS:-}"
 
 # Find all public key files (sorted alphabetically to match TRUST_NAMES order)
-pub_keys=(/keys/*.pub)
-if [ ${#pub_keys[@]} -eq 0 ]; then
-    echo "ERROR: No .pub key files found in /keys/" >&2
+keys_dir="${KEYS_DIR:-/keys}"
+pub_keys=("$keys_dir"/*.pub)
+if [ ! -e "${pub_keys[0]}" ]; then
+    echo "ERROR: No .pub key files found in ${keys_dir}/" >&2
     exit 1
+fi
+
+if [ -z "$raw_trust_names" ]; then
+    # By number, so that a key added later is registered after the ones already there:
+    # the "already registered" branch below finds a node id by its place in that order.
+    sorted_keys=$(printf '%s\n' "${pub_keys[@]}" | sort -V)
+    pub_keys=()
+    trust_names=()
+    while IFS= read -r pub_key; do
+        if [[ "$pub_key" =~ /supernode_credentials_([0-9]+)\.pub$ ]]; then
+            pub_keys+=("$pub_key")
+            trust_names+=("Trust_${BASH_REMATCH[1]}")
+        else
+            echo "ERROR: ${pub_key} is not supernode_credentials_<N>.pub, so it names no kit slot (or set TRUST_NAMES)" >&2
+            exit 1
+        fi
+    done <<< "$sorted_keys"
 fi
 
 echo "Registering ${#pub_keys[@]} SuperNode key(s)..."
@@ -123,6 +144,10 @@ for pub_key in "${pub_keys[@]}"; do
                     echo "    Discovered existing node_id=${node_id}"
                 fi
             fi
+        elif echo "$output" | grep -q '"success": *false'; then
+            # Exit 0 with {"success": false}: the key is NOT registered, and its SuperNode would be refused.
+            echo "    FAIL: ${output}" >&2
+            failed=1
         else
             echo "    WARN: Registration succeeded but could not parse node_id"
         fi

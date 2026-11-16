@@ -77,7 +77,7 @@ def one_shot(tmp_path):
     (bin_dir / "python").chmod(0o755)
     calls = tmp_path / "flwr-calls.log"
 
-    def run(sans: list[str]) -> tuple[subprocess.CompletedProcess[str], str]:
+    def run(sans: list[str], **overrides: str) -> tuple[subprocess.CompletedProcess[str], str]:
         _write_server_cert(certs / "server.pem", sans)
         env = {
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
@@ -87,6 +87,7 @@ def one_shot(tmp_path):
             "SUPERLINK_ROOT_CERTIFICATES": str(certs / "ca.crt"),
             "TRUST_NAMES": '["Trust_1"]',
             "SUPERLINK_READY_ATTEMPTS": "1",
+            **overrides,
         }
         result = subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True, cwd=tmp_path)
         return result, calls.read_text() if calls.exists() else ""
@@ -107,3 +108,42 @@ def test_a_certificate_naming_the_superlink_host_proceeds_to_registration(one_sh
     result, calls = one_shot(["localhost", "superlink", "fl-server-net-1", HOST])
     assert "SuperLink Control API is ready." in result.stdout, result.stdout + result.stderr
     assert "supernode ls local" in calls
+
+
+def _keys(tmp_path: Path, *numbers: int) -> Path:
+    keys = tmp_path / "keys"
+    keys.mkdir()
+    for number in numbers:
+        (keys / f"supernode_credentials_{number}.pub").write_text("unused by the stub\n")
+    return keys
+
+
+def test_without_trust_names_each_key_is_named_after_its_own_number(one_shot, tmp_path):
+    """FLIP#1942: the keys are the slot list, so the tenth key is Trust_10 although it sorts second."""
+    keys = _keys(tmp_path, 1, 2, 10)
+    result, calls = one_shot([HOST], TRUST_NAMES="", KEYS_DIR=str(keys))
+    registered = [line.split() for line in calls.splitlines() if line.startswith("supernode register")]
+    assert [(Path(call[2]).name, call[call.index("--name") + 1]) for call in registered] == [
+        ("supernode_credentials_1.pub", "Trust_1"),
+        ("supernode_credentials_2.pub", "Trust_2"),
+        ("supernode_credentials_10.pub", "Trust_10"),
+    ], result.stdout + result.stderr
+
+
+def test_without_trust_names_a_key_that_names_no_slot_is_refused(one_shot, tmp_path):
+    keys = _keys(tmp_path, 1)
+    (keys / "stray.pub").write_text("unused by the stub\n")
+    result, calls = one_shot([HOST], TRUST_NAMES="", KEYS_DIR=str(keys))
+    assert result.returncode == 1
+    assert "stray.pub is not supernode_credentials_<N>.pub" in result.stderr
+    assert "supernode register" not in calls
+
+
+def test_a_registration_the_superlink_did_not_accept_fails_the_run(one_shot, tmp_path):
+    """Exit 0 with success false left the key unregistered while the one-shot reported success."""
+    keys = _keys(tmp_path, 1)
+    flwr = tmp_path / "bin" / "flwr"
+    flwr.write_text(STUB_FLWR.replace('{"success": true, "node-id": 42}', '{"success": false, "error-message": "x"}'))
+    result, _ = one_shot([HOST], TRUST_NAMES="", KEYS_DIR=str(keys))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "One or more registrations failed" in result.stderr
