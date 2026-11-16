@@ -87,6 +87,21 @@ def paths_of(ops) -> list[str]:
     return [op.path_in_repo for op in ops]
 
 
+RECORDED_AT = "2026-09-07T12:20:06Z"
+
+
+def manifest_of(publisher, tree, workflow_run=None) -> dict:
+    """The manifest of ``tree``'s GIFs, as the CLI builds it for VERSION."""
+    return publisher.build_manifest(
+        tree.gifs,
+        publisher.expected_gifs(tree.specs),
+        version=VERSION,
+        source_commit=SOURCE_COMMIT,
+        recorded_at=RECORDED_AT,
+        workflow_run=workflow_run,
+    )
+
+
 class TestFileSet:
     def test_specs_map_to_gifs_and_support_is_skipped(self, publisher, tree):
         assert publisher.expected_gifs(tree.specs) == [
@@ -107,31 +122,17 @@ class TestFileSet:
     def test_a_spec_without_a_gif_is_refused_naming_it(self, publisher, tree):
         (tree.gifs / "flip/create-model.gif").unlink()
         with pytest.raises(SystemExit, match="missing: flip/create-model.gif"):
-            publisher.build_manifest(
-                tree.gifs,
-                publisher.expected_gifs(tree.specs),
-                version=VERSION,
-                source_commit=SOURCE_COMMIT,
-                recorded_at="2026-09-07T12:20:06Z",
-                workflow_run=None,
-            )
+            manifest_of(publisher, tree)
 
 
 class TestManifest:
     def test_content(self, publisher, tree):
         paths = publisher.expected_gifs(tree.specs)
-        manifest = publisher.build_manifest(
-            tree.gifs,
-            paths,
-            version=VERSION,
-            source_commit=SOURCE_COMMIT,
-            recorded_at="2026-09-07T12:20:06Z",
-            workflow_run="https://github.com/o/r/actions/runs/1",
-        )
+        manifest = manifest_of(publisher, tree, workflow_run=RUN)
         assert manifest["version"] == VERSION
         assert manifest["source_commit"] == SOURCE_COMMIT
-        assert manifest["recorded_at"] == "2026-09-07T12:20:06Z"
-        assert manifest["workflow_run"] == "https://github.com/o/r/actions/runs/1"
+        assert manifest["recorded_at"] == RECORDED_AT
+        assert manifest["workflow_run"] == RUN
         assert list(manifest["files"]) == paths  # sorted
         data = (tree.gifs / "flip/create-model.gif").read_bytes()
         assert manifest["files"]["flip/create-model.gif"] == {
@@ -155,14 +156,7 @@ class TestManifest:
 
 class TestOperations:
     def test_adds_every_gif_the_manifest_and_the_card(self, publisher, tree):
-        manifest = publisher.build_manifest(
-            tree.gifs,
-            publisher.expected_gifs(tree.specs),
-            version=VERSION,
-            source_commit=SOURCE_COMMIT,
-            recorded_at="2026-09-07T12:20:06Z",
-            workflow_run=None,
-        )
+        manifest = manifest_of(publisher, tree)
         ops = publisher.build_operations(tree.gifs, manifest, [".gitattributes"], tree.card)
         assert paths_of(ops) == [
             "admin/create-user.gif",
@@ -177,14 +171,7 @@ class TestOperations:
         assert json.loads(manifest_op.path_or_fileobj)["version"] == VERSION
 
     def test_a_removed_spec_deletes_its_dataset_gif_and_nothing_else(self, publisher, tree):
-        manifest = publisher.build_manifest(
-            tree.gifs,
-            publisher.expected_gifs(tree.specs),
-            version=VERSION,
-            source_commit=SOURCE_COMMIT,
-            recorded_at="2026-09-07T12:20:06Z",
-            workflow_run=None,
-        )
+        manifest = manifest_of(publisher, tree)
         published = [".gitattributes", "README.md", "manifest.json", "admin/create-user.gif", "flip/retired.gif"]
         ops = publisher.build_operations(tree.gifs, manifest, published, None)
         deletes = [op for op in ops if isinstance(op, CommitOperationDelete)]
@@ -193,14 +180,7 @@ class TestOperations:
 
     def test_a_stray_local_gif_is_ignored_with_a_warning(self, publisher, tree, capsys):
         write(tree.gifs / "flip/no-spec.gif")
-        manifest = publisher.build_manifest(
-            tree.gifs,
-            publisher.expected_gifs(tree.specs),
-            version=VERSION,
-            source_commit=SOURCE_COMMIT,
-            recorded_at="2026-09-07T12:20:06Z",
-            workflow_run=None,
-        )
+        manifest = manifest_of(publisher, tree)
         ops = publisher.build_operations(tree.gifs, manifest, [], None)
         assert "flip/no-spec.gif" not in paths_of(ops)
         assert "no spec: flip/no-spec.gif" in capsys.readouterr().out
@@ -213,14 +193,7 @@ class TestOperations:
 
 class TestPublish:
     def ops(self, publisher, tree):
-        manifest = publisher.build_manifest(
-            tree.gifs,
-            publisher.expected_gifs(tree.specs),
-            version=VERSION,
-            source_commit=SOURCE_COMMIT,
-            recorded_at="2026-09-07T12:20:06Z",
-            workflow_run=None,
-        )
+        manifest = manifest_of(publisher, tree)
         return publisher.build_operations(tree.gifs, manifest, [], tree.card)
 
     def publish(self, publisher, tree, api, branch="main", *, new_branch=False, dry_run=False):

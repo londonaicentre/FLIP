@@ -180,6 +180,31 @@ def possible_patch_size(
     return (new_x, new_y), sizes
 
 
+def _to_network_layout(
+    batch: dict[str, Any], device: torch.device, dual_scan: bool, channels_last: bool = False
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    """Split the dual-scan mask and move a batch to BCDHW float tensors on device.
+
+    Args:
+        batch: Collated batch with "image" and "mask" (B, C, H, W, D).
+        device: Target device.
+        dual_scan: If True, mask channels 3: are returned as the previous-scan mask.
+        channels_last: If True, return tensors in channels_last_3d memory format.
+
+    Returns:
+        (image, mask, mask_prev); mask_prev is None unless dual_scan.
+    """
+    image, mask, mask_prev = batch["image"], batch["mask"], None
+    if dual_scan:
+        mask, mask_prev = mask[:, :3, ...], mask[:, 3:, ...]
+
+    def _prep(t: torch.Tensor) -> torch.Tensor:
+        t = rearrange(t, "b c h w d -> b c d h w").float().to(device)
+        return t.contiguous(memory_format=torch.channels_last_3d) if channels_last else t
+
+    return _prep(image), _prep(mask), (_prep(mask_prev) if mask_prev is not None else None)
+
+
 def train_seg(
     conf: dict[str, Any],
     model: nn.Module,
@@ -282,26 +307,7 @@ def train_seg(
 
     train_bar = tqdm(train_loader, total=len(train_loader), disable=None)
     for batch in train_bar:
-        image, mask = batch["image"], batch["mask"]
-        if dual_scan:
-            mask, mask_prev = mask[:, :3, ...], mask[:, 3:, ...]
-
-            image, mask, mask_prev = (
-                rearrange(image, "b c h w d -> b c d h w").float().to(device),
-                rearrange(mask, "b c h w d -> b c d h w").float().to(device),
-                rearrange(mask_prev, "b c h w d -> b c d h w").float().to(device),
-            )
-        else:
-            image, mask = (
-                rearrange(image, "b c h w d -> b c d h w").float().to(device),
-                rearrange(mask, "b c h w d -> b c d h w").float().to(device),
-            )
-
-        if _use_cl3d:
-            image = image.contiguous(memory_format=torch.channels_last_3d)
-            mask = mask.contiguous(memory_format=torch.channels_last_3d)
-            if dual_scan:
-                mask_prev = mask_prev.contiguous(memory_format=torch.channels_last_3d)
+        image, mask, mask_prev = _to_network_layout(batch, device, dual_scan, channels_last=_use_cl3d)
 
         optimizer.zero_grad(set_to_none=True)
 
@@ -370,26 +376,7 @@ def train_seg(
 
     val_bar = tqdm(val_loader, total=len(val_loader), disable=None)
     for batch in val_bar:
-        image, mask = batch["image"], batch["mask"]
-        if dual_scan:
-            mask, mask_prev = mask[:, :3, ...], mask[:, 3:, ...]
-
-            image, mask, mask_prev = (
-                rearrange(image, "b c h w d -> b c d h w").float().to(device),
-                rearrange(mask, "b c h w d -> b c d h w").float().to(device),
-                rearrange(mask_prev, "b c h w d -> b c d h w").float().to(device),
-            )
-        else:
-            image, mask = (
-                rearrange(image, "b c h w d -> b c d h w").float().to(device),
-                rearrange(mask, "b c h w d -> b c d h w").float().to(device),
-            )
-
-        if _use_cl3d:
-            image = image.contiguous(memory_format=torch.channels_last_3d)
-            mask = mask.contiguous(memory_format=torch.channels_last_3d)
-            if dual_scan:
-                mask_prev = mask_prev.contiguous(memory_format=torch.channels_last_3d)
+        image, mask, mask_prev = _to_network_layout(batch, device, dual_scan, channels_last=_use_cl3d)
 
         with torch.no_grad():
             if dual_scan:
@@ -758,10 +745,10 @@ def inference_func(
     table to "{exp_name}_bootstrap.csv". Finally computes means, stds, and 95% CI
     bounds (overall and per gland region) for all metrics.
 
-    Unlike MambaX-Net's original (patch-iterator based) version, data_loader is expected to yield
-    the whole-volume `{"image", "mask", "accession_id"}` batches dataset.py/data_loading.py already
-    build (monai.data.list_data_collate) — each batch item is one full preprocessed case, never a
-    patch, so there is no patch reconstruction step here.
+    data_loader yields patch-grid batches (collated with monai.data.list_data_collate), not whole
+    volumes: each item is one patch carrying its case's accession_id and coord, plus that case's
+    img_shape/mask_shape. Patches are grouped per case (_group_patches_by_case) and reassembled with
+    recreate_image before scoring, so Dice/HD95 are per subject, not per patch.
 
     Args:
         conf: Config dict/object with keys "bf16", "deep_supervision".
@@ -769,7 +756,8 @@ def inference_func(
         model_path: Directory containing "{exp_name}_*.pt" checkpoint files.
         model: Model instance used as a template; its state_dict is overwritten for
             each loaded checkpoint and the resulting model is added to the ensemble.
-        data_loader: DataLoader yielding `{"image", "mask", "accession_id"}` batches.
+        data_loader: DataLoader yielding per-patch `{"image", "mask", "accession_id", "coord", "img_shape",
+            "mask_shape"}` batches (see dataset.py/data_loading.py).
         device: Device to run inference on.
         criterion: Loss function called on the ensembled logits and mask.
         dual_scan (bool, optional): If True, splits mask into current/previous-scan
@@ -822,21 +810,7 @@ def inference_func(
 
     for batch in test_bar:
         names = batch["accession_id"]
-        image, mask = batch["image"], batch["mask"]
-
-        if dual_scan:
-            mask, mask_prev = mask[:, :3, ...], mask[:, 3:, ...]
-
-            image, mask, mask_prev = (
-                rearrange(image, "b c h w d -> b c d h w").float().to(device),
-                rearrange(mask, "b c h w d -> b c d h w").float().to(device),
-                rearrange(mask_prev, "b c h w d -> b c d h w").float().to(device),
-            )
-        else:
-            image, mask = (
-                rearrange(image, "b c h w d -> b c d h w").float().to(device),
-                rearrange(mask, "b c h w d -> b c d h w").float().to(device),
-            )
+        image, mask, mask_prev = _to_network_layout(batch, device, dual_scan)
 
         # One row per reconstructed VOLUME, not per patch — see the recreate_image call below.
         case_names, patches_per_image = _group_patches_by_case(list(names))
@@ -844,7 +818,7 @@ def inference_func(
         img_shapes = _per_case_shape(batch["img_shape"], patches_per_image)
         mask_shapes = _per_case_shape(batch["mask_shape"], patches_per_image)
 
-        img_names.append(case_names)
+        img_names.extend(case_names)
 
         with torch.no_grad():
             amp_context = (
@@ -860,7 +834,7 @@ def inference_func(
                     dual_scan,
                     conf.get("deep_supervision", True),
                     use_tta=use_tta,
-                    mask_prev=mask_prev if dual_scan else None,
+                    mask_prev=mask_prev,
                 )
                 loss = criterion(logits, mask)
         torch.cuda.empty_cache()
@@ -913,8 +887,6 @@ def inference_func(
     test_dice_metric_batch.reset()
     test_hdf_metric_batch.reset()
 
-    img_names = [item for sublist in img_names for item in (sublist if isinstance(sublist, list) else [sublist])]
-
     df = pd.DataFrame(
         {
             "img_names": img_names,
@@ -929,41 +901,25 @@ def inference_func(
         }
     )
     df.to_csv(f"{exp_name}_bootstrap.csv")
-    test_dice_mean = np.mean(test_metric)
-    test_loss_mean = np.mean(loss_list)
-    test_wp_mean = np.mean(test_metric_wp)
-    test_pz_mean = np.mean(test_metric_pz)
-    test_tz_mean = np.mean(test_metric_tz)
-    test_wp_hdf_mean = np.nanmean(metric_wp_hdf)
-    test_pz_hdf_mean = np.nanmean(metric_pz_hdf)
-    test_tz_hdf_mean = np.nanmean(metric_tz_hdf)
-
-    test_std_loss = np.std(loss_list)
-    test_std_dice = np.std(test_metric)
-    test_std_wp = np.std(test_metric_wp)
-    test_std_pz = np.std(test_metric_pz)
-    test_std_tz = np.std(test_metric_tz)
-    test_std_wp_hdf = np.nanstd(metric_wp_hdf)
-    test_std_pz_hdf = np.nanstd(metric_pz_hdf)
-    test_std_tz_hdf = np.nanstd(metric_tz_hdf)
-
-    test_95ci_loss = _ci95_from_values(loss_list)
-    test_95ci_dice = _ci95_from_values(test_metric)
-    test_95ci_wp = _ci95_from_values(test_metric_wp)
-    test_95ci_pz = _ci95_from_values(test_metric_pz)
-    test_95ci_tz = _ci95_from_values(test_metric_tz)
-    test_95ci_wp_hdf = _ci95_from_values(metric_wp_hdf)
-    test_95ci_pz_hdf = _ci95_from_values(metric_pz_hdf)
-    test_95ci_tz_hdf = _ci95_from_values(metric_tz_hdf)
-
-    test_95ci_lower_loss, test_95ci_upper_loss = _ci95_bounds(test_loss_mean, test_95ci_loss)
-    test_95ci_lower_dice, test_95ci_upper_dice = _ci95_bounds(test_dice_mean, test_95ci_dice)
-    test_95ci_lower_wp, test_95ci_upper_wp = _ci95_bounds(test_wp_mean, test_95ci_wp)
-    test_95ci_lower_pz, test_95ci_upper_pz = _ci95_bounds(test_pz_mean, test_95ci_pz)
-    test_95ci_lower_tz, test_95ci_upper_tz = _ci95_bounds(test_tz_mean, test_95ci_tz)
-    test_95ci_lower_wp_hdf, test_95ci_upper_wp_hdf = _ci95_bounds(test_wp_hdf_mean, test_95ci_wp_hdf)
-    test_95ci_lower_pz_hdf, test_95ci_upper_pz_hdf = _ci95_bounds(test_pz_hdf_mean, test_95ci_pz_hdf)
-    test_95ci_lower_tz_hdf, test_95ci_upper_tz_hdf = _ci95_bounds(test_tz_hdf_mean, test_95ci_tz_hdf)
+    series = {
+        "loss": loss_list,
+        "dice": test_metric,
+        "wp": test_metric_wp,
+        "pz": test_metric_pz,
+        "tz": test_metric_tz,
+        "wp_hdf": metric_wp_hdf,
+        "pz_hdf": metric_pz_hdf,
+        "tz_hdf": metric_tz_hdf,
+    }
+    # HD95 is NaN when either side is empty, so its summaries skip NaNs.
+    mean = {n: (np.nanmean if n.endswith("_hdf") else np.mean)(v) for n, v in series.items()}
+    std = {n: (np.nanstd if n.endswith("_hdf") else np.std)(v) for n, v in series.items()}
+    ci95 = {n: _ci95_from_values(v) for n, v in series.items()}
+    summary: dict[str, Any] = {f"test_{n}_mean": mean[n] for n in series}
+    summary |= {f"test_std_{n}": std[n] for n in series}
+    summary |= {f"test_95ci_{n}": ci95[n] for n in series}
+    for n in series:
+        summary[f"test_95ci_lower_{n}"], summary[f"test_95ci_upper_{n}"] = _ci95_bounds(mean[n], ci95[n])
 
     # Regional (apex / mid-gland / base) summary
     _region_metrics_out: dict = {}
@@ -987,49 +943,7 @@ def inference_func(
                     "ci95_upper": ci_upper_v,
                 }
 
-    return {
-        "test_loss_mean": test_loss_mean,
-        "test_dice_mean": test_dice_mean,
-        "test_wp_mean": test_wp_mean,
-        "test_pz_mean": test_pz_mean,
-        "test_tz_mean": test_tz_mean,
-        "test_wp_hdf_mean": test_wp_hdf_mean,
-        "test_pz_hdf_mean": test_pz_hdf_mean,
-        "test_tz_hdf_mean": test_tz_hdf_mean,
-        "test_std_loss": test_std_loss,
-        "test_std_dice": test_std_dice,
-        "test_std_wp": test_std_wp,
-        "test_std_pz": test_std_pz,
-        "test_std_tz": test_std_tz,
-        "test_std_wp_hdf": test_std_wp_hdf,
-        "test_std_pz_hdf": test_std_pz_hdf,
-        "test_std_tz_hdf": test_std_tz_hdf,
-        "test_95ci_loss": test_95ci_loss,
-        "test_95ci_dice": test_95ci_dice,
-        "test_95ci_wp": test_95ci_wp,
-        "test_95ci_pz": test_95ci_pz,
-        "test_95ci_tz": test_95ci_tz,
-        "test_95ci_wp_hdf": test_95ci_wp_hdf,
-        "test_95ci_pz_hdf": test_95ci_pz_hdf,
-        "test_95ci_tz_hdf": test_95ci_tz_hdf,
-        "test_95ci_lower_loss": test_95ci_lower_loss,
-        "test_95ci_upper_loss": test_95ci_upper_loss,
-        "test_95ci_lower_dice": test_95ci_lower_dice,
-        "test_95ci_upper_dice": test_95ci_upper_dice,
-        "test_95ci_lower_wp": test_95ci_lower_wp,
-        "test_95ci_upper_wp": test_95ci_upper_wp,
-        "test_95ci_lower_pz": test_95ci_lower_pz,
-        "test_95ci_upper_pz": test_95ci_upper_pz,
-        "test_95ci_lower_tz": test_95ci_lower_tz,
-        "test_95ci_upper_tz": test_95ci_upper_tz,
-        "test_95ci_lower_wp_hdf": test_95ci_lower_wp_hdf,
-        "test_95ci_upper_wp_hdf": test_95ci_upper_wp_hdf,
-        "test_95ci_lower_pz_hdf": test_95ci_lower_pz_hdf,
-        "test_95ci_upper_pz_hdf": test_95ci_upper_pz_hdf,
-        "test_95ci_lower_tz_hdf": test_95ci_lower_tz_hdf,
-        "test_95ci_upper_tz_hdf": test_95ci_upper_tz_hdf,
-        "region_metrics": _region_metrics_out,
-    }
+    return {**summary, "region_metrics": _region_metrics_out}
 
 
 def generate_predictions(

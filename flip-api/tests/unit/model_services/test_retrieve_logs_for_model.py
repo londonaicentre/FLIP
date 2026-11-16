@@ -93,26 +93,20 @@ def mock_model_status_none():
         yield
 
 
+def _stub_feed(session, logs, trusts=()):
+    """Stub the feed's three queries: the model check (.first(), truthy), the logs and the trust id -> name map."""
+    rows = MagicMock()
+    rows.all.return_value = logs
+    trust_rows = MagicMock()
+    trust_rows.all.return_value = list(trusts)
+    session.exec.side_effect = [MagicMock(), rows, trust_rows]
+
+
 # ---------- Test Cases ----------
 
 
 def test_retrieve_logs_for_model_success(override_dependencies, mock_can_access_true, mock_model_status_ok):
-    # First call to exec() → used for model check (returns a model)
-    mock_model = MagicMock()
-
-    # Second call to exec().all() → used for retrieving logs
-    mock_exec_result = MagicMock()
-    mock_exec_result.all.return_value = mock_logs
-
-    # Third call to exec().all() → trust id -> name lookup (no trusts to resolve here)
-    mock_trust_result = MagicMock()
-    mock_trust_result.all.return_value = []
-
-    override_dependencies.exec.side_effect = [
-        mock_model,  # db.exec(...).first() → model exists
-        mock_exec_result,  # db.exec(...).all() → returns mock logs
-        mock_trust_result,  # db.exec(...).all() → trust id -> name map
-    ]
+    _stub_feed(override_dependencies, mock_logs)
 
     response = client.get(f"/api/model/{test_model_id}/logs")
     assert response.status_code == status.HTTP_200_OK
@@ -148,13 +142,7 @@ def test_retrieve_logs_event_rows_serve_rendered_text_and_round_fields(
         ),
     ]
 
-    mock_model = MagicMock()
-    mock_exec_result = MagicMock()
-    mock_exec_result.all.return_value = event_logs
-    mock_trust_result = MagicMock()
-    mock_trust_result.all.return_value = [(trust_id, "King's College Hospital", "KCH")]
-
-    override_dependencies.exec.side_effect = [mock_model, mock_exec_result, mock_trust_result]
+    _stub_feed(override_dependencies, event_logs, [(trust_id, "King's College Hospital", "KCH")])
 
     response = client.get(f"/api/model/{test_model_id}/logs")
     assert response.status_code == status.HTTP_200_OK
@@ -197,12 +185,7 @@ def test_one_unrenderable_row_degrades_alone_instead_of_500ing_the_feed(
         log="all good",
     )
 
-    mock_model = MagicMock()
-    mock_exec_result = MagicMock()
-    mock_exec_result.all.return_value = [poisoned, healthy]
-    mock_trust_result = MagicMock()
-    mock_trust_result.all.return_value = []
-    override_dependencies.exec.side_effect = [mock_model, mock_exec_result, mock_trust_result]
+    _stub_feed(override_dependencies, [poisoned, healthy])
 
     real_render = retrieve_logs_module.render_log
 

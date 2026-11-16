@@ -595,6 +595,11 @@ def check_fl_server_clients(net_numbers: list[int]) -> None:
             print_status("INFO", f"Could not query CloudWatch log group {log_group}")
 
 
+def _ecs_log_groups(net_numbers: list[int]) -> list[str]:
+    """Return the hub's ECS log groups: flip-api, then fl-api and fl-server for each net."""
+    return ["/ecs/flip-api"] + [g for n in net_numbers for g in (f"/ecs/fl-api-net-{n}", f"/ecs/fl-server-net-{n}")]
+
+
 def check_container_errors(net_numbers: list[int]) -> None:
     """Scan ECS log groups for recent errors.
 
@@ -605,9 +610,7 @@ def check_container_errors(net_numbers: list[int]) -> None:
     print_status("INFO", "Scanning ECS log groups for recent errors (last 5 min)...")
     pattern = '?ERROR ?Traceback ?Exception ?"Name or service not known"'
 
-    log_groups = ["/ecs/flip-api"]
-    for net in net_numbers:
-        log_groups += [f"/ecs/fl-api-net-{net}", f"/ecs/fl-server-net-{net}"]
+    log_groups = _ecs_log_groups(net_numbers)
 
     for log_group in log_groups:
         ok, events = _filter_log_events(log_group, pattern, minutes=5)
@@ -842,9 +845,7 @@ def check_ecs_log_streams(net_numbers: list[int]) -> None:
     import time
 
     print_status("INFO", "Checking ECS log groups for recent activity...")
-    log_groups = ["/ecs/flip-api"]
-    for net in net_numbers:
-        log_groups += [f"/ecs/fl-api-net-{net}", f"/ecs/fl-server-net-{net}"]
+    log_groups = _ecs_log_groups(net_numbers)
     threshold_ms = int((time.time() - 60 * 60) * 1000)
 
     for log_group in log_groups:
@@ -876,11 +877,10 @@ def check_ecs_log_streams(net_numbers: list[int]) -> None:
         except ValueError:
             print_status("WARN", f"{log_group}: could not parse lastEventTimestamp ({first_line!r})")
             continue
+        age_min = int((time.time() * 1000 - last_ts) / 60000)
         if last_ts >= threshold_ms:
-            age_min = int((time.time() * 1000 - last_ts) / 60000)
             print_status("PASS", f"{log_group} active (last event {age_min} min ago)")
         else:
-            age_min = int((time.time() * 1000 - last_ts) / 60000)
             print_status("WARN", f"{log_group} stale (last event {age_min} min ago)")
 
 
@@ -929,7 +929,6 @@ def main(
     Verifies that the AWS deployment is functioning correctly.
     """
     # Change to terraform directory
-    original_dir = Path.cwd()
     os.chdir(terraform_dir)
 
     # Determine ALB subdomain from environment. ALB_SUBDOMAIN takes precedence;
@@ -970,75 +969,73 @@ def main(
     print_section("Checking AWS Resources")
 
     # Check Central Hub EC2 instance status
-    if central_hub_id:
-        success, output = run_aws_command(
+    success, output = run_aws_command(
+        [
+            "ec2",
+            "describe-instances",
+            "--instance-ids",
+            central_hub_id,
+            "--query",
+            "Reservations[0].Instances[0].State.Name",
+            "--output",
+            "text",
+        ]
+    )
+    if success and output == "running":
+        print_status("PASS", "Central Hub SSM bastion is running")
+    else:
+        print_status("FAIL", f"Central Hub SSM bastion state: {output}")
+
+    success, ping_status = run_aws_command(
+        [
+            "ssm",
+            "describe-instance-information",
+            "--filters",
+            f"Key=InstanceIds,Values={central_hub_id}",
+            "--query",
+            "InstanceInformationList[0].PingStatus",
+            "--output",
+            "text",
+        ]
+    )
+    if success and ping_status == "Online":
+        print_status("PASS", "Central Hub bastion is online in SSM")
+    else:
+        print_status("FAIL", f"Central Hub bastion SSM status: {format_ssm_ping_status(success, ping_status)}")
+
+    # Check security groups
+    success, sg_id = run_aws_command(
+        [
+            "ec2",
+            "describe-instances",
+            "--instance-ids",
+            central_hub_id,
+            "--query",
+            "Reservations[0].Instances[0].SecurityGroups[0].GroupId",
+            "--output",
+            "text",
+        ]
+    )
+    if success and sg_id:
+        print_status("PASS", f"Security Group: {sg_id}")
+        success, ingress_count = run_aws_command(
             [
                 "ec2",
-                "describe-instances",
-                "--instance-ids",
-                central_hub_id,
+                "describe-security-groups",
+                "--group-ids",
+                sg_id,
                 "--query",
-                "Reservations[0].Instances[0].State.Name",
+                "length(SecurityGroups[0].IpPermissions)",
                 "--output",
                 "text",
             ]
         )
-        if success and output == "running":
-            print_status("PASS", "Central Hub SSM bastion is running")
+        if success and ingress_count == "0":
+            print_status("PASS", "Central Hub bastion security group has no inbound rules")
         else:
-            print_status("FAIL", f"Central Hub SSM bastion state: {output}")
-
-        success, ping_status = run_aws_command(
-            [
-                "ssm",
-                "describe-instance-information",
-                "--filters",
-                f"Key=InstanceIds,Values={central_hub_id}",
-                "--query",
-                "InstanceInformationList[0].PingStatus",
-                "--output",
-                "text",
-            ]
-        )
-        if success and ping_status == "Online":
-            print_status("PASS", "Central Hub bastion is online in SSM")
-        else:
-            print_status("FAIL", f"Central Hub bastion SSM status: {format_ssm_ping_status(success, ping_status)}")
-
-        # Check security groups
-    if central_hub_id:
-        success, sg_id = run_aws_command(
-            [
-                "ec2",
-                "describe-instances",
-                "--instance-ids",
-                central_hub_id,
-                "--query",
-                "Reservations[0].Instances[0].SecurityGroups[0].GroupId",
-                "--output",
-                "text",
-            ]
-        )
-        if success and sg_id:
-            print_status("PASS", f"Security Group: {sg_id}")
-            success, ingress_count = run_aws_command(
-                [
-                    "ec2",
-                    "describe-security-groups",
-                    "--group-ids",
-                    sg_id,
-                    "--query",
-                    "length(SecurityGroups[0].IpPermissions)",
-                    "--output",
-                    "text",
-                ]
-            )
-            if success and ingress_count == "0":
-                print_status("PASS", "Central Hub bastion security group has no inbound rules")
-            else:
-                print_status("FAIL", f"Central Hub bastion security group inbound rule count: {ingress_count}")
-        else:
-            print_status("WARN", "Could not retrieve Security Group ID")
+            print_status("FAIL", f"Central Hub bastion security group inbound rule count: {ingress_count}")
+    else:
+        print_status("WARN", "Could not retrieve Security Group ID")
 
     # Check RDS instance
     print_status("INFO", "Checking RDS database...")
@@ -1351,9 +1348,6 @@ def main(
             f"services are properly configured.{Colors.NC}"
         )
         sys.exit(1)
-
-    # Restore original directory
-    os.chdir(original_dir)
 
 
 if __name__ == "__main__":

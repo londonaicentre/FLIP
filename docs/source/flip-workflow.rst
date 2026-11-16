@@ -21,13 +21,13 @@ The same flow covers **evaluating** an existing model, a special case of trainin
      - The researcher knows how many matching patients each trust holds.
    * - `Project approval`_
      - Researcher, then each trust
-     - Approving trusts fix the cohort and pull its images into their own XNAT.
+     - Approving trusts fix the cohort and, for imaging projects, pull its images into their own XNAT.
    * - `Image enrichment`_
      - Project members (optional)
      - Images carry the labels or segmentations the model needs.
    * - `File uploads`_
      - Researcher
-     - The model's code and configuration are on the hub, checked.
+     - The model's code and configuration are uploaded to the hub and have passed its checks.
    * - `Job start`_
      - Researcher
      - The code is running at the participating trusts, on each trust's data.
@@ -372,7 +372,8 @@ hub, where they are combined into one model.
 
 **3.** Each trust sends back its **model update** with the metrics its code recorded. On NVIDIA FLARE the update is
 always privacy-filtered before it leaves the trust, and a trust can enforce its own filter. On Flower it is filtered
-only if the app adds FLIP's privacy mod, as all the tutorials do.
+only if the app adds FLIP's privacy mod (a Flower client plug-in), as all the tutorials do. See
+:doc:`components/component-fl-privacy`.
 
 **4–5.** The FL server passes the metrics to the hub, where they appear as charts on the model page while training
 runs, and combines the updates into the next global model.
@@ -382,11 +383,11 @@ runs, and combines the updates into the next global model.
 **8–9.** The FL server saves the final model and results to the hub and marks the model **Results uploaded**, which
 frees the net. Project members download them with **Download Results**.
 
-.. seealso::
-
-   :ref:`training-metrics` and :ref:`view-results`.
-
 .. note::
 
    **Evaluation** is a special case of training: one round, in which each trust runs an uploaded model on its own data
    and returns metrics only. No model update leaves the trust.
+
+.. seealso::
+
+   :ref:`training-metrics` and :ref:`view-results`.

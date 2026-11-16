@@ -10,8 +10,9 @@
 # limitations under the License.
 """Single kit-file writer for trust/.env.<...> files (stdlib only).
 
-One in-place-upsert implementation behind every operator-side kit write — the
-dev distributor, the prod distributor, and the hub-shared sync. Merges a kit
+One in-place-upsert implementation behind every operator-side kit write —
+distribute_trust_kits.py (dev and prod registration), sync_trust_kit.py (hub-shared
+refresh) and site_upgrade.py (release tag pin). Merges a kit
 dict (as emitted by ``flip_api.scripts.register_trust``) into a kit file while
 preserving the operator's host-local edits:
 
@@ -23,10 +24,6 @@ preserving the operator's host-local edits:
   is present on both paths and upserted unconditionally.
 - The hub-shared block is upserted under a sentinel header; the header is added
   once on first write.
-
-Replaces the bash upsert in scripts/distribute-trust-kits.sh and
-deploy/providers/AWS/scripts/register-trusts.sh::write_kit_file(), and the
-in-place upsert in trust/deploy/scripts/sync_trust_kit.py.
 
 Also the one Python reader of the kit's TRUST_DATA_SEED (:func:`trust_data_seed`).
 """
@@ -103,7 +100,7 @@ def trust_data_seed(kit: dict[str, str]) -> bool:
 
 
 def upsert(lines: list[str], key: str, value: str) -> list[str]:
-    """Replace the first ``KEY=...`` line in place, or append ``KEY=value``.
+    """Replace every live ``KEY=...`` line in place, or append ``KEY=value``.
 
     Comment and blank lines pass through untouched. Existing positions are
     preserved so a repeated write produces a stable file when values are stable.

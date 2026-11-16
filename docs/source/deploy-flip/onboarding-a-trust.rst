@@ -26,9 +26,9 @@ requirements on :doc:`deploy-trust-node`.
    :local:
    :depth: 1
 
-**************
-How to read it
-**************
+*****************************
+Placeholders and environments
+*****************************
 
 .. list-table::
    :header-rows: 1
@@ -69,8 +69,8 @@ Step 2 — Register the trust on the hub
 
 This registers the trust with the hub and writes the trust's **credentials** into its kit file (API key, internal
 service key, FL slot and expected trust id), and mints the trust's XNAT database and message-broker passwords.
-No hub redeploy is needed. Most of the **hub-shared settings**,
-including the encryption key and the hub URL, are still placeholders afterwards; step 3 fills them.
+No hub redeploy is needed. It then fills the **hub-shared settings**, including the encryption key and the hub
+URL, from your local ``.env.prod``, and fails naming any setting missing there.
 
 .. important::
 
@@ -80,22 +80,19 @@ including the encryption key and the hub URL, are still placeholders afterwards;
    registered afresh — see :doc:`/sys-admin/admin-backup-and-restore`.
 
 *******************************************
-Step 3 — Fill in the hub-shared settings
+Step 3 — Check the hub-shared settings
 *******************************************
 
 *Who: FLIP admin, from the repo root with your local* ``.env.prod`` *present*
+
+Step 2 copied the hub-shared settings from your local env file into the kit. To refresh them later without
+registering again (after you change one in ``.env.prod``):
 
 .. code-block:: shell
 
    make sync-trust-kit KIT=<CODE> HUB=prod
 
-This copies the hub-shared settings from your local env file into the kit and leaves the credentials from step 2
-untouched.
-
-.. important::
-
-   Do not skip this step. Without it the kit's encryption key and hub URL stay as placeholders: the
-   trust can neither reach the hub nor decrypt a task, and the kit can be neither packaged nor started.
+This leaves the credentials from step 2 untouched.
 
 .. seealso::
 
@@ -182,9 +179,10 @@ Step 7 — Load the OMOP core vocabulary
 
 *Who: trust operator, once, after the first start*
 
-The node's OMOP database starts without the OMOP core vocabulary: SNOMED CT, LOINC and the other licensed
-vocabularies that cohort queries resolve concepts through. Each site downloads its own copy under its own licences;
-the AI Centre cannot hand on its copy, because the licences do not clearly allow that redistribution.
+The node's OMOP database starts without the OMOP core vocabulary: SNOMED CT, LOINC and the other licensed vocabularies
+that cohort queries resolve concepts through. Each site downloads its own copy under its own licences; the London AI
+Centre for Value-Based Healthcare, which maintains FLIP, cannot pass on its copy, because the licences do not clearly
+allow that redistribution.
 
 .. warning::
 
@@ -212,8 +210,8 @@ the AI Centre cannot hand on its copy, because the licences do not clearly allow
         ./files/load_core_vocab.sh <export dir> files/OMOPCDM_postgresql_5.4_constraints.sql
 
    The full roster takes about 25 minutes. Re-running is safe: tables that already hold the vocabulary are skipped.
-   On Kubernetes, run it over a ``kubectl port-forward`` to the ``omop-db`` service, or let the chart load it from
-   an S3 bucket instead; see "Load the OMOP core vocabulary" on :doc:`deploy-flip-node-kubernetes`.
+   On Kubernetes, run it over a ``kubectl port-forward`` to the ``omop-db`` service, or stage the same folder onto
+   the node and let the chart load it; see "Load the OMOP core vocabulary" on :doc:`deploy-flip-node-kubernetes`.
 
 #. **Check it.** With the same variables, ``./files/load_core_vocab.sh --check`` loads nothing and exits 0 once every
    table is loaded.
@@ -262,9 +260,9 @@ Optional — set a site privacy policy (FLARE)
 *Who: trust operator*
 
 As the data holder, you can apply your own privacy filter to everything the FL client sends to the FL server,
-whatever the researcher's app configures. The filter binds what the researcher's app declares, not what its
-code does: FLARE job code runs in the FL client's job process, so code review remains the control there
-(FLIP#1572).
+whatever the researcher's app configures. The filter applies to what the researcher's app declares, not to what
+its code does: FLARE job code runs inside the FL client's job process, so reviewing that code remains the control
+for it (FLIP#1572).
 
 #. In your kit file, uncomment ``FL_SITE_PRIVACY_POLICY`` and, optionally, its parameters. An invalid combination
    stops the FL client at startup, by design.

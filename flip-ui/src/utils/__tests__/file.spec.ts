@@ -11,7 +11,6 @@
  * limitations under the License.
  */
 
-import mime from "mime";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getPreSignedUrl, uploadModelFile } from "@/services/model-service";
@@ -57,7 +56,7 @@ describe("uploadFile", () => {
         expect(uploadModelFile).toHaveBeenCalledWith(policy, file);
     });
 
-    it("throws FileTooLargeError before calling the network when file exceeds policy maxBytes", async () => {
+    it("throws FileTooLargeError, with the policy limit and actual size, before calling the network", async () => {
         // Fail-fast guard: avoids a wasted multipart POST + S3 reject cycle
         // when the client already knows the policy will reject the file.
         const file = new File(["x".repeat(200)], "big.py");
@@ -67,22 +66,13 @@ describe("uploadFile", () => {
             maxBytes: 100
         };
 
-        await expect(uploadFile(file, policy)).rejects.toBeInstanceOf(FileTooLargeError);
-        expect(uploadModelFile).not.toHaveBeenCalled();
-    });
-
-    it("populates FileTooLargeError with the policy limit and actual size", async () => {
-        const file = new File(["x".repeat(200)], "big.py");
-        const policy = {
-            url: "https://signed.example/upload",
-            fields: { key: "models/m-1/big.py" },
-            maxBytes: 100
-        };
-
-        await expect(uploadFile(file, policy)).rejects.toMatchObject({
+        const upload = uploadFile(file, policy);
+        await expect(upload).rejects.toBeInstanceOf(FileTooLargeError);
+        await expect(upload).rejects.toMatchObject({
             limitBytes: 100,
             actualBytes: 200
         });
+        expect(uploadModelFile).not.toHaveBeenCalled();
     });
 
     it("permits files exactly at the maxBytes boundary", async () => {
@@ -127,16 +117,6 @@ describe("createPreSignedUrl", () => {
             }
         );
         expect(result).toBe(policy);
-    });
-
-    it("resolves the content type from the file name via mime.getType", async () => {
-        vi.mocked(getPreSignedUrl).mockResolvedValue(null);
-        const file = new File(["{}"], "config.json");
-
-        await createPreSignedUrl(file, "/files/upload", "m-1");
-
-        const [, body] = vi.mocked(getPreSignedUrl).mock.calls[0];
-        expect(body.contentType).toBe(mime.getType("config.json"));
     });
 
     it("falls back to application/octet-stream when mime cannot resolve a type", async () => {

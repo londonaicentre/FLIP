@@ -114,15 +114,16 @@ Privacy on shared updates
 
 The two frameworks privatise a Trust's training result differently before it leaves the site:
 
-- **NVIDIA FLARE** sparsifies and clips the update, without noise. This is a heuristic filter, not formal
-  differential privacy. It can be tuned or switched off only in local or recipe runs; on the platform the template
-  fixes it, and a Trust can also enforce **its own** filter, which runs whatever the app does.
+- **NVIDIA FLARE** sparsifies and clips the update, without noise. This is a heuristic filter, not formal differential
+  privacy. It can be tuned or switched off only when you run the app yourself (locally, or through its ``job.py``
+  recipe); on the platform the template fixes it, and a Trust can also enforce **its own** filter, which runs whatever
+  the app does.
 - **Flower** clips the update and adds Gaussian noise: a per-round Gaussian mechanism, valid only with a calibrated
   ``dp-sensitivity``. It is applied only if your ``client_app.py`` registers the privacy mod, so it is enforced by
   code review rather than by the platform, and the shipped defaults are demonstration values, not a defensible privacy
   budget.
 
-If the Trusts in your project require a site-enforced policy, use NVIDIA FLARE.
+If the Trusts in your project require a site-enforced policy, use NVIDIA FLARE: Flower has no site-side filter hook.
 
 .. seealso::
 
@@ -135,14 +136,14 @@ Tutorials and templates per framework
 
 Each framework has its own app templates, one per job type, and its own worked tutorials. The same model often
 exists on both, so you can compare them side by side. The templates are under :gh:`fl-apps/nvflare` and
-:gh:`fl-apps/flower`; to list the tutorials for each framework:
+:gh:`fl-apps/flower`. To list the tutorials for each framework, run from the root of a FLIP repository checkout:
 
 .. code-block:: shell
 
    make -C fl-tutorials list-tutorials                    # NVIDIA FLARE
    make -C fl-tutorials list-tutorials FL_BACKEND=flower
 
-:doc:`/paper/arkplus-fine-tuning` walks through one tutorial end to end on the platform.
+:doc:`/paper/arkplus-fine-tuning` walks through one NVIDIA FLARE tutorial end to end on the platform.
 
 
 Next steps

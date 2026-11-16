@@ -84,7 +84,7 @@ services:
       # explicitly-empty kit value would register an empty AE title rather than fail. The
       # explicit empty is refused by trust/Makefile (require-xnat-aetitle) before this runs.
       ORTHANC__DICOM_MODALITIES: |
-          {"XNAT": {"AET": "${XNAT_AETITLE:-XNAT}", "Host": "xnat-web", "Port": "${XNAT_PORT}"}}
+          {"XNAT": {"AET": "${XNAT_AETITLE:-FLIP_XNAT}", "Host": "xnat-web", "Port": "${XNAT_PORT}"}}
 
   imaging-api:
     image: ghcr.io/londonaicentre/imaging-api:${DOCKER_TAG}
@@ -124,7 +124,7 @@ services:
       # rather than fail. An explicitly-empty kit value is refused by trust/Makefile
       # (require-xnat-aetitle) before compose runs; the XNAT stack keeps its own bare-dash
       # form because configure-xnat.sh guards the empty itself.
-      XNAT_AETITLE: ${XNAT_AETITLE:-XNAT}
+      XNAT_AETITLE: ${XNAT_AETITLE:-FLIP_XNAT}
       XNAT_SERVICE_USER: ${XNAT_SERVICE_USER}
       XNAT_SERVICE_PASSWORD: ${XNAT_SERVICE_PASSWORD}
       AES_KEY_BASE64: ${AES_KEY_BASE64}

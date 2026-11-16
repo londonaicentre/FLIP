@@ -25,7 +25,7 @@ emit around configure_train/aggregate_train; an evaluation-only strategy
 type yields a coherent round timeline without double-emission.
 
 Like ``flip.flower.privacy``, importing this module requires the ``flwr`` package
-(present in the Flower fl-server images) — it subclasses the real ``FedAvg``.
+(the ``flower`` extra; present in the Flower fl-server images) — it subclasses the real ``FedAvg``.
 Keep logic in the helpers; this class is wiring.
 """
 

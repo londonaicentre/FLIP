@@ -188,7 +188,7 @@ def test_values_declare_the_governance_document_and_default_it_off() -> None:
 def test_the_values_schema_declares_the_governance_document() -> None:
     """``helm`` validates values against the schema; an undeclared key is only a warning.
 
-    The schema is the chart's machine-readable interface (``helm lint``, scripts/validate.sh),
+    The schema is the chart's machine-readable interface (``helm lint``, ``make validate``),
     so the document has to be declared there — a string, defaulting to empty.
     """
     schema = json.loads(SCHEMA_FILE.read_text())

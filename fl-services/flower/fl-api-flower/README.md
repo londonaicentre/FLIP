@@ -14,7 +14,7 @@
 
 # Flower FL API
 
-Standalone FastAPI service for Flower deployment runtime.
+FastAPI service that flip-api calls to drive a Flower SuperLink: it uploads and submits apps, lists and aborts runs, and reports server and client status.
 
 ## Authentication
 
@@ -23,7 +23,7 @@ Every route except the health one requires the hub's FL API key: the caller send
 ([`fl_api/utils/auth.py`](./fl_api/utils/auth.py), byte-identical in both backends). Missing or wrong key
 is a 401; an API started without `FL_API_KEY` answers 401 on every protected route and says so in its boot
 log. The key is dedicated to this hop — flip-api holds it (`make up` mints it into the hub env file;
-on ECS it is a `secrets` entry of every task that calls the API) and it is never `INTERNAL_SERVICE_KEY`.
+on ECS it is a `secrets` entry of every task that calls the API) and it opens nothing on the hub.
 
 ## Endpoints
 
@@ -34,25 +34,30 @@ on ECS it is a `secrets` entry of every task that calls the API) and it is never
 - `GET /list_runs`
 - `POST /upload_app/{model_id}`
 - `POST /submit_run/{job_folder}` — submit a previously uploaded application; `job_folder` is the Central Hub `model_id` (UUID). flip-api's production path (also exposed as the hidden `/submit_job` alias)
-- `POST /submit_tutorial/{tutorial_name}` — submit a pre-baked tutorial folder by name (e.g. `xray_classification`); the local tutorial harness targets this. The name is resolved to `/app/src/<category>/<name>` (the `fl-tutorials/flower/` layout since #1500) and must match exactly one folder; a flat `/app/src/<name>` is never used
+- `POST /submit_tutorial/{tutorial_name}` — submit a pre-baked tutorial folder by name (e.g. `xray_classification`); the local tutorial harness targets this. The name is resolved to `/app/src/<category>/<name>` (mirroring `fl-tutorials/flower/<category>/<name>`) and must match exactly one folder; a flat `/app/src/<name>` is never used
 - `DELETE /abort_run/{run_id}`
 
 ## API docs
 
-The FL API's host port is not published by default; the standalone dev stack keeps it internal and jobs are submitted via `make submit` (exec into the container). To reach the Swagger UI/OpenAPI JSON/ReDoc from the host, publish port 8000 by editing `fl-services/flower/compose.dev.yml` and re-running `make -C fl-services/flower up`, then access on `localhost:8000`:
+The FL API's port is not published to the host. The standalone dev stack keeps it internal, and jobs are submitted with `make submit`, which execs into the container. To open the API docs from the host:
 
-- Swagger UI: `http://localhost:8000/docs`
-- OpenAPI JSON: `http://localhost:8000/openapi.json`
-- ReDoc: `http://localhost:8000/redoc`
+1. Publish port 8000 in `fl-services/flower/compose.dev.yml`.
+2. Re-run `make -C fl-services/flower up`.
+3. Open one of:
+   - Swagger UI: `http://localhost:8000/docs`
+   - OpenAPI JSON: `http://localhost:8000/openapi.json`
+   - ReDoc: `http://localhost:8000/redoc`
+
+## What each endpoint runs
 
 Both submit endpoints (`/submit_run/{job_folder}` for uploaded applications, `/submit_tutorial/{tutorial_name}`
 for pre-baked tutorials) start a Flower run with:
 
 ```bash
-uvx flwr run . local --format json
+flwr run . local --format json
 ```
 
-It parses the JSON output from Flower and returns the full payload from the API response.
+The API parses Flower's JSON output, answers 500 if Flower reports a failure, and otherwise returns the new run's id.
 
 Both pass `flip-job-dir` (the app directory) in a `--run-config` file. `/submit_run` merges the uploaded
 `app/config.toml` into it, which is how a platform run gets its settings. `/submit_tutorial` does not: a tutorial's
@@ -62,25 +67,24 @@ Both pass `flip-job-dir` (the app directory) in a `--run-config` file. `/submit_
 The list endpoint runs:
 
 ```bash
-uvx flwr list local --format json
+flwr list local --format json
 ```
 
-It returns a list of dictionaries with:
-
-- all fields from all Flower run objects in the `runs` array.
+It returns one `{"job_id", "status"}` item per run in Flower's `runs` array, with Flower's status mapped to
+the shared job-status values.
 
 The abort endpoint runs:
 
 ```bash
-uvx flwr stop <run_id> local --format json
+flwr stop <run_id> local --format json
 ```
 
-It returns the full JSON payload from Flower.
+It returns `{"job_id", "status"}`: `STOPPED`, or the run's terminal status if it had already finished.
 
-The server status endpoint checks the Flower SuperLink health service configured by
-`SUPERLINK_HEALTH_ADDRESS` and returns:
+The server status endpoint requests the SuperLink's own `/health` route, on the same listener as
+its Control API (`SUPERLINK_ADDRESS`, port 8000), and returns:
 
-- `{"status": "RUNNING"}` when gRPC health returns `SERVING`
+- `{"status": "RUNNING"}` when it answers 200
 - `{"status": "STOPPED"}` otherwise
 
 The register node endpoint accepts a JSON body `{"name": "<trust_name>", "node_id": "<flower_node_id>"}`
@@ -96,11 +100,19 @@ registered node mappings to return one item per trust:
 
 If `targets` are omitted, all registered trust names are returned.
 
-## Health status configuration
+## Environment variables
 
-Set these environment variables in the FL API container:
+- `SUPERLINK_ADDRESS` (example: `superlink:8000`) — the SuperLink's HTTP listener; `/check_server_status` requests its
+  `/health` route, so the check needs no setting of its own
+- `SUPERLINK_ROOT_CERTIFICATES` — when set, the check is HTTPS verified against this CA; unset
+  (the standalone insecure dev stack), it is plain HTTP
+- `FLOWER_HEALTHCHECK_TIMEOUT_SECONDS` (default `1.0`)
+- `FL_API_KEY`, `FL_API_KEY_HEADER` — see [Authentication](#authentication)
+- `BUNDLE_URL_ALLOWED_ORIGINS` — see below
+- `JOB_CREDENTIAL_DIR` — where the job's hub credential is written for the fl-server; see
+  [`fl-services/AGENTS.md`](../../AGENTS.md#environment-variables)
 
-- `SUPERLINK_HEALTH_ADDRESS` (example: `superlink:9097`) — for server status checks
+Flower 1.43 removed the separate gRPC health server (port 9097) the check used to call (FLIP#1914).
 
 ## Bundle-fetch origin allow-list (`BUNDLE_URL_ALLOWED_ORIGINS`)
 
@@ -161,14 +173,10 @@ applied immediately without restarting the container.
 
 ## Lint and Tests
 
+From `fl-services/flower/fl-api-flower/`:
+
 ```bash
 uv run pytest --tb=short
-```
-
-```bash
 uv run ruff check . --fix
-```
-
-```bash
-uv run mypy . --ignore-missing-imports 
+uv run mypy . --ignore-missing-imports
 ```

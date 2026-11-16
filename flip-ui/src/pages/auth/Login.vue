@@ -14,8 +14,8 @@
 <!-- eslint-disable vue/multi-word-component-names -->
 <template>
     <section class="flex flex-col h-full">
-        <p class="mb-2 text-xs font-heading text-gray-500 dark:text-gray-300">
-            FEDERATED LEARNING & INTEROPERABILITY PLATFORM
+        <p class="mb-2 text-xs text-gray-500 dark:text-gray-300">
+            Federated Learning & Interoperability Platform
         </p>
         <h1 class="mb-5 text-xl font-heading md:text-3xl dark:text-gray-100">
             Sign in to <span class="text-primary-500 dark:text-primary-300 underline underline-offset-4">FLIP</span>

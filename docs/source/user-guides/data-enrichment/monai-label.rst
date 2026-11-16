@@ -32,9 +32,13 @@ leave the Trust: the viewer, the model and the saved labels all stay inside it.
 Switch it on in your browser
 ******************************
 
-Once per browser: open any scan in the OHIF viewer, then *Options → Preferences → Experimental
-Features*, tick **MONAILabel Tools** and **Save**. The setting lives in your browser, so a new
-browser or a cleared cache needs it again.
+Do this once per browser:
+
+1. Open any scan in the OHIF viewer.
+2. Go to *Options → Preferences → Experimental Features*.
+3. Tick **MONAILabel Tools** and click **Save**.
+
+The setting lives in your browser, so a new browser or a cleared cache needs it again.
 
 .. figure:: ../../assets/generated/gifs/monailabel/monailabel-enable.gif
    :width: 100%
@@ -49,7 +53,7 @@ Label a scan from nothing with a few clicks
 The walkthrough below segments a spleen with **SAM** (Segment Anything), an interactive model that
 follows your clicks:
 
-1. In the **Masks** panel, add a **Mask ROI** and name it after the structure (click its label).
+1. In the **Masks** panel, add a **Mask ROI**. Click its label to rename it after the structure (for example *spleen*).
 2. Open *Mask ▾ → MONAILabel*. The panel shows the Trust's MONAI Label server.
 3. Set **Tool type** to *DeepGrow* and the model to **sam_2d**.
 4. Pick *Mask ▾ → MONAILabel* **again**. Until you do, clicks on the image do nothing (a known
@@ -102,10 +106,13 @@ with the segmentation resource type:
    masks = sorted(masks_path.rglob("*.nii.gz"))  # one NIfTI per ROI collection on the session
 
 You receive **every** ROI collection on the session, each with its DICOM-SEG (``.dcm``) and its NIfTI
-(``.nii.gz``), so decide in your app which one to train on (for example the most recent, or one
-agreed by name), and skip sessions that have none. The NIfTI is already on the scan's grid. Apps
-written for the ``label_*`` convention, such as the spleen tutorials, need their label loader adapted
-to this route.
+(``.nii.gz``). The NIfTI is already on the scan's grid. In your app:
+
+- choose which collection to train on, for example the most recent, or one agreed by name;
+- skip sessions that have none.
+
+Apps written for the ``label_*`` convention, such as the spleen tutorials, need their label loader
+adapted to this route.
 
 .. _monai-label-quirks:
 
