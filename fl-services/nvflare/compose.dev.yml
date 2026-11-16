@@ -42,7 +42,8 @@ services:
       context: ../../fl-services/nvflare/fl-client-segmentation
       dockerfile: Dockerfile
       args:
-        BASE_REF: flare-fl-client:${DOCKER_FL_TAG:-dev}
+        # The client image, not fl-base: CLIENT_REF overrides it, as BASE_REF does for the images below.
+        BASE_REF: ${CLIENT_REF:-flare-fl-client:${DOCKER_FL_TAG:-dev}}
     profiles: ["build-only"]
 
   fl-server:
