@@ -40,8 +40,12 @@
 -- Replace <CODE> with the trust code from the FLIP kit (KIT=<CODE>), upper-cased, e.g. GSTT.
 -- SET statements below do that in one place.
 --
--- Run as a role that can grant on these objects (ACCOUNTADMIN, SECURITYADMIN for the role
--- grant, or the trust's FLIP_<CODE>_ADMIN).
+-- Run as a role that can grant on these objects: ACCOUNTADMIN, or SECURITYADMIN for the role
+-- itself. This is the standalone path, for an account not managed by FLIP's Terraform roots.
+-- Where those roots are used, the break-glass platform root
+-- (trust/deploy/terraform/snowflake-platform) already creates FLIP_<CODE>_OMOP_READER and the
+-- workload root grants it on the OMOP schema, so none of this is needed. FLIP_<CODE>_ADMIN is
+-- retired (two-tier decision, epic #1589).
 --
 -- Usage:
 --   snowsql -f snowflake_readonly_grants.sql -D code=GSTT
