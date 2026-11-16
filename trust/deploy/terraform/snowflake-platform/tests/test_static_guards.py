@@ -272,9 +272,9 @@ def test_the_integration_allows_no_authentication_secrets():
     assert "none = true" in block, "secrets are bound to services by sync-kit, not through the integration"
 
 
-def test_the_eai_is_usable_by_the_deploy_and_service_roles():
+def test_the_eai_is_usable_by_the_deploy_service_and_fl_roles():
     """A service spec can only reference an integration its role holds USAGE on."""
-    for name in ("deploy_eai", "svc_eai"):
+    for name in ("deploy_eai", "svc_eai", "fl_eai"):
         block = hcl_block(source("grants.tf"), f'resource "snowflake_grant_privileges_to_account_role" "{name}"')
         assert block, name
         assert 'object_type = "INTEGRATION"' in block

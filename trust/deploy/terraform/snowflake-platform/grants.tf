@@ -52,6 +52,19 @@ resource "snowflake_grant_privileges_to_account_role" "svc_eai" {
   }
 }
 
+# The FL client dials the FL server, so its role may use the integration too.
+resource "snowflake_grant_privileges_to_account_role" "fl_eai" {
+  count = var.enable_hub_egress ? 1 : 0
+
+  account_role_name = local.roles.fl
+  privileges        = ["USAGE"]
+
+  on_account_object {
+    object_type = "INTEGRATION"
+    object_name = snowflake_external_access_integration.hub[0].name
+  }
+}
+
 # The observer role reads the account's logs: the platform database, its OBS schema, and the event
 # table itself. No clinical data lives here.
 resource "snowflake_grant_privileges_to_account_role" "observer_platform_database" {

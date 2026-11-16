@@ -34,8 +34,9 @@ With `trust_code = GSTT`:
 
 | Object | Name | Holds |
 | ------ | ---- | ----- |
-| Workload role | `FLIP_GSTT_DEPLOY` | the five roles below; granted to `SYSADMIN` so object administrators can see the tree |
+| Workload role | `FLIP_GSTT_DEPLOY` | the six roles below; granted to `SYSADMIN` so object administrators can see the tree |
 | Service role | `FLIP_GSTT_SVC` | `FLIP_GSTT_OMOP_READER` |
+| FL client role | `FLIP_GSTT_FL` | nothing, and never an OMOP role: the FL client runs researcher code |
 | OMOP roles | `FLIP_GSTT_OMOP_READER`, `FLIP_GSTT_OMOP_LOADER` | nothing here; the workload root grants on its tables |
 | Observer | `FLIP_GSTT_OBSERVER` | nothing here; the platform root grants on the logs |
 | Converter | `FLIP_GSTT_CONVERTER` | nothing here; the workload root grants on its procedures |

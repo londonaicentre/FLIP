@@ -243,7 +243,8 @@ in a command line, in this script's output, or on disk:
 Secrets are created with `CREATE SECRET IF NOT EXISTS` and then `ALTER SECRET ... SET`,
 never `CREATE OR REPLACE`: replacing a secret drops every grant on it, and the next
 deploy's services fail to start on a privilege error about an object that plainly exists.
-`sync-kit` also issues `GRANT READ ON SECRET ... TO ROLE FLIP_<CODE>_SVC`, because the
+`sync-kit` also issues `GRANT READ ON SECRET ... TO ROLE FLIP_<CODE>_SVC` (and, for the
+trust-internal key alone, to `FLIP_<CODE>_FL`), because the
 Terraform provider cannot grant on an object that does not exist yet and these objects
 are created here, not there.
 
@@ -281,8 +282,9 @@ auth, except the service creates in `make up`. `FLIP_<CODE>_ADMIN` is **retired*
 | Object | Owner | Granted |
 | --- | --- | --- |
 | Services (`CREATE SERVICE`, then `ALTER SERVICE ... FROM SPECIFICATION`) | `FLIP_<CODE>_SVC` | created as that role; the deploy role drops and suspends them through the role hierarchy |
+| FL client services | `FLIP_<CODE>_FL` | created as that role, with no query warehouse |
 | dcm2niix jobs | `FLIP_<CODE>_CONVERTER` | started only by `CALL APP.CONVERT_SCAN` (Terraform workload root) |
-| Secrets (`sync-kit`) | `FLIP_<CODE>_DEPLOY` | `READ` to `FLIP_<CODE>_SVC` |
+| Secrets (`sync-kit`) | `FLIP_<CODE>_DEPLOY` | `READ` to `FLIP_<CODE>_SVC`; the trust-internal key also to `FLIP_<CODE>_FL` |
 | Database, schemas, warehouse, pools, repository, stages | `FLIP_<CODE>_DEPLOY` | per the Terraform workload root |
 
 **Why services are owned by the services role (FLIP#1578).** A service's OAuth token
@@ -294,6 +296,19 @@ creates the services as that role, and revokes the grant in a `finally`: a faile
 lost connection or Ctrl-C still revokes it. Verified on the test account: the token of a
 service created this way is `FLIP_<CODE>_SVC`, and `CREATE SERVICE`, `EXECUTE JOB SERVICE`
 and the event table are all denied to it.
+
+**Why the FL client has a role of its own.** SPCS mounts that token in every container,
+whether or not the spec asks for one, and the services role reads OMOP (data-access-api
+connects through it) and writes every stage. On the test account a job owned like the
+fl-client used the token against the SQL API to `SELECT` from `OMOP.PERSON`, past the
+cohort threshold and the frozen cohort, and wrote to the governance and cohort-snapshot
+stages. So FL client services are created as `FLIP_<CODE>_FL`, which holds the images
+stage (read and write), the FL kit stage (read), the image repository, the pools, the
+egress integration and the trust-internal key: no OMOP role, no other stage, no
+warehouse. A stage grant covers the whole stage, so through SQL this role can still list
+the file names of another FL net's images; the mount itself stays sliced to its own net.
+An fl-client that exists under the services role is dropped and created again by
+`make up`, because a service's role is fixed when it is created.
 
 That role holds exactly four account privileges, granted once by the break-glass
 Terraform root: `CREATE DATABASE`, `CREATE COMPUTE POOL`, `EXECUTE TASK`,

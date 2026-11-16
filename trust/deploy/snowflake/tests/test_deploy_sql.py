@@ -102,10 +102,11 @@ def test_no_deploy_statement_uses_a_privileged_role(rendered: Path, manifest: di
 # the services role, which holds CREATE SERVICE only for the length of `make up`.
 
 
-def test_services_are_created_as_the_services_role(rendered: Path, manifest: dict) -> None:
+def test_services_are_created_as_the_service_roles(rendered: Path, manifest: dict) -> None:
     sql = spcs_sql.sql_up(rendered, manifest)
     assert sql[0] == "USE ROLE FLIP_GSTT_SVC;"
-    assert not any(s.startswith("USE ROLE") for s in sql[1:]), "no switch back before the creates"
+    switches = [s for s in sql[1:] if s.startswith("USE ROLE")]
+    assert switches == ["USE ROLE FLIP_GSTT_FL;"], "one switch, to the FL role, and never back to the deploy role"
     assert "GRANT" not in "\n".join(sql), "sql_up grants nothing: run_up brackets it"
 
 

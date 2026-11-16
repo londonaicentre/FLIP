@@ -58,7 +58,7 @@ platform root and #1582 derive the same names from the same `trust_code`. With
 
 | Object | Name | Created by |
 | ------ | ---- | ---------- |
-| Roles | `FLIP_GSTT_DEPLOY`, `FLIP_GSTT_SVC`, `FLIP_GSTT_OMOP_READER`, `FLIP_GSTT_OMOP_LOADER`, `FLIP_GSTT_OBSERVER`, `FLIP_GSTT_CONVERTER` | platform root |
+| Roles | `FLIP_GSTT_DEPLOY`, `FLIP_GSTT_SVC`, `FLIP_GSTT_FL`, `FLIP_GSTT_OMOP_READER`, `FLIP_GSTT_OMOP_LOADER`, `FLIP_GSTT_OBSERVER`, `FLIP_GSTT_CONVERTER` | platform root |
 | Deploy user | `FLIP_GSTT_DEPLOY_USER` (TYPE = SERVICE, key pair) | platform root |
 | Egress integration | `FLIP_GSTT_HUB_EAI` (optional) | platform root |
 | Resource monitor | `FLIP_GSTT_RM` | platform root (attached to the warehouse there) |

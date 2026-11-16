@@ -155,6 +155,14 @@ class Names:
         return f"FLIP_{self.code}_SVC"
 
     @property
+    def fl_role(self) -> str:
+        """The role the FL client services run as (and so the token researcher code can read).
+
+        Apart from ``service_role`` because that one reads OMOP and writes every stage.
+        """
+        return f"FLIP_{self.code}_FL"
+
+    @property
     def hub_eai(self) -> str:
         """The hub/FL egress integration, owned by the platform tier (#1599).
 

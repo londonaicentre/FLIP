@@ -156,7 +156,7 @@ def test_secrets_are_altered_not_replaced(kit: dict) -> None:
     assert "CREATE OR REPLACE SECRET" not in joined
     assert joined.count("CREATE SECRET IF NOT EXISTS") == len(sync.SECRETS)
     assert joined.count("ALTER SECRET") == len(sync.SECRETS)
-    assert joined.count("GRANT READ ON SECRET") == len(sync.SECRETS)
+    assert joined.count("TO ROLE FLIP_GSTT_SVC;") == len(sync.SECRETS)
     assert "GRANT WRITE" not in joined
 
 

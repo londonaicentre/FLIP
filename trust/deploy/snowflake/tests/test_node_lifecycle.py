@@ -102,3 +102,64 @@ def test_the_fl_client_is_mirrored_at_the_fl_tag() -> None:
     assert mirror_images.source_tag(kit, "flare-fl-client") == "v2.0.0"
     assert mirror_images.source_tag({**kit, "FL_BACKEND": "flower"}, "flower-supernode") == "v2.0.0"
     assert mirror_images.source_tag(kit, "trust-api") == "v1.0.0"
+
+
+# --- the FL client's own role ---------------------------------------------------------------------
+#
+# SPCS hands every container a session token for the role that owns its service. Created as the
+# services role, the fl-client (researcher code) could read OMOP and write every stage.
+
+
+def test_fl_clients_are_created_as_the_fl_role_and_everything_else_is_not(rendered: Path, manifest: dict) -> None:
+    role = ""
+    creators = {}
+    for statement in spcs_sql.sql_up(rendered, manifest):
+        if statement.startswith("USE ROLE "):
+            role = statement.removeprefix("USE ROLE ").rstrip(";")
+        elif statement.startswith("CREATE SERVICE "):
+            creators[statement.split()[2].rsplit(".", 1)[-1]] = role
+    assert creators.pop("FL_CLIENT_NET_1") == "FLIP_GSTT_FL"
+    assert set(creators.values()) == {"FLIP_GSTT_SVC"}
+
+
+def test_an_fl_client_is_given_no_warehouse(rendered: Path, manifest: dict) -> None:
+    """The FL role holds none, and a service that names one it cannot use fails to create."""
+    fl_client = "CREATE SERVICE FLIP_TRUST_GSTT.APP.FL_CLIENT"
+    created = next(s for s in spcs_sql.sql_up(rendered, manifest) if s.startswith(fl_client))
+    altered = spcs_sql.sql_up(rendered, manifest, frozenset({"FL_CLIENT_NET_1"}))
+    assert "QUERY_WAREHOUSE" not in created
+    assert not any("FL_CLIENT_NET_1 SET QUERY_WAREHOUSE" in statement for statement in altered)
+
+
+def test_both_service_roles_lose_create_service_after_a_deploy(manifest: dict) -> None:
+    for build, verb in ((spcs_sql.sql_grant_create_service, "GRANT"), (spcs_sql.sql_revoke_create_service, "REVOKE")):
+        sql = build(manifest)
+        for role in ("FLIP_GSTT_SVC", "FLIP_GSTT_FL"):
+            assert any(s.startswith(f"{verb} CREATE SERVICE") and s.endswith(f"ROLE {role};") for s in sql), role
+
+
+def test_an_fl_client_under_the_old_role_is_dropped_and_created_again(rendered: Path, manifest: dict) -> None:
+    """A service's role is fixed at CREATE, so an ALTER would leave it with the old role's token."""
+    sql = spcs_sql.sql_up(rendered, manifest, frozenset({"FL_CLIENT_NET_1"}), frozenset({"FL_CLIENT_NET_1"}))
+    drop = sql.index("DROP SERVICE IF EXISTS FLIP_TRUST_GSTT.APP.FL_CLIENT_NET_1;")
+    assert sql[drop - 1] == "USE ROLE FLIP_GSTT_DEPLOY;"
+    assert sql[drop + 1] == "USE ROLE FLIP_GSTT_FL;"
+    assert sql[drop + 2].startswith("CREATE SERVICE FLIP_TRUST_GSTT.APP.FL_CLIENT_NET_1")
+
+
+def test_only_an_fl_client_is_ever_counted_as_misowned(manifest: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    """xnat-db and Orthanc hold their databases on block volumes: never dropped by a deploy."""
+    rows = [{"name": "FL_CLIENT_NET_1", "owner": "FLIP_GSTT_SVC"}, {"name": "XNAT_DB", "owner": "SOMEONE_ELSE"}]
+    monkeypatch.setattr(spcs_sql, "show_rows", lambda *_: rows)
+    existing, misowned = spcs_sql.existing_services("snow", "connection", manifest)
+    assert existing == {"FL_CLIENT_NET_1", "XNAT_DB"}
+    assert misowned == {"FL_CLIENT_NET_1"}
+
+
+def test_the_fl_role_reads_only_the_secret_its_spec_maps() -> None:
+    import sync_snowflake_kit
+    from naming import SECRETS, Names
+
+    sql = sync_snowflake_kit._object_statements(Names("GSTT"), dict.fromkeys(SECRETS, "'x'"))
+    to_fl = [s for s in sql if s.endswith("TO ROLE FLIP_GSTT_FL;")]
+    assert to_fl == ["GRANT READ ON SECRET FLIP_TRUST_GSTT.APP.TRUST_INTERNAL_SERVICE_KEY TO ROLE FLIP_GSTT_FL;"]

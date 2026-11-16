@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Five account roles, created here and nowhere else. The workload root cannot create a role: it
+# The account roles, created here and nowhere else. The workload root cannot create a role: it
 # holds no CREATE ROLE on the account (grants.tf), which the static guards in both roots pin.
 resource "snowflake_account_role" "deploy" {
   name    = local.roles.deploy
@@ -22,6 +22,14 @@ resource "snowflake_account_role" "deploy" {
 resource "snowflake_account_role" "svc" {
   name    = local.roles.svc
   comment = "FLIP ${local.code}: the role SPCS services run as."
+}
+
+# An SPCS container is handed a session token for the role that owns its service, whether or not
+# its spec asks for one. The FL client runs researcher code, so it gets a role of its own that
+# holds its net's images, the FL kit to read and one secret: no OMOP, no other stage.
+resource "snowflake_account_role" "fl" {
+  name    = local.roles.fl
+  comment = "FLIP ${local.code}: the role the FL client services run as. Never reads OMOP."
 }
 
 resource "snowflake_account_role" "omop_reader" {
@@ -59,6 +67,7 @@ resource "snowflake_account_role" "converter" {
 resource "snowflake_grant_account_role" "to_deploy" {
   for_each = {
     svc         = snowflake_account_role.svc.name
+    fl          = snowflake_account_role.fl.name
     omop_reader = snowflake_account_role.omop_reader.name
     omop_loader = snowflake_account_role.omop_loader.name
     observer    = snowflake_account_role.observer.name
@@ -69,7 +78,7 @@ resource "snowflake_grant_account_role" "to_deploy" {
   parent_role_name = snowflake_account_role.deploy.name
 }
 
-# A service reads OMOP through the service role.
+# A service reads OMOP through the service role. The FL role is deliberately not given it.
 resource "snowflake_grant_account_role" "omop_reader_to_svc" {
   role_name        = snowflake_account_role.omop_reader.name
   parent_role_name = snowflake_account_role.svc.name

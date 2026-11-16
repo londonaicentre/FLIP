@@ -96,6 +96,9 @@ def render(kit: dict[str, str], code: str, env: str, out_dir: Path, digests: dic
                 "name": item.name,
                 "sql_name": names.service(item.name),
                 "kind": item.kind,
+                # The role that creates the service, and so the role of the token its
+                # container is handed. The FL client runs researcher code: it gets its own.
+                "role": names.fl_role if item.name.startswith("fl-client") else names.service_role,
                 "pool": item.pool,
                 "spec_file": path.name,
                 "image": container["image"],
@@ -117,6 +120,7 @@ def render(kit: dict[str, str], code: str, env: str, out_dir: Path, digests: dic
         "role": names.deploy_role,
         # Services are created AS this role so their tokens carry its grants (FLIP#1578).
         "service_role": names.service_role,
+        "fl_role": names.fl_role,
         "schema": "APP",
         "warehouse": names.warehouse,
         "image_repository": names.image_repository,

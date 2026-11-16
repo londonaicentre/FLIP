@@ -191,6 +191,42 @@ def test_the_deploy_role_grants_itself_nothing():
     assert "local.roles.deploy" not in all_terraform().split("roles = {")[-1].split("}", 1)[-1]
 
 
+# --- the FL client's role -------------------------------------------------------------------------
+#
+# SPCS hands every container a session token for the role that owns its service. On the live
+# account a job owned like the fl-client read OMOP.PERSON over the SQL API with that token, and
+# wrote to the governance and cohort-snapshot stages. So the client's services get their own role.
+
+
+def _fl_grants() -> dict[str, str]:
+    blocks = re.findall(
+        r'resource "snowflake_grant_privileges_to_account_role" "(\w+)" \{\n(.*?)\n\}\n', all_terraform(), flags=re.S
+    )
+    return {name: body for name, body in blocks if "account_role_name = local.roles.fl" in body}
+
+
+def test_the_fl_role_holds_only_what_the_client_mounts():
+    grants = _fl_grants()
+    assert set(grants) == {
+        "fl_database",
+        "fl_schemas",
+        "fl_images_stage",
+        "fl_kit_stage",
+        "fl_image_repository",
+        "fl_pools",
+    }
+    assert 'privileges        = ["READ"]' in grants["fl_kit_stage"], "the kit is read, never written"
+    assert "local.schemas.omop" not in grants["fl_schemas"]
+    for body in grants.values():
+        for forbidden in ("STAGES", "SECRETS", "WAREHOUSE", "PROCEDURE", "TABLES", "future", "all {"):
+            assert forbidden not in body, f"the FL role must not hold a grant over {forbidden}:\n{body}"
+
+
+def test_the_fl_role_reaches_two_stages_by_name():
+    stages = set(re.findall(r'snowflake_stage_internal\.trust\["(\w+)"\]', "\n".join(_fl_grants().values())))
+    assert stages == {"IMAGES", "FL_KIT"}
+
+
 # --- the converter launch path (FLIP#1578) ------------------------------------------------------
 #
 # A service's token carries the role that OWNS it, and SPCS cannot transfer a service's ownership.

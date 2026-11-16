@@ -101,6 +101,78 @@ resource "snowflake_grant_privileges_to_account_role" "svc_future_secrets" {
   depends_on = [snowflake_schema.trust]
 }
 
+# --- fl: the role the FL client services run as ---------------------------------------------------
+# The FL client runs researcher code, and SPCS hands every container a session token for the role
+# that owns its service. So this role holds only what the client mounts: the images tree to read
+# and write, the FL kit to read, and the image repository and pools a service needs to start. No
+# OMOP, no snapshot or governance stage, no warehouse, and no secret but the trust-internal key
+# (granted by `make sync-kit`). Stage grants are per stage, not per prefix: the mount is sliced to
+# the client's own net, but through SQL this role can still list the other nets' file names.
+resource "snowflake_grant_privileges_to_account_role" "fl_database" {
+  account_role_name = local.roles.fl
+  privileges        = ["USAGE"]
+
+  on_account_object {
+    object_type = "DATABASE"
+    object_name = snowflake_database.trust.name
+  }
+}
+
+resource "snowflake_grant_privileges_to_account_role" "fl_schemas" {
+  for_each = toset([local.schemas.app, local.schemas.stages])
+
+  account_role_name = local.roles.fl
+  privileges        = ["USAGE"]
+
+  on_schema {
+    schema_name = "\"${snowflake_database.trust.name}\".\"${each.value}\""
+  }
+
+  depends_on = [snowflake_schema.trust]
+}
+
+resource "snowflake_grant_privileges_to_account_role" "fl_images_stage" {
+  account_role_name = local.roles.fl
+  privileges        = ["READ", "WRITE"]
+
+  on_schema_object {
+    object_type = "STAGE"
+    object_name = snowflake_stage_internal.trust["IMAGES"].fully_qualified_name
+  }
+}
+
+resource "snowflake_grant_privileges_to_account_role" "fl_kit_stage" {
+  account_role_name = local.roles.fl
+  privileges        = ["READ"]
+
+  on_schema_object {
+    object_type = "STAGE"
+    object_name = snowflake_stage_internal.trust["FL_KIT"].fully_qualified_name
+  }
+}
+
+resource "snowflake_grant_privileges_to_account_role" "fl_image_repository" {
+  account_role_name = local.roles.fl
+  privileges        = ["READ"]
+
+  on_schema_object {
+    object_type = "IMAGE REPOSITORY"
+    object_name = snowflake_image_repository.images.fully_qualified_name
+  }
+}
+
+resource "snowflake_grant_privileges_to_account_role" "fl_pools" {
+  for_each = snowflake_compute_pool.trust
+
+  account_role_name = local.roles.fl
+  privileges        = ["USAGE", "MONITOR"]
+
+  on_account_object {
+    object_type = "COMPUTE POOL"
+    object_name = each.value.name
+  }
+}
+
 # --- OMOP reader and loader ---------------------------------------------------------------------
 resource "snowflake_grant_privileges_to_account_role" "omop_reader_database" {
   account_role_name = local.roles.omop_reader

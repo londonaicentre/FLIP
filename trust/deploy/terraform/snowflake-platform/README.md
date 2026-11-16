@@ -84,7 +84,7 @@ With `trust_code = GSTT`:
 
 | Object | Name |
 | ------ | ---- |
-| Roles (identity root) | `FLIP_GSTT_DEPLOY`, `FLIP_GSTT_SVC`, `FLIP_GSTT_OMOP_READER`, `FLIP_GSTT_OMOP_LOADER`, `FLIP_GSTT_OBSERVER`, `FLIP_GSTT_CONVERTER` |
+| Roles (identity root) | `FLIP_GSTT_DEPLOY`, `FLIP_GSTT_SVC`, `FLIP_GSTT_FL`, `FLIP_GSTT_OMOP_READER`, `FLIP_GSTT_OMOP_LOADER`, `FLIP_GSTT_OBSERVER`, `FLIP_GSTT_CONVERTER` |
 | Deploy user (identity root) | `FLIP_GSTT_DEPLOY_USER` (`TYPE = SERVICE`, key pair) |
 | Egress integration | `FLIP_GSTT_HUB_EAI` (optional, off by default) |
 | Account policies | `FLIP_GSTT_ADMIN_NP`, `FLIP_GSTT_PASSWORD_POLICY`, `FLIP_GSTT_SESSION_POLICY` |

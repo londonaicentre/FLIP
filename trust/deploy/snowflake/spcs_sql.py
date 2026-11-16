@@ -62,19 +62,19 @@ def _spec_body(directory: Path, service: dict[str, Any]) -> str:
 
 def _create_service_grant(manifest: dict[str, Any], verb: str) -> list[str]:
     preposition = "TO" if verb == "GRANT" else "FROM"
-    return [
-        f"USE ROLE {manifest['role']};",
-        f"{verb} CREATE SERVICE ON SCHEMA {manifest['database']}.APP {preposition} ROLE {manifest['service_role']};",
+    return [f"USE ROLE {manifest['role']};"] + [
+        f"{verb} CREATE SERVICE ON SCHEMA {manifest['database']}.APP {preposition} ROLE {role};"
+        for role in (manifest["service_role"], manifest["fl_role"])
     ]
 
 
 def sql_grant_create_service(manifest: dict[str, Any]) -> list[str]:
-    """Give the services role CREATE SERVICE for the length of one deploy (FLIP#1578).
+    """Give the two service roles CREATE SERVICE for the length of one deploy (FLIP#1578).
 
     A service's OAuth token carries the role that OWNS it, and SPCS refuses
-    ``GRANT OWNERSHIP ON SERVICE``, so the only way to give services the narrow services
-    role's token is to create them as that role. It must not keep the privilege: the
-    fl-client runs researcher code with that token. ``run_up`` revokes it in a ``finally``.
+    ``GRANT OWNERSHIP ON SERVICE``, so the only way to give a service a narrow role's token
+    is to create it as that role. Neither role may keep the privilege: the fl-client runs
+    researcher code with its role's token. ``run_up`` revokes it in a ``finally``.
     """
     return _create_service_grant(manifest, "GRANT")
 
@@ -83,8 +83,13 @@ def sql_revoke_create_service(manifest: dict[str, Any]) -> list[str]:
     return _create_service_grant(manifest, "REVOKE")
 
 
-def sql_up(directory: Path, manifest: dict[str, Any], existing: frozenset[str] = frozenset()) -> list[str]:
-    """CREATE the services that do not exist and ALTER the ones that do, as the services role.
+def sql_up(
+    directory: Path,
+    manifest: dict[str, Any],
+    existing: frozenset[str] = frozenset(),
+    misowned: frozenset[str] = frozenset(),
+) -> list[str]:
+    """CREATE the services that do not exist and ALTER the ones that do, each as its own role.
 
     Snowflake has no ``CREATE OR ALTER SERVICE`` (the live account answers "syntax error ...
     unexpected 'OR'"), and ``CREATE OR REPLACE`` is not an option: replacing a service drops
@@ -94,6 +99,9 @@ def sql_up(directory: Path, manifest: dict[str, Any], existing: frozenset[str] =
     ``ALTER SERVICE ... FROM SPECIFICATION``, which upgrades it in place, a ``SET`` of its
     query warehouse and a ``RESUME`` (so ``up`` after ``suspend`` starts the node again). The
     job service is only described.
+
+    A service's role is fixed at CREATE, so one in ``misowned`` (an fl-client created before
+    it had a role of its own) is dropped and created again. It holds no block volume.
 
     Run only between ``sql_grant_create_service`` and ``sql_revoke_create_service``, which
     is what ``run_up`` (and so ``make up``) does.
@@ -107,8 +115,18 @@ def sql_up(directory: Path, manifest: dict[str, Any], existing: frozenset[str] =
         f"USE DATABASE {manifest['database']};",
         f"USE SCHEMA {manifest['database']}.APP;",
     ]
+    role = manifest["service_role"]
     for service in manifest["services"]:
         body = _spec_body(directory, service)
+        name = service["sql_name"].rsplit(".", 1)[-1].upper()
+        if service["kind"] != JOB_KIND and name in misowned:
+            statements += [f"USE ROLE {manifest['role']};", f"DROP SERVICE IF EXISTS {service['sql_name']};"]
+            role = manifest["role"]
+        if service["kind"] != JOB_KIND and service["role"] != role:
+            role = service["role"]
+            statements.append(f"USE ROLE {role};")
+        # The FL role holds no warehouse: its services run no query.
+        warehouse = service["role"] == manifest["service_role"]
         if service["kind"] == JOB_KIND:
             statements.append(
                 f"-- {service['sql_name']} is a job service: executed on demand (EXECUTE JOB SERVICE),\n"
@@ -116,23 +134,22 @@ def sql_up(directory: Path, manifest: dict[str, Any], existing: frozenset[str] =
                 f"-- procedure APP.CONVERT_SCAN (Terraform, FLIP#1578); {service['spec_file']} documents it."
             )
             continue
-        if service["sql_name"].rsplit(".", 1)[-1].upper() in existing:
-            statements += [
-                f"ALTER SERVICE {service['sql_name']} FROM SPECIFICATION $$\n{body}$$;",
+        if name in existing and name not in misowned:
+            statements.append(f"ALTER SERVICE {service['sql_name']} FROM SPECIFICATION $$\n{body}$$;")
+            if warehouse:
                 # QUERY_WAREHOUSE only: instance counts are fixed at CREATE, and Snowflake
                 # refuses any MIN/MAX_INSTANCES on a service with a block volume as
                 # "scaling", even to the same value (live account, xnat-db).
-                f"ALTER SERVICE {service['sql_name']} SET QUERY_WAREHOUSE = {manifest['warehouse']};",
-                # `make suspend` leaves the service suspended and ALTER does not wake it. The
-                # pools resume by themselves (auto_resume) once a service asks for a node.
-                f"ALTER SERVICE {service['sql_name']} RESUME;",
-            ]
+                statements.append(f"ALTER SERVICE {service['sql_name']} SET QUERY_WAREHOUSE = {manifest['warehouse']};")
+            # `make suspend` leaves the service suspended and ALTER does not wake it. The
+            # pools resume by themselves (auto_resume) once a service asks for a node.
+            statements.append(f"ALTER SERVICE {service['sql_name']} RESUME;")
             continue
         statements.append(
             f"CREATE SERVICE {service['sql_name']}\n"
             f"  IN COMPUTE POOL {service['pool']}\n"
-            f"  QUERY_WAREHOUSE = {manifest['warehouse']}\n"
-            f"  MIN_INSTANCES = 1\n"
+            + (f"  QUERY_WAREHOUSE = {manifest['warehouse']}\n" if warehouse else "")
+            + f"  MIN_INSTANCES = 1\n"
             f"  MAX_INSTANCES = 1\n"
             f"  FROM SPECIFICATION $$\n{body}$$;"
         )
@@ -318,10 +335,20 @@ def show_rows(snow: str, connection: str, statement: str) -> list[dict[str, Any]
     return [row for row in rows if isinstance(row, dict)]
 
 
-def existing_services(snow: str, connection: str, manifest: dict[str, Any]) -> frozenset[str]:
-    """The services already in the trust's APP schema, as unqualified upper-case names."""
+def existing_services(snow: str, connection: str, manifest: dict[str, Any]) -> tuple[frozenset[str], frozenset[str]]:
+    """The services already in the trust's APP schema, and those under the wrong role.
+
+    Both as unqualified upper-case names. The second set is the FL client services not owned
+    by the FL role, which ``sql_up`` drops and creates again. Nothing else is ever dropped:
+    xnat-db and Orthanc keep their databases on block volumes.
+    """
     rows = show_rows(snow, connection, f"SHOW SERVICES IN SCHEMA {manifest['database']}.APP;")
-    return frozenset(str(row.get("name", "")).upper() for row in rows)
+    owners = {str(row.get("name", "")).upper(): str(row.get("owner", "")).upper() for row in rows}
+    fl_clients = {
+        s["sql_name"].rsplit(".", 1)[-1].upper() for s in manifest["services"] if s["role"] == manifest["fl_role"]
+    }
+    misowned = frozenset(name for name in fl_clients if owners.get(name, manifest["fl_role"]) != manifest["fl_role"])
+    return frozenset(owners), misowned
 
 
 def missing_integrations(snow: str, connection: str, manifest: dict[str, Any]) -> list[str]:
@@ -344,6 +371,7 @@ def run_up(
     manifest: dict[str, Any],
     run: Callable[[list[str]], None],
     existing: frozenset[str] = frozenset(),
+    misowned: frozenset[str] = frozenset(),
 ) -> None:
     """Grant, create the services as the services role, and revoke whatever happened.
 
@@ -351,7 +379,7 @@ def run_up(
     leaves the services role without CREATE SERVICE. Rendering the statements first means
     a broken spec fails before anything is granted.
     """
-    statements = sql_up(directory, manifest, existing)
+    statements = sql_up(directory, manifest, existing, misowned)
     run(sql_grant_create_service(manifest))
     try:
         run(statements)
@@ -427,8 +455,8 @@ def main() -> None:
                     "   (trust/deploy/terraform/snowflake-platform), then re-run. Rendering with\n"
                     "   HUB_EGRESS=false deploys the trust without egress instead."
                 )
-            existing = existing_services(args.snow, args.connection, manifest)
-            run_up(args.dir, manifest, snow_runner(args.snow, args.connection), existing)
+            existing, misowned = existing_services(args.snow, args.connection, manifest)
+            run_up(args.dir, manifest, snow_runner(args.snow, args.connection), existing, misowned)
         return
     for statement in COMMANDS[args.command](args.dir, manifest):
         print(statement)

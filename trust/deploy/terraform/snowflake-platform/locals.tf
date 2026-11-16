@@ -25,6 +25,7 @@ locals {
   roles = {
     deploy      = "${local.prefix}_DEPLOY"
     svc         = "${local.prefix}_SVC"
+    fl          = "${local.prefix}_FL"
     omop_reader = "${local.prefix}_OMOP_READER"
     omop_loader = "${local.prefix}_OMOP_LOADER"
     observer    = "${local.prefix}_OBSERVER"

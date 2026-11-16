@@ -36,7 +36,7 @@ ROOT_FILES = (
     "user.tf",
     "outputs.tf",
 )
-ROLES = ("DEPLOY", "SVC", "OMOP_READER", "OMOP_LOADER", "OBSERVER", "CONVERTER")
+ROLES = ("DEPLOY", "SVC", "FL", "OMOP_READER", "OMOP_LOADER", "OBSERVER", "CONVERTER")
 IDENTITY_RESOURCES = {"snowflake_account_role", "snowflake_grant_account_role", "snowflake_service_user"}
 
 
@@ -54,7 +54,7 @@ def test_apache_header(path):
 
 
 @pytest.mark.parametrize("role", ROLES)
-def test_the_six_roles_exist_under_the_shared_names(role):
+def test_the_roles_exist_under_the_shared_names(role):
     name = f'"${{local.prefix}}_{role}"'
     assert name in source("locals.tf"), role
     assert name in (PLATFORM_DIR / "locals.tf").read_text(), f"{role}: the platform root must derive the same name"
@@ -69,7 +69,7 @@ def test_the_consumer_roles_are_granted_to_the_deploy_role():
     """So the workload root can grant on its own objects without MANAGE GRANTS."""
     block = hcl_block(source("roles.tf"), 'resource "snowflake_grant_account_role" "to_deploy"')
     assert block, "the consumer roles must be handed to the deploy role"
-    for role in ("svc", "omop_reader", "omop_loader", "observer", "converter"):
+    for role in ("svc", "fl", "omop_reader", "omop_loader", "observer", "converter"):
         assert re.search(rf"{role}\s+= snowflake_account_role.{role}.name", block), role
     assert "parent_role_name = snowflake_account_role.deploy.name" in block
 
@@ -85,6 +85,13 @@ def test_a_service_inherits_omop_read_and_nothing_else():
         for role in ("observer", "converter"):
             if f"snowflake_account_role.{role}.name" in block and "for_each" not in block:
                 raise AssertionError(f"{role} is reachable only through the deploy role:\n{block}")
+
+
+def test_the_fl_role_inherits_no_role():
+    """The FL client runs researcher code and holds a token for the role that owns its service.
+    With OMOP_READER inherited, that code read OMOP.PERSON directly: no threshold, no frozen cohort."""
+    grants = resource_blocks(all_terraform(), "snowflake_grant_account_role")
+    assert not [b for b in grants if "parent_role_name = snowflake_account_role.fl.name" in b]
 
 
 # --- the deploy user ------------------------------------------------------------------------------

@@ -57,6 +57,10 @@ if str(HERE) not in sys.path:
 
 from kitfile import is_placeholder, kit_path, read_env_vars, resolve_env  # noqa: E402
 from naming import SECRET_KIT_VAR, SECRETS, Names, NamingError, with_derived_secrets  # noqa: E402
+from spec_templates import SECRET_MAP  # noqa: E402
+
+#: The secrets the FL client's own role may read: what its spec maps, nothing more.
+FL_CLIENT_SECRETS = frozenset(SECRET_MAP["fl-client"])
 
 REPO_ROOT = HERE.parents[2]
 
@@ -119,6 +123,8 @@ def _object_statements(names: Names, literals: dict[str, str]) -> list[str]:
             # MANAGE GRANTS, so READ goes to the role the services run as.
             f"GRANT READ ON SECRET {qualified} TO ROLE {names.service_role};",
         ]
+        if entry in FL_CLIENT_SECRETS:
+            statements.append(f"GRANT READ ON SECRET {qualified} TO ROLE {names.fl_role};")
     return statements
 
 
