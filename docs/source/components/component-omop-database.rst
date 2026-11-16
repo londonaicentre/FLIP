@@ -298,7 +298,7 @@ Two consequences:
 Where a Trust's OMOP can live
 ******************************
 
-FLIP reads a Trust's OMOP through one configured **backend**, chosen in the Trust's own deployment kit and
+FLIP reads a Trust's OMOP through one configured **backend**, chosen in the Trust's own deployment and
 nowhere else. The Central Hub is not involved: where a Trust's clinical data lives, and what credentials reach
 it, are the Trust's decisions.
 
@@ -327,8 +327,9 @@ Trust migrates. Result column names are also folded to the same lower case on ev
 Configuring a Snowflake Trust
 =============================
 
-These go in the **Trust-local credentials** section of the Trust's kit file (``trust/.env.<CODE>.<env>``),
-hand-edited by the operator and never written by ``register-trust``:
+These are environment variables of the Trust's Data Access API. They are kept in the **Trust-local
+credentials** section of the Trust's kit file (``trust/.env.<CODE>.<env>``), hand-edited by the operator and
+never written by ``register-trust``:
 
 .. code-block:: shell
 
@@ -341,6 +342,12 @@ hand-edited by the operator and never written by ``register-trust``:
    # Key-pair auth only (off Snowpark Container Services):
    SNOWFLAKE_USER=<service user>
    SNOWFLAKE_PRIVATE_KEY_FILE=/run/secrets/snowflake_key.pem
+
+.. note::
+
+   Only the Snowpark Container Services node sets these variables on the Data Access API today, in its service
+   spec. The Docker Compose files and the Helm chart do not pass them, so on those nodes the kit-file values
+   have no effect and the Trust keeps reading PostgreSQL.
 
 Authentication is **never** by password, and there is no setting for one. Two modes are supported:
 

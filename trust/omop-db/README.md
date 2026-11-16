@@ -191,10 +191,14 @@ What a run does, in order:
 2. **Loads the DICOM vocabulary first**, and skips it when already present, because `concept_relationship`
    carries no unique key, so a blind re-load would duplicate its rows. Same rule, same reason, as
    `load-dicom-vocab`.
-3. **Replaces the listed projects' rows**, keyed by their own `person_id`s, then `PUT`s the
-   filtered CSVs to `FLIP_TRUST_<CODE>.STAGES.SEED` and `COPY INTO`s them. Every `PUT` precedes
-   every `COPY`, so a failed upload costs nothing.
-4. **Writes the marker last**, to `OMOP._FLIP_SEED_MARKER` (`projects` / `source_trust` /
+3. **Replaces the listed projects' rows.** Per project it `PUT`s the filtered CSVs to
+   `FLIP_TRUST_<CODE>.STAGES.SEED`, then deletes the project's rows by their own `person_id`s and
+   `COPY INTO`s the CSVs as one transaction, so a failed upload costs nothing and a failed load
+   leaves the previous rows in place. `COPY INTO` carries `FORCE = TRUE`: Snowflake otherwise skips
+   a staged file it has loaded before, which emptied the tables on a re-seed.
+4. **Counts what it loaded.** Each table's rows for the project are compared with the staged CSV.
+   A mismatch fails the run and the marker is not written.
+5. **Writes the marker last**, to `OMOP._FLIP_SEED_MARKER` (`projects` / `source_trust` /
    `provenance`): the Snowflake equivalent of the Postgres path's `.seeded` file, rendering the
    same text. A matching marker means nothing to do; a differing one (a `.data_version` bump, a
    changed `PROJECTS`, a re-partition) re-seeds those projects and leaves every other project and
