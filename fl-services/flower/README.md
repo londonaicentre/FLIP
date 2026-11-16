@@ -150,7 +150,7 @@ provision/creds/net-<N>/
 ```
 
 `make provision` mints one key pair per entry in this environment's `FL_KIT_SLOT_NAMES`, or 2 when
-no pool is named (a dev env file, or a stag/prod one, which no longer needs the key). Override with
+the env file names no pool (a stag/prod one, whose keys are the pool). Override with
 `NUM_SUPERNODES=<n>` (or `FLOWER_NUM_SUPERNODES=<n>` when calling the script directly).
 
 A trust staged into slot *N* fetches `keys/supernode_credentials_N`, so a kit that stops short of the
@@ -191,9 +191,9 @@ SuperNode's `.pub` key is registered with the SuperLink (and, in the hub, mapped
 by [`register-supernode-keys.sh`](register-supernode-keys.sh) — it runs `flwr supernode register`
 for every `/keys/*.pub`, naming each node after its trust (`--name`, flwr ≥ 1.38, so the ServerApp
 sees the trust behind every node id through `Grid.get_nodes()`), skipping already-registered
-keys. This is the Flower analogue of claiming a participant slot. The names come from `TRUST_NAMES`,
-paired with the sorted keys by position (the compose stacks); with `TRUST_NAMES` unset each key
-names its own slot, `supernode_credentials_<N>.pub` being `Trust_<N>` (the ECS hub).
+keys. This is the Flower analogue of claiming a participant slot. With `TRUST_NAMES` unset each key
+names its own slot, `supernode_credentials_<N>.pub` being `Trust_<N>` (the ECS hub and the prod
+compose); the dev compose stacks pass `TRUST_NAMES`, paired with the keys by position.
 
 ### Adding SuperNode keys to a deployed hub
 
@@ -216,8 +216,9 @@ make -C deploy/providers/AWS add-fl-kits N=<n> HUB=<stag|prod>
 `keys/supernode_credentials_<N>` and `.pub` is complete on every net under
 `s3://<AICENTRE_BUCKET_NAME>/fl-flower-participant-kits/<FLOWER_KIT_DATE>/` (its `FLOWER_KITS_S3_URI`),
 read at every registration. The registration one-shot on ECS names each node the same way, from the
-key's file name, so there is no separate slot list to keep in step (`FL_KIT_SLOT_NAMES` is no longer
-a Terraform input; the compose stacks still pass it as `TRUST_NAMES`).
+key's file name, so there is no separate slot list to keep in step (`FL_KIT_SLOT_NAMES` is a dev-only
+setting, which the dev compose stacks pass as `TRUST_NAMES`). `add-fl-kits` first checks that
+`FLOWER_KIT_DATE` is the date the hub runs, since it copies that date's public keys onto the hub.
 
 `add-fl-kits` (`deploy/providers/AWS/scripts/add_fl_kits_flower.sh`) works in this order, and the
 order is what keeps a slot from being claimed before its SuperNode would be admitted:
@@ -240,15 +241,18 @@ If a run stops before step 4, the private keys are gone with it: delete the publ
 from S3 and run it again for the slots still needed. The numbering skips the spent names.
 
 To withdraw a slot that no trust holds, delete its private key from S3: flip-api stops handing it
-out at the next registration. `upload-creds-to-s3` is for a **new** kit date only, since its
+out at the next registration. Keep the public key: it is what keeps the number from being minted again
+(a key provisioned with the kit is only in the minted-names record once an `add-fl-kits` run has seen
+it), and flip-api then logs the slot as not claimable at every registration, which is expected. `upload-creds-to-s3` is for a **new** kit date only, since its
 `--delete` removes every key added under a live one.
 
 **Registrations do not survive the SuperLink.** It runs without `--database`, so it holds registered
 SuperNodes in memory. Terraform runs the registration one-shot again whenever it registers a new
-SuperLink task definition, from the keys on EFS, which `add-fl-kits` keeps in step with S3. A task
-that ECS replaces by itself (a crash, a Fargate retirement) comes back with no registered SuperNode
-until the one-shot runs again: `terraform taint 'null_resource.flower_register_supernode_keys[0]'`
-and apply, or any `add-fl-kits` run.
+SuperLink task definition, from the keys on EFS (`add-fl-kits` adds to them and never removes one).
+A SuperLink restarted any other way (`make deploy-centralhub` or `rollback-centralhub` (new task-definition revisions made outside Terraform), staging power-on, a forced deployment, a crash or a Fargate retirement) comes back with no registered SuperNode until the
+one-shot runs again: `terraform taint 'null_resource.flower_register_supernode_keys[0]'` and apply.
+An `add-fl-kits` run also registers every key again, but it always mints at least one new slot.
+FLIP#1947 tracks closing this.
 
 ## The fleet proxy: what a trust can reach (FLIP#1517)
 

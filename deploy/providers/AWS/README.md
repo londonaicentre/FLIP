@@ -426,9 +426,9 @@ a prefix no ECS task role can read; see the nvflare README for estates that stil
 **On a Flower hub the SuperNode keys are the pool (FLIP#1942).** flip-api's slot pool is every slot `Trust_<N>`
 whose key pair `keys/supernode_credentials_<N>` and `.pub` is complete on every net under
 `fl-flower-participant-kits/<FLOWER_KIT_DATE>/` (task env `FLOWER_KITS_S3_URI`), with the same read at every
-registration, the same warning for a pair left out and the same 503 when S3 cannot be listed. There is no
-`FL_KIT_SLOT_NAMES` Terraform variable and no `/flip/fl_kit_slot_names` SSM parameter any more: the registration
-one-shot (`ecs_flower.tf`) names each node from its key's file name.
+registration, the same warning for a pair left out and the same 503 when S3 cannot be listed. The registration
+one-shot (`ecs_flower.tf`) names each node from its key's file name too, so the keys are the only slot list:
+`FL_KIT_SLOT_NAMES` is a dev-only setting.
 
 There, `make add-fl-kits N=<n>` hands over to `scripts/add_fl_kits_flower.sh`: it numbers the new keys past every
 key in S3 and every name in `fl-flower-kit-state/<FLOWER_KIT_DATE>/minted_slot_names` (a prefix no ECS task role
@@ -438,8 +438,11 @@ the **public** keys, runs the `efs-provision-certs` task definition with the key
 then the `flower-register-supernode-keys` task definition as Terraform defines it (`aws ecs run-task`, in the
 subnets and security groups of the live `fl-server-net-1` and `fl-api-net-1` services), and uploads the
 **private** keys last, once the registration task's exit code and its log both say every key is registered.
-Nothing is replaced or restarted, and a running job is not disturbed. It needs `ecs:RunTask` and `iam:PassRole`
-for those two task definitions, as `register-trusts` does for flip-api's.
+Nothing is replaced or restarted, and a running job is not disturbed. Before the plan it checks that
+`FLOWER_KIT_DATE` is the date the hub runs (flip-api's `FLOWER_KITS_S3_URI`), since the copy to the hub syncs that
+date's keys onto the live EFS. The operator needs `ecs:DescribeServices`, `ecs:DescribeTaskDefinition`,
+`ecs:RunTask`, `ecs:DescribeTasks` and `iam:PassRole` for those two task definitions, `logs:GetLogEvents` on
+`/ecs/fl-server-net-1`, and S3 read and write under `fl-flower-participant-kits/` and `fl-flower-kit-state/`.
 
 **After a backend switch, a minted slot can already be assigned.** The hub has one slot table for both backends
 (a trust keeps its `Trust_<N>` across a switch), but each script numbers past its own backend's kits or keys only.
@@ -447,9 +450,9 @@ On a hub that grew its pool under the other backend, the first names minted can 
 the run says they are claimable and registration still finds no free slot. Mint enough to pass the highest slot
 the hub has assigned. A hub that stays on one backend never meets this.
 
-The SuperLink keeps registrations in memory. Terraform replays the one-shot on every new SuperLink task
-definition; a task ECS replaces by itself has none until it runs again (see the
-[Flower README](../../../fl-services/flower/README.md#adding-supernode-keys-to-a-deployed-hub)).
+The SuperLink keeps registrations in memory. Terraform replays the one-shot when it registers a new SuperLink task
+definition; a SuperLink restarted any other way (`make deploy-centralhub` or `rollback-centralhub` (new task-definition revisions made outside Terraform), staging power-on, a forced deployment, a crash or a Fargate retirement) has none until it runs again (see the
+[Flower README](../../../fl-services/flower/README.md#adding-supernode-keys-to-a-deployed-hub); FLIP#1947).
 
 The scripts have a black-box test harness (`scripts/tests/test_add_fl_kits.sh`, `aws`/`make`/`openssl`
 stubbed — no credentials or network) that CI runs in the `Deploy script tests` job of

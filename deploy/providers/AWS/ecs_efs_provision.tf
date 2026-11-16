@@ -152,8 +152,8 @@ resource "aws_ecs_task_definition" "efs_provision" {
         # SuperLink; keys/ the per-slot SuperNode public keys the
         # register-supernode-keys one-shot (ecs_flower.tf) feeds to it. Only
         # the *.pub files: a SuperNode's private key belongs to its trust.
-        # add_fl_kits.sh runs this task with the last line alone as its command,
-        # to copy new keys beside the ones a running SuperLink already has.
+        # add_fl_kits_flower.sh runs this task with the keys/ sync below alone as
+        # its command (no wipe), to copy new keys beside the ones already there.
         mkdir -p /mnt/flower-certs /mnt/flower-keys /mnt/flower-jobs
         find /mnt/flower-certs -mindepth 1 -delete 2>/dev/null || true
         find /mnt/flower-keys -mindepth 1 -delete 2>/dev/null || true

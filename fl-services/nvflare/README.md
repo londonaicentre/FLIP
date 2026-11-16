@@ -296,9 +296,8 @@ Then `make register-trust KIT=<CODE>` (see
 the claimed `FL_KIT_SLOT` / `FL_KIT_SLOT_NUMBER` into the trust's kit file, and the
 trust-host deploy pulls that kit from the S3 path above.
 
-> Flower caveat: on the compose stacks the per-slot SuperNode key labelling reads
-> `TRUST_NAMES` at net startup, so a slot added at runtime isn't usable on a running Flower
-> net until its containers are recreated. A stag/prod hub on ECS has the dynamic path:
+> Flower caveat: on the compose stacks the SuperNode keys are registered at net startup, so a
+> slot added at runtime isn't usable on a running Flower net until its containers are recreated. A stag/prod hub on ECS has the dynamic path:
 > `add-fl-kits` registers the new keys with the running SuperLink.
 
 ## Standalone targets

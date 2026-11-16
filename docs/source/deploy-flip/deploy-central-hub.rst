@@ -313,8 +313,9 @@ nothing to add, so try again and check the hub's log.) One command adds more, on
 
 It pauses for you to confirm the plan it prints (``YES=1`` skips the prompt). The hub reads its slots straight from
 the kits in S3 at every registration, so the next ``register-trusts`` can claim one: no Terraform apply and no
-restart. Every complete kit in S3 can be claimed, so delete a kit there (on Flower, its private key) rather than keep
-one that should not be handed out; a trust that already holds that slot keeps it.
+restart. Every complete kit in S3 can be claimed, so delete a kit there rather than keep one that should not be
+handed out; a trust that already holds that slot keeps it. On Flower, delete only the private key: the public key
+keeps the number from being used again, and the hub's log then lists that slot as not claimable.
 
 .. warning::
 
@@ -333,8 +334,9 @@ one that should not be handed out; a trust that already holds that slot keeps it
 .. note::
 
    A Flower SuperLink holds its registered SuperNodes in memory. A Terraform apply that replaces the SuperLink
-   registers every key again; a SuperLink task that ECS restarts by itself does not, and its trusts are refused
-   until the registration runs again. :gh:`fl-services/flower/README.md` has the command.
+   registers every key again. A SuperLink restarted any other way, including ``deploy-centralhub``, a rollback,
+   staging power-on or a crash, does not, and its trusts are refused until the registration runs again.
+   :gh:`fl-services/flower/README.md` has the command.
 
 .. seealso::
 

@@ -58,9 +58,10 @@ build:
 	$(SECURE_COMPOSE) build fleet-proxy
 
 # How many SuperNode credentials a provisioning run mints. Defaults to the size of
-# this environment's FL kit slot pool, so the kit covers every slot the hub can hand
+# FL_KIT_SLOT_NAMES, the dev slot pool, so a dev kit covers every slot the hub can hand
 # out: a trust staged into slot N fetches keys/supernode_credentials_N, and the
-# FLARE-side staging guard now fails loudly when its slot's material is missing.
+# FLARE-side staging guard fails loudly when its slot's material is missing. A stag/prod
+# env file names no pool (its keys are the pool), so pass NUM_SUPERNODES for a first kit.
 # A re-run regenerates the CA and invalidates every node already holding credentials,
 # so a deployed kit grows through provision-add-supernode below instead (on a stag/prod
 # hub: `make -C deploy/providers/AWS add-fl-kits`). FL_KIT_SLOT_NAMES is a JSON
@@ -78,7 +79,7 @@ provision:
 # Mint one more SuperNode key pair, supernode_credentials_<KEY_NUMBER>{,.pub}, into
 # <OUT_DIR>/keys (FLIP#1942). A SuperNode key is not signed by the CA, so the CA, the
 # server certificate and every key already handed out are untouched: nvflare's
-# provision-add-client. deploy/providers/AWS/scripts/add_fl_kits.sh drives it.
+# provision-add-client. deploy/providers/AWS/scripts/add_fl_kits_flower.sh drives it.
 provision-add-supernode:
 	@[ -n "$(KEY_NUMBER)" ] && [ -n "$(OUT_DIR)" ] || { echo "❌ KEY_NUMBER=<n> and OUT_DIR=<dir> are required"; exit 1; }
 	@mkdir -p "$(OUT_DIR)" && cd "$(OUT_DIR)" && \

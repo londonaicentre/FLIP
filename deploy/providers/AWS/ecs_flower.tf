@@ -21,8 +21,8 @@
 # No TRUST_NAMES: each key names its own slot (supernode_credentials_<N>.pub is
 # Trust_<N>), the name flip-api derives from the same key in S3 (FLIP#1942), so the
 # keys are the only slot list. The SuperLink keeps registrations in memory, so this
-# task registers every key each time it runs; add_fl_kits.sh runs it as it is, after
-# copying new keys to EFS, against the running SuperLink.
+# task registers every key each time it runs; add_fl_kits_flower.sh runs it as it is,
+# after copying new keys to EFS, against the running SuperLink.
 
 resource "aws_ecs_task_definition" "flower_register_supernode_keys" {
   count                    = var.enable_efs && var.fl_backend == "flower" ? 1 : 0
@@ -119,9 +119,10 @@ resource "aws_ecs_task_definition" "flower_register_supernode_keys" {
 # self rule covers FL_API_ADDRESS. A FLOWER_KIT_DATE bump re-runs it after
 # the EFS re-sync and the FL services' rollout (their task definitions carry the
 # kit as FL_KIT_SOURCE, locals.tf), so it registers against a SuperLink already
-# serving the new kit's certificates (FLIP#1738); tainting re-runs it alone. Any
-# new SuperLink task definition re-runs it too: the replacement task starts with
-# no registered SuperNode.
+# serving the new kit's certificates (FLIP#1738); tainting re-runs it alone. A new
+# SuperLink task definition that Terraform registers re-runs it too: the replacement
+# task starts with no registered SuperNode. A SuperLink restarted any other way (a
+# revision made by deploy-centralhub, staging power-on, a crash) is not covered: FLIP#1947.
 resource "null_resource" "flower_register_supernode_keys" {
   count = var.enable_service_discovery && var.enable_efs && var.fl_backend == "flower" ? 1 : 0
 

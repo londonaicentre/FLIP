@@ -30,7 +30,7 @@ _HUB_KIT_FILES = frozenset({"fed_server.json", "fed_admin.json"})
 _KIT_KEY_RE = re.compile(r"(net-\d+)/(?:services/([^/]+)/(?:startup/([^/]+)$)?)?")
 
 # A Flower slot is complete on a net once both halves of its SuperNode key pair are there
-# (FLIP#1942). add_fl_kits.sh uploads the private key last, after the SuperLink has
+# (FLIP#1942). add_fl_kits_flower.sh uploads the private key last, after the SuperLink has
 # registered the public one, so a slot is never claimable before its SuperNode is admitted.
 # Slot Trust_<N> is keys/supernode_credentials_<N>{,.pub}: the name
 # register-supernode-keys.sh gives the same key at the SuperLink.

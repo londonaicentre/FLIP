@@ -22,7 +22,7 @@ every future CI plan.
 
 So this derives the values from the deployed infrastructure instead: the live
 Terraform state, plus the handful of things state cannot answer (the current
-image tags, the FL kit-slot list, the live secret material). What comes out is
+image tags, the live secret material). What comes out is
 what a plan would have to see to be a no-op — which is the definition of correct
 for this purpose.
 
