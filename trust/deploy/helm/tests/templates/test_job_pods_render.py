@@ -303,7 +303,7 @@ def test_a_job_pod_reserves_cpu_and_memory_through_a_no_op_init_container():
 
     assert reserve["command"] == ["/bin/true"]
     assert reserve["resources"] == {"requests": {"cpu": 2, "memory": "8Gi"}}
-    assert reserve["image"] == _env(_client_container(docs))["FL_K8S_JOB_IMAGE"]["value"]
+    assert reserve["image"] == _env(_init_container(docs))["FL_K8S_JOB_IMAGE"]["value"]
     assert reserve["securityContext"] == _client_container(docs)["securityContext"]
 
 
