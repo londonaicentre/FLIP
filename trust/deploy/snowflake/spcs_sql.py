@@ -40,6 +40,12 @@ from typing import Any
 #: ensures its specification is staged, and `down`/`suspend` ignore it.
 JOB_KIND = "job"
 
+#: The services the FL client calls. A service accepts a call only from a role that holds
+#: its endpoints' service role, and the FL client has a role of its own, so each deploy
+#: grants it these two and nothing else: without the grant every request from training
+#: code to data-access-api timed out (live account).
+FL_CLIENT_CALLS = ("data-access-api", "imaging-api")
+
 
 def load(manifest_path: Path) -> dict[str, Any]:
     if not manifest_path.exists():
@@ -81,6 +87,17 @@ def sql_grant_create_service(manifest: dict[str, Any]) -> list[str]:
 
 def sql_revoke_create_service(manifest: dict[str, Any]) -> list[str]:
     return _create_service_grant(manifest, "REVOKE")
+
+
+def _fl_endpoint_grant(manifest: dict[str, Any], service: dict[str, Any]) -> list[str]:
+    """Let the FL role call this service, if it is one the FL client calls.
+
+    Issued by the service's owner, right after the service is created or altered, on every
+    deploy: the grant goes when a service is dropped.
+    """
+    if service["name"] not in FL_CLIENT_CALLS:
+        return []
+    return [f"GRANT SERVICE ROLE {service['sql_name']}!ALL_ENDPOINTS_USAGE TO ROLE {manifest['fl_role']};"]
 
 
 def sql_up(
@@ -152,6 +169,7 @@ def sql_up(
             # `make suspend` leaves the service suspended and ALTER does not wake it. The
             # pools resume by themselves (auto_resume) once a service asks for a node.
             statements.append(f"ALTER SERVICE {service['sql_name']} RESUME;")
+            statements += _fl_endpoint_grant(manifest, service)
             continue
         statements.append(
             f"CREATE SERVICE {service['sql_name']}\n"
@@ -162,6 +180,7 @@ def sql_up(
             f"  MAX_INSTANCES = 1\n"
             f"  FROM SPECIFICATION $$\n{body}$$;"
         )
+        statements += _fl_endpoint_grant(manifest, service)
     return statements
 
 

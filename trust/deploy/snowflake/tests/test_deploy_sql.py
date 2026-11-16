@@ -107,7 +107,7 @@ def test_services_are_created_as_the_service_roles(rendered: Path, manifest: dic
     assert sql[0] == "USE ROLE FLIP_GSTT_SVC;"
     switches = [s for s in sql[1:] if s.startswith("USE ROLE")]
     assert switches == ["USE ROLE FLIP_GSTT_FL;"], "one switch, to the FL role, and never back to the deploy role"
-    assert "GRANT" not in "\n".join(sql), "sql_up grants nothing: run_up brackets it"
+    assert "GRANT CREATE SERVICE" not in "\n".join(sql), "sql_up never grants CREATE SERVICE: run_up brackets it"
 
 
 def test_the_grant_and_revoke_name_only_create_service_on_app(manifest: dict) -> None:

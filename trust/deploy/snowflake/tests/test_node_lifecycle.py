@@ -179,3 +179,25 @@ def test_a_grant_that_fails_half_way_is_still_revoked(rendered: Path, manifest: 
     with pytest.raises(RuntimeError):
         getattr(spcs_sql, runner)(*args)
     assert batches[-1] == spcs_sql.sql_revoke_create_service(manifest)
+
+
+@pytest.mark.parametrize(
+    "existing", [frozenset(), frozenset({"DATA_ACCESS_API", "IMAGING_API"})], ids=["created", "altered"]
+)
+def test_the_fl_role_may_call_the_two_services_training_code_uses(
+    rendered: Path, manifest: dict, existing: frozenset
+) -> None:
+    """A service takes calls only from a role holding its endpoints' service role. With a role of
+    its own and no grant, flip.get_dataframe timed out and the round failed (live account)."""
+    sql = spcs_sql.sql_up(rendered, manifest, existing)
+    grants = [s for s in sql if s.startswith("GRANT SERVICE ROLE")]
+    assert grants == [
+        "GRANT SERVICE ROLE FLIP_TRUST_GSTT.APP.DATA_ACCESS_API!ALL_ENDPOINTS_USAGE TO ROLE FLIP_GSTT_FL;",
+        "GRANT SERVICE ROLE FLIP_TRUST_GSTT.APP.IMAGING_API!ALL_ENDPOINTS_USAGE TO ROLE FLIP_GSTT_FL;",
+    ]
+    role = ""
+    for statement in sql:
+        if statement.startswith("USE ROLE "):
+            role = statement
+        elif statement in grants:
+            assert role == "USE ROLE FLIP_GSTT_SVC;", "a service's owner grants its service role"
