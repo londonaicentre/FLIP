@@ -223,7 +223,7 @@ The hub uses two kinds of key and a per-job credential. See :doc:`/sys-admin` fo
      - Calls from the FL server to the hub API about one model. One per FL job.
      - Minted by the hub when it dispatches the job. Nothing to configure.
    * - **Trust-internal service key**
-     - Calls between services inside one trust. One key per trust; the hub never sees it.
+     - Calls between services inside one trust. One key per trust; the hub mints it and never stores it.
      - Minted alongside the trust API key and written into the trust's kit file.
 
 The two per-trust keys are minted when you register the trust; see :ref:`deploy-central-hub-register-trusts`.

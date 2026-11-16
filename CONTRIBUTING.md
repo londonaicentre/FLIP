@@ -385,8 +385,8 @@ compose file — avoid hardcoding values in Dockerfiles or compose files directl
   call to imaging-api or data-access-api.
 - `TRUST_INTERNAL_SERVICE_KEY` — single per-trust plaintext key, in that trust's kit file
   (`trust/.env.<CODE>.<env>`), minted by `register_trust`. Read by every trust-internal container. The hub
-  never sees it. Distinct from the per-job credential that protects fl-server → flip-api on the
-  Central Hub. See the [public security model](docs/source/security.rst#trust-internal-service-authentication).
+  mints it at registration and returns it once, and never stores it. Distinct from the per-job credential
+  that protects fl-server → flip-api on the Central Hub. See the [public security model](docs/source/security.rst#trust-internal-service-authentication).
 
 FL clients (trust side) intentionally do **not** receive Central Hub API credentials. Only the fl-server (on the Central
 Hub) communicates with flip-api. FL clients relay metrics and exceptions to the fl-server, which forwards them.
