@@ -141,11 +141,8 @@ services:
       # (FLIP#957).
       - FL_API_ADDRESS=http://fl-api-net-1:8000
       - FL_API_KEY=${FL_API_KEY}
-      # The script reads ${TRUST_NAMES} as a label list, but the underlying identity it's
-      # labelling is the per-slot SuperNode key. Feed FL_KIT_SLOT_NAMES through so trusts
-      # admin-created later (and bound to a slot via FLKitSlot.assigned_to_trust_id) still
-      # get their node_id mapped on net startup.
-      - TRUST_NAMES=${FL_KIT_SLOT_NAMES}
+      # No TRUST_NAMES: each key names its own slot (supernode_credentials_<N>.pub is
+      # Trust_<N>), the name flip-api derives from the same key in S3 (FLIP#1942), as on ECS.
     volumes:
       - /opt/flip/services/net-1/certificates:/certs:ro
       - /opt/flip/services/net-1/keys:/keys:ro

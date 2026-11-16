@@ -84,7 +84,8 @@ for i in "${!trust_names[@]}"; do
 done
 fl_api_address="${FL_API_ADDRESS:-}"
 
-# Find all public key files (sorted alphabetically to match TRUST_NAMES order)
+# Find all public key files: in glob order when TRUST_NAMES pairs names with them by position,
+# else re-sorted by number below.
 keys_dir="${KEYS_DIR:-/keys}"
 pub_keys=("$keys_dir"/*.pub)
 if [ ! -e "${pub_keys[0]}" ]; then
@@ -94,7 +95,7 @@ fi
 
 if [ -z "$raw_trust_names" ]; then
     # By number, so that a key added later is registered after the ones already there:
-    # the "already registered" branch below finds a node id by its place in that order.
+    # the node ids of keys already registered are matched to them in that order (below).
     sorted_keys=$(printf '%s\n' "${pub_keys[@]}" | sort -V)
     pub_keys=()
     trust_names=()
@@ -111,8 +112,22 @@ fi
 
 echo "Registering ${#pub_keys[@]} SuperNode key(s)..."
 
+# The nodes this SuperLink already has, oldest first (`flwr supernode ls` sorts by registration
+# time). A key it already holds is refused with "already in use" and no node id, and the listing
+# names neither key nor node name, so those ids can only be matched to keys by position — which
+# holds only when the keys already held are exactly the first ones here, one per listed node.
+# Anything else (a node whose key is no longer on disk, say) and their mappings are left as they
+# are rather than guessed.
+existing_ids=()
+if ls_output=$(flwr supernode ls local --format json 2>&1); then
+    while IFS= read -r nid; do
+        [ -n "$nid" ] && existing_ids+=("$nid")
+    done <<< "$(echo "$ls_output" | grep -oE '"node-id": *"?[0-9]+' | grep -oE '[0-9]+$' || true)"
+fi
+
 # Collect node_id → trust_name mappings for FL API registration
 declare -a node_ids=()
+skipped=()
 
 failed=0
 idx=0
@@ -130,36 +145,24 @@ for pub_key in "${pub_keys[@]}"; do
     if output=$(flwr supernode register "$pub_key" local --name "${trust_names[$idx]}" --format json 2>&1); then
         # Parse node_id from JSON output: {"success": true, "node-id": <id>}
         # node-id may be quoted ("123") or unquoted (123) depending on Flower version
-        node_id=$(echo "$output" | grep -oP '"node-id":\s*"?\K[0-9]+' || true)
+        node_id=$(echo "$output" | grep -oE '"node-id": *"?[0-9]+' | grep -oE '[0-9]+$' || true)
 
         if [ -n "$node_id" ]; then
-            echo "    OK: node_id=${node_id}"
-        elif echo "$output" | grep -qi "already in use"; then
+            # add_fl_kits_flower.sh releases a new slot only on this line, for its key.
+            echo "    OK: ${pub_key##*/} node_id=${node_id}"
+        elif echo "$output" | grep -q "Public key already in use"; then
             # Flower returns exit 0 with {"success": false} for already-registered keys
             echo "    SKIP (already registered): ${pub_key}"
-            if ls_output=$(flwr supernode ls local --format json 2>&1); then
-                all_ids=$(echo "$ls_output" | grep -oP '"node-id":\s*"?\K[0-9]+' || true)
-                node_id=$(echo "$all_ids" | sed -n "$((idx + 1))p" || true)
-                if [ -n "$node_id" ]; then
-                    echo "    Discovered existing node_id=${node_id}"
-                fi
-            fi
-        elif echo "$output" | grep -q '"success": *false'; then
-            # Exit 0 with {"success": false}: the key is NOT registered, and its SuperNode would be refused.
+            skipped+=("$idx")
+        else
+            # Exit 0 without a node id: {"success": false}, or output this script does not know.
+            # Either way the key is not known to be registered, and its SuperNode may be refused.
             echo "    FAIL: ${output}" >&2
             failed=1
-        else
-            echo "    WARN: Registration succeeded but could not parse node_id"
         fi
-    elif echo "$output" | grep -qi "already in use"; then
+    elif echo "$output" | grep -q "Public key already in use"; then
         echo "    SKIP (already registered): ${pub_key}"
-        if ls_output=$(flwr supernode ls local --format json 2>&1); then
-            all_ids=$(echo "$ls_output" | grep -oP '"node-id":\s*"?\K[0-9]+' || true)
-            node_id=$(echo "$all_ids" | sed -n "$((idx + 1))p" || true)
-            if [ -n "$node_id" ]; then
-                echo "    Discovered existing node_id=${node_id}"
-            fi
-        fi
+        skipped+=("$idx")
     else
         echo "    FAIL: ${output}" >&2
         failed=1
@@ -175,6 +178,23 @@ if [ "$failed" -ne 0 ]; then
 fi
 
 echo "All SuperNode keys registered successfully."
+
+# Node ids for the keys already registered, by position (see existing_ids above).
+if [ ${#skipped[@]} -gt 0 ]; then
+    in_order=1
+    for i in "${!skipped[@]}"; do
+        [ "${skipped[$i]}" -eq "$i" ] || in_order=0
+    done
+    if [ "$in_order" -eq 1 ] && [ ${#skipped[@]} -eq ${#existing_ids[@]} ]; then
+        for i in "${!skipped[@]}"; do
+            node_ids[i]="${existing_ids[$i]}"
+            echo "  Existing node_id=${existing_ids[$i]} is ${pub_keys[$i]##*/}"
+        done
+    else
+        echo "  WARN: ${#skipped[@]} key(s) already registered, but the SuperLink lists ${#existing_ids[@]} node(s)" \
+            "in an order that does not match them: their FL API mappings are left as they are."
+    fi
+fi
 
 # Register node_id → trust_name mappings with FL API (best-effort)
 if [ -n "$fl_api_address" ] && [ ${#trust_names[@]} -gt 0 ]; then
@@ -214,10 +234,5 @@ urllib.request.urlopen(req, timeout=5)
 
     echo "Node registration complete."
 else
-    if [ -z "$fl_api_address" ]; then
-        echo "FL_API_ADDRESS not set — skipping node → trust name registration."
-    fi
-    if [ ${#trust_names[@]} -eq 0 ]; then
-        echo "TRUST_NAMES not set — skipping node → trust name registration."
-    fi
+    echo "FL_API_ADDRESS not set — skipping node → trust name registration."
 fi

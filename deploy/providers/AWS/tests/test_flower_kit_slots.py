@@ -84,3 +84,28 @@ def test_add_fl_kits_runs_the_task_definitions_terraform_owns():
     ):
         assert re.search(rf'family\s*=\s*"{family}"', source)
         assert re.search(rf'name\s*=\s*"{container}"', source)
+
+
+def test_add_fl_kits_reads_the_registration_tasks_own_report():
+    """add-fl-kits releases a slot only on the registration task's own log lines, read from where the
+    task definition sends them: a rename on either side would stop every run."""
+    task = hcl_block(ECS_FLOWER, 'resource "aws_ecs_task_definition" "flower_register_supernode_keys"')
+    assert "awslogs-group         = aws_cloudwatch_log_group.ecs_fl_server_net_1.name" in task
+    assert 'awslogs-stream-prefix = "register-supernode-keys"' in task
+    ecs = strip_comments((AWS_DIR / "ecs.tf").read_text())
+    log_group = hcl_block(ecs, 'resource "aws_cloudwatch_log_group" "ecs_fl_server_net_1"')
+    assert 'name              = "/ecs/fl-server-net-1"' in log_group
+    assert 'REGISTER_LOG_GROUP="/ecs/fl-server-${NET}"' in ADD_KITS
+    assert '"register-supernode-keys/register-supernode-keys/${TASK_ID}"' in ADD_KITS
+
+    assert 'echo "All SuperNode keys registered successfully."' in REGISTER
+    assert '*"All SuperNode keys registered successfully."*' in ADD_KITS
+    assert 'echo "    OK: ${pub_key##*/} node_id=${node_id}"' in REGISTER
+    assert '*"OK: supernode_credentials_${number}.pub node_id="*' in ADD_KITS
+
+
+def test_the_copy_tasks_command_override_runs_in_a_shell():
+    """add-fl-kits overrides the copy task's command with one shell string: the task must run it with
+    a shell entrypoint, not the image's `aws`."""
+    task = hcl_block(EFS_PROVISION, 'resource "aws_ecs_task_definition" "efs_provision"')
+    assert 'entryPoint = ["/bin/sh", "-c"]' in task

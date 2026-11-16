@@ -40,7 +40,9 @@
 #     SuperNode is admitted
 #   - a name is recorded before its key is minted, so it is never reused: not after a
 #     failed run, and not after its key was deleted from S3 to withdraw it
-#   - a mid-run failure prints exactly what was uploaded and how to recover
+#   - the kit date must be the one the hub runs (flip-api's FLOWER_KITS_S3_URI): the copy
+#     to the hub syncs that date's public keys onto the live EFS
+#   - a mid-run failure, or an interrupt, prints exactly what was uploaded and how to recover
 
 set -Eeuo pipefail
 
@@ -83,6 +85,8 @@ on_error() {
     fi
 }
 trap on_error ERR
+# An interrupt is the likeliest abort (the ECS waits run for minutes): report it too.
+trap 'on_error; exit 130' INT TERM
 
 die() {
     printf '%s\n' "$@" >&2
@@ -95,7 +99,7 @@ die() {
 # container, by name: describe-tasks also lists the GuardDuty sidecar (FLIP#1447).
 run_one_shot() { # <task family> <container> <service whose network to use> [overrides JSON]
     local family="$1" container="$2" service="$3" overrides="${4:-}"
-    local subnets groups public_ip task_arn exit_code
+    local subnets groups public_ip run_output task_arn failure describe_output exit_code stopped_reason
     # shellcheck disable=SC2016 # the backticks are JMESPath literals, not a command
     read -r subnets groups public_ip < <(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "${service}" \
         --query 'services[0].networkConfiguration.awsvpcConfiguration.[join(`,`,subnets),join(`,`,securityGroups),assignPublicIp]' \
@@ -103,23 +107,54 @@ run_one_shot() { # <task family> <container> <service whose network to use> [ove
     [[ -n "${subnets:-}" && "${subnets}" != "None" && -n "${groups:-}" ]] ||
         die "❌ Could not read the network settings of the ${service} service — is the hub deployed?"
 
-    task_arn="$(aws ecs run-task --cluster "${ECS_CLUSTER}" --task-definition "${family}" --launch-type FARGATE \
-        --started-by add-fl-kits \
+    # run-task exits 0 when ECS refuses to place the task (no capacity, a role it cannot
+    # pass): there is then no task, only a failure reason.
+    # (The calls run outside `IFS=… read`, whose IFS would also split their arguments.)
+    run_output="$(aws ecs run-task --cluster "${ECS_CLUSTER}" --task-definition "${family}" \
+        --launch-type FARGATE --started-by add-fl-kits \
         --network-configuration "awsvpcConfiguration={subnets=[${subnets}],securityGroups=[${groups}],assignPublicIp=${public_ip}}" \
-        ${overrides:+--overrides "${overrides}"} --query 'tasks[0].taskArn' --output text)"
+        ${overrides:+--overrides "${overrides}"} --query '[tasks[0].taskArn, failures[0].reason]' --output text)" ||
+        run_output=""
+    IFS=$'\t' read -r task_arn failure <<< "${run_output}" || true
+    [[ -n "${task_arn:-}" && "${task_arn}" != "None" ]] ||
+        die "❌ ECS did not start the ${family} task: ${failure:-no reason given (see the AWS error above)}."
     TASK_ID="${task_arn##*/}"
     aws ecs wait tasks-stopped --cluster "${ECS_CLUSTER}" --tasks "${TASK_ID}" ||
         die "❌ The ${family} task ${TASK_ID} did not stop in time — its outcome is unknown; check its log."
-    exit_code="$(aws ecs describe-tasks --cluster "${ECS_CLUSTER}" --tasks "${TASK_ID}" \
-        --query "tasks[0].containers[?name=='${container}'].exitCode | [0]" --output text)"
-    [[ "${exit_code}" == "0" ]] ||
-        die "❌ The ${family} task ${TASK_ID} failed (exit code '${exit_code}') — see its log in ${REGISTER_LOG_GROUP}."
+    describe_output="$(aws ecs describe-tasks --cluster "${ECS_CLUSTER}" --tasks "${TASK_ID}" \
+        --query "tasks[0].[containers[?name=='${container}'].exitCode | [0], stoppedReason]" --output text)" ||
+        describe_output=""
+    IFS=$'\t' read -r exit_code stopped_reason <<< "${describe_output}" || true
+    [[ "${exit_code:-}" == "0" ]] ||
+        die "❌ The ${family} task ${TASK_ID} failed (exit code '${exit_code:-unknown}': ${stopped_reason:-no reason given})" \
+            "   — see its log in ${REGISTER_LOG_GROUP}."
 }
 
-# --- 1. Discover the net + compute the new slot names ---------------------------
+# --- 1. Check the kit date, discover the net + compute the new slot names --------
+
+# The kit date comes from the operator's env file, and the copy to the hub below syncs
+# that date's public keys onto the live EFS: a date ahead of the hub (mid-rotation) would
+# put a new kit's keys over the live trusts' ones, a stale one would mint into a dead
+# prefix. The hub's own date is in flip-api's task definition (FLOWER_KITS_S3_URI).
+flip_api_task_def="$(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services flip-api \
+    --query 'services[0].taskDefinition' --output text)" || {
+    echo "❌ Could not read the flip-api service — refusing to mint without knowing the hub's kit date." >&2
+    exit 1
+}
+deployed_kits_uri="$(aws ecs describe-task-definition --task-definition "${flip_api_task_def}" \
+    --query "taskDefinition.containerDefinitions[].environment[] | [?name=='FLOWER_KITS_S3_URI'].value | [0]" \
+    --output text)" || {
+    echo "❌ Could not read ${flip_api_task_def} — refusing to mint without knowing the hub's kit date." >&2
+    exit 1
+}
+if [[ "${deployed_kits_uri%/}" != "${BASE_S3}" ]]; then
+    echo "❌ The hub serves its Flower kits from '${deployed_kits_uri}', but FLOWER_KIT_DATE gives ${BASE_S3}." >&2
+    echo "   Set FLOWER_KIT_DATE to the hub's date (finish or roll back a kit rotation first)." >&2
+    exit 1
+fi
 
 nets_listing="$(aws s3 ls "${BASE_S3}/")" || {
-    echo "❌ Could not list ${BASE_S3}/ — AWS error above (credentials/profile?), not a config issue." >&2
+    echo "❌ Could not list ${BASE_S3}/ — see the AWS error above." >&2
     exit 1
 }
 nets="$(printf '%s\n' "${nets_listing}" | awk '{print $2}' | sed -n 's#^\(net-[0-9]*\)/$#\1#p' | sort -V | xargs)"
@@ -235,18 +270,29 @@ run_one_shot flower-register-supernode-keys register-supernode-keys "fl-api-${NE
 # The exit code of a one-off Fargate task has been seen to read 0 for a failed container,
 # so the private keys below also wait on the task's own account of what it registered.
 register_log=""
+log_error=""
 for attempt in 1 2 3 4 5 6; do
-    register_log="$(aws logs get-log-events --log-group-name "${REGISTER_LOG_GROUP}" \
+    if register_log="$(aws logs get-log-events --log-group-name "${REGISTER_LOG_GROUP}" \
         --log-stream-name "register-supernode-keys/register-supernode-keys/${TASK_ID}" \
-        --start-from-head --query 'events[].message' --output text)" || register_log=""
+        --start-from-head --query 'events[].message' --output text 2>"${work_dir}/logs.err")"; then
+        log_error=""
+    else
+        register_log="" log_error="$(cat "${work_dir}/logs.err")"
+    fi
     [[ "${register_log}" == *"All SuperNode keys registered successfully."* ]] && break
     [[ "${attempt}" == 6 ]] || sleep "${LOG_POLL_SECONDS:-5}"
 done
+[[ -z "${log_error}" ]] ||
+    die "❌ Could not read the registration task's log (${REGISTER_LOG_GROUP}): ${log_error}" \
+        "   The keys may well be registered, but without the log this run cannot tell, so no slot is released."
 [[ "${register_log}" == *"All SuperNode keys registered successfully."* ]] ||
     die "❌ The registration task ${TASK_ID} did not report every key registered — see its log in ${REGISTER_LOG_GROUP}."
+# A key minted by this run is new to the SuperLink: it must have been registered now, with a
+# node id, not skipped or merely seen.
 for number in "${MINT_NUMBERS[@]}"; do
-    [[ "${register_log}" == *"/supernode_credentials_${number}.pub"* ]] ||
-        die "❌ The registration task ${TASK_ID} never saw supernode_credentials_${number}.pub — the copy to the hub did not deliver it."
+    [[ "${register_log}" == *"OK: supernode_credentials_${number}.pub node_id="* ]] ||
+        die "❌ The registration task ${TASK_ID} did not register supernode_credentials_${number}.pub" \
+            "   (the copy to the hub did not deliver it, or the SuperLink did not take it) — see its log in ${REGISTER_LOG_GROUP}."
 done
 
 # --- 4. Private keys last: only now does flip-api count the slots complete ------

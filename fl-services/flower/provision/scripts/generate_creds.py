@@ -144,8 +144,7 @@ def write_supernode_key(number: int) -> None:
     # Generate ECDSA key (P-384 to match -b 384)
     private_key = ec.generate_private_key(ec.SECP384R1())
 
-    # Serialize Private Key (OpenSSH format)
-    # Note: The original script used ssh-keygen Use OpenSSH format for both
+    # Both halves in OpenSSH format, as the ssh-keygen this replaced wrote them.
     private_bytes = private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.OpenSSH,
@@ -200,7 +199,8 @@ def add_supernode_key(number: int) -> None:
     credential already handed out stays valid.
     """
     KEY_DIR.mkdir(exist_ok=True)
-    if any(KEY_DIR.glob(f"supernode_credentials_{number}*")):
+    # The two exact names: a prefix match would also see supernode_credentials_10 for 1.
+    if any((KEY_DIR / f"supernode_credentials_{number}{half}").exists() for half in ("", ".pub")):
         raise SystemExit(f"{KEY_DIR}/supernode_credentials_{number} already exists: refusing to overwrite it.")
     write_supernode_key(number)
 
@@ -222,6 +222,8 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.add_supernode is not None:
+        if args.add_supernode < 1:
+            parser.error("--add-supernode takes a slot number of 1 or more")
         add_supernode_key(args.add_supernode)
         return
 

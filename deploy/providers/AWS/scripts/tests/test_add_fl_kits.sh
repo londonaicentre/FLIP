@@ -360,14 +360,19 @@ mkdir -p "${FLOWER_MOCKBIN}"
 #   minted          — the minted_slot_names record, when the bucket holds one
 #   keycount.<key>  — override the never-overwrite KeyCount probe; default 0 (empty)
 #   register.exit   — exit code of the registration task's container; default 0
-#   no-sync / no-success — the copy to the hub delivers nothing / the registration log
-#                     lacks its closing line
+#   no-sync / no-success / no-ok — the copy to the hub delivers nothing / the registration
+#                     log lacks its closing line / lacks the per-key "OK:" lines
+#   deployed        — the FLOWER_KITS_S3_URI in flip-api's live task definition; default
+#                     the kit date the case runs with
+#   keys.fail / minted.fail / logs.fail — that read fails with an AWS error
+#   runtask.<family> — ECS refuses to start that task, with this reason
 #   calls           — written by the mock: one line per write or task, in order
 cat > "${FLOWER_MOCKBIN}/aws" <<'MOCK_AWS'
 #!/usr/bin/env bash
 fx="${FIXTURE_DIR}"
 if [[ "$1" == "s3" && "$2" == "ls" ]]; then
     if [[ "$3" == */keys/ ]]; then
+        [[ -f "${fx}/keys.fail" ]] && { echo "An error occurred (AccessDenied)" >&2; exit 1; }
         while read -r n; do [[ -n "$n" ]] && printf '2026-01-01 00:00:00        204 %s\n' "$n"; done < "${fx}/keys"
     else
         while read -r n; do [[ -n "$n" ]] && printf '                           PRE %s/\n' "$n"; done < "${fx}/nets"
@@ -378,6 +383,7 @@ if [[ "$1" == "s3api" && "$2" == "list-objects-v2" ]]; then
     prefix=""
     while [[ $# -gt 0 ]]; do [[ "$1" == "--prefix" ]] && prefix="$2"; shift; done
     if [[ "$prefix" == fl-flower-kit-state/*/minted_slot_names ]]; then
+        [[ -f "${fx}/minted.fail" ]] && exit 1
         if [[ -f "${fx}/minted" ]]; then echo 1; else echo 0; fi
     elif [[ "$prefix" =~ /net-1/keys/(supernode_credentials_[0-9]+)$ ]]; then
         if [[ -f "${fx}/keycount.${BASH_REMATCH[1]}" ]]; then cat "${fx}/keycount.${BASH_REMATCH[1]}"; else echo 0; fi
@@ -401,6 +407,14 @@ if [[ "$1" == "s3" && "$2" == "cp" ]]; then
     fi
     exit 0
 fi
+if [[ "$1" == "ecs" && "$2" == "describe-services" && "$6" == flip-api ]]; then
+    echo "arn:aws:ecs:eu-west-2:000000000000:task-definition/flip-api:7"
+    exit 0
+fi
+if [[ "$1" == "ecs" && "$2" == "describe-task-definition" ]]; then
+    if [[ -f "${fx}/deployed" ]]; then cat "${fx}/deployed"; else echo "s3://testbucket/fl-flower-participant-kits/2026-01-01"; fi
+    exit 0
+fi
 if [[ "$1" == "ecs" && "$2" == "describe-services" ]]; then
     printf 'subnet-a,subnet-b\tsg-%s\tDISABLED\n' "$6"
     exit 0
@@ -416,6 +430,10 @@ if [[ "$1" == "ecs" && "$2" == "run-task" ]]; then
         shift
     done
     echo "run-task ${family} ${network} ${overrides}" >> "${fx}/calls"
+    if [[ -f "${fx}/runtask.${family}" ]]; then
+        printf 'None\t%s\n' "$(xargs < "${fx}/runtask.${family}")"
+        exit 0
+    fi
     # The copy to the hub: what the registration task will find on EFS.
     if [[ "$family" == efs-provision-certs && ! -f "${fx}/no-sync" ]]; then
         { grep '\.pub$' "${fx}/keys"; sed -n 's/^upload \(.*\.pub\)$/\1/p' "${fx}/calls"; } > "${fx}/efs"
@@ -435,7 +453,12 @@ if [[ "$1" == "ecs" && "$2" == "describe-tasks" ]]; then
     exit 0
 fi
 if [[ "$1" == "logs" && "$2" == "get-log-events" ]]; then
-    while read -r n; do [[ -n "$n" ]] && printf '  Registering /keys/%s...\t' "$n"; done < "${fx}/efs"
+    [[ -f "${fx}/logs.fail" ]] && { echo "An error occurred (AccessDeniedException)" >&2; exit 254; }
+    while read -r n; do
+        [[ -n "$n" ]] || continue
+        printf '  Registering /keys/%s...\t' "$n"
+        [[ -f "${fx}/no-ok" ]] || printf '    OK: %s node_id=1\t' "$n"
+    done < "${fx}/efs"
     [[ -f "${fx}/no-success" ]] || printf 'All SuperNode keys registered successfully.'
     echo
     exit 0
@@ -556,7 +579,7 @@ upload supernode_credentials_4"
 YES_MODE=1
 FLOWER_FIXTURES=("register.exit=1")
 run_flower_case "flower: failed registration leaves the slot unclaimable (N=1)" 1 "net-1" "${PAIRS_1_2}"
-check_contains "reports the failed task" 1 "The flower-register-supernode-keys task flower-register-supernode-keys-task failed (exit code '1')"
+check_contains "reports the failed task" 1 "The flower-register-supernode-keys task flower-register-supernode-keys-task failed (exit code '1':"
 check_contains "names the orphan public key" 1 "Public keys uploaded this run whose slot is NOT claimable: net-1/supernode_credentials_3.pub"
 check_contains "says what to delete" 1 "aws s3 rm s3://testbucket/fl-flower-participant-kits/2026-01-01/net-1/keys/supernode_credentials_<n>.pub"
 check_calls "the private key never reached S3" \
@@ -577,7 +600,73 @@ check_contains "names the orphan public key" 1 "NOT claimable: net-1/supernode_c
 YES_MODE=1
 FLOWER_FIXTURES=("no-sync=1")
 run_flower_case "flower: a key the registration never saw is a failure (N=1)" 1 "net-1" "${PAIRS_1_2}"
-check_contains "names the key that was not delivered" 1 "never saw supernode_credentials_3.pub"
+check_contains "names the key that was not registered" 1 "did not register supernode_credentials_3.pub"
+
+# The task reports success but has no registration line for the new key (a reply it did not
+# recognise, say): seeing the key is not enough, so the slot is not released.
+YES_MODE=1
+FLOWER_FIXTURES=("no-ok=1")
+run_flower_case "flower: a key with no registration line is a failure (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_contains "names the key that was not registered" 1 "did not register supernode_credentials_3.pub"
+check_calls "the private key never reached S3" \
+"record Trust_1 Trust_2 Trust_3 
+upload supernode_credentials_3.pub
+${SYNC_TASK}
+${REGISTER_TASK}"
+
+# The env file's kit date is not the one the hub runs (mid-rotation, or stale): the copy to the
+# hub would put that date's keys on the live EFS, so nothing is touched.
+FLOWER_FIXTURES=("deployed=s3://testbucket/fl-flower-participant-kits/2026-02-02")
+run_flower_case "flower: a kit date the hub does not run is refused (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_contains "names both dates" 1 "The hub serves its Flower kits from 's3://testbucket/fl-flower-participant-kits/2026-02-02'"
+check_calls "nothing written" ""
+
+# ECS refuses to start the copy task: its reason is reported, not a timeout on a task that never was.
+YES_MODE=1
+FLOWER_FIXTURES=("runtask.efs-provision-certs=Capacity is unavailable at this time")
+run_flower_case "flower: a task ECS would not start is reported with its reason (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_contains "gives ECS's reason" 1 "ECS did not start the efs-provision-certs task: Capacity is unavailable at this time."
+check_contains "names the orphan public key" 1 "NOT claimable: net-1/supernode_credentials_3.pub"
+
+# The registration log cannot be read (a missing logs:GetLogEvents, say): said as such, not as a
+# failed registration, and still no slot is released.
+YES_MODE=1
+FLOWER_FIXTURES=("logs.fail=1")
+run_flower_case "flower: an unreadable registration log is reported as such (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_contains "gives the AWS error" 1 "Could not read the registration task's log (/ecs/fl-server-net-1): An error occurred (AccessDeniedException)"
+check_contains "names the orphan public key" 1 "NOT claimable: net-1/supernode_credentials_3.pub"
+
+# The two reads the numbering depends on fail closed: nothing is written.
+FLOWER_FIXTURES=("keys.fail=1")
+run_flower_case "flower: an unreadable keys listing stops the run (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_contains "refuses to number" 1 "refusing to compute slot numbers"
+check_calls "nothing written" ""
+FLOWER_FIXTURES=("minted.fail=1")
+run_flower_case "flower: an unreadable minted-names record stops the run (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_contains "refuses to number" 1 "refusing to compute slot numbers without it"
+check_calls "nothing written" ""
+
+# A run keeps every name the record already held, including one whose key left S3.
+YES_MODE=1
+FLOWER_FIXTURES=("minted=Trust_1 Trust_2 Trust_7")
+run_flower_case "flower: the record keeps the names it held (N=1)" 1 "net-1" "${PAIRS_1_2}"
+check_contains "run succeeds" 0 "Minted Trust_8"
+check_calls "record keeps Trust_7, then the rest of the run" \
+"record Trust_1 Trust_2 Trust_7 Trust_8 
+upload supernode_credentials_8.pub
+${SYNC_TASK}
+${REGISTER_TASK}
+upload supernode_credentials_8"
+
+# Two slots, the second refused: the report names only the public key that did go up.
+YES_MODE=1
+FLOWER_FIXTURES=("keycount.supernode_credentials_4=1")
+run_flower_case "flower: a partial run names exactly what it uploaded (N=2)" 2 "net-1" "${PAIRS_1_2}"
+check_contains "names the one orphan" 1 "NOT claimable: net-1/supernode_credentials_3.pub
+"
+check_calls "only the first public key went up" \
+"record Trust_1 Trust_2 Trust_3 Trust_4 
+upload supernode_credentials_3.pub"
 
 # An object already at the new key's name is never overwritten; the name stays spent.
 YES_MODE=1
