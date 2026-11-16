@@ -441,6 +441,12 @@ subnets and security groups of the live `fl-server-net-1` and `fl-api-net-1` ser
 Nothing is replaced or restarted, and a running job is not disturbed. It needs `ecs:RunTask` and `iam:PassRole`
 for those two task definitions, as `register-trusts` does for flip-api's.
 
+**After a backend switch, a minted slot can already be assigned.** The hub has one slot table for both backends
+(a trust keeps its `Trust_<N>` across a switch), but each script numbers past its own backend's kits or keys only.
+On a hub that grew its pool under the other backend, the first names minted can be ones a trust already holds:
+the run says they are claimable and registration still finds no free slot. Mint enough to pass the highest slot
+the hub has assigned. A hub that stays on one backend never meets this.
+
 The SuperLink keeps registrations in memory. Terraform replays the one-shot on every new SuperLink task
 definition; a task ECS replaces by itself has none until it runs again (see the
 [Flower README](../../../fl-services/flower/README.md#adding-supernode-keys-to-a-deployed-hub)).

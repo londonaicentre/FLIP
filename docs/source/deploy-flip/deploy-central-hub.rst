@@ -324,6 +324,12 @@ one that should not be handed out; a trust that already holds that slot keeps it
    the numbering can skip one. Delete the incomplete kit from S3 (on Flower, the public keys the run names), or the
    hub keeps warning about it.
 
+.. warning::
+
+   On a hub that has been switched between NVFLARE and Flower, the first kits a run makes can carry names that
+   trusts registered under the other backend already hold, so they add no free slot. Ask for enough kits to pass
+   the highest slot the hub has assigned.
+
 .. note::
 
    A Flower SuperLink holds its registered SuperNodes in memory. A Terraform apply that replaces the SuperLink
