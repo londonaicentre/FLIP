@@ -23,11 +23,12 @@ FROM base AS development
 # in the composes, which is what has to match the host-owned bind mounts.
 ARG UNAME=flip
 
-# Copy entrypoint script
+# Copy entrypoint script, and the one-shot init that does every write into the kit (FLIP#1570)
 COPY --chown=${UNAME}:${UNAME} fl-client/entrypoint.sh /app/entrypoint.sh
+COPY --chown=${UNAME}:${UNAME} fl-client/init.sh /app/fl-client-init.sh
 
-# Make entrypoint script executable
-RUN chmod +x /app/entrypoint.sh
+# Make entrypoint and init scripts executable
+RUN chmod +x /app/entrypoint.sh /app/fl-client-init.sh
 
 # Expose necessary ports
 EXPOSE 8081 8082

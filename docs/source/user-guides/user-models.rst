@@ -65,8 +65,8 @@ You can edit a model until its training starts.
 Delete a model
 **************
 
-Only the project owner, the user who created the model, or a user with the ``admin`` role can delete a model. You can
-delete it at any time.
+Only the project owner, the user who created the model, or a user with the ``admin`` role can delete a model. They can
+delete it at any time, including during training.
 
 .. warning::
 
@@ -105,9 +105,9 @@ as federated averaging or evaluation), and on the platform's FL backend.
 
 **You do not need to look this up.** The model page tells you:
 
-- The **Model Files** panel shows the job type detected from your uploaded ``config.json``.
-- The **Model Files** panel lists the files that job type requires and marks any still missing, and the training
-  options on the right show a **Required files** summary.
+- The **Model Files** panel shows the job type detected from your uploaded ``config.json``, lists the files that job
+  type requires and marks any still missing.
+- The training options on the right show a **Required files** summary.
 
 Both update as soon as you upload or replace ``config.json``. Training cannot start until every required file is
 uploaded.
@@ -121,8 +121,7 @@ bundled with the app and sent to the participating Trusts, with two exceptions:
 .. seealso::
 
    :ref:`fl-required-files` and the :ref:`FL nets component page <flip-fl-nets>` for the full file list per job type,
-   and the :gh:`FLIP tutorials <fl-tutorials>` for complete, working
-   apps.
+   and the :gh:`FLIP tutorials <fl-tutorials>` for complete, working apps.
 
 .. important::
 
@@ -146,9 +145,9 @@ bundled with the app and sent to the participating Trusts, with two exceptions:
 
 .. tip::
 
-   Test your files locally with the FLIP tutorials workflow before uploading, and check them for syntax errors. Linters
-   such as `Pylint <https://pypi.org/project/pylint/>`_ and `JSON Lint <https://www.npmjs.com/package/jsonlint>`_ are a
-   quick way to check Python and JSON.
+   Test your files locally with the :gh:`FLIP tutorials <fl-tutorials>` workflow before uploading, and check them for
+   syntax errors. Linters such as `Pylint <https://pypi.org/project/pylint/>`_ and `JSON Lint
+   <https://www.npmjs.com/package/jsonlint>`_ are a quick way to check Python and JSON.
 
 .. _upload-model-files:
 
@@ -171,14 +170,17 @@ Upload files
 Checking usually takes seconds; a large checkpoint takes longer. You can leave the page meanwhile: the check runs on the
 server and the status is up to date when you return. **Training cannot start until every file has passed.**
 
-**How files are checked.** Every upload waits in a staging area until it has been checked. Until then it cannot be used
-for training and is never sent to a Trust.
+How files are checked
+---------------------
+
+Every upload waits in a staging area until it has been checked. Until then it cannot be used for training and is never
+sent to a Trust.
 
 - Files that carry Python pickle data (``.pt``, ``.pth``, ``.pkl``), including model checkpoints, are
   **scanned for unsafe content**, because loading one runs whatever it contains. A file that fails is marked with a
   red virus icon and deleted from storage. Delete the entry and upload a corrected file.
-- Python files are checked for type, then released and run as they are at every participating Trust (see the warning
-  below).
+- Python files are checked for file type, then released and run as they are at every participating Trust (see the
+  warning below).
 
 .. warning::
 
@@ -224,7 +226,7 @@ backend:
    * - Backend
      - Configuration
    * - FLARE
-     - ``config.json``, required for every FLARE job type. Besides ``job_type``, it can set platform keys such as
+     - ``config.json``. Besides ``job_type``, it can set platform keys such as
        ``GLOBAL_ROUNDS`` and ``LOCAL_ROUNDS``. Keys the platform does not recognise are passed through unchanged for
        your code to read, which is how the tutorials set things like learning rate or validation split.
    * - Flower

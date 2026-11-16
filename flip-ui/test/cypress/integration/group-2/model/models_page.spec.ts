@@ -106,12 +106,12 @@ describe("models page", () => {
         cy.getBySel("models-list-item-2").should("not.exist");
     });
 
-    it("arrives scoped from a deep link, showing every status rather than the estate default", () => {
+    it("arrives scoped from a deep link, showing every status", () => {
         cy.visit("/models?project=p1");
         cy.wait("@getScopedModels");
 
         cy.getBySel("project-filter-chip").should("be.visible");
-        // "View All Models" promises all of the project's models, so no status tile is preselected.
+        // No status filter is preselected, scoped or not.
         cy.get("[aria-pressed=true]").should("not.exist");
     });
 
@@ -164,7 +164,27 @@ describe("models page", () => {
         cy.visit("/models");
         cy.wait("@getNoModels");
 
-        cy.contains("There are no models to show").should("be.visible");
+        cy.contains("No models yet.").should("be.visible");
+    });
+
+    it("filters to one status group from its tile, and back to every model from the same tile", () => {
+        cy.intercept("GET", /\/models\?pageNumber=1.*status=RUNNING/, page([ALL[1]], {
+            PENDING: 1,
+            RUNNING: 1,
+            RESULTS_UPLOADED: 1
+        })).as("getRunning");
+        cy.visit("/models");
+        cy.wait("@getAllModels");
+        cy.getBySel("filter-tile-count-running").should("have.text", "1");
+
+        cy.getBySel("filter-tile-running").click();
+        cy.wait("@getRunning");
+        cy.getBySel("filter-tile-running").should("have.attr", "aria-pressed", "true");
+        cy.getBySel("model-owner-meta").should("contain", "created");
+
+        cy.getBySel("filter-tile-running").click();
+        cy.getBySel("filter-tile-running").should("have.attr", "aria-pressed", "false");
+        cy.getBySel("models-list-item-2").should("exist");
     });
 
     it("surfaces a failed fetch", () => {

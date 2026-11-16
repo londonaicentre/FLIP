@@ -135,35 +135,32 @@ class TestStateLookup:
 
 
 class TestSplitImage:
-    def test_splits_registry_prefix_and_tag(self):
-        assert rce.split_image("ghcr.io/londonaicentre/flip-api:sha-badcff1") == (
-            "ghcr.io/londonaicentre/",
-            "sha-badcff1",
-        )
-
-    def test_digest_reference_yields_no_tag(self):
-        # A digest-pinned image has no tag to reuse. Returning the digest
-        # fragment would produce an unpullable `repo:sha256` reference.
-        assert rce.split_image("ghcr.io/londonaicentre/flip-api@sha256:0123abcd") == ("", "")
-
-    def test_empty_image_is_safe(self):
-        assert rce.split_image("") == ("", "")
-
-    def test_release_digest_pin_comes_back_whole(self):
-        # A release apply pins `:v<X.Y.Z>@sha256:…` (FLIP#1283). The tag part is
-        # the whole `v<X.Y.Z>@sha256:…` string, because that is what Terraform
-        # has to re-emit to keep the pin: reporting only `v1.2.3` would silently
-        # un-pin the digest on the next apply.
-        assert rce.split_image("ghcr.io/londonaicentre/flip-api:v1.2.3@sha256:" + "a" * 64) == (
-            "ghcr.io/londonaicentre/",
-            "v1.2.3@sha256:" + "a" * 64,
-        )
-
-    def test_untagged_reference_yields_no_tag(self):
-        # The only colon here is the registry port, and there is none at all in
-        # the first form — neither carries a tag to reuse.
-        assert rce.split_image("ghcr.io/londonaicentre/flip-api") == ("", "")
-        assert rce.split_image("registry.example:5000/flip-api") == ("", "")
+    @pytest.mark.parametrize(
+        ("image", "expected"),
+        [
+            pytest.param(
+                "ghcr.io/londonaicentre/flip-api:sha-badcff1", ("ghcr.io/londonaicentre/", "sha-badcff1"), id="tag"
+            ),
+            # A digest-pinned image has no tag to reuse. Returning the digest
+            # fragment would produce an unpullable `repo:sha256` reference.
+            pytest.param("ghcr.io/londonaicentre/flip-api@sha256:0123abcd", ("", ""), id="digest-only"),
+            pytest.param("", ("", ""), id="empty"),
+            # A release apply pins `:v<X.Y.Z>@sha256:…` (FLIP#1283). The tag part is
+            # the whole `v<X.Y.Z>@sha256:…` string, because that is what Terraform
+            # has to re-emit to keep the pin: reporting only `v1.2.3` would silently
+            # un-pin the digest on the next apply.
+            pytest.param(
+                "ghcr.io/londonaicentre/flip-api:v1.2.3@sha256:" + "a" * 64,
+                ("ghcr.io/londonaicentre/", "v1.2.3@sha256:" + "a" * 64),
+                id="release-digest-pin-whole",
+            ),
+            # No colon at all, or only the registry port's: neither carries a tag to reuse.
+            pytest.param("ghcr.io/londonaicentre/flip-api", ("", ""), id="untagged"),
+            pytest.param("registry.example:5000/flip-api", ("", ""), id="registry-port-only"),
+        ],
+    )
+    def test_split_image(self, image, expected):
+        assert rce.split_image(image) == expected
 
 
 class TestLiveImageTag:
@@ -354,8 +351,6 @@ def stub_aws(monkeypatch):
             return json.dumps(
                 {
                     "aes_key": "not-a-real-key",  # pragma: allowlist secret
-                    "internal_service_key": "not-a-real-service-key",  # pragma: allowlist secret
-                    "internal_service_key_hash": "0" * 64,
                     "fl_api_key": "not-a-real-fl-api-key",  # pragma: allowlist secret
                 }
             )

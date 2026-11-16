@@ -9,7 +9,8 @@ Approving projects for your Trust
 
    You need the **Trust Admin** role for your Trust. A FLIP admin assigns it (see :ref:`assigning-a-trust-admin`).
 
-A **Trust Admin** approves or declines, on their Trust's behalf, the projects that model developers stage at it.
+As a **Trust Admin**, you approve or decline, on your Trust's behalf, the projects that model developers stage at
+your Trust.
 
 While your Trust has a Trust Admin, nobody at the hub can decide for it: a project uses your Trust's patients' data
 only once you approve it. Apart from that, you have the same access as a ``researcher`` (see :ref:`rbac-roles`).
@@ -30,11 +31,17 @@ Open **My Trust** from the top navigation. Its badge counts the projects awaitin
 Deciding on a project
 =====================
 
-1. Each card under 'Awaiting your decision' shows:
+1. Review the project's card under **Awaiting your decision**. It shows:
 
    - the project's owner and description, and when it was staged
-   - the size of its cohort at your Trust — or that your Trust did not report one, withheld a count below its disclosure threshold, or could not run the query
-   - whether it uses imaging; for an imaging project, a note that approving starts the imaging pull from PACS to XNAT
+   - the size of its cohort at your Trust, or, if there is no count, the reason:
+
+     - your Trust did not report one
+     - the count was below your Trust's disclosure threshold, so it was withheld
+     - your Trust could not run the query
+
+   - whether it uses imaging; for an imaging project, a note that approving starts copying the cohort's images from
+     PACS into XNAT (see :doc:`../components/component-xnat`)
    - **View query**, which opens the project's cohort query page
 
 2. Click **Approve** or **Decline**, then confirm. The confirmation names your Trust and what follows.

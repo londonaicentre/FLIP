@@ -49,11 +49,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 COPY pyproject.toml uv.lock ./
 
 COPY ./entrypoint.sh /app/entrypoint.sh
-# COPY ./admin /app/admin
 RUN chown -R ${UNAME}:${UNAME} /app
 
 RUN chmod +x /app/entrypoint.sh
-WORKDIR /app
 USER ${UNAME}
 
 # Sync dependencies using uv
@@ -78,5 +76,3 @@ RUN mkdir -p /app/admin/transfer && chown -R ${UNAME}:${UNAME} /app/admin
 
 # The paths the API writes on ECS's read-only root filesystem; must stay VOLUMEs (FLIP#1795, deploy/providers/AWS/AGENTS.md).
 VOLUME ["/tmp", "/app/admin/transfer"]
-
-CMD ["bash", "-c", "/app/entrypoint.sh"]

@@ -91,7 +91,11 @@ To list the tutorials for each backend:
 
 A job type describes the federated algorithm, not the data: the same ``standard`` job type runs imaging and
 tabular apps alike. What to fetch is your script's decision (an imaging app calls ``flip.get_by_accession_number``,
-a tabular one only ``flip.get_dataframe``).
+a tabular one only ``flip.get_dataframe``). Nor does the job have to train: the biomarker causal-discovery
+tutorial (:gh:`fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery
+<fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery>`) federates a bootstrapped FCI (Fast
+Causal Inference) analysis through ``standard`` by choosing what the sites send so that the weighted average
+*is* the analysis.
 
 Evaluation metrics
 ==================
@@ -232,7 +236,7 @@ Every setting has a default, so an app that declares only ``job_type`` is valid.
 Some further keys are used by FLIP's FLARE components but are **not validated**:
 
 - ``SERVER_CHECKPOINT``: a model file (string, or list of strings) to stage on the FL server instead of bundling
-  it into the app.
+  it into the app (see `What ends up in the bundle`_).
 - ``models``: the checkpoints an evaluation job loads, each entry naming a ``checkpoint`` file.
 
 **Any other key is passed through untouched** for your code to read at run time, such as ``LEARNING_RATE`` or

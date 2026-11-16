@@ -28,7 +28,7 @@
 | `source/sys-admin/` | Admin tasks: project/user management, user roles, platform support, upgrading sites, backup and restore |
 | `source/user-guides/` | Researcher guides: `getting-started`, `user-common` (landing) with `user-account` / `user-projects` / `user-models` / `user-training`, data enrichment, trust admin |
 | `source/deploy-flip/` | Deployment guides: `deploy-central-hub` (shared hub operations) with child `deploy-central-hub-aws-lza` (the architecture and the generated diagrams; the old `deploy-central-hub-aws` URL redirects there); `deploy-trust-node` (landing) with `trust-readiness-checklist` (the prerequisites for a trust's IG, data, PACS and IT leads: plain language, by owner, in order), `onboarding-a-trust` (the shared runbook) and the per-platform pages `deploy-flip-node-on-prem` (Docker Compose), `deploy-flip-node-kubernetes` (Helm on an existing cluster), `deploy-flip-node-aws-ec2` (AWS EC2), `deploy-flip-node-aws-eks` (Amazon EKS), `deploy-flip-node-azure` (Azure VM), `deploy-flip-node-azure-aks` (Azure AKS), `deploy-flip-node-in-tre`; `deploy-local-dev` (the one-host `make up` walkthrough) |
-| `source/working-with-flip-apps/` | `choosing-an-fl-framework`, the paired FLARE / Flower app-authoring pages, `wrap-model-for-deployment` (MAP tutorial) and `map-toolchain-reference` |
+| `source/working-with-flip-apps/` | `choosing-an-fl-framework`, `flip-utils-package` (the flip-utils SDK), the paired FLARE / Flower app-authoring pages, `wrap-model-for-deployment` (MAP tutorial) and `map-toolchain-reference` |
 | `source/troubleshooting/` | Symptom-first troubleshooting: FL training/projects, Central Hub on AWS, trust on Compose, trust on Kubernetes (index: `source/troubleshooting.rst`) |
 
 ## Paired pages

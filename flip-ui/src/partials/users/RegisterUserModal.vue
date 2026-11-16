@@ -309,7 +309,13 @@ const roleOptions = computed<IOption[]>(() =>
 );
 
 watch(selectedOption, async (current) => {
-    role.value.value = current?.id ?? "";
+    // Only close() clears the option, and its resetForm() has already emptied
+    // the role. Writing "" here would validate the field again and mark Role
+    // as required on the form that was just reset (FLIP#1854).
+    if (!current) {
+        return;
+    }
+    role.value.value = current.id;
     await validateField("role");
 });
 

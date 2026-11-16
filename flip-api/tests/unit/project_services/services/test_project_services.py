@@ -231,33 +231,19 @@ class TestEditProjectService:
                 session=mock_db_session,
             )
 
-    def test_edit_project_service_not_found(self, mock_db_session: MagicMock):
-        project_id = uuid4()
-        current_user_id = uuid4()
-        payload = IProjectDetails(name="Test", description="Test", users=[])
-
-        mock_db_session.get.return_value = None
-
-        # As for delete: the service's not-found ValueError surfaces as a generic 500 (logged, not
-        # returned); the router 404s a missing or deleted project before calling in.
-        with pytest.raises(HTTPException) as exc_info:
-            edit_project_service(project_id, payload, current_user_id, mock_db_session)
-
-        assert exc_info.value.status_code == 500
-        assert exc_info.value.detail == "Internal server error"
-
-    def test_edit_project_service_deleted_project(self, mock_db_session: MagicMock, sample_project: Projects):
+    @pytest.mark.parametrize("found", [False, True], ids=["missing", "deleted"])
+    def test_edit_project_service_missing_or_deleted(
+        self, found: bool, mock_db_session: MagicMock, sample_project: Projects
+    ):
         sample_project.deleted = True
-        project_id = sample_project.id
-        current_user_id = uuid4()
         payload = IProjectDetails(name="Test", description="Test", users=[])
 
-        mock_db_session.get.return_value = sample_project
+        mock_db_session.get.return_value = sample_project if found else None
 
         # As for delete: the service's not-found ValueError surfaces as a generic 500 (logged, not
         # returned); the router 404s a missing or deleted project before calling in.
         with pytest.raises(HTTPException) as exc_info:
-            edit_project_service(project_id, payload, current_user_id, mock_db_session)
+            edit_project_service(sample_project.id, payload, uuid4(), mock_db_session)
 
         assert exc_info.value.status_code == 500
         assert exc_info.value.detail == "Internal server error"
