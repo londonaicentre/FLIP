@@ -404,8 +404,8 @@ the header against their own copy with a constant-time compare. `/health` is int
 probes still work.
 
 Each trust gets a distinct key — a leak in `Trust_1` cannot drive operations on `Trust_2`'s APIs. The hub
-never sees these keys: they live only in trust-side env (the trust's kit file `trust/.env.<CODE>.<env>`, which
-`trust/Makefile` `-include`s so every trust-internal container inherits it). See the
+mints each key at registration and returns it once, but never stores it: the keys live only in trust-side env
+(the trust's kit file `trust/.env.<CODE>.<env>`, which `trust/Makefile` `-include`s so every trust-internal container inherits it). See the
 [public security model](https://londonaicentreflip.readthedocs.io/en/latest/security.html#trust-internal-service-authentication) for the full threat model.
 
 FL clients (trust side) **do not** have Central Hub API credentials. Only the fl-server communicates with flip-api.
@@ -454,7 +454,7 @@ outside the hub's Docker network.
 | `TRUST_API_KEY` | trust-side kit file | Per-trust plaintext key (hub stores its SHA-256 in the `trust` table's `api_key_hash`) |
 | `FL_API_KEY` | flip-api, fl-api-net-N, Flower `register-supernode-keys-net-N` | Key every FL API route but `/health` requires (header `FL_API_KEY_HEADER`, default `X-FL-API-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | trust-api, imaging-api, data-access-api, fl-client | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
-| `TRUST_INTERNAL_SERVICE_KEY` | trust-side kit file | Per-trust plaintext key, minted by `register_trust`. The hub never sees it. |
+| `TRUST_INTERNAL_SERVICE_KEY` | trust-side kit file | Per-trust plaintext key, minted by `register_trust`. The hub returns it once and never stores it. |
 | `CENTRAL_HUB_API_URL` | flip-ui, trust-api | Public base URL of flip-api (in prod: CloudFront URL) |
 | `FLIP_API_INTERNAL_URL` | fl-server | Docker-network URL of flip-api on the Central Hub (e.g. `http://flip-api:8000/api`) |
 
