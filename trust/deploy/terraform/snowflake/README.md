@@ -21,10 +21,10 @@ platform tier owns it, with the resource monitor attached (see "Cost guards").
 It is the **workload tier** of a two-tier split (epic
 [#1589](https://github.com/londonaicentre/FLIP/issues/1589), decided 2026-10-20). It is applied
 **routinely**, as `FLIP_<CODE>_DEPLOY_USER` (`TYPE = SERVICE`, key-pair auth), whose role holds
-four account privileges and nothing more:
+three account privileges and nothing more:
 
 ```
-CREATE DATABASE, CREATE COMPUTE POOL, BIND SERVICE ENDPOINT, EXECUTE TASK
+CREATE DATABASE, CREATE COMPUTE POOL, EXECUTE TASK
 ```
 
 The roles themselves and the deploy user come from

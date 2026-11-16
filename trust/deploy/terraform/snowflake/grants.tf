@@ -16,7 +16,7 @@
 #
 # The deploy role owns every object here, and an owner may grant privileges on its own objects
 # without MANAGE GRANTS. The platform tier granted the consumer roles TO the deploy role, so the
-# deploy role may name them. Nothing below is an account-level grant: the four account privileges
+# deploy role may name them. Nothing below is an account-level grant: the three account privileges
 # the deploy role holds are issued once, in ../snowflake-platform/grants.tf, and the static guards
 # in tests/ fail this root if an `on_account = true` grant ever appears.
 #
@@ -79,6 +79,12 @@ resource "snowflake_grant_privileges_to_account_role" "svc_pools" {
   on_account_object {
     object_type = "COMPUTE POOL"
     object_name = each.value.name
+  }
+
+  # Replacing a pool drops the grants on it, and the name is unchanged, so without this the
+  # plan shows nothing and the next apply has to put them back.
+  lifecycle {
+    replace_triggered_by = [snowflake_compute_pool.trust[each.key]]
   }
 }
 
@@ -170,6 +176,12 @@ resource "snowflake_grant_privileges_to_account_role" "fl_pools" {
   on_account_object {
     object_type = "COMPUTE POOL"
     object_name = each.value.name
+  }
+
+  # Replacing a pool drops the grants on it, and the name is unchanged, so without this the
+  # plan shows nothing and the next apply has to put them back.
+  lifecycle {
+    replace_triggered_by = [snowflake_compute_pool.trust[each.key]]
   }
 }
 
@@ -302,6 +314,12 @@ resource "snowflake_grant_privileges_to_account_role" "observer_pools" {
   on_account_object {
     object_type = "COMPUTE POOL"
     object_name = each.value.name
+  }
+
+  # Replacing a pool drops the grants on it, and the name is unchanged, so without this the
+  # plan shows nothing and the next apply has to put them back.
+  lifecycle {
+    replace_triggered_by = [snowflake_compute_pool.trust[each.key]]
   }
 }
 

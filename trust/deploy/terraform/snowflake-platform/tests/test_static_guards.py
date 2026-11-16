@@ -11,7 +11,7 @@
 """Static guards for the Snowflake PLATFORM root (FLIP#1581, epic #1589).
 
 The break-glass tier. These are the invariants no runtime test can see without a Snowflake
-account: the workload role receives EXACTLY four account privileges and no more, nothing is
+account: the workload role receives EXACTLY three account privileges and no more, nothing is
 granted to PUBLIC, the retired FLIP_<CODE>_ADMIN role is gone, the deploy identity is a SERVICE
 user with a public key only, egress is off by default and closed when on, and no credential of any
 kind is a Terraform variable.
@@ -47,12 +47,13 @@ ROOT_FILES = (
 ALLOWED_ACCOUNT_PRIVILEGES = (
     "CREATE DATABASE",
     "CREATE COMPUTE POOL",
-    "BIND SERVICE ENDPOINT",
     "EXECUTE TASK",
 )
 
 # Account privileges that would undo the split. None may appear anywhere in this root.
 FORBIDDEN_ACCOUNT_PRIVILEGES = (
+    # Only a public endpoint needs it, and no spec has one (trust/deploy/snowflake guards that).
+    "BIND SERVICE ENDPOINT",
     "CREATE ROLE",
     "CREATE USER",
     "CREATE INTEGRATION",
@@ -607,3 +608,11 @@ def test_the_grafana_follow_up_is_recorded_and_not_half_built():
     readme = (ROOT_DIR / "README.md").read_text()
     assert "Grafana" in readme, "the Grafana-on-SPCS follow-up is a note in Open points, nothing more"
     assert "grafana" not in all_terraform().lower(), "nothing about Grafana is built in this issue"
+
+
+def test_severity_falls_back_to_the_level_in_the_log_line():
+    """Container stdout has no severity_text: on the live account all 31,852 records had a NULL
+    SEVERITY, so V_RECENT_ERRORS was empty while 980 lines carried "level": "ERROR"."""
+    events = hcl_block(source("observability_views.tf"), 'resource "snowflake_view" "events"')
+    assert 'TRY_PARSE_JSON("VALUE"::VARCHAR):level' in events
+    assert "RECORD:severity_text::VARCHAR" in events

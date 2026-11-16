@@ -16,7 +16,7 @@
 #
 # Why this tier and not the workload root. A view runs with its OWNER's rights, so a view over
 # SNOWFLAKE.ACCOUNT_USAGE can only be owned by a role that holds IMPORTED PRIVILEGES on database
-# SNOWFLAKE. The deploy role holds exactly four account privileges (grants.tf) and that is not one
+# SNOWFLAKE. The deploy role holds exactly three account privileges (grants.tf) and that is not one
 # of them, by design: account-wide usage and query history is more than a routine deploy key
 # should be able to read. Owning the views here also means a workload `make destroy` takes the
 # trust's objects and leaves the account's observability standing, the same reason the event table
@@ -53,7 +53,12 @@ resource "snowflake_view" "events" {
       RESOURCE_ATTRIBUTES:"snow.service.container.instance"::VARCHAR  AS CONTAINER_INSTANCE,
       RESOURCE_ATTRIBUTES:"snow.service.container.run.id"::VARCHAR    AS CONTAINER_RUN_ID,
       RESOURCE_ATTRIBUTES:"snow.compute_pool.name"::VARCHAR           AS COMPUTE_POOL_NAME,
-      RECORD:severity_text::VARCHAR                                   AS SEVERITY,
+      -- Container stdout carries no severity_text, so every SEVERITY was NULL and the error
+      -- views stayed empty. The FLIP services log JSON lines with a "level": read it from there.
+      COALESCE(
+        RECORD:severity_text::VARCHAR,
+        REPLACE(UPPER(TRY_PARSE_JSON("VALUE"::VARCHAR):level::VARCHAR), 'CRITICAL', 'FATAL')
+      )                                                               AS SEVERITY,
       "VALUE"::VARCHAR                                                AS MESSAGE
     FROM ${local.event_table_fqn}
   SQL

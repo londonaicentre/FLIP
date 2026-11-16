@@ -16,7 +16,7 @@
 **Read this before running anything here.** This is the break-glass root. It creates the Snowflake
 account's security objects and nothing else:
 
-- the **only** account-level grant in the whole design: four privileges to `FLIP_<CODE>_DEPLOY`;
+- the **only** account-level grant in the whole design: three privileges to `FLIP_<CODE>_DEPLOY`;
 - the egress network rule and the external access integration (off by default);
 - the account network, password and session policies;
 - the event table and the `EVENT_TABLE` account parameter, in a small platform-owned database;
@@ -51,7 +51,7 @@ one session, and a one-time passcode is accepted once.
 The **account privileges** `FLIP_<CODE>_DEPLOY` holds are exactly:
 
 ```
-CREATE DATABASE, CREATE COMPUTE POOL, BIND SERVICE ENDPOINT, EXECUTE TASK
+CREATE DATABASE, CREATE COMPUTE POOL, EXECUTE TASK
 ```
 
 Deliberately absent: `CREATE ROLE`, `CREATE USER`, `CREATE INTEGRATION`, `CREATE NETWORK POLICY`,
@@ -71,7 +71,7 @@ role throughout.
 The trust warehouse lives here, not in the workload root, because assigning a resource monitor to a
 warehouse needs `ACCOUNTADMIN`. This root owns `FLIP_<CODE>_WH` with `FLIP_<CODE>_RM` attached and
 grants the deploy role USAGE, OPERATE and MONITOR (no MODIFY, no OWNERSHIP), so the cost guard is
-out of the deploy key's reach. `EXECUTE TASK` is the deploy role's fourth account privilege so it
+out of the deploy key's reach. `EXECUTE TASK` is the deploy role's third account privilege so it
 can run the nightly pool-suspend task it owns.
 
 There is **no remote-state data source** between the roots. Both derive every name from
@@ -266,7 +266,7 @@ With `account_admin = false` the root leaves out what only `ACCOUNTADMIN` can cr
 | `EVENT_TABLE` account parameter, retention task | The account keeps its own event table, so the views over `FLIP_EVENTS` stay empty |
 | Cost views | They read `SNOWFLAKE.ACCOUNT_USAGE`, which `platform_role` cannot |
 | Account password and session policies | The site's own policies apply |
-| `EXECUTE TASK`, `BIND SERVICE ENDPOINT` for the deploy role | Set `nightly_pool_suspend = false` in the workload root; no endpoint in the specs is public |
+| `EXECUTE TASK` for the deploy role | Set `nightly_pool_suspend = false` in the workload root |
 
 ## Migrating an account bootstrapped with FLIP_<CODE>_ADMIN
 

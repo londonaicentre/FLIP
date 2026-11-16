@@ -73,10 +73,10 @@ locals {
   # no CREATE USER, no CREATE INTEGRATION, no CREATE NETWORK POLICY, no MANAGE GRANTS, and no
   # CREATE WAREHOUSE: the warehouse is platform-owned so its resource monitor cannot be shed.
   # EXECUTE TASK lets the role run the tasks it owns, i.e. the nightly compute-pool suspend.
+  # No BIND SERVICE ENDPOINT: it is only needed for a public endpoint, and no spec has one.
   deploy_account_privileges = [
     "CREATE DATABASE",
     "CREATE COMPUTE POOL",
-    "BIND SERVICE ENDPOINT",
     "EXECUTE TASK",
   ]
   # A role other than ACCOUNTADMIN can pass on only what it holds with the grant option.

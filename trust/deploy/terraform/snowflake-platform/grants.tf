@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# The only account-level grant in either root. Exactly four privileges, listed in locals.tf and
+# The only account-level grant in either root. Exactly three privileges, listed in locals.tf and
 # pinned by the static guards here and in the workload root:
 #
-#   CREATE DATABASE, CREATE COMPUTE POOL, BIND SERVICE ENDPOINT, EXECUTE TASK
+#   CREATE DATABASE, CREATE COMPUTE POOL, EXECUTE TASK
 #
 # Deliberately absent: CREATE ROLE, CREATE USER, CREATE INTEGRATION, CREATE NETWORK POLICY,
 # MANAGE GRANTS, APPLY <policy>, MONITOR USAGE. A compromised deploy key therefore cannot mint an

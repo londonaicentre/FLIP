@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # The WORKLOAD tier, applied routinely as FLIP_<CODE>_DEPLOY_USER (TYPE = SERVICE) with key-pair
-# auth. The role it assumes holds four account privileges and nothing more; the account's security
+# auth. The role it assumes holds three account privileges and nothing more; the account's security
 # objects live in ../snowflake-platform and are out of this root's reach.
 #
 # No credential is ever written here or into a variable: the provider reads the deploy identity

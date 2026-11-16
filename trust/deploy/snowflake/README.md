@@ -310,9 +310,8 @@ the file names of another FL net's images; the mount itself stays sliced to its 
 An fl-client that exists under the services role is dropped and created again by
 `make up`, because a service's role is fixed when it is created.
 
-That role holds exactly four account privileges, granted once by the break-glass
-Terraform root: `CREATE DATABASE`, `CREATE COMPUTE POOL`, `EXECUTE TASK`,
-`BIND SERVICE ENDPOINT`. It has no `CREATE ROLE`, no `CREATE USER`, no
+That role holds exactly three account privileges, granted once by the break-glass
+Terraform root: `CREATE DATABASE`, `CREATE COMPUTE POOL`, `EXECUTE TASK`. It has no `CREATE ROLE`, no `CREATE USER`, no
 `CREATE INTEGRATION`, no `CREATE NETWORK POLICY` and no `MANAGE GRANTS`. The grants this
 directory issues all work through **ownership**: an owner may grant privileges on its own
 objects without `MANAGE GRANTS`.
