@@ -34,9 +34,10 @@ from image_workflows import (  # noqa: E402
     step_block,
 )
 
-# Per workflow: Flower also publishes its fleet proxy, the SuperLink's trust-facing listener (FLIP#1517).
+# Per workflow: Flower also publishes its fleet proxy, the SuperLink's trust-facing listener (FLIP#1517), and
+# FLARE its segmentation FL environment, a second client image (FLIP#32).
 IMAGES = {
-    "fl-docker-build-nvflare.yml": ("BASE", "SERVER", "CLIENT", "API"),
+    "fl-docker-build-nvflare.yml": ("BASE", "SERVER", "CLIENT", "CLIENT_SEGMENTATION", "API"),
     "fl-docker-build-flower.yml": ("BASE", "SERVER", "CLIENT", "API", "PROXY"),
 }
 

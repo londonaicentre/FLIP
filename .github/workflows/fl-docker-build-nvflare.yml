@@ -40,6 +40,8 @@ jobs:
       BASE_IMAGE: flare-fl-base
       SERVER_IMAGE: flare-fl-server
       CLIENT_IMAGE: flare-fl-client
+      # The segmentation FL environment (FLIP#32): the client image plus flip-utils' `segmentation` extra.
+      CLIENT_SEGMENTATION_IMAGE: flare-fl-client-segmentation
       API_IMAGE: flare-fl-api
       # No UID/GID/UNAME: the Dockerfiles fix the image identity at flip/1000/1000
       # (FLIP#1171), so this workflow and a local `make build-fl` produce byte-identical
@@ -70,6 +72,7 @@ jobs:
           BASE_TAGS="${REGISTRY}/${ORG}/${BASE_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${BASE_IMAGE}:sha-${SHORT_SHA}"
           SERVER_TAGS="${REGISTRY}/${ORG}/${SERVER_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${SERVER_IMAGE}:sha-${SHORT_SHA}"
           CLIENT_TAGS="${REGISTRY}/${ORG}/${CLIENT_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${CLIENT_IMAGE}:sha-${SHORT_SHA}"
+          CLIENT_SEGMENTATION_TAGS="${REGISTRY}/${ORG}/${CLIENT_SEGMENTATION_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${CLIENT_SEGMENTATION_IMAGE}:sha-${SHORT_SHA}"
           API_TAGS="${REGISTRY}/${ORG}/${API_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${API_IMAGE}:sha-${SHORT_SHA}"
 
           # A release-tag run publishes :v<X.Y.Z> only — see AGENTS.md "Docker image builds".
@@ -80,6 +83,7 @@ jobs:
             BASE_TAGS="${REGISTRY}/${ORG}/${BASE_IMAGE}:${GITHUB_REF_NAME}"
             SERVER_TAGS="${REGISTRY}/${ORG}/${SERVER_IMAGE}:${GITHUB_REF_NAME}"
             CLIENT_TAGS="${REGISTRY}/${ORG}/${CLIENT_IMAGE}:${GITHUB_REF_NAME}"
+            CLIENT_SEGMENTATION_TAGS="${REGISTRY}/${ORG}/${CLIENT_SEGMENTATION_IMAGE}:${GITHUB_REF_NAME}"
             API_TAGS="${REGISTRY}/${ORG}/${API_IMAGE}:${GITHUB_REF_NAME}"
           fi
 
@@ -87,23 +91,27 @@ jobs:
             BASE_TAGS="${BASE_TAGS},${REGISTRY}/${ORG}/${BASE_IMAGE}:prod"
             SERVER_TAGS="${SERVER_TAGS},${REGISTRY}/${ORG}/${SERVER_IMAGE}:prod"
             CLIENT_TAGS="${CLIENT_TAGS},${REGISTRY}/${ORG}/${CLIENT_IMAGE}:prod"
+            CLIENT_SEGMENTATION_TAGS="${CLIENT_SEGMENTATION_TAGS},${REGISTRY}/${ORG}/${CLIENT_SEGMENTATION_IMAGE}:prod"
             API_TAGS="${API_TAGS},${REGISTRY}/${ORG}/${API_IMAGE}:prod"
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             BASE_TAGS="${BASE_TAGS},${REGISTRY}/${ORG}/${BASE_IMAGE}:stag"
             SERVER_TAGS="${SERVER_TAGS},${REGISTRY}/${ORG}/${SERVER_IMAGE}:stag"
             CLIENT_TAGS="${CLIENT_TAGS},${REGISTRY}/${ORG}/${CLIENT_IMAGE}:stag"
+            CLIENT_SEGMENTATION_TAGS="${CLIENT_SEGMENTATION_TAGS},${REGISTRY}/${ORG}/${CLIENT_SEGMENTATION_IMAGE}:stag"
             API_TAGS="${API_TAGS},${REGISTRY}/${ORG}/${API_IMAGE}:stag"
           fi
 
           echo "base_tags=${BASE_TAGS}"   >> $GITHUB_OUTPUT
           echo "server_tags=${SERVER_TAGS}" >> $GITHUB_OUTPUT
           echo "client_tags=${CLIENT_TAGS}" >> $GITHUB_OUTPUT
+          echo "client_segmentation_tags=${CLIENT_SEGMENTATION_TAGS}" >> $GITHUB_OUTPUT
           echo "api_tags=${API_TAGS}" >> $GITHUB_OUTPUT
           echo "release=${RELEASE}" >> $GITHUB_OUTPUT
           echo "Generated tags:"
           echo "Base:   ${BASE_TAGS}"
           echo "Server: ${SERVER_TAGS}"
           echo "Client: ${CLIENT_TAGS}"
+          echo "Client (segmentation): ${CLIENT_SEGMENTATION_TAGS}"
           echo "API:    ${API_TAGS}"
 
       - name: Log in to GHCR
@@ -215,6 +223,43 @@ jobs:
             docker push "$tag"
           done
           echo "✅ Pushed FL Client."
+
+      ###########################################
+      # 3️⃣b Build and Push the segmentation FL Client
+      ###########################################
+      # Built on the client image above, which is why this comes before that image's cleanup.
+      - name: Build segmentation FL Client Image
+        run: |
+          docker build \
+            -f fl-services/nvflare/fl-client-segmentation/Dockerfile \
+            --build-arg BASE_REF=$REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} \
+            -t $REGISTRY/$ORG/$CLIENT_SEGMENTATION_IMAGE:${{ github.sha }} \
+            -t $REGISTRY/$ORG/$CLIENT_SEGMENTATION_IMAGE:sha-$SHORT_SHA fl-services/nvflare/fl-client-segmentation
+
+          # The extra's packages import, and beside the torch the lock pins for every FL image.
+          docker run --rm --network none --entrypoint python $REGISTRY/$ORG/$CLIENT_SEGMENTATION_IMAGE:${{ github.sha }} \
+            -c "import nnunetv2, SimpleITK, totalsegmentator, torch; print(torch.__version__)"
+
+          echo "✅ Built segmentation FL Client."
+
+      - name: Push segmentation FL Client Image
+        env:
+          TAGS: ${{ steps.tags.outputs.client_segmentation_tags }}
+        run: |
+          for tag in ${TAGS//,/ }; do
+            docker tag "$REGISTRY/$ORG/$CLIENT_SEGMENTATION_IMAGE:${{ github.sha }}" "$tag"
+            docker push "$tag"
+          done
+          echo "✅ Pushed segmentation FL Client."
+
+      - name: Cleanup after segmentation FL Client
+        env:
+          TAGS: ${{ steps.tags.outputs.client_segmentation_tags }}
+        run: |
+          img="$REGISTRY/$ORG/$CLIENT_SEGMENTATION_IMAGE"
+          for tag in $(printf '%s\n' "$img:${{ github.sha }}" "$img:sha-$SHORT_SHA" ${TAGS//,/ } | sort -u); do
+            docker rmi "$tag" || true
+          done
 
       - name: Cleanup after FL Client
         env:
