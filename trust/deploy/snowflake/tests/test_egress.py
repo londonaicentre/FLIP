@@ -48,28 +48,28 @@ def build(tmp_path: Path, kit: dict[str, str], **overrides: str) -> tuple[dict, 
     return manifest, specs
 
 
-def applied(specs: dict[str, dict]) -> dict[str, list[str]]:
-    return {name: spec["spec"].get("externalAccessIntegrations", []) for name, spec in specs.items()}
+def applied(manifest: dict) -> dict[str, list[str]]:
+    return {service["name"]: service["external_access_integrations"] for service in manifest["services"]}
 
 
 def test_nothing_reaches_out_by_default(tmp_path: Path, kit: dict[str, str]) -> None:
     """A trial account has no external network access, so hubless is the default."""
-    manifest, specs = build(tmp_path, kit)
+    manifest, _ = build(tmp_path, kit)
     assert manifest["external_access_integrations"] == []
-    assert not any(applied(specs).values())
+    assert not any(applied(manifest).values())
 
 
 def test_only_trust_api_and_the_fl_client_attach_the_integration(tmp_path: Path, kit: dict[str, str]) -> None:
-    _, specs = build(tmp_path, kit, HUB_EGRESS="true")
-    attached = {name for name, names in applied(specs).items() if names}
+    manifest, _ = build(tmp_path, kit, HUB_EGRESS="true")
+    attached = {name for name, names in applied(manifest).items() if names}
     assert attached == {"trust-api", "fl-client-net-1"}
 
 
 def test_every_attaching_spec_names_the_one_integration(tmp_path: Path, kit: dict[str, str]) -> None:
     """One integration per trust: a second would be a second egress list to keep in step."""
-    manifest, specs = build(tmp_path, kit, HUB_EGRESS="true")
+    manifest, _ = build(tmp_path, kit, HUB_EGRESS="true")
     assert manifest["external_access_integrations"] == ["FLIP_GSTT_HUB_EAI"]
-    for name, names in applied(specs).items():
+    for name, names in applied(manifest).items():
         assert len(names) <= 1, name
         assert set(names) <= {"FLIP_GSTT_HUB_EAI"}, name
 
@@ -176,3 +176,21 @@ def test_the_preflight_lists_exactly_what_the_specs_attach(tmp_path: Path, kit: 
     manifest = render(dict(kit, HUB_EGRESS="true"), CODE, ENV, out, digests={})
     assert manifest["external_access_integrations"] == ["FLIP_GSTT_HUB_EAI"]
     assert spcs_sql.missing_integrations.__doc__ is not None, "the why stays with the code"
+
+
+def test_the_integration_is_an_option_of_the_service_not_of_its_spec(tmp_path: Path, kit: dict[str, str]) -> None:
+    """Snowflake rejects it in a specification: "unknown option 'externalAccessIntegrations' for
+    'spec'" (live account). It is attached by CREATE SERVICE, and set or cleared on an existing one."""
+    manifest, specs = build(tmp_path, kit, HUB_EGRESS="true")
+    assert not any("externalAccessIntegrations" in spec["spec"] for spec in specs.values())
+
+    created = spcs_sql.sql_up(tmp_path / "rendered", manifest)
+    with_egress = [s.split()[2].rsplit(".", 1)[-1] for s in created if "EXTERNAL_ACCESS_INTEGRATIONS" in s]
+    assert with_egress == ["TRUST_API", "FL_CLIENT_NET_1"]
+    assert all("EXTERNAL_ACCESS_INTEGRATIONS = (FLIP_GSTT_HUB_EAI)\n" in s for s in created if "TRUST_API\n" in s)
+
+    altered = spcs_sql.sql_up(tmp_path / "rendered", manifest, frozenset({"TRUST_API", "XNAT_DB"}))
+    assert (
+        "ALTER SERVICE FLIP_TRUST_GSTT.APP.TRUST_API SET EXTERNAL_ACCESS_INTEGRATIONS = (FLIP_GSTT_HUB_EAI);" in altered
+    )
+    assert "ALTER SERVICE FLIP_TRUST_GSTT.APP.XNAT_DB UNSET EXTERNAL_ACCESS_INTEGRATIONS;" in altered

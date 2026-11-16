@@ -106,7 +106,7 @@ def render(kit: dict[str, str], code: str, env: str, out_dir: Path, digests: dic
                 "volumes": [volume["name"] for volume in item.spec["spec"].get("volumes", [])],
                 "read_only_volumes": item.read_only_volumes,
                 "endpoints": item.spec["spec"].get("endpoints", []),
-                "external_access_integrations": item.spec["spec"].get("externalAccessIntegrations", []),
+                "external_access_integrations": item.external_access_integrations,
             }
         )
 

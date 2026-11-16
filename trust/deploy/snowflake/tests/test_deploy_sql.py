@@ -180,8 +180,8 @@ def test_apply_up_dry_run_prints_the_bracketed_sql(rendered: Path, capsys, monke
 
 
 def test_the_hub_eai_is_not_attached_here(rendered: Path, manifest: dict) -> None:
-    """Hub egress is tracked by FLIP#1586, and the integration belongs to the break-glass
-    Terraform root. Nothing in the deploy SQL or in a rendered spec may reference it."""
+    """A kit that does not ask for egress gets none: nothing in the deploy SQL or in a rendered
+    spec references the integration (tests/test_egress.py covers a kit that does)."""
     sql = "\n".join(spcs_sql.sql_up(rendered, manifest))
     assert "EXTERNAL_ACCESS_INTEGRATIONS" not in sql.upper()
     assert "HUB_EAI" not in sql.upper()

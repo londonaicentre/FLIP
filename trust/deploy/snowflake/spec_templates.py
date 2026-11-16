@@ -150,6 +150,10 @@ class Rendered:
     #: stage). Recording the intent here keeps it assertable offline and keeps the kit
     #: sync's grants and the specs from drifting apart.
     read_only_volumes: list[str] = field(default_factory=list)
+    #: Egress integrations, attached by the deploy SQL as ``EXTERNAL_ACCESS_INTEGRATIONS`` on
+    #: the service. It is not a key of the specification: Snowflake rejects it there
+    #: ("unknown option 'externalAccessIntegrations' for 'spec'", live account).
+    external_access_integrations: list[str] = field(default_factory=list)
 
 
 def _resources(cpu: str, memory: str, cpu_limit: str, memory_limit: str) -> dict[str, Any]:
@@ -185,16 +189,14 @@ def hub_egress(kit: dict[str, str]) -> bool:
     raise ValueError(f"HUB_EGRESS must be true or false, not {kit.get('HUB_EGRESS')!r}")
 
 
-def _egress(service: str, kit: dict[str, str], names: Names) -> dict[str, Any]:
-    """The spec-level ``externalAccessIntegrations`` key, or nothing.
+def _egress(service: str, kit: dict[str, str], names: Names) -> list[str]:
+    """The egress integrations a service is created with: the trust's one, or none.
 
     SPCS has one integration per trust and it carries the closed egress list (the hub host
-    and the FL endpoints), so attaching it is all a spec does; the hosts live in the
+    and the FL endpoints), so attaching it is all a deploy does; the hosts live in the
     platform tier and never in a spec.
     """
-    if service in EGRESS_SERVICES and hub_egress(kit):
-        return {"externalAccessIntegrations": [names.hub_eai]}
-    return {}
+    return [names.hub_eai] if service in EGRESS_SERVICES and hub_egress(kit) else []
 
 
 #: The uid each image runs as. A stage volume mounts root-owned 0755 unless the volume names
@@ -312,11 +314,12 @@ def _trust_api(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Re
                 }
             ],
             "endpoints": [{"name": "api", "port": 8000, "protocol": "HTTP", "public": False}],
-            **_egress("trust-api", kit, names),
             **_event_table_exports(),
         }
     }
-    return Rendered("trust-api", "service", names.pool, spec)
+    return Rendered(
+        "trust-api", "service", names.pool, spec, external_access_integrations=_egress("trust-api", kit, names)
+    )
 
 
 def _data_access_api(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Rendered:
@@ -559,12 +562,18 @@ def _fl_client(kit: dict[str, str], names: Names, digests: dict[str, str], net: 
                 {"name": "dshm", "source": "memory", "size": "8Gi"},
                 *flare_workspace,
             ],
-            **_egress("fl-client", kit, names),
             **_event_table_exports(),
         }
     }
     container["volumeMounts"].append({"name": "dshm", "mountPath": "/dev/shm"})
-    return Rendered(f"fl-client-{net_id}", "service", pool, spec, read_only_volumes=["fl-kit"])
+    return Rendered(
+        f"fl-client-{net_id}",
+        "service",
+        pool,
+        spec,
+        read_only_volumes=["fl-kit"],
+        external_access_integrations=_egress("fl-client", kit, names),
+    )
 
 
 def _pacs_env(kit: dict[str, str], names: Names) -> dict[str, str]:

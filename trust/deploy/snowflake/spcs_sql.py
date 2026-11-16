@@ -127,6 +127,8 @@ def sql_up(
             statements.append(f"USE ROLE {role};")
         # The FL role holds no warehouse: its services run no query.
         warehouse = service["role"] == manifest["service_role"]
+        # An option of the service, not of its specification (Snowflake rejects it there).
+        integrations = ", ".join(service.get("external_access_integrations", []))
         if service["kind"] == JOB_KIND:
             statements.append(
                 f"-- {service['sql_name']} is a job service: executed on demand (EXECUTE JOB SERVICE),\n"
@@ -141,6 +143,12 @@ def sql_up(
                 # refuses any MIN/MAX_INSTANCES on a service with a block volume as
                 # "scaling", even to the same value (live account, xnat-db).
                 statements.append(f"ALTER SERVICE {service['sql_name']} SET QUERY_WAREHOUSE = {manifest['warehouse']};")
+            # Set or cleared on every deploy, so turning egress off takes effect too.
+            statements.append(
+                f"ALTER SERVICE {service['sql_name']} SET EXTERNAL_ACCESS_INTEGRATIONS = ({integrations});"
+                if integrations
+                else f"ALTER SERVICE {service['sql_name']} UNSET EXTERNAL_ACCESS_INTEGRATIONS;"
+            )
             # `make suspend` leaves the service suspended and ALTER does not wake it. The
             # pools resume by themselves (auto_resume) once a service asks for a node.
             statements.append(f"ALTER SERVICE {service['sql_name']} RESUME;")
@@ -149,6 +157,7 @@ def sql_up(
             f"CREATE SERVICE {service['sql_name']}\n"
             f"  IN COMPUTE POOL {service['pool']}\n"
             + (f"  QUERY_WAREHOUSE = {manifest['warehouse']}\n" if warehouse else "")
+            + (f"  EXTERNAL_ACCESS_INTEGRATIONS = ({integrations})\n" if integrations else "")
             + f"  MIN_INSTANCES = 1\n"
             f"  MAX_INSTANCES = 1\n"
             f"  FROM SPECIFICATION $$\n{body}$$;"
