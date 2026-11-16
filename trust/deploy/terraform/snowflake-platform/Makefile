@@ -11,11 +11,11 @@
 #
 # Snowflake PLATFORM root (FLIP#1581, epic #1589). THE BREAK-GLASS TIER.
 #
-# This root creates the account's security objects: the FLIP_<CODE>_* roles and their hierarchy,
-# the deploy SERVICE user, the four account privileges the workload role holds, the egress
+# This root creates the account's security objects (the roles and the deploy user come first,
+# from ../snowflake-identity): the four account privileges the workload role holds, the egress
 # integration, the account network/password/session policies, the event table and EVENT_TABLE
 # parameter, the resource monitor and the trust warehouse it is attached to. It is applied RARELY, by a PERSON user with MFA holding
-# ACCOUNTADMIN (or SECURITYADMIN where that is enough), and never from CI.
+# ACCOUNTADMIN, and never from CI.
 #
 # Routine work does NOT come here: trust/deploy/terraform/snowflake is the workload root, applied
 # as FLIP_<CODE>_DEPLOY_USER with key-pair auth. The two roots keep separate state.
@@ -57,7 +57,7 @@ define break_glass_warning
 	@echo "################################################################################"
 	@echo "#  BREAK GLASS: Snowflake PLATFORM tier                                        #"
 	@echo "################################################################################"
-	@echo "#  This root changes the account's SECURITY objects: roles, the deploy user,    #"
+	@echo "#  This root changes the account's SECURITY objects: the deploy role's          #"
 	@echo "#  account grants, the egress integration, account network/password/session     #"
 	@echo "#  policies, the EVENT_TABLE parameter and the resource monitor.                #"
 	@echo "#                                                                               #"

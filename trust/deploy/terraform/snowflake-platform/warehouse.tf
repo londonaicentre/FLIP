@@ -34,11 +34,11 @@ resource "snowflake_warehouse" "trust" {
   statement_timeout_in_seconds        = var.warehouse_statement_timeout_secs
   statement_queued_timeout_in_seconds = var.warehouse_statement_timeout_secs
 
-  resource_monitor = snowflake_resource_monitor.trust.name
+  resource_monitor = one(snowflake_resource_monitor.trust[*].name)
 }
 
 resource "snowflake_grant_privileges_to_account_role" "deploy_warehouse" {
-  account_role_name = snowflake_account_role.deploy.name
+  account_role_name = local.roles.deploy
   privileges        = ["USAGE", "OPERATE", "MONITOR"]
 
   on_account_object {
@@ -49,7 +49,7 @@ resource "snowflake_grant_privileges_to_account_role" "deploy_warehouse" {
 
 # Services and the OMOP loader run queries; the reader role is inherited through SVC.
 resource "snowflake_grant_privileges_to_account_role" "warehouse_usage" {
-  for_each          = toset([snowflake_account_role.svc.name, snowflake_account_role.omop_loader.name])
+  for_each          = toset([local.roles.svc, local.roles.omop_loader])
   account_role_name = each.value
   privileges        = ["USAGE"]
 
@@ -60,7 +60,7 @@ resource "snowflake_grant_privileges_to_account_role" "warehouse_usage" {
 }
 
 resource "snowflake_grant_privileges_to_account_role" "observer_warehouse" {
-  account_role_name = snowflake_account_role.observer.name
+  account_role_name = local.roles.observer
   privileges        = ["MONITOR"]
 
   on_account_object {

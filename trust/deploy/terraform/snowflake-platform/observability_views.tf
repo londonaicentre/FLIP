@@ -27,7 +27,7 @@
 #
 # Only FLIP_<CODE>_OBSERVER can read these. FLIP_<CODE>_SVC, the role every service runs as, has
 # no USAGE on FLIP_PLATFORM at all, so a container cannot read the logs of its neighbours, and
-# OBSERVER is granted only to FLIP_<CODE>_DEPLOY (roles.tf), never into the service hierarchy.
+# OBSERVER is granted only to FLIP_<CODE>_DEPLOY (the identity root), never into the service hierarchy.
 #
 # copy_grants on every view: the provider replaces a view when its statement changes, and without
 # it the grants below would be dropped between the replace and the next apply of the grant.
@@ -169,6 +169,8 @@ resource "snowflake_view" "fl_client_logs" {
 # Cost per compute pool. SPCS is billed per node-second while a pool runs and resource monitors do
 # not cover it, so this is the tile that catches a pool somebody left up.
 resource "snowflake_view" "compute_pool_cost" {
+  count = var.account_admin ? 1 : 0
+
   database    = snowflake_database.platform.name
   schema      = local.platform_schemas.obs
   name        = local.obs_views.compute_pool_cost
@@ -193,6 +195,8 @@ resource "snowflake_view" "compute_pool_cost" {
 # Cost per warehouse. The trust warehouse carries the resource monitor, so this is the tile that
 # says how close the month is to the quota.
 resource "snowflake_view" "warehouse_cost" {
+  count = var.account_admin ? 1 : 0
+
   database    = snowflake_database.platform.name
   schema      = local.platform_schemas.obs
   name        = local.obs_views.warehouse_cost

@@ -19,6 +19,8 @@
 # that the break-glass person users, and any human user the account later grows, inherit it rather
 # than the Snowflake default.
 resource "snowflake_password_policy" "account" {
+  count = var.account_admin ? 1 : 0
+
   database = snowflake_database.platform.name
   schema   = snowflake_schema.platform["policies"].name
   name     = local.password_policy
@@ -38,10 +40,14 @@ resource "snowflake_password_policy" "account" {
 }
 
 resource "snowflake_account_password_policy_attachment" "account" {
-  password_policy = snowflake_password_policy.account.fully_qualified_name
+  count = var.account_admin ? 1 : 0
+
+  password_policy = snowflake_password_policy.account[0].fully_qualified_name
 }
 
 resource "snowflake_session_policy" "account" {
+  count = var.account_admin ? 1 : 0
+
   database = snowflake_database.platform.name
   schema   = snowflake_schema.platform["policies"].name
   name     = local.session_policy
@@ -55,6 +61,8 @@ resource "snowflake_session_policy" "account" {
 # Person users only: a SERVICE user has no interactive session to time out, and the provider
 # refuses both flags at once, so the service-user half is deliberately left unattached.
 resource "snowflake_account_session_policy_attachment" "account" {
-  session_policy_name  = snowflake_session_policy.account.fully_qualified_name
+  count = var.account_admin ? 1 : 0
+
+  session_policy_name  = snowflake_session_policy.account[0].fully_qualified_name
   for_all_person_users = true
 }

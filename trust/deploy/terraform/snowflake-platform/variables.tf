@@ -25,11 +25,22 @@ variable "account_name" {
 variable "platform_role" {
   description = <<-EOT
     The role the break-glass operator assumes. ACCOUNTADMIN is required for the account parameter,
-    the resource monitor and the account policy attachments; SECURITYADMIN is enough for the roles,
-    the deploy user and the role hierarchy, so a site that splits the apply may run the security
-    half under the lesser role. Supplied at apply time so no privileged role name is defaulted here.
+    the resource monitor and the account policy attachments; with account_admin = false a role
+    that owns objects (SYSADMIN) is enough. The roles and the deploy user are not created here but
+    in ../snowflake-identity. Supplied at apply time so no privileged role name is defaulted here.
   EOT
   type        = string
+}
+
+variable "account_admin" {
+  description = <<-EOT
+    Whether platform_role is ACCOUNTADMIN. False leaves out everything only that role can create:
+    the resource monitor, the EVENT_TABLE account parameter, the retention task, the cost views,
+    the account password and session policies, and the deploy role's EXECUTE TASK and BIND SERVICE
+    ENDPOINT. Nothing this root applies then reaches beyond FLIP's own objects.
+  EOT
+  type        = bool
+  default     = true
 }
 
 variable "platform_warehouse" {
@@ -43,7 +54,8 @@ variable "authenticator" {
     How the break-glass identity authenticates. SNOWFLAKE_JWT (the default) is the just-in-time
     operator: a key-pair SERVICE user that holds no role while idle and is granted the platform role
     by an MFA-protected admin in Snowsight only for the length of an apply (README "Break-glass
-    operator"); it works with any MFA method, passkeys included. USERNAMEPASSWORDMFA pairs
+    operator"); it works with any MFA method, passkeys included. PROGRAMMATIC_ACCESS_TOKEN reads a
+    token the user generated in Snowsight from SNOWFLAKE_TOKEN. USERNAMEPASSWORDMFA pairs
     SNOWFLAKE_PASSWORD with the TOTP code in SNOWFLAKE_PASSCODE for an admin enrolled with an
     authenticator app; EXTERNALBROWSER delegates to the account's IdP. Every credential comes from
     the environment: this root accepts none as a variable.
@@ -52,8 +64,8 @@ variable "authenticator" {
   default     = "SNOWFLAKE_JWT"
 
   validation {
-    condition     = contains(["SNOWFLAKE_JWT", "USERNAMEPASSWORDMFA", "EXTERNALBROWSER"], var.authenticator)
-    error_message = "authenticator must be SNOWFLAKE_JWT (just-in-time operator), USERNAMEPASSWORDMFA or EXTERNALBROWSER."
+    condition     = contains(["SNOWFLAKE_JWT", "PROGRAMMATIC_ACCESS_TOKEN", "USERNAMEPASSWORDMFA", "EXTERNALBROWSER"], var.authenticator)
+    error_message = "authenticator must be SNOWFLAKE_JWT (just-in-time operator), PROGRAMMATIC_ACCESS_TOKEN, USERNAMEPASSWORDMFA or EXTERNALBROWSER."
   }
 }
 
@@ -65,22 +77,6 @@ variable "trust_code" {
     condition     = can(regex("^[A-Z][A-Z0-9]{1,15}$", var.trust_code))
     error_message = "trust_code must be 2 to 16 upper-case letters or digits and start with a letter."
   }
-}
-
-variable "deploy_user_public_key" {
-  description = "PEM body (no header, footer or newlines) of the deploy SERVICE user's RSA public key. The private half never reaches Terraform."
-  type        = string
-
-  validation {
-    condition     = can(regex("^[A-Za-z0-9+/=]{300,}$", var.deploy_user_public_key))
-    error_message = "deploy_user_public_key must be the base64 body of an RSA public key, without the PEM header and footer."
-  }
-}
-
-variable "deploy_statement_timeout_secs" {
-  description = "STATEMENT_TIMEOUT_IN_SECONDS on the deploy SERVICE user: a deploy session cannot sit on a warehouse indefinitely."
-  type        = number
-  default     = 300
 }
 
 variable "enable_hub_egress" {

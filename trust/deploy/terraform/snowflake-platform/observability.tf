@@ -52,6 +52,8 @@ resource "snowflake_execute" "event_table_time_travel" {
 # logExporters.eventTableConfig.logLevel, and the workload root's static guards refuse DEBUG and
 # TRACE there (trust/deploy/terraform/snowflake/variables.tf, service_log_level).
 resource "snowflake_account_parameter" "event_table" {
+  count = var.account_admin ? 1 : 0
+
   key   = "EVENT_TABLE"
   value = local.event_table_fqn
 
@@ -62,6 +64,8 @@ resource "snowflake_account_parameter" "event_table" {
 # a DELETE. This task is that DELETE, daily, owned by the platform tier so the deploy key cannot
 # lengthen the window or switch it off.
 resource "snowflake_task" "prune_events" {
+  count = var.account_admin ? 1 : 0
+
   database  = snowflake_database.platform.name
   schema    = local.platform_schemas.obs
   name      = local.prune_task

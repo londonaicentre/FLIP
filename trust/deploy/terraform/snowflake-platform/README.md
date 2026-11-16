@@ -16,9 +16,6 @@
 **Read this before running anything here.** This is the break-glass root. It creates the Snowflake
 account's security objects and nothing else:
 
-- the six `FLIP_<CODE>_*` roles and the role hierarchy (`DEPLOY`, `SVC`, `OMOP_READER`,
-  `OMOP_LOADER`, `OBSERVER`, `CONVERTER`), nothing granted to `PUBLIC`;
-- the deploy `SERVICE` user, public key only;
 - the **only** account-level grant in the whole design: four privileges to `FLIP_<CODE>_DEPLOY`;
 - the egress network rule and the external access integration (off by default);
 - the account network, password and session policies;
@@ -28,20 +25,28 @@ account's security objects and nothing else:
 It is applied **rarely**, by a **person** user with **MFA** holding `ACCOUNTADMIN` (or
 `SECURITYADMIN` where that is enough), and **never from CI**. Routine work belongs in
 [`../snowflake`](../snowflake/README.md), the workload root, applied as `FLIP_<CODE>_DEPLOY_USER`
-with key-pair auth. The two roots keep **separate state**: that is the point of the split. A
-routine apply cannot touch a role, a user, an account grant or an account policy, because none of
-those objects is in its state file.
+with key-pair auth.
 
-## The two tiers
+The six `FLIP_<CODE>_*` roles and the deploy `SERVICE` user are **not** created here. They come
+first, from [`../snowflake-identity`](../snowflake-identity/README.md), applied by whoever
+administers users in the account. This root only names them. The three roots keep **separate
+state**: that is the point of the split. A routine apply cannot touch a role, a user, an account
+grant or an account policy, because none of those objects is in its state file.
 
-| | Platform (here) | Workload (`../snowflake`) |
-| --- | --- | --- |
-| Identity | person user, MFA | `FLIP_<CODE>_DEPLOY_USER` (`TYPE = SERVICE`, key pair) |
-| Role | `ACCOUNTADMIN` / `SECURITYADMIN` | `FLIP_<CODE>_DEPLOY` |
-| Frequency | rarely, by hand | every deploy |
-| Creates | roles, deploy user, account grants, EAI, account policies, event table, resource monitor, the trust warehouse (monitor attached) | database, schemas, compute pools, image repository, stages, nightly task, grants on those objects |
-| State | `terraform-platform.<env>.tfstate` | `terraform.<env>.tfstate` |
-| In CI | static checks only | static checks only |
+## The three tiers
+
+| | Identity (`../snowflake-identity`) | Platform (here) | Workload (`../snowflake`) |
+| --- | --- | --- | --- |
+| Applied by | the account's user administrator | person user, MFA | `FLIP_<CODE>_DEPLOY_USER` (`TYPE = SERVICE`, key pair) |
+| Role | `USERADMIN` (or `ACCOUNTADMIN`) | `ACCOUNTADMIN`, or the role that owns objects (`SYSADMIN`) | `FLIP_<CODE>_DEPLOY` |
+| Frequency | once | rarely, by hand | every deploy |
+| Creates | the six roles, their hierarchy, the deploy user | account grants, EAI, account policies, event table, resource monitor, the trust warehouse (monitor attached) | database, schemas, compute pools, image repository, stages, nightly task, grants on those objects |
+| State | `terraform-identity.<env>.tfstate` | `terraform-platform.<env>.tfstate` | `terraform.<env>.tfstate` |
+| In CI | static checks only | static checks only | static checks only |
+
+Each tier is one role and so one session. That is why the identities are a root of their own: a
+site that keeps user administration and object ownership in different roles cannot apply both in
+one session, and a one-time passcode is accepted once.
 
 The **account privileges** `FLIP_<CODE>_DEPLOY` holds are exactly:
 
@@ -58,8 +63,8 @@ own. Both roots' pytest guards fail if that list ever grows.
 
 The workload role **owns** every object it creates, and an owner may grant privileges on its own
 objects **without** `MANAGE GRANTS`. What an owner cannot do is name a role it does not hold. So
-this root grants `SVC`, `OMOP_READER`, `OMOP_LOADER`, `OBSERVER` and `CONVERTER` **to** `FLIP_<CODE>_DEPLOY`
-once (`roles.tf`), and from then on a routine apply can say "grant `SELECT` on this table to
+the identity root grants `SVC`, `OMOP_READER`, `OMOP_LOADER`, `OBSERVER` and `CONVERTER` **to**
+`FLIP_<CODE>_DEPLOY` once (`../snowflake-identity/roles.tf`), and from then on a routine apply can say "grant `SELECT` on this table to
 `FLIP_<CODE>_OMOP_READER`" entirely within its own privileges. Ownership stays with the deploy
 role throughout.
 
@@ -79,8 +84,8 @@ With `trust_code = GSTT`:
 
 | Object | Name |
 | ------ | ---- |
-| Roles | `FLIP_GSTT_DEPLOY`, `FLIP_GSTT_SVC`, `FLIP_GSTT_OMOP_READER`, `FLIP_GSTT_OMOP_LOADER`, `FLIP_GSTT_OBSERVER`, `FLIP_GSTT_CONVERTER` |
-| Deploy user | `FLIP_GSTT_DEPLOY_USER` (`TYPE = SERVICE`, key pair) |
+| Roles (identity root) | `FLIP_GSTT_DEPLOY`, `FLIP_GSTT_SVC`, `FLIP_GSTT_OMOP_READER`, `FLIP_GSTT_OMOP_LOADER`, `FLIP_GSTT_OBSERVER`, `FLIP_GSTT_CONVERTER` |
+| Deploy user (identity root) | `FLIP_GSTT_DEPLOY_USER` (`TYPE = SERVICE`, key pair) |
 | Egress integration | `FLIP_GSTT_HUB_EAI` (optional, off by default) |
 | Account policies | `FLIP_GSTT_ADMIN_NP`, `FLIP_GSTT_PASSWORD_POLICY`, `FLIP_GSTT_SESSION_POLICY` |
 | Resource monitor | `FLIP_GSTT_RM` |
@@ -201,7 +206,10 @@ export SNOWFLAKE_PASSCODE=...             # the current TOTP code
 ```
 
 `authenticator = "USERNAMEPASSWORDMFA"` pairs the password with that passcode, for an admin
-enrolled with an authenticator app. `authenticator = "EXTERNALBROWSER"` delegates to the account's
+enrolled with an authenticator app. `authenticator = "PROGRAMMATIC_ACCESS_TOKEN"` reads a token from
+`SNOWFLAKE_TOKEN`: the user generates it in Snowsight (profile, Settings, Authentication,
+Programmatic access tokens), restricted to the one role the root is applied as and with a short
+expiry. It needs no code, so it suits a person whose only second factor is a passkey. `authenticator = "EXTERNALBROWSER"` delegates to the account's
 IdP and needs no password in the environment at all; use it wherever the account is federated.
 
 `platform_role` has **no default**: the operator names it in their gitignored tfvars file, so no
@@ -217,6 +225,7 @@ you back in if the only admin's authenticator is lost, and this root cannot help
 ## Usage
 
 ```bash
+make -C trust/deploy/terraform/snowflake-identity plan apply   # once: the roles and the deploy user
 cd trust/deploy/terraform/snowflake-platform
 cp terraform.tfvars.example terraform.development.tfvars   # gitignored; fill it in
 make plan
@@ -233,6 +242,31 @@ time. No target skips a prompt.
 State and backend work exactly as in the workload root (partial backend configuration, local state
 plus OpenTofu state encryption on the test account, a site-chosen remote backend in production),
 but the state **file name differs** so the two roots can never share one.
+
+## Applying without ACCOUNTADMIN
+
+A site that already runs other things in its Snowflake account may not hand out `ACCOUNTADMIN`,
+and should not have account-wide settings changed by a FLIP install. Apply the identity root as
+the role that administers users (`identity_role = "USERADMIN"`), then this one with:
+
+```hcl
+platform_role = "SYSADMIN"    # owns the warehouse, FLIP_PLATFORM and the egress integration
+account_admin = false
+```
+
+`platform_role` needs `CREATE DATABASE` and `CREATE COMPUTE
+POOL` with the grant option and `CREATE WAREHOUSE` (`SYSADMIN` has all three by default) and, for
+`enable_hub_egress`, `CREATE INTEGRATION`, which an account admin grants once.
+
+With `account_admin = false` the root leaves out what only `ACCOUNTADMIN` can create:
+
+| Left out | Consequence |
+| -------- | ----------- |
+| Resource monitor | The warehouse has no credit cap; it still auto-suspends |
+| `EVENT_TABLE` account parameter, retention task | The account keeps its own event table, so the views over `FLIP_EVENTS` stay empty |
+| Cost views | They read `SNOWFLAKE.ACCOUNT_USAGE`, which `platform_role` cannot |
+| Account password and session policies | The site's own policies apply |
+| `EXECUTE TASK`, `BIND SERVICE ENDPOINT` for the deploy role | Set `nightly_pool_suspend = false` in the workload root; no endpoint in the specs is public |
 
 ## Migrating an account bootstrapped with FLIP_<CODE>_ADMIN
 
@@ -278,6 +312,18 @@ Then apply this root (it adopts or creates the roles, the user and the account g
 re-apply the workload root. Expect the workload plan to show grant churn and nothing destructive;
 read it before typing `yes`. If the old state file mixed both tiers, split it with
 `tofu state rm` for the moved resources rather than letting the workload root destroy them.
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+| ------- | ----- | --- |
+| `390197: Multi-factor authentication is required for this account` on `make plan` | A person user signing in with a password must be enrolled in MFA, and the provider cannot enrol it | Enrol in Snowsight (profile, Settings, Authentication), then `export SNOWFLAKE_PASSCODE=<current code>` with `authenticator = "USERNAMEPASSWORDMFA"`. Or have the user's owner set a key (`ALTER USER <you> SET RSA_PUBLIC_KEY = '...'`) and use `SNOWFLAKE_JWT`: a user cannot set its own key, and `USERADMIN` can only do it for users it owns |
+| MFA is enrolled with a passkey only | A passkey needs a browser, which the provider does not have | Use a programmatic access token (`PROGRAMMATIC_ACCESS_TOKEN`), add an authenticator app as a second method, or use a key pair |
+| `390432: Network policy is required` with `PROGRAMMATIC_ACCESS_TOKEN` | Snowflake accepts a token only from a user covered by a network policy | An account admin attaches one to the user (`ALTER USER <you> SET NETWORK_POLICY = ...`), or sign in another way |
+| `390190` (SAML) with `authenticator = "EXTERNALBROWSER"` | The account is not federated to an identity provider, which is the case on a trial | Use `SNOWFLAKE_JWT` or `USERNAMEPASSWORDMFA` |
+| `JWT token is invalid` | The public key on the user is not the pair of the private key in `SNOWFLAKE_PRIVATE_KEY` | `DESCRIBE USER <user>` and compare `RSA_PUBLIC_KEY_FP` with the key's fingerprint |
+| `read: -p: no coprocess` | `read -rsp` is bash; zsh (the macOS default) reads `-p` differently | `read -rs 'SNOWFLAKE_PRIVATE_KEY_PASSPHRASE?Passphrase: '` |
+| `Role 'FLIP_<CODE>_DEPLOY' does not exist or not authorized` | The identity root has not been applied to this account | `make -C ../snowflake-identity plan apply` first |
 
 ## CI
 

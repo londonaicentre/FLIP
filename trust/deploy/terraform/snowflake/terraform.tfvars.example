@@ -16,7 +16,7 @@ organization_name = "MYORG"
 account_name      = "MYACCOUNT"
 
 # The workload root is always applied as the deploy role. The deploy user, the role and the four
-# account privileges it holds are created by ../snowflake-platform.
+# account privileges it holds are created by ../snowflake-identity and ../snowflake-platform.
 terraform_role      = "FLIP_GSTT_DEPLOY"
 # terraform_warehouse: leave unset; the provider needs no warehouse and FLIP_<CODE>_WH is created by this root
 
@@ -26,6 +26,8 @@ trust_code = "GSTT"
 pool_auto_suspend_secs           = 600
 suspend_pools_cron               = "0 22 * * *"
 suspend_pools_timezone           = "Europe/London"
+# False when the platform root ran with account_admin = false (no EXECUTE TASK on the account).
+# nightly_pool_suspend = false
 
 # Off on a trial account: no GPU quota, and trials exclude external network access.
 enable_gpu_pool = false

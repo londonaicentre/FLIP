@@ -27,11 +27,12 @@ four account privileges and nothing more:
 CREATE DATABASE, CREATE COMPUTE POOL, BIND SERVICE ENDPOINT, EXECUTE TASK
 ```
 
-Everything else about the account, the roles themselves, the deploy user, that account grant, the
-egress integration, the account network/password/session policies, the event table and the
+The roles themselves and the deploy user come from
+[`../snowflake-identity`](../snowflake-identity/README.md). Everything else about the account, that
+account grant, the egress integration, the account network/password/session policies, the event table and the
 `EVENT_TABLE` parameter, and the resource monitor, lives in the break-glass root next door,
 [`../snowflake-platform`](../snowflake-platform/README.md), applied rarely by a **person** user
-with **MFA**. The two roots keep **separate state**, so a routine apply cannot reach an account
+with **MFA**. The three roots keep **separate state**, so a routine apply cannot reach an account
 security object even by mistake, and the pytest guards in `tests/` fail this root if a role, a
 user, an integration, an account policy, an account parameter or an `on_account` grant ever
 appears in it.

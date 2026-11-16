@@ -32,8 +32,6 @@ ROOT_FILES = (
     "providers.tf",
     "variables.tf",
     "locals.tf",
-    "roles.tf",
-    "user.tf",
     "platform_database.tf",
     "network.tf",
     "policies.tf",
@@ -94,6 +92,23 @@ def test_the_six_roles_exist(role):
     assert f'"${{local.prefix}}_{role}"' in source("locals.tf"), role
 
 
+def test_identities_belong_to_the_identity_root():
+    """Roles and users are created by ../snowflake-identity, as a role that may create them. This
+    root only names them, so it needs neither CREATE ROLE nor CREATE USER."""
+    for resource_type in ("snowflake_account_role", "snowflake_grant_account_role", "snowflake_service_user"):
+        assert not resource_blocks(all_terraform(), resource_type), resource_type
+    assert source("locals.tf").count("roles = {") == 1
+    identity_locals = (ROOT_DIR.parent / "snowflake-identity" / "locals.tf").read_text()
+    for role in ROLES:
+        assert f'"${{local.prefix}}_{role}"' in identity_locals, f"{role}: the two roots must derive the same name"
+
+
+def test_only_the_observer_can_read_the_event_table():
+    """The event table holds every service's logs, so a running service must not read it."""
+    event_table_grants = re.findall(r"GRANT SELECT ON EVENT TABLE \S+ TO ROLE \$\{([^}]+)\}", all_terraform())
+    assert event_table_grants == ["local.roles.observer"]
+
+
 def test_the_admin_role_is_retired():
     text = all_terraform()
     assert '_ADMIN"' not in text.replace("_ADMIN_NP", ""), (
@@ -116,23 +131,48 @@ def test_the_account_grant_uses_that_list_and_nothing_else():
         if "on_account        = true" in block or "on_account = true" in block
     ]
     assert len(blocks) == 1, "exactly one account-level grant, to the workload role"
-    assert "privileges        = local.deploy_account_privileges" in blocks[0]
-    assert "account_role_name = snowflake_account_role.deploy.name" in blocks[0]
+    assert "privileges        = local.deploy_account_grant" in blocks[0]
+    assert "account_role_name = local.roles.deploy" in blocks[0]
+
+
+def test_without_accountadmin_the_workload_role_gets_a_subset():
+    """A role other than ACCOUNTADMIN passes on only what it holds with the grant option."""
+    reduced = re.search(
+        r"deploy_account_grant = var\.account_admin \? local\.deploy_account_privileges : \[(.*?)\]",
+        source("locals.tf"),
+    )
+    assert reduced, "locals.tf must derive the granted list from account_admin"
+    assert set(re.findall(r'"([^"]+)"', reduced.group(1))) < set(ALLOWED_ACCOUNT_PRIVILEGES)
+
+
+ACCOUNT_ADMIN_ONLY = (
+    ("cost.tf", "snowflake_resource_monitor", "trust"),
+    ("observability.tf", "snowflake_account_parameter", "event_table"),
+    ("observability.tf", "snowflake_task", "prune_events"),
+    ("observability_views.tf", "snowflake_view", "compute_pool_cost"),
+    ("observability_views.tf", "snowflake_view", "warehouse_cost"),
+    ("policies.tf", "snowflake_password_policy", "account"),
+    ("policies.tf", "snowflake_account_password_policy_attachment", "account"),
+    ("policies.tf", "snowflake_session_policy", "account"),
+    ("policies.tf", "snowflake_account_session_policy_attachment", "account"),
+)
+
+
+@pytest.mark.parametrize(("file", "resource_type", "name"), ACCOUNT_ADMIN_ONLY)
+def test_what_only_accountadmin_can_create_is_left_out_without_it(file, resource_type, name):
+    """With account_admin = false the root must apply as a lesser role and touch nothing account-wide."""
+    block = hcl_block(source(file), f'resource "{resource_type}" "{name}"')
+    assert "count = var.account_admin ? 1 : 0" in block, f"{resource_type}.{name}"
+
+
+def test_account_admin_defaults_to_the_break_glass_tier():
+    assert re.search(r"default\s+= true", hcl_block(source("variables.tf"), 'variable "account_admin"'))
 
 
 @pytest.mark.parametrize("privilege", FORBIDDEN_ACCOUNT_PRIVILEGES)
 def test_no_forbidden_account_privilege_is_granted(privilege):
     for path in TF_FILES:
         assert f'"{privilege}"' not in path.read_text(), f"{path.name} grants {privilege}"
-
-
-def test_the_consumer_roles_are_granted_to_the_deploy_role():
-    """So the workload root can grant on its own objects without MANAGE GRANTS."""
-    block = hcl_block(source("roles.tf"), 'resource "snowflake_grant_account_role" "to_deploy"')
-    assert block, "the platform tier must hand the consumer roles to the deploy role"
-    for role in ("svc", "omop_reader", "omop_loader", "observer", "converter"):
-        assert re.search(rf"{role}\s+= snowflake_account_role.{role}.name", block), role
-    assert "parent_role_name = snowflake_account_role.deploy.name" in block
 
 
 # --- grants ---------------------------------------------------------------------------------------
@@ -180,13 +220,6 @@ def test_no_credential_is_a_terraform_variable(field):
         assert not re.search(rf'variable "[a-z_]*{field}[a-z_]*"', path.read_text()), (
             f"{path.name}: {field} must come from the environment, never from a variable"
         )
-
-
-def test_the_deploy_identity_is_a_service_user_with_a_public_key():
-    block = hcl_block(source("user.tf"), 'resource "snowflake_service_user" "deploy"')
-    assert block, "the deploy identity must be a SERVICE user"
-    assert "rsa_public_key = var.deploy_user_public_key" in block
-    assert not re.search(r"^\s*password\s*=", block, re.M)
 
 
 def test_no_person_user_is_managed_here():
@@ -288,28 +321,6 @@ def test_the_observer_role_can_read_the_event_table():
     assert "REVOKE SELECT ON EVENT TABLE" in block
 
 
-def test_only_the_observer_and_deploy_roles_can_read_the_logs():
-    """The event table holds every service's logs, so a running service must not read it.
-
-    SPCS services run as FLIP_<CODE>_SVC, which may inherit OMOP_READER and nothing else. OBSERVER,
-    which holds SELECT on the event table, is granted to the deploy role only (so an operator
-    deploying can read logs, as the first live spike did) and never into the service hierarchy.
-    """
-    grants = resource_blocks(all_terraform(), "snowflake_grant_account_role")
-    into_svc = [b for b in grants if "parent_role_name = snowflake_account_role.svc.name" in b]
-    assert len(into_svc) == 1, "SVC must inherit exactly one role"
-    assert "role_name        = snowflake_account_role.omop_reader.name" in into_svc[0]
-
-    for block in grants:
-        if "snowflake_account_role.observer.name" in block and "for_each" not in block:
-            assert "parent_role_name = snowflake_account_role.deploy.name" in block, block
-    for block in grants:
-        if "snowflake_account_role.converter.name" in block and "for_each" not in block:
-            raise AssertionError("CONVERTER (CREATE SERVICE) is reachable only through the deploy role")
-    event_table_grants = re.findall(r"GRANT SELECT ON EVENT TABLE \S+ TO ROLE \$\{([^}]+)\}", all_terraform())
-    assert event_table_grants == ["snowflake_account_role.observer.name"]
-
-
 def test_a_resource_monitor_caps_warehouse_credits():
     block = hcl_block(source("cost.tf"), 'resource "snowflake_resource_monitor" "trust"')
     assert "credit_quota = var.credit_quota" in block
@@ -320,7 +331,7 @@ def test_the_warehouse_is_platform_owned_with_the_monitor_attached():
     """Assigning a resource monitor needs ACCOUNTADMIN, so the warehouse lives here. The deploy role
     may use and operate it but not MODIFY or own it, so the deploy key cannot detach the monitor."""
     block = hcl_block(source("warehouse.tf"), 'resource "snowflake_warehouse" "trust"')
-    assert "resource_monitor = snowflake_resource_monitor.trust.name" in block
+    assert "resource_monitor = one(snowflake_resource_monitor.trust[*].name)" in block
     header = 'resource "snowflake_grant_privileges_to_account_role" "deploy_warehouse"'
     grant = hcl_block(source("warehouse.tf"), header)
     assert 'privileges        = ["USAGE", "OPERATE", "MONITOR"]' in grant
@@ -504,14 +515,12 @@ def test_only_the_observer_can_select_the_obs_views():
     for name in ("observer_obs_views", "observer_future_obs_views"):
         block = hcl_block(source("grants.tf"), f'resource "snowflake_grant_privileges_to_account_role" "{name}"')
         assert block, name
-        assert "account_role_name = snowflake_account_role.observer.name" in block, name
+        assert "account_role_name = local.roles.observer" in block, name
         assert 'privileges        = ["SELECT"]' in block, name
         assert 'object_type_plural = "VIEWS"' in block, name
     grants = resource_blocks(all_terraform(), "snowflake_grant_privileges_to_account_role")
     for block in [b for b in grants if '"SELECT"' in b]:
-        assert "snowflake_account_role.observer.name" in block, (
-            f"only the observer may SELECT in the platform tier:\n{block}"
-        )
+        assert "local.roles.observer" in block, f"only the observer may SELECT in the platform tier:\n{block}"
 
 
 def test_the_service_role_cannot_reach_the_platform_database():
@@ -519,7 +528,7 @@ def test_the_service_role_cannot_reach_the_platform_database():
     views are out of reach whatever is granted inside the schema."""
     for block in resource_blocks(all_terraform(), "snowflake_grant_privileges_to_account_role"):
         if "snowflake_database.platform.name" in block:
-            assert "snowflake_account_role.svc.name" not in block, block
+            assert "local.roles.svc" not in block, block
 
 
 # --- retention ------------------------------------------------------------------------------------

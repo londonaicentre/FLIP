@@ -20,14 +20,9 @@ output "role_names" {
   value       = local.roles
 }
 
-output "deploy_user_name" {
-  description = "The deploy SERVICE user. Its private key lives outside Terraform."
-  value       = snowflake_service_user.deploy.name
-}
-
 output "deploy_account_privileges" {
   description = "The account privileges the workload role holds, and the complete list of them."
-  value       = local.deploy_account_privileges
+  value       = local.deploy_account_grant
 }
 
 output "external_access_integration_name" {
@@ -53,14 +48,14 @@ output "observability_view_names" {
     service_restarts  = snowflake_view.service_restarts.fully_qualified_name
     recent_errors     = snowflake_view.recent_errors.fully_qualified_name
     fl_client_logs    = snowflake_view.fl_client_logs.fully_qualified_name
-    compute_pool_cost = snowflake_view.compute_pool_cost.fully_qualified_name
-    warehouse_cost    = snowflake_view.warehouse_cost.fully_qualified_name
+    compute_pool_cost = one(snowflake_view.compute_pool_cost[*].fully_qualified_name)
+    warehouse_cost    = one(snowflake_view.warehouse_cost[*].fully_qualified_name)
   }
 }
 
 output "observer_role_name" {
   description = "The role the observability views and the Snowsight dashboard are granted to (#1584)."
-  value       = snowflake_account_role.observer.name
+  value       = local.roles.observer
 }
 
 output "platform_database_name" {
@@ -70,7 +65,7 @@ output "platform_database_name" {
 
 output "resource_monitor_name" {
   description = "The resource monitor the workload root attaches to its warehouse."
-  value       = snowflake_resource_monitor.trust.name
+  value       = one(snowflake_resource_monitor.trust[*].name)
 }
 
 output "warehouse_name" {

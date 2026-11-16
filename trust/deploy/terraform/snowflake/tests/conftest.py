@@ -16,6 +16,7 @@ from pathlib import Path
 
 SNOWFLAKE_DIR = Path(__file__).resolve().parent.parent
 PLATFORM_DIR = SNOWFLAKE_DIR.parent / "snowflake-platform"
+IDENTITY_DIR = SNOWFLAKE_DIR.parent / "snowflake-identity"
 TF_FILES = sorted(p for p in SNOWFLAKE_DIR.glob("*.tf"))
 
 
