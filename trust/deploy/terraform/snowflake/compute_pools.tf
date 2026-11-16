@@ -29,3 +29,12 @@ resource "snowflake_compute_pool" "trust" {
 
   comment = "FLIP ${local.code}: ${each.key}."
 }
+
+# What forces a pool to be replaced: its instance family. The grants on a pool are replaced with
+# this, and not with the pool itself, because the provider also updates a pool in place for
+# reasons of its own, and a grant re-made on every such update would churn on every apply.
+resource "terraform_data" "pool_generation" {
+  for_each = local.pools
+
+  input = each.value
+}

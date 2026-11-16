@@ -84,7 +84,7 @@ resource "snowflake_grant_privileges_to_account_role" "svc_pools" {
   # Replacing a pool drops the grants on it, and the name is unchanged, so without this the
   # plan shows nothing and the next apply has to put them back.
   lifecycle {
-    replace_triggered_by = [snowflake_compute_pool.trust[each.key]]
+    replace_triggered_by = [terraform_data.pool_generation[each.key]]
   }
 }
 
@@ -185,7 +185,7 @@ resource "snowflake_grant_privileges_to_account_role" "fl_pools" {
   # Replacing a pool drops the grants on it, and the name is unchanged, so without this the
   # plan shows nothing and the next apply has to put them back.
   lifecycle {
-    replace_triggered_by = [snowflake_compute_pool.trust[each.key]]
+    replace_triggered_by = [terraform_data.pool_generation[each.key]]
   }
 }
 
@@ -323,7 +323,7 @@ resource "snowflake_grant_privileges_to_account_role" "observer_pools" {
   # Replacing a pool drops the grants on it, and the name is unchanged, so without this the
   # plan shows nothing and the next apply has to put them back.
   lifecycle {
-    replace_triggered_by = [snowflake_compute_pool.trust[each.key]]
+    replace_triggered_by = [terraform_data.pool_generation[each.key]]
   }
 }
 
