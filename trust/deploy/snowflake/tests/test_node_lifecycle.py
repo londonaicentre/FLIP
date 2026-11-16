@@ -163,3 +163,19 @@ def test_the_fl_role_reads_only_the_secret_its_spec_maps() -> None:
     sql = sync_snowflake_kit._object_statements(Names("GSTT"), dict.fromkeys(SECRETS, "'x'"))
     to_fl = [s for s in sql if s.endswith("TO ROLE FLIP_GSTT_FL;")]
     assert to_fl == ["GRANT READ ON SECRET FLIP_TRUST_GSTT.APP.TRUST_INTERNAL_SERVICE_KEY TO ROLE FLIP_GSTT_FL;"]
+
+
+@pytest.mark.parametrize("runner", ["run_up", "run_job"])
+def test_a_grant_that_fails_half_way_is_still_revoked(rendered: Path, manifest: dict, runner: str) -> None:
+    """Two roles are granted CREATE SERVICE. If the second grant fails, the first must not stay."""
+    batches: list[list[str]] = []
+
+    def run(statements: list[str]) -> None:
+        batches.append(statements)
+        if statements == spcs_sql.sql_grant_create_service(manifest):
+            raise RuntimeError("role FLIP_GSTT_FL does not exist")
+
+    args = (rendered, manifest, run) if runner == "run_up" else (rendered, manifest, "selftest", run)
+    with pytest.raises(RuntimeError):
+        getattr(spcs_sql, runner)(*args)
+    assert batches[-1] == spcs_sql.sql_revoke_create_service(manifest)

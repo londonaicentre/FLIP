@@ -380,8 +380,9 @@ def run_up(
     a broken spec fails before anything is granted.
     """
     statements = sql_up(directory, manifest, existing, misowned)
-    run(sql_grant_create_service(manifest))
     try:
+        # Inside the try: if the second role's grant fails, the first is still revoked.
+        run(sql_grant_create_service(manifest))
         run(statements)
     finally:
         run(sql_revoke_create_service(manifest))
@@ -395,8 +396,8 @@ def run_job(directory: Path, manifest: dict[str, Any], name: str, run: Callable[
     researcher code with that role's token.
     """
     statements = sql_run_job(directory, manifest, name)
-    run(sql_grant_create_service(manifest))
     try:
+        run(sql_grant_create_service(manifest))
         run(statements)
     finally:
         run(sql_revoke_create_service(manifest))

@@ -112,8 +112,12 @@ resource "snowflake_grant_privileges_to_account_role" "svc_future_secrets" {
 # that owns its service. So this role holds only what the client mounts: the images tree to read
 # and write, the FL kit to read, and the image repository and pools a service needs to start. No
 # OMOP, no snapshot or governance stage, no warehouse, and no secret but the trust-internal key
-# (granted by `make sync-kit`). Stage grants are per stage, not per prefix: the mount is sliced to
-# the client's own net, but through SQL this role can still list the other nets' file names.
+# (granted by `make sync-kit`).
+#
+# Known limit: a stage grant covers the whole stage, while the mount is sliced to the client's own
+# net. With no warehouse the role cannot SELECT from staged files, and a container has no route to
+# the stage's storage for a GET, so what is left through SQL is LIST: the file names of the other
+# nets. A trust running more than one FL net needs a stage and a role per net to close that.
 resource "snowflake_grant_privileges_to_account_role" "fl_database" {
   account_role_name = local.roles.fl
   privileges        = ["USAGE"]
