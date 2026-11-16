@@ -36,7 +36,16 @@ EXPECTED_SERVICES = {
     "xnat-db",
     "orthanc",
     "dcm2niix",
+    # One-shot job services (FLIP#1583).
+    "xnat-configure",
+    "seed-orthanc",
+    "smoke-cstore",
+    "reconvert",
 }
+
+#: The job services, and what each one is. A job is never "up": `make up` only stages its
+#: specification, and an operator (or imaging-api, for dcm2niix) executes it on demand.
+JOB_SERVICES = {"dcm2niix", "xnat-configure", "seed-orthanc", "smoke-cstore", "reconvert"}
 
 #: The contract's least-privilege secret map, as SECRET OBJECT NAMES per service.
 EXPECTED_SECRETS = {
@@ -48,6 +57,10 @@ EXPECTED_SECRETS = {
     "xnat-db": {"XNAT_DB_ADMIN_PASSWORD", "XNAT_DB_PASSWORD"},
     "orthanc": {"ORTHANC_REGISTERED_USERS"},
     "dcm2niix": set(),
+    "xnat-configure": {"XNAT_ADMIN_PASSWORD", "XNAT_SERVICE_PASSWORD"},
+    "seed-orthanc": {"ORTHANC_PASSWORD"},
+    "smoke-cstore": {"ORTHANC_PASSWORD", "XNAT_SERVICE_PASSWORD"},
+    "reconvert": {"TRUST_INTERNAL_SERVICE_KEY", "AES_KEY_BASE64", "XNAT_SERVICE_PASSWORD"},
 }
 
 
@@ -287,6 +300,157 @@ def test_multiple_fl_nets_each_get_their_own_prefix(kit: dict, tmp_path: Path) -
                 assert volume["stageConfig"]["name"].endswith(f"/net-{net}")
 
 
+#
+# The job services that put a Snowflake trust into a working state (FLIP#1583).
+#
+# xnat-configure, seed-orthanc, smoke-cstore and reconvert are the SPCS twins of the
+# Compose / Helm targets of the same names. The guards below pin the properties that are
+# not visible from reading one spec: that they stay jobs, that their scripts reach the
+# container at all, and that the two which only read are mounted read-only.
+#
+
+
+def test_job_services_are_jobs_and_expose_nothing(manifest: dict, specs: dict) -> None:
+    """A job is executed on demand; a job with an endpoint would be a service by accident.
+
+    ``make up`` walks the manifest and skips `kind: job`, so a job that drifted to
+    `kind: service` would be created as a permanently running container on the pool, which
+    is both a bill and (for smoke-cstore) a C-STORE in a loop.
+    """
+    kinds = {service["name"]: service["kind"] for service in manifest["services"]}
+    for name in JOB_SERVICES:
+        assert kinds[name] == "job", f"{name} must stay a job service"
+        assert not specs[name]["spec"].get("endpoints"), f"{name} must expose no endpoint"
+        assert specs[name]["spec"]["containers"][0]["name"] == name
+
+
+def test_job_services_run_on_the_job_pool(manifest: dict) -> None:
+    """Never the service pool: a long conversion there would starve the running services."""
+    job_pool = manifest["pools"]["job"]
+    for service in manifest["services"]:
+        if service["name"] in JOB_SERVICES:
+            assert service["pool"] == job_pool, f"{service['name']} is not on the job pool"
+
+
+@pytest.mark.parametrize(
+    ("service", "marker"),
+    [
+        ("xnat-configure", "bash configure-xnat.sh"),
+        ("seed-orthanc", "ORTHANC_URL}/instances"),
+        ("smoke-cstore", "/modalities/${XNAT_MODALITY}/store"),
+        ("reconvert", "imaging_api.scripts.reconvert_nifti"),
+    ],
+)
+def test_job_scripts_are_inlined_into_the_spec(specs: dict, service: str, marker: str) -> None:
+    """The script travels in the spec, because a job service can fetch nothing.
+
+    There is no image of our own for these and no stage to read a script from at start-up,
+    so a spec whose args lost the script would produce a container that exits 0 having
+    done nothing, which reads as a pass.
+    """
+    container = containers(specs[service])[0]
+    assert container["command"] == ["/bin/bash"]
+    assert container["args"][0] == "-c"
+    assert len(container["args"]) == 2
+    assert marker in container["args"][1]
+
+
+def test_xnat_configure_does_not_register_the_container_service(specs: dict) -> None:
+    """configure-dcm2niix.sh must not run here: there is no Container Service on SPCS.
+
+    Registering the command would give XNAT a converter it can never launch (no Docker
+    socket, no swarm, no Kubernetes backend), so every trigger would fire into a failure
+    instead of leaving conversion to the dcm2niix job service (FLIP#1578).
+    """
+    script = containers(specs["xnat-configure"])[0]["args"][-1]
+    assert "configure-dcm2niix.sh" in script, "say out loud why it is not run"
+    assert "bash configure-dcm2niix.sh" not in script
+    assert specs["xnat-web"]["spec"]["containers"][0]["env"]["XNAT_CONTAINER_SERVICE_ENABLED"] == "false"
+
+
+@pytest.mark.parametrize(
+    ("service", "volume"),
+    [("seed-orthanc", "seed"), ("smoke-cstore", "xnat-archive"), ("reconvert", "xnat-archive")],
+)
+def test_read_only_intent_is_recorded_for_the_reading_jobs(manifest: dict, service: str, volume: str) -> None:
+    """SPCS has no readOnly flag on a volume, so the intent is recorded and granted.
+
+    smoke-cstore matters most: a smoke test able to write the archive could manufacture
+    the very evidence it then reports as a pass.
+    """
+    entry = next(item for item in manifest["services"] if item["name"] == service)
+    assert volume in entry["read_only_volumes"]
+
+
+def test_seed_orthanc_reads_the_seed_stage_only(specs: dict) -> None:
+    """Seeding has no egress on Snowflake: the corpus arrives on @STAGES.SEED."""
+    spec = specs["seed-orthanc"]["spec"]
+    assert [volume["stageConfig"]["name"] for volume in spec["volumes"]] == ["@FLIP_TRUST_GSTT.STAGES.SEED"]
+    script = containers(specs["seed-orthanc"])[0]["args"][-1]
+    assert "huggingface" not in script.lower(), "a Snowflake trust has no egress to the dataset host"
+
+
+def test_credentials_never_reach_a_job_command_line(specs: dict) -> None:
+    """A password in argv is readable from /proc and is echoed back by the spec itself.
+
+    The two curl-driven jobs authenticate through a 0600 netrc written at run time; this
+    pins that neither grows a `--user` or a `-u` with an interpolated secret.
+    """
+    for name in ("seed-orthanc", "smoke-cstore"):
+        script = containers(specs[name])[0]["args"][-1]
+        assert "--netrc-file" in script, f"{name} must authenticate through a netrc"
+        assert "chmod 600" in script, f"{name} must not leave the netrc world-readable"
+        # Comments are allowed to name the option; code is not.
+        code = [line for line in script.splitlines() if not line.lstrip().startswith("#")]
+        offenders = [line for line in code if "--user" in line or " -u " in line]
+        assert not offenders, f"{name} puts a credential in argv: {offenders}"
+
+
+def test_imaging_api_and_reconvert_share_the_converter_contract(specs: dict) -> None:
+    """Both sides of the conversion path must agree, or reconvert silently uses the other.
+
+    reconvert IS imaging-api's code; if the job's CONVERTER_BACKEND or its CONVERTER_IO
+    mount drifted from the service's, a reconvert run would look for output the service
+    never wrote, or launch through a Container Service that is not there.
+    """
+    service_env = containers(specs["imaging-api"])[0]["env"]
+    job_env = containers(specs["reconvert"])[0]["env"]
+    for key in (
+        "CONVERTER_BACKEND",
+        "SNOWFLAKE_DATABASE",
+        "SNOWFLAKE_SCHEMA",
+        "SNOWFLAKE_TOKEN_FILE",
+        "CONVERTER_IO_DIR",
+    ):
+        assert service_env[key] == job_env[key], f"{key} drifted between imaging-api and reconvert"
+    assert service_env["CONVERTER_BACKEND"] == "snowflake"
+
+
+def test_the_converter_path_carries_no_database_password(specs: dict) -> None:
+    """The OAuth session token IS the credential for CALLing the converter procedures."""
+    for name in ("imaging-api", "reconvert"):
+        container = containers(specs[name])[0]
+        assert container["mountSessionToken"] is True, f"{name} has no session token to connect with"
+        assert "SNOWFLAKE_PASSWORD" not in container["env"]
+        # SPCS injects both; a rendered copy could only go stale.
+        assert "SNOWFLAKE_HOST" not in container["env"]
+        assert "SNOWFLAKE_ACCOUNT" not in container["env"]
+
+
+def test_xnat_web_waits_for_a_resolvable_database_host(specs: dict) -> None:
+    """`xnat-db` resolves nowhere on SPCS; the spec must name the service's real DNS name.
+
+    The image's entrypoint hardcoded it before FLIP#1583. Both halves are pinned here: the
+    JDBC URL XNAT connects with and the host its wait targets must be the same service.
+    """
+    env = containers(specs["xnat-web"])[0]["env"]
+    expected = "xnat-db.app.flip-trust-gstt.snowflakecomputing.internal"
+    assert env["XNAT_DB_HOST"] == expected
+    assert expected in env["XNAT_DATASOURCE_URL"]
+    # And the config copy must not aim at the root-owned default, which uid 1001 cannot write.
+    assert env["XNAT_CONFIG_SHARE_DIR"].startswith("/data/xnat/")
+
+
 def test_the_flare_client_gets_a_writable_workspace_seeded_from_the_kit(specs: dict) -> None:
     """The FLARE client chmods /app/startup and writes /app/local (privacy.json, log config).
     The kit stage stays read-only; local volumes take the copy (found on the live account)."""
@@ -327,6 +491,36 @@ def test_xnat_db_keeps_the_superuser_apart_from_the_xnat_role(specs: dict) -> No
     env = containers(specs["xnat-db"])[0]["env"]
     assert "POSTGRES_USER" not in env
     assert env["XNAT_DATASOURCE_USERNAME"] == "xnat"
+
+
+def test_no_container_has_args_beside_a_multi_element_command(specs: dict) -> None:
+    """The live account rejects such a spec: "Args not allowed when multiple commands are specified"."""
+    for name, spec in specs.items():
+        for container in containers(spec):
+            if len(container.get("command", [])) > 1:
+                assert "args" not in container, name
+
+
+def test_no_kit_password_reaches_a_spec_in_plain_env(kit: dict) -> None:
+    """xnat-configure once carried the kit's XNAT_ADMIN_INITIAL_PASSWORD as plain env."""
+    import spec_templates
+
+    marker = "SENTINEL-initial-admin-7f30"  # pragma: allowlist secret
+    for rendered in spec_templates.build_all({**kit, "XNAT_ADMIN_INITIAL_PASSWORD": marker}, "GSTT"):
+        assert marker not in json.dumps(rendered.spec), rendered.name
+
+
+def test_smoke_cstore_pages_orthanc_with_since(specs: dict) -> None:
+    """Orthanc answers `/instances?limit=1` with HTTP 400 ("Missing since"), live account."""
+    script = containers(specs["smoke-cstore"])[0]["args"][-1]
+    assert "instances?since=0&limit=1" in script
+    assert "instances?limit=" not in script
+
+
+def test_smoke_cstore_fails_fast_on_an_orthanc_error(specs: dict) -> None:
+    """A 404 from /modalities/<m>/store once cost a 180 s wait for evidence that could not come."""
+    script = containers(specs["smoke-cstore"])[0]["args"][-1]
+    assert script.index(".HttpStatus") < script.index("EVIDENCE_TIMEOUT_SECONDS )")
 
 
 def test_orthanc_knows_xnat_as_a_modality(specs: dict) -> None:
