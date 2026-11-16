@@ -84,6 +84,12 @@ nvflare = [
 flower = [
     "flwr>=1.43.0",
 ]
+# The segmentation FL environment (FLIP#32): TotalSegmentator, with the nnU-Net and SimpleITK it runs
+# on. Installed on top of `full` by the flare-fl-client-segmentation image only, so the default FL
+# images do not carry it.
+segmentation = [
+    "totalsegmentator>=2.18.0",
+]
 # Full dependencies for running FL jobs (includes ML frameworks); no FL backend, add one of the above.
 full = [
     "einops==0.8.1",
