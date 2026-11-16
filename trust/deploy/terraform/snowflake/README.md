@@ -62,6 +62,7 @@ platform root and #1582 derive the same names from the same `trust_code`. With
 | Egress integration | `FLIP_GSTT_HUB_EAI` (optional) | platform root |
 | Resource monitor | `FLIP_GSTT_RM` | platform root (attached to the warehouse there) |
 | Event table | `FLIP_PLATFORM.OBS.FLIP_EVENTS` | platform root |
+| Observability views + dashboard | `FLIP_PLATFORM.OBS.V_*` | platform root ([why](../snowflake-platform/README.md#observability-flip1584)) |
 | Database | `FLIP_TRUST_GSTT`, schemas `APP`, `OMOP`, `STAGES`, `OBS` | here |
 | Warehouse | `FLIP_GSTT_WH` (XSMALL) | platform root |
 | Compute pools | `FLIP_GSTT_POOL`, `FLIP_GSTT_JOB_POOL`, `FLIP_GSTT_GPU_POOL` (optional) | here |
@@ -113,6 +114,29 @@ not cover compute pools**. Three independent guards, all on by default:
    a warehouse needs `ACCOUNTADMIN`, so the platform tier owns the warehouse and attaches it; the
    deploy role gets USAGE, OPERATE and MONITOR only, so the deploy key can neither detach the
    monitor nor recreate the warehouse without it. Apply the platform root first.
+
+## Observability (FLIP#1584)
+
+Containers started by this root log into the **account** event table, which the platform root
+owns: `FLIP_PLATFORM.OBS.FLIP_EVENTS`, with its views, its retention task and the Snowsight
+dashboard. Nothing about it is created here, and the static guards refuse an event table, a view
+or a `LOG_LEVEL` parameter in this root. The reason is the cost views: a view runs with its
+owner's rights, so one over `SNOWFLAKE.ACCOUNT_USAGE` needs `IMPORTED PRIVILEGES` on database
+`SNOWFLAKE`, which the deploy role must not hold. See
+[the platform README](../snowflake-platform/README.md#observability-flip1584).
+
+What this root does own is **how loud each service is**. `service_log_level` (default `INFO`)
+becomes the `logExporters.eventTableConfig.logLevel` of every spec, starting with the converter
+job in `converter.tf`. `DEBUG` and `TRACE` are refused by a variable validation: a debug stream is
+clinical-adjacent text landing in a shared table, and the event table is pruned on a fixed window,
+so noise displaces signal. Lower it to `WARN` or `ERROR` on a busy trust.
+
+`FLIP_TRUST_<CODE>.OBS` stays as it is: the deploy role owns it, and `FLIP_<CODE>_OBSERVER`
+already holds `USAGE` on the schema and a future `SELECT` on its views, so a per-trust view added
+later needs no new grant.
+
+To read the logs of a deploy you have just run, assume `FLIP_<CODE>_OBSERVER` (the deploy role
+holds it) and query `FLIP_PLATFORM.OBS.V_RECENT_ERRORS`.
 
 ## Prerequisites
 
@@ -200,9 +224,11 @@ triggers the hub's plan or apply workflows.
 - **No budget resource.** Snowflake budgets are a native application, with no provider resource, so
   the credit cap is the platform tier's resource monitor plus the pool guards here. A budget is
   still worth setting by hand on an On-Demand account (#1586).
-- **Preview resources.** Stages, compute pools and image repositories are still preview features in
-  the 2.x provider and are enabled explicitly in `providers.tf`. A provider upgrade that promotes
-  or renames one of them fails there rather than drifting silently.
+- **Preview resources.** Stages, compute pools and image repositories were promoted to stable in
+  the 2.x provider; the one preview resource left is `snowflake_procedure_sql`, the converter's
+  launch procedure, enabled explicitly in `providers.tf`. A provider upgrade that promotes or
+  renames one fails there rather than drifting silently, and a new preview resource must be added
+  to that list or the apply is refused.
 - **Services are not here yet.** `manage_services` is a placeholder variable for #1582 and changes
   nothing.
 - **Trial accounts have no external network access,** so the platform tier's `enable_hub_egress`

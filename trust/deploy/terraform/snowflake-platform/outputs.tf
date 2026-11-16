@@ -40,6 +40,29 @@ output "event_table_name" {
   value       = local.event_table_fqn
 }
 
+output "event_table_retention_days" {
+  description = "How long a log record is kept, enforced by the nightly prune task (#1584)."
+  value       = var.event_table_retention_days
+}
+
+output "observability_view_names" {
+  description = "Fully qualified observability views in FLIP_PLATFORM.OBS, readable by the observer role (#1584)."
+  value = {
+    events            = snowflake_view.events.fully_qualified_name
+    service_status    = snowflake_view.service_status.fully_qualified_name
+    service_restarts  = snowflake_view.service_restarts.fully_qualified_name
+    recent_errors     = snowflake_view.recent_errors.fully_qualified_name
+    fl_client_logs    = snowflake_view.fl_client_logs.fully_qualified_name
+    compute_pool_cost = snowflake_view.compute_pool_cost.fully_qualified_name
+    warehouse_cost    = snowflake_view.warehouse_cost.fully_qualified_name
+  }
+}
+
+output "observer_role_name" {
+  description = "The role the observability views and the Snowsight dashboard are granted to (#1584)."
+  value       = snowflake_account_role.observer.name
+}
+
 output "platform_database_name" {
   description = "The small platform-owned database holding the event table and the account policies."
   value       = snowflake_database.platform.name

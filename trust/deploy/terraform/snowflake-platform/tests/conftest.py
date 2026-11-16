@@ -18,6 +18,12 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 WORKLOAD_DIR = ROOT_DIR.parent / "snowflake"
 TF_FILES = sorted(p for p in ROOT_DIR.glob("*.tf"))
 
+# The Snowsight dashboard (FLIP#1584). Snowsight has no API and no Terraform resource, so the
+# dashboard is kept in-repo as the SQL of its tiles and the guards pin it against the views.
+DASHBOARD_DIR = ROOT_DIR / "dashboards"
+DASHBOARD_SQL = DASHBOARD_DIR / "flip_trust_observability.sql"
+DASHBOARD_README = DASHBOARD_DIR / "README.md"
+
 
 def source(name: str) -> str:
     """The text of one .tf file in the root."""
