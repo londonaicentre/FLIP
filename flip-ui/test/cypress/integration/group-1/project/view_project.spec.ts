@@ -27,22 +27,26 @@ describe("Project Page: Researcher & Owner [UNAPPROVED]", () => {
         cy.intercept(
             "GET",
             "/users/*/permissions", {
-            statusCode: 200,
-            fixture: "user/getPermissionsResearcher"
-        }
+                statusCode: 200,
+                fixture: "user/getPermissionsResearcher"
+            }
         ).as("getPermissions");
 
         cy.intercept(
             "GET",
             "/projects/*", {
-            fixture: "project/getProject",
-            statusCode: 200
-        }
+                fixture: "project/getProject",
+                statusCode: 200
+            }
         ).as("getProject");
 
         cy.intercept(
 
-            { method: "GET", pathname: "/users/lookup", query: { email: "validUser@gmail.com" } },
+            {
+                method: "GET",
+                pathname: "/users/lookup",
+                query: { email: "validUser@gmail.com" }
+            },
 
             { statusCode: 200 }
 
@@ -130,51 +134,38 @@ describe("Project Page: Researcher & Owner [UNAPPROVED]", () => {
             cy.intercept(
                 "GET",
                 `/projects/${validProjectWithQuery.id}`, {
-                fixture: "project/getProjectWithQueryNotApprovedUnstaged",
-                statusCode: 200
-            }
+                    fixture: "project/getProjectWithQueryNotApprovedUnstaged",
+                    statusCode: 200
+                }
             ).as("getProject");
             cy.intercept("POST", `/projects/${validProjectWithQuery.id}/stage`, { statusCode: 200 }).as("stage");
             cy.visit(`/project/${validProjectWithQuery.id}`);
         });
 
-        it("can stage with only one trust associated with a project", () => {
+        [
+            {
+                name: "can stage with only one trust associated with a project",
+                selectors: ["KCH"],
+                trusts: ["4c9692ac-f607-4216-9f0b-b45eb72d83d2"]
+            },
+            {
+                name: "can stage with all trusts associated with a project",
+                selectors: ["KCH", "UCLH"],
+                trusts: ["4c9692ac-f607-4216-9f0b-b45eb72d83d2", "53ca8126-5551-41a8-bd0a-587956c859d5"]
+            }
+        ].forEach(({ name, selectors, trusts }) => {
+            it(name, () => {
+                cy.getBySel("stage-project-btn").click();
+                cy.contains("You must select a minimum of one trust when staging.");
 
-            cy.getBySel("stage-project-btn").click();
-            cy.contains("You must select a minimum of one trust when staging.");
+                selectors.forEach(code => cy.getBySel(`${code}-selector`).click());
 
-            cy.getBySel("KCH-selector").click();
+                cy.getBySel("stage-project-btn").click();
 
-            cy.getBySel("stage-project-btn").click();
+                cy.wait("@stage");
+                cy.get("@stage.all").should("have.length", 1);
 
-            cy.wait("@stage");
-            cy.get("@stage.all").should("have.length", 1).then(console.log);
-
-            cy.get("@stage").its("request.body").should("deep.equal", {
-                "trusts": [
-                    "4c9692ac-f607-4216-9f0b-b45eb72d83d2"
-                ]
-            });
-        });
-
-        it("can stage with all trusts associated with a project", () => {
-
-            cy.getBySel("stage-project-btn").click();
-            cy.contains("You must select a minimum of one trust when staging.");
-
-            cy.getBySel("KCH-selector").click();
-            cy.getBySel("UCLH-selector").click();
-
-            cy.getBySel("stage-project-btn").click();
-
-            cy.wait("@stage");
-            cy.get("@stage.all").should("have.length", 1).then(console.log);
-
-            cy.get("@stage").its("request.body").should("deep.equal", {
-                "trusts": [
-                    "4c9692ac-f607-4216-9f0b-b45eb72d83d2",
-                    "53ca8126-5551-41a8-bd0a-587956c859d5"
-                ]
+                cy.get("@stage").its("request.body").should("deep.equal", { trusts });
             });
         });
     });
@@ -190,22 +181,26 @@ describe("Editing Project", () => {
         cy.intercept(
             "GET",
             "/users/*/permissions", {
-            fixture: "user/getPermissionsResearcher",
-            statusCode: 200
-        }
+                fixture: "user/getPermissionsResearcher",
+                statusCode: 200
+            }
         ).as("getPermissions");
 
         cy.intercept(
             "GET",
             "/projects/*", {
-            fixture: "project/getProject",
-            statusCode: 200
-        }
+                fixture: "project/getProject",
+                statusCode: 200
+            }
         ).as("getProject");
 
         cy.intercept(
 
-            { method: "GET", pathname: "/users/lookup", query: { email: "validUser@gmail.com" } },
+            {
+                method: "GET",
+                pathname: "/users/lookup",
+                query: { email: "validUser@gmail.com" }
+            },
 
             { statusCode: 200 }
 
@@ -228,7 +223,11 @@ describe("Editing Project", () => {
         cy.intercept(
 
 
-            { method: "GET", pathname: "/users/lookup", query: { email: "invalidUser@gmail.com" } },
+            {
+                method: "GET",
+                pathname: "/users/lookup",
+                query: { email: "invalidUser@gmail.com" }
+            },
 
 
             { statusCode: 404 }

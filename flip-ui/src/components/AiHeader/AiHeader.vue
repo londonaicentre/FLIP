@@ -18,7 +18,7 @@
         class="flex flex-row items-center h-14 bg-white dark:bg-dark-canvas border-b border-gray-200 dark:border-dark-border px-4 xl:px-6 shrink-0"
     >
         <!-- Mobile menu button -->
-        <PopoverButton aria-label="Open menu" class="outline-none xl:hidden mr-3" data-test="mobile-menu-btn">
+        <PopoverButton aria-label="Open menu" class="outline-none xl:hidden mr-3 rounded focus-visible:ring-2 focus-visible:ring-primary-500 dark:focus-visible:ring-primary-400" data-test="mobile-menu-btn">
             <icon-ph-list class="w-6 h-6" />
         </PopoverButton>
 
@@ -52,7 +52,7 @@
                 <span
                     v-if="item.badge"
                     data-test="nav-badge"
-                    class="ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-[11px] font-bold bg-primary-500 text-white"
+                    class="ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-xs font-bold bg-primary-500 text-white"
                     :aria-label="`${item.badge} awaiting your decision`"
                 >{{ item.badge }}</span>
                 <span
@@ -147,7 +147,7 @@
                                         {{ item.name }}
                                         <span
                                             v-if="item.badge"
-                                            class="ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-[11px] font-bold bg-primary-500 text-white"
+                                            class="ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-xs font-bold bg-primary-500 text-white"
                                         >{{ item.badge }}</span>
                                     </router-link>
                                 </div>

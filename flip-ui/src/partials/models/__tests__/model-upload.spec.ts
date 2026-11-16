@@ -120,11 +120,6 @@ vi.mock("@/utils/snackbar", () => ({
     }
 }));
 
-// uploadFile sleeps 3s between the upload and processScannedFile — and
-// schedules a 10s setTimeout to emit "uploaded". Use fake timers in the
-// upload-flow tests so we can advance past both without actually waiting.
-// Left out of non-upload tests so the watch/mount lifecycle runs normally.
-
 // Helper to build a mock File (jsdom implements File natively).
 function makeFile(name: string, size = 1024, type = "text/plain"): File {
     return new File(["x".repeat(size)], name, { type });
@@ -663,20 +658,15 @@ describe("ModelUpload", () => {
             mockUploadFileService.mockResolvedValue(undefined);
             mockProcessScannedFile.mockResolvedValue(undefined);
 
-            vi.useFakeTimers();
             const wrapper = mountModelUpload();
             wrapper.findComponent({ name: "FileUpload" }).vm.$emit(
                 "new-files",
                 makeFileList([makeFile("model.py")])
             );
-            // Advance past the 3s scan-wait — by this point filesAreUploading
-            // should be true and uploadingFiles contains model.py (SCANNING).
-            await vi.advanceTimersByTimeAsync(3_500);
             await flushPromises();
 
             // Parent now passes the completed file back via props.files —
             // this is the real-world "server confirmed the file" update.
-            vi.useRealTimers();
             await wrapper.setProps({
                 files: [
                     {
@@ -745,15 +735,11 @@ describe("ModelUpload", () => {
             mockUploadFileService.mockResolvedValue(undefined);
             mockProcessScannedFile.mockResolvedValue(undefined);
 
-            vi.useFakeTimers();
             const wrapper = mountModelUpload();
             wrapper.findComponent({ name: "FileUpload" }).vm.$emit(
                 "new-files",
                 makeFileList([makeFile("custom_model.py")])
             );
-
-            // Advance past the 3s scan-wait inside uploadFile.
-            await vi.advanceTimersByTimeAsync(3_500);
             await flushPromises();
 
             expect(mockCreatePreSignedUrl).toHaveBeenCalled();

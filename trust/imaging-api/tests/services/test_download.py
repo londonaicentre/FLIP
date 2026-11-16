@@ -310,52 +310,48 @@ class TestDownloadAndUnzipImages:
         mock_get_project.assert_called_once_with("hub-proj-1", headers)
 
     @pytest.mark.asyncio
-    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
-    async def test_project_not_found(self, mock_get_project, headers):
-        mock_get_project.side_effect = NotFoundError("Project not found")
-
-        with pytest.raises(NotFoundError, match="Project with ID"):
-            await download_and_unzip_images("bad-id", "ACC1", "net1", "scan", "NIFTI", headers)
-
-    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("project_id", "accession", "project_error", "experiment_error", "error", "match"),
+        [
+            pytest.param(
+                "bad-id", "ACC1", NotFoundError("Project not found"), None, NotFoundError, "Project with ID",
+                id="project_not_found",
+            ),
+            pytest.param(
+                "hub-proj-1", "BAD-ACC", None, NotFoundError("Experiment not found"), NotFoundError,
+                "Experiment with ID or label", id="experiment_not_found",
+            ),
+            pytest.param(
+                "hub-proj-1", "ACC1", Exception("connection refused"), None, Exception, "Failed to fetch project ID",
+                id="project_fetch_generic_error",
+            ),
+            pytest.param(
+                "hub-proj-1", "ACC1", None, Exception("connection refused"), Exception,
+                "Failed to fetch experiment details", id="experiment_fetch_generic_error",
+            ),
+        ],
+    )  # fmt: skip
     @patch("imaging_api.services.download.get_experiment")
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
-    async def test_experiment_not_found(self, mock_get_project, mock_get_exp, headers):
+    async def test_lookup_failure(
+        self,
+        mock_get_project,
+        mock_get_exp,
+        project_id,
+        accession,
+        project_error,
+        experiment_error,
+        error,
+        match,
+        headers,
+    ):
+        # side_effect=None falls back to the return_value, so only the failing lookup raises.
         mock_get_project.return_value = MagicMock(ID="PROJ1")
-        mock_get_exp.side_effect = NotFoundError("Experiment not found")
+        mock_get_project.side_effect = project_error
+        mock_get_exp.side_effect = experiment_error
 
-        with pytest.raises(NotFoundError, match="Experiment with ID or label"):
-            await download_and_unzip_images("hub-proj-1", "BAD-ACC", "net1", "scan", "NIFTI", headers)
-
-    @pytest.mark.asyncio
-    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
-    async def test_project_fetch_generic_error(self, mock_get_project, headers):
-        mock_get_project.side_effect = Exception("connection refused")
-
-        with pytest.raises(Exception, match="Failed to fetch project ID"):
-            await download_and_unzip_images("hub-proj-1", "ACC1", "net1", "scan", "NIFTI", headers)
-
-    @pytest.mark.asyncio
-    @patch("imaging_api.services.download.get_experiment")
-    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
-    async def test_experiment_fetch_generic_error(self, mock_get_project, mock_get_exp, headers):
-        mock_get_project.return_value = MagicMock(ID="PROJ1")
-        mock_get_exp.side_effect = Exception("connection refused")
-
-        with pytest.raises(Exception, match="Failed to fetch experiment details"):
-            await download_and_unzip_images("hub-proj-1", "ACC1", "net1", "scan", "NIFTI", headers)
-
-    @pytest.mark.asyncio
-    @patch("imaging_api.services.download.download_file")
-    @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
-    @patch("imaging_api.services.download.get_experiment", return_value=EXPERIMENT_RESPONSE)
-    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
-    async def test_download_failure(self, mock_get_project, mock_get_exp, mock_get_subj, mock_download, headers):
-        mock_get_project.return_value = MagicMock(ID="PROJ1")
-        mock_download.side_effect = Exception("disk full")
-
-        with pytest.raises(Exception, match="Failed to download file"):
-            await download_and_unzip_images("hub-proj-1", "ACC1", "net1", "scan", "NIFTI", headers)
+        with pytest.raises(error, match=match):
+            await download_and_unzip_images(project_id, accession, "net1", "scan", "NIFTI", headers)
 
     @pytest.mark.asyncio
     @patch("imaging_api.services.download.download_file")

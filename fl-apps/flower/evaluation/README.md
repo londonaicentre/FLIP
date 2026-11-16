@@ -15,28 +15,32 @@
 
 ## Overview
 
-The Flower evaluation job type (`job_type=evaluation`): loads a **pre-trained checkpoint** and
-scores it across every connected client — no training rounds, no parameter updates. The server
-side is [`EvaluationStrategy`](app/strategy.py), a thin subclass of
-[`FlipFedAvg`](../../../flip-utils/flip/flower/strategy.py) run with `fraction_train=0.0,
-fraction_evaluate=1.0`; `FedAvg` itself aggregates whatever metrics the clients return (a weighted
-average by `num-examples`), and the subclass adds only a per-client breakdown for the results
-artifact. This is the Flower counterpart of the FLARE
-[`evaluation`](../../nvflare/evaluation/README.md) job type, though the two differ in shape: FLARE
-evaluates one or more **server-listed checkpoints** (`config.json['models']`) via a dedicated
-`EvaluationModelLocator`, while this template evaluates the **single checkpoint staged for the
-run** and reports aggregate + per-client metrics natively through `FedAvg`.
+The Flower evaluation job type (`job_type=evaluation`) loads a **pre-trained checkpoint** and
+scores it on every connected client. There are no training rounds and no parameter updates.
+
+The server side is [`EvaluationStrategy`](app/strategy.py), a thin subclass of
+[`FlipFedAvg`](../../../flip-utils/flip/flower/strategy.py). `FedAvg` aggregates whatever metrics
+the clients return (a weighted average by `num-examples`). The subclass only adds a per-client
+breakdown for the results artifact.
+
+This is the Flower counterpart of the FLARE [`evaluation`](../../nvflare/evaluation/README.md) job
+type, but the two differ in shape:
+
+- FLARE evaluates one or more **server-listed checkpoints** (`config.json['models']`) through a
+  dedicated `EvaluationModelLocator`.
+- This template evaluates the **single checkpoint staged for the run** and reports aggregate and
+  per-client metrics natively through `FedAvg`.
 
 ## What's the logic?
 
 [`app/server_app.py`](app/server_app.py) (`@app.main()`):
 
 1. Reports `INITIATED`, then loads the checkpoint named by the `checkpoint` run-config key from
-   `flip-job-dir` — the app directory on the shared volume that the FL API stages the uploaded
-   bundle (sources + checkpoint) into at submission time. The checkpoint is loaded strictly
-   (a plain `load_state_dict(state_dict)`, i.e. torch's default `strict=True`) onto CPU: a
-   mismatch between the checkpoint and
-   `get_model()`'s architecture fails loudly rather than evaluating a partially-random model.
+   `flip-job-dir`. That is the app directory on the shared volume where the FL API stages the
+   uploaded bundle (sources + checkpoint) at submission time. The weights are loaded onto CPU with a
+   plain `load_state_dict(state_dict)` (torch's default `strict=True`), so a checkpoint that does
+   not match `get_model()`'s architecture fails loudly instead of evaluating a partially-random
+   model.
 2. Packs the loaded weights into an `ArrayRecord` and starts `EvaluationStrategy` for
    `num-server-rounds` (default 1) rounds — `fraction_train=0.0` so no round trains,
    `fraction_evaluate=1.0` so every connected client evaluates.
@@ -51,9 +55,11 @@ run** and reports aggregate + per-client metrics natively through `FedAvg`.
 `client_name`, then delegates to `FlipFedAvg` for the actual weighted aggregation and Central Hub
 forwarding (status, per-client metrics/exceptions, round events). There is no metric declaration or
 validation anywhere in this template — whatever `client_app.py` returns in its `MetricRecord` is
-what gets aggregated and reported. Each client's metrics show on the model page against its trust,
-upper-cased, as one point at round 1; the client must name itself with `client_name` (or `site`) in
-the reply's `config` record, or its metrics are dropped.
+what gets aggregated and reported. Each client's metrics appear on the model page against its trust (upper-cased), as one point at
+round 1.
+
+> **Required:** the client must name itself with `client_name` (or `site`) in the reply's `config`
+> record. If it does not, its metrics are dropped.
 
 ## What does the user upload?
 
@@ -69,39 +75,54 @@ The required files (see [`required_files.json`](./required_files.json)) are:
 The model checkpoint itself (e.g. `model.pt`) is uploaded alongside these and staged into the app
 directory by the FL API; its filename is supplied per run via the `checkpoint` run-config key.
 
-`app/server_app.py`, `app/strategy.py` and `pyproject.toml` ship with the template. Uploaded files
-are copied only into the template's `app/`, and a base file there wins —
-[`bundle_flower_application`](../../../flip-api/src/flip_api/fl_services/services/fl_service.py)
-skips any uploaded file whose name collides with one inside `app/` — so a user cannot replace the
-server app or the strategy. An uploaded `pyproject.toml` lands harmlessly at `app/pyproject.toml`,
-never over the project config at the bundle root.
+`app/server_app.py`, `app/strategy.py` and `pyproject.toml` ship with the template, and an upload
+cannot replace them:
+
+- Uploaded files are copied only into the template's `app/`.
+- [`bundle_flower_application`](../../../flip-api/src/flip_api/fl_services/services/fl_service.py)
+  skips any uploaded file whose name matches one already in `app/`, so the base file wins. A user
+  cannot replace the server app or the strategy.
+- An uploaded `pyproject.toml` lands harmlessly at `app/pyproject.toml`, never over the project
+  config at the bundle root.
 
 ## Run-config keys
 
-Declared under `[tool.flwr.app.config]` in [`pyproject.toml`](pyproject.toml) (placeholders here;
-overridden per run via `config.toml`):
+Declared under `[tool.flwr.app.config]` in [`pyproject.toml`](pyproject.toml) with placeholder
+values. Per run, the researcher's `config.toml` overrides them, and the FL API injects the `flip-*`
+keys at submission:
 
 | Key | Purpose |
 | --- | --- |
 | `num-server-rounds` | Evaluation rounds (default `1` — evaluation only needs one pass). |
 | `checkpoint` | Filename of the checkpoint to evaluate, relative to `flip-job-dir`. Dummy placeholder in `pyproject.toml`; the real value comes from the researcher's uploaded `config.toml` (the FL API injects only the `flip-*` keys below). |
 | `flip-model-id` / `flip-project-id` / `flip-cohort-query` / `flip-job-dir` | FLIP plumbing injected by the FL API at submission time. |
-| `flip-min-clients` | Quorum for the run; the FL API overrides the placeholder with the participating-trust count at submit time (`flwr` rejects a `--run-config` key the app config does not declare). A malformed or zero value raises out of `min_clients_from_run_config` / the `EvaluationStrategy` constructor and the model is marked `ERROR`. |
+| `flip-min-clients` | Quorum for the run. The FL API overrides the placeholder at submit time with the number of participating trusts; the placeholder must exist because `flwr` rejects a `--run-config` key the app config does not declare. A malformed or zero value raises in `min_clients_from_run_config` / the `EvaluationStrategy` constructor, and the model is marked `ERROR`. |
 | `local-epochs`, `learning-rate`, `batch-size`, `spatial-dims`, `num-classes` | Placeholders for model/training config consumed by user code; unused by this template's own server logic. |
 
 ## Local test
 
-There is no server-side simulator run for this template on its own — it needs a real checkpoint and
-connected clients. The shipped consumer, `fl-tutorials/flower/image_evaluation/3d_spleen_segmentation_evaluation`,
-runs on the flwr simulator via
-`make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower`
-(`fl-tutorials/flower/sim-tutorial.sh`, which wraps `flwr run`). What its README discourages is a
-**raw** `flwr run`, for the five reasons the script handles (listed there) — among them, a
-long-lived SuperLink caches its environment, the `ClientApp` runs from a snapshot under
-`~/.flwr/apps/`, and `WORKING_DIR` defaults to a container path. The deployment wiring (the FL
-images, fl-api submit, SuperNode registration) is exercised by
-`make -C flip-api e2e_smoke_spleen_evaluation FL_BACKEND=flower` on the dev stack; to run the
-Flower containers by hand:
+This template has no simulator run of its own: it needs a real checkpoint and connected clients.
+Test it through its shipped consumer, the
+[`3d_spleen_segmentation_evaluation`](../../../fl-tutorials/flower/image_evaluation/3d_spleen_segmentation_evaluation/README.md)
+tutorial.
+
+**On the flwr simulator** (through `fl-tutorials/flower/sim-tutorial.sh`, which wraps `flwr run`):
+
+```bash
+make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower
+```
+
+Use this rather than a raw `flwr run`. The tutorial README lists the five problems the script
+handles, among them a long-lived SuperLink caching its environment, the `ClientApp` running from a
+snapshot under `~/.flwr/apps/`, and `WORKING_DIR` defaulting to a container path.
+
+**Deployment wiring** (the FL images, fl-api submit, SuperNode registration), on the dev stack:
+
+```bash
+make -C flip-api e2e_smoke_spleen_evaluation FL_BACKEND=flower
+```
+
+**The Flower containers by hand:**
 
 ```bash
 make -C fl-tutorials/flower/image_evaluation/3d_spleen_segmentation_evaluation download-checkpoints  # fetch model.pt
@@ -110,7 +131,7 @@ make -C fl-services/flower up      # start fl-api, superlink, supernode-1, super
 make -C fl-services/flower submit APP=3d_spleen_segmentation_evaluation
 ```
 
-See [`fl-tutorials/flower/image_evaluation/3d_spleen_segmentation_evaluation/README.md`](../../../fl-tutorials/flower/image_evaluation/3d_spleen_segmentation_evaluation/README.md)
-for the full walkthrough, including how to change which metrics are reported (edit the client's own
-metric registry — nothing here needs to change) and how `fl-services/flower/compose.dev.yml` wires
-`DEV_DATAFRAME` / `DEV_IMAGES_DIR` / `WORKING_DIR` into the containers.
+The tutorial README is the full walkthrough. It covers how to change which metrics are reported
+(edit the client's own metric registry; nothing in this template needs to change) and how
+`fl-services/flower/compose.dev.yml` wires `DEV_DATAFRAME` / `DEV_IMAGES_DIR` / `WORKING_DIR` into
+the containers.

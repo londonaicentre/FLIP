@@ -16,11 +16,11 @@ Trust: {{ .Values.trustName }} (slot {{ .Values.trustNumber }})
 
 Check the stack is up:
   kubectl get pods -n {{ include "flip-trust.namespace" . }}
-{{- if and .Values.omopDb.enabled .Values.omopDb.vocabLoad.enabled (not .Values.omopDb.vocabLoad.s3Bucket) }}
+{{- if and .Values.omopDb.enabled .Values.omopDb.vocabLoad.enabled (not .Values.omopDb.vocabLoad.hostPath) }}
 
 ⚠️  OMOP core vocabulary was NOT loaded
 
-    omopDb.vocabLoad.s3Bucket is empty, so the omop-vocab-load hook was skipped.
+    omopDb.vocabLoad.hostPath is empty, so the omop-vocab-load hook was skipped.
 
     The omop-db image and the seeded database are vocab-free by design: the
     licensed bundle (SNOMED CT / LOINC / Read v2 / dm+d) cannot be published,
@@ -29,15 +29,15 @@ Check the stack is up:
     Until it is loaded, cohort queries that join omop.concept return NOTHING —
     the stack looks healthy and silently matches no patients.
 
-    Load it by either:
-      * setting omopDb.vocabLoad.s3Bucket to a bucket this cluster can read
-        (your OWN environment's AICENTRE_BUCKET_NAME — trust roles have no
-        cross-account read) and re-running `helm upgrade`. From the repo root:
-            make -C trust/deploy/helm sync-kit KIT=<CODE> HUB=<env>
-            make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
-        or
-      * running trust/omop-db/files/load_core_vocab.sh against the database
-        with your own OHDSI Athena / NHS TRUD export.
+    Load it by:
+      1. getting the bundle as a folder of CSVs — with access to the AI Centre
+         bucket, from the repo root (your own AWS CLI profile):
+             make -C trust/deploy/helm download-vocab
+         otherwise an OHDSI Athena / NHS TRUD export;
+      2. staging it onto the node:
+             make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<ctx>
+      3. setting omopDb.vocabLoad.hostPath (or the kit's OMOP_VOCAB_DIR) and
+         re-running `helm upgrade`.
 
     See trust/deploy/helm/README.md → "OMOP core vocabulary".
 {{- end }}

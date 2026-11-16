@@ -195,8 +195,8 @@ def test_web_port_can_be_separated_from_the_dicom_port():
 
 
 def test_ae_title_defaults_when_unset():
-    """An unset AE title must reach the script as XNAT, not as an empty string."""
-    assert make_vars("XNAT_AETITLE_EFFECTIVE")["XNAT_AETITLE_EFFECTIVE"] == "XNAT"
+    """An unset AE title must reach the script as FLIP_XNAT, not as an empty string."""
+    assert make_vars("XNAT_AETITLE_EFFECTIVE")["XNAT_AETITLE_EFFECTIVE"] == "FLIP_XNAT"
 
 
 def test_ae_title_set_empty_stays_empty():
@@ -258,7 +258,7 @@ def dry_run_trust_up(tmp_path, kit_lines: str, *overrides: str) -> subprocess.Co
 
 
 def test_trust_compose_defaults_the_ae_title_for_its_code_defaulting_consumers():
-    """The two consumers outside the XNAT stack take ``${XNAT_AETITLE:-XNAT}`` — colon-dash — by design.
+    """The two consumers outside the XNAT stack take ``${XNAT_AETITLE:-FLIP_XNAT}`` — colon-dash — by design.
 
     The reverse of test_compose_defaults_do_not_cancel_the_scripts_empty_check, and for the reverse
     reason: nothing downstream of these lines checks for an empty AE title, so passing one through
@@ -268,8 +268,8 @@ def test_trust_compose_defaults_the_ae_title_for_its_code_defaulting_consumers()
     """
     for name, found in trust_compose_ae_title_references().items():
         assert len(found) == 2, f"{name} should wire XNAT_AETITLE to Orthanc's modality entry and imaging-api: {found}"
-        assert set(found) == {"${XNAT_AETITLE:-XNAT}"}, f"{name} changed the AE title's form: {found}"
-    assert make_vars("XNAT_AETITLE_EFFECTIVE")["XNAT_AETITLE_EFFECTIVE"] == "XNAT"
+        assert set(found) == {"${XNAT_AETITLE:-FLIP_XNAT}"}, f"{name} changed the AE title's form: {found}"
+    assert make_vars("XNAT_AETITLE_EFFECTIVE")["XNAT_AETITLE_EFFECTIVE"] == "FLIP_XNAT"
 
 
 @pytest.mark.parametrize(
@@ -299,11 +299,11 @@ def test_explicitly_empty_ae_title_is_refused_before_anything_runs(tmp_path, kit
 
 @pytest.mark.parametrize(
     "kit_lines",
-    ["", "# XNAT_AETITLE=XNAT\n", "XNAT_AETITLE=FLIPXNAT\n"],
+    ["", "# XNAT_AETITLE=FLIP_XNAT\n", "XNAT_AETITLE=FLIPXNAT\n"],
     ids=["absent", "commented-out", "configured"],
 )
 def test_unset_or_configured_ae_title_passes_the_guard(tmp_path, kit_lines):
-    """The guard distinguishes unset from empty: an absent line still takes the XNAT default silently."""
+    """The guard distinguishes unset from empty: an absent line still takes the FLIP_XNAT default silently."""
     result = dry_run_trust_up(tmp_path, kit_lines)
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -399,3 +399,22 @@ def test_nginx_update_rides_out_the_xnat_web_restart():
     assert re.search(update_policy, block.group(1), re.M), (
         "xnat-nginx must set deploy.update_config.failure_action: continue"
     )
+
+
+def test_xnat_runs_in_uk_local_time():
+    """DQR reads the PACS availability window with LocalTime.now(), the JVM's zone (FLIP#1880).
+
+    Without TZ, xnat-web runs in UTC and a UK trust's agreed window is an hour off during BST.
+    """
+    assert compose_environment()["TZ"] == "${XNAT_TZ}"
+    assert make_vars("XNAT_TZ")["XNAT_TZ"] == "Europe/London"
+
+
+@pytest.mark.parametrize(("hub", "heap"), [("", "6144m"), ("stag", "8192m"), ("prod", "8192m")])
+def test_dev_heap_leaves_room_under_the_dev_container_limit(hub, heap):
+    """Development caps xnat-web at 8G; a heap that size gets the container OOM-killed (FLIP#1880).
+
+    Deployed trusts have no limit and keep .env's heap.
+    """
+    overrides = {"HUB": hub} if hub else {}
+    assert make_vars("XNAT_MAX_HEAP", **overrides)["XNAT_MAX_HEAP"] == heap

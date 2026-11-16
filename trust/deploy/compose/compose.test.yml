@@ -77,11 +77,10 @@ services:
       # in-process trust-api side and the containerised data-access-api use the
       # same per-trust shared secret on every /cohort call.
       TRUST_INTERNAL_SERVICE_KEY: "test-trust-internal-service-key"  # pragma: allowlist secret
-      # 5 instead of the prod default of 10 so the seed's 6 M + 6 F image-bearing
-      # patients each clear the bucket-rollup threshold individually, letting the
-      # sex/age distribution assertions test the real per-bucket counts rather
-      # than always rolling into the "Other" bucket.
-      COHORT_QUERY_THRESHOLD: "5"
+      # The platform floor (FLIP#870): nothing lower starts. The seed's 10 M + 10 F
+      # image-bearing patients each clear it, so the sex distribution assertions test
+      # real per-bucket counts rather than everything rolling into "Other".
+      COHORT_QUERY_THRESHOLD: "10"
       # Approved-cohort snapshot store (FLIP#857). /tmp is writable by the container
       # user and ephemeral per run — each pytest session gets a clean store.
       COHORT_SNAPSHOT_DIR: /tmp/snapshots

@@ -157,20 +157,9 @@ def _load_task_status_trust_ids(
             col(TrustTask.status).in_([TaskStatus.PENDING, TaskStatus.CANCELLED]),
         )
     ).all()
-    pending: list[UUID] = []
-    cancelled: list[UUID] = []
-    seen_pending: set[UUID] = set()
-    seen_cancelled: set[UUID] = set()
-    for tid, status in rows:
-        if tid is None:
-            continue
-        if status == TaskStatus.PENDING and tid not in seen_pending:
-            seen_pending.add(tid)
-            pending.append(tid)
-        elif status == TaskStatus.CANCELLED and tid not in seen_cancelled:
-            seen_cancelled.add(tid)
-            cancelled.append(tid)
-
+    # dict.fromkeys dedupes while keeping first-seen order
+    pending = list(dict.fromkeys(tid for tid, s in rows if tid is not None and s == TaskStatus.PENDING))
+    cancelled = list(dict.fromkeys(tid for tid, s in rows if tid is not None and s == TaskStatus.CANCELLED))
     return pending, cancelled
 
 
@@ -437,10 +426,7 @@ def get_approved_trusts_for_project(project_id: UUID, session: Session) -> list[
     )
     results = session.exec(stmt).all()
     if not results:
-        # Original TS code throws an error if no response.
-        # Consider if returning empty list is more Pythonic for "not found" scenarios.
         logger.warn(f"No approved trusts found for project {project_id}, or project has no approved trusts.")
-        # raise ValueError(f"No approved trusts found for project {project_id}") # If error is desired
     return [Trust(id=trust_id, name=trust_name) for trust_id, trust_name in results]
 
 
@@ -546,20 +532,14 @@ def get_project_models_service(
 
     # NOTE Do NOT use "not Model.deleted" below — This expression is evaluated immediately in Python, not translated
     # into SQL. Use "Model.deleted == False" or the below to create a proper SQL condition.
-    query_stmt = (
-        select(Model)
-        .join(Projects, col(Model.project_id) == Projects.id)
-        .where(col(Model.project_id) == project_id)
-        .where(col(Model.deleted).is_(False))
-        .where(col(Projects.deleted).is_(False))
+    filters = (
+        col(Model.project_id) == project_id,
+        col(Model.deleted).is_(False),
+        col(Projects.deleted).is_(False),
     )
-    count_stmt = (
-        select(func.count(col(Model.id)))
-        .join(Projects, col(Model.project_id) == Projects.id)
-        .where(col(Model.project_id) == project_id)
-        .where(col(Model.deleted).is_(False))
-        .where(col(Projects.deleted).is_(False))
-    )
+    join_on = col(Model.project_id) == Projects.id
+    query_stmt = select(Model).join(Projects, join_on).where(*filters)
+    count_stmt = select(func.count(col(Model.id))).join(Projects, join_on).where(*filters)
 
     if paging_details.search_str:
         search_pattern = f"%{paging_details.search_str.lower()}%"
@@ -621,7 +601,6 @@ def update_project_status(
 
     # Try to update the status value of the project in the database
     try:
-        project.name = project.name
         project.status = new_status
         session.flush()
         logger.info(f"Project {project_id} status updated to {new_status.value}.")

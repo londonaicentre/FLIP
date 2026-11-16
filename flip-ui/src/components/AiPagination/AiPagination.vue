@@ -21,7 +21,7 @@
                         aria-label="Previous page"
                         :disabled="!hasPrev()"
                         data-test="page-btn-prev"
-                        @click="() => goToPage(prevPage)"
+                        @click="goToPage(currentPage - 1)"
                     >
                         <icon-ph-arrow-left class="mr-2" />
                         <template v-if="!slim">
@@ -79,7 +79,7 @@
                         aria-label="Next page"
                         data-test="page-btn-next"
                         :disabled="!hasNext()"
-                        @click="() => goToPage(nextPage)"
+                        @click="goToPage(currentPage + 1)"
                     >
                         <icon-ph-arrow-right class="ml-2 order-last" />
                         <span v-if="!slim">Next</span>
@@ -145,16 +145,9 @@ const hasNext = () => {
  * Computed
  */
 
-const pages = computed(() => {
-    const pages = [];
-    let i: number = rangeStart.value;
-
-    for (i; i <= rangeEnd.value; i++) {
-        pages.push(i);
-    }
-
-    return pages;
-});
+const pages = computed(() =>
+    Array.from({ length: rangeEnd.value - rangeStart.value + 1 }, (_, k) => rangeStart.value + k)
+);
 
 const rangeStart = computed(() => {
     const start = props.currentPage - pageRange;
@@ -166,14 +159,6 @@ const rangeEnd = computed(() => {
     const end = props.currentPage + pageRange;
 
     return (end < props.totalPages - 1) ? end : props.totalPages;
-});
-
-const nextPage = computed(() => {
-    return props.currentPage + 1;
-});
-
-const prevPage = computed(() => {
-    return props.currentPage - 1;
 });
 </script>
 
