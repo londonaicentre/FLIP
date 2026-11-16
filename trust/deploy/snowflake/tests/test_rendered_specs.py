@@ -618,3 +618,16 @@ def test_the_selftest_reports_the_unload_setting_without_failing_on_it(specs: di
     assert "SELFTEST {'PASS' if unload == 'true' else 'WARN'}" in advisory
     assert "check(" not in advisory, "check() counts a failure; the advisory line must not"
     assert "ALTER ACCOUNT" not in script
+
+
+def test_imaging_api_survives_a_cohort_download(specs: dict) -> None:
+    """imaging-api answers /health only between two downloads (one at a time on its event loop,
+    FLIP#1026). With three failures allowed SPCS restarted it mid-training, twice, and the FL
+    client trained on half its studies. SPCS takes no probe timeout, so the threshold gives."""
+    container = containers(specs["imaging-api"])[0]
+    for probe in ("readinessProbe", "livenessProbe"):
+        assert container[probe]["failureThreshold"] >= 30, probe
+        assert "timeoutSeconds" not in container[probe], "SPCS rejects it: unknown option"
+    assert containers(specs["trust-api"])[0]["livenessProbe"]["failureThreshold"] == 3, (
+        "only imaging-api blocks its loop"
+    )

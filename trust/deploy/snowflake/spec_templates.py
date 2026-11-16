@@ -237,8 +237,17 @@ def _secrets(service: str, names: Names) -> list[dict[str, Any]]:
     ]
 
 
-def _probe(port: int, path: str = HEALTH_PATH) -> dict[str, Any]:
-    return {"port": port, "path": path, "periodSeconds": 10, "failureThreshold": 3}
+def _probe(port: int, path: str = HEALTH_PATH, **overrides: int) -> dict[str, Any]:
+    return {"port": port, "path": path, "periodSeconds": 10, "failureThreshold": 3, **overrides}
+
+
+#: imaging-api serves one download at a time on its event loop, by design (FLIP#1026), and a
+#: study takes several seconds, so /health answers only between two downloads and most probes
+#: time out while a cohort is fetched. With three failures allowed the platform restarted it
+#: mid-training (exit 143) and the FL client lost a third of its studies (live account, twice).
+#: SPCS has no probe timeout to raise ("unknown option 'timeoutSeconds'"), so the number of
+#: failures is what gives: five minutes with no answer at all before the service counts as dead.
+SLOW_LOOP_PROBE = {"failureThreshold": 30}
 
 
 def _image(names: Names, repo: str, kit: dict[str, str], digests: dict[str, str]) -> str:
@@ -440,8 +449,8 @@ def _imaging_api(kit: dict[str, str], names: Names, digests: dict[str, str]) -> 
                     "name": "imaging-api",
                     "image": _image(names, "imaging-api", kit, digests),
                     "env": env,
-                    "readinessProbe": _probe(8000),
-                    "livenessProbe": _probe(8000),
+                    "readinessProbe": _probe(8000, **SLOW_LOOP_PROBE),
+                    "livenessProbe": _probe(8000, **SLOW_LOOP_PROBE),
                     "resources": _resources("1", "2Gi", "2", "4Gi"),
                     # The OAuth session token is how imaging-api CALLs the converter
                     # procedures; it is not a database credential for anything else.
