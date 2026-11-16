@@ -281,7 +281,7 @@ class Settings(BaseSettings):
         """The ``snowflake://`` URL naming the account, database, schema, warehouse and role.
 
         Carries **no credential**: authentication is resolved separately at connect time
-        (``db.backend``) and passed through ``connect_args``, so no secret is ever rendered into
+        (``db.backend``) for each new connection, so no secret is ever rendered into
         a URL string that could reach a log line. ``snowflake-sqlalchemy`` reads
         ``<database>/<schema>`` out of the URL's database slot.
 

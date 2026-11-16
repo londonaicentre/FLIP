@@ -89,9 +89,14 @@ Key environment variables. Most come from the trust kit file — template at [`.
 <a id="omop-backends"></a>
 ### OMOP backends (FLIP#13)
 
-A trust's OMOP is read through one configured backend (`data_access_api/db/backend.py`), selected by
-`OMOP_BACKEND` in the trust's own kit file and nowhere else. The engine is built on **first use**, not at
-import, so the backend is a deployment decision rather than an import-time one.
+A trust's OMOP is read through one configured backend (`data_access_api/db/backend.py`), selected by the
+`OMOP_BACKEND` environment variable of this service; the hub is not involved. The engine is built on
+**first use**, not at import, so the backend is a deployment decision rather than an import-time one.
+
+Setting `OMOP_BACKEND` in a kit file is not yet enough on every node shape. The SPCS service spec
+(`trust/deploy/snowflake/spec_templates.py`) sets it and the `SNOWFLAKE_*` variables on the container. The
+Compose files and the Helm chart pass `data-access-api` a fixed list of variables that includes neither, so
+a Compose or Kubernetes trust reads PostgreSQL whatever its kit file says until they are wired.
 
 | `OMOP_BACKEND` | Where OMOP is | Notes |
 | --- | --- | --- |
@@ -115,10 +120,28 @@ What is backend-specific:
   external functions and stage references — all of which parse perfectly cleanly and would sail past the
   Postgres list. The shared posture is to reject every unrecognised (`exp.Anonymous`) function, so each
   list only has to name what a cohort query legitimately needs. `age()` is allowed on PostgreSQL and
-  refused on Snowflake, which has no such function.
+  refused on Snowflake, which has no such function. The Snowflake list is empty: `flatten` is not on it,
+  because the query is parsed as PostgreSQL and sqlglot would emit it as `ARRAY_FLATTEN`; write `unnest`,
+  which is emitted as `TABLE(FLATTEN(INPUT => ...))`. A stage reference (`FROM @stage`) is refused by its
+  shape, qualified or not.
+- **Functions sqlglot types.** The unrecognised-function rule cannot see a function sqlglot parses into
+  its own node type. Snowflake's `AI_AGG`, `AI_CLASSIFY`, `AI_EMBED`, `AI_SIMILARITY` and `AI_SUMMARIZE_AGG`
+  are such functions and would hand patient values to a model, so the Snowflake backend refuses them by
+  node class (`refused_functions`). This one is an explicit list, not an allowlist: sqlglot has several
+  hundred typed functions and no common base for these. `tests/db/test_backend.py` fails when a sqlglot
+  upgrade types another `AI_*` function that the list lacks. The untyped ones (`AI_COMPLETE`,
+  `SNOWFLAKE.CORTEX.*`) are refused as unrecognised.
+- **Table clauses.** On both backends a table reference may carry only an allowlisted set of clauses
+  (alias, joins, `TABLESAMPLE`, `ONLY`, `PIVOT`, `WITH ORDINALITY`). Snowflake time travel
+  (`AT(...)` / `BEFORE(...)`) and `CHANGES(...)` are therefore refused: they read rows as they were before
+  a patient was withdrawn.
 - **Three-part names.** `otherdb.omop.person` is rejected on PostgreSQL, which has no cross-database
   references. On Snowflake `DB.SCHEMA.TABLE` is the ordinary form, so the rule is *pin the catalog too*:
   only `SNOWFLAKE_DATABASE` is admissible, and unqualified tables are pinned to it as well as to `omop`.
+- **How a schema or database name resolves.** The pins compare the way the engine does. PostgreSQL folds
+  unquoted names to lower case, so `"OMOP"` is a different schema from `omop` and is refused. Snowflake
+  folds them to upper case and keeps a quoted name exact, so `"OMOP"` and `"FLIP_TRUST_GSTT"` are
+  accepted, while `"omop"` and `"flip_trust_gstt"` name different objects and are refused.
 - **Error classification.** Missing-table / missing-column diagnostics come from the backend, not from an
   `isinstance` against psycopg2's error classes, so they do not degrade to an opaque 500 on a driver that
   is not psycopg2.

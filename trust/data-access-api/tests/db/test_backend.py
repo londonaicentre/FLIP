@@ -23,8 +23,10 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
+import sqlglot
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from sqlglot import exp
 
 from data_access_api.config import Settings
 from data_access_api.db import backend as backend_module
@@ -103,7 +105,7 @@ def test_the_snowflake_url_names_account_database_schema_warehouse_and_role():
 
 
 def test_the_snowflake_url_carries_no_credential():
-    """Credentials travel in connect_args, never in a URL string that could reach a log line."""
+    """Credentials are supplied per connection, never in a URL string that could reach a log line."""
     url = snowflake_settings(SNOWFLAKE_USER="svc").SNOWFLAKE_DATABASE_URL
 
     assert url.password is None
@@ -125,7 +127,7 @@ def test_the_snowflake_engine_pre_pings_and_recycles(snowflake_backend):
     backend, _ = snowflake_backend
     with (
         patch.object(backend_module, "create_engine") as create,
-        patch.object(backend_module, "snowflake_connect_args", return_value={}),
+        patch.object(backend_module, "event") as event,
     ):
         backend.create_engine()
 
@@ -133,6 +135,9 @@ def test_the_snowflake_engine_pre_pings_and_recycles(snowflake_backend):
     assert kwargs["pool_pre_ping"] is True
     assert kwargs["pool_recycle"] > 0
     assert kwargs["echo"] is False
+    # Evaluated once, so a credential here would outlive a rotated token.
+    assert "connect_args" not in kwargs
+    event.listen.assert_called_once_with(create.return_value, "do_connect", backend_module._snowflake_do_connect)
 
 
 def test_the_postgres_engine_is_unchanged():
@@ -174,6 +179,28 @@ def test_the_token_is_read_at_connect_time_not_cached(tmp_path):
     assert snowflake_connect_args(settings)["token"] == "first"
     token_file.write_text("second", encoding="utf-8")
     assert snowflake_connect_args(settings)["token"] == "second"
+
+
+def test_every_new_connection_reads_the_token_file_again(tmp_path):
+    """The engine outlives the token: SPCS rotates the file under a running service."""
+    token_file = tmp_path / "token"
+    token_file.write_text("first", encoding="utf-8")
+    settings = snowflake_settings(SNOWFLAKE_TOKEN_FILE=str(token_file))
+    with patch.object(backend_module, "get_settings", return_value=settings):
+        engine = SnowflakeOmopBackend().create_engine()
+        # Stop at the driver: the dialect's own connect is what do_connect feeds, and
+        # initialize is the first-connect introspection, which needs a real session.
+        with (
+            patch.object(engine.dialect, "connect", return_value=MagicMock()) as connect,
+            patch.object(engine.dialect, "initialize"),
+        ):
+            engine.raw_connection().close()
+            token_file.write_text("second", encoding="utf-8")
+            engine.dispose()
+            engine.raw_connection().close()
+
+    assert [call.kwargs["token"] for call in connect.call_args_list] == ["first", "second"]
+    assert all(call.kwargs["authenticator"] == "oauth" for call in connect.call_args_list)
 
 
 def test_key_pair_auth_is_used_off_spcs(tmp_path):
@@ -358,16 +385,34 @@ def test_the_snowflake_age_expression_avoids_the_nonexistent_age_function(snowfl
 
 def test_postgres_rejects_every_catalog():
     """Postgres has no cross-database references, so a catalog can only be confusion."""
-    assert PostgresOmopBackend().allows_catalog("otherdb") is False
+    assert PostgresOmopBackend().allows_catalog(exp.to_identifier("otherdb")) is False
     assert PostgresOmopBackend().pinned_catalog() is None
 
 
 def test_snowflake_allows_only_its_own_database(snowflake_backend):
     backend, _ = snowflake_backend
 
-    assert backend.allows_catalog("FLIP_TRUST_GSTT") is True
-    assert backend.allows_catalog("flip_trust_gstt") is True
-    assert backend.allows_catalog("FLIP_TRUST_OTHER") is False
+    assert backend.allows_catalog(exp.to_identifier("FLIP_TRUST_GSTT")) is True
+    assert backend.allows_catalog(exp.to_identifier("flip_trust_gstt")) is True
+    assert backend.allows_catalog(exp.to_identifier("FLIP_TRUST_OTHER")) is False
+
+
+def test_snowflake_compares_a_quoted_name_exactly(snowflake_backend):
+    """Unquoted folds to upper case; ``"flip_trust_gstt"`` is a different database."""
+    backend, _ = snowflake_backend
+
+    assert backend.allows_catalog(exp.to_identifier("FLIP_TRUST_GSTT", quoted=True)) is True
+    assert backend.allows_catalog(exp.to_identifier("flip_trust_gstt", quoted=True)) is False
+    assert backend.names_schema(exp.to_identifier("omop"), "omop") is True
+    assert backend.names_schema(exp.to_identifier("OMOP", quoted=True), "omop") is True
+    assert backend.names_schema(exp.to_identifier("omop", quoted=True), "omop") is False
+
+
+def test_postgres_compares_the_folded_schema_name():
+    backend = PostgresOmopBackend()
+
+    assert backend.names_schema(exp.to_identifier("omop", quoted=True), "omop") is True
+    assert backend.names_schema(exp.to_identifier("OMOP", quoted=True), "omop") is False
 
 
 def test_snowflake_pins_unqualified_tables_to_its_own_database(snowflake_backend):
@@ -379,6 +424,28 @@ def test_snowflake_pins_unqualified_tables_to_its_own_database(snowflake_backend
 def test_snowflake_refuses_a_stage_reference(snowflake_backend):
     """``FROM @stage`` reads staged FILES; pinning it would merely qualify it."""
     backend, _ = snowflake_backend
+    stage = sqlglot.parse_one("SELECT * FROM @my_stage", read="postgres").find(exp.Table)
 
-    assert backend.reject_table_reference("@my_stage") == "Stage references are not allowed."
-    assert backend.reject_table_reference("person") is None
+    assert backend.reject_table_reference(stage) == "Stage references are not allowed."
+    assert backend.reject_table_reference(exp.to_table("person")) is None
+
+
+# ── Functions sqlglot types, so the unrecognised-function rule never sees them ───────
+
+
+def test_postgres_refuses_no_typed_function():
+    assert PostgresOmopBackend.refused_functions == ()
+
+
+def test_every_ai_function_sqlglot_types_is_refused_on_snowflake():
+    """Tripwire for a sqlglot upgrade that starts typing another ``AI_*`` function."""
+
+    def subclasses(cls):
+        for sub in cls.__subclasses__():
+            yield sub
+            yield from subclasses(sub)
+
+    typed_ai = {cls for cls in subclasses(exp.Func) if any(name.startswith("AI_") for name in cls.sql_names())}
+
+    assert typed_ai
+    assert typed_ai <= set(SnowflakeOmopBackend.refused_functions)

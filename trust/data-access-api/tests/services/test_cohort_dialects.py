@@ -104,12 +104,45 @@ def test_writes_are_refused_anywhere_in_the_tree(backend, query):
     [
         pytest.param("SELECT * FROM public.secrets", id="other-schema"),
         pytest.param("SELECT * FROM pg_catalog.pg_class", id="pg-catalog"),
-        pytest.param('SELECT * FROM "OMOP".person', id="quoted-other-case-schema"),
     ],
 )
 def test_only_the_omop_schema_is_reachable(backend, query):
     with pytest.raises(HTTPException, match="is not accessible"):
         validate_query(query)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param("SELECT person_id FROM omop.person AT(OFFSET => -86400)", id="at-offset"),
+        pytest.param("SELECT person_id FROM omop.person AT(TIMESTAMP => '2026-01-01'::timestamp)", id="at-timestamp"),
+        pytest.param("SELECT person_id FROM omop.person BEFORE(STATEMENT => '01a2b3c4')", id="before-statement"),
+        pytest.param("SELECT person_id FROM person AT(OFFSET => -86400)", id="unqualified-table"),
+        pytest.param(
+            "SELECT person_id FROM omop.person CHANGES(INFORMATION => DEFAULT) AT(OFFSET => -60)", id="changes"
+        ),
+        pytest.param(
+            "SELECT 1 FROM omop.person p JOIN omop.death AT(OFFSET => -60) d ON d.person_id = p.person_id",
+            id="joined-table",
+        ),
+    ],
+)
+def test_time_travel_is_refused(backend, query):
+    """A withdrawn patient's rows stay readable through time travel for the retention window."""
+    with pytest.raises(HTTPException, match="Table clause"):
+        validate_query(query)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param("SELECT * FROM omop.person TABLESAMPLE BERNOULLI (10)", id="tablesample"),
+        pytest.param("SELECT * FROM ONLY omop.person", id="only"),
+        pytest.param("SELECT p.person_id FROM omop.person AS p", id="alias"),
+    ],
+)
+def test_ordinary_table_clauses_survive(backend, query):
+    assert "omop.person" in validate_query(query)
 
 
 def test_an_unqualified_table_is_pinned_to_omop(backend):
@@ -221,6 +254,104 @@ def test_the_snowflake_dangerous_surface_is_refused(snowflake, query):
     with pytest.raises(HTTPException) as error:
         validate_query(query)
     assert error.value.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param("SELECT AI_AGG(person_source_value, 'summarise') FROM omop.person", id="ai-agg"),
+        pytest.param("SELECT AI_SUMMARIZE_AGG(person_source_value) FROM omop.person", id="ai-summarize-agg"),
+        pytest.param("SELECT AI_CLASSIFY(person_source_value, ARRAY['a', 'b']) FROM omop.person", id="ai-classify"),
+        pytest.param("SELECT AI_EMBED('model', person_source_value) FROM omop.person", id="ai-embed"),
+        pytest.param("SELECT AI_SIMILARITY(person_source_value, 'x') FROM omop.person", id="ai-similarity"),
+        pytest.param("SELECT AI_COMPLETE('model', person_source_value) FROM omop.person", id="ai-complete"),
+        pytest.param("SELECT AI_SENTIMENT(person_source_value) FROM omop.person", id="ai-sentiment"),
+        pytest.param(
+            "SELECT SNOWFLAKE.CORTEX.COMPLETE('model', person_source_value) FROM omop.person", id="cortex-complete"
+        ),
+        pytest.param(
+            "SELECT SNOWFLAKE.CORTEX.TRANSLATE(person_source_value, 'en', 'fr') FROM omop.person",
+            id="cortex-name-sqlglot-types",
+        ),
+        pytest.param(
+            "SELECT person_id FROM omop.person WHERE AI_SIMILARITY(person_source_value, 'x') > 0.5", id="in-where"
+        ),
+    ],
+)
+def test_model_functions_are_refused_on_snowflake(snowflake, query):
+    """Patient values must not reach an LLM function, whether sqlglot types the call or not."""
+    with pytest.raises(HTTPException, match="is not an allowed function"):
+        validate_query(query)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param('SELECT * FROM "flip_trust_gstt".omop.person', id="quoted-lower-case-database"),
+        pytest.param('SELECT * FROM "Flip_Trust_Gstt".omop.person', id="quoted-mixed-case-database"),
+        pytest.param('SELECT * FROM "omop".person', id="quoted-lower-case-schema"),
+        pytest.param('SELECT * FROM FLIP_TRUST_GSTT."omop".person', id="own-database-quoted-lower-case-schema"),
+    ],
+)
+def test_a_quoted_name_snowflake_resolves_elsewhere_is_refused(snowflake, query):
+    """Snowflake keeps a quoted name exact, so ``"omop"`` is a different schema from ``OMOP``."""
+    with pytest.raises(HTTPException, match="Cross-database|is not accessible"):
+        validate_query(query)
+
+
+@pytest.mark.parametrize(
+    ("query", "emitted"),
+    [
+        pytest.param('SELECT * FROM "OMOP".person', 'SELECT * FROM "OMOP".person', id="quoted-schema"),
+        pytest.param(
+            'SELECT * FROM "FLIP_TRUST_GSTT"."OMOP".person',
+            'SELECT * FROM "FLIP_TRUST_GSTT"."OMOP".person',
+            id="quoted-database-and-schema",
+        ),
+        pytest.param(
+            "SELECT * FROM Flip_Trust_Gstt.Omop.person",
+            "SELECT * FROM flip_trust_gstt.omop.person",
+            id="unquoted-any-case",
+        ),
+    ],
+)
+def test_the_names_snowflake_resolves_to_the_omop_schema_are_accepted(snowflake, query, emitted):
+    """Unquoted folds to upper case; a quoted name must equal the real upper-case one."""
+    assert validate_query(query) == emitted
+
+
+def test_postgres_keeps_a_quoted_upper_case_schema_distinct():
+    with patch.object(cohort_service, "get_backend", return_value=PostgresOmopBackend()):
+        with pytest.raises(HTTPException, match="is not accessible"):
+            validate_query('SELECT * FROM "OMOP".person')
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param("SELECT * FROM @mystage", id="stage"),
+        pytest.param("SELECT * FROM omop.@mystage", id="schema-qualified-stage"),
+        pytest.param("SELECT $1 FROM @~", id="user-stage"),
+        pytest.param("SELECT * FROM @mystage AS t", id="aliased-stage"),
+    ],
+)
+def test_a_stage_reference_is_refused(snowflake, query):
+    """``FROM @stage`` reads staged files, not a table."""
+    with pytest.raises(HTTPException, match="Stage references are not allowed"):
+        validate_query(query)
+
+
+def test_flatten_is_not_an_allowed_table_function_on_snowflake(snowflake):
+    """Parsed as PostgreSQL it would be emitted as ARRAY_FLATTEN, which is not a table function."""
+    with pytest.raises(HTTPException, match="is not an allowed table-valued function"):
+        validate_query("SELECT * FROM flatten(x)")
+
+
+def test_unnest_is_emitted_as_snowflakes_flatten(snowflake):
+    """The portable spelling: authored as PostgreSQL ``unnest``, emitted as ``TABLE(FLATTEN(...))``."""
+    emitted = validate_query("SELECT * FROM unnest(ARRAY[1, 2]) AS t(x)")
+
+    assert "TABLE(FLATTEN(INPUT => [1, 2]))" in emitted
 
 
 def test_the_postgres_allowlist_is_not_reused_on_snowflake(snowflake):

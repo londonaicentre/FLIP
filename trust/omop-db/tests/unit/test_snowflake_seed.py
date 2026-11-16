@@ -157,6 +157,12 @@ def test_copy_into_binds_columns_by_position(names: seed.Names) -> None:
     assert "ON_ERROR = ABORT_STATEMENT" in statement
 
 
+def test_copy_into_forces_a_reload(names: seed.Names) -> None:
+    """Snowflake remembers a staged file it has loaded and skips it: after the scoped delete a
+    re-seed loaded nothing and left the tables empty (found on the live account)."""
+    assert "FORCE = TRUE" in seed.sql_copy_into(names, "person", ["person_id"], "@S/person.csv.gz")
+
+
 def test_copy_into_refuses_an_unsafe_column_name(names: seed.Names) -> None:
     with pytest.raises(seed.SnowflakeSeedError, match="Unsafe SQL identifier"):
         seed.sql_copy_into(names, "person", ["person_id); DROP TABLE PERSON; --"], "@S/x.gz")
@@ -246,7 +252,6 @@ def _seed_statements(canonical: Path, tmp_path: Path, names: seed.Names, **overr
         num_trusts=2,
         source_trust=1,
         partition="source_trust",
-        marker=seed.Marker(projects=("cxr_project",), source_trust=1, provenance="version=20261001"),
         ddl_sql="CREATE TABLE IF NOT EXISTS PERSON (person_id SERIAL PRIMARY KEY NOT NULL);",
         vocab_dir=None,
         load_vocab=False,
@@ -255,14 +260,34 @@ def _seed_statements(canonical: Path, tmp_path: Path, names: seed.Names, **overr
     return seed.build_seed_statements(**kwargs)  # type: ignore[arg-type]
 
 
-def test_a_seed_run_is_ordered_ddl_clean_load_marker(canonical: Path, tmp_path: Path, names: seed.Names) -> None:
+def test_a_seed_run_is_ordered_ddl_clean_load(canonical: Path, tmp_path: Path, names: seed.Names) -> None:
     statements = _seed_statements(canonical, tmp_path, names)
     joined = "\n".join(statements)
     create = joined.index("CREATE TABLE IF NOT EXISTS FLIP_TRUST_GSTT.OMOP.PERSON")
     delete = joined.index("DELETE FROM FLIP_TRUST_GSTT.OMOP.PERSON WHERE person_id IN")
     copy = joined.index("COPY INTO FLIP_TRUST_GSTT.OMOP.PERSON")
-    marker = joined.index("INSERT INTO FLIP_TRUST_GSTT.OMOP._FLIP_SEED_MARKER")
-    assert create < delete < copy < marker
+    assert create < delete < copy
+
+
+def test_the_seed_statements_do_not_write_the_marker(canonical: Path, tmp_path: Path, names: seed.Names) -> None:
+    """The marker is written by ``main`` only after the loaded rows have been counted."""
+    assert not any(
+        "_FLIP_SEED_MARKER" in s and not s.startswith("CREATE") for s in _seed_statements(canonical, tmp_path, names)
+    )
+
+
+def test_a_projects_delete_and_load_are_one_transaction(canonical: Path, tmp_path: Path, names: seed.Names) -> None:
+    """A load that fails after the delete must not leave the project's tables empty."""
+    statements = _seed_statements(canonical, tmp_path, names)
+    begin, commit = statements.index("BEGIN TRANSACTION;"), statements.index("COMMIT;")
+    inside = statements[begin + 1 : commit]
+
+    assert {s.split()[0] for s in inside} == {"DELETE", "COPY"}
+    assert sum(s.startswith("DELETE") for s in inside) == 7
+    assert sum(s.startswith("COPY") for s in inside) == 5
+    # PUT is a file upload and DDL commits implicitly, so both stay ahead of the transaction.
+    assert all(not s.startswith(("PUT", "CREATE")) for s in statements[begin:])
+    assert statements.count("BEGIN TRANSACTION;") == statements.count("COMMIT;") == 1
 
 
 def test_the_scoped_clean_uses_the_whole_projects_person_ids(
@@ -292,6 +317,97 @@ def test_loading_the_vocabulary_without_a_directory_is_refused(
 ) -> None:
     with pytest.raises(seed.SnowflakeSeedError, match="needs --vocab-dir"):
         _seed_statements(canonical, tmp_path, names, load_vocab=True)
+
+
+# ── verifying what was loaded ────────────────────────────────────────────────────────────
+
+
+def _staged(canonical: Path, tmp_path: Path) -> Path:
+    staging = tmp_path / "stage"
+    seed.write_project_csvs(canonical, "cxr_project", staging, 2, 1, "source_trust")
+    return staging
+
+
+def _counts(**loaded: int) -> list[dict[str, object]]:
+    return [{"TABLE_NAME": table.upper(), "LOADED": count} for table, count in loaded.items()]
+
+
+def test_the_count_query_is_scoped_to_the_projects_persons(names: seed.Names) -> None:
+    query = seed.sql_count_person_rows(names, list(range(1, 1502)), ["person", "visit_occurrence"])
+    assert query.count("UNION ALL") == 1
+    assert "SELECT 'PERSON' AS table_name, COUNT(*) AS loaded FROM FLIP_TRUST_GSTT.OMOP.PERSON" in query
+    # Chunked like the deletes: 1501 ids are two IN lists per table.
+    assert query.count("person_id IN (") == 4
+
+
+def test_matching_row_counts_pass(
+    canonical: Path, tmp_path: Path, names: seed.Names, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    staging = _staged(canonical, tmp_path)
+    full = _counts(person=2, visit_occurrence=1, procedure_occurrence=1, image_occurrence=1, image_feature=1)
+    monkeypatch.setattr(seed, "run_sql", lambda *args, **kwargs: full)
+    seed.verify_loaded(names, canonical, ["cxr_project"], staging, "flip-test", "snow")
+
+
+def test_a_load_that_loaded_nothing_is_an_error(
+    canonical: Path, tmp_path: Path, names: seed.Names, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``COPY INTO`` answers "0 files processed" with exit code 0, so only a count can tell."""
+    staging = _staged(canonical, tmp_path)
+    empty = _counts(person=0, visit_occurrence=0, procedure_occurrence=0, image_occurrence=0, image_feature=0)
+    monkeypatch.setattr(seed, "run_sql", lambda *args, **kwargs: empty)
+    with pytest.raises(seed.SnowflakeSeedError, match=r"cxr_project.*person: 0 of 2"):
+        seed.verify_loaded(names, canonical, ["cxr_project"], staging, "flip-test", "snow")
+
+
+def test_a_table_missing_from_the_count_is_an_error(
+    canonical: Path, tmp_path: Path, names: seed.Names, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    staging = _staged(canonical, tmp_path)
+    monkeypatch.setattr(seed, "run_sql", lambda *args, **kwargs: _counts(person=2))
+    with pytest.raises(seed.SnowflakeSeedError, match="visit_occurrence: 0 of 1"):
+        seed.verify_loaded(names, canonical, ["cxr_project"], staging, "flip-test", "snow")
+
+
+def _fake_snowflake(monkeypatch: pytest.MonkeyPatch, loaded: list[dict[str, object]]) -> list[str]:
+    """Replace ``run_sql`` for a ``main`` run; the returned list fills with every script sent."""
+    scripts: list[str] = []
+
+    def fake_run_sql(statements: list[str], **kwargs: object) -> list[dict[str, object]] | None:
+        script = "\n".join(statements)
+        scripts.append(script)
+        if "SELECT 1 AS loaded" in script:
+            return [{"LOADED": 1}]  # the DICOM vocabulary is already there
+        return loaded if "COUNT(*) AS loaded" in script else None
+
+    monkeypatch.setattr(seed, "run_sql", fake_run_sql)
+    monkeypatch.setattr(seed, "validate_data_dir", lambda *args: None)
+    monkeypatch.setattr(seed, "read_ddl", lambda _path: "CREATE TABLE IF NOT EXISTS PERSON (person_id INT);")
+    return scripts
+
+
+def _main_args(canonical: Path) -> list[str]:
+    return ["--code", "GSTT", "--projects", "cxr_project", "--data-dir", str(canonical), "--revision", "20261001"]
+
+
+def test_the_marker_is_written_after_the_counts_match(canonical: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    full = _counts(person=2, visit_occurrence=1, procedure_occurrence=1, image_occurrence=1, image_feature=1)
+    scripts = _fake_snowflake(monkeypatch, full)
+
+    assert seed.main(_main_args(canonical)) == 0
+
+    kinds = ["copy" if "COPY INTO" in s else "count" if "COUNT(*)" in s else "marker" for s in scripts[1:]]
+    assert kinds == ["copy", "count", "marker"]
+    assert "INSERT INTO FLIP_TRUST_GSTT.OMOP._FLIP_SEED_MARKER" in scripts[-1]
+
+
+def test_an_empty_load_fails_the_run_and_writes_no_marker(canonical: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    scripts = _fake_snowflake(monkeypatch, _counts(person=0))
+
+    with pytest.raises(seed.SnowflakeSeedError, match="person: 0 of 2"):
+        seed.main(_main_args(canonical))
+
+    assert not any("INSERT INTO FLIP_TRUST_GSTT.OMOP._FLIP_SEED_MARKER" in s for s in scripts)
 
 
 # ── unseed ───────────────────────────────────────────────────────────────────────────────
