@@ -74,9 +74,11 @@ make -C trust/deploy/snowflake job-status     KIT=GSTT HUB=stag JOB=xnat-configu
 make -C trust/deploy/snowflake seed-orthanc KIT=GSTT HUB=stag
 make -C trust/deploy/snowflake smoke-cstore KIT=GSTT HUB=stag
 
-# 7. Check, and stop paying when idle
-make -C trust/deploy/snowflake status  KIT=GSTT HUB=stag
-make -C trust/deploy/snowflake suspend KIT=GSTT HUB=stag
+# 7. Check, and stop paying when idle. `selftest` waits for its job and fails unless
+#    every check passed; `up` after `suspend` resumes the services.
+make -C trust/deploy/snowflake status   KIT=GSTT HUB=stag
+make -C trust/deploy/snowflake selftest KIT=GSTT HUB=stag
+make -C trust/deploy/snowflake suspend  KIT=GSTT HUB=stag
 ```
 
 Every Snowflake target takes `DRY_RUN=true`, which prints the SQL instead of running it:
@@ -176,6 +178,11 @@ with `CREATE SERVICE` granted for the length of the call and revoked in a `final
 that on a cold site; the `NAME` because `SYSTEM$GET_SERVICE_STATUS` and
 `SYSTEM$GET_SERVICE_LOGS` are the only way to read what a job did, and an anonymous job
 cannot be addressed once the call returns. All four take `DRY_RUN=true`.
+
+A job keeps its name once it has finished, so each run first drops the previous one
+(its log stays in the event table). `smoke-cstore` and `selftest` then wait for the job
+(`JOB_TIMEOUT`, 900 s by default), print its log and exit non-zero unless it ended `DONE`;
+the other jobs return at once and are followed with `job-status`.
 
 | Job | Compose / Helm twin | What is different here |
 |---|---|---|
@@ -328,6 +335,8 @@ SPCS bills each compute-pool node while it runs, and **a resource monitor does n
 compute pools**. So `make suspend` suspends every service *and* every pool, pool
 auto-suspend is set by the Terraform root, and a nightly suspend task is part of the
 epic's deliverable. An idle trust that was never suspended is the expensive failure mode.
+`make up` brings a suspended trust back: it resumes each service, and the pools resume by
+themselves when a service asks for a node.
 
 ## Testing
 
@@ -374,7 +383,6 @@ a live account.
 | A stage volume can be sliced to a prefix (`@...IMAGES/net-1`), which is what carries the per-net isolation rule | FLIP#1579 | The fl-client needs one stage per net instead, and the Terraform root grows a stage per FL network |
 | Stage read-only is enforced by granting READ and not WRITE (SPCS has no `readOnly` mount flag). The intent is recorded per volume in `manifest.json` | FLIP#1579 | A different mechanism, or an accepted residual risk documented in the runbook |
 | The resource requests and limits are starting points, not measurements | FLIP#1579, FLIP#1585 | Revised against the self-test's observed usage |
-| The self-test is a placeholder: service status and container logs read through `SYSTEM$` functions | FLIP#1585 | Replaced by real assertions (a cohort query, an image pull, an FL round) |
 
 The hub-connected path cannot be tested on a trial account at all: trials exclude
 External Network Access, so there is no External Access Integration and no egress. That
