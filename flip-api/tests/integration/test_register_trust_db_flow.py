@@ -10,12 +10,12 @@
 # limitations under the License.
 #
 
-"""register_trust's slot claim + reconcile-on-miss, and key rotation, against real Postgres.
+"""register_trust's slot claim from the source's names, and key rotation, against real Postgres.
 
-The unit tests mock the session, so the mechanics that make the reconcile safe —
+The unit tests mock the session, so the mechanics that make the claim safe —
 ``begin_nested()`` savepoint flush, rollback leaving the outer transaction usable,
-and the retried ``SELECT ... FOR UPDATE SKIP LOCKED`` seeing rows inserted in the
-same open transaction — are only exercised here. Rotation is here for the same reason: whether
+and ``SELECT ... FOR UPDATE SKIP LOCKED`` seeing rows inserted in the same open
+transaction but only those the source names — are only exercised here. Rotation is here for the same reason: whether
 the hub really refuses the old key afterwards is a property of the committed row, not of a mock.
 """
 
@@ -37,9 +37,9 @@ from flip_api.trusts_services.services.register_trust import (
 
 
 @patch("flip_api.trusts_services.services.register_trust.resolve_fl_kit_slot_names")
-def test_reconcile_grows_pool_and_claims_within_one_transaction(mock_resolve, session):
-    """Empty pool + a newly configured name: the miss reconciles, the retried claim
-    wins the just-inserted row, and the whole registration commits atomically.
+def test_new_slot_is_inserted_and_claimed_within_one_transaction(mock_resolve, session):
+    """Empty pool + a newly named slot: the claim wins the just-inserted row, and the
+    whole registration commits atomically.
     """
     mock_resolve.return_value = ["Trust_701"]
 
@@ -55,8 +55,8 @@ def test_reconcile_grows_pool_and_claims_within_one_transaction(mock_resolve, se
 @patch("flip_api.trusts_services.services.register_trust.resolve_fl_kit_slot_names")
 def test_exhausted_pool_raises_and_commits_nothing(mock_resolve, session):
     """The realistic exhaustion shape: the resolver keeps returning the same name,
-    whose row is already assigned — reconcile inserts nothing (the savepoint flush
-    runs for real), the retry misses, and no partial trust row survives.
+    whose row is already assigned — nothing is inserted (the savepoint flush runs
+    for real), the claim misses, and no partial trust row survives.
     """
     mock_resolve.return_value = ["Trust_702"]
     register_trust(name="First Trust", code="FST", region=None, session=session)
@@ -67,10 +67,27 @@ def test_exhausted_pool_raises_and_commits_nothing(mock_resolve, session):
     session.rollback()  # clear the aborted registration's open transaction
     session.expire_all()
     assert session.exec(select(Trust).where(Trust.name == "Second Trust")).first() is None
-    # The pool still holds exactly the one assigned row — reconcile stayed additive.
+    # The pool still holds exactly the one assigned row.
     slots = session.exec(select(FLKitSlot)).all()
     assert [s.slot_name for s in slots] == ["Trust_702"]
     assert slots[0].assigned_to_trust_id is not None
+
+
+@patch("flip_api.trusts_services.services.register_trust.resolve_fl_kit_slot_names")
+def test_free_slot_the_source_no_longer_names_is_not_claimed(mock_resolve, session):
+    """A kit withdrawn after its row was seeded (deleted from S3, say) is not handed out,
+    even though its row is free and lower-numbered.
+    """
+    session.add(FLKitSlot(slot_name="Trust_704", slot_number=704))
+    session.commit()
+    mock_resolve.return_value = ["Trust_705"]
+
+    result = register_trust(name="Withdrawn Kit Trust", code="WKT", region=None, session=session)
+
+    assert result.fl_kit_slot.slot_name == "Trust_705"
+    session.expire_all()
+    withdrawn = session.exec(select(FLKitSlot).where(FLKitSlot.slot_name == "Trust_704")).one()
+    assert withdrawn.assigned_to_trust_id is None
 
 
 @patch("flip_api.trusts_services.services.register_trust.resolve_fl_kit_slot_names")

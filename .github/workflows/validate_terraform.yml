@@ -23,6 +23,8 @@ on:
       - "trust/deploy/terraform/aws/**"
       # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
       - "flip-api/src/flip_api/auth/identity/cognito.py"
+      # test_flare_kit_required_files.py reads it: add_fl_kits.sh uploads the same files last.
+      - "flip-api/src/flip_api/db/seed/fl_kit_slots.py"
       # test_site_roles.py, test_trust_kit_staging.py and the seed tests read the EC2 host plays
       # site.yml imports and the shared roles they compose.
       - "trust/deploy/ansible/aws-ec2-host.yml"
@@ -43,6 +45,8 @@ on:
       - "trust/deploy/terraform/aws/**"
       # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
       - "flip-api/src/flip_api/auth/identity/cognito.py"
+      # test_flare_kit_required_files.py reads it: add_fl_kits.sh uploads the same files last.
+      - "flip-api/src/flip_api/db/seed/fl_kit_slots.py"
       # test_site_roles.py, test_trust_kit_staging.py and the seed tests read the EC2 host plays
       # site.yml imports and the shared roles they compose.
       - "trust/deploy/ansible/aws-ec2-host.yml"
