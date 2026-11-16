@@ -15,7 +15,7 @@ import re
 from collections import defaultdict
 
 from botocore.exceptions import BotoCoreError, ClientError
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from flip_api.config import get_settings
 from flip_api.db.models.main_models import FLKitSlot
@@ -33,7 +33,9 @@ _FL_KIT_SLOT_NAMES_PARAMETER = "/flip/fl_kit_slot_names"
 # add_fl_kits.sh uploads them last, so a half-uploaded kit never qualifies; the hub's own
 # server and admin kits have no fed_client.json, so they never do either.
 FLARE_KIT_REQUIRED_FILES = frozenset({"client.crt", "client.key", "rootCA.pem", "fed_client.json", "sub_start.sh"})
-_KIT_KEY_RE = re.compile(r"(net-\d+)/(?:services/([^/]+)/startup/([^/]+)$)?")
+# What marks a kit as the hub's own (server, admin): expected to fall short, so not warned about.
+_HUB_KIT_FILES = frozenset({"fed_server.json", "fed_admin.json"})
+_KIT_KEY_RE = re.compile(r"(net-\d+)/(?:services/([^/]+)/(?:startup/([^/]+)$)?)?")
 
 _SLOT_NUMBER_RE = re.compile(r"_(\d+)$")
 
@@ -57,7 +59,7 @@ def _slot_number(slot_name: str) -> int:
     return int(match.group(1)) if match else _NON_NUMERIC_SLOT_NUMBER
 
 
-def resolve_fl_kit_slot_names() -> list[str]:
+def resolve_fl_kit_slot_names() -> list[str] | None:
     """Resolve the FL kit-slot names from their environment's single source.
 
     - Development: the ``FL_KIT_SLOT_NAMES`` env var (a ``DevSettings``-only field).
@@ -69,12 +71,13 @@ def resolve_fl_kit_slot_names() -> list[str]:
     returns: a slot added since boot is claimable with no restart, and one withdrawn
     since is never handed out.
 
-    Deliberately no fallback: an unreadable source returns an empty list, logged, and no
-    slot can be claimed until it is fixed. Rows and assignments already in the pool are
+    Deliberately no fallback: an unreadable source returns ``None``, logged, and no slot
+    can be claimed until it is fixed. Rows and assignments already in the pool are
     untouched.
 
     Returns:
-        list[str]: The slot names; empty when none are configured or the source is unreadable.
+        list[str] | None: The slot names, empty when none are configured; ``None`` when the
+        source could not be read (an AWS error or a malformed value).
     """
     settings = get_settings()
     if settings.ENV != "production":
@@ -86,7 +89,7 @@ def resolve_fl_kit_slot_names() -> list[str]:
     return _slot_names_from_parameter()
 
 
-def _complete_flare_kit_names(kits_uri: str) -> list[str]:
+def _complete_flare_kit_names(kits_uri: str) -> list[str] | None:
     """List the slots whose FLARE kit is complete on every net under ``kits_uri``.
 
     A trust needs a working kit for every net, so a kit incomplete or missing on any net
@@ -96,7 +99,8 @@ def _complete_flare_kit_names(kits_uri: str) -> list[str]:
         kits_uri (str): ``s3://<bucket>/fl-flare-participant-kits/<FLARE_KIT_DATE>``.
 
     Returns:
-        list[str]: The complete slot names; empty when there are none or the listing fails.
+        list[str] | None: The complete slot names, empty when there are none; ``None`` when
+        the listing fails.
     """
     if not kits_uri:
         logger.error("FLARE_KITS_S3_URI is not set. No kit slot can be claimed until it is.")
@@ -106,7 +110,7 @@ def _complete_flare_kit_names(kits_uri: str) -> list[str]:
         paths = S3Client().list_objects(prefix)
     except Exception:
         logger.exception(f"Could not list the FLARE kits under '{prefix}'. No kit slot can be claimed until fixed.")
-        return []
+        return None
 
     nets: set[str] = set()
     kits: defaultdict[str, dict[str, set[str]]] = defaultdict(dict)  # slot -> net -> startup file names
@@ -115,7 +119,9 @@ def _complete_flare_kit_names(kits_uri: str) -> list[str]:
             net, slot_name, file_name = match.groups()
             nets.add(net)
             if slot_name:
-                kits[slot_name].setdefault(net, set()).add(file_name)
+                files = kits[slot_name].setdefault(net, set())
+                if file_name:
+                    files.add(file_name)
 
     if not nets:
         logger.error(f"No FLARE kits under '{prefix}' — is FLARE_KIT_DATE right? No kit slot can be claimed.")
@@ -125,21 +131,22 @@ def _complete_flare_kit_names(kits_uri: str) -> list[str]:
         missing = {net: FLARE_KIT_REQUIRED_FILES - files_by_net.get(net, set()) for net in sorted(nets)}
         if not any(missing.values()):
             complete.append(slot)
-        elif any("fed_client.json" in files for files in files_by_net.values()):
-            # A client kit, unlike the hub's own server and admin kits: say why it is left out.
+        elif not any(files & _HUB_KIT_FILES for files in files_by_net.values()):
+            # Not one of the hub's own kits, so a client kit: say why it is left out.
             gaps = "; ".join(f"{net} lacks {', '.join(sorted(files))}" for net, files in missing.items() if files)
             logger.warning(f"FLARE kit '{slot}' is not claimable: {gaps}.")
     return sorted(complete, key=lambda name: (_slot_number(name), name))
 
 
-def _slot_names_from_parameter() -> list[str]:
+def _slot_names_from_parameter() -> list[str] | None:
     """Read Flower's slot list from the ``/flip/fl_kit_slot_names`` SSM parameter.
 
     A missing parameter is a not-yet-provisioned source (WARNING); any other AWS error or
     a malformed value means the source is broken (ERROR).
 
     Returns:
-        list[str]: The configured slot names; empty when the parameter is unreadable.
+        list[str] | None: The configured slot names, empty when the parameter does not exist
+        yet; ``None`` when it could not be read.
     """
     try:
         slot_names = json.loads(get_parameter(_FL_KIT_SLOT_NAMES_PARAMETER))
@@ -157,7 +164,7 @@ def _slot_names_from_parameter() -> list[str]:
             f"Could not read SSM parameter '{_FL_KIT_SLOT_NAMES_PARAMETER}' ({e!r}). No kit slot can be "
             "claimed until this is fixed (existing assignments are unaffected)."
         )
-        return []
+        return None
 
 
 def insert_missing_slots(session: Session, slot_names: list[str]) -> list[str]:
@@ -175,12 +182,12 @@ def insert_missing_slots(session: Session, slot_names: list[str]) -> list[str]:
     Returns:
         list[str]: The slot names that were newly inserted.
     """
-    inserted: list[str] = []
-    for slot_name in slot_names:
-        existing = session.exec(select(FLKitSlot).where(FLKitSlot.slot_name == slot_name)).first()
-        if existing is None:
-            session.add(FLKitSlot(slot_name=slot_name, slot_number=_slot_number(slot_name)))
-            inserted.append(slot_name)
+    if not slot_names:
+        return []
+    existing = set(session.exec(select(FLKitSlot.slot_name).where(col(FLKitSlot.slot_name).in_(slot_names))).all())
+    inserted = [slot_name for slot_name in dict.fromkeys(slot_names) if slot_name not in existing]
+    for slot_name in inserted:
+        session.add(FLKitSlot(slot_name=slot_name, slot_number=_slot_number(slot_name)))
     return inserted
 
 
@@ -195,7 +202,7 @@ def seed_fl_kit_slots(session: Session) -> None:
     Args:
         session (Session): The SQLModel session used for reads and inserts.
     """
-    slot_names = resolve_fl_kit_slot_names()
+    slot_names = resolve_fl_kit_slot_names() or []  # an unreadable source seeds nothing; it is logged
     insert_missing_slots(session, slot_names)
     session.commit()
 

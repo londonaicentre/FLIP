@@ -15,9 +15,10 @@
 # Mint N more *claimable* FL kit slots on a running stag/prod FLARE deployment, end to
 # end:
 #
-#   1. discover the deployment's nets and existing kit names from S3
-#   2. on EVERY net: restore + fingerprint-verify the CA workspace (state/ holds the
-#      root CA), `nvflare provision --add_client` (via make) the next Trust_<n> names,
+#   1. discover the deployment's nets from S3, restore each net's CA state (state/ holds
+#      the root CA) and number past every kit in S3 and every name the CA has signed
+#   2. on EVERY net: fingerprint-verify the CA workspace,
+#      `nvflare provision --add_client` (via make) the next Trust_<n> names,
 #      upload ONLY the new kits (additive `aws s3 cp`; never `sync --delete`) and
 #      refresh the net's mirrored cert.json CA registry under fl-flare-ca-state/
 #      (operator-only: no ECS task role reads that prefix)
@@ -102,7 +103,10 @@ on_error() {
     if [[ ${#UPLOADED[@]} -gt 0 ]]; then
         echo "   Kits uploaded this run (the last may be partial): ${UPLOADED[*]}" >&2
         echo "   A kit is claimable only once it is complete on every net. Re-run add-fl-kits" >&2
-        echo "   with the number of slots still needed: it numbers past every kit in S3." >&2
+        echo "   with the number of slots still needed: it numbers past every kit in S3 and every" >&2
+        echo "   name the CA has signed, so these names are not reused. Delete a kit above that" >&2
+        echo "   is not complete on every net (${NETS[*]}), or flip-api warns about it for good:" >&2
+        echo "     aws s3 rm --recursive ${BASE_S3}/<net>/services/<name>/" >&2
     else
         echo "   Nothing was uploaded; re-run once the underlying error is fixed." >&2
     fi
@@ -133,10 +137,33 @@ if [[ "${#NETS[@]}" -eq 0 ]]; then
 fi
 log "Nets in S3 (${FLARE_KIT_DATE}): ${NETS[*]}"
 
-# Existing slot names: every net's services/Trust_* prefixes. The max trailing number
-# decides where new names start, so a name is never reused, even a half-uploaded one.
+# Existing slot names: every net's services/Trust_* prefixes, plus every name the net's
+# CA has signed (state/cert.json). The max trailing number decides where new names start,
+# so a name is never reused: not a half-uploaded one, and not one whose kit was deleted
+# from S3 to withdraw it, or was minted by a run that failed before its upload.
 existing_names=()
 for net in "${NETS[@]}"; do
+    workspace="${WORKSPACE_PARENT}/${net}"
+    # Restore the CA state from the S3 mirror if this checkout has never provisioned
+    # (or added to) this net.
+    if [[ ! -f "${workspace}/state/cert.json" ]]; then
+        log "${net}: no local CA state — restoring it from ${CA_STATE_S3}/${net}/"
+        aws s3 cp "${CA_STATE_S3}/${net}/" "${workspace}/state/" --recursive --only-show-errors
+        if [[ ! -f "${workspace}/state/cert.json" ]]; then
+            # Uploaded before the CA state had its own prefix: still among the kits.
+            log "${net}: none there — reading ${BASE_S3}/${net}/state/ (move it: fl-services/nvflare/README.md)"
+            aws s3 cp "${BASE_S3}/${net}/state/" "${workspace}/state/" --recursive --only-show-errors
+        fi
+        if [[ ! -f "${workspace}/state/cert.json" ]]; then
+            die "❌ ${net}: the S3 mirror has no cert.json — this net's CA state was never" \
+                "   uploaded, so kits can only be minted from the checkout that provisioned it." \
+                "   (Do NOT re-provision: that rotates the CA and forces a fleet-wide redeploy.)"
+        fi
+    fi
+    while IFS= read -r name; do
+        [[ -n "${name}" ]] && existing_names+=("${name}")
+    done < <(grep -oE '"Trust_[0-9]+"[[:space:]]*:' "${workspace}/state/cert.json" | grep -oE 'Trust_[0-9]+' || true)
+
     services_listing="$(aws s3 ls "${BASE_S3}/${net}/services/")" || {
         echo "❌ Could not list ${BASE_S3}/${net}/services/ — refusing to compute slot numbers" >&2
         echo "   from an incomplete view (a missed name here could reuse a live trust's slot)." >&2
@@ -188,22 +215,7 @@ for net in "${NETS[@]}"; do
     workspace="${WORKSPACE_PARENT}/${net}"
     server_kit="services/fl-server-${net}"
 
-    # Restore the CA state + server kit from the S3 mirror if this checkout has
-    # never provisioned (or added to) this net — the two things add-client.sh needs.
-    if [[ ! -f "${workspace}/state/cert.json" ]]; then
-        log "${net}: no local CA state — restoring it from ${CA_STATE_S3}/${net}/"
-        aws s3 cp "${CA_STATE_S3}/${net}/" "${workspace}/state/" --recursive --only-show-errors
-        if [[ ! -f "${workspace}/state/cert.json" ]]; then
-            # Uploaded before the CA state had its own prefix: still among the kits.
-            log "${net}: none there — reading ${BASE_S3}/${net}/state/ (move it: fl-services/nvflare/README.md)"
-            aws s3 cp "${BASE_S3}/${net}/state/" "${workspace}/state/" --recursive --only-show-errors
-        fi
-        if [[ ! -f "${workspace}/state/cert.json" ]]; then
-            die "❌ ${net}: the S3 mirror has no cert.json — this net's CA state was never" \
-                "   uploaded, so kits can only be minted from the checkout that provisioned it." \
-                "   (Do NOT re-provision: that rotates the CA and forces a fleet-wide redeploy.)"
-        fi
-    fi
+    # The CA state was restored above; the server kit is the other thing add-client.sh needs.
     if [[ ! -f "${workspace}/${server_kit}/startup/rootCA.pem" ]]; then
         aws s3 cp "${BASE_S3}/${net}/${server_kit}/" "${workspace}/${server_kit}/" --recursive --only-show-errors
     fi

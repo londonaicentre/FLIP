@@ -61,6 +61,10 @@ class NoFreeKitSlotError(TrustRegistrationError):
     """The FL kit slot pool is exhausted."""
 
 
+class KitSlotSourceUnreadableError(TrustRegistrationError):
+    """The slot source could not be read, so whether a slot is free is unknown."""
+
+
 @dataclass(frozen=True)
 class RegisteredTrust:
     """Result of a successful registration — the only place plaintext keys exist.
@@ -129,6 +133,7 @@ def register_trust(
         EmptyTrustCodeError: ``code`` is missing or empty after strip.
         DuplicateTrustError: A trust with this name already exists.
         NoFreeKitSlotError: None of the slots the slot source names is unassigned.
+        KitSlotSourceUnreadableError: The slot source could not be read.
     """
     name = name.strip()
     if not name:
@@ -159,6 +164,11 @@ def register_trust(
     # The pool is what the slot source names right now (resolve_fl_kit_slot_names): a
     # slot added since boot gets its row here, and one withdrawn since is not claimed.
     slot_names = resolve_fl_kit_slot_names()
+    if slot_names is None:
+        # Not "no slots": free ones may exist, so do not send the admin off to mint kits.
+        raise KitSlotSourceUnreadableError(
+            "The FL kit-slot source could not be read. Try again; if it keeps failing, check the flip-api logs."
+        )
     try:
         with session.begin_nested():
             inserted = insert_missing_slots(session, slot_names)
@@ -182,7 +192,7 @@ def register_trust(
             "restart flip-api. Stag/prod NVFLARE: `make -C deploy/providers/AWS add-fl-kits N=<n> HUB=<stag|prod>`. "
             "Stag/prod Flower: provision SuperNode keys for the new slots, add them to FL_KIT_SLOT_NAMES and run a "
             "Terraform apply (it replaces the SuperLink, so quiesce first). If kits already exist and still don't "
-            "appear, check earlier logs for a kit left out as incomplete or an unreadable slot source."
+            "appear, check earlier logs for a kit left out as incomplete."
         )
         raise NoFreeKitSlotError("No FL kit slots available. Pre-provision more FL kits and try again.")
 

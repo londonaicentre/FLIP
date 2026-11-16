@@ -296,7 +296,8 @@ Running out of FL kit slots
 ===========================
 
 Registration fails with ``NoFreeKitSlotError`` ("No FL kit slots available…") when the hub has no claimable FL kit
-slot left. One command adds more (FLARE only):
+slot left. (If it says instead that the kit-slot source could not be read, the hub could not list its kits: there is
+nothing to add, so try again and check the hub's log.) One command adds more (FLARE only):
 
 .. code-block:: shell
 
@@ -314,7 +315,8 @@ out; a trust that already holds that slot keeps it.
 
    If a run stops part-way, it prints which kits it uploaded. A kit that is not complete on every net is never
    claimed, and the hub's log names it with the files it lacks. Re-run ``add-fl-kits`` with the number of kits still
-   needed: it numbers past every kit already in S3.
+   needed: it numbers past every kit in S3 and every name it has already signed, so a name is never used twice and
+   the numbering can skip one. Delete the incomplete kit from S3, or the hub keeps warning about it.
 
 .. seealso::
 

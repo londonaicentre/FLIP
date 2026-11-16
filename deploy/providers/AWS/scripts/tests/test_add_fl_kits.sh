@@ -184,15 +184,22 @@ check_last_upload() {  # assert a kit's final upload carries exactly the require
     fi
 }
 
-seed_workspace() {  # pre-seed a net's CA state + server kit so the mint loop skips the restore
-    local net="$1"
+seed_workspace() {  # pre-seed a net's CA state + server kit so the run skips the restore: <net> [signed names]
+    local net="$1" signed="${2:-}" name
     mkdir -p "${WORKSPACE_PARENT}/${net}/state" \
         "${WORKSPACE_PARENT}/${net}/services/fl-server-${net}/startup"
-    echo '{}' > "${WORKSPACE_PARENT}/${net}/state/cert.json"
+    {
+        printf '{"root_cert": "x"'
+        for name in ${signed}; do printf ', "%s": {"cert": "x"}' "${name}"; done
+        printf '}\n'
+    } > "${WORKSPACE_PARENT}/${net}/state/cert.json"
     echo 'mock' > "${WORKSPACE_PARENT}/${net}/services/fl-server-${net}/startup/rootCA.pem"
 }
 
 # --- Plan scenarios (abort at the confirmation prompt) --------------------------------
+
+seed_workspace net-1
+seed_workspace net-2
 
 run_case "mint the next names (N=2)" 2 "net-1 net-2" \
     "net-1=Trust_1 Trust_2 fl-server-net-1" "net-2=Trust_1 Trust_2 fl-server-net-2"
@@ -213,6 +220,14 @@ check_plan "mint Trust_3" "Trust_3  (existing max: Trust_2)"
 run_case "zero-padded suffixes parse as decimal (N=1)" 1 "net-1 net-2" \
     "net-1=Trust_008 Trust_010" "net-2=Trust_008 Trust_010"
 check_plan "mint Trust_11 (max is decimal 10, not octal 8)" "Trust_11  (existing max: Trust_10)"
+
+# A name the CA has signed still bumps the numbering after its kit left S3 (withdrawn, or
+# minted by a run that failed before its upload): a second certificate is never issued for it.
+seed_workspace net-1 "Trust_1 Trust_2 Trust_7"
+run_case "name signed by the CA but not in S3 bumps max (N=1)" 1 "net-1 net-2" \
+    "net-1=Trust_1 Trust_2" "net-2=Trust_1 Trust_2"
+check_plan "mint Trust_8" "Trust_8  (existing max: Trust_7)"
+seed_workspace net-1
 
 # A stray prefix such as net-1-old/ is not a net (it would otherwise read as a second net-1).
 run_case "stray net-like prefix ignored (N=1)" 1 "net-1 net-1-old state" \
@@ -246,6 +261,7 @@ run_case "guard abort after upload keeps recovery guidance (N=1)" 1 "net-1 net-2
 check_contains "refuses net-2 overwrite" 1 "already has objects — refusing to overwrite"
 check_contains "reports the net-1 upload" 1 "Kits uploaded this run (the last may be partial): net-1/Trust_3"
 check_contains "says how to recover" 1 "with the number of slots still needed"
+check_contains "says what to delete" 1 "aws s3 rm --recursive s3://testbucket/fl-flare-participant-kits/2026-01-01/<net>/services/<name>/"
 
 # A minted kit without one of the required startup files (nvflare changed its kit layout,
 # say) would never count as complete in flip-api: the run stops before uploading it.
@@ -306,12 +322,17 @@ check_contains "refuses to mint without the CA state" 1 "the S3 mirror has no ce
 # --- ENV_NAME (FLIP#749): the environment CLASS the Makefile derives from HUB (deploy/env_mode.mk's
 # --- ENV_CLASS); anything else is refused ---
 
+seed_workspace net-1
+seed_workspace net-2
 ENV_MODE=stag
 run_case "ENV_NAME=stag plans as the stag env (N=2)" 2 "net-1 net-2" \
     "net-1=Trust_1 Trust_2" "net-2=Trust_1 Trust_2"
 check_plan "mint Trust_3 Trust_4" "Trust_3 Trust_4  (existing max: Trust_2)"
 check_contains "plan header names the stag env" 1 "Plan (stag):"
 
+WORKSPACE_PARENT="${WORKSPACE_PARENT%-stag}-prod"
+seed_workspace net-1
+seed_workspace net-2
 ENV_MODE=prod
 run_case "ENV_NAME=prod plans as the prod env (N=1)" 1 "net-1 net-2" \
     "net-1=Trust_1 Trust_2" "net-2=Trust_1 Trust_2"

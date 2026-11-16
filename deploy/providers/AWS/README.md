@@ -408,12 +408,19 @@ registration and claims only from the kits complete at that moment, so a new kit
 `register-trusts` with **no Terraform apply and no restart**, and a kit deleted from S3 is no longer handed out
 (a trust that already holds the slot keeps it). Every complete kit under the kit date is claimable, so delete one
 that should not be. A kit left out as incomplete is named in a flip-api warning, with the files it lacks.
+If S3 cannot be listed, registration answers that the slot source could not be read (503), not that the pool is empty.
+
+**The nets are the `net-N/` prefixes in S3**, the same list `add_fl_kits.sh` mints on, so a net counts from its
+first object. To add a net to a hub that already has kits, provision it with every existing slot name and upload
+it whole, in a window with no registration: until each slot's kit is complete on the new net, none is claimable
+(flip-api warns once per kit), and `add-fl-kits` cannot fill the gap, since it only mints new names.
 (A Flower hub still reads `FL_KIT_SLOT_NAMES` through the `/flip/fl_kit_slot_names`
 SSM parameter: its SuperLink labels SuperNodes from the same list at startup.)
 
 `make add-fl-kits N=<n>` runs `scripts/add_fl_kits.sh`: discovers the deployment's nets from S3, restores +
 fingerprint-verifies each net's CA workspace (`fl-services/nvflare/provision/workspace-<env>/`), mints the next
-`Trust_<n>` names on **every** net via `nvflare provision --add_client` (existing kits untouched — no CA rotation),
+`Trust_<n>` names on **every** net (numbered past every kit in S3 and every name in the CA's `cert.json`, so a name
+whose kit was deleted is never signed twice) via `nvflare provision --add_client` (existing kits untouched — no CA rotation),
 uploads **only** the new kits additively (never `aws s3 sync --delete`), the five required startup files last so a
 half-uploaded kit never counts, and refreshes each net's mirrored CA state (`cert.json` under `fl-flare-ca-state/`,
 a prefix no ECS task role can read; see the nvflare README for estates that still hold it among the kits).

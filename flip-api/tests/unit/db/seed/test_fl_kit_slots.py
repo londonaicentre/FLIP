@@ -64,10 +64,7 @@ class TestSlotNumberDerivation:
 def test_seed_inserts_new_slots(mock_get_settings, mock_session):
     """Each missing slot name from FL_KIT_SLOT_NAMES is inserted."""
     mock_get_settings.return_value = SimpleNamespace(ENV="development", FL_KIT_SLOT_NAMES=["Trust_1", "Trust_2"])
-    mock_session.exec.side_effect = [
-        MagicMock(first=MagicMock(return_value=None)),
-        MagicMock(first=MagicMock(return_value=None)),
-    ]
+    mock_session.exec.return_value.all.return_value = []
 
     seed_fl_kit_slots(mock_session)
 
@@ -83,8 +80,7 @@ def test_seed_inserts_new_slots(mock_get_settings, mock_session):
 def test_seed_skips_existing_slots(mock_get_settings, mock_session):
     """A pre-existing slot row is left untouched."""
     mock_get_settings.return_value = SimpleNamespace(ENV="development", FL_KIT_SLOT_NAMES=["Trust_1"])
-    existing = FLKitSlot(slot_name="Trust_1", slot_number=1)
-    mock_session.exec.side_effect = [MagicMock(first=MagicMock(return_value=existing))]
+    mock_session.exec.return_value.all.return_value = ["Trust_1"]
 
     seed_fl_kit_slots(mock_session)
 
@@ -135,36 +131,36 @@ class TestResolveFlKitSlotNames:
         assert "fl_kit_slot_names" in caplog.text
         assert caplog.records[-1].levelno == logging.WARNING
 
-    def test_prod_aws_error_returns_empty_and_logs_error(self, prod_ssm, caplog):
+    def test_prod_aws_error_is_unreadable_and_logs_error(self, prod_ssm, caplog):
         """Any non-ParameterNotFound AWS failure (e.g. the IAM read not applied yet) is
         broken config, not the rollout state — ERROR, not WARNING.
         """
         prod_ssm.side_effect = ClientError({"Error": {"Code": "AccessDeniedException"}}, "GetParameter")
 
         with caplog.at_level(logging.ERROR, logger="flip_api.seed"):
-            assert resolve_fl_kit_slot_names() == []
+            assert resolve_fl_kit_slot_names() is None
 
         assert caplog.records[-1].levelno == logging.ERROR
 
-    def test_prod_botocore_error_returns_empty(self, prod_ssm):
+    def test_prod_botocore_error_is_unreadable(self, prod_ssm):
         """BotoCoreError subclasses (no credentials, endpoint unreachable) aren't ClientError."""
         prod_ssm.side_effect = EndpointConnectionError(endpoint_url="https://ssm.test")
 
-        assert resolve_fl_kit_slot_names() == []
+        assert resolve_fl_kit_slot_names() is None
 
     # GetParameter always returns a string, so the last two (non-string) payloads are
     # theoretical — kept so the guard against a crash-looping boot seed stays pinned.
     @pytest.mark.parametrize(
         "payload", ["not json", '"Trust_1"', '{"Trust_1": 1}', '["Trust_1", 2]', ["Trust_1"], None]
     )
-    def test_prod_malformed_parameter_value_returns_empty_and_logs_error(self, prod_ssm, payload, caplog):
+    def test_prod_malformed_parameter_value_is_unreadable_and_logs_error(self, prod_ssm, payload, caplog):
         prod_ssm.return_value = payload
 
         with caplog.at_level(logging.ERROR, logger="flip_api.seed"):
-            assert resolve_fl_kit_slot_names() == []
+            assert resolve_fl_kit_slot_names() is None
 
         # A malformed value is broken config (not the transient rollout state), so the
-        # empty result must be loud: ERROR, naming the parameter.
+        # result must be loud: ERROR, naming the parameter.
         assert "fl_kit_slot_names" in caplog.text
         assert caplog.records[-1].levelno == logging.ERROR
 
@@ -225,7 +221,7 @@ class TestCompleteFlareKitNames:
             *_kit("net-1", "Trust_2"),
             *_kit("net-2", "Trust_2", FLARE_KIT_REQUIRED_FILES - {"client.key"}),
             *_kit("net-1", "Trust_3"),
-            f"{_KITS}/net-2/services/fl-server-net-2/startup/rootCA.pem",
+            *_kit("net-2", "fl-server-net-2", ["fed_server.json", "rootCA.pem"]),
         ]
 
         with caplog.at_level(logging.WARNING, logger="flip_api.seed"):
@@ -237,12 +233,33 @@ class TestCompleteFlareKitNames:
             "client.crt, client.key, fed_client.json, rootCA.pem, sub_start.sh.",
         ]
 
-    def test_listing_failure_returns_empty_and_logs_error(self, mock_get_settings, mock_s3, caplog):
+    def test_upload_interrupted_before_the_required_files_is_named_on_a_single_net(
+        self, mock_get_settings, mock_s3, caplog
+    ):
+        """The required files go up last, so an interrupted kit has none of them: still warned about."""
+        self._settings(mock_get_settings)
+        mock_s3.return_value.list_objects.return_value = [
+            *_SERVER_AND_ADMIN_KITS,
+            *_kit("net-1", "Trust_1"),
+            *_kit("net-1", "Trust_2", ["start.sh", "stop_fl.sh"]),
+            f"{_KITS}/net-1/services/Trust_3/local/resources.json.default",
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="flip_api.seed"):
+            assert resolve_fl_kit_slot_names() == ["Trust_1"]
+
+        lacks = "net-1 lacks client.crt, client.key, fed_client.json, rootCA.pem, sub_start.sh."
+        assert [record.getMessage() for record in caplog.records] == [
+            f"FLARE kit 'Trust_2' is not claimable: {lacks}",
+            f"FLARE kit 'Trust_3' is not claimable: {lacks}",
+        ]
+
+    def test_listing_failure_is_unreadable_and_logs_error(self, mock_get_settings, mock_s3, caplog):
         self._settings(mock_get_settings)
         mock_s3.return_value.list_objects.side_effect = Exception("AccessDenied")
 
         with caplog.at_level(logging.ERROR, logger="flip_api.seed"):
-            assert resolve_fl_kit_slot_names() == []
+            assert resolve_fl_kit_slot_names() is None
 
         assert "AccessDenied" in caplog.text
         assert caplog.records[-1].levelno == logging.ERROR
@@ -281,13 +298,10 @@ def test_insert_missing_slots_returns_only_new_names_and_never_commits(mock_sess
     """The return value feeds the reconcile's log line, and committing is the caller's
     job — a commit here would break register_trust's savepoint semantics.
     """
-    existing = FLKitSlot(slot_name="Trust_1", slot_number=1)
-    mock_session.exec.side_effect = [
-        MagicMock(first=MagicMock(return_value=existing)),
-        MagicMock(first=MagicMock(return_value=None)),
-    ]
+    mock_session.exec.return_value.all.return_value = ["Trust_1"]
 
     inserted = insert_missing_slots(mock_session, ["Trust_1", "Trust_2"])
 
     assert inserted == ["Trust_2"]
+    mock_session.exec.assert_called_once()  # one query for all the names
     mock_session.commit.assert_not_called()

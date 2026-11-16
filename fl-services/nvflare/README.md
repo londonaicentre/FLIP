@@ -275,7 +275,8 @@ carries a kit per slot name, which is why the minting steps above run per net. T
 is seeded at flip-api boot and **read again at every registration**: flip-api inserts
 any new names and claims the lowest free slot among those its source names at that
 moment, so a slot withdrawn from the source is no longer handed out. If none is free it
-fails with `NoFreeKitSlotError: "No FL kit slots available…"`. The slot list has a
+fails with `NoFreeKitSlotError: "No FL kit slots available…"`; a source that could not be
+read fails with `KitSlotSourceUnreadableError` instead (a 503 in the UI). The slot list has a
 single source per environment (`resolve_fl_kit_slot_names`):
 
 - **Dev**: the `FL_KIT_SLOT_NAMES` env var (a `DevSettings`-only field). Add the name to

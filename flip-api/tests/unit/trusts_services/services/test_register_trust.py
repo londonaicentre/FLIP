@@ -20,6 +20,7 @@ from flip_api.trusts_services.services.register_trust import (
     DuplicateTrustError,
     EmptyTrustCodeError,
     EmptyTrustNameError,
+    KitSlotSourceUnreadableError,
     NoFreeKitSlotError,
     register_trust,
 )
@@ -27,8 +28,8 @@ from flip_api.trusts_services.services.register_trust import (
 
 @pytest.fixture(autouse=True)
 def mock_resolve():
-    """The slot source. It names nothing unless a test says so, which keeps the per-name
-    row lookups of ``insert_missing_slots`` out of ``session.exec``.
+    """The slot source. It names nothing unless a test says so, which keeps the row
+    lookup of ``insert_missing_slots`` out of ``session.exec``.
     """
     with patch(
         "flip_api.trusts_services.services.register_trust.resolve_fl_kit_slot_names", return_value=[]
@@ -159,7 +160,7 @@ def test_register_trust_409_on_duplicate_name():
 
 @patch("flip_api.trusts_services.services.register_trust.generate_trust_key")
 def test_register_trust_409_when_the_source_names_no_slot(mock_gen_key, mock_resolve):
-    """An empty or unreadable slot source: nothing to claim, so 409 and no trust row."""
+    """An empty slot source: nothing to claim, so 409 and no trust row."""
     mock_gen_key.side_effect = [("k", "h"), ("k", "h")]
     session = _mock_session(existing_trust=None, free_slot=None)
 
@@ -170,6 +171,19 @@ def test_register_trust_409_when_the_source_names_no_slot(mock_gen_key, mock_res
     session.commit.assert_not_called()
     # No trust insert without a slot to back it.
     session.add.assert_not_called()
+
+
+def test_register_trust_refuses_when_the_source_is_unreadable(mock_resolve):
+    """Free slots may exist, so the admin is told to retry, not to mint kits. Still fails closed."""
+    mock_resolve.return_value = None
+    session = _mock_session(existing_trust=None, free_slot=None)
+
+    with pytest.raises(KitSlotSourceUnreadableError, match="could not be read"):
+        register_trust(name="GSTT", code="GSTT", region=None, session=session)
+
+    assert session.exec.call_count == 1  # the duplicate-name lookup only: no claim
+    session.add.assert_not_called()
+    session.commit.assert_not_called()
 
 
 @patch("flip_api.trusts_services.services.register_trust.generate_trust_key")
@@ -184,7 +198,7 @@ def test_register_trust_409_when_all_named_slots_are_assigned(mock_gen_key, mock
     session = MagicMock()
     session.exec.side_effect = [
         MagicMock(first=MagicMock(return_value=None)),  # duplicate-name lookup
-        MagicMock(first=MagicMock(return_value=assigned)),  # insert_missing_slots: row exists
+        MagicMock(all=MagicMock(return_value=["Trust_1"])),  # insert_missing_slots: row exists
         MagicMock(first=MagicMock(return_value=None)),  # slot claim misses
     ]
 
@@ -206,10 +220,8 @@ def test_register_trust_claims_a_slot_added_since_boot(mock_gen_key, mock_resolv
     session = MagicMock()
     session.exec.side_effect = [
         MagicMock(first=MagicMock(return_value=None)),  # duplicate-name lookup
-        # insert_missing_slots existence checks: Trust_1/Trust_2 exist, Trust_3 doesn't
-        MagicMock(first=MagicMock(return_value=FLKitSlot(slot_name="Trust_1", slot_number=1))),
-        MagicMock(first=MagicMock(return_value=FLKitSlot(slot_name="Trust_2", slot_number=2))),
-        MagicMock(first=MagicMock(return_value=None)),
+        # insert_missing_slots existence check: Trust_1/Trust_2 exist, Trust_3 doesn't
+        MagicMock(all=MagicMock(return_value=["Trust_1", "Trust_2"])),
         MagicMock(first=MagicMock(return_value=new_slot)),  # slot claim
     ]
 
@@ -237,7 +249,7 @@ def test_register_trust_tolerates_concurrent_slot_insert(mock_gen_key, mock_reso
     session.begin_nested.return_value.__exit__.side_effect = IntegrityError("stmt", {}, Exception("duplicate pk"))
     session.exec.side_effect = [
         MagicMock(first=MagicMock(return_value=None)),  # duplicate-name lookup
-        MagicMock(first=MagicMock(return_value=None)),  # insert_missing_slots existence check
+        MagicMock(all=MagicMock(return_value=[])),  # insert_missing_slots existence check
         MagicMock(first=MagicMock(return_value=won_slot)),  # slot claim sees the winner's row
     ]
 
