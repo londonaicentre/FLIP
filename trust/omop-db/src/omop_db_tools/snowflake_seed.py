@@ -26,6 +26,8 @@ using:
    Postgres seed: ``concept_relationship`` carries no unique key, so a blind re-run would
    duplicate its rows.
 4. The filtered CSVs are PUT to the ``STAGES.SEED`` internal stage and loaded with COPY INTO.
+   A project's delete and its COPYs are one transaction, and the loaded rows are counted
+   against the CSVs before the marker is written.
 5. A marker table, ``OMOP._FLIP_SEED_MARKER``, records ``projects`` / ``source_trust`` /
    provenance -- the Snowflake equivalent of the Postgres path's ``.seeded`` file, with the
    same contract: a matching marker means nothing to do; a differing one means re-seed the
@@ -355,6 +357,10 @@ def sql_copy_into(names: Names, table: str, columns: list[str], stage_file: str)
     ``ON_ERROR = ABORT_STATEMENT`` (the default, stated anyway): a partially loaded table is
     not a state this seeder may leave behind.
 
+    ``FORCE = TRUE``: Snowflake's load metadata remembers a staged file it has loaded and
+    skips it, reporting "0 files processed" as a success. A re-seed stages the same file
+    again after deleting the project's rows, so without FORCE it left the tables empty.
+
     Args:
         names (Names): Target objects.
         table (str): OMOP table name.
@@ -374,6 +380,7 @@ def sql_copy_into(names: Names, table: str, columns: list[str], stage_file: str)
         f"  FROM (SELECT {selected} FROM '{stage_file}')\n"
         f"  {_FILE_FORMAT}\n"
         "  ON_ERROR = ABORT_STATEMENT\n"
+        "  FORCE = TRUE\n"
         "  PURGE = FALSE;"
     )
 
@@ -406,14 +413,42 @@ def sql_delete_person_rows(names: Names, person_ids: list[int], tables: list[str
     """
     if not person_ids:
         return []
-    ids = [int(value) for value in person_ids]
     statements: list[str] = []
     for table in reversed(tables or CANONICAL_TABLES):
-        for start in range(0, len(ids), _DELETE_CHUNK):
-            chunk = ids[start : start + _DELETE_CHUNK]
-            joined = ", ".join(str(value) for value in chunk)
-            statements.append(f"DELETE FROM {names.omop_schema}.{table.upper()} WHERE person_id IN ({joined});")
+        for in_list in _person_in_lists(person_ids):
+            statements.append(f"DELETE FROM {names.omop_schema}.{table.upper()} WHERE {in_list};")
     return statements
+
+
+def _person_in_lists(person_ids: list[int]) -> list[str]:
+    """``person_id IN (...)`` predicates covering the ids, ``_DELETE_CHUNK`` ids each."""
+    ids = [int(value) for value in person_ids]
+    return [
+        f"person_id IN ({', '.join(str(value) for value in ids[start : start + _DELETE_CHUNK])})"
+        for start in range(0, len(ids), _DELETE_CHUNK)
+    ]
+
+
+def sql_count_person_rows(names: Names, person_ids: list[int], tables: list[str]) -> str:
+    """One query counting a project's rows in each of the given tables.
+
+    Args:
+        names (Names): Target objects.
+        person_ids (list[int]): The project's person ids.
+        tables (list[str]): Tables to count.
+
+    Returns:
+        str: A ``table_name`` / ``loaded`` query, one row per table.
+    """
+    predicate = " OR ".join(_person_in_lists(person_ids))
+    return (
+        "\nUNION ALL\n".join(
+            f"SELECT '{table.upper()}' AS table_name, COUNT(*) AS loaded "
+            f"FROM {names.omop_schema}.{table.upper()} WHERE {predicate}"
+            for table in tables
+        )
+        + ";"
+    )
 
 
 def sql_dicom_vocab_loaded(names: Names) -> str:
@@ -505,6 +540,37 @@ def write_dicom_vocab_csvs(vocab_dir: Path, staging_dir: Path) -> dict[str, Path
     return written
 
 
+def put_statements(written: dict[str, Path], stage_prefix: str) -> list[str]:
+    """One PUT per written CSV.
+
+    Args:
+        written (dict[str, Path]): Table name to local CSV, in load order.
+        stage_prefix (str): Stage directory, e.g. ``@DB.STAGES.SEED/cxr_project``.
+
+    Returns:
+        list[str]: The PUT statements.
+    """
+    return [sql_put(path.resolve(), stage_prefix) for path in written.values()]
+
+
+def copy_statements(names: Names, written: dict[str, Path], stage_prefix: str) -> list[str]:
+    """One COPY INTO per written CSV.
+
+    Args:
+        names (Names): Target objects.
+        written (dict[str, Path]): Table name to local CSV, in load order.
+        stage_prefix (str): Stage directory, e.g. ``@DB.STAGES.SEED/cxr_project``.
+
+    Returns:
+        list[str]: The COPY INTO statements.
+    """
+    copies = []
+    for table, path in written.items():
+        columns = list(pd.read_csv(path, nrows=0).columns)
+        copies.append(sql_copy_into(names, table, columns, f"{stage_prefix}/{path.name}.gz"))
+    return copies
+
+
 def load_statements(names: Names, written: dict[str, Path], stage_prefix: str) -> list[str]:
     """PUT + COPY INTO pairs for a set of written CSVs.
 
@@ -517,12 +583,7 @@ def load_statements(names: Names, written: dict[str, Path], stage_prefix: str) -
         list[str]: Every PUT, then every COPY INTO. PUTs first so an upload failure costs
         nothing: no table has been touched yet.
     """
-    puts = [sql_put(path.resolve(), stage_prefix) for path in written.values()]
-    copies = []
-    for table, path in written.items():
-        columns = list(pd.read_csv(path, nrows=0).columns)
-        copies.append(sql_copy_into(names, table, columns, f"{stage_prefix}/{path.name}.gz"))
-    return puts + copies
+    return put_statements(written, stage_prefix) + copy_statements(names, written, stage_prefix)
 
 
 # ── the snow CLI ─────────────────────────────────────────────────────────────────────────
@@ -680,7 +741,6 @@ def build_seed_statements(
     num_trusts: int,
     source_trust: int,
     partition: str,
-    marker: Marker,
     ddl_sql: str,
     vocab_dir: Path | None,
     load_vocab: bool,
@@ -691,9 +751,13 @@ def build_seed_statements(
 
     Order matters and is the Postgres path's order: schema first, then the DICOM vocabulary
     (so the projects' imaging concepts resolve whether or not the licensed core vocabulary has
-    been loaded), then per project a scoped delete followed by the loads, then the marker.
-    The marker is written LAST, so a run that fails part way leaves a marker that does not
-    match and the next run re-seeds.
+    been loaded), then per project the uploads, then a scoped delete and the loads as ONE
+    transaction. ``snow sql`` stops at the first failing statement and the session closes
+    without a COMMIT, which rolls the transaction back, so a load that fails cannot leave the
+    project's tables empty. PUT is a file upload and DDL commits implicitly, so both come
+    before the BEGIN. The marker is not written here: ``main`` writes it once
+    ``verify_loaded`` has counted the rows, so a run that fails part way leaves a marker
+    that does not match and the next run re-seeds.
 
     Args:
         names (Names): Target objects.
@@ -703,7 +767,6 @@ def build_seed_statements(
         num_trusts (int): Total number of trusts.
         source_trust (int): Partition to load.
         partition (str): A ``PARTITION_MODES`` entry.
-        marker (Marker): The marker to record on success.
         ddl_sql (str): Contents of the Postgres DDL file.
         vocab_dir (Path | None): DICOM vocab directory; required when ``load_vocab``.
         load_vocab (bool): Load the DICOM vocabulary (skip when already present).
@@ -736,13 +799,55 @@ def build_seed_statements(
 
     for project in projects:
         statements.append(f"-- ── {project} ──")
+        written = write_project_csvs(data_dir, project, staging_dir, num_trusts, source_trust, partition)
+        stage_prefix = f"{names.seed_stage}/{project}"
+        statements += put_statements(written, stage_prefix)
+        statements.append("BEGIN TRANSACTION;")
         if clean:
             statements += sql_delete_person_rows(names, project_person_ids(data_dir, project))
-        written = write_project_csvs(data_dir, project, staging_dir, num_trusts, source_trust, partition)
-        statements += load_statements(names, written, f"{names.seed_stage}/{project}")
+        statements += copy_statements(names, written, stage_prefix)
+        statements.append("COMMIT;")
 
-    statements += sql_write_marker(names, marker)
     return statements
+
+
+def verify_loaded(
+    names: Names, data_dir: Path, projects: list[str], staging_dir: Path, connection: str, snow: str
+) -> None:
+    """Check that every table holds the rows its staged CSV carried.
+
+    ``COPY INTO`` reports a file it skipped as a success, so the exit code of the load says
+    nothing about whether rows arrived. Each project's rows are counted by its person ids --
+    the scope the delete used -- and compared with the CSVs this run staged.
+
+    Args:
+        names (Names): Target objects.
+        data_dir (Path): Canonical tables directory.
+        projects (list[str]): Projects that were seeded.
+        staging_dir (Path): Where ``build_seed_statements`` wrote the filtered CSVs.
+        connection (str): ``snow`` connection name.
+        snow (str): The CLI executable.
+
+    Raises:
+        SnowflakeSeedError: A table holds a different number of rows than its CSV.
+    """
+    for project in projects:
+        expected = {path.stem: len(pd.read_csv(path)) for path in sorted((staging_dir / project).glob("*.csv"))}
+        if not expected:
+            continue
+        query = sql_count_person_rows(names, project_person_ids(data_dir, project), list(expected))
+        rows = run_sql([*sql_session_preamble(names), query], connection=connection, snow=snow, capture=True)
+        loaded = {str(_row_value(row, "table_name")).lower(): int(str(_row_value(row, "loaded"))) for row in rows or []}
+        wrong = [
+            f"{table}: {loaded.get(table, 0)} of {count}"
+            for table, count in expected.items()
+            if loaded.get(table) != count
+        ]
+        if wrong:
+            raise SnowflakeSeedError(
+                f"{project} did not load completely into {names.omop_schema} ({', '.join(wrong)} rows). "
+                "The seed marker was not written."
+            )
 
 
 def build_unseed_statements(names: Names, data_dir: Path, projects: list[str]) -> list[str]:
@@ -849,13 +954,23 @@ def main(argv: list[str] | None = None) -> int:
             num_trusts=args.num_trusts,
             source_trust=args.source_trust,
             partition=args.partition,
-            marker=marker,
             ddl_sql=read_ddl(args.ddl_file),
             vocab_dir=args.vocab_dir,
             load_vocab=load_vocab,
             vocab_skip_note=vocab_skip_note,
         )
         run_sql(statements, connection=args.connection, snow=args.snow, dry_run=args.dry_run)
+        if not args.dry_run:
+            verify_loaded(names, args.data_dir, args.projects, Path(tmp), args.connection, args.snow)
+
+    # Written last, and only once the counts match: a marker over empty tables would make
+    # the next --if-needed run skip the trust.
+    run_sql(
+        [*sql_session_preamble(names), *sql_write_marker(names, marker)],
+        connection=args.connection,
+        snow=args.snow,
+        dry_run=args.dry_run,
+    )
 
     print(
         f"✅ Seeded {names.database}.OMOP with: {' '.join(args.projects)} "
