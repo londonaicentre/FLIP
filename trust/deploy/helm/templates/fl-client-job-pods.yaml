@@ -28,9 +28,9 @@ merge with the launcher's by name.
 A job pod holds only its own project's studies. The template mounts no images and streams each study
 from imaging-api into the job's own run directory (IMAGES_TRANSPORT=stream, FLIP#1049). With
 flClient.nvflare.jobPods.images: project it also declares the shared images volume, unmounted, and the
-fl-client mounts the project's own folder of it in the job's NVFLARE study, where the job then reads by
-path (flip.nvflare.components.project_study, FLIP#1678). A job outside a project's study therefore never
-sees the cache. Declaring the volume makes the pod attach it, so it follows the fl-client's placement rule.
+project's entry in the site's NVFLARE study file mounts the project's own folder of it, where the job
+then reads by path (flip.nvflare.project_studies, FLIP#1678). A job outside a project's study therefore
+never sees the cache. Declaring the volume makes the pod attach it, so it follows the fl-client's placement rule.
 */}}
 {{- define "flip-trust.flJobPod" -}}
 {{- $projectImages := eq .Values.flClient.nvflare.jobPods.images "project" -}}

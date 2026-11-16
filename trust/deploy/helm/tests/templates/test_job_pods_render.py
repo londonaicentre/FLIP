@@ -178,6 +178,27 @@ def test_a_job_pod_gets_what_the_client_container_has():
     assert pod["spec"]["enableServiceLinks"] is False
 
 
+def test_the_study_file_is_the_operators_configmap_which_the_client_only_reads():
+    """NVFLARE's study file is the site's to maintain (FLIP#1678): the chart mounts it and never creates it."""
+    docs = _enabled()
+    spec = _client(docs)["spec"]["template"]["spec"]
+    name = "trust-release-flip-trust-fl-studies-net-1"
+
+    volume = next(v for v in spec["volumes"] if v["name"] == "fl-studies")
+    assert volume["configMap"] == {"name": name, "optional": True}
+    created = [d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"] == name]
+    assert not created, "a helm upgrade would reset it"
+    # make sync-project-studies writes the ConfigMap under the same name.
+    makefile = (Path(__file__).parents[2] / "Makefile").read_text()
+    assert "$(RELEASE_NAME)-flip-trust-fl-studies-$(FL_NET)" in makefile
+    mount = next(m for m in _client_container(docs)["volumeMounts"] if m["name"] == "fl-studies")
+    assert mount == {"name": "fl-studies", "mountPath": "/app/studies", "readOnly": True}
+    # fl-client-init links local/study_runtime.yaml to it; it does not mount it, so it cannot write it.
+    init = _init_container(docs)
+    assert _env(init)["FL_K8S_STUDIES_FILE"]["value"] == "/app/studies/study_runtime.yaml"
+    assert "fl-studies" not in [m["name"] for m in init["volumeMounts"]]
+
+
 def test_the_template_never_mounts_images_and_streams():
     """Only a project's own NVFLARE study adds an images mount, so a job outside one cannot see the cache."""
     for extra in ((), ("--set", f"{JOB_PODS}.images=stream")):

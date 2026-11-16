@@ -515,6 +515,8 @@ flClient:
       #   attach sharedImagesPvc, so on a ReadWriteOnce volume they run on the fl-client's node; a
       #   separate GPU pool needs a ReadWriteMany one. A job outside a project's study (from a hub that
       #   predates studies) mounts nothing and streams.
+      # Either way a project's jobs start only once the site has given it a study entry:
+      # `make sync-project-studies`, after the first deploy, each approval and each upgrade.
       # - stream: no images volume. Each job streams its studies from imaging-api into its own run
       #   directory (FLIP#1049), so job pods run on any node; size ephemeralStorage for them.
       images: project

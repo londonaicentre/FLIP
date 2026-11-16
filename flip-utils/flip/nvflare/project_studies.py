@@ -10,34 +10,36 @@
 # limitations under the License.
 #
 
-"""Give each FLIP project its own entry in NVFLARE's ``local/study_runtime.yaml`` (FLIP#1678).
+"""Build NVFLARE's ``study_runtime.yaml`` for a site: the default study plus one entry per FLIP project (FLIP#1678).
 
 Each FLIP project is an NVFLARE study. NVFLARE leaves the study-to-data mapping to the site, in
-``local/study_runtime.yaml``, which its Kubernetes launcher re-reads at every launch, and it fires
-``BEFORE_JOB_LAUNCH`` with the job's study before that read. This component, which ``flip.nvflare.k8s_job_mode`` adds
-to the fl-client's ``resources.json``, writes the study's entry then: the default study's job image and pod template
-and, where the template declares the shared images volume, a mount of the project's own folder of it. A job pod
-therefore sees only its own project's studies, at the paths imaging-api returns.
+``local/study_runtime.yaml``, which the site's operator maintains and its Kubernetes launcher re-reads at every
+launch. The fl-client only reads that file: its kit is read-only while it runs (FLIP#1570). The trust's chart
+therefore mounts the file from a ConfigMap, and the operator fills it with
+``make -C trust/deploy/helm sync-project-studies``, which runs this module inside the fl-client and applies what
+it prints::
+
+    python -m flip.nvflare.project_studies <local_dir> [<project id> ...]
+
+A project's entry is the default study's job image and pod template and, where the template declares the shared
+images volume, a read-only mount of the project's own folder of it. A job pod therefore sees only its own
+project's studies, at the paths imaging-api returns.
 
 The template itself mounts no images, so a job outside a project's study never sees the cache: one in the default
-study streams its studies, and a study that is not a project id gets no entry, so NVFLARE has no image for it and
-does not start the job.
+study streams its studies, and a study with no entry has no job image, so NVFLARE does not start its job.
 """
 
-import threading
+import argparse
+import json
+import sys
 import uuid
 from pathlib import Path
 from typing import Any
 
 import yaml
-from nvflare.apis.event_type import EventType
-from nvflare.apis.fl_component import FLComponent
-from nvflare.apis.fl_constant import FLContextKey
-from nvflare.apis.fl_context import FLContext
-from nvflare.apis.job_def import JobMetaKey
 
 from flip.constants import FlipConstants
-from flip.nvflare.k8s_job_mode import STUDY_RUNTIME, _write_json
+from flip.nvflare.k8s_job_mode import STUDY_RUNTIME_DEFAULT
 
 # The chart's name for the shared images volume in the job-pod template.
 IMAGES_VOLUME = "images"
@@ -92,31 +94,37 @@ def project_entry(local_dir: Path, default: dict[str, Any], project: str) -> dic
     return entry
 
 
-def add_project_study(local_dir: Path, project: str) -> None:
-    """Write one project's entry into ``study_runtime.yaml``, leaving the file alone when it already holds it."""
-    runtime_path = local_dir / STUDY_RUNTIME
-    document = yaml.safe_load(runtime_path.read_text(encoding="utf-8"))
-    studies = document["studies"]
-    entry = project_entry(local_dir, studies["default"], project)
-    if studies.get(project) != entry:
-        studies[project] = entry
-        _write_json(runtime_path, document)
+def study_runtime(local_dir: Path, projects: list[str]) -> dict[str, Any]:
+    """Return the site's ``study_runtime.yaml``: the default study the kit was switched with, and each project's.
+
+    Raises:
+        ValueError: naming an id that is not a project id.
+        OSError: the default study's file or its pod template cannot be read.
+    """
+    unknown = [project for project in projects if not is_project(project)]
+    if unknown:
+        raise ValueError(f"not a project id (a lowercase UUID): {', '.join(unknown)}")
+    document: dict[str, Any] = yaml.safe_load((local_dir / STUDY_RUNTIME_DEFAULT).read_text(encoding="utf-8"))
+    default = document["studies"]["default"]
+    for project in sorted(set(projects)):
+        document["studies"][project] = project_entry(local_dir, default, project)
+    return document
 
 
-class ProjectStudy(FLComponent):
-    """Writes a project's study entry when one of its jobs is about to launch."""
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point. Prints the file (JSON, which is valid YAML) and returns ``0``, or ``1`` with the reason."""
+    parser = argparse.ArgumentParser(prog="flip.nvflare.project_studies", description=__doc__)
+    parser.add_argument("local_dir", type=Path, help="The client kit's local/ directory")
+    parser.add_argument("projects", nargs="*", help="The ids of the projects this site serves")
+    parsed = parser.parse_args(argv)
+    try:
+        document = study_runtime(parsed.local_dir, parsed.projects)
+    except (OSError, ValueError) as e:
+        print(f"❌ cannot build study_runtime.yaml: {e}", file=sys.stderr)
+        return 1
+    print(json.dumps(document, indent=2))
+    return 0
 
-    def __init__(self) -> None:
-        super().__init__()
-        self._lock = threading.Lock()  # two jobs can launch at once, and both rewrite the one file
 
-    def handle_event(self, event_type: str, fl_ctx: FLContext) -> None:
-        if event_type != EventType.BEFORE_JOB_LAUNCH:
-            return
-        study = fl_ctx.get_prop(FLContextKey.JOB_META, {}).get(JobMetaKey.STUDY.value)
-        if not is_project(study):
-            return
-        local_dir = Path(fl_ctx.get_prop(FLContextKey.WORKSPACE_OBJECT).get_site_config_dir())
-        with self._lock:
-            add_project_study(local_dir, study)
-        self.log_info(fl_ctx, f"Study {study} mapped to its project's images in {STUDY_RUNTIME}")
+if __name__ == "__main__":
+    sys.exit(main())

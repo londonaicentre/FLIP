@@ -344,6 +344,9 @@ spec:
               value: {{ .Values.flClient.nvflare.jobPods.pendingTimeout | quote }}
             - name: FL_K8S_POD_TEMPLATE
               value: /app/k8s/job-pod.yaml
+            # The site's study file, mounted below: local/study_runtime.yaml becomes a link to it (FLIP#1678).
+            - name: FL_K8S_STUDIES_FILE
+              value: /app/studies/study_runtime.yaml
             {{- end }}
           volumeMounts:
             - name: fl-client-kit
@@ -415,9 +418,13 @@ spec:
               # local/ and startup/ are read-only here: fl-client-init rendered them (FLIP#1570). Start
               # without writing to the kit, and refuse a render that is missing or does not match this
               # container's configuration (fail closed).
-              for cfg in resources.json log_config.json{{ if $jobPods }} study_runtime.yaml{{ end }}; do
+              for cfg in resources.json log_config.json{{ if $jobPods }} study_runtime.default.yaml{{ end }}; do
                 [ -f "{{ $ws }}/local/$cfg" ] || { echo "local/$cfg is missing: fl-client-init must run first" >&2; exit 1; }
               done
+              {{- if $jobPods }}
+              # A link to the site's study file, which exists once the operator has run sync-project-studies.
+              [ -L "{{ $ws }}/local/study_runtime.yaml" ] || { echo "local/study_runtime.yaml is not linked: fl-client-init must run first" >&2; exit 1; }
+              {{- end }}
               python -m flip.nvflare.site_policy --assert-rendered {{ $ws }}/local/privacy.json
               pkill -f nvflare 2>/dev/null || true
               rm -f {{ $ws }}/pid.fl {{ $ws }}/daemon_pid.fl
@@ -484,6 +491,11 @@ spec:
             # Writable root for the per-job directories; the kit's folders mount inside it.
             - name: fl-workspace
               mountPath: {{ $ws }}
+            # The site's NVFLARE study file, which the operator maintains (make sync-project-studies,
+            # FLIP#1678). Mounted as a folder, so a change reaches the client without a restart.
+            - name: fl-studies
+              mountPath: /app/studies
+              readOnly: true
             {{- end }}
             # Read-only: fl-client-init did every write (FLIP#1570).
             - name: fl-client-kit
@@ -611,5 +623,10 @@ spec:
         - name: fl-job-pod
           configMap:
             name: {{ include "flip-trust.fullname" . }}-fl-job-pod-{{ .Values.flClient.netId }}
+        - name: fl-studies
+          configMap:
+            # Not the chart's: make sync-project-studies creates it, so a helm upgrade never resets it.
+            name: {{ include "flip-trust.fullname" . }}-fl-studies-{{ .Values.flClient.netId }}
+            optional: true
         {{- end }}
 {{- end }}

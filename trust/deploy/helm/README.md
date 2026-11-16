@@ -693,10 +693,21 @@ client runs `python -m flip.nvflare.k8s_job_mode`, which switches the kit's laun
 pool. Each job runs in the fl-client image.
 
 Each FLIP project is an NVFLARE study (FLIP#1678), and NVFLARE takes a study's job image and pod template
-from the site's `local/study_runtime.yaml`, which its launcher re-reads at every launch. The fl-client writes
-a project's entry when one of its jobs is about to launch (`flip.nvflare.components.project_study`, on
-NVFLARE's `BEFORE_JOB_LAUNCH` event), from the template above. The template itself mounts no images, so a
-job from a hub that predates studies, which lands in the default study, streams its studies.
+from the site's `local/study_runtime.yaml`, which the site's operator maintains and its launcher re-reads at
+every launch. The fl-client only reads it: the file is a ConfigMap (`<release>-fl-studies-<net>`) that the
+chart mounts and never writes, so a `helm upgrade` leaves it alone. Fill it, and refresh it, with:
+
+```bash
+make sync-project-studies                       # every project whose approved cohort this trust holds
+make sync-project-studies PROJECTS="<id> ..."   # or exactly these
+```
+
+It builds one entry per project from the template above and replaces the ConfigMap; the client picks the
+change up within a minute or so, with no restart. Run it after the first deploy, after each project is
+approved at this trust, and after an upgrade (the entries carry the job image and the pod template). Until
+a project has its entry NVFLARE has no job image for its study and does not start its jobs. The template
+itself mounts no images, so a job from a hub that predates studies, which lands in the default study,
+streams its studies.
 
 Prerequisites and trade-offs:
 

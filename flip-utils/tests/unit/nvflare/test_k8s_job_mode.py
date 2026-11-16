@@ -13,7 +13,6 @@
 """Unit tests for ``flip.nvflare.k8s_job_mode``: the fl-client's switch to one Kubernetes pod per job (FLIP#1428)."""
 
 import ast
-import importlib
 import json
 import sys
 from pathlib import Path
@@ -131,16 +130,25 @@ def test_components_the_switch_does_not_own_are_kept_untouched():
     assert "process_launcher" in _by_id(KIT_RESOURCES), "the input is not mutated"
 
 
-def test_each_projects_study_entry_is_written_by_a_flip_component():
-    component = _by_id(patch_resources(KIT_RESOURCES, config_from_env(ENV), WORKSPACE))["project_study"]
+def test_the_fl_client_gets_no_component_that_writes_its_site_config():
+    """The site's operator maintains the projects' study entries; the running client only reads them (FLIP#1678)."""
+    assert "project_study" not in _by_id(patch_resources(KIT_RESOURCES, config_from_env(ENV), WORKSPACE))
 
-    assert component == {
-        "id": "project_study",
-        "path": "flip.nvflare.components.project_study.ProjectStudy",
-        "args": {},
-    }
-    module, _, name = component["path"].rpartition(".")
-    assert hasattr(importlib.import_module(module), name)
+
+def test_the_study_file_links_to_the_operators_and_the_default_study_is_kept_beside_it(tmp_path):
+    local = _kit(tmp_path)
+    studies_file = tmp_path / "studies" / "study_runtime.yaml"
+
+    assert main([str(local)], env={**ENV, "FL_K8S_STUDIES_FILE": str(studies_file)}) == 0
+    assert main([str(local)], env={**ENV, "FL_K8S_STUDIES_FILE": str(studies_file)}) == 0, "a restart re-links"
+
+    link = local / "study_runtime.yaml"
+    assert link.is_symlink()
+    assert link.readlink() == studies_file
+    # Until the operator's file exists NVFLARE finds no study file at all, so no job image.
+    assert not link.exists()
+    default = json.loads((local / "study_runtime.default.yaml").read_text())
+    assert default == study_runtime(config_from_env(ENV))
 
 
 def test_patching_twice_gives_the_same_resources():
