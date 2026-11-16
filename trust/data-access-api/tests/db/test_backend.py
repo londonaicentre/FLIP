@@ -23,8 +23,10 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
+import sqlglot
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from sqlglot import exp
 
 from data_access_api.config import Settings
 from data_access_api.db import backend as backend_module
@@ -358,16 +360,34 @@ def test_the_snowflake_age_expression_avoids_the_nonexistent_age_function(snowfl
 
 def test_postgres_rejects_every_catalog():
     """Postgres has no cross-database references, so a catalog can only be confusion."""
-    assert PostgresOmopBackend().allows_catalog("otherdb") is False
+    assert PostgresOmopBackend().allows_catalog(exp.to_identifier("otherdb")) is False
     assert PostgresOmopBackend().pinned_catalog() is None
 
 
 def test_snowflake_allows_only_its_own_database(snowflake_backend):
     backend, _ = snowflake_backend
 
-    assert backend.allows_catalog("FLIP_TRUST_GSTT") is True
-    assert backend.allows_catalog("flip_trust_gstt") is True
-    assert backend.allows_catalog("FLIP_TRUST_OTHER") is False
+    assert backend.allows_catalog(exp.to_identifier("FLIP_TRUST_GSTT")) is True
+    assert backend.allows_catalog(exp.to_identifier("flip_trust_gstt")) is True
+    assert backend.allows_catalog(exp.to_identifier("FLIP_TRUST_OTHER")) is False
+
+
+def test_snowflake_compares_a_quoted_name_exactly(snowflake_backend):
+    """Unquoted folds to upper case; ``"flip_trust_gstt"`` is a different database."""
+    backend, _ = snowflake_backend
+
+    assert backend.allows_catalog(exp.to_identifier("FLIP_TRUST_GSTT", quoted=True)) is True
+    assert backend.allows_catalog(exp.to_identifier("flip_trust_gstt", quoted=True)) is False
+    assert backend.names_schema(exp.to_identifier("omop"), "omop") is True
+    assert backend.names_schema(exp.to_identifier("OMOP", quoted=True), "omop") is True
+    assert backend.names_schema(exp.to_identifier("omop", quoted=True), "omop") is False
+
+
+def test_postgres_compares_the_folded_schema_name():
+    backend = PostgresOmopBackend()
+
+    assert backend.names_schema(exp.to_identifier("omop", quoted=True), "omop") is True
+    assert backend.names_schema(exp.to_identifier("OMOP", quoted=True), "omop") is False
 
 
 def test_snowflake_pins_unqualified_tables_to_its_own_database(snowflake_backend):
@@ -379,6 +399,28 @@ def test_snowflake_pins_unqualified_tables_to_its_own_database(snowflake_backend
 def test_snowflake_refuses_a_stage_reference(snowflake_backend):
     """``FROM @stage`` reads staged FILES; pinning it would merely qualify it."""
     backend, _ = snowflake_backend
+    stage = sqlglot.parse_one("SELECT * FROM @my_stage", read="postgres").find(exp.Table)
 
-    assert backend.reject_table_reference("@my_stage") == "Stage references are not allowed."
-    assert backend.reject_table_reference("person") is None
+    assert backend.reject_table_reference(stage) == "Stage references are not allowed."
+    assert backend.reject_table_reference(exp.to_table("person")) is None
+
+
+# ── Functions sqlglot types, so the unrecognised-function rule never sees them ───────
+
+
+def test_postgres_refuses_no_typed_function():
+    assert PostgresOmopBackend.refused_functions == ()
+
+
+def test_every_ai_function_sqlglot_types_is_refused_on_snowflake():
+    """Tripwire for a sqlglot upgrade that starts typing another ``AI_*`` function."""
+
+    def subclasses(cls):
+        for sub in cls.__subclasses__():
+            yield sub
+            yield from subclasses(sub)
+
+    typed_ai = {cls for cls in subclasses(exp.Func) if any(name.startswith("AI_") for name in cls.sql_names())}
+
+    assert typed_ai
+    assert typed_ai <= set(SnowflakeOmopBackend.refused_functions)

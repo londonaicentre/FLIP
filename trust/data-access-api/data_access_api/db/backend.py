@@ -38,6 +38,7 @@ from typing import Any, Literal
 
 import pandas as pd
 from sqlalchemy import Engine, create_engine
+from sqlglot import exp
 
 from data_access_api.config import OMOP_BACKEND_SNOWFLAKE, Settings, get_settings
 from data_access_api.utils.logger import logger
@@ -59,6 +60,9 @@ class OmopBackend(ABC):
     allowed_table_functions: frozenset[str]
     #: Functions permitted anywhere an expression is. Superset of the table functions.
     allowed_functions: frozenset[str]
+    #: Functions sqlglot parses into a typed node that this backend must still refuse. The
+    #: unrecognised-function rule only sees ``exp.Anonymous``, so these need naming by class.
+    refused_functions: tuple[type[exp.Func], ...] = ()
 
     @abstractmethod
     def create_engine(self) -> Engine:
@@ -70,15 +74,28 @@ class OmopBackend(ABC):
         """
 
     @abstractmethod
-    def allows_catalog(self, catalog: str) -> bool:
+    def allows_catalog(self, catalog: exp.Identifier) -> bool:
         """Whether a three-part ``catalog.schema.table`` reference may name this catalog.
 
         Args:
-            catalog (str): The leading part of the reference, as the validator folded it.
+            catalog (exp.Identifier): The leading part of the reference, as the validator folded it.
 
         Returns:
             bool: True when the reference is pinned to this backend's own catalog.
         """
+
+    def names_schema(self, identifier: exp.Identifier, schema: str) -> bool:
+        """Whether an identifier resolves to the given schema on this backend.
+
+        Args:
+            identifier (exp.Identifier): The schema part of a reference, as the validator folded
+                it (PostgreSQL rules: unquoted lowered, quoted left alone).
+            schema (str): The schema name, in lower case.
+
+        Returns:
+            bool: True when the engine would resolve the identifier to that schema.
+        """
+        return identifier.name == schema
 
     @abstractmethod
     def pinned_catalog(self) -> str | None:
@@ -89,14 +106,14 @@ class OmopBackend(ABC):
             namespace to pin (PostgreSQL).
         """
 
-    def reject_table_reference(self, name: str) -> str | None:
-        """A backend-specific reason this table name must be refused, if any.
+    def reject_table_reference(self, table: exp.Table) -> str | None:
+        """A backend-specific reason this table reference must be refused, if any.
 
         Args:
-            name (str): The table's own name, as folded by the validator.
+            table (exp.Table): The FROM-clause item.
 
         Returns:
-            str | None: The refusal reason, or None when the name is acceptable.
+            str | None: The refusal reason, or None when the reference is acceptable.
         """
         return None
 
@@ -185,7 +202,7 @@ class PostgresOmopBackend(OmopBackend):
         """Build the psycopg2 engine, exactly as before the backend seam existed."""
         return create_engine(get_settings().OMOP_DATABASE_URL.get_secret_value(), echo=False)
 
-    def allows_catalog(self, catalog: str) -> bool:
+    def allows_catalog(self, catalog: exp.Identifier) -> bool:
         """Never: Postgres has no cross-database references, so this can only be confusion."""
         return False
 
@@ -228,12 +245,39 @@ class SnowflakeOmopBackend(OmopBackend):
     #     reaches rows this validator never saw,
     #   - external functions and user-defined functions, which execute code off-warehouse,
     #   - stage references (``FROM @stage``), which read files rather than tables.
-    # So the posture stays "reject every unrecognised function", and the allowlist holds only
-    # what a cohort query legitimately needs: FLATTEN, Snowflake's set-returning unnest.
+    # So the posture stays "reject every unrecognised function", and the allowlist is empty.
+    # ``flatten`` is absent because the query is parsed as PostgreSQL, where sqlglot reads it
+    # as an array function and emits ARRAY_FLATTEN; the portable spelling is ``unnest``, which
+    # is emitted as ``TABLE(FLATTEN(INPUT => ...))``.
     # ``age`` is deliberately absent — Snowflake has no AGE(), so admitting it would turn a
     # clean 400 into a runtime failure inside the warehouse.
-    allowed_table_functions = frozenset({"flatten"})
+    allowed_table_functions: frozenset[str] = frozenset()
     allowed_functions = allowed_table_functions
+    # Functions that hand row values to a model. sqlglot types these, so they never reach the
+    # unrecognised-function rule; the untyped ones (AI_COMPLETE, SNOWFLAKE.CORTEX.*) do. An
+    # allowlist of typed classes is not practical — sqlglot has several hundred and no family
+    # base class for these — so this is an explicit list, and test_backend.py fails when a
+    # sqlglot upgrade types another ``AI_*`` function that is missing from it.
+    refused_functions = (
+        exp.AIAgg,
+        exp.AIClassify,
+        exp.AIEmbed,
+        exp.AIForecast,
+        exp.AIGenerate,
+        exp.AISimilarity,
+        exp.AISummarizeAgg,
+        exp.FeaturesAtTime,
+        exp.GenerateBool,
+        exp.GenerateDouble,
+        exp.GenerateEmbedding,
+        exp.GenerateInt,
+        exp.GenerateTable,
+        exp.GenerateText,
+        exp.MLForecast,
+        exp.MLTranslate,
+        exp.Predict,
+        exp.VectorSearch,
+    )
 
     def create_engine(self) -> Engine:
         """Build the Snowflake engine with auto-suspend-aware pooling.
@@ -252,7 +296,7 @@ class SnowflakeOmopBackend(OmopBackend):
             connect_args=snowflake_connect_args(settings),
         )
 
-    def allows_catalog(self, catalog: str) -> bool:
+    def allows_catalog(self, catalog: exp.Identifier) -> bool:
         """Only this trust's own configured database.
 
         On Snowflake ``DB.SCHEMA.TABLE`` is the normal form, so rejecting every three-part
@@ -260,19 +304,24 @@ class SnowflakeOmopBackend(OmopBackend):
         becomes "pin the catalog too" rather than "reject": a reference naming any OTHER
         database is still refused.
         """
-        return catalog.strip('"').upper() == get_settings().SNOWFLAKE_DATABASE.upper()
+        return _snowflake_name(catalog) == get_settings().SNOWFLAKE_DATABASE.upper()
+
+    def names_schema(self, identifier: exp.Identifier, schema: str) -> bool:
+        """Compare the way Snowflake resolves the identifier, not the way PostgreSQL does."""
+        return _snowflake_name(identifier) == schema.upper()
 
     def pinned_catalog(self) -> str | None:
         """This trust's OMOP database, pinned onto every unqualified table reference."""
         return get_settings().SNOWFLAKE_DATABASE
 
-    def reject_table_reference(self, name: str) -> str | None:
+    def reject_table_reference(self, table: exp.Table) -> str | None:
         """Refuse a stage reference.
 
-        ``FROM @mystage`` reads staged FILES rather than a table. It carries a name, so the
-        schema pin would simply qualify it and pass it through.
+        ``FROM @mystage`` reads staged FILES rather than a table. Parsed as PostgreSQL it is
+        a table whose name is a parameter, which the schema pin would simply qualify and
+        emit as ``omop.$mystage``.
         """
-        if name.startswith("@"):
+        if isinstance(table.this, exp.Parameter):
             return "Stage references are not allowed."
         return None
 
@@ -310,6 +359,18 @@ class SnowflakeOmopBackend(OmopBackend):
         """Lower-fold an all-upper-case label; leave a quoted (mixed-case) one untouched."""
         label = str(name)
         return label.lower() if label.isupper() else label
+
+
+def _snowflake_name(identifier: exp.Identifier) -> str:
+    """The name Snowflake resolves an identifier to: unquoted folds to upper case, quoted is exact.
+
+    Args:
+        identifier (exp.Identifier): The identifier as written.
+
+    Returns:
+        str: The resolved name.
+    """
+    return identifier.name if identifier.quoted else identifier.name.upper()
 
 
 # Snowflake driver error numbers for the two diagnostics worth echoing back. Kept as plain

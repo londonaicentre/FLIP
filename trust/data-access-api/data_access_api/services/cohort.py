@@ -141,6 +141,15 @@ _DATA_MODIFYING_TYPES: tuple[type[exp.Expression], ...] = (
 )
 
 
+# What a table reference may carry besides its name. An allowlist, so a clause sqlglot learns to
+# parse later is refused until someone adds it here. It leaves out Snowflake time travel
+# (``AT`` / ``BEFORE``, sqlglot's ``when``) and ``CHANGES``, which read rows as they were before
+# a patient was withdrawn, and the ``FILE_FORMAT`` / ``PATTERN`` options of a staged-file read.
+_ALLOWED_TABLE_ARGS = frozenset(
+    {"this", "db", "catalog", "alias", "joins", "laterals", "pivots", "sample", "only", "ordinality"}
+)
+
+
 def _invalid_query(detail: str) -> HTTPException:
     logger.warning(f"Query validation failed: {detail}")
     return HTTPException(status_code=400, detail=detail)
@@ -168,7 +177,7 @@ def _reject_disallowed_table_function(table: exp.Table, backend: OmopBackend) ->
     if function_name not in backend.allowed_table_functions:
         raise _invalid_query(
             f"'{function_name}' is not an allowed table-valued function. "
-            f"Allowed: {', '.join(sorted(backend.allowed_table_functions))}."
+            f"Allowed: {', '.join(sorted(backend.allowed_table_functions)) or 'none'}."
         )
 
 
@@ -267,7 +276,11 @@ def validate_query(query: str) -> str:
     allowlist, the catalog rule and any backend-specific name shape come from
     ``db.backend.get_backend()``, because ``pg_catalog`` reachability and Snowflake's
     ``SYSTEM$…`` / ``RESULT_SCAN`` / stage surface are different problems with the same answer:
-    reject what is not recognised.
+    reject what is not recognised. The backend also says how a schema or database name
+    resolves (Snowflake folds unquoted names to upper case and keeps quoted ones exact) and
+    which functions sqlglot types that it must still refuse (Snowflake's ``AI_*``). On every
+    backend a table reference may carry only the clauses in ``_ALLOWED_TABLE_ARGS``, which
+    leaves out Snowflake time travel (``AT`` / ``BEFORE``) and ``CHANGES``.
 
     Returns:
         The validated query re-emitted from its parsed AST, in the backend's dialect — pass
@@ -344,11 +357,25 @@ def _validate_query_ast(query: str) -> str:
     # exactly what the caller wrote.
     stmt = normalize_identifiers(stmt, dialect=SOURCE_DIALECT)
 
+    for table in stmt.find_all(exp.Table):
+        for arg, value in table.args.items():
+            if value and arg not in _ALLOWED_TABLE_ARGS:
+                raise _invalid_query(
+                    f"Table clause '{arg}' is not allowed. Time travel, change tracking and "
+                    "file-format clauses cannot be used on a table reference."
+                )
+
     # A CTE reference and an unqualified physical table have the same exp.Table shape. Walk each
     # lexical scope so only a CTE visible from that exact SELECT is exempted; a flat set of every
     # CTE name would let an inner CTE exempt a physical table in an enclosing query.
     for scope in traverse_scope(stmt):
         for table in scope.tables:
+            # A reference the backend refuses whatever it is qualified with — a Snowflake stage
+            # (``FROM @stage``) reads staged FILES, not a table.
+            refusal = backend.reject_table_reference(table)
+            if refusal is not None:
+                raise _invalid_query(refusal)
+
             # Validate the schema FIRST, before any name-based skip. A schema-qualified
             # table-valued function — ``FROM pg_catalog.pg_ls_dir('/')`` — parses as an exp.Table
             # with an empty ``.name`` but a populated ``.db``, so skipping empty names ahead of
@@ -369,8 +396,7 @@ def _validate_query_ast(query: str) -> str:
                 # other database is refused exactly as any other schema is.
                 catalog_node = table.args.get("catalog")
                 if catalog_node is not None:
-                    catalog_name = catalog_node.name if isinstance(catalog_node, exp.Identifier) else str(catalog_node)
-                    if not backend.allows_catalog(catalog_name):
+                    if not isinstance(catalog_node, exp.Identifier) or not backend.allows_catalog(catalog_node):
                         raise _invalid_query("Cross-database table references are not allowed.")
 
                 # ``db`` is usually an Identifier, but not always: sqlglot hands back a bare
@@ -380,13 +406,14 @@ def _validate_query_ast(query: str) -> str:
                 if not isinstance(schema_node, exp.Identifier):
                     raise _invalid_query("Malformed table reference.")
 
-                # Compare the name as-is: ``normalize_identifiers`` above already folded it the
-                # way Postgres does. Lowering here instead would re-open the same gap the
-                # normalisation closes — ``"OMOP".person`` is a quoted identifier Postgres keeps
-                # distinct from ``omop``, so a lowered comparison calls it allowed and then emits
-                # it untouched, approving one schema while the engine reads another.
-                schema_name = schema_node.name
-                if schema_name != ALLOWED_SCHEMA:
+                # Compare the way the engine resolves the name, which is the backend's to say, and
+                # never by lowering it here: the identifier is emitted as written, so a comparison
+                # looser than the engine's approves one schema while the engine reads another.
+                # Postgres keeps a quoted ``"OMOP"`` distinct from ``omop``; Snowflake folds
+                # unquoted names to upper case, so there ``"OMOP"`` is the schema and ``"omop"``
+                # is a different one.
+                if not backend.names_schema(schema_node, ALLOWED_SCHEMA):
+                    schema_name = schema_node.sql(dialect=SOURCE_DIALECT)
                     raise _invalid_query(
                         f"Schema '{schema_name}' is not accessible. Only the '{ALLOWED_SCHEMA}' schema is allowed."
                     )
@@ -403,13 +430,6 @@ def _validate_query_ast(query: str) -> str:
                 continue
 
             table_name = table.name
-            if table_name:
-                # A backend-specific name shape the pin cannot express anything about — a
-                # Snowflake stage reference (``FROM @stage``) reads staged FILES, not a table,
-                # and carries a name, so pinning it would merely qualify it and pass it through.
-                refusal = backend.reject_table_reference(table_name)
-                if refusal is not None:
-                    raise _invalid_query(refusal)
             if not table_name:
                 # An empty name with no schema is an unqualified table-valued function
                 # (``FROM generate_series(1, 10)``), which sqlglot wraps in an exp.Table carrying
@@ -457,8 +477,14 @@ def _validate_query_ast(query: str) -> str:
         if function_name not in backend.allowed_functions:
             raise _invalid_query(
                 f"'{function_name}' is not an allowed function. "
-                f"Allowed: {', '.join(sorted(backend.allowed_functions))}."
+                f"Allowed: {', '.join(sorted(backend.allowed_functions)) or 'none'}."
             )
+
+    # sqlglot types some functions a backend must refuse (Snowflake's AI_AGG and friends), so
+    # the walk above never sees them.
+    if backend.refused_functions:
+        for typed_function in stmt.find_all(*backend.refused_functions):
+            raise _invalid_query(f"'{typed_function.sql_name().lower()}' is not an allowed function.")
 
     for clause_type, label in ((exp.Limit, "LIMIT"), (exp.Offset, "OFFSET")):
         for node in stmt.find_all(clause_type):
