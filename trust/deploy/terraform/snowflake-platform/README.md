@@ -268,6 +268,22 @@ With `account_admin = false` the root leaves out what only `ACCOUNTADMIN` can cr
 | Account password and session policies | The site's own policies apply |
 | `EXECUTE TASK` for the deploy role | Set `nightly_pool_suspend = false` in the workload root |
 
+## Account settings FLIP recommends and does not set
+
+FLIP changes nothing account-wide in an account it joins, so these stay with the site's
+account administrator:
+
+| Setting | Recommended | Why |
+| ------- | ----------- | --- |
+| `PREVENT_UNLOAD_TO_INLINE_URL` | `TRUE` | Off, a session that can read OMOP and use a warehouse can export rows with `COPY INTO 's3://...'`, giving the bucket's credentials inline. Snowflake's own compute does the export, so the node having no internet route does not stop it. A researcher's cohort query cannot do this (the validator passes a single `SELECT`) and neither can the FL client's role (no OMOP, no warehouse); the deploy key and data-access-api's own session can. |
+
+```sql
+ALTER ACCOUNT SET PREVENT_UNLOAD_TO_INLINE_URL = TRUE;  -- as ACCOUNTADMIN; applies to the whole account
+```
+
+`make -C trust/deploy/snowflake selftest` prints a `SELFTEST WARN` line while it is off. A warning
+does not fail the self-test.
+
 ## Migrating an account bootstrapped with FLIP_<CODE>_ADMIN
 
 Earlier drafts of #1581 bootstrapped a single `FLIP_<CODE>_ADMIN` role holding `CREATE ROLE`,

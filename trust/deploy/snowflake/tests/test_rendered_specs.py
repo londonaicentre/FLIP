@@ -609,3 +609,12 @@ def test_the_fl_client_image_follows_the_fl_tag(kit: dict) -> None:
         r for r in spec_templates.build_all({**kit, "DOCKER_FL_TAG": "v9.9.9"}, "GSTT") if "fl-client" in r.name
     )
     assert client.spec["spec"]["containers"][0]["image"].endswith("/flare-fl-client:v9.9.9")
+
+
+def test_the_selftest_reports_the_unload_setting_without_failing_on_it(specs: dict) -> None:
+    """An account-wide setting the site owns: the self-test warns, it does not fail or set it."""
+    script = containers(specs["selftest"])[0]["args"][1]
+    advisory = script.split("PREVENT_UNLOAD_TO_INLINE_URL' IN ACCOUNT", 1)[1].split("ALL PASS", 1)[0]
+    assert "SELFTEST {'PASS' if unload == 'true' else 'WARN'}" in advisory
+    assert "check(" not in advisory, "check() counts a failure; the advisory line must not"
+    assert "ALTER ACCOUNT" not in script

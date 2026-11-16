@@ -24,6 +24,9 @@
 #     database itself for the read-only role the service connects as;
 #   * a cohort can be frozen and removed, which needs the snapshot stage to be writable.
 #
+# One advisory line (SELFTEST WARN, never a failure): whether the account refuses an export
+# to an external bucket. It is an account-wide setting the site owns, so FLIP only reports it.
+#
 # Prints one SELFTEST PASS|FAIL line per check and exits non-zero on any failure, so the
 # job's status is the verdict. No secret value is printed.
 
@@ -134,6 +137,16 @@ status, _ = call(f"{daa}/cohort/snapshot", {k: query[k] for k in ("encrypted_pro
 check("cohort-frozen", status == 200, f"-> {status}")
 status, _ = call(f"{daa}/cohort/snapshot/delete", {"encrypted_project_id": query["encrypted_project_id"]}, admin)
 check("cohort-removed", status == 200, f"-> {status}")
+
+# 6. Advisory. With PREVENT_UNLOAD_TO_INLINE_URL off, a session that reads OMOP can export rows
+#    to a bucket named in the statement, which no network rule on the node stops.
+try:
+    cursor.execute("SHOW PARAMETERS LIKE 'PREVENT_UNLOAD_TO_INLINE_URL' IN ACCOUNT")
+    row = cursor.fetchone()
+    unload = str(row[1]).lower() if row else "unknown"
+except snowflake.connector.errors.Error:
+    unload = "unreadable"
+print(f"SELFTEST {'PASS' if unload == 'true' else 'WARN'} unload-to-external-url-prevented value={unload}", flush=True)
 
 print(f"SELFTEST {'ALL PASS' if failures == 0 else f'{failures} FAILED'}", flush=True)
 sys.exit(1 if failures else 0)
