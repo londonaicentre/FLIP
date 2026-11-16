@@ -205,9 +205,14 @@ XNAT_UID = 1001  # xnat-web and the dcm2niix image
 FLOWER_UID = 49999  # upstream flwr/base
 
 
-def _stage_volume(name: str, stage: str, uid: int) -> dict[str, Any]:
-    """A stage volume presented as owned by the user the container runs as."""
-    return {"name": name, "source": "stage", "stageConfig": {"name": stage}, "uid": uid, "gid": uid}
+def _stage_volume(name: str, stage: str, uid: int | None = None) -> dict[str, Any]:
+    """A stage volume, owned by ``uid`` when the container writes to it.
+
+    A volume the service only reads (its ``read_only_volumes``) names no owner and stays
+    root-owned 0755, which the container can read and cannot write.
+    """
+    volume: dict[str, Any] = {"name": name, "source": "stage", "stageConfig": {"name": stage}}
+    return volume if uid is None else {**volume, "uid": uid, "gid": uid}
 
 
 def _secrets(service: str, names: Names) -> list[dict[str, Any]]:
@@ -345,7 +350,7 @@ def _data_access_api(kit: dict[str, str], names: Names, digests: dict[str, str])
     ]
     volumes = [
         _stage_volume("cohort-snapshots", names.stage_ref("COHORT_SNAPSHOTS"), API_UID),
-        _stage_volume("governance", names.stage_ref("GOVERNANCE"), API_UID),
+        _stage_volume("governance", names.stage_ref("GOVERNANCE")),
     ]
     # The governance document (FLIP#1259) travels on the GOVERNANCE stage rather than as
     # a host path: a path on the deploy host means nothing inside a container. Unset =
@@ -548,7 +553,7 @@ def _fl_client(kit: dict[str, str], names: Names, digests: dict[str, str], net: 
             # external access integration and listens for nothing.
             "volumes": [
                 _stage_volume("images", names.stage_ref("IMAGES", net_id), uid),
-                _stage_volume("fl-kit", names.stage_ref("FL_KIT", net_id), uid),
+                _stage_volume("fl-kit", names.stage_ref("FL_KIT", net_id)),
                 # FLARE and Flower both want real shared memory for dataloader workers;
                 # the Compose stack's shm_size: 8gb equivalent.
                 {"name": "dshm", "source": "memory", "size": "8Gi"},
@@ -887,7 +892,7 @@ def _seed_orthanc(kit: dict[str, str], names: Names, digests: dict[str, str]) ->
     spec = {
         "spec": {
             "containers": [container],
-            "volumes": [_stage_volume("seed", names.stage_ref("SEED"), XNAT_UID)],
+            "volumes": [_stage_volume("seed", names.stage_ref("SEED"))],
             **_event_table_exports(),
         }
     }
@@ -919,7 +924,7 @@ def _smoke_cstore(kit: dict[str, str], names: Names, digests: dict[str, str]) ->
     spec = {
         "spec": {
             "containers": [container],
-            "volumes": [_stage_volume("xnat-archive", names.stage_ref("XNAT_ARCHIVE"), XNAT_UID)],
+            "volumes": [_stage_volume("xnat-archive", names.stage_ref("XNAT_ARCHIVE"))],
             **_event_table_exports(),
         }
     }
@@ -969,7 +974,7 @@ def _reconvert(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Re
             "containers": [container],
             "volumes": [
                 _stage_volume("converter-io", names.stage_ref("CONVERTER_IO"), API_UID),
-                _stage_volume("xnat-archive", names.stage_ref("XNAT_ARCHIVE"), API_UID),
+                _stage_volume("xnat-archive", names.stage_ref("XNAT_ARCHIVE")),
             ],
             **_event_table_exports(),
         }

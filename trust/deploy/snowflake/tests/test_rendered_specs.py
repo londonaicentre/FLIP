@@ -562,23 +562,31 @@ def test_orthanc_knows_xnat_as_a_modality(specs: dict) -> None:
 import spec_templates  # noqa: E402
 
 
-def test_every_stage_volume_is_owned_by_the_user_its_container_runs_as(specs: dict) -> None:
+def test_a_written_stage_volume_is_owned_by_the_user_its_container_runs_as(specs: dict, manifest: dict) -> None:
     """A stage volume mounts root-owned 0755 unless it names an owner. data-access-api (uid
-    1000) then cannot write /snapshots, no cohort can be frozen, and training gets no data."""
+    1000) then cannot write /snapshots, no cohort can be frozen, and training gets no data.
+    A volume the service only reads names no owner, so it stays unwritable."""
+    read_only = {service["name"]: service["read_only_volumes"] for service in manifest["services"]}
     for name, spec in specs.items():
-        expected = 1001 if name in ("xnat-web", "dcm2niix", "seed-orthanc", "smoke-cstore") else 1000
+        uid = 1001 if name in ("xnat-web", "dcm2niix") else 1000
         for volume in spec["spec"].get("volumes", []):
-            if volume["source"] == "stage":
-                assert (volume.get("uid"), volume.get("gid")) == (expected, expected), (name, volume["name"])
+            if volume["source"] != "stage":
+                continue
+            expected = (None, None) if volume["name"] in read_only[name] else (uid, uid)
+            assert (volume.get("uid"), volume.get("gid")) == expected, (name, volume["name"])
 
 
-def test_the_flower_client_owns_its_stage_volumes(kit: dict) -> None:
+def test_researcher_code_cannot_write_the_fl_kit(specs: dict) -> None:
+    kit_volume = next(v for v in specs["fl-client-net-1"]["spec"]["volumes"] if v["name"] == "fl-kit")
+    assert "uid" not in kit_volume
+
+
+def test_the_flower_client_owns_its_images_volume(kit: dict) -> None:
     """The Flower image runs as uid 49999 (upstream flwr/base), not the FLIP APIs' 1000."""
     flower = {**kit, "FL_BACKEND": "flower", "NLB_SUBDOMAIN": "fl.example", "FL_SERVER_PORT": "9092"}
     client = next(r for r in spec_templates.build_all(flower, "GSTT") if r.name == "fl-client-net-1")
-    stage_volumes = [v for v in client.spec["spec"]["volumes"] if v["source"] == "stage"]
-    assert stage_volumes
-    assert all((v["uid"], v["gid"]) == (49999, 49999) for v in stage_volumes)
+    images = next(v for v in client.spec["spec"]["volumes"] if v["name"] == "images")
+    assert (images["uid"], images["gid"]) == (49999, 49999)
 
 
 @pytest.mark.parametrize("missing", ["NLB_SUBDOMAIN", "FL_SERVER_PORT"])
