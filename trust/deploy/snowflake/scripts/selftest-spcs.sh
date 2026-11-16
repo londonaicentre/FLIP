@@ -21,13 +21,15 @@
 #   * data-access-api reaches OMOP on Snowflake (/health/omop reports the backend);
 #   * a cohort statistics query against the seeded OMOP returns rows;
 #   * a write is refused twice: by data-access-api's query validation, and by the
-#     database itself for the read-only role the service connects as.
+#     database itself for the read-only role the service connects as;
+#   * a cohort can be frozen and removed, which needs the snapshot stage to be writable.
 #
 # Prints one SELFTEST PASS|FAIL line per check and exits non-zero on any failure, so the
 # job's status is the verdict. No secret value is printed.
 
 set -euo pipefail
 exec python - <<'PY'
+import hashlib
 import json
 import os
 import sys
@@ -91,7 +93,7 @@ check("cohort-statistics", status == 200 and isinstance(count, int) and count > 
 
 # 4a. A write is refused by query validation.
 status, _ = call(f"{daa}/cohort", {**query, "query": "INSERT INTO omop.person (person_id) VALUES (1)"}, headers)
-check("write-refused-by-validation", 400 <= status < 500, f"-> {status}")
+check("write-refused-by-validation", status == 400, f"-> {status}")
 
 # 4b. ...and by the database, for the read-only role data-access-api connects as.
 import snowflake.connector  # noqa: E402  (lazy: only the database check needs it)
@@ -115,7 +117,23 @@ for name, statement in (
         cursor.execute(statement)
         check(name, False, "it was allowed")
     except snowflake.connector.errors.ProgrammingError as e:
-        check(name, True, f"as {os.environ['SNOWFLAKE_ROLE']}: {str(e).splitlines()[-1][:100]}")
+        # 42501 is "insufficient privileges": any other error (a missing table, a suspended
+        # warehouse) is not the database refusing the write.
+        check(name, e.sqlstate == "42501", f"as {os.environ['SNOWFLAKE_ROLE']}: {str(e).splitlines()[-1][:100]}")
+
+# 5. The approved cohort can be frozen and removed, as trust-api does at approval. With the
+#    snapshot stage not writable this is a 500 while every check above passes, and no
+#    project can then train or pull images.
+admin = {
+    **headers,
+    os.environ.get("COHORT_ADMIN_KEY_HEADER", "X-Cohort-Admin-Key"): hashlib.sha256(
+        os.environ["AES_KEY_BASE64"].encode()
+    ).hexdigest(),
+}
+status, _ = call(f"{daa}/cohort/snapshot", {k: query[k] for k in ("encrypted_project_id", "query")}, admin)
+check("cohort-frozen", status == 200, f"-> {status}")
+status, _ = call(f"{daa}/cohort/snapshot/delete", {"encrypted_project_id": query["encrypted_project_id"]}, admin)
+check("cohort-removed", status == 200, f"-> {status}")
 
 print(f"SELFTEST {'ALL PASS' if failures == 0 else f'{failures} FAILED'}", flush=True)
 sys.exit(1 if failures else 0)

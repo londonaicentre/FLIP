@@ -30,6 +30,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -90,8 +91,9 @@ def sql_up(directory: Path, manifest: dict[str, Any], existing: frozenset[str] =
     its block volumes (xnat-db's and Orthanc's databases) and every grant on it. So the
     caller names the services already there (``existing``, unqualified upper-case names
     from SHOW SERVICES): a new one is CREATEd, an existing one gets
-    ``ALTER SERVICE ... FROM SPECIFICATION``, which upgrades it in place, plus a ``SET`` of
-    its query warehouse. The job service is only described.
+    ``ALTER SERVICE ... FROM SPECIFICATION``, which upgrades it in place, a ``SET`` of its
+    query warehouse and a ``RESUME`` (so ``up`` after ``suspend`` starts the node again). The
+    job service is only described.
 
     Run only between ``sql_grant_create_service`` and ``sql_revoke_create_service``, which
     is what ``run_up`` (and so ``make up``) does.
@@ -121,6 +123,9 @@ def sql_up(directory: Path, manifest: dict[str, Any], existing: frozenset[str] =
                 # refuses any MIN/MAX_INSTANCES on a service with a block volume as
                 # "scaling", even to the same value (live account, xnat-db).
                 f"ALTER SERVICE {service['sql_name']} SET QUERY_WAREHOUSE = {manifest['warehouse']};",
+                # `make suspend` leaves the service suspended and ALTER does not wake it. The
+                # pools resume by themselves (auto_resume) once a service asks for a node.
+                f"ALTER SERVICE {service['sql_name']} RESUME;",
             ]
             continue
         statements.append(
@@ -163,6 +168,9 @@ def sql_run_job(directory: Path, manifest: dict[str, Any], name: str) -> list[st
         f"USE ROLE {manifest['service_role']};",
         f"USE DATABASE {manifest['database']};",
         f"USE SCHEMA {manifest['database']}.APP;",
+        # A finished job keeps its name, and a second EXECUTE under it fails with "already
+        # exists". The previous run's logs stay in the event table.
+        f"DROP SERVICE IF EXISTS {service['sql_name']};",
         f"EXECUTE JOB SERVICE\n"
         f"  IN COMPUTE POOL {service['pool']}\n"
         f"  NAME = {service['sql_name']}\n"
@@ -188,8 +196,8 @@ def sql_job_status(manifest: dict[str, Any], name: str) -> list[str]:
 
 
 def sql_down(manifest: dict[str, Any]) -> list[str]:
-    """DROP every service, newest first. Block volumes keep their snapshot on delete."""
-    services = [s for s in manifest["services"] if s["kind"] != JOB_KIND]
+    """DROP every service and finished job, newest first. Block volumes keep their snapshot."""
+    services = manifest["services"]
     statements = [f"USE ROLE {manifest['role']};", f"USE SCHEMA {manifest['database']}.APP;"]
     return statements + [f"DROP SERVICE IF EXISTS {service['sql_name']};" for service in reversed(services)]
 
@@ -219,16 +227,14 @@ def sql_status(manifest: dict[str, Any]) -> list[str]:
 
 
 def sql_selftest(manifest: dict[str, Any]) -> list[str]:
-    """Placeholder self-test: service status, then /health where a service has one.
+    """The SQL half of the self-test: service status, then the tail of each API's log.
 
-    The real assertions (a cohort query, an image pull, an FL round) arrive with
-    FLIP#1585. What this does today is the part that is cheap and still catches the
-    common failure: a service that reports READY while its container never bound a port.
-    ``SYSTEM$GET_SERVICE_STATUS`` is read through SQL, so the self-test needs no public
-    endpoint and no egress - which is the whole reason it can run on a trial account.
+    Cheap, and it catches a service that reports READY while its container never bound a
+    port. The assertions are the ``selftest`` job (scripts/selftest-spcs.sh), which
+    ``make selftest`` runs next and waits for. ``SYSTEM$GET_SERVICE_STATUS`` is read through
+    SQL, so this needs no public endpoint and no egress, and runs on a trial account.
     """
     statements = [
-        "-- FLIP#1582 placeholder self-test. Real assertions land with FLIP#1585.",
         "-- Every check below is a SQL read: no public endpoint, no egress, trial-account safe.",
     ]
     statements += sql_status(manifest)
@@ -244,6 +250,39 @@ def sql_selftest(manifest: dict[str, Any]) -> list[str]:
             f"AS {service['name'].replace('-', '_')}_logs;"
         )
     return statements
+
+
+#: Job-service states that end the wait (SYSTEM$GET_SERVICE_STATUS).
+JOB_PASSED = "DONE"
+JOB_ENDED = frozenset({JOB_PASSED, "FAILED", "INTERNAL_ERROR", "DELETED"})
+
+
+def wait_job(
+    manifest: dict[str, Any],
+    name: str,
+    query: Callable[[str], list[dict[str, Any]]],
+    timeout: float = 900,
+    interval: float = 10,
+    sleep: Callable[[float], None] = time.sleep,
+) -> bool:
+    """Wait for a job service to end, print its log, and say whether it passed.
+
+    ``EXECUTE JOB SERVICE ... ASYNC`` returns at once, so without this a target that runs a
+    job (the self-test above all) exits 0 whatever the job found.
+    """
+    status_sql, logs_sql = sql_job_status(manifest, name)
+    state = ""
+    for _ in range(max(1, int(timeout // interval))):
+        rows = query(status_sql)
+        containers = json.loads(next(iter(rows[0].values()), "") or "[]") if rows else []
+        state = containers[0].get("status", "") if containers else ""
+        if state in JOB_ENDED:
+            break
+        sleep(interval)
+    for row in query(logs_sql):
+        print(next(iter(row.values()), ""))
+    print(f"{'✅' if state == JOB_PASSED else '❌'} {name}: {state or 'no status'}")
+    return state == JOB_PASSED
 
 
 def snow_runner(snow: str, connection: str) -> Callable[[list[str]], None]:
@@ -346,18 +385,24 @@ COMMANDS = {
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Emit SPCS deploy SQL from a rendered trust")
-    parser.add_argument("command", choices=sorted([*COMMANDS, "apply-up", "run-job", "job-status"]))
+    parser.add_argument("command", choices=sorted([*COMMANDS, "apply-up", "run-job", "job-status", "wait-job"]))
     parser.add_argument("--dir", type=Path, required=True, help="Directory render_specs.py wrote")
     parser.add_argument("--snow", default="snow", help="apply-up: the snow CLI")
     parser.add_argument("--connection", default="flip-test", help="apply-up: the snow connection")
     parser.add_argument("--dry-run", action="store_true", help="apply-up / run-job: print the SQL, run nothing")
-    parser.add_argument("--service", default="", help="run-job / job-status: the job service name")
+    parser.add_argument("--service", default="", help="run-job / job-status / wait-job: the job service name")
+    parser.add_argument("--timeout", type=float, default=900, help="wait-job: seconds to wait for the job to end")
     args = parser.parse_args()
     manifest = load(args.dir / "manifest.json")
     if args.command == "job-status":
         for statement in sql_job_status(manifest, args.service):
             print(statement)
         return
+    if args.command == "wait-job":
+        passed = wait_job(
+            manifest, args.service, lambda sql: show_rows(args.snow, args.connection, sql), timeout=args.timeout
+        )
+        sys.exit(0 if passed else 1)
     if args.command == "run-job":
         # Executes, like apply-up and for the same reason: the grant must be revoked even
         # when the job fails, which a single piped script cannot guarantee.

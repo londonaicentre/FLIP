@@ -555,3 +555,49 @@ def test_orthanc_knows_xnat_as_a_modality(specs: dict) -> None:
     # Orthanc refused the full SPCS name as too long; the bare name resolves via the search list.
     assert modalities["XNAT"]["Host"] == "xnat-web"
     assert modalities["XNAT"]["Port"] == env["XNAT_PORT"]
+
+
+# --- found on the live account (review of #1600, #1710, #1756) ------------------------------------
+
+import spec_templates  # noqa: E402
+
+
+def test_every_stage_volume_is_owned_by_the_user_its_container_runs_as(specs: dict) -> None:
+    """A stage volume mounts root-owned 0755 unless it names an owner. data-access-api (uid
+    1000) then cannot write /snapshots, no cohort can be frozen, and training gets no data."""
+    for name, spec in specs.items():
+        expected = 1001 if name in ("xnat-web", "dcm2niix", "seed-orthanc", "smoke-cstore") else 1000
+        for volume in spec["spec"].get("volumes", []):
+            if volume["source"] == "stage":
+                assert (volume.get("uid"), volume.get("gid")) == (expected, expected), (name, volume["name"])
+
+
+def test_the_flower_client_owns_its_stage_volumes(kit: dict) -> None:
+    """The Flower image runs as uid 49999 (upstream flwr/base), not the FLIP APIs' 1000."""
+    flower = {**kit, "FL_BACKEND": "flower", "NLB_SUBDOMAIN": "fl.example", "FL_SERVER_PORT": "9092"}
+    client = next(r for r in spec_templates.build_all(flower, "GSTT") if r.name == "fl-client-net-1")
+    stage_volumes = [v for v in client.spec["spec"]["volumes"] if v["source"] == "stage"]
+    assert stage_volumes
+    assert all((v["uid"], v["gid"]) == (49999, 49999) for v in stage_volumes)
+
+
+@pytest.mark.parametrize("missing", ["NLB_SUBDOMAIN", "FL_SERVER_PORT"])
+def test_a_flower_kit_without_a_superlink_address_is_refused(kit: dict, missing: str) -> None:
+    """`--superlink ":"` deployed cleanly and the SuperNode then exited with code 600."""
+    flower = {**kit, "FL_BACKEND": "flower", "NLB_SUBDOMAIN": "fl.example", "FL_SERVER_PORT": "9092"}
+    del flower[missing]
+    with pytest.raises(ValueError, match="NLB_SUBDOMAIN"):
+        spec_templates.build_all(flower, "GSTT")
+
+
+def test_trust_api_probes_omop_on_snowflake(specs: dict) -> None:
+    """Unset, trust-api probes tcp://omop-db:5432 and the hub shows this trust's OMOP as down."""
+    assert containers(specs["trust-api"])[0]["env"]["OMOP_BACKEND"] == "snowflake"
+
+
+def test_the_fl_client_image_follows_the_fl_tag(kit: dict) -> None:
+    """The FL images are released on their own tag (DOCKER_FL_TAG), as in Compose and Helm."""
+    client = next(
+        r for r in spec_templates.build_all({**kit, "DOCKER_FL_TAG": "v9.9.9"}, "GSTT") if "fl-client" in r.name
+    )
+    assert client.spec["spec"]["containers"][0]["image"].endswith("/flare-fl-client:v9.9.9")

@@ -129,7 +129,7 @@ def source_tag(kit: dict[str, str], repo: str) -> str:
         return kit.get("XNAT_TAG", "").strip() or default
     if repo == "orthanc":
         return kit.get("ORTHANC_TAG", "").strip() or default
-    if repo.startswith("fl-client"):
+    if repo == fl_client_image(kit):
         return kit.get("DOCKER_FL_TAG", "").strip() or default
     return default
 

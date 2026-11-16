@@ -27,6 +27,10 @@ REPO_ROOT := $(abspath $(SNOWFLAKE_DIR)/../../..)
 # Makefile does.
 include $(REPO_ROOT)/deploy/env_mode.mk
 
+# bash for `set -o pipefail`: the recipes below pipe emitted SQL into snow, and without it a
+# missing manifest (spcs_sql.py exits 1) still ended the target with exit 0.
+SHELL := /bin/bash
+
 KIT ?=
 KIT_ENV := $(ENV)
 KIT_FILE := $(REPO_ROOT)/trust/.env.$(KIT).$(KIT_ENV)
@@ -73,14 +77,14 @@ help:
 	@echo "                    MIRROR_PULL=false       ...pushing the local daemon's images (local builds) as is"
 	@echo "  make plan|apply|destroy  HUB=<env>        The Terraform root (TF_ROOT=workload, or platform)"
 	@echo "  make sync-kit      KIT=<CODE> HUB=<env>   Write SECRET objects, push FL kit + governance"
-	@echo "  make up            KIT=<CODE> HUB=<env>   CREATE (or ALTER) each service from the rendered specs"
+	@echo "  make up            KIT=<CODE> HUB=<env>   CREATE (or ALTER and RESUME) each service from the rendered specs"
 	@echo "                    HUB_EGRESS=true        ...attaching the hub/FL egress integration"
 	@echo "  make down          KIT=<CODE> HUB=<env>   Drop every service"
 	@echo "  make suspend       KIT=<CODE> HUB=<env>   Suspend every service AND every compute pool"
 	@echo "  make status        KIT=<CODE> HUB=<env>   Service and compute-pool status"
-	@echo "  make selftest      KIT=<CODE> HUB=<env>   Placeholder self-test (real asserts: FLIP#1585)"
+	@echo "  make selftest      KIT=<CODE> HUB=<env>   Hubless self-test job; fails unless every check passes"
 	@echo ""
-	@echo "  One-shot jobs (EXECUTE JOB SERVICE, ASYNC; follow with job-status):"
+	@echo "  One-shot jobs (EXECUTE JOB SERVICE, ASYNC; follow with job-status; smoke-cstore waits):"
 	@echo "  make xnat-configure KIT=<CODE> HUB=<env>  Register the DICOM receiver, the PACS and the DQR schedule"
 	@echo "  make seed-orthanc   KIT=<CODE> HUB=<env>  Seed the mocked PACS from the SEED stage"
 	@echo "  make smoke-cstore   KIT=<CODE> HUB=<env>  Drive a real C-STORE and check the receiver"
@@ -136,15 +140,15 @@ up: require-kit render
 
 down: require-kit
 	@echo "🛑 DROP SERVICE for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
-	@$(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py down --dir $(RENDER_DIR) | $(RUN_SQL)
+	@set -o pipefail; $(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py down --dir $(RENDER_DIR) | $(RUN_SQL)
 
 # Idle pools bill every node they hold, and a resource monitor does not cover them.
 suspend: require-kit
 	@echo "💤 Suspending services and compute pools for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
-	@$(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py suspend --dir $(RENDER_DIR) | $(RUN_SQL)
+	@set -o pipefail; $(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py suspend --dir $(RENDER_DIR) | $(RUN_SQL)
 
 status: require-kit
-	@$(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py status --dir $(RENDER_DIR) | $(RUN_SQL)
+	@set -o pipefail; $(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py status --dir $(RENDER_DIR) | $(RUN_SQL)
 
 # ── One-shot jobs ────────────────────────────────────────────────────────────
 # EXECUTE JOB SERVICE against a rendered job spec, run AS the services role with
@@ -158,6 +162,14 @@ define run_job
 		--snow $(SNOW) --connection $(SNOW_CONNECTION) \
 		$(if $(filter true,$(DRY_RUN)),--dry-run,)
 	@$(if $(filter true,$(DRY_RUN)),true,echo "   Follow it: make job-status KIT=$(KIT) HUB=$(HUB) JOB=$(1)")
+endef
+
+# Waits for a job to end, prints its log and fails unless it passed. The job is ASYNC, so
+# without this a target exits 0 whatever the job found.
+JOB_TIMEOUT ?= 900
+define wait_job
+	@$(if $(filter true,$(DRY_RUN)),true,$(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py wait-job --dir $(RENDER_DIR) \
+		--service $(1) --snow $(SNOW) --connection $(SNOW_CONNECTION) --timeout $(JOB_TIMEOUT))
 endef
 
 # Not optional on a new deploy. Until this has run XNAT has registered no DICOM
@@ -181,6 +193,7 @@ seed-orthanc: require-kit render
 smoke-cstore: require-kit render
 	@echo "🩺 C-STORE smoke for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
 	$(call run_job,smoke-cstore)
+	$(call wait_job,smoke-cstore)
 
 # `make -C trust reconvert-nifti`, on the Snowflake conversion path: imaging-api's own
 # script, with CONVERTER_BACKEND=snowflake, so it CALLs APP.CONVERT_SCAN instead of
@@ -195,7 +208,7 @@ job-status: require-kit
 		echo "❌ JOB is required, e.g. make job-status KIT=$(KIT) JOB=xnat-configure"; \
 		exit 1; \
 	fi
-	@$(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py job-status --dir $(RENDER_DIR) --service $(JOB) | $(RUN_SQL)
+	@set -o pipefail; $(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py job-status --dir $(RENDER_DIR) --service $(JOB) | $(RUN_SQL)
 
 # The hubless self-test (FLIP#1585): service and pool status by SQL, then a job inside the
 # account that checks /health over SPCS DNS, OMOP on Snowflake, a cohort statistics query
@@ -204,8 +217,9 @@ job-status: require-kit
 # checks: smoke-cstore, then reconvert-nifti.
 selftest: require-kit render
 	@echo "🧪 Self-test for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
-	@$(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py selftest --dir $(RENDER_DIR) | $(RUN_SQL)
+	@set -o pipefail; $(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py selftest --dir $(RENDER_DIR) | $(RUN_SQL)
 	$(call run_job,selftest)
+	$(call wait_job,selftest)
 
 # ── Guards ───────────────────────────────────────────────────────────────────
 # No Snowflake account, no credentials, no network: everything is asserted over rendered

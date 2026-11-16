@@ -197,6 +197,19 @@ def _egress(service: str, kit: dict[str, str], names: Names) -> dict[str, Any]:
     return {}
 
 
+#: The uid each image runs as. A stage volume mounts root-owned 0755 unless the volume names
+#: its owner, so a non-root service cannot write to it: data-access-api could persist no
+#: cohort, which leaves training and imaging with no data (live account).
+API_UID = 1000  # trust-api, data-access-api, imaging-api and the FLARE client
+XNAT_UID = 1001  # xnat-web and the dcm2niix image
+FLOWER_UID = 49999  # upstream flwr/base
+
+
+def _stage_volume(name: str, stage: str, uid: int) -> dict[str, Any]:
+    """A stage volume presented as owned by the user the container runs as."""
+    return {"name": name, "source": "stage", "stageConfig": {"name": stage}, "uid": uid, "gid": uid}
+
+
 def _secrets(service: str, names: Names) -> list[dict[str, Any]]:
     """``containers.secrets`` entries for a service, from :data:`SECRET_MAP`.
 
@@ -237,6 +250,8 @@ def _image(names: Names, repo: str, kit: dict[str, str], digests: dict[str, str]
         tag = kit.get("XNAT_TAG", "").strip() or tag
     elif repo == "orthanc":
         tag = kit.get("ORTHANC_TAG", "").strip() or tag
+    elif repo == fl_client_image(kit):
+        tag = kit.get("DOCKER_FL_TAG", "").strip() or tag
     return f"{names.image_repository_path}/{repo}:{tag}"
 
 
@@ -271,6 +286,9 @@ def _trust_api(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Re
         # Derived, not copied: the compose values name Docker network aliases.
         "DATA_ACCESS_API_URL": f"http://{names.dns('data-access-api')}:8000",
         "IMAGING_API_URL": f"http://{names.dns('imaging-api')}:8000",
+        # Without it trust-api probes tcp://omop-db:5432 and the hub shows OMOP as down; with
+        # it the probe is data-access-api's /health/omop.
+        "OMOP_BACKEND": "snowflake",
         # The hub's Connection Status reports the FL build this site runs; the fl-client
         # has no health endpoint of its own (FLIP#1204).
         "FL_CLIENT_IMAGE_TAG": kit.get("DOCKER_FL_TAG", ""),
@@ -326,8 +344,8 @@ def _data_access_api(kit: dict[str, str], names: Names, digests: dict[str, str])
         {"name": "governance", "mountPath": "/governance"},
     ]
     volumes = [
-        {"name": "cohort-snapshots", "source": "stage", "stageConfig": {"name": names.stage_ref("COHORT_SNAPSHOTS")}},
-        {"name": "governance", "source": "stage", "stageConfig": {"name": names.stage_ref("GOVERNANCE")}},
+        _stage_volume("cohort-snapshots", names.stage_ref("COHORT_SNAPSHOTS"), API_UID),
+        _stage_volume("governance", names.stage_ref("GOVERNANCE"), API_UID),
     ]
     # The governance document (FLIP#1259) travels on the GOVERNANCE stage rather than as
     # a host path: a path on the deploy host means nothing inside a container. Unset =
@@ -432,8 +450,8 @@ def _imaging_api(kit: dict[str, str], names: Names, digests: dict[str, str]) -> 
             ],
             "endpoints": [{"name": "api", "port": 8000, "protocol": "HTTP", "public": False}],
             "volumes": [
-                {"name": "images", "source": "stage", "stageConfig": {"name": names.stage_ref("IMAGES")}},
-                {"name": "converter-io", "source": "stage", "stageConfig": {"name": names.stage_ref("CONVERTER_IO")}},
+                _stage_volume("images", names.stage_ref("IMAGES"), API_UID),
+                _stage_volume("converter-io", names.stage_ref("CONVERTER_IO"), API_UID),
             ],
             **_event_table_exports(),
         }
@@ -459,6 +477,7 @@ def _fl_client(kit: dict[str, str], names: Names, digests: dict[str, str], net: 
     net_id = f"net-{net}"
     backend = (kit.get("FL_BACKEND", "").strip() or "nvflare").lower()
     repo = fl_client_image(kit)
+    uid = FLOWER_UID if backend == "flower" else API_UID
     env = {
         "NET_ID": net_id,
         "LOCAL_DEV": "false",
@@ -490,6 +509,9 @@ def _fl_client(kit: dict[str, str], names: Names, digests: dict[str, str], net: 
         slot = kit.get("FL_KIT_SLOT_NUMBER", "1")
         superlink = kit.get("NLB_SUBDOMAIN", "")
         port = kit.get("FL_EDGE_PORT", "").strip() or kit.get("FL_SERVER_PORT", "").strip()
+        if not superlink.strip() or not port:
+            # `--superlink ":"` deploys cleanly and the SuperNode then exits with code 600.
+            raise ValueError("FL_BACKEND=flower needs NLB_SUBDOMAIN and FL_EDGE_PORT (or FL_SERVER_PORT) in the kit")
         container["args"] = [
             "--root-certificates",
             # The stage volume is FL_KIT/<net-N> itself, so the kit sits at the mount root.
@@ -525,16 +547,8 @@ def _fl_client(kit: dict[str, str], names: Names, digests: dict[str, str], net: 
             # No endpoints at all: the client dials out to the FL server through the
             # external access integration and listens for nothing.
             "volumes": [
-                {
-                    "name": "images",
-                    "source": "stage",
-                    "stageConfig": {"name": names.stage_ref("IMAGES", net_id)},
-                },
-                {
-                    "name": "fl-kit",
-                    "source": "stage",
-                    "stageConfig": {"name": names.stage_ref("FL_KIT", net_id)},
-                },
+                _stage_volume("images", names.stage_ref("IMAGES", net_id), uid),
+                _stage_volume("fl-kit", names.stage_ref("FL_KIT", net_id), uid),
                 # FLARE and Flower both want real shared memory for dataloader workers;
                 # the Compose stack's shm_size: 8gb equivalent.
                 {"name": "dshm", "source": "memory", "size": "8Gi"},
@@ -632,8 +646,8 @@ def _xnat_web(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Ren
                 {"name": "dicom", "port": dicom_port, "protocol": "TCP", "public": False},
             ],
             "volumes": [
-                {"name": "xnat-archive", "source": "stage", "stageConfig": {"name": names.stage_ref("XNAT_ARCHIVE")}},
-                {"name": "converter-io", "source": "stage", "stageConfig": {"name": names.stage_ref("CONVERTER_IO")}},
+                _stage_volume("xnat-archive", names.stage_ref("XNAT_ARCHIVE"), XNAT_UID),
+                _stage_volume("converter-io", names.stage_ref("CONVERTER_IO"), XNAT_UID),
                 # Scratch only: the prefetch cache is rebuilt, never read by anything else.
                 {"name": "xnat-cache", "source": "local"},
             ],
@@ -757,8 +771,8 @@ def _dcm2niix(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Ren
                 }
             ],
             "volumes": [
-                {"name": "xnat-archive", "source": "stage", "stageConfig": {"name": names.stage_ref("XNAT_ARCHIVE")}},
-                {"name": "converter-io", "source": "stage", "stageConfig": {"name": names.stage_ref("CONVERTER_IO")}},
+                _stage_volume("xnat-archive", names.stage_ref("XNAT_ARCHIVE"), XNAT_UID),
+                _stage_volume("converter-io", names.stage_ref("CONVERTER_IO"), XNAT_UID),
             ],
             **_event_table_exports(),
         }
@@ -873,7 +887,7 @@ def _seed_orthanc(kit: dict[str, str], names: Names, digests: dict[str, str]) ->
     spec = {
         "spec": {
             "containers": [container],
-            "volumes": [{"name": "seed", "source": "stage", "stageConfig": {"name": names.stage_ref("SEED")}}],
+            "volumes": [_stage_volume("seed", names.stage_ref("SEED"), XNAT_UID)],
             **_event_table_exports(),
         }
     }
@@ -905,9 +919,7 @@ def _smoke_cstore(kit: dict[str, str], names: Names, digests: dict[str, str]) ->
     spec = {
         "spec": {
             "containers": [container],
-            "volumes": [
-                {"name": "xnat-archive", "source": "stage", "stageConfig": {"name": names.stage_ref("XNAT_ARCHIVE")}}
-            ],
+            "volumes": [_stage_volume("xnat-archive", names.stage_ref("XNAT_ARCHIVE"), XNAT_UID)],
             **_event_table_exports(),
         }
     }
@@ -956,8 +968,8 @@ def _reconvert(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Re
         "spec": {
             "containers": [container],
             "volumes": [
-                {"name": "converter-io", "source": "stage", "stageConfig": {"name": names.stage_ref("CONVERTER_IO")}},
-                {"name": "xnat-archive", "source": "stage", "stageConfig": {"name": names.stage_ref("XNAT_ARCHIVE")}},
+                _stage_volume("converter-io", names.stage_ref("CONVERTER_IO"), API_UID),
+                _stage_volume("xnat-archive", names.stage_ref("XNAT_ARCHIVE"), API_UID),
             ],
             **_event_table_exports(),
         }

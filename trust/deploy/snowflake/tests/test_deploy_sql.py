@@ -203,10 +203,10 @@ def test_suspend_covers_the_compute_pools(manifest: dict) -> None:
 
 
 def test_down_drops_every_service(manifest: dict) -> None:
+    """Finished jobs included: a job service left behind keeps its name and blocks the next run."""
     sql = spcs_sql.sql_down(manifest)
-    expected = [s for s in manifest["services"] if s["kind"] != "job"]
     drops = [statement for statement in sql if statement.startswith("DROP SERVICE IF EXISTS")]
-    assert len(drops) == len(expected)
+    assert len(drops) == len(manifest["services"])
     assert all(statement.startswith(("USE ", "DROP SERVICE IF EXISTS")) for statement in sql)
 
 
