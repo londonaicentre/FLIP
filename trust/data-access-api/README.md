@@ -59,11 +59,22 @@ Key environment variables. Most come from the trust kit file — template at [`.
 
 | Variable | Description |
 | --- | --- |
-| `OMOP_DB_SERVICE_NAME` | Docker service name or hostname of the OMOP database |
-| `OMOP_DB_PORT` | Port of the OMOP database |
+| `OMOP_BACKEND` | Which OMOP backend to read: `postgres` (default) or `snowflake`. Unset or empty = `postgres`, so a kit file carrying only the `*POSTGRES*` variables keeps working untouched. See [OMOP backends](#omop-backends) |
+| `OMOP_DB_SERVICE_NAME` | Docker service name or hostname of the OMOP database (`postgres` backend) |
+| `OMOP_DB_PORT` | Port of the OMOP database (`postgres` backend) |
 | `DATA_ACCESS_POSTGRES_USER` | PostgreSQL username for OMOP database access |
 | `DATA_ACCESS_POSTGRES_PASSWORD` | PostgreSQL password for OMOP database access. Give it raw, never percent-encoded: the service URL-escapes it when it builds the connection URL |
 | `OMOP_POSTGRES_DB` | Name of the OMOP PostgreSQL database |
+| `SNOWFLAKE_ACCOUNT` | Snowflake account locator (`snowflake` backend) |
+| `SNOWFLAKE_HOST` | Hostname SPCS injects inside a container service; unset off SPCS |
+| `SNOWFLAKE_WAREHOUSE` | Warehouse the cohort query runs on |
+| `SNOWFLAKE_DATABASE` | Database holding the OMOP schema (`FLIP_TRUST_<CODE>`) |
+| `SNOWFLAKE_SCHEMA` | Schema holding the OMOP CDM tables (default `OMOP`) |
+| `SNOWFLAKE_ROLE` | Read-only role to run as (`FLIP_<CODE>_OMOP_READER`) |
+| `SNOWFLAKE_USER` | Service user for key-pair auth; unset on SPCS, where the token carries the identity |
+| `SNOWFLAKE_PRIVATE_KEY_FILE` | PEM private key for key-pair auth. Optional: unset on SPCS |
+| `SNOWFLAKE_PRIVATE_KEY_PASSPHRASE` | Passphrase for an encrypted private key. Optional |
+| `SNOWFLAKE_TOKEN_FILE` | SPCS OAuth token path (default `/snowflake/session/token`) |
 | `AES_KEY_BASE64` | AES-256 key shared with the hub, used to open the AES-256-GCM-enveloped project identifiers the FL client forwards (FLIP#1179). Must be byte-identical to the hub's and to trust-api's; a mismatch fails closed |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Required on every `/cohort` request. |
@@ -74,6 +85,94 @@ Key environment variables. Most come from the trust kit file — template at [`.
 | `CACHE_TTL_DAYS` | Age (days, default `60`) at which a cached result is treated as expired and dropped on the next lookup |
 | `CACHE_MAX_RESULT_ROWS` | Largest result (rows, default `50000`) that is cached at all — anything bigger is returned but not stored, keeping memory bounded |
 | `CACHE_MAX_ENTRIES` | Maximum number of cached results (default `64`); inserting past the limit evicts the oldest entry |
+
+<a id="omop-backends"></a>
+### OMOP backends (FLIP#13)
+
+A trust's OMOP is read through one configured backend (`data_access_api/db/backend.py`), selected by the
+`OMOP_BACKEND` environment variable of this service; the hub is not involved. The engine is built on
+**first use**, not at import, so the backend is a deployment decision rather than an import-time one.
+
+Setting `OMOP_BACKEND` in a kit file is not yet enough on every node shape. The SPCS service spec
+(`trust/deploy/snowflake/spec_templates.py`) sets it and the `SNOWFLAKE_*` variables on the container. The
+Compose files and the Helm chart pass `data-access-api` a fixed list of variables that includes neither, so
+a Compose or Kubernetes trust reads PostgreSQL whatever its kit file says until they are wired.
+
+| `OMOP_BACKEND` | Where OMOP is | Notes |
+| --- | --- | --- |
+| `postgres` (default) | The trust node's PostgreSQL `omop-db`, or any PostgreSQL it can reach | Dev/CI default. Behaviourally unchanged by the seam: same URL, same `create_engine(echo=False)`, same psycopg2 diagnostics, same emitted SQL |
+| `snowflake` | The trust's own Snowflake warehouse | Reached over outbound HTTPS 443. `pool_pre_ping` + `pool_recycle`, because an auto-suspending warehouse drops idle sessions |
+
+**One query string, every backend.** The hub fans out a single cohort query, authored in PostgreSQL
+dialect (every `query.sql` in this repo is). `validate_query` always **parses and identifier-folds as
+PostgreSQL** and **emits in the backend's dialect**, so transpilation happens at emit time on the trust
+and needs no hub change and no per-trust query authoring. Because the string handed to the engine was
+always re-emitted from the checked AST rather than forwarded, transpiling adds no new trust in the
+caller's text.
+
+**The guarantees do not vary; the implementation does.** Single statement, SELECT-only including writable
+CTEs, the `omop` schema pin, literal `LIMIT`/`OFFSET`, re-emission from the checked AST — identical on
+both backends, and `tests/services/test_cohort_dialects.py` runs the same attack corpus against both.
+What is backend-specific:
+
+- **The dangerous-surface allowlist.** PostgreSQL's is about `pg_catalog` reachability (`query_to_xml`,
+  `pg_read_file`, `dblink`). Snowflake's is about `SYSTEM$…`, `TABLE(RESULT_SCAN(LAST_QUERY_ID()))`,
+  external functions and stage references — all of which parse perfectly cleanly and would sail past the
+  Postgres list. The shared posture is to reject every unrecognised (`exp.Anonymous`) function, so each
+  list only has to name what a cohort query legitimately needs. `age()` is allowed on PostgreSQL and
+  refused on Snowflake, which has no such function. The Snowflake list is empty: `flatten` is not on it,
+  because the query is parsed as PostgreSQL and sqlglot would emit it as `ARRAY_FLATTEN`; write `unnest`,
+  which is emitted as `TABLE(FLATTEN(INPUT => ...))`. A stage reference (`FROM @stage`) is refused by its
+  shape, qualified or not.
+- **Functions sqlglot types.** The unrecognised-function rule cannot see a function sqlglot parses into
+  its own node type. Snowflake's `AI_AGG`, `AI_CLASSIFY`, `AI_EMBED`, `AI_SIMILARITY` and `AI_SUMMARIZE_AGG`
+  are such functions and would hand patient values to a model, so the Snowflake backend refuses them by
+  node class (`refused_functions`). This one is an explicit list, not an allowlist: sqlglot has several
+  hundred typed functions and no common base for these. `tests/db/test_backend.py` fails when a sqlglot
+  upgrade types another `AI_*` function that the list lacks. The untyped ones (`AI_COMPLETE`,
+  `SNOWFLAKE.CORTEX.*`) are refused as unrecognised.
+- **Table clauses.** On both backends a table reference may carry only an allowlisted set of clauses
+  (alias, joins, `TABLESAMPLE`, `ONLY`, `PIVOT`, `WITH ORDINALITY`). Snowflake time travel
+  (`AT(...)` / `BEFORE(...)`) and `CHANGES(...)` are therefore refused: they read rows as they were before
+  a patient was withdrawn.
+- **Three-part names.** `otherdb.omop.person` is rejected on PostgreSQL, which has no cross-database
+  references. On Snowflake `DB.SCHEMA.TABLE` is the ordinary form, so the rule is *pin the catalog too*:
+  only `SNOWFLAKE_DATABASE` is admissible, and unqualified tables are pinned to it as well as to `omop`.
+- **How a schema or database name resolves.** The pins compare the way the engine does. PostgreSQL folds
+  unquoted names to lower case, so `"OMOP"` is a different schema from `omop` and is refused. Snowflake
+  folds them to upper case and keeps a quoted name exact, so `"OMOP"` and `"FLIP_TRUST_GSTT"` are
+  accepted, while `"omop"` and `"flip_trust_gstt"` name different objects and are refused.
+- **Error classification.** Missing-table / missing-column diagnostics come from the backend, not from an
+  `isinstance` against psycopg2's error classes, so they do not degrade to an opaque 500 on a driver that
+  is not psycopg2.
+- **Result column names.** Snowflake upper-folds unquoted identifiers. Results are folded back before
+  anything downstream — including the cache — sees the frame, so `flip.get_dataframe()` consumers, the
+  tutorial transform chains and this service's own `df["accession_id"]` see the same names on both
+  backends. A name that is not entirely upper case came from a *quoted* identifier and is left alone,
+  which is what PostgreSQL does too.
+- **Age in whole years.** `/cohort`'s age histogram is raw SQL that never passes through
+  `validate_query`, and PostgreSQL's `AGE()` does not exist on Snowflake. The expression comes from the
+  backend and both forms return the same integer, so the decade buckets agree.
+
+**Authentication: never a password.** There is no password setting. Two modes, resolved at connect time:
+
+1. **SPCS OAuth token** — a service on Snowpark Container Services reads `/snowflake/session/token` and
+   connects back through `SNOWFLAKE_HOST`. Re-read on every connect, so a rotated token is picked up.
+2. **Key-pair** — off SPCS, as `SNOWFLAKE_USER` with the PEM key at `SNOWFLAKE_PRIVATE_KEY_FILE`.
+
+**Read-only role (prerequisite).** `sql/snowflake_readonly_grants.sql` is run by the **trust's own
+Snowflake admin** before onboarding: `SELECT` on the OMOP schema only, no write or DDL, and a statement
+timeout. FLIP cannot create it; the trust owns the account. It is the Snowflake counterpart of
+`trust/omop-db/files/create_readonly_users.sql` and is treated the same way.
+
+**Health.** `GET /health/omop` (unauthenticated, like `/health`) opens a session and reports
+`{"status": "ok" | "down", "backend": ...}`. trust-api uses it instead of its TCP port probe whenever
+`OMOP_BACKEND` is not `postgres`, so a Snowflake trust does not report a permanently red OMOP.
+
+**Testing.** No live account exists and CI must not gain one: `tests/db/test_backend.py` covers the URL,
+connect arguments, auth-mode selection, error classification and column folding with mocks, and
+`tests/services/test_cohort_dialects.py` covers the validator against both dialects. Both are pure
+sqlglot plus the backend objects — no account, no network.
 
 ### Query cache
 
@@ -123,7 +222,14 @@ logged when it differs). Consequences:
   without re-running the query, so it cannot re-admit patients. There is no way to replace a membership:
   only a project with no record (never frozen, deleted, or lost with the store) is frozen afresh. The
   store is write-once at the filesystem level (a single rename the kernel refuses over an existing
-  record), and a record that is present but unreadable answers 500 rather than being frozen over;
+  record), and a record that is present but unreadable answers 500 rather than being frozen over.
+  On Snowpark Container Services (FLIP#1580) that directory is a mounted **stage volume**, i.e. an
+  object-store prefix whose rename is emulated by a FUSE layer with semantics Snowflake does not
+  document; no live account exists to measure it against, so it is an assumption pending the SPCS
+  runtime spike (FLIP#1579). Write-once therefore does not rest on the rename alone: the service
+  checks for an existing record before writing and reads back what landed afterwards, refusing
+  unless it is the record that request wrote. On a real filesystem both checks are redundant;
+  on a permissive mount they are what stops a re-queued snapshot overwriting an approved cohort;
 - the governance policy is asked at freeze time as for `cohort.statistics` — the freeze reports the
   same counts to the hub — so a project denied statistics is not frozen, and a policy
   `min_cohort_size` raise applies to the freeze as it does to the statistics route;

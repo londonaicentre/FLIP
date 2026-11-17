@@ -153,9 +153,12 @@ def create_project_from_central_hub_project(
 
     # Create a project-scoped event subscription for automatic DICOM-to-NIfTI conversion
     # Active when dicom_to_nifti=True, deactivated when False (can be toggled later via XNAT API)
-    create_project_event_subscription(
-        project.ID, get_settings().DCM2NIIX_IMAGE, central_hub_project.dicom_to_nifti, headers
-    )
+    # Only where XNAT's Container Service runs the converter: a Snowflake node has none, the
+    # subscription cannot be created there, and conversion is the job reconvert-nifti starts.
+    if get_settings().CONVERTER_BACKEND == "container-service":
+        create_project_event_subscription(
+            project.ID, get_settings().DCM2NIIX_IMAGE, central_hub_project.dicom_to_nifti, headers
+        )
 
     # Add central hub users to imaging project
     # Will create XNAT users if they do not exist, and add them to the XNAT project
