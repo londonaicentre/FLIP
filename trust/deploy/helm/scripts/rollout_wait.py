@@ -48,8 +48,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import subprocess
 import sys
+import time
 
 # Workloads deliberately NOT waited on. Each entry needs a reason that says why being unready is a
 # legitimate steady state for a supported configuration, rather than merely inconvenient.
@@ -66,14 +68,14 @@ OPTIONAL_COMPONENTS = {
     "alloy": "observability",
 }
 
-WORKLOAD_KINDS = ("deployment", "statefulset")
+WORKLOAD_KINDS = ("deployment", "statefulset", "daemonset")
 
 
 def _run(cmd: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
-def discover(kubectl: str, namespace: str, release: str, timeout: int = 120) -> list[tuple[str, str, str]]:
+def discover(kubectl: list[str], namespace: str, release: str, timeout: int = 120) -> list[tuple[str, str, str]]:
     """Every chart-managed workload in the release, as (kind, name, component).
 
     Selecting on the release's own instance label keeps this to the chart's workloads, so a
@@ -83,7 +85,7 @@ def discover(kubectl: str, namespace: str, release: str, timeout: int = 120) -> 
     for kind in WORKLOAD_KINDS:
         proc = _run(
             [
-                kubectl,
+                *kubectl,
                 "get",
                 kind,
                 "--namespace",
@@ -120,19 +122,21 @@ def partition(
     return waited, skipped
 
 
-def rollout_status(kubectl: str, namespace: str, kind: str, name: str, timeout: str) -> tuple[bool, str]:
+def rollout_status(kubectl: list[str], namespace: str, kind: str, name: str, seconds: int) -> tuple[bool, str]:
+    """`kubectl rollout status` for one workload, given the seconds left of the shared budget."""
+    seconds = max(seconds, 1)
     proc = _run(
-        [kubectl, "rollout", "status", f"{kind}/{name}", "--namespace", namespace, f"--timeout={timeout}"],
-        timeout=_seconds(timeout) + 60,
+        [*kubectl, "rollout", "status", f"{kind}/{name}", "--namespace", namespace, f"--timeout={seconds}s"],
+        timeout=seconds + 60,
     )
     detail = (proc.stdout or "").strip() or (proc.stderr or "").strip()
     return proc.returncode == 0, detail
 
 
-def is_ready(kubectl: str, namespace: str, kind: str, name: str) -> bool:
+def is_ready(kubectl: list[str], namespace: str, kind: str, name: str) -> bool:
     """A point-in-time readiness check, used for the report on skipped workloads (no waiting)."""
     proc = _run(
-        [kubectl, "get", kind, name, "--namespace", namespace, "-o", "json"],
+        [*kubectl, "get", kind, name, "--namespace", namespace, "-o", "json"],
         timeout=120,
     )
     if proc.returncode != 0:
@@ -142,9 +146,12 @@ def is_ready(kubectl: str, namespace: str, kind: str, name: str) -> bool:
     except (json.JSONDecodeError, ValueError):
         return False
     status = obj.get("status") or {}
-    spec = obj.get("spec") or {}
-    desired = spec.get("replicas", 1)
-    ready = status.get("readyReplicas", 0)
+    if kind == "daemonset":
+        desired = status.get("desiredNumberScheduled", 0)
+        ready = status.get("numberReady", 0)
+    else:
+        desired = (obj.get("spec") or {}).get("replicas", 1)
+        ready = status.get("readyReplicas", 0)
     return bool(desired == 0 or ready >= desired)
 
 
@@ -167,13 +174,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--namespace", required=True)
     parser.add_argument("--release", required=True)
-    parser.add_argument("--timeout", default="30m", help="per-workload rollout budget")
-    parser.add_argument("--kubectl", default="kubectl")
+    parser.add_argument(
+        "--timeout", default="30m", help="one budget shared by every core workload, not a per-workload budget"
+    )
+    parser.add_argument("--kubectl", default="kubectl", help='kubectl command, e.g. "kubectl --context x"')
     args = parser.parse_args()
+    # The Makefile passes $(KUBECTL), which carries `--context <ctx>` when KUBE_CONTEXT is set.
+    kubectl = shlex.split(args.kubectl)
 
     try:
-        workloads = discover(args.kubectl, args.namespace, args.release)
-    except RuntimeError as exc:
+        workloads = discover(kubectl, args.namespace, args.release)
+    except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
         # Fail closed: if the rollout cannot be judged, the deploy has not been shown to have
         # landed, and saying otherwise is the FLIP#1228 failure again.
         print(f"could not determine the release's workloads: {exc}", file=sys.stderr)
@@ -185,9 +196,14 @@ def main() -> int:
 
     waited, skipped = partition(workloads)
 
+    # One deadline across the loop, so HELM_TIMEOUT bounds the whole wait rather than each workload.
+    deadline = time.monotonic() + _seconds(args.timeout)
     failed: list[str] = []
     for kind, name, _component in sorted(waited):
-        ok, detail = rollout_status(args.kubectl, args.namespace, kind, name, args.timeout)
+        try:
+            ok, detail = rollout_status(kubectl, args.namespace, kind, name, int(deadline - time.monotonic()))
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            ok, detail = False, f"could not run kubectl: {exc}"
         if ok:
             print(f"  ✓ {kind}/{name}")
         else:
@@ -195,7 +211,11 @@ def main() -> int:
             print(f"  ✗ {kind}/{name}: {detail}")
 
     for kind, name, component in sorted(skipped):
-        if not is_ready(args.kubectl, args.namespace, kind, name):
+        try:
+            ready = is_ready(kubectl, args.namespace, kind, name)
+        except (OSError, subprocess.TimeoutExpired):
+            ready = False
+        if not ready:
             reason = OPTIONAL_COMPONENTS.get(component, "optional")
             print(f"  - {kind}/{name} is not ready, not waited on ({reason})")
 

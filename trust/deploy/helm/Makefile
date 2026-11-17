@@ -179,7 +179,7 @@ ifneq ($(strip $(TAG)),)
 	VALUES_OPTS := $(VALUES_OPTS) --set global.image.tag=$(TAG)
 endif
 
-.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init kit-secret stage-kit download-vocab stage-vocab preflight template-egress-variants smoke-cstore selftest xnat-db-migrate-dump xnat-db-remove-old-cluster
+.PHONY: help lint template deploy deploy-release failing-hooks undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init kit-secret stage-kit download-vocab stage-vocab preflight template-egress-variants smoke-cstore selftest xnat-db-migrate-dump xnat-db-remove-old-cluster
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -293,7 +293,7 @@ stage-vocab: ## Place the unpacked OMOP core vocabulary onto the node (omopDb.vo
 #
 # A Deployment the chart now renders as Recreate but the cluster still runs as RollingUpdate is
 # switched first, or Helm 4's server-side apply refuses it (FLIP#1524; scripts/migrate-strategy.sh).
-deploy: preflight ## Deploy the Helm chart to the cluster
+deploy-release: preflight ## Apply the chart and wait for the core workloads to roll out (no xnat-init)
 	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) --namespace $(NAMESPACE) $(VALUES_OPTS) | \
 		NAMESPACE=$(NAMESPACE) RELEASE_NAME=$(RELEASE_NAME) KUBECTL="$(KUBECTL)" $(CHART_DIR)/scripts/migrate-strategy.sh
@@ -307,11 +307,18 @@ deploy: preflight ## Deploy the Helm chart to the cluster
 		--namespace $(NAMESPACE) --release $(RELEASE_NAME) \
 		--timeout $(HELM_TIMEOUT) --kubectl "$(KUBECTL)" \
 		|| { $(SUBMAKE) --no-print-directory failing-hooks; exit 1; }
+
+# The two steps are separate targets so that WHICH one failed is the signal. GNU make exits 2 for
+# any failed recipe whatever code the recipe returned, so an exit code cannot carry "upgraded, but
+# XNAT not configured" through make (FLIP#1645). A caller that must tell the two apart (the
+# auto-upgrade agent, FLIP#1640; deploy-trust-k8s; upgrade-trust-k8s) runs deploy-release, then
+# xnat-init, and reads which command failed. `deploy` is the two in sequence, for humans.
+deploy: deploy-release ## Deploy the Helm chart to the cluster (deploy-release, then xnat-init)
 	@$(SUBMAKE) --no-print-directory xnat-init || { \
 		printf '\033[0;33m%s\033[0m\n' \
 			"⚠️  the release is live and rolled out, but xnat-init did not complete (see #565)." \
 			"⚠️  Re-run: make -C trust/deploy/helm xnat-init (raise HELM_TIMEOUT if it just needed longer)."; \
-		exit 3; }
+		exit 1; }
 
 # Helm records every hook's outcome for the current revision, so when the upgrade fails the
 # operator is told which one failed instead of reading the whole output. Best-effort: a cluster
@@ -336,12 +343,16 @@ down: undeploy ## Tear down the trust K8s release (alias for undeploy)
 deploy-trust-k8s: ## Deploy trust services to K8s; KIT= regenerates the per-trust override from the kit and re-patches secrets
 ifdef KIT
 	$(MAKE) sync-kit-override KIT=$(KIT)
-	@rc=0; \
-	$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml || rc=$$?; \
-	if [ $$rc -eq 3 ]; then \
-		echo "⚠️  the release is live but xnat-init did not complete (see #565). Patching per-trust secrets, then re-exiting 3."; \
+	@rc=0; step=release; \
+	$(MAKE) deploy-release OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml || rc=1; \
+	if [ $$rc -eq 0 ]; then \
+		step=xnat-init; \
+		$(MAKE) xnat-init OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml || rc=1; \
+	fi; \
+	if [ $$rc -ne 0 ] && [ $$step = xnat-init ]; then \
+		echo "⚠️  the release is live and rolled out, but xnat-init did not complete (see #565). Patching per-trust secrets, then failing."; \
 	elif [ $$rc -ne 0 ]; then \
-		echo "❌ deploy failed ($$rc). Patching per-trust secrets first so trust-api gets the correct key and does not poll with the stale seed key (#595), then re-exiting with the deploy status."; \
+		echo "❌ the release did not land (helm or the rollout wait failed). Patching per-trust secrets first so trust-api gets the correct key and does not poll with the stale seed key (#595), then failing."; \
 	fi; \
 	$(MAKE) patch-kit-secrets KIT=$(KIT); \
 	exit $$rc
@@ -396,9 +407,11 @@ upgrade-trust-k8s: ## Move a deployed trust to a release tag (data-safe helm upg
 _upgrade-trust-k8s-apply:
 	$(MAKE) sync-kit KIT=$(KIT)
 	$(MAKE) xnat-db-migrate-dump
-	$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml TAG=$(shell sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1) \
+	$(MAKE) deploy-release OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml TAG=$(shell sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1) \
 	  || { $(MAKE) xnat-db-drop-unused-dump AFTER_FAILED_DEPLOY=1; exit 1; }
 	$(MAKE) xnat-db-drop-unused-dump
+	$(MAKE) xnat-init OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml TAG=$(shell sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1) \
+	  || { echo "⚠️  the release is live and rolled out, but xnat-init did not complete (see #565). Re-run: make -C trust/deploy/helm xnat-init"; exit 1; }
 	@echo "✅ $(KIT) is on $$(sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1). Verify: kubectl -n $(NAMESPACE) get pods; trust-api /health reports the new version."
 
 # The PostgreSQL major the xnat-db image runs, and the release's XNAT pods (FLIP#1812).
@@ -527,7 +540,8 @@ xnat-init: ## Run the XNAT post-install init job (a no-op when xnat.enabled=fals
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
 		$(VALUES_OPTS) \
-		--set xnat.initJob.enabled=true > $$tmp; \
+		--set xnat.initJob.enabled=true > $$tmp \
+		|| { echo "❌  could not render the chart — xnat-init not run."; exit 1; }; \
 	if ! grep -q 'app.kubernetes.io/component: xnat-init' $$tmp; then \
 		echo "⏭  XNAT is disabled (xnat.enabled=false) — nothing to initialise."; \
 		exit 0; \

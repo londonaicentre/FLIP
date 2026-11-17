@@ -19,6 +19,7 @@ closed when the cluster cannot be read.
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -125,14 +126,15 @@ def test_discovery_selects_only_this_release(monkeypatch):
         return FakeProc(stdout=_items(("t-trust-api", "trust-api")))
 
     monkeypatch.setattr(rollout_wait, "_run", fake_run)
-    rollout_wait.discover("kubectl", "flip", "t")
+    rollout_wait.discover(["kubectl"], "flip", "t")
     for cmd in seen:
         assert "--selector" in cmd
         assert "app.kubernetes.io/instance=t" in cmd
 
 
-def test_discovery_covers_statefulsets_as_well_as_deployments(monkeypatch):
-    """omop-db, xnat-db and loki are StatefulSets; omitting the kind would skip the databases."""
+def test_discovery_covers_every_workload_kind(monkeypatch):
+    """omop-db, xnat-db and loki are StatefulSets; omitting the kind would skip the databases. A
+    DaemonSet added to the chart is waited on unless named, like any other workload."""
     kinds = []
 
     def fake_run(cmd, timeout):
@@ -140,20 +142,20 @@ def test_discovery_covers_statefulsets_as_well_as_deployments(monkeypatch):
         return FakeProc(stdout=_items())
 
     monkeypatch.setattr(rollout_wait, "_run", fake_run)
-    rollout_wait.discover("kubectl", "flip", "t")
-    assert set(kinds) == {"deployment", "statefulset"}
+    rollout_wait.discover(["kubectl"], "flip", "t")
+    assert set(kinds) == {"deployment", "statefulset", "daemonset"}
 
 
 def test_an_unreadable_cluster_raises_rather_than_reporting_success(monkeypatch):
     monkeypatch.setattr(rollout_wait, "_run", lambda cmd, timeout: FakeProc(returncode=1, stderr="nope"))
     with pytest.raises(RuntimeError):
-        rollout_wait.discover("kubectl", "flip", "t")
+        rollout_wait.discover(["kubectl"], "flip", "t")
 
 
 def test_malformed_kubectl_output_raises(monkeypatch):
     monkeypatch.setattr(rollout_wait, "_run", lambda cmd, timeout: FakeProc(stdout="not json"))
     with pytest.raises(RuntimeError):
-        rollout_wait.discover("kubectl", "flip", "t")
+        rollout_wait.discover(["kubectl"], "flip", "t")
 
 
 # ---------------------------------------------------------------- timeout parsing
@@ -238,3 +240,83 @@ def test_an_undiscoverable_release_fails_closed(monkeypatch):
     monkeypatch.setattr(rollout_wait, "discover", boom)
     monkeypatch.setattr(sys, "argv", ["rollout_wait.py", "--namespace", "flip", "--release", "t"])
     assert rollout_wait.main() == 1
+
+
+# ---------------------------------------------------------------- the kubectl command
+
+
+def test_a_context_pinned_kubectl_is_split_into_its_arguments(monkeypatch):
+    """With KUBE_CONTEXT set the Makefile passes `kubectl --context <ctx>` as ONE argument; used as
+    the program name it crashed every context-pinned deploy after helm had applied the release."""
+    seen = []
+
+    def fake_run(cmd, timeout):
+        seen.append(cmd)
+        if cmd[3] == "get":
+            return FakeProc(stdout=_items(("t-trust-api", "trust-api")) if cmd[4] == "deployment" else _items())
+        return FakeProc(stdout="rolled out")
+
+    monkeypatch.setattr(rollout_wait, "_run", fake_run)
+    monkeypatch.setattr(
+        sys, "argv", ["rollout_wait.py", "--namespace", "flip", "--release", "t", "--kubectl", "kubectl --context x"]
+    )
+    assert rollout_wait.main() == 0
+    assert seen
+    for cmd in seen:
+        assert cmd[:3] == ["kubectl", "--context", "x"], cmd
+
+
+def test_a_missing_kubectl_fails_closed_without_a_traceback(monkeypatch, capsys):
+    def missing(cmd, timeout):
+        raise FileNotFoundError(2, "No such file or directory", cmd[0])
+
+    monkeypatch.setattr(rollout_wait, "_run", missing)
+    monkeypatch.setattr(sys, "argv", ["rollout_wait.py", "--namespace", "flip", "--release", "t", "--kubectl", "nope"])
+    assert rollout_wait.main() == 1
+    assert "could not determine" in capsys.readouterr().err
+
+
+def test_a_kubectl_that_hangs_fails_that_workload_rather_than_crashing(monkeypatch, capsys):
+    monkeypatch.setattr(rollout_wait, "discover", lambda *a, **k: [wl("deployment", "t-trust-api", "trust-api")])
+
+    def hang(*a, **k):
+        raise subprocess.TimeoutExpired("kubectl", 1)
+
+    monkeypatch.setattr(rollout_wait, "rollout_status", hang)
+    monkeypatch.setattr(sys, "argv", ["rollout_wait.py", "--namespace", "flip", "--release", "t"])
+    assert rollout_wait.main() == 1
+    assert "could not run kubectl" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- one shared budget
+
+
+def test_the_timeout_is_one_budget_across_all_workloads(monkeypatch):
+    """Waited one after another, a per-workload budget made the worst case N x HELM_TIMEOUT."""
+    clock = [1000.0]
+    budgets = []
+
+    def slow(kubectl, ns, kind, name, seconds):
+        budgets.append(seconds)
+        clock[0] += 40
+        return True, "rolled out"
+
+    monkeypatch.setattr(rollout_wait.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        rollout_wait,
+        "discover",
+        lambda *a, **k: [wl("deployment", f"t-{n}", n) for n in ("a", "b", "c")],
+    )
+    monkeypatch.setattr(rollout_wait, "rollout_status", slow)
+    monkeypatch.setattr(rollout_wait, "is_ready", lambda *a, **k: True)
+    monkeypatch.setattr(sys, "argv", ["rollout_wait.py", "--namespace", "flip", "--release", "t", "--timeout", "100s"])
+    rollout_wait.main()
+    assert budgets == [100, 60, 20]
+
+
+def test_a_daemonset_is_judged_on_its_scheduled_pods(monkeypatch):
+    obj = {"status": {"desiredNumberScheduled": 3, "numberReady": 2}}
+    monkeypatch.setattr(rollout_wait, "_run", lambda cmd, timeout: FakeProc(stdout=json.dumps(obj)))
+    assert rollout_wait.is_ready(["kubectl"], "flip", "daemonset", "t-x") is False
+    obj["status"]["numberReady"] = 3
+    assert rollout_wait.is_ready(["kubectl"], "flip", "daemonset", "t-x") is True

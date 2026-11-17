@@ -12,11 +12,11 @@
 
 """Name the hooks that did not succeed on the current release revision (FLIP#1645).
 
-`make deploy` runs `helm upgrade --wait`, so Helm itself judges whether the manifests applied,
-whether every workload rolled out, and whether the post-upgrade hooks succeeded. Its exit code is
-therefore the verdict and nothing here re-derives it. What Helm's exit code does NOT say is *which*
-of the three post-upgrade hooks failed — `xnat-init` (weight 2), `omop-vocab-load` (5) and
-`trust-seed` (6). Helm records each hook's `last_run.phase` per revision, so this reads that record
+`make deploy-release` runs `helm upgrade` (with `xnat.initJob.enabled=false`; `xnat-init` is the
+separate step that follows) and then `scripts/rollout_wait.py`. Helm's exit code says whether the
+manifests applied and the remaining post-upgrade hooks succeeded, and nothing here re-derives it.
+What it does NOT say is *which* hook failed — `omop-vocab-load` (weight 5) or `trust-seed` (6).
+Helm records each hook's `last_run.phase` per revision, so this reads that record
 off `helm status -o json` on stdin and prints one line for the operator.
 
 Diagnostics only: it never decides anything and the Makefile ignores its exit code. Unreadable or

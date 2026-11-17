@@ -23,18 +23,21 @@ is all-or-nothing and would fail the whole deploy on a workload that is legitima
 `flClient` on a scale-from-zero GPU pool, or one deployed before its kit is staged). `kubectl
 rollout status` applies Helm's own readiness rules (`observedGeneration` vs `generation`, the new
 ReplicaSet for a Deployment, `currentRevision == updateRevision` for a StatefulSet) to the core
-workloads only. Each exit code then means one thing by construction, with nothing re-deriving it
-from cluster evidence:
+workloads only. Which step failed then says what happened, with nothing re-deriving it from
+cluster evidence. GNU make exits 2 for any failed recipe, so the outcomes are told apart by
+target rather than by exit code:
 
-* 1 — helm failed: the apply was rejected or a remaining hook (`omop-vocab-load`, `trust-seed`) failed;
-  or the core workloads did not roll out within `HELM_TIMEOUT`;
-* 3 — the release is live and rolled out, and only XNAT's configuration step failed;
-* 0 — applied, rolled out, every hook succeeded.
+* `deploy-release` fails — helm rejected the apply or a remaining hook (`omop-vocab-load`,
+  `trust-seed`) failed, or the core workloads did not roll out within `HELM_TIMEOUT`;
+* `deploy-release` succeeds and `xnat-init` fails — the release is live and rolled out, and only
+  XNAT's configuration step failed;
+* both succeed — applied, rolled out, every hook succeeded. `deploy` runs the two in sequence.
 
 The hook annotation stays the chart default, so a plain `helm install` still gets `xnat-init`;
 only the Makefile path turns it off.
 
-These tests read `make -n` output, so they need no cluster. `failing_hooks.py` is diagnostics on
+These tests read `make -n` output, so they need no cluster (test_deploy_exit_status.py runs the
+targets for real against stubs). `failing_hooks.py` is diagnostics on
 the failure path and is tested directly.
 """
 
@@ -130,9 +133,10 @@ def test_xnat_init_is_taken_out_of_helms_path_and_run_after():
 
 
 @needs_make
-def test_an_incomplete_xnat_init_exits_3_not_1():
-    """3 is still a failure; it just says "upgraded, init incomplete" rather than "not upgraded"."""
-    assert "exit 3" in deploy_recipe()
+def test_no_step_relies_on_an_exit_code_make_cannot_pass_on():
+    """GNU make turns any failed recipe into exit 2, so `exit 3` never reached a caller. The real
+    exit statuses are asserted against stubs in test_deploy_exit_status.py."""
+    assert "exit 3" not in deploy_recipe()
 
 
 @needs_make
