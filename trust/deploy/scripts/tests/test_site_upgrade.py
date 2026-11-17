@@ -296,6 +296,12 @@ class SiteImages(unittest.TestCase):
         assert "flower-supernode:v0.6.1" in names
         assert "flare-fl-client:v0.6.1" not in names
 
+    def test_a_client_image_named_on_the_command_line_is_the_one_checked(self):
+        with mock.patch.dict(os.environ, {"DOCKER_FL_CLIENT_NAME": "flare-fl-client-segmentation"}):
+            names = {ref.rsplit("/", 1)[1] for ref in su.site_images({}, "v0.6.1")}
+        assert "flare-fl-client-segmentation:v0.6.1" in names
+        assert "flare-fl-client:v0.6.1" not in names
+
     def test_the_fl_client_is_checked_at_its_own_tag_when_one_is_given(self):
         names = {ref.rsplit("/", 1)[1] for ref in su.site_images({}, "sha-1234567", "sha-03fdb61")}
         assert "flare-fl-client:sha-03fdb61" in names

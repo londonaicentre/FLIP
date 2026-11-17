@@ -72,6 +72,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -382,7 +383,11 @@ def site_images(kit: dict[str, str], tag: str, fl_tag: str | None = None) -> lis
     # too, but only on a kit that turns it on — the same exact-"true" test as trust/Makefile.
     if kit.get("MONAI_LABEL", "").strip() == "true":
         refs.append(f"{_SITE_REGISTRY}monailabel:{tag}")
-    fl_client = _FL_CLIENT_IMAGE.get(kit.get("FL_BACKEND") or "nvflare", _FL_CLIENT_IMAGE["nvflare"])
+    # make exports the client image it will run (deploy/fl_backend.mk), which a command-line
+    # DOCKER_FL_CLIENT_NAME changes: a site on another FL environment image is checked for that one.
+    fl_client = os.environ.get("DOCKER_FL_CLIENT_NAME") or _FL_CLIENT_IMAGE.get(
+        kit.get("FL_BACKEND") or "nvflare", _FL_CLIENT_IMAGE["nvflare"]
+    )
     return [*refs, f"{_SITE_REGISTRY}{fl_client}:{fl_tag or tag}"]
 
 
