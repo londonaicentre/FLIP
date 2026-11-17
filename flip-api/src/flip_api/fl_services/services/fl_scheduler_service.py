@@ -19,6 +19,7 @@ from sqlalchemy import Column
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, col, select
 
+from flip_api.config import get_settings
 from flip_api.db.models.main_models import (
     FLJob,
     FLKitSlot,
@@ -648,8 +649,8 @@ def offline_trusts_message(trust_names: list[str], net_name: str, fl_backend: FL
         str: The model log line.
     """
     waits = (
-        "FLARE starts the job once every selected trust is connected. If they have not connected within about "
-        "an hour, the model fails."
+        "FLARE starts the job once every selected trust is connected. If they have not connected within "
+        f"{get_settings().FL_JOB_START_TIMEOUT_MINUTES} minutes, the model fails."
         if fl_backend == FLBackend.NVFLARE
         else "Flower starts the job once as many trusts are connected as were selected."
     )
