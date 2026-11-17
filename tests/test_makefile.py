@@ -275,9 +275,9 @@ class FlEnvironment(unittest.TestCase):
     """A kit's FL_ENVIRONMENT picks the FLARE client's environment image (FLIP#32); the name stays derived."""
 
     @staticmethod
-    def client_name(kit: str, *extra: str) -> subprocess.CompletedProcess:
+    def client_name(kit: tuple[str, ...], *extra: str) -> subprocess.CompletedProcess:
         with tempfile.TemporaryDirectory() as tmp:
-            Path(tmp, "kit").write_text(kit)
+            Path(tmp, "kit").write_text("".join(f"{line}\n" for line in kit))
             Path(tmp, "Makefile").write_text(
                 f"-include kit\ninclude {REPO}/deploy/fl_backend.mk\nshow:\n\t@echo $(DOCKER_FL_CLIENT_NAME)\n"
             )
@@ -287,19 +287,19 @@ class FlEnvironment(unittest.TestCase):
 
     def test_the_kit_names_the_environment_image(self):
         for kit, expected in (
-            ("FL_BACKEND=nvflare\n", "flare-fl-client"),
-            ("FL_BACKEND=nvflare\nFL_ENVIRONMENT=\n", "flare-fl-client"),
-            ("FL_BACKEND=nvflare\nFL_ENVIRONMENT=segmentation\n", "flare-fl-client-segmentation"),
-            ("DOCKER_FL_CLIENT_NAME=other\nFL_ENVIRONMENT=segmentation\n", "flare-fl-client-segmentation"),
-            ("FL_BACKEND=flower\n", "flower-supernode"),
+            (("FL_BACKEND=nvflare",), "flare-fl-client"),
+            (("FL_BACKEND=nvflare", "FL_ENVIRONMENT="), "flare-fl-client"),
+            (("FL_BACKEND=nvflare", "FL_ENVIRONMENT=segmentation"), "flare-fl-client-segmentation"),
+            (("DOCKER_FL_CLIENT_NAME=other", "FL_ENVIRONMENT=segmentation"), "flare-fl-client-segmentation"),
+            (("FL_BACKEND=flower",), "flower-supernode"),
         ):
             result = self.client_name(kit)
             assert result.stdout.split() == [expected], (kit, result.stdout + result.stderr)
 
     def test_an_unknown_environment_and_a_flower_one_are_refused(self):
         for kit, message in (
-            ("FL_BACKEND=nvflare\nFL_ENVIRONMENT=other\n", "Invalid FL_ENVIRONMENT 'other'"),
-            ("FL_BACKEND=flower\nFL_ENVIRONMENT=segmentation\n", "needs FL_BACKEND=nvflare"),
+            (("FL_BACKEND=nvflare", "FL_ENVIRONMENT=other"), "Invalid FL_ENVIRONMENT 'other'"),
+            (("FL_BACKEND=flower", "FL_ENVIRONMENT=segmentation"), "needs FL_BACKEND=nvflare"),
         ):
             result = self.client_name(kit)
             assert result.returncode != 0, (kit, result.stdout)
