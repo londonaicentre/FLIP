@@ -498,7 +498,7 @@ def submit_job(fl_job_id: UUID, endpoint: str, model_id: UUID, session: Session)
 
 
 def _get_fl_status(endpoint: str, subject: str, noun: str) -> Any | None:
-    """GET the FL API's ``check_<subject>_status`` route; ``None`` when unreachable, an error status or empty."""
+    """GET the FL API's ``check_<subject>_status`` route; ``None`` when unreachable, an error status or no answer."""
     url = f"{endpoint}/check_{subject}_status"
     logger.debug(f"Checking {subject} status at '{url}'")
     # NOTE the Flower FL API queries the SuperLink on each call (ControlServicer.ShowFederation for the
@@ -515,7 +515,7 @@ def _get_fl_status(endpoint: str, subject: str, noun: str) -> Any | None:
             logger.error(f"HTTP GET failed for {url}: {e}")
         return None
     logger.debug(f"{subject.capitalize()} status response: {response}")
-    if not response:
+    if response is None:
         logger.error(f"No response from FL API for {noun} at endpoint {endpoint}")
         return None
     return response
@@ -547,27 +547,9 @@ def check_client_status(endpoint: str) -> list[IClientStatus] | None:
         list[IClientStatus] | None: A list of client statuses, empty when no client is connected, or
             ``None`` when the FL API cannot be reached, answers with an error status or sends nothing.
     """
-    url = f"{endpoint}/check_client_status"
-    logger.debug(f"Checking client status at '{url}'")
-    # NOTE the Flower FL API queries the SuperLink (ControlServicer.ShowFederation) on each call,
-    # which can take ~9s — past httpx's 5s default — so a single check would time out and fail the
-    # whole run (run_jobs marks the model ERROR). Use the same generous timeout as Flower submit.
-    try:
-        response = http_get(url, timeout=30)
-    except httpx.HTTPError as e:
-        # HTTPError covers an unreachable FL API (RequestError) and an FL API that answers 4xx/5xx
-        # (HTTPStatusError), e.g. FLARE's FL API returning 500 while the fl-server behind it is down.
-        # Either way there is no status to report, so the caller shows the net offline. http_get has
-        # already logged a RequestError, so only an error response is logged here.
-        if isinstance(e, httpx.HTTPStatusError):
-            logger.error(f"HTTP GET failed for {url}: {e}")
-        return None
-    logger.debug(f"Client status response: {response}")
-    if response is None:
-        logger.error(f"No response from FL API for clients at endpoint {endpoint}")
-        return None
-    client_statuses = [IClientStatus.model_validate(c) for c in response]
-    return client_statuses
+    # An empty list is an answer (no client connected), so only no answer at all maps to None.
+    response = _get_fl_status(endpoint, "client", "clients")
+    return None if response is None else [IClientStatus.model_validate(c) for c in response]
 
 
 def fetch_server_status(endpoint: str) -> IServerStatus | None:
