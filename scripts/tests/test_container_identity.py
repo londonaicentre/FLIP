@@ -420,7 +420,11 @@ def check_images_tolerate_a_foreign_uid(failures: list[str]) -> None:
 
 
 # Images that take a `USER root` step to apply those changes must hand back to their own user.
-IMAGES_ENDING_NON_ROOT = ("trust/orthanc/Dockerfile", "trust/xnat/xnat/Dockerfile")
+IMAGES_ENDING_NON_ROOT = (
+    "trust/orthanc/Dockerfile",
+    "trust/xnat/xnat/Dockerfile",
+    "fl-services/nvflare/fl-client-segmentation/Dockerfile",
+)
 
 # XNAT's Container Service jobs run as the uid the backend's `container-user` names; under FLIP_UID
 # that must be xnat-web's uid, or dcm2niix cannot read the 640 files it archives (FLIP#1731).

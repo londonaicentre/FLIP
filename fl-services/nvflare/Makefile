@@ -65,8 +65,10 @@ build:
 # Build the segmentation FL environment (FLIP#32) on the flare-fl-client:$(FL_BUILD_TAG) that `build`
 # made. Not part of `build`: it downloads TotalSegmentator's weights, which most local stacks do not need.
 build-segmentation:
-	@echo "🛠️  Building flare-fl-client-segmentation:$(FL_BUILD_TAG)..."
-	$(DEV_COMPOSE) --profile build-only build fl-segmentation
+	@docker image inspect $(or $(CLIENT_REF),flare-fl-client:$(FL_BUILD_TAG)) >/dev/null 2>&1 || \
+		{ echo "❌ $(or $(CLIENT_REF),flare-fl-client:$(FL_BUILD_TAG)) is not built: run 'make build' first, and again after a flip-utils change."; exit 1; }
+	@echo "🛠️  Building flare-fl-client-segmentation:$(FL_BUILD_TAG) (LOCAL_DEV=$(LOCAL_DEV))..."
+	LOCAL_DEV=$(LOCAL_DEV) $(DEV_COMPOSE) --profile build-only build fl-segmentation
 
 # Dev: provision net-<NET_NUMBER> startup kits into DEV_WORKSPACE_DIR (gitignored),
 # where the dev compose mounts expect them.

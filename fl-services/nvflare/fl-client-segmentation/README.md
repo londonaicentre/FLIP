@@ -27,11 +27,18 @@ unchanged:
 | Layer | Holds | Size |
 |-------|-------|------|
 | `uv sync --frozen ... --extra segmentation` | The packages `flip-utils/uv.lock` adds for the extra. No package of the client image changes version | about 1.1 GB |
-| `totalseg_download_weights` | TotalSegmentator's weights for the tasks in the `TOTALSEG_TASKS` build argument (default `total`), under `/opt/totalsegmentator` (`TOTALSEG_HOME_DIR`) | about 1.4 GB |
+| `COPY --from=weights` | TotalSegmentator's weights for the tasks in the `TOTALSEG_TASKS` build argument (default `total`), under `/opt/totalsegmentator` (`TOTALSEG_HOME_DIR`) | about 1.4 GB |
 
-TotalSegmentator's usage statistics are turned off in the image. Its weights have their own licences: `total`
-is open, and some other tasks need a licence from the authors. Check a task's licence before adding it to
-`TOTALSEG_TASKS`.
+The weights are downloaded in a build stage of their own and checked against the `TOTALSEG_WEIGHTS_SHA256`
+build argument, so a changed download fails the build. Their timestamps are fixed, so the same weights give
+the same layer in every build and a trust pulls it once. To change `TOTALSEG_TASKS`, change the digest with
+it: a failed check prints the one it found.
+
+`/opt/totalsegmentator` is owned by root and read-only to a job. TotalSegmentator's usage statistics are off
+in its `config.json`, and a job cannot turn them on.
+
+The weights have their own licences: `total` is open, and some other tasks need a licence from the authors.
+Check a task's licence before adding it to `TOTALSEG_TASKS`.
 
 ## Build and run locally
 
@@ -42,8 +49,10 @@ make -C fl-services/nvflare build-segmentation
 make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev DOCKER_FL_CLIENT_NAME=flare-fl-client-segmentation
 ```
 
-`DOCKER_FL_CLIENT_NAME` on the command line selects the image for every trust of the stack. A job cannot
-choose its image: a trust runs one client image.
+`build-segmentation` takes `LOCAL_DEV` as `build-fl` does; give both the same value. `DOCKER_FL_CLIENT_NAME`
+on the command line selects the image for every trust of the stack, and `make -C trust upgrade-trust` given
+the same variable checks that this image is published at the target tag. A job cannot choose its image: a
+trust runs one client image.
 
 ## Using it in a job
 

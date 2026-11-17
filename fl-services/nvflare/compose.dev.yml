@@ -44,6 +44,7 @@ services:
       args:
         # The client image, not fl-base: CLIENT_REF overrides it, as BASE_REF does for the images below.
         BASE_REF: ${CLIENT_REF:-flare-fl-client:${DOCKER_FL_TAG:-dev}}
+        LOCAL_DEV: ${LOCAL_DEV:-false}
     profiles: ["build-only"]
 
   fl-server:
