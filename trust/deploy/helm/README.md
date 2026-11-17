@@ -704,7 +704,9 @@ make sync-project-studies PROJECTS="<id> ..."   # or exactly these
 
 It builds one entry per project from the template above and replaces the ConfigMap; the client picks the
 change up within a minute or so, with no restart. Run it after the first deploy, after each project is
-approved at this trust, and after an upgrade (the entries carry the job image and the pod template). Until
+approved at this trust, after an upgrade (the entries carry the job image and the pod template), and after
+changing `jobPods.images`: the file outlives a redeploy, so until it is synced again every project keeps
+the entries of the previous mode. Until
 a project has its entry NVFLARE has no job image for its study and does not start its jobs. The template
 itself mounts no images, so a job from a hub that predates studies, which lands in the default study,
 streams its studies.

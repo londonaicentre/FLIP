@@ -522,7 +522,8 @@ flClient:
       #   patient data until FLIP#1860 is in: the mount lists every study archived for the project,
       #   including those of patients who have since left its approved cohort.
       # Either way a project's jobs start only once the site has given it a study entry:
-      # `make sync-project-studies`, after the first deploy, each approval and each upgrade.
+      # `make sync-project-studies`, after the first deploy, each approval, each upgrade and each change
+      # of this setting.
       # - stream: no images volume. Each job streams its studies from imaging-api into its own run
       #   directory (FLIP#1049), so job pods run on any node; size ephemeralStorage for them.
       images: project
