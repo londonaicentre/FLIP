@@ -275,7 +275,7 @@ jobs:
           # Staging only (FLIP#1375): before reusing a running image, pin the newest
           # build of an earlier develop commit, so a held apply's images still deploy
           # after more merges land. Production moves by release_tag.
-          CATCH_UP: ${{ github.ref_name != 'main' }}
+          CATCH_UP: ${{ github.ref_name == 'develop' }}
           DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
           FALLBACK_DOCKER_TAG: ${{ vars.DOCKER_TAG }}
           FALLBACK_DOCKER_FL_TAG: ${{ vars.DOCKER_FL_TAG }}
