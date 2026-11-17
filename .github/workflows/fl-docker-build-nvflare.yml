@@ -225,9 +225,36 @@ jobs:
           echo "✅ Pushed FL Client."
 
       ###########################################
-      # 3️⃣b Build and Push the segmentation FL Client
+      # 4️⃣ Build and Push FL API
       ###########################################
-      # Built on the client image above, which is why this comes before that image's cleanup.
+      - name: Build FL API Image
+        env:
+          # Baked into the image as FLIP_RELEASE so /health names the build.
+          FLIP_RELEASE: ${{ steps.tags.outputs.release }}
+        run: |
+          docker build ${BUILD_ARGS} \
+            --build-arg FLIP_RELEASE="$FLIP_RELEASE" \
+            -f fl-services/nvflare/fl-api-base/Dockerfile \
+            -t $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} \
+            -t $REGISTRY/$ORG/$API_IMAGE:sha-$SHORT_SHA fl-services/nvflare/fl-api-base
+
+          echo "✅ Built FL API."
+
+      - name: Push FL API Image
+        env:
+          TAGS: ${{ steps.tags.outputs.api_tags }}
+        run: |
+          for tag in ${TAGS//,/ }; do
+            docker tag "$REGISTRY/$ORG/$API_IMAGE:${{ github.sha }}" "$tag"
+            docker push "$tag"
+          done
+          echo "✅ Pushed FL API."
+
+      ###########################################
+      # 5️⃣ Build and Push the segmentation FL Client
+      ###########################################
+      # Last, so a failed weights download or a full disk cannot stop a core image being published. It is
+      # built on the client image, which is why that image's cleanup waits until after this.
       - name: Build segmentation FL Client Image
         run: |
           docker build \
@@ -236,9 +263,19 @@ jobs:
             -t $REGISTRY/$ORG/$CLIENT_SEGMENTATION_IMAGE:${{ github.sha }} \
             -t $REGISTRY/$ORG/$CLIENT_SEGMENTATION_IMAGE:sha-$SHORT_SHA fl-services/nvflare/fl-client-segmentation
 
-          # The extra's packages import, and beside the torch the lock pins for every FL image.
-          docker run --rm --network none --entrypoint python $REGISTRY/$ORG/$CLIENT_SEGMENTATION_IMAGE:${{ github.sha }} \
-            -c "import nnunetv2, SimpleITK, totalsegmentator, torch; print(torch.__version__)"
+          # With no network and a read-only filesystem, as at a trust: the extra's packages and
+          # TotalSegmentator's API import beside the torch the lock pins for every FL image, the
+          # weights are there, usage statistics are off and a job cannot turn them on.
+          docker run --rm --network none --read-only --tmpfs /tmp --entrypoint python \
+            $REGISTRY/$ORG/$CLIENT_SEGMENTATION_IMAGE:${{ github.sha }} -c "
+          import json, os, pathlib
+          import nnunetv2, SimpleITK, torch
+          from totalsegmentator.python_api import totalsegmentator
+          home = pathlib.Path(os.environ['TOTALSEG_HOME_DIR'])
+          assert json.loads((home / 'config.json').read_text())['send_usage_stats'] is False, 'usage statistics are on'
+          assert any((home / 'nnunet' / 'results').glob('Dataset*')), 'no weights'
+          assert not os.access(home / 'config.json', os.W_OK), 'config.json is writable'
+          print(torch.__version__)"
 
           echo "✅ Built segmentation FL Client."
 
@@ -273,32 +310,6 @@ jobs:
           docker system prune -f
           echo "Disk space after FL Client cleanup:"
           df -h
-
-      ###########################################
-      # 4️⃣ Build and Push FL API
-      ###########################################
-      - name: Build FL API Image
-        env:
-          # Baked into the image as FLIP_RELEASE so /health names the build.
-          FLIP_RELEASE: ${{ steps.tags.outputs.release }}
-        run: |
-          docker build ${BUILD_ARGS} \
-            --build-arg FLIP_RELEASE="$FLIP_RELEASE" \
-            -f fl-services/nvflare/fl-api-base/Dockerfile \
-            -t $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} \
-            -t $REGISTRY/$ORG/$API_IMAGE:sha-$SHORT_SHA fl-services/nvflare/fl-api-base
-
-          echo "✅ Built FL API."
-
-      - name: Push FL API Image
-        env:
-          TAGS: ${{ steps.tags.outputs.api_tags }}
-        run: |
-          for tag in ${TAGS//,/ }; do
-            docker tag "$REGISTRY/$ORG/$API_IMAGE:${{ github.sha }}" "$tag"
-            docker push "$tag"
-          done
-          echo "✅ Pushed FL API."
 
       - name: Final cleanup
         env:
