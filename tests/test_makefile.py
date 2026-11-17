@@ -271,6 +271,41 @@ KIT = (
 )
 
 
+class FlEnvironment(unittest.TestCase):
+    """A kit's FL_ENVIRONMENT picks the FLARE client's environment image (FLIP#32); the name stays derived."""
+
+    @staticmethod
+    def client_name(kit: str, *extra: str) -> subprocess.CompletedProcess:
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "kit").write_text(kit)
+            Path(tmp, "Makefile").write_text(
+                f"-include kit\ninclude {REPO}/deploy/fl_backend.mk\nshow:\n\t@echo $(DOCKER_FL_CLIENT_NAME)\n"
+            )
+            env = {k: v for k, v in os.environ.items() if k not in ("FL_BACKEND", "FL_ENVIRONMENT", "MAKEFLAGS")}
+            command = ["make", "--no-print-directory", "-C", tmp, "show", *extra]
+            return subprocess.run(command, env=env, capture_output=True, text=True)
+
+    def test_the_kit_names_the_environment_image(self):
+        for kit, expected in (
+            ("FL_BACKEND=nvflare\n", "flare-fl-client"),
+            ("FL_BACKEND=nvflare\nFL_ENVIRONMENT=\n", "flare-fl-client"),
+            ("FL_BACKEND=nvflare\nFL_ENVIRONMENT=segmentation\n", "flare-fl-client-segmentation"),
+            ("DOCKER_FL_CLIENT_NAME=other\nFL_ENVIRONMENT=segmentation\n", "flare-fl-client-segmentation"),
+            ("FL_BACKEND=flower\n", "flower-supernode"),
+        ):
+            result = self.client_name(kit)
+            assert result.stdout.split() == [expected], (kit, result.stdout + result.stderr)
+
+    def test_an_unknown_environment_and_a_flower_one_are_refused(self):
+        for kit, message in (
+            ("FL_BACKEND=nvflare\nFL_ENVIRONMENT=other\n", "Invalid FL_ENVIRONMENT 'other'"),
+            ("FL_BACKEND=flower\nFL_ENVIRONMENT=segmentation\n", "needs FL_BACKEND=nvflare"),
+        ):
+            result = self.client_name(kit)
+            assert result.returncode != 0, (kit, result.stdout)
+            assert message in result.stderr, (kit, result.stderr)
+
+
 class MakeKitSelection(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

@@ -33,7 +33,7 @@ services:
 
   # The segmentation FL environment (FLIP#32): the client image plus flip-utils' `segmentation` extra.
   # Built by `make build-segmentation`, after the client image it is built on. Run it as the trusts'
-  # client with DOCKER_FL_CLIENT_NAME=flare-fl-client-segmentation on the `make up` command line.
+  # client with FL_ENVIRONMENT=segmentation, in a kit file or on the `make up` command line.
   # Named fl-segmentation, not fl-client-*: it is never run from this file, and the fl-client-* names
   # are the running clients that scripts/tests/test_container_identity.py checks.
   fl-segmentation:

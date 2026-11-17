@@ -40,19 +40,30 @@ in its `config.json`, and a job cannot turn them on.
 The weights have their own licences: `total` is open, and some other tasks need a licence from the authors.
 Check a task's licence before adding it to `TOTALSEG_TASKS`.
 
+## Running it at a trust
+
+A trust chooses its client image in its kit file:
+
+```bash
+FL_ENVIRONMENT=segmentation
+```
+
+`deploy/fl_backend.mk` derives the image name from it, so `up-trust`, `restart-trust` and `upgrade-trust` all
+run `flare-fl-client-segmentation`, and `upgrade-trust` checks that image is published at the target tag
+before it changes anything. An unknown name, or one given with `FL_BACKEND=flower`, is refused. A job cannot
+choose its image: a trust runs one client image. The Helm chart does not read the key yet.
+
 ## Build and run locally
 
 From the repo root, after `make build-fl`:
 
 ```bash
 make -C fl-services/nvflare build-segmentation
-make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev DOCKER_FL_CLIENT_NAME=flare-fl-client-segmentation
+make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev FL_ENVIRONMENT=segmentation
 ```
 
-`build-segmentation` takes `LOCAL_DEV` as `build-fl` does; give both the same value. `DOCKER_FL_CLIENT_NAME`
-on the command line selects the image for every trust of the stack, and `make -C trust upgrade-trust` given
-the same variable checks that this image is published at the target tag. A job cannot choose its image: a
-trust runs one client image.
+`build-segmentation` takes `LOCAL_DEV` as `build-fl` does; give both the same value. `FL_ENVIRONMENT` on the
+command line, or in `.env.development`, selects the image for every trust of the stack.
 
 ## Using it in a job
 

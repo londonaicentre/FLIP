@@ -14,7 +14,7 @@ provisioning live in [`../fl-services/AGENTS.md`](../fl-services/AGENTS.md).
 | `compose.{development,prod}.{flower,nvflare}.yml` | Per-backend FL overlays |
 | `keycloak/flip-realm.json` (+ `keycloak/README.md`) | The dev identity provider's realm (FLIP#919), imported by the ephemeral `keycloak` service in the dev compose at every boot; `${...}` placeholders resolve from the container env. Edits need `make reset-keycloak` |
 | `instance.mk` | Derives `INSTANCE_PREFIX` and `COMPOSE_PROJECT` once, for every Makefile that needs them |
-| `fl_backend.mk` | Derives `FL_PROVISIONED_DIR` and `DOCKER_FL_CLIENT_NAME` from `FL_BACKEND` |
+| `fl_backend.mk` | Derives `FL_PROVISIONED_DIR` and `DOCKER_FL_CLIENT_NAME` from `FL_BACKEND`, and the client's environment image from `FL_ENVIRONMENT` |
 | `README.md` | Compose file matrix and the external networks these files join |
 
 ## Dev object store (FLIP#1291)

@@ -32,10 +32,25 @@ ifeq (,$(filter $(FL_BACKEND),$(VALID_FL_BACKENDS)))
 $(error Invalid FL_BACKEND '$(FL_BACKEND)'. Must be one of: $(VALID_FL_BACKENDS))
 endif
 
+# FL_ENVIRONMENT names the FL environment image (FLIP#32) a trust's FLARE client runs:
+# flare-fl-client-<name>, which is the client image plus that environment's packages. Unset is the
+# plain client image. It is the trust's choice, so a kit file carries it (and the hub's env file,
+# for every trust of a local stack); the image name stays derived, as the others here are.
+VALID_FL_ENVIRONMENTS := segmentation
+FL_ENVIRONMENT := $(strip $(FL_ENVIRONMENT))
+ifneq (,$(FL_ENVIRONMENT))
+ifneq ($(FL_BACKEND),nvflare)
+$(error FL_ENVIRONMENT=$(FL_ENVIRONMENT) needs FL_BACKEND=nvflare: only the FLARE client has environment images)
+endif
+ifeq (,$(filter $(FL_ENVIRONMENT),$(VALID_FL_ENVIRONMENTS)))
+$(error Invalid FL_ENVIRONMENT '$(FL_ENVIRONMENT)'. Must be one of: $(VALID_FL_ENVIRONMENTS))
+endif
+endif
+
 ifeq ($(FL_BACKEND),nvflare)
 DOCKER_FL_API_NAME    := flare-fl-api
 DOCKER_FL_SERVER_NAME := flare-fl-server
-DOCKER_FL_CLIENT_NAME := flare-fl-client
+DOCKER_FL_CLIENT_NAME := flare-fl-client$(if $(FL_ENVIRONMENT),-$(FL_ENVIRONMENT))
 FL_PROVISIONED_DIR    := fl-services/nvflare/provision/workspace-dev
 else
 DOCKER_FL_API_NAME    := flower-fl-api
