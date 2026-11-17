@@ -227,6 +227,13 @@ jobs:
       ###########################################
       # 4️⃣ Build and Push FL API
       ###########################################
+      # The client image stays for the segmentation build below, so only what nothing references goes:
+      # the FL API build gets the room it had when the client's cleanup ran here.
+      - name: Free disk before FL API
+        run: |
+          docker system prune -f
+          df -h
+
       - name: Build FL API Image
         env:
           # Baked into the image as FLIP_RELEASE so /health names the build.
