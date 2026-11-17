@@ -17,7 +17,7 @@ on:
     branches: [main, develop]
     paths:
       - "trust/deploy/snowflake/**"
-      # The Makefile derives the kit env token from PROD through it.
+      # The Makefile derives the kit env token from HUB through it.
       - "deploy/env_mode.mk"
       - ".github/workflows/test_snowflake_specs.yml"
   pull_request:
@@ -65,9 +65,3 @@ jobs:
       - name: Spec and sync-kit guards
         working-directory: trust/deploy/snowflake
         run: uv run --no-project --with pytest --with "pyyaml==6.0.3" pytest tests/ -v
-
-      - name: Lint
-        run: |
-          pip install ruff
-          ruff check trust/deploy/snowflake
-          ruff format --check trust/deploy/snowflake

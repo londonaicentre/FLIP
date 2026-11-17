@@ -40,6 +40,11 @@ from typing import Any
 #: ensures its specification is staged, and `down`/`suspend` ignore it.
 JOB_KIND = "job"
 
+#: The converter job. imaging-api starts it through the owner's-rights procedure
+#: APP.CONVERT_SCAN, so its container never carries the services role's token (which
+#: inherits OMOP_READER); `run-job` refuses it rather than run it as that role.
+CONVERTER_JOB = "dcm2niix"
+
 #: The services the FL client calls. A service accepts a call only from a role that holds
 #: its endpoints' service role, and the FL client has a role of its own, so each deploy
 #: grants it these two and nothing else: without the grant every request from training
@@ -147,10 +152,14 @@ def sql_up(
         # An option of the service, not of its specification (Snowflake rejects it there).
         integrations = ", ".join(service.get("external_access_integrations", []))
         if service["kind"] == JOB_KIND:
+            started_by = (
+                "imaging-api starts it through the owner's-rights\n-- procedure APP.CONVERT_SCAN (Terraform, FLIP#1578)"
+                if service["name"] == CONVERTER_JOB
+                else "`make` starts it on demand"
+            )
             statements.append(
                 f"-- {service['sql_name']} is a job service: executed on demand (EXECUTE JOB SERVICE),\n"
-                f"-- never a running service. imaging-api starts it through the owner's-rights\n"
-                f"-- procedure APP.CONVERT_SCAN (Terraform, FLIP#1578); {service['spec_file']} documents it."
+                f"-- never a running service. {started_by}; {service['spec_file']} documents it."
             )
             continue
         if name in existing and name not in misowned:
@@ -202,9 +211,15 @@ def sql_run_job(directory: Path, manifest: dict[str, Any], name: str) -> list[st
       it did. An anonymous job's output is unrecoverable once the call returns.
 
     Raises:
-        SystemExit: ``name`` is not a job service in the manifest.
+        SystemExit: ``name`` is not a job service in the manifest, or is the converter.
     """
-    jobs = {service["name"]: service for service in manifest["services"] if service["kind"] == JOB_KIND}
+    jobs = {
+        service["name"]: service
+        for service in manifest["services"]
+        if service["kind"] == JOB_KIND and service["name"] != CONVERTER_JOB
+    }
+    if name == CONVERTER_JOB:
+        sys.exit(f"❌ {name} is not run from here: imaging-api starts it through APP.CONVERT_SCAN.")
     if name not in jobs:
         sys.exit(f"❌ {name!r} is not a job service in this manifest. Choose one of: {', '.join(sorted(jobs))}")
     service = jobs[name]
@@ -445,11 +460,13 @@ def main() -> None:
     parser.add_argument("command", choices=sorted([*COMMANDS, "apply-up", "run-job", "job-status", "wait-job"]))
     parser.add_argument("--dir", type=Path, required=True, help="Directory render_specs.py wrote")
     parser.add_argument("--snow", default="snow", help="apply-up: the snow CLI")
-    parser.add_argument("--connection", default="flip-test", help="apply-up: the snow connection")
+    parser.add_argument("--connection", default="", help="apply-up / run-job / wait-job: the snow connection")
     parser.add_argument("--dry-run", action="store_true", help="apply-up / run-job: print the SQL, run nothing")
     parser.add_argument("--service", default="", help="run-job / job-status / wait-job: the job service name")
     parser.add_argument("--timeout", type=float, default=900, help="wait-job: seconds to wait for the job to end")
     args = parser.parse_args()
+    if args.command in ("apply-up", "run-job", "wait-job") and not (args.connection or args.dry_run):
+        parser.error(f"{args.command} needs --connection: the name of a `snow connection add` entry")
     manifest = load(args.dir / "manifest.json")
     if args.command == "job-status":
         for statement in sql_job_status(manifest, args.service):

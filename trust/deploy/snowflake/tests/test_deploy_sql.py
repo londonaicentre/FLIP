@@ -22,6 +22,7 @@ Terraform root's static checks rely on.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -266,8 +267,23 @@ def test_targets_requiring_a_kit_refuse_without_one() -> None:
         assert "require-kit" in body.group(1), f"{target} must depend on require-kit"
 
 
-def test_the_connection_name_is_a_variable_defaulting_to_the_test_account() -> None:
-    assert "SNOW_CONNECTION ?= flip-test" in MAKEFILE
+def test_the_connection_name_has_no_default() -> None:
+    """A default acts silently through whichever account that name points at on a new site."""
+    assert re.search(r"^SNOW_CONNECTION \?=\s*$", MAKEFILE, re.M)
+    for script in ("mirror_images.py", "sync_snowflake_kit.py", "spcs_sql.py"):
+        assert "flip-test" not in (SNOWFLAKE_DIR / script).read_text(), script
+
+
+@pytest.mark.parametrize("target", ["mirror-images", "sync-kit", "up", "down", "suspend", "status", "selftest"])
+def test_targets_reaching_snowflake_refuse_without_a_connection(target: str) -> None:
+    result = subprocess.run(
+        ["make", "-C", str(SNOWFLAKE_DIR), target, "KIT=ZZ", "HUB=stag", "DRY_RUN=true"],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "SNOW_CONNECTION": ""},
+    )
+    assert result.returncode != 0
+    assert "SNOW_CONNECTION is required" in result.stdout
 
 
 def test_no_tooling_emits_stop_all():
@@ -319,6 +335,8 @@ def _run_job_cli(fake_snow: tuple[Path, Path], rendered: Path, service: str) -> 
             str(rendered),
             "--service",
             service,
+            "--connection",
+            "review",
             "--snow",
             str(binary),
         ],
@@ -371,6 +389,17 @@ def test_an_unknown_job_is_refused_by_name(rendered: Path, manifest: dict) -> No
     with pytest.raises(SystemExit) as exc:
         spcs_sql.sql_run_job(rendered, manifest, "xnat_configure")
     assert "xnat-configure" in str(exc.value)
+
+
+def test_the_converter_job_cannot_be_run_as_the_services_role(rendered: Path, manifest: dict) -> None:
+    """dcm2niix runs only through the owner's-rights APP.CONVERT_SCAN, so its container never
+    holds the services role's token; `run-job --service dcm2niix` must not bypass that."""
+    with pytest.raises(SystemExit) as exc:
+        spcs_sql.sql_run_job(rendered, manifest, "dcm2niix")
+    assert "CONVERT_SCAN" in str(exc.value)
+    with pytest.raises(SystemExit) as exc:
+        spcs_sql.sql_run_job(rendered, manifest, "xnat_configure")
+    assert "dcm2niix" not in str(exc.value)
 
 
 def test_a_long_running_service_cannot_be_run_as_a_job(rendered: Path, manifest: dict) -> None:

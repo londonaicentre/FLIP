@@ -40,7 +40,7 @@ services would fail to start with a privilege error on an object that plainly ex
 The pair is idempotent and leaves the grants in place.
 
 Usage:
-  python3 sync_snowflake_kit.py --kit GSTT --env production --connection flip-test
+  python3 sync_snowflake_kit.py --kit GSTT --env production --connection <name>
   python3 sync_snowflake_kit.py --kit GSTT --env production --dry-run
 """
 
@@ -63,9 +63,6 @@ from spec_templates import SECRET_MAP  # noqa: E402
 FL_CLIENT_SECRETS = frozenset(SECRET_MAP["fl-client"])
 
 REPO_ROOT = HERE.parents[2]
-
-#: Default Snowflake CLI connection. The test account; an operator names their own.
-DEFAULT_CONNECTION = "flip-test"
 
 #: What a dry run prints in place of a value. Never a prefix or a length of the real
 #: one: a redaction that leaks the first characters is not a redaction.
@@ -262,7 +259,7 @@ def main() -> int:
         help="Kit-file env token (trust/.env.<KIT>.<token>). Required when HUB is set; the "
         "Makefile injects it from deploy/env_mode.mk.",
     )
-    parser.add_argument("--connection", default=DEFAULT_CONNECTION, help="snow CLI connection name")
+    parser.add_argument("--connection", required=True, help="snow CLI connection name")
     parser.add_argument("--snow", default="snow", help="snow CLI binary (tests point this at a fake)")
     parser.add_argument("--fl-kit-dir", type=Path, default=None, help="Local FL participant kit root")
     parser.add_argument("--no-fl-kit", action="store_true", help="Skip the FL kit stage push")

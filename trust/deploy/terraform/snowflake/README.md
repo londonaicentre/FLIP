@@ -187,6 +187,9 @@ encrypted, and `enforced = true` means a plaintext state file is refused rather 
 `backend.tf` declaring, for example, `terraform { backend "s3" {} }`, then re-run
 `make init BACKEND_CONFIG=...`. Nothing else in the root changes.
 
+`init`, `plan`, `apply` and `destroy` refuse to run in all three roots unless one of the three is
+in place (`encryption.tf`, `TF_ENCRYPTION` or `backend_override.tf`), so state is never written in clear.
+
 ## Usage
 
 ```bash

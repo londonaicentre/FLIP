@@ -89,7 +89,7 @@ def test_selftest_and_smoke_wait_for_their_verdict() -> None:
 def test_a_missing_manifest_fails_the_target(target: str, tmp_path: Path) -> None:
     """The SQL is piped into snow, and without pipefail the pipe's status was snow's: exit 0."""
     result = subprocess.run(
-        ["make", "-C", str(SNOWFLAKE_DIR), target, "KIT=ZZ", "HUB=stag", "DRY_RUN=true"],
+        ["make", "-C", str(SNOWFLAKE_DIR), target, "KIT=ZZ", "HUB=stag", "DRY_RUN=true", "SNOW_CONNECTION=review"],
         text=True,
         capture_output=True,
     )

@@ -387,7 +387,18 @@ def _fake_snowflake(monkeypatch: pytest.MonkeyPatch, loaded: list[dict[str, obje
 
 
 def _main_args(canonical: Path) -> list[str]:
-    return ["--code", "GSTT", "--projects", "cxr_project", "--data-dir", str(canonical), "--revision", "20261001"]
+    return [
+        "--code",
+        "GSTT",
+        "--connection",
+        "review",
+        "--projects",
+        "cxr_project",
+        "--data-dir",
+        str(canonical),
+        "--revision",
+        "20261001",
+    ]
 
 
 def test_the_marker_is_written_after_the_counts_match(canonical: Path, monkeypatch: pytest.MonkeyPatch) -> None:

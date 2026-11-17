@@ -169,16 +169,16 @@ the load mechanism differs: internal stage + `COPY INTO` instead of row inserts.
 
 ```sh
 # Print the whole seed as SQL (no account, no credentials, no network)
-make -C trust/omop-db seed-omop-snowflake KIT=GSTT DRY_RUN=1
+make -C trust/omop-db seed-omop-snowflake KIT=GSTT SNOW_CONNECTION=<name> DRY_RUN=1
 
 # Run it, as FLIP_GSTT_OMOP_LOADER, through a `snow connection add` entry
-make -C trust/omop-db seed-omop-snowflake KIT=GSTT SOURCE_TRUST=1 PROJECTS="cxr_project"
+make -C trust/omop-db seed-omop-snowflake KIT=GSTT SNOW_CONNECTION=<name> SOURCE_TRUST=1 PROJECTS="cxr_project"
 
 # Only if the marker does not already record exactly this (the ensure-seeded equivalent)
 make -C trust/omop-db ensure-seeded-snowflake KIT=GSTT
 
 # Take a project out, as the tables at a given revision describe it
-make -C trust/omop-db unseed-omop-snowflake KIT=GSTT PROJECTS=spleen_project HF_TRUST_DATA_REVISION=20260911
+make -C trust/omop-db unseed-omop-snowflake KIT=GSTT SNOW_CONNECTION=<name> PROJECTS=spleen_project HF_TRUST_DATA_REVISION=20260911
 ```
 
 What a run does, in order:
@@ -213,7 +213,7 @@ as the loader and nothing else. The read side is the separate SELECT-only
 `FLIP_<CODE>_OMOP_READER`, granted by
 [`trust/data-access-api/sql/snowflake_readonly_grants.sql`](../data-access-api/sql/snowflake_readonly_grants.sql).
 
-`SNOW_CONNECTION` (default `flip-test`) names a `snow connection add` entry; it is a connection
+`SNOW_CONNECTION` (required, no default) names a `snow connection add` entry; it is a connection
 name, never a credential. When the Snowflake node shape (FLIP#1582) merges, its
 `trust/deploy/snowflake/Makefile` will forward its seed target to these ones rather than
 reimplementing the fetch and the split.

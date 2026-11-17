@@ -883,7 +883,7 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entry point: seed or unseed a Snowflake-hosted trust OMOP."""
     parser = argparse.ArgumentParser(description="Seed a Snowflake-hosted trust OMOP from the canonical dataset.")
     parser.add_argument("--code", required=True, help="Trust code from the kit (KIT=<CODE>), e.g. GSTT.")
-    parser.add_argument("--connection", default="flip-test", help="snow CLI connection name (default: %(default)s).")
+    parser.add_argument("--connection", required=True, help="snow CLI connection name.")
     parser.add_argument("--snow", default="snow", help="snow CLI executable (default: %(default)s).")
     parser.add_argument("--projects", nargs="+", default=DEFAULT_PROJECTS, help="Projects (default: %(default)s).")
     parser.add_argument("--source-trust", type=int, default=1, help="OMOP partition to load (default: %(default)s).")

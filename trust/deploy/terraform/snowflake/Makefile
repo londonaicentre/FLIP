@@ -49,6 +49,12 @@ define require_tf
 	@[ -n "$(TF)" ] || { echo "❌ Neither tofu nor terraform is on PATH."; exit 1; }
 endef
 
+# State and plan files are written encrypted (encryption.tf or TF_ENCRYPTION) or to a site's own
+# remote backend (backend_override.tf); never in clear on the operator's disk.
+define require_encryption
+	@[ -f encryption.tf ] || [ -f backend_override.tf ] || [ -n "$$TF_ENCRYPTION" ] || { echo "❌ No encryption.tf, TF_ENCRYPTION or backend_override.tf: state would be written in clear. Copy encryption.tf.example and export TF_VAR_state_passphrase (README, State)."; exit 1; }
+endef
+
 define require_tfvars
 	@[ -f "$(TFVARS)" ] || { echo "❌ $(TFVARS) not found. Copy terraform.tfvars.example and fill it in."; exit 1; }
 endef
@@ -61,6 +67,7 @@ help: ## Show this help message
 
 init: ## Initialise the root (BACKEND_CONFIG=path=... or a site's remote backend settings)
 	$(require_tf)
+	$(require_encryption)
 	$(TF) init -input=false -backend-config="$(BACKEND_CONFIG)"
 
 plan: init ## Plan into $(PLAN_FILE)
@@ -69,6 +76,7 @@ plan: init ## Plan into $(PLAN_FILE)
 
 apply: ## Show the saved plan, ask, then apply it
 	$(require_tf)
+	$(require_encryption)
 	@[ -f "$(PLAN_FILE)" ] || { echo "❌ No $(PLAN_FILE). Run: make plan"; exit 1; }
 	$(TF) show $(PLAN_FILE)
 	@read -r -p "Apply this plan to Snowflake? Type yes to continue: " answer; \
@@ -77,6 +85,7 @@ apply: ## Show the saved plan, ask, then apply it
 
 destroy: ## Destroy every object this root created (asks first)
 	$(require_tf)
+	$(require_encryption)
 	$(require_tfvars)
 	$(TF) destroy -var-file="$(TFVARS)"
 

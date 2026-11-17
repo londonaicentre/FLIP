@@ -15,8 +15,9 @@
 # A resource monitor caps WAREHOUSE credits. It does NOT cover SPCS compute pools: those are
 # capped by mandatory pool auto-suspend and the nightly suspend task, both in the workload root.
 #
-# Creating a resource monitor needs ACCOUNTADMIN, so it lives here. The workload root attaches it
-# to the warehouse it creates, using the MODIFY grant in grants.tf.
+# Creating a resource monitor needs ACCOUNTADMIN, so it lives here. The warehouse is created here
+# too, with the monitor attached (warehouse.tf), because assigning a resource monitor needs
+# ACCOUNTADMIN even for the warehouse owner. The deploy role gets USAGE, OPERATE and MONITOR only.
 resource "snowflake_resource_monitor" "trust" {
   count = var.account_admin ? 1 : 0
 

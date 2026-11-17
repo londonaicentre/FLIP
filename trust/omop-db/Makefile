@@ -191,15 +191,16 @@ unseed-omop: $(if $(CANONICAL_DIR),,fetch-dataset)
 # Nothing here needs a Snowflake account: DRY_RUN=1 prints the SQL and runs
 # nothing, which is how the seed is reviewed and how its unit tests exercise it.
 #
-#   make seed-omop-snowflake KIT=GSTT SOURCE_TRUST=1 PROJECTS="cxr_project"
-#   make seed-omop-snowflake KIT=GSTT DRY_RUN=1
-#   make unseed-omop-snowflake KIT=GSTT PROJECTS=spleen_project HF_TRUST_DATA_REVISION=20260911
+#   make seed-omop-snowflake KIT=GSTT SNOW_CONNECTION=<name> SOURCE_TRUST=1 PROJECTS="cxr_project"
+#   make seed-omop-snowflake KIT=GSTT SNOW_CONNECTION=<name> DRY_RUN=1
+#   make unseed-omop-snowflake KIT=GSTT SNOW_CONNECTION=<name> PROJECTS=spleen_project HF_TRUST_DATA_REVISION=20260911
 #
 # KIT is the trust code from the kit file, upper-cased into the FLIP_<CODE>_*
-# object names. SNOW_CONNECTION names a `snow connection add` entry: a
-# connection name, never a credential; the default matches FLIP#1582's.
+# object names. SNOW_CONNECTION (required) names a `snow connection add` entry:
+# a connection name, never a credential, and no default, so a forgotten one
+# fails instead of seeding whichever account a default points at.
 KIT ?=
-SNOW_CONNECTION ?= flip-test
+SNOW_CONNECTION ?=
 SNOW ?= snow
 DRY_RUN ?=
 SNOWFLAKE_SEED_ARGS = --code $(KIT) --connection $(SNOW_CONNECTION) --snow $(SNOW) \
@@ -212,6 +213,10 @@ check-kit:
 	@if [ -z "$(KIT)" ]; then \
 		echo "❌ KIT is required: the trust code the FLIP_<CODE>_* Snowflake objects are named after,"; \
 		echo "   e.g. make seed-omop-snowflake KIT=GSTT"; \
+		exit 1; \
+	fi
+	@if [ -z "$(SNOW_CONNECTION)" ]; then \
+		echo "❌ SNOW_CONNECTION is required: the name of your \`snow connection add\` entry"; \
 		exit 1; \
 	fi
 

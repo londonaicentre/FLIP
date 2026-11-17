@@ -177,3 +177,17 @@ def test_the_three_roots_keep_separate_state():
 @pytest.mark.parametrize("target", ["init", "plan", "apply", "destroy", "output", "lint", "test"])
 def test_makefile_has_target(target):
     assert re.search(rf"^{target}:", (ROOT_DIR / "Makefile").read_text(), re.M), target
+
+
+@pytest.mark.parametrize("target", ["init", "apply", "destroy"])
+def test_state_is_never_written_in_clear(target):
+    """Every target that writes state or a plan first requires encryption.tf, TF_ENCRYPTION or a
+    site's remote backend (plan runs init first); fmt, validate and lint stay credential-free."""
+    makefile = (ROOT_DIR / "Makefile").read_text()
+    guard = re.search(r"^define require_encryption\n(.*?)^endef", makefile, re.M | re.S)
+    assert guard, "require_encryption is not defined"
+    for escape in ("encryption.tf", "backend_override.tf", "$$TF_ENCRYPTION"):
+        assert escape in guard.group(1), escape
+    recipe = re.search(rf"^{target}:.*\n((?:\t.*\n)+)", makefile, re.M)
+    assert recipe, f"{target} has no recipe"
+    assert "$(require_encryption)" in recipe.group(1), f"{target} does not require encryption"

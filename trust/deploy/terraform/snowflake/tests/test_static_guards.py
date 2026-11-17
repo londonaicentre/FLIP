@@ -480,3 +480,17 @@ def test_the_event_table_belongs_to_the_platform_root():
         "the observability views are owner's-rights over SNOWFLAKE.ACCOUNT_USAGE, which this role must not hold"
     )
     assert (PLATFORM_DIR / "observability_views.tf").is_file(), "the views live in the platform root"
+
+
+@pytest.mark.parametrize("target", ["init", "apply", "destroy"])
+def test_state_is_never_written_in_clear(target):
+    """Every target that writes state or a plan first requires encryption.tf, TF_ENCRYPTION or a
+    site's remote backend (plan runs init first); fmt, validate and lint stay credential-free."""
+    makefile = (SNOWFLAKE_DIR / "Makefile").read_text()
+    guard = re.search(r"^define require_encryption\n(.*?)^endef", makefile, re.M | re.S)
+    assert guard, "require_encryption is not defined"
+    for escape in ("encryption.tf", "backend_override.tf", "$$TF_ENCRYPTION"):
+        assert escape in guard.group(1), escape
+    recipe = re.search(rf"^{target}:.*\n((?:\t.*\n)+)", makefile, re.M)
+    assert recipe, f"{target} has no recipe"
+    assert "$(require_encryption)" in recipe.group(1), f"{target} does not require encryption"

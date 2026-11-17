@@ -33,12 +33,11 @@ SHELL := /bin/bash
 
 KIT ?=
 KIT_ENV := $(ENV)
-KIT_FILE := $(REPO_ROOT)/trust/.env.$(KIT).$(KIT_ENV)
 
-# The snow CLI connection to act through. Default is the shared test account; an operator
-# deploying a real trust names their own. Never a credential: `snow connection add` holds
-# the key pair, outside this repo.
-SNOW_CONNECTION ?= flip-test
+# The snow CLI connection to act through, required by every target that reaches Snowflake: a
+# default would act silently through whichever account that name points at. Never a
+# credential: `snow connection add` holds the key pair, outside this repo.
+SNOW_CONNECTION ?=
 SNOW ?= snow
 PYTHON ?= python3
 
@@ -66,7 +65,7 @@ RUN_SQL = $(SNOW) sql --stdin --enable-templating NONE --connection $(SNOW_CONNE
 SQL_MODE =
 endif
 
-.PHONY: help require-kit render mirror-images sync-kit up down suspend status selftest test clean \
+.PHONY: help require-kit require-connection render mirror-images sync-kit up down suspend status selftest test clean \
 	xnat-configure seed-orthanc smoke-cstore reconvert-nifti job-status
 
 help:
@@ -102,6 +101,12 @@ require-kit:
 		exit 1; \
 	fi
 
+require-connection:
+	@if [ -z "$(strip $(SNOW_CONNECTION))" ]; then \
+		echo "❌ SNOW_CONNECTION is required: the name of your \`snow connection add\` entry, e.g. SNOW_CONNECTION=flip-gstt"; \
+		exit 1; \
+	fi
+
 # ── Specs ────────────────────────────────────────────────────────────────────
 render: require-kit
 	@HUB_EGRESS=$(HUB_EGRESS) $(PYTHON) $(SNOWFLAKE_DIR)render_specs.py --kit $(KIT) --env $(KIT_ENV) --out-dir $(RENDER_DIR)
@@ -111,7 +116,7 @@ render: require-kit
 # the registry returned. The digest is what the rendered specs reference: a tag in the
 # account repository can be moved afterwards, a digest cannot, so this is the difference
 # between a reproducible deploy and one that silently changes under a re-push.
-mirror-images: require-kit
+mirror-images: require-kit require-connection
 	@$(PYTHON) $(SNOWFLAKE_DIR)mirror_images.py \
 		--kit $(KIT) --env $(KIT_ENV) \
 		--connection $(SNOW_CONNECTION) --snow $(SNOW) \
@@ -121,7 +126,7 @@ mirror-images: require-kit
 		$(if $(filter false,$(MIRROR_PULL)),--no-pull,)
 
 # ── Secrets, FL kit, governance ──────────────────────────────────────────────
-sync-kit: require-kit
+sync-kit: require-kit require-connection
 	@$(PYTHON) $(SNOWFLAKE_DIR)sync_snowflake_kit.py \
 		--kit $(KIT) --env $(KIT_ENV) \
 		--connection $(SNOW_CONNECTION) --snow $(SNOW) \
@@ -132,22 +137,22 @@ sync-kit: require-kit
 # Services are created AS the services role (a service's token is its owner's role), which holds
 # CREATE SERVICE only for the length of this target: spcs_sql.py apply-up grants it, creates,
 # and revokes in a `finally`, so a failed deploy cannot leave it behind (FLIP#1578).
-up: require-kit render
+up: require-kit require-connection render
 	@echo "🚀 CREATE / ALTER SERVICE for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
 	@$(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py apply-up --dir $(RENDER_DIR) \
 		--snow $(SNOW) --connection $(SNOW_CONNECTION) \
 		$(if $(filter true,$(DRY_RUN)),--dry-run,)
 
-down: require-kit
+down: require-kit require-connection
 	@echo "🛑 DROP SERVICE for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
 	@set -o pipefail; $(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py down --dir $(RENDER_DIR) | $(RUN_SQL)
 
 # Idle pools bill every node they hold, and a resource monitor does not cover them.
-suspend: require-kit
+suspend: require-kit require-connection
 	@echo "💤 Suspending services and compute pools for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
 	@set -o pipefail; $(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py suspend --dir $(RENDER_DIR) | $(RUN_SQL)
 
-status: require-kit
+status: require-kit require-connection
 	@set -o pipefail; $(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py status --dir $(RENDER_DIR) | $(RUN_SQL)
 
 # ── One-shot jobs ────────────────────────────────────────────────────────────
@@ -176,21 +181,21 @@ endef
 # receiver and rejects every C-STORE, so the trust answers HTTP and retrieves nothing
 # (spike FLIP#1577). The compose twin is `make -C trust/xnat xnat-configure`, the
 # Kubernetes twin the chart's xnat-init hook.
-xnat-configure: require-kit render
+xnat-configure: require-kit require-connection render
 	@echo "🔧 Configuring XNAT for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
 	$(call run_job,xnat-configure)
 
 # The PACS half of `make -C trust seed`. Put the DICOM on the stage first, once:
 #   snow stage copy <dicom dir> @FLIP_$(KIT)... /dicom/ --recursive --enable-templating NONE
 # A re-run is a no-op (Orthanc dedupes on SOPInstanceUID).
-seed-orthanc: require-kit render
+seed-orthanc: require-kit require-connection render
 	@echo "🌱 Seeding the mocked PACS for $(KIT) ($(KIT_ENV)) from the SEED stage $(SQL_MODE)"
 	$(call run_job,seed-orthanc)
 
 # A real C-STORE through the mocked PACS, then the receiver's own evidence. The twin of
 # `make -C trust/deploy/helm smoke-cstore`. A C-ECHO passes while every store aborts, so
 # this is the only check that says the DICOM path works (FLIP#1228).
-smoke-cstore: require-kit render
+smoke-cstore: require-kit require-connection render
 	@echo "🩺 C-STORE smoke for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
 	$(call run_job,smoke-cstore)
 	$(call wait_job,smoke-cstore)
@@ -198,12 +203,12 @@ smoke-cstore: require-kit render
 # `make -C trust reconvert-nifti`, on the Snowflake conversion path: imaging-api's own
 # script, with CONVERTER_BACKEND=snowflake, so it CALLs APP.CONVERT_SCAN instead of
 # XNAT's Container Service bulk launcher. RECONVERT_ARGS overrides the default --launch.
-reconvert-nifti: require-kit render
+reconvert-nifti: require-kit require-connection render
 	@echo "🔁 Reconverting scans without NIfTI for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
 	$(call run_job,reconvert)
 
 JOB ?=
-job-status: require-kit
+job-status: require-kit require-connection
 	@if [ -z "$(strip $(JOB))" ]; then \
 		echo "❌ JOB is required, e.g. make job-status KIT=$(KIT) JOB=xnat-configure"; \
 		exit 1; \
@@ -215,7 +220,7 @@ job-status: require-kit
 # and two refused writes (by validation and by the read-only role). The job's status is
 # the verdict; its SELFTEST lines say which check failed. The DICOM path has its own
 # checks: smoke-cstore, then reconvert-nifti.
-selftest: require-kit render
+selftest: require-kit require-connection render
 	@echo "🧪 Self-test for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
 	@set -o pipefail; $(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py selftest --dir $(RENDER_DIR) | $(RUN_SQL)
 	$(call run_job,selftest)
@@ -234,12 +239,12 @@ clean:
 # --- Infrastructure: forwarded to the Terraform roots ---------------------------------------
 # So the node's whole lifecycle is one Makefile, named like the Azure targets. The workload
 # root (trust/deploy/terraform/snowflake) is the default and is applied by the deploy user;
-# TF_ROOT=platform reaches the break-glass tier, whose own Makefile prints its warning and asks.
-# The bootstrap root is not forwarded: it is applied by a person with ACCOUNTADMIN, by hand.
+# TF_ROOT=platform reaches the break-glass tier, whose own Makefile prints its warning and asks,
+# and TF_ROOT=identity the roles and the deploy user, applied as USERADMIN by a person.
 TF_ROOT ?= workload
-TF_ROOT_DIR = $(REPO_ROOT)/trust/deploy/terraform/$(if $(filter platform,$(TF_ROOT)),snowflake-platform,snowflake)
+TF_ROOT_DIR = $(REPO_ROOT)/trust/deploy/terraform/snowflake$(if $(filter platform identity,$(TF_ROOT)),-$(TF_ROOT))
 
 .PHONY: plan apply destroy
 plan apply destroy:
-	@case "$(TF_ROOT)" in workload|platform) ;; *) echo "❌ TF_ROOT must be workload or platform, not '$(TF_ROOT)'."; exit 2;; esac
+	@case "$(TF_ROOT)" in workload|platform|identity) ;; *) echo "❌ TF_ROOT must be workload, platform or identity, not '$(TF_ROOT)'."; exit 2;; esac
 	$(MAKE) -C $(TF_ROOT_DIR) $@

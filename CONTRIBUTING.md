@@ -830,9 +830,10 @@ credentials, no network:
 make -C trust/deploy/snowflake test
 
 # Print the deploy SQL instead of running it. Every Snowflake target takes DRY_RUN
-make -C trust/deploy/snowflake up KIT=<CODE> HUB=<env> DRY_RUN=true
+make -C trust/deploy/snowflake up KIT=<CODE> HUB=<env> SNOW_CONNECTION=<name> DRY_RUN=true
 
-# The whole node, in the order a first deploy uses it, and the two roots it depends on
+# The whole node, in the order a first deploy uses it, and the three roots it depends on
+export SNOW_CONNECTION=<name>   # a `snow connection add` entry; required, no default
 make -C trust/deploy/snowflake render KIT=<CODE> HUB=<env>
 make -C trust/deploy/snowflake mirror-images KIT=<CODE> HUB=<env>
 make -C trust/deploy/snowflake sync-kit KIT=<CODE> HUB=<env>
@@ -840,6 +841,7 @@ make -C trust/deploy/snowflake up KIT=<CODE> HUB=<env>
 make -C trust/deploy/snowflake selftest KIT=<CODE> HUB=<env>   # passes only on SELFTEST ALL PASS
 make -C trust/deploy/snowflake plan KIT=<CODE> HUB=<env>       # the workload root
 make -C trust/deploy/snowflake plan KIT=<CODE> HUB=<env> TF_ROOT=platform
+make -C trust/deploy/snowflake plan KIT=<CODE> HUB=<env> TF_ROOT=identity
 ```
 
 The operator's runbook, including the break-glass tier, egress and the security notes, is

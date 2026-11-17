@@ -142,10 +142,12 @@ The node itself
 
 The node lives in ``trust/deploy/snowflake``, beside ``helm/``. Add a `snow` connection for the
 deploy user (``snow connection add``, key-pair authentication, role ``FLIP_<CODE>_DEPLOY``) and name
-it with ``SNOW_CONNECTION=<name>`` on every target. A first deployment runs, in this order:
+it in ``SNOW_CONNECTION``: every target that reaches Snowflake refuses to run without it, rather than
+fall back to a default. A first deployment runs, in this order:
 
 .. code-block:: bash
 
+   export SNOW_CONNECTION=<name>
    make render         KIT=GSTT HUB=stag   # one service spec per service, from the kit
    make mirror-images  KIT=GSTT HUB=stag   # GHCR -> the account's image repository, by digest
    make sync-kit       KIT=GSTT HUB=stag   # SECRET objects, the FL kit, the governance document

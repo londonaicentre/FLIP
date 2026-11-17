@@ -46,14 +46,16 @@ trust's kit file, and never pass through Terraform variables or state.
 # 0. One-off: a snow CLI connection with key-pair auth for the deploy SERVICE user,
 #    FLIP_<CODE>_DEPLOY_USER, whose default role is FLIP_<CODE>_DEPLOY.
 #    Humans use MFA; no ACCOUNTADMIN in automation.
-snow connection add --connection-name flip-test ...
+snow connection add --connection-name <name> ...
+export SNOW_CONNECTION=<name>   # every target that reaches Snowflake refuses to run without it
 
-# 1a. Account security objects, break glass, rarely, by a person user with MFA (FLIP#1581)
-make -C trust/deploy/terraform/snowflake-platform apply KIT=GSTT HUB=stag
-
-# 1b. Infrastructure, the workload root (FLIP#1581)
-make -C trust/deploy/terraform/snowflake apply KIT=GSTT HUB=stag
-#    (or from here: make plan|apply|destroy KIT=GSTT HUB=stag; TF_ROOT=platform for 1a)
+# 1. The three Terraform roots, in this order (FLIP#1581): identity (the FLIP_<CODE>_*
+#    roles and the deploy user, as USERADMIN), platform (break glass, by a person user
+#    with MFA), workload (as the deploy user). Each applies only a saved plan.
+make -C trust/deploy/terraform/snowflake-identity plan apply HUB=stag
+make -C trust/deploy/terraform/snowflake-platform plan apply HUB=stag
+make -C trust/deploy/terraform/snowflake          plan apply HUB=stag
+#    (or from here: make plan apply HUB=stag TF_ROOT=identity|platform|workload)
 
 # 2. Images into the account repository (needs docker + GHCR login + egress)
 make -C trust/deploy/snowflake mirror-images KIT=GSTT HUB=stag
@@ -84,7 +86,7 @@ make -C trust/deploy/snowflake suspend  KIT=GSTT HUB=stag
 Every Snowflake target takes `DRY_RUN=true`, which prints the SQL instead of running it:
 
 ```bash
-make -C trust/deploy/snowflake up KIT=GSTT HUB=stag DRY_RUN=true
+make -C trust/deploy/snowflake up KIT=GSTT HUB=stag SNOW_CONNECTION=<name> DRY_RUN=true
 ```
 
 That is not only a safety net. It is how the deploy path is tested, since CI has no
@@ -92,7 +94,8 @@ Snowflake account and no credentials.
 
 `HUB` maps to the kit-file token (`trust/.env.<CODE>.<token>`) through
 `deploy/env_mode.mk`, the repo's single copy of that map, exactly as the Helm Makefile
-does. `SNOW_CONNECTION` selects the snow CLI connection and defaults to `flip-test`.
+does. `SNOW_CONNECTION` selects the snow CLI connection and has no default: a forgotten one
+fails instead of acting through whichever account a default name points at.
 
 ## The services
 
@@ -202,7 +205,7 @@ Put it there once, from a workstation that has the data:
 
 ```bash
 snow stage copy ./dicom @FLIP_TRUST_GSTT.STAGES.SEED/dicom/ --recursive \
-  --enable-templating NONE --connection flip-test
+  --enable-templating NONE --connection "$SNOW_CONNECTION"
 ```
 
 A re-run of `seed-orthanc` uploads the same instances and stores none of them again:

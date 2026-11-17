@@ -34,7 +34,11 @@ def test_every_lifecycle_target_exists(target: str) -> None:
 
 @pytest.mark.parametrize(
     ("root", "directory"),
-    [("workload", "trust/deploy/terraform/snowflake"), ("platform", "trust/deploy/terraform/snowflake-platform")],
+    [
+        ("workload", "trust/deploy/terraform/snowflake"),
+        ("platform", "trust/deploy/terraform/snowflake-platform"),
+        ("identity", "trust/deploy/terraform/snowflake-identity"),
+    ],
 )
 @pytest.mark.parametrize("target", ["plan", "apply", "destroy"])
 def test_infrastructure_targets_forward_to_the_terraform_root(target: str, root: str, directory: str) -> None:
@@ -46,10 +50,9 @@ def test_infrastructure_targets_forward_to_the_terraform_root(target: str, root:
     assert f"{directory} {target}" in out, out
 
 
-def test_the_bootstrap_root_is_not_reachable() -> None:
-    """Bootstrap is applied by hand with ACCOUNTADMIN; no make path should lead there."""
+def test_an_unknown_root_is_refused() -> None:
     result = subprocess.run(
         ["make", "-C", str(SNOWFLAKE_DIR), "plan", "TF_ROOT=bootstrap"], capture_output=True, text=True
     )
     assert result.returncode != 0
-    assert "TF_ROOT must be workload or platform" in result.stdout
+    assert "TF_ROOT must be workload, platform or identity" in result.stdout
