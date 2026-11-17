@@ -25,7 +25,7 @@ fl-services/nvflare/
 ├── fl-client-segmentation/  # client image + the segmentation FL environment (flare-fl-client-segmentation)
 ├── fl-api-base/      # FastAPI admin-API image — see its README (flare-fl-api)
 ├── provision/        # project YAMLs, scripts/, and the gitignored workspace-{dev,stag,prod}/ output
-├── compose.dev.yml   # build + standalone-run definitions for the four FL images
+├── compose.dev.yml   # build + standalone-run definitions for the FL images
 ├── Makefile          # this backend's build / provision / up / down / submit
 └── README.md
 ```
