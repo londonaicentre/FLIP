@@ -6,7 +6,7 @@ Deploy a FLIP node on Amazon EKS
 
 A FLIP node on Amazon EKS runs the trust-side stack as the ``flip-trust`` Helm chart on a small EKS
 cluster, built from code in ``trust/deploy/terraform/aws/eks``. It is the AWS twin of the AKS cluster on
-:doc:`deploy-flip-node-azure`: a cluster for the chart and nothing else. It can go in **any AWS account and
+:doc:`deploy-flip-node-azure-aks`: a cluster for the chart and nothing else. It can go in **any AWS account and
 VPC**, including the site's own: it reads nothing from the hub (no remote state, no hub env file, no hub
 credentials). Its only links to a hub are its **kit** and its **registration**, as for any trust. The
 nodes have no public IP and accept no inbound connection; the operator reaches the cluster's API from one
@@ -23,10 +23,8 @@ chart itself, its values and known limits, :doc:`deploy-flip-node-kubernetes`.
 Architecture
 ************
 
-The diagrams are generated when this documentation is built, by a script kept next to the Terraform
-(``trust/deploy/terraform/aws/eks/architecture/``). A test in that tree pins every drawn node to a resource
-in the ``.tf`` files, and every resource to a drawn node. Dashed boxes exist only when the root creates its
-own network.
+The diagrams are drawn from the Terraform itself, so they show exactly what it creates. Dashed boxes exist
+only when the root creates its own network.
 
 .. figure:: ../assets/generated/trust-node-aws-eks-network.png
    :align: center
@@ -78,18 +76,17 @@ Network and security
   Its gp3 storage class is the cluster default, since the chart's claims name none.
 - **XNAT's archive is on EFS.** XNAT's Container Service runs each DICOM-to-NIfTI conversion as its own
   pod with xnat-web's volume mounted, on whichever node it lands, so that one volume must be mountable
-  from every node. ``join`` creates the ``xnat-efs`` class (``make storage-class``): an access point per
-  claim, owned by XNAT's uid 1001. The file system is encrypted, and only the cluster security group
-  reaches it, on NFS. imaging-api and the FL client share the other two-pod volume and are kept on one
-  node instead.
-- **Standard support only.** The cluster's upgrade policy is ``STANDARD``: a version in extended support
-  costs six times as much per hour, and nothing else would say so.
+  from every node. ``join`` creates the ``xnat-efs`` storage class (it runs ``make storage-class``), with one
+  access point per claim, owned by XNAT's uid 1001. The file system is encrypted, and only the cluster
+  security group reaches it, over NFS. imaging-api and the FL client also share a volume; they are kept on
+  one node instead.
+- **Standard support only.** The cluster's upgrade policy is ``STANDARD``, so it never moves into extended
+  support, which costs six times as much per hour and would otherwise go unnoticed.
 - **Control-plane logs** (``api``, ``audit``, ``authenticator``) go to CloudWatch Logs.
-- **Egress** is the list on :doc:`deploy-flip-node-aws-ec2` (hub, FL endpoint exempt from TLS inspection,
-  GHCR, Docker Hub, Hugging Face, PyPI), plus the chart's own (*Extra network egress* on
-  :doc:`deploy-flip-node-kubernetes`, and XNAT's plugin downloads, listed for AKS on
-  :doc:`deploy-flip-node-azure`), plus the AWS endpoints EKS nodes need (EKS, ECR for the add-on images,
-  STS, EC2).
+- **Egress** is the list in :ref:`deploy-trust-node-network` (hub, FL endpoint exempt from TLS inspection,
+  GHCR, Hugging Face, PyPI), plus the chart's own (*Extra network egress* on
+  :doc:`deploy-flip-node-kubernetes`), plus the AWS endpoints EKS nodes need (EKS, ECR for the add-on
+  images, STS, EC2).
 
 Where the account requires a permissions boundary on new roles, pass it as ``BOUNDARY_ARN``.
 
@@ -129,18 +126,19 @@ Prerequisites
 - AWS credentials for that account (``AWS_PROFILE``) and an S3 bucket for the cluster's Terraform state.
 - Terraform >= 1.13, the AWS CLI, ``kubectl``, Helm 3.16 or newer and ``python3``.
 
-*********************
+*****************
 Build the cluster
-*********************
+*****************
 
-On the hub admin's side, as for any on-prem trust:
+If the hub admin has not yet registered the trust and packaged its kit (see :doc:`onboarding-a-trust`),
+they run, as for any on-prem trust:
 
 .. code-block:: bash
 
    make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<env>
    make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=<env>
 
-On the site's side:
+Then, on the site's side:
 
 .. code-block:: bash
 
@@ -152,9 +150,9 @@ On the site's side:
    make apply       KIT=$KIT HUB=$HUB REGION=$REGION   # shows the plan and the account, asks for yes
    make credentials KIT=$KIT HUB=$HUB REGION=$REGION   # kube context flip-<env>-<code>
 
-*************
+************
 Join the hub
-*************
+************
 
 .. code-block:: bash
 
@@ -162,11 +160,16 @@ Join the hub
    make selftest KIT=$KIT HUB=$HUB
    make status   KIT=$KIT HUB=$HUB
 
-``join`` does what ``aks-join`` does on Azure: it unpacks the tarball under ``build/kits/``, installs the
-kit file as ``trust/.env.<CODE>.<env>``, puts the FL kit in a Secret (a managed node can be replaced at
-any time; a Flower Secret holds only ``ca.crt`` and the slot's own credential), and deploys the chart with
-``values-eks.yaml`` and ``values-small-node.yaml``, recording them in the kit file as
-``K8S_PLATFORM_VALUES``. The first install takes up to half an hour, most of it XNAT's first start.
+``join``:
+
+#. unpacks the tarball under ``build/kits/``;
+#. installs the kit file as ``trust/.env.<CODE>.<env>``;
+#. puts the FL kit in a Secret, since a managed node can be replaced at any time (a Flower Secret holds
+   only ``ca.crt`` and the slot's own credential);
+#. deploys the chart with ``values-eks.yaml`` and ``values-small-node.yaml``, and records them in the kit
+   file as ``K8S_PLATFORM_VALUES``.
+
+The first install takes up to half an hour, most of it XNAT's first start.
 ``MOCK_PACS=1`` seeds the published mock studies into the chart's Orthanc, which a test node needs for an
 imaging pull and for the self-test.
 
@@ -181,7 +184,11 @@ hub's *Trusts* page shows it online, or when its heartbeat is answered:
 
    kubectl --context flip-<env>-<code> -n flip-trust logs deploy/trust-release-flip-trust-trust-api | grep heartbeat   # 200 OK
 
-``make deploy KIT=… HUB=…`` redeploys or upgrades from the installed kit.
+To redeploy or upgrade from the installed kit:
+
+.. code-block:: bash
+
+   make deploy KIT=$KIT HUB=$HUB
 
 ******
 Remove
@@ -210,7 +217,8 @@ Tips
      region = eu-west-2
 
   then ``AWS_PROFILE=flip-eks make plan …``.
-- **A trust on slot 3 or above** needs a seed partition the mock dataset has (it has two): give ``join`` an
-  extra overlay setting ``trustData.seed.sourceTrust: "1"``, by appending its path to ``EKS_VALUES``.
+- **A trust on slot 3 or above.** The mock dataset has only two seed partitions, so point the trust at an
+  existing one: write an overlay that sets ``trustData.seed.sourceTrust: "1"`` and append its path to
+  ``EKS_VALUES`` before running ``join``.
 - **An AWS Free plan account** launches only Free-Tier-eligible instance types. ``m7i-flex.large``, the
   default, is the largest of them; two hold the trust stack with ``values-small-node.yaml``.

@@ -55,13 +55,13 @@ resource "aws_ssm_parameter" "flip_app_bundles_bucket" {
   value       = local.flip_app_bundles_bucket_uri
 }
 
-# FL kit-slot pool names — flip-api's runtime source in production, read at boot
-# seeding and re-read when a trust registration finds the pool exhausted
-# (resolve_fl_kit_slot_names, reconcile-on-miss). Growing the pool is an env-file
-# edit + `make apply-fl-kit-slots` (targeted apply of this parameter): no
-# task-definition change, no flip-api restart. The value stays the JSON-list
-# *string* from the env file (flip-api json.loads it). Not a secret — just the
-# roster of pre-provisioned kit slots, hence SSM per the /flip convention above.
+# FL kit-slot pool names on a Flower hub — flip-api's runtime source there, read at
+# boot seeding and at every trust registration, which claims only from the names
+# it holds then (resolve_fl_kit_slot_names). The SuperLink labels SuperNodes
+# from the same list at startup (ecs_flower.tf), so it stays authored config. An
+# NVFLARE hub ignores it: its pool is the complete kits in S3 (FLIP#1720). The
+# value stays the JSON-list *string* from the env file (flip-api json.loads it).
+# Not a secret, hence SSM per the /flip convention above.
 resource "aws_ssm_parameter" "fl_kit_slot_names" {
   # checkov:skip=CKV2_AWS_34:non-secret operational config by design (see file header and the comment above) — SecureString adds KMS coupling for no confidentiality gain
   name        = "${local.ssm_prefix}/fl_kit_slot_names"
@@ -71,9 +71,9 @@ resource "aws_ssm_parameter" "fl_kit_slot_names" {
 }
 
 # The EC2 keypair's public key, for the Terraform CI workflows (FLIP#962,
-# FLIP#1199). Both aws_key_pair resources read their key with file() from
+# FLIP#1199). aws_key_pair.flip_keypair reads its key with file() from
 # ~/.ssh/host-aws.pub, and public_key is ForceNew — a runner without that file
-# would plan a replacement of both keypairs that ripples into
+# would plan a replacement of the keypair that ripples into
 # aws_instance.ec2_instance. So each workflow reads this parameter and writes
 # the file before Terraform runs.
 #
@@ -88,22 +88,11 @@ resource "aws_ssm_parameter" "fl_kit_slot_names" {
 # there fails with ParameterAlreadyExists — and CI applies stag on every merge
 # to develop. The value it writes is the one CI has just read from it, so
 # adoption changes nothing.
-#
-# The precondition keeps the check that make target used to make: CI can only
-# supply ONE file, so the two keypairs must hold the same key, or CI would
-# silently plan a replacement of whichever one differs.
 resource "aws_ssm_parameter" "ci_host_aws_public_key" {
   # checkov:skip=CKV2_AWS_34:a PUBLIC key, non-secret by definition — SecureString adds KMS coupling for no confidentiality gain
   name        = "${local.ssm_prefix}/ci/host_aws_public_key"
   description = "EC2 keypair public key, read by the Terraform CI workflows (FLIP#962)"
   type        = "String"
-  value       = aws_key_pair.host_key.public_key
+  value       = aws_key_pair.flip_keypair.public_key
   overwrite   = true
-
-  lifecycle {
-    precondition {
-      condition     = aws_key_pair.flip_keypair.public_key == aws_key_pair.host_key.public_key
-      error_message = "aws_key_pair.flip_keypair and aws_key_pair.host_key hold different public keys. Both are read from ~/.ssh/host-aws.pub and CI can only supply one file, so reconcile them from a laptop before enabling Terraform CI."
-    }
-  }
 }

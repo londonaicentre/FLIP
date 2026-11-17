@@ -69,7 +69,6 @@ def get_labels_from_radiology_row(
 
 
 def get_lesion_label(in_batch: dict, lesions: LesionDict):
-    out_tensor = []
     out_tensor = [in_batch[les.lesion] for les in sorted(lesions.items, key=lambda x: x.id)]
     return torch.stack(out_tensor, dim=1).float()
 

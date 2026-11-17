@@ -22,13 +22,13 @@
     that:
       - omop_postgres_password is defined
       - omop_postgres_password | length > 0
-    fail_msg: "omop_postgres_password is required (the kit's OMOP_POSTGRES_PASSWORD; passed by make seed-trust-data)"
+    fail_msg: "omop_postgres_password is required (the kit's OMOP_POSTGRES_PASSWORD; passed by the EC2 root's make seed)"
 
 - name: assert the vocabulary bucket extra-var is set
   assert:
     that:
       - omop_vocab_s3_bucket | length > 0
-    fail_msg: "vocab_s3_bucket is required (the env's AICENTRE_BUCKET_NAME; passed by make seed-trust-data)"
+    fail_msg: "vocab_s3_bucket is required (the hub's kit bucket; passed by the EC2 root's make seed KIT_BUCKET=)"
 
 - name: install postgresql-client and unzip
   apt:

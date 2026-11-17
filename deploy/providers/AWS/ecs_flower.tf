@@ -42,9 +42,24 @@ resource "aws_ecs_task_definition" "flower_register_supernode_keys" {
         { name = "SUPERLINK_ADDRESS", value = "${local.service_discovery_names.fl_server}:${local.flower_superlink_control_port}" },
         { name = "FL_API_ADDRESS", value = "http://${local.service_discovery_names.fl_api}:${local.api_container_port}" },
         { name = "TRUST_NAMES", value = var.FL_KIT_SLOT_NAMES },
+        # The script writes the Flower CLI's ~/.flwr/config.toml; the image's HOME
+        # (/app) is on the read-only root filesystem (ECS.5, FLIP#1795).
+        { name = "HOME", value = "/tmp" },
       ]
 
+      # /register_node on the fl-api requires the FL API key like every other route.
+      secrets = [
+        {
+          name      = "FL_API_KEY"
+          valueFrom = "${module.flip_api_secret.secret_arn}:fl_api_key::"
+        },
+      ]
+
+      # The SuperLink image's own user, flwr/base's app.
+      user                   = "49999:49999"
+      readonlyRootFilesystem = true
       mountPoints = [
+        { sourceVolume = "tmp", containerPath = "/tmp", readOnly = false },
         {
           sourceVolume  = "efs-fl-net-1-certs"
           containerPath = "/certs"
@@ -67,6 +82,10 @@ resource "aws_ecs_task_definition" "flower_register_supernode_keys" {
       }
     }
   ])
+
+  volume {
+    name = "tmp"
+  }
 
   dynamic "volume" {
     for_each = {
@@ -95,9 +114,11 @@ resource "aws_ecs_task_definition" "flower_register_supernode_keys" {
 # Runs the one-shot after both FL services exist, waiting for them to be
 # stable first (compose expresses this as depends_on fl-server started +
 # fl-api healthy). Runs with the fl-api SG so the Flower control-plane SG
-# rules in ecs_sg.tf cover its SuperLink Control API (8000) call, and the fl-api's
-# VPC HTTP rule covers FL_API_ADDRESS. Re-run on key rotation by bumping
-# FLOWER_KIT_DATE (retriggers via the provisioning task's arn) or tainting.
+# rules in ecs_sg.tf cover its SuperLink Control API (8000) call, and the fl-api SG's
+# self rule covers FL_API_ADDRESS. A FLOWER_KIT_DATE bump re-runs it after
+# the EFS re-sync and the FL services' rollout (their task definitions carry the
+# kit as FL_KIT_SOURCE, locals.tf), so it registers against a SuperLink already
+# serving the new kit's certificates (FLIP#1738); tainting re-runs it alone.
 resource "null_resource" "flower_register_supernode_keys" {
   count = var.enable_service_discovery && var.enable_efs && var.fl_backend == "flower" ? 1 : 0
 

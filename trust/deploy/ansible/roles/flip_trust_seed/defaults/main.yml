@@ -17,8 +17,8 @@ seed_dir: "/opt/flip/seed"
 seed_trust_num: "{{ trust_num | default('1') }}"
 # Optional extra-vars get DISTINCT internal names (like hf_trust_data_repo above): a play
 # var that references itself (`x: "{{ x | default(...) }}"`) is fine only while an
-# extra-var of the same name shadows it, and these four are passed by `make
-# seed-trust-data` only when the operator sets them — unset, the first use would recurse
+# extra-var of the same name shadows it, and these four are passed by the EC2 root's
+# `make seed` only when the operator sets them — unset, the first use would recurse
 # ("Recursive loop detected in template").
 seed_source_trust: "{{ source_trust | default(seed_trust_num) }}"
 seed_num_trusts: "{{ num_trusts | default('2') }}"
@@ -31,7 +31,7 @@ hf_trust_data_revision: "{{ trust_data_hf_revision | default(trust_data_version)
 omop_db_image: "ghcr.io/londonaicentre/omop-db:{{ omop_db_tag | default('stag', true) }}"
 orthanc_image: "ghcr.io/londonaicentre/orthanc:{{ omop_db_tag | default('stag', true) }}"
 # uv's image, pinned by digest — the same one the Helm chart's trust-seed hook runs in.
-uv_image: "ghcr.io/astral-sh/uv@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58"
+uv_image: "ghcr.io/londonaicentre/mirror/astral-sh/uv:python3.12-bookworm-slim@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58"
 seed_omop_port: "15499"
 seed_orthanc_port: "15442"
 seed_omop_user: "{{ omop_postgres_user | default('postgres', true) }}"

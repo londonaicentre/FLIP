@@ -47,8 +47,18 @@ from pathlib import Path
 
 import torch
 from monai.bundle import ConfigParser
-from monai.deploy.core import AppContext, ConditionType, Fragment, Image, Operator, OperatorSpec
-from monai.transforms import Activations, Compose, EnsureType, Resize, ScaleIntensity
+from monai.deploy.core import (
+    AppContext,
+    ConditionType,
+    ExecutionContext,
+    Fragment,
+    Image,
+    InputContext,
+    Operator,
+    OperatorSpec,
+    OutputContext,
+)
+from monai.transforms import Compose, EnsureType, Resize, ScaleIntensity
 
 # Label semantics come from the training app's config.json LESIONS block. The trainer optimises a
 # binary cross-entropy loss, so the two outputs are independent binary labels read through a
@@ -85,7 +95,7 @@ class FlipXrayClassifierOperator(Operator):
         model_path: Path = MODEL_LOCAL_PATH,
         output_folder: Path = DEFAULT_OUTPUT_FOLDER,
         **kwargs,
-    ):
+    ) -> None:
         self.input_name_image = "image"
         self.output_name_result = "result_text"
         self.output_folder = output_folder
@@ -209,7 +219,7 @@ class FlipXrayClassifierOperator(Operator):
         spec.input(self.input_name_image)
         spec.output(self.output_name_result).condition(ConditionType.NONE)
 
-    def compute(self, op_input, op_output, context) -> None:
+    def compute(self, op_input: InputContext, op_output: OutputContext, context: ExecutionContext) -> None:
         input_image = op_input.receive(self.input_name_image)
         if not isinstance(input_image, Image):
             raise ValueError(f"Expected an Image on '{self.input_name_image}', got {type(input_image)!r}")
@@ -231,11 +241,10 @@ class FlipXrayClassifierOperator(Operator):
 
         with torch.no_grad():
             logits = self.model(batch)
-        probabilities = Compose([EnsureType(), Activations(sigmoid=True)])(logits)[0].cpu().numpy()
+        probabilities = torch.sigmoid(logits)[0].cpu().numpy()
 
-        findings = {
-            label: float(probabilities[index]) for index, label in enumerate(LABELS) if index < len(probabilities)
-        }
+        # zip stops at the shorter input, so a model with fewer outputs than LABELS still scores.
+        findings = {label: float(score) for label, score in zip(LABELS, probabilities)}
         positives = [label for label, score in findings.items() if score >= POSITIVE_THRESHOLD]
 
         detail = ", ".join(f"{label} {score:.3f}" for label, score in findings.items())

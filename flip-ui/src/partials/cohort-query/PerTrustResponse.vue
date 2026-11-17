@@ -17,7 +17,7 @@
         dark:bg-dark-canvas dark:border-dark-border"
     >
         <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-dark-border">
-            <span class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 dark:text-gray-300">
+            <span class="text-xs font-semibold text-gray-500 dark:text-gray-300">
                 Per-trust response
             </span>
             <span v-if="anyRunning" class="text-xs text-gray-500 dark:text-gray-300">
@@ -59,7 +59,7 @@
                     </div>
                     <div
                         v-if="row.errored && row.error"
-                        class="text-xs truncate text-red-600 dark:text-red-400"
+                        class="text-note truncate text-red-600 dark:text-red-400"
                         :title="row.error"
                     >
                         {{ row.error }}
@@ -68,7 +68,7 @@
                 <div class="text-right">
                     <span
                         v-if="row.errored"
-                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-white rounded-full bg-red-600"
+                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-semibold text-white rounded-full bg-red-600"
                         :title="row.error || 'Query failed on this trust'"
                     >
                         <span class="inline-block w-1.5 h-1.5 bg-white rounded-full" />
@@ -76,7 +76,7 @@
                     </span>
                     <span
                         v-else-if="row.cancelled"
-                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-gray-500 dark:text-gray-300 rounded-full bg-gray-100 dark:bg-dark-surface"
+                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-semibold text-gray-500 dark:text-gray-300 rounded-full bg-gray-100 dark:bg-dark-surface"
                         title="Project was approved without this trust; query task cancelled"
                     >
                         <span class="inline-block w-1.5 h-1.5 bg-gray-400 rounded-full" />
@@ -84,7 +84,7 @@
                     </span>
                     <span
                         v-else-if="row.pending"
-                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-gray-700 dark:text-gray-200 rounded-full bg-gray-200 dark:bg-dark-raised"
+                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-semibold text-gray-700 dark:text-gray-200 rounded-full bg-gray-200 dark:bg-dark-raised"
                         title="Queued at the hub; trust hasn't polled for it yet"
                     >
                         <span class="inline-block w-1.5 h-1.5 bg-gray-500 rounded-full" />
@@ -92,7 +92,7 @@
                     </span>
                     <span
                         v-else-if="row.running"
-                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-white rounded-full"
+                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-semibold text-white rounded-full"
                         style="background-color: #e51170"
                     >
                         <span class="inline-block w-1.5 h-1.5 bg-white rounded-full cq-pulse" />
@@ -100,7 +100,7 @@
                     </span>
                     <span
                         v-else-if="row.suppressed"
-                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-amber-700 dark:text-amber-300 rounded-full bg-amber-100 dark:bg-amber-900/40"
+                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300 rounded-full bg-amber-100 dark:bg-amber-900/40"
                         title="The matching cohort is below the privacy threshold, so the trust suppressed the exact count (which may be zero)"
                     >
                         <span class="inline-block w-1.5 h-1.5 bg-amber-500 rounded-full" />
@@ -119,10 +119,9 @@
 </template>
 
 <script lang="ts" setup>
-import useSWRV from "swrv";
-import { computed, ref, watch } from "vue";
+import { computed } from "vue";
 
-import { getOMOPResults, IResults } from "@/services/cohort-query-service";
+import { useCohortResults } from "@/composables/useCohortResults";
 import { useProjectStore } from "@/store/project";
 import { useTrustStore } from "@/store/trusts";
 import { filterByQueriedTrustIds } from "@/utils/cohort/query";
@@ -136,66 +135,9 @@ const props = withDefaults(defineProps<IProps>(), { submitting: false });
 const projectStore = useProjectStore();
 const trustStore = useTrustStore();
 
-const results = ref<IResults | null>(null);
-
-const { data } = useSWRV(
-    () => projectStore.project?.query?.id ? `/cohort/${projectStore.project.query.id}` : "",
-    getOMOPResults,
-    {
-        errorRetryInterval: 1_000,
-        refreshInterval: projectStore.project?.status !== "UNSTAGED" ? 0 : 10_000
-    }
-);
-
-watch(data, (v) => { results.value = (v as IResults | null | undefined) ?? null; }, { immediate: true });
-
-// Per-trust state comes from `trustRecordCounts` and `trustErrors` on the
-// response — both populated by the hub aggregator. A trust present in
-// trustRecordCounts has responded successfully (count may be 0 for
-// privacy-suppressed); a trust in trustErrors failed; a trust in neither is
-// still running. We fall back to per-field aggregation only when neither map
-// is present (back-compat with older QueryStats rows that pre-date this fix).
-interface IFieldShape {
-    results: { trustId: string; data: { count: number }[] }[];
-}
-
-interface IResultsShape {
-    trustsResults?: IFieldShape[];
-    trustRecordCounts?: Record<string, number>;
-    trustErrors?: Record<string, string>;
-    trustSuppressed?: string[];
-}
-
-const perTrustCounts = computed<Record<string, number>>(() => {
-    const r = results.value as unknown as IResultsShape | null;
-    if (r?.trustRecordCounts) return r.trustRecordCounts;
-    // Back-compat fallback for QueryStats rows written before the trust_record_counts field existed.
-    const trustsResults = r?.trustsResults;
-    if (!trustsResults?.length) return {};
-    const firstField = trustsResults.find(f => f.results?.length);
-    if (!firstField) return {};
-    const counts: Record<string, number> = {};
-    for (const t of firstField.results) {
-        counts[t.trustId] = t.data.reduce((acc, d) => acc + (d.count || 0), 0);
-    }
-
-    return counts;
-});
-
-const perTrustErrors = computed<Record<string, string>>(() => {
-    const r = results.value as unknown as IResultsShape | null;
-
-    return r?.trustErrors ?? {};
-});
-
-// Set of trust ids whose count was privacy-suppressed (below threshold). These
-// trusts responded successfully but render a "suppressed" chip instead of a
-// literal 0 that would read as "no data available". See issue #519.
-const perTrustSuppressed = computed<Set<string>>(() => {
-    const r = results.value as unknown as IResultsShape | null;
-
-    return new Set(r?.trustSuppressed ?? []);
-});
+// Suppressed trusts render a "suppressed" chip instead of a literal 0 that would read as
+// "no data available" (#519).
+const { perTrustCounts, perTrustErrors, perTrustSuppressed } = useCohortResults();
 
 interface IRow {
     id: string;

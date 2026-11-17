@@ -51,6 +51,9 @@ def _assert_cohort_admin_header(call_args) -> None:
     assert AES_KEY_BASE64 not in headers.values()
 
 
+IMAGING_STATUS_PAYLOAD = {"imaging_project_id": "img-123", "encoded_query": "base64query"}
+
+
 @pytest.fixture
 def mock_make_request():
     with patch("trust_api.services.task_handlers.make_request", new_callable=AsyncMock) as mock:
@@ -291,76 +294,45 @@ async def test_handle_update_user_profile_success(mock_make_request):
 
 
 @pytest.mark.asyncio
-async def test_handle_create_imaging_error(mock_make_request):
-    """Should return failure on error."""
+@pytest.mark.parametrize(
+    ("handler", "payload"),
+    [
+        pytest.param(
+            handle_create_imaging,
+            {"project_id": str(uuid4()), "trust_id": str(uuid4()), "project_name": "Test"},
+            id="create_imaging",
+        ),
+        pytest.param(handle_delete_imaging, {"imaging_project_id": str(uuid4())}, id="delete_imaging"),
+        pytest.param(handle_get_imaging_status, IMAGING_STATUS_PAYLOAD, id="get_imaging_status"),
+        pytest.param(handle_reimport_studies, IMAGING_STATUS_PAYLOAD, id="reimport_studies"),
+        pytest.param(handle_update_user_profile, {"email": "user@test.com", "enabled": True}, id="update_user_profile"),
+    ],
+)
+async def test_handler_reports_failure_on_error(mock_make_request, handler, payload):
+    """Any upstream failure is reported as success=False with the original error text."""
     mock_make_request.side_effect = Exception("Service unavailable")
 
-    payload = {"project_id": str(uuid4()), "trust_id": str(uuid4()), "project_name": "Test"}
-    result = await handle_create_imaging(payload)
+    result = await handler(dict(payload))
 
     assert result["success"] is False
     assert "Service unavailable" in result["error"]
 
 
 @pytest.mark.asyncio
-async def test_handle_delete_imaging_error(mock_make_request):
-    """Should return failure on error."""
-    mock_make_request.side_effect = Exception("Service unavailable")
+@pytest.mark.parametrize(
+    ("status_code", "detail"),
+    [(404, "Project not found"), (502, "Failed to connect")],
+    ids=["project_gone_404", "xnat_unreachable_502"],
+)
+async def test_handle_get_imaging_status_reports_http_status_code(mock_make_request, status_code, detail):
+    """Report the imaging-api status code structurally so the hub need not sniff the error string (FLIP#1022):
+    404 means the XNAT project is gone; 502 is make_request's mapping of a transport failure, an unreachable XNAT."""
+    mock_make_request.side_effect = HTTPException(status_code=status_code, detail=detail)
 
-    result = await handle_delete_imaging({"imaging_project_id": str(uuid4())})
-
-    assert result["success"] is False
-    assert "Service unavailable" in result["error"]
-
-
-@pytest.mark.asyncio
-async def test_handle_get_imaging_status_error(mock_make_request):
-    """Should return failure on error."""
-    mock_make_request.side_effect = Exception("Service unavailable")
-
-    result = await handle_get_imaging_status(
-        {
-            "imaging_project_id": "img-123",
-            "encoded_query": "base64query",
-        }
-    )
+    result = await handle_get_imaging_status(dict(IMAGING_STATUS_PAYLOAD))
 
     assert result["success"] is False
-    assert "Service unavailable" in result["error"]
-
-
-@pytest.mark.asyncio
-async def test_handle_get_imaging_status_reports_upstream_status_code(mock_make_request):
-    """A 404 from imaging-api means the XNAT project is gone, which the hub renders differently
-    from an unreachable trust (FLIP#1022). Report the code structurally so the hub does not have
-    to sniff it out of the error string."""
-    mock_make_request.side_effect = HTTPException(status_code=404, detail="Project not found")
-
-    result = await handle_get_imaging_status(
-        {
-            "imaging_project_id": "img-123",
-            "encoded_query": "base64query",
-        }
-    )
-
-    assert result["success"] is False
-    assert result["status_code"] == 404
-
-
-@pytest.mark.asyncio
-async def test_handle_get_imaging_status_reports_transport_status_code(mock_make_request):
-    """make_request maps transport failures to 502; that is an unreachable XNAT, not a missing project."""
-    mock_make_request.side_effect = HTTPException(status_code=502, detail="Failed to connect")
-
-    result = await handle_get_imaging_status(
-        {
-            "imaging_project_id": "img-123",
-            "encoded_query": "base64query",
-        }
-    )
-
-    assert result["success"] is False
-    assert result["status_code"] == 502
+    assert result["status_code"] == status_code
 
 
 @pytest.mark.asyncio
@@ -377,33 +349,6 @@ async def test_handle_get_imaging_status_omits_status_code_for_non_http_errors(m
 
     assert result["success"] is False
     assert "status_code" not in result
-
-
-@pytest.mark.asyncio
-async def test_handle_reimport_studies_error(mock_make_request):
-    """Should return failure on error."""
-    mock_make_request.side_effect = Exception("Service unavailable")
-
-    result = await handle_reimport_studies(
-        {
-            "imaging_project_id": "img-123",
-            "encoded_query": "base64query",
-        }
-    )
-
-    assert result["success"] is False
-    assert "Service unavailable" in result["error"]
-
-
-@pytest.mark.asyncio
-async def test_handle_update_user_profile_error(mock_make_request):
-    """Should return failure on error."""
-    mock_make_request.side_effect = Exception("Service unavailable")
-
-    result = await handle_update_user_profile({"email": "user@test.com", "enabled": True})
-
-    assert result["success"] is False
-    assert "Service unavailable" in result["error"]
 
 
 # ---- Persist cohort handler (FLIP#857) ----

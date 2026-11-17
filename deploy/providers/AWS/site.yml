@@ -9,41 +9,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# site.yml — the hub's half of its AWS hosts: the Central Hub SSM bastion, and the hub's own trust
-# EC2 for as long as the hub root still creates one (FLIP#1438 PR 3 removes it).
-#
-# The trust host is provisioned by trust/deploy/ansible/aws-ec2-host.yml, imported below and shared
-# with trust/deploy/ansible/aws-ec2.yml, the play for a trust node from the standalone
-# trust/deploy/terraform/aws/ec2 root (FLIP#1528). Its plays compose the roles under
-# trust/deploy/ansible/roles, found via ./ansible.cfg. What stays here is the hub's: the inventory
-# built from this root's Terraform outputs, and the bastion.
+# site.yml — the hub's only AWS host: the Central Hub SSM bastion, found from this root's Terraform
+# outputs. A trust node on AWS is provisioned by trust/deploy/ansible/aws-ec2.yml, from the
+# standalone trust/deploy/terraform/aws/ec2 root (FLIP#1528, FLIP#1438).
 
 ---
 - name: create EC2 Ansible inventory hosts on-the-fly
   hosts: localhost
   gather_facts: false
-  # `always` so the inventory (add_host for flip-trust) is built even when a
-  # tag filter like `--tags flkit` selects only a later play.
+  # `always` so the inventory is built even when a tag filter like `--tags bastion`
+  # selects only a later play.
   tags: always
   tasks:
-    - name: ensure flip_aicentre_bucket variable is defined
-      assert:
-        that:
-          - flip_aicentre_bucket is defined
-          - flip_aicentre_bucket | length > 0
-        fail_msg: "The flip_aicentre_bucket variable must be defined to proceed."
-    - name: ensure fl_kit_date variable is defined
-      assert:
-        that:
-          - fl_kit_date is defined
-          - fl_kit_date | length > 0
-        fail_msg: "The fl_kit_date variable must be defined to proceed."
-    - name: ensure trust_data_version variable is defined
-      assert:
-        that:
-          - trust_data_version is defined
-          - trust_data_version | length > 0
-        fail_msg: "trust_data_version must be defined (contents of trust/.data_version, a tag on the trust-data dataset, e.g. 20260729)."
     - name: initialize Terraform backend for validation
       command: >
         terraform init
@@ -76,21 +53,6 @@
         ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') + '/.ssh/host-aws' }}"
         ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
         ansible_ec2_instance_id: "{{ terraform_output.outputs.Ec2InstanceId.value }}"
-    - name: add Trust EC2 instance to Ansible inventory
-      add_host:
-        # Use the SSH alias so Ansible tunnels through SSM Session Manager
-        name: flip-trust
-        groups:
-          - ec2
-          - trust_ec2
-        ansible_ssh_user: ubuntu
-        ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') + '/.ssh/host-aws' }}"
-        ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
-        ansible_ec2_instance_id: "{{ terraform_output.outputs.TrustEc2InstanceId.value }}"
-      # Hub-only deployment (deploy_trust_ec2=false): no cloud trust host exists —
-      # the output is empty, the trust_ec2 group stays empty, and every
-      # `hosts: trust_ec2` play below is skipped cleanly.
-      when: (terraform_output.outputs.TrustEc2InstanceId.value | default('')) | length > 0
 
 - name: update packages
   hosts: central_hub
@@ -126,6 +88,3 @@
         name: postgresql-client
         state: present
         update_cache: yes
-
-# The hub's trust EC2 (group trust_ec2, empty on a hub-only deploy).
-- import_playbook: ../../../trust/deploy/ansible/aws-ec2-host.yml

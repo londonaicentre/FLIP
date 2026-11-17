@@ -15,11 +15,22 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
+from flip_api.utils import http
 from flip_api.utils.http import http_delete, http_get, http_post
+
+# What every FL API call must carry: the key, in its configured header (fl-api requires it on every route but /health).
+KEY_HEADER = {"X-FL-API-Key": "test-fl-api-key"}
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def fl_api_key_settings():
+    settings = MagicMock(FL_API_KEY_HEADER="X-FL-API-Key", FL_API_KEY="test-fl-api-key")
+    with patch.object(http, "get_settings", return_value=settings):
+        yield
 
 
 @pytest.fixture
@@ -49,44 +60,60 @@ def error_response():
 
 
 # ---------------------------------------------------------------------------
-# http_get
+# All verbs: response decoding and error propagation
 # ---------------------------------------------------------------------------
 
+VERBS = [
+    pytest.param("get", http_get, "http://example.com/resource", id="get"),
+    pytest.param("post", http_post, "http://example.com/resource", id="post"),
+    pytest.param("delete", http_delete, "http://example.com/resource/1", id="delete"),
+]
 
-def test_http_get_returns_json(json_response):
-    with patch.object(httpx.Client, "get", return_value=json_response):
-        result = http_get("http://example.com/resource")
+
+@pytest.mark.parametrize(("method", "call", "url"), VERBS)
+def test_returns_json(method, call, url, json_response):
+    kwargs = {"data": {"key": "value"}} if method == "post" else {}
+    with patch.object(httpx.Client, method, return_value=json_response):
+        result = call(url, **kwargs)
     assert result == {"status": "ok"}
 
 
-def test_http_get_returns_text_when_no_json(text_response):
-    with patch.object(httpx.Client, "get", return_value=text_response):
-        result = http_get("http://example.com/resource")
+@pytest.mark.parametrize(("method", "call", "url"), VERBS)
+def test_returns_text_when_no_json(method, call, url, text_response):
+    with patch.object(httpx.Client, method, return_value=text_response):
+        result = call(url)
     assert result == "plain text"
+
+
+@pytest.mark.parametrize(("method", "call", "url"), VERBS)
+def test_raises_on_http_status_error(method, call, url, error_response):
+    with patch.object(httpx.Client, method, return_value=error_response):
+        with pytest.raises(httpx.HTTPStatusError):
+            call(url)
+
+
+@pytest.mark.parametrize(("method", "call", "url"), VERBS)
+def test_raises_on_request_error(method, call, url):
+    with patch.object(httpx.Client, method, side_effect=httpx.ConnectError("connection refused")):
+        with pytest.raises(httpx.RequestError):
+            call(url)
+
+
+# ---------------------------------------------------------------------------
+# http_get
+# ---------------------------------------------------------------------------
 
 
 def test_http_get_passes_request_id_header(json_response):
     with patch.object(httpx.Client, "get", return_value=json_response) as mock_get:
         http_get("http://example.com/resource", request_id="req-1")
-    mock_get.assert_called_once_with("http://example.com/resource", headers={"x-request-id": "req-1"})
+    mock_get.assert_called_once_with("http://example.com/resource", headers={**KEY_HEADER, "x-request-id": "req-1"})
 
 
-def test_http_get_no_request_id_sends_empty_headers(json_response):
+def test_http_get_no_request_id_sends_only_the_key(json_response):
     with patch.object(httpx.Client, "get", return_value=json_response) as mock_get:
         http_get("http://example.com/resource")
-    mock_get.assert_called_once_with("http://example.com/resource", headers={})
-
-
-def test_http_get_raises_on_http_status_error(error_response):
-    with patch.object(httpx.Client, "get", return_value=error_response):
-        with pytest.raises(httpx.HTTPStatusError):
-            http_get("http://example.com/resource")
-
-
-def test_http_get_raises_on_request_error():
-    with patch.object(httpx.Client, "get", side_effect=httpx.ConnectError("connection refused")):
-        with pytest.raises(httpx.RequestError):
-            http_get("http://example.com/resource")
+    mock_get.assert_called_once_with("http://example.com/resource", headers=KEY_HEADER)
 
 
 def test_http_get_passes_timeout_when_provided(json_response):
@@ -94,7 +121,7 @@ def test_http_get_passes_timeout_when_provided(json_response):
         http_get("http://example.com/resource", timeout=5.0)
     mock_get.assert_called_once_with(
         "http://example.com/resource",
-        headers={},
+        headers=KEY_HEADER,
         timeout=5.0,
     )
 
@@ -110,24 +137,12 @@ def test_http_get_omits_timeout_when_none(json_response):
 # ---------------------------------------------------------------------------
 
 
-def test_http_post_returns_json(json_response):
-    with patch.object(httpx.Client, "post", return_value=json_response):
-        result = http_post("http://example.com/resource", data={"key": "value"})
-    assert result == {"status": "ok"}
-
-
-def test_http_post_returns_text_when_no_json(text_response):
-    with patch.object(httpx.Client, "post", return_value=text_response):
-        result = http_post("http://example.com/resource")
-    assert result == "plain text"
-
-
 def test_http_post_passes_request_id_header(json_response):
     with patch.object(httpx.Client, "post", return_value=json_response) as mock_post:
         http_post("http://example.com/resource", request_id="req-2", data={"x": 1})
     mock_post.assert_called_once_with(
         "http://example.com/resource",
-        headers={"Content-Type": "application/json", "x-request-id": "req-2"},
+        headers={**KEY_HEADER, "Content-Type": "application/json", "x-request-id": "req-2"},
         json={"x": 1},
     )
 
@@ -145,7 +160,7 @@ def test_http_post_passes_timeout_when_provided(json_response):
         http_post("http://example.com/resource", data={}, timeout=5.0)
     mock_post.assert_called_once_with(
         "http://example.com/resource",
-        headers={"Content-Type": "application/json"},
+        headers={**KEY_HEADER, "Content-Type": "application/json"},
         json={},
         timeout=5.0,
     )
@@ -157,54 +172,18 @@ def test_http_post_omits_timeout_when_none(json_response):
     assert "timeout" not in mock_post.call_args.kwargs
 
 
-def test_http_post_raises_on_http_status_error(error_response):
-    with patch.object(httpx.Client, "post", return_value=error_response):
-        with pytest.raises(httpx.HTTPStatusError):
-            http_post("http://example.com/resource")
-
-
-def test_http_post_raises_on_request_error():
-    with patch.object(httpx.Client, "post", side_effect=httpx.ConnectError("connection refused")):
-        with pytest.raises(httpx.RequestError):
-            http_post("http://example.com/resource")
-
-
 # ---------------------------------------------------------------------------
 # http_delete
 # ---------------------------------------------------------------------------
 
 
-def test_http_delete_returns_json(json_response):
-    with patch.object(httpx.Client, "delete", return_value=json_response):
-        result = http_delete("http://example.com/resource/1")
-    assert result == {"status": "ok"}
-
-
-def test_http_delete_returns_text_when_no_json(text_response):
-    with patch.object(httpx.Client, "delete", return_value=text_response):
-        result = http_delete("http://example.com/resource/1")
-    assert result == "plain text"
-
-
 def test_http_delete_passes_request_id_header(json_response):
     with patch.object(httpx.Client, "delete", return_value=json_response) as mock_del:
         http_delete("http://example.com/resource/1", request_id="req-3")
-    mock_del.assert_called_once_with("http://example.com/resource/1", headers={"x-request-id": "req-3"})
+    mock_del.assert_called_once_with("http://example.com/resource/1", headers={**KEY_HEADER, "x-request-id": "req-3"})
 
 
-def test_http_delete_no_request_id_sends_empty_headers(json_response):
+def test_http_delete_no_request_id_sends_only_the_key(json_response):
     with patch.object(httpx.Client, "delete", return_value=json_response) as mock_del:
         http_delete("http://example.com/resource/1")
-    mock_del.assert_called_once_with("http://example.com/resource/1", headers={})
-
-
-def test_http_delete_raises_on_http_status_error(error_response):
-    with patch.object(httpx.Client, "delete", return_value=error_response):
-        with pytest.raises(httpx.HTTPStatusError):
-            http_delete("http://example.com/resource/1")
-
-
-def test_http_delete_raises_on_request_error():
-    with patch.object(httpx.Client, "delete", side_effect=httpx.ConnectError("connection refused")):
-        with pytest.raises(httpx.RequestError):
-            http_delete("http://example.com/resource/1")
+    mock_del.assert_called_once_with("http://example.com/resource/1", headers=KEY_HEADER)

@@ -14,7 +14,7 @@
 flwr>=1.40 serves the SuperLink's unauthenticated Control API and the ServerApp's Runtime API on
 the same port as the Fleet API. On a Flower estate the NLB therefore binds the fleet-proxy sidecar,
 the SuperLink maps no trust-facing port, and its 8000 is open to the fl-api's security group alone,
-never the VPC (the optional cloud trust EC2 lives in it). NVFLARE keeps every one of these as it
+never the whole VPC. NVFLARE keeps every one of these as it
 was; the count added to the VPC-wide rule carries a `moved` block so its state plans no change.
 
 Source-level assertions, like the rest of this suite: the CI plan runs against an NVFLARE estate,

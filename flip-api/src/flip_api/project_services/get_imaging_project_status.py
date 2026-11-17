@@ -114,9 +114,7 @@ async def get_imaging_project_status(
             detail="The imaging project was not found.",
         )
     # Get imaging project statuses
-    if not project_response.query.query:
-        project_response.query.query = ""
-    encoded_query = base64_url_encode(project_response.query.query)
+    encoded_query = base64_url_encode(project_response.query.query or "")
     imaging_project_statuses = get_imaging_project_statuses(imaging_projects, encoded_query, session)
     if not imaging_project_statuses:
         raise HTTPException(

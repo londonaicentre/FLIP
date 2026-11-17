@@ -187,12 +187,18 @@ export const deriveServices = (t: ITrustResponse, nowMs: number = Date.now()): I
     });
 };
 
+export const isFailing = (s: IDerivedService): s is IDerivedService & { status: FailingStatus } =>
+    s.status === "down" || s.status === "degraded";
+
+const trustApiDown = (services: IDerivedService[]): boolean =>
+    services.find(s => s.key === "trust-api")?.status === "down";
+
 // The design's pure state derivation over an already-derived row set: trust-api
 // down → Offline; any service down/degraded → Degraded; else Online. "unknown"
 // never degrades.
 export const stateFromServices = (services: IDerivedService[]): TrustState => {
-    if (services.find(s => s.key === "trust-api")?.status === "down") return "offline";
-    if (services.some(s => s.status === "down" || s.status === "degraded")) return "degraded";
+    if (trustApiDown(services)) return "offline";
+    if (services.some(isFailing)) return "degraded";
 
     return "online";
 };
@@ -200,14 +206,11 @@ export const stateFromServices = (services: IDerivedService[]): TrustState => {
 export const deriveTrustState = (t: ITrustResponse, nowMs: number = Date.now()): TrustState =>
     stateFromServices(deriveServices(t, nowMs));
 
-export const isFailing = (s: IDerivedService): s is IDerivedService & { status: FailingStatus } =>
-    s.status === "down" || s.status === "degraded";
-
 // Caption parts for a non-online row ("XNAT down · OMOP degraded"), down first —
 // except when trust-api is down, where the caption collapses to just that, since
 // nothing else can be known about a trust that isn't reporting.
 export const failingFromServices = (services: IDerivedService[]): IFailingService[] => {
-    if (services.find(s => s.key === "trust-api")?.status === "down") {
+    if (trustApiDown(services)) {
         return [
             {
                 text: "trust-api down",

@@ -18,7 +18,7 @@ from sqlmodel import Session, col, select
 
 from flip_api.auth.access_manager import authenticate_trust
 from flip_api.db.database import get_session
-from flip_api.db.models.main_models import Queries, QueryResult, QueryStats, Trust
+from flip_api.db.models.main_models import Projects, Queries, QueryResult, QueryStats, Trust, TrustTask
 from flip_api.domain.schemas.private import (
     AggregatedCohortStats,
     AggregatedFieldResult,
@@ -27,6 +27,7 @@ from flip_api.domain.schemas.private import (
     OmopCohortResults,
     TrustSpecificData,
 )
+from flip_api.domain.schemas.status import ProjectStatus, TaskStatus, TaskType
 from flip_api.utils.logger import logger
 
 router = APIRouter(tags=["private_services"])
@@ -62,6 +63,66 @@ def _redact_trust_error(raw: str | None) -> str:
     if candidate in _ALLOWED_TRUST_ERROR_CATEGORIES:
         return candidate
     return "internal_error"
+
+
+# Task states in which the trust has not been handed the query: PENDING means it has
+# not polled it yet, CANCELLED that the hub withdrew it. A result in either state did
+# not come from running the dispatched task.
+_UNDISPATCHED_TASK_STATUSES: frozenset[TaskStatus] = frozenset({TaskStatus.PENDING, TaskStatus.CANCELLED})
+
+_NOT_DISPATCHED_DETAIL = "Trust is not authorised to submit results for this cohort query"
+
+
+def _require_dispatched_query(db: Session, trust: Trust, query_id: UUID) -> None:
+    """Refuse a result for a query this trust was not dispatched, or whose project is frozen.
+
+    The ``COHORT_QUERY`` ``TrustTask`` row is the authoritative dispatch record: submit creates
+    one per trust with the query id, the poll flips it out of PENDING when the trust is handed
+    it, and the row is kept (CANCELLED, never deleted) so "was this trust ever asked?" stays
+    answerable. ``Queries.queried_trust_ids`` is a denormalised copy for the UI, overwritten on
+    every re-submit and carrying no dispatch state, so it is not the gate.
+
+    Args:
+        db (Session): Database session.
+        trust (Trust): The authenticated trust.
+        query_id (UUID): The query the result claims to answer.
+
+    Raises:
+        HTTPException: 403 when no dispatched task exists for ``(query_id, trust)`` — one detail
+            whether or not the query exists; 404 when a dispatched task exists but the query row
+            is gone; 403 when the query's project is no longer UNSTAGED (its cohort of record is
+            frozen at staging, the same rule the submit route applies).
+    """
+    task_statuses = db.exec(
+        select(TrustTask.status)
+        .where(TrustTask.task_type == TaskType.COHORT_QUERY)
+        .where(TrustTask.query_id == query_id)
+        .where(TrustTask.trust_id == trust.id)
+    ).all()
+    if not any(task_status not in _UNDISPATCHED_TASK_STATUSES for task_status in task_statuses):
+        logger.warning("Cohort results refused: trust %s was not dispatched query %s.", trust.id, query_id)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_NOT_DISPATCHED_DETAIL)
+
+    row = db.exec(
+        select(Queries.id, Projects.status)
+        .join(Projects, col(Queries.project_id) == col(Projects.id), isouter=True)
+        .where(Queries.id == query_id)
+    ).first()
+    if row is None:
+        logger.warning("Cohort results refused: query %s no longer exists (trust %s).", query_id, trust.id)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cohort query not found.")
+    _, project_status = row
+    if project_status is not None and project_status != ProjectStatus.UNSTAGED:
+        logger.warning(
+            "Cohort results refused: project of query %s is %s, not UNSTAGED (trust %s).",
+            query_id,
+            project_status,
+            trust.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Unable to accept cohort results as the project has been staged/approved",
+        )
 
 
 def _save_individual_result(db: Session, cohort_results: OmopCohortResults) -> None:
@@ -216,31 +277,23 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
                 if ptd.suppressed:
                     trust_suppressed.append(trust_id_str)
 
-        all_field_names: set[str] = set()
-        for trust_data_item in parsed_trust_data_list:
-            if trust_data_item.error:
-                continue
-            if trust_data_item.data:
-                for datum in trust_data_item.data:
-                    all_field_names.add(datum.name)
+        all_field_names = {d.name for ptd in parsed_trust_data_list if not ptd.error for d in ptd.data or []}
 
         logger.debug(f"Found field names for aggregation: {all_field_names} for query_id: {query_id}")
 
         aggregated_field_results: list[AggregatedFieldResult] = []
 
         if total_record_count > 0:  # Only aggregate if there's data
-            for field_name in sorted(list(all_field_names)):  # Sort for consistent output
+            for field_name in sorted(all_field_names):  # Sort for consistent output
                 current_field_trust_results: list[AggregatedTrustFieldResult] = []
                 for i, trust_specific_data_item in enumerate(parsed_trust_data_list):
                     if trust_specific_data_item.error:
                         continue
                     # Only include trusts that contributed to the record count for this field
                     if trust_specific_data_item.record_count > 0 and trust_specific_data_item.data:
-                        matching_omop_datum = None
-                        for omop_datum in trust_specific_data_item.data:
-                            if omop_datum.name == field_name:
-                                matching_omop_datum = omop_datum
-                                break
+                        matching_omop_datum = next(
+                            (d for d in trust_specific_data_item.data if d.name == field_name), None
+                        )
 
                         if matching_omop_datum:
                             current_field_trust_results.append(
@@ -339,6 +392,11 @@ def receive_cohort_results_endpoint(
             ),
         )
     logger.info(f"Received cohort results for query_id: {cohort_results.query_id}, trust_id: {cohort_results.trust_id}")
+
+    # query_id is caller-supplied: only a trust the hub dispatched this query to may write a
+    # result under it, and only while the project's cohort is still open. This also guarantees
+    # the Queries row the aggregation locks below exists.
+    _require_dispatched_query(db, authenticated_trust, cohort_results.query_id)
 
     try:
         # 1. Save or update the individual result from the trust

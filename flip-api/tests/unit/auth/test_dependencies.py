@@ -25,7 +25,7 @@ import pytest
 from fastapi import HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 
-from flip_api.auth.dependencies import verify_token, verify_token_no_mfa
+from flip_api.auth.dependencies import require_provisioned_user, verify_token, verify_token_no_mfa
 from flip_api.auth.identity import IdentityProvider
 from flip_api.auth.token_verifier import VerifiedIdentity
 
@@ -48,6 +48,14 @@ def idp() -> MagicMock:
     return MagicMock(spec=IdentityProvider)
 
 
+def _session(profile: bool = True, role: bool = False) -> MagicMock:
+    """A session whose UserProfile lookup and UserRole query answer as asked."""
+    session = MagicMock()
+    session.get.return_value = object() if profile else None
+    session.exec.return_value.first.return_value = object() if role else None
+    return session
+
+
 def _identity(user_sub: str) -> VerifiedIdentity:
     return VerifiedIdentity(sub=UUID(user_sub), username="user@example.com")
 
@@ -56,7 +64,7 @@ def test_verify_token_allows_mfa_enrolled_caller(credentials, user_sub, idp):
     """Happy path: JWT is valid and MFA is active."""
     idp.is_mfa_enabled.return_value = True
     with patch(PATCH_VERIFY, return_value=_identity(user_sub)):
-        result = verify_token(credentials, idp=idp)
+        result = verify_token(credentials, idp=idp, session=_session())
 
     assert str(result) == user_sub
     # The gate hands the provider the principal name from the token, never the sub.
@@ -68,7 +76,7 @@ def test_verify_token_rejects_caller_without_mfa(credentials, user_sub, idp):
     idp.is_mfa_enabled.return_value = False
     with patch(PATCH_VERIFY, return_value=_identity(user_sub)):
         with pytest.raises(HTTPException) as exc_info:
-            verify_token(credentials, idp=idp)
+            verify_token(credentials, idp=idp, session=_session())
 
     assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
     assert "MFA enrolment required" in exc_info.value.detail
@@ -79,7 +87,7 @@ def test_verify_token_propagates_verification_failures(credentials, idp):
     rejected = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not validate credentials")
     with patch(PATCH_VERIFY, side_effect=rejected):
         with pytest.raises(HTTPException) as exc_info:
-            verify_token(credentials, idp=idp)
+            verify_token(credentials, idp=idp, session=_session())
 
     assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
     idp.is_mfa_enabled.assert_not_called()
@@ -88,7 +96,7 @@ def test_verify_token_propagates_verification_failures(credentials, idp):
 def test_verify_token_no_mfa_skips_gate(credentials, user_sub):
     """The bootstrap variant never consults a provider — it's for pre-enrolment callers."""
     with patch(PATCH_VERIFY, return_value=_identity(user_sub)):
-        result = verify_token_no_mfa(credentials)
+        result = verify_token_no_mfa(credentials, session=_session())
 
     assert str(result) == user_sub
 
@@ -100,7 +108,7 @@ def test_verify_token_skips_mfa_gate_when_enforce_mfa_is_false(credentials, user
     with patch(PATCH_VERIFY, return_value=_identity(user_sub)), patch(PATCH_SETTINGS) as mock_get_settings:
         mock_get_settings.return_value.ENFORCE_MFA = False
 
-        result = verify_token(credentials, idp=idp)
+        result = verify_token(credentials, idp=idp, session=_session())
 
     assert str(result) == user_sub
     # Crucial: skipping the gate also skips the provider round-trip.
@@ -116,7 +124,33 @@ def test_verify_token_enforces_gate_when_enforce_mfa_is_true(credentials, user_s
         mock_get_settings.return_value.ENFORCE_MFA = True
 
         with pytest.raises(HTTPException) as exc_info:
-            verify_token(credentials, idp=idp)
+            verify_token(credentials, idp=idp, session=_session())
 
     assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
     idp.is_mfa_enabled.assert_called_once()
+
+
+def test_verify_token_refuses_a_subject_with_no_profile_and_no_role(credentials, user_sub, idp):
+    """A token the identity provider signed for an account the hub never invited is refused."""
+    idp.is_mfa_enabled.return_value = True
+    with patch(PATCH_VERIFY, return_value=_identity(user_sub)):
+        with pytest.raises(HTTPException) as exc:
+            verify_token(credentials, idp=idp, session=_session(profile=False, role=False))
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+    idp.is_mfa_enabled.assert_not_called()
+
+
+def test_verify_token_no_mfa_refuses_an_unprovisioned_subject(credentials, user_sub):
+    """The MFA-bootstrap dependency applies the same provisioning gate."""
+    with patch(PATCH_VERIFY, return_value=_identity(user_sub)):
+        with pytest.raises(HTTPException) as exc:
+            verify_token_no_mfa(credentials, session=_session(profile=False, role=False))
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+def test_provisioned_user_check_accepts_profile_or_role():
+    """Either row proves the admin provisioned the account; a user whose roles were all revoked stays known."""
+    require_provisioned_user(_session(profile=True, role=False), uuid.uuid4())
+    require_provisioned_user(_session(profile=False, role=True), uuid.uuid4())
+    with pytest.raises(HTTPException):
+        require_provisioned_user(_session(profile=False, role=False), uuid.uuid4())

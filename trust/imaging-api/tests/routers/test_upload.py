@@ -12,6 +12,7 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 import requests
 from cryptography.exceptions import InvalidTag
 
@@ -31,6 +32,20 @@ _SCAN1 = {"meta": {"xsi:type": "xnat:crScanData"}, "data_fields": {"ID": "SCAN1"
 _EXPERIMENT_WITH_SCAN1 = {
     "items": [{"data_fields": {"subject_ID": "SUBJ1"}, "children": [{"field": "scans/scan", "items": [_SCAN1]}]}]
 }
+
+
+@pytest.fixture
+def staged_upload(tmp_path):
+    """scan.nii staged in net1's upload dir, with the project id decrypting and resolving to XNAT project P."""
+    upload_dir = tmp_path / "net1" / "upload"
+    upload_dir.mkdir(parents=True)
+    (upload_dir / "scan.nii").write_bytes(b"nifti-data")
+    with (
+        patch("imaging_api.routers.upload.decrypt", return_value="decrypted-project-id"),
+        patch("imaging_api.services.upload.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)),
+        patch("imaging_api.services.upload.get_project_from_central_hub_project_id", return_value=MagicMock(ID="P")),
+    ):
+        yield
 
 
 def test_upload_data_rejects_a_project_id_that_fails_authentication(client):
@@ -161,17 +176,11 @@ def test_upload_data_server_error(client):
     assert "Failed to upload files" in response.json()["detail"]
 
 
-def test_upload_data_rejected_xnat_put_is_an_error_not_a_url(client, tmp_path):
+def test_upload_data_rejected_xnat_put_is_an_error_not_a_url(client, staged_upload):
     # End to end through the real service: a file PUT that XNAT rejects must surface as an error,
     # never as a URL in the success list (#1387).
-    upload_dir = tmp_path / "net1" / "upload"
-    upload_dir.mkdir(parents=True)
-    (upload_dir / "scan.nii").write_bytes(b"nifti-data")
 
     with (
-        patch("imaging_api.routers.upload.decrypt", return_value="decrypted-project-id"),
-        patch("imaging_api.services.upload.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)),
-        patch("imaging_api.services.upload.get_project_from_central_hub_project_id", return_value=MagicMock(ID="P")),
         # SCAN1 already exists, so the upload sends no scan PUT and requests.put sees only the file.
         patch("imaging_api.services.upload.get_experiment", return_value=_EXPERIMENT_WITH_SCAN1),
         patch(
@@ -185,20 +194,14 @@ def test_upload_data_rejected_xnat_put_is_an_error_not_a_url(client, tmp_path):
     assert response.json()["detail"].startswith("Failed to upload files: Error uploading file")
 
 
-def test_upload_data_file_xnat_kept_is_an_error_and_leaves_the_download_cache(client, tmp_path):
+def test_upload_data_file_xnat_kept_is_an_error_and_leaves_the_download_cache(client, staged_upload):
     # A file XNAT kept is an error, and leaves the download cache alone since nothing in XNAT changed.
-    upload_dir = tmp_path / "net1" / "upload"
-    upload_dir.mkdir(parents=True)
-    (upload_dir / "scan.nii").write_bytes(b"nifti-data")
     kept = requests.Response()
     kept.status_code = 200
     kept._content = b'{"duplicates": ["scan.nii"]}'
     kept.headers["Content-Type"] = "text/html"
 
     with (
-        patch("imaging_api.routers.upload.decrypt", return_value="decrypted-project-id"),
-        patch("imaging_api.services.upload.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)),
-        patch("imaging_api.services.upload.get_project_from_central_hub_project_id", return_value=MagicMock(ID="P")),
         # SCAN1 already exists, so the upload sends no scan PUT and requests.put sees only the file.
         patch("imaging_api.services.upload.get_experiment", return_value=_EXPERIMENT_WITH_SCAN1),
         patch("imaging_api.services.upload.requests.put", return_value=kept),
@@ -211,17 +214,11 @@ def test_upload_data_file_xnat_kept_is_an_error_and_leaves_the_download_cache(cl
     mock_invalidate.assert_not_called()
 
 
-def test_upload_into_a_new_scan_of_a_session_without_scans_is_a_server_error(client, tmp_path):
+def test_upload_into_a_new_scan_of_a_session_without_scans_is_a_server_error(client, staged_upload):
     # With no scan to take the new scan's type from, the fault is XNAT's state, not the request.
-    upload_dir = tmp_path / "net1" / "upload"
-    upload_dir.mkdir(parents=True)
-    (upload_dir / "scan.nii").write_bytes(b"nifti-data")
     empty_session = {"items": [{"data_fields": {"subject_ID": "SUBJ1"}, "children": []}]}
 
     with (
-        patch("imaging_api.routers.upload.decrypt", return_value="decrypted-project-id"),
-        patch("imaging_api.services.upload.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)),
-        patch("imaging_api.services.upload.get_project_from_central_hub_project_id", return_value=MagicMock(ID="P")),
         patch("imaging_api.services.upload.get_experiment", return_value=empty_session),
         patch("imaging_api.services.upload.requests.put") as mock_put,
     ):

@@ -28,12 +28,23 @@ from fastapi import HTTPException, status
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import NullPool
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from flip_api.auth.access_manager import authenticate_trust
-from flip_api.db.models.main_models import Queries, QueryResult, QueryStats, Trust
+from flip_api.db.models.main_models import Projects, Queries, QueryResult, QueryStats, Trust, TrustTask
+from flip_api.domain.schemas.status import ProjectStatus, TaskStatus, TaskType
 from flip_api.main import app
 from flip_api.private_services.receive_cohort_results import _aggregate_and_save_results
+
+
+def _dispatch(session: Session, trust: Trust, query_row: Queries, task_status: TaskStatus) -> None:
+    """The ``cohort_query`` task submit creates for ``(query, trust)``, in the state the poll leaves it."""
+    session.add(
+        TrustTask(
+            trust_id=trust.id, task_type=TaskType.COHORT_QUERY, query_id=query_row.id, payload="{}", status=task_status
+        )
+    )
+    session.commit()
 
 
 @pytest.fixture
@@ -82,17 +93,30 @@ class TestReceiveCohortResultsEndpoint:
         finally:
             app.dependency_overrides.pop(authenticate_trust, None)
 
-    def test_save_then_aggregate_round_trip(self, client, session, sample_cohort_dict: dict):
-        """Full happy path: the payload's trust_id matches the authenticated trust."""
+    @staticmethod
+    def _trust_and_query(session, project: Projects | None = None) -> tuple[Trust, Queries]:
         trust = Trust(name="Round Trip Trust")
         session.add(trust)
+        if project is not None:
+            session.add(project)
         session.commit()
         session.refresh(trust)
 
-        query_row = Queries(name="cohort-endpoint-roundtrip", query="SELECT 1", created_by=uuid.uuid4())
+        query_row = Queries(
+            name="cohort-endpoint-roundtrip",
+            query="SELECT 1",
+            created_by=uuid.uuid4(),
+            project_id=project.id if project is not None else None,
+        )
         session.add(query_row)
         session.commit()
         session.refresh(query_row)
+        return trust, query_row
+
+    def test_save_then_aggregate_round_trip(self, client, session, sample_cohort_dict: dict):
+        """Full happy path: the authenticated trust was dispatched the query and is mid-task."""
+        trust, query_row = self._trust_and_query(session)
+        _dispatch(session, trust, query_row, TaskStatus.IN_PROGRESS)
 
         app.dependency_overrides[authenticate_trust] = lambda: trust
         try:
@@ -104,6 +128,54 @@ class TestReceiveCohortResultsEndpoint:
             assert response.json() == {"message": "Cohort results processed successfully"}
         finally:
             app.dependency_overrides.pop(authenticate_trust, None)
+
+        assert session.exec(select(QueryResult).where(QueryResult.query_id == query_row.id)).one().trust_id == trust.id
+        assert session.exec(select(QueryStats).where(QueryStats.query_id == query_row.id)).one() is not None
+
+    @pytest.mark.parametrize("task_status", [None, TaskStatus.PENDING, TaskStatus.CANCELLED])
+    def test_result_for_a_query_not_dispatched_to_the_trust_writes_nothing(
+        self, client, session, sample_cohort_dict: dict, task_status
+    ):
+        """No task, or one the trust was never handed (PENDING) or that was withdrawn (CANCELLED) ⇒ 403,
+        and neither a QueryResult nor a QueryStats row appears."""
+        trust, query_row = self._trust_and_query(session)
+        if task_status is not None:
+            _dispatch(session, trust, query_row, task_status)
+
+        app.dependency_overrides[authenticate_trust] = lambda: trust
+        try:
+            sample_cohort_dict["trust_id"] = str(trust.id)
+            sample_cohort_dict["query_id"] = str(query_row.id)
+
+            response = client.post("/api/cohort/results", json=sample_cohort_dict)
+            assert response.status_code == status.HTTP_403_FORBIDDEN, response.text
+        finally:
+            app.dependency_overrides.pop(authenticate_trust, None)
+
+        assert session.exec(select(QueryResult)).all() == []
+        assert session.exec(select(QueryStats)).all() == []
+
+    @pytest.mark.parametrize("project_status", [ProjectStatus.STAGED, ProjectStatus.APPROVED])
+    def test_result_for_a_staged_or_approved_project_writes_nothing(
+        self, client, session, sample_cohort_dict: dict, project_status
+    ):
+        """A dispatched trust's late result must not change the cohort of record once the project is frozen."""
+        project = Projects(name="frozen", description="frozen", owner_id=uuid.uuid4(), status=project_status)
+        trust, query_row = self._trust_and_query(session, project)
+        _dispatch(session, trust, query_row, TaskStatus.IN_PROGRESS)
+
+        app.dependency_overrides[authenticate_trust] = lambda: trust
+        try:
+            sample_cohort_dict["trust_id"] = str(trust.id)
+            sample_cohort_dict["query_id"] = str(query_row.id)
+
+            response = client.post("/api/cohort/results", json=sample_cohort_dict)
+            assert response.status_code == status.HTTP_403_FORBIDDEN, response.text
+            assert "staged/approved" in response.json()["detail"]
+        finally:
+            app.dependency_overrides.pop(authenticate_trust, None)
+
+        assert session.exec(select(QueryResult)).all() == []
 
 
 class TestAggregateConcurrency:

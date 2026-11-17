@@ -10,13 +10,14 @@
 # limitations under the License.
 #
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.exceptions import RequestValidationError
 from nvflare.fuel.flare_api.api_spec import JobNotFound
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from fl_api.routers import application, health, jobs, system
 from fl_api.startup.session_manager import create_fl_session
+from fl_api.utils.auth import require_fl_api_key, warn_if_fl_api_key_missing
 from fl_api.utils.exception_handlers import (
     file_not_found_handler,
     http_exception_handler,
@@ -50,11 +51,11 @@ app.add_exception_handler(ValueError, value_error_handler)  # type: ignore[arg-t
 # Catch-all MUST be Exception (not 500)
 app.add_exception_handler(Exception, server_error_handler)
 
-# Include routers
+# Include routers. Every router but health requires the hub's FL API key (fl_api/utils/auth.py).
 app.include_router(health.router, tags=["Health"])
-app.include_router(application.router, tags=["Application"])
-app.include_router(jobs.router, tags=["Jobs"])
-app.include_router(system.router, tags=["System"])
+app.include_router(application.router, tags=["Application"], dependencies=[Depends(require_fl_api_key)])
+app.include_router(jobs.router, tags=["Jobs"], dependencies=[Depends(require_fl_api_key)])
+app.include_router(system.router, tags=["System"], dependencies=[Depends(require_fl_api_key)])
 
 
 # Startup event to initialize FL session
@@ -64,5 +65,6 @@ def on_startup() -> None:
     logger.info("Running FL startup initialization...")
     # Report an empty bundle-fetch allow-list where an operator looks first: the boot log (FLIP#905).
     warn_if_bundle_url_allow_list_empty()
+    warn_if_fl_api_key_missing()
     app.state.session = create_fl_session()
     logger.info("FL session initialized successfully.")

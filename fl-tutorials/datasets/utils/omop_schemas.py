@@ -27,13 +27,15 @@ Notes:
     - Missing columns are NOT added, because there is not safe default for nullable integer columns.
     - Schemas are cached alongside this module as committed YAML (see `SCHEMA_DIR`); importing this
       module never needs the network. Regenerate the cache with `python omop_schemas.py --regenerate`.
-    - If run as a script, debug messages will be printed.
+    - Set the module-level `debug = True` before `--regenerate` to print parsing diagnostics (including
+      unsupported-SQL-type fallbacks to str); it has no effect on the schemas produced.
 """
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 import pandera.pandas as pa
 import requests
@@ -67,7 +69,7 @@ ALTER TABLE @cdmDatabaseSchema.PERSON ADD CONSTRAINT xpk_PERSON PRIMARY KEY (per
 debug = False
 
 
-def _debug_print(*args, **kwargs):
+def _debug_print(*args: Any, **kwargs: Any) -> None:
     """Print debug messages if debugging is enabled."""
     if debug:
         print(*args, **kwargs)
@@ -101,7 +103,7 @@ def _load_primary_keys(sql_text: str) -> dict[str, set[str]]:
     return pk_map
 
 
-def _sql_type_to_pandera(sql_type: str):
+def _sql_type_to_pandera(sql_type: str) -> type | str:
     """Map PostgreSQL types used in OMOP to Pandera / pandas dtypes."""
     sql_type = sql_type.lower()
     if sql_type.startswith(("integer", "int4", "int", "bigint", "int8", "smallint")):

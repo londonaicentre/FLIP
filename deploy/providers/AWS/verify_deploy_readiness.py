@@ -27,6 +27,7 @@ Exit Codes:
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -117,8 +118,7 @@ def check_makefile_dependency_absent(target: str, dependency: str, description: 
 
 def check_command_available(command: str, min_version: str | None = None) -> bool:
     """Check if a command is available in PATH."""
-    result = subprocess.run(["which", command], capture_output=True, text=True, timeout=5)
-    if result.returncode != 0:
+    if shutil.which(command) is None:
         return False
 
     if min_version:
@@ -180,7 +180,6 @@ def main() -> int:
     # Check Terraform files
     print("🏗️  TERRAFORM FILES")
     all_passed &= check_file_exists("main.tf", "Central Hub Terraform")
-    all_passed &= check_file_exists("modules/trust_ec2/main.tf", "Trust EC2 Terraform")
     print()
 
     # Check templates
@@ -199,7 +198,6 @@ def main() -> int:
     all_passed &= check_makefile_target("check-ssm-ready", "SSM prerequisites check")
     all_passed &= check_makefile_target("ansible-init", "Ansible provisioning")
     all_passed &= check_makefile_target("deploy-centralhub", "Central Hub deployment")
-    all_passed &= check_makefile_target("deploy-trust", "Trust deployment")
     all_passed &= check_makefile_target("full-deploy", "Full deployment")
     print()
 
@@ -216,25 +214,15 @@ def main() -> int:
         "deploy-centralhub does not depend on the SSM bastion",
     )
     all_passed &= check_makefile_dependency(
-        "deploy-trust",
-        "ssh-config",
-        "deploy-trust depends on ssh-config",
-    )
-    all_passed &= check_makefile_dependency(
         "full-deploy",
         "deploy-centralhub",
         "full-deploy depends on deploy-centralhub",
-    )
-    all_passed &= check_makefile_dependency(
-        "full-deploy",
-        "deploy-trust",
-        "full-deploy depends on deploy-trust",
     )
     print()
 
     # Check unit tests
     print("🧪 UNIT TESTS")
-    uv_available, _ = run_command(["which", "uv"])
+    uv_available = shutil.which("uv") is not None
     if not uv_available:
         print("   ⚠️  Unit tests skipped (uv not installed)")
     else:

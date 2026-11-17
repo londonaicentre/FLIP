@@ -61,6 +61,10 @@ class NoFreeKitSlotError(TrustRegistrationError):
     """The FL kit slot pool is exhausted."""
 
 
+class KitSlotSourceUnreadableError(TrustRegistrationError):
+    """The slot source could not be read, so whether a slot is free is unknown."""
+
+
 @dataclass(frozen=True)
 class RegisteredTrust:
     """Result of a successful registration — the only place plaintext keys exist.
@@ -76,21 +80,22 @@ class RegisteredTrust:
     trust_internal_service_key: str
 
 
-def _claim_free_slot(session: Session) -> FLKitSlot | None:
-    """Lock and return the lowest-numbered unassigned FL kit slot, if any.
+def _claim_free_slot(session: Session, slot_names: list[str]) -> FLKitSlot | None:
+    """Lock and return the lowest-numbered unassigned FL kit slot among ``slot_names``, if any.
 
     SKIP LOCKED so two concurrent registrations never collide on the same row.
 
     Args:
         session (Session): The registration transaction's SQLModel session.
+        slot_names (list[str]): The slots the slot source names now.
 
     Returns:
-        FLKitSlot | None: The claimed (row-locked) slot, or ``None`` when the pool
-        has no unassigned rows.
+        FLKitSlot | None: The claimed (row-locked) slot, or ``None`` when none of
+        ``slot_names`` is unassigned.
     """
     return session.exec(
         select(FLKitSlot)
-        .where(col(FLKitSlot.assigned_to_trust_id).is_(None))
+        .where(col(FLKitSlot.assigned_to_trust_id).is_(None), col(FLKitSlot.slot_name).in_(slot_names))
         .order_by(col(FLKitSlot.slot_number).asc())
         .limit(1)
         .with_for_update(skip_locked=True)
@@ -127,8 +132,8 @@ def register_trust(
         EmptyTrustNameError: ``name.strip()`` is empty.
         EmptyTrustCodeError: ``code`` is missing or empty after strip.
         DuplicateTrustError: A trust with this name already exists.
-        NoFreeKitSlotError: The ``fl_kit_slot`` pool has no unassigned rows, even
-            after the on-miss reconcile from the configured slot names.
+        NoFreeKitSlotError: None of the slots the slot source names is unassigned.
+        KitSlotSourceUnreadableError: The slot source could not be read.
     """
     name = name.strip()
     if not name:
@@ -156,35 +161,38 @@ def register_trust(
         created_at=datetime.now(timezone.utc),
     )
 
-    # Claim the next free FL kit slot in the same transaction as the insert.
+    # The pool is what the slot source names right now (resolve_fl_kit_slot_names): a
+    # slot added since boot gets its row here, and one withdrawn since is not claimed.
+    slot_names = resolve_fl_kit_slot_names()
+    if slot_names is None:
+        # Not "no slots": free ones may exist, so do not send the admin off to mint kits.
+        raise KitSlotSourceUnreadableError(
+            "The FL kit-slot source could not be read. Try again; if it keeps failing, check the flip-api logs."
+        )
+    try:
+        with session.begin_nested():
+            inserted = insert_missing_slots(session, slot_names)
+        if inserted:
+            logger.info(f"FL kit slot pool grew at registration: added {inserted}")
+    except IntegrityError as e:
+        # A concurrent registration inserted the same slot rows between our
+        # existence check and the savepoint flush (slot_name is the PK). Fine —
+        # the rows exist either way; the claim below sees them. Only the
+        # new FLKitSlot rows are pending inside this savepoint (the trust insert
+        # comes later), so nothing else can be the flush that raised here.
+        logger.info(f"Concurrent registration added the FL kit slot rows first ({e.orig!r})")
+    # Claim the next free slot in the same transaction as the trust insert.
     # SKIP LOCKED so two concurrent registrations don't collide on the same row.
-    slot = _claim_free_slot(session)
-    if slot is None:
-        # Pool exhausted — but the configured slot list may have grown since boot
-        # (in production the /flip/fl_kit_slot_names SSM parameter is the live source;
-        # see resolve_fl_kit_slot_names). Reconcile additively and retry the claim once.
-        try:
-            with session.begin_nested():
-                inserted = insert_missing_slots(session, resolve_fl_kit_slot_names())
-            if inserted:
-                logger.info(f"FL kit slot pool reconciled at registration: added {inserted}")
-        except IntegrityError as e:
-            # A concurrent registration inserted the same slot rows between our
-            # existence check and the savepoint flush (slot_name is the PK). Fine —
-            # the rows exist either way; the retried claim below sees them. Only the
-            # new FLKitSlot rows are pending inside this savepoint (the trust insert
-            # comes later), so nothing else can be the flush that raised here.
-            logger.info(f"Concurrent registration reconciled the FL kit slot pool first ({e.orig!r}); retrying claim")
-        slot = _claim_free_slot(session)
+    slot = _claim_free_slot(session, slot_names)
     if slot is None:
         # The raised message is user-facing (UI snackbar / CLI); the operator
         # remediation lives here in the logs.
         logger.error(
-            "FL kit slot pool exhausted even after reconcile. Development: add slots to FL_KIT_SLOT_NAMES and "
-            "restart flip-api. Stag/prod: append the new slot names to FL_KIT_SLOT_NAMES in the env file and run "
-            "`make -C deploy/providers/AWS apply-fl-kit-slots HUB=<stag|prod>` (or grow the pool end-to-end with "
-            "`make -C deploy/providers/AWS add-fl-kits N=<n> HUB=<stag|prod>`). If slots were already applied and "
-            "still don't appear, check earlier logs for /flip/fl_kit_slot_names SSM read errors."
+            "No free FL kit slot among those the slot source names. Development: add slots to FL_KIT_SLOT_NAMES and "
+            "restart flip-api. Stag/prod NVFLARE: `make -C deploy/providers/AWS add-fl-kits N=<n> HUB=<stag|prod>`. "
+            "Stag/prod Flower: provision SuperNode keys for the new slots, add them to FL_KIT_SLOT_NAMES and run a "
+            "Terraform apply (it replaces the SuperLink, so quiesce first). If kits already exist and still don't "
+            "appear, check earlier logs for a kit left out as incomplete."
         )
         raise NoFreeKitSlotError("No FL kit slots available. Pre-provision more FL kits and try again.")
 
@@ -210,6 +218,68 @@ def register_trust(
     # Bust the in-process auth cache so the new trust authenticates immediately
     # in this worker. Cross-process eviction is bounded by the cache TTL.
     trust_key_cache.invalidate()
+
+    return RegisteredTrust(
+        trust=trust,
+        fl_kit_slot=slot,
+        trust_api_key=api_key,
+        trust_internal_service_key=internal_key,
+    )
+
+
+def rotate_trust_keys(session: Session, *, name: str) -> RegisteredTrust:
+    """Reissue a trust's api and internal-service keys in place (FLIP#1569).
+
+    The trust row, its id, its code and its FL kit slot assignment are unchanged. Only
+    ``api_key_hash`` moves, in one transaction with a ROTATED audit row, and the new plaintext
+    keys are returned once for the operator to write into the trust's kit file. The hub refuses
+    the old key from the moment this commits, so the trust is offline until its containers are
+    recreated from the new kit.
+
+    Args:
+        session (Session): SQLModel session; the function commits before returning.
+        name (str): Trust display name, as ``register_one_trust`` looks it up.
+
+    Returns:
+        RegisteredTrust: The trust, its FL kit slot, and the new plaintext keys.
+
+    Raises:
+        TrustRegistrationError: No trust of that name is registered, or it has no FL kit slot.
+    """
+    trust = session.exec(select(Trust).where(Trust.name == name.strip())).first()
+    if trust is None:
+        raise TrustRegistrationError(f"No trust named {name!r} is registered.")
+
+    slot = session.exec(select(FLKitSlot).where(FLKitSlot.assigned_to_trust_id == trust.id)).first()
+    if slot is None:
+        raise TrustRegistrationError(
+            f"Trust {trust.name!r} has no FL kit slot assigned, so its kit cannot be reissued. "
+            "Reclaiming a slot is a separate operation; do not rotate the api key without one."
+        )
+
+    api_key, api_key_hash = generate_trust_key()
+    # Per-trust and trust-side only: the hub never validates this key, so its hash is discarded.
+    internal_key, _ = generate_trust_key()
+
+    trust.api_key_hash = api_key_hash
+
+    # Same transaction as the hash change: a rolled-back rotation leaves no audit claim behind.
+    audit_trust_action(
+        trust_id=trust.id,
+        trust_name=trust.name,
+        action=TrustAuditAction.ROTATED,
+        user_id=None,
+        session=session,
+    )
+
+    session.add(trust)
+    session.commit()
+    session.refresh(trust)
+
+    # Drop this process's entry; serving workers re-check the live hash on every cache hit.
+    trust_key_cache.invalidate()
+
+    logger.info("Rotated api and internal-service keys for trust %r (id=%s).", trust.name, trust.id)
 
     return RegisteredTrust(
         trust=trust,

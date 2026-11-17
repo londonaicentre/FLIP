@@ -12,10 +12,15 @@
 -->
 
 <template>
-    <DemoBanner v-if="isDemoBuild" />
-    <AiRouteProgress />
-    <router-view />
-    <AiSnackbar />
+    <!-- One column at the viewport's height: the layouts fill what the demo banner leaves. -->
+    <div class="flex flex-col h-screen supports-[height:100dvh]:h-dvh">
+        <AiRouteProgress />
+        <DemoBanner v-if="isDemoBuild" class="shrink-0" />
+        <div class="relative flex-1 min-h-0">
+            <router-view />
+        </div>
+        <AiSnackbar />
+    </div>
 </template>
 
 <script lang="ts" setup>
@@ -38,9 +43,9 @@ import { useTrustStore } from "./store/trusts";
 import { replayPostSignOutNotice } from "./utils/session-teardown";
 
 // The literal, not the cross-module `IS_DEMO` — same tree-shaking contract as
-// src/main.ts. DemoBanner statically imports mocks/demo/ark-plus-register.ts
-// for DEMO_CAPTURE_DATE, so a gate rolldown cannot fold keeps the demo identity
-// constants in the public production bundle. Enforced by
+// src/main.ts. DemoBanner statically imports mocks/demo/capture-window.ts for
+// the capture dates and project count, so a gate rolldown cannot fold keeps
+// those demo constants in the public production bundle. Enforced by
 // scripts/assert-no-demo-artefacts.mjs.
 const isDemoBuild = import.meta.env.VITE_DEMO === "true";
 

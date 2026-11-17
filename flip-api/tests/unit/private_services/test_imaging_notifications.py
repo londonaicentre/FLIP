@@ -42,6 +42,19 @@ def _make_task(created_users, added_users=None, project_id=PROJECT_ID):
     return task
 
 
+TWO_USERS = [
+    {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
+    {"username": "user2", "encrypted_setup_path": "enc2", "email": "user2@test.com"},
+]
+
+
+def _db(*firsts):
+    """A mock session whose successive ``exec()`` calls return results whose ``.first()`` yields ``firsts``."""
+    db = MagicMock()
+    db.exec.side_effect = [MagicMock(first=MagicMock(return_value=v)) for v in firsts]
+    return db
+
+
 def _mock_trust():
     trust = MagicMock()
     trust.name = "Trust_1"
@@ -76,19 +89,9 @@ def mock_insert_status():
 
 def test_sends_email_to_each_created_user(mock_send_email, mock_decrypt, mock_insert_status):
     """Should send one SES email per created user with correct template data."""
-    users = [
-        {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
-        {"username": "user2", "encrypted_setup_path": "enc2", "email": "user2@test.com"},
-    ]
-    task = _make_task(users)
+    task = _make_task(TWO_USERS)
 
-    mock_db = MagicMock()
-    # First exec: query lookup; second: trust lookup
-    query_result = MagicMock()
-    query_result.first.return_value = _mock_query()
-    trust_result = MagicMock()
-    trust_result.first.return_value = _mock_trust()
-    mock_db.exec.side_effect = [query_result, trust_result]
+    mock_db = _db(_mock_query(), _mock_trust())  # query lookup, then trust lookup
 
     handle_imaging_task_completed(task, mock_db)
 
@@ -118,14 +121,8 @@ def test_inserts_xnat_project_status(mock_send_email, mock_decrypt, mock_insert_
     task = _make_task(users)
 
     mock_query = _mock_query()
-    mock_db = MagicMock()
-    idempotency_result = MagicMock()
-    idempotency_result.first.return_value = None  # No existing status row
-    query_result = MagicMock()
-    query_result.first.return_value = mock_query
-    trust_result = MagicMock()
-    trust_result.first.return_value = _mock_trust()
-    mock_db.exec.side_effect = [idempotency_result, query_result, trust_result]
+    # No existing status row, then the query lookup, then the trust.
+    mock_db = _db(None, mock_query, _mock_trust())
 
     handle_imaging_task_completed(task, mock_db)
 
@@ -146,14 +143,8 @@ def test_inserts_status_with_no_query(mock_send_email, mock_decrypt, mock_insert
     ]
     task = _make_task(users)
 
-    mock_db = MagicMock()
-    idempotency_result = MagicMock()
-    idempotency_result.first.return_value = None  # No existing status row
-    query_result = MagicMock()
-    query_result.first.return_value = None  # No query exists
-    trust_result = MagicMock()
-    trust_result.first.return_value = _mock_trust()
-    mock_db.exec.side_effect = [idempotency_result, query_result, trust_result]
+    # No existing status row, then the query lookup (no query exists), then the trust.
+    mock_db = _db(None, None, _mock_trust())
 
     handle_imaging_task_completed(task, mock_db)
 
@@ -164,48 +155,12 @@ def test_inserts_status_with_no_query(mock_send_email, mock_decrypt, mock_insert
 def test_no_emails_when_no_users_at_all(mock_send_email, mock_decrypt, mock_insert_status):
     """Should skip email sending when no created or added users, but still insert status."""
     task = _make_task(created_users=[], added_users=[])
-    mock_db = MagicMock()
-    idempotency_result = MagicMock()
-    idempotency_result.first.return_value = None  # No existing status row
-    query_result = MagicMock()
-    query_result.first.return_value = _mock_query()
-    mock_db.exec.side_effect = [idempotency_result, query_result]
+    mock_db = _db(None, _mock_query())  # no existing status row, then the query lookup
 
     handle_imaging_task_completed(task, mock_db)
 
     mock_insert_status.assert_called_once()
     mock_send_email.assert_not_called()
-
-
-def test_systemic_failure_raises_so_the_task_stays_retryable(mock_send_email, mock_decrypt, mock_insert_status):
-    """A systemic failure must NOT return cleanly — that would discard the retry.
-
-    Both callers clear ``needs_post_processing`` only on a clean return
-    (``trust_tasks``, and the ``stale_task_recovery`` sweep), so swallowing a
-    systemic failure — a broken AWS region, an SES outage — would permanently
-    drop the notifications with nothing left in the retry queue. It aborts on
-    the first recipient rather than working through the rest: a client that
-    cannot be constructed cannot send to anyone.
-    """
-    users = [
-        {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
-        {"username": "user2", "encrypted_setup_path": "enc2", "email": "user2@test.com"},
-    ]
-    task = _make_task(users, added_users=[{"username": "existing1", "email": "existing1@test.com"}])
-
-    mock_db = MagicMock()
-    query_result = MagicMock()
-    query_result.first.return_value = _mock_query()
-    trust_result = MagicMock()
-    trust_result.first.return_value = _mock_trust()
-    mock_db.exec.side_effect = [query_result, trust_result]
-
-    mock_send_email.side_effect = NoRegionError()
-
-    with pytest.raises(EmailDispatchError, match="failed systemically"):
-        handle_imaging_task_completed(task, mock_db)
-
-    assert mock_send_email.call_count == 1
 
 
 def test_single_recipient_rejection_does_not_raise(mock_send_email, mock_decrypt, mock_insert_status):
@@ -224,12 +179,7 @@ def test_single_recipient_rejection_does_not_raise(mock_send_email, mock_decrypt
         ]
     )
 
-    mock_db = MagicMock()
-    query_result = MagicMock()
-    query_result.first.return_value = _mock_query()
-    trust_result = MagicMock()
-    trust_result.first.return_value = _mock_trust()
-    mock_db.exec.side_effect = [query_result, trust_result]
+    mock_db = _db(_mock_query(), _mock_trust())
 
     mock_send_email.side_effect = ClientError(
         {"Error": {"Code": "MessageRejected", "Message": "Email address is not verified"}}, "SendEmail"
@@ -240,86 +190,51 @@ def test_single_recipient_rejection_does_not_raise(mock_send_email, mock_decrypt
     assert mock_send_email.call_count == 1
 
 
-def test_single_recipient_systemic_failure_raises(mock_send_email, mock_decrypt, mock_insert_status):
-    """The counterpart: at the same batch size, a systemic fault still aborts.
+@pytest.mark.parametrize(
+    ("created", "added", "error"),
+    [
+        (TWO_USERS, [{"username": "existing1", "email": "existing1@test.com"}], NoRegionError),
+        ([{"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"}], [], NoCredentialsError),
+        ([], [{"username": "existing1", "email": "existing1@test.com"}], NoRegionError),
+    ],
+    ids=["batch-aborts-on-first", "single-created-recipient", "added-user-loop"],
+)
+def test_systemic_failure_raises_so_the_task_stays_retryable(
+    created, added, error, mock_send_email, mock_decrypt, mock_insert_status
+):
+    """A systemic failure must NOT return cleanly — that would discard the retry.
 
-    This is the pair that pins the semantics — same one-recipient shape, and
-    the outcome is decided by the exception type rather than the count.
+    Both callers clear ``needs_post_processing`` only on a clean return
+    (``trust_tasks``, and the ``stale_task_recovery`` sweep), so swallowing a
+    systemic failure — a broken AWS region, missing credentials, an SES outage —
+    would permanently drop the notifications with nothing left in the retry
+    queue. It aborts on the first recipient rather than working through the rest:
+    a client that cannot be constructed cannot send to anyone.
+
+    ``single-created-recipient`` is the counterpart of
+    test_single_recipient_rejection_does_not_raise: the same one-recipient shape,
+    so the outcome is decided by the exception type rather than the count — keep
+    it a one-recipient case. ``added-user-loop`` pins that the added-user loop
+    classifies identically to the created-user loop.
     """
-    task = _make_task(
-        [
-            {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
-        ]
-    )
+    task = _make_task(created, added_users=added)
+    mock_db = _db(_mock_query(), _mock_trust())
 
-    mock_db = MagicMock()
-    query_result = MagicMock()
-    query_result.first.return_value = _mock_query()
-    trust_result = MagicMock()
-    trust_result.first.return_value = _mock_trust()
-    mock_db.exec.side_effect = [query_result, trust_result]
-
-    mock_send_email.side_effect = NoCredentialsError()
+    mock_send_email.side_effect = error()
 
     with pytest.raises(EmailDispatchError, match="failed systemically"):
         handle_imaging_task_completed(task, mock_db)
 
-
-def test_added_user_systemic_failure_raises(mock_send_email, mock_decrypt, mock_insert_status):
-    """The added-user loop classifies identically to the created-user loop."""
-    task = _make_task([], added_users=[{"username": "existing1", "email": "existing1@test.com"}])
-
-    mock_db = MagicMock()
-    query_result = MagicMock()
-    query_result.first.return_value = _mock_query()
-    trust_result = MagicMock()
-    trust_result.first.return_value = _mock_trust()
-    mock_db.exec.side_effect = [query_result, trust_result]
-
-    mock_send_email.side_effect = NoRegionError()
-
-    with pytest.raises(EmailDispatchError, match="failed systemically"):
-        handle_imaging_task_completed(task, mock_db)
+    assert mock_send_email.call_count == 1
 
 
 def test_partial_failure_does_not_raise(mock_send_email, mock_decrypt, mock_insert_status):
     """One bad address is not systemic: the run succeeds so the task is not retried forever."""
-    users = [
-        {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
-        {"username": "user2", "encrypted_setup_path": "enc2", "email": "user2@test.com"},
-    ]
-    task = _make_task(users)
+    task = _make_task(TWO_USERS)
 
-    mock_db = MagicMock()
-    query_result = MagicMock()
-    query_result.first.return_value = _mock_query()
-    trust_result = MagicMock()
-    trust_result.first.return_value = _mock_trust()
-    mock_db.exec.side_effect = [query_result, trust_result]
+    mock_db = _db(_mock_query(), _mock_trust())
 
     mock_send_email.side_effect = [Exception("bad address"), None]
-
-    handle_imaging_task_completed(task, mock_db)
-
-    assert mock_send_email.call_count == 2
-
-
-def test_ses_failure_for_one_user_continues_to_next(mock_send_email, mock_decrypt, mock_insert_status):
-    """Should continue sending to remaining users if the send fails for one."""
-    users = [
-        {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
-        {"username": "user2", "encrypted_setup_path": "enc2", "email": "user2@test.com"},
-    ]
-    task = _make_task(users)
-
-    mock_db = MagicMock()
-    query_result = MagicMock()
-    query_result.first.return_value = _mock_query()
-    trust_result = MagicMock()
-    trust_result.first.return_value = _mock_trust()
-    mock_db.exec.side_effect = [query_result, trust_result]
-
-    mock_send_email.side_effect = [Exception("SES error"), None]
 
     handle_imaging_task_completed(task, mock_db)
 
@@ -371,45 +286,22 @@ def test_decryption_failure_raises_so_the_task_stays_retryable(mock_send_email, 
     mock_send_email.assert_not_called()
 
 
-def test_raises_when_result_is_none():
-    """Should raise ValueError when task result is None."""
-    task = MagicMock()
-    task.result = None
-    task.id = "task-123"
-    mock_db = MagicMock()
+@pytest.mark.parametrize(
+    ("result", "error", "match"),
+    [
+        (None, ValueError, "no result data"),
+        ("not valid json{{", json.JSONDecodeError, None),
+        (json.dumps({"created_users": []}), ValueError, "missing required fields"),  # Missing ID and name
+        (json.dumps({"name": "Test", "created_users": []}), ValueError, "ID"),  # Missing ID
+    ],
+    ids=["no-result", "malformed-json", "missing-required-fields", "missing-id"],
+)
+def test_invalid_result_raises(result, error, match):
+    """Should raise when the task result is missing, not JSON, or lacks the required ID or name fields."""
+    task = MagicMock(result=result, id="task-123")
 
-    with pytest.raises(ValueError, match="no result data"):
-        handle_imaging_task_completed(task, mock_db)
-
-
-def test_malformed_result_json_raises():
-    """Should raise when task result contains invalid JSON."""
-    task = MagicMock()
-    task.result = "not valid json{{"
-    mock_db = MagicMock()
-
-    with pytest.raises(json.JSONDecodeError):
-        handle_imaging_task_completed(task, mock_db)
-
-
-def test_missing_required_fields_raises_value_error():
-    """Should raise ValueError when result is missing required ID or name fields."""
-    task = MagicMock()
-    task.result = json.dumps({"created_users": []})  # Missing ID and name
-    mock_db = MagicMock()
-
-    with pytest.raises(ValueError, match="missing required fields"):
-        handle_imaging_task_completed(task, mock_db)
-
-
-def test_missing_id_field_raises_value_error():
-    """Should raise ValueError when result is missing the ID field."""
-    task = MagicMock()
-    task.result = json.dumps({"name": "Test", "created_users": []})  # Missing ID
-    mock_db = MagicMock()
-
-    with pytest.raises(ValueError, match="ID"):
-        handle_imaging_task_completed(task, mock_db)
+    with pytest.raises(error, match=match):
+        handle_imaging_task_completed(task, MagicMock())
 
 
 def test_sends_project_access_email_to_added_users(mock_send_email, mock_decrypt, mock_insert_status):
@@ -420,12 +312,7 @@ def test_sends_project_access_email_to_added_users(mock_send_email, mock_decrypt
     ]
     task = _make_task(created_users=[], added_users=added_users)
 
-    mock_db = MagicMock()
-    query_result = MagicMock()
-    query_result.first.return_value = _mock_query()
-    trust_result = MagicMock()
-    trust_result.first.return_value = _mock_trust()
-    mock_db.exec.side_effect = [query_result, trust_result]
+    mock_db = _db(_mock_query(), _mock_trust())
 
     handle_imaging_task_completed(task, mock_db)
 
@@ -453,12 +340,7 @@ def test_sends_both_invite_and_access_emails(mock_send_email, mock_decrypt, mock
     ]
     task = _make_task(created_users=created_users, added_users=added_users)
 
-    mock_db = MagicMock()
-    query_result = MagicMock()
-    query_result.first.return_value = _mock_query()
-    trust_result = MagicMock()
-    trust_result.first.return_value = _mock_trust()
-    mock_db.exec.side_effect = [query_result, trust_result]
+    mock_db = _db(_mock_query(), _mock_trust())
 
     handle_imaging_task_completed(task, mock_db)
 
@@ -483,12 +365,7 @@ def test_added_user_email_failure_continues(mock_send_email, mock_decrypt, mock_
     ]
     task = _make_task(created_users=[], added_users=added_users)
 
-    mock_db = MagicMock()
-    query_result = MagicMock()
-    query_result.first.return_value = _mock_query()
-    trust_result = MagicMock()
-    trust_result.first.return_value = _mock_trust()
-    mock_db.exec.side_effect = [query_result, trust_result]
+    mock_db = _db(_mock_query(), _mock_trust())
 
     mock_send_email.side_effect = [Exception("SES error"), None]
 

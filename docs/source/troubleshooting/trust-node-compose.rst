@@ -16,18 +16,22 @@ Trust node on Docker Compose
 ##############################
 
 Problems on a trust node that runs the Docker Compose stack: an on-prem host
-(:doc:`../deploy-flip/deploy-flip-node-on-prem`) or the trust EC2 the AWS deployment creates.
+(:doc:`../deploy-flip/deploy-flip-node-on-prem`) or a VM node on AWS or Azure.
 
 **Where commands run.** ``make -C …`` commands run from the repo root. ``docker`` commands run on the trust host,
-with ``sudo`` on an on-prem host. The AWS-hosted trust is reached with ``ssh flip-trust``, which
-``make -C deploy/providers/AWS ssh-config HUB=<env>`` sets up.
+as a user with Docker socket access (``sudo -E`` on a host provisioned by the on-prem playbook; see
+:ref:`onprem-operator-access`). An AWS EC2 node is reached with ``ssh flip-<env>-<code>``, which
+``make -C trust/deploy/terraform/aws/ec2 ssh-config KIT=<CODE> HUB=<env>`` sets up.
 
-**Kit and environment.** On an on-prem host the kit file is ``trust/.env.<CODE>.prod``, so ``make -C trust …``
-commands take ``KIT=<CODE> HUB=prod`` and, when they touch Docker, run with ``sudo -E``. Without ``HUB`` they fall back
-to the development setup. For the AWS-hosted trust they run on the workstation with ``KIT=<CODE> HUB=<env>``.
+**Kit and environment.** ``make -C trust …`` commands name the trust's kit and hub:
+
+- On an on-prem host the kit file is ``trust/.env.<CODE>.prod``: pass ``KIT=<CODE> HUB=prod``.
+- For the AWS-hosted trust, run them on the workstation with ``KIT=<CODE> HUB=<env>``.
+
+Without ``HUB`` they fall back to the development setup.
 
 **Container names.** A trust's containers are named ``trust<N>-<service>-1`` and its XNAT stack ``xnat<N>``,
-where ``<N>`` is the FL kit slot the hub assigned (``FL_KIT_SLOT_NUMBER`` in the kit file). ``sudo docker ps``
+where ``<N>`` is the FL kit slot the hub assigned (``FL_KIT_SLOT_NUMBER`` in the kit file). ``docker ps``
 lists them.
 
 .. contents:: On this page
@@ -37,7 +41,7 @@ lists them.
 .. warning::
 
    Several fixes below mention the first-install commands (``make up-onprem-trust``,
-   ``make -C deploy/providers/AWS deploy-trust``, ``make -C trust/xnat up-xnat``). They **wipe the XNAT archive**,
+   ``make -C trust/deploy/terraform/aws/ec2 deploy``, ``make -C trust/xnat up-xnat``). They **wipe the XNAT archive**,
    and the first two re-seed the trust's data. Never use them to move a live site to a new release; see
    :ref:`admin-upgrading-sites`.
 
@@ -68,15 +72,15 @@ A kit created from an older template may lack the key: copy it from ``trust/.env
 ===================================================================
 
 **Cause.** The trust image set (the FL client with its PyTorch dependencies, XNAT, Orthanc, OMOP and the APIs)
-needs more room than an older 50 GB root volume. Terraform now provisions 100 GB, but growing an existing volume
-leaves the partition and filesystem at the old size.
+needs more room than a 50 GB root volume, which older nodes were created with. Terraform provisions 100 GB, but
+growing an existing volume leaves the partition and filesystem at the old size.
 
 **Fix.** After ``terraform apply`` has grown the volume, resize once on the host and retry the deployment:
 
 .. code-block:: shell
 
-   ssh flip-trust 'sudo growpart /dev/nvme0n1 1 && sudo resize2fs /dev/nvme0n1p1'
-   ssh flip-trust 'df -h /'     # should show about 100 GB
+   ssh flip-<env>-<code> 'sudo growpart /dev/nvme0n1 1 && sudo resize2fs /dev/nvme0n1p1'
+   ssh flip-<env>-<code> 'df -h /'     # should show about 100 GB
 
 .. _ts-compose-images-permission:
 
@@ -100,10 +104,10 @@ imaging-api and the FL client:
 .. code-block:: shell
 
    # NVIDIA FLARE
-   ssh flip-trust 'sudo chown -R 1000:1000 /opt/flip/data/trust-<N>'
+   ssh flip-<env>-<code> 'sudo chown -R 1000:1000 /opt/flip/data/trust-<N>'
    # Flower: also open each net folder to the client's group
-   ssh flip-trust 'sudo chown 1000:49999 /opt/flip/data/trust-<N>/net-{1,2} && \
-                   sudo chmod 0775 /opt/flip/data/trust-<N>/net-{1,2}'
+   ssh flip-<env>-<code> 'sudo chown 1000:49999 /opt/flip/data/trust-<N>/net-{1,2} && \
+                          sudo chmod 0775 /opt/flip/data/trust-<N>/net-{1,2}'
 
 .. tip::
 
@@ -132,15 +136,16 @@ the EC2. Docker creates that directory empty and Orthanc starts with no studies.
 
    .. code-block:: shell
 
-      ssh flip-trust 'docker inspect trust<N>-orthanc-1 --format "{{json .Mounts}}"'
+      ssh flip-<env>-<code> 'docker inspect trust<N>-orthanc-1 --format "{{json .Mounts}}"'
 
 #. Set host paths (``/opt/flip/...``) for ``ORTHANC_STORAGE_DIR`` and the other host-local entries in the kit file.
    Check the other containers' mounts the same way.
-#. Redeploy the trust, which stops the stack, seeds OMOP and Orthanc on the host and starts it again:
+#. Redeploy the trust, which stops the stack, seeds OMOP and Orthanc on the host and starts it again. This is a
+   first-install command: it wipes the XNAT archive (see the warning at the top of this page).
 
    .. code-block:: shell
 
-      make -C deploy/providers/AWS deploy-trust KIT=<CODE> HUB=<env>
+      make -C trust/deploy/terraform/aws/ec2 deploy KIT=<CODE> HUB=<env>
 
 #. Re-trigger the import from the project page.
 
@@ -156,7 +161,7 @@ restart to pick up the saved configuration.
 
 .. code-block:: shell
 
-   sudo docker service update --force xnat<N>_xnat-web
+   docker service update --force xnat<N>_xnat-web
 
 .. _ts-compose-imaging-api-hung:
 
@@ -170,17 +175,16 @@ queue behind it.
 
 .. code-block:: shell
 
-   sudo docker restart trust<N>-imaging-api-1
+   docker restart trust<N>-imaging-api-1
 
 If it hangs again, check that XNAT itself answers (:ref:`ts-compose-xnat-401`).
 
 .. _ts-compose-xnat-401:
 
-``XNAT API returned 401 — check XNAT_SERVICE_USER/PASSWORD``
-============================================================
+imaging-api gets HTTP 401 from XNAT
+===================================
 
-``make -C deploy/providers/AWS status`` reports this for the AWS-hosted trust; on any trust, imaging-api's calls to
-XNAT fail with 401. The XNAT web UI itself still loads.
+imaging-api's calls to XNAT fail with 401. The XNAT web UI itself still loads.
 
 **Cause.** imaging-api's password for the XNAT service account does not match the one XNAT holds. The usual
 reason is a ``#`` or ``$`` in ``XNAT_SERVICE_PASSWORD``: the kit file is also read by ``make``, which treats ``#``
@@ -189,7 +193,8 @@ got the whole one.
 
 **Fix.**
 
-#. Check what ``make`` sees. Run from the repo root, with the kit file's path:
+#. Check what ``make`` sees. Run from the repo root, replacing ``trust/.env.<CODE>.prod`` with your kit file's
+   path if it differs (for example ``trust/.env.<CODE>.<env>`` for the AWS-hosted trust):
 
    .. code-block:: shell
 
@@ -203,13 +208,18 @@ got the whole one.
 
    .. code-block:: shell
 
-      sudo -E make -C trust/xnat up-xnat KIT=<CODE> HUB=prod
+      make -C trust/xnat up-xnat KIT=<CODE> HUB=prod
 
    ``up-xnat`` deletes the XNAT archive and database and configures a new XNAT from the kit. For the AWS-hosted
-   trust, run it from the workstation with ``KIT=<CODE> HUB=<env>`` and ``DOCKER_CONTEXT=flip-trust`` in front, as
-   the deployment does.
-#. Recreate imaging-api so it reads the new value. A plain ``docker restart`` keeps the old environment; see
-   "Changing the log level" on :doc:`../components/component-logging-stack` for how to recreate one container.
+   trust, run it from the workstation against the node's Docker context, as
+   ``make -C trust/deploy/terraform/aws/ec2 deploy`` does:
+
+   .. code-block:: shell
+
+      DOCKER_CONTEXT=flip-<env>-<code> make -C trust/xnat up-xnat KIT=<CODE> HUB=<env>
+#. Recreate imaging-api so it reads the new value. A plain ``docker restart`` keeps the old environment. The
+   command to recreate one container is in "Changing the log level" on
+   :doc:`../components/component-logging-stack`.
 
 .. warning::
 
@@ -248,8 +258,8 @@ or broken are never converted afterwards.
 
 .. code-block:: shell
 
-   sudo -E make -C trust reconvert-nifti KIT=<CODE> HUB=prod                           # report only
-   sudo -E make -C trust reconvert-nifti KIT=<CODE> HUB=prod PROJECT="<id>" LAUNCH=1   # convert and follow
+   make -C trust reconvert-nifti KIT=<CODE> HUB=prod                           # report only
+   make -C trust reconvert-nifti KIT=<CODE> HUB=prod PROJECT="<id>" LAUNCH=1   # convert and follow
 
 ``WAIT=<minutes>``, ``MAX_ATTEMPTS=<n>`` and ``RELAUNCH_UNFINISHED=1`` tune it. What it selects and its exit codes
 are explained in :ref:`ts-k8s-nifti-backlog`.
@@ -271,7 +281,7 @@ and say why in their logs: the FL client half prints ``[site-privacy] FATAL: <wh
 .. code-block:: shell
 
    make -C trust check-governance KIT=<CODE> HUB=prod
-   sudo -E make -C trust reload-governance KIT=<CODE> HUB=prod
+   make -C trust reload-governance KIT=<CODE> HUB=prod
 
 ``reload-governance`` recreates data-access-api (and, on NVIDIA FLARE, the FL clients), so apply it between
 training runs. The usual mistakes are listed in :ref:`ts-k8s-governance`.

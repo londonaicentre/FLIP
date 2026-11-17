@@ -73,6 +73,7 @@ module "terraform_ci" {
   state_key                      = var.state_key
   plan_workflow_file             = var.plan_workflow_file
   apply_workflow_file            = var.apply_workflow_file
+  power_workflow_file            = var.power_workflow_file
   drift_workflow_file            = var.drift_workflow_file
   flip_api_secret_name           = var.flip_api_secret_name
   managed_role_names             = var.managed_role_names
@@ -94,6 +95,7 @@ module "terraform_ci" {
   state_bucket_sse_algorithm         = var.state_bucket_sse_algorithm
   state_noncurrent_versions_retained = var.state_noncurrent_versions_retained
   state_noncurrent_version_days      = var.state_noncurrent_version_days
+  state_access_log_bucket            = var.state_access_log_bucket
   restrict_state_writes              = var.restrict_state_writes
   state_writer_principal_arns        = var.state_writer_principal_arns
 }

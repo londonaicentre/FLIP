@@ -12,6 +12,17 @@
 # Ships syslog, the container logs and host metrics to CloudWatch. The instance profile carries
 # CloudWatchAgentServerPolicy, which lets the agent create its log group.
 ---
+- name: read the host's region from instance metadata
+  shell: |
+    set -euo pipefail
+    token=$(curl -sSf -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token)
+    curl -sSf -H "X-aws-ec2-metadata-token: $token" http://169.254.169.254/latest/meta-data/placement/region
+  args:
+    executable: /bin/bash
+  register: cloudwatch_agent_region
+  changed_when: false
+  check_mode: false
+
 - name: download CloudWatch agent package
   get_url:
     url: "{{ cloudwatch_agent_deb }}"

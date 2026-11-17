@@ -130,11 +130,11 @@ jobs:
           FLIP_UI_BUCKET_NAME: ${{ vars.FLIP_UI_BUCKET_NAME }}
           FL_SERVER_PORT: ${{ vars.FL_SERVER_PORT }}
           ENFORCE_MFA: ${{ vars.ENFORCE_MFA }}
-          DEMO_ASSETS_BUCKET_NAME: ${{ vars.DEMO_ASSETS_BUCKET_NAME }}
           FL_ADMIN_DIRECTORY: ${{ vars.FL_ADMIN_DIRECTORY }}
-          INTERNAL_SERVICE_KEY_HEADER: ${{ vars.INTERNAL_SERVICE_KEY_HEADER }}
           TRUST_API_KEY_HEADER: ${{ vars.TRUST_API_KEY_HEADER }}
           SES_VERIFIED_EMAIL: ${{ vars.SES_VERIFIED_EMAIL }}
+          SES_SENDER_EMAIL: ${{ vars.SES_SENDER_EMAIL }}
+          COGNITO_EMAIL_VIA_SES: ${{ vars.COGNITO_EMAIL_VIA_SES }}
           ALB_SUBDOMAIN: ${{ vars.ALB_SUBDOMAIN }}
           NLB_SUBDOMAIN: ${{ vars.NLB_SUBDOMAIN }}
           DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
@@ -142,7 +142,6 @@ jobs:
           FL_KIT_SLOT_NAMES: ${{ vars.FL_KIT_SLOT_NAMES }}
           FLARE_KIT_DATE: ${{ vars.FLARE_KIT_DATE }}
           FLOWER_KIT_DATE: ${{ vars.FLOWER_KIT_DATE }}
-          DEPLOY_TRUST_EC2: ${{ vars.DEPLOY_TRUST_EC2 }}
           JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
           # The LZA keys (FLIP#749), required — see compose-ci-env.sh. The last three have no
           # `export TF_VAR_…` line in the Makefile, so the script writes them into
@@ -158,15 +157,14 @@ jobs:
           LZA_WEB_EDGE_DISTRIBUTION_ARN: ${{ vars.LZA_WEB_EDGE_DISTRIBUTION_ARN }}
           ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
-          INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
-          INTERNAL_SERVICE_KEY_HASH: ${{ secrets.INTERNAL_SERVICE_KEY_HASH }}
+          FL_API_KEY: ${{ secrets.FL_API_KEY }}
           POSTGRES_DB: ${{ vars.POSTGRES_DB }}
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}
         run: deploy/providers/AWS/scripts/compose-ci-env.sh
 
-      # aws_key_pair.public_key is ForceNew and neither keypair is behind a
+      # aws_key_pair.public_key is ForceNew and the keypair is not behind a
       # `count`, so a runner without this file plans a replacement of
-      # flip-keypair and host-aws — which ripples into aws_instance.ec2_instance.
+      # flip-keypair — which ripples into aws_instance.ec2_instance.
       # The bytes come from SSM rather than a checked-in file so they cannot drift
       # from what is actually in state; Terraform itself declares the parameter
       # (aws_ssm_parameter.ci_host_aws_public_key in parameter_store.tf).
@@ -218,7 +216,7 @@ jobs:
           preserve-plan: true
           # MUST stay false. tf-via-pr defaults this to true, and the plan file
           # it uploads is a zip containing the full tfstate — which holds
-          # AES_KEY_BASE64, INTERNAL_SERVICE_KEY and ADMIN_USER_PASSWORD in
+          # AES_KEY_BASE64, FL_API_KEY and ADMIN_USER_PASSWORD in
           # plaintext. This repository is public, so that artifact is a public
           # download. Nothing downstream needs it: this job only comments the
           # diff, and terraform_apply.yml re-plans from scratch rather than

@@ -63,7 +63,7 @@ def preprocess(src: Path, dst: Path, config_key: str) -> None:
     state_dict = proc["extract"](ckpt)
 
     print("  Processing weights ...")
-    load_arkplus_state_dict(model, state_dict, {"load_backbone_only": False})
+    load_arkplus_state_dict(model, state_dict, {"LOAD_BACKBONE_ONLY": False})
 
     # Strip classification heads — fine-tuning trains its own head from
     # scratch with the runtime's default nn.Linear init, matching whichever

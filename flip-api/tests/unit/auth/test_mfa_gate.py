@@ -32,6 +32,7 @@ from fastapi.testclient import TestClient
 from flip_api.auth.dependencies import verify_token, verify_token_no_mfa
 from flip_api.auth.identity import IdentityProvider, get_identity_provider
 from flip_api.auth.token_verifier import VerifiedIdentity
+from flip_api.db.database import get_session
 
 
 @pytest.fixture
@@ -50,6 +51,8 @@ def gated_app() -> FastAPI:
     app = FastAPI()
     app.state.idp = MagicMock(spec=IdentityProvider)
     app.dependency_overrides[get_identity_provider] = lambda: app.state.idp
+    # Every caller in these tests is a provisioned user (has a UserProfile row).
+    app.dependency_overrides[get_session] = lambda: MagicMock(**{"get.return_value": object()})
 
     @app.get("/gated")
     def gated_route(_user_id: uuid.UUID = Depends(verify_token)) -> dict[str, str]:

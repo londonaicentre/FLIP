@@ -141,5 +141,5 @@ If you see variables reported as missing but they exist:
 ## Related Documentation
 
 - [scripts/README.md](../scripts/README.md) - Overview of all pre-commit hooks
-- [SECURITY_INCIDENT.md](../SECURITY_INCIDENT.md) - Security incident response procedures
+- [SECURITY.md](../SECURITY.md) - Security policy and how to report a vulnerability
 - [Pre-commit Framework](https://pre-commit.com/) - Official pre-commit documentation

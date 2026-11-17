@@ -20,6 +20,12 @@ of its own; the deploy tooling decides what to register.
 
 Idempotent: if a trust with ``--name`` already exists it is skipped.
 
+``--rotate`` switches the CLI to reissuing an already-registered trust's keys in place
+(``make rotate-trust-keys KIT=<CODE>`` in dev, ``register-trusts.sh`` with ``ROTATE_KEYS=1`` on
+stag / prod). The trust keeps its id, code and FL kit slot; only its api key hash changes. The
+hub refuses the old key from the moment the rotation commits, so the trust is offline until its
+containers are recreated from the new kit: deliver the kit promptly.
+
 Output transports — two contracts depending on ``--out-ssm-parameter``:
 
 - *Default (dev pipe / docker compose exec)* — the kit JSON array prints on
@@ -40,6 +46,8 @@ Kit shape (both transports):
 - *New registration*: full kit (``trust_id``, ``trust_name``,
   ``trust_api_key``, ``trust_internal_service_key``, ``fl_kit_slot``,
   ``fl_kit_slot_number``, ``hub_shared``).
+- *Rotation* (``--rotate``): full kit, always. The caller asked for new credentials, so a kit
+  without them is a failure, and there is no skip path.
 - *Idempotent skip* (trust already existed): metadata-only kit (same keys
   minus ``trust_api_key`` / ``trust_internal_service_key``). The hub stores
   only the SHA-256 hashes of those keys and cannot re-emit plaintext, so
@@ -65,8 +73,10 @@ from flip_api.config import get_settings
 from flip_api.db.database import get_engine
 from flip_api.db.models.main_models import FLKitSlot, Trust
 from flip_api.trusts_services.services.register_trust import (
+    RegisteredTrust,
     TrustRegistrationError,
     register_trust,
+    rotate_trust_keys,
 )
 from flip_api.utils.logger import logger
 
@@ -113,6 +123,42 @@ def _hub_shared_from_env() -> dict[str, str]:
     if not shared.get("FL_EDGE_PORT") and "FL_SERVER_PORT" in shared:
         shared["FL_EDGE_PORT"] = shared["FL_SERVER_PORT"]
     return shared
+
+
+def _kit_dict(kit: RegisteredTrust) -> dict[str, Any]:
+    """The full kit dict (credentials included) for a freshly registered or rotated trust."""
+    return {
+        "trust_id": str(kit.trust.id),
+        "trust_name": kit.trust.name,
+        "trust_api_key": kit.trust_api_key,
+        "trust_internal_service_key": kit.trust_internal_service_key,
+        "fl_kit_slot": kit.fl_kit_slot.slot_name,
+        "fl_kit_slot_number": kit.fl_kit_slot.slot_number,
+        "hub_shared": _hub_shared_from_env(),
+    }
+
+
+def rotate_one_trust(name: str, session: Session) -> list[dict[str, Any]]:
+    """Reissue one registered trust's keys and return its full kit as a single-element list.
+
+    Args:
+        name (str): Trust display name.
+        session (Session): SQLModel session.
+
+    Returns:
+        list[dict[str, Any]]: ``[kit]``, always carrying the new credentials.
+
+    Raises:
+        TrustRegistrationError: No trust of that name is registered, or it has no FL kit slot.
+    """
+    kit = rotate_trust_keys(session, name=name.strip())
+    logger.info(
+        "Rotated keys for trust %r (id=%s), FL kit slot %r.",
+        kit.trust.name,
+        kit.trust.id,
+        kit.fl_kit_slot.slot_name,
+    )
+    return [_kit_dict(kit)]
 
 
 def register_one_trust(
@@ -176,17 +222,7 @@ def register_one_trust(
         kit.trust.id,
         kit.fl_kit_slot.slot_name,
     )
-    return [
-        {
-            "trust_id": str(kit.trust.id),
-            "trust_name": kit.trust.name,
-            "trust_api_key": kit.trust_api_key,
-            "trust_internal_service_key": kit.trust_internal_service_key,
-            "fl_kit_slot": kit.fl_kit_slot.slot_name,
-            "fl_kit_slot_number": kit.fl_kit_slot.slot_number,
-            "hub_shared": _hub_shared_from_env(),
-        }
-    ]
+    return [_kit_dict(kit)]
 
 
 def _write_kit_to_ssm(kits: list[dict[str, Any]], parameter_name: str) -> None:
@@ -227,8 +263,10 @@ def _write_kit_to_ssm(kits: list[dict[str, Any]], parameter_name: str) -> None:
 
 
 def main() -> None:
-    """CLI entry point: register one trust, emit its kit JSON to the chosen output."""
-    parser = argparse.ArgumentParser(description="Register one trust on the hub.")
+    """CLI entry point: register one trust (or rotate its keys), emit its kit JSON to the chosen output."""
+    parser = argparse.ArgumentParser(
+        description="Register one trust on the hub, or reissue a registered trust's keys with --rotate."
+    )
     parser.add_argument("--name", required=True, help="Trust display name.")
     parser.add_argument(
         "--code",
@@ -250,6 +288,16 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--rotate",
+        action="store_true",
+        default=False,
+        help=(
+            "Reissue the named trust's api and internal-service keys in place instead of registering "
+            "it. Same id, code and FL kit slot. The hub refuses the old key from the moment this "
+            "commits, so the trust is offline until its containers are recreated from the new kit."
+        ),
+    )
+    parser.add_argument(
         "--out-ssm-parameter",
         default=None,
         metavar="NAME",
@@ -261,14 +309,20 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    if args.rotate and (args.code or args.region or args.require_existing):
+        parser.error("--rotate identifies the trust by --name only; drop --code, --region and --require-existing")
 
     with Session(get_engine()) as session:
         try:
-            kits = register_one_trust(
-                args.name, args.code, args.region, session, require_existing=args.require_existing
-            )
+            if args.rotate:
+                kits = rotate_one_trust(args.name, session)
+            else:
+                kits = register_one_trust(
+                    args.name, args.code, args.region, session, require_existing=args.require_existing
+                )
         except TrustRegistrationError as e:
-            logger.error("Failed to register trust %r: %s", args.name, e)
+            verb = "rotate keys for" if args.rotate else "register"
+            logger.error("Failed to %s trust %r: %s", verb, args.name, e)
             session.rollback()
             if args.out_ssm_parameter:
                 # Empty array signals "no kit" to the deploy script regardless of

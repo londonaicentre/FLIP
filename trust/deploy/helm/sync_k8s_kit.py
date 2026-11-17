@@ -41,7 +41,8 @@ This script reads that kit file and:
   2. Writes a Helm values override (``k8s-trust-<CODE>.yaml``) carrying the
      non-secret, deployment-specific settings the chart needs: the hub URL,
      FL backend, AWS region, trust number, where the FL kit sits on the node,
-     the release image pins, the OMOP vocabulary bucket, the FL-server
+     the release image pins, where the OMOP vocabulary is staged on the node
+     (``OMOP_VOCAB_DIR``, FLIP#923), the FL-server
      egress port and — when the kit names one — the trust's governance
      document (FLIP#1259), read from its ``ACCESS_POLICY_FILE`` and embedded
      whole (a path on the deploy host means nothing inside a pod).
@@ -99,9 +100,7 @@ _SECRET_NAME_SUFFIX = "-flip-trust-secrets"
 
 def derive_release_name(secret_name: str) -> str:
     """Best-effort Helm release name from the chart Secret name (FLIP#595)."""
-    if secret_name.endswith(_SECRET_NAME_SUFFIX):
-        return secret_name[: -len(_SECRET_NAME_SUFFIX)]
-    return secret_name
+    return secret_name.removesuffix(_SECRET_NAME_SUFFIX)
 
 
 def _is_placeholder(value: str) -> bool:
@@ -186,8 +185,8 @@ def _validate_governance(kit: dict[str, str], document: Path | None) -> str | No
     env = {key: value for key, value in kit.items() if key.startswith("FL_SITE_PRIVACY_")}
     backend = (kit.get("FL_BACKEND", "").strip() or "nvflare").lower()
     floor = kit.get("COHORT_QUERY_THRESHOLD", "").strip() or "10"
-    if not floor.isdigit() or int(floor) < 1:
-        raise GovernanceDocumentError(f"COHORT_QUERY_THRESHOLD={floor!r} is not a positive integer")
+    if not floor.isdigit() or int(floor) < 10:
+        raise GovernanceDocumentError(f"COHORT_QUERY_THRESHOLD={floor!r} is not an integer of at least 10")
     if document is None and not any(value.strip() for value in env.values()):
         # Nothing to validate — and the validators need tomllib (3.11+), which a trust using
         # neither control must not: sync-kit runs on the deploy host's own python3.
@@ -322,6 +321,20 @@ def _generate_values() -> ModuleType:
     spec = importlib.util.spec_from_file_location("_flip_generate_values", path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load the values generator from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@functools.cache
+def _kit_lib() -> ModuleType:
+    """``trust/deploy/scripts/trust_kit_lib.py`` (stdlib only), loaded by path: its ``trust_data_seed`` is the one
+    Python reader of the kit's TRUST_DATA_SEED, shared with the onboarding checklist and the node self-test."""
+    path = REPO_ROOT / "trust" / "deploy" / "scripts" / "trust_kit_lib.py"
+    spec = importlib.util.spec_from_file_location("_flip_trust_kit_lib", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load the kit library from {path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -691,25 +704,6 @@ def build_secret_entries(kit: dict[str, str]) -> dict[str, str]:
     return entries
 
 
-# The bucket trust/.env.example scaffolded every kit with until it shipped the key commented out
-# (#881): the dev account's, which no other environment can read. A kit outside development still
-# carrying it was never filled in.
-SCAFFOLD_VOCAB_BUCKET = "flipdev-aicentre"
-
-
-def is_scaffold_bucket(kit: dict[str, str], env: str) -> bool:
-    """Whether the kit still names the dev scaffolding bucket outside development (#881).
-
-    Args:
-        kit: The parsed kit file.
-        env: The kit's environment token (development, stag, lza-stag, ...).
-
-    Returns:
-        True when the vocab load would read a bucket this environment cannot.
-    """
-    return kit.get("AICENTRE_BUCKET_NAME", "").strip() == SCAFFOLD_VOCAB_BUCKET and env != "development"
-
-
 def render_override(
     kit: dict[str, str], code: str, aws_region: str, trust_dir: Path | None = None, vocab_load: bool = True
 ) -> str:
@@ -730,16 +724,18 @@ def render_override(
         GovernanceDocumentError: If the kit's governance configuration cannot be deployed — an
             ``ACCESS_POLICY_FILE`` that cannot be read or is invalid, or a site privacy filter
             that is invalid or would be ignored by this trust's backend.
+        ValueError: If ``TRUST_DATA_SEED`` is neither ``true`` nor ``false``.
     """
     trust_name = kit.get("TRUST_NAME", code)
     slot_number = kit.get("FL_KIT_SLOT_NUMBER", "").strip()
     hub_url = kit.get("CENTRAL_HUB_API_URL", "")
     fl_backend = kit.get("FL_BACKEND", "nvflare").strip() or "nvflare"
-    # A still-scaffolded `<...>` bucket counts as unset: emitted, it would name a bucket that
-    # does not exist, and the vocab-load hook failing fails the whole release (FLIP#881).
-    kit_bucket = kit.get("AICENTRE_BUCKET_NAME", "").strip()
-    if _is_placeholder(kit_bucket):
-        kit_bucket = ""
+    # Where the operator staged the OMOP core vocabulary ON THE NODE (make stage-vocab, FLIP#923).
+    # A still-scaffolded `<...>` value counts as unset: emitted, it would mount a path that does
+    # not exist, and the vocab-load hook failing fails the whole release.
+    vocab_dir = kit.get("OMOP_VOCAB_DIR", "").strip()
+    if _is_placeholder(vocab_dir):
+        vocab_dir = ""
     # Where the operator placed this trust's kit ON THE NODE. FL_KIT_DIR is the same
     # value the Compose path uses, so one kit field serves both deployment shapes.
     # The fallback is the canonical FLIP kit path: every shipped kit sets FL_KIT_DIR
@@ -805,23 +801,27 @@ def render_override(
     ]
 
     # OMOP core vocabulary (FLIP#842/843): the licensed bundle cannot be mirrored
-    # publicly, so the chart runs its vocab-load hook only when a readable bucket
-    # is named — the chart default is empty, and a release installed without this
+    # publicly, so the chart runs its vocab-load hook only when a staged bundle is
+    # named — the chart default is empty, and a release installed without this
     # has NO vocabulary (cohort queries joining omop.concept return nothing).
-    # Each environment reads its OWN bucket (no cross-account read), which is
-    # exactly what AICENTRE_BUCKET_NAME carries.
     # The mock-data partition the seed hook loads (trustData.seed.sourceTrust). The chart falls back
     # to the slot number, and the published data has only two partitions, so a trust on Trust_3 or
     # above names one in its kit (SOURCE_TRUST, as for the Compose stack) — FLIP#1390.
+    # A real trust turns the hook off with the kit's TRUST_DATA_SEED=false, as on Compose (FLIP#1687);
+    # unset or true leaves the chart's value, and anything else is refused.
+    seed = _kit_lib().trust_data_seed(kit)
     source_trust = kit.get("SOURCE_TRUST", "").strip()
-    if source_trust:
-        lines += ["trustData:", "  seed:", f'    sourceTrust: "{source_trust}"', ""]
+    seed_values = ([] if seed else ["    enabled: false"]) + (
+        [f'    sourceTrust: "{source_trust}"'] if source_trust else []
+    )
+    if seed_values:
+        lines += ["trustData:", "  seed:", *seed_values, ""]
 
-    if kit_bucket and vocab_load:
+    if vocab_dir and vocab_load:
         lines += [
             "omopDb:",
             "  vocabLoad:",
-            f"    s3Bucket: {kit_bucket}",
+            f"    hostPath: {yaml_quote(vocab_dir)}",
             "",
         ]
 
@@ -1022,19 +1022,15 @@ def main(
         output_dir.mkdir(parents=True, exist_ok=True)
         override_path = output_dir / rel_override
         try:
-            scaffold = vocab_load and is_scaffold_bucket(kit, env)
-            if scaffold:
-                print("⚠️  Skipping the S3 vocabulary load: AICENTRE_BUCKET_NAME is still the dev scaffolding")
-                print(f"   default ({SCAFFOLD_VOCAB_BUCKET}), which {env} cannot read (#881). Set this environment's")
-                print("   bucket in the kit, or load the vocabulary another way (load-omop-vocab).")
-            override = render_override(
-                kit, code, aws_region, trust_dir=repo_root / "trust", vocab_load=vocab_load and not scaffold
-            )
+            override = render_override(kit, code, aws_region, trust_dir=repo_root / "trust", vocab_load=vocab_load)
         except GovernanceDocumentError as e:
             print(f"❌ {e}")
             print("   Nothing was deployed. A relative ACCESS_POLICY_FILE resolves against trust/, as the")
             print("   Compose stack's --project-directory trust does. `make -C trust check-governance")
             print(f"   KIT={code}{hub}` validates the document and the kit's FL_SITE_PRIVACY_* in full.")
+            sys.exit(1)
+        except ValueError as e:
+            print(f"❌ {e} (in {kit_path.name}). Nothing was deployed.")
             sys.exit(1)
         override_path.write_text(override)
         print(f"  ✓ Wrote values override: {override_path}")
@@ -1103,7 +1099,7 @@ if __name__ == "__main__":
         "--no-vocab-load",
         dest="vocab_load",
         action="store_false",
-        help="Never turn on the omop-db S3 vocab-load hook (a cluster with no route to AWS, e.g. AKS)",
+        help="Never turn on the omop-db vocab-load hook, whatever OMOP_VOCAB_DIR says (e.g. a managed node pool)",
     )
     args = parser.parse_args()
     if args.kube_context:

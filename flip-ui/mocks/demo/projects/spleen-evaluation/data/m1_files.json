@@ -1,0 +1,101 @@
+[
+  {
+    "bandit_findings": null,
+    "created": null,
+    "id": "d6e7fc61-1c15-804b-88b4-546b0fd89ed1",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "modified": null,
+    "name": "config.json",
+    "size": 31,
+    "status": "COMPLETED",
+    "type": "application/json"
+  },
+  {
+    "bandit_findings": null,
+    "created": null,
+    "id": "0cf206c9-b963-832f-beaf-18be174ee8eb",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "modified": null,
+    "name": "config.toml",
+    "size": 729,
+    "status": "COMPLETED",
+    "type": "application/octet-stream"
+  },
+  {
+    "bandit_findings": null,
+    "created": null,
+    "id": "b9fde691-0412-826b-9828-74a2168d71d9",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "modified": null,
+    "name": "model.pt",
+    "size": 19299235,
+    "status": "COMPLETED",
+    "type": "application/vnd.snesdev-page-table"
+  },
+  {
+    "bandit_findings": [],
+    "created": null,
+    "id": "f7c5c1eb-e64b-883a-b54c-cbbd8f82da28",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "modified": null,
+    "name": "__init__.py",
+    "size": 685,
+    "status": "COMPLETED",
+    "type": "text/x-python"
+  },
+  {
+    "bandit_findings": [],
+    "created": null,
+    "id": "875768a5-0bff-82aa-8ea5-86a5c9f52e7e",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "modified": null,
+    "name": "client_app.py",
+    "size": 5001,
+    "status": "COMPLETED",
+    "type": "text/x-python"
+  },
+  {
+    "bandit_findings": [],
+    "created": null,
+    "id": "f427e63e-9a50-8ce8-84da-41525dc69a46",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "modified": null,
+    "name": "data_loading.py",
+    "size": 4544,
+    "status": "COMPLETED",
+    "type": "text/x-python"
+  },
+  {
+    "bandit_findings": [],
+    "created": null,
+    "id": "533bdac1-d3f2-8580-902a-aa13b54a6493",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "modified": null,
+    "name": "task.py",
+    "size": 8925,
+    "status": "COMPLETED",
+    "type": "text/x-python"
+  },
+  {
+    "bandit_findings": [],
+    "created": null,
+    "id": "90d4381a-37ff-8f0f-9e25-268fb5ec73ea",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "modified": null,
+    "name": "transforms.py",
+    "size": 3447,
+    "status": "COMPLETED",
+    "type": "text/x-python"
+  },
+  {
+    "bandit_findings": [],
+    "created": null,
+    "id": "0b48af54-237d-80fc-904f-f31f46fe63ce",
+    "modelId": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+    "modified": null,
+    "name": "models.py",
+    "size": 1869,
+    "status": "COMPLETED",
+    "type": "text/x-python"
+  }
+]

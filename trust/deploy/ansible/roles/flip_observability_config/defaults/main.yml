@@ -11,7 +11,7 @@
 #
 ---
 # The repo's trust/observability tree, resolved from this role's own location so
-# the play can live anywhere (deploy/providers/AWS/site.yml runs it too).
+# the play can live anywhere.
 observability_src_dir: "{{ role_path }}/../../../../observability"
 # Root of everything the trust stack bind-mounts from the host (flip_trust_dirs uses it too).
 flip_dir: /opt/flip

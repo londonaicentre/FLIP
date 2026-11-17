@@ -20,7 +20,7 @@ format), are left alone.
 
 Usage:
     python3 ssh_config.py --alias flip-stag-gstt --instance-id i-0abc --region eu-west-2 \
-        --key ~/.ssh/host-aws [--profile lza-stag] [--config ~/.ssh/config]
+        --key ~/.ssh/host-aws [--profile stag] [--config ~/.ssh/config]
 """
 
 import argparse

@@ -40,7 +40,7 @@ class EvaluationStrategy(FlipFedAvg):
     ``evaluation_results.json`` artifact the ServerApp uploads to S3.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         # Per-client results for the JSON artifact: {client_name: {metric_name: value}}
         self.per_client_results: dict[str, dict[str, float]] = {}

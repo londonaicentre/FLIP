@@ -13,8 +13,7 @@
 # limitations under the License.
 """Static guard: the shared roles' input contract (FLIP#1213 review).
 
-The roles are composed by onprem.yml, azure.yml and aws-ec2-host.yml (imported by aws-ec2.yml and
-deploy/providers/AWS/site.yml).
+The roles are composed by onprem.yml, azure.yml and aws-ec2-host.yml (imported by aws-ec2.yml).
 A missing or misspelt input must stop the play, not fall back to a value that silently
 re-owns the net-N dirs for the wrong backend or stages no FL kit at all. The same goes for
 flip_observability_config's hand-kept file list: a file added under trust/observability
@@ -190,3 +189,19 @@ def test_cloudwatch_agent_account_never_takes_the_orthanc_uid() -> None:
     script = account["shell"]
     assert "SYS_UID_MAX=998" in script
     assert "SYS_GID_MAX=998" in script
+
+
+def test_cloudwatch_agent_comes_from_the_hosts_own_region() -> None:
+    """The global s3.amazonaws.com bucket is in us-east-1 (FLIP#1684).
+
+    A host that reaches S3 only through its VPC's gateway endpoint, as in an LZA workload account,
+    reaches same-region buckets only, so the download must use AWS's copy in the host's region.
+    """
+    defaults = _load(ROLES_DIR / "flip_cloudwatch_agent" / "defaults" / "main.yml")
+    region = "{{ cloudwatch_agent_region.stdout }}"
+    assert defaults["cloudwatch_agent_deb"].startswith(
+        f"https://amazoncloudwatch-agent-{region}.s3.{region}.amazonaws.com/"
+    )
+    names = [task.get("name") for task in _load(ROLES_DIR / "flip_cloudwatch_agent" / "tasks" / "main.yml")]
+    lookup = names.index("read the host's region from instance metadata")
+    assert lookup < names.index("download CloudWatch agent package")

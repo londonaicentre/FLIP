@@ -79,7 +79,7 @@ spec:
       {{- end }}
       containers:
         - name: loki
-          image: "{{ .Values.observability.loki.image.repository }}:{{ .Values.observability.loki.image.tag }}"
+          image: "{{ .Values.observability.loki.image.repository }}:{{ .Values.observability.loki.image.tag }}{{ with .Values.observability.loki.image.digest }}@{{ . }}{{ end }}"
           imagePullPolicy: {{ .Values.observability.loki.image.pullPolicy }}
           args:
             - -config.file=/etc/loki/loki-config.yml

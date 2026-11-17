@@ -43,7 +43,7 @@ services:
   flip-api:
     image: ghcr.io/londonaicentre/flip-api:${DOCKER_TAG}
     ports:
-      - "${API_PORT}:8000"
+      - "${HUB_BIND_ADDRESS:-127.0.0.1}:${API_PORT}:8000"
     environment:
       - ENV=production
       - ENFORCE_MFA=${ENFORCE_MFA:-true}
@@ -76,8 +76,8 @@ services:
       - DB_PORT=${DB_PORT}
       - POSTGRES_DB=${POSTGRES_DB}
       - TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
-      - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
-      # in production, INTERNAL_SERVICE_KEY_HASH and AES_KEY_BASE64 are retrieved from AWS Secrets Manager at runtime
+      - FL_API_KEY=${FL_API_KEY}
+      # in production, AES_KEY_BASE64 is retrieved from AWS Secrets Manager at runtime
       - AWS_SECRET_NAME=${AWS_SECRET_NAME}
       - AWS_SES_ADMIN_EMAIL_ADDRESS=${AWS_SES_ADMIN_EMAIL_ADDRESS}
       - AWS_SES_SENDER_EMAIL_ADDRESS=${AWS_SES_SENDER_EMAIL_ADDRESS}
@@ -87,10 +87,10 @@ services:
       - FL_APP_DESTINATION_BUCKET=${FL_APP_DESTINATION_BUCKET}
       - NET_ENDPOINTS=${NET_ENDPOINTS}
       - FL_BACKEND=${FL_BACKEND}
-      # No FL_KIT_SLOT_NAMES here: in production the kit-slot pool's single source
-      # is the /flip/fl_kit_slot_names SSM parameter (read at runtime by
-      # resolve_fl_kit_slot_names) — an env copy would be dead config that
-      # apply-fl-kit-slots never updates.
+      # No FL_KIT_SLOT_NAMES here: in production the kit-slot pool is read at
+      # runtime by resolve_fl_kit_slot_names — the complete kits under
+      # FLARE_KITS_S3_URI (NVFLARE) or the /flip/fl_kit_slot_names SSM parameter (Flower).
+      - FLARE_KITS_S3_URI=s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}
     security_opt:
       - no-new-privileges:true
     cap_drop:

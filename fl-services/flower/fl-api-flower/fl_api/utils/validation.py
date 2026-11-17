@@ -13,11 +13,11 @@
 
 """Boundary input validation for the FL API.
 
-The FL API performs no authentication of its own — it trusts that the only caller is
-flip-api / fl-server on the trust's internal Docker network. To keep that trust from
-becoming a path-traversal or SSRF foothold (a compromised trust container, or an
-operator with an SSM port-forward, could reach the API directly), every request value
-that becomes a filesystem path or an outbound fetch is validated here first.
+Every route but /health requires the hub's FL API key (``fl_api/utils/auth.py``), and the
+key is held by flip-api alone. Defence in depth stops there being a single point: to keep
+a leaked key, or a caller on the hub network, from becoming a path-traversal or SSRF
+foothold, every request value that becomes a filesystem path or an outbound fetch is
+validated here first.
 """
 
 import ipaddress

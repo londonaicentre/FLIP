@@ -99,8 +99,8 @@ bastion only. From `deploy/providers/AWS/` with the staging profile:
 cd deploy/providers/AWS
 export AWS_PROFILE=stag             # must match; the Makefile enforces it
 make aws-login                          # SSO
-make plan  HUB=stag DEPLOY_TRUST_EC2=false   # hub-only (trusts run on the desktop)
-make apply HUB=stag DEPLOY_TRUST_EC2=false   # run plan + apply as SEPARATE commands
+make plan  HUB=stag                     # the hub only (trusts run on the desktop)
+make apply HUB=stag                     # run plan + apply as SEPARATE commands
 make deploy-centralhub HUB=stag         # roll the hub services to the develop tip (sha-<short7> task-def revisions)
 make deploy-ui HUB=stag                 # ship the UI (S3 + CloudFront)
 ```

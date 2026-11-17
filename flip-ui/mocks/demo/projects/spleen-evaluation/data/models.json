@@ -1,0 +1,15 @@
+{
+  "data": [
+    {
+      "description": "E2E smoke model",
+      "id": "86bb7e7b-e97d-8a34-995e-a1bb8763fe2d",
+      "name": "Spleen evaluation",
+      "owner_id": "00000000-0000-4000-8000-000000000001",
+      "status": "RESULTS_UPLOADED"
+    }
+  ],
+  "page": 1,
+  "pageSize": 20,
+  "totalPages": 1,
+  "totalRecords": 1
+}

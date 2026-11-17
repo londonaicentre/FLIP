@@ -7,6 +7,10 @@ Overview
 This page maps FLIP's components: what runs on the Central Hub, what runs at each Trust, and how the two connect. It
 is for engineers evaluating, deploying or operating FLIP. Each component has its own page with the detail.
 
+.. contents:: On this page
+   :local:
+   :depth: 1
+
 ************
 Architecture
 ************
@@ -22,6 +26,7 @@ FLIP has two parts:
 
 .. figure:: ../assets/support/flip_architecture-flip_architecture.png
    :align: center
+   :alt: The Central Hub in the cloud and a FLIP node inside each Trust's network.
 
    FLIP architecture.
 
@@ -75,8 +80,8 @@ Components
 Deployment targets
 ******************
 
-The Central Hub runs on AWS, provisioned with Terraform/OpenTofu, on a Landing Zone Accelerator estate. See
-:ref:`deploy-central-hub`.
+The Central Hub runs on AWS, provisioned with Terraform/OpenTofu, on an AWS Landing Zone Accelerator (LZA) estate. See
+:ref:`deploy-central-hub` and :doc:`/deploy-flip/deploy-central-hub-aws-lza`.
 
 A FLIP node runs in one of three ways:
 
@@ -84,4 +89,5 @@ A FLIP node runs in one of three ways:
 - inside a Trusted Research Environment: :doc:`/deploy-flip/deploy-flip-node-in-tre`;
 - on Kubernetes, from the Helm chart: :ref:`deploy-flip-node-kubernetes`.
 
-The mock Trusts used for staging run the same Compose stack on an EC2 instance.
+The mock Trusts used for staging run the same stacks, on nodes in AWS and Azure. See
+:doc:`/deploy-flip/deploy-trust-node`.

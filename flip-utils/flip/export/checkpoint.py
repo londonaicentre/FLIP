@@ -20,8 +20,9 @@ FLIP produces two on-disk checkpoint shapes, and both are handled here:
 * **Bare state dict** — parameter names at the top level, as carried by user-uploaded evaluation
   checkpoints.
 
-``PTModelPersistenceFormatManager`` normalises both. It is used here rather than re-implementing
-the discrimination, so that reading a checkpoint stays faithful to how FLIP itself reads one.
+Both are told apart here the way FLARE's ``PTModelPersistenceFormatManager`` does it (a ``model`` key
+means the persistence format), without importing NVFLARE, so export works under either FL backend
+(FLIP#1047). ``tests/unit/export/test_checkpoint.py`` checks the two agree.
 """
 
 from __future__ import annotations
@@ -34,7 +35,6 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from nvflare.app_opt.pt.model_persistence_format_manager import PTModelPersistenceFormatManager
 from torch import nn
 
 # Buffers PyTorch defines as integer-valued. FLIP's aggregation averages every entry of the state
@@ -42,6 +42,11 @@ from torch import nn
 # declares them integral. ``load_state_dict`` casts them back on copy, so strict loading is
 # unaffected — but anything reading the raw dict must not assume dtypes survive aggregation.
 _INTEGER_BUFFER_SUFFIX = "num_batches_tracked"
+
+# The persistence format's keys, as named by FLARE's ``PTModelPersistenceFormatManager``.
+PERSISTENCE_KEY_MODEL = "model"
+PERSISTENCE_KEY_TRAIN_CONF = "train_conf"
+PERSISTENCE_KEY_META_PROPS = "meta_props"
 
 
 @dataclass
@@ -107,7 +112,7 @@ def state_dict_from(data: dict[str, Any]) -> dict[str, Any]:
     Returns:
         dict[str, Any]: The parameter dictionary.
     """
-    var_dict: dict[str, Any] = PTModelPersistenceFormatManager(data, default_train_conf=None).var_dict
+    var_dict: dict[str, Any] = data.get(PERSISTENCE_KEY_MODEL, data)
     return var_dict
 
 
@@ -121,13 +126,13 @@ def describe_checkpoint(data: dict[str, Any], path: Path) -> CheckpointFacts:
     Returns:
         CheckpointFacts: The structural facts.
     """
-    manager = PTModelPersistenceFormatManager(data, default_train_conf=None)
-    state_dict = manager.var_dict
+    is_persistence_format = PERSISTENCE_KEY_MODEL in data
+    state_dict = state_dict_from(data)
     tensors = {key: value for key, value in state_dict.items() if isinstance(value, torch.Tensor)}
 
     return CheckpointFacts(
         path=path,
-        is_persistence_format=PTModelPersistenceFormatManager.PERSISTENCE_KEY_MODEL in data,
+        is_persistence_format=is_persistence_format,
         num_entries=len(state_dict),
         num_elements=sum(tensor.numel() for tensor in tensors.values()),
         dtype_histogram=dict(Counter(str(tensor.dtype) for tensor in tensors.values())),
@@ -138,8 +143,8 @@ def describe_checkpoint(data: dict[str, Any], path: Path) -> CheckpointFacts:
             for key, tensor in tensors.items()
             if key.endswith(_INTEGER_BUFFER_SUFFIX) and tensor.dtype.is_floating_point
         ],
-        train_conf=manager.train_conf,
-        meta_props=manager.meta,
+        train_conf=(data.get(PERSISTENCE_KEY_TRAIN_CONF) or None) if is_persistence_format else None,
+        meta_props=data.get(PERSISTENCE_KEY_META_PROPS) if is_persistence_format else None,
     )
 
 

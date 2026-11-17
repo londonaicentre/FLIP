@@ -20,9 +20,10 @@ XNAT, Orthanc, OMOP) on one EC2 instance, built from code in ``trust/deploy/terr
 configured by ``trust/deploy/ansible/aws-ec2.yml``. It can go in **any AWS account and VPC**, including
 the site's own: it reads nothing from the hub (no remote state, no hub env file, no hub credentials).
 Its only links to a hub are its **kit** and its **registration**, as for any trust. The instance has no
-public IP and no inbound rule; it is reached through SSM Session Manager only. The node needs internet
-egress, so it cannot run in the hub's own Landing Zone Accelerator accounts, which have none by design
-(checked on stag on 21 Oct 2026).
+public IP and no inbound rule; it is reached through SSM Session Manager only. In one of the hub's
+Landing Zone Accelerator accounts, outbound traffic leaves through the estate's central firewall, which
+drops anything it has no rule for: the node can run there only once that firewall allows the hosts in
+:ref:`deploy-trust-node-network` from the node's address.
 
 For a node on a Trust's own host see :doc:`deploy-flip-node-on-prem`; on Azure,
 :doc:`deploy-flip-node-azure`; as the Helm chart on Amazon EKS, :doc:`deploy-flip-node-aws-eks`.
@@ -35,10 +36,8 @@ For a node on a Trust's own host see :doc:`deploy-flip-node-on-prem`; on Azure,
 Architecture
 ************
 
-The diagrams are generated when this documentation is built, by a script kept next to the Terraform
-(``trust/deploy/terraform/aws/ec2/architecture/``). A test in that tree pins every drawn node to a resource
-in the ``.tf`` files, and every load-bearing resource to a drawn node. Dashed boxes are optional: the own-VPC
-network mode, the SSM endpoints, the stop/start schedule and the S3 kit read.
+The diagrams are generated from the Terraform in ``trust/deploy/terraform/aws/ec2``, so they match what it deploys.
+Dashed boxes are optional: the own-VPC network mode, the SSM endpoints, the stop/start schedule and the S3 kit read.
 
 .. figure:: ../assets/generated/trust-node-aws-ec2-network.png
    :align: center
@@ -97,8 +96,9 @@ destroyed with the stack. In existing-subnet mode there is none: the node leaves
 egress, typically a central firewall or inspection VPC that holds the site's public addresses and
 allowlists the destinations below.
 
-**Egress the site must allow** (the node's security group allows only 443, 80, the FL port and the VPC
-DNS resolver; a site firewall narrows that to these names):
+**Egress the site must allow**: everything in :ref:`deploy-trust-node-network`, plus the AWS services
+below. The node's security group allows only 443, 80, the FL port and the VPC DNS resolver; a site
+firewall narrows that to these names.
 
 .. list-table::
    :header-rows: 1
@@ -107,43 +107,19 @@ DNS resolver; a site firewall narrows that to these names):
    * - Destination
      - Port
      - For
-   * - the hub URL (``CENTRAL_HUB_API_URL``)
+   * - ``awscli.amazonaws.com``
      - 443
-     - polling, heartbeat, results
-   * - the hub's FL endpoint
-     - 8002 prod, 8003 stag (the kit's ``FL_EDGE_PORT``)
-     - federated training. **Exempt it from TLS inspection**: the connection is mutual TLS, which a
-       re-signing proxy breaks. A firewall without a DNS proxy needs a rule on the endpoint's address
-   * - ``ghcr.io`` **and** ``pkg-containers.githubusercontent.com``
+     - the AWS CLI, installed once at provisioning
+   * - AWS: SSM (``ssm``, ``ssmmessages``, ``ec2messages``), CloudWatch, and S3 in the node's region
      - 443
-     - trust images; the second serves the layers, and ``ghcr.io`` alone fails every pull
-   * - ``registry-1.docker.io``, ``auth.docker.io``, ``production.cloudfront.docker.com``
-     - 443
-     - the observability, Postgres and socket-proxy images
-   * - ``huggingface.co``
-     - 443
-     - the seed dataset (``aicentreflip/trust-data``)
-   * - Ubuntu's apt mirrors and ``esm.ubuntu.com``; ``download.docker.com``
-     - 80, 443
-     - packages and Docker at provisioning
-   * - ``pypi.org``, ``files.pythonhosted.org``
-     - 443
-     - the seed's loaders
-   * - ``awscli.amazonaws.com``; the CloudWatch agent package on ``s3.amazonaws.com``
-     - 443
-     - the AWS CLI and the agent at provisioning
-   * - AWS: SSM (``ssm``, ``ssmmessages``, ``ec2messages``), CloudWatch, and S3 if the kit and vocabulary
-       come from a bucket
-     - 443
-     - access, logs, the kit. On a subnet with no internet route to SSM, set ``SSM_ENDPOINTS=true`` for
-       interface endpoints (~$24/month per AZ). They cover Session Manager only: CloudWatch, the kit bucket
-       and every other row here still need the site's own route
+     - access, logs and metrics; the CloudWatch agent package at provisioning; the kit and vocabulary
+       when they come from a bucket
 
-The registry, Docker Hub and FL rows were measured behind a firewall on the Azure node (October 2026),
-along with XNAT's plugin downloads at start (``xnat.org``, ``api.bitbucket.org`` and
-``bbuseruploads.s3.amazonaws.com``, ``github.com`` and ``release-assets.githubusercontent.com``), which
-that Kubernetes node needed; the provisioning rows come from the EC2 host's own installs. A site with no
-route to the registries needs a mirror.
+On a subnet with no internet route to SSM, set ``SSM_ENDPOINTS=true`` to create interface endpoints
+(~$24/month per AZ). They cover Session Manager only: CloudWatch, S3 and every other destination above still
+need the site's own route.
+
+Neither of the two rows in the table has been measured behind a firewall yet.
 
 **What the instance role may do**: open Session Manager sessions (no ``ssm:GetParameter``, so it cannot
 read parameters in its account), ship logs and metrics to CloudWatch, and, only when ``KIT_BUCKET`` is
@@ -210,9 +186,13 @@ Build the node and join
 The FL kit arrives out of band with the kit file. ``KIT_SRC`` is the slot's own kit, as the Kubernetes
 chart takes it: ``local/``, ``startup/`` and ``transfer/`` for FLARE, ``certificates/`` and ``keys/`` for
 Flower. ``stage-kit`` refuses a FLARE kit that names another slot. Without a ``KIT_BUCKET`` the seed
-loads no OMOP vocabulary, so cohort queries use the vocabulary-free form. Check the node joined from the hub's *Trusts* page (the trust is
-online) and from the trust: ``make shell`` and ``curl -s localhost:<TRUST_API_PORT>/health`` reports
-``hub_key_match: true``.
+loads no OMOP vocabulary, so cohort queries use the vocabulary-free form.
+
+To check the node has joined:
+
+1. On the hub's *Trusts* page, the trust shows as online.
+2. On the node, the trust-api health check reports ``hub_key_match: true``. Open a shell with ``make shell``, then
+   run ``curl -s localhost:<TRUST_API_PORT>/health`` in it.
 
 Before ``deploy``:
 
@@ -222,6 +202,9 @@ Before ``deploy``:
   each defaults under ``/opt/flip``.
 - **A trust on slot 3 or above** needs ``SOURCE_TRUST=1`` (or 2): the mock dataset has two partitions,
   and the seed defaults to the slot number.
+- **A trust with its own data** sets ``TRUST_DATA_SEED=false`` in the kit: ``deploy`` and ``seed`` then load
+  none of the sample data into its OMOP or Orthanc, only the vocabulary (with a ``KIT_BUCKET``). Any other
+  value than ``true`` or ``false`` stops them before the stack is touched.
 - **Credentials from** ``aws login`` are not read by Terraform. A ``credential_process`` profile hands
   them over and refreshes them itself, as on the :doc:`EKS page <deploy-flip-node-aws-eks>`:
   ``credential_process = aws configure export-credentials --profile <your aws login profile> --format process``.
@@ -238,17 +221,16 @@ Operate and remove
   live node.
 - ``make stage-kit`` re-stages the FL kit after a re-registration; ``make seed`` re-seeds after a data
   version bump (the stack must be stopped).
-- ``make destroy KIT=… HUB=…`` removes the node with its root volume, and so the trust's data, and in
-  own-VPC mode its network. It names the target account and asks for a typed yes first. Deregister the
-  trust on the hub first.
+- To remove the node, first deregister the trust on the hub, then run ``make destroy KIT=… HUB=…``. It
+  removes the node with its root volume, and so the trust's data, and in own-VPC mode its network. It names
+  the target account and asks for a typed yes first.
 
-*************
-Not yet here
-*************
+*****************
+Not yet supported
+*****************
 
 - **The node self-test before join** (``selftest_node.sh`` over SSM, as the Azure node runs it through Run
-  Command) and **the running-stack check after join** (FLIP#1449) are not wired to this root yet.
-  ``make -C deploy/providers/AWS status`` checks only the hub's own trust EC2.
-- **GPU hosts**: ``flip_gpu_host`` holds the NVIDIA driver and checks a container sees the GPU (it does
-  nothing on a CPU host), but ``make deploy`` still starts the FL client CPU-only. Untested until the
-  account has G-instance quota.
+  Command) and **the running-stack check after join** (FLIP#1449) are not yet available for EC2 nodes.
+- **GPU hosts**: provisioning installs the NVIDIA driver and checks a container can see the GPU (the
+  ``flip_gpu_host`` role; it does nothing on a CPU host), but ``make deploy`` still starts the FL client
+  CPU-only. GPU instances have not been tested.

@@ -69,14 +69,12 @@ BASE_ENV=(
     FLIP_UI_BUCKET_NAME=flip-ui-stag
     ADMIN_USER_PASSWORD=not-a-real-password
     AES_KEY_BASE64=bm90LWEtcmVhbC1rZXk=
-    INTERNAL_SERVICE_KEY=not-a-real-service-key
-    INTERNAL_SERVICE_KEY_HASH=0000000000000000000000000000000000000000000000000000000000000000
+    FL_API_KEY=not-a-real-fl-api-key
     POSTGRES_DB=flip
     POSTGRES_USER=flipuser
     ENFORCE_MFA=true
     FL_ADMIN_DIRECTORY=/workspace
     FL_SERVER_PORT=8002
-    INTERNAL_SERVICE_KEY_HEADER=X-Internal-Service-Key
     SES_VERIFIED_EMAIL=noreply@example.invalid
     TRUST_API_KEY_HEADER=X-Trust-API-Key
     ALB_SUBDOMAIN=api-stag
@@ -87,8 +85,6 @@ BASE_ENV=(
     FL_BACKEND=nvflare
     FL_KIT_SLOT_NAMES='["Trust_1", "Trust_2"]'
     FLARE_KIT_DATE=20260429
-    # Required, not optional: its Makefile `?=` default creates a trust host.
-    DEPLOY_TRUST_EC2=false
     ACCESS_LOGS_BUCKET_NAME=flip-access-logs-lza
     EFS_PROVISION_IMAGE=123456789012.dkr.ecr.eu-west-2.amazonaws.com/ecr-public/aws-cli/aws-cli:2.22.35
     LZA_VPC_NAME=AWSAccelerator-eu-west-2-prod
@@ -306,7 +302,7 @@ fi
 # 1e. NO WORKFLOW MAY PUBLISH A PLAN FILE AS AN ARTIFACT.
 #
 #     tf-via-pr defaults upload-plan to true, and a Terraform plan file is a zip
-#     containing the full tfstate — AES_KEY_BASE64, INTERNAL_SERVICE_KEY and
+#     containing the full tfstate — AES_KEY_BASE64, FL_API_KEY and
 #     ADMIN_USER_PASSWORD in plaintext. This repository is PUBLIC, so an uploaded
 #     plan is a public download of live credentials. It happened once: the first
 #     green CI plan (2026-09-01) left a 357 KB stag plan artifact behind, because
@@ -399,25 +395,6 @@ if [[ -f "${OUT_FILE}" ]]; then
     no "writes no file on failure" "a partial file would let make proceed with an empty value"
 else
     ok "writes no file on failure"
-fi
-
-# 5b. THE DESTRUCTIVE DEFAULT. `?=` in the Makefile means an absent key does not
-#     reach variables.tf at all — it reaches Terraform as the Makefile's own
-#     default, and for DEPLOY_TRUST_EC2 that default creates a trust host. It is
-#     not on check-fl-plan-impact.sh's watch list, so an unattended apply would do
-#     it silently. Required, so the value has to be written down.
-run_case "DEPLOY_TRUST_EC2 is required, not defaulted" DEPLOY_TRUST_EC2
-expect_rc 1 "exits 1"
-expect_stderr "DEPLOY_TRUST_EC2" "names it"
-
-# ...and `false` is a legitimate value that must compose, not be mistaken for
-# absence: an explicit false is a decision, an absent key is an accident.
-run_case "an explicit false composes"
-expect_rc 0 "exits 0"
-if grep -qFx 'DEPLOY_TRUST_EC2=false' "${OUT_FILE}"; then
-    ok "writes the explicit false through"
-else
-    no "writes the explicit false through" "file: $(grep '^DEPLOY_TRUST' "${OUT_FILE}")"
 fi
 
 # 6. ALL missing keys are reported at once — a one-at-a-time script costs a CI
@@ -540,7 +517,7 @@ else
     ok "does not write the raw keys twice"
 fi
 
-# The destructive default, in the same spirit as DEPLOY_TRUST_EC2 above: an absent
+# A destructive default: an absent
 # NETWORKING_INGRESS_CIDRS is not "no change", it is every rule the estate's edge
 # reaches the internal NLB through.
 for key in ACCESS_LOGS_BUCKET_NAME EFS_PROVISION_IMAGE LZA_VPC_NAME MANAGE_DNS NETWORKING_INGRESS_CIDRS; do
@@ -559,7 +536,7 @@ expect_rc 0 "exits 0"
 #     variable between a run and the account it shapes, and getting it wrong is not
 #     a wrong-looking plan: TF_HUB=stag on aws-prod composes a prod estate with
 #     staging's destructive defaults — the RDS comes out with
-#     deletion_protection = false, skip_final_snapshot = true — inside an apply job
+#     skip_final_snapshot = true — inside an apply job
 #     nobody is watching. The compose step is the last cheap place to stop it.
 #
 #     The value is per workflow, not per file: terraform_plan.yml declares

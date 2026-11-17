@@ -104,6 +104,17 @@ variable "apply_workflow_file" {
   default     = "terraform_apply.yml"
 }
 
+variable "power_workflow_file" {
+  description = <<-EOT
+    Staging power workflow (FLIP#1596). It assumes the APPLY role, because
+    stopping staging mutates ECS, EC2 and RDS, so its job_workflow_ref has to be
+    trusted by the apply role as well. Staging only: local.apply_workflow_refs
+    (main.tf) adds it only when environment == "stag".
+  EOT
+  type        = string
+  default     = "staging_lifecycle.yml"
+}
+
 variable "drift_workflow_file" {
   description = "Scheduled drift-detection workflow, which also plans."
   type        = string
@@ -114,7 +125,7 @@ variable "flip_api_secret_name" {
   description = <<-EOT
     Name of the Secrets Manager secret the FLIP root manages
     (module.flip_api_secret in ../../main.tf). The plan role needs an explicit read
-    grant on it — see plan_read_flip_api_secret in main.tf. Kept as a variable
+    grant on it — see plan_read_flip_api_secret in iam_plan.tf. Kept as a variable
     rather than hardcoded so the coupling to the other root stays visible, and so
     a renamed secret is a one-line change here rather than a silent plan failure.
   EOT
@@ -141,10 +152,15 @@ variable "managed_role_names" {
     "ecs-flip-api-task-role",
     "ecs-fl-api-task-role",
     "ecs-fl-server-task-role",
+    "ecs-fl-kit-provision-task-role",
     # rds_proxy.tf
     "flip-rds-proxy-role",
     # main.tf, via terraform-aws-modules/iam//modules/iam-assumable-role
     "ec2-role",
+    # main.tf, flip_db enhanced monitoring (RDS.6, FLIP#1796)
+    "flip-rds-monitoring-role",
+    # Retiring (FLIP#1438): the root no longer declares it. Kept so the apply that deletes it is
+    # allowed; remove once stag and prod have applied that change.
     "trust-ec2-role",
   ]
 }
@@ -155,6 +171,8 @@ variable "managed_instance_profile_names" {
   type        = list(string)
   default = [
     "ec2-role-profile",
+    # Retiring (FLIP#1438): the root no longer declares it. Kept so the apply that deletes it is
+    # allowed; remove once stag and prod have applied that change.
     "trust-ec2-role-profile",
   ]
 }
@@ -167,8 +185,9 @@ variable "attachable_managed_policies" {
   type        = list(string)
   default = [
     "service-role/AmazonECSTaskExecutionRolePolicy", # iam_ecs.tf, execution role
-    "AmazonSSMManagedInstanceCore",                  # main.tf, both EC2 roles
-    "CloudWatchAgentServerPolicy",                   # main.tf, trust EC2 role
+    "AmazonSSMManagedInstanceCore",                  # main.tf, the bastion role
+    "service-role/AmazonRDSEnhancedMonitoringRole",  # main.tf, flip_db enhanced monitoring (RDS.6, FLIP#1796)
+    "CloudWatchAgentServerPolicy",                   # retiring with trust-ec2-role (FLIP#1438)
   ]
 }
 
@@ -209,6 +228,7 @@ variable "apply_service_prefixes" {
     "cloudfront",
     "cognito-idp",
     "ec2",
+    "ecr",
     "ecs",
     "elasticfilesystem",
     "elasticloadbalancing",
@@ -323,6 +343,16 @@ variable "state_noncurrent_version_days" {
   description = "How many days a previous state version is kept before it may expire."
   type        = number
   default     = 90
+}
+
+# S3.9. On an AWS Landing Zone Accelerator estate, the accelerator's own
+# aws-accelerator-s3-access-logs-<account>-<region> bucket, whose policy admits
+# S3 log delivery from any bucket in the account. Never a bucket the FLIP root
+# declares (flip-access-logs-*): that bucket's own state is kept in this one.
+variable "state_access_log_bucket" {
+  description = "Bucket, in the same account and region, that receives the state bucket's S3 server access logs under a <state_bucket_name>/ prefix. Empty turns access logging off."
+  type        = string
+  default     = ""
 }
 
 variable "restrict_state_writes" {

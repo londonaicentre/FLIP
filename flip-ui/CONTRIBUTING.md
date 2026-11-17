@@ -76,7 +76,7 @@ a running backend).
 
 ```bash
 npm run build        # full type-check + vite build (strict)
-npm run build:deploy # vite build only — used by make deploy-ui for CloudFront S3 sync
+npm run build:deploy # vite build only — used by make deploy-ui and publish_ui.yml to build the bundle published to the UI bucket
 ```
 
 The compiled output is written to `dist/`. `npm run build:deploy` skips `vue-tsc --noEmit` so it can ship while

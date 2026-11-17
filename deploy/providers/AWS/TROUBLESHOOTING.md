@@ -110,7 +110,7 @@ If you regress this: confirm the ALB listener rule's `target_group_arn` is `aws_
 
 ### 1.7 ECS-internal call from fl-api → fl-server hangs in `try_connect`
 
-**Symptom**: On ECS `fl-api-net-1` boots, registers in Cloud Map, but its FLARE admin client hangs trying to reach fl-server. `fl-server-net-1` is healthy on the NLB and reachable from the trust EC2.
+**Symptom**: On ECS `fl-api-net-1` boots, registers in Cloud Map, but its FLARE admin client hangs trying to reach fl-server. `fl-server-net-1` is healthy on the NLB and reachable from off-VPC trust FL clients.
 
 **Root cause**: fl-api is the FLARE admin client and connects directly to fl-server inside the VPC (the NLB path is reserved for off-VPC trust FL clients). The fl-server SG had no ingress on 8002 from the fl-api SG, so the in-VPC connect attempt timed out.
 
@@ -151,7 +151,7 @@ The two digests will match. To confirm the tag was rebuilt by a specific merge, 
 
 ### 2.2 Container images missing for current branch tag
 
-**Symptom**: `make deploy-trust` fails with `docker manifest inspect` returning "no such manifest", or a Central Hub ECS deployment reports `CannotPullContainerError`.
+**Symptom**: A Central Hub ECS deployment reports `CannotPullContainerError`.
 
 **Root cause**: The `DOCKER_TAG` in `.env.stag` refers to a branch whose images haven't been built. GitHub Actions only auto-publish to GHCR on merges to `develop` and `main`. Branch images require manual `workflow_dispatch`.
 
@@ -162,9 +162,8 @@ The two digests will match. To confirm the tag was rebuilt by a specific merge, 
 sed -i 's/^DOCKER_TAG=.*/DOCKER_TAG=develop/' .env.stag
 
 # Option B: Trigger builds for specific branch
-gh workflow run docker_build_trust_trust_api.yml --ref <branch>
-gh workflow run docker_build_trust_imaging_api.yml --ref <branch>
-gh workflow run docker_build_trust_data_access_api.yml --ref <branch>
+gh workflow run docker_build_flip_api.yml --ref <branch>
+gh workflow run fl-docker-build-nvflare.yml --ref <branch>   # or fl-docker-build-flower.yml
 # Wait for green, then use branch tag
 ```
 
@@ -258,20 +257,6 @@ UPDATE xnat_project_status SET last_reimport='2020-01-01' WHERE xnat_project_id=
 
 ---
 
-### 4.4 DHCP options change not applied to running instances
-
-**Symptom**: After deploying the ECS foundation, `flip.local` domain resolution doesn't work from existing EC2 instances.
-
-**Root cause**: The `dhcp.tf` resource associates a new DHCP options set (with `flip.local` search domain) to the VPC. Existing EC2 instances won't pick up the new options until their DHCP lease expires and renews (typically 24-72 hours for AWS default, or a reboot). Until renewal, the instances continue using the previous (default) DHCP options.
-
-**Fix**: Reboot the EC2 instance to force an immediate DHCP renewal:
-
-```bash
-aws ec2 reboot-instances --instance-ids <instance-id> --profile stag   # or prod
-```
-
-Or wait for the lease to renew naturally. This only matters if the instance needs to resolve `flip.local` domains (which it doesn't during PR 1 — ECS Fargate tasks are the consumers in PR 2).
-
 ---
 
 ## 5. Verification Commands
@@ -321,14 +306,15 @@ SELECT xnat_project_id, last_reimport, reimport_count FROM xnat_project_status W
 # Central Hub ECS service
 AWS_PROFILE=stag aws logs tail /ecs/flip-api --since 10m | grep -iE 'ERROR|Exception|Traceback' | tail -20
 
-# Trust
-ssh flip-trust "docker logs trust1-trust-api-1 2>&1 | grep -iE 'ERROR|ReadTimeout|502' | tail -20"
+# Trust on an AWS EC2 node, after `make -C trust/deploy/terraform/aws/ec2 ssh-config KIT=<CODE> HUB=stag`;
+# containers are trust<N>-<service>-1, <N> the kit's FL_KIT_SLOT_NUMBER
+ssh flip-stag-<code> "docker logs trust<N>-trust-api-1 2>&1 | grep -iE 'ERROR|ReadTimeout|502' | tail -20"
 ```
 
 ### Test XNAT connectivity from imaging-api
 
 ```bash
-ssh flip-trust "docker exec trust1-imaging-api-1 python3 -c \"
+ssh flip-stag-<code> "docker exec trust<N>-imaging-api-1 python3 -c \"
 import os, requests
 r = requests.get('http://xnat-web:8080/data/projects',
     auth=(os.environ.get('XNAT_SERVICE_USER', 'flipServiceAccount'),

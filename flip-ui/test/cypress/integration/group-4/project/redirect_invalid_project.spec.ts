@@ -25,18 +25,6 @@ describe("redirect user to the project list page if the given project does not e
         cy.restoreLocalStorage();
     });
 
-    it("redirects to project list on nav to non-existent project page", () => {
-        cy.intercept("GET", `/projects/${projectId}`, { statusCode: 404 })
-            .as("getProject404");
-
-        cy.visit(`/project/${projectId}`);
-
-        cy.wait("@getProject404");
-
-        cy.url().should("include", "/projects");
-        cy.contains("The requested project could not be found.").should("be.visible");
-    });
-
     it("redirects to project list on nav to 'model dashboard' of non-existent project", () => {
         cy.fixture("model/getModel").then((getModel) => {
             cy.intercept("GET", `/projects/${getModel.projectId}`, { statusCode: 404 })
@@ -53,40 +41,39 @@ describe("redirect user to the project list page if the given project does not e
         cy.contains("The requested project could not be found.").should("be.visible");
     });
 
-    it("redirects to project list on nav to 'create model' of non-existent project", () => {
-        cy.intercept("GET", `/projects/${projectId}`, { statusCode: 404 })
-            .as("getProject404");
+    [
+        {
+            name: "redirects to project list on nav to non-existent project page",
+            path: "",
+            status: 404
+        },
+        {
+            name: "redirects to project list on nav to 'create model' of non-existent project",
+            path: "/model/create",
+            status: 404
+        },
+        {
+            name: "redirects to project list on nav to 'create cohort' of non-existent project",
+            path: "/cohort-query",
+            status: 404
+        },
+        {
+            // The 400 path is what this test is about; the project page exercises it.
+            name: "redirects to project list on nav to page where project is not given or invalid",
+            path: "",
+            status: 400
+        }
+    ].forEach(({ name, path, status }) => {
+        it(name, () => {
+            cy.intercept("GET", `/projects/${projectId}`, { statusCode: status })
+                .as("getProject");
 
-        cy.visit(`/project/${projectId}/model/create`);
+            cy.visit(`/project/${projectId}${path}`);
 
-        cy.wait("@getProject404");
+            cy.wait("@getProject");
 
-        cy.url().should("include", "/projects");
-        cy.contains("The requested project could not be found.").should("be.visible");
-    });
-
-    it("redirects to project list on nav to 'create cohort' of non-existent project", () => {
-        cy.intercept("GET", `/projects/${projectId}`, { statusCode: 404 })
-            .as("getProject404");
-
-        cy.visit(`/project/${projectId}/cohort-query`);
-
-        cy.wait("@getProject404");
-
-        cy.url().should("include", "/projects");
-        cy.contains("The requested project could not be found.").should("be.visible");
-    });
-
-    it("redirects to project list on nav to page where project is not given or invalid", () => {
-        cy.intercept("GET", `/projects/${projectId}`, { statusCode: 400 })
-            .as("getProject400");
-
-        // The 400 path is what this test is about; the project page exercises it.
-        cy.visit(`/project/${projectId}`);
-
-        cy.wait("@getProject400");
-
-        cy.url().should("include", "/projects");
-        cy.contains("The requested project could not be found.").should("be.visible");
+            cy.url().should("include", "/projects");
+            cy.contains("The requested project could not be found.").should("be.visible");
+        });
     });
 });
