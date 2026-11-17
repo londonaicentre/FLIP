@@ -57,6 +57,35 @@ def test_upload_files_stages_the_files_for_the_upload_then_removes_them(client, 
     assert os.listdir(tmp_path / "net1" / "upload") == []
 
 
+def test_two_files_that_share_a_name_stay_two_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(upload_service, "BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path))
+    uploads = [
+        UploadFile(file=io.BytesIO(b"AAA"), filename="a/seg.nii"),
+        UploadFile(file=io.BytesIO(b"BBB"), filename="b/seg.nii"),
+    ]
+
+    staging_dir, relative_paths = asyncio.run(upload_service.stage_uploads("net1", uploads))
+
+    request_id = os.path.basename(staging_dir)
+    assert relative_paths == [f"{request_id}/a/seg.nii", f"{request_id}/b/seg.nii"]
+    upload_dir = tmp_path / "net1" / "upload"
+    assert [(upload_dir / path).read_bytes() for path in relative_paths] == [b"AAA", b"BBB"]
+
+
+@pytest.mark.parametrize("path", ["../seg.nii", "a/../../seg.nii", "/etc/seg.nii", "a/"])
+def test_staging_refuses_a_path_outside_its_request_before_writing_anything(path, tmp_path, monkeypatch):
+    monkeypatch.setattr(upload_service, "BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path))
+    uploads = [
+        UploadFile(file=io.BytesIO(b"ok"), filename="ok.nii"),
+        UploadFile(file=io.BytesIO(b"bad"), filename=path),
+    ]
+
+    with pytest.raises(ValueError, match="Path traversal|needs a name"):
+        asyncio.run(upload_service.stage_uploads("net1", uploads))
+
+    assert not (tmp_path / "net1").exists()
+
+
 def test_upload_files_rejects_an_unsafe_scan_id_and_leaves_nothing_behind(client, tmp_path, monkeypatch):
     monkeypatch.setattr(upload_service, "BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path))
 

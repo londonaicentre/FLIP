@@ -168,13 +168,18 @@ def test_a_job_pod_gets_what_the_client_container_has():
     env = _env(job)
     for name in ("TRUST_INTERNAL_SERVICE_KEY_HEADER", "TRUST_INTERNAL_SERVICE_KEY"):
         assert env[name] == _env(client)[name]
-    # No images volume: a job pod streams its studies into its own run directory (FLIP#1049).
+    # No images volume: a job pod streams its studies into its own run directory (FLIP#1049), and its
+    # IMAGES_DIR is a scratch folder of its own for the files add_resource uploads.
     assert env["IMAGES_TRANSPORT"]["value"] == "stream"
-    assert job["volumeMounts"] == [{"name": "dshm", "mountPath": "/dev/shm"}]
+    assert job["volumeMounts"] == [
+        {"name": "dshm", "mountPath": "/dev/shm"},
+        {"name": "images-scratch", "mountPath": "/app/data/images"},
+    ]
     client_spec = _client(docs)["spec"]["template"]["spec"]
     volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
     assert "images" not in volumes
     assert volumes["dshm"]["emptyDir"]["medium"] == "Memory"
+    assert volumes["images-scratch"] == {"name": "images-scratch", "emptyDir": {}}
     assert "affinity" not in pod["spec"]
     assert pod["spec"]["automountServiceAccountToken"] is False
     # None by default: both backends dial the hub's public FL name.

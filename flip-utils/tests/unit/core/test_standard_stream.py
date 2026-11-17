@@ -78,11 +78,13 @@ def test_the_study_dir_is_made_once_and_removed_at_exit(monkeypatch):
 
 
 def test_add_resource_sends_the_files_themselves(stream_constants, tmp_path):
-    segmentation = tmp_path / "seg.nii.gz"
-    segmentation.write_bytes(b"seg")
+    stream_constants.IMAGES_DIR = str(tmp_path)
+    run_dir = tmp_path / "net-1" / "upload" / "run-1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "seg.nii.gz").write_bytes(b"seg")
 
     with patch("flip.core.standard.requests.put", return_value=Mock(status_code=200)) as put:
-        FLIPStandardProd().add_resource("proj-1", "ACC001", "scan-1", "SEG", [str(segmentation)])
+        FLIPStandardProd().add_resource("proj-1", "ACC001", "scan-1", "SEG", ["run-1/seg.nii.gz"])
 
     assert put.call_args.args[0] == "https://imaging.example.com/upload/images/net-1/files"
     assert put.call_args.kwargs["data"] == {
@@ -91,6 +93,8 @@ def test_add_resource_sends_the_files_themselves(stream_constants, tmp_path):
         "scan_id": "scan-1",
         "resource_id": "SEG",
     }
+    # The same relative path the mount route takes, opened from this net's upload folder.
     [(field, (name, handle))] = put.call_args.kwargs["files"]
-    assert (field, name) == ("files", "seg.nii.gz")
+    assert (field, name) == ("files", "run-1/seg.nii.gz")
+    assert handle.name == str(run_dir / "seg.nii.gz")
     assert handle.closed  # the ExitStack closed it after the request

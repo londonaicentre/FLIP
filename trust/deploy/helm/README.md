@@ -698,8 +698,9 @@ Prerequisites and trade-offs:
   `Insufficient` CPU, memory or GPU (what an autoscaler adding a node looks like). A pod no node could ever
   take is `Unschedulable` and fails at once, which is what a `nodeSelector` aimed at a pool at zero reports.
 - **No images volume.** A job pod streams each study from imaging-api into its own run directory
-  (`IMAGES_TRANSPORT=stream`, FLIP#1049) and uploads results the same way, so it holds only its project's
-  studies, a separate GPU pool needs no ReadWriteMany class, and job pods ignore `flClient.affinity`.
+  (`IMAGES_TRANSPORT=stream`, FLIP#1049) and sends `flip.add_resource`'s files in the request, so it holds only
+  its project's studies, a separate GPU pool needs no ReadWriteMany class, and job pods ignore `flClient.affinity`.
+  Its `IMAGES_DIR` is a scratch `emptyDir` of its own, where training code writes those files, as on the mount.
   imaging-api keeps the whole cache, bounded by `IMAGE_CACHE_RETENTION_HOURS`.
 - **Size `ephemeralStorage` to the cohort.** The streamed studies sit on the job pod's own disk, and
   Kubernetes evicts a pod that writes past `jobPods.ephemeralStorage`, which fails the job. It is the

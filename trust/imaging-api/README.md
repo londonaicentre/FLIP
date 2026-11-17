@@ -292,8 +292,9 @@ A missing resource is created with the first file, and a missing `scan_id` with 
 scan; in a session with no scans, the upload fails.
 
 `PUT /upload/images/{net_id}/files` is the multipart twin for a client with no mount of the net's upload folder
-(FLIP#1049): the same fields as form data, the files themselves as `files` parts. They are staged under
-`<net_id>/upload/<request id>/` for the upload and removed afterwards.
+(FLIP#1049): the same fields as form data, the files themselves as `files` parts, each named by the same path
+relative to the net's upload folder that `files` holds above. They are staged at `<net_id>/upload/<request id>/<path>`
+for the upload and removed afterwards; a path that would leave its request's folder is refused with a 400.
 
 ### Users
 

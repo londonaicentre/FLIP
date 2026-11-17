@@ -387,7 +387,8 @@ class FLIPStandardProd(FLIPBase):
             accession_id (str): Accession ID to upload the resource to
             scan_id (str): ID of the scan to upload
             resource_id (str): Type of resource that is being uploaded (e.g. NIFTI)
-            files (list[str]): List of files to upload
+            files (list[str]): Paths of the files to upload, relative to this net's upload folder,
+                ``IMAGES_DIR/NET_ID/upload``: write each file there first. The same on both transports.
         """
         if not isinstance(project_id, str):
             raise TypeError(f"expect project id to be string, but got {type(project_id)}")
@@ -419,9 +420,11 @@ class FLIPStandardProd(FLIPBase):
         endpoint = _join_url(FlipConstants.IMAGING_API_URL, f"upload/images/{FlipConstants.NET_ID}")
 
         if FlipConstants.IMAGES_TRANSPORT == "stream":
-            # No mount of the net's upload folder: the files travel in the request (FLIP#1049).
+            # No mount of the net's upload folder: the files travel in the request, each named by the same
+            # relative path the mount route takes (FLIP#1049).
+            upload_dir = Path(FlipConstants.IMAGES_DIR) / FlipConstants.NET_ID / "upload"
             with ExitStack() as stack:
-                parts = [("files", (Path(f).name, stack.enter_context(open(f, "rb")))) for f in files]
+                parts = [("files", (f, stack.enter_context(open(upload_dir / f, "rb")))) for f in files]
                 response = requests.put(
                     f"{endpoint}/files",
                     data={key: value for key, value in payload.items() if key != "files"},

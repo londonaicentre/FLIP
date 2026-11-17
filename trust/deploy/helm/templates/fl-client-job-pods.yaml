@@ -24,8 +24,9 @@ the job's resource_spec). Everything else a FLIP job needs from the trust comes 
 the fl-client container: its env, the trust-internal key, /dev/shm and the FL server's host aliases (a
 job pod connects to the FL server itself, not only through the parent). A job pod mounts no images
 volume: it streams each study from imaging-api into its own run directory (IMAGES_TRANSPORT=stream,
-FLIP#1049), so it holds only its project's studies and can run on any node. Volumes, volumeMounts and
-env merge with the launcher's by name.
+FLIP#1049), so it holds only its project's studies and can run on any node. Its IMAGES_DIR is a scratch
+emptyDir of its own, where training code writes the files flip.add_resource uploads, as on the mount.
+Volumes, volumeMounts and env merge with the launcher's by name.
 */}}
 {{- define "flip-trust.flJobPod" -}}
 apiVersion: v1
@@ -103,11 +104,15 @@ spec:
       volumeMounts:
         - name: dshm
           mountPath: /dev/shm
+        - name: images-scratch
+          mountPath: {{ .Values.flClient.imagesDir }}
   volumes:
     - name: dshm
       emptyDir:
         medium: Memory
         sizeLimit: {{ .Values.flClient.shmSize }}
+    - name: images-scratch
+      emptyDir: {}
 {{- end }}
 
 {{- if and .Values.flClient.enabled (eq .Values.flBackend "nvflare") .Values.flClient.nvflare.jobPods.enabled }}
