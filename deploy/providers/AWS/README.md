@@ -1307,6 +1307,17 @@ deployed one. An environment genuinely running `:stag` (staging, today) gets
 `:stag` back, which is a no-op; what cannot happen is a sha-pinned service being
 moved onto a mutable tag.
 
+**On staging it will not stay behind develop** (FLIP#1375). Before reusing a
+running image, a develop apply looks for the newest build of an earlier develop
+commit, newer than the one running, and pins that. So when the FL gate holds the
+apply that built new FL images and more merges land on top, the `fl_quiesced`
+re-dispatch can run from the new tip and still deploys those images, and on a
+stopped staging estate (where the gate does not hold) the next merge catches up
+with nobody dispatching anything. The walk only moves forward: it stops at the
+running commit, and leaves alone a running tag that names no develop commit, such
+as `:stag` or a branch build deployed by hand. Production is unchanged: it moves
+by `release_tag`.
+
 Every lookup in that script **fails closed**. An expired session, a throttle, an
 AccessDenied or a wrong `ECS_CLUSTER` all used to look exactly like "there is no
 service here", which is the one answer that reaches the configured-tag fallback —
