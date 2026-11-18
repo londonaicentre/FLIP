@@ -97,6 +97,20 @@
 #
 # When RELEASE_TAG is unset or empty the release path is skipped entirely.
 #
+# CATCH_UP — staging follows develop (FLIP#1375).
+#
+# Images are path-filtered, so most develop merges build none, and step 2 keeps
+# whatever runs. When the one apply that would move an image forward is held by
+# the FL gate and another merge lands on top, the quiesced re-dispatch runs at
+# the new tip, finds no image for it, and keeps the old one: staging stays behind
+# until the next merge that rebuilds that image. With CATCH_UP=true (develop
+# only), step 2 first looks for the newest build of an earlier develop commit:
+# it walks first parents (only those get push builds) back from this commit and
+# pins the first published image, stopping where the running commit is no longer
+# an ancestor, so a service only ever moves forward. A running tag that names no
+# commit here (`:stag`, a branch build deployed by hand) is left alone, and so is
+# anything git cannot answer: those cases keep step 2's behaviour.
+#
 # Usage:
 #     resolve-image-tags.sh
 #
@@ -113,8 +127,15 @@
 #     RESOLVE_SHA_TAG            true (default) to look for this commit's image;
 #                                false to resolve the live tag only, which needs
 #                                no registry access at all (plan, drift)
-#     GHCR_WAIT_SECONDS          bound on waiting for the image (default 900);
-#                                0 probes once and moves on
+#     CATCH_UP                   true to pin the newest build of an earlier
+#                                develop commit before reusing the running tag;
+#                                needs the full git history (default false)
+#     GHCR_WAIT_SECONDS          default bound on waiting for an image (default
+#                                900); 0 probes once and moves on
+#     GHCR_WAIT_SECONDS_HUB      per-group bounds, for the hub image and for the
+#     GHCR_WAIT_SECONDS_FL       FL images; each defaults to GHCR_WAIT_SECONDS.
+#                                terraform_apply.yml sets them with
+#                                image-wait-budgets.sh (FLIP#1811)
 #     GHCR_POLL_SECONDS          gap between probes (default 30)
 #
 # Writes `KEY=value` lines to stdout:
@@ -154,15 +175,30 @@ ECS_CLUSTER="${ECS_CLUSTER:-flip-cluster}"
 RESOLVE_SHA_TAG="${RESOLVE_SHA_TAG:-true}"
 GHCR_WAIT_SECONDS="${GHCR_WAIT_SECONDS:-900}"
 GHCR_POLL_SECONDS="${GHCR_POLL_SECONDS:-30}"
+# Empty counts as unset: a step output that never got written must not read as 0.
+GHCR_WAIT_SECONDS_HUB="${GHCR_WAIT_SECONDS_HUB:-${GHCR_WAIT_SECONDS}}"
+GHCR_WAIT_SECONDS_FL="${GHCR_WAIT_SECONDS_FL:-${GHCR_WAIT_SECONDS}}"
+for seconds in "${GHCR_WAIT_SECONDS}" "${GHCR_WAIT_SECONDS_HUB}" "${GHCR_WAIT_SECONDS_FL}"; do
+    [[ "${seconds}" =~ ^[0-9]+$ ]] ||
+        die "GHCR_WAIT_SECONDS, GHCR_WAIT_SECONDS_HUB and GHCR_WAIT_SECONDS_FL must be whole seconds (got '${seconds}')"
+done
+# Base 10: bash reads a leading zero as octal, and `08` then fails every comparison.
+GHCR_WAIT_SECONDS_HUB=$((10#${GHCR_WAIT_SECONDS_HUB}))
+GHCR_WAIT_SECONDS_FL=$((10#${GHCR_WAIT_SECONDS_FL}))
 # A zero poll interval never advances the elapsed counter, so a non-zero wait
 # budget would spin forever rather than time out.
 [[ "${GHCR_POLL_SECONDS}" -ge 1 ]] || GHCR_POLL_SECONDS=1
 
 command -v jq >/dev/null 2>&1 || die "jq is required (the ECS responses are parsed as JSON so a failure is distinguishable from an absence)"
 
+CATCH_UP="${CATCH_UP:-false}"
 case "${RESOLVE_SHA_TAG}" in
     true | false) ;;
     *) die "RESOLVE_SHA_TAG must be 'true' or 'false' (got '${RESOLVE_SHA_TAG}')" ;;
+esac
+case "${CATCH_UP}" in
+    true | false) ;;
+    *) die "CATCH_UP must be 'true' or 'false' (got '${CATCH_UP}')" ;;
 esac
 
 # Unset and empty mean the same thing — the dispatch input is an empty string on
@@ -224,14 +260,14 @@ image_exists() {
 
 # Wait for one image, bounded. Returns 0 if it appeared, 1 if the budget ran out.
 wait_for_image() {
-    local ref="$1"
+    local ref="$1" budget="$2"
     local waited=0
     while true; do
         if image_exists "${ref}"; then
             [[ "${waited}" -gt 0 ]] && log "   ${ref} appeared after ${waited}s."
             return 0
         fi
-        if [[ "${waited}" -ge "${GHCR_WAIT_SECONDS}" ]]; then
+        if [[ "${waited}" -ge "${budget}" ]]; then
             return 1
         fi
         sleep "${GHCR_POLL_SECONDS}"
@@ -366,11 +402,39 @@ active_tag() {
     ACTIVE_TAG="${tag}"
 }
 
+# Newest `sha-<short7>` of image_name built for a first-parent ancestor of
+# GIT_SHA that descends from the running commit, into CAUGHT_UP_TAG (CATCH_UP,
+# see the header). Empty when there is none, or when git cannot say: that keeps
+# the running tag. A registry error is still fatal (image_exists).
+CAUGHT_UP_TAG=""
+
+newer_ancestor_build() {
+    local image_name="$1" running="$2" running_commit commit
+    CAUGHT_UP_TAG=""
+    case "${running}" in
+        sha-*) running_commit="${running#sha-}" ;;
+        v*) running_commit="${running%%@*}" ;;
+        *) return 0 ;;
+    esac
+    running_commit="$(git rev-parse -q --verify "${running_commit}^{commit}" 2>/dev/null)" || {
+        log "   not catching up: ${running} is not a commit in this checkout."
+        return 0
+    }
+    while read -r commit; do
+        [[ "${commit}" != "${running_commit}" ]] || return 0
+        git merge-base --is-ancestor "${running_commit}" "${commit}" 2>/dev/null || return 0
+        if image_exists "${PROBE_REGISTRY}${image_name}:sha-${commit:0:7}"; then
+            CAUGHT_UP_TAG="sha-${commit:0:7}"
+            return 0
+        fi
+    done < <(git rev-list --first-parent --skip=1 --max-count=50 "${GIT_SHA}" 2>/dev/null)
+}
+
 # Wait groups whose publishing workflow has already been waited out in full.
 # fl-server and fl-api are built and pushed by one workflow
 # (fl-docker-build-<backend>.yml), so a full timeout on the first is a timeout
-# on the second; the sibling then probes once instead of spending a second
-# GHCR_WAIT_SECONDS.
+# on the second; the sibling then probes once instead of spending the group's
+# budget again.
 WAIT_GROUPS_EXHAUSTED=""
 
 # Resolve one tag into RESOLVED_TAG: published sha tag, else the live tag, else
@@ -378,9 +442,14 @@ WAIT_GROUPS_EXHAUSTED=""
 RESOLVED_TAG=""
 
 resolve() {
-    local label="$1" image_name="$2" service="$3" container="$4" fallback="$5" wait_group="${6:-}"
-    local ref="${PROBE_REGISTRY}${image_name}:${SHA_TAG}"
+    local label="$1" image_name="$2" service="$3" container="$4" fallback="$5" wait_group="$6"
+    local ref="${PROBE_REGISTRY}${image_name}:${SHA_TAG}" budget
     RESOLVED_TAG=""
+    case "${wait_group}" in
+        hub) budget="${GHCR_WAIT_SECONDS_HUB}" ;;
+        fl) budget="${GHCR_WAIT_SECONDS_FL}" ;;
+        *) die "unknown wait group '${wait_group}'" ;;
+    esac
 
     if [[ "${RESOLVE_SHA_TAG}" == "true" ]]; then
         if [[ -n "${RELEASE_TAG}" ]]; then
@@ -406,28 +475,33 @@ resolve() {
             log "   pinning ${RESOLVED_TAG}"
             return 0
         fi
-        if [[ -n "${wait_group}" && " ${WAIT_GROUPS_EXHAUSTED} " == *" ${wait_group} "* ]]; then
-            # One workflow publishes every image in this group, so its sha tags
-            # appear together or not at all. A sibling has already waited the
-            # full GHCR_WAIT_SECONDS for that workflow and timed out; waiting
-            # again would only add another GHCR_WAIT_SECONDS to a run that is
-            # already going to fall back. Probe once instead (FLIP#1283).
-            log "🔎 ${label}: single probe for ${ref} — ${wait_group} already waited ${GHCR_WAIT_SECONDS}s"
+        if [[ " ${WAIT_GROUPS_EXHAUSTED} " == *" ${wait_group} "* ]]; then
+            # One workflow publishes every image in this group. A sibling has
+            # already waited the group's full budget for that workflow and
+            # timed out; waiting again would only add another budget to a run
+            # that is already going to fall back. Probe once instead (FLIP#1283).
+            log "🔎 ${label}: single probe for ${ref} — ${wait_group} already waited ${budget}s"
             if image_exists "${ref}"; then
                 log "   pinning ${SHA_TAG}"
                 RESOLVED_TAG="${SHA_TAG}"
                 return 0
             fi
-            log "   not published — this merge probably changed no ${wait_group} code."
+            log "   not published."
         else
             log "🔎 ${label}: looking for ${ref}"
-            if wait_for_image "${ref}"; then
+            if wait_for_image "${ref}" "${budget}"; then
                 log "   pinning ${SHA_TAG}"
                 RESOLVED_TAG="${SHA_TAG}"
                 return 0
             fi
-            [[ -z "${wait_group}" ]] || WAIT_GROUPS_EXHAUSTED="${WAIT_GROUPS_EXHAUSTED} ${wait_group}"
-            log "   not published within ${GHCR_WAIT_SECONDS}s — this merge probably changed no service code."
+            # Why a group has the budget it has is in the apply's wait step
+            # (image-wait-budgets.sh), so no guess at the reason here.
+            if [[ "${budget}" -gt 0 ]]; then
+                WAIT_GROUPS_EXHAUSTED="${WAIT_GROUPS_EXHAUSTED} ${wait_group}"
+                log "   not published within ${budget}s."
+            else
+                log "   not published (probed once, no wait)."
+            fi
         fi
     else
         # Plan and drift: what matters is agreeing with the deployed task
@@ -439,6 +513,14 @@ resolve() {
     fi
 
     active_tag "${service}" "${container}"
+    if [[ "${RESOLVE_SHA_TAG}" == "true" && "${CATCH_UP}" == "true" ]]; then
+        newer_ancestor_build "${image_name}" "${ACTIVE_TAG}"
+        if [[ -n "${CAUGHT_UP_TAG}" ]]; then
+            log "   catching up from ${ACTIVE_TAG} to ${CAUGHT_UP_TAG}, the newest earlier develop build."
+            RESOLVED_TAG="${CAUGHT_UP_TAG}"
+            return 0
+        fi
+    fi
     if [[ -n "${ACTIVE_TAG}" ]]; then
         log "   reusing the tag ${service} is already running: ${ACTIVE_TAG}"
         RESOLVED_TAG="${ACTIVE_TAG}"
@@ -453,7 +535,7 @@ resolve() {
     RESOLVED_TAG="${fallback}"
 }
 
-resolve "hub images" "flip-api" "flip-api" "flip-api" "${FALLBACK_DOCKER_TAG}"
+resolve "hub images" "flip-api" "flip-api" "flip-api" "${FALLBACK_DOCKER_TAG}" "hub"
 hub_tag="${RESOLVED_TAG}"
 # The fl-server container is named for its net, not for the service role
 # (ecs_tasks.tf:275) — same string as the service, which is easy to mis-assume.

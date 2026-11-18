@@ -203,7 +203,7 @@ def test_add_fl_backend_job_id_updates_db(fl_job_id, fake_session):
 def test_submit_job_raises_when_no_job_id(mock_post, fl_job_id, model_id, fake_session):
     mock_post.return_value = ""
     with pytest.raises(ValueError, match="No backend job id returned"):
-        fl_service.submit_job(fl_job_id, "endpoint", model_id, fake_session)
+        fl_service.submit_job(fl_job_id, "endpoint", model_id, fake_session, study="proj")
 
 
 # TODO add tests for fetch_server_status, fetch_client_status
@@ -242,48 +242,29 @@ def test_add_fl_backend_job_id_raises_if_job_missing(fl_job_id, fake_session):
 
 
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_all_offline(mock_get_status):
-    # The backend is passed in explicitly now (resolved per-net at runtime), not read from settings.
+def test_unavailable_clients_names_only_the_clients_not_connected(mock_get_status):
     mock_get_status.return_value = [
         IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY),
         IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS),
     ]
 
-    with pytest.raises(fl_service.ClientAvailabilityError, match="Clients unavailable: trust-1"):
-        fl_service.validate_client_availability(["trust-1"], "endpoint", FLBackend.NVFLARE)
+    # Trust_3 is not in the statuses at all, which counts as not connected.
+    assert fl_service.unavailable_clients(["Trust_2", "Trust_1", "Trust_3"], "endpoint") == ["Trust_2", "Trust_3"]
 
 
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_some_online(mock_get_status):
-    mock_get_status.return_value = [
-        IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY),
-        IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS),
-    ]
-
-    # This has to raise an error for Trust_2 only.
-    with pytest.raises(fl_service.ClientAvailabilityError, match="Clients unavailable: Trust_2"):
-        fl_service.validate_client_availability(["Trust_2", "Trust_1"], "endpoint", FLBackend.NVFLARE)
-
-
-@pytest.mark.parametrize(
-    "statuses", [[], [IClientStatus(name="Trust_1", status=ClientStatus.DISCONNECTED)]], ids=["empty", "unavailable"]
-)
-@patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_flower_soft(mock_get_status, statuses):
-    """Flower backend: empty or unavailable client statuses log a warning instead of raising."""
-    mock_get_status.return_value = statuses
-
-    # Should NOT raise — Flower degrades gracefully
-    fl_service.validate_client_availability(["Trust_1"], "endpoint", FLBackend.FLOWER)
-
-
-@patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_nvflare_still_raises(mock_get_status):
-    """FLARE backend: empty client statuses raise a researcher-facing refusal."""
+def test_unavailable_clients_names_every_client_when_none_is_connected(mock_get_status):
     mock_get_status.return_value = []
 
-    with pytest.raises(fl_service.ClientAvailabilityError, match="Unable to fetch client statuses"):
-        fl_service.validate_client_availability(["Trust_1"], "endpoint", FLBackend.NVFLARE)
+    assert fl_service.unavailable_clients(["Trust_1", "Trust_2"], "endpoint") == ["Trust_1", "Trust_2"]
+
+
+@patch("flip_api.fl_services.services.fl_service.check_client_status")
+def test_unavailable_clients_never_raises_when_the_fl_api_reports_nothing(mock_get_status):
+    """No statuses means nothing is known: no client is named and the submission goes ahead (#1133)."""
+    mock_get_status.return_value = None
+
+    assert fl_service.unavailable_clients(["Trust_1"], "endpoint") == []
 
 
 @patch("flip_api.fl_services.services.fl_service.http_delete")
@@ -1195,7 +1176,7 @@ def test_extract_current_job_data_success(mock_http_get):
     assert result.status == "RUNNING"
 
     # Verify correct HTTP endpoint called (with the generous Flower-aware timeout)
-    mock_http_get.assert_called_once_with(f"{net_endpoint}/list_jobs", timeout=30)
+    mock_http_get.assert_called_once_with(f"{net_endpoint}/list_jobs", timeout=30, params=[])
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
@@ -1252,7 +1233,7 @@ def test_list_backend_jobs_parses_every_job(mock_http_get):
 
     assert jobs is not None
     assert [(j.job_id, j.status) for j in jobs] == [("a", FLJobStatus.RUNNING), ("b", FLJobStatus.FAILED)]
-    mock_http_get.assert_called_once_with("http://fl-api/list_jobs", timeout=30)
+    mock_http_get.assert_called_once_with("http://fl-api/list_jobs", timeout=30, params=[])
 
 
 @pytest.mark.parametrize(
@@ -1300,8 +1281,9 @@ def test_abort_model_training_success(
     abort_mocks.server.return_value = {"status": "stopped"}
     mock_extract_current_job_data.return_value = IJobMetaData(job_id="job123", status="RUNNING")
 
+    fake_session.get.return_value = MagicMock(project_id=None)
     fl_service.abort_model_training(model_id, fake_session)
-    abort_mocks.abort.assert_called_once_with("http://fl-api-endpoint", "job123")
+    abort_mocks.abort.assert_called_once_with("http://fl-api-endpoint", "job123", study=None)
     # The dequeue DELETEs the job, so update_fl_scheduler can no longer free the net —
     # the abort path must release it itself once the abort has been delivered.
     abort_mocks.release.assert_called_once_with(model_id, fake_session)
@@ -1339,9 +1321,10 @@ def test_abort_model_training_aborts_a_job_still_waiting_to_start(
     abort_mocks.server.return_value = {"status": "started"}
     mock_http_get.return_value = [{"job_id": "job123", "status": "PENDING"}]
 
+    fake_session.get.return_value = MagicMock(project_id=None)
     fl_service.abort_model_training(model_id, fake_session)
 
-    abort_mocks.abort.assert_called_once_with("http://fl-api-endpoint", "job123")
+    abort_mocks.abort.assert_called_once_with("http://fl-api-endpoint", "job123", study=None)
     abort_mocks.release.assert_called_once_with(model_id, fake_session)
 
 
@@ -1406,9 +1389,9 @@ def test_submit_job_persists_backend_id_on_success(mock_post, mock_add, fl_job_i
     """A valid backend job id from the FL API is persisted against the FLJob row."""
     mock_post.return_value = "backend-job-99"
 
-    fl_service.submit_job(fl_job_id, "endpoint", model_id, fake_session)
+    fl_service.submit_job(fl_job_id, "endpoint", model_id, fake_session, study="proj")
 
-    mock_post.assert_called_once_with(f"endpoint/submit_job/{model_id}", timeout=30)
+    mock_post.assert_called_once_with(f"endpoint/submit_job/{model_id}", timeout=30, params=[("study", "proj")])
     mock_add.assert_called_once_with(fl_job_id, "backend-job-99", fake_session)
 
 
@@ -1480,9 +1463,17 @@ def test_check_client_status_success(mock_http_get):
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
 def test_check_client_status_returns_none_when_no_response(mock_http_get):
-    mock_http_get.return_value = []
+    mock_http_get.return_value = None
 
     assert fl_service.check_client_status("endpoint") is None
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_check_client_status_returns_an_empty_list_when_no_client_is_connected(mock_http_get):
+    """FLARE drops a client from its list once it stops answering, so [] means every client is offline."""
+    mock_http_get.return_value = []
+
+    assert fl_service.check_client_status("endpoint") == []
 
 
 # --- fetch_* unavailable branches ----------------------------------------------------------------
@@ -2699,3 +2690,101 @@ def test_start_training_logs_nothing_about_gpus_when_flower_got_no_override(mode
     _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), reply)
 
     assert logged == []
+
+
+# --- the project's NVFLARE study on submit, list and abort (FLIP#1678) ---------------------------
+
+PROJECT_STUDY = "8b2e9d6e-5a53-4f2e-9c37-2c8f4f0f2d11"
+
+
+@patch("flip_api.fl_services.services.fl_service.submit_job")
+@patch("flip_api.fl_services.services.fl_service.upload_app")
+@patch("flip_api.fl_services.services.fl_service.encrypt")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_required_training_details")
+def test_start_training_submits_under_the_project_study(
+    mock_get_required, mock_encrypt, mock_upload, mock_submit, model_id, fl_job_id, fake_session
+):
+    mock_get_required.return_value = MagicMock(project_id=PROJECT_STUDY, cohort_query="query")
+    mock_encrypt.return_value = "encrypted"
+    fake_session.get.return_value = FLJob(id=fl_job_id, model_id=model_id)
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS
+
+    fl_service.start_training(
+        model_id=model_id,
+        fl_job_id=fl_job_id,
+        clients=["client1"],
+        endpoint="endpoint",
+        bundle_urls=["url"],
+        session=fake_session,
+    )
+
+    assert mock_submit.call_args.kwargs["study"] == PROJECT_STUDY
+
+
+@patch("flip_api.fl_services.services.fl_service.add_fl_backend_job_id")
+@patch("flip_api.fl_services.services.fl_service.http_post")
+def test_submit_job_sends_the_study(mock_post, mock_add, fl_job_id, model_id, fake_session):
+    mock_post.return_value = "backend-job-99"
+
+    fl_service.submit_job(fl_job_id, "endpoint", model_id, fake_session, study=PROJECT_STUDY)
+
+    mock_post.assert_called_once_with(f"endpoint/submit_job/{model_id}", timeout=30, params=[("study", PROJECT_STUDY)])
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_list_backend_jobs_sends_each_study(mock_http_get):
+    mock_http_get.return_value = []
+
+    fl_service.list_backend_jobs("http://fl-api-net-1:8000", ["a", "b"])
+
+    mock_http_get.assert_called_once_with(
+        "http://fl-api-net-1:8000/list_jobs", timeout=30, params=[("study", "a"), ("study", "b")]
+    )
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_extract_current_job_data_sends_the_study(mock_http_get):
+    mock_http_get.return_value = [{"job_id": "job123", "status": "RUNNING"}]
+
+    fl_service.extract_current_job_data("http://fl-api", "job123", study=PROJECT_STUDY)
+
+    mock_http_get.assert_called_once_with("http://fl-api/list_jobs", timeout=30, params=[("study", PROJECT_STUDY)])
+
+
+@patch("flip_api.fl_services.services.fl_service.http_delete")
+def test_abort_job_sends_the_study(mock_delete):
+    mock_delete.return_value = {"status": "aborted"}
+
+    fl_service.abort_job("endpoint", "job-id", study=PROJECT_STUDY)
+
+    mock_delete.assert_called_once_with("endpoint/abort_job/job-id", params=[("study", PROJECT_STUDY)])
+
+
+@patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
+@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
+@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_service.abort_job")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
+@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+@patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model")
+def test_abort_model_training_uses_the_models_project_study(
+    mock_release,
+    mock_remove,
+    mock_get_net,
+    mock_abort,
+    mock_fetch_server_status,
+    mock_get_fl_backend_job_id_by_model_id,
+    mock_extract_current_job_data,
+    model_id,
+    fake_session,
+):
+    mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
+    mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
+    mock_fetch_server_status.return_value = {"status": "running"}
+    mock_extract_current_job_data.return_value = IJobMetaData(job_id="job123", status="RUNNING")
+    fake_session.get.return_value = MagicMock(project_id=UUID(PROJECT_STUDY))
+
+    fl_service.abort_model_training(model_id, fake_session)
+
+    mock_extract_current_job_data.assert_called_once_with("http://fl-api-endpoint", "job123", study=PROJECT_STUDY)
+    mock_abort.assert_called_once_with("http://fl-api-endpoint", "job123", study=PROJECT_STUDY)

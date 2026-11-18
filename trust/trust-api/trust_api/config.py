@@ -87,11 +87,21 @@ class Settings(BaseSettings):
     XNAT_URL: str = "http://xnat-web:8080"
     OMOP_DB_HOST: str = "omop-db"
     OMOP_DB_PORT: int = 5432
+    # Where this trust's OMOP lives (FLIP#13). Only the health probe reads it here: a
+    # Snowflake account is not a TCP port on the trust network, so the raw TCP probe below
+    # would report a Snowflake trust's OMOP as permanently down. Empty / unset means
+    # ``postgres``, so an existing kit file is unaffected.
+    OMOP_BACKEND: str = "postgres"
     # The fl-client image tag this deployment configured (compose: DOCKER_FL_TAG; the K8s
     # chart: the tag flip-trust.imageTag resolves for the fl-client — its pin, else
     # global.image.tag, else flClient.image.tag). The fl-client has no health endpoint, so this is how its
     # build reaches the hub's Connection Status (FLIP#1204). Empty = not reported.
     FL_CLIENT_IMAGE_TAG: str = ""
+    # How this trust runs an FL job, reported beside the fl-client's tag (so not sent when FL_CLIENT_IMAGE_TAG is
+    # empty): "process" inside the fl-client's container (compose, and the chart by default), or "pods", one pod
+    # per job (the chart with NVFLARE job pods). So the hub can later decide whether two jobs may share a net
+    # (FLIP#1739).
+    FL_CLIENT_JOB_MODE: Literal["process", "pods"] = "process"
 
 
 # Eager load once (for app use)

@@ -242,11 +242,16 @@ Setting ``rollingUpdate: null`` in the chart does not help. Helm 3 applies clien
 
 .. _ts-k8s-xnat-init-timeout:
 
-Deploy fails with ``resource Job/flip-trust/trust-release-flip-trust-xnat-init not ready``
-==========================================================================================
+Deploy reports ``xnat-init did not complete``
+=============================================
 
-**Cause.** The ``xnat-init`` job, which configures XNAT after each install or upgrade, ran longer than the deploy's
-wait budget. Helm has already applied the new spec by then, so the error names Helm, not the wait.
+**Symptom.** ``make deploy`` (or ``deploy-trust-k8s`` / ``upgrade-trust-k8s``) prints ``the release is live and
+rolled out, but xnat-init did not complete`` after ``❌  XNAT init failed — check logs:``. A plain ``helm install``
+or ``helm upgrade`` of the chart, which still runs ``xnat-init`` as a hook, reports the same thing as
+``resource Job/flip-trust/trust-release-flip-trust-xnat-init not ready``.
+
+**Cause.** The ``xnat-init`` job, which configures XNAT after each install or upgrade, ran longer than the wait
+budget. The release is already applied and rolled out by then; only XNAT's configuration step is unfinished.
 
 **Fix.** Time one run of the job, then deploy with a larger budget (the default is ``30m``):
 
@@ -255,9 +260,8 @@ wait budget. Helm has already applied the new spec by then, so the error names H
    kubectl get job -n flip-trust -w
    make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> HELM_TIMEOUT=45m
 
-If the job is wedged rather than slow, set ``xnat.initJob.enabled: false`` in your values file (``VALUES_FILE``, see
-"Key values" on :doc:`../deploy-flip/deploy-flip-node-kubernetes`), deploy, and run
-``make -C trust/deploy/helm xnat-init`` on its own, where its logs are easy to read. "The wait budget" under Step 4
+If the job is wedged rather than slow, run ``make -C trust/deploy/helm xnat-init`` on its own, where its logs are
+easy to read; the release does not need deploying again. "The wait budget" under Step 4
 of :doc:`../deploy-flip/deploy-flip-node-kubernetes` explains the setting.
 
 ****************************
