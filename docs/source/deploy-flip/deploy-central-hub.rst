@@ -576,7 +576,12 @@ check and is often junked or dropped. So FLIP also creates an SES identity for t
         - TXT
         - ``v=DMARC1; p=quarantine``
 
-2. **Wait for the domain identity to show Verified** in the SES console.
+2. **Wait for the domain identity to show Verified** in the SES console. It usually does within minutes of the records
+   resolving. SES looks for the DKIM and MAIL FROM records for only 72 hours after the identity is created, then marks
+   both **Failed** and stops looking, so a DNS change that takes longer, through another team's zone say, needs one
+   more step: once the records resolve, open the domain identity in the SES console and choose **Retry DKIM
+   verification**, then **Retry configuring MAIL FROM domain**. Both keep the same tokens, so the published records
+   stay valid.
 3. **Set** ``SES_SENDER_EMAIL=no-reply@<ALB_SUBDOMAIN>`` in the hub env file and apply. FLIP's own emails now come from
    that address. ``SES_VERIFIED_EMAIL`` stays the address access-request notifications are sent to, so keep it a
    mailbox somebody reads.
@@ -590,8 +595,22 @@ check and is often junked or dropped. So FLIP also creates an SES identity for t
    while the account is in the sandbox delivers only to verified addresses, so users stop receiving invitations and
    reset codes that Cognito's built-in sender delivers today.
 
-**To check email works end to end**, register a new user in FLIP. The invitation email with the temporary password
-comes from Cognito, so this tests the invitation templates in a real mail client.
+**To check email works end to end**, send each email once and open it in a real mail client. While the account is in
+the sandbox, verify each recipient address in the SES console first (*Configuration → Identities → Create identity →
+Email address*).
+
+- **Invitation:** register a new user in FLIP. This one comes from Cognito, so it checks Cognito's sender, not SES.
+- **Access request:** submit the *Request Access* form on the sign-in page. The notification goes to
+  ``SES_VERIFIED_EMAIL``.
+- **XNAT invite:** create a project with that new user in it, then stage and approve it at a trust. When the trust has
+  created the project in its XNAT, each project user without an XNAT account there gets an invite with a set-password
+  link.
+- **Added to a project:** approve a second project at the same trust with the same user. The trust sends this notice
+  only to users who have signed in to its XNAT before (opening the set-password link counts); anyone else gets the
+  invite again.
+
+In the mail client's view of the original message (*Show original* in Gmail), SPF, DKIM and DMARC should all show
+**PASS**, with DKIM signed for ``ALB_SUBDOMAIN``.
 
 .. note::
 
