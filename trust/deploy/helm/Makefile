@@ -447,7 +447,9 @@ sync-project-studies: ## Give each approved project its NVFLARE study entry for 
 	if [ -z "$$projects" ]; then \
 	  daa=$$($(FL_STUDIES_POD)=data-access-api | head -1); \
 	  [ -n "$$daa" ] || { echo "❌ no running data-access-api to list the approved projects; pass PROJECTS=\"<id> ...\""; exit 1; }; \
-	  projects=$$($(KUBECTL) exec -n $(NAMESPACE) "$$daa" -- sh -c 'cd "$$COHORT_SNAPSHOT_DIR" && for f in */membership.json; do [ -f "$$f" ] && echo "$${f%%/*}"; done; true'); \
+	  projects=$$($(KUBECTL) exec -n $(NAMESPACE) "$$daa" -- sh -c 'cd "$${COHORT_SNAPSHOT_DIR:?}" && for f in */membership.json; do [ ! -f "$$f" ] || echo "$${f%%/*}"; done') \
+	    || { echo "❌ cannot list the approved projects in data-access-api's COHORT_SNAPSHOT_DIR"; exit 1; }; \
+	  [ -n "$$projects" ] || { echo "❌ no approved project found in data-access-api's COHORT_SNAPSHOT_DIR; pass PROJECTS=\"<id> ...\""; exit 1; }; \
 	fi; \
 	file=$$(mktemp); trap 'rm -f "$$file"' EXIT; \
 	$(KUBECTL) exec -n $(NAMESPACE) "$$client" -c fl-client -- \
