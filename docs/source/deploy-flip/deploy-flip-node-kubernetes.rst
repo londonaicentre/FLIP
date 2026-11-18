@@ -11,12 +11,13 @@
 
 .. _deploy-flip-node-kubernetes:
 
-##################################
-Deploy a FLIP node on Kubernetes
-##################################
+########################################
+Deploy on an existing Kubernetes cluster
+########################################
 
 The ``flip-trust`` Helm chart deploys the trust node onto a Kubernetes cluster the trust already runs. Use it when
-the trust's platform team operates Kubernetes rather than standalone hosts. This page is step 5 of
+the trust's platform team operates Kubernetes rather than standalone hosts. To build a cluster for the chart from
+code instead, see :doc:`deploy-flip-node-aws-eks` or :doc:`deploy-flip-node-azure-aks`. This page is step 5 of
 :doc:`onboarding-a-trust`.
 
 As on every platform, **all traffic to the hub is outbound**. Every application Service is ``ClusterIP``; the one
@@ -28,8 +29,9 @@ optional inbound path is the DICOM receiver for a real PACS (see `Connect a real
    Do steps 1 to 4 of :doc:`onboarding-a-trust` first: you need the kit file and this trust's FL participant kit.
    When the node is deployed and its DICOM path verified, continue at step 6 there.
 
-The chart is validated on single-node k3s: read `Known limitations`_, particularly storage and Pod Security, before
-choosing it for a production trust. The :gh:`Helm chart README <trust/deploy/helm/README.md>` has the full values
+The chart is validated on single-node k3s, and its self-test passes on AKS (:doc:`deploy-flip-node-azure-aks`) and
+Amazon EKS (:doc:`deploy-flip-node-aws-eks`) with both FL backends. Read `Known limitations`_, particularly storage
+and Pod Security, before choosing it for a production trust. The :gh:`Helm chart README <trust/deploy/helm/README.md>` has the full values
 and secrets reference.
 
 .. contents:: On this page
@@ -135,9 +137,7 @@ Cluster
      - 1Gi
      - No
 
-Every volume is ``ReadWriteOnce`` by default. The FL client is pinned to imaging-api's node so the two can share the
-images volume, and XNAT's DICOM-to-NIfTI conversion jobs mount the XNAT volume, so on a **multi-node** cluster see
-`Known limitations`_.
+Every volume is ``ReadWriteOnce`` by default. On a **multi-node** cluster, see `Known limitations`_.
 
 GPUs
 ====
@@ -146,7 +146,16 @@ GPU training needs the `NVIDIA GPU Operator <https://github.com/NVIDIA/gpu-opera
 **580 or newer** on the GPU nodes, because the FL images ship PyTorch built for CUDA 13. The operator installs the
 driver itself, so pin its ``driver.version`` to a 580+ release, or set ``driver.enabled=false`` and pre-install one on
 the node. Then set ``flClient.gpu.enabled: true`` and ``flClient.gpu.count: 1`` (on NVFLARE the chart accepts only 1;
-see `Key values`_).
+see `Key values`_). The client then requests ``nvidia.com/gpu`` (``flClient.gpu.allocation: devicePlugin``, the
+default), so Kubernetes reserves a GPU for it and places it on a node that has one. On a single node with no device
+plugin, whose default container runtime is ``nvidia`` (a k3s workstation), set ``flClient.gpu.allocation: runtime``
+instead: the pod then takes that node's GPU 0 without a reservation.
+
+The trust offers the FL scheduler only the GPUs it is configured with. A trust left at the default
+``flClient.gpu.enabled: false`` offers none, so every job that asks for a GPU waits and then fails, and the hub shows
+the trust as "waiting for resources". To lend a cluster's GPUs one per job instead of holding one around the clock,
+use NVFLARE job pods (``flClient.nvflare.jobPods``, with ``maxGpus`` set to the GPUs FLIP may use); see the chart
+README's "NVFLARE job pods" section.
 
 Extra network egress
 ====================
@@ -163,9 +172,8 @@ On top of :ref:`deploy-trust-node-network`:
      - ``sync-kit`` adds this port to the chart's egress policy for you.
    * - ``github.com``, ``codeload.github.com``, ``raw.githubusercontent.com``
      - The sample-data seed job (``trustData.seed``) fetches its scripts from FLIP's repository, on install and on
-       every upgrade while it is enabled. It also needs the sample-data hosts in the general table.
-   * - Your S3 vocabulary bucket
-     - The OMOP vocabulary load job, only if ``omopDb.vocabLoad.s3Bucket`` is set.
+       every upgrade while it is enabled. It also needs the sample-data hosts in the general table. Neither is needed
+       with ``TRUST_DATA_SEED=false`` in the kit (see Step 1).
 
 To restrict egress further, see :gh:`NETWORK-POLICY.md <trust/deploy/helm/NETWORK-POLICY.md>`.
 
@@ -183,6 +191,14 @@ Step 1 — Check out the release and copy in the kit
 
 The chart templates come from the checkout, so never deploy from a branch tip. The chart never registers anything
 itself: the kit file ``trust/.env.<CODE>.<env>`` is what the admin's registration produced.
+
+**A trust with real data:** add ``TRUST_DATA_SEED=false`` to the kit file before the first deploy. Every
+``deploy-trust-k8s KIT=<CODE>`` and ``upgrade-trust-k8s`` then turns the chart's mock-data seed job off
+(``trustData.seed.enabled``), so FLIP's sample data never reaches your OMOP database or PACS. Any other ``deploy``
+that names ``KIT=<CODE>`` turns it off as well, with or without the override; only a ``deploy`` naming no kit leaves
+the chart's default, which seeds. On AKS and EKS, ``join`` installs the kit from the tarball and deploys in
+one step, so ask the hub admin to add the line before packaging the kit. Leave it unset on a test trust. For the
+DICOM vocabulary that normally comes with the sample data, see :ref:`onprem-core-vocabulary`.
 
 **********************************
 Step 2 — Generate the secrets file
@@ -262,7 +278,7 @@ On a managed cluster (AKS, EKS): the kit from a Secret
 ======================================================
 
 A managed node pool replaces nodes at will, so nothing may live on one. Put the kit in a Secret instead and deploy
-with ``flClient.kit.source=secret`` (FLIP#1390):
+with ``flClient.kit.source=secret``:
 
 .. code-block:: shell
 
@@ -271,13 +287,15 @@ with ``flClient.kit.source=secret`` (FLIP#1390):
      PLATFORM_VALUES=values-aks.yaml KUBE_CONTEXT=<kube-context>
 
 - ``values-aks.yaml`` carries what belongs to a managed cluster rather than to the trust: the kit from the Secret,
-  Postgres data below the fresh disk's ``lost+found``, and the S3 vocabulary load off. ``PLATFORM_VALUES`` layers it
+  Postgres data below the fresh disk's ``lost+found``, and the vocabulary load off. ``PLATFORM_VALUES`` layers it
   after the per-trust override. Better, put ``K8S_PLATFORM_VALUES=values-aks.yaml`` in the kit file: every
   ``deploy``, ``deploy-trust-k8s`` and ``upgrade-trust-k8s`` with that ``KIT`` then applies it. A run without it
   moves PGDATA back to the volume root (both databases crash-loop) and looks for the kit on the node (the FL client
   stays ``Pending``).
 - On EKS the overlay is ``values-eks.yaml`` (the same settings, for the EBS CSI default class). The
-  :doc:`EKS root <deploy-flip-node-aws-eks>` creates the cluster and runs both steps for you with ``make join``.
+  :doc:`EKS root <deploy-flip-node-aws-eks>` creates the cluster and runs both steps for you with
+  ``make -C trust/deploy/terraform/aws/eks join``; the :doc:`AKS root <deploy-flip-node-azure-aks>` does the same
+  with ``make -C trust/deploy/terraform/azure/aks join``.
 - The overlays live beside the chart in the repository, not in the packaged chart, so a deploy from a chart tarball
   passes a checkout's copy by path.
 - ``kit-secret`` makes one key per mounted file in ``<release>-flip-trust-fl-kit``. It refuses a kit missing its
@@ -302,8 +320,8 @@ Step 4 — Deploy
 This runs, in order:
 
 #. **Override.** Regenerates ``trust/deploy/helm/k8s-trust-<CODE>.yaml`` from the kit: hub URL, FL backend, image
-   tag, kit path and the FL server's egress port. The file holds no secrets and is rewritten on every deploy, so
-   **do not edit it by hand**.
+   tag, kit path, the FL server's egress port and whether the mock-data seed runs. The file holds no secrets and is
+   rewritten on every deploy, so **do not edit it by hand**.
 #. **Preflight.** Checks tools and versions, cluster access, a default StorageClass, the chart files and the kit, and
    runs ``helm lint``. A failed required check stops the deploy; a missing default StorageClass is only a warning.
 #. **Install.** ``helm upgrade --install`` of release ``trust-release`` into namespace ``flip-trust``, with the
@@ -351,8 +369,8 @@ neither implies the other.
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm status
-   make -C trust/deploy/helm smoke-cstore
+   make -C trust/deploy/helm status [KUBE_CONTEXT=<ctx>]
+   make -C trust/deploy/helm smoke-cstore [KUBE_CONTEXT=<ctx>]
 
 ``status``
    Shows the Helm release and runs the chart's health checks: pod readiness, volumes, HTTP endpoints, and that XNAT
@@ -370,8 +388,8 @@ neither implies the other.
 The trust self-test
 ===================
 
-``make -C trust/deploy/helm selftest KUBE_CONTEXT=<ctx>`` runs the acceptance checklist every trust shape shares
-(the VM node self-test's, FLIP#1406) against the deployed release:
+``make -C trust/deploy/helm selftest KUBE_CONTEXT=<ctx>`` runs the acceptance checklist that every trust shape
+shares, the same one as the VM node self-test, against the deployed release:
 
 .. list-table::
    :header-rows: 1
@@ -401,13 +419,24 @@ The trust self-test
    * - fl client running
      - The FL client is running, with no restart, at two samples 45 s apart.
 
-It needs no hub: an unreachable hub or FL server is not a failure. Every check runs in a pod the release already
-has, so it adds no RBAC or NetworkPolicy exception. The conversion check starts one dcm2niix job, as a cohort pull
-would, and deletes its ``FLIPSELFTEST`` project when it ends, pass or fail: a C-STORE alone shows XNAT received a
-study, not that this cluster can convert it. If other conversions are queued, its job waits for a slot under the
-cap (:ref:`ts-k8s-dcm2niix-jobs-cap`), so run it on an idle trust. It writes
-``selftest-k8s-<backend>-<stamp>.json`` and ``.md`` (and ``latest-k8s-<backend>.md``) under ``SELFTEST_OUT``
-(default ``build/selftest/`` in the checkout) and exits non-zero on any failure.
+A check that needs sample data the release does not load passes as *skipped*, with the reason:
+
+- With ``trustData.seed.enabled`` off (``TRUST_DATA_SEED=false`` in the kit): ``omop seeded``, ``orthanc seeded``,
+  ``xnat c-store`` and ``dcm2niix conversion`` skip.
+- With only ``trustData.seed.orthanc`` off (the chart default): the last three skip.
+
+Those three skip only while Orthanc holds no instance. If it holds studies anyway, loaded another way or the trust's
+own, the self-test sends one to XNAT and converts one series, as a cohort pull would.
+
+- **No hub needed.** An unreachable hub or FL server is not a failure.
+- **No extra permissions.** Every check runs in a pod the release already has, so it adds no RBAC or NetworkPolicy
+  exception.
+- **Conversion check.** A C-STORE alone shows XNAT received a study, not that this cluster can convert it. So the
+  check starts one dcm2niix job and deletes its ``FLIPSELFTEST`` project when it ends, pass or fail. If other
+  conversions are queued, its job waits for a slot under the cap (:ref:`ts-k8s-dcm2niix-jobs-cap`), so run the
+  self-test on an idle trust.
+- **Report.** It writes ``selftest-k8s-<backend>-<stamp>.json`` and ``.md`` (and ``latest-k8s-<backend>.md``) under
+  ``SELFTEST_OUT`` (default ``build/selftest/`` in the checkout) and exits non-zero on any failure.
 
 Continue at step 6 of :doc:`onboarding-a-trust`.
 
@@ -416,47 +445,55 @@ Load the OMOP core vocabulary
 *****************************
 
 *Who: trust operator.* Why the vocabulary is needed, and how to export it, is step 7 of :doc:`onboarding-a-trust`.
-After a default install, Helm prints a warning that it is not loaded. On Kubernetes you have two ways to load it:
+After a default install, Helm prints a warning that it is not loaded. The chart loads it from a folder you stage
+onto the node; it fetches nothing and needs no cloud credentials, so this works without AWS access:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - You have
-     - Do this
-   * - An S3 bucket holding the bundle that the cluster can read
-     - Set ``AICENTRE_BUCKET_NAME`` in the kit to your own environment's bucket and re-run Step 4. ``sync-kit`` writes
-       it into ``omopDb.vocabLoad.s3Bucket`` and a load job runs after each install or upgrade.
-   * - Your own Athena / TRUD export
-     - Leave ``omopDb.vocabLoad.s3Bucket`` empty and run the loader from :ref:`onprem-core-vocabulary` over a
-       ``kubectl port-forward`` to the ``omop-db`` service.
+1. Get the vocabulary as a folder of Athena CSVs. With access to the AI Centre bucket, run
+   ``make -C trust/deploy/helm download-vocab`` on your own machine (it uses your AWS CLI profile). Otherwise export
+   it from OHDSI Athena as step 7 of :doc:`onboarding-a-trust` describes, and unzip the export into a folder.
+2. Stage it onto the node: ``make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<kube-context>``
+   on kind; on any other cluster, copy the folder to ``/opt/flip/omop-vocab`` on the node yourself. With more than
+   one node, pin the load job to that node with ``omopDb.vocabLoad.nodeSelector`` (for example
+   ``kubernetes.io/hostname: <node>``). The folder is read only for the first load: once the database holds the
+   vocabulary, later upgrades skip it, so you may remove it.
+3. Set ``OMOP_VOCAB_DIR=/opt/flip/omop-vocab`` in the kit and re-run Step 4. ``sync-kit`` writes it into
+   ``omopDb.vocabLoad.hostPath`` and a load job runs after each install or upgrade, loading only what is missing.
 
 .. warning::
 
-   The S3 load runs as a Helm hook. If the cluster cannot read the bucket, the hook fails and **the whole release
-   is marked failed**, not just the vocabulary load. The deploy does not roll it back.
+   The load runs as a Helm hook. If the vocabulary is not loaded yet and nothing is staged at that path on the node
+   the job runs on, the hook fails and **the whole release is marked failed**, not just the vocabulary load. The
+   deploy does not roll it back.
 
-On a cluster with no route to AWS, ``values-aks.yaml`` keeps the S3 load out whatever bucket the kit names, and with
-it the metadata endpoint, which on Azure hands out managed-identity tokens; ``NO_VOCAB_LOAD=1`` does the same for
-``sync-kit`` on any other cluster. The trust then runs without the vocabulary until one is loaded another way, and
-cohort queries that name concepts through ``omop.concept`` return nothing. The x-ray tutorial ships
+``values-aks.yaml`` and ``values-eks.yaml`` keep the load off, because a managed node pool keeps nothing staged on a
+node; ``NO_VOCAB_LOAD=1`` does the same for ``sync-kit`` on any other cluster. Load the vocabulary there with the loader
+from :ref:`onprem-core-vocabulary` over a ``kubectl port-forward`` to the ``omop-db`` service, or run the trust
+without it: cohort queries that name concepts through ``omop.concept`` then return nothing. The x-ray tutorial ships
 ``query_novocab.sql`` for this, and ``make e2e_smoke`` on a dev stack (``HUB`` unset) smokes such a trust with it.
 With ``HUB`` set, pass it by hand:
 ``QUERY_FILE=fl-tutorials/nvflare/image_classification/xray_classification/query_novocab.sql`` (Flower:
 ``fl-tutorials/flower/image_classification/xray_classification/query_novocab.sql``).
 
+.. note::
+
+   Charts before FLIP#923 fetched the bundle from S3 inside the cluster. A values file that still sets
+   ``omopDb.vocabLoad.s3Bucket``, ``bundleName``, ``awsProfile``, ``hostAwsMount``, ``fetchResources`` or
+   ``workDirSize`` now fails to render; the chart README, "Upgrading: the chart no longer fetches the vocabulary from
+   S3", has the steps.
+
 .. seealso::
 
-   The chart README, "OMOP core vocabulary" and "Local clusters (kind)", for the port-forward commands, AWS
-   credentials for the load job, and loading the Synthea EHR cohort the same way.
+   The chart README, "OMOP core vocabulary", for the port-forward commands and loading the Synthea EHR cohort the
+   same way.
 
 **********
 Key values
 **********
 
 Most values come from the kit through ``sync-kit``. Those you may set yourself are below. Keep them in a values file
-of your own; the deploy targets pass ``-f $(VALUES_FILE)`` first, so ``VALUES_FILE=<your file>`` layers it over the
-chart defaults, and the generated override still wins for the keys it sets. Do not pass settings with
+of your own and pass it to the deploy targets with ``VALUES_FILE=<your file>``: it is layered over the chart
+defaults. It is passed first, so ``values-secrets.yaml``, the generated override and any ``PLATFORM_VALUES``
+overlay win for the keys they set. Do not pass settings with
 ``helm upgrade --set``: the next deploy does not reuse them, so they silently disappear.
 
 .. list-table::
@@ -478,19 +515,23 @@ chart defaults, and the generated override still wins for the keys it sets. Do n
      - from the kit
      - The release every FLIP-built image runs. Set from the kit's ``DOCKER_TAG``; ``upgrade-trust-k8s TAG=`` moves
        it.
-   * - ``flClient.gpu.enabled`` / ``flClient.gpu.count``
-     - ``false`` / ``0``
-     - Request GPUs for the FL client. Needs the GPU Operator (see `GPUs`_).
+   * - ``flClient.gpu.enabled`` / ``flClient.gpu.count`` / ``flClient.gpu.allocation``
+     - ``false`` / ``0`` / ``devicePlugin``
+     - Give the FL client a GPU. Needs the GPU Operator (see `GPUs`_); ``allocation: runtime`` for a node with no
+       device plugin.
    * - ``trustData.seed.enabled``
      - ``true``
-     - Loads the **mock** projects into OMOP (and Orthanc) on install and every upgrade. **Turn it off** for a site
-       whose stores hold real data only.
+     - Loads the **mock** projects into OMOP (and Orthanc) on install and every upgrade. A site whose stores hold
+       real data only turns it off with ``TRUST_DATA_SEED=false`` in the kit (see Step 1).
    * - ``trustData.seed.orthanc``
      - ``false``
      - Also load the mock DICOM studies into Orthanc (about 2 GB per trust). ``smoke-cstore`` needs it.
-   * - ``omopDb.vocabLoad.s3Bucket``
+   * - ``omopDb.vocabLoad.hostPath``
      - ``""``
-     - Bucket for the OMOP vocabulary load; empty skips it (see above).
+     - Node folder holding the staged OMOP vocabulary; empty skips the load (see above).
+   * - ``omopDb.vocabLoad.nodeSelector``
+     - ``{}``
+     - Pins the vocabulary load job to the node holding that folder, on a cluster with more than one node.
    * - ``omopDb.enabled`` / ``omopDb.external.host``
      - ``true`` / ``""``
      - Use an external OMOP database instead of the in-cluster one.
@@ -509,7 +550,9 @@ chart defaults, and the generated override still wins for the keys it sets. Do n
    * - ``namespace.create``
      - ``false``
      - Let the chart create the namespace with Pod Security labels. ``make deploy`` creates the namespace itself,
-       without those labels.
+       without those labels. The ``baseline`` profile the labels enforce does not admit ``hostPath`` volumes, which
+       the FL kit (``flClient.kitHostPath``) and the vocabulary load (``omopDb.vocabLoad.hostPath``) both use: with
+       either, set ``podSecurity.enforce`` to ``privileged``.
 
 **Governance policy.** A trust's optional governance document is set through the kit, not as a value: point
 ``ACCESS_POLICY_FILE`` at it in the kit file, validate it with ``make -C trust check-governance KIT=<CODE>
@@ -548,8 +591,9 @@ When the admin refreshes your kit's hub-shared settings, see "Later — rotate h
 
 .. warning::
 
-   While ``trustData.seed.enabled`` is on, every upgrade re-applies the mock projects. Turn it off for a site whose
-   stores hold real data only.
+   While ``trustData.seed.enabled`` is on, every upgrade re-applies the mock projects. A site whose stores hold real
+   data must set ``TRUST_DATA_SEED=false`` in the kit (see `Step 1 — Check out the release and copy in the kit`_);
+   the upgrade carries it into the release.
 
 .. seealso::
 
@@ -626,6 +670,7 @@ Known limitations
 - **Pod Security.** The API services and FL client run hardened, but ``xnat-web``, ``xnat-db``, ``omop-db`` and
   ``orthanc`` cannot yet run under the ``restricted`` Pod Security profile.
 - **Multi-node clusters.** Volumes are ``ReadWriteOnce``. The FL client is pinned to imaging-api's node, and XNAT's
-  conversion jobs must land on the ``xnat-web`` node. Across several nodes, give the XNAT volume a ``ReadWriteMany``
+  conversion jobs must land on the ``xnat-web`` node, and the vocabulary load job on the node holding the staged
+  folder (``omopDb.vocabLoad.nodeSelector``). Across several nodes, give the XNAT volume a ``ReadWriteMany``
   storage class (``xnat.web.persistence.accessMode: ReadWriteMany``, for example NFS or EFS).
 - **Orthanc** runs a single replica on an embedded SQLite database.

@@ -31,18 +31,16 @@ class Settings(BaseSettings):
             return "development"
         return v
 
-    # env file is 3 directories up from this file
-    # Get current directory: imaging-api/imaging_api/config.py
+    # Repo-root .env.development (ENV here is the class default, not the runtime value). A .parent
+    # chain, not parents[3]: in the image (/app/<pkg>/config.py) the path is too shallow for the index.
     model_config = SettingsConfigDict(
-        env_file=str(Path(__file__).parent.parent.parent.parent / f".env.{ENV}"),
+        env_file=str(Path(__file__).parent.parent.parent.parent / ".env.development"),
         env_file_encoding="utf-8",
         extra="allow",
     )
 
-    #
     LOG_LEVEL: str = "INFO"
 
-    #
     CENTRAL_HUB_API_URL: str
     # Internal trust-network URLs (docker service name + container port), fixed by
     # the compose topology — default here instead of being required kit fields.
@@ -89,6 +87,11 @@ class Settings(BaseSettings):
     XNAT_URL: str = "http://xnat-web:8080"
     OMOP_DB_HOST: str = "omop-db"
     OMOP_DB_PORT: int = 5432
+    # Where this trust's OMOP lives (FLIP#13). Only the health probe reads it here: a
+    # Snowflake account is not a TCP port on the trust network, so the raw TCP probe below
+    # would report a Snowflake trust's OMOP as permanently down. Empty / unset means
+    # ``postgres``, so an existing kit file is unaffected.
+    OMOP_BACKEND: str = "postgres"
     # The fl-client image tag this deployment configured (compose: DOCKER_FL_TAG; the K8s
     # chart: the tag flip-trust.imageTag resolves for the fl-client — its pin, else
     # global.image.tag, else flClient.image.tag). The fl-client has no health endpoint, so this is how its

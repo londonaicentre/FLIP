@@ -58,7 +58,7 @@ class Http {
 
         http.interceptors.request.use(
             async config => {
-                // Public Ark+ demo: never touch the identity provider. Requests
+                // Public demo: never touch the identity provider. Requests
                 // are answered by the in-browser Mirage server, so no bearer
                 // token is needed and no auth network call must ever leave the
                 // page.
@@ -87,7 +87,7 @@ class Http {
 
         http.interceptors.response.use(
             (response) => {
-                // Public Ark+ demo: Mirage's fake XHR ignores responseType "blob"
+                // Public demo: Mirage's fake XHR ignores responseType "blob"
                 // and yields a string body. Wrap it so Blob consumers
                 // (downloadModelFile -> blob.text()) work identically to prod.
                 if (import.meta.env.VITE_DEMO === "true"

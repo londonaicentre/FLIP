@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from nvflare.apis.fl_exception import FLCommunicationError
+from nvflare.fuel.flare_api.api_spec import NoConnection
 
 from fl_api.startup.session_manager import create_fl_session
 
@@ -68,10 +69,18 @@ def test_create_fl_session_refuses_a_gpu_default_no_job_could_use(fake_settings)
     session_cls.assert_not_called()
 
 
-def test_create_fl_session_waits_for_a_server_that_is_still_starting(fake_settings):
+# What NVFLARE 2.9's Session.try_connect raises for a server that is not up yet, and the error it wraps.
+NOT_UP_YET = [
+    NoConnection("cannot connect to server for 5.0 seconds"),
+    FLCommunicationError("cannot connect to server for 5.0 seconds"),
+]
+
+
+@pytest.mark.parametrize("error", NOT_UP_YET, ids=type)
+def test_create_fl_session_waits_for_a_server_that_is_still_starting(fake_settings, error):
     """A slow FL server start is retried with a fresh session; each failed one is closed so its connector stops."""
     failed, ok = MagicMock(), MagicMock()
-    failed.try_connect.side_effect = FLCommunicationError("cannot connect to server for 5.0 seconds")
+    failed.try_connect.side_effect = error
 
     with (
         patch("fl_api.startup.session_manager.get_settings", return_value=fake_settings),
@@ -84,16 +93,17 @@ def test_create_fl_session_waits_for_a_server_that_is_still_starting(fake_settin
     ok.close.assert_not_called()
 
 
-def test_create_fl_session_gives_up_after_the_startup_timeout(fake_settings):
+@pytest.mark.parametrize("error", NOT_UP_YET, ids=type)
+def test_create_fl_session_gives_up_after_the_startup_timeout(fake_settings, error):
     """Past TIMEOUT_FL_SERVER_STARTUP the connection error propagates, so the API does not start half-alive."""
     fake_settings.TIMEOUT_FL_SERVER_STARTUP = 0.0
     failed = MagicMock()
-    failed.try_connect.side_effect = FLCommunicationError("cannot connect to server for 5.0 seconds")
+    failed.try_connect.side_effect = error
 
     with (
         patch("fl_api.startup.session_manager.get_settings", return_value=fake_settings),
         patch("fl_api.startup.session_manager.FLIP_Session", return_value=failed),
-        pytest.raises(FLCommunicationError),
+        pytest.raises(type(error)),
     ):
         create_fl_session()
 

@@ -18,9 +18,13 @@ git and curl stubbed on PATH.
 from __future__ import annotations
 
 import base64
+from functools import partial
 
 import pytest
-from conftest import run_make
+from conftest import run_make as run_any_make
+
+# Every test here runs vm/Makefile, which reads the lookup from common.mk.
+run_make = partial(run_any_make, root="vm")
 
 HOSTILE = ['203.0.113.7"; touch PWNED; "', "203.0.113.7`touch PWNED`", "$(touch PWNED)"]
 LOOKUP = "curl -fsS --max-time 10 https://api.ipify.org"
@@ -31,7 +35,7 @@ def _curls(calls: list[str]) -> list[str]:
 
 
 def _terraform(calls: list[str], verb: str) -> str:
-    (call,) = [c for c in calls if c.startswith(f"terraform -chdir=vm {verb}")]
+    (call,) = [c for c in calls if c.startswith(f"terraform {verb}")]
     return call
 
 

@@ -21,6 +21,8 @@ module.exports = {
     theme: {
         extend: {
             fontSize: {
+                // Secondary text step: metadata lines under a title, table sub-lines.
+                note: "13px",
                 sm: "0.95rem"
             },
             fontFamily: {
@@ -64,26 +66,26 @@ module.exports = {
                 },
                 deeporange: { 900: "#BF360C" },
                 green: colors.emerald,
-                // FLIP dark-mode palette (warm plum-charcoal). Single source of
+                // FLIP dark-mode palette ("True graphite": neutral, deep, high contrast). Single source of
                 // truth for dark surfaces/borders — reference via `dark:bg-dark-*`
                 // and `dark:border-dark-*`. Dark-mode text maps onto the standard
                 // gray ramp (fg-1 gray-100, fg-2 gray-300, fg-3 gray-400, disabled
                 // gray-500) and links onto primary-300/200, so those need no new
                 // tokens. See the palette reference for usage rules.
                 dark: {
-                    canvas: "#0B1018", // app background / page (deep cool charcoal)
-                    surface: "#0E0B13", // cards, panels, sidebar
-                    raised: "#201A29", // modals, popovers, sticky header, hover
-                    inset: "#070509", // input wells, code blocks, table headers (darker than surface so wells read)
-                    border: "#2A2336", // default dividers + card borders
-                    "border-strong": "#3A3147", // input borders / separators with presence
+                    canvas: "#08080A", // app background / page (near-black graphite)
+                    surface: "#141417", // cards, panels, sidebar: lighter than canvas so cards read as raised
+                    raised: "#1E1E23", // modals, popovers, sticky header, hover
+                    inset: "#050506", // input wells, code blocks, table headers (darker than surface so wells read)
+                    border: "#2E2E35", // default dividers + card borders
+                    "border-strong": "#6B6B72", // input borders / separators with presence (3:1 on raised)
                 },
                 // Status colours, lightened to read on dark surfaces. Render as
                 // the solid colour for text + dot over a low-opacity tint.
                 status: {
-                    approved: "#4ADE80", // success / APPROVED
-                    staged: "#F4BE1D", // warn / STAGED (brand gold)
-                    unstaged: "#F87171", // danger / UNSTAGED
+                    approved: "#34D399", // APPROVED (emerald-400; light mode uses emerald)
+                    staged: "#FBBF24", // STAGED (amber-400; light mode uses amber)
+                    unstaged: "#9CA3AF", // UNSTAGED / draft (gray-400): grey in both themes, never the error red
                     info: "#A9C5DC", // info / data
                 }
             },
@@ -93,9 +95,6 @@ module.exports = {
                 "5xl": "3840px"
             }
         },
-    },
-    variants: {
-        extend: {},
     },
     plugins: [
         require('@tailwindcss/forms'),

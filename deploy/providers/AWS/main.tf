@@ -139,11 +139,26 @@ module "flip_db" {
   vpc_security_group_ids           = [module.rds_security_group.security_group.id]
   backup_retention_period          = 7
   skip_final_snapshot              = var.environment != "prod"
-  deletion_protection              = var.environment == "prod"
+  deletion_protection              = true
   final_snapshot_identifier_prefix = "flip-database-final"
   # Explicit, not the module default (FLIP#1576); kms_key_id would force replacement, see the test.
   storage_encrypted = true
   family            = "postgres${split(".", var.postgres_version)[0]}"
+
+  # Security Hub FSBP controls (FLIP#1796): RDS.17, RDS.10, RDS.9/RDS.36, RDS.6.
+  copy_tags_to_snapshot = true
+  # IAM tokens to the instance itself; the proxy still logs in with the master secret (rds_proxy.tf).
+  iam_database_authentication_enabled    = true
+  enabled_cloudwatch_logs_exports        = ["postgresql", "upgrade"]
+  create_cloudwatch_log_group            = true
+  cloudwatch_log_group_retention_in_days = local.log_retention_days
+  monitoring_interval                    = 60
+  create_monitoring_role                 = true
+  monitoring_role_name                   = "flip-rds-monitoring-role"
+  monitoring_role_permissions_boundary   = local.iam_permissions_boundary_arn
+  # Modifications land at apply, not the weekly window: IAM auth would otherwise wait for a window in
+  # which staging's instance is usually stopped. Also applies to future class or engine changes.
+  apply_immediately = true
 }
 
 ############################
@@ -162,9 +177,8 @@ module "flip_api_secret" {
   recovery_window_in_days = 30
 
   secret_string = jsonencode({
-    aes_key                   = var.AES_KEY_BASE64
-    internal_service_key_hash = var.INTERNAL_SERVICE_KEY_HASH
-    internal_service_key      = var.INTERNAL_SERVICE_KEY
+    aes_key    = var.AES_KEY_BASE64
+    fl_api_key = var.FL_API_KEY
   })
 }
 
@@ -392,6 +406,11 @@ output "CognitoAppClientId" {
   value       = module.cognito.app_client_id
 }
 
+output "SesDkimTokens" {
+  description = "DKIM tokens of the SES sender domain (flip_alb_subdomain). Whoever runs the domain's zone publishes <token>._domainkey.<domain> CNAME <token>.dkim.amazonses.com for each (FLIP#592)."
+  value       = module.ses.dkim_tokens
+}
+
 output "FlServerEndpoint" {
   description = "FL server DNS endpoint (NLB pass-through; on LZA the name resolves to the networking account's edge NLB, which relays to the internal NLB in fl_ingress_lza.tf)"
   value       = var.flip_nlb_subdomain
@@ -409,6 +428,7 @@ module "ses" {
   source = "./modules/ses"
 
   sender_email  = var.SES_VERIFIED_EMAIL
+  sender_domain = var.flip_alb_subdomain
   templates_dir = "${path.module}/templates/ses"
   # template_name_prefix left empty so prod keeps its existing SES template
   # names (flip-access-request etc.) and this refactor is a pure state-mv.

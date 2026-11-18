@@ -56,9 +56,7 @@ STUB_ENV = {
     "FLIP_FL_RESULTS_BUCKET_NAME": "probe-results",
     "FLIP_APP_BUNDLES_BUCKET_NAME": "probe-bundles",
     "AICENTRE_BUCKET_NAME": "probe-aicentre",
-    "INTERNAL_SERVICE_KEY": "probe",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY_HASH": "probe",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
+    "FL_API_KEY": "probe",  # pragma: allowlist secret
 }
 
 # Selector inputs the caller's shell may carry; every run here states its own.
@@ -128,7 +126,7 @@ def test_a_class_mismatch_is_refused(hub: str, expected: str) -> None:
     """``TF_HUB`` alone chooses the estate, so the caller's class is asserted.
 
     TF_HUB=stag on aws-prod composes a prod-sized plan whose RDS is refreshed as
-    ``deletion_protection = false``, ``skip_final_snapshot = true`` — and the apply
+    ``skip_final_snapshot = true`` — and the apply
     job then applies it unattended. The compose step is the last place that can stop
     it cheaply.
     """
@@ -226,13 +224,11 @@ COMPOSE_ENV = {
     "FLIP_UI_BUCKET_NAME": "probe-ui",
     "ADMIN_USER_PASSWORD": "probe",  # pragma: allowlist secret
     "AES_KEY_BASE64": "probe",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY": "probe",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY_HASH": "probe",  # pragma: allowlist secret
     "POSTGRES_DB": "flip",
     "POSTGRES_USER": "flip",
     "FL_ADMIN_DIRECTORY": "/app",
     "FL_SERVER_PORT": "8002",
-    "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
+    "FL_API_KEY": "probe",  # pragma: allowlist secret
     "TRUST_API_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
     "SES_VERIFIED_EMAIL": "probe@example.com",
     "ALB_SUBDOMAIN": "alb",

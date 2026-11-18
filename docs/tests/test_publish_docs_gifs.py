@@ -20,9 +20,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import requests
 from huggingface_hub import CommitOperationAdd, CommitOperationDelete
-from huggingface_hub.errors import EntryNotFoundError
+from huggingface_hub.errors import LocalEntryNotFoundError, RemoteEntryNotFoundError, RevisionNotFoundError
 
+PIN = "a" * 64
 SOURCE_COMMIT = "594524287f1826969c1a3cb250dd4fbeb2ac5fa3"  # pragma: allowlist secret (a git sha)
 VERSION = "20260907T122006Z-5945242"
 RUN = "https://github.com/o/r/actions/runs/1"
@@ -31,14 +33,17 @@ RUN = "https://github.com/o/r/actions/runs/1"
 class FakeApi:
     """Records what the publisher asks of the Hub; answers with fixed branches and files per branch."""
 
-    def __init__(self, files: dict[str, list[str]] | None = None):
+    def __init__(self, files: dict[str, list[str]] | None = None, tags: tuple[str, ...] = ()):
         self.files = files if files is not None else {"main": [".gitattributes"]}
+        self.tags = tags
         self.commits: list[dict] = []
         self.created_branches: list[dict] = []
         self.listed: list[str] = []
 
     def list_repo_refs(self, repo, repo_type):
-        return SimpleNamespace(branches=[SimpleNamespace(name=b) for b in self.files])
+        return SimpleNamespace(
+            branches=[SimpleNamespace(name=b) for b in self.files], tags=[SimpleNamespace(name=t) for t in self.tags]
+        )
 
     def list_repo_files(self, repo, repo_type, revision):
         self.listed.append(revision)
@@ -55,7 +60,7 @@ class FakeApi:
 @pytest.fixture(autouse=True)
 def no_live_gifs(publisher, monkeypatch, tmp_path):
     """The repo's own live-recorded list stays out of these tests; TestLiveRecorded opts back in explicitly."""
-    monkeypatch.setattr(publisher, "DEFAULT_LIVE_LIST", tmp_path / "no-live-list.txt")
+    monkeypatch.setattr(publisher, "DEFAULT_LIVE_LIST", write(tmp_path / "empty-live-list.txt", b""))
 
 
 def write(path: Path, data: bytes = b"GIF89a") -> Path:
@@ -82,6 +87,21 @@ def paths_of(ops) -> list[str]:
     return [op.path_in_repo for op in ops]
 
 
+RECORDED_AT = "2026-09-07T12:20:06Z"
+
+
+def manifest_of(publisher, tree, workflow_run=None) -> dict:
+    """The manifest of ``tree``'s GIFs, as the CLI builds it for VERSION."""
+    return publisher.build_manifest(
+        tree.gifs,
+        publisher.expected_gifs(tree.specs),
+        version=VERSION,
+        source_commit=SOURCE_COMMIT,
+        recorded_at=RECORDED_AT,
+        workflow_run=workflow_run,
+    )
+
+
 class TestFileSet:
     def test_specs_map_to_gifs_and_support_is_skipped(self, publisher, tree):
         assert publisher.expected_gifs(tree.specs) == [
@@ -102,31 +122,17 @@ class TestFileSet:
     def test_a_spec_without_a_gif_is_refused_naming_it(self, publisher, tree):
         (tree.gifs / "flip/create-model.gif").unlink()
         with pytest.raises(SystemExit, match="missing: flip/create-model.gif"):
-            publisher.build_manifest(
-                tree.gifs,
-                publisher.expected_gifs(tree.specs),
-                version=VERSION,
-                source_commit=SOURCE_COMMIT,
-                recorded_at="2026-09-07T12:20:06Z",
-                workflow_run=None,
-            )
+            manifest_of(publisher, tree)
 
 
 class TestManifest:
     def test_content(self, publisher, tree):
         paths = publisher.expected_gifs(tree.specs)
-        manifest = publisher.build_manifest(
-            tree.gifs,
-            paths,
-            version=VERSION,
-            source_commit=SOURCE_COMMIT,
-            recorded_at="2026-09-07T12:20:06Z",
-            workflow_run="https://github.com/o/r/actions/runs/1",
-        )
+        manifest = manifest_of(publisher, tree, workflow_run=RUN)
         assert manifest["version"] == VERSION
         assert manifest["source_commit"] == SOURCE_COMMIT
-        assert manifest["recorded_at"] == "2026-09-07T12:20:06Z"
-        assert manifest["workflow_run"] == "https://github.com/o/r/actions/runs/1"
+        assert manifest["recorded_at"] == RECORDED_AT
+        assert manifest["workflow_run"] == RUN
         assert list(manifest["files"]) == paths  # sorted
         data = (tree.gifs / "flip/create-model.gif").read_bytes()
         assert manifest["files"]["flip/create-model.gif"] == {
@@ -150,14 +156,7 @@ class TestManifest:
 
 class TestOperations:
     def test_adds_every_gif_the_manifest_and_the_card(self, publisher, tree):
-        manifest = publisher.build_manifest(
-            tree.gifs,
-            publisher.expected_gifs(tree.specs),
-            version=VERSION,
-            source_commit=SOURCE_COMMIT,
-            recorded_at="2026-09-07T12:20:06Z",
-            workflow_run=None,
-        )
+        manifest = manifest_of(publisher, tree)
         ops = publisher.build_operations(tree.gifs, manifest, [".gitattributes"], tree.card)
         assert paths_of(ops) == [
             "admin/create-user.gif",
@@ -172,14 +171,7 @@ class TestOperations:
         assert json.loads(manifest_op.path_or_fileobj)["version"] == VERSION
 
     def test_a_removed_spec_deletes_its_dataset_gif_and_nothing_else(self, publisher, tree):
-        manifest = publisher.build_manifest(
-            tree.gifs,
-            publisher.expected_gifs(tree.specs),
-            version=VERSION,
-            source_commit=SOURCE_COMMIT,
-            recorded_at="2026-09-07T12:20:06Z",
-            workflow_run=None,
-        )
+        manifest = manifest_of(publisher, tree)
         published = [".gitattributes", "README.md", "manifest.json", "admin/create-user.gif", "flip/retired.gif"]
         ops = publisher.build_operations(tree.gifs, manifest, published, None)
         deletes = [op for op in ops if isinstance(op, CommitOperationDelete)]
@@ -188,14 +180,7 @@ class TestOperations:
 
     def test_a_stray_local_gif_is_ignored_with_a_warning(self, publisher, tree, capsys):
         write(tree.gifs / "flip/no-spec.gif")
-        manifest = publisher.build_manifest(
-            tree.gifs,
-            publisher.expected_gifs(tree.specs),
-            version=VERSION,
-            source_commit=SOURCE_COMMIT,
-            recorded_at="2026-09-07T12:20:06Z",
-            workflow_run=None,
-        )
+        manifest = manifest_of(publisher, tree)
         ops = publisher.build_operations(tree.gifs, manifest, [], None)
         assert "flip/no-spec.gif" not in paths_of(ops)
         assert "no spec: flip/no-spec.gif" in capsys.readouterr().out
@@ -208,14 +193,7 @@ class TestOperations:
 
 class TestPublish:
     def ops(self, publisher, tree):
-        manifest = publisher.build_manifest(
-            tree.gifs,
-            publisher.expected_gifs(tree.specs),
-            version=VERSION,
-            source_commit=SOURCE_COMMIT,
-            recorded_at="2026-09-07T12:20:06Z",
-            workflow_run=None,
-        )
+        manifest = manifest_of(publisher, tree)
         return publisher.build_operations(tree.gifs, manifest, [], tree.card)
 
     def publish(self, publisher, tree, api, branch="main", *, new_branch=False, dry_run=False):
@@ -330,7 +308,7 @@ class TestLiveRecorded:
     """GIFs recorded on a live trust: listed by hand, published with the Cypress set, never dropped by CI."""
 
     def test_listed_gifs_join_the_spec_set(self, publisher, tree, tmp_path):
-        live = write(tmp_path / "live.txt", b"# comment\n\nmonailabel/monailabel-export.gif  # trailing note\n")
+        live = write(tmp_path / "live.txt", f"# comment\n\nmonailabel/monailabel-export.gif {PIN}  # note\n".encode())
         assert publisher.expected_gifs(tree.specs, live) == [
             "admin/create-user.gif",
             "flip/approve-project.gif",
@@ -338,13 +316,32 @@ class TestLiveRecorded:
             "monailabel/monailabel-export.gif",
         ]
 
-    def test_a_malformed_line_is_refused(self, publisher, tree, tmp_path):
-        live = write(tmp_path / "live.txt", b"MonaiLabel/Export.GIF\n")
-        with pytest.raises(SystemExit, match="is not <category>/<name>.gif"):
+    @pytest.mark.parametrize(
+        "line",
+        [
+            f"MonaiLabel/Export.GIF {PIN}",
+            "monailabel/monailabel-export.gif",
+            "monailabel/monailabel-export.gif abc",
+            f"monailabel/monailabel-export.gif {PIN} {PIN}",
+        ],
+    )
+    def test_a_malformed_or_unpinned_line_is_refused(self, publisher, tree, tmp_path, line):
+        live = write(tmp_path / "live.txt", f"{line}\n".encode())
+        with pytest.raises(SystemExit, match="is not <category>/<name>.gif <sha256>"):
             publisher.expected_gifs(tree.specs, live)
 
+    def test_a_path_listed_twice_is_refused(self, publisher, tree, tmp_path):
+        live = write(tmp_path / "live.txt", f"m/a.gif {PIN}\nm/a.gif {'b' * 64}\n".encode())
+        with pytest.raises(SystemExit, match="m/a.gif is listed twice"):
+            publisher.expected_gifs(tree.specs, live)
+
+    def test_a_missing_list_is_refused_not_read_as_empty(self, publisher, tree, tmp_path):
+        """Read as empty, a mistyped --live-list would delete every live GIF from the branch."""
+        with pytest.raises(SystemExit, match="no live-recorded list at"):
+            publisher.expected_gifs(tree.specs, tmp_path / "typo.txt")
+
     def test_a_gif_cannot_be_both_a_spec_and_a_live_recording(self, publisher, tree, tmp_path):
-        live = write(tmp_path / "live.txt", b"flip/create-model.gif\n")
+        live = write(tmp_path / "live.txt", f"flip/create-model.gif {PIN}\n".encode())
         with pytest.raises(SystemExit, match="both a Cypress spec and a live recording"):
             publisher.expected_gifs(tree.specs, live)
 
@@ -357,10 +354,18 @@ class TestLiveRecorded:
         )
 
 
+def not_found() -> requests.Response:
+    response = requests.Response()
+    response.status_code = 404
+    return response
+
+
 class TestCarryForward:
-    """A CI publish has only the Cypress GIFs; the live ones come from the first dataset ref that has them."""
+    """A CI publish has only the Cypress GIFs; the live ones are the pinned bytes, from any dataset ref holding them."""
 
     GIF = "monailabel/monailabel-export.gif"
+    RECUT = b"GIF89a re-cut"
+    LIVE = {GIF: hashlib.sha256(RECUT).hexdigest()}
 
     @staticmethod
     def hub(tmp_path: Path, refs: dict[str, dict[str, bytes]], manifests: dict[str, dict] | None = None):
@@ -380,64 +385,106 @@ class TestCarryForward:
 
         def download(filename: str, ref: str) -> str:
             calls.append((filename, ref))
-            path = root / ref / filename
-            if not path.is_file():
-                raise EntryNotFoundError(f"{filename} at {ref}")
-            return str(path)
+            if not (root / ref).is_dir():
+                raise RevisionNotFoundError(ref, response=not_found())
+            if not (root / ref / filename).is_file():
+                raise RemoteEntryNotFoundError(f"{filename} at {ref}", response=not_found())
+            return str(root / ref / filename)
 
         return download, calls
 
-    def test_a_missing_live_gif_comes_from_the_first_ref_that_has_it(self, publisher, tree, tmp_path):
-        download, _ = self.hub(tmp_path, {"pr-945": {self.GIF: b"GIF89a re-cut"}, "main": {self.GIF: b"GIF89a old"}})
-        refs = ["pr-1", "pr-945", "main"]  # pr-1 was never published
-        assert publisher.carry_forward(tree.gifs, [self.GIF], "repo", refs, download) == [self.GIF]
-        assert (tree.gifs / self.GIF).read_bytes() == b"GIF89a re-cut"
+    def test_the_pinned_bytes_come_from_the_first_ref_holding_them(self, publisher, tree, tmp_path):
+        """main still has the old cut; the merged PR's branch has the pinned one (its own publish never ran)."""
+        download, _ = self.hub(tmp_path, {"main": {self.GIF: b"GIF89a old"}, "pr-945": {self.GIF: self.RECUT}})
+        refs = ["main", "pr-1", "pr-945"]  # pr-1 was never published
+        assert publisher.carry_forward(tree.gifs, self.LIVE, "repo", refs, download) == [self.GIF]
+        assert (tree.gifs / self.GIF).read_bytes() == self.RECUT
 
-    def test_main_is_the_fallback(self, publisher, tree, tmp_path):
-        download, _ = self.hub(tmp_path, {"pr-945": {}, "main": {self.GIF: b"GIF89a live"}})
-        publisher.carry_forward(tree.gifs, [self.GIF], "repo", ["pr-945", "main"], download)
-        assert (tree.gifs / self.GIF).read_bytes() == b"GIF89a live"
+    def test_every_live_gif_is_carried_not_just_the_first(self, publisher, tree, tmp_path):
+        other = "monailabel/monailabel-enable.gif"
+        write(tree.gifs / self.GIF, self.RECUT)
+        download, _ = self.hub(tmp_path, {"main": {other: b"GIF89a enable"}})
+        live = {**self.LIVE, other: hashlib.sha256(b"GIF89a enable").hexdigest()}
+        assert publisher.carry_forward(tree.gifs, live, "repo", ["main"], download) == [other]
 
-    def test_a_local_live_gif_wins_and_nothing_is_fetched(self, publisher, tree, tmp_path):
-        write(tree.gifs / self.GIF, b"GIF89a re-recorded")
+    def test_every_local_live_gif_is_checked_not_just_the_first(self, publisher, tree, tmp_path):
+        other = "monailabel/monailabel-enable.gif"
+        write(tree.gifs / self.GIF, self.RECUT)
+        write(tree.gifs / other, b"GIF89a unpinned")
+        download, _ = self.hub(tmp_path, {"main": {}})
+        live = {**self.LIVE, other: PIN}
+        with pytest.raises(SystemExit, match=f"{other} is not the pinned recording"):
+            publisher.carry_forward(tree.gifs, live, "repo", ["main"], download)
+
+    def test_a_network_error_is_not_read_as_an_absent_ref(self, publisher, tree, tmp_path):
+        """Read as absent, a Hub blip would end in "publish it to the pr-<N>", sending the operator to re-record."""
+
+        def download(filename: str, ref: str) -> str:
+            raise LocalEntryNotFoundError("connection error")
+
+        with pytest.raises(LocalEntryNotFoundError):
+            publisher.carry_forward(tree.gifs, self.LIVE, "repo", ["main"], download)
+
+    def test_main_serves_once_it_holds_them(self, publisher, tree, tmp_path):
+        download, calls = self.hub(tmp_path, {"main": {self.GIF: self.RECUT}, "pr-945": {self.GIF: self.RECUT}})
+        publisher.carry_forward(tree.gifs, self.LIVE, "repo", ["main", "pr-945"], download)
+        assert {ref for _, ref in calls} == {"main"}
+
+    def test_a_local_pinned_gif_wins_and_nothing_is_fetched(self, publisher, tree, tmp_path):
+        write(tree.gifs / self.GIF, self.RECUT)
         download, calls = self.hub(tmp_path, {"main": {self.GIF: b"GIF89a old"}})
-        assert publisher.carry_forward(tree.gifs, [self.GIF], "repo", ["main"], download) == []
+        assert publisher.carry_forward(tree.gifs, self.LIVE, "repo", ["main"], download) == []
         assert calls == []
-        assert (tree.gifs / self.GIF).read_bytes() == b"GIF89a re-recorded"
 
-    def test_bytes_that_do_not_match_the_manifest_are_refused(self, publisher, tree, tmp_path):
-        manifests = {"main": {"files": {self.GIF: {"sha256": "0" * 64, "bytes": 1}}}}
+    def test_a_local_gif_that_is_not_pinned_is_refused_with_its_line(self, publisher, tree, tmp_path):
+        write(tree.gifs / self.GIF, b"GIF89a another cut")
+        download, _ = self.hub(tmp_path, {"main": {}})
+        line = f"{self.GIF} {hashlib.sha256(b'GIF89a another cut').hexdigest()}"
+        with pytest.raises(SystemExit, match=f"Re-cut it\\? Pin it: {line} — otherwise merge develop"):
+            publisher.carry_forward(tree.gifs, self.LIVE, "repo", ["main"], download)
+
+    def test_bytes_that_are_not_the_pinned_ones_are_refused(self, publisher, tree, tmp_path):
+        """A ref whose manifest claims the pin but serves other bytes (edited after review)."""
+        manifests = {"main": {"files": {self.GIF: {"sha256": self.LIVE[self.GIF], "bytes": 1}}}}
         download, _ = self.hub(tmp_path, {"main": {self.GIF: b"GIF89a tampered"}}, manifests)
-        with pytest.raises(SystemExit, match="does not match that ref's manifest"):
-            publisher.carry_forward(tree.gifs, [self.GIF], "repo", ["main"], download)
+        with pytest.raises(SystemExit, match="is not the pinned recording"):
+            publisher.carry_forward(tree.gifs, self.LIVE, "repo", ["main"], download)
         assert not (tree.gifs / self.GIF).exists()
 
-    def test_a_gif_no_ref_has_is_refused(self, publisher, tree, tmp_path):
-        download, _ = self.hub(tmp_path, {"main": {}})
-        with pytest.raises(SystemExit, match="on none of pr-945, main .* record it on a live trust first"):
-            publisher.carry_forward(tree.gifs, [self.GIF], "repo", ["pr-945", "main"], download)
+    def test_pinned_bytes_no_ref_holds_are_refused(self, publisher, tree, tmp_path):
+        download, _ = self.hub(tmp_path, {"main": {self.GIF: b"GIF89a old"}})
+        with pytest.raises(SystemExit, match="is on none of main, pr-945 .* publish it to the pr-<N>"):
+            publisher.carry_forward(tree.gifs, self.LIVE, "repo", ["main", "pr-945"], download)
 
-    def test_the_cli_tries_carry_from_then_the_branch_then_main(self, publisher, tree, tmp_path, monkeypatch):
-        live = write(tmp_path / "live.txt", f"{self.GIF}\n".encode())
+    def test_the_cli_tries_the_branch_main_every_pr_newest_first_then_tags(
+        self, publisher, tree, tmp_path, monkeypatch
+    ):
+        live = write(tmp_path / "live.txt", f"{self.GIF} {PIN}\n".encode())
         seen: list[list[str]] = []
-        monkeypatch.setattr(publisher, "carry_forward", lambda gifs, paths, repo, refs, dl: seen.append(refs))
+        monkeypatch.setattr(publisher, "carry_forward", lambda gifs, pins, repo, refs, dl: seen.append(refs))
         write(tree.gifs / self.GIF)  # carry_forward is stubbed, so the GIF must already be there
-        monkeypatch.setattr(publisher, "HfApi", lambda: FakeApi())
+        branches = {b: [".gitattributes"] for b in ("main", "pr-945", "pr-1772", "pr-99", "scratch")}
+        monkeypatch.setattr(publisher, "HfApi", lambda: FakeApi(files=dict(branches), tags=("v0.13.0",)))
         args = ["--source-commit", SOURCE_COMMIT, "--gifs-dir", str(tree.gifs), "--specs-dir", str(tree.specs)]
-        publisher.main([*args, "--card", str(tree.card), "--live-list", str(live), "--branch", "pr-7"])
-        publisher.main(
-            [
-                *args,
-                "--card",
-                str(tree.card),
-                "--live-list",
-                str(live),
-                "--branch",
-                "main",
-                "--workflow-run",
-                RUN,
-                "--carry-from",
-                "pr-945",
-            ]
+        args += ["--card", str(tree.card), "--live-list", str(live)]
+        publisher.main([*args, "--branch", "pr-7"])
+        publisher.main([*args, "--branch", "main", "--workflow-run", RUN])
+        prs_then_tags = ["pr-1772", "pr-945", "pr-99", "v0.13.0"]
+        assert seen == [["pr-7", "main", *prs_then_tags], ["main", *prs_then_tags]]
+
+    def test_the_ci_publish_carries_the_pinned_gif_end_to_end(self, publisher, tree, tmp_path, monkeypatch):
+        """The merged PR's own publish never ran: its pinned GIF is only on its pr-<N>, and still reaches main."""
+        download, calls = self.hub(tmp_path, {"main": {self.GIF: b"GIF89a old"}, "pr-945": {self.GIF: self.RECUT}})
+        monkeypatch.setattr(
+            publisher, "hf_hub_download", lambda repo, name, repo_type, revision: download(name, revision)
         )
-        assert seen == [["pr-7", "main"], ["pr-945", "main"]]
+        api = FakeApi(files={"main": [".gitattributes"], "pr-945": [".gitattributes"]})
+        monkeypatch.setattr(publisher, "HfApi", lambda: api)
+        live = write(tmp_path / "live.txt", f"{self.GIF} {self.LIVE[self.GIF]}\n".encode())
+        args = ["--source-commit", SOURCE_COMMIT, "--gifs-dir", str(tree.gifs), "--specs-dir", str(tree.specs)]
+        publisher.main(
+            [*args, "--card", str(tree.card), "--live-list", str(live), "--branch", "main", "--workflow-run", RUN]
+        )
+        assert (self.GIF, "pr-945") in calls
+        assert self.GIF in paths_of(api.commits[0]["operations"])
+        assert (tree.gifs / self.GIF).read_bytes() == self.RECUT

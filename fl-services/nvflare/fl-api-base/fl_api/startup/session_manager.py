@@ -14,6 +14,7 @@ import contextlib
 import time
 
 from nvflare.apis.fl_exception import FLCommunicationError
+from nvflare.fuel.flare_api.api_spec import NoConnection
 
 from fl_api.config import get_settings
 from fl_api.utils.flip_session import FLIP_Session
@@ -48,7 +49,8 @@ def create_fl_session() -> FLIP_Session:
         try:
             session.try_connect(get_settings().TIMEOUT_SESSION_CONNECT)
             break
-        except FLCommunicationError as e:
+        # NVFLARE 2.9's try_connect re-raises "cannot connect to server" as NoConnection, not FLCommunicationError.
+        except (FLCommunicationError, NoConnection) as e:
             with contextlib.suppress(Exception):
                 session.close()
             if time.monotonic() >= deadline:

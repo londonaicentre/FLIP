@@ -23,14 +23,14 @@
             <div v-else class="flex flex-col flex-1 min-w-0 overflow-y-auto">
                 <!-- Page header (design ref: ProjectsStatusSpine + ProjectsB header section) -->
                 <header class="px-8 pt-8 pb-4">
-                    <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                    <p class="text-xs text-gray-500 dark:text-gray-300">
                         Workspace · {{ approvedTrustCount }}
                         {{ approvedTrustCount === 1 ? "trust" : "trusts" }} active
                     </p>
                     <div class="flex items-center justify-between gap-4">
                         <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100">
                             <span class="text-primary-600 underline decoration-4 decoration-primary-500/60 underline-offset-8 dark:text-white">Projects</span>
-                            <span class="ml-3 text-gray-400 dark:text-gray-300 font-medium">{{ data.data.length }}</span>
+                            <span class="ml-3 text-gray-500 dark:text-gray-300 font-medium">{{ data.data.length }}</span>
                         </h1>
                         <AiButton
                             v-if="canCreateProjects"
@@ -77,7 +77,8 @@
                     </div>
 
                     <!-- Type filter (FLIP#1071): the same segmented pattern as the My/All toggle;
-                         the two typed labels are long, so they collapse to their icons below md. -->
+                         the two types show only their icons (as in the Type column), named by the tooltip and for
+                         screen readers. -->
                     <div role="tablist" aria-label="Project type" :class="SEGMENTED_GROUP_CLASS" data-test="type-filter">
                         <button
                             v-for="opt in typeOptions"
@@ -90,9 +91,9 @@
                             :data-test="`type-filter-${opt.id}`"
                             @click="selectType(opt.value)"
                         >
-                            <icon-ph-scan v-if="opt.id === 'imaging'" class="w-4 h-4 shrink-0" aria-hidden="true" />
-                            <icon-ph-database v-else-if="opt.id === 'omop-only'" class="w-4 h-4 shrink-0" aria-hidden="true" />
-                            <span :class="opt.id === 'all' ? '' : 'hidden md:inline'">{{ opt.label }}</span>
+                            <!-- The chip carries the type's name for screen readers. -->
+                            <ProjectTypeChip v-if="opt.id !== 'all'" :has-imaging="opt.id === 'imaging'" size="lg" />
+                            <span v-else>{{ opt.label }}</span>
                         </button>
                     </div>
 
@@ -176,9 +177,10 @@
                             <div class="w-2 shrink-0" />
                             <div
                                 :class="ROW_GRID_CLASS"
-                                class="grid flex-1 gap-5 px-5 py-3 text-xs font-mono font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300"
+                                class="grid flex-1 gap-5 px-5 py-3 text-xs font-medium text-gray-500 dark:text-gray-300"
                             >
                                 <div>Project</div>
+                                <div>Type</div>
                                 <div>Description</div>
                                 <div class="hidden lg:block">
                                     Trusts
@@ -211,20 +213,23 @@
                                 data-test="project-row-grid"
                             >
                                 <div class="min-w-0">
-                                    <div class="font-heading font-semibold text-base text-gray-900 dark:text-gray-100 truncate" data-test="project-name">
+                                    <div class="font-semibold text-base text-gray-900 dark:text-gray-100 truncate" data-test="project-name">
                                         {{ project.name }}
                                     </div>
-                                    <div class="flex items-center gap-2 mt-0.5 min-w-0 text-xs text-gray-500 dark:text-gray-300">
-                                        <ProjectTypeChip :has-imaging="projectHasImaging(project)" />
+                                    <div class="flex items-center gap-2 mt-0.5 min-w-0 text-note text-gray-500 dark:text-gray-300">
+                                        <ProjectTypeChip :has-imaging="projectHasImaging(project)" size="sm" :class="[INK, 'md:hidden']" />
                                         <span class="truncate">{{ ownerLabel(project) }} · {{ relativeUpdated(project) }}</span>
                                     </div>
+                                </div>
+                                <div class="hidden md:flex justify-start">
+                                    <ProjectTypeChip :has-imaging="projectHasImaging(project)" size="xl" :class="INK" />
                                 </div>
                                 <!-- Below md the row is two columns: this drops under the name and
                                      its meta line, while the status block spans both rows to its
                                      right. From md the normal column flow takes over. -->
                                 <div
                                     class="col-start-1 row-start-2 md:col-start-auto md:row-start-auto
-                                    text-[12.5px] md:text-[13px] text-gray-600 dark:text-gray-300
+                                    text-note text-gray-600 dark:text-gray-300
                                     leading-snug line-clamp-2"
                                     data-test="project-row-description"
                                 >
@@ -241,16 +246,16 @@
                                     flex flex-col items-end gap-1.5"
                                 >
                                     <span
-                                        class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold tracking-wide uppercase"
+                                        class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold"
                                         :class="pillClass(project.status)"
                                         data-test="project-status-indicator"
                                     >
                                         {{ statusLabel(project.status) }}
                                     </span>
-                                    <span v-if="nextActionFor(project)" class="text-[11px] text-gray-500 dark:text-gray-300">
+                                    <span v-if="nextActionFor(project)" class="text-xs text-gray-500 dark:text-gray-300">
                                         {{ nextActionFor(project) }}
                                     </span>
-                                    <span v-if="cohortSize(project)" class="text-[11px] text-gray-500 dark:text-gray-300 font-mono">
+                                    <span v-if="cohortSize(project)" class="text-xs text-gray-500 dark:text-gray-300 tabular-nums">
                                         {{ cohortSize(project)?.toLocaleString() }} patients
                                     </span>
                                 </div>
@@ -278,17 +283,17 @@
                         <div class="flex items-center justify-between gap-2">
                             <div class="flex items-center gap-2 min-w-0">
                                 <span
-                                    class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold tracking-wide uppercase"
+                                    class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold"
                                     :class="pillClass(project.status)"
                                 >
                                     {{ statusLabel(project.status) }}
                                 </span>
-                                <ProjectTypeChip :has-imaging="projectHasImaging(project)" />
+                                <ProjectTypeChip :has-imaging="projectHasImaging(project)" :class="INK" />
                             </div>
                         </div>
 
                         <div>
-                            <h3 class="font-heading font-semibold text-lg leading-tight text-gray-900 dark:text-gray-100">
+                            <h3 class="font-semibold text-lg leading-tight text-gray-900 dark:text-gray-100">
                                 {{ project.name }}
                             </h3>
                             <p
@@ -307,17 +312,17 @@
                         >
                             <icon-ph-users-three-duotone class="w-4 h-4 text-gray-500 dark:text-gray-300 shrink-0" />
                             <template v-if="cohortSize(project)">
-                                <span class="font-mono font-semibold text-gray-800 dark:text-gray-200">
+                                <span class="font-semibold tabular-nums text-gray-800 dark:text-gray-200">
                                     {{ cohortSize(project)?.toLocaleString() }}
                                 </span>
                                 <span class="text-gray-500 dark:text-gray-300">patients in cohort</span>
                             </template>
-                            <span v-else class="text-gray-400 dark:text-gray-300 italic">
+                            <span v-else class="text-gray-500 dark:text-gray-300">
                                 No cohort yet
                             </span>
                         </div>
 
-                        <div class="flex justify-between items-center gap-2 pt-2 mt-auto border-t border-gray-100 dark:border-dark-border text-xs text-gray-500 dark:text-gray-300">
+                        <div class="flex justify-between items-center gap-2 pt-2 mt-auto border-t border-gray-100 dark:border-dark-border text-note text-gray-500 dark:text-gray-300">
                             <!-- Same owner · created line the list rows carry, so a card and a row
                                  say the same things about a project. -->
                             <span class="truncate" data-test="project-card-meta">
@@ -361,6 +366,7 @@ import { getProjects, IProject, ProjectStatus } from "@/services/project-service
 import { useAuthStore } from "@/store/auth";
 import { useModalsStore } from "@/store/modals";
 import { apiTimestampMs, relativeCreatedLabel } from "@/utils/helpers";
+import { segmentClass, SEGMENTED_GROUP_CLASS } from "@/utils/segmented";
 
 const pageSize = 20;
 const authStore = useAuthStore();
@@ -391,31 +397,18 @@ const userId = authStore.user?.userId;
 // Each fr track is wrapped in `minmax(0,…)` deliberately: a bare `1.6fr` means
 // `minmax(auto,1.6fr)`, whose min-content floor lets a long name or description push
 // its own track past its share — don't simplify them back to bare `fr`. The trusts
-// column is `hidden lg:flex`, and a `display: none` child occupies no grid cell, so
-// the md template deliberately declares three tracks to the lg template's four.
+// and Type columns are hidden below lg and md, and a `display: none` child occupies no
+// grid cell, so the md template deliberately declares four tracks to the lg template's five.
 // Keep each class name whole within one string literal: Tailwind's extractor scans
 // source text, so a class split across a concatenation is never generated.
-const ROW_GRID_CLASS = "grid-cols-[minmax(0,1fr)_8rem] md:grid-cols-[minmax(0,1.2fr)_minmax(0,1.8fr)_10rem] "
-    + "lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1.8fr)_11rem_10rem]";
+const ROW_GRID_CLASS = "grid-cols-[minmax(0,1fr)_8rem] md:grid-cols-[minmax(0,1.2fr)_5rem_minmax(0,1.8fr)_10rem] "
+    + "lg:grid-cols-[minmax(0,1.2fr)_5rem_minmax(0,1.8fr)_11rem_10rem]";
 
 type ViewMode = "list" | "grid";
 const viewMode = ref<ViewMode>("list");
 
 type SortKey = "created" | "status" | "name" | "cohort";
 const sortKey = ref<SortKey>("created");
-
-// All three toolbar controls (My/All, Type, and the list/grid view toggle) share one group look;
-// keep the class string in one place so they cannot drift apart. Only the group wrapper is shared —
-// the view toggle's buttons are icon-only and keep their own padding, so segmentClass is for the two
-// labelled controls.
-const SEGMENTED_GROUP_CLASS = "inline-flex bg-white dark:bg-dark-canvas border border-gray-200 "
-    + "dark:border-dark-border rounded-lg p-1";
-const segmentClass = (active: boolean): string[] => [
-    "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-semibold transition-colors",
-    active
-        ? "bg-gray-100 dark:bg-dark-surface text-gray-900 dark:text-gray-100"
-        : "bg-transparent text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200"
-];
 
 const accessOptions = [
     {
@@ -594,4 +587,7 @@ const userCountLabel = (project: IProject): string => {
 // proxy for the design's "updated 2h ago". Real updated-at tracking is a
 // separate backend change. Formatting is shared with the Models list.
 const relativeUpdated = (project: IProject): string => relativeCreatedLabel(project.creationtimestamp);
+
+// One ink for both project types on the list: the icons tell them apart, colour does not.
+const INK = "text-gray-800 dark:text-gray-100";
 </script>

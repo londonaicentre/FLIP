@@ -43,6 +43,9 @@ GENERATOR = REPO_ROOT / "flip-api/src/flip_api/scripts/generate_xnat_credentials
 XNAT_MAKEFILE = REPO_ROOT / "trust/xnat/Makefile"
 WAIT_FOR_POSTGRES = REPO_ROOT / "trust/xnat/xnat/wait-for-postgres.sh"
 GUARD_XNAT_DB = REPO_ROOT / "trust/xnat/postgres/guard-xnat-db-passwords.sh"
+#: Renders xnat-conf.properties and prefs-init.ini at container start (FLIP#1583 made its
+#: convenience copy of them optional, so that a read-only share directory cannot stop XNAT).
+MAKE_XNAT_CONFIG = REPO_ROOT / "trust/xnat/xnat/make-xnat-config.sh"
 
 PLACEHOLDER = "<run-make-generate-xnat-credentials>"
 

@@ -16,7 +16,6 @@
 
 """Tests for the deploy readiness verification script."""
 
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -68,58 +67,24 @@ class TestFileExistence:
         assert result is False
 
 
-class TestPythonSyntax:
-    """Tests for Python syntax checking."""
-
-    def test_python_syntax_valid(self) -> None:
-        """Test checking valid Python syntax."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("print('hello')\n")
-            f.flush()
-            result = check_python_syntax(f.name, "Test script")
-            assert result is True
-            Path(f.name).unlink()
-
-    def test_python_syntax_invalid(self) -> None:
-        """Test checking invalid Python syntax."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write("print('hello'  # missing closing quote\n")
-            f.flush()
-            result = check_python_syntax(f.name, "Invalid script")
-            assert result is False
-            Path(f.name).unlink()
-
-    def test_python_syntax_file_not_found(self) -> None:
-        """Test checking syntax of non-existent file."""
-        result = check_python_syntax("nonexistent_xyz.py", "Missing script")
-        assert result is False
-
-
-class TestBashSyntax:
-    """Tests for Bash syntax checking."""
-
-    def test_bash_syntax_valid(self) -> None:
-        """Test checking valid Bash syntax."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as f:
-            f.write("#!/bin/bash\necho 'hello'\n")
-            f.flush()
-            result = check_bash_syntax(f.name, "Test script")
-            assert result is True
-            Path(f.name).unlink()
-
-    def test_bash_syntax_invalid(self) -> None:
-        """Test checking invalid Bash syntax."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as f:
-            f.write("#!/bin/bash\nif true; then echo 'missing fi'\n")
-            f.flush()
-            result = check_bash_syntax(f.name, "Invalid script")
-            assert result is False
-            Path(f.name).unlink()
-
-    def test_bash_syntax_file_not_found(self) -> None:
-        """Test checking syntax of non-existent file."""
-        result = check_bash_syntax("nonexistent_xyz.sh", "Missing script")
-        assert result is False
+@pytest.mark.parametrize(
+    ("check", "name", "content", "expected"),
+    [
+        (check_python_syntax, "ok.py", "print('hello')\n", True),
+        (check_python_syntax, "bad.py", "print('hello'  # missing closing quote\n", False),
+        (check_python_syntax, "missing.py", None, False),
+        (check_bash_syntax, "ok.sh", "#!/bin/bash\necho 'hello'\n", True),
+        (check_bash_syntax, "bad.sh", "#!/bin/bash\nif true; then echo 'missing fi'\n", False),
+        (check_bash_syntax, "missing.sh", None, False),
+    ],
+    ids=["python-valid", "python-invalid", "python-missing", "bash-valid", "bash-invalid", "bash-missing"],
+)
+def test_syntax_check(tmp_path: Path, check, name: str, content: str | None, expected: bool) -> None:
+    """The Python and Bash syntax checks accept a valid script and reject an invalid or missing one."""
+    path = tmp_path / name
+    if content is not None:
+        path.write_text(content)
+    assert check(str(path), f"Test script {name}") is expected
 
 
 class TestMakefileTargets:

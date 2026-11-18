@@ -1,0 +1,15 @@
+{
+  "data": [
+    {
+      "description": "E2E smoke model",
+      "id": "5069e9f1-6932-8b7e-bb51-56786c12da88",
+      "name": "Spleen 3D U-Net",
+      "owner_id": "00000000-0000-4000-8000-000000000001",
+      "status": "RESULTS_UPLOADED"
+    }
+  ],
+  "page": 1,
+  "pageSize": 20,
+  "totalPages": 1,
+  "totalRecords": 1
+}

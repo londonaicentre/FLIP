@@ -17,15 +17,17 @@
 -- excluded — adds rows without test value at this scope.
 --
 -- Counts (asserted in test_cohort_query.py and test_cohort_endpoint.py):
---   person                  -> 16 rows  (8 M, 8 F, ages spanning six decade buckets)
---   visit_occurrence        -> 12 rows  (one per imaging-bearing person 1-12)
---   procedure_occurrence    -> 12 rows  (one per CT image; 6 CT Spleen + 6 CT Head)
---   image_occurrence        -> 24 rows  (12 CT, 8 MR, 4 XR)
--- Persons 1-12 each appear in image_occurrence (twice for 1-8, once for 9-12); persons
--- 13-16 have no imaging — useful for joins that must drop those rows. Only the 12 CT
--- image_occurrence rows have a populated procedure_occurrence_id; the MR and XR rows
+--   person                  -> 24 rows  (12 M, 12 F, birth years 1945-2004)
+--   visit_occurrence        -> 20 rows  (one per imaging-bearing person 1-20)
+--   procedure_occurrence    -> 20 rows  (one per CT image; 10 CT Spleen + 10 CT Head)
+--   image_occurrence        -> 32 rows  (20 CT, 8 MR, 4 XR)
+-- Persons 1-20 (10 M, 10 F) each appear in image_occurrence (twice for 1-12, once for
+-- 13-20); persons 21-24 have no imaging — useful for joins that must drop those rows. Each
+-- sex clears the stack's COHORT_QUERY_THRESHOLD of 10 on its own, while no decade bucket
+-- reaches it (ages drift with CURRENT_DATE, so the birth years stay spread out). Only the
+-- 20 CT image_occurrence rows have a populated procedure_occurrence_id; the MR and XR rows
 -- carry NULL there, which lets a CTE-filtered ``WHERE procedure_concept = 'CT Spleen'``
--- query on the realistic-shape test return a tight 6-row result.
+-- query on the realistic-shape test return a tight 10-row result.
 
 CREATE SCHEMA IF NOT EXISTS omop;
 
@@ -115,7 +117,15 @@ INSERT INTO omop.person (person_id, gender_concept_id, year_of_birth, birth_date
     (13, 8507, 1994, '1994-03-08 00:00:00', 'M', 'P013'),
     (14, 8532, 1997, '1997-07-11 00:00:00', 'F', 'P014'),
     (15, 8507, 2000, '2000-11-29 00:00:00', 'M', 'P015'),
-    (16, 8532, 2002, '2002-04-04 00:00:00', 'F', 'P016');
+    (16, 8532, 2002, '2002-04-04 00:00:00', 'F', 'P016'),
+    (17, 8507, 1945, '1945-06-02 00:00:00', 'M', 'P017'),
+    (18, 8532, 1955, '1955-09-14 00:00:00', 'F', 'P018'),
+    (19, 8507, 1965, '1965-12-21 00:00:00', 'M', 'P019'),
+    (20, 8532, 1980, '1980-01-30 00:00:00', 'F', 'P020'),
+    (21, 8507, 1950, '1950-05-05 00:00:00', 'M', 'P021'),
+    (22, 8532, 1960, '1960-08-08 00:00:00', 'F', 'P022'),
+    (23, 8507, 1976, '1976-10-10 00:00:00', 'M', 'P023'),
+    (24, 8532, 2004, '2004-02-02 00:00:00', 'F', 'P024');
 
 -- One inpatient encounter per imaging-bearing person.
 INSERT INTO omop.visit_occurrence (visit_occurrence_id, person_id, visit_start_date, visit_type_concept_id) VALUES
@@ -130,10 +140,18 @@ INSERT INTO omop.visit_occurrence (visit_occurrence_id, person_id, visit_start_d
     (6009, 9,  '2024-01-23', 9201001),
     (6010, 10, '2024-01-24', 9201001),
     (6011, 11, '2024-01-25', 9201001),
-    (6012, 12, '2024-01-26', 9201001);
+    (6012, 12, '2024-01-26', 9201001),
+    (6013, 13, '2024-01-27', 9201001),
+    (6014, 14, '2024-01-28', 9201001),
+    (6015, 15, '2024-01-29', 9201001),
+    (6016, 16, '2024-01-30', 9201001),
+    (6017, 17, '2024-01-31', 9201001),
+    (6018, 18, '2024-02-01', 9201001),
+    (6019, 19, '2024-02-02', 9201001),
+    (6020, 20, '2024-02-03', 9201001);
 
--- One procedure per CT study. First six are CT Spleen, next six are CT Head — gives the
--- realistic-shape test a 6-row WHERE-filtered cohort that clears the threshold of 5.
+-- One procedure per CT study: persons 1-6 and 13-16 are CT Spleen, the rest CT Head — gives
+-- the realistic-shape test a 10-row WHERE-filtered cohort that clears the threshold of 10.
 INSERT INTO omop.procedure_occurrence (procedure_occurrence_id, person_id, visit_occurrence_id, procedure_date, procedure_concept_id) VALUES
     (5001, 1,  6001, '2024-01-15', 4002001),  -- CT Spleen
     (5002, 2,  6002, '2024-01-16', 4002001),  -- CT Spleen
@@ -146,10 +164,18 @@ INSERT INTO omop.procedure_occurrence (procedure_occurrence_id, person_id, visit
     (5009, 9,  6009, '2024-01-23', 4002002),  -- CT Head
     (5010, 10, 6010, '2024-01-24', 4002002),  -- CT Head
     (5011, 11, 6011, '2024-01-25', 4002002),  -- CT Head
-    (5012, 12, 6012, '2024-01-26', 4002002);  -- CT Head
+    (5012, 12, 6012, '2024-01-26', 4002002),  -- CT Head
+    (5013, 13, 6013, '2024-01-27', 4002001),  -- CT Spleen
+    (5014, 14, 6014, '2024-01-28', 4002001),  -- CT Spleen
+    (5015, 15, 6015, '2024-01-29', 4002001),  -- CT Spleen
+    (5016, 16, 6016, '2024-01-30', 4002001),  -- CT Spleen
+    (5017, 17, 6017, '2024-01-31', 4002002),  -- CT Head
+    (5018, 18, 6018, '2024-02-01', 4002002),  -- CT Head
+    (5019, 19, 6019, '2024-02-02', 4002002),  -- CT Head
+    (5020, 20, 6020, '2024-02-03', 4002002);  -- CT Head
 
 INSERT INTO omop.image_occurrence (image_occurrence_id, person_id, procedure_occurrence_id, visit_occurrence_id, modality_concept_id, anatomic_site_concept_id, accession_id, image_occurrence_date, image_study_uid) VALUES
-    -- CT: 12 rows. Each has a populated procedure_occurrence_id pointing at one of the
+    -- CT: 20 rows (1001-1012 and 1025-1032). Each has a populated procedure_occurrence_id pointing at one of the
     -- procedures above (CT Spleen anatomy concept 4003001, CT Head anatomy concept 4003002).
     (1001, 1,  5001, 6001, 4013636, 4003001, 'ACC-1001', '2024-01-15', '1.2.840.113619.2.55.1001'),
     (1002, 2,  5002, 6002, 4013636, 4003001, 'ACC-1002', '2024-01-16', '1.2.840.113619.2.55.1002'),
@@ -177,4 +203,13 @@ INSERT INTO omop.image_occurrence (image_occurrence_id, person_id, procedure_occ
     (1021, 9,  NULL, 6009, 4013632, NULL, 'ACC-1021', '2024-03-01', '1.2.840.113619.2.55.1021'),
     (1022, 10, NULL, 6010, 4013632, NULL, 'ACC-1022', '2024-03-02', '1.2.840.113619.2.55.1022'),
     (1023, 11, NULL, 6011, 4013632, NULL, 'ACC-1023', '2024-03-03', '1.2.840.113619.2.55.1023'),
-    (1024, 12, NULL, 6012, 4013632, NULL, 'ACC-1024', '2024-03-04', '1.2.840.113619.2.55.1024');
+    (1024, 12, NULL, 6012, 4013632, NULL, 'ACC-1024', '2024-03-04', '1.2.840.113619.2.55.1024'),
+    -- CT for persons 13-20, added so each sex clears a threshold of 10 (FLIP#870).
+    (1025, 13, 5013, 6013, 4013636, 4003001, 'ACC-1025', '2024-01-27', '1.2.840.113619.2.55.1025'),
+    (1026, 14, 5014, 6014, 4013636, 4003001, 'ACC-1026', '2024-01-28', '1.2.840.113619.2.55.1026'),
+    (1027, 15, 5015, 6015, 4013636, 4003001, 'ACC-1027', '2024-01-29', '1.2.840.113619.2.55.1027'),
+    (1028, 16, 5016, 6016, 4013636, 4003001, 'ACC-1028', '2024-01-30', '1.2.840.113619.2.55.1028'),
+    (1029, 17, 5017, 6017, 4013636, 4003002, 'ACC-1029', '2024-01-31', '1.2.840.113619.2.55.1029'),
+    (1030, 18, 5018, 6018, 4013636, 4003002, 'ACC-1030', '2024-02-01', '1.2.840.113619.2.55.1030'),
+    (1031, 19, 5019, 6019, 4013636, 4003002, 'ACC-1031', '2024-02-02', '1.2.840.113619.2.55.1031'),
+    (1032, 20, 5020, 6020, 4013636, 4003002, 'ACC-1032', '2024-02-03', '1.2.840.113619.2.55.1032');

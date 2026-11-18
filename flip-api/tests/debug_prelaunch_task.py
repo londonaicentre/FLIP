@@ -12,6 +12,7 @@
 
 import json
 import warnings
+from pathlib import Path
 
 import requests
 from requests.models import Response
@@ -19,9 +20,9 @@ from requests.models import Response
 from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.utils import constants
 from tests.integration.utils import admin_authentication
+from tests.query_files import read_query_file
 
-with open("tests/example_query.sql", "r") as f:
-    QUERY = f.read()
+QUERY = read_query_file(Path("tests/example_query.sql"))
 
 try:
     AUTH_TOKEN = admin_authentication()

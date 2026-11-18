@@ -37,17 +37,10 @@ def compute_precision_recall_f1(
     prediction = prediction.detach().cpu().numpy().round()
     ground_truth = ground_truth.detach().cpu().numpy()
 
-    prediction_new = []
-    ground_truth_new = []
-    for b in range(prediction.shape[0]):
-        for lesion in lesions.items:
-            if lesion.lesion == pathology:
-                prediction_new.append(prediction[b, int(lesion.id)])
-                ground_truth_new.append(ground_truth[b, int(lesion.id)])
-                break
-
-    prediction_new = np.array(prediction_new)
-    ground_truth_new = np.array(ground_truth_new)
+    # The pathology's column (first match); an unknown pathology gives empty arrays and NaN metrics.
+    ids = [int(lesion.id) for lesion in lesions.items if lesion.lesion == pathology][:1]
+    prediction_new = prediction[:, ids].ravel()
+    ground_truth_new = ground_truth[:, ids].ravel()
 
     # Calculate metrics using the pathology-specific predictions and ground truth
     tp = np.sum((prediction_new == 1) & (ground_truth_new == 1))

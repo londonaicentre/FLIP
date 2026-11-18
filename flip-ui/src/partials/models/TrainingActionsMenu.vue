@@ -97,16 +97,16 @@ const stopTrainingAction = async () => {
     try {
         stopTrainingSubmitting.value = true;
         await stopTraining(modelId);
-        dialogStopTraining.value = false;
-        stopTrainingSubmitting.value = false;
     }
     catch {
-        dialogStopTraining.value = false;
-        stopTrainingSubmitting.value = false;
         Snackbar.error({
             title: "Something went wrong!",
             text: isPreRunning.value ? "Failed to abort job" : "Failed to stop training"
         });
+    }
+    finally {
+        dialogStopTraining.value = false;
+        stopTrainingSubmitting.value = false;
     }
 };
 

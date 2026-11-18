@@ -311,13 +311,11 @@ class FlipFedAvgRecipe(FlipRecipe):
                 validation_timeout=self.validation_timeout,
             )
         job.to_server(evaluation_controller)
-        evaluation_result_tasks = [self.evaluate_task_name, FlipTasks.POST_VALIDATION.value]
-        if self.submit_model_task_name:
-            evaluation_result_tasks.insert(0, self.submit_model_task_name)
+        submit = [self.submit_model_task_name] if self.submit_model_task_name else []
         job.to_server(
             ClientExceptionReporter(),
             filter_type=FilterType.TASK_RESULT,
-            tasks=evaluation_result_tasks,
+            tasks=[*submit, self.evaluate_task_name, FlipTasks.POST_VALIDATION.value],
         )
         job.to_server(BroadcastTask(task_name=FlipTasks.POST_VALIDATION.value))
 
@@ -336,9 +334,7 @@ class FlipFedAvgRecipe(FlipRecipe):
         job.to_clients(CleanupImages(), tasks=["init_training", "post_validation"])
 
         # Clients: Client API trainer for train / optional submit_model / validate.
-        executor_tasks = [self.train_task_name, self.evaluate_task_name]
-        if self.submit_model_task_name:
-            executor_tasks.insert(1, self.submit_model_task_name)
+        executor_tasks = [self.train_task_name, *submit, self.evaluate_task_name]
         job.to_clients(
             ClientAPIExecutor(
                 execution_mode=ExecutionMode.IN_PROCESS,

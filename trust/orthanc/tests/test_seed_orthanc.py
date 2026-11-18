@@ -389,37 +389,13 @@ class TestLocalSource:
                 source=source, tables_dir=tmp_path / "nowhere",
             )  # fmt: skip
 
-    def test_cli_requires_both_local_flags_together(self, seed, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("only", ["--source", "--tables-dir"])
+    def test_cli_requires_both_local_flags_together(self, seed, tmp_path, monkeypatch, only):
         monkeypatch.setenv("ORTHANC_USERNAME", "u")
         monkeypatch.setenv("ORTHANC_PASSWORD", "p")
+        argv = ["--trust-index", "1", "--projects", "brain_mri_project", "--orthanc-url", "http://pacs"]
         with pytest.raises(SystemExit, match="--source and --tables-dir"):
-            seed.main(
-                [
-                    "--trust-index",
-                    "1",
-                    "--projects",
-                    "brain_mri_project",
-                    "--orthanc-url",
-                    "http://pacs",
-                    "--source",
-                    str(tmp_path),
-                    "--dry-run",
-                ]
-            )
-        with pytest.raises(SystemExit, match="--source and --tables-dir"):
-            seed.main(
-                [
-                    "--trust-index",
-                    "1",
-                    "--projects",
-                    "brain_mri_project",
-                    "--orthanc-url",
-                    "http://pacs",
-                    "--tables-dir",
-                    str(tmp_path),
-                    "--dry-run",
-                ]
-            )
+            seed.main([*argv, only, str(tmp_path), "--dry-run"])
 
 
 class TestRemoveOnly:

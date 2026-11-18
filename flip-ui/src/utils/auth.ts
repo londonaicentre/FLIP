@@ -81,7 +81,7 @@ export const authCheck = async (
             return next();
         }
 
-        // Public Ark+ demo build (VITE_DEMO): no identity provider, every
+        // Public demo build (VITE_DEMO): no identity provider, every
         // route open. Safe because the demo bundle talks only to the
         // in-browser Mirage server (mocks/demo-server.ts), which has no
         // passthrough — there is no real backend to protect. Vite inlines

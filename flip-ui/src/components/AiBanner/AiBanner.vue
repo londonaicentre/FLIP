@@ -32,9 +32,17 @@
                         >
                             Learn more
                         </a>
-                        <div v-tippy="{placement: 'bottom-end'}" class="w-6 h-5 cursor-pointer" content="Close for this session" @click="close">
-                            <icon-mdi-close class="w-5 h-5 text-white transition rounded hover:text-primary-200" />
-                        </div>
+                        <button
+                            v-tippy="{placement: 'bottom-end'}"
+                            type="button"
+                            class="grid w-8 h-8 text-white transition rounded place-items-center hover:text-primary-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                            content="Close for this session"
+                            aria-label="Close for this session"
+                            data-test="banner-close"
+                            @click="close"
+                        >
+                            <icon-mdi-close class="w-5 h-5" aria-hidden="true" />
+                        </button>
                     </div>
                 </div>
             </div>

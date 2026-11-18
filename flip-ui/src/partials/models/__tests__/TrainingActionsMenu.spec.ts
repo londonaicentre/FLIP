@@ -12,11 +12,12 @@
  */
 
 
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
+import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
 import TrainingActionsMenu from "@/partials/models/TrainingActionsMenu.vue";
-import { ModelStatusEnum, stopTraining } from "@/services/model-service";
+import { getDownloadUrlForResults, ModelStatusEnum, stopTraining } from "@/services/model-service";
 
 vi.mock("vue-router", async (importOriginal) => {
     const actual = await importOriginal<typeof import("vue-router")>();
@@ -71,12 +72,12 @@ function mountMenu(status: ModelStatusEnum = ModelStatusEnum.RUNNING) {
     });
 }
 
-describe("TrainingActionsMenu responsive button labels", () => {
-    // Below lg the labels hide so the buttons shrink to icons and stop
-    // squashing the model title in the page header; title + aria-label keep
-    // the buttons named for tooltips and screen readers at every width.
-    const labelSelector = "span.hidden.lg\\:inline";
+// Below lg the labels hide so the buttons shrink to icons and stop
+// squashing the model title in the page header; title + aria-label keep
+// the buttons named for tooltips and screen readers at every width.
+const labelSelector = "span.hidden.lg\\:inline";
 
+describe("TrainingActionsMenu responsive button labels", () => {
     it("hides the Stop Training label below lg and keeps title + aria-label", () => {
         const wrapper = mountMenu();
 
@@ -102,8 +103,6 @@ describe("TrainingActionsMenu responsive button labels", () => {
 });
 
 describe("TrainingActionsMenu abort vs stop affordance", () => {
-    const labelSelector = "span.hidden.lg\\:inline";
-
     it.each([
         ["STOPPED", ModelStatusEnum.STOPPED],
         ["ERROR", ModelStatusEnum.ERROR],
@@ -137,7 +136,7 @@ describe("TrainingActionsMenu abort vs stop affordance", () => {
     it("uses abort copy in the confirm modal at INITIATED", () => {
         const wrapper = mountMenu(ModelStatusEnum.INITIATED);
 
-        const modal = wrapper.findComponent("[data-test=confirm-modal-stub]");
+        const modal = wrapper.findComponent(AiConfirmModal);
         expect(modal.props("confirmationText")).toContain("abort");
         expect(modal.props("continueButtonText")).toBe("Abort job");
     });
@@ -153,7 +152,7 @@ describe("TrainingActionsMenu abort vs stop affordance", () => {
         expect(btn.attributes("title")).toBe("Stop Training");
         expect(btn.find(labelSelector).text()).toBe("Stop Training");
 
-        const modal = wrapper.findComponent("[data-test=confirm-modal-stub]");
+        const modal = wrapper.findComponent(AiConfirmModal);
         expect(modal.props("confirmationText")).toBe("Are you sure you want to stop training this model?");
         expect(modal.props("continueButtonText")).toBe("Stop Training");
     });
@@ -171,7 +170,7 @@ describe("TrainingActionsMenu abort vs stop affordance", () => {
     it("aborts via the confirm modal at INITIATED", async () => {
         vi.mocked(stopTraining).mockResolvedValueOnce(undefined);
         const wrapper = mountMenu(ModelStatusEnum.INITIATED);
-        const modal = () => wrapper.findComponent("[data-test=confirm-modal-stub]");
+        const modal = () => wrapper.findComponent(AiConfirmModal);
 
         expect(modal().props("dialog")).toBe(false);
         await wrapper.find("[data-test=stop-training-btn]").trigger("click");
@@ -182,33 +181,75 @@ describe("TrainingActionsMenu abort vs stop affordance", () => {
         expect(modal().props("dialog")).toBe(false);
     });
 
-    it("reports 'Failed to abort job' when the pre-running abort fails", async () => {
+    it.each([
+        ["the pre-running abort (INITIATED)", ModelStatusEnum.INITIATED, "Failed to abort job"],
+        ["stopping a running model (RUNNING)", ModelStatusEnum.RUNNING, "Failed to stop training"]
+    ])("reports the failure of %s as its own message", async (_name, status, text) => {
+        // Each row must see its own snackbar call, not the previous row's.
+        mockSnackbarError.mockClear();
         vi.mocked(stopTraining).mockRejectedValueOnce(new Error("network error"));
-        const wrapper = mountMenu(ModelStatusEnum.INITIATED);
-        const modal = () => wrapper.findComponent("[data-test=confirm-modal-stub]");
+        const wrapper = mountMenu(status);
+        const modal = () => wrapper.findComponent(AiConfirmModal);
 
         await wrapper.find("[data-test=stop-training-btn]").trigger("click");
         await (modal().props("continueAction") as () => Promise<void>)();
 
         expect(mockSnackbarError).toHaveBeenCalledWith({
             title: "Something went wrong!",
-            text: "Failed to abort job"
+            text
         });
         expect(modal().props("dialog")).toBe(false);
     });
+});
 
-    it("reports 'Failed to stop training' when stopping a running model fails", async () => {
-        vi.mocked(stopTraining).mockRejectedValueOnce(new Error("network error"));
+describe("TrainingActionsMenu download results", () => {
+    const download = async () => {
+        const wrapper = mountMenu(ModelStatusEnum.RESULTS_UPLOADED);
+        await wrapper.find("[data-test=download-results-btn]").trigger("click");
+        await flushPromises();
+    };
+
+    it("fetches this model's result URLs and opens each one", async () => {
+        const opened: string[] = [];
+        const click = vi.spyOn(HTMLElement.prototype, "click")
+            .mockImplementation(function (this: HTMLElement) {
+                opened.push(this.getAttribute("href") ?? "");
+            });
+        vi.mocked(getDownloadUrlForResults).mockResolvedValueOnce(["https://s3/a.zip", "https://s3/b.zip"]);
+
+        await download();
+
+        expect(getDownloadUrlForResults).toHaveBeenCalledWith("model-1");
+        expect(opened).toEqual(["https://s3/a.zip", "https://s3/b.zip"]);
+        expect(mockSnackbarError).not.toHaveBeenCalled();
+        click.mockRestore();
+    });
+
+    it("says no results are available when the hub returns no URLs", async () => {
+        vi.mocked(getDownloadUrlForResults).mockResolvedValueOnce([]);
+
+        await download();
+
+        expect(mockSnackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "No results available" }));
+    });
+
+    it("reports a failed download", async () => {
+        vi.mocked(getDownloadUrlForResults).mockRejectedValueOnce(new Error("boom"));
+
+        await download();
+
+        expect(mockSnackbarError)
+            .toHaveBeenCalledWith(expect.objectContaining({ title: "Unable to download results" }));
+    });
+
+    it("closes the stop confirmation when the modal asks to close", async () => {
         const wrapper = mountMenu(ModelStatusEnum.RUNNING);
-        const modal = () => wrapper.findComponent("[data-test=confirm-modal-stub]");
-
+        const modal = () => wrapper.findComponent(AiConfirmModal);
         await wrapper.find("[data-test=stop-training-btn]").trigger("click");
-        await (modal().props("continueAction") as () => Promise<void>)();
 
-        expect(mockSnackbarError).toHaveBeenCalledWith({
-            title: "Something went wrong!",
-            text: "Failed to stop training"
-        });
+        await modal().vm.$emit("closeModal");
+
         expect(modal().props("dialog")).toBe(false);
+        expect(stopTraining).not.toHaveBeenCalled();
     });
 });

@@ -1,0 +1,90 @@
+[
+  {
+    "bandit_findings": null,
+    "created": null,
+    "id": "ec13331b-bfc2-8c8b-a880-38fac23aba4e",
+    "modelId": "5069e9f1-6932-8b7e-bb51-56786c12da88",
+    "modified": null,
+    "name": "config.json",
+    "size": 31,
+    "status": "COMPLETED",
+    "type": "application/json"
+  },
+  {
+    "bandit_findings": null,
+    "created": null,
+    "id": "d55335a4-35e2-8a30-9116-89518522c946",
+    "modelId": "5069e9f1-6932-8b7e-bb51-56786c12da88",
+    "modified": null,
+    "name": "config.toml",
+    "size": 1789,
+    "status": "COMPLETED",
+    "type": "application/octet-stream"
+  },
+  {
+    "bandit_findings": [],
+    "created": null,
+    "id": "a7442885-4f93-87ce-9b53-0ff5abeabbd3",
+    "modelId": "5069e9f1-6932-8b7e-bb51-56786c12da88",
+    "modified": null,
+    "name": "data_loading.py",
+    "size": 5780,
+    "status": "COMPLETED",
+    "type": "text/x-python"
+  },
+  {
+    "bandit_findings": [],
+    "created": null,
+    "id": "93f1626b-3ed7-8945-a37e-c600304061ec",
+    "modelId": "5069e9f1-6932-8b7e-bb51-56786c12da88",
+    "modified": null,
+    "name": "__init__.py",
+    "size": 660,
+    "status": "COMPLETED",
+    "type": "text/x-python"
+  },
+  {
+    "bandit_findings": [],
+    "created": null,
+    "id": "e49b4fa5-2601-8551-9550-7ba972d9e97e",
+    "modelId": "5069e9f1-6932-8b7e-bb51-56786c12da88",
+    "modified": null,
+    "name": "task.py",
+    "size": 6954,
+    "status": "COMPLETED",
+    "type": "text/x-python"
+  },
+  {
+    "bandit_findings": [],
+    "created": null,
+    "id": "aa74baec-53aa-8182-a992-14d0f22f3f8e",
+    "modelId": "5069e9f1-6932-8b7e-bb51-56786c12da88",
+    "modified": null,
+    "name": "client_app.py",
+    "size": 12628,
+    "status": "COMPLETED",
+    "type": "text/x-python"
+  },
+  {
+    "bandit_findings": [],
+    "created": null,
+    "id": "37e8f5f7-8631-86a7-954f-2e8822557d86",
+    "modelId": "5069e9f1-6932-8b7e-bb51-56786c12da88",
+    "modified": null,
+    "name": "models.py",
+    "size": 2097,
+    "status": "COMPLETED",
+    "type": "text/x-python"
+  },
+  {
+    "bandit_findings": [],
+    "created": null,
+    "id": "3e53da78-3921-83dd-8ba3-4974b7d494f7",
+    "modelId": "5069e9f1-6932-8b7e-bb51-56786c12da88",
+    "modified": null,
+    "name": "transforms.py",
+    "size": 3447,
+    "status": "COMPLETED",
+    "type": "text/x-python"
+  }
+]

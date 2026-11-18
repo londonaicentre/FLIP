@@ -19,43 +19,47 @@ from thefuzz import fuzz
 MODULE_PATH = Path(__file__).resolve().parents[1]
 
 
-def find_function_definitions(code_dir):
-    """
-    Find all function definitions in the code directory.
-    """
-    function_definitions = []
+def _find_definitions(code_dir, keyword):
+    """Find every line containing `keyword` in the .py files under `code_dir`."""
+    found = []
     for root, _, files in os.walk(code_dir):
         for file in files:
             if file.endswith(".py"):
                 with open(os.path.join(root, file), "r") as f:
-                    lines = f.readlines()
-                    for line in lines:
-                        if "def " in line:
-                            line = f"{str(root).replace(str(MODULE_PATH), '')}{file}\n\t\t\t{line.strip()}"
-                            function_definitions.append(line)
-    return function_definitions
+                    for line in f:
+                        if keyword in line:
+                            found.append(f"{str(root).replace(str(MODULE_PATH), '')}{file}\n\t\t\t{line.strip()}")
+    return found
+
+
+def find_function_definitions(code_dir):
+    """
+    Find all function definitions in the code directory.
+    """
+    return _find_definitions(code_dir, "def ")
 
 
 def find_class_definitions(code_dir):
     """
     Find all class definitions in the code directory.
     """
-    class_definitions = []
-    for root, _, files in os.walk(code_dir):
-        for file in files:
-            if file.endswith(".py"):
-                with open(os.path.join(root, file), "r") as f:
-                    lines = f.readlines()
-                    for line in lines:
-                        if "class " in line:
-                            line = f"{str(root).replace(str(MODULE_PATH), '')}{file}\n\t\t\t{line.strip()}"
-                            class_definitions.append(line)
-    return class_definitions
+    return _find_definitions(code_dir, "class ")
+
+
+def _extract_name(definition_str):
+    """Name from "def name(...):", "class Name(...):" or "class Name:"; None if neither."""
+    if "def " in definition_str:
+        rest = definition_str.split("def ")[1]
+    elif "class" in definition_str:
+        rest = definition_str.split("class ")[1]
+    else:
+        return None
+    return rest.split("(", 1)[0].split(":", 1)[0].strip()
 
 
 # %%
 # Print the function names that appear more than once
-def print_duplicate_names(definitions, similarity_threshold=85, item_type="Identifier", suffix=""):
+def print_duplicate_names(definitions, similarity_threshold=85, item_type="Identifier"):
     """
     Identifies and prints groups of similar names from a list of definitions
     using fuzzy string matching.
@@ -66,29 +70,9 @@ def print_duplicate_names(definitions, similarity_threshold=85, item_type="Ident
         print(f"No {item_type.lower()} definitions provided.")
         return
 
-    identifiers = []
-    for definition_str in definitions:
-        name = None
-        if "def " in definition_str:
-            clean_def = definition_str.split("def ")[1]
-            # Extract name from "def function_name(params...):"
-            name = clean_def.split("(", 1)[0].strip()
-        elif "class" in definition_str:
-            clean_def = definition_str.split("class ")[1]
-            # Extract name from "class ClassName(bases...):" or "class ClassName:"
-            name = clean_def.split("(", 1)[0].split(":", 1)[0].strip()
-
-        if name:  # Only add if a name was successfully extracted
-            identifiers.append(name)
-
+    identifiers = [name for d in definitions if (name := _extract_name(d))]
     if not identifiers:
         print(f"Could not extract any {item_type.lower()} names from the definitions.")
-        return
-
-    # Filter out any empty strings that might have slipped through, though unlikely
-    identifiers = [ident for ident in identifiers if ident]
-    if not identifiers:  # Re-check after filtering
-        print(f"No valid {item_type.lower()} names found after extraction.")
         return
 
     # Find groups of similar names
@@ -121,15 +105,11 @@ def print_duplicate_names(definitions, similarity_threshold=85, item_type="Ident
 
         # If the group has more than one member, it means similar items were found
         if len(current_group) > 1:
-            groups.append(sorted(list(current_group)))  # Store as a sorted list
-            # Mark all identifiers that are part of this newly found group as processed
-            for item_in_group in current_group:
-                for k_idx, k_val in enumerate(identifiers):
-                    if k_val == item_in_group:
-                        processed_indices[k_idx] = True
-        else:
-            # If no similar items were found for current_identifier, mark only itself as processed
-            processed_indices[i] = True
+            groups.append(sorted(current_group))
+            # Mark every identifier in this group as processed so it does not start its own search
+            for k, ident in enumerate(identifiers):
+                if ident in current_group:
+                    processed_indices[k] = True
 
     if not groups:
         print(f"No significantly similar {item_type.lower()} names found (threshold: {similarity_threshold}%).")
@@ -147,7 +127,7 @@ def print_duplicate_names(definitions, similarity_threshold=85, item_type="Ident
                         break
 
 
-def print_exact_duplicates(definitions, item_type="Identifier", suffix=""):
+def print_exact_duplicates(definitions, item_type="Identifier"):
     """
     Identifies and prints exact duplicates from a list of definitions.
     """
@@ -159,16 +139,7 @@ def print_exact_duplicates(definitions, item_type="Identifier", suffix=""):
     identifier_counts = {}
     origin_file = {}
     for definition_str in definitions:
-        name = None
-        if "def " in definition_str:
-            clean_def = definition_str.split("def ")[1]
-            # Extract name from "def function_name(params...):"
-            name = clean_def.split("(", 1)[0].split(":", 1)[0].strip()
-        elif "class" in definition_str:
-            clean_def = definition_str.split("class ")[1]
-            # Extract name from "class ClassName(bases...):" or "class ClassName:"
-            name = clean_def.split("(", 1)[0].split(":", 1)[0].strip()
-
+        name = _extract_name(definition_str)
         if name:  # Only add if a name was successfully extracted
             identifier_counts[name] = identifier_counts.get(name, 0) + 1
             # Store the origin file for each identifier
@@ -188,15 +159,12 @@ def print_exact_duplicates(definitions, item_type="Identifier", suffix=""):
 
 
 if __name__ == "__main__":
-    # Set the directory to the current working directory
-
-    MODULE_DIR = Path(__file__).resolve().parents[1]
-    print(f"Module directory: {MODULE_DIR}")
-    CODE_DIR = MODULE_DIR / "src/flip_api/"
+    print(f"Module directory: {MODULE_PATH}")
+    CODE_DIR = MODULE_PATH / "src/flip_api/"
     print(f"Code directory: {CODE_DIR}")
     function_definitions = find_function_definitions(CODE_DIR)
     class_definitions = find_class_definitions(CODE_DIR)
-    print_duplicate_names(function_definitions, suffix="def", similarity_threshold=95)
-    print_duplicate_names(class_definitions, suffix="class", similarity_threshold=95)
-    print_exact_duplicates(function_definitions, suffix="def")
-    print_exact_duplicates(class_definitions, suffix="class")
+    print_duplicate_names(function_definitions, similarity_threshold=95)
+    print_duplicate_names(class_definitions, similarity_threshold=95)
+    print_exact_duplicates(function_definitions)
+    print_exact_duplicates(class_definitions)

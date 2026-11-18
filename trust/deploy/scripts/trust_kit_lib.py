@@ -10,8 +10,9 @@
 # limitations under the License.
 """Single kit-file writer for trust/.env.<...> files (stdlib only).
 
-One in-place-upsert implementation behind every operator-side kit write — the
-dev distributor, the prod distributor, and the hub-shared sync. Merges a kit
+One in-place-upsert implementation behind every operator-side kit write —
+distribute_trust_kits.py (dev and prod registration), sync_trust_kit.py (hub-shared
+refresh) and site_upgrade.py (release tag pin). Merges a kit
 dict (as emitted by ``flip_api.scripts.register_trust``) into a kit file while
 preserving the operator's host-local edits:
 
@@ -24,9 +25,7 @@ preserving the operator's host-local edits:
 - The hub-shared block is upserted under a sentinel header; the header is added
   once on first write.
 
-Replaces the bash upsert in scripts/distribute-trust-kits.sh and
-deploy/providers/AWS/scripts/register-trusts.sh::write_kit_file(), and the
-in-place upsert in trust/deploy/scripts/sync_trust_kit.py.
+Also the one Python reader of the kit's TRUST_DATA_SEED (:func:`trust_data_seed`).
 """
 
 from __future__ import annotations
@@ -84,8 +83,24 @@ _FIELD_BY_ENV_KEY: dict[str, str] = {
 }
 
 
+def trust_data_seed(kit: dict[str, str]) -> bool:
+    """Whether the kit seeds the sample data: its TRUST_DATA_SEED (FLIP#1687), read as make reads it.
+
+    A trailing ``# comment`` and every quote are dropped and unset is true (deploy/env_mode.mk's
+    trust_data_seed). Anything but true or false is refused: read as true, it would seed a real
+    trust's OMOP.
+
+    Raises:
+        ValueError: If the value is neither true nor false.
+    """
+    value = kit.get("TRUST_DATA_SEED", "").split("#", 1)[0].replace('"', "").replace("'", "").strip()
+    if value not in ("", "true", "false"):
+        raise ValueError(f"TRUST_DATA_SEED must be true or false, not {value!r}")
+    return value != "false"
+
+
 def upsert(lines: list[str], key: str, value: str) -> list[str]:
-    """Replace the first ``KEY=...`` line in place, or append ``KEY=value``.
+    """Replace every live ``KEY=...`` line in place, or append ``KEY=value``.
 
     Comment and blank lines pass through untouched. Existing positions are
     preserved so a repeated write produces a stable file when values are stable.

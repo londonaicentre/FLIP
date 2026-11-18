@@ -31,13 +31,13 @@ The main folders are:
 
 All APIs are created using FastAPI, and the project uses the SQLModel library for database interactions. The project is designed to be modular, with each component handling specific functionalities related to federated learning and trust management.
 
-All Python code is managed using `UV` as package manager, so every Python project has a `pyproject.toml` and a `tests` folder split into `tests/unit/` and `tests/integration/`. The project uses `pytest` for testing and `uv run` for running the application.
+All Python code is managed using `UV` as package manager, so every Python project has a `pyproject.toml` and a `tests` folder. flip-api splits it into `tests/unit/` and `tests/integration/`; the trust and FL APIs keep unit tests directly under `tests/` (by module: `routers/`, `services/`, ...) with a `tests/integration/` folder where they have integration tests. The project uses `pytest` for testing and `uv run` for running the application.
 
 # Copilot Instructions
 
 - Use Makefile to automate common tasks and commands. Every sub-repo has its own Makefile, so make sure to run the commands in the correct sub-repo.
 - Documentation follows the [Google style guide](https://google.github.io/styleguide/pyguide.html) for Python. The documentation generator is [Sphinx](https://www.sphinx-doc.org/en/master/).
-- Put Python code in the service's package directory (under `src/` in flip-api and trust/omop-db, at the service root in the three trust APIs, `flip/` in flip-utils). A test goes in `tests/integration/` only if it touches a real backing service (database, AWS, a running sibling API); otherwise it goes in `tests/unit/`.
+- Put Python code in the service's package directory (under `src/` in flip-api and trust/omop-db, at the service root in the three trust APIs, `flip/` in flip-utils). A test goes in `tests/integration/` only if it touches a real backing service (database, AWS, a running sibling API); otherwise it is a unit test (in `tests/unit/` where the project has one).
 - Use the `uv` package manager for managing dependencies and running the application.
 - Use the `pytest` framework for writing and running tests.
 - Use SQLModel for database interactions, and follow the project's database schema and models.

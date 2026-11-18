@@ -17,6 +17,13 @@ DB_INSTANCE_ID=$(aws_cmd rds describe-db-instances \
   --output text 2>/dev/null || echo "")
 
 if [ -n "$DB_INSTANCE_ID" ]; then
+  # Deletion protection is on in every environment (Security Hub RDS.8, FLIP#1796); lifting it is a deliberate step.
+  if [ "$(aws_cmd rds describe-db-instances --db-instance-identifier "$DB_INSTANCE_ID" \
+    --query 'DBInstances[0].DeletionProtection' --output text)" = "True" ]; then
+    log_error "  $DB_INSTANCE_ID has deletion protection on. To destroy it, first run:"
+    log_error "  aws rds modify-db-instance --db-instance-identifier $DB_INSTANCE_ID --no-deletion-protection --apply-immediately"
+    exit 1
+  fi
   log_info "  Found database instance: $DB_INSTANCE_ID - Deleting..."
   aws_cmd rds delete-db-instance \
     --db-instance-identifier "$DB_INSTANCE_ID" \
