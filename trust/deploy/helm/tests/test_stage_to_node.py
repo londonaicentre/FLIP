@@ -45,7 +45,10 @@ echo "kubectl $*" >> "$STAGE_LOG"
 case "$*" in
   *"get nodes"*) printf 'node-1' ;;
   *"create namespace"*) printf 'apiVersion: v1\\nkind: Namespace\\n' ;;
-  *"apply -f -"*) cat >> "$STAGE_MANIFESTS" ;;
+  *"apply -f -"*) manifest=$(cat); printf '%s\n' "$manifest" >> "$STAGE_MANIFESTS"
+    case "$manifest" in *"kind: Pod"*) [ -z "$FAIL_APPLY" ] || {
+      echo 'pods "flip-stage" is forbidden: violates PodSecurity "baseline:latest"' >&2; exit 1; } ;; esac ;;
+  *"wait pod"*) [ -z "$FAIL_WAIT" ] || exit 1 ;;
   *" cp "*) [ -z "$FAIL_CP" ] || exit 1 ;;
 esac
 exit 0
@@ -174,6 +177,44 @@ def test_the_pod_is_removed_when_a_step_fails(tmp_path, kit):
     name = next(d for d in docs if d["kind"] == "Pod")["metadata"]["name"]
     assert any(f"delete pod {name}" in c for c in calls)
     assert not any(f"exec {name} -- sh -c" in c for c in calls), "nothing is chowned after a failed copy"
+
+
+@pytest.mark.parametrize(
+    ("failure", "says"),
+    [("FAIL_APPLY", "would not run the staging pod"), ("FAIL_WAIT", "did not start within 180s")],
+    ids=["refused", "never-ready"],
+)
+def test_a_cluster_that_will_not_run_the_pod_gets_the_command_to_stage_by_hand(tmp_path, kit, failure, says):
+    """FLIP#1477: under Pod Security baseline (or with the image out of reach) the operator is told what to run."""
+    result, calls, _docs = _stage(
+        tmp_path, "--src", str(kit), "--dest", "/opt/flip/fl-kit", "--subdirs", KIT_SUBDIRS, "--owner", "1000",
+        kind=False, **{failure: "1"},
+    )  # fmt: skip
+
+    assert result.returncode == 1
+    assert says in result.stderr
+    assert (
+        "sudo sh -c 'mkdir -p /opt/flip/fl-kit && find /opt/flip/fl-kit -mindepth 1 -delete"
+        f" && cp -a <your copy of {kit}>/. /opt/flip/fl-kit/"
+        " && for d in local startup transfer; do mkdir -p /opt/flip/fl-kit/$d; done"
+        " && chmod -R go-rwx /opt/flip/fl-kit && chown -R 1000:1000 /opt/flip/fl-kit'"
+    ) in result.stderr
+    assert not any(" cp " in c for c in calls), "nothing is copied"
+
+
+def test_the_by_hand_command_for_the_vocabulary_keeps_it_world_readable(tmp_path):
+    bundle = tmp_path / "vocab"
+    bundle.mkdir()
+
+    result, _calls, _docs = _stage(
+        tmp_path, "--src", str(bundle), "--dest", "/opt/flip/omop-vocab", "--world-readable", kind=False,
+        FAIL_APPLY="1",
+    )  # fmt: skip
+
+    assert result.returncode == 1
+    assert f"cp -a <your copy of {bundle}>/. /opt/flip/omop-vocab/ && chmod -R a+rX /opt/flip/omop-vocab'" in (
+        result.stderr
+    )
 
 
 @pytest.mark.parametrize(

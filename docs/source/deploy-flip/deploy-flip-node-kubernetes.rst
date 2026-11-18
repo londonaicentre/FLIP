@@ -334,8 +334,9 @@ the FL client starts.
    On a kind development cluster ``stage-kit`` copies with ``docker cp``. On any other cluster (k3s, a VM) it starts
    a short-lived root pod on the node, with ``KIT_DEST`` mounted as a ``hostPath``, and copies with
    ``kubectl cp``: no docker and no root on the host, only permission to create that pod in the namespace. Pod
-   Security ``baseline`` or stricter refuses it; there use the kit Secret below, or place the kit at ``KIT_DEST``
-   by your site's own means, owned by uid 1000 (FLARE) or 49999 (Flower) and readable by no one else. On a host
+   Security ``baseline`` or stricter refuses it, and then ``stage-kit`` prints the same steps as one command to run
+   as root on the node. Otherwise use the kit Secret below, or place the kit at ``KIT_DEST`` by your site's own
+   means, owned by uid 1000 (FLARE) or 49999 (Flower) and readable by no one else. On a host
    shared with people, check that uid isn't a person's account: whoever holds it can read the kit's private key.
 
 If you skip this step, the FL client pod stays ``Pending`` with a ``hostPath type check failed`` event naming the

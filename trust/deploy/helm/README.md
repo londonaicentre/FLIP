@@ -104,7 +104,8 @@ helm upgrade --install trust-release ./trust/deploy/helm/ \
   re-stage leaves no stale credentials, and pre-creates the subPath directories the chart mounts. On a
   kind node it copies with `docker cp`; on any other node (k3s, a VM) through a short-lived root pod pinned
   to the node with `KIT_DEST` as a hostPath, and `kubectl cp` (`scripts/stage-to-node.sh`, FLIP#1958).
-  `stage-vocab` goes the same way.
+  A cluster that will not run that pod (Pod Security `baseline` or stricter, or the image out of reach) gets
+  the same steps printed as one command to run as root on the node (FLIP#1477). `stage-vocab` goes the same way.
 - **`undeploy`** (aliases `down`, `undeploy-trust-k8s`) is `helm uninstall`. Every standalone PVC in the
   chart has no `helm.sh/resource-policy: keep`, so uninstall deletes them (orthanc, xnat-web,
   data-access-api's cohort snapshots, grafana, shared images); only StatefulSet `volumeClaimTemplates`

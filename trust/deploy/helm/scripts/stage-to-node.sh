@@ -19,8 +19,9 @@
 #   - a kind node is a Docker container of the same name: `docker exec` / `docker cp`, as before;
 #   - any other node (k3s, a VM, bare metal): a short-lived root pod pinned to the node mounts <dest> as a hostPath,
 #     and the folder goes in with `kubectl cp`. Neither docker nor root on the host is needed, only RBAC to create
-#     that pod in $NAMESPACE. A namespace under Pod Security "baseline" or stricter refuses it; there use the kit
-#     Secret route (flClient.kit.source=secret) or copy the folder by the site's own means.
+#     that pod in $NAMESPACE. A namespace under Pod Security "baseline" or stricter refuses it (FLIP#1477): the
+#     script then prints the same steps as one command to run as root on the node. The kit Secret route
+#     (flClient.kit.source=secret) is the other way round it.
 #
 # The same steps on both paths, in this order: create <dest>, empty it (both copies merge, so a re-stage would keep
 # the previous kit's files beside the new ones), copy <src>'s contents, create the --subdirs (a subPath missing from
@@ -70,8 +71,10 @@ node=$("${kubectl[@]}" get nodes -o jsonpath='{.items[0].metadata.name}') && [ -
 
 if [ -n "$owner" ]; then
   permissions="chmod -R go-rwx \"\$1\" && chown -R $owner:$owner \"\$1\""
+  permissions_by_hand="chmod -R go-rwx $dest && chown -R $owner:$owner $dest"
 else
   permissions="chmod -R a+rX \"\$1\""
+  permissions_by_hand="chmod -R a+rX $dest"
 fi
 # Runs on the node, with $1 the destination: everything after the copy.
 finish="set -e${subdirs:+; for d in $subdirs; do mkdir -p \"\$1/\$d\"; done}; $permissions"
@@ -90,12 +93,19 @@ if [ -n "$kind_cluster" ]; then
   exit 0
 fi
 
+# When the cluster will not run the pod, the same steps for the operator to run as root on the node.
+by_hand() {
+  echo "❌ $1. Stage it on $node as root instead, from a copy of $src on that host:" >&2
+  echo "   sudo sh -c 'mkdir -p $dest && find $dest -mindepth 1 -delete && cp -a <your copy of $src>/. $dest/${subdirs:+ && for d in $subdirs; do mkdir -p $dest/\$d; done} && $permissions_by_hand'" >&2
+  exit 1
+}
+
 pod="flip-stage-$(date +%s)-$$"
 echo "📦 $src → node $node:$dest (pod $namespace/$pod, kubectl cp)"
 "${kubectl[@]}" create namespace "$namespace" --dry-run=client -o yaml | "${kubectl[@]}" apply -f - > /dev/null
 # busybox's sleep ignores SIGTERM, so the default 30 s grace period would only leave the pod Terminating.
 trap '"${kubectl[@]}" -n "$namespace" delete pod "$pod" --ignore-not-found --wait=false --grace-period=1 > /dev/null 2>&1 || true' EXIT
-"${kubectl[@]}" -n "$namespace" apply -f - > /dev/null << YAML
+if ! "${kubectl[@]}" -n "$namespace" apply -f - > /dev/null << YAML
 apiVersion: v1
 kind: Pod
 metadata:
@@ -122,7 +132,11 @@ spec:
         path: $dest
         type: DirectoryOrCreate
 YAML
-"${kubectl[@]}" -n "$namespace" wait pod "$pod" --for=condition=Ready --timeout="${STAGE_TIMEOUT:-180s}" > /dev/null
+then
+  by_hand "the cluster would not run the staging pod (a namespace under Pod Security \"baseline\" or stricter refuses it)"
+fi
+"${kubectl[@]}" -n "$namespace" wait pod "$pod" --for=condition=Ready --timeout="${STAGE_TIMEOUT:-180s}" > /dev/null \
+  || by_hand "the staging pod did not start within ${STAGE_TIMEOUT:-180s} (is $STAGE_IMAGE reachable from the node?)"
 "${kubectl[@]}" -n "$namespace" exec "$pod" -- find /stage -mindepth 1 -delete
 "${kubectl[@]}" -n "$namespace" cp "$src/." "$pod:/stage"
 "${kubectl[@]}" -n "$namespace" exec "$pod" -- sh -c "$finish" sh /stage
