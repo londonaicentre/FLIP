@@ -232,9 +232,6 @@ export TF_VAR_FLIP_UI_BUCKET_NAME=${FLIP_UI_BUCKET_NAME}
 export TF_VAR_TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
 export TF_VAR_FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
 export TF_VAR_ENFORCE_MFA=${ENFORCE_MFA}
-# JSON list of FL kit-slot names; seeds the fl_kit_slot pool register_trust
-# claims from. Empty ⇒ NoFreeKitSlotError on registration. Set in the env file.
-export TF_VAR_FL_KIT_SLOT_NAMES=${FL_KIT_SLOT_NAMES}
 ECS_CLUSTER ?= flip-cluster
 CENTRALHUB_ECS_SERVICES = flip-api fl-api-net-1 fl-server-net-1
 
@@ -360,11 +357,14 @@ apply-cert: ## Apply only the ACM certificate (step 1 of 2 for HTTPS)
 	@echo "✅ Certificate created! Now run 'make plan' and 'make apply' to deploy DNS validation."
 
 .PHONY: add-fl-kits
-add-fl-kits: ## Mint N more claimable FL kit slots on every net (FLARE; HUB=stag|prod)
-	## Wraps scripts/add_fl_kits.sh: restore/fingerprint-verify each net's CA workspace,
+add-fl-kits: ## Mint N more claimable FL kit slots (both FL backends; HUB=stag|prod)
+	## Wraps scripts/add_fl_kits.sh. FLARE: restore/fingerprint-verify each net's CA workspace,
 	## mint the next Trust_<n> names, upload only the new kits (never sync --delete).
-	## flip-api's pool is every kit complete on every net (FLIP#1720), so the slots are
-	## claimable at the next trust registration — no Terraform apply, no restart.
+	## Flower (FLIP#1942): mint the next SuperNode key pairs, register them with the running
+	## SuperLink through the two one-shot ECS tasks, upload the private keys last.
+	## flip-api's pool is every kit (FLARE, FLIP#1720) or key pair (Flower) complete on every
+	## net, so the slots are claimable at the next trust registration — no Terraform apply,
+	## no restart.
 	@[ -n "$(N)" ] || { echo "❌ N is required, e.g. make add-fl-kits N=2 HUB=prod"; exit 1; }
 	@$(_AWS_ENV) N=$(N) YES=$(YES) FL_BACKEND=$(FL_BACKEND) ENV_NAME=$(ENV_CLASS) ./scripts/add_fl_kits.sh
 

@@ -126,7 +126,6 @@ TERRAFORM_ADDRESSES: dict[str, tuple[str, ...]] = {
         "aws_ssm_parameter.flip_model_files_uploads_bucket",
         "aws_ssm_parameter.flip_fl_results_bucket",
         "aws_ssm_parameter.flip_app_bundles_bucket",
-        "aws_ssm_parameter.fl_kit_slot_names",
         "aws_ssm_parameter.ci_host_aws_public_key",
     ),
     "KMS": ("aws_kms_key.flip_app_key",),
