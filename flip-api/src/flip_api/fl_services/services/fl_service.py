@@ -616,6 +616,37 @@ def is_client_available(client_name: str, client_statuses: list[IClientStatus]) 
     return False
 
 
+FL_API_PROBE_TIMEOUT_SECONDS = 10.0
+_FL_API_HEALTH_PATHS = {FLBackend.NVFLARE: "/health/", FLBackend.FLOWER: "/health"}
+
+
+def fl_api_is_serving(endpoint: str, fl_backend: FLBackend) -> bool:
+    """
+    Whether the net's FL API takes a connection and answers, whatever the answer (FLIP#1962).
+
+    The FL API only opens its listener once its startup has connected to the FL server, so a refused or timed-out
+    connection means it is starting or restarting, and a job handed to it now would fail without ever reaching it.
+    Any HTTP status counts as serving: a job that then fails on an answer from the FL API fails as before.
+
+    Args:
+        endpoint (str): The endpoint of the FL API service.
+        fl_backend (FLBackend): The net's backend, which names its unauthenticated health route.
+
+    Returns:
+        bool: True when the FL API answered; False when the connection failed or no answer came in time.
+    """
+    try:
+        httpx.get(
+            f"{endpoint}{_FL_API_HEALTH_PATHS[fl_backend]}",
+            timeout=FL_API_PROBE_TIMEOUT_SECONDS,
+            follow_redirects=False,
+        )
+    except httpx.TransportError as e:
+        logger.warning(f"The FL API at {endpoint} is not answering: {e!r}")
+        return False
+    return True
+
+
 def unavailable_clients(clients: list[str], endpoint: str) -> list[str]:
     """
     List the clients that are not connected to the net's FL server.

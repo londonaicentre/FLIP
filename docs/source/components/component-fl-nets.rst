@@ -97,7 +97,9 @@ Starting training on a model creates a **job** in the hub's queue. On each sched
 
 #. frees any net whose job has finished or been deleted;
 #. stops here if **deployment mode** is on (see `Deployment mode (quiescing the nets)`_);
-#. locks one ``AVAILABLE`` net and marks it ``BUSY``;
+#. locks one ``AVAILABLE`` net whose FL API answers and marks it ``BUSY``. A net whose FL API does not answer, as
+   while it starts or restarts (a hub deploy, a staging start, ECS replacing the task), is released for this tick
+   and the next ``AVAILABLE`` net is tried; queued jobs wait, and nothing fails;
 #. takes the oldest ``QUEUED`` job and marks it ``IN_PROGRESS``. Any job whose Trusts are no longer approved
    for the model is retired instead. If the queue is empty, it releases the net again;
 #. bundles the app from the platform's template for the job type and the researcher's uploaded files (see
@@ -109,6 +111,9 @@ is bundled: **the deployment chooses the backend, not the model**.
 
 Any problem with the app itself (an unknown job type, a missing required file, invalid settings) is found while
 bundling or submitting. The model is then set to ``ERROR`` with the reason in its log, and the net is freed.
+An FL API that stops answering between the check above and the upload or submission is not such a problem: a
+request that cannot connect never reached it, so the job goes back to the head of the queue, the net is freed, the
+model is left as it is, and the next tick tries again.
 
 **Which clients train** differs by backend:
 

@@ -267,6 +267,35 @@ def test_unavailable_clients_never_raises_when_the_fl_api_reports_nothing(mock_g
     assert fl_service.unavailable_clients(["Trust_1"], "endpoint") == []
 
 
+@pytest.mark.parametrize("status_code", [200, 401, 500])
+def test_fl_api_is_serving_counts_any_answer(status_code):
+    """An FL API only listens once its startup has reached the FL server, so any answer means it is serving."""
+    with patch.object(fl_service.httpx, "get", return_value=httpx.Response(status_code)):
+        assert fl_service.fl_api_is_serving("http://fl-api-net-1:8000", FLBackend.NVFLARE) is True
+
+
+@pytest.mark.parametrize(
+    "error",
+    [httpx.ConnectError("Connection refused"), httpx.ConnectTimeout("timed out"), httpx.ReadTimeout("timed out")],
+    ids=["refused", "connect-timeout", "read-timeout"],
+)
+def test_fl_api_is_serving_is_false_when_the_fl_api_does_not_answer(error, caplog):
+    with patch.object(fl_service.httpx, "get", side_effect=error):
+        assert fl_service.fl_api_is_serving("http://fl-api-net-1:8000", FLBackend.NVFLARE) is False
+    assert "http://fl-api-net-1:8000 is not answering" in caplog.text
+
+
+@pytest.mark.parametrize(("fl_backend", "path"), [(FLBackend.NVFLARE, "/health/"), (FLBackend.FLOWER, "/health")])
+def test_fl_api_is_serving_probes_the_backends_health_route(fl_backend, path):
+    """Both health routes take no key, and redirects are not followed: the first answer is the answer."""
+    with patch.object(fl_service.httpx, "get", return_value=httpx.Response(200)) as mock_get:
+        fl_service.fl_api_is_serving("http://fl-api-net-1:8000", fl_backend)
+
+    mock_get.assert_called_once_with(
+        f"http://fl-api-net-1:8000{path}", timeout=fl_service.FL_API_PROBE_TIMEOUT_SECONDS, follow_redirects=False
+    )
+
+
 @patch("flip_api.fl_services.services.fl_service.http_delete")
 def test_abort_job_success(mock_delete):
     mock_delete.return_value = {"status": "aborted"}
