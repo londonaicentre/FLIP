@@ -102,7 +102,7 @@ address the node's traffic leaves from**, and tell them whenever it changes.
 images and OMOP rows stay on the node.
 
 **Where the secrets live.** The Trust's API key and its trust-internal service key are in its
-kit file, installed owner-only on the node; the hub never sees the trust-internal key. The kit
+kit file, installed owner-only on the node; the hub mints the trust-internal key and never stores it. The kit
 reaches the node through the kit drop, a storage account with shared keys off, a firewall that
 admits only the node's subnet and the operator's IP, and a rule that deletes every kit within
 about 48 hours. The node reads it with its own managed identity.

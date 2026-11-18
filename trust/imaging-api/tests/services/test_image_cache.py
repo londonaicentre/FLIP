@@ -22,6 +22,7 @@ from imaging_api.services.image_cache import (
     invalidate_accession,
     read_sentinel,
     sentinel_path,
+    touch_sentinel,
     write_sentinel,
 )
 
@@ -99,6 +100,40 @@ class TestWriteRemoveSentinel:
     def test_anything_but_a_record_reads_as_none(self, tmp_path, content):
         (tmp_path / f"{SENTINEL_PREFIX}scan-NIFTI").write_text(content)
         assert read_sentinel(str(tmp_path), "scan", "NIFTI") is None
+
+
+# ── touch_sentinel ──
+
+
+class TestTouchSentinel:
+    def test_advances_mtime_of_existing_sentinel(self, tmp_path):
+        accession_dir = str(tmp_path / "net1" / "proj" / "ACC1")
+        os.makedirs(accession_dir)
+        write_sentinel(accession_dir, "scan", "NIFTI", RECORD)
+        sentinel = os.path.join(accession_dir, f"{SENTINEL_PREFIX}scan-NIFTI")
+        os.utime(sentinel, (1_000_000, 1_000_000))
+
+        touch_sentinel(accession_dir, "scan", "NIFTI")
+
+        assert os.stat(sentinel).st_mtime > 1_000_000
+
+    def test_missing_sentinel_raises_and_is_not_created(self, tmp_path):
+        """Touching must never fabricate completeness for a download that never finished."""
+        accession_dir = str(tmp_path / "net1" / "proj" / "ACC1")
+        os.makedirs(accession_dir)
+
+        with pytest.raises(FileNotFoundError):
+            touch_sentinel(accession_dir, "scan", "NIFTI")
+
+        assert not os.path.exists(os.path.join(accession_dir, f"{SENTINEL_PREFIX}scan-NIFTI"))
+
+    @pytest.mark.parametrize(
+        ("assessor_type", "resource_type"),
+        [("scan/../..", "NIFTI"), ("scan", "../NIFTI")],
+    )
+    def test_path_component_values_are_rejected(self, tmp_path, assessor_type, resource_type):
+        with pytest.raises(ValueError, match="Path traversal detected in"):
+            touch_sentinel(str(tmp_path), assessor_type, resource_type)
 
 
 # ── invalidate_accession ──

@@ -719,7 +719,8 @@ Prerequisites and trade-offs:
   `Insufficient` CPU, memory or GPU (what an autoscaler adding a node looks like). A pod no node could ever
   take is `Unschedulable` and fails at once, which is what a `nodeSelector` aimed at a pool at zero reports.
 - **A job pod holds only its own project's studies**, by `jobPods.images`. Either way imaging-api keeps the
-  whole cache, bounded by `IMAGE_CACHE_RETENTION_HOURS`, and results are uploaded in the request.
+  whole cache, bounded by `IMAGE_CACHE_RETENTION_HOURS`, and `flip.add_resource`'s files are sent in the
+  request: training code writes them in the job pod's `IMAGES_DIR`, a scratch `emptyDir` of its own.
   - `project` (the default) is NVFLARE's own way to give a job pod its data, a mount set by its study: the
     project's entry mounts `<net>/<project>`, the project's folder of imaging-api's cache, read-only, at
     the path imaging-api returns. Nothing is copied into the pod, and the job cannot change or delete what
@@ -746,8 +747,15 @@ Prerequisites and trade-offs:
   minute later (67 s in a test) the run ends as `FINISHED:EXECUTION_EXCEPTION`. Never set NVFLARE's
   `strict_start_job_reply_check` on a server with job-pod sites: with FLIP's `min_clients` (every selected
   Trust), it fails each job whose pod starts late.
-- **Finished job pods are not deleted** by NVFLARE; clear them with
-  `kubectl delete pod -l app.kubernetes.io/component=fl-job --field-selector=status.phase!=Running`.
+- **Finished job pods** are not deleted by NVFLARE: its launcher deletes a job pod only on abort or timeout, and a
+  retention policy is listed as future work in its job-launcher design ("Unified cleanup"). Until NVFLARE ships one,
+  a `job-pod-pruner` container beside the parent deletes this net's finished job pods once they are
+  `keepFinishedHours` old (default 24), so a day of their logs stays. A job pod still Pending after that long goes
+  too: an upgrade restarts the parent, and a pod that was waiting for its node then has nobody left to time it out.
+- **Each job pod reserves `jobPods.requests`** (default 250m CPU, 512Mi). NVFLARE 2.9 replaces the job container's
+  resources with the job's own `launcher_spec`, which FLIP refuses, so the request sits on a no-op `reserve` init
+  container; Kubernetes reserves the larger of a pod's init containers and containers. It also keeps job pods out of
+  BestEffort, where the XNAT conversion quota would count them and could refuse a job while conversions run.
 - **NVFLARE only.** Flower has no equivalent wired into this chart.
 - **EKS:** the VPC CNI enforces NetworkPolicy only with `enableNetworkPolicy` set, and GPU scale-from-zero
   needs Karpenter or the cluster autoscaler's node-template tags.

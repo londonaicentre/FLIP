@@ -28,6 +28,7 @@ from flip_api.trusts_services.services.register_trust import (
     DuplicateTrustError,
     EmptyTrustCodeError,
     EmptyTrustNameError,
+    KitSlotSourceUnreadableError,
     NoFreeKitSlotError,
     RegisteredTrust,
 )
@@ -98,9 +99,15 @@ def test_admin_create_trust_403_without_admin_permission(mock_perms, admin_id):
             "already exists",
         ),
         (NoFreeKitSlotError("No FL kit slots available."), "GSTT", status.HTTP_409_CONFLICT, "FL kit slots"),
+        (
+            KitSlotSourceUnreadableError("The FL kit-slot source could not be read."),
+            "GSTT",
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "could not be read",
+        ),
         (SQLAlchemyError("db boom"), "GSTT", status.HTTP_500_INTERNAL_SERVER_ERROR, None),
     ],
-    ids=["empty-name", "empty-code", "duplicate", "pool-exhausted", "db-error"],
+    ids=["empty-name", "empty-code", "duplicate", "pool-exhausted", "source-unreadable", "db-error"],
 )
 @patch("flip_api.trusts_services.admin_create_trust.has_permissions", return_value=True)
 @patch("flip_api.trusts_services.admin_create_trust.register_trust")

@@ -186,6 +186,9 @@ class Settings(BaseSettings):
     FL_JOB_WATCHDOG_STRIKES: int = 3
     # A picked-up job with no backend id after this long never reached the FL server. upload_app alone allows 15.
     FL_JOB_PREPARE_TIMEOUT_MINUTES: int = 30
+    # A job its FL server still holds unstarted this long after pickup is failed. Longer than FLARE's own tries
+    # (about 41 minutes), which never start while no client at all is connected to the server (FLIP#1133).
+    FL_JOB_START_TIMEOUT_MINUTES: int = 60
     SCHEDULER_KEEP_FL_API_SESSION_ALIVE_RATE: int = 2  # in minutes
     SCHEDULER_REIMPORT_IMAGING_PROJECT_STUDIES_RATE: int = (
         30  # How often to check for projects with unimported studies (in minutes)
@@ -493,10 +496,10 @@ class DevSettings(Settings):
 
     # FL kit slot pool names — one per pre-provisioned FL kit (workspace/net-N/services/<slot>).
     # Seeded into `fl_kit_slot` so POST /admin/trusts can hand each joining trust the next
-    # free slot regardless of the trust's friendly name. Dev-only on purpose: in production
-    # the pool's single source is the /flip/fl_kit_slot_names SSM parameter (see
-    # db/seed/fl_kit_slots.resolve_fl_kit_slot_names) — there is no env-var fallback, so a
-    # broken parameter can't be silently masked by stale task-definition env. Defaults to []
+    # free slot regardless of the trust's friendly name. Dev-only on purpose, so a stale env
+    # copy can never mask production's source: the kits in S3 (NVFLARE) or the
+    # /flip/fl_kit_slot_names SSM parameter (Flower) — see
+    # db/seed/fl_kit_slots.resolve_fl_kit_slot_names. Defaults to []
     # so existing dev envs aren't required to set it; in that case the pool is empty until
     # the admin provisions kits and adds them here.
     FL_KIT_SLOT_NAMES: list[str] = []
@@ -534,6 +537,10 @@ class ProdSettings(Settings):
     EMAIL_BACKEND: Literal["ses"] = "ses"
     AWS_SES_ADMIN_EMAIL_ADDRESS: EmailStr  # e.g. admin@example.com
     AWS_SES_SENDER_EMAIL_ADDRESS: EmailStr  # e.g. no-reply@example.com, but can be same as admin email
+
+    # NVFLARE only: s3://<bucket>/fl-flare-participant-kits/<FLARE_KIT_DATE>. The kit-slot
+    # pool is every slot whose kit is complete on every net under it (FLIP#1720).
+    FLARE_KITS_S3_URI: str = ""
 
 
 # Eager load once (for app use)

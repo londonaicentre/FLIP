@@ -26,11 +26,13 @@ job pod connects to the FL server itself, not only through the parent). Volumes,
 merge with the launcher's by name.
 
 A job pod holds only its own project's studies. The template mounts no images and streams each study
-from imaging-api into the job's own run directory (IMAGES_TRANSPORT=stream, FLIP#1049). With
-flClient.nvflare.jobPods.images: project it also declares the shared images volume, unmounted, and the
-project's entry in the site's NVFLARE study file mounts the project's own folder of it, where the job
-then reads by path (flip.nvflare.project_studies, FLIP#1678). A job outside a project's study therefore
-never sees the cache. Declaring the volume makes the pod attach it, so it follows the fl-client's placement rule.
+from imaging-api into the job's own run directory (IMAGES_TRANSPORT=stream, FLIP#1049). Its IMAGES_DIR is
+a scratch emptyDir of its own, where training code writes the files flip.add_resource uploads, as on the
+mount. With flClient.nvflare.jobPods.images: project it also declares the shared images volume, unmounted,
+and the project's entry in the site's NVFLARE study file mounts the project's own folder of it, read-only
+inside that scratch directory, where the job then reads by path (flip.nvflare.project_studies, FLIP#1678).
+A job outside a project's study therefore never sees the cache. Declaring the volume makes the pod attach
+it, so it follows the fl-client's placement rule.
 */}}
 {{- define "flip-trust.flJobPod" -}}
 {{- $projectImages := eq .Values.flClient.nvflare.jobPods.images "project" -}}
@@ -49,6 +51,24 @@ spec:
   hostAliases:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+  {{- /*
+  The job's CPU and memory reservation. NVFLARE 2.9's launcher replaces the job container's resources with the
+  job's own launcher_spec, which FLIP refuses, so the request rides on this no-op init container: Kubernetes
+  reserves the larger of a pod's init containers and containers. It also keeps the pod out of BestEffort, where
+  the XNAT conversion quota (xnat-container-jobs-quota.yaml) would count it and could refuse it.
+  */}}
+  initContainers:
+    - name: reserve
+      image: {{ include "flip-trust.flClientImage" . }}
+      imagePullPolicy: {{ .Values.flClient.image.pullPolicy }}
+      {{- with .Values.securityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      command: ["/bin/true"]
+      resources:
+        requests:
+          {{- toYaml .Values.flClient.nvflare.jobPods.requests | nindent 10 }}
   {{- if .Values.imagePullSecrets }}
   imagePullSecrets:
 {{ include "flip-trust.imagePullSecrets" . | indent 4 }}
@@ -97,6 +117,8 @@ spec:
       volumeMounts:
         - name: dshm
           mountPath: /dev/shm
+        - name: images-scratch
+          mountPath: {{ .Values.flClient.imagesDir }}
   volumes:
     {{- if $projectImages }}
     - name: images
@@ -107,6 +129,8 @@ spec:
       emptyDir:
         medium: Memory
         sizeLimit: {{ .Values.flClient.shmSize }}
+    - name: images-scratch
+      emptyDir: {}
 {{- end }}
 
 {{- if and .Values.flClient.enabled (eq .Values.flBackend "nvflare") .Values.flClient.nvflare.jobPods.enabled }}

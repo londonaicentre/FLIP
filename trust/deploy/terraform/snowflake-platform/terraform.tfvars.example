@@ -1,0 +1,46 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Copy to terraform.<env>.tfvars (gitignored) and fill in. No real account identifier,
+# organization name or key is ever committed: every value below is a placeholder.
+
+organization_name = "MYORG"
+account_name      = "MYACCOUNT"
+
+# The break-glass PERSON user's role. ACCOUNTADMIN is needed for the account parameter, the
+# resource monitor and the account policy attachments.
+platform_role      = "ACCOUNTADMIN"
+platform_warehouse = "COMPUTE_WH"
+
+# Without ACCOUNTADMIN (README "Applying without ACCOUNTADMIN"): platform_role is the role that
+# owns objects, and nothing account-wide is applied.
+# account_admin = false
+
+# SNOWFLAKE_JWT (default): the just-in-time operator, key pair from SNOWFLAKE_PRIVATE_KEY (PEM contents) + SNOWFLAKE_PRIVATE_KEY_PASSPHRASE.
+# PROGRAMMATIC_ACCESS_TOKEN reads a token the user generated in Snowsight from SNOWFLAKE_TOKEN.
+# USERNAMEPASSWORDMFA reads SNOWFLAKE_PASSWORD and the current TOTP code from SNOWFLAKE_PASSCODE.
+# EXTERNALBROWSER delegates to the account's IdP and needs no password in the environment.
+authenticator = "SNOWFLAKE_JWT"
+
+trust_code = "GSTT"
+
+# Warehouse credit cap. Compute pools are capped in the workload root instead.
+credit_quota = 50
+
+# Off on a trial account: trials exclude external network access.
+enable_hub_egress = false
+
+# Only read when enable_hub_egress is true.
+# hub_api_host        = "api.example.invalid"
+# fl_server_endpoints = ["fl.example.invalid:8002", "fl.example.invalid:8003"]
+
+# Sign-in allowlist for the account. Empty means no account network policy is attached.
+# admin_allowed_cidrs = ["203.0.113.4/32"]
