@@ -1120,6 +1120,34 @@ def test_55_hub_shared_keys_are_trust_kit_libs_minus_the_optional_ones() -> None
     _assert(check.label == "Hub-shared block (10 keys)", "the row label still counts ten keys", check.label)
 
 
+def test_56_fl_kit_contents_a_kit_private_to_another_uid_is_not_called_missing() -> None:
+    """The kit is private to the FL client's uid (FLIP#1964); an operator who is not that uid cannot list it, and
+    its subdirectories must not be reported missing. CI runs as root, which bypasses mode bits, so the access
+    check itself is patched."""
+    print("▶ FL kit contents: a slot dir this uid cannot enter -> WARN 'not checked', not FAIL 'missing'")
+    with tempfile.TemporaryDirectory() as td:
+        slot = Path(td) / "net-1" / "services" / "Trust_1"
+        for d in ("local", "startup", "transfer"):
+            (slot / d).mkdir(parents=True)
+        (Path(td) / "net-1" / "certificates").mkdir()
+        base = {"FL_KIT_DIR": td, "FL_BACKEND": "nvflare", "FL_KIT_SLOT": "Trust_1", "FL_KIT_SLOT_NUMBER": "1"}
+        sealed = {str(slot), str(Path(td) / "net-1")}
+        real_access = os.access
+
+        def access(path, mode):
+            return False if str(path) in sealed else real_access(path, mode)
+
+        with mock.patch.object(mod.os, "access", side_effect=access):
+            flare = mod.check_fl_kit_contents(base, True)
+            flower = mod.check_fl_kit_contents({**base, "FL_BACKEND": "flower"}, True)
+        open_kit = mod.check_fl_kit_contents(base, True)
+    _assert(flare.status == mod.Status.WARN, "nvflare: WARN, not FAIL", str(flare))
+    _assert(flare.detail.startswith(f"not checked: {slot} belongs to uid"), "names the slot dir", flare.detail)
+    _assert("sudo -E make onboard-onprem-trust" in flare.hints[0], "says how to check it", flare.hints[0])
+    _assert(flower.status == mod.Status.WARN and "net-1 belongs to uid" in flower.detail, "flower too", str(flower))
+    _assert(open_kit.status == mod.Status.PASS, "a kit this uid can enter is still checked", str(open_kit))
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -1179,6 +1207,7 @@ def main() -> None:
     test_53_log_level_info_passes_and_unset_warns()
     test_54_hub_shared_allows_the_other_backends_kit_date_empty()
     test_55_hub_shared_keys_are_trust_kit_libs_minus_the_optional_ones()
+    test_56_fl_kit_contents_a_kit_private_to_another_uid_is_not_called_missing()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

@@ -103,6 +103,10 @@ fi
 fl_backend="$(get_var FL_BACKEND)"
 slot="$(get_var FL_KIT_SLOT)"
 slot_number="$(get_var FL_KIT_SLOT_NUMBER)"
+# The uid:gid the operator's FL client runs as, which alone may read the kit: the kit's FLIP_UID/FLIP_GID when set,
+# else the image's own user (FLARE 1000, Flower's flwr/base 49999), as the prod compose files say.
+flip_uid="$(get_var FLIP_UID)"
+flip_gid="$(get_var FLIP_GID)"
 
 # Validate the kit-file values that drive S3 paths. These are populated by
 # the admin's register-trusts + sync-trust-kit steps; missing values mean
@@ -149,6 +153,8 @@ bucket_name="$AICENTRE_BUCKET_NAME"
 
 BUILD_DIR="$REPO_ROOT/deploy/providers/AWS/build/trust-kits"
 mkdir -p "$BUILD_DIR"
+# The slice holds the FL client's private key: everything staged from here on is the admin's alone (FLIP#1964).
+umask 077
 DATE="$(date -u +'%Y%m%d-%H%M%S')"
 STAGE_DIR="$BUILD_DIR/${slot}-${DATE}"
 KIT_STAGE_DIR="$STAGE_DIR/fl-kit"
@@ -162,6 +168,8 @@ mkdir -p "$KIT_STAGE_DIR"
 # the admin sees the bad config immediately.
 log_info "Syncing FL kit slice from S3 ($fl_backend; bucket=$bucket_name; date=$fl_kit_date; slot=$slot)..."
 if [ "$fl_backend" = "nvflare" ]; then
+    client_owner="${flip_uid:-1000}:${flip_gid:-${flip_uid:-1000}}"
+    client_kit="fl-kit/net-1/services/$slot"
     target="$KIT_STAGE_DIR/net-1/services/$slot"
     mkdir -p "$target"
     aws_cmd s3 sync "s3://$bucket_name/$fl_prefix/$fl_kit_date/net-1/services/$slot/" "$target/"
@@ -181,6 +189,8 @@ if [ "$fl_backend" = "nvflare" ]; then
     # `onboard-onprem-trust` expects.
     mkdir -p "$target/transfer"
 else
+    client_owner="${flip_uid:-49999}:${flip_gid:-${flip_uid:-49999}}"
+    client_kit="fl-kit/net-1"
     certs_target="$KIT_STAGE_DIR/net-1/certificates"
     mkdir -p "$certs_target" "$KIT_STAGE_DIR/net-1/keys"
     aws_cmd s3 sync "s3://$bucket_name/$fl_prefix/$fl_kit_date/net-1/certificates/" "$certs_target/"
@@ -203,9 +213,13 @@ chmod 600 "$STAGE_DIR/$KIT_NAME"
 log_info "Copied $KIT_FILE → $STAGE_DIR/$KIT_NAME (unmodified)."
 
 # --- Tarball ---
+# tar keeps each file's mode, so these are the modes the operator extracts: whatever the S3 client set, nothing in
+# the kit is readable by anyone but its owner. COPYFILE_DISABLE and --no-xattrs keep macOS's AppleDouble files and
+# extended-attribute headers out (bsdtar); GNU tar takes the flag too.
+chmod -R go-rwx "$STAGE_DIR"
 tarball="$BUILD_DIR/flip-trust-kit-${slot}-${DATE}.tar.gz"
 log_info "Packaging tarball..."
-tar -C "$STAGE_DIR" -czf "$tarball" "$KIT_NAME" fl-kit
+COPYFILE_DISABLE=1 tar --no-xattrs -C "$STAGE_DIR" -czf "$tarball" "$KIT_NAME" fl-kit
 chmod 600 "$tarball"
 log_success "Tarball written to $tarball"
 
@@ -234,21 +248,26 @@ cat <<EOF
        mkdir -p \$HOME/flip-trust-kit
        tar -C \$HOME/flip-trust-kit -xzf \$HOME/flip-trust-kit-${slot}-${DATE}.tar.gz
 
-  2. From your FLIP checkout, copy the env file in:
+  2. The kit is readable by its owner alone, so give it to the uid your
+     FL client runs as (skip this if that is you: your FLIP_UID):
+
+       sudo chown -R ${client_owner} \$HOME/flip-trust-kit/${client_kit}
+
+  3. From your FLIP checkout, copy the env file in:
 
        cp \$HOME/flip-trust-kit/${KIT_NAME} trust/${KIT_NAME}
 
-  3. Edit trust/${KIT_NAME} — Host-local profile + Trust-local credentials
+  4. Edit trust/${KIT_NAME} — Host-local profile + Trust-local credentials
      sections only (managed blocks below them are already correct):
        - FL_KIT_DIR=\$HOME/flip-trust-kit/fl-kit
        - Adjust ports / bind-mount dirs to match your host
        - Override Orthanc / OMOP / XNAT / Grafana passwords for
          production-grade secrets
 
-  4. Send your public IP to the FLIP admin so they can open the NLB:
+  5. Send your public IP to the FLIP admin so they can open the NLB:
        curl -s https://api.ipify.org
 
-  5. Bring up the stack, as a user who can run docker (Docker socket
+  6. Bring up the stack, as a user who can run docker (Docker socket
      access is all it needs; on a host provisioned by the FLIP on-prem
      playbook that means prefixing sudo -E — see "Access the operator
      needs" in the on-prem deployment guide):

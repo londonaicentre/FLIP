@@ -714,6 +714,27 @@ def _client_cannot_read(path: Path, kit_vars: dict[str, str], image_uid: int) ->
     return f"{path} is owned by uid {st.st_uid} mode {st.st_mode & 0o777:o}, and the client runs as uid {uid}"
 
 
+_KIT_AS_ROOT_HINT = (
+    "That is how it should be when the FL client runs as that uid. To check inside it, run the checklist as root:"
+    " sudo -E make onboard-onprem-trust KIT=<CODE>."
+)
+
+
+def _sealed_from_me(directory: Path) -> str:
+    """Why this user cannot look inside a kit directory that is there, or "" when it can (FLIP#1964).
+
+    The kit is private to the FL client's uid, so an operator who is another uid, without sudo, cannot list it, and
+    everything inside would look missing. That is the kit as it should be, not a missing one.
+    """
+    try:
+        if not directory.is_dir() or os.access(directory, os.R_OK | os.X_OK):
+            return ""
+        st = directory.stat()
+    except OSError:
+        return ""
+    return f"{directory} belongs to uid {st.st_uid} (mode {st.st_mode & 0o777:o}), so uid {os.getuid()} cannot look in"
+
+
 def check_fl_kit_contents(kit_vars: dict[str, str], kit_present: bool) -> Check:
     if not kit_present:
         return Check("FL kit contents", Status.PENDING, "pending — needs kit file")
@@ -736,6 +757,8 @@ def check_fl_kit_contents(kit_vars: dict[str, str], kit_present: bool) -> Check:
     root = Path(fl_kit_dir)
     if backend == "nvflare":
         target = root / "net-1" / "services" / slot
+        if sealed := _sealed_from_me(target):
+            return Check("FL kit contents (nvflare)", Status.WARN, f"not checked: {sealed}", hints=[_KIT_AS_ROOT_HINT])
         sub = {p: (target / p).is_dir() for p in ("local", "startup", "transfer")}
         if all(sub.values()):
             if why := _client_cannot_read(target / "startup" / "client.key", kit_vars, 1000):
@@ -758,6 +781,8 @@ def check_fl_kit_contents(kit_vars: dict[str, str], kit_present: bool) -> Check:
             hints=["Check the tarball was extracted preserving the net-1/services/<slot>/ hierarchy."],
         )
     # flower
+    if sealed := _sealed_from_me(root / "net-1"):
+        return Check("FL kit contents (flower)", Status.WARN, f"not checked: {sealed}", hints=[_KIT_AS_ROOT_HINT])
     certs = root / "net-1" / "certificates"
     creds = root / "net-1" / "keys" / f"supernode_credentials_{slot_number}"
     if certs.is_dir() and creds.is_file():
