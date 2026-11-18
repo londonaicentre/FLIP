@@ -56,6 +56,10 @@ _served: dict[str, tuple[float, frozenset[str] | None]] = {}
 # the wait again: a removal can come late, never early.
 _left_at: dict[tuple[str, str], float] = {}
 
+# XNAT project id -> subjects whose last session was removed and whose own record (it carries the patient's
+# identifier) is still to go. Swept every pass until XNAT confirms the delete, so a failure is retried.
+_emptied: dict[str, set[str]] = {}
+
 
 async def served_accessions(
     central_hub_project_id: str, max_age: float = SERVED_MAX_AGE_SECONDS
@@ -130,7 +134,8 @@ def _delete(url: str, headers: dict[str, str]) -> bool:
     except requests.RequestException as e:
         logger.warning(f"XNAT delete failed in transport ({type(e).__name__})")
         return False
-    if 200 <= response.status_code < 300:
+    # A 404 is the outcome asked for: nothing is left to delete.
+    if 200 <= response.status_code < 300 or response.status_code == 404:
         return True
     logger.warning(f"XNAT delete failed: {response.status_code}")
     return False
@@ -152,7 +157,7 @@ def _remove_from_xnat(
         prearchive (dict[str, str]): The project's prearchive sessions' paths, by label.
         headers (dict[str, str]): XNAT authentication headers.
     """
-    emptied: set[str] = set()
+    emptied = _emptied.setdefault(project.ID, set())
     for accession in accessions:
         removed = accession in prearchive and delete_prearchive_session(prearchive[accession], headers)
         if session := sessions.get(accession):
@@ -165,13 +170,26 @@ def _remove_from_xnat(
                 f"Removed accession {accession} of project {project.secondary_ID} from XNAT: "
                 "it left the project's approved cohort"
             )
-    if not emptied:
-        return
-    # Read again: the subject goes only when nothing of theirs is left in the project.
-    emptied -= {row.get("subject_ID", "") for row in _experiments(project.ID, headers)}
-    for subject_id in emptied:
+    if emptied:
+        # Read again: the subject goes only when nothing of theirs is left in the project.
+        _remove_emptied_subjects(project, _experiments(project.ID, headers), headers)
+
+
+def _remove_emptied_subjects(project: Project, experiments: list[dict[str, str]], headers: dict[str, str]) -> None:
+    """Deletes the project's emptied subjects that hold nothing; one XNAT does not confirm is tried again next pass.
+
+    Args:
+        project (Project): The XNAT project.
+        experiments (list[dict[str, str]]): The project's experiments, as listed now.
+        headers (dict[str, str]): XNAT authentication headers.
+    """
+    emptied = _emptied.get(project.ID, set())
+    # A subject who holds a study again (a new pull) keeps their record.
+    emptied -= {row.get("subject_ID", "") for row in experiments}
+    for subject_id in list(emptied):
         url = xnat_url("data", "projects", project.ID, "subjects", subject_id, query={"removeFiles": "true"})
         if _delete(url, headers):
+            emptied.discard(subject_id)
             logger.info(f"Removed a subject of project {project.secondary_ID} from XNAT: none of their studies is left")
 
 
@@ -195,6 +213,8 @@ async def _reconcile_project(project: Project, headers: dict[str, str], grace_se
         logger.warning(f"Could not remove the cached copy in {folder}, which left the cohort; trying again next pass")
 
     experiments = await run_in_threadpool(_experiments, project.ID, headers)
+    if _emptied.get(project.ID):
+        await run_in_threadpool(_remove_emptied_subjects, project, experiments, headers)
     sessions = {row["label"]: row for row in experiments if _is_session(row)}
     receiving = await run_in_threadpool(get_prearchive_sessions, project.ID, headers)
     prearchive = {name: s.url for s in receiving if (name := s.name or s.folder_name) and s.url}
@@ -230,6 +250,8 @@ async def reconcile(headers: dict[str, str], grace_seconds: float) -> None:
     live = {project.ID for project in projects}
     for key in [key for key in _left_at if key[0] not in live]:
         del _left_at[key]
+    for project_id in _emptied.keys() - live:
+        del _emptied[project_id]
 
 
 async def run_reconcile() -> None:

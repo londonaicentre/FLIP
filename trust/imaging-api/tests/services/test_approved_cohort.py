@@ -51,10 +51,13 @@ class Trust:
         self.experiments: list[dict] = []
         self.prearchive: list[PrearchiveSession] = []
         self.deleted: list[str] = []
+        self.refusing: set[str] = set()  # XNAT fails the delete of these subjects
         self.now = 1000.0
 
     def delete(self, url: str, headers: dict[str, str]) -> bool:
         self.deleted.append(url.split("/data/", 1)[1])
+        if any(url.endswith(f"subjects/{subject}?removeFiles=true") for subject in self.refusing):
+            return False
         # XNAT removes a subject's sessions with it, and a session's assessors with it.
         self.experiments = [
             e for e in self.experiments if e["ID"] not in url and f"subjects/{e['subject_ID']}?" not in url
@@ -87,6 +90,7 @@ def trust(tmp_path: Path) -> Iterator[Trust]:
         patch.object(approved_cohort.time, "monotonic", side_effect=lambda: trust.now),
         patch.dict(approved_cohort._served, clear=True),
         patch.dict(approved_cohort._left_at, clear=True),
+        patch.dict(approved_cohort._emptied, clear=True),
     ):
         trust.delete_prearchive = delete_prearchive  # type: ignore[attr-defined]
         yield trust
@@ -229,6 +233,60 @@ async def test_a_subject_keeps_their_record_while_another_of_their_studies_is_in
 
 
 @pytest.mark.asyncio
+async def test_a_subject_xnat_fails_to_remove_is_removed_on_a_later_pass(trust):
+    """Their record carries the patient's identifier, so it is tried again until XNAT confirms."""
+    subject = f"projects/{XNAT_ID}/subjects/S1?removeFiles=true"
+    trust.served = []
+    trust.experiments = [_session("A1", "S1")]
+    trust.refusing = {"S1"}
+
+    await trust.reconcile(grace_seconds=0)
+    await trust.reconcile(grace_seconds=0)
+    assert trust.deleted == [f"projects/{XNAT_ID}/subjects/S1/experiments/XNAT_E_A1?removeFiles=true", subject, subject]
+
+    trust.refusing = set()
+    await trust.reconcile(grace_seconds=0)
+    await trust.reconcile(grace_seconds=0)
+    assert trust.deleted[3:] == [subject]
+
+
+@pytest.mark.asyncio
+async def test_a_subject_is_removed_on_a_later_pass_when_xnat_cannot_list_after_their_session_goes(trust):
+    trust.served = []
+    trust.experiments = [_session("A1", "S1")]
+    listings = iter([trust.experiments, XnatFetchError("XNAT is restarting")])
+
+    def experiments(project_id, headers):
+        answer = next(listings, list(trust.experiments))
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    with patch.object(approved_cohort, "_experiments", side_effect=experiments):
+        await trust.reconcile(grace_seconds=0)
+        assert trust.deleted == [f"projects/{XNAT_ID}/subjects/S1/experiments/XNAT_E_A1?removeFiles=true"]
+        await trust.reconcile(grace_seconds=0)
+
+    assert trust.deleted[1:] == [f"projects/{XNAT_ID}/subjects/S1?removeFiles=true"]
+
+
+@pytest.mark.asyncio
+async def test_a_subject_xnat_failed_to_remove_keeps_their_record_once_they_hold_a_study_again(trust):
+    trust.served = ["A2"]
+    trust.experiments = [_session("A1", "S1")]
+    trust.refusing = {"S1"}
+    await trust.reconcile(grace_seconds=0)
+
+    trust.refusing = set()
+    trust.experiments = [_session("A2", "S1")]  # a new pull, of a study in the cohort
+    await trust.reconcile(grace_seconds=0)
+    await trust.reconcile(grace_seconds=0)
+
+    assert trust.deleted.count(f"projects/{XNAT_ID}/subjects/S1?removeFiles=true") == 1
+    assert approved_cohort._emptied[XNAT_ID] == set()
+
+
+@pytest.mark.asyncio
 async def test_an_assessor_is_never_removed_on_its_own(trust):
     """A segmentation is an experiment too, under a label that is no accession; it goes with its session."""
     trust.served = ["A1"]
@@ -332,6 +390,11 @@ def test_a_listing_xnat_cannot_give_removes_nothing(failure):
         pytest.raises(XnatFetchError),
     ):
         approved_cohort._experiments(XNAT_ID, {})
+
+
+def test_a_delete_of_what_xnat_no_longer_holds_is_done():
+    with patch.object(approved_cohort.requests, "delete", return_value=MagicMock(status_code=404)):
+        assert approved_cohort._delete("http://xnat/data/projects/p/subjects/S1", {})
 
 
 def test_a_failed_delete_is_reported_without_the_study_it_names():
