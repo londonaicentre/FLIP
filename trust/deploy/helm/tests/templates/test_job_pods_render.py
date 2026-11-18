@@ -168,24 +168,84 @@ def test_a_job_pod_gets_what_the_client_container_has():
     env = _env(job)
     for name in ("TRUST_INTERNAL_SERVICE_KEY_HEADER", "TRUST_INTERNAL_SERVICE_KEY"):
         assert env[name] == _env(client)[name]
-    # No images volume: a job pod streams its studies into its own run directory (FLIP#1049), and its
-    # IMAGES_DIR is a scratch folder of its own for the files add_resource uploads.
-    assert env["IMAGES_TRANSPORT"]["value"] == "stream"
-    assert job["volumeMounts"] == [
-        {"name": "dshm", "mountPath": "/dev/shm"},
-        {"name": "images-scratch", "mountPath": "/app/data/images"},
-    ]
     client_spec = _client(docs)["spec"]["template"]["spec"]
     volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
-    assert "images" not in volumes
     assert volumes["dshm"]["emptyDir"]["medium"] == "Memory"
-    assert volumes["images-scratch"] == {"name": "images-scratch", "emptyDir": {}}
-    assert "affinity" not in pod["spec"]
     assert pod["spec"]["automountServiceAccountToken"] is False
     # None by default: both backends dial the hub's public FL name.
     assert "hostAliases" not in pod["spec"]
     assert "hostAliases" not in client_spec
     assert pod["spec"]["enableServiceLinks"] is False
+
+
+def test_the_study_file_is_the_operators_configmap_which_the_client_only_reads():
+    """NVFLARE's study file is the site's to maintain (FLIP#1678): the chart mounts it and never creates it."""
+    docs = _enabled()
+    spec = _client(docs)["spec"]["template"]["spec"]
+    name = "trust-release-flip-trust-fl-studies-net-1"
+
+    volume = next(v for v in spec["volumes"] if v["name"] == "fl-studies")
+    assert volume["configMap"] == {"name": name, "optional": True}
+    created = [d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"] == name]
+    assert not created, "a helm upgrade would reset it"
+    # make sync-project-studies writes the ConfigMap under the same name.
+    makefile = (Path(__file__).parents[2] / "Makefile").read_text()
+    assert "$(RELEASE_NAME)-flip-trust-fl-studies-$(FL_NET)" in makefile
+    mount = next(m for m in _client_container(docs)["volumeMounts"] if m["name"] == "fl-studies")
+    assert mount == {"name": "fl-studies", "mountPath": "/app/studies", "readOnly": True}
+    # fl-client-init links local/study_runtime.yaml to it; it does not mount it, so it cannot write it.
+    init = _init_container(docs)
+    assert _env(init)["FL_K8S_STUDIES_FILE"]["value"] == "/app/studies/study_runtime.yaml"
+    assert "fl-studies" not in [m["name"] for m in init["volumeMounts"]]
+
+
+def test_the_template_never_mounts_images_and_streams():
+    """Only a project's own NVFLARE study adds an images mount, so a job outside one cannot see the cache."""
+    for extra in ((), ("--set", f"{JOB_PODS}.images=stream")):
+        [job] = _job_pod(_enabled(*extra))["spec"]["containers"]
+
+        assert _env(job)["IMAGES_TRANSPORT"]["value"] == "stream"
+        # Its IMAGES_DIR is a scratch folder of its own, for the files add_resource uploads (FLIP#1049).
+        assert job["volumeMounts"] == [
+            {"name": "dshm", "mountPath": "/dev/shm"},
+            {"name": "images-scratch", "mountPath": "/app/data/images"},
+        ]
+
+
+def test_by_default_a_job_pod_declares_the_shared_images_volume_for_its_study_to_mount():
+    """The fl-client mounts the project's folder of it in the job's NVFLARE study (FLIP#1678)."""
+    docs = _enabled()
+    pod = _job_pod(docs)
+    client_spec = _client(docs)["spec"]["template"]["spec"]
+
+    volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
+    assert volumes["images"] == next(v for v in client_spec["volumes"] if v["name"] == "images")
+    # The job pod attaches the fl-client's volume, so it is placed by the fl-client's rule.
+    assert pod["spec"]["affinity"] == client_spec["affinity"]
+
+
+def test_a_streaming_job_pod_mounts_no_images_volume_and_runs_anywhere():
+    """It streams its studies into its own run directory (FLIP#1049)."""
+    pod = _job_pod(_enabled("--set", f"{JOB_PODS}.images=stream"))
+
+    volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
+    assert list(volumes) == ["dshm", "images-scratch"]
+    assert volumes["images-scratch"] == {"name": "images-scratch", "emptyDir": {}}
+    assert "affinity" not in pod["spec"]
+
+
+def test_a_project_mount_is_refused_without_the_shared_images_volume():
+    result = _helm("--set", f"{JOB_PODS}.enabled=true", "--set", "sharedImagesPvc.enabled=false")
+
+    assert result.returncode != 0
+    assert "images: stream" in result.stderr
+
+
+def test_an_unknown_way_to_get_images_is_refused():
+    result = _helm("--set", f"{JOB_PODS}.enabled=true", "--set", f"{JOB_PODS}.images=mount")
+
+    assert result.returncode != 0
+    assert "project (a mount" in result.stderr
 
 
 def test_a_job_pod_resolves_the_fl_server_as_the_client_does():

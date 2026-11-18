@@ -100,8 +100,9 @@ compares them:
   XNAT answers the lookups, and never served unchecked.
 
 `force_refresh=true` takes the same delete-then-download step. The cache is also invalidated when an upload through
-imaging-api changes the accession (see Upload), and — on the FLARE backend — by `CleanupImages`, which empties the
-whole net directory at job start and end.
+imaging-api changes the accession (see Upload), and — on the FLARE backend, where a job mounts the net's whole
+folder — by `CleanupImages`, which empties that folder at job start and end. A Kubernetes job pod mounts only its
+project's folder, read-only, or none, and deletes nothing: there the retention sweep bounds the cache.
 
 **Retention (FLIP#1050).** Every cache hit refreshes the sentinel's mtime, the entry's last-used time, and an hourly
 sweep (`services/cache_retention.py`) removes accession folders whose newest sentinel is older than

@@ -130,6 +130,27 @@ def test_components_the_switch_does_not_own_are_kept_untouched():
     assert "process_launcher" in _by_id(KIT_RESOURCES), "the input is not mutated"
 
 
+def test_the_fl_client_gets_no_component_that_writes_its_site_config():
+    """The site's operator maintains the projects' study entries; the running client only reads them (FLIP#1678)."""
+    assert "project_study" not in _by_id(patch_resources(KIT_RESOURCES, config_from_env(ENV), WORKSPACE))
+
+
+def test_the_study_file_links_to_the_operators_and_the_default_study_is_kept_beside_it(tmp_path):
+    local = _kit(tmp_path)
+    studies_file = tmp_path / "studies" / "study_runtime.yaml"
+
+    assert main([str(local)], env={**ENV, "FL_K8S_STUDIES_FILE": str(studies_file)}) == 0
+    assert main([str(local)], env={**ENV, "FL_K8S_STUDIES_FILE": str(studies_file)}) == 0, "a restart re-links"
+
+    link = local / "study_runtime.yaml"
+    assert link.is_symlink()
+    assert link.readlink() == studies_file
+    # Until the operator's file exists NVFLARE finds no study file at all, so no job image.
+    assert not link.exists()
+    default = json.loads((local / "study_runtime.default.yaml").read_text())
+    assert default == study_runtime(config_from_env(ENV))
+
+
 def test_patching_twice_gives_the_same_resources():
     mode = config_from_env(ENV)
     once = patch_resources(KIT_RESOURCES, mode, WORKSPACE)

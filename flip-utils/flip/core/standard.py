@@ -419,7 +419,7 @@ class FLIPStandardProd(FLIPBase):
 
         endpoint = _join_url(FlipConstants.IMAGING_API_URL, f"upload/images/{FlipConstants.NET_ID}")
 
-        if FlipConstants.IMAGES_TRANSPORT == "stream":
+        if FlipConstants.IMAGES_TRANSPORT != "mount":
             # No mount of the net's upload folder: the files travel in the request, each named by the same
             # relative path the mount route takes (FLIP#1049).
             upload_dir = Path(FlipConstants.IMAGES_DIR) / FlipConstants.NET_ID / "upload"

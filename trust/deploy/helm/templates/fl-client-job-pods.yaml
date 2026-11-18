@@ -22,13 +22,20 @@ The job pod template. The launcher fills in the container NVFLARE names nvflare_
 the job workspace and startup-kit volumes, and resources (ephemeral storage plus nvidia.com/gpu from
 the job's resource_spec). Everything else a FLIP job needs from the trust comes from here, mirroring
 the fl-client container: its env, the trust-internal key, /dev/shm and the FL server's host aliases (a
-job pod connects to the FL server itself, not only through the parent). A job pod mounts no images
-volume: it streams each study from imaging-api into its own run directory (IMAGES_TRANSPORT=stream,
-FLIP#1049), so it holds only its project's studies and can run on any node. Its IMAGES_DIR is a scratch
-emptyDir of its own, where training code writes the files flip.add_resource uploads, as on the mount.
-Volumes, volumeMounts and env merge with the launcher's by name.
+job pod connects to the FL server itself, not only through the parent). Volumes, volumeMounts and env
+merge with the launcher's by name.
+
+A job pod holds only its own project's studies. The template mounts no images and streams each study
+from imaging-api into the job's own run directory (IMAGES_TRANSPORT=stream, FLIP#1049). Its IMAGES_DIR is
+a scratch emptyDir of its own, where training code writes the files flip.add_resource uploads, as on the
+mount. With flClient.nvflare.jobPods.images: project it also declares the shared images volume, unmounted,
+and the project's entry in the site's NVFLARE study file mounts the project's own folder of it, read-only
+inside that scratch directory, where the job then reads by path (flip.nvflare.project_studies, FLIP#1678).
+A job outside a project's study therefore never sees the cache. Declaring the volume makes the pod attach
+it, so it follows the fl-client's placement rule.
 */}}
 {{- define "flip-trust.flJobPod" -}}
+{{- $projectImages := eq .Values.flClient.nvflare.jobPods.images "project" -}}
 apiVersion: v1
 kind: Pod
 metadata:
@@ -74,6 +81,12 @@ spec:
   tolerations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+  {{- if $projectImages }}
+  {{- with include "flip-trust.sharedImagesAffinity" (dict "affinity" .Values.flClient.affinity "root" $) }}
+  affinity:
+    {{- . | nindent 4 }}
+  {{- end }}
+  {{- end }}
   containers:
     - name: nvflare_job
       imagePullPolicy: {{ .Values.flClient.image.pullPolicy }}
@@ -107,6 +120,11 @@ spec:
         - name: images-scratch
           mountPath: {{ .Values.flClient.imagesDir }}
   volumes:
+    {{- if $projectImages }}
+    - name: images
+      persistentVolumeClaim:
+        claimName: {{ include "flip-trust.fullname" . }}-shared-images
+    {{- end }}
     - name: dshm
       emptyDir:
         medium: Memory

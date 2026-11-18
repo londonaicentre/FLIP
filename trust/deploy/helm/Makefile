@@ -179,7 +179,7 @@ ifneq ($(strip $(TAG)),)
 	VALUES_OPTS := $(VALUES_OPTS) --set global.image.tag=$(TAG)
 endif
 
-.PHONY: help lint template deploy deploy-release failing-hooks undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init kit-secret stage-kit download-vocab stage-vocab preflight template-egress-variants smoke-cstore selftest xnat-db-migrate-dump xnat-db-remove-old-cluster
+.PHONY: sync-project-studies help lint template deploy deploy-release failing-hooks undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init kit-secret stage-kit download-vocab stage-vocab preflight template-egress-variants smoke-cstore selftest xnat-db-migrate-dump xnat-db-remove-old-cluster
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -469,6 +469,32 @@ SELFTEST_OUT ?= $(REPO_ROOT)/build/selftest
 selftest: ## Run the trust self-test against the deployed release and write a report
 	python3 $(CHART_DIR)/scripts/selftest_k8s.py --namespace $(NAMESPACE) --release $(RELEASE_NAME) \
 		$(if $(KUBE_CONTEXT),--context $(KUBE_CONTEXT)) --out $(SELFTEST_OUT)
+
+# NVFLARE's study file for job pods (FLIP#1678): the site maintains it, the fl-client only reads it. The
+# fl-client builds the file (it holds the job-pod template and creates each project's images folder) and this
+# replaces the ConfigMap the chart mounts. PROJECTS defaults to the projects whose approved cohort this trust
+# holds, which is data-access-api's snapshot folder.
+FL_NET ?= net-1
+FL_STUDIES_POD = $(KUBECTL) get pod -n $(NAMESPACE) --field-selector=status.phase=Running -o name \
+	-l app.kubernetes.io/instance=$(RELEASE_NAME),app.kubernetes.io/component
+sync-project-studies: ## Give each approved project its NVFLARE study entry for job pods; PROJECTS="<id> ..." names them
+	@set -e; \
+	client=$$($(FL_STUDIES_POD)=fl-client,flip/network=$(FL_NET) | head -1); \
+	[ -n "$$client" ] || { echo "❌ no running fl-client for $(FL_NET) in $(NAMESPACE)"; exit 1; }; \
+	projects="$(PROJECTS)"; \
+	if [ -z "$$projects" ]; then \
+	  daa=$$($(FL_STUDIES_POD)=data-access-api | head -1); \
+	  [ -n "$$daa" ] || { echo "❌ no running data-access-api to list the approved projects; pass PROJECTS=\"<id> ...\""; exit 1; }; \
+	  projects=$$($(KUBECTL) exec -n $(NAMESPACE) "$$daa" -- sh -c 'cd "$${COHORT_SNAPSHOT_DIR:?}" && for f in */membership.json; do [ ! -f "$$f" ] || echo "$${f%%/*}"; done') \
+	    || { echo "❌ cannot list the approved projects in data-access-api's COHORT_SNAPSHOT_DIR"; exit 1; }; \
+	  [ -n "$$projects" ] || { echo "❌ no approved project found in data-access-api's COHORT_SNAPSHOT_DIR; pass PROJECTS=\"<id> ...\""; exit 1; }; \
+	fi; \
+	file=$$(mktemp); trap 'rm -f "$$file"' EXIT; \
+	$(KUBECTL) exec -n $(NAMESPACE) "$$client" -c fl-client -- \
+	  python -m flip.nvflare.project_studies /var/tmp/nvflare/workspace/local $$projects > "$$file"; \
+	$(KUBECTL) create configmap $(RELEASE_NAME)-flip-trust-fl-studies-$(FL_NET) -n $(NAMESPACE) \
+	  --from-file=study_runtime.yaml="$$file" --dry-run=client -o yaml | $(KUBECTL) apply -f -; \
+	echo "✅ study entries for $$(echo $$projects | wc -w | tr -d ' ') project(s) on $(FL_NET)"
 
 status: ## Show the status of the Helm release and run smoke tests
 	@echo "=== Helm Release Status ==="
