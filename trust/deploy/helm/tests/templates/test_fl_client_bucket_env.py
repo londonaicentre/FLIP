@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-CHART_DIR = Path(__file__).resolve().parents[1]
+CHART_DIR = Path(__file__).resolve().parents[2]
 BUCKET_ENV = "UPLOADED_FEDERATED_DATA_BUCKET"
 
 
