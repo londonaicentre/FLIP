@@ -21,6 +21,7 @@ key, this net's images slice, /dev/shm and the FL server's host aliases).
 They also pin the other half: off by default, and a default install renders none of it.
 """
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -215,6 +216,30 @@ def test_job_pods_are_refused_on_flower():
 
     assert result.returncode != 0
     assert "NVFLARE" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("values", "mode"),
+    [
+        ((), "process"),
+        (("--set", f"{JOB_PODS}.enabled=true"), "pods"),
+        (("--set", "flBackend=flower"), "process"),
+        # Only reachable with the fl-client off (the chart refuses job pods on Flower otherwise): pins the
+        # backend check.
+        (
+            ("--set", "flBackend=flower", "--set", "flClient.enabled=false", "--set", f"{JOB_PODS}.enabled=true"),
+            "process",
+        ),
+    ],
+)
+def test_trust_api_reports_how_the_trust_runs_fl_jobs(values, mode):
+    """trust-api reports "pods" exactly when NVFLARE job pods are on, so the hub knows how jobs run (FLIP#1739)."""
+    result = _helm(*values)
+    assert result.returncode == 0, f"helm template failed: {result.stderr}"
+
+    assert re.findall(r'FL_CLIENT_JOB_MODE: "(\w+)"', result.stdout) == [mode]
+    # trust-api reads the mode once, at start, so its pod template carries it too: a changed mode rolls the pod.
+    assert re.findall(r'flip-trust/fl-client-job-mode: "(\w+)"', result.stdout) == [mode]
 
 
 def test_a_parent_that_holds_a_gpu_is_refused():
