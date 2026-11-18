@@ -13,6 +13,7 @@
 """``flip.nvflare.project_studies``: the site's study file, one entry per project (FLIP#1678)."""
 
 import json
+import runpy
 from pathlib import Path
 from unittest.mock import patch
 
@@ -157,6 +158,21 @@ def test_the_command_prints_the_file(tmp_path, capsys):
     assert main([str(local), PROJECT]) == 0
 
     assert json.loads(capsys.readouterr().out) == study_runtime(local, [PROJECT])
+
+
+@pytest.mark.filterwarnings("ignore:'flip.nvflare.project_studies' found in sys.modules:RuntimeWarning")
+def test_the_module_runs_as_the_chart_invokes_it(tmp_path, capsys):
+    """``python -m flip.nvflare.project_studies``, as ``make -C trust/deploy/helm sync-project-studies`` runs it.
+
+    No images volume: the re-run module reads the real ``FlipConstants``, not the fixture's.
+    """
+    local, _ = _kit(tmp_path, images_volume=False)
+
+    with patch("sys.argv", ["project_studies", str(local), PROJECT]), pytest.raises(SystemExit) as exited:
+        runpy.run_module("flip.nvflare.project_studies", run_name="__main__")
+
+    assert exited.value.code == 0
+    assert PROJECT in json.loads(capsys.readouterr().out)["studies"]
 
 
 def test_a_kit_that_was_not_switched_is_refused(tmp_path, capsys):
