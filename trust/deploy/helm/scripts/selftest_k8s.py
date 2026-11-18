@@ -74,6 +74,7 @@ class Cluster(Protocol):
     def container_port(self, pod: str) -> int | None: ...
     def orthanc_credentials(self) -> str | None: ...
     def container_state(self, pod: str) -> tuple[bool, int]: ...
+    def mounts(self, pod: str, container: str) -> list[dict]: ...
     def exec(self, pod: str, script: str, stdin: str | None = None) -> tuple[bool, str]: ...
 
 
@@ -155,6 +156,10 @@ class KubectlCluster:
             return False, -1
         return "running" in statuses[0].get("state", {}), int(statuses[0].get("restartCount", 0))
 
+    def mounts(self, pod: str, container: str) -> list[dict]:
+        containers = self._pod_json(pod).get("spec", {}).get("containers", [])
+        return next((c.get("volumeMounts", []) for c in containers if c.get("name") == container), [])
+
     def orthanc_credentials(self) -> str | None:
         """user:password of the first Orthanc user, from the Secret its Deployment reads."""
         deploys = self._json(
@@ -226,16 +231,30 @@ def check_release_ready(cluster: Cluster) -> Check:
     return Check("release ready", True, f"{len(items)} workloads ready")
 
 
+def nvflare_startup_dir(cluster: Cluster, pod: str) -> str | None:
+    """The fl-client's mount of the kit's startup/ folder, read from the pod (FLIP#1958).
+
+    templates/fl-client.yaml mounts it at /app/startup, or with job pods under the workspace the parent runs NVFLARE
+    in. Reading the pod follows the chart wherever it puts the kit; a path written here went stale once already.
+    """
+    mounts = cluster.mounts(pod, "fl-client")
+    return next((m["mountPath"] for m in mounts if m.get("subPath") == "startup"), None)
+
+
 def check_fl_kit(cluster: Cluster, backend: str) -> Check:
     """The FL client sees its participant kit where the image reads it (templates/fl-client.yaml)."""
     pod = cluster.pod("fl-client")
     if not pod:
         return Check("fl kit delivered", False, "no running fl-client pod")
     if backend == "nvflare":
-        where, script = "/app/startup/fed_client.json", "test -s /app/startup/fed_client.json"
+        startup = nvflare_startup_dir(cluster, pod)
+        if not startup:
+            return Check("fl kit delivered", False, f"{pod} mounts no startup/ folder from the kit")
+        where = f"{startup}/fed_client.json"
+        ok, _ = cluster.exec(pod, f"test -s {shlex.quote(where)}")
     else:
-        where, script = "/certs/ca.crt and /keys", 'test -s /certs/ca.crt && [ -n "$(ls -A /keys)" ]'
-    ok, _ = cluster.exec(pod, script)
+        where = "/certs/ca.crt and /keys"
+        ok, _ = cluster.exec(pod, 'test -s /certs/ca.crt && [ -n "$(ls -A /keys)" ]')
     return Check("fl kit delivered", ok, f"{where} in {pod}" if ok else f"{pod} has no kit at {where}")
 
 
