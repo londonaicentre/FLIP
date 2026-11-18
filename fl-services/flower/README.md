@@ -226,7 +226,11 @@ order is what keeps a slot from being claimed before its SuperNode would be admi
 1. Numbers the new keys past every key in S3 and every name already minted, and records the new
    names in `s3://<AICENTRE_BUCKET_NAME>/fl-flower-kit-state/<FLOWER_KIT_DATE>/minted_slot_names`.
    Flower has no CA registry of issued identities, so this record is what stops a name being reused
-   after its key is deleted from S3. No ECS task role reads that prefix.
+   after its key is deleted from S3. No ECS task role reads that prefix. The record is per kit date:
+   a new kit date starts numbering from its own keys alone, so provision its kit with
+   `NUM_SUPERNODES` at least the highest slot the hub has assigned (on stag/prod it defaults to 2).
+   Otherwise the trusts holding the higher slots have no key under it, and the first names
+   `add-fl-kits` mints there are theirs: the run calls them claimable, but they add no free slot.
 2. Mints the key pairs into a temporary directory and uploads the **public** keys (additive
    `aws s3 cp`).
 3. Runs the `efs-provision-certs` task definition with the key sync alone as its command, which
@@ -238,7 +242,10 @@ order is what keeps a slot from being claimed before its SuperNode would be admi
    registered. Until then flip-api leaves the slot out, with a warning naming the missing key.
 
 If a run stops before step 4, the private keys are gone with it: delete the public keys it names
-from S3 and run it again for the slots still needed. The numbering skips the spent names.
+from S3 and run it again for the slots still needed. The numbering skips the spent names. If it
+stops during step 4, those public keys are already on the hub's EFS and registered with the
+SuperLink, and deleting them from S3 removes neither; without their private keys no SuperNode can
+use them, and the abort message says so.
 
 To withdraw a slot that no trust holds, delete its private key from S3: flip-api stops handing it
 out at the next registration. Keep the public key: it is what keeps the number from being minted again

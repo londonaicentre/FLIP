@@ -38,8 +38,9 @@
 #   - a slot's private key is uploaded only once the SuperLink has registered its public
 #     key (the task's exit code AND its log), so a slot is never claimable before its
 #     SuperNode is admitted
-#   - a name is recorded before its key is minted, so it is never reused: not after a
-#     failed run, and not after its key was deleted from S3 to withdraw it
+#   - a name is recorded before its key is minted, so it is never reused under this kit
+#     date: not after a failed run, and not after its key was deleted from S3 to withdraw
+#     it (the record is per kit date, so a new kit date starts from its own keys alone)
 #   - the kit date must be the one the hub runs (flip-api's FLOWER_KITS_S3_URI): the copy
 #     to the hub syncs that date's public keys onto the live EFS
 #   - a mid-run failure, or an interrupt, prints exactly what was uploaded and how to recover
@@ -70,6 +71,7 @@ log() { echo "🧩 $*"; }
 # message through the same reporting (an explicit `exit 1` bypasses the trap, which
 # would lose it on exactly the partial-run paths).
 UPLOADED=()
+REGISTERED=""
 on_error() {
     echo "" >&2
     echo "❌ add-fl-kits aborted." >&2
@@ -80,6 +82,11 @@ on_error() {
         echo "     aws s3 rm ${BASE_S3}/${NET}/keys/supernode_credentials_<n>.pub" >&2
         echo "   Then re-run add-fl-kits with the number of slots still needed: it numbers past" >&2
         echo "   every name already minted, so these names are not reused." >&2
+        if [[ -n "${REGISTERED}" ]]; then
+            echo "   They are already on the hub's EFS and registered with the SuperLink: deleting them" >&2
+            echo "   from S3 removes neither, and every later registration run registers them again." >&2
+            echo "   With no private key, no SuperNode can use them." >&2
+        fi
     else
         echo "   No key was left half-uploaded; re-run once the underlying error is fixed." >&2
     fi
@@ -169,7 +176,7 @@ log "Net in S3 (${FLOWER_KIT_DATE}): ${NET}"
 # The max trailing number decides where new names start, so a name is never reused: not
 # a half-uploaded one, and not one whose key was deleted from S3 to withdraw it, or was
 # minted by a run that failed before its upload. Flower has no CA registry to ask (a
-# SuperNode key is not signed), hence the minted_slot_names record.
+# SuperNode key is not signed), hence the minted_slot_names record, kept per kit date.
 keys_listing="$(aws s3 ls "${BASE_S3}/${NET}/keys/")" || {
     echo "❌ Could not list ${BASE_S3}/${NET}/keys/ — refusing to compute slot numbers" >&2
     echo "   from an incomplete view (a missed name here could reuse a live trust's slot)." >&2
@@ -294,6 +301,7 @@ for number in "${MINT_NUMBERS[@]}"; do
         die "❌ The registration task ${TASK_ID} did not register supernode_credentials_${number}.pub" \
             "   (the copy to the hub did not deliver it, or the SuperLink did not take it) — see its log in ${REGISTER_LOG_GROUP}."
 done
+REGISTERED=1
 
 # --- 4. Private keys last: only now does flip-api count the slots complete ------
 
