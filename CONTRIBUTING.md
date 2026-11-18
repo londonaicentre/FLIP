@@ -392,8 +392,8 @@ compose file — avoid hardcoding values in Dockerfiles or compose files directl
   call to imaging-api or data-access-api.
 - `TRUST_INTERNAL_SERVICE_KEY` — single per-trust plaintext key, in that trust's kit file
   (`trust/.env.<CODE>.<env>`), minted by `register_trust`. Read by every trust-internal container. The hub
-  never sees it. Distinct from the per-job credential that protects fl-server → flip-api on the
-  Central Hub. See the [public security model](docs/source/security.rst#trust-internal-service-authentication).
+  mints it at registration and returns it once, and never stores it. Distinct from the per-job credential
+  that protects fl-server → flip-api on the Central Hub. See the [public security model](docs/source/security.rst#trust-internal-service-authentication).
 
 FL clients (trust side) intentionally do **not** receive Central Hub API credentials. Only the fl-server (on the Central
 Hub) communicates with flip-api. FL clients relay metrics and exceptions to the fl-server, which forwards them.
@@ -510,6 +510,51 @@ list — including the classes triaged in FLIP#1058 and deliberately *not* promo
 broken checkov install can never produce a vacuous green. The script's own guards (version pin, unknown check
 IDs, skip rationale, canary) are regression-tested by `deploy/providers/AWS/scripts/tests/test_checkov_lint.sh` with `checkov` stubbed,
 run by the same workflow's `Deploy script tests` job.
+
+### Snowflake trust roots (Terraform)
+
+The trust's Snowflake infrastructure is **three** roots with **separate state** (FLIP#1581, epic
+FLIP#1589), neither holding hub credentials:
+
+| Root | Tier | Applied by | When |
+| --- | --- | --- | --- |
+| `trust/deploy/terraform/snowflake-identity` | identity | the account's user administrator (`USERADMIN` or `ACCOUNTADMIN`) | once, before the other two |
+| `trust/deploy/terraform/snowflake-platform` | break glass | a **person** user with **MFA**, `ACCOUNTADMIN`, or the role that owns objects with `account_admin = false` | rarely, by hand, never in CI |
+| `trust/deploy/terraform/snowflake` | workload | `FLIP_<CODE>_DEPLOY_USER` (`TYPE = SERVICE`, key pair) | every deploy |
+
+The identity root creates the six `FLIP_<CODE>_*` roles, the role hierarchy and the deploy
+`SERVICE` user. The platform root creates the account's security objects: the egress integration, the account
+network/password/session policies, the event table and `EVENT_TABLE` parameter, the resource
+monitor and the trust warehouse it is attached to (assigning a monitor needs `ACCOUNTADMIN`), and
+the single account-level grant in the whole design, exactly `CREATE DATABASE`,
+`CREATE COMPUTE POOL`, `EXECUTE TASK`. The workload root creates the
+trust database and schemas, the compute pools, the image repository, the SSE
+stages, the nightly pool-suspend task and the grants on those objects. `FLIP_<CODE>_ADMIN` is
+retired; the platform README carries the migration for an account bootstrapped with it.
+
+Targets are the same in all three directories:
+
+```bash
+make -C trust/deploy/terraform/snowflake lint              # tofu fmt, tofu validate, tflint, checkov
+make -C trust/deploy/terraform/snowflake test              # the credential-free pytest guards
+make -C trust/deploy/terraform/snowflake plan              # needs terraform.<env>.tfvars and Snowflake credentials
+make -C trust/deploy/terraform/snowflake apply             # shows the plan and asks before applying
+make -C trust/deploy/terraform/snowflake-identity plan apply   # once, first: shows the plan and asks
+make -C trust/deploy/terraform/snowflake-platform lint
+make -C trust/deploy/terraform/snowflake-platform test
+make -C trust/deploy/terraform/snowflake-platform apply    # prints a BREAK GLASS banner and asks twice
+```
+
+`lint` and `test` need nothing but `tofu` (or `terraform`), `tflint`, `uvx` and `uv`; they are what
+`validate_terraform.yml`'s `Snowflake <root> static checks` matrix runs. The guards pin the
+invariants no plan can show without an account. In the workload root: no `snowflake_account_role`,
+no user, no integration, no network/password/session policy, no account parameter and no
+`on_account` grant (all of those belong to the platform root), plus no grant to `PUBLIC`,
+server-side encryption on every stage, and auto-suspend on every compute pool. In the platform
+root: the deploy role receives exactly those four account privileges and no others, the
+break-glass identity authenticates with MFA, and no password, passcode or key is ever a Terraform
+variable. Read both READMEs before changing either: secrets are written by `make sync-kit`
+(FLIP#1582), never by Terraform.
 
 ### TFLint (Terraform)
 
@@ -780,6 +825,41 @@ smoke, and a `sync_k8s_kit.py` script that syncs a registered trust's kit file (
 itself still goes through `register_trust` / `make register-trusts`) into the chart's Kubernetes
 Secret and a Helm values override. See the [K8s README](trust/deploy/helm/README.md) for details.
 
+**Snowflake (SPCS) node testing**: The Snowflake shape of the trust node at
+`trust/deploy/snowflake/` is tested entirely offline - no Snowflake account, no
+credentials, no network:
+
+```bash
+# Spec guards (no public endpoints, no secret literals, the per-service secret map,
+# the fl-client's read-only kit and net-N-only images mount, block volumes only for
+# xnat-db and orthanc, resource limits everywhere) plus the sync-kit guards, which
+# drive a fake `snow` binary and assert no secret value reaches argv or any log
+make -C trust/deploy/snowflake test
+
+# Print the deploy SQL instead of running it. Every Snowflake target takes DRY_RUN
+make -C trust/deploy/snowflake up KIT=<CODE> HUB=<env> SNOW_CONNECTION=<name> DRY_RUN=true
+
+# The whole node, in the order a first deploy uses it, and the three roots it depends on
+export SNOW_CONNECTION=<name>   # a `snow connection add` entry; required, no default
+make -C trust/deploy/snowflake render KIT=<CODE> HUB=<env>
+make -C trust/deploy/snowflake mirror-images KIT=<CODE> HUB=<env>
+make -C trust/deploy/snowflake sync-kit KIT=<CODE> HUB=<env>
+make -C trust/deploy/snowflake up KIT=<CODE> HUB=<env>
+make -C trust/deploy/snowflake selftest KIT=<CODE> HUB=<env>   # passes only on SELFTEST ALL PASS
+make -C trust/deploy/snowflake plan KIT=<CODE> HUB=<env>       # the workload root
+make -C trust/deploy/snowflake plan KIT=<CODE> HUB=<env> TF_ROOT=platform
+make -C trust/deploy/snowflake plan KIT=<CODE> HUB=<env> TF_ROOT=identity
+```
+
+The operator's runbook, including the break-glass tier, egress and the security notes, is
+`docs/source/deploy-flip/deploy-flip-node-snowflake.rst`.
+
+Secret values are fed to `snow sql` on **stdin** and never as arguments: an argument is
+visible in `ps` to every user on the host and is recorded by shell history and most CI
+runners' command logging. Keep it that way when extending `sync_snowflake_kit.py` - the
+guard that catches a regression is `tests/test_sync_kit.py`. CI runs the suite from
+`.github/workflows/test_snowflake_specs.yml`, path-gated like every other service suite.
+
 **Testing fixtures**: For testing APIs and integration tests, we use [pytest fixtures](https://docs.pytest.org/en/latest/how-to/fixtures.html). Shared fixtures are defined in `conftest.py` files. In some cases, [`factory_boy`](https://factoryboy.readthedocs.io/) is used to create test data following production data structures.
 
 All new functionality should be accompanied by an appropriate set of tests. Existing tests throughout the services can serve as examples.
@@ -983,7 +1063,7 @@ The list below is what they check and do, and what stays manual (the notes' pros
    - [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) and [`check-package-metadata.yml`](.github/workflows/check-package-metadata.yml) run when `flip-utils/**` changed.
 1. On merge to `main`:
    - [`release.yml`](.github/workflows/release.yml) reads the root `pyproject.toml`, creates the `v<X.Y.Z>` git tag (the tag it pushes is on `main` by construction, which is what the image workflows' release-tag guard checks), and publishes the GitHub Release named `Release v<X.Y.Z>` with auto-generated notes.
-   - [`release-pypi.yml`](.github/workflows/release-pypi.yml) reads `flip-utils/flip/__init__.py` and, if that version is not yet tagged, lints + tests + builds the package, publishes it to PyPI via OIDC trusted publishing, tags it, and publishes a GitHub Release named `flip-utils v<X.Y.Z>` with the template header, the generated changelog, and the build artifacts attached.
+   - [`release-pypi.yml`](.github/workflows/release-pypi.yml) reads `flip-utils/flip/__init__.py` and, if that version is not yet tagged, lints + tests + builds the package, publishes it to PyPI via OIDC trusted publishing, tags it, and publishes a GitHub Release named `flip-utils v<X.Y.Z>` with the build artifacts attached. Its notes list only the PRs that changed `flip-utils/` since the previous `flip-utils-v*` tag ([`flip-utils-release-notes.sh`](.github/scripts/flip-utils-release-notes.sh)) and point to the platform release for everything else; it is never marked *Latest*.
    - Every `docker_build_*.yml` workflow under [`.github/workflows/`](.github/workflows/) rebuilds its service and pushes the `:prod` and `:<sha>` tags to GHCR.
    - `release.yml` then **dispatches** every image workflow — `docker_build_*.yml` and both `fl-docker-build-*.yml` — at the new tag (`gh workflow run <wf> --ref v<X.Y.Z>`), building every image at the release commit, unfiltered, and pushing `:v<X.Y.Z>` (FLIP#1204). This is the tag hub and sites deploy: a release is one identity across the whole stack, not a different `sha-` per service. The image workflows also carry a `push.tags: ['v*.*.*']` trigger, but it cannot serve the real release: the tag is pushed with the workflow's own `GITHUB_TOKEN`, and GitHub starts no workflow for an event created that way (only `workflow_dispatch` / `repository_dispatch` are exempt) — the push trigger is what a **hand-pushed** tag uses, i.e. a release candidate. `.github/tests/workflows/test_release.py` holds the dispatch roster to the exact set of publishing workflows, so one added without being listed fails CI.
 1. Verify on the [Releases page](https://github.com/londonaicentre/FLIP/releases) that the new release exists and the notes look right — the curated header (including *Site upgrade*) now sits above the generated changelog. Verify on [GHCR](https://github.com/orgs/londonaicentre/packages) that every image carries `:v<X.Y.Z>` (fourteen workflows; `.github/tests/workflows/test_docker_build.py` and `test_fl_docker_build.py` guard the triggers) and that the `:prod` tags were updated. If the package was released, verify it on [PyPI](https://pypi.org/project/flip-utils/).
@@ -1002,7 +1082,7 @@ There is no `CHANGELOG.md` — the GitHub Releases page is the changelog. Releas
 - **The generated changelog** — GitHub's release-notes API lists every PR merged since the previous `v*.*.*` tag, plus a contributors section, categorised by PR label according to [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`, then Other Changes. PRs labelled `ignore-for-release` are excluded. Curating this means labelling each PR correctly **before** it merges into `develop` — it cannot be fixed at release time.
 - **The hand-written header** — [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md), with `{{VERSION}}`, `{{TAG}}`, and `{{PREV_TAG}}` substituted. Edit this file on the release branch to fill in Highlights and the Breaking Changes / New Features / Bug Fixes summaries.
 
-Both are rendered into the preview comment on the `develop` → `main` PR (and on a hotfix PR), and both go into the releases published by `release.yml` and `release-pypi.yml` — the template header above the generated changelog. (Until FLIP#1204 the platform release carried the generated changelog only, so the curated sections never reached the page trust operators read.)
+Both are rendered into the preview comment on the `develop` → `main` PR (and on a hotfix PR), and both go into the platform release published by `release.yml` — the template header above the generated changelog. The flip-utils release carries neither: it lists the PRs that changed the package. (Until FLIP#1204 the platform release carried the generated changelog only, so the curated sections never reached the page trust operators read.)
 
 ### flip-utils and the PyPI release path
 

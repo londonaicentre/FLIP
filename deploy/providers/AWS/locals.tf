@@ -162,7 +162,7 @@ locals {
       # trust is configured with. AES_KEY_BASE64 is not here; flip-api reads the key it
       # decrypts with from Secrets Manager. The tags go without their digest: a release
       # pins `v<X.Y.Z>@sha256:…` of one repository, and a trust pulls others.
-      FL_KITS_URI         = var.fl_backend == "flower" ? "s3://${aws_s3_bucket.aicentre_bucket.id}/fl-flower-participant-kits/${var.flower_kit_date}" : "s3://${aws_s3_bucket.aicentre_bucket.id}/fl-flare-participant-kits/${var.flare_kit_date}"
+      FL_KITS_URI         = var.fl_backend == "flower" ? "s3://${aws_s3_bucket.aicentre_bucket.id}/fl-flower-participant-kits/${var.flower_kit_date}" : local.flare_kits_base_s3
       CENTRAL_HUB_API_URL = "https://${var.flip_alb_subdomain}/api"
       FLARE_KIT_DATE      = var.flare_kit_date
       FLOWER_KIT_DATE     = var.flower_kit_date
@@ -171,10 +171,11 @@ locals {
       NLB_SUBDOMAIN       = var.flip_nlb_subdomain
       FL_SERVER_PORT      = tostring(var.FL_SERVER_PORT)
       FL_EDGE_PORT        = var.fl_edge_port != "" ? var.fl_edge_port : tostring(var.FL_SERVER_PORT)
-      # FL_KIT_SLOT_NAMES is deliberately NOT in the task env: in production the
-      # kit-slot pool's single source is the /flip/fl_kit_slot_names SSM parameter
-      # (parameter_store.tf), read at runtime by resolve_fl_kit_slot_names — an env
-      # copy here would be dead config that apply-fl-kit-slots never updates.
+      # The NVFLARE kit-slot pool: every slot whose kit is complete on every net under
+      # this prefix (resolve_fl_kit_slot_names, FLIP#1720). A Flower hub reads the
+      # /flip/fl_kit_slot_names SSM parameter instead, so FL_KIT_SLOT_NAMES is
+      # deliberately not in the task env.
+      FLARE_KITS_S3_URI = var.fl_backend == "nvflare" ? local.flare_kits_base_s3 : ""
     })
     fl_server = {
       LOCAL_DEV             = "false"

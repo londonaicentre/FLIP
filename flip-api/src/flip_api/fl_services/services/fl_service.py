@@ -498,7 +498,7 @@ def submit_job(fl_job_id: UUID, endpoint: str, model_id: UUID, session: Session)
 
 
 def _get_fl_status(endpoint: str, subject: str, noun: str) -> Any | None:
-    """GET the FL API's ``check_<subject>_status`` route; ``None`` when unreachable, an error status or empty."""
+    """GET the FL API's ``check_<subject>_status`` route; ``None`` when unreachable, an error status or no answer."""
     url = f"{endpoint}/check_{subject}_status"
     logger.debug(f"Checking {subject} status at '{url}'")
     # NOTE the Flower FL API queries the SuperLink on each call (ControlServicer.ShowFederation for the
@@ -515,7 +515,7 @@ def _get_fl_status(endpoint: str, subject: str, noun: str) -> Any | None:
             logger.error(f"HTTP GET failed for {url}: {e}")
         return None
     logger.debug(f"{subject.capitalize()} status response: {response}")
-    if not response:
+    if response is None:
         logger.error(f"No response from FL API for {noun} at endpoint {endpoint}")
         return None
     return response
@@ -544,11 +544,12 @@ def check_client_status(endpoint: str) -> list[IClientStatus] | None:
         endpoint (str): The endpoint of the server to check the status from.
 
     Returns:
-        list[IClientStatus] | None: A list of client statuses, or ``None`` when the FL API cannot be
-            reached or answers with an error status.
+        list[IClientStatus] | None: A list of client statuses, empty when no client is connected, or
+            ``None`` when the FL API cannot be reached, answers with an error status or sends nothing.
     """
+    # An empty list is an answer (no client connected), so only no answer at all maps to None.
     response = _get_fl_status(endpoint, "client", "clients")
-    return [IClientStatus.model_validate(c) for c in response] if response else None
+    return None if response is None else [IClientStatus.model_validate(c) for c in response]
 
 
 def fetch_server_status(endpoint: str) -> IServerStatus | None:
@@ -605,43 +606,28 @@ def is_client_available(client_name: str, client_statuses: list[IClientStatus]) 
     return False
 
 
-def validate_client_availability(clients: list[str], endpoint: str, fl_backend: FLBackend) -> None:
+def unavailable_clients(clients: list[str], endpoint: str) -> list[str]:
     """
-    Validate the availability of clients by checking their status.
-    It sends a GET request to the FL API service to check the status of the clients.
-    For FLARE, raises ClientAvailabilityError if any client is unavailable.
-    For Flower, logs a warning instead — Flower's SuperLink handles client selection at runtime.
+    List the clients that are not connected to the net's FL server.
+
+    Neither backend needs them connected at submission, so this informs and never stops a submission (#1133):
+    FLARE's scheduler holds the job until every mandatory client connects, and Flower's strategy waits until as
+    many nodes are connected as trusts were selected.
 
     Args:
-        clients (list[str]): A list of client names to check the availability of.
+        clients (list[str]): The client names to check.
         endpoint (str): The endpoint of the FL API service.
-        fl_backend (FLBackend): The FL backend of the net being validated (``nvflare`` or ``flower``).
 
     Returns:
-        None
-
-    Raises:
-        ClientAvailabilityError: If client statuses cannot be fetched or any client is unavailable (FLARE only).
+        list[str]: The clients that are not connected, in the order given; all of them when none is. Empty when
+            the FL API cannot say, since then nothing is known.
     """
-    is_flower = fl_backend == FLBackend.FLOWER
-
     client_statuses = check_client_status(endpoint)
-    if not client_statuses:
-        if is_flower:
-            logger.warning(f"No client status response from FL API at {endpoint} — Flower will handle client selection")
-            return
-        logger.error(f"No response from FL API for clients at endpoint {endpoint}")
-        raise ClientAvailabilityError("Unable to fetch client statuses to validate client availability")
-
+    if client_statuses is None:
+        logger.warning(f"No client status response from FL API at {endpoint}")
+        return []
     logger.info(f"Client status: {client_statuses}")
-
-    unavailable = [client for client in clients if not is_client_available(client, client_statuses)]
-
-    if unavailable:
-        if is_flower:
-            logger.warning(f"Clients unavailable: {', '.join(unavailable)} — Flower will handle client selection")
-            return
-        raise ClientAvailabilityError(f"Clients unavailable: {', '.join(unavailable)}")
+    return [client for client in clients if not is_client_available(client, client_statuses)]
 
 
 def abort_job(endpoint: str, job_id: str) -> dict:

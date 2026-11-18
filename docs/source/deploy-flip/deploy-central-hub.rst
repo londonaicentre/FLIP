@@ -223,7 +223,7 @@ The hub uses two kinds of key and a per-job credential. See :doc:`/sys-admin` fo
      - Calls from the FL server to the hub API about one model. One per FL job.
      - Minted by the hub when it dispatches the job. Nothing to configure.
    * - **Trust-internal service key**
-     - Calls between services inside one trust. One key per trust; the hub never sees it.
+     - Calls between services inside one trust. One key per trust; the hub mints it and never stores it.
      - Minted alongside the trust API key and written into the trust's kit file.
 
 The two per-trust keys are minted when you register the trust from the command line (see
@@ -302,25 +302,27 @@ Running out of FL kit slots
 ===========================
 
 Registration fails with ``NoFreeKitSlotError`` ("No FL kit slots available…") when the hub has no claimable FL kit
-slot left. One command adds more (FLARE only):
+slot left. (If it says instead that the kit-slot source could not be read, the hub could not list its kits: there is
+nothing to add, so try again and check the hub's log.) One command adds more (FLARE only):
 
 .. code-block:: shell
 
    make -C deploy/providers/AWS add-fl-kits N=2 HUB=<stag|prod>
 
-``N`` is the number of **extra claimable slots** you want, not the number of kits to create. The command first
-activates spare kits that were provisioned earlier but never made claimable, which is quick and needs no
-certificates. It mints new kits only for the shortfall: that restores and verifies each net's CA workspace and needs
-the FLARE provisioning tools. Existing kits are never touched and no CA is rotated.
+``N`` is the number of new kits to make. The command restores and verifies each net's CA workspace, which needs the
+FLARE provisioning tools, then makes and uploads the kits. Existing kits are never touched and no CA is rotated.
 
-It ends with a targeted Terraform plan and apply of the slot list, and pauses for you to confirm both the kit plan
-and the Terraform plan (``YES=1`` skips the prompts). Read the plan before you confirm. The hub picks up the new
-slots without a restart, so the next ``register-trusts`` can claim one.
+It pauses for you to confirm the plan it prints (``YES=1`` skips the prompt). The hub reads its slots straight from
+the kits in S3 at every registration, so the next ``register-trusts`` can claim one: no Terraform apply and no
+restart. Every complete kit in S3 can be claimed, so delete a kit there rather than keep one that should not be handed
+out; a trust that already holds that slot keeps it.
 
 .. warning::
 
-   If the final apply fails, recover with ``make -C deploy/providers/AWS apply-fl-kit-slots HUB=<hub>``. Do not
-   re-run ``add-fl-kits``: the slot names are already in your env file, and a second run would add another ``N``.
+   If a run stops part-way, it prints which kits it uploaded. A kit that is not complete on every net is never
+   claimed, and the hub's log names it with the files it lacks. Re-run ``add-fl-kits`` with the number of kits still
+   needed: it numbers past every kit in S3 and every name it has already signed, so a name is never used twice and
+   the numbering can skip one. Delete the incomplete kit from S3, or the hub keeps warning about it.
 
 .. seealso::
 

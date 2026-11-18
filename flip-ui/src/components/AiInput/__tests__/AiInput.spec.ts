@@ -84,6 +84,14 @@ describe("Ai Input", () => {
             vi.useRealTimers();
         });
 
+        it("shows no error when an untouched field loses focus", async () => {
+            const comp = mount(EmailForm);
+
+            await comp.find("input").trigger("blur");
+            await settle();
+            expect(comp.find(".error_message").exists()).toBe(false);
+        });
+
         it("shows no error while typing, then validates on blur", async () => {
             const comp = mount(EmailForm);
             const input = comp.find("input");
