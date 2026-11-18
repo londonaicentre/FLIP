@@ -315,7 +315,6 @@ jobs:
           NLB_SUBDOMAIN: ${{ vars.NLB_SUBDOMAIN }}
           DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
           FL_BACKEND: ${{ vars.FL_BACKEND }}
-          FL_KIT_SLOT_NAMES: ${{ vars.FL_KIT_SLOT_NAMES }}
           FLARE_KIT_DATE: ${{ vars.FLARE_KIT_DATE }}
           FLOWER_KIT_DATE: ${{ vars.FLOWER_KIT_DATE }}
           JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}

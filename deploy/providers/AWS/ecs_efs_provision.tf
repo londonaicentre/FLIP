@@ -36,7 +36,9 @@ locals {
   # chart itself no longer fetches from S3 (a trust holds no FLIP credentials),
   # but the on-disk layout is the same one tree. Layout:
   #   fl-flower-participant-kits/{date}/net-1/{certificates,keys}/...
-  flower_creds_base_s3 = "s3://${aws_s3_bucket.aicentre_bucket.id}/fl-flower-participant-kits/${var.flower_kit_date}/net-1"
+  # Root of this deployment's Flower kits: also flip-api's FLOWER_KITS_S3_URI (locals.tf).
+  flower_kits_base_s3  = "s3://${aws_s3_bucket.aicentre_bucket.id}/fl-flower-participant-kits/${var.flower_kit_date}"
+  flower_creds_base_s3 = "${local.flower_kits_base_s3}/net-1"
 }
 
 resource "null_resource" "provision_efs_certs" {
@@ -150,6 +152,8 @@ resource "aws_ecs_task_definition" "efs_provision" {
         # SuperLink; keys/ the per-slot SuperNode public keys the
         # register-supernode-keys one-shot (ecs_flower.tf) feeds to it. Only
         # the *.pub files: a SuperNode's private key belongs to its trust.
+        # add_fl_kits_flower.sh runs this task with the keys/ sync below alone as
+        # its command (no wipe), to copy new keys beside the ones already there.
         mkdir -p /mnt/flower-certs /mnt/flower-keys /mnt/flower-jobs
         find /mnt/flower-certs -mindepth 1 -delete 2>/dev/null || true
         find /mnt/flower-keys -mindepth 1 -delete 2>/dev/null || true

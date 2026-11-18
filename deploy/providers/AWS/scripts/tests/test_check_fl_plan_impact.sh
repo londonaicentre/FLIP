@@ -121,7 +121,7 @@ echo "==== check-fl-plan-impact.sh ===="
 run_on "infrastructure-only plan passes" "$(plan_with \
     "aws_s3_bucket logs aws_s3_bucket.logs update" \
     "aws_iam_role_policy ecs_flip_api_task aws_iam_role_policy.ecs_flip_api_task update" \
-    "aws_ssm_parameter fl_kit_slot_names aws_ssm_parameter.fl_kit_slot_names update" \
+    "aws_ssm_parameter flip_api_internal_url aws_ssm_parameter.flip_api_internal_url update" \
     "aws_cloudfront_distribution flip_ui aws_cloudfront_distribution.flip_ui update")"
 expect_rc 0 "safe to apply"
 expect_mentions "4 resource change" "reports the change count"
@@ -297,7 +297,7 @@ done
 #     rare enough to be read.
 run_on "no LZA ingress change is silent" "$(plan_with \
     "aws_s3_bucket logs aws_s3_bucket.logs update" \
-    "aws_ssm_parameter fl_kit_slot_names aws_ssm_parameter.fl_kit_slot_names update")"
+    "aws_ssm_parameter flip_api_internal_url aws_ssm_parameter.flip_api_internal_url update")"
 expect_rc 0 "safe to apply"
 expect_silent_about "LZA FL ingress" "no advisory"
 

@@ -297,30 +297,53 @@ Running out of FL kit slots
 
 Registration fails with ``NoFreeKitSlotError`` ("No FL kit slots available…") when the hub has no claimable FL kit
 slot left. (If it says instead that the kit-slot source could not be read, the hub could not list its kits: there is
-nothing to add, so try again and check the hub's log.) One command adds more (FLARE only):
+nothing to add, so try again and check the hub's log.) One command adds more, on either FL backend:
 
 .. code-block:: shell
 
    make -C deploy/providers/AWS add-fl-kits N=2 HUB=<stag|prod>
 
-``N`` is the number of new kits to make. The command restores and verifies each net's CA workspace, which needs the
-FLARE provisioning tools, then makes and uploads the kits. Existing kits are never touched and no CA is rotated.
+``N`` is the number of new kits to make. Existing kits are never touched and no CA is rotated.
+
+- On a **FLARE** hub the command restores and verifies each net's CA workspace, which needs the FLARE provisioning
+  tools, then makes and uploads the kits.
+- On a **Flower** hub it makes new SuperNode key pairs, uploads the public keys, registers them with the running
+  SuperLink by running two of the hub's one-off ECS tasks, and uploads the private keys last. The SuperLink is not
+  restarted and a running job is not disturbed.
 
 It pauses for you to confirm the plan it prints (``YES=1`` skips the prompt). The hub reads its slots straight from
 the kits in S3 at every registration, so the next ``register-trusts`` can claim one: no Terraform apply and no
-restart. Every complete kit in S3 can be claimed, so delete a kit there rather than keep one that should not be handed
-out; a trust that already holds that slot keeps it.
+restart. Every complete kit in S3 can be claimed, so delete a kit there rather than keep one that should not be
+handed out; a trust that already holds that slot keeps it. On Flower, delete only the private key: the public key
+keeps the number from being used again, and the hub's log then lists that slot as not claimable.
 
 .. warning::
 
-   If a run stops part-way, it prints which kits it uploaded. A kit that is not complete on every net is never
+   If a run stops part-way, it prints what it uploaded. A kit that is not complete on every net is never
    claimed, and the hub's log names it with the files it lacks. Re-run ``add-fl-kits`` with the number of kits still
-   needed: it numbers past every kit in S3 and every name it has already signed, so a name is never used twice and
-   the numbering can skip one. Delete the incomplete kit from S3, or the hub keeps warning about it.
+   needed: it numbers past every kit in S3 and every name it has already issued, so a name is never used twice and
+   the numbering can skip one. Delete the incomplete kit from S3 (on Flower, the public keys the run names), or the
+   hub keeps warning about it.
+
+.. warning::
+
+   On a hub that has been switched between NVFLARE and Flower, the first kits a run makes can carry names that
+   trusts registered under the other backend already hold, so they add no free slot. Ask for enough kits to pass
+   the highest slot the hub has assigned.
+
+.. note::
+
+   A Flower SuperLink holds its registered SuperNodes in memory. A Terraform apply that replaces the SuperLink
+   registers every key again. A SuperLink restarted any other way, including ``deploy-centralhub``, a rollback,
+   staging power-on or a crash, does not, and its trusts are refused until the registration runs again.
+   :gh:`fl-services/flower/README.md` has the command.
 
 .. seealso::
 
    :gh:`fl-services/nvflare/README.md` — minting kits by hand, and onboarding a new client onto an existing network.
+
+   :gh:`fl-services/flower/README.md` — how a Flower hub adds SuperNode keys, and what the order of its steps
+   protects.
 
 .. _deploy-central-hub-rotate-trust-keys:
 

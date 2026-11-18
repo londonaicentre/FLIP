@@ -12,8 +12,9 @@
 # limitations under the License.
 #
 
-# Mint N more *claimable* FL kit slots on a running stag/prod FLARE deployment, end to
-# end:
+# Mint N more *claimable* FL kit slots on a running stag/prod deployment, end to end.
+# A Flower hub (FL_BACKEND=flower) is handed to add_fl_kits_flower.sh, the same steps
+# for SuperNode keys (FLIP#1942); the rest of this file is the FLARE path:
 #
 #   1. discover the deployment's nets from S3, restore each net's CA state (state/ holds
 #      the root CA) and number past every kit in S3 and every name the CA has signed
@@ -30,7 +31,7 @@
 # Invoked by `make -C deploy/providers/AWS add-fl-kits N=<n> HUB=<stag|prod> [YES=1]`
 # (the Makefile hands this script the environment CLASS as ENV_NAME=prod|stag),
 # which exports the env-file vars this script reads (AICENTRE_BUCKET_NAME,
-# FLARE_KIT_DATE, AWS_PROFILE, FL_BACKEND, HUB) plus N / YES.
+# FLARE_KIT_DATE or FLOWER_KIT_DATE, AWS_PROFILE, FL_BACKEND, HUB) plus N / YES.
 #
 # Safety invariants (live trusts' kits are sacred):
 #   - never writes into an existing S3 kit prefix; the emptiness check fails CLOSED
@@ -46,15 +47,7 @@
 set -euo pipefail
 
 N="${N:?N is required (number of kit slots to add, e.g. N=2)}"
-AICENTRE_BUCKET_NAME="${AICENTRE_BUCKET_NAME:?AICENTRE_BUCKET_NAME must be set (run via make with HUB=<env>)}"
-FLARE_KIT_DATE="${FLARE_KIT_DATE:?FLARE_KIT_DATE must be set (run via make with HUB=<env>)}"
 YES="${YES:-}"
-
-if [[ "${FL_BACKEND:-nvflare}" != "nvflare" ]]; then
-    echo "❌ add-fl-kits supports FL_BACKEND=nvflare only. Flower kits are per-supernode key" >&2
-    echo "   pairs whose net-side labelling happens at net startup — see fl-services/flower/." >&2
-    exit 1
-fi
 
 if ! [[ "${N}" =~ ^[0-9]+$ ]] || [[ "${N}" -lt 1 ]]; then
     echo "❌ N must be a positive integer, got '${N}'." >&2
@@ -79,6 +72,20 @@ prod | stag) ;;
 esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+case "${FL_BACKEND:-nvflare}" in
+nvflare) ;;
+flower)
+    export N YES ENV_NAME
+    exec "${SCRIPT_DIR}/add_fl_kits_flower.sh"
+    ;;
+*)
+    echo "❌ FL_BACKEND must be 'nvflare' or 'flower' — got '${FL_BACKEND}'." >&2
+    exit 1
+    ;;
+esac
+
+AICENTRE_BUCKET_NAME="${AICENTRE_BUCKET_NAME:?AICENTRE_BUCKET_NAME must be set (run via make with HUB=<env>)}"
+FLARE_KIT_DATE="${FLARE_KIT_DATE:?FLARE_KIT_DATE must be set (run via make with HUB=<env>)}"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 NVFLARE_DIR="${REPO_ROOT}/fl-services/nvflare"
 WORKSPACE_PARENT="${NVFLARE_DIR}/provision/workspace-${ENV_NAME}"
