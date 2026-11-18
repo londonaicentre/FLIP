@@ -93,7 +93,8 @@ fi
 pod="flip-stage-$(date +%s)-$$"
 echo "📦 $src → node $node:$dest (pod $namespace/$pod, kubectl cp)"
 "${kubectl[@]}" create namespace "$namespace" --dry-run=client -o yaml | "${kubectl[@]}" apply -f - > /dev/null
-trap '"${kubectl[@]}" -n "$namespace" delete pod "$pod" --ignore-not-found --wait=false > /dev/null 2>&1 || true' EXIT
+# busybox's sleep ignores SIGTERM, so the default 30 s grace period would only leave the pod Terminating.
+trap '"${kubectl[@]}" -n "$namespace" delete pod "$pod" --ignore-not-found --wait=false --grace-period=1 > /dev/null 2>&1 || true' EXIT
 "${kubectl[@]}" -n "$namespace" apply -f - > /dev/null << YAML
 apiVersion: v1
 kind: Pod
