@@ -140,11 +140,15 @@ class PublishUi(unittest.TestCase):
 
 class ApplyPublishesTheUi(unittest.TestCase):
     def test_the_ui_follows_a_successful_apply(self) -> None:
-        """needs: apply, so a held or failed apply publishes no UI."""
+        """A held or failed apply publishes no UI, and a production apply does publish one.
+
+        start-staging is skipped on main, so the implicit success() of a bare ``needs: apply``
+        skipped every production publish (v0.15.0); ``always()`` lifts it, the result check holds the gate.
+        """
         ui = job("terraform_apply.yml", "ui")
         assert "needs: apply" in ui
         assert "uses: ./.github/workflows/publish_ui.yml" in ui
-        assert not re.search(r"^    if:", ui, re.MULTILINE), "the ui job must not override needs: apply"
+        assert re.search(r"^    if: always\(\) && needs\.apply\.result == 'success'$", ui, re.MULTILINE), ui
         assert permissions(ui) == {"contents": "read", "id-token": "write"}
 
     def test_the_ui_publishes_into_the_applys_environment(self) -> None:

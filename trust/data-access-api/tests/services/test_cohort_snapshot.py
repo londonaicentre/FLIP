@@ -107,6 +107,44 @@ def test_save_never_replaces_a_frozen_membership(store):
     assert [p.name for p in store.iterdir()] == [PROJECT_ID]
 
 
+def test_save_is_write_once_even_when_rename_replaces_the_record(store):
+    """FLIP#1580: on an SPCS stage volume the store is an object-store mount, not a filesystem,
+    and its emulated rename may not refuse to replace a non-empty directory. The post-write
+    read-back is what keeps write-once a property of the service rather than of the mount."""
+    first = _save()
+
+    real_rename = os.rename
+
+    def replacing_rename(src, dst):
+        """A rename that clobbers, the way a permissive FUSE mount might."""
+        if os.path.isdir(dst):
+            for child in os.listdir(dst):
+                os.remove(os.path.join(dst, child))
+            os.rmdir(dst)
+        real_rename(src, dst)
+
+    with patch.object(cohort_snapshot.os, "rename", replacing_rename):
+        with pytest.raises(SnapshotExists):
+            _save(query="SELECT person_id FROM omop.person", person_ids=["9"], accession_ids=None)
+
+    # The approved membership still stands; the clobbering write never ran.
+    assert get_snapshot(PROJECT_ID).query_hash == first.query_hash
+
+
+def test_save_reports_a_store_that_swallows_the_record(store):
+    """A mount where the record is simply not there afterwards fails closed too."""
+    real_rename = os.rename
+
+    def vanishing_rename(src, dst):
+        real_rename(src, dst)
+        for child in os.listdir(dst):
+            os.remove(os.path.join(dst, child))
+
+    with patch.object(cohort_snapshot.os, "rename", vanishing_rename):
+        with pytest.raises(SnapshotExists):
+            _save()
+
+
 def test_save_after_delete_freezes_afresh(store):
     _save()
     delete_snapshot(PROJECT_ID)

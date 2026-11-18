@@ -1,0 +1,359 @@
+{
+  "recordCount": 1097,
+  "trustErrors": {},
+  "trustRecordCounts": {
+    "00000000-0000-4000-8000-00000000a001": 553,
+    "00000000-0000-4000-8000-00000000a002": 544
+  },
+  "trustSuppressed": [],
+  "trustsResults": [
+    {
+      "name": "Age Distribution",
+      "results": [
+        {
+          "data": [
+            {
+              "count": 59,
+              "value": "10-19"
+            },
+            {
+              "count": 61,
+              "value": "20-29"
+            },
+            {
+              "count": 62,
+              "value": "30-39"
+            },
+            {
+              "count": 75,
+              "value": "40-49"
+            },
+            {
+              "count": 77,
+              "value": "50-59"
+            },
+            {
+              "count": 74,
+              "value": "60-69"
+            },
+            {
+              "count": 46,
+              "value": "70-79"
+            },
+            {
+              "count": 44,
+              "value": "80-89"
+            },
+            {
+              "count": 20,
+              "value": "90-99"
+            },
+            {
+              "count": 10,
+              "value": "100-109"
+            },
+            {
+              "count": 21,
+              "value": "110-119"
+            }
+          ],
+          "trustId": "00000000-0000-4000-8000-00000000a001",
+          "trustName": "Guy's and St Thomas' Trust"
+        },
+        {
+          "data": [
+            {
+              "count": 51,
+              "value": "10-19"
+            },
+            {
+              "count": 63,
+              "value": "20-29"
+            },
+            {
+              "count": 82,
+              "value": "30-39"
+            },
+            {
+              "count": 74,
+              "value": "40-49"
+            },
+            {
+              "count": 79,
+              "value": "50-59"
+            },
+            {
+              "count": 67,
+              "value": "60-69"
+            },
+            {
+              "count": 48,
+              "value": "70-79"
+            },
+            {
+              "count": 34,
+              "value": "80-89"
+            },
+            {
+              "count": 13,
+              "value": "90-99"
+            },
+            {
+              "count": 23,
+              "value": "110-119"
+            },
+            {
+              "count": 10,
+              "value": "Other"
+            }
+          ],
+          "trustId": "00000000-0000-4000-8000-00000000a002",
+          "trustName": "King's College Hospital"
+        }
+      ]
+    },
+    {
+      "name": "Counts",
+      "results": [
+        {
+          "data": [
+            {
+              "count": 553,
+              "value": "person\nid"
+            },
+            {
+              "count": 553,
+              "value": "age"
+            },
+            {
+              "count": 553,
+              "value": "is\nfemale"
+            },
+            {
+              "count": 553,
+              "value": "has\nprediabetes"
+            },
+            {
+              "count": 553,
+              "value": "has\nobesity"
+            },
+            {
+              "count": 553,
+              "value": "has\nsevere\nobesity"
+            },
+            {
+              "count": 553,
+              "value": "has\nhypertension"
+            },
+            {
+              "count": 553,
+              "value": "has\nhyperlipidemia"
+            },
+            {
+              "count": 553,
+              "value": "n\nprior\nconditions"
+            },
+            {
+              "count": 553,
+              "value": "n\nprior\nvisits"
+            },
+            {
+              "count": 553,
+              "value": "label\nt2dm"
+            }
+          ],
+          "trustId": "00000000-0000-4000-8000-00000000a001",
+          "trustName": "Guy's and St Thomas' Trust"
+        },
+        {
+          "data": [
+            {
+              "count": 544,
+              "value": "person\nid"
+            },
+            {
+              "count": 544,
+              "value": "age"
+            },
+            {
+              "count": 544,
+              "value": "is\nfemale"
+            },
+            {
+              "count": 544,
+              "value": "has\nprediabetes"
+            },
+            {
+              "count": 544,
+              "value": "has\nobesity"
+            },
+            {
+              "count": 544,
+              "value": "has\nsevere\nobesity"
+            },
+            {
+              "count": 544,
+              "value": "has\nhypertension"
+            },
+            {
+              "count": 544,
+              "value": "has\nhyperlipidemia"
+            },
+            {
+              "count": 544,
+              "value": "n\nprior\nconditions"
+            },
+            {
+              "count": 544,
+              "value": "n\nprior\nvisits"
+            },
+            {
+              "count": 544,
+              "value": "label\nt2dm"
+            }
+          ],
+          "trustId": "00000000-0000-4000-8000-00000000a002",
+          "trustName": "King's College Hospital"
+        }
+      ]
+    },
+    {
+      "name": "Nulls",
+      "results": [
+        {
+          "data": [
+            {
+              "count": 0,
+              "value": "person\nid"
+            },
+            {
+              "count": 0,
+              "value": "age"
+            },
+            {
+              "count": 0,
+              "value": "is\nfemale"
+            },
+            {
+              "count": 0,
+              "value": "has\nprediabetes"
+            },
+            {
+              "count": 0,
+              "value": "has\nobesity"
+            },
+            {
+              "count": 0,
+              "value": "has\nsevere\nobesity"
+            },
+            {
+              "count": 0,
+              "value": "has\nhypertension"
+            },
+            {
+              "count": 0,
+              "value": "has\nhyperlipidemia"
+            },
+            {
+              "count": 0,
+              "value": "n\nprior\nconditions"
+            },
+            {
+              "count": 0,
+              "value": "n\nprior\nvisits"
+            },
+            {
+              "count": 0,
+              "value": "label\nt2dm"
+            }
+          ],
+          "trustId": "00000000-0000-4000-8000-00000000a001",
+          "trustName": "Guy's and St Thomas' Trust"
+        },
+        {
+          "data": [
+            {
+              "count": 0,
+              "value": "person\nid"
+            },
+            {
+              "count": 0,
+              "value": "age"
+            },
+            {
+              "count": 0,
+              "value": "is\nfemale"
+            },
+            {
+              "count": 0,
+              "value": "has\nprediabetes"
+            },
+            {
+              "count": 0,
+              "value": "has\nobesity"
+            },
+            {
+              "count": 0,
+              "value": "has\nsevere\nobesity"
+            },
+            {
+              "count": 0,
+              "value": "has\nhypertension"
+            },
+            {
+              "count": 0,
+              "value": "has\nhyperlipidemia"
+            },
+            {
+              "count": 0,
+              "value": "n\nprior\nconditions"
+            },
+            {
+              "count": 0,
+              "value": "n\nprior\nvisits"
+            },
+            {
+              "count": 0,
+              "value": "label\nt2dm"
+            }
+          ],
+          "trustId": "00000000-0000-4000-8000-00000000a002",
+          "trustName": "King's College Hospital"
+        }
+      ]
+    },
+    {
+      "name": "Sex Distribution",
+      "results": [
+        {
+          "data": [
+            {
+              "count": 279,
+              "value": "M"
+            },
+            {
+              "count": 274,
+              "value": "F"
+            }
+          ],
+          "trustId": "00000000-0000-4000-8000-00000000a001",
+          "trustName": "Guy's and St Thomas' Trust"
+        },
+        {
+          "data": [
+            {
+              "count": 272,
+              "value": "M"
+            },
+            {
+              "count": 272,
+              "value": "F"
+            }
+          ],
+          "trustId": "00000000-0000-4000-8000-00000000a002",
+          "trustName": "King's College Hospital"
+        }
+      ]
+    }
+  ]
+}

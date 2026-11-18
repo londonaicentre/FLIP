@@ -118,4 +118,4 @@ down:
 # (FLIP#1432); /submit_run is UUID-only (flip-api's production model_id path).
 submit:
 	$(DEV_COMPOSE) -p flwr exec -T fl-api \
-		python -c "import urllib.request as u; print(u.urlopen(u.Request('http://localhost:8000/submit_tutorial/$(APP)', method='POST')).read().decode())"
+		python -c "import urllib.request as u; print(u.urlopen(u.Request('http://localhost:8000/submit_tutorial/$(APP)', method='POST', headers={'X-FL-API-Key': '$(FL_API_KEY)'})).read().decode())"

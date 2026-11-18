@@ -18,6 +18,9 @@
 /// <reference types="vite-plugin-pages/client" />
 /// <reference types="vite-plugin-layouts/client" />
 /// <reference types="vite-svg-loader" />
+// highlight.js 10 declares its lib/core and lib/languages/* subpaths as ambient modules in the
+// package's own types, which load only when referenced (tsconfig "types" lists none of them).
+/// <reference types="highlight.js" />
 
 interface Window {
     Cypress: Cypress;

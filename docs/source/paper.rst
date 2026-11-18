@@ -22,7 +22,7 @@ fine-tuning and federated evaluation on chest X-ray cohorts across FLIP nodes in
 
 The guides below reproduce the paper's experiments on your own FLIP deployment:
 
-- :doc:`paper/arkplus-fine-tuning` — the federated Ark+ chest X-ray classification app used in the study.
+- :doc:`paper/arkplus-fine-tuning` — run the federated Ark+ chest X-ray classification app used in the study.
 - :doc:`paper/reproducing-platform-overhead` — how much wall-clock time FLIP's orchestration adds to training,
   compared with running the same app locally.
 

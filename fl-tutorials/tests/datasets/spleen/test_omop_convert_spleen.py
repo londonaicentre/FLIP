@@ -116,7 +116,7 @@ def _write_metadata_csv(path: Path, count: int) -> Path:
 
 
 def test_nhs_number_becomes_a_nine_digit_integer(converter: ModuleType) -> None:
-    assert converter.nhs_number_to_integer("123 456 789") == 123456789
+    assert converter.person_id("123 456 789") == 123456789
 
 
 def test_transform_produces_the_expected_tables(converter: ModuleType, tmp_path: Path) -> None:
@@ -145,7 +145,7 @@ def test_split_writes_one_directory_per_trust_without_the_trust_column(converter
     csv_path = _write_metadata_csv(tmp_path / "dicom_metadata.csv", count=4)
     tables = converter.transform_dicom_metadata_to_omop_tables(str(csv_path))
 
-    converter.split_data_into_trusts_and_copy_dicoms(tables, COPY_DICOM=False)
+    converter.split_data_into_trusts_and_copy_dicoms(tables)
 
     for trust in converter.TRUSTS:
         person_csv = tmp_path / "omop" / trust / converter.PROJECT / "person.csv"

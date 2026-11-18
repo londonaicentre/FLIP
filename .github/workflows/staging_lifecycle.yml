@@ -27,8 +27,8 @@
 #   start-stag-services    the ECS counts, and nothing else.
 #                    terraform_apply.yml uses the two halves rather than
 #                    start-stag, and the order is the point. The RDS wait has to
-#                    finish before the plan, because Terraform refreshes RDS on
-#                    every plan and a stopped instance fails the refresh. The ECS
+#                    finish before the apply, because a stopped RDS instance
+#                    cannot be modified. The ECS
 #                    counts have to stay at 0 until after the FL gate has read the
 #                    plan, because "the FL services are at 0" is exactly what lets
 #                    that gate pass a develop apply without an fl_quiesced

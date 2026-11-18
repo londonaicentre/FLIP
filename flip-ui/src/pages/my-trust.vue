@@ -21,11 +21,11 @@
     <div class="flex flex-col w-full h-full">
         <div class="w-full overflow-y-auto">
             <div class="max-w-[1440px] mx-auto px-8 pt-8 pb-12">
-                <!-- Header — the Models page's spine: mono eyebrow, underlined title, description. -->
+                <!-- Header — the Models page's spine: eyebrow, underlined title, description. -->
                 <header class="mb-6">
                     <p
                         data-test="my-trust-eyebrow"
-                        class="text-[11px] font-mono uppercase tracking-[0.16em] text-gray-500 dark:text-gray-300"
+                        class="text-xs text-gray-500 dark:text-gray-300"
                     >
                         Trust admin · {{ trustAdminOf?.code ?? trustAdminOf?.name }}
                     </p>
@@ -46,10 +46,10 @@
                         <section>
                             <h2
                                 data-test="pending-heading"
-                                class="flex items-baseline gap-2.5 mb-3 text-lg font-bold text-gray-900 font-heading dark:text-gray-100"
+                                class="flex items-baseline gap-2.5 mb-3 text-lg font-bold text-gray-900 dark:text-gray-100"
                             >
                                 Awaiting your decision
-                                <span data-test="pending-count" class="font-medium text-gray-400 dark:text-gray-300">{{ pending.length }}</span>
+                                <span data-test="pending-count" class="font-medium text-gray-500 dark:text-gray-300">{{ pending.length }}</span>
                             </h2>
                             <div
                                 v-if="decisionsError"
@@ -74,7 +74,7 @@
                                 <p class="text-sm font-semibold text-gray-700 dark:text-gray-100">
                                     There are no requests awaiting your decision
                                 </p>
-                                <p class="text-[13px] text-gray-500 dark:text-gray-300">
+                                <p class="text-note text-gray-500 dark:text-gray-300">
                                     New project requests for this Trust will appear here.
                                 </p>
                             </div>
@@ -90,9 +90,9 @@
                         </section>
 
                         <section>
-                            <h2 class="flex items-baseline gap-2.5 mb-3 text-lg font-bold text-gray-900 font-heading dark:text-gray-100">
+                            <h2 class="flex items-baseline gap-2.5 mb-3 text-lg font-bold text-gray-900 dark:text-gray-100">
                                 Decided
-                                <span data-test="decided-count" class="font-medium text-gray-400 dark:text-gray-300">{{ decided.length }}</span>
+                                <span data-test="decided-count" class="font-medium text-gray-500 dark:text-gray-300">{{ decided.length }}</span>
                             </h2>
                             <p
                                 v-if="decisions && !decided.length"
@@ -152,6 +152,7 @@ import { computed, onBeforeMount, ref } from "vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
+import { useHubVersion, useTrustStatuses } from "@/composables/useTrustPolls";
 import TrustDetailCard from "@/partials/connection/TrustDetailCard.vue";
 import TrustAutoUpgradeCard from "@/partials/trusts/TrustAutoUpgradeCard.vue";
 import TrustDecisionsTable from "@/partials/trusts/TrustDecisionsTable.vue";
@@ -160,14 +161,10 @@ import { routeChange } from "@/router";
 import { approveProject } from "@/services/project-service";
 import {     clearAutoUpgradeFailure,
     getAutoUpgrade,
-    getHubHealth,
     getTrustDecisions,
-    getTrustStatuses,
     IAutoUpgrade,
     IAutoUpgradeSettings,
-    IHubHealth,
     ITrustDecision,
-    ITrustResponse,
     updateAutoUpgrade } from "@/services/trust-service";
 import { useAuthStore } from "@/store/auth";
 import { extractErrorDetail } from "@/utils/api-errors";
@@ -182,17 +179,8 @@ onBeforeMount(() => {
 });
 
 // Same key and cadence as Connection Status, so the two pages share one poll.
-const { data: trusts } = useSWRV<ITrustResponse[]>("trust-connection-status", getTrustStatuses, {
-    dedupingInterval: 5_000,
-    shouldRetryOnError: false,
-    refreshInterval: 15_000
-});
-const { data: hubHealth } = useSWRV<IHubHealth>("hub-health", getHubHealth, {
-    dedupingInterval: 30_000,
-    shouldRetryOnError: false,
-    refreshInterval: 60_000
-});
-const hubVersion = computed<string | null>(() => hubHealth.value?.version ?? null);
+const { data: trusts } = useTrustStatuses();
+const hubVersion = useHubVersion();
 
 const derivedTrust = computed(() => {
     const trust = (trusts.value ?? []).find(t => t.id === trustAdminOf.value?.id);

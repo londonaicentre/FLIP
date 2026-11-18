@@ -11,22 +11,7 @@
 #
 
 from nvflare.apis.fl_component import FLComponent
-from nvflare.apis.fl_context import FLContext
 
 
 class ClientEventHandler(FLComponent):
-    """ClientEventHandler is a generic component that handles system events triggered by nvflare
-    or custom flip events. It executes logic inside its own event handler but may also call
-    other component's event handlers directly to help overcome the non-deterministic order
-    in which nvflare handles events.
-
-    Args:
-
-    Raises:
-    """
-
-    def __init__(self) -> None:
-        super(ClientEventHandler, self).__init__()
-
-    def handle_event(self, event_type: str, fl_ctx: FLContext) -> None:
-        pass
+    """No-op client component, kept so job configs that list it still load."""

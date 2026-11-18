@@ -42,39 +42,21 @@ describe("routeChange", () => {
         backSpy = vi.spyOn(router, "back").mockImplementation(() => undefined);
     });
 
-    it("gotoLogin pushes /auth/login", () => {
-        routeChange.gotoLogin();
-        expect(pushSpy).toHaveBeenCalledWith({ path: "/auth/login" });
-    });
-
-    it("viewProjects pushes /projects", () => {
-        routeChange.viewProjects();
-        expect(pushSpy).toHaveBeenCalledWith({ path: "/projects" });
-    });
-
-    it("viewProject pushes /project/:id", () => {
-        routeChange.viewProject("proj-1");
-        expect(pushSpy).toHaveBeenCalledWith({ path: "/project/proj-1" });
-    });
-
-    it("viewModel pushes /project/:pid/model/:mid", () => {
-        routeChange.viewModel("proj-3", "mdl-7");
-        expect(pushSpy).toHaveBeenCalledWith({ path: "/project/proj-3/model/mdl-7" });
-    });
-
-    it("addCohortQuery pushes /project/:id/cohort-query/create", () => {
-        routeChange.addCohortQuery("proj-4");
-        expect(pushSpy).toHaveBeenCalledWith({ path: "/project/proj-4/cohort-query/create" });
-    });
-
-    it("editCohortQuery pushes /project/:id/cohort-query/edit", () => {
-        routeChange.editCohortQuery("proj-5");
-        expect(pushSpy).toHaveBeenCalledWith({ path: "/project/proj-5/cohort-query/edit" });
-    });
-
-    it("notAllowed pushes /403", () => {
-        routeChange.notAllowed();
-        expect(pushSpy).toHaveBeenCalledWith({ path: "/403" });
+    it.each([
+        ["gotoLogin", [], "/auth/login"],
+        ["viewProjects", [], "/projects"],
+        ["viewProject", ["proj-1"], "/project/proj-1"],
+        ["viewModel", ["proj-3", "mdl-7"], "/project/proj-3/model/mdl-7"],
+        ["addCohortQuery", ["proj-4"], "/project/proj-4/cohort-query/create"],
+        ["editCohortQuery", ["proj-5"], "/project/proj-5/cohort-query/edit"],
+        ["notAllowed", [], "/403"],
+        ["newPassword", [], "/auth/new-password"],
+        ["mfaSetup", [], "/auth/mfa-setup"],
+        ["mfaVerify", [], "/auth/mfa-verify"],
+        ["accessRequest", [], "/auth/access-request"]
+    ] as const)("%s(%j) pushes %s", (fn, args, path) => {
+        (routeChange[fn] as (...a: string[]) => void)(...args);
+        expect(pushSpy).toHaveBeenCalledWith({ path });
     });
 
     it("changePassword pushes /auth/change-password with email param", () => {
@@ -84,26 +66,6 @@ describe("routeChange", () => {
             name: "ChangePassword",
             params: { email: "a@b.com" }
         });
-    });
-
-    it("newPassword pushes /auth/new-password", () => {
-        routeChange.newPassword();
-        expect(pushSpy).toHaveBeenCalledWith({ path: "/auth/new-password" });
-    });
-
-    it("mfaSetup pushes /auth/mfa-setup", () => {
-        routeChange.mfaSetup();
-        expect(pushSpy).toHaveBeenCalledWith({ path: "/auth/mfa-setup" });
-    });
-
-    it("mfaVerify pushes /auth/mfa-verify", () => {
-        routeChange.mfaVerify();
-        expect(pushSpy).toHaveBeenCalledWith({ path: "/auth/mfa-verify" });
-    });
-
-    it("accessRequest pushes /auth/access-request", () => {
-        routeChange.accessRequest();
-        expect(pushSpy).toHaveBeenCalledWith({ path: "/auth/access-request" });
     });
 
     it("back calls router.back()", () => {

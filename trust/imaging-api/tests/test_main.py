@@ -10,14 +10,43 @@
 # limitations under the License.
 #
 
-"""Tests for imaging_api.main app construction (currently: docs gating)."""
+"""Tests for imaging_api.main app construction (docs gating, the lifespan's cache sweeper)."""
 
+import asyncio
 import importlib
+import threading
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
 from imaging_api import config, main
+
+
+class TestLifespan:
+    """The lifespan runs the image-cache sweeper (FLIP#1050) unless the TTL is 0."""
+
+    def test_sweeper_runs_for_the_app_lifetime(self, monkeypatch):
+        started = threading.Event()
+
+        async def fake_sweeper():
+            started.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(main, "run_sweeper", fake_sweeper)
+        with TestClient(main.app):
+            assert started.wait(timeout=5)
+
+    def test_a_zero_ttl_turns_the_sweeper_off(self, monkeypatch):
+        started = threading.Event()
+
+        async def fake_sweeper():
+            started.set()
+
+        monkeypatch.setattr(main, "run_sweeper", fake_sweeper)
+        monkeypatch.setattr(config.get_settings(), "IMAGE_CACHE_RETENTION_HOURS", 0)
+        with TestClient(main.app):
+            pass
+        assert not started.is_set()
 
 
 class TestDocsGating:

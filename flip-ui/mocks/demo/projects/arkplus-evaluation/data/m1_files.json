@@ -1,0 +1,72 @@
+[
+  {
+    "id": "89c1f4b3-c58f-81e7-b4f6-ad9be05b3a02",
+    "name": "arkplus_flat_models.py",
+    "size": 3285,
+    "type": "application/octet-stream",
+    "status": "COMPLETED",
+    "modelId": "95c466ac-7680-8b1c-acda-d0a2a7913dc9",
+    "created": null,
+    "modified": null
+  },
+  {
+    "id": "757405c3-fcfa-8c59-9447-ba9f243002b2",
+    "name": "config.json",
+    "size": 961,
+    "type": "application/json",
+    "status": "COMPLETED",
+    "modelId": "95c466ac-7680-8b1c-acda-d0a2a7913dc9",
+    "created": null,
+    "modified": null
+  },
+  {
+    "id": "44bfff93-6daf-8536-9b22-1ccfcf58a1fb",
+    "name": "data_utils.py",
+    "size": 15460,
+    "type": "application/octet-stream",
+    "status": "COMPLETED",
+    "modelId": "95c466ac-7680-8b1c-acda-d0a2a7913dc9",
+    "created": null,
+    "modified": null
+  },
+  {
+    "id": "f52bde23-cd15-855e-817a-ac79febcfc59",
+    "name": "evaluator.py",
+    "size": 10725,
+    "type": "application/octet-stream",
+    "status": "COMPLETED",
+    "modelId": "95c466ac-7680-8b1c-acda-d0a2a7913dc9",
+    "created": null,
+    "modified": null
+  },
+  {
+    "id": "1a2200fd-7826-8d16-8d9a-729c8a93e2a7",
+    "name": "metrics_utils.py",
+    "size": 3611,
+    "type": "application/octet-stream",
+    "status": "COMPLETED",
+    "modelId": "95c466ac-7680-8b1c-acda-d0a2a7913dc9",
+    "created": null,
+    "modified": null
+  },
+  {
+    "id": "be3bb56a-9aee-8d25-8c9b-669ddf891944",
+    "name": "models.py",
+    "size": 4379,
+    "type": "application/octet-stream",
+    "status": "COMPLETED",
+    "modelId": "95c466ac-7680-8b1c-acda-d0a2a7913dc9",
+    "created": null,
+    "modified": null
+  },
+  {
+    "id": "6aa5180b-8cd5-812f-8e1b-562739904f02",
+    "name": "arkplus_pretrained_weights.pt",
+    "size": 795823544,
+    "type": "application/octet-stream",
+    "status": "COMPLETED",
+    "modelId": "95c466ac-7680-8b1c-acda-d0a2a7913dc9",
+    "created": null,
+    "modified": null
+  }
+]

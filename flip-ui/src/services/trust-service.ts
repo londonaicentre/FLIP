@@ -50,21 +50,9 @@ export interface ITrustResponse {
 // "no trusts available" by disabling submit), and throwing would bubble up to a
 // generic SWRV error overlay with no recovery path.
 export async function getTrusts(): Promise<ITrustResponse[]> {
-    try {
-        const response = await _http.get<ITrustResponse[]>("/trust");
-
-        return Array.isArray(response.data) ? response.data : [];
-
-    } catch {
-        return [];
-    }
+    return getTrustStatuses().catch(() => []);
 }
 
-// Connection-status view over the same GET /trust endpoint. Readable by any
-// authenticated user (Researcher / Viewer / Admin). Errors are intentionally
-// NOT swallowed: a rejection lets SWRV keep the page's loader rather than
-// rendering a misleading empty federation. Creating a trust stays admin-only
-// (see createAdminTrust in admin-trusts-service).
 /** A trust's latest cohort-query answer for a project, as its Trust Admin sees it (FLIP#1258). */
 export interface ITrustCohortCount {
     recordCount: number | null;
@@ -97,6 +85,11 @@ export async function getTrustDecisions(trustId: string): Promise<ITrustDecision
     return Array.isArray(response.data) ? response.data : [];
 }
 
+// Connection-status view over the same GET /trust endpoint. Readable by any
+// authenticated user (Researcher / Viewer / Admin). Errors are intentionally
+// NOT swallowed: a rejection lets SWRV keep the page's loader rather than
+// rendering a misleading empty federation. Creating a trust stays admin-only
+// (see createAdminTrust in admin-trusts-service).
 export async function getTrustStatuses(): Promise<ITrustResponse[]> {
     const response = await _http.get<ITrustResponse[]>("/trust");
 

@@ -15,7 +15,7 @@
 
 Everything FLIP's Terraform CI needs to exist in an AWS account before it can run: the GitHub OIDC **plan role**
 (read-only) and **apply role**, the **permissions boundary** that caps every role an apply creates, and, optionally,
-the **Terraform state bucket**. FLIP#962 introduced the roles; FLIP#1199 moved their ownership here.
+the **Terraform state bucket**. (History: the roles were introduced in FLIP#962 and moved into this module in FLIP#1199.)
 
 > [!IMPORTANT]
 > **This is a published interface, not a private module of the FLIP root.** It is instantiated by a platform
@@ -27,15 +27,18 @@ the **Terraform state bucket**. FLIP#962 introduced the roles; FLIP#1199 moved t
 
 ## Why it lives outside the FLIP root
 
-The boundary is the ceiling on FLIP's own pipeline. Defined in the repository whose pipeline it caps, and applied by
-that pipeline, anyone who can merge to FLIP could raise it. Instantiated by a platform repository, a FLIP merge can
+The boundary is the ceiling on FLIP's own pipeline. If it were defined in FLIP and applied by FLIP's pipeline,
+anyone who can merge to FLIP could raise it. Instantiated by a platform repository, a FLIP merge can
 only *propose* a change: nothing reaches an AI Centre account until the platform repository bumps the pinned SHA and
 its reviewers approve the resulting plan.
 
 ## Using it
 
-Pin a **full commit SHA**, through the GitHub archive URL. FLIP has no tag ruleset, so tags can move; and a SHA-pinned
-`git::` source clones the whole repository on every `terraform init`, while the archive is the tree at that commit.
+Pin a **full commit SHA**, through the GitHub archive URL:
+
+- not a tag: FLIP has no tag ruleset, so tags can move;
+- not a `git::` source: a SHA-pinned `git::` source clones the whole repository on every `terraform init`, while the
+  archive is just the tree at that commit.
 
 ```hcl
 module "flip_stag_terraform_ci" {
@@ -84,11 +87,12 @@ Least privilege, with each grant explained where it is declared:
 - **Apply role** ([`iam_apply.tf`](iam_apply.tf)): no managed policy. `<service>:*` for the AWS services the FLIP root
   uses (`apply_service_prefixes`), in the account's region and `us-east-1` only; IAM write only on the FLIP root's
   roles and instance profiles, by name (`managed_role_names`, `managed_instance_profile_names`), under the boundary and
-  a three-policy attach allowlist; Denies on the CI roles and the boundary; the state object and its lock.
+  a managed-policy attach allowlist (`attachable_managed_policies`); Denies on the CI roles and the boundary; the state
+  object and its lock.
 - **UI-publish role** ([`iam_ui_publish.tf`](iam_ui_publish.tf), FLIP#1186): created only when `ui_bucket_name` is
   set. Trusts the reusable `publish_ui.yml` at `apply_branch` (a reusable workflow's jobs present the called file as
   `job_workflow_ref`). `s3:ListBucket` on the UI bucket, `Get`/`Put`/`DeleteObject` on its objects, a Deny on writes
-  and deletes under `ark_demo/*`, and nothing else. Its ARN, the `ui_publish_role_arn` output, goes in the environment
+  and deletes under `demo/*` (the public demo, FLIP#1746), and nothing else. Its ARN, the `ui_publish_role_arn` output, goes in the environment
   variable `TF_UI_PUBLISH_ROLE_ARN`.
 - **Boundary** ([`boundary.tf`](boundary.tf)): allow everything, deny identity management, Organizations and Account.
 
@@ -107,11 +111,22 @@ types need, so the list can neither fall behind the root nor keep a service it n
 
 ## The state bucket
 
-With `manage_state_bucket = true` (the default) the module declares the bucket and its versioning, public-access
-block, encryption (`AES256`, or `aws:kms` with the AWS-managed key), lifecycle (the newest
-`state_noncurrent_versions_retained` previous versions, each for `state_noncurrent_version_days`) and a TLS-only
-bucket policy. `prevent_destroy` protects it; removing a caller's module block needs
+With `manage_state_bucket = true` (the default) the module declares the bucket and:
+
+- versioning;
+- a public-access block;
+- encryption (`AES256`, or `aws:kms` with the AWS-managed key);
+- a lifecycle keeping the newest `state_noncurrent_versions_retained` previous versions, each for
+  `state_noncurrent_version_days`;
+- a TLS-only bucket policy.
+
+`prevent_destroy` protects the bucket; removing a caller's module block needs
 `removed { from = … lifecycle { destroy = false } }`.
+
+`state_access_log_bucket` (empty by default, so off) turns on S3 server access logging (Security Hub S3.9) into a bucket
+in the same account and region, under a `<state_bucket_name>/` prefix. On an AWS Landing Zone Accelerator estate name
+the accelerator's `aws-accelerator-s3-access-logs-<account>-<region>`, whose bucket policy accepts deliveries from any
+bucket in the account. Do not use the FLIP root's `flip-access-logs-*` bucket: its Terraform state is stored in this state bucket.
 
 `restrict_state_writes` (off by default) adds a Deny on state-object writes for every principal except the apply role
 and `state_writer_principal_arns`. Staging typically lists the engineers' SSO role there so laptop applies used to test
@@ -122,9 +137,14 @@ a branch keep working; production lists a break-glass role only. SSO patterns ne
 
 The resource addresses are the ones [`../../ci`](../../ci) used (the boundary now at `aws_iam_policy.apply_boundary[0]`),
 so existing roles, policies and buckets import with plain `import` blocks. Three differences from a bootstrap made by an
-older `ci/` are expected: the apply role's `PowerUserAccess` attachment is removed in favour of the `apply_services`
-allowlist, `flip-terraform-apply-iam` scopes its role-writing verbs to the named roles, and the plan role gains
-`deny-data-reads`. Beyond those, a correct import plan shows **no change** to any
+older `ci/` are expected:
+
+- the apply role's `PowerUserAccess` attachment is removed in favour of the `apply_services` inline policy, the
+  allowlist built from `apply_service_prefixes`;
+- `flip-terraform-apply-iam` scopes its role-writing verbs to the named roles;
+- the plan role gains `deny-data-reads`.
+
+Beyond those, a correct import plan shows **no change** to any
 role, inline policy, attachment or the boundary — only bucket-side additions (tags, lifecycle, the bucket policy) and
 whatever `default_tags` the caller's provider stamps. Anything else touching a trust policy, a permission policy or a
 description means the module and the live objects disagree: stop and find out why.

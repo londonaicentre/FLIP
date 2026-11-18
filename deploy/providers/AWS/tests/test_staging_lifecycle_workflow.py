@@ -119,10 +119,18 @@ def test_the_nightly_guard_stands_down_when_work_is_in_flight() -> None:
 @pytest.mark.parametrize(
     ("path", "job_names"),
     [
-        (APPLY, ["start-staging", "restore-staging-services", "staging-end-to-end", "hold-then-stop-staging"]),
-        (DRIFT, ["staging-state"]),
+        (
+            APPLY,
+            [
+                "supersede-hold",
+                "start-staging",
+                "restore-staging-services",
+                "staging-end-to-end",
+                "hold-then-stop-staging",
+            ],
+        ),
     ],
-    ids=["terraform_apply.yml", "terraform_drift.yml"],
+    ids=["terraform_apply.yml"],
 )
 def test_staging_only_jobs_refuse_main(path: Path, job_names: list[str]) -> None:
     jobs = _jobs(path)
@@ -141,21 +149,16 @@ def test_the_apply_still_runs_on_main_when_the_staging_start_is_skipped() -> Non
         "dependency silently skips every production apply"
     )
     assert "needs.start-staging.result != 'failure'" in condition, (
-        "an apply must not plan against a database that failed to start: the refresh error reads as "
+        "an apply must not run against a database that failed to start: the modify error reads as "
         "a broken pipeline rather than a sleeping instance"
     )
 
 
-def test_drift_still_runs_on_main_when_the_staging_probe_is_skipped() -> None:
-    condition = _jobs(DRIFT)["drift"]["if"]
-    assert "always()" in condition
-    assert "needs.staging-state.outputs.stopped != 'true'" in condition, (
-        "the nightly drift run must stand down on a stopped staging estate, or it reports the "
-        "intended state as drift every night"
-    )
-    assert "needs.staging-state.result != 'failure'" in condition, (
-        "not being able to tell whether staging is stopped is not a licence to plan it"
-    )
+def test_drift_plans_staging_whether_or_not_it_is_stopped() -> None:
+    """A stopped RDS refreshes fine, so a stand-down would only leave staging drift unchecked most nights."""
+    drift = _jobs(DRIFT)["drift"]
+    assert "needs" not in drift, "the drift job must not wait on a 'is staging stopped?' probe"
+    assert "stopped" not in drift["if"]
 
 
 def test_the_fl_gate_is_released_by_a_measurement_not_a_literal() -> None:
@@ -194,13 +197,26 @@ def test_the_end_to_end_check_can_fail_the_job() -> None:
 
 
 def test_an_apply_cancels_a_sleeping_hold() -> None:
-    """Otherwise a merge during a hold queues behind the whole window and then its stop."""
-    start = _jobs(APPLY)["start-staging"]
-    assert start["concurrency"] == {"group": "stag-hold", "cancel-in-progress": True}, (
+    """A newer deploy replaces the window, from a no-op job so a hold dispatch cannot cancel the start."""
+    jobs = _jobs(APPLY)
+    assert jobs["supersede-hold"]["concurrency"] == {"group": "stag-hold", "cancel-in-progress": True}, (
         "the apply must claim the hold's concurrency group so a newer deploy replaces the window"
+    )
+    assert "concurrency" not in jobs["start-staging"], (
+        "a hold-then-stop dispatched while start-staging waits on RDS would cancel it, and the apply with it"
     )
     hold = _jobs(LIFECYCLE)["hold"]
     assert hold["concurrency"]["group"] == "stag-hold", "both sides have to name the same group"
+
+
+def test_the_hold_runs_outside_the_apply_run() -> None:
+    """The tf-apply-<ref> group holds a run until its last job: a called hold queued the next merge behind it."""
+    stop = _jobs(APPLY)["hold-then-stop-staging"]
+    assert "uses" not in stop, "the hold must be dispatched as its own run, not called as a reusable workflow"
+    assert stop["permissions"] == {"actions": "write"}
+    run = " ".join(step.get("run", "") for step in stop["steps"])
+    assert "gh workflow run staging_lifecycle.yml" in run
+    assert "action=hold-then-stop" in run
 
 
 def test_the_staging_apply_role_trusts_the_power_workflow() -> None:

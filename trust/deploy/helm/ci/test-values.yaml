@@ -59,10 +59,9 @@ orthanc:
 
 omopDb:
   # Belt and braces: the chart already skips the vocab-load hook when
-  # vocabLoad.s3Bucket is empty (the default), so CI installs vocab-less without
-  # this. Pinned off so a future default bucket can never make CI reach for org
-  # credentials — the licensed bundle is neither available nor licence-appropriate
-  # in CI.
+  # vocabLoad.hostPath is empty (the default), so CI installs vocab-less without
+  # this. Pinned off because the licensed bundle is neither available nor
+  # licence-appropriate in CI.
   vocabLoad:
     enabled: false
   persistence:

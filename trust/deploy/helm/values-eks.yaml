@@ -20,8 +20,8 @@ omopDb:
     # A fresh EBS volume has lost+found at its root, which initdb refuses.
     pgdataSubdir: pgdata
   vocabLoad:
-    # The vocabulary sits in the hub's bucket, which a node in the site's account cannot read; the
-    # site loads its own licensed copy. Off, the NetworkPolicy also keeps 169.254.169.254 closed.
+    # The load reads a bundle staged onto the node, and a managed node group replaces nodes at
+    # will. Off here; the site loads its own licensed copy by hand (chart README).
     enabled: false
 
 xnat:

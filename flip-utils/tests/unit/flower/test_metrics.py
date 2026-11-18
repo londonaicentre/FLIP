@@ -20,6 +20,8 @@ than importing ``flwr``.
 
 from unittest.mock import Mock
 
+import pytest
+
 from flip.constants.flip_constants import ModelStatus
 from flip.flower.metrics import handle_client_exception, handle_client_metrics
 
@@ -60,24 +62,19 @@ def _build_message(
 
 
 class TestHandleClientMetrics:
-    def test_errored_message_is_noop(self):
-        msg = _build_message(metrics={"loss": 0.5}, site="Trust_1", has_error=True)
-        flip = Mock()
-
-        handle_client_metrics(msg, server_round=1, model_id=VALID_MODEL_ID, flip=flip)
-
-        flip.send_metrics.assert_not_called()
-
-    def test_missing_metrics_is_noop(self):
-        msg = _build_message(metrics=None, site="Trust_1")
-        flip = Mock()
-
-        handle_client_metrics(msg, server_round=1, model_id=VALID_MODEL_ID, flip=flip)
-
-        flip.send_metrics.assert_not_called()
-
-    def test_empty_metrics_is_noop(self):
-        msg = _build_message(metrics={}, site="Trust_1")
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            pytest.param({"metrics": {"loss": 0.5}, "site": "Trust_1", "has_error": True}, id="errored"),
+            pytest.param({"metrics": None, "site": "Trust_1"}, id="no-metrics"),
+            pytest.param({"metrics": {}, "site": "Trust_1"}, id="empty-metrics"),
+            # No site: the hub cannot attribute the metric to a trust. These used to be sent under a
+            # fabricated unknown_<node_id>, which the hub rejected with a 400 on every metric of every round.
+            pytest.param({"metrics": {"loss": 0.1}, "site": None, "src_node_id": 7}, id="no-site"),
+        ],
+    )
+    def test_nothing_is_forwarded(self, kwargs):
+        msg = _build_message(**kwargs)
         flip = Mock()
 
         handle_client_metrics(msg, server_round=1, model_id=VALID_MODEL_ID, flip=flip)
@@ -110,21 +107,16 @@ class TestHandleClientMetrics:
             x_label=None,
         )
 
-    def test_skips_bookkeeping_keys(self):
-        msg = _build_message(
-            metrics={"num-examples": 1024, "num-iterations": 50, "loss": 0.1},
-            site="Trust_1",
-        )
-        flip = Mock()
-
-        handle_client_metrics(msg, server_round=1, model_id=VALID_MODEL_ID, flip=flip)
-
-        assert flip.send_metrics.call_count == 1
-        ((_, kwargs),) = flip.send_metrics.call_args_list
-        assert kwargs["label"] == "LOSS"
-
-    def test_skips_non_numeric_metrics(self):
-        msg = _build_message(metrics={"note": "skip me", "loss": 0.1}, site="Trust_1")
+    @pytest.mark.parametrize(
+        "metrics",
+        [
+            {"num-examples": 1024, "num-iterations": 50, "loss": 0.1},
+            {"note": "skip me", "loss": 0.1},
+        ],
+        ids=["bookkeeping", "non-numeric"],
+    )
+    def test_skips_non_forwarded_keys(self, metrics):
+        msg = _build_message(metrics=metrics, site="Trust_1")
         flip = Mock()
 
         handle_client_metrics(msg, server_round=1, model_id=VALID_MODEL_ID, flip=flip)
@@ -203,19 +195,6 @@ class TestHandleClientMetrics:
             x_value=2.5,
             x_label="epoch",
         )
-
-    def test_metrics_without_a_site_are_dropped(self):
-        """The hub cannot attribute a metric to a trust without a site name.
-
-        Previously these were sent under a fabricated ``unknown_<node_id>``, which
-        the hub rejected with a 400 on every metric of every round.
-        """
-        msg = _build_message(metrics={"loss": 0.1}, site=None, src_node_id=7)
-        flip = Mock()
-
-        handle_client_metrics(msg, server_round=1, model_id=VALID_MODEL_ID, flip=flip)
-
-        flip.send_metrics.assert_not_called()
 
     def test_accepts_client_name_config_key_as_site_fallback(self):
         msg = _build_message(metrics={"loss": 0.1}, client_name="Trust_5")

@@ -107,6 +107,8 @@ class IStartTrainingBody(BaseModel):
     # The run's GPU override, if the researcher set one at submission (FLIP#70). None leaves the
     # job's own meta.json resource_spec, or the fl-api default, in force.
     resources: IJobResources | None = None
+    # What the job's FL server must present on its callbacks about this model (auth/job_callback.py).
+    job_credential: str = Field(repr=False)
 
 
 class ISchedulerResponse(BaseModel):

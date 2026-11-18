@@ -22,6 +22,8 @@ see this wiring, so the invariants are asserted over the ``.tf`` source:
 
 * the internal NLB carries a ``web-listener`` on ``var.ALB_HTTPS_PORT`` forwarding
   to the flip-api target group, which is TCP and health-checked on ``/api/health``;
+* that listener is TLS (FLIP#1797), with a policy that keeps TLS 1.2 and, without a
+  zone, the certificate the platform issues into the account;
 * the flip-api ECS service registers with that target group;
 * no ALB module or listener rule comes back;
 * the SSM handoff no longer publishes an ALB DNS name (the networking relay must
@@ -47,8 +49,30 @@ def test_internal_nlb_has_web_listener_on_https_port():
     nlb = strip_comments(hcl_block(FL_INGRESS_LZA_TF, 'module "fl_server_internal_nlb"'))
     listener = hcl_block(nlb, '"web-listener"')
     assert re.search(r"port\s*=\s*var\.ALB_HTTPS_PORT", listener)
-    assert re.search(r'protocol\s*=\s*var\.manage_dns \? "TLS" : "TCP"', listener)
     assert EXPECTED_ECS_TARGET_GROUP in listener
+
+
+def test_web_listener_is_tls_whatever_manage_dns_says():
+    """manage_dns stays false on LZA, so it must not decide the protocol (FLIP#1797)."""
+    nlb = strip_comments(hcl_block(FL_INGRESS_LZA_TF, 'module "fl_server_internal_nlb"'))
+    listener = hcl_block(nlb, '"web-listener"')
+    assert re.search(r'protocol\s*=\s*"TLS"', listener)
+    assert re.search(r"certificate_arn\s*=\s*local\.web_listener_certificate_arn", listener)
+    # The edge's VPC origin offers TLS 1.2, so a TLS 1.3-only policy would fail every handshake.
+    assert re.search(r'ssl_policy\s*=\s*"ELBSecurityPolicy-TLS13-1-2-[^"]+"', listener)
+
+
+def test_web_listener_certificate_is_looked_up_only_without_a_zone():
+    """On LZA the platform issues the certificate; with a zone this stack issues its own."""
+    lookup = strip_comments(hcl_block(FL_INGRESS_LZA_TF, 'data "aws_acm_certificate" "web_listener"'))
+    assert re.search(r"count\s*=\s*var\.manage_dns \? 0 : 1", lookup)
+    assert re.search(r"domain\s*=\s*var\.flip_alb_subdomain", lookup)
+    assert re.search(r'statuses\s*=\s*\["ISSUED"\]', lookup)
+    assert re.search(
+        r"web_listener_certificate_arn\s*=\s*var\.manage_dns \? one\(aws_acm_certificate\.flip\[\*\]\.arn\)"
+        r" : one\(data\.aws_acm_certificate\.web_listener\[\*\]\.arn\)",
+        FL_INGRESS_LZA_TF,
+    )
 
 
 def test_flip_api_target_group_is_tcp_with_http_health_check():

@@ -1,5 +1,6 @@
 {
     "name": "Socket proxy",
+    "backend": "swarm",
     "host": "tcp://xnat-socket-proxy:2375",
     "cert-path": "",
     "swarm-mode": true,
@@ -7,5 +8,6 @@
     "path-translation-docker-prefix": "${DATA_PATH}",
     "pull-images-on-xnat-init": true,
     "container-user": "",
-    "auto-cleanup": true
+    "auto-cleanup": true,
+    "build-dir-cleanup-enabled": true
 }

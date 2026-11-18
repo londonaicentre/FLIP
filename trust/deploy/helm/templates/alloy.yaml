@@ -69,7 +69,7 @@ spec:
       serviceAccountName: {{ include "flip-trust.fullname" . }}-alloy
       containers:
         - name: alloy
-          image: "{{ .Values.observability.alloy.image.repository }}:{{ .Values.observability.alloy.image.tag }}"
+          image: "{{ .Values.observability.alloy.image.repository }}:{{ .Values.observability.alloy.image.tag }}{{ with .Values.observability.alloy.image.digest }}@{{ . }}{{ end }}"
           imagePullPolicy: {{ .Values.observability.alloy.image.pullPolicy }}
           args:
             - run
