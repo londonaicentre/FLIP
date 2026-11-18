@@ -251,7 +251,9 @@ or ``helm upgrade`` of the chart, which still runs ``xnat-init`` as a hook, repo
 ``resource Job/flip-trust/trust-release-flip-trust-xnat-init not ready``.
 
 **Cause.** The ``xnat-init`` job, which configures XNAT after each install or upgrade, ran longer than the wait
-budget. The release is already applied and rolled out by then; only XNAT's configuration step is unfinished.
+budget, or failed. The release is already applied and rolled out by then; only XNAT's configuration step is
+unfinished. A job that fails ends the wait at once and its log follows the message; see the next entry for the most
+common failure on a cluster you run yourself.
 
 **Fix.** Time one run of the job, then deploy with a larger budget (the default is ``30m``):
 
@@ -263,6 +265,33 @@ budget. The release is already applied and rolled out by then; only XNAT's confi
 If the job is wedged rather than slow, run ``make -C trust/deploy/helm xnat-init`` on its own, where its logs are
 easy to read; the release does not need deploying again. "The wait budget" under Step 4
 of :doc:`../deploy-flip/deploy-flip-node-kubernetes` explains the setting.
+
+.. _ts-k8s-api-server-egress:
+
+``xnat-init`` fails: ``Container Service cannot reach its kubernetes backend (HTTP 500)``
+==========================================================================================
+
+**Symptom.** The ``xnat-init`` job log ends with ``Pinging the kubernetes backend...`` and then this error, and the
+job retries until its ``backoffLimit``. On a trust with NVFLARE job pods, no job pod is ever created either.
+
+**Cause.** XNAT's Container Service starts its conversion jobs through the Kubernetes API, from ``xnat-web``, and
+NetworkPolicy matches the API server's real endpoint, not the ``kubernetes`` Service's 443. On k3s (which enforces
+NetworkPolicy out of the box) and kind the API server listens on 6443, minikube on 8443, which the chart's egress
+does not allow.
+
+**Fix.** Name the endpoint in ``networkPolicies.apiServer`` and deploy again:
+
+.. code-block:: shell
+
+   kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes \
+     -o jsonpath='{.items[0].endpoints[0].addresses} {.items[0].ports[0].port}'
+
+.. code-block:: yaml
+
+   networkPolicies:
+     apiServer:
+       cidrs: ["<address>/32"]
+       port: <port>
 
 ****************************
 DICOM import into XNAT
@@ -801,6 +830,23 @@ If you manage the values by hand, add the port to ``networkPolicies.allowedEgres
 
    "FL client won't connect" in the :gh:`chart README <trust/deploy/helm/README.md>` for the kit path, kit owner
    and GPU checks.
+
+.. _ts-k8s-job-pods-no-study:
+
+Job pods on: a project's jobs never start at this trust
+=======================================================
+
+**Symptom.** With ``flClient.nvflare.jobPods.enabled``, a newly approved project's training waits at this trust and
+no job pod appears, while other projects' jobs run.
+
+**Cause.** NVFLARE takes a job's image and pod template from the project's entry in the site's study file, which
+the site maintains. A project approved since the file was last synced has no entry, so NVFLARE does not start its jobs.
+
+**Fix.** Sync the entries, after each approval and after every upgrade:
+
+.. code-block:: shell
+
+   make -C trust/deploy/helm sync-project-studies KUBE_CONTEXT=<ctx>
 
 .. _ts-k8s-fl-reset:
 
