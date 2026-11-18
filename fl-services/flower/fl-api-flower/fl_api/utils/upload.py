@@ -21,6 +21,7 @@ from fastapi import HTTPException
 from tomlkit import dumps, parse
 
 from fl_api.schemas import UploadAppRequest
+from fl_api.utils.job_credential import deliver_job_credential
 from fl_api.utils.logger import logger
 from fl_api.utils.refusals import ResearcherRefusal
 from fl_api.utils.validation import redact_url, safe_join, validate_bundle_url
@@ -55,8 +56,8 @@ def upsert_flwr_run_config(
     config from pyproject.toml and applies these keys on top of it. Any other content the
     researcher placed in config.toml is preserved.
 
-    ``flip-job-dir`` is not set here — ``submit_run`` (in app.py) passes it as an
-    inline ``--run-config`` override at submission time.
+    ``flip-job-dir`` is not set here: ``_submit_from_job_dir`` (app.py) adds it to a temp
+    copy of this file at submission.
 
     Args:
         config_path: Path to the app's config.toml file.
@@ -107,7 +108,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
     # — but that raise happens inside the ServerApp at run time, long after submission, where the
     # only channel left is a log line the platform does not surface. It is reachable: the hub's
     # slot_names is a DB lookup returning [] when no participating trust holds an FL kit slot, and
-    # the Flower branch of validate_client_availability passes an empty list straight through.
+    # the hub submits that empty list as it is.
     # Refusing here turns it into the submit's error, which the hub already converts to ERROR on
     # the model, and keeps the previous bundle intact — the job dir is cleared further down.
     if not body.trusts:
@@ -183,6 +184,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
     upsert_flwr_run_config(config_toml, model_id, body.project_id, body.cohort_query, body.trusts)
 
     logger.info("config.toml updated with FLIP runtime parameters")
+
+    deliver_job_credential(model_id, body.job_credential)
 
     # Flower's deployment runtime places no job by GPU, and flwr rejects run-config keys an app does not
     # declare, so the request is not injected anywhere: it is recorded and reported as not enforced (FLIP#70).

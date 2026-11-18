@@ -126,9 +126,7 @@ export TF_VAR_flip_cognito_admin_email=aicentreflip@gmail.com
 export TF_VAR_flip_cognito_researcher_email=rafaelagd@gmail.com
 export TF_VAR_POSTGRES_DB=${POSTGRES_DB}
 export TF_VAR_AES_KEY_BASE64=${AES_KEY_BASE64}
-export TF_VAR_INTERNAL_SERVICE_KEY_HASH=${INTERNAL_SERVICE_KEY_HASH}
-export TF_VAR_INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
-export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
+export TF_VAR_FL_API_KEY=${FL_API_KEY}
 # ── Fail-fast env guards ────────────────────────────────────────────────────────────────────
 # Parse-time refusals of a deploy env file that cannot work. They stand aside only when every
 # goal is static (STATIC_ONLY, at the top); any other goal keeps all of them.
@@ -159,13 +157,11 @@ $(if $(call unset_or_placeholder,$(FLIP_APP_BUNDLES_BUCKET_NAME)),$(error 🪶 F
 # AICENTRE_BUCKET_NAME is guarded on the same terms: `variable "AICENTRE_BUCKET_NAME"` has no
 # default, and it also names the bucket the FL participant-kit targets below read and write.
 $(if $(call unset_or_placeholder,$(AICENTRE_BUCKET_NAME)),$(error 🪶 AICENTRE_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),)
-# Fail fast with a useful message when these are missing — the variable is
+# Fail fast with a useful message when this is missing — the variable is
 # `sensitive` with no default, so otherwise Terraform errors out mid-plan
 # with a generic "no value for required variable" that gives no hint about
 # where the value should come from.
-$(if $(INTERNAL_SERVICE_KEY),,$(error 🔑 INTERNAL_SERVICE_KEY must be set in $(MAIN_ENV_FILE) — generate with `make -C ../../../flip-api generate-internal-service-key`))
-$(if $(INTERNAL_SERVICE_KEY_HASH),,$(error 🔑 INTERNAL_SERVICE_KEY_HASH must be set in $(MAIN_ENV_FILE) — must be sha256 of INTERNAL_SERVICE_KEY))
-$(if $(INTERNAL_SERVICE_KEY_HEADER),,$(error 📨 INTERNAL_SERVICE_KEY_HEADER must be set in $(MAIN_ENV_FILE)))
+$(if $(FL_API_KEY),,$(error 🔑 FL_API_KEY must be set in $(MAIN_ENV_FILE) — generate with `make -C ../../../flip-api generate-fl-api-key ENV_FILE=$(abspath $(MAIN_ENV_FILE))`))
 endif
 
 # The GPUs fl-api on ECS writes into a job that declares none (mirrors compose).
@@ -218,6 +214,14 @@ export TF_VAR_AWS_REGION=${AWS_REGION}
 export TF_VAR_manage_dns=$(MANAGE_DNS)
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
 export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
+# Email delivery (FLIP#592), both optional and exported only when set so
+# variables.tf's defaults (send from SES_VERIFIED_EMAIL; Cognito's own sender) hold.
+ifneq ($(SES_SENDER_EMAIL),)
+export TF_VAR_SES_SENDER_EMAIL=${SES_SENDER_EMAIL}
+endif
+ifneq ($(COGNITO_EMAIL_VIA_SES),)
+export TF_VAR_cognito_email_via_ses=${COGNITO_EMAIL_VIA_SES}
+endif
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
 export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
 export TF_VAR_FLIP_UI_BUCKET_NAME=${FLIP_UI_BUCKET_NAME}
@@ -226,12 +230,8 @@ export TF_VAR_FLIP_UI_BUCKET_NAME=${FLIP_UI_BUCKET_NAME}
 # compose files mirror a subset as the local prod-image harness only; the hub
 # no longer deploys on EC2+compose.
 export TF_VAR_TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
-export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 export TF_VAR_FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
 export TF_VAR_ENFORCE_MFA=${ENFORCE_MFA}
-# JSON list of FL kit-slot names; seeds the fl_kit_slot pool register_trust
-# claims from. Empty ⇒ NoFreeKitSlotError on registration. Set in the env file.
-export TF_VAR_FL_KIT_SLOT_NAMES=${FL_KIT_SLOT_NAMES}
 ECS_CLUSTER ?= flip-cluster
 CENTRALHUB_ECS_SERVICES = flip-api fl-api-net-1 fl-server-net-1
 
@@ -324,7 +324,7 @@ init: ## Initialize Terraform configuration
 # Every line of stdout is consumed as KEY=value, so the recipe must print the
 # variables and nothing else — no @echo banner, and no `##` recipe-line comments
 # (those are echoed by make and would land in the file as garbage). Output carries
-# AES_KEY_BASE64, INTERNAL_SERVICE_KEY, ADMIN_USER_PASSWORD and the DB user, so
+# AES_KEY_BASE64, FL_API_KEY, ADMIN_USER_PASSWORD and the DB user, so
 # never pipe it anywhere it would be echoed. Values are single-line by construction
 # (scripts/compose-ci-env.sh rejects embedded newlines), which is what makes the
 # plain KEY=value form safe for $$GITHUB_ENV.
@@ -356,67 +356,17 @@ apply-cert: ## Apply only the ACM certificate (step 1 of 2 for HTTPS)
 	@$(_TF) apply -target=aws_acm_certificate.flip -auto-approve
 	@echo "✅ Certificate created! Now run 'make plan' and 'make apply' to deploy DNS validation."
 
-.PHONY: plan-fl-kit-slots
-plan-fl-kit-slots: ## Plan only the /flip/fl_kit_slot_names SSM parameter (+ flip-api task-role read)
-	@echo "📋 Planning FL kit-slot parameter..."
-	@$(_TF) plan -target=aws_ssm_parameter.fl_kit_slot_names \
-		-target=aws_iam_role_policy.ecs_flip_api_task -out=plan-fl-kit-slots.tfplan
-
-.PHONY: apply-fl-kit-slots
-apply-fl-kit-slots: ## Apply only the FL kit-slot SSM parameter — the slot activation path
-	## Re-renders /flip/fl_kit_slot_names from the env file's FL_KIT_SLOT_NAMES.
-	## flip-api re-reads the parameter when the slot pool runs dry (register_trust
-	## reconcile), so new kit slots become claimable with no task-definition change
-	## and no restart. The plan diff is plain-text (the list is not a secret) —
-	## review it before it applies. Also targets the flip-api task-role policy so
-	## the first rollout (which adds the ssm:GetParameter read) is self-contained;
-	## a no-op on every later run. Targeted on purpose: never run a full prod
-	## `make apply` for this — it also applies whatever else is pending in the
-	## plan, FL task-definition replacements (which kill a running job) included.
-	##
-	## NOT literally one resource: -target applies the target's whole dependency
-	## closure, and the task-role policy references the bucket modules, whose
-	## server-access logging targets aws_s3_bucket.flip_access_logs. So on an env whose
-	## state predates that S3-logging hardening the first run ALSO creates
-	## flip-access-logs-<subdomain> + its ACL/ownership (additive, 0 destroys). Seen on
-	## stag 2026-07-14: 4 to add, 1 to change, 0 to destroy. Prod has no access-logs
-	## bucket either — expect the same there. The plan prints and pauses for
-	## confirmation before it applies (YES=1 skips the pause, matching add_fl_kits.sh).
-	@echo "🎛️  Planning FL kit-slot parameter..."
-	@$(_TF) plan -target=aws_ssm_parameter.fl_kit_slot_names \
-		-target=aws_iam_role_policy.ecs_flip_api_task -out=plan-fl-kit-slots.tfplan
-	@if [ "$(YES)" != "1" ]; then \
-	  printf "   Apply this plan? [y/N] "; \
-	  read -r answer; \
-	  case "$$answer" in \
-	    [Yy]|[Yy][Ee][Ss]) ;; \
-	    *) echo "❌ Aborted — nothing applied (plan saved at plan-fl-kit-slots.tfplan)."; exit 1;; \
-	  esac; \
-	fi
-	@$(_TF) apply plan-fl-kit-slots.tfplan
-	@echo "✅ FL kit-slot parameter applied — new slots (if any) are claimable on the next trust registration."
-
 .PHONY: add-fl-kits
-add-fl-kits: ## Ensure N more claimable FL kit slots exist, end to end (FLARE; HUB=stag|prod)
-	## Wraps scripts/add_fl_kits.sh: discover nets from S3 → ACTIVATE up to N spares
-	## (kits already minted on every net but not yet in FL_KIT_SLOT_NAMES — no certs, no
-	## upload) → MINT only the shortfall on every net (restore/fingerprint-verify each
-	## net's CA workspace, additive S3 upload, never sync --delete) → append the activated
-	## + minted names to FL_KIT_SLOT_NAMES in the env file. Then re-invokes make for
-	## apply-fl-kit-slots so the sub-make re-reads the just-edited env file (this parse's
-	## TF_VAR_FL_KIT_SLOT_NAMES predates the edit). N is a target ("N more live slots"),
-	## not a mint count — spares are reused before any fresh mint, so a good kit is never
-	## stranded and, when spares cover N, nothing is minted at all.
+add-fl-kits: ## Mint N more claimable FL kit slots (both FL backends; HUB=stag|prod)
+	## Wraps scripts/add_fl_kits.sh. FLARE: restore/fingerprint-verify each net's CA workspace,
+	## mint the next Trust_<n> names, upload only the new kits (never sync --delete).
+	## Flower (FLIP#1942): mint the next SuperNode key pairs, register them with the running
+	## SuperLink through the two one-shot ECS tasks, upload the private keys last.
+	## flip-api's pool is every kit (FLARE, FLIP#1720) or key pair (Flower) complete on every
+	## net, so the slots are claimable at the next trust registration — no Terraform apply,
+	## no restart.
 	@[ -n "$(N)" ] || { echo "❌ N is required, e.g. make add-fl-kits N=2 HUB=prod"; exit 1; }
-	@$(_AWS_ENV) MAIN_ENV_FILE=$(MAIN_ENV_FILE) N=$(N) YES=$(YES) \
-		FL_BACKEND=$(FL_BACKEND) ENV_NAME=$(ENV_CLASS) ./scripts/add_fl_kits.sh
-	@$(MAKE) apply-fl-kit-slots HUB=$(HUB) YES=$(YES) || { \
-	  echo "❌ Parameter apply failed AFTER the new slot names were appended to the env file"; \
-	  echo "   (and any shortfall minted + uploaded)."; \
-	  echo "   Recover with just: make apply-fl-kit-slots HUB=$(HUB)"; \
-	  echo "   Do NOT re-run add-fl-kits — it would grow the pool by another N slots (activating"; \
-	  echo "   more spares or minting higher-numbered kits)."; \
-	  exit 1; }
+	@$(_AWS_ENV) N=$(N) YES=$(YES) FL_BACKEND=$(FL_BACKEND) ENV_NAME=$(ENV_CLASS) ./scripts/add_fl_kits.sh
 
 .PHONY: destroy-cert
 destroy-cert: ## Destroy only the ACM certificate (use with caution - will break HTTPS)
@@ -912,11 +862,6 @@ help: ## Show this help message
 	@echo ""
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?##"}; {printf "  \033[36m%-20s\033[0m %s\n", $$0, $$1, $$2}'
 
-.PHONY: generate-internal-service-key
-generate-internal-service-key: ## Generate a new internal service key (fl-server → flip-api auth)
-	@echo "🔑 Generating internal service key..."
-	@$(MAKE) -C ../../../flip-api generate-internal-service-key ENV_FILE=$(abspath $(MAIN_ENV_FILE))
-
 REGISTER_KIT_FILES = $(if $(KIT),$(KIT_FILE),$(sort $(wildcard $(REPO_ROOT)/trust/.env.*.$(ENV))))
 
 .PHONY: register-trusts
@@ -930,7 +875,7 @@ register-trusts: ## Register CODE-named trust kit(s) on the hub and write trust/
 	##   (no KIT)   → register every live trust/.env.*.<env> kit (an old-named one only with KIT=);
 	##                 none is a warning, not an error: a new hub registers its trusts later
 	@:$(if $(KIT),,$(call old_kits_hint,$(REPO_ROOT)/trust/))
-	@KIT=$(KIT) KIT_FILES="$(REGISTER_KIT_FILES)" bash scripts/register-trusts.sh
+	@KIT=$(KIT) ENV_CLASS=$(ENV_CLASS) MAIN_ENV_FILE=$(abspath $(MAIN_ENV_FILE)) KIT_FILES="$(REGISTER_KIT_FILES)" bash scripts/register-trusts.sh
 	@# The XNAT stack passwords are trust-side secrets the hub never mints, as in the dev register-trust.
 	@for kit in $(REGISTER_KIT_FILES); do $(MAKE) -C ../../../flip-api generate-xnat-credentials ENV_FILE="$$kit" FORCE= || exit 1; done
 
@@ -944,13 +889,13 @@ rotate-trust-keys: ## Reissue one trust's api + internal-service keys in place (
 	## EC2, or `package-onprem-trust-kit` for an on-prem site (copy the kit to trust/.env.<slot> first).
 	## NEVER that root's `deploy`: it is a first-install verb and re-seeds the site's data.
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=KCL)"; exit 1; }
-	@KIT=$(KIT) ROTATE_KEYS=1 KIT_FILES="$(KIT_FILE)" bash scripts/register-trusts.sh
+	@KIT=$(KIT) ENV_CLASS=$(ENV_CLASS) MAIN_ENV_FILE=$(abspath $(MAIN_ENV_FILE)) ROTATE_KEYS=1 KIT_FILES="$(KIT_FILE)" bash scripts/register-trusts.sh
 
 .PHONY: package-onprem-trust-kit
 package-onprem-trust-kit: ## Tarball trust/.env.<KIT>.<env> + FL kit slice for an on-prem operator
 	## Does NOT edit the kit file. The admin prepares it first (from the repo root):
-	##   1. register-trusts and sync-trust-kit with KIT=<CODE> HUB=prod fill
-	##      trust/.env.<CODE>.prod (register-trusts also mints its XNAT passwords);
+	##   1. register-trusts with KIT=<CODE> HUB=prod fills trust/.env.<CODE>.prod
+	##      (hub-shared block from the env file, and its XNAT passwords);
 	##   2. run this with KIT=<CODE> HUB=prod (KIT_FILE=<path> packs a kit kept elsewhere).
 	## This target then reads FL_BACKEND / FL_KIT_SLOT / etc. out of the populated
 	## kit file, slices the operator's portion of the FL participant kit out of
@@ -977,15 +922,14 @@ delete-trust: ## Hard-delete a trust on the hub (frees the name + FL kit slot; c
 full-deploy: ## Full AWS deployment of the Central Hub; trusts deploy from trust/deploy/ (honours HUB)
 	## Step order:
 	## 1. login + init: auth and Terraform init
-	## 2. generate-internal-service-key: mint the fl-server→hub key (idempotent)
-	## 3. plan+apply: provision the hub's AWS infrastructure (ECS, RDS, bastion, secrets)
-	## 4. update-env: refresh .env with Terraform outputs (the two Cognito IDs)
-	## 5. ssh-config + ansible-init: configure the SSM bastion
-	## 6. deploy-centralhub: deploy Central Hub ECS services at the env branch tip (new task-def revisions) + publish the UI
-	## 7. register-trusts: register every live trust/.env.*.<env> kit present (none yet is fine)
-	## 8. status: verify
+	## 2. plan+apply: provision the hub's AWS infrastructure (ECS, RDS, bastion, secrets)
+	## 3. update-env: refresh .env with Terraform outputs (the two Cognito IDs)
+	## 4. ssh-config + ansible-init: configure the SSM bastion
+	## 5. deploy-centralhub: deploy Central Hub ECS services at the env branch tip (new task-def revisions) + publish the UI
+	## 6. register-trusts: register every live trust/.env.*.<env> kit present (none yet is fine)
+	## 7. status: verify
 	## Each trust then joins with its kit, from its own shape under trust/deploy/ (on-prem, Helm,
 	## trust/deploy/terraform/aws/{ec2,eks}, trust/deploy/terraform/azure), FLIP#1438:
 	##   1. make new-trust TRUST_CODE=<CODE> ... HUB=$(HUB) && make register-trusts KIT=<CODE> HUB=$(HUB)
 	##   2. make package-onprem-trust-kit KIT=<CODE> HUB=$(HUB), and hand the tarball to its operator
-full-deploy: github-login aws-login init generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts status
+full-deploy: github-login aws-login init plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts status

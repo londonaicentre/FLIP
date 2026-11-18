@@ -19,11 +19,11 @@ A **trust node** is FLIP's footprint inside a participating trust: trust-api, im
 client, an OMOP database, XNAT, a PACS (mocked by Orthanc until you connect your own) and a logging stack. It polls
 the Central Hub for work over HTTPS. **All traffic to the hub is outbound**; no inbound port is opened for it.
 
-A trust deciding whether it can join, and the people who must prepare its data, PACS, network and host, start
-with :doc:`trust-readiness-checklist`: the prerequisites in plain language, by owner, in order.
+If your trust is still deciding whether it can join, start with :doc:`trust-readiness-checklist`. It lists the
+prerequisites for the data, PACS, network and host teams in plain language, by owner and in order.
 
-Read this page next. It covers what every trust node needs, whatever it runs on. Then follow
-:doc:`onboarding-a-trust`, which sends you to your platform's page for the install.
+Then read this page, which covers what every trust node needs whatever it runs on. Finally follow
+:doc:`onboarding-a-trust`, which sends you to your platform's install page.
 
 .. toctree::
    :maxdepth: 1
@@ -38,6 +38,7 @@ Read this page next. It covers what every trust node needs, whatever it runs on.
    deploy-flip-node-azure
    deploy-flip-node-azure-aks
    deploy-flip-node-in-tre
+   deploy-flip-node-snowflake
 
 .. contents:: On this page
    :local:
@@ -129,9 +130,14 @@ Choose your platform
      - Governance requires data access through a Trusted Research Environment loaded with a project-specific
        subset. The node itself installs as a Docker Compose host.
      - :doc:`deploy-flip-node-in-tre`
+   * - **Snowflake Snowpark**
+     - The trust already keeps its data in Snowflake, or would rather not run a host: the node runs as Snowpark
+       Container Services with OMOP in native tables. Needs an Enterprise account, and an On-Demand one to reach
+       a hub.
+     - :doc:`deploy-flip-node-snowflake`
 
-A trust on AWS, in any account, is :doc:`deploy-flip-node-aws-ec2` or :doc:`deploy-flip-node-aws-eks`. The Central
-Hub deployment creates no trust of its own.
+To run a trust on AWS, in any account, use :doc:`deploy-flip-node-aws-ec2` or :doc:`deploy-flip-node-aws-eks`.
+Deploying the Central Hub does not create a trust node.
 
 ****************
 Before you start
@@ -169,8 +175,7 @@ Central Hub
 ===========
 
 The hub must be deployed in AWS (:doc:`deploy-central-hub-aws-lza`) before a trust can be registered and receive its
-FL participant kit. The FL entry point is the networking account's edge. Shared prerequisites are in
-:doc:`deploy-central-hub`.
+FL participant kit. Shared prerequisites are in :doc:`deploy-central-hub`.
 
 .. _deploy-trust-node-network:
 
@@ -191,6 +196,10 @@ different load balancers, so allow both. This is everything a node connects out 
    status) for each one it cannot reach. That output is the evidence to hand your network team. It says only
    "reachable from this host": a firewall that filters one direction answers the probe while blocking nothing.
 
+   When the FL endpoint probe times out, the checklist also asks ``checkip.amazonaws.com`` for the public address
+   this host leaves from and prints it. Nothing depends on that lookup: if it is blocked, the hint appears without
+   the address.
+
 .. list-table::
    :header-rows: 1
    :widths: 26 14 13 35 12
@@ -210,7 +219,8 @@ different load balancers, so allow both. This is everything a node connects out 
      - Always
      - Federated training, over mutual TLS. **Exempt it from TLS inspection**: a proxy that re-signs the traffic
        breaks the client's certificate check. It has a fixed IP, so a firewall that filters by name only in HTTP
-       rules (Azure Firewall Basic, for example) can allow it by address
+       rules (Azure Firewall Basic, for example) can allow it by address. The hub may admit connections here only
+       from registered sites: **give the hub team the public address your node leaves from before going live**
      - Yes, Oct 2026
    * - ``ghcr.io`` **and** ``pkg-containers.githubusercontent.com``
      - 443
@@ -252,8 +262,8 @@ from ``ghcr.io/londonaicentre/mirror/`` (:gh:`trust/deploy/mirror-images.manifes
 upstream's images).
 
 The hub identifies a trust by its kit's mTLS certificates and API key, not by its address, so the node needs no fixed
-public address. Still tell the FLIP team the public address the node's traffic leaves from, and when it changes: the
-hub's FL edge is restricted to declared trust addresses.
+public address. The hub's FL edge does, however, admit only declared trust addresses: **before going live, give the
+FLIP team the public address the node's traffic leaves from**, and tell them whenever it changes.
 
 A connection that opens and then drops is a different problem from a blocked port, and needs a different request.
 Check it from the node, with the FL endpoint and port from the kit:
@@ -274,3 +284,7 @@ The deploy commands always pull, so the registries are needed in a TRE too (see 
 platforms add destinations of their own: the Kubernetes chart (:doc:`deploy-flip-node-kubernetes`), the Azure VM's
 first boot (:doc:`deploy-flip-node-azure`), AKS (:doc:`deploy-flip-node-azure-aks`), and the AWS services an EC2 node uses
 (:doc:`deploy-flip-node-aws-ec2`).
+
+A trust whose OMOP lives in Snowflake rather than on the node needs one further outbound destination, HTTPS 443
+to ``<account>.snowflakecomputing.com``, and its egress proxy configured for the connector if it has one. Still
+no inbound rule. See :ref:`omop-backends`.

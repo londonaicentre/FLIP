@@ -20,8 +20,9 @@
 #      an already-registered trust returns a metadata-only kit (no credentials;
 #      the hub stores only the SHA-256 hash), so re-running is safe.
 #   3. Write the kit back into trust/.env.<CODE>.<env> via
-#      trust/deploy/scripts/distribute_trust_kits.py (whatever credentials the kit carries,
-#      hub-shared refreshed every run; operator host-local edits preserved).
+#      trust/deploy/scripts/distribute_trust_kits.py (whatever credentials the kit carries;
+#      operator host-local edits preserved), then refresh the hub-shared block from the
+#      operator env file with trust/deploy/scripts/sync_trust_kit.py.
 # Delivery to a host is command-driven, NOT done here: `make -C trust/deploy/terraform/aws/ec2
 # upgrade KIT=<CODE> HUB=<env>` recreates an EC2 node's containers on the new kit;
 # `make package-onprem-trust-kit` tarballs it for an on-prem operator.
@@ -61,6 +62,12 @@ LOG_GROUP="${LOG_GROUP:-/ecs/flip-api}"
 if [ -z "${KIT_FILES:-}" ]; then
     log_warn "No trust/.env.<CODE>.${HUB:-<env>} kits found — scaffold one with 'make new-trust TRUST_CODE=<CODE> TRUST_NAME=... HUB=${HUB:-<env>}' first."
     exit 0
+fi
+
+# The sync step below needs it; the Makefile passes env_mode.mk's ENV_CLASS.
+if [ "${ENV_CLASS:-}" != stag ] && [ "${ENV_CLASS:-}" != prod ]; then
+    log_error "ENV_CLASS must be stag or prod (run this through 'make register-trusts HUB=<env>')."
+    exit 1
 fi
 
 log_info "Discovering live $ECS_SERVICE service network config..."
@@ -192,22 +199,18 @@ register_one_kit() {
     # code, which Fargate misreports for one-off tasks (a container exiting 7 has been
     # observed as exitCode 0). register_trust writes [] on any TrustRegistrationError.
     #
-    # On failure, salvage the task's logger lines BEFORE the stream is deleted below:
+    # On failure, salvage the tail of the task's log BEFORE the stream is deleted below:
     # that is where the operator remediation lives (an exhausted pool names
-    # apply-fl-kit-slots / add-fl-kits). Safe to echo — the kit body only ever travels
+    # add-fl-kits). Safe to echo — the kit body only ever travels
     # via --out-ssm-parameter, so the logger never carries credentials.
+    # The whole tail, not a grep for a log level: outside uvicorn the registration's
+    # own errors print with no level prefix, as does an unhandled traceback, and a
+    # level filter kept only the kit-slot warnings beside them.
     failure_log=""
     if [ -z "$kit" ] || [ "$kit" = "None" ] || [ "$(echo "$kit" | jq 'length')" = "0" ]; then
-        raw_log="$(aws_cmd logs get-log-events --log-group-name "$LOG_GROUP" \
+        failure_log="$(aws_cmd logs get-log-events --log-group-name "$LOG_GROUP" \
             --log-stream-name "flip-api/flip-api/$task_id" --start-from-head \
-            --query 'events[].message' --output text 2>/dev/null | tr '\t' '\n')"
-        failure_log="$(printf '%s\n' "$raw_log" | grep -E "ERROR|WARNING" || true)"
-        # A raw unhandled traceback has no log-level prefix, so the grep above
-        # comes back empty; fall back to the tail of the raw log — the stream
-        # is deleted just below, so this is the only evidence that survives.
-        if [ -z "$failure_log" ] && [ -n "$raw_log" ]; then
-            failure_log="$(printf '%s\n' "$raw_log" | tail -n 40)"
-        fi
+            --query 'events[].message' --output text 2>/dev/null | tr '\t' '\n' | tail -n 40)"
     fi
 
     aws_cmd logs delete-log-stream --log-group-name "$LOG_GROUP" \
@@ -257,6 +260,24 @@ register_one_kit() {
         return 1
     fi
     aws_cmd ssm delete-parameter --name "$ssm_param" >/dev/null 2>&1 || true
+
+    # The task's env carries only some hub-shared keys (FLIP#1476), so refresh the block from the
+    # operator env file the Makefile exported, as sync-trust-kit does. It fails naming any key
+    # still unresolved, so a placeholder is never left behind as success.
+    # By now the hub has committed and the kit holds any new credentials, so the failure says so:
+    # re-running the verb (or re-scaffolding the kit) would throw them away. stdin is closed so a
+    # sync can never wait on the terminal.
+    if ! uv run --no-config "$REPO_ROOT/trust/deploy/scripts/sync_trust_kit.py" \
+        --env-class "$ENV_CLASS" --target "$kit_file" </dev/null; then
+        log_error "Trust '$name': the hub-shared block of $kit_file is incomplete — $verb FAILED."
+        if [ "${ROTATE_KEYS:-0}" = "1" ]; then
+            log_error "The rotation itself succeeded: the hub refuses the old key, and $kit_file holds the new keys. Do not re-run rotate-trust-keys."
+        elif echo "$kit" | jq -e '.trust_api_key' >/dev/null 2>&1; then
+            log_error "The trust IS registered: $kit_file holds its write-once credentials (the hub keeps only their hash). Do not re-scaffold it."
+        fi
+        log_error "Set the keys named above in ${MAIN_ENV_FILE:-the hub env file .env.<hub>}, then run 'make sync-trust-kit KIT=${code:-${KIT:-<CODE>}} HUB=${HUB:-$ENV_CLASS}'."
+        return 1
+    fi
     log_success "Wrote kit for '$name' → $kit_file"
 }
 

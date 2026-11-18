@@ -57,7 +57,7 @@ def partition(data_dir: Path) -> None:
 
     rows = load_marksheet(data_dir / "clinical_information")
 
-    by_center: dict[str, list[dict[str, str]]] = {}
+    by_center: dict[str, list[tuple[dict[str, str], list[Path], Path, Path]]] = {}
     skipped = 0
     for row in rows:
         patient_id, study_id, center = row["patient_id"], row["study_id"], row["center"]
@@ -71,7 +71,7 @@ def partition(data_dir: Path) -> None:
         if not scans or not label_path.exists() or not zonal_label_path.exists():
             skipped += 1
             continue
-        by_center.setdefault(center, []).append(row)
+        by_center.setdefault(center, []).append((row, scans, label_path, zonal_label_path))
 
     for center, center_rows in by_center.items():
         site_nifti_dir = sites_dir / center / "nifti"
@@ -81,23 +81,17 @@ def partition(data_dir: Path) -> None:
         site_labels_dir.mkdir(parents=True, exist_ok=True)
         site_zonal_labels_dir.mkdir(parents=True, exist_ok=True)
 
-        for row in center_rows:
-            patient_id, study_id = row["patient_id"], row["study_id"]
-            for scan_path in sorted((nifti_dir / patient_id).glob(f"{patient_id}_{study_id}_*.nii.gz")):
+        for _row, scans, label_path, zonal_label_path in center_rows:
+            for scan_path in scans:
                 link_to(site_nifti_dir / scan_path.name, scan_path)
-
-            label_path = labels_dir / f"{patient_id}_{study_id}.nii.gz"
             link_to(site_labels_dir / label_path.name, label_path)
-
-            zonal_label_path = zonal_labels_dir / f"{patient_id}_{study_id}.nii.gz"
             link_to(site_zonal_labels_dir / zonal_label_path.name, zonal_label_path)
 
         manifest_path = sites_dir / center / "manifest.csv"
         with open(manifest_path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["patient_id", "study_id"])
+            writer = csv.DictWriter(f, fieldnames=["patient_id", "study_id"], extrasaction="ignore")
             writer.writeheader()
-            for row in center_rows:
-                writer.writerow({"patient_id": row["patient_id"], "study_id": row["study_id"]})
+            writer.writerows(row for row, *_ in center_rows)
 
         print(f"{center}: {len(center_rows)} studies -> {sites_dir / center}")
 

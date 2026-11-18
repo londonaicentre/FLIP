@@ -67,7 +67,7 @@ resource "aws_security_group_rule" "ecs_flip_api_egress_all" {
 
 resource "aws_security_group" "ecs_fl_api" {
   name        = "ecs-fl-api"
-  description = "ECS fl-api-net-1 task - inbound HTTP from VPC"
+  description = "ECS fl-api-net-1 task - inbound HTTP from flip-api"
   vpc_id      = local.vpc_id
 
   tags = {
@@ -75,14 +75,29 @@ resource "aws_security_group" "ecs_fl_api" {
   }
 }
 
-resource "aws_security_group_rule" "ecs_fl_api_ingress_vpc_http" {
+# The FL API drives the whole net (submit, abort, shut down), so only its callers reach it:
+# flip-api (NET_ENDPOINTS) and, on Flower, the key-registration one-shot (ecs_flower.tf), which
+# runs with this SG and maps node ids on /register_node. A VPC-wide rule handed every route to
+# anything in the VPC, the optional cloud trust EC2 included.
+resource "aws_security_group_rule" "ecs_fl_api_ingress_flip_api_http" {
+  type                     = "ingress"
+  description              = "HTTP from flip-api task"
+  from_port                = local.api_container_port
+  to_port                  = local.api_container_port
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.ecs_fl_api.id
+  source_security_group_id = aws_security_group.ecs_flip_api.id
+}
+
+resource "aws_security_group_rule" "ecs_fl_api_ingress_self_http" {
+  count             = var.fl_backend == "flower" ? 1 : 0
   type              = "ingress"
-  description       = "HTTP from VPC (fl-server to fl-api)"
+  description       = "HTTP from the Flower key-registration one-shot (same SG)"
   from_port         = local.api_container_port
   to_port           = local.api_container_port
   protocol          = "tcp"
   security_group_id = aws_security_group.ecs_fl_api.id
-  cidr_blocks       = [local.vpc_cidr_block]
+  self              = true
 }
 
 resource "aws_security_group_rule" "ecs_fl_api_egress_all" {
@@ -125,7 +140,7 @@ resource "aws_security_group_rule" "ecs_fl_server_ingress_fl_api_admin" {
 }
 
 # Flower control plane (fl_backend=flower only): the fl-api submits runs to
-# the SuperLink's HTTP Control API (8000) and polls its health server (9097) over
+# the SuperLink's HTTP APIs (8000: Control, and /health for status) over
 # Cloud Map — direct task-to-task, never via the NLB. The register-supernode-
 # keys one-shot (ecs_flower.tf) runs with the fl-api SG so these same rules
 # cover its 8000 calls.
@@ -135,17 +150,6 @@ resource "aws_security_group_rule" "ecs_fl_server_ingress_fl_api_flower_exec" {
   description              = "Flower SuperLink Control API from fl-api task"
   from_port                = local.flower_superlink_control_port
   to_port                  = local.flower_superlink_control_port
-  protocol                 = "tcp"
-  security_group_id        = aws_security_group.ecs_fl_server.id
-  source_security_group_id = aws_security_group.ecs_fl_api.id
-}
-
-resource "aws_security_group_rule" "ecs_fl_server_ingress_fl_api_flower_health" {
-  count                    = var.fl_backend == "flower" ? 1 : 0
-  type                     = "ingress"
-  description              = "Flower SuperLink health server from fl-api task"
-  from_port                = local.flower_superlink_health_port
-  to_port                  = local.flower_superlink_health_port
   protocol                 = "tcp"
   security_group_id        = aws_security_group.ecs_fl_server.id
   source_security_group_id = aws_security_group.ecs_fl_api.id

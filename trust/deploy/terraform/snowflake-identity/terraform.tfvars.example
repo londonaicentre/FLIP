@@ -1,0 +1,33 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#
+# Copy to terraform.<env>.tfvars (gitignored) and fill in. No real account identifier,
+# organization name or key is ever committed: every value below is a placeholder.
+
+organization_name = "MYORG"
+account_name      = "MYACCOUNT"
+
+# A role that can create roles and users: USERADMIN, or ACCOUNTADMIN on an account FLIP has to
+# itself. It has no default so no privileged role name is committed.
+identity_role = "USERADMIN"
+
+# SNOWFLAKE_JWT (default): key pair from SNOWFLAKE_PRIVATE_KEY (PEM contents) + SNOWFLAKE_PRIVATE_KEY_PASSPHRASE.
+# PROGRAMMATIC_ACCESS_TOKEN reads a token the user generated in Snowsight from SNOWFLAKE_TOKEN.
+# USERNAMEPASSWORDMFA reads SNOWFLAKE_PASSWORD and the current TOTP code from SNOWFLAKE_PASSCODE.
+# EXTERNALBROWSER delegates to the account's IdP and needs no password in the environment.
+authenticator = "SNOWFLAKE_JWT"
+
+trust_code = "GSTT"
+
+# The deploy SERVICE user's RSA public key: the base64 body only, no PEM header, footer or
+# newlines. Keep the private half out of this repository.
+deploy_user_public_key = "REPLACE_WITH_THE_PUBLIC_KEY_BODY"

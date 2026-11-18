@@ -70,6 +70,22 @@ $(error ❌  the kit at $(KIT_SRC) has both a FLARE shape (startup/) and a Flowe
 endif
 endif
 KIT_UID ?= $(if $(filter flower,$(KIT_BACKEND)),49999,1000)
+# The OMOP core vocabulary (FLIP#923): VOCAB_DIR is a folder of Athena CSVs (CONCEPT.csv, ...) and
+# VOCAB_DEST the node directory omopDb.vocabLoad.hostPath names (the kit's OMOP_VOCAB_DIR).
+# stage-vocab empties VOCAB_DEST first, as stage-kit does KIT_DEST and with the same guards.
+VOCAB_DEST ?= /opt/flip/omop-vocab
+VOCAB_BUNDLE ?= vocab_aicentre_core_20240916
+ifneq ($(filter stage-vocab,$(MAKECMDGOALS)),)
+ifeq ($(strip $(VOCAB_DEST)),)
+$(error ❌  VOCAB_DEST must not be empty — stage-vocab clears it before copying)
+endif
+ifeq ($(strip $(VOCAB_DEST)),/)
+$(error ❌  VOCAB_DEST must not be / — stage-vocab clears it before copying)
+endif
+ifeq ($(wildcard $(VOCAB_DIR)/CONCEPT.csv),)
+$(error ❌  VOCAB_DIR=<folder holding the unpacked bundle: CONCEPT.csv, ...> is required — make download-vocab, or an OHDSI Athena export)
+endif
+endif
 # Which cluster to act on. Defaults to kubectl's current context, but stage-kit
 # REQUIRES it explicitly: it writes to a node's filesystem, and a machine running
 # several kind clusters will otherwise silently stage into whichever one kubectl
@@ -112,6 +128,11 @@ $(if $(KIT),$(call kit_hint,$(patsubst $(REPO_ROOT)/%,%,$(KIT_FILE))))
 # one of those internal budgets alone therefore changes nothing about how long a deploy
 # waits — raise this too, or the extra budget is unreachable.
 HELM_TIMEOUT ?= 30m
+
+# GNU make runs any recipe line whose text contains "$(MAKE)" even under -n, so a sub-target
+# spelled that way would make `make -n deploy` deploy for real. Indirecting through a variable
+# keeps the recursion without that flag; `make -n` then prints the step like any other line.
+SUBMAKE := $(MAKE)
 
 # Determine which values files to pass
 VALUES_OPTS := -f $(VALUES_FILE)
@@ -158,7 +179,7 @@ ifneq ($(strip $(TAG)),)
 	VALUES_OPTS := $(VALUES_OPTS) --set global.image.tag=$(TAG)
 endif
 
-.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init kit-secret stage-kit preflight template-egress-variants smoke-cstore selftest
+.PHONY: sync-project-studies help lint template deploy deploy-release failing-hooks undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init kit-secret stage-kit download-vocab stage-vocab preflight template-egress-variants smoke-cstore selftest xnat-db-migrate-dump xnat-db-remove-old-cluster
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -229,6 +250,34 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	  docker exec "$$node" sh -c 'chmod -R go-rwx "$(KIT_DEST)" && chown -R $(KIT_UID):$(KIT_UID) "$(KIT_DEST)"' && \
 	  echo "✅ Kit staged. Deploy with --set flClient.kitHostPath=$(KIT_DEST)"
 
+download-vocab: ## Download the OMOP core vocabulary from the AI Centre bucket to this host (your AWS CLI profile)
+	## For operators with access to the bucket (FLIP#923); everyone else exports the same
+	## folder from OHDSI Athena (trust/omop-db/README.md). Runs on this host, never in the
+	## cluster. VOCAB_S3_BUCKET overrides the bucket.
+	$(MAKE) -C $(REPO_ROOT)/trust/omop-db fetch-vocab-core VOCAB_CORE_BUNDLE=$(VOCAB_BUNDLE) $(if $(VOCAB_S3_BUCKET),VOCAB_S3_BUCKET=$(VOCAB_S3_BUCKET))
+	@echo "✅ Next: make stage-vocab VOCAB_DIR=$(REPO_ROOT)/trust/omop-db/data/$(VOCAB_BUNDLE) KUBE_CONTEXT=<ctx>"
+
+stage-vocab: ## Place the unpacked OMOP core vocabulary onto the node (omopDb.vocabLoad.hostPath; run BEFORE deploy)
+	## Like stage-kit, the kind case:
+	##
+	##   make stage-vocab VOCAB_DIR=<folder with CONCEPT.csv, ...> KUBE_CONTEXT=kind-flip-kch
+	##
+	## On any other cluster copy the folder to VOCAB_DEST on the node yourself (with several
+	## nodes, pin the Job there: omopDb.vocabLoad.nodeSelector). It is read only for the first
+	## load. World-readable, as the loader runs as the image user.
+	##
+	## VOCAB_DEST is emptied first: `docker cp` merges, so a narrower re-stage would otherwise
+	## leave the previous bundle's table files beside the new ones for the loader to read.
+	@[ -n "$(KUBE_CONTEXT)" ] || (echo "❌  KUBE_CONTEXT is required — this writes to a node's filesystem. e.g. KUBE_CONTEXT=kind-flip-kch"; exit 1)
+	@node=$$(kubectl --context $(KUBE_CONTEXT) get nodes -o jsonpath='{.items[0].metadata.name}') && \
+	  [ -n "$$node" ] || { echo "❌  no node found in context $(KUBE_CONTEXT) — is the cluster reachable?"; exit 1; }; \
+	  echo "📦 Staging $(VOCAB_DIR) → [$(KUBE_CONTEXT)] $$node:$(VOCAB_DEST)"; \
+	  docker exec "$$node" mkdir -p "$(VOCAB_DEST)" && \
+	  docker exec "$$node" find "$(VOCAB_DEST)" -mindepth 1 -delete && \
+	  docker cp "$(VOCAB_DIR)/." "$$node:$(VOCAB_DEST)/" && \
+	  docker exec "$$node" chmod -R a+rX "$(VOCAB_DEST)" && \
+	  echo "✅ Vocabulary staged. Deploy with --set omopDb.vocabLoad.hostPath=$(VOCAB_DEST) (or OMOP_VOCAB_DIR=$(VOCAB_DEST) in the kit)"
+
 # Deliberately NO --force-conflicts here. Helm 4 applies the release server-side, and
 # `patch-kit-secrets` writes the kit's per-trust keys into the same Secret with field
 # manager `kubectl-patch`, so an upgrade that would CHANGE one of those keys is refused
@@ -244,14 +293,39 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 #
 # A Deployment the chart now renders as Recreate but the cluster still runs as RollingUpdate is
 # switched first, or Helm 4's server-side apply refuses it (FLIP#1524; scripts/migrate-strategy.sh).
-deploy: preflight ## Deploy the Helm chart to the cluster
+deploy-release: preflight ## Apply the chart and wait for the core workloads to roll out (no xnat-init)
 	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) --namespace $(NAMESPACE) $(VALUES_OPTS) | \
 		NAMESPACE=$(NAMESPACE) RELEASE_NAME=$(RELEASE_NAME) KUBECTL="$(KUBECTL)" $(CHART_DIR)/scripts/migrate-strategy.sh
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
 		--timeout $(HELM_TIMEOUT) \
-		$(VALUES_OPTS)
+		--set xnat.initJob.enabled=false \
+		$(VALUES_OPTS) \
+		|| { $(SUBMAKE) --no-print-directory failing-hooks; exit 1; }
+	@python3 $(CHART_DIR)/scripts/rollout_wait.py \
+		--namespace $(NAMESPACE) --release $(RELEASE_NAME) \
+		--timeout $(HELM_TIMEOUT) --kubectl "$(KUBECTL)" \
+		|| { $(SUBMAKE) --no-print-directory failing-hooks; exit 1; }
+
+# The two steps are separate targets so that WHICH one failed is the signal. GNU make exits 2 for
+# any failed recipe whatever code the recipe returned, so an exit code cannot carry "upgraded, but
+# XNAT not configured" through make (FLIP#1645). A caller that must tell the two apart (the
+# auto-upgrade agent, FLIP#1640; deploy-trust-k8s; upgrade-trust-k8s) runs deploy-release, then
+# xnat-init, and reads which command failed. `deploy` is the two in sequence, for humans.
+deploy: deploy-release ## Deploy the Helm chart to the cluster (deploy-release, then xnat-init)
+	@$(SUBMAKE) --no-print-directory xnat-init || { \
+		printf '\033[0;33m%s\033[0m\n' \
+			"⚠️  the release is live and rolled out, but xnat-init did not complete (see #565)." \
+			"⚠️  Re-run: make -C trust/deploy/helm xnat-init (raise HELM_TIMEOUT if it just needed longer)."; \
+		exit 1; }
+
+# Helm records every hook's outcome for the current revision, so when the upgrade fails the
+# operator is told which one failed instead of reading the whole output. Best-effort: a cluster
+# that cannot be read prints nothing and never changes the exit code of the caller.
+failing-hooks: ## Name the post-upgrade hooks that did not succeed on the current revision
+	-@$(HELM) status $(RELEASE_NAME) --namespace $(NAMESPACE) -o json 2>/dev/null \
+		| python3 $(CHART_DIR)/scripts/failing_hooks.py 2>/dev/null
 
 undeploy: ## Remove the Helm release from the cluster
 	$(HELM) uninstall $(RELEASE_NAME) --namespace $(NAMESPACE)
@@ -269,10 +343,16 @@ down: undeploy ## Tear down the trust K8s release (alias for undeploy)
 deploy-trust-k8s: ## Deploy trust services to K8s; KIT= regenerates the per-trust override from the kit and re-patches secrets
 ifdef KIT
 	$(MAKE) sync-kit-override KIT=$(KIT)
-	@rc=0; \
-	$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml || rc=$$?; \
-	if [ $$rc -ne 0 ]; then \
-		echo "⚠️  deploy returned non-zero ($$rc) — often a non-fatal post-install hook (e.g. xnat-init — see #565), but it may be a genuine Helm failure. Patching per-trust secrets first so trust-api gets the correct key and does not poll with the stale seed key (#595), then re-exiting with the deploy status."; \
+	@rc=0; step=release; \
+	$(MAKE) deploy-release OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml || rc=1; \
+	if [ $$rc -eq 0 ]; then \
+		step=xnat-init; \
+		$(MAKE) xnat-init OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml || rc=1; \
+	fi; \
+	if [ $$rc -ne 0 ] && [ $$step = xnat-init ]; then \
+		echo "⚠️  the release is live and rolled out, but xnat-init did not complete (see #565). Patching per-trust secrets, then failing."; \
+	elif [ $$rc -ne 0 ]; then \
+		echo "❌ the release did not land (helm or the rollout wait failed). Patching per-trust secrets first so trust-api gets the correct key and does not poll with the stale seed key (#595), then failing."; \
 	fi; \
 	$(MAKE) patch-kit-secrets KIT=$(KIT); \
 	exit $$rc
@@ -326,8 +406,60 @@ upgrade-trust-k8s: ## Move a deployed trust to a release tag (data-safe helm upg
 # Secret from the same kit, then a plain `helm upgrade` at that tag.
 _upgrade-trust-k8s-apply:
 	$(MAKE) sync-kit KIT=$(KIT)
-	$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml TAG=$(shell sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1)
+	$(MAKE) xnat-db-migrate-dump
+	$(MAKE) deploy-release OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml TAG=$(shell sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1) \
+	  || { $(MAKE) xnat-db-drop-unused-dump AFTER_FAILED_DEPLOY=1; exit 1; }
+	$(MAKE) xnat-db-drop-unused-dump
+	$(MAKE) xnat-init OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml TAG=$(shell sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1) \
+	  || { echo "⚠️  the release is live and rolled out, but xnat-init did not complete (see #565). Re-run: make -C trust/deploy/helm xnat-init"; exit 1; }
 	@echo "✅ $(KIT) is on $$(sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1). Verify: kubectl -n $(NAMESPACE) get pods; trust-api /health reports the new version."
+
+# The PostgreSQL major the xnat-db image runs, and the release's XNAT pods (FLIP#1812).
+XNAT_DB_PG_MAJOR := $(shell sed -n 's/^PG_VERSION=\([0-9]*\).*/\1/p' $(REPO_ROOT)/trust/xnat/.env)
+XNAT_POD = -n $(NAMESPACE) -l app.kubernetes.io/instance=$(RELEASE_NAME),app.kubernetes.io/component
+
+# Before a helm upgrade that moves xnat-db to a newer PostgreSQL major: stop xnat-web, then dump the
+# xnat database beside the running cluster on its volume, where the new image restores it on first
+# start. The helm upgrade brings xnat-web back. The old cluster stays for a rollback until
+# xnat-db-remove-old-cluster. A no-op without an xnat-db pod or once it is on that major.
+xnat-db-migrate-dump:
+	@set -e; \
+	pod=$$($(KUBECTL) get pod $(XNAT_POD)=xnat-db --field-selector=status.phase=Running -o name | head -1); \
+	[ -n "$$pod" ] || exit 0; \
+	current=$$($(KUBECTL) exec -n $(NAMESPACE) "$$pod" -c postgres -- sh -c 'cat "$$PGDATA/PG_VERSION"'); \
+	case "$$current:$(XNAT_DB_PG_MAJOR)" in *[!0-9:]*|:*|*:) \
+	  echo "❌ Cannot compare xnat-db's PostgreSQL major ('$$current') with the image's ('$(XNAT_DB_PG_MAJOR)', from PG_VERSION in trust/xnat/.env). Nothing was changed."; exit 1 ;; esac; \
+	[ "$$current" -lt $(XNAT_DB_PG_MAJOR) ] || exit 0; \
+	echo "⬆️  xnat-db moves from PostgreSQL $$current to $(XNAT_DB_PG_MAJOR): stopping xnat-web and dumping the xnat database for the new server to restore."; \
+	$(KUBECTL) scale deployment $(XNAT_POD)=xnat-web --replicas=0; \
+	$(KUBECTL) wait pod $(XNAT_POD)=xnat-web --for=delete --timeout=$(HELM_TIMEOUT) \
+	  || ! $(KUBECTL) get pod $(XNAT_POD)=xnat-web -o name | grep -q .; \
+	$(KUBECTL) exec -i -n $(NAMESPACE) "$$pod" -c postgres -- sh -s $(XNAT_DB_PG_MAJOR) \
+	  < $(REPO_ROOT)/trust/xnat/scripts/xnat_db_migrate_dump.sh || { \
+	  echo "❌ The dump failed, so nothing was upgraded. Starting xnat-web again on PostgreSQL $$current."; \
+	  $(KUBECTL) scale deployment $(XNAT_POD)=xnat-web --replicas=1; exit 1; }
+
+# After the helm upgrade: remove a dump the deploy did not use, because xnat-db stayed on the old
+# major (xnat.image.pin or the kit's XNAT_TAG holds an older release). helm upgrade does not wait
+# for the StatefulSet, and the pod it is replacing still answers with the dump the new one needs, so
+# the rollout comes first. After a failed deploy the old server may be the one that stays, and the
+# dump goes all the same.
+xnat-db-drop-unused-dump:
+	@set -e; \
+	sts=$$($(KUBECTL) get statefulset $(XNAT_POD)=xnat-db -o name | head -1); \
+	[ -n "$$sts" ] || exit 0; \
+	$(KUBECTL) rollout status -n $(NAMESPACE) "$$sts" --timeout=$(HELM_TIMEOUT)$(if $(AFTER_FAILED_DEPLOY), || true); \
+	pod=$$($(KUBECTL) get pod $(XNAT_POD)=xnat-db --field-selector=status.phase=Running -o name | head -1); \
+	[ -z "$$pod" ] || $(KUBECTL) exec -i -n $(NAMESPACE) "$$pod" -c postgres -- sh -s \
+	  < $(REPO_ROOT)/trust/xnat/scripts/xnat_db_drop_unused_dump.sh
+
+# Once XNAT is confirmed on the new major: list the older cluster an upgrade kept for a rollback,
+# and delete it with YES=1.
+xnat-db-remove-old-cluster: ## List the PostgreSQL cluster an xnat-db major upgrade kept for a rollback; YES=1 deletes it
+	@pod=$$($(KUBECTL) get pod $(XNAT_POD)=xnat-db -o name); \
+	[ -n "$$pod" ] || { echo "❌ No xnat-db pod in $(NAMESPACE)."; exit 1; }; \
+	$(KUBECTL) exec -i -n $(NAMESPACE) "$$pod" -c postgres -- sh -s -- $(if $(YES),--delete) \
+	  < $(REPO_ROOT)/trust/xnat/scripts/xnat_db_remove_old_cluster.sh
 
 # The node self-test's checklist against a deployed release (FLIP#1390): release ready, FL kit,
 # API health, OMOP/Orthanc seeded, Orthanc auth, a real C-STORE, a dcm2niix conversion (FLIP#1448),
@@ -338,12 +470,39 @@ selftest: ## Run the trust self-test against the deployed release and write a re
 	python3 $(CHART_DIR)/scripts/selftest_k8s.py --namespace $(NAMESPACE) --release $(RELEASE_NAME) \
 		$(if $(KUBE_CONTEXT),--context $(KUBE_CONTEXT)) --out $(SELFTEST_OUT)
 
+# NVFLARE's study file for job pods (FLIP#1678): the site maintains it, the fl-client only reads it. The
+# fl-client builds the file (it holds the job-pod template and creates each project's images folder) and this
+# replaces the ConfigMap the chart mounts. PROJECTS defaults to the projects whose approved cohort this trust
+# holds, which is data-access-api's snapshot folder.
+FL_NET ?= net-1
+FL_STUDIES_POD = $(KUBECTL) get pod -n $(NAMESPACE) --field-selector=status.phase=Running -o name \
+	-l app.kubernetes.io/instance=$(RELEASE_NAME),app.kubernetes.io/component
+sync-project-studies: ## Give each approved project its NVFLARE study entry for job pods; PROJECTS="<id> ..." names them
+	@set -e; \
+	client=$$($(FL_STUDIES_POD)=fl-client,flip/network=$(FL_NET) | head -1); \
+	[ -n "$$client" ] || { echo "❌ no running fl-client for $(FL_NET) in $(NAMESPACE)"; exit 1; }; \
+	projects="$(PROJECTS)"; \
+	if [ -z "$$projects" ]; then \
+	  daa=$$($(FL_STUDIES_POD)=data-access-api | head -1); \
+	  [ -n "$$daa" ] || { echo "❌ no running data-access-api to list the approved projects; pass PROJECTS=\"<id> ...\""; exit 1; }; \
+	  projects=$$($(KUBECTL) exec -n $(NAMESPACE) "$$daa" -- sh -c 'cd "$${COHORT_SNAPSHOT_DIR:?}" && for f in */membership.json; do [ ! -f "$$f" ] || echo "$${f%%/*}"; done') \
+	    || { echo "❌ cannot list the approved projects in data-access-api's COHORT_SNAPSHOT_DIR"; exit 1; }; \
+	  [ -n "$$projects" ] || { echo "❌ no approved project found in data-access-api's COHORT_SNAPSHOT_DIR; pass PROJECTS=\"<id> ...\""; exit 1; }; \
+	fi; \
+	file=$$(mktemp); trap 'rm -f "$$file"' EXIT; \
+	$(KUBECTL) exec -n $(NAMESPACE) "$$client" -c fl-client -- \
+	  python -m flip.nvflare.project_studies /var/tmp/nvflare/workspace/local $$projects > "$$file"; \
+	$(KUBECTL) create configmap $(RELEASE_NAME)-flip-trust-fl-studies-$(FL_NET) -n $(NAMESPACE) \
+	  --from-file=study_runtime.yaml="$$file" --dry-run=client -o yaml | $(KUBECTL) apply -f -; \
+	echo "✅ study entries for $$(echo $$projects | wc -w | tr -d ' ') project(s) on $(FL_NET)"
+
 status: ## Show the status of the Helm release and run smoke tests
 	@echo "=== Helm Release Status ==="
 	$(HELM) status $(RELEASE_NAME) --namespace $(NAMESPACE)
 	@echo ""
 	@echo "=== Smoke Tests ==="
-	@python3 $(CHART_DIR)/check_status.py --namespace $(NAMESPACE) --helm-release $(RELEASE_NAME)
+	@python3 $(CHART_DIR)/check_status.py --namespace $(NAMESPACE) --helm-release $(RELEASE_NAME) \
+		$(if $(KUBE_CONTEXT),--context $(KUBE_CONTEXT))
 
 list: ## List all Helm releases in the namespace
 	$(HELM) list --namespace $(NAMESPACE)
@@ -383,7 +542,7 @@ template-egress-variants: ## Render the egress NetworkPolicy in default / harden
 	@echo "=== Hardened (CIDR-scoped) egress ==="
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) $(VALUES_OPTS) \
 		--set networkPolicies.allowedEgressCIDRs[0]=10.20.0.0/24 \
-		--set networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=13.43.162.56/32 \
+		--set networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=203.0.113.10/32 \
 		--set networkPolicies.allowedEgressCIDRsWithPorts[0].port=8002 \
 		--show-only templates/network-policy.yaml > /dev/null
 	@echo "=== NetworkPolicies disabled ==="
@@ -394,35 +553,40 @@ template-egress-variants: ## Render the egress NetworkPolicy in default / harden
 clean: ## Clean up rendered output
 	@rm -f $(CHART_DIR)/*.rendered.yaml
 
-# Registration is done ONCE on the hub, not here:
-#   make new-trust TRUST_CODE=<KIT> TRUST_NAME="..."
-#   make -C deploy/providers/AWS register-trusts KIT=<KIT> HUB=<env>
-#   make sync-trust-kit KIT=<KIT> HUB=<env>           # fills the Hub-shared block
-# This target then reads trust/.env.<KIT>.<env>, patches the per-trust keys into the
-# chart's Kubernetes Secret, and writes a secret-free Helm override. Then deploy with
-# `make up OVERRIDES_FILE=k8s-trust-<KIT>.yaml`. Env from $(HUB).
-xnat-init: ## Run the XNAT post-install init job manually (use after XNAT web is ready, when initJob.enabled=false)
-	@# An earlier Job (a manual run, or a hook that failed) would make the apply "unchanged" and the
-	@# wait return at once, without running the configuration again.
-	@$(KUBECTL) delete job -n $(NAMESPACE) --selector app.kubernetes.io/component=xnat-init \
-		--ignore-not-found --cascade=foreground --timeout=$(HELM_TIMEOUT)
+xnat-init: ## Run the XNAT post-install init job (a no-op when xnat.enabled=false)
+	@# One shell for the whole target: the "nothing to do" case must skip the wait too, and a
+	@# bare `exit 0` in one recipe line would only end that line.
+	@# Render first and look, because with `xnat.enabled=false` the chart renders no init Job at
+	@# all (templates/xnat-init-job.yaml is guarded on both). `kubectl apply --selector` is then
+	@# handed zero objects and fails with "no objects passed to apply", which turned a deploy of a
+	@# trust that has no XNAT to configure into exit 3.
 	@echo "▶  Rendering XNAT init job from chart templates..."
-	@$(HELM) template $(RELEASE_NAME) $(CHART_DIR) \
+	@tmp=$$(mktemp); \
+	trap 'rm -f "$$tmp"' EXIT; \
+	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
 		$(VALUES_OPTS) \
-		--set xnat.initJob.enabled=true \
-		| $(KUBECTL) apply -n $(NAMESPACE) -f - \
-		--selector app.kubernetes.io/component=xnat-init
-	@echo "⏳  Waiting for xnat-init job to complete (timeout $(HELM_TIMEOUT))..."
-	@$(KUBECTL) wait job \
+		--set xnat.initJob.enabled=true > $$tmp \
+		|| { echo "❌  could not render the chart — xnat-init not run."; exit 1; }; \
+	if ! grep -q 'app.kubernetes.io/component: xnat-init' $$tmp; then \
+		echo "⏭  XNAT is disabled (xnat.enabled=false) — nothing to initialise."; \
+		exit 0; \
+	fi; \
+	$(KUBECTL) delete job -n $(NAMESPACE) --selector app.kubernetes.io/component=xnat-init \
+		--ignore-not-found --cascade=foreground --timeout=$(HELM_TIMEOUT) || exit 1; \
+	$(KUBECTL) apply -n $(NAMESPACE) -f $$tmp \
+		--selector app.kubernetes.io/component=xnat-init || exit 1; \
+	echo "⏳  Waiting for xnat-init job to complete (timeout $(HELM_TIMEOUT))..."; \
+	$(KUBECTL) wait job \
 		--selector app.kubernetes.io/component=xnat-init \
 		--for=condition=complete \
 		--namespace $(NAMESPACE) \
 		--timeout=$(HELM_TIMEOUT) && \
-	echo "✅  XNAT init complete." || \
-	(echo "❌  XNAT init failed — check logs:"; \
-	 $(KUBECTL) logs -n $(NAMESPACE) -l app.kubernetes.io/component=xnat-init --tail=40; \
-	 exit 1)
+	echo "✅  XNAT init complete." || { \
+		echo "❌  XNAT init failed — check logs:"; \
+		$(KUBECTL) logs -n $(NAMESPACE) -l app.kubernetes.io/component=xnat-init --tail=40; \
+		exit 1; \
+	}
 
 sync-kit-override: ## Regenerate the k8s-trust-<KIT>.yaml override from the kit (validates its governance document) without touching the cluster Secret
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit-override KIT=Trust_K8s HUB=stag"; exit 1)
@@ -458,6 +622,13 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 		$(KUBECTL) rollout status deployment/$(RELEASE_NAME)-flip-trust-$$svc -n $(NAMESPACE) --timeout=120s; \
 	done
 
+# Registration is done ONCE on the hub, not here:
+#   make new-trust TRUST_CODE=<KIT> TRUST_NAME="..."
+#   make -C deploy/providers/AWS register-trusts KIT=<KIT> HUB=<env>
+#   make sync-trust-kit KIT=<KIT> HUB=<env>           # fills the Hub-shared block
+# This target then reads trust/.env.<KIT>.<env>, patches the per-trust keys into the
+# chart's Kubernetes Secret, and writes a secret-free Helm override. Then deploy with
+# `make up OVERRIDES_FILE=k8s-trust-<KIT>.yaml`. Env from $(HUB).
 sync-kit: ## Sync a registered trust KIT into the cluster (patches Secret + writes k8s-trust-<KIT>.yaml override)
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit KIT=Trust_K8s HUB=stag"; exit 1)
 	@uv run --no-config $(CHART_DIR)/sync_k8s_kit.py \

@@ -12,4 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""FLARE-specific platform components for federated learning workflows."""
+"""FLARE-specific platform components for federated learning workflows.
+
+Importing any ``flip.nvflare`` module needs NVFLARE, including the stdlib-only ones
+(``site_policy``, ``server_site_config``, ``k8s_job_mode``): ``python -m`` runs them only in the FLARE
+images, which have it, and the trust host loads ``site_policy.py`` by path, bypassing this package.
+"""
+
+try:
+    import nvflare  # noqa: F401
+except ImportError as error:
+    raise ImportError("flip.nvflare needs NVFLARE: install flip-utils[nvflare] (FLIP#1047)") from error

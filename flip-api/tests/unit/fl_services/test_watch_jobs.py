@@ -27,7 +27,11 @@ NOW = datetime(2026, 10, 14, 12, 0, 0)
 PREPARE_TIMEOUT = timedelta(minutes=30)
 
 
-def _job(fl_backend_job_id: str | None = "run-1", started: datetime | None = NOW - timedelta(hours=1)) -> WatchedJob:
+def _job(
+    fl_backend_job_id: str | None = "run-1",
+    started: datetime | None = NOW - timedelta(hours=1),
+    study: str | None = "study-a",
+) -> WatchedJob:
     return WatchedJob(
         job_id=uuid4(),
         model_id=uuid4(),
@@ -35,6 +39,7 @@ def _job(fl_backend_job_id: str | None = "run-1", started: datetime | None = NOW
         started=started,
         net_name="net-1",
         net_endpoint="http://fl-api-net-1:8000",
+        study=study,
     )
 
 
@@ -76,6 +81,35 @@ def test_any_live_record_keeps_the_job_alive():
     assert why_job_is_dead(_job(), backend_jobs, NOW, PREPARE_TIMEOUT) is None
 
 
+START_TIMEOUT = timedelta(minutes=60)
+
+
+def test_a_job_the_backend_holds_unstarted_past_the_start_timeout_is_dead():
+    """FLARE never tries to schedule a job while no client is connected, so it never gives up on it (FLIP#1133)."""
+    job = _job(started=NOW - timedelta(minutes=61))
+
+    reason = why_job_is_dead(job, _listed(FLJobStatus.PENDING), NOW, PREPARE_TIMEOUT, START_TIMEOUT)
+
+    assert reason == (
+        "The FL server on net-1 did not start this job within 60 minutes, "
+        "for example because the selected trusts never connected."
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "minutes_ago", "start_timeout"),
+    [
+        (FLJobStatus.PENDING, 59, START_TIMEOUT),
+        (FLJobStatus.RUNNING, 600, START_TIMEOUT),
+        (FLJobStatus.PENDING, 600, None),
+    ],
+)
+def test_a_job_waiting_within_the_start_timeout_or_running_is_alive(status, minutes_ago, start_timeout):
+    job = _job(started=NOW - timedelta(minutes=minutes_ago))
+
+    assert why_job_is_dead(job, _listed(status), NOW, PREPARE_TIMEOUT, start_timeout) is None
+
+
 def test_a_job_still_being_prepared_is_alive():
     job = _job(fl_backend_job_id=None, started=NOW - timedelta(minutes=29))
 
@@ -114,6 +148,31 @@ def test_a_dead_job_is_failed_on_the_third_tick(watched):
     )
 
 
+@pytest.mark.parametrize("abort_error", [None, RuntimeError("FL API down")])
+def test_the_watchdog_aborts_and_fails_a_job_its_backend_never_started(watched, abort_error):
+    """The backend still holds the job, so it is aborted first, or it would start once a trust connects. A failed
+    abort does not stop the model being failed."""
+    # The fixture's job was picked up an hour ago, so a 30-minute start timeout has passed.
+    watched["list_jobs"].return_value = _listed(FLJobStatus.PENDING)
+    watchdog = JobWatchdog(strikes=1, prepare_timeout=PREPARE_TIMEOUT, start_timeout=timedelta(minutes=30))
+
+    with patch("flip_api.fl_services.watch_jobs.abort_job", side_effect=abort_error) as abort:
+        assert watchdog.tick(MagicMock(), NOW) == [watched["job"].model_id]
+
+    # In the job's own study: the FL API reaches a job only through its study's session (FLIP#1678).
+    abort.assert_called_once_with("http://fl-api-net-1:8000", "run-1", "study-a")
+    assert "did not start this job within 30 minutes" in watched["fail"].call_args.args[1]
+
+
+def test_a_job_the_backend_has_ended_is_not_aborted(watched):
+    watched["list_jobs"].return_value = _listed(FLJobStatus.FAILED)
+
+    with patch("flip_api.fl_services.watch_jobs.abort_job") as abort:
+        JobWatchdog(strikes=1, prepare_timeout=PREPARE_TIMEOUT).tick(MagicMock(), NOW)
+
+    abort.assert_not_called()
+
+
 def test_a_live_tick_resets_the_count(watched):
     watchdog = JobWatchdog(strikes=3, prepare_timeout=PREPARE_TIMEOUT)
     for status in (FLJobStatus.FAILED, FLJobStatus.FAILED, FLJobStatus.RUNNING, FLJobStatus.FAILED, FLJobStatus.FAILED):
@@ -133,14 +192,15 @@ def test_an_unreachable_fl_api_never_fails_a_job(watched):
     watched["fail"].assert_not_called()
 
 
-def test_each_net_is_listed_once_per_tick(watched):
-    second = _job(fl_backend_job_id="run-2")
-    watched["find"].return_value = [watched["job"], second]
+def test_each_net_is_listed_once_per_tick_with_its_jobs_studies(watched):
+    # Each NVFLARE study only shows its own jobs, so the net is asked for every study it runs, once each.
+    jobs = [_job(study="study-b"), _job(fl_backend_job_id="run-2", study="study-a"), _job(fl_backend_job_id="run-3")]
+    watched["find"].return_value = jobs
     watched["list_jobs"].return_value = _listed(FLJobStatus.RUNNING) + _listed(FLJobStatus.RUNNING, job_id="run-2")
 
     JobWatchdog(strikes=3, prepare_timeout=PREPARE_TIMEOUT).tick(MagicMock(), NOW)
 
-    watched["list_jobs"].assert_called_once_with("http://fl-api-net-1:8000")
+    watched["list_jobs"].assert_called_once_with("http://fl-api-net-1:8000", ["study-a", "study-b"])
 
 
 def test_a_net_with_only_unsubmitted_jobs_is_not_listed(watched):
@@ -176,11 +236,13 @@ def test_the_scheduled_task_ticks_with_the_configured_watchdog():
     ):
         settings.return_value.FL_JOB_WATCHDOG_STRIKES = 5
         settings.return_value.FL_JOB_PREPARE_TIMEOUT_MINUTES = 45
+        settings.return_value.FL_JOB_START_TIMEOUT_MINUTES = 90
         watch_jobs.watch_fl_jobs_scheduled_task()
 
     tick.assert_called_once()
     assert watch_jobs._watchdog().strikes == 5
     assert watch_jobs._watchdog().prepare_timeout == timedelta(minutes=45)
+    assert watch_jobs._watchdog().start_timeout == timedelta(minutes=90)
     watch_jobs._watchdog.cache_clear()
 
 
@@ -201,7 +263,7 @@ def test_one_net_that_cannot_be_listed_does_not_stop_the_others(watched):
     other = _on_net_2(_job(fl_backend_job_id="run-2"))
     watched["find"].return_value = [watched["job"], other]
 
-    def list_jobs(endpoint: str) -> list[IJobMetaData]:
+    def list_jobs(endpoint: str, studies: list[str]) -> list[IJobMetaData]:
         if endpoint == "http://fl-api-net-1:8000":
             raise httpx.InvalidURL("bad endpoint")
         return _listed(FLJobStatus.FAILED, job_id="run-2")

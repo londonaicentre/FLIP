@@ -20,8 +20,7 @@
 #
 # The obvious pre-check — ask the hub — is not available to a GitHub runner:
 # GET /fl/quiesce is gated on `verify_token` (a Cognito session, and prod runs
-# ENFORCE_MFA=true), CloudFront strips X-Internal-Service-Key at the edge, and the
-# scheduler state lives in Postgres inside private subnets. So instead of asking
+# ENFORCE_MFA=true), and the scheduler state lives in Postgres inside private subnets. So instead of asking
 # whether a run is in flight, this asks whether the apply could disturb one — which
 # is answerable offline, from the plan itself, and is the stricter of the two
 # questions when the answer is "no".
@@ -383,7 +382,8 @@ cat >&2 <<'EOF'
      2. Wait until GET /fl/quiesce reports deployment mode ON and no BUSY net.
      3. Re-run terraform_apply.yml on this branch via workflow_dispatch, with the
         `fl_quiesced` input set to true. That input is what skips this gate — a
-        plain re-run reads the same plan and holds again.
+        plain re-run reads the same plan and holds again. On develop it need not be
+        this commit: a dispatch from a later one still deploys the newest builds.
      4. Disable deployment mode afterwards.
 
    Runbook: deploy/providers/AWS/README.md, "Terraform CI: plan on PR, apply on

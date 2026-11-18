@@ -43,6 +43,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import ipaddress
 import json
 import os
 import shlex
@@ -70,23 +71,13 @@ def quote_make_assignment(key: str, value: str | Path) -> str:
     return shlex.quote(f"{key}={value}".replace("$", "$$"))
 
 
-# Hub-shared keys — MUST stay in lockstep with HUB_SHARED_KEYS in
-# trust/deploy/scripts/sync_trust_kit.py and HUB_SHARED_ENV_KEYS in
-# flip-api/src/flip_api/scripts/register_trust.py, except FL_EDGE_PORT: a kit synced before
-# FLIP#1365 lacks it and every reader falls back to FL_SERVER_PORT, so requiring it would fail
-# every existing site's upgrade checklist.
-HUB_SHARED_KEYS: tuple[str, ...] = (
-    "AES_KEY_BASE64",
-    "CENTRAL_HUB_API_URL",
-    "TRUST_API_KEY_HEADER",
-    "FL_BACKEND",
-    "FLOWER_KIT_DATE",
-    "FLARE_KIT_DATE",
-    "DOCKER_TAG",
-    "DOCKER_FL_TAG",
-    "NLB_SUBDOMAIN",
-    "FL_SERVER_PORT",
-)
+# Keys a kit may lack because every reader falls back: FL_EDGE_PORT (kits synced before FLIP#1365 lack it;
+# readers fall back to FL_SERVER_PORT). Requiring such a key would FAIL every existing site's upgrade checklist.
+_HUB_SHARED_OPTIONAL: frozenset[str] = frozenset({"FL_EDGE_PORT"})
+# Derived from trust_kit_lib (the one list, held to register_trust.HUB_SHARED_ENV_KEYS by flip-api's lockstep
+# test). A key added there becomes REQUIRED here for every existing kit; if older kits can lack it and readers
+# fall back, add it to _HUB_SHARED_OPTIONAL in the same change.
+HUB_SHARED_KEYS: tuple[str, ...] = tuple(k for k in trust_kit_lib.HUB_SHARED_KEYS if k not in _HUB_SHARED_OPTIONAL)
 KIT_CRED_KEYS: tuple[str, ...] = (
     "TRUST_API_KEY",
     "TRUST_INTERNAL_SERVICE_KEY",
@@ -193,6 +184,15 @@ def read_kit_vars(kit_file: Path) -> dict[str, str]:
 def is_filled(value: str | None) -> bool:
     """A value is "filled" iff it's non-empty and not a `<run-make-…>` placeholder."""
     return bool(value) and "<run-make-" not in value
+
+
+def is_deployed_kit(kit_path: str) -> bool:
+    """Whether a kit path names a deployed site (``.stag`` / ``.prod``) rather than a dev kit.
+
+    A deployed kit publishes real services and holds real credentials, so some checks escalate
+    from WARN to FAIL for it.
+    """
+    return kit_path.rsplit(".", 1)[-1] in ("stag", "prod")
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -309,19 +309,26 @@ def check_kit_file(kit: str, kit_file: Path, kit_path: str | None = None) -> Che
 
 
 def check_hub_shared(kit_vars: dict[str, str], kit_present: bool) -> Check:
+    label = f"Hub-shared block ({len(HUB_SHARED_KEYS)} keys)"
     if not kit_present:
-        return Check("Hub-shared block (10 keys)", Status.PENDING, "pending — needs kit file")
-    missing = [k for k in HUB_SHARED_KEYS if not is_filled(kit_vars.get(k))]
+        return Check(label, Status.PENDING, "pending — needs kit file")
+    # The other backend's kit date may be empty (FLIP#1476): an NVFLARE hub has no FLOWER_KIT_DATE.
+    other_kit_date = {"nvflare": "FLOWER_KIT_DATE", "flower": "FLARE_KIT_DATE"}.get(kit_vars.get("FL_BACKEND", ""))
+    missing = [
+        k
+        for k in HUB_SHARED_KEYS
+        if not is_filled(kit_vars.get(k)) and not (k == other_kit_date and not kit_vars.get(k))
+    ]
     if not missing:
         hub_url = kit_vars.get("CENTRAL_HUB_API_URL", "").removesuffix("/api")
         return Check(
-            "Hub-shared block (10 keys)",
+            label,
             Status.PASS,
             "populated",
             hints=[f"UI URL: {hub_url or '<unset>'}"],
         )
     return Check(
-        "Hub-shared block (10 keys)",
+        label,
         Status.FAIL,
         f"{len(missing)} unfilled: {', '.join(missing)}",
         hints=["Ask the FLIP admin to run 'make sync-trust-kit KIT=<CODE>' and re-send the kit."],
@@ -358,6 +365,7 @@ REGISTRY_HOSTS: tuple[str, ...] = (
     "production.cloudfront.docker.com",
 )
 EGRESS_DOC = "the egress list on docs → Deploy a trust node → Network requirements"
+EGRESS_IP_URL = "https://checkip.amazonaws.com"
 
 
 def _failure_reason(error: BaseException) -> str:
@@ -384,6 +392,15 @@ def probe_tcp(host: str, port: int, timeout: float = PROBE_TIMEOUT_SECONDS) -> s
             return None
     except OSError as error:
         return _failure_reason(error)
+
+
+def lookup_egress_ip(timeout: float = PROBE_TIMEOUT_SECONDS) -> str | None:
+    """The public address this host leaves from, or None when it cannot be looked up."""
+    try:
+        with urllib.request.urlopen(EGRESS_IP_URL, timeout=timeout) as response:
+            return str(ipaddress.ip_address(response.read(64).decode("ascii").strip()))
+    except Exception:  # only feeds a hint: a blocked or intercepted lookup must not fail the checklist
+        return None
 
 
 def probe_hub_health(hub_url: str, timeout: float = PROBE_TIMEOUT_SECONDS) -> tuple[str | None, str | None]:
@@ -456,16 +473,20 @@ def check_fl_endpoint_reachable(kit_vars: dict[str, str], kit_present: bool) -> 
     failure = probe_tcp(host, port)
     if failure is None:
         return Check(label, Status.PASS, f"tcp {host}:{port} connects (from {source})")
-    return Check(
-        label,
-        Status.FAIL,
-        f"tcp {host}:{port}: {failure} (from {source})",
-        hints=[
-            "The FL client connects out to this host:port over mutual TLS; a connection that opens"
-            " here but fails in the client log is a TLS-inspection proxy re-signing it — exempt the host.",
-            f"Ask the network team to allow it outbound from this host — {EGRESS_DOC}.",
-        ],
-    )
+    hints = [
+        "The FL client connects out to this host:port over mutual TLS; a connection that opens"
+        " here but fails in the client log is a TLS-inspection proxy re-signing it — exempt the host.",
+        f"Ask the network team to allow it outbound from this host — {EGRESS_DOC}.",
+    ]
+    if "timed out" in failure:
+        # A hub that filters by source address drops an unlisted site without an answer.
+        egress_ip = lookup_egress_ip()
+        leaves_from = f": {egress_ip}" if egress_ip else " (not found from here; your network team knows it)"
+        hints.append(
+            "If outbound is already allowed, the hub may admit FL connections only from registered site"
+            f" addresses — send the FLIP hub team the public address this host leaves from{leaves_from}."
+        )
+    return Check(label, Status.FAIL, f"tcp {host}:{port}: {failure} (from {source})", hints=hints)
 
 
 def check_registries_reachable() -> Check:
@@ -1000,7 +1021,7 @@ def check_unrotated_passwords(
     ]
     if not unchanged:
         return Check("Trust-local passwords", Status.PASS, "all rotated from template defaults")
-    deployed = kit_path.rsplit(".", 1)[-1] in ("stag", "prod")
+    deployed = is_deployed_kit(kit_path)
     return Check(
         "Trust-local passwords",
         Status.FAIL if deployed else Status.WARN,
@@ -1009,6 +1030,36 @@ def check_unrotated_passwords(
             f"Unchanged: {', '.join(unchanged)}",
             f"Edit {kit_path} → Trust-local credentials section and replace each with a",
             "  random secret (`make new-trust` mints them for a fresh kit).",
+        ],
+    )
+
+
+def check_log_level(kit_vars: dict[str, str], kit_present: bool, kit_path: str) -> Check:
+    """Refuse a deployed kit left at ``TRUST_LOG_LEVEL=DEBUG`` (FLIP-SR-050).
+
+    At DEBUG the trust APIs log request headers and bodies into Loki, which runs with auth
+    disabled, shares the trust network with the FL client, and keeps 30 days of history — so the
+    trust's hub API key, internal key and cohort-admin proof land where researcher FL code can read
+    them. On a `.stag` / `.prod` kit that is a FAIL; on a development kit it is a WARN (mock data,
+    throwaway credentials).
+    """
+    label = "Trust log level"
+    if not kit_present:
+        return Check(label, Status.PENDING, "pending — needs kit file")
+    level = (kit_vars.get("TRUST_LOG_LEVEL") or "").strip().upper()
+    if level and level != "DEBUG":
+        return Check(label, Status.PASS, f"TRUST_LOG_LEVEL={level}")
+    if not level:
+        # Unset falls back to each service's own default; name it rather than assume.
+        return Check(label, Status.WARN, "TRUST_LOG_LEVEL unset — set it to INFO explicitly")
+    deployed = is_deployed_kit(kit_path)
+    return Check(
+        label,
+        Status.FAIL if deployed else Status.WARN,
+        "TRUST_LOG_LEVEL=DEBUG logs trust credentials into Loki (FLIP-SR-050)",
+        hints=[
+            f"Edit {kit_path} → set TRUST_LOG_LEVEL=INFO, then recreate the trust APIs.",
+            "A site that already ran at DEBUG should rotate both trust keys.",
         ],
     )
 
@@ -1262,6 +1313,7 @@ def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None) -> list[
         check_site_privacy_policy(kit_vars, kit_present, kit, repo_root, kit_path),
         check_governance_document(kit_vars, kit_present, kit, repo_root, kit_file),
         check_unrotated_passwords(kit_vars, kit_present, repo_root, kit, kit_path),
+        check_log_level(kit_vars, kit_present, kit_path),
         check_sample_data(kit_vars, kit_present, kit_path),
         check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, kit_present, repo_root),
         check_data_dir("Orthanc storage dir", "ORTHANC_STORAGE_DIR", kit_vars, kit_present, repo_root),

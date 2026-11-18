@@ -39,7 +39,7 @@ from pathlib import Path
 
 import pytest
 
-from test_password_guards import CANONICAL_WEAK_VALUES, GUARD_XNAT_DB, WAIT_FOR_POSTGRES
+from test_password_guards import CANONICAL_WEAK_VALUES, GUARD_XNAT_DB, MAKE_XNAT_CONFIG, WAIT_FOR_POSTGRES
 
 # A guard that stops refusing is a security regression; a guard that stops
 # terminating is a boot hang. Both must fail the suite rather than wedge CI.
@@ -334,6 +334,285 @@ def test_xnat_db_guard_execs_entrypoint_with_argv_intact(
 
 
 #
+# xnat-db — guard-xnat-db-data.sh (FLIP#1812), the entrypoint ahead of the password guard
+#
+
+GUARD_XNAT_DB_DATA = GUARD_XNAT_DB.with_name("guard-xnat-db-data.sh")
+
+
+def _data_guard(tmp_path: Path, stub_bin: Path, shell: tuple[str, ...], layout: set[str]):
+    """Run the data guard over a volume laid out as named, with PGDATA at <volume>/pg16.
+
+    ``layout`` holds any of: ``old`` (a PostgreSQL 12 cluster at the volume root), ``dump`` (the
+    migration dump beside it), ``initialised`` (a pg16 cluster), ``restored`` (its marker) and
+    ``old-ran-since`` (the old cluster was started again after the dump and the restore),
+    ``sibling`` (a PostgreSQL 15 cluster in pg15/) and ``as-root`` (the guard runs as uid 0, over a
+    volume root of mode 0700).
+    Returns the result and the argv it handed the password guard, None when it did not.
+    """
+    root = tmp_path / "data"
+    pgdata = root / "pg16"
+    root.mkdir()
+    if "old" in layout:
+        (root / "PG_VERSION").write_text("12\n")
+    if "dump" in layout:
+        (root / "xnat-migrate.dump").write_text("dump")
+    if "initialised" in layout:
+        pgdata.mkdir()
+        (pgdata / "PG_VERSION").write_text("16\n")
+    if "restored" in layout:
+        (pgdata / "xnat-restored").touch()
+    if "old-ran-since" in layout:
+        # The old server writes postmaster.opts at each start: here, after everything else was made.
+        (root / "postmaster.opts").touch()
+        for made in (root / "xnat-migrate.dump", pgdata / "xnat-restored"):
+            if made.exists():
+                os.utime(made, (1_000_000_000, 1_000_000_000))
+    elif "old" in layout:
+        (root / "postmaster.opts").touch()
+        os.utime(root / "postmaster.opts", (1_000_000_000, 1_000_000_000))
+    if "sibling" in layout:
+        (root / "pg15").mkdir()
+        (root / "pg15" / "PG_VERSION").write_text("15\n")
+    if "as-root" in layout:
+        _write_stub(stub_bin, "id", "echo 0")
+        root.chmod(0o700)
+    record = tmp_path / "argv"
+    _install_argv_recorder(stub_bin, "guard-xnat-db-passwords.sh", record)
+    env = {"PGDATA": str(pgdata), "PG_MAJOR": "16"}
+    result = _run(GUARD_XNAT_DB_DATA, env, shell=shell, stub_bin=stub_bin, argv=("postgres", "one two"))
+    return result, record.read_text().splitlines() if record.exists() else None
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+@pytest.mark.parametrize(
+    "layout",
+    [
+        set(),  # a fresh install
+        {"old", "dump"},  # the first start after an upgrade's dump: init restores it
+        {"old", "dump", "initialised", "restored"},  # a restart after that restore
+        {"old", "initialised"},  # the old cluster's dump already removed
+        {"initialised"},  # after xnat-db-remove-old-cluster
+    ],
+    ids=["fresh", "first-start-restores", "restored", "dump-removed", "old-cluster-removed"],
+)
+def test_xnat_db_data_guard_hands_over_with_argv_intact(shell, layout, stub_bin: Path, tmp_path: Path) -> None:
+    result, handed = _data_guard(tmp_path, stub_bin, shell, layout)
+
+    assert result.returncode == 0, result.stderr
+    assert handed == ["2", "postgres", "one two"]
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+def test_xnat_db_data_guard_refuses_an_old_cluster_without_a_dump(shell, stub_bin: Path, tmp_path: Path) -> None:
+    """Initialising beside it would start XNAT as an empty site, the old database unread."""
+    result, handed = _data_guard(tmp_path, stub_bin, shell, {"old"})
+
+    assert result.returncode == 1
+    assert "holds a PostgreSQL 12 database" in result.stderr
+    # The verbs need the old server running, so the pin back comes first.
+    assert result.stderr.index("Pin XNAT_TAG") < result.stderr.index("make upgrade-trust")
+    assert handed is None
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+@pytest.mark.parametrize(
+    ("layout", "said"),
+    [
+        ({"old", "dump", "initialised", "restored", "old-ran-since"}, "is out of date"),
+        ({"old", "dump", "old-ran-since"}, "would lose what changed"),
+    ],
+    ids=["rolled-back-then-redeployed", "stale-dump"],
+)
+def test_xnat_db_data_guard_refuses_what_the_old_cluster_has_outlived(
+    shell, layout, said, stub_bin: Path, tmp_path: Path
+) -> None:
+    """After a rollback the old database is the live one: a restore or a dump from before it is stale."""
+    result, handed = _data_guard(tmp_path, stub_bin, shell, layout)
+
+    assert result.returncode == 1
+    assert said in result.stderr
+    assert result.stderr.index("Pin XNAT_TAG") < result.stderr.index("make upgrade-trust")
+    assert handed is None
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+def test_xnat_db_data_guard_refuses_a_restore_that_did_not_finish(shell, stub_bin: Path, tmp_path: Path) -> None:
+    """The entrypoint skips init over an initialised PGDATA, so a restart would serve half a database."""
+    result, handed = _data_guard(tmp_path, stub_bin, shell, {"old", "dump", "initialised"})
+
+    assert result.returncode == 1
+    assert "did not finish" in result.stderr
+    assert handed is None
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+def test_xnat_db_data_guard_refuses_a_cluster_in_another_major_dir(shell, stub_bin: Path, tmp_path: Path) -> None:
+    """The verbs move a cluster at the volume root only: beside pg15/, initdb would start XNAT empty."""
+    result, handed = _data_guard(tmp_path, stub_bin, shell, {"sibling"})
+
+    assert result.returncode == 1
+    assert "pg15 holds a PostgreSQL 15 database" in result.stderr
+    assert "not implemented" in result.stderr
+    assert handed is None
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+@pytest.mark.parametrize(
+    ("layout", "mode"),
+    [
+        ({"as-root"}, 0o711),  # a fresh volume made under umask 077: postgres could not reach pg16/
+        ({"as-root", "old", "dump"}, 0o700),  # the old server refuses a data dir wider than 0750
+        ({"as-root", "old", "dump", "initialised", "restored"}, 0o700),
+    ],
+    ids=["fresh", "old-cluster", "old-cluster-restored"],
+)
+def test_xnat_db_data_guard_opens_only_a_fresh_volume_root_to_postgres(
+    shell, layout, mode, stub_bin: Path, tmp_path: Path
+) -> None:
+    if len(shell) > 1 and mode == 0o711:
+        pytest.skip("busybox sh runs its own id applet, not the stub, so the guard cannot be made to see root here")
+    result, handed = _data_guard(tmp_path, stub_bin, shell, layout)
+
+    assert result.returncode == 0, result.stderr
+    assert handed is not None
+    assert (tmp_path / "data").stat().st_mode & 0o777 == mode
+
+
+#
+# xnat-db — restore-xnat-dump.sh and xnat_db_migrate_dump.sh (FLIP#1812), over stub PostgreSQL tools
+#
+
+RESTORE_XNAT_DUMP = GUARD_XNAT_DB.with_name("restore-xnat-dump.sh")
+XNAT_DB_MIGRATE_DUMP = GUARD_XNAT_DB.parents[1] / "scripts" / "xnat_db_migrate_dump.sh"
+
+
+def _restore(tmp_path: Path, stub_bin: Path, shell: tuple[str, ...], *, dump: bool, pg_restore: str = "exit 0"):
+    """Run the restore over <volume>/pg16. Returns the result, pg_restore's argv (None: not called) and PGDATA."""
+    pgdata = tmp_path / "data" / "pg16"
+    pgdata.mkdir(parents=True)
+    if dump:
+        (tmp_path / "data" / "xnat-migrate.dump").write_text("dump")
+    record = tmp_path / "argv"
+    _write_stub(stub_bin, "pg_restore", f'printf "%s\\n" "$@" > {shlex.quote(str(record))}\n{pg_restore}')
+    env = {"PGDATA": str(pgdata), "POSTGRES_USER": "postgres", "POSTGRES_DB": "xnat"}
+    result = _run(RESTORE_XNAT_DUMP, env, shell=shell, stub_bin=stub_bin)
+    return result, record.read_text().splitlines() if record.exists() else None, pgdata
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+def test_xnat_db_restore_does_nothing_without_a_dump(shell, stub_bin: Path, tmp_path: Path) -> None:
+    """A fresh install: no dump, so the init leaves the empty database and no marker."""
+    result, called, pgdata = _restore(tmp_path, stub_bin, shell, dump=False)
+
+    assert result.returncode == 0, result.stderr
+    assert called is None
+    assert not (pgdata / "xnat-restored").exists()
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+def test_xnat_db_restore_marks_a_finished_restore(shell, stub_bin: Path, tmp_path: Path) -> None:
+    result, called, pgdata = _restore(tmp_path, stub_bin, shell, dump=True)
+
+    assert result.returncode == 0, result.stderr
+    dump = str(tmp_path / "data" / "xnat-migrate.dump")
+    assert called == ["--exit-on-error", "--no-password", "-U", "postgres", "-d", "xnat", dump]
+    assert (pgdata / "xnat-restored").exists()
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+def test_xnat_db_restore_that_fails_leaves_no_marker(shell, stub_bin: Path, tmp_path: Path) -> None:
+    """The marker is what lets the data guard tell half a database from a whole one."""
+    result, called, pgdata = _restore(tmp_path, stub_bin, shell, dump=True, pg_restore="exit 1")
+
+    assert result.returncode != 0
+    assert called is not None
+    assert not (pgdata / "xnat-restored").exists()
+
+
+def _migrate_dump(
+    pgdata: Path,
+    stub_bin: Path,
+    shell: tuple[str, ...],
+    *,
+    psql: str = "exit 0",
+    pg_dump: str = "exit 0",
+    pg_restore: str = "exit 0",
+):
+    """Run the dump script in ``pgdata``, moving to 16. Returns the result and pg_dump's argv (None: not called).
+
+    The pg_dump stub writes the file ``-f`` names before it runs ``pg_dump``, so a failing one leaves a partial dump.
+    """
+    pgdata.mkdir(parents=True, exist_ok=True)
+    record = stub_bin / "pg_dump.argv"
+    _write_stub(stub_bin, "psql", psql)
+    _write_stub(stub_bin, "pg_restore", pg_restore)
+    _write_stub(
+        stub_bin,
+        "pg_dump",
+        f'printf "%s\\n" "$@" > {shlex.quote(str(record))}\n'
+        'while [ $# -gt 0 ]; do [ "$1" != -f ] || echo dump > "$2"; shift; done\n'
+        f"{pg_dump}",
+    )
+    env = {"PGDATA": str(pgdata), "POSTGRES_DB": "xnat"}
+    result = _run(XNAT_DB_MIGRATE_DUMP, env, shell=shell, stub_bin=stub_bin, argv=("16",))
+    return result, record.read_text().splitlines() if record.exists() else None
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+@pytest.mark.parametrize(("psql", "role"), [("exit 0", "postgres"), ("exit 1", "xnat")], ids=["two-roles", "pre-split"])
+def test_xnat_db_migrate_dump_leaves_the_dump_beside_the_cluster(
+    shell, psql, role, stub_bin: Path, tmp_path: Path
+) -> None:
+    """As the postgres role, or as xnat on a volume that has no postgres role (FLIP#1666)."""
+    pgdata = tmp_path / "data"
+    result, called = _migrate_dump(pgdata, stub_bin, shell, psql=psql)
+
+    assert result.returncode == 0, result.stderr
+    assert called == ["-Fc", "-U", role, "-f", str(pgdata / "xnat-migrate.dump.tmp"), "xnat"]
+    assert sorted(p.name for p in pgdata.iterdir()) == ["xnat-migrate.dump"]
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+@pytest.mark.parametrize(
+    "failing", [{"pg_dump": "exit 1"}, {"pg_restore": "exit 1"}], ids=["dump-fails", "dump-unreadable"]
+)
+def test_xnat_db_migrate_dump_that_fails_leaves_no_file(shell, failing, stub_bin: Path, tmp_path: Path) -> None:
+    """A partial dump left behind is one the new image would restore."""
+    pgdata = tmp_path / "data"
+    result, _ = _migrate_dump(pgdata, stub_bin, shell, **failing)
+
+    assert result.returncode != 0
+    assert list(pgdata.iterdir()) == []
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+def test_xnat_db_migrate_dump_moves_an_earlier_new_cluster_aside(shell, stub_bin: Path, tmp_path: Path) -> None:
+    """After a rollback pg16/ is stale, but it is the only copy of what the site wrote while on 16."""
+    pgdata = tmp_path / "data"
+    (pgdata / "pg16").mkdir(parents=True)
+    (pgdata / "pg16" / "written-on-16").write_text("kept")
+    result, _ = _migrate_dump(pgdata, stub_bin, shell)
+
+    assert result.returncode == 0, result.stderr
+    assert not (pgdata / "pg16").exists()
+    (aside,) = pgdata.glob("pg16.replaced-*")
+    assert (aside / "written-on-16").read_text() == "kept"
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+def test_xnat_db_migrate_dump_refuses_a_cluster_already_in_a_major_dir(shell, stub_bin: Path, tmp_path: Path) -> None:
+    """From pg16/ the dump would land inside it, where the next major's image does not look."""
+    pgdata = tmp_path / "data" / "pg16"
+    result, called = _migrate_dump(pgdata, stub_bin, shell)
+
+    assert result.returncode == 1
+    assert "not implemented" in result.stderr
+    assert called is None
+    assert list(pgdata.iterdir()) == []
+
+
+#
 # xnat-web — wait-for-postgres.sh
 #
 # The psql stub is installed on every case, so "psql was never called" is a real
@@ -476,3 +755,138 @@ def test_xnat_web_entrypoint_retries_while_postgres_is_unreachable(
     assert len(calls.read_text().splitlines()) == 3, "expected two retries then a successful connection"
     assert "Postgres is unavailable - sleeping" in result.stderr
     assert record.read_text().splitlines() == ["0"]
+
+
+#
+# xnat-web: which Postgres the entrypoint waits for (FLIP#1583)
+#
+# The host used to be the literal "xnat-db", the Compose and Helm service name, which is
+# the one name Snowpark Container Services cannot resolve. These pin the three-way
+# resolution so the SPCS deploy and the Compose deploy cannot drift apart: an explicit
+# XNAT_DB_HOST, else the host in the JDBC URL XNAT itself connects with, else "xnat-db".
+#
+# An explicit XNAT_DB_HOST takes the whole decision, port included (XNAT_DB_PORT, default
+# 5432). Half-reading the URL would be worse than not reading it: a host override paired
+# with a port from a URL naming a different host is a combination nobody configured.
+#
+
+
+def _install_host_recording_psql(stub_bin: Path, calls: Path) -> None:
+    """Install a ``psql`` stub that records the -h and -p it was handed, then succeeds.
+
+    Args:
+        stub_bin (Path): Mock-bin directory.
+        calls (Path): File the stub writes ``<host>:<port>`` to.
+    """
+    quoted = shlex.quote(str(calls))
+    _write_stub(
+        stub_bin,
+        "psql",
+        'host=""; port=""\n'
+        'while [ "$#" -gt 0 ]; do\n'
+        '  case "$1" in\n'
+        '    -h) host="$2"; shift 2 ;;\n'
+        '    -p) port="$2"; shift 2 ;;\n'
+        "    *) shift ;;\n"
+        "  esac\n"
+        "done\n"
+        f'printf "%s:%s\\n" "$host" "$port" > {quoted}\n'
+        "exit 0",
+    )
+
+
+XNAT_DB_HOST_CASES = [
+    ({}, "xnat-db:5432", "compose-default"),
+    ({"XNAT_DB_HOST": "db.internal", "XNAT_DB_PORT": "6543"}, "db.internal:6543", "explicit-host-and-port"),
+    (
+        {"XNAT_DATASOURCE_URL": "jdbc:postgresql://xnat-db.app.flip-trust-gstt.snowflakecomputing.internal:5432/xnat"},
+        "xnat-db.app.flip-trust-gstt.snowflakecomputing.internal:5432",
+        "from-spcs-jdbc-url",
+    ),
+    ({"XNAT_DATASOURCE_URL": "jdbc:postgresql://plain-host/xnat"}, "plain-host:5432", "jdbc-url-without-port"),
+    (
+        {"XNAT_DB_HOST": "wins", "XNAT_DATASOURCE_URL": "jdbc:postgresql://loses:5433/xnat"},
+        "wins:5432",
+        "explicit-host-beats-jdbc-url",
+    ),
+]
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [(case[0], case[1]) for case in XNAT_DB_HOST_CASES],
+    ids=[case[2] for case in XNAT_DB_HOST_CASES],
+)
+def test_xnat_web_entrypoint_waits_for_the_configured_database_host(
+    shell: tuple[str, ...], overrides: dict[str, str], expected: str, stub_bin: Path, tmp_path: Path
+) -> None:
+    """The wait must target the database XNAT is configured to use, on any platform."""
+    calls = tmp_path / "psql-host"
+    _install_host_recording_psql(stub_bin, calls)
+    _install_argv_recorder(stub_bin, "record-argv", tmp_path / "argv")
+
+    result = _run(WAIT_FOR_POSTGRES, _xnat_web_env(**overrides), shell=shell, stub_bin=stub_bin, argv=("record-argv",))
+
+    assert result.returncode == 0, result.stderr
+    assert calls.read_text().strip() == expected
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+def test_make_xnat_config_survives_an_unwritable_share_dir(
+    shell: tuple[str, ...], stub_bin: Path, tmp_path: Path
+) -> None:
+    """A share directory the container cannot create must warn, not kill the container.
+
+    Under SPCS the process is uid 1001 and /usr/local/share is root-owned, so the
+    unconditional ``mkdir -p`` aborted the entrypoint (it runs under ``set -e``) before
+    Tomcat ever started. The rendered configuration is the deliverable; the copy is not.
+    """
+    xnat_home = tmp_path / "home"
+    (xnat_home / "config").mkdir(parents=True)
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a directory")
+
+    result = _run(
+        MAKE_XNAT_CONFIG,
+        {
+            "XNAT_HOME": str(xnat_home),
+            "XNAT_CONFIG_SHARE_DIR": str(blocked / "xnat"),
+            "XNAT_DATASOURCE_DRIVER": "org.postgresql.Driver",
+            "XNAT_DATASOURCE_URL": "jdbc:postgresql://xnat-db:5432/xnat",
+            "XNAT_DATASOURCE_USERNAME": "xnat",
+            "XNAT_DATASOURCE_PASSWORD": STRONG_PASSWORD,
+        },
+        shell=shell,
+        stub_bin=stub_bin,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "skipping the config copy" in result.stderr
+    assert (xnat_home / "config" / "xnat-conf.properties").exists()
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
+def test_make_xnat_config_writes_the_copy_where_it_can(shell: tuple[str, ...], stub_bin: Path, tmp_path: Path) -> None:
+    """With a writable destination the convenience copy is still made."""
+    xnat_home = tmp_path / "home"
+    (xnat_home / "config").mkdir(parents=True)
+    share = tmp_path / "share" / "xnat"
+
+    result = _run(
+        MAKE_XNAT_CONFIG,
+        {
+            "XNAT_HOME": str(xnat_home),
+            "XNAT_CONFIG_SHARE_DIR": str(share),
+            "XNAT_DATASOURCE_DRIVER": "org.postgresql.Driver",
+            "XNAT_DATASOURCE_URL": "jdbc:postgresql://xnat-db:5432/xnat",
+            "XNAT_DATASOURCE_USERNAME": "xnat",
+            "XNAT_DATASOURCE_PASSWORD": STRONG_PASSWORD,
+        },
+        shell=shell,
+        stub_bin=stub_bin,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (share / "xnat-conf.properties").exists()
+    assert (share / "prefs-init.ini").exists()

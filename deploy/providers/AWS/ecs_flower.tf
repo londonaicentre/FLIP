@@ -18,9 +18,11 @@
 # service. The script (/scripts/register-supernode-keys.sh, baked into the
 # SuperLink image) reads the per-slot keys from EFS, registers each with the
 # SuperLink over the Control API, and maps the resulting node_ids on the fl-api.
-# TRUST_NAMES carries FL_KIT_SLOT_NAMES: the identity being labelled is the
-# per-slot SuperNode key, so trusts admin-created later (bound to a slot via
-# FLKitSlot.assigned_to_trust_id) still get their node_id mapped.
+# No TRUST_NAMES: each key names its own slot (supernode_credentials_<N>.pub is
+# Trust_<N>), the name flip-api derives from the same key in S3 (FLIP#1942), so the
+# keys are the only slot list. The SuperLink keeps registrations in memory, so this
+# task registers every key each time it runs; add_fl_kits_flower.sh runs it as it is,
+# after copying new keys to EFS, against the running SuperLink.
 
 resource "aws_ecs_task_definition" "flower_register_supernode_keys" {
   count                    = var.enable_efs && var.fl_backend == "flower" ? 1 : 0
@@ -41,10 +43,17 @@ resource "aws_ecs_task_definition" "flower_register_supernode_keys" {
       environment = [
         { name = "SUPERLINK_ADDRESS", value = "${local.service_discovery_names.fl_server}:${local.flower_superlink_control_port}" },
         { name = "FL_API_ADDRESS", value = "http://${local.service_discovery_names.fl_api}:${local.api_container_port}" },
-        { name = "TRUST_NAMES", value = var.FL_KIT_SLOT_NAMES },
         # The script writes the Flower CLI's ~/.flwr/config.toml; the image's HOME
         # (/app) is on the read-only root filesystem (ECS.5, FLIP#1795).
         { name = "HOME", value = "/tmp" },
+      ]
+
+      # /register_node on the fl-api requires the FL API key like every other route.
+      secrets = [
+        {
+          name      = "FL_API_KEY"
+          valueFrom = "${module.flip_api_secret.secret_arn}:fl_api_key::"
+        },
       ]
 
       # The SuperLink image's own user, flwr/base's app.
@@ -106,18 +115,21 @@ resource "aws_ecs_task_definition" "flower_register_supernode_keys" {
 # Runs the one-shot after both FL services exist, waiting for them to be
 # stable first (compose expresses this as depends_on fl-server started +
 # fl-api healthy). Runs with the fl-api SG so the Flower control-plane SG
-# rules in ecs_sg.tf cover its SuperLink Control API (8000) call, and the fl-api's
-# VPC HTTP rule covers FL_API_ADDRESS. A FLOWER_KIT_DATE bump re-runs it after
+# rules in ecs_sg.tf cover its SuperLink Control API (8000) call, and the fl-api SG's
+# self rule covers FL_API_ADDRESS. A FLOWER_KIT_DATE bump re-runs it after
 # the EFS re-sync and the FL services' rollout (their task definitions carry the
 # kit as FL_KIT_SOURCE, locals.tf), so it registers against a SuperLink already
-# serving the new kit's certificates (FLIP#1738); tainting re-runs it alone.
+# serving the new kit's certificates (FLIP#1738); tainting re-runs it alone. A new
+# SuperLink task definition that Terraform registers re-runs it too: the replacement
+# task starts with no registered SuperNode. A SuperLink restarted any other way (a
+# revision made by deploy-centralhub, staging power-on, a crash) is not covered: FLIP#1947.
 resource "null_resource" "flower_register_supernode_keys" {
   count = var.enable_service_discovery && var.enable_efs && var.fl_backend == "flower" ? 1 : 0
 
   triggers = {
-    task_def   = aws_ecs_task_definition.flower_register_supernode_keys[0].arn
-    slot_names = var.FL_KIT_SLOT_NAMES
-    creds      = local.flower_creds_base_s3
+    task_def  = aws_ecs_task_definition.flower_register_supernode_keys[0].arn
+    superlink = aws_ecs_task_definition.fl_server_net_1[0].arn
+    creds     = local.flower_creds_base_s3
   }
 
   provisioner "local-exec" {

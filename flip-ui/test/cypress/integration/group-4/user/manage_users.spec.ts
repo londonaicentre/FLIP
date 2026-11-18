@@ -56,7 +56,7 @@ describe("Manage Users as Administrator", () => {
         // The new single-role UI shows roles[0] (Researcher) as preselected, so
         // checking the same radio is a no-op (selectRole short-circuits when the
         // role hasn't changed) and the form stays clean — leaving save-user-btn
-        // disabled (gated on selectedUser.dirty). Flip to Admin first so the
+        // disabled (gated on isDirty). Flip to Admin first so the
         // change registers, then back to Researcher so we still verify the
         // single-role POST body.
         cy.getBySel("select-admin-role").find("input").check();

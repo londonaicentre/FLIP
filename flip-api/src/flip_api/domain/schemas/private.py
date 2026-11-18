@@ -93,6 +93,57 @@ class TrainingMetrics(BaseModel):
         return data
 
 
+# S3's multipart limits: at most 10,000 parts, each at least 5 MiB except the last.
+RESULTS_UPLOAD_MAX_PARTS = 10_000
+RESULTS_UPLOAD_PART_BYTES = 64 * 1024 * 1024
+
+# What the hub hands out for a started upload and takes back on every later call (``results_upload.py``).
+_UploadHandle = Annotated[str, StringConstraints(min_length=1, max_length=8192)]
+
+
+class ResultsUploadRequest(BaseModel):
+    """Body of ``POST /model/{id}/results-upload``. Mirrored by the sender, flip-utils' ``flip/core/standard.py``."""
+
+    # A plain zip name: no separator and no second dot, so the object key stays under the model's own prefix.
+    file_name: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,64}\.zip$")]
+    size: int = Field(gt=0)
+
+
+class ResultsUpload(BaseModel):
+    """A started results upload: the caller sends the file in ``part_size`` pieces, the last one shorter."""
+
+    upload: str
+    part_size: int
+
+
+class ResultsUploadPartRequest(BaseModel):
+    """Body of ``POST /model/{id}/results-upload/part``."""
+
+    upload: _UploadHandle
+    part_number: int = Field(ge=1)
+
+
+class ResultsUploadPart(BaseModel):
+    """Where to PUT one part."""
+
+    url: str
+
+
+class ResultsUploadCompletion(BaseModel):
+    """Body of ``POST /model/{id}/results-upload/complete``: the ETag S3 returned for each part, in part order."""
+
+    upload: _UploadHandle
+    etags: list[Annotated[str, StringConstraints(min_length=1, max_length=128)]] = Field(
+        min_length=1, max_length=RESULTS_UPLOAD_MAX_PARTS
+    )
+
+
+class ResultsUploadAbort(BaseModel):
+    """Body of ``POST /model/{id}/results-upload/abort``."""
+
+    upload: _UploadHandle
+
+
 class TrainingLog(BaseModel):
     """One row for ``POST /model/{id}/logs``: free text XOR a typed round event.
 
@@ -120,7 +171,7 @@ class TrainingLog(BaseModel):
     # emit-on-change dedup (which compares against any stored row).
     event_type: str | None = Field(default=None, max_length=64)
     # 1-based on both backends; every event this endpoint accepts is round-scoped except
-    # the ROUND_LESS_EVENTS, which describe a job FLARE has not started yet (the
+    # the ROUND_LESS_EVENTS, which may come before the first round (the
     # hub-emitted, round-less QUEUE_POSITION is written directly by the FL
     # scheduler and rejected at this boundary). The ceiling is the PG INTEGER max
     # of the fl_logs.global_round column — without it an oversized round passes
@@ -234,6 +285,13 @@ class ServiceHealthEntry(BaseModel):
     status: ServiceHealthStatus
     version: str | None = Field(default=None, max_length=64)
     response_ms: int | None = Field(default=None, ge=0, le=1_000_000)
+    # How the trust runs an FL job: ``process`` (inside the fl-client's own container) or ``pods`` (a pod per job).
+    # The trust sends it on the fl-client entry only; the hub does not check which entry. A string, not an enum, so
+    # a well-formed new mode does not cost the trust its whole snapshot; left out of the stored entry when absent
+    # (FLIP#1739).
+    job_mode: str | None = Field(
+        default=None, max_length=16, pattern=r"^[a-z0-9-]+$", exclude_if=lambda mode: mode is None
+    )
 
 
 # Roster keys are the trust collector's wire contract; the hub stays roster-agnostic

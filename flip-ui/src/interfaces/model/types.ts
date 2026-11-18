@@ -53,11 +53,6 @@ export interface FileInfo {
     bandit_findings?: BanditFinding[] | null;
 }
 
-export interface FileTableRow {
-    id: string;
-    name: string;
-    size: number;
+export interface FileTableRow extends FileInfo {
     tag?: string;
-    status: FileUploadStatus;
-    bandit_findings?: BanditFinding[] | null;
 }

@@ -54,15 +54,19 @@ def test_cohort_query_threshold_accepts_operator_override():
     assert Settings(COHORT_QUERY_THRESHOLD="25").COHORT_QUERY_THRESHOLD == 25
 
 
-@pytest.mark.parametrize("value", [0, -1, "0", "-5"])
-def test_cohort_query_threshold_rejects_non_positive(value):
-    """A non-positive threshold must fail loudly rather than disable the control.
+@pytest.mark.parametrize("value", [10, "10", "11"])
+def test_cohort_query_threshold_accepts_the_floor_and_above(value):
+    assert Settings(COHORT_QUERY_THRESHOLD=value).COHORT_QUERY_THRESHOLD == int(value)
 
-    ``COHORT_QUERY_THRESHOLD=0`` would turn off every check that reads it at once: both
-    row-level gates (``len(df) < 0`` is never true, so ``/cohort/dataframe`` and
-    ``/cohort/accession-ids`` would release any cohort, including a single patient) and the
-    statistics suppression on ``/cohort``. Settings are built at import, so rejecting here
-    means the service refuses to start instead of running with the floor silently removed.
+
+@pytest.mark.parametrize("value", [0, -1, "0", "-5", 1, "5", 9, "9"])
+def test_cohort_query_threshold_rejects_values_below_the_floor(value):
+    """A threshold below the shipped 10 must fail loudly rather than weaken the control (FLIP#870).
+
+    ``0`` would turn off every check that reads it at once (both row-level gates and the
+    statistics suppression on ``/cohort``), and ``1`` would release a cohort of one patient.
+    Settings are built at import, so rejecting here means the service refuses to start instead
+    of running below the platform floor.
     """
     with pytest.raises(ValidationError):
         Settings(COHORT_QUERY_THRESHOLD=value)

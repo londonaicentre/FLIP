@@ -20,6 +20,8 @@ from fastapi.testclient import TestClient
 # Set required environment variables before importing the app
 # This must happen before fl_api.config is imported
 os.environ.setdefault("FL_ADMIN_DIRECTORY", "/tmp/test_admin")
+# The key every route but /health requires; the client fixture presents it (fl_api/utils/auth.py).
+os.environ.setdefault("FL_API_KEY", "test-fl-api-key")  # pragma: allowlist secret
 
 from fl_api.app import app
 from fl_api.core.dependencies import get_session
@@ -35,6 +37,7 @@ def mock_session():
 def client(mock_session):
     with patch("fl_api.app.create_fl_session", return_value=mock_session):
         with TestClient(app, raise_server_exceptions=False) as test_client:
+            test_client.headers["X-FL-API-Key"] = os.environ["FL_API_KEY"]
             yield test_client
 
 

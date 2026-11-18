@@ -697,11 +697,15 @@ def test_33_fl_endpoint_comes_from_what_the_client_dials() -> None:
             ok = mod.check_fl_endpoint_reachable(flare, True)
         _assert(ok.status == mod.Status.PASS, "connects -> PASS", str(ok))
         _assert(probe.call_args.args == ("fl.hub.example", 8002), "probed the dialled host:port", str(probe.call_args))
-        with mock.patch.object(mod, "probe_tcp", return_value="timed out (blackholed or filtered)"):
+        with (
+            mock.patch.object(mod, "probe_tcp", return_value="timed out (blackholed or filtered)"),
+            mock.patch.object(mod, "lookup_egress_ip", return_value="203.0.113.7"),
+        ):
             bad = mod.check_fl_endpoint_reachable(flare, True)
         _assert(bad.status == mod.Status.FAIL, "cannot connect -> FAIL", str(bad))
         _assert("fl.hub.example:8002" in bad.detail, "FAIL names host:port", bad.detail)
         _assert(any("TLS-inspection" in h for h in bad.hints), "hint covers the TLS-inspection proxy case")
+        _assert("leaves from: 203.0.113.7." in bad.hints[-1], "timeout hint names this host's egress address")
         pending = mod.check_fl_endpoint_reachable({"FL_BACKEND": "flower"}, True)
         _assert(pending.status == mod.Status.PENDING, "no endpoint yet -> PENDING", str(pending))
 
@@ -1020,6 +1024,102 @@ def test_49_a_sample_data_value_up_trust_refuses_fails_the_checklist() -> None:
         _assert(pending.status == mod.Status.PENDING, "PENDING without the kit", str(pending))
 
 
+def test_50_fl_endpoint_timeout_hints_at_the_hub_source_address_list() -> None:
+    print("\n[50] FL endpoint: a timeout asks for the site's egress address; the lookup never fails the row")
+    kit = {"FL_BACKEND": "flower", "NLB_SUBDOMAIN": "fl.hub.example", "FL_EDGE_PORT": "8002"}
+    timed_out = mock.patch.object(mod, "probe_tcp", return_value="timed out (blackholed or filtered)")
+
+    with timed_out, mock.patch.object(mod, "lookup_egress_ip", return_value=None):
+        unknown = mod.check_fl_endpoint_reachable(kit, True)
+    _assert(unknown.status == mod.Status.FAIL, "lookup failed -> still the same FAIL", str(unknown))
+    _assert("your network team knows it" in unknown.hints[-1], "hint survives without the address", unknown.hints[-1])
+
+    for failure in (None, "connection refused"):
+        with (
+            mock.patch.object(mod, "probe_tcp", return_value=failure),
+            mock.patch.object(mod, "lookup_egress_ip") as lookup,
+        ):
+            row = mod.check_fl_endpoint_reachable(kit, True)
+        _assert(not lookup.called, f"no lookup when the probe says {failure or 'connected'}")
+        _assert(not any("leaves from" in h for h in row.hints), f"no address hint on {failure or 'PASS'}")
+
+    def answer(body: bytes) -> mock.MagicMock:
+        opened = mock.MagicMock()
+        opened.__enter__.return_value.read.return_value = body
+        return opened
+
+    with mock.patch.object(mod.urllib.request, "urlopen", return_value=answer(b"203.0.113.7\n")) as urlopen:
+        _assert(mod.lookup_egress_ip() == "203.0.113.7", "lookup returns the address")
+    _assert(urlopen.call_args.kwargs["timeout"] == mod.PROBE_TIMEOUT_SECONDS, "lookup is bounded by the probe timeout")
+    with mock.patch.object(mod.urllib.request, "urlopen", return_value=answer(b"<html>Blocked by proxy</html>")):
+        _assert(mod.lookup_egress_ip() is None, "an intercepted answer is not printed as an address")
+    for error in (urllib.error.URLError("blocked"), TimeoutError(), RuntimeError("anything")):
+        with mock.patch.object(mod.urllib.request, "urlopen", side_effect=error):
+            _assert(mod.lookup_egress_ip() is None, f"{type(error).__name__} -> None, not a crash")
+
+
+def test_51_log_level_debug_fails_a_deployed_kit() -> None:
+    """FLIP-SR-050: a .prod/.stag kit left at TRUST_LOG_LEVEL=DEBUG is a blocking FAIL."""
+    print("\n[51] TRUST_LOG_LEVEL=DEBUG on a deployed kit -> FAIL")
+    for env in ("prod", "stag"):
+        result = mod.check_log_level({"TRUST_LOG_LEVEL": "DEBUG"}, True, f"trust/.env.SITE.{env}")
+        _assert(result.status == mod.Status.FAIL, f".{env} at DEBUG is a FAIL", result.detail)
+        _assert(any("INFO" in h for h in result.hints), "hint names INFO", result.detail)
+        _assert(any("rotate" in h for h in result.hints), "hint says to rotate the keys")
+
+
+def test_52_log_level_debug_warns_a_development_kit() -> None:
+    """DEBUG on a development kit is a non-blocking WARN (mock data, throwaway creds)."""
+    print("\n[52] TRUST_LOG_LEVEL=DEBUG on a development kit -> WARN")
+    result = mod.check_log_level({"TRUST_LOG_LEVEL": "DEBUG"}, True, "trust/.env.SITE.development")
+    _assert(result.status == mod.Status.WARN, "development at DEBUG is a WARN, not a blocker", result.detail)
+
+
+def test_53_log_level_info_passes_and_unset_warns() -> None:
+    """INFO (any non-DEBUG level) passes; an unset level is a WARN naming the variable."""
+    print("\n[53] TRUST_LOG_LEVEL=INFO -> PASS; unset -> WARN")
+    ok = mod.check_log_level({"TRUST_LOG_LEVEL": "info"}, True, "trust/.env.SITE.prod")
+    _assert(ok.status == mod.Status.PASS, "INFO passes (case-insensitive)", ok.detail)
+    unset = mod.check_log_level({}, True, "trust/.env.SITE.prod")
+    _assert(unset.status == mod.Status.WARN, "unset level is a WARN", unset.detail)
+
+
+def test_54_hub_shared_allows_the_other_backends_kit_date_empty() -> None:
+    """Only the running backend's kit date is required (FLIP#1476); a placeholder still fails."""
+    print("▶ hub-shared row: the other backend's kit date may be empty")
+    base = {k: "x" for k in mod.HUB_SHARED_KEYS}
+    for backend, other, own in (
+        ("nvflare", "FLOWER_KIT_DATE", "FLARE_KIT_DATE"),
+        ("flower", "FLARE_KIT_DATE", "FLOWER_KIT_DATE"),
+    ):
+        check = mod.check_hub_shared({**base, "FL_BACKEND": backend, other: ""}, True)
+        _assert(check.status == mod.Status.PASS, f"{backend}: empty {other} passes", check.detail)
+        check = mod.check_hub_shared({**base, "FL_BACKEND": backend, other: "<run-make-register-trust>"}, True)
+        _assert(check.status == mod.Status.FAIL, f"{backend}: placeholder {other} fails", check.detail)
+        check = mod.check_hub_shared({**base, "FL_BACKEND": backend, own: ""}, True)
+        _assert(check.status == mod.Status.FAIL and own in check.detail, f"{backend}: empty {own} fails", check.detail)
+
+
+def test_55_hub_shared_keys_are_trust_kit_libs_minus_the_optional_ones() -> None:
+    print("55. The checklist's Hub-shared keys are trust_kit_lib's, minus FL_EDGE_PORT")
+    expected = (
+        "AES_KEY_BASE64",
+        "CENTRAL_HUB_API_URL",
+        "TRUST_API_KEY_HEADER",
+        "FL_BACKEND",
+        "FLOWER_KIT_DATE",
+        "FLARE_KIT_DATE",
+        "DOCKER_TAG",
+        "DOCKER_FL_TAG",
+        "NLB_SUBDOMAIN",
+        "FL_SERVER_PORT",
+    )
+    _assert(mod.HUB_SHARED_KEYS == expected, "the ten required keys, in order", repr(mod.HUB_SHARED_KEYS))
+    _assert("FL_EDGE_PORT" not in mod.HUB_SHARED_KEYS, "FL_EDGE_PORT is not required")
+    check = mod.check_hub_shared({}, False)
+    _assert(check.label == "Hub-shared block (10 keys)", "the row label still counts ten keys", check.label)
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -1073,6 +1173,12 @@ def main() -> None:
     test_47_empty_dir_with_sample_data_off_says_nothing_is_seeded()
     test_48_sample_data_off_needs_no_seed_marker_dir()
     test_49_a_sample_data_value_up_trust_refuses_fails_the_checklist()
+    test_50_fl_endpoint_timeout_hints_at_the_hub_source_address_list()
+    test_51_log_level_debug_fails_a_deployed_kit()
+    test_52_log_level_debug_warns_a_development_kit()
+    test_53_log_level_info_passes_and_unset_warns()
+    test_54_hub_shared_allows_the_other_backends_kit_date_empty()
+    test_55_hub_shared_keys_are_trust_kit_libs_minus_the_optional_ones()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

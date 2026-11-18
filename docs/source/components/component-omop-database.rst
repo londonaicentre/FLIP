@@ -254,7 +254,7 @@ them, and the tutorial matches them by exact string against the ``LESIONS`` map 
    :start-after: -- limitations under the License.
    :caption: ``fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/query.sql``
 
-Four lines, because there is nothing to pivot. A segmentation mask is a 3D volume and OMOP has no column for
+The query is short because there is nothing to pivot. A segmentation mask is a 3D volume and OMOP has no column for
 one, so the query only names the studies (``modality_concept_id = 4300757`` is *Computed tomography*) and lets
 ``SELECT *`` carry ``accession_id`` through. The masks reach the model separately: they are uploaded into XNAT
 alongside the converted images during :doc:`data enrichment </user-guides/user-data-enrichment>`.
@@ -292,26 +292,113 @@ Two consequences:
    this: it parses the query, checks it and runs its own re-emitted copy. See :ref:`create-cohort-query` for
    the user workflow.
 
+.. _omop-backends:
+
+******************************
+Where a Trust's OMOP can live
+******************************
+
+FLIP reads a Trust's OMOP through one configured **backend**, chosen in the Trust's own deployment and
+nowhere else. The Central Hub is not involved: where a Trust's clinical data lives, and what credentials reach
+it, are the Trust's decisions.
+
+.. list-table::
+   :widths: 18 30 52
+   :header-rows: 1
+
+   * - ``OMOP_BACKEND``
+     - Where OMOP is
+     - Notes
+   * - ``postgres`` (default)
+     - The PostgreSQL database on the Trust node, or another PostgreSQL the node can reach on port 5432
+     - The shipped default and the dev/CI path. A kit file that names no backend selects this, so an existing
+       Trust needs no change at all.
+   * - ``snowflake``
+     - The Trust's own Snowflake warehouse
+     - For a Trust that has migrated its OMOP into Snowflake. The query executes in the Trust's own Snowflake
+       tenancy, reached over outbound HTTPS on 443.
+
+**One query, every backend.** Cohort queries are authored once, in PostgreSQL dialect, and the hub fans the same
+string out to every Trust in a project. Each Trust parses it, applies the identical safety rules, and re-emits
+it for its own engine with ``sqlglot``. There is no per-Trust query authoring and no hub-side change when a
+Trust migrates. Result column names are also folded to the same lower case on every backend, so
+``flip.get_dataframe`` consumers and the tutorial transform chains cannot tell the difference.
+
+Configuring a Snowflake Trust
+=============================
+
+These are environment variables of the Trust's Data Access API. They are kept in the **Trust-local
+credentials** section of the Trust's kit file (``trust/.env.<CODE>.<env>``), hand-edited by the operator and
+never written by ``register-trust``:
+
+.. code-block:: shell
+
+   OMOP_BACKEND=snowflake
+   SNOWFLAKE_ACCOUNT=<account locator>
+   SNOWFLAKE_WAREHOUSE=FLIP_<CODE>_WH
+   SNOWFLAKE_DATABASE=FLIP_TRUST_<CODE>
+   SNOWFLAKE_SCHEMA=OMOP                       # default
+   SNOWFLAKE_ROLE=FLIP_<CODE>_OMOP_READER
+   # Key-pair auth only (off Snowpark Container Services):
+   SNOWFLAKE_USER=<service user>
+   SNOWFLAKE_PRIVATE_KEY_FILE=/run/secrets/snowflake_key.pem
+
+.. note::
+
+   Only the Snowpark Container Services node sets these variables on the Data Access API today, in its service
+   spec. The Docker Compose files and the Helm chart do not pass them, so on those nodes the kit-file values
+   have no effect and the Trust keeps reading PostgreSQL.
+
+Authentication is **never** by password, and there is no setting for one. Two modes are supported:
+
+- **Snowpark Container Services OAuth token.** A service running inside SPCS is handed a short-lived token at
+  ``/snowflake/session/token`` and connects back to its own account through ``SNOWFLAKE_HOST``. Nothing is
+  stored, and the token is re-read on every connect so a rotation is picked up. This is how an SPCS service is
+  meant to authenticate, and it is used automatically whenever the token file is present.
+- **Key-pair.** For a Trust node reading Snowflake over the internet: a ``TYPE = SERVICE`` Snowflake user, which
+  cannot have a password at all, with the private key mounted on the node.
+
+**The read-only role is a prerequisite, and the Trust creates it.** FLIP cannot: the Trust owns its Snowflake
+account. The script to run is shipped at :gh:`trust/data-access-api/sql/snowflake_readonly_grants.sql`; it
+grants ``SELECT`` on the OMOP schema and nothing else, no write or DDL privilege of any kind, and a statement
+timeout. Treat it exactly as the PostgreSQL read-only role below is treated: the Trust cannot be onboarded until
+it exists.
+
+**Network.** One new outbound destination from the Trust node, HTTPS 443 to
+``<account>.snowflakecomputing.com``. No inbound rule, and no change to the claim that Trust systems accept no
+inbound connections. A Trust that egresses through a proxy needs that proxy configured for the connector.
+
+**Health.** ``data-access-api`` exposes ``/health/omop``, which opens a session and reports what happened; the
+Trust API uses it instead of the TCP port probe whenever the backend is not ``postgres``, so a Snowflake Trust
+reports a truthful OMOP status rather than a permanently red port.
+
 **************
 Access control
 **************
 
-The Data Access API runs cohort queries as a **read-only database user** (``DATA_ACCESS_POSTGRES_USER``,
-``data_analyst_reader`` by default). Its grants are:
+On the ``postgres`` backend the Data Access API runs cohort queries as a **read-only database user**
+(``DATA_ACCESS_POSTGRES_USER``, ``data_analyst_reader`` by default). Its grants are:
 
 - ``CONNECT`` on the database, ``USAGE`` on the ``omop`` schema, and ``SELECT`` on its tables and sequences;
 - ``INSERT``, ``UPDATE``, ``DELETE``, ``TRUNCATE`` and ``CREATE`` explicitly revoked;
 - at most five connections and a 300-second statement timeout.
 
-This is the database half of the Data Access API's query validation. Compose and Kubernetes deployments apply
-the same grants. Compose applies them when the database is first initialised; the Kubernetes chart re-applies
-them on every pod start, so an upgrade also narrows a role created by an older chart.
+This is the database half of the Data Access API's query validation. Compose and Kubernetes apply the same
+grants, at different times: Compose when the database is first initialised, the Kubernetes chart on every pod
+start, so an upgrade also narrows a role created by an older chart.
 
 .. note::
 
-   On Kubernetes, the narrowing comes from the ``omop-db`` image. An image tag older than the fix leaves an
-   existing role's wider access in place, and logs a warning saying so. The upgrade path is in the
-   :gh:`chart README <trust/deploy/helm/README.md>`. The query validator's ``omop``-schema pin applies either way.
+   On Kubernetes, the narrowing comes from the ``omop-db`` image. An ``omop-db`` image older than the release that added
+   this narrowing leaves an existing role's wider access in place, and logs a warning saying so. The upgrade path is in
+   the :gh:`chart README <trust/deploy/helm/README.md>`. The query validator's ``omop``-schema pin applies either way.
+
+On the ``snowflake`` backend the equivalent is the ``FLIP_<CODE>_OMOP_READER`` role created by the grant script
+above: ``USAGE`` on the database, the OMOP schema and the warehouse, ``SELECT`` on the OMOP tables and views,
+and nothing else — no write, no DDL, no other schema, and a ``STATEMENT_TIMEOUT_IN_SECONDS``. The query
+validator's rules are identical on both backends; only the list of unrecognised functions it refuses is
+engine-specific, because PostgreSQL's ``pg_catalog`` surface and Snowflake's ``SYSTEM$…`` / ``RESULT_SCAN`` /
+stage surface are different problems.
 
 **Results are also gated on the Trust's disclosure threshold** (``COHORT_QUERY_THRESHOLD``, default 10), and a
 project's cohort membership is fixed at approval. Both are described on :doc:`component-trust-apis`;
@@ -349,7 +436,7 @@ To seed by hand:
    make -C trust ensure-seeded KIT=GSTT             # seed unless already seeded at this version
    make -C trust seed KIT=GSTT PROJECTS="…"         # load further published projects
 
-Every row carries a ``source_trust`` column, and N Trusts are a deterministic split of the one dataset.
+Every row carries a ``source_trust`` column, its OMOP partition: N Trusts are a deterministic split of the one dataset.
 
 .. seealso::
 
@@ -382,11 +469,38 @@ Run it once per Trust, with the stack up:
    variables, then restart its data-access-api. The recipe is in the
    :gh:`chart README <trust/deploy/helm/README.md>`, "OMOP core vocabulary".
 
+The ADNI cohort for the causal-discovery tutorial
+=================================================
+
+The biomarker causal-discovery tutorial uses ADNI, which is access-controlled, so this seed step downloads
+nothing. The licence holder first converts their own ADNI download
+(``make -C fl-tutorials convert-adni-cohort``), then appends each Trust's slice the same way as the EHR loader:
+
+.. code-block:: shell
+
+   make -C trust load-adni-cohort TRUST_INDEX=<1|2> OMOP_DB_PORT=<5434|5436>
+
+.. warning::
+
+   Use this on a local development stack only. Nothing derived from ADNI may be loaded into a shared Trust.
+
 Seeding the vocabulary
 ======================
 
 The published image and trust data contain **no licensed vocabulary**. SNOMED CT, LOINC, Read v2 and dm+d are
-licensed, so each environment loads the bundle it is licensed to use into its own running database, once:
+licensed, so each environment loads the bundle it is licensed to use into its own running database, once.
+
+``load-omop-vocab`` needs the bundle unpacked in ``trust/omop-db/data/vocab_aicentre_core_20240916/``. Get it
+first, in one of two ways:
+
+- **AI Centre developers**: ``AWS_PROFILE=dev make -C trust/omop-db fetch-vocab-core``, with the ``dev`` profile
+  set up as in Step 3 of :doc:`/deploy-flip/deploy-local-dev`. It reads the AI Centre staging bucket by default
+  (``VOCAB_S3_BUCKET`` names another). ``load-omop-vocab`` runs this for you; it skips the download if the
+  directory exists, and fails without AWS access if it does not.
+- **Every other site**: build an equivalent export from `OHDSI Athena <https://athena.ohdsi.org/>`_ under your
+  own licences and unpack it into that directory, as :ref:`onprem-core-vocabulary` describes.
+
+With the bundle in place, load it:
 
 .. code-block:: shell
 
@@ -405,16 +519,6 @@ licensed, so each environment loads the bundle it is licensed to use into its ow
 
    The spleen query still works on an unseeded stack: it filters on a concept id but never joins
    ``omop.concept``.
-
-``load-omop-vocab`` needs the bundle unpacked in ``trust/omop-db/data/vocab_aicentre_core_20240916/``. Get it
-first, in one of two ways:
-
-- **AI Centre developers**: ``AWS_PROFILE=dev make -C trust/omop-db fetch-vocab-core``, with the ``dev`` profile
-  set up as in Step 3 of :doc:`/deploy-flip/deploy-local-dev`. It reads the AI Centre staging bucket by default
-  (``VOCAB_S3_BUCKET`` names another). ``load-omop-vocab`` runs this for you; it skips the download if the
-  directory exists, and fails without AWS access if it does not.
-- **Every other site**: build an equivalent export from `OHDSI Athena <https://athena.ohdsi.org/>`_ under your
-  own licences and unpack it into that directory, as :ref:`onprem-core-vocabulary` describes.
 
 The DICOM vocabulary is freely redistributable and the trust-data seed already loads it, so it needs no step of
 its own.

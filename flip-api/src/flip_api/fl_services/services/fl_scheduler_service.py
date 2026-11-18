@@ -19,6 +19,7 @@ from sqlalchemy import Column
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, col, select
 
+from flip_api.config import get_settings
 from flip_api.db.models.main_models import (
     FLJob,
     FLKitSlot,
@@ -27,6 +28,7 @@ from flip_api.db.models.main_models import (
     FLScheduler,
     Model,
     Queries,
+    Trust,
 )
 from flip_api.domain.interfaces.fl import (
     IJobResponse,
@@ -41,12 +43,13 @@ from flip_api.domain.schemas.status import (
 )
 from flip_api.domain.schemas.types import FLBackend, FLLogEvent
 from flip_api.fl_services.services.fl_service import (
+    ResearcherFacingError,
     _raise_if_job_aborted,
     bundle_flower_application,
     bundle_nvflare_application,
     get_bundle_urls,
     start_training,
-    validate_client_availability,
+    unavailable_clients,
 )
 from flip_api.model_services.services.model_service import add_log, update_model_status, validate_trust_ids
 from flip_api.utils.exceptions import DatabaseError, JobAbortedError, NotFoundError
@@ -634,6 +637,26 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         raise DatabaseError("Error checking for queued jobs") from e
 
 
+def offline_trusts_message(trust_names: list[str], net_name: str, fl_backend: FLBackend) -> str:
+    """Say which selected trusts were not connected at submission, and what the backend does about it (#1133).
+
+    Args:
+        trust_names (list[str]): The hub names of the trusts that were not connected.
+        net_name (str): The net the job was submitted to.
+        fl_backend (FLBackend): The net's backend.
+
+    Returns:
+        str: The model log line.
+    """
+    waits = (
+        "FLARE starts the job once every selected trust is connected. If they have not connected within "
+        f"{get_settings().FL_JOB_START_TIMEOUT_MINUTES} minutes, the model fails."
+        if fl_backend == FLBackend.NVFLARE
+        else "Flower starts the job once as many trusts are connected as were selected."
+    )
+    return f"Not connected to '{net_name}' when training was submitted: {', '.join(trust_names)}. {waits}"
+
+
 def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[UUID], session: Session) -> bool:
     """
     Prepares and starts the training process for a given model.
@@ -653,8 +676,9 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
             was skipped and the net released.
 
     Raises:
-        Exception: If the FL backend is unsupported, the net endpoint cannot be resolved, client
-            availability validation fails, or training fails to start. On failure the job is
+        Exception: If the FL backend is unsupported, the net endpoint cannot be resolved, or
+            training fails to start. A selected trust that is not connected is not a failure: it is
+            logged on the model and the backend waits for it (#1133). On failure the job is
             removed, the model is marked as errored, the net is released, and the original
             exception is re-raised.
     """
@@ -698,14 +722,14 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
 
         # Resolve FL kit slot names at the FL boundary. The FL protocol (FLARE/Flower)
         # identifies participants by the CN baked into the kit's cert at provisioning
-        # time — that's the slot name, NOT the trust's friendly hub-side name. Using
-        # Trust.name here would make validate_client_availability fail with
-        # "Clients unavailable: <friendly name>" because the FL server never saw it.
+        # time — that's the slot name, NOT the trust's friendly hub-side name, which the
+        # FL server never sees.
         slot_names = list(
             session.exec(select(FLKitSlot.slot_name).where(col(FLKitSlot.assigned_to_trust_id).in_(trust_ids))).all()
         )
 
-        validate_client_availability(slot_names, net_details.endpoint, fl_backend)
+        # An offline trust does not stop the submission (#1133): the backend waits for it.
+        offline_slots = unavailable_clients(slot_names, net_details.endpoint)
 
         # Get presigned URLs from the files in the destination bucket on S3
         bundle_urls = get_bundle_urls(dest_bucket_s3_path)
@@ -720,6 +744,13 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         )
 
         add_log(model_id, f"Model training assigned to '{net_details.name}'", session)
+        if offline_slots:
+            offline = session.exec(
+                select(Trust.name)
+                .join(FLKitSlot, col(FLKitSlot.assigned_to_trust_id) == Trust.id)
+                .where(col(FLKitSlot.slot_name).in_(offline_slots))
+            ).all()
+            add_log(model_id, offline_trusts_message(list(offline), net_details.name, fl_backend), session)
         return True
 
     except JobAbortedError:
@@ -731,9 +762,13 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         return False
 
     except Exception as e:
-        logger.error(f"Failed to start training: {e}")
-        error_message = fl_api_error_message(e) if isinstance(e, httpx.HTTPStatusError) else str(e)
-        logger.info(f"Error message: {error_message}")
+        logger.exception("Failed to start training for model %s (job %s)", model_id, fl_job_id)
+        if isinstance(e, httpx.HTTPStatusError):
+            error_message = fl_api_error_message(e)
+        elif isinstance(e, ResearcherFacingError):
+            error_message = str(e)
+        else:
+            error_message = f"Training could not be started; the platform team has the details (job {fl_job_id})."
         remove_job(fl_job_id, session)
         add_log(model_id, error_message, session, success=False)
         update_model_status(model_id, ModelStatus.ERROR, session)
@@ -742,7 +777,7 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         release_scheduler_for_model(model_id, session)
 
         logger.debug("Reverted job and released scheduler pickup")
-        raise e
+        raise
 
 
 def get_required_training_details(model_id: UUID, session: Session) -> IRequiredTrainingInformation:

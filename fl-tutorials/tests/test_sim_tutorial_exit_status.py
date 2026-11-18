@@ -40,7 +40,7 @@ import pytest
 FLOWER = Path(__file__).resolve().parents[1] / "flower"
 SIM_TUTORIAL = FLOWER / "sim-tutorial.sh"
 
-# `uv run --project <flip-utils> --extra full <cmd> …`: `flwr ls` and `flwr run` are faked, `python`
+# `uv run --project <flip-utils> --extra flower --extra full <cmd> …`: `flwr ls` and `flwr run` are faked, `python`
 # runs the real interpreter (the script parses the `flwr ls` reply with it). FAKE_STATUSES is one
 # entry per `flwr ls` call, comma-separated, the last repeating: a status; empty for flwr's
 # "Run ID not found" reply; `!<message>` for any other failure — both of which flwr reports as
@@ -72,7 +72,7 @@ s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(); time.sleep(120)' "$port" >/
     [ -n "${FAKE_RUN_SILENT:-}" ] || echo "Successfully started run 4242"
     exit "${FAKE_RUN_RC:-0}" ;;
   *" python "*)
-    shift 5; shift; exec python3 "$@" ;;
+    while [ "$1" != python ]; do shift; done; shift; exec python3 "$@" ;;
   *) echo "fake uv: unexpected invocation: $*" >&2; exit 97 ;;
 esac
 """

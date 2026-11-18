@@ -11,26 +11,16 @@
 #
 
 from datetime import datetime
-from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 from pydantic.alias_generators import to_camel
-from sqlalchemy.orm import declarative_base
 
-from flip_api.domain.schemas.status import (
-    AccessRequestStatus,
-    FileUploadStatus,
-    FileUploadTag,
-)
-
-Base = declarative_base()
+from flip_api.domain.schemas.status import AccessRequestStatus
 
 # ---------------------------
 # Core Types
 # ---------------------------
-
-ProcessEnv = dict[str, str | None]
 
 
 class IId(BaseModel):
@@ -40,26 +30,6 @@ class IId(BaseModel):
 # ---------------------------
 # Data Models
 # ---------------------------
-
-
-class IFileInfo:
-    name: str
-    status: FileUploadStatus
-    size: int
-    type: str
-    tag: FileUploadTag | None
-
-
-class SQLArray:
-    array: list[str]
-
-
-class ICount:
-    count: int
-
-
-class IContext:
-    dbConnection: Any  # Replace with actual Sequelize equivalent
 
 
 class IAccessRequest(BaseModel):

@@ -39,6 +39,8 @@ data:
   XNAT_ACTIVEMQ_URL: ""
   XNAT_SMTP_ENABLED: "false"
   XNAT_EMAIL: {{ .Values.xnat.web.env.XNAT_EMAIL | quote }}
+  # The zone DQR reads pacs.availability in (FLIP#1880).
+  TZ: {{ .Values.xnat.web.env.XNAT_TZ | quote }}
   XNAT_MIN_HEAP: {{ .Values.xnat.web.env.XNAT_MIN_HEAP | quote }}
   XNAT_MAX_HEAP: {{ .Values.xnat.web.env.XNAT_MAX_HEAP | quote }}
   CATALINA_OPTS: "-Xms{{ .Values.xnat.web.env.XNAT_MIN_HEAP }} -Xmx{{ .Values.xnat.web.env.XNAT_MAX_HEAP }} -Dxnat.home=/data/xnat/home -XX:+UseG1GC -Djava.awt.headless=true"

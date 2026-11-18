@@ -16,7 +16,7 @@
 A small XNAT REST client plus manifest-driven upload helpers for the FLIP **data enrichment**
 stage: the platform step where a model developer adds whatever an app needs on top of the imaging
 data FLIP already pulled into a Trust's XNAT — most commonly segmentation labels for a supervised
-app (see `docs/source/user-guides/user-data-enrichment.rst`).
+app (see the [Data Enrichment user guide](../../../docs/source/user-guides/user-data-enrichment.rst)).
 
 **Where this runs.** On the model developer's workstation inside the Trust network (or as an XNAT
 Container Service job), authenticated as their own XNAT account — deliberately **not** part of the
@@ -25,7 +25,8 @@ the imaging-api proxy; this package is a separate, human-in-the-loop tool.
 
 Built on `requests` rather than a full XNAT client library, so it stays import-light inside the FL
 images that vendor `flip`. Endpoint shapes mirror what the Trust `imaging-api` already uses in
-`imaging_api/services/upload.py` / `imaging_api/services/projects.py`.
+[`upload.py`](../../../trust/imaging-api/imaging_api/services/upload.py) and
+[`projects.py`](../../../trust/imaging-api/imaging_api/services/projects.py).
 
 ## Public API (`flip.xnat`)
 
@@ -45,18 +46,24 @@ images that vendor `flip`. Endpoint shapes mirror what the Trust `imaging-api` a
 `str(image).replace("/input_", "/label_")` — so by default the target filename in XNAT is derived
 from the image already sitting in the scan's `NIFTI` resource, swapping the `input_` prefix for
 `label_` (`DEFAULT_RENAME`, overridable). That keeps the uploaded name in lock-step with whatever
-DICOM-to-NIfTI conversion produced, instead of the caller guessing it. `upload_scan_resource_file`
-never overwrites unless asked (`overwrite=True`): otherwise an existing file fails the upload with
-`XnatError`.
+DICOM-to-NIfTI conversion produced, instead of the caller guessing it.
 
-**Multi-server rosters are self-selecting.** Each Trust's XNAT holds only its own studies, so
-`run_enrichment` sends the whole manifest to every server in `clients` — an accession exists at
-exactly one Trust, and the others report it as "no matching scan" — so nothing can be uploaded
-twice and no per-server filtering is needed. A Trust that has not pulled the project at all is a
-non-fatal skip when there is more than one server in the roster (an `XnatProjectNotFound` alone is
-fatal); any other `XnatError` is always fatal.
+**No silent overwrites.** `upload_scan_resource_file` fails with `XnatError` if the target file
+already exists, unless called with `overwrite=True` (CLI: `--overwrite`).
 
-`list_scans` lists every scan of the project in one request, DX (chest X-ray) sessions included.
+**Multi-server rosters are self-selecting.** `run_enrichment` sends the whole manifest to every
+server in `clients`. Each Trust's XNAT holds only its own studies, so an accession exists at exactly
+one Trust and the others report it as "no matching scan". Nothing is uploaded twice, and no
+per-server filtering is needed.
+
+When a server fails:
+
+- Project not pulled at that Trust (`XnatProjectNotFound`): a non-fatal skip if the roster has more
+  than one server; fatal if it is the only one.
+- Any other `XnatError`: always fatal.
+
+`XnatClient.list_scans` lists every scan of the project in one request, including DX (chest X-ray)
+sessions.
 
 ## CLI: `flip-xnat`
 
@@ -71,7 +78,7 @@ flip-xnat upload --manifest manifest.csv --flip-project-id <uuid> [options]
 | ------ | ------- |
 | `--manifest PATH` (required) | CSV with `accession_id`, `file_path`, optional `target_filename` columns. |
 | `--flip-project-id` / `--project-id` (mutually exclusive, one required) | Resolve the XNAT project by matching `secondary_ID` against the FLIP Central Hub project id, or address a known XNAT project id directly. |
-| `--credentials-file PATH` (repeatable) | JSON `{"server", "user", "password"}` file; repeat once per Trust to enrich the whole roster in one run. Defaults to `XNAT_HOST`/`XNAT_USER`/`XNAT_PASS`. |
+| `--credentials-file PATH` (repeatable) | JSON `{"server", "user", "password"}` file; repeat once per Trust to enrich the whole roster in one run. If omitted, reads `XNAT_HOST`/`XNAT_USER`/`XNAT_PASS` (see [Auth](#auth--environment-variables)). |
 | `--resource NAME` | XNAT resource to write into (default `NIFTI`). |
 | `--rename SOURCE:TARGET` | Prefix swap deriving the target filename from the image (default `input_:label_`). |
 | `--overwrite` | Replace files already present. |
@@ -96,10 +103,11 @@ The reference consumer is
 which builds an `EnrichmentItem` manifest from the MSD spleen download and the published
 accession↔MSD-case mapping (`trust-data`'s `omop-csv/spleen_project/image_occurrence.csv`, pinned
 by `trust/.data_version`), then calls `run_enrichment` directly rather than going through the CLI
-(so it can add its own `--trust` filter and its own mapping-fetch/caching logic). Run it against
-the checkout (`--with ./flip-utils`, from the repo root), not the PyPI release, so the enrichment
-code matches this tree — `make -C fl-tutorials upload-spleen-labels` does the same via
-`FLIP_UTILS_DIR`:
+(so it can add its own `--trust` filter and its own mapping-fetch/caching logic).
+
+Run it from the repo root against this checkout (`--with ./flip-utils`), not the PyPI release, so
+the enrichment code matches this tree. `make -C fl-tutorials upload-spleen-labels` does the same
+through `FLIP_UTILS_DIR`:
 
 ```bash
 uv run --no-project --with ./flip-utils python fl-tutorials/datasets/spleen/upload_spleen_labels_to_xnat.py \
@@ -110,8 +118,7 @@ uv run --no-project --with ./flip-utils python fl-tutorials/datasets/spleen/uplo
   --dry-run
 ```
 
-It is wired into the platform's end-to-end smoke test via `--data-enrichment-cwd` /
-`--data-enrichment-cmd`, and into `make -C fl-tutorials upload-spleen-labels` — see the root
-`AGENTS.md` ("Smoking the spleen segmentation app requires a data-enrichment step") for the full
-runbook, including why enrichment must run after DICOM-to-NIfTI conversion and why every Trust in
-the roster must be enriched, not just one.
+The end-to-end smoke test runs it through `--data-enrichment-cwd` / `--data-enrichment-cmd`
+(`make -C flip-api e2e_smoke_spleen`). The full runbook, including why enrichment must run after
+DICOM-to-NIfTI conversion and why every Trust in the roster must be enriched, is in
+[`flip-api/AGENTS.md`](../../../flip-api/AGENTS.md#end-to-end-smoke-test).

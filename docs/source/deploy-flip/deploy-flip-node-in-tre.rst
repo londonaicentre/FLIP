@@ -24,10 +24,13 @@ FLIP supports two deployment modes for trust-side services:
   direct on-premise compute.
 
 This guide covers the TRE deployment mode: what the TRE operator provides, how data
-reaches the node, and what may leave the TRE. The node itself **installs as a Docker
-Compose host**: the FLIP admin and the operator follow :doc:`onboarding-a-trust`, with
-step 5 on :doc:`deploy-flip-node-on-prem`. The requirements every node shares are on
-:doc:`deploy-trust-node`.
+reaches the node, and what may leave the TRE.
+
+To install the node itself, treat it as a **Docker Compose host**:
+
+- The FLIP admin and the TRE operator follow :doc:`onboarding-a-trust`.
+- At step 5 of that guide, install the node using :doc:`deploy-flip-node-on-prem`.
+- The requirements every node shares are on :doc:`deploy-trust-node`.
 
 .. note::
 
@@ -57,13 +60,16 @@ operator. The TRE operator is responsible for:
 
 **Container images**
 
-Everything a trust node runs comes from one registry, the GitHub Container Registry, under
-``ghcr.io/londonaicentre/``: FLIP's own images, and byte-identical copies of the third-party ones
-(Grafana, Loki, Alloy, XNAT's Docker socket proxy, the chart's ``uv`` and ``busybox`` helpers) under
-``ghcr.io/londonaicentre/mirror/``, pinned by digest in the compose files and the Helm chart
-(:gh:`trust/deploy/mirror-images.manifest`). Nothing is pulled from Docker Hub.
+Everything a trust node runs comes from one registry, the GitHub Container Registry (GHCR),
+under ``ghcr.io/londonaicentre/``. Nothing is pulled from Docker Hub.
 
-Where the TRE lets the FLIP host pull directly (CREATE does this), its proxy needs the two GHCR
+- FLIP's own images.
+- Byte-identical copies of the third-party images (Grafana, Loki, Alloy, XNAT's Docker socket
+  proxy, the chart's ``uv`` and ``busybox`` helpers), under ``ghcr.io/londonaicentre/mirror/``
+  and pinned by digest in the compose files and the Helm chart
+  (:gh:`trust/deploy/mirror-images.manifest`).
+
+Where the TRE lets the FLIP host pull directly (the CREATE TRE does this, for example), its proxy needs the two GHCR
 hosts in :ref:`deploy-trust-node-network`. A proxy allowlist works by host name: it cannot be
 narrowed to FLIP's packages and admits every public image on GHCR. The control over what the node
 runs is the image references themselves, release tags for FLIP's images and digests for the
@@ -82,7 +88,7 @@ so images have to come in through the TRE's normal file-ingress process, for exa
    air-gapped TRE therefore needs site-specific adaptation; agree it with the FLIP team
    before the TRE build starts.
 
-The XNAT image carries its plugins, so a trust downloads none at start, on Compose or Kubernetes.
+XNAT's plugins are built into the XNAT image, so the node downloads no plugins at start, on Compose or Kubernetes.
 
 **Network policy**
 
@@ -114,8 +120,7 @@ Two communication pathways connect the FLIP node to the Central Hub (hosted on A
 2. **FL Server <-> FL Client**: Model distribution (for evaluation) and model weight exchange
    (for federated training), orchestrated via the FL framework (e.g. NVIDIA FLARE, Flower).
 
-Both pathways use **outbound-only** connections, making FLIP compatible with TRE network
-policies that block inbound traffic.
+Both pathways use **outbound-only** connections; the next section explains how.
 
 .. figure:: ../assets/tre/TRE_FLIP_diagram_steps.png
    :align: center
@@ -161,7 +166,7 @@ Central Hub for new instructions:
 - Results (cohort statistics, project status) are pushed outbound from the Trust API to the
   Central Hub.
 
-trust-api polls every few seconds (``POLL_INTERVAL_SECONDS``, default 5). The settings it
+The Trust API polls every few seconds (``POLL_INTERVAL_SECONDS``, default 5). The settings it
 polls with, and how the hub authenticates it, are on :ref:`trust-authentication`.
 
 Data flow
@@ -234,12 +239,11 @@ Compute and software
 --------------------
 
 The host must meet the prerequisites of a Docker Compose host
-(:doc:`deploy-flip-node-on-prem`): Docker in swarm mode with overlay networking, and for
-GPU work an NVIDIA driver of 580 or newer with the NVIDIA Container Toolkit. In a TRE you
-typically install these yourself rather than with the Ansible playbook:
+(:doc:`deploy-flip-node-on-prem`). In a TRE you typically install these yourself rather than
+with the Ansible playbook:
 
-- Docker Engine (>= 24.0) with Docker Compose (>= 2.40)
-- NVIDIA driver (>= 580) and the NVIDIA Container Toolkit
+- Docker Engine (>= 24.0) in swarm mode with overlay networking, and Docker Compose (>= 2.40)
+- NVIDIA driver (>= 580) and the NVIDIA Container Toolkit, for GPU work
 - Python 3.12 or 3.13
 - PostgreSQL client libraries (``postgresql-client``)
 - Make
@@ -250,16 +254,22 @@ memory requirements depend on the model architecture.
 Networking
 ----------
 
-The outbound connections in :ref:`deploy-trust-node-network`, and no inbound ones, with the
-questions on :ref:`readiness-network` settled first. The two frameworks differ at the wire:
-Flower's SuperNode speaks plain HTTPS (HTTP/1.1), while NVIDIA FLARE's client speaks gRPC
-(HTTP/2) under mutual TLS. An appliance that classifies by port and protocol sees both as TLS
-on a non-default port; one that understands only HTTP/1.1 can tell them apart only by
-decrypting the traffic, which breaks mutual TLS on any port. NVIDIA FLARE also ships a
-websocket transport, its ``http`` driver, chosen at provisioning time, which starts as an
-ordinary HTTP/1.1 request before upgrading. FLIP provisions gRPC only and has not tested that
-transport on the platform, so raise it with the FLIP team as an option to evaluate for a
-site, not a setting to rely on.
+Settle the questions on :ref:`readiness-network` first. Then allow the outbound connections
+in :ref:`deploy-trust-node-network`. No inbound connections are needed.
+
+The two FL frameworks look different on the wire:
+
+- **Flower**: the SuperNode speaks plain HTTPS (HTTP/1.1).
+- **NVIDIA FLARE**: the client speaks gRPC (HTTP/2) under mutual TLS.
+
+An appliance that classifies traffic by port and protocol sees both as TLS on a non-default
+port. An appliance that understands only HTTP/1.1 can tell them apart only by decrypting the
+traffic, and decryption breaks mutual TLS on any port.
+
+NVIDIA FLARE also ships a websocket transport (its ``http`` driver, chosen at provisioning
+time), which starts as an ordinary HTTP/1.1 request before upgrading. FLIP provisions gRPC only
+and has not tested that transport on the platform. Raise it with the FLIP team as an option to
+evaluate for a site, not a setting to rely on.
 
 Data
 ----
@@ -278,9 +288,8 @@ Observability
 -------------
 
 FLIP deploys a log-aggregation stack (Grafana Alloy, Loki, Grafana) alongside the Trust
-APIs. Alloy scrapes container stdout via the Docker socket, Loki stores logs with 30-day
-retention, and Grafana provides a pre-provisioned dashboard. **The stack runs entirely
-inside the TRE boundary**: no log data is sent to the Central Hub. See
+APIs. **The stack runs entirely inside the TRE boundary**: no log data is sent to the Central
+Hub. See
 :doc:`/components/component-logging-stack` for configuration, ports, and persistent volumes.
 
 On AzureTRE
@@ -325,17 +334,14 @@ Why evaluation is TRE-friendly
 - **Model ingress**: The pretrained model file is sent from the FL server to the FL client
   inside the TRE. TREs routinely handle data ingress.
 
-- **Metrics-only egress**: Only aggregate evaluation metrics leave the TRE, not model
-  weights. These metrics are standard summary statistics that TRE output-checking processes
-  (airlocks) are designed to review.
+- **Metrics-only egress**: Only aggregate evaluation metrics leave the TRE. No model
+  weights or other model artefact leave, so the disclosure risks specific to model artefacts
+  do not arise. The metrics are standard summary statistics that TRE output-checking
+  processes (airlocks) are designed to review.
 
 - **Single egress event**: Unlike training, which requires iterative weight exchange across
   many rounds, evaluation produces a single set of results that can go through standard TRE
   output review.
-
-- **No model artefact leaves the TRE**: because no locally-trained model is exported on this
-  path, the disclosure risks specific to model artefacts do not arise. Only the summary
-  metrics need reviewing.
 
 Evaluation data flow
 --------------------
@@ -510,7 +516,7 @@ that a project-specific approval accepts, or mitigates by other means.
       automatically, so this remains a documentation step on your side.
    4. **Agree the artefact plan before the project starts**, as SATRE 3.1.16 recommends: what
       will be trained, whether the result may be exported, and on what conditions.
-   5. **Optionally, test the released model.** SACRO-ML (see below) can simulate attacks
+   5. **Optionally, test the released model.** SACRO-ML (see `UK TRE federation landscape`_) can simulate attacks
       against a trained model after the fact, which some operators use as supporting evidence
       for a release decision.
 
@@ -597,8 +603,8 @@ members and results leaving the federation altogether. That is the shape of a FL
 spanning several TREs, and a useful frame for operators agreeing terms with each other rather
 than only with the platform.
 
-GPU Resource Management
------------------------
+GPU resource management
+=======================
 
 TRE environments may offer the ability to dynamically provision and release GPU resources
 based on workload requirements. Unlike on-premise deployments where dedicated GPU hardware

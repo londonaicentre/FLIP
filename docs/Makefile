@@ -10,12 +10,8 @@
 # limitations under the License.
 #
 
-# Makefile for Sphinx documentation and automated API doc generation
-# Due to multiple Makefiles in this project, the second command should be run from the docs/ directory
-
-# Usage:
-#   make clean
-#   make docs
+# Sphinx HTML build, clean, and tests for the docs scripts. Run from docs/ or as `make -C docs <target>`.
+# Usage: make docs | make clean | make test
 
 SPHINXBUILD   = sphinx-build
 SOURCEDIR     = source

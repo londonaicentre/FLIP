@@ -32,8 +32,21 @@ _cache: dict[str, CacheEntry] = {}
 
 
 def _make_cache_key(query: Any, params: Mapping[str, Any] | None = None) -> str:
-    query_str = query if isinstance(query, str) else str(query)
-    normalized = " ".join(query_str.strip().lower().split())
+    """Hashes the exact query text plus its normalised bind parameters.
+
+    The text is not case- or whitespace-folded: either would also fold string literals, so
+    ``= 'F'`` and ``= 'f'`` would share an entry (FLIP#859). Cohort queries arrive already
+    re-emitted by ``validate_query`` and the rest are fixed internal statements, so the text is
+    canonical without any folding here.
+
+    Args:
+        query (Any): The SQL string or SQLAlchemy ``TextClause``.
+        params (Mapping[str, Any] | None): Bind parameters; key order and list order are ignored.
+
+    Returns:
+        str: The SHA-256 hex digest used as the cache key.
+    """
+    normalized = query if isinstance(query, str) else str(query)
     if params:
         normalized_params = {k: sorted(v) if isinstance(v, (list, tuple)) else v for k, v in sorted(params.items())}
         normalized += "|" + repr(normalized_params)

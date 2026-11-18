@@ -22,7 +22,7 @@ every future CI plan.
 
 So this derives the values from the deployed infrastructure instead: the live
 Terraform state, plus the handful of things state cannot answer (the current
-image tags, the FL kit-slot list, the live secret material). What comes out is
+image tags, the live secret material). What comes out is
 what a plan would have to see to be a no-op — which is the definition of correct
 for this purpose.
 
@@ -35,7 +35,7 @@ shows a truncated SHA-256 so two copies can be compared without either being
 disclosed.
 
 ``--env prod|stag`` is required. ``--profile`` and ``--bucket`` default to AI Centre's
-LZA estates (profile ``lza-<env>``, state bucket ``flip-terraform-state-lza`` /
+LZA estates (profile ``<env>``, the hub name, state bucket ``flip-terraform-state-lza`` /
 ``flip-terraform-state-lza-stag``); another estate passes its own.
 
 Usage:
@@ -66,8 +66,7 @@ from typing import Any
 SECRET_KEYS = {
     "ADMIN_USER_PASSWORD",
     "AES_KEY_BASE64",
-    "INTERNAL_SERVICE_KEY",
-    "INTERNAL_SERVICE_KEY_HASH",
+    "FL_API_KEY",
 }
 
 
@@ -306,15 +305,6 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         or "{}"
     )
 
-    # Live, not state: the kit-slot list is grown by `make apply-fl-kit-slots`,
-    # which is a targeted apply — state and the parameter can legitimately differ
-    # between full applies.
-    slots = aws(
-        ["ssm", "get-parameter", "--name", "/flip/fl_kit_slot_names", "--query", "Parameter.Value", "--output", "text"],
-        profile,
-        region,
-    )
-
     # The OAC is named after the subdomain (cloudfront.tf); the Route 53 records once read
     # for both subdomains never existed on an LZA estate.
     oac_name = st.attrs("aws_cloudfront_origin_access_control", "flip_ui").get("name", "")
@@ -333,7 +323,6 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "POSTGRES_DB": api_env.get("POSTGRES_DB", ""),
         "POSTGRES_USER": api_env.get("POSTGRES_USER", ""),
         "FL_SERVER_PORT": first_port(fl_server),
-        "INTERNAL_SERVICE_KEY_HEADER": api_env.get("INTERNAL_SERVICE_KEY_HEADER", ""),
         "TRUST_API_KEY_HEADER": api_env.get("TRUST_API_KEY_HEADER", ""),
         "FL_BACKEND": api_env.get("FL_BACKEND", ""),
         "FL_ADMIN_DIRECTORY": fl_api_env.get("FL_ADMIN_DIRECTORY", ""),
@@ -342,14 +331,12 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "DOCKER_REGISTRY": registry,
         "DOCKER_TAG": live_image_tag("flip-api", "flip-api", cluster, profile, region),
         "DOCKER_FL_TAG": live_image_tag("fl-server-net-1", "fl-server-net-1", cluster, profile, region),
-        "FL_KIT_SLOT_NAMES": slots,
         # Empty is meaningful: locals.tf omits ENFORCE_MFA from the task env when
         # unset so flip-api's secure Pydantic default applies.
         "ENFORCE_MFA": api_env.get("ENFORCE_MFA", ""),
         "ADMIN_USER_PASSWORD": st.attrs("aws_cognito_user", "admin_user").get("password", ""),
         "AES_KEY_BASE64": secret.get("aes_key", ""),
-        "INTERNAL_SERVICE_KEY": secret.get("internal_service_key", ""),
-        "INTERNAL_SERVICE_KEY_HASH": secret.get("internal_service_key_hash", ""),
+        "FL_API_KEY": secret.get("fl_api_key", ""),
         "JOB_RESOURCE_SPEC_NUM_GPUS": fl_api_env.get("JOB_RESOURCE_SPEC_NUM_GPUS", ""),
         # The keys every estate requires (compose-ci-env.sh's LZA_REQUIRED_KEYS).
         "ACCESS_LOGS_BUCKET_NAME": st.attrs("aws_s3_bucket", "flip_access_logs").get("bucket", ""),
@@ -367,8 +354,7 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
     sources: dict[str, str] = {}
     for group, keys in (
         ("live ECS service", ("DOCKER_TAG", "DOCKER_FL_TAG")),
-        ("live SSM parameter", ("FL_KIT_SLOT_NAMES",)),
-        ("live Secrets Manager", ("AES_KEY_BASE64", "INTERNAL_SERVICE_KEY", "INTERNAL_SERVICE_KEY_HASH")),
+        ("live Secrets Manager", ("AES_KEY_BASE64", "FL_API_KEY")),
     ):
         sources.update(dict.fromkeys(keys, group))
     return v, sources
@@ -404,7 +390,7 @@ def read_env_file(path: str) -> dict[str, str]:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--env", required=True, choices=["stag", "prod"], help="the hub, as HUB=stag|prod")
-    ap.add_argument("--profile", help="AWS profile (default: lza-<env>)")
+    ap.add_argument("--profile", help="AWS profile (default: <env>, the hub name)")
     ap.add_argument("--region", default="eu-west-2")
     ap.add_argument(
         "--bucket",
@@ -448,7 +434,7 @@ def main() -> None:
         for k, was, now in drift:
             print(f"  {k}")
             print(f"      file    {shown(k, was or '')}")
-            print(f"      deployed{'':<0} {shown(k, now)}")
+            print(f"      deployed {shown(k, now)}")
 
     if args.out:
         # This writes ONLY the Terraform inputs. A real operator .env file also

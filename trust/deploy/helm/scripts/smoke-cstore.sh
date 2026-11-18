@@ -390,14 +390,10 @@ command -v "$PYTHON" >/dev/null 2>&1 \
 # and owns the exit status. Everything above only gathers; nothing above judges, and no
 # parsing happens here — `cstore_verdict.build_evidence` reads these variables itself, so the
 # precedence rules it applies are the ones its tests cover.
-set +e
 NEW_LOG="$NEW_LOG" POD_LOG="$POD_LOG" SCAN="$SCAN" NEW_RECEIVED="$NEW_RECEIVED" \
   FAILED_COUNT="$FAILED_COUNT" INSTANCE_COUNT="$INSTANCE_COUNT" \
   SOP_UID="$SOP_UID" STUDY_UID="$STUDY_UID" SENDER_AE="$SENDER_AE" \
   TIMED_OUT="$TIMED_OUT" PREARCHIVE_TIMEOUT="$PREARCHIVE_TIMEOUT" \
   RECEIVED_LOG_PRESENT="$RECEIVED_LOG_PRESENT" \
   "$PYTHON" "${SCRIPT_DIR}/cstore_verdict.py" --from-env
-STATUS=$?
-set -e
-exit "$STATUS"
 

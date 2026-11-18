@@ -522,120 +522,45 @@ class TestReimportFailedStudiesCompletenessGate:
             trust_name="T1",
         )
 
+    @pytest.mark.parametrize(
+        ("status", "queued"),
+        [
+            # Zero failed and zero queue-failed studies: no task queued, count not incremented.
+            (IImagingImportStatus(successful=300, failed=0, processing=0, queued=0, queueFailed=0), False),
+            # In-flight studies with no failures yet have nothing to retry, so skip.
+            (IImagingImportStatus(successful=100, failed=0, processing=100, queued=100, queueFailed=0), False),
+            # A failed study keeps the project eligible: task queued and count incremented.
+            (IImagingImportStatus(successful=298, failed=2, processing=0, queued=0, queueFailed=0), True),
+            # A queue-failed study also keeps the project eligible for reimport.
+            (IImagingImportStatus(successful=299, failed=0, processing=0, queued=0, queueFailed=1), True),
+            # No completed status result yet: proceed as before so real failures still get retried.
+            (None, True),
+        ],
+        ids=["all-imported", "in-flight", "failed", "queue-failed", "status-unknown"],
+    )
     @patch(f"{MOCK_SERVICE_PATH}._get_latest_imaging_status")
     @patch(f"{MOCK_SERVICE_PATH}.base64_url_encode")
     @patch(MOCK_LOGGER_PATH)
-    def test_skips_when_all_studies_imported(
+    def test_reimport_follows_import_status(
         self,
         mock_logger: MagicMock,
         mock_b64_encode: MagicMock,
         mock_get_latest: MagicMock,
+        status: IImagingImportStatus | None,
+        queued: bool,
         mock_db_session: MagicMock,
     ):
-        """Zero failed and zero queue-failed studies: no task queued, count not incremented."""
         mock_b64_encode.side_effect = lambda q: "encoded"
-        mock_get_latest.return_value = IImagingImportStatus(
-            successful=300, failed=0, processing=0, queued=0, queueFailed=0
-        )
-        mock_xnat_status = MagicMock()
-        mock_xnat_status.reimport_count = 2
+        mock_get_latest.return_value = status
+        mock_xnat_status = MagicMock(reimport_count=2)
         mock_db_session.exec.return_value.one_or_none.return_value = mock_xnat_status
 
         result = reimport_failed_studies([self._eligible_query()], mock_db_session, project_reimport_rate_minutes=60)
 
         assert result is True
-        mock_db_session.add.assert_not_called()
-        assert mock_xnat_status.reimport_count == 2
+        assert mock_db_session.add.call_count == int(queued)
+        assert mock_xnat_status.reimport_count == 2 + int(queued)
         mock_db_session.commit.assert_called_once()
-
-    @patch(f"{MOCK_SERVICE_PATH}._get_latest_imaging_status")
-    @patch(f"{MOCK_SERVICE_PATH}.base64_url_encode")
-    @patch(MOCK_LOGGER_PATH)
-    def test_skips_when_zero_failures_but_studies_in_flight(
-        self,
-        mock_logger: MagicMock,
-        mock_b64_encode: MagicMock,
-        mock_get_latest: MagicMock,
-        mock_db_session: MagicMock,
-    ):
-        """In-flight studies with no failures yet have nothing to retry, so skip."""
-        mock_b64_encode.side_effect = lambda q: "encoded"
-        mock_get_latest.return_value = IImagingImportStatus(
-            successful=100, failed=0, processing=100, queued=100, queueFailed=0
-        )
-        mock_db_session.exec.return_value.one_or_none.return_value = MagicMock()
-
-        result = reimport_failed_studies([self._eligible_query()], mock_db_session, project_reimport_rate_minutes=60)
-
-        assert result is True
-        mock_db_session.add.assert_not_called()
-
-    @patch(f"{MOCK_SERVICE_PATH}._get_latest_imaging_status")
-    @patch(f"{MOCK_SERVICE_PATH}.base64_url_encode")
-    @patch(MOCK_LOGGER_PATH)
-    def test_reimports_when_studies_failed(
-        self,
-        mock_logger: MagicMock,
-        mock_b64_encode: MagicMock,
-        mock_get_latest: MagicMock,
-        mock_db_session: MagicMock,
-    ):
-        """A failed study keeps the project eligible: task queued and count incremented."""
-        mock_b64_encode.side_effect = lambda q: "encoded"
-        mock_get_latest.return_value = IImagingImportStatus(
-            successful=298, failed=2, processing=0, queued=0, queueFailed=0
-        )
-        mock_xnat_status = MagicMock()
-        mock_xnat_status.reimport_count = 2
-        mock_db_session.exec.return_value.one_or_none.return_value = mock_xnat_status
-
-        result = reimport_failed_studies([self._eligible_query()], mock_db_session, project_reimport_rate_minutes=60)
-
-        assert result is True
-        assert mock_db_session.add.call_count == 1
-        assert mock_xnat_status.reimport_count == 3
-
-    @patch(f"{MOCK_SERVICE_PATH}._get_latest_imaging_status")
-    @patch(f"{MOCK_SERVICE_PATH}.base64_url_encode")
-    @patch(MOCK_LOGGER_PATH)
-    def test_reimports_when_only_queue_failed(
-        self,
-        mock_logger: MagicMock,
-        mock_b64_encode: MagicMock,
-        mock_get_latest: MagicMock,
-        mock_db_session: MagicMock,
-    ):
-        """A queue-failed study also keeps the project eligible for reimport."""
-        mock_b64_encode.side_effect = lambda q: "encoded"
-        mock_get_latest.return_value = IImagingImportStatus(
-            successful=299, failed=0, processing=0, queued=0, queueFailed=1
-        )
-        mock_db_session.exec.return_value.one_or_none.return_value = MagicMock(reimport_count=0)
-
-        result = reimport_failed_studies([self._eligible_query()], mock_db_session, project_reimport_rate_minutes=60)
-
-        assert result is True
-        assert mock_db_session.add.call_count == 1
-
-    @patch(f"{MOCK_SERVICE_PATH}._get_latest_imaging_status")
-    @patch(f"{MOCK_SERVICE_PATH}.base64_url_encode")
-    @patch(MOCK_LOGGER_PATH)
-    def test_reimports_when_status_unknown(
-        self,
-        mock_logger: MagicMock,
-        mock_b64_encode: MagicMock,
-        mock_get_latest: MagicMock,
-        mock_db_session: MagicMock,
-    ):
-        """No completed status result yet: proceed as before so real failures still get retried."""
-        mock_b64_encode.side_effect = lambda q: "encoded"
-        mock_get_latest.return_value = None
-        mock_db_session.exec.return_value.one_or_none.return_value = MagicMock(reimport_count=0)
-
-        result = reimport_failed_studies([self._eligible_query()], mock_db_session, project_reimport_rate_minutes=60)
-
-        assert result is True
-        assert mock_db_session.add.call_count == 1
 
 
 class TestGetImagingProjectsEdgeCases:
@@ -693,25 +618,22 @@ class TestUpdateXnatUserProfileEdgeCases:
 
 
 class TestGetLatestImagingStatus:
-    def test_returns_parsed_status(self, mock_db_session: MagicMock):
-        """Should parse import status from completed task result."""
-        trust_id = uuid4()
-        xnat_project_id = uuid4()
+    @pytest.mark.parametrize("wrap", [True, False], ids=["wrapped", "flat"])
+    def test_returns_parsed_status(self, wrap: bool, mock_db_session: MagicMock):
+        """Should parse import status from a completed task result, under an ``import_status`` wrapper or at
+        the top level."""
+        counts = {
+            "successful_count": 10,
+            "failed_count": 2,
+            "processing_count": 3,
+            "queued_count": 5,
+            "queue_failed_count": 1,
+        }
         mock_task = MagicMock()
-        mock_task.result = json.dumps(
-            {
-                "import_status": {
-                    "successful_count": 10,
-                    "failed_count": 2,
-                    "processing_count": 3,
-                    "queued_count": 5,
-                    "queue_failed_count": 1,
-                }
-            }
-        )
+        mock_task.result = json.dumps({"import_status": counts} if wrap else counts)
         mock_db_session.exec.return_value.first.return_value = mock_task
 
-        result = _get_latest_imaging_status(trust_id, xnat_project_id, mock_db_session)
+        result = _get_latest_imaging_status(uuid4(), uuid4(), mock_db_session)
 
         assert result is not None
         assert result.successful_count == 10
@@ -728,44 +650,16 @@ class TestGetLatestImagingStatus:
 
         assert result is None
 
-    def test_returns_none_when_no_result_data(self, mock_db_session: MagicMock):
-        """Should return None when task has no result."""
+    @pytest.mark.parametrize("raw", [None, "not valid json"], ids=["no-result", "malformed"])
+    def test_returns_none_for_missing_or_malformed_result(self, raw: str | None, mock_db_session: MagicMock):
+        """Should return None, and not raise, when the task has no result or malformed result JSON."""
         mock_task = MagicMock()
-        mock_task.result = None
+        mock_task.result = raw
         mock_db_session.exec.return_value.first.return_value = mock_task
 
         result = _get_latest_imaging_status(uuid4(), uuid4(), mock_db_session)
 
         assert result is None
-
-    def test_handles_malformed_json(self, mock_db_session: MagicMock):
-        """Should return None and not raise on malformed result JSON."""
-        mock_task = MagicMock()
-        mock_task.result = "not valid json"
-        mock_db_session.exec.return_value.first.return_value = mock_task
-
-        result = _get_latest_imaging_status(uuid4(), uuid4(), mock_db_session)
-
-        assert result is None
-
-    def test_handles_flat_result_structure(self, mock_db_session: MagicMock):
-        """Should handle result where counts are at the top level (no import_status wrapper)."""
-        mock_task = MagicMock()
-        mock_task.result = json.dumps(
-            {
-                "successful_count": 5,
-                "failed_count": 0,
-                "processing_count": 1,
-                "queued_count": 2,
-                "queue_failed_count": 0,
-            }
-        )
-        mock_db_session.exec.return_value.first.return_value = mock_task
-
-        result = _get_latest_imaging_status(uuid4(), uuid4(), mock_db_session)
-
-        assert result is not None
-        assert result.successful_count == 5
 
 
 class TestHasPendingImagingTasks:
@@ -951,26 +845,6 @@ class TestGetImagingStatusSnapshot:
         # The timestamp is when the counts were last *confirmed*, not when the failure happened.
         assert snapshot.last_seen_at == seen
 
-    def test_failed_500_is_unreachable(self, mock_db_session: MagicMock):
-        """imaging-api 500 means the XNAT fetch itself failed — XNAT is unreachable."""
-        failed = _failed_task("500: Error: XNAT project fetch failed: timeout", datetime.now(timezone.utc))
-        mock_db_session.exec.return_value.first.side_effect = [failed, None]
-
-        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
-
-        assert snapshot.connection_state == ImagingConnectionState.UNREACHABLE
-        assert snapshot.import_status is None
-        assert snapshot.last_seen_at is None
-
-    def test_failed_502_is_unreachable(self, mock_db_session: MagicMock):
-        """trust-api could not reach imaging-api at all."""
-        failed = _failed_task("502: Failed to connect to remote service", datetime.now(timezone.utc))
-        mock_db_session.exec.return_value.first.side_effect = [failed, None]
-
-        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
-
-        assert snapshot.connection_state == ImagingConnectionState.UNREACHABLE
-
     def test_prefers_structured_status_code_over_the_error_string(self, mock_db_session: MagicMock):
         """A trust that reports ``status_code`` is classified on that, not on string sniffing."""
         failed = _failed_task("upstream said no", datetime.now(timezone.utc), status_code=404)
@@ -980,53 +854,38 @@ class TestGetImagingStatusSnapshot:
 
         assert snapshot.connection_state == ImagingConnectionState.PROJECT_MISSING
 
-    def test_unclassifiable_failure_falls_back_to_unreachable(self, mock_db_session: MagicMock):
-        """Stale-task recovery gives up with a plain message and no status code."""
-        failed = _failed_task("Exceeded maximum retries (3)", datetime.now(timezone.utc))
-        mock_db_session.exec.return_value.first.side_effect = [failed, None]
-
-        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
-
-        assert snapshot.connection_state == ImagingConnectionState.UNREACHABLE
-
-    def test_malformed_failure_result_falls_back_to_unreachable(self, mock_db_session: MagicMock):
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            # imaging-api 500: the XNAT fetch itself failed, so XNAT is unreachable.
+            pytest.param(json.dumps({"error": "500: Error: XNAT project fetch failed: timeout"}), id="500"),
+            # 502: trust-api could not reach imaging-api at all.
+            pytest.param(json.dumps({"error": "502: Failed to connect to remote service"}), id="502"),
+            # Stale-task recovery gives up with a plain message and no status code.
+            pytest.param(json.dumps({"error": "Exceeded maximum retries (3)"}), id="unclassifiable"),
+            pytest.param("not valid json", id="malformed"),
+            # A task can be marked FAILED without ever recording a result, e.g. killed mid-flight.
+            pytest.param(None, id="none"),
+            pytest.param("", id="empty-string"),
+            # Valid JSON that isn't an object has no `status_code` to read, so it can't be a 404.
+            pytest.param('"boom"', id="string"),
+            pytest.param("[404]", id="list"),
+            pytest.param("404", id="number"),
+        ],
+    )
+    def test_failure_falls_back_to_unreachable(self, raw: str | None, mock_db_session: MagicMock):
+        """Any FAILED status task that is not a 404 classifies as UNREACHABLE."""
         failed = MagicMock()
         failed.status = TaskStatus.FAILED
-        failed.result = "not valid json"
+        failed.result = raw
         failed.updated_at = datetime.now(timezone.utc)
         mock_db_session.exec.return_value.first.side_effect = [failed, None]
 
         snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
 
         assert snapshot.connection_state == ImagingConnectionState.UNREACHABLE
-
-    @pytest.mark.parametrize("result", [None, ""], ids=["none", "empty-string"])
-    def test_failure_with_no_result_payload_falls_back_to_unreachable(
-        self, result: str | None, mock_db_session: MagicMock
-    ):
-        """A task can be marked FAILED without ever recording a result — e.g. killed mid-flight."""
-        failed = MagicMock()
-        failed.status = TaskStatus.FAILED
-        failed.result = result
-        failed.updated_at = datetime.now(timezone.utc)
-        mock_db_session.exec.return_value.first.side_effect = [failed, None]
-
-        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
-
-        assert snapshot.connection_state == ImagingConnectionState.UNREACHABLE
-
-    @pytest.mark.parametrize("payload", ['"boom"', "[404]", "404"], ids=["string", "list", "number"])
-    def test_non_object_failure_result_falls_back_to_unreachable(self, payload: str, mock_db_session: MagicMock):
-        """Valid JSON that isn't an object has no `status_code` to read, so it can't be a 404."""
-        failed = MagicMock()
-        failed.status = TaskStatus.FAILED
-        failed.result = payload
-        failed.updated_at = datetime.now(timezone.utc)
-        mock_db_session.exec.return_value.first.side_effect = [failed, None]
-
-        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
-
-        assert snapshot.connection_state == ImagingConnectionState.UNREACHABLE
+        assert snapshot.import_status is None
+        assert snapshot.last_seen_at is None
 
     def test_failure_with_no_result_keeps_the_last_known_counts(self, mock_db_session: MagicMock):
         """Whatever shape the failure took, the last good counts must survive it."""
@@ -1042,14 +901,4 @@ class TestGetImagingStatusSnapshot:
         assert snapshot.connection_state == ImagingConnectionState.UNREACHABLE
         assert snapshot.import_status is not None
         assert snapshot.import_status.successful_count == 300
-        assert snapshot.last_seen_at == seen
-
-    def test_recovery_back_to_ok_when_a_newer_refresh_succeeds(self, mock_db_session: MagicMock):
-        """Once the trust comes back, the newest terminal task is COMPLETED again."""
-        seen = datetime(2026, 8, 21, 15, 30, tzinfo=timezone.utc)
-        mock_db_session.exec.return_value.first.return_value = _completed_task(_SAMPLE_COUNTS, seen)
-
-        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
-
-        assert snapshot.connection_state == ImagingConnectionState.OK
         assert snapshot.last_seen_at == seen
