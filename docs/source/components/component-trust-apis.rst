@@ -213,7 +213,9 @@ Download cache
 
 The first time an FL client asks for an accession's resources, ``imaging-api`` pulls the study out of XNAT onto
 the Trust host, under that net's own images directory. Later requests are served from disk: the next FL round
-and, on Flower, the next job.
+and, on Flower, the next job. On a Kubernetes Trust running NVFLARE job pods, a job pod mounts no images
+directory: it streams each study from ``imaging-api`` into its own directory, so it holds only its project's
+studies.
 
 A study unused for seven days is deleted from disk; it is downloaded again from XNAT if a job asks for it later.
 Trust operators can change the period with ``IMAGE_CACHE_RETENTION_HOURS`` in the kit file (``imagingApi.env`` on

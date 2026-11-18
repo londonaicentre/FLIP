@@ -124,7 +124,10 @@ def test_job_pods_reach_the_parent_through_a_service_that_selects_only_the_paren
 def test_the_init_container_switches_the_kit_before_nvflare_starts():
     """fl-client-init does the switch, after rendering resources.json; the client, whose kit is read-only
     (FLIP#1570), refuses to start without the switched kit's study_runtime.yaml."""
-    docs = _enabled("--set", f"{JOB_PODS}.maxGpus=2", "--set", f"{JOB_PODS}.pendingTimeout=1200")
+    docs = _enabled(
+        "--set", f"{JOB_PODS}.maxGpus=2", "--set", f"{JOB_PODS}.pendingTimeout=1200",
+        "--set", f"{JOB_PODS}.ephemeralStorage=40Gi",
+    )  # fmt: skip
     container = _init_container(docs)
     client = _client_container(docs)
 
@@ -142,6 +145,7 @@ def test_the_init_container_switches_the_kit_before_nvflare_starts():
     assert env["FL_K8S_JOB_IMAGE"]["value"] == client["image"], "jobs run the image the client runs"
     assert env["FL_K8S_MAX_GPUS"]["value"] == "2"
     assert env["FL_K8S_PENDING_TIMEOUT"]["value"] == "1200"
+    assert env["FL_K8S_EPHEMERAL_STORAGE"]["value"] == "40Gi"
     assert env["FL_K8S_POD_TEMPLATE"]["value"] == "/app/k8s/job-pod.yaml"
     mount = next(m for m in container["volumeMounts"] if m["mountPath"] == "/app/k8s")
     volume = next(v for v in _client(docs)["spec"]["template"]["spec"]["volumes"] if v["name"] == mount["name"])
@@ -164,13 +168,20 @@ def test_a_job_pod_gets_what_the_client_container_has():
     env = _env(job)
     for name in ("TRUST_INTERNAL_SERVICE_KEY_HEADER", "TRUST_INTERNAL_SERVICE_KEY"):
         assert env[name] == _env(client)[name]
-    images = next(m for m in client["volumeMounts"] if m["name"] == "images")
-    assert images in job["volumeMounts"], "only this net's slice, at the path imaging-api returns"
-    assert {"name": "dshm", "mountPath": "/dev/shm"} in job["volumeMounts"]
+    # No images volume: a job pod streams its studies into its own run directory (FLIP#1049), and its
+    # IMAGES_DIR is a scratch folder of its own for the files add_resource uploads.
+    assert env["IMAGES_TRANSPORT"]["value"] == "stream"
+    assert job["volumeMounts"] == [
+        {"name": "dshm", "mountPath": "/dev/shm"},
+        {"name": "images-scratch", "mountPath": "/app/data/images"},
+    ]
     client_spec = _client(docs)["spec"]["template"]["spec"]
     volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
-    assert volumes["images"] == next(v for v in client_spec["volumes"] if v["name"] == "images")
+    assert "images" not in volumes
     assert volumes["dshm"]["emptyDir"]["medium"] == "Memory"
+    assert volumes["images-scratch"] == {"name": "images-scratch", "emptyDir": {}}
+    assert "affinity" not in pod["spec"]
+    assert pod["spec"]["automountServiceAccountToken"] is False
     # None by default: both backends dial the hub's public FL name.
     assert "hostAliases" not in pod["spec"]
     assert "hostAliases" not in client_spec

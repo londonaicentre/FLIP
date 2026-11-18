@@ -83,6 +83,22 @@ def test_the_process_launcher_is_replaced_by_the_k8s_launcher():
     assert launcher["args"]["workspace_mount_path"] == WORKSPACE
 
 
+def test_job_pods_get_the_storage_the_site_allows_for_streamed_studies():
+    # A job pod streams its studies into its own filesystem (FLIP#1049), and Kubernetes evicts a pod that
+    # writes past this limit. NVFLARE's own default is 1Gi, less than one CT cohort.
+    def launcher_args(env):
+        return _by_id(patch_resources(KIT_RESOURCES, config_from_env(env), WORKSPACE))["k8s_launcher"]["args"]
+
+    assert launcher_args(ENV)["ephemeral_storage"] == "10Gi"
+    assert launcher_args({**ENV, "FL_K8S_EPHEMERAL_STORAGE": "200Gi"})["ephemeral_storage"] == "200Gi"
+
+
+@pytest.mark.parametrize("value", ["lots", "10", "0Gi", "-1Gi", "10 Gi"])
+def test_a_storage_allowance_that_is_not_a_size_is_refused(value):
+    with pytest.raises(ValueError, match="FL_K8S_EPHEMERAL_STORAGE"):
+        config_from_env({**ENV, "FL_K8S_EPHEMERAL_STORAGE": value})
+
+
 def test_the_site_declares_its_gpu_pool_without_probing_the_parent_host():
     """The parent pod has no GPU: probing it would refuse every GPU job, and passthrough would never queue one."""
     patched = _by_id(patch_resources(KIT_RESOURCES, config_from_env(ENV), WORKSPACE))

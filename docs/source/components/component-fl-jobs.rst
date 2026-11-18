@@ -329,6 +329,13 @@ round) return the local copy after a small check with XNAT, which downloads agai
    To force a re-download (for example a file replaced by one of the same size), the Imaging API's download route
    accepts ``force_refresh=true``. Uploads through ``flip.add_resource`` invalidate the cache automatically.
 
+``flip.add_resource(project_id, accession_id, scan_id, resource_id, files)``
+   Uploads files into a scan's resource in the project's XNAT (through the Imaging API), creating the scan or the
+   resource if missing. Write each file under ``<IMAGES_DIR>/<NET_ID>/upload/`` first (both are in
+   ``flip.constants.FlipConstants``) and pass its path relative to that folder, for example
+   ``["run-1/seg.nii.gz"]``. That holds wherever the job runs, including a Kubernetes job pod, where the files
+   travel in the request because the pod mounts no images volume.
+
 **Communication with the Central Hub:**
 
 ``flip.update_status(model_id, new_model_status)``
