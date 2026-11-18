@@ -208,3 +208,33 @@ spec:
   policyTypes:
     - Egress
 {{- end }}
+{{- if and .Values.networkPolicies.enabled .Values.networkPolicies.apiServer.cidrs .Values.xnat.enabled .Values.xnat.web.enabled }}
+---
+# XNAT's Container Service starts its jobs (dcm2niix) through the Kubernetes API, from xnat-web. NetworkPolicy
+# matches the API server's real endpoint, so where it does not listen on 443 the egress above misses it and
+# xnat-init fails with "Container Service cannot reach its kubernetes backend" (FLIP#1958). xnat-web only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-xnat-web-api-server
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-web
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "flip-trust.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: xnat-web
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        {{- range .Values.networkPolicies.apiServer.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.networkPolicies.apiServer.port }}
+          protocol: TCP
+{{- end }}

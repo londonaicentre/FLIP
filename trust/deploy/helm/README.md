@@ -100,9 +100,11 @@ helm upgrade --install trust-release ./trust/deploy/helm/ \
   `deploy/env_mode.mk`'s `kit_file` and passes it to `scripts/preflight.sh` as `KIT_FILE` and to
   `sync_k8s_kit.py` as `--kit-file`, so the checklist reads the kit the site actually has.
 - **`stage-kit`** detects the backend from the kit's shape (FLARE `startup/`, Flower `certificates/` +
-  `keys/`), chowns to that image's uid (1000 / 49999), empties `KIT_DEST` before `docker cp` so a
-  re-stage leaves no stale credentials, and pre-creates the subPath directories the chart mounts. It
-  implements the kind case only.
+  `keys/`), chowns to that image's uid (1000 / 49999), empties `KIT_DEST` before the copy so a
+  re-stage leaves no stale credentials, and pre-creates the subPath directories the chart mounts. On a
+  kind node it copies with `docker cp`; on any other node (k3s, a VM) through a short-lived root pod pinned
+  to the node with `KIT_DEST` as a hostPath, and `kubectl cp` (`scripts/stage-to-node.sh`, FLIP#1958).
+  `stage-vocab` goes the same way.
 - **`undeploy`** (aliases `down`, `undeploy-trust-k8s`) is `helm uninstall`. Every standalone PVC in the
   chart has no `helm.sh/resource-policy: keep`, so uninstall deletes them (orthanc, xnat-web,
   data-access-api's cohort snapshots, grafana, shared images); only StatefulSet `volumeClaimTemplates`
@@ -516,13 +518,13 @@ loaded** (`helm install` prints a warning).
    export the vocabularies from [OHDSI Athena](https://athena.ohdsi.org/) (plus
    [NHS TRUD](https://isd.digital.nhs.uk/) for the UK ones) and unzip the export into a
    folder — `trust/omop-db/README.md`, "The core vocabulary bundle".
-2. **Stage it onto the node** at `/opt/flip/omop-vocab` (`VOCAB_DEST=` to change it). On kind:
+2. **Stage it onto the node** at `/opt/flip/omop-vocab` (`VOCAB_DEST=` to change it):
 
    ```sh
    make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<ctx>
    ```
 
-   On any other cluster (k3s, a VM) copy the folder there yourself, readable by every user.
+   On kind it copies with `docker cp`, on any other node through a short-lived pod (as `stage-kit`).
    `stage-vocab` empties the destination first, so a re-stage leaves no file of the previous
    bundle behind.
 3. **Point the chart at it**: `OMOP_VOCAB_DIR=/opt/flip/omop-vocab` in the kit file
@@ -741,8 +743,10 @@ Prerequisites and trade-offs:
   spleen CT studies as NIfTI took 435 MB, and 300 chest X-rays about 80 MB.
 - **API server egress.** The launcher calls the Kubernetes API from the parent. The default egress allows
   port 443, which covers AKS and EKS. NetworkPolicy matches the API server's real endpoint, so where it
-  listens elsewhere (minikube 8443, kind 6443) set `flClient.nvflare.jobPods.apiServer.cidrs` and `.port`,
-  or the first launch hangs and no job pod appears. Only the parent gets that rule.
+  listens elsewhere (k3s and kind 6443, minikube 8443) set `networkPolicies.apiServer.cidrs` and `.port`,
+  or the first launch hangs and no job pod appears. That one setting also lets `xnat-web` reach the API,
+  which XNAT's Container Service needs on the same clusters (FLIP#1958). Of the FL pods only the parent
+  gets the rule; job pods never do. `flClient.nvflare.jobPods.apiServer` still works and wins for the parent.
 - **Cold start.** The first job waits for a node to boot and pull the FL image, and an idle GPU node lingers
   for the autoscaler's scale-down delay (around 10 minutes on AKS by default). The FL server's 20-second
   wait for a client to start a job does not sink a late pod: tested with a job pod held 3.5 minutes for its

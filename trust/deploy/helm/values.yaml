@@ -560,7 +560,8 @@ flClient:
       # 443 (AKS, EKS). NetworkPolicy matches the API server's real endpoint rather than the kubernetes
       # Service, so where it listens on another port (minikube 8443, kind 6443) name it here, e.g. from
       # `kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes`. Without it the
-      # launcher's first call hangs and no job pod is ever created. Only the parent gets this rule.
+      # launcher's first call hangs and no job pod is ever created. Only the parent gets this rule. Left empty, the
+      # parent follows networkPolicies.apiServer, which also covers xnat-web: prefer setting it there (FLIP#1958).
       apiServer:
         cidrs: []
         port: 443
@@ -1130,3 +1131,14 @@ networkPolicies:
       protocol: TCP
     - port: 443
       protocol: TCP
+  # The Kubernetes API server's real endpoint, for the pods that call the API: xnat-web (XNAT's Container Service
+  # starts dcm2niix as Jobs through it) and, with NVFLARE job pods, the fl-client parent (the job launcher and the
+  # job-pod pruner). NetworkPolicy matches the endpoint the kubernetes Service forwards to, not the Service's 443, so
+  # where the API server listens elsewhere name it here, from
+  # `kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes`: on k3s and kind the
+  # control-plane node's address on 6443, on minikube 8443. AKS and EKS answer on 443, which allowedEgressPorts
+  # already allows, so they leave this empty. Without it on such a cluster xnat-init fails with "Container Service
+  # cannot reach its kubernetes backend" and no job pod is ever created (FLIP#1958).
+  apiServer:
+    cidrs: []
+    port: 443

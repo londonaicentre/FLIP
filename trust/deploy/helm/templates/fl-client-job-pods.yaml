@@ -206,11 +206,14 @@ metadata:
 data:
   job-pod.yaml: |
     {{- include "flip-trust.flJobPod" . | nindent 4 }}
-{{- if and .Values.networkPolicies.enabled .Values.flClient.nvflare.jobPods.apiServer.cidrs }}
+{{- $apiServer := .Values.flClient.nvflare.jobPods.apiServer }}
+{{- if not $apiServer.cidrs }}{{ $apiServer = .Values.networkPolicies.apiServer }}{{ end }}
+{{- if and .Values.networkPolicies.enabled $apiServer.cidrs }}
 ---
 # The launcher calls the Kubernetes API from the parent. NetworkPolicy matches the API server's real
 # endpoint, not the kubernetes Service's 443, so where that endpoint listens on another port the
 # chart's 443 egress does not cover it. The parent alone gets this: job pods run researcher code.
+# jobPods.apiServer when set, else the cluster-wide networkPolicies.apiServer (FLIP#1958).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -229,12 +232,12 @@ spec:
     - Egress
   egress:
     - to:
-        {{- range .Values.flClient.nvflare.jobPods.apiServer.cidrs }}
+        {{- range $apiServer.cidrs }}
         - ipBlock:
             cidr: {{ . }}
         {{- end }}
       ports:
-        - port: {{ .Values.flClient.nvflare.jobPods.apiServer.port }}
+        - port: {{ $apiServer.port }}
           protocol: TCP
 {{- end }}
 {{- end }}

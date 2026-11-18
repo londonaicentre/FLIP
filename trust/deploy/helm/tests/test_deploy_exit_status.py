@@ -26,6 +26,7 @@ import os
 import shutil
 import stat
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -63,7 +64,12 @@ case "$1" in
     elif [ "$(eval echo \\${$#})" = json ]; then
       echo '{"items":[]}'
     fi ;;
-  wait) exit "${KUBECTL_WAIT_RC:-0}" ;;
+  wait)
+    # JOB_FAILED: the Job is past its backoffLimit, so Failed is set at once and Complete never comes.
+    if [ -n "$JOB_FAILED" ]; then
+      case "$*" in *condition=failed*) exit 0 ;; *) exec sleep 60 ;; esac
+    fi
+    exit "${KUBECTL_WAIT_RC:-0}" ;;
 esac
 exit 0
 """
@@ -121,6 +127,18 @@ def test_deploy_says_the_release_is_live_when_only_xnat_init_failed(tmp_path):
     result, _ = _make(tmp_path, "deploy", KUBECTL_WAIT_RC="1")
     assert result.returncode != 0
     assert "the release is live and rolled out, but xnat-init did not complete" in result.stdout + result.stderr
+
+
+def test_a_failed_xnat_init_job_ends_the_wait_at_once(tmp_path):
+    """A Job past its backoffLimit never completes; the step used to wait out HELM_TIMEOUT (FLIP#1958)."""
+    started = time.monotonic()
+    result, calls = _make(tmp_path, "xnat-init", JOB_FAILED="1")
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert time.monotonic() - started < 30, "the step waited for a Complete that cannot come"
+    assert "XNAT init failed" in result.stdout
+    assert "--for=condition=failed" in calls
+    assert "--for=condition=complete" in calls
 
 
 def test_an_unrenderable_chart_fails_xnat_init_instead_of_reporting_xnat_disabled(tmp_path):

@@ -22,6 +22,7 @@ drive exactly that.
 """
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -64,7 +65,7 @@ def flower_kit(tmp_path):
 def test_nvflare_kit_is_chowned_to_the_nvflare_uid(nvflare_kit):
     result = make_n_stage_kit(nvflare_kit)
     assert result.returncode == 0, result.stderr
-    assert f"chown -R {NVFLARE_UID}:{NVFLARE_UID}" in result.stdout
+    assert f"--owner {NVFLARE_UID}" in result.stdout
     assert "nvflare kit" in result.stdout
 
 
@@ -72,8 +73,8 @@ def test_flower_kit_is_chowned_to_the_supernode_uid_without_fl_backend(flower_ki
     """The documented invocation names no backend; the kit's shape is enough."""
     result = make_n_stage_kit(flower_kit)
     assert result.returncode == 0, result.stderr
-    assert f"chown -R {FLOWER_UID}:{FLOWER_UID}" in result.stdout
-    assert f"chown -R {NVFLARE_UID}:" not in result.stdout
+    assert f"--owner {FLOWER_UID}" in result.stdout
+    assert f"--owner {NVFLARE_UID}" not in result.stdout
     assert "flower kit" in result.stdout
 
 
@@ -93,27 +94,23 @@ def test_mounted_subdirectories_are_created_before_the_chown(request, fixture_na
     or when site policy writes ``privacy.json`` into ``local/`` at container start. Neither
     ``aws s3 sync`` nor ``docker cp`` recreates an empty directory, so a sync-assembled kit
     arrives without them. The mkdir has to precede the chown or the created directories keep
-    root's ownership, which is the bug it exists to prevent.
+    root's ownership, which is the bug it exists to prevent (FLIP#1958 moved the steps into
+    scripts/stage-to-node.sh; tests/test_stage_to_node.py pins their order).
     """
     kit = request.getfixturevalue(fixture_name)
     result = make_n_stage_kit(kit)
     assert result.returncode == 0, result.stderr
 
-    mkdir_lines = [ln for ln in result.stdout.splitlines() if "mkdir -p" in ln and "fl-kit" in ln]
-    subdir_line = next((ln for ln in mkdir_lines if any(f"/{d}" in ln for d in expected)), None)
-    assert subdir_line is not None, f"no mkdir for the mounted subdirectories: {mkdir_lines}"
-    for name in expected:
-        assert f"/{name}" in subdir_line, f"{name} not pre-created: {subdir_line}"
+    subdirs = re.search(r'--subdirs "([^"]*)"', result.stdout)
+    assert subdirs, f"no --subdirs passed to the staging script: {result.stdout}"
+    assert subdirs.group(1).split() == list(expected)
     for name in not_expected:
-        assert f"/{name}" not in subdir_line, f"{name} belongs to the other backend: {subdir_line}"
-
-    assert result.stdout.index(subdir_line) < result.stdout.index("chown -R"), (
-        "the subdirectory mkdir must run before the chown, or the new dirs stay root-owned"
-    )
+        assert name not in subdirs.group(1).split(), f"{name} belongs to the other backend"
+    # That the script creates them before the chown, on both transports: tests/test_stage_to_node.py.
 
 
 def test_the_destination_is_emptied_before_the_copy(nvflare_kit):
-    """``docker cp`` merges into the destination, so a re-stage must clear it first.
+    """A copy merges into the destination, so a re-stage must clear it first.
 
     Without the wipe, re-staging after a kit-date bump, a backend switch, or a corrected
     over-broad Flower sync leaves the previous kit's files beside the new ones — including
@@ -124,16 +121,10 @@ def test_the_destination_is_emptied_before_the_copy(nvflare_kit):
     result = make_n_stage_kit(nvflare_kit)
     assert result.returncode == 0, result.stderr
 
-    # `make -n` echoes the recipe's own `##` doc comments, which mention both commands by
-    # name — so compare positions among the command lines only.
-    commands = [ln for ln in result.stdout.splitlines() if not ln.lstrip().startswith("##")]
-
-    wipe = next((i for i, ln in enumerate(commands) if "-mindepth 1 -delete" in ln), None)
-    assert wipe is not None, f"destination is never cleared: {result.stdout}"
-    assert "/opt/flip/fl-kit" in commands[wipe], f"the wipe does not name KIT_DEST: {commands[wipe]}"
-
-    copy = next(i for i, ln in enumerate(commands) if "docker cp" in ln)
-    assert wipe < copy, "the wipe must run before the copy, or it removes the kit it just staged"
+    # The script wipes --dest before it copies, on both transports (tests/test_stage_to_node.py); this
+    # pins that KIT_DEST is what it is handed.
+    assert '--dest "/opt/flip/fl-kit"' in result.stdout
+    assert "stage-to-node.sh" in result.stdout
 
 
 @pytest.mark.parametrize("bad_dest", ["", "/"])
@@ -146,7 +137,7 @@ def test_a_destination_the_wipe_must_not_touch_is_refused(nvflare_kit, bad_dest)
     result = make_n_stage_kit(nvflare_kit, f"KIT_DEST={bad_dest}")
     assert result.returncode != 0
     assert "KIT_DEST must not be" in result.stderr
-    assert "docker cp" not in result.stdout
+    assert "stage-to-node.sh" not in result.stdout
 
 
 def test_keys_alone_mark_a_flower_kit(tmp_path):
@@ -155,19 +146,19 @@ def test_keys_alone_mark_a_flower_kit(tmp_path):
     (kit / "keys").mkdir(parents=True)
     result = make_n_stage_kit(kit)
     assert result.returncode == 0, result.stderr
-    assert f"chown -R {FLOWER_UID}:{FLOWER_UID}" in result.stdout
+    assert f"--owner {FLOWER_UID}" in result.stdout
 
 
 def test_explicit_fl_backend_overrides_the_kit_shape(nvflare_kit):
     result = make_n_stage_kit(nvflare_kit, "FL_BACKEND=flower")
     assert result.returncode == 0, result.stderr
-    assert f"chown -R {FLOWER_UID}:{FLOWER_UID}" in result.stdout
+    assert f"--owner {FLOWER_UID}" in result.stdout
 
 
 def test_explicit_kit_uid_overrides_everything(flower_kit):
     result = make_n_stage_kit(flower_kit, "KIT_UID=4242")
     assert result.returncode == 0, result.stderr
-    assert "chown -R 4242:4242" in result.stdout
+    assert "--owner 4242" in result.stdout
 
 
 def test_a_kit_with_neither_shape_is_refused_by_name(tmp_path):
@@ -177,7 +168,7 @@ def test_a_kit_with_neither_shape_is_refused_by_name(tmp_path):
     assert result.returncode != 0
     assert str(kit) in result.stderr
     assert "cannot tell which backend" in result.stderr
-    assert "chown" not in result.stdout
+    assert "stage-to-node.sh" not in result.stdout
 
 
 def test_a_kit_with_both_shapes_is_refused_by_name(tmp_path):
@@ -188,7 +179,7 @@ def test_a_kit_with_both_shapes_is_refused_by_name(tmp_path):
     assert result.returncode != 0
     assert str(kit) in result.stderr
     assert "both a FLARE shape" in result.stderr
-    assert "chown" not in result.stdout
+    assert "stage-to-node.sh" not in result.stdout
 
 
 def test_an_unknown_fl_backend_is_refused(nvflare_kit):

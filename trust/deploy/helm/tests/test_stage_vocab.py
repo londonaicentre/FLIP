@@ -42,11 +42,10 @@ def bundle(tmp_path: Path) -> Path:
 def test_stage_vocab_copies_the_folder_where_the_chart_mounts_it(bundle):
     result = make_n("stage-vocab", f"VOCAB_DIR={bundle}", "KUBE_CONTEXT=test")
     assert result.returncode == 0, result.stderr
-    # Emptied first, so a narrower re-stage leaves no table file of the previous bundle behind.
-    assert f'find "{DEST}" -mindepth 1 -delete' in result.stdout
-    assert result.stdout.index("-mindepth 1 -delete") < result.stdout.index('docker cp "')
-    assert f'docker cp "{bundle}/." "$node:{DEST}/"' in result.stdout
-    assert f'chmod -R a+rX "{DEST}"' in result.stdout
+    # scripts/stage-to-node.sh empties the destination first, so a narrower re-stage leaves no table file of
+    # the previous bundle behind, and leaves it world-readable (tests/test_stage_to_node.py, FLIP#1958).
+    assert f'--src "{bundle}" --dest "{DEST}" --world-readable' in result.stdout
+    assert "stage-to-node.sh" in result.stdout
     assert f"omopDb.vocabLoad.hostPath={DEST}" in result.stdout
 
 
