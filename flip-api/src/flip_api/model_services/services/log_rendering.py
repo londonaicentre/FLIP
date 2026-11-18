@@ -115,6 +115,18 @@ def render_log(row: FLLogs) -> str:
     if row.event_type == FLLogEvent.JOB_WAITING_FOR_RESOURCES:
         return _render_waiting_for_resources(details)
 
+    if row.event_type == FLLogEvent.CLIENT_LOST:
+        if _is_count(row.global_round) and row.global_round >= 1:
+            return f"Lost contact with this trust in round {row.global_round}"
+        # Before the first round the usual cause is a job that never started at the trust.
+        return (
+            "Lost contact with this trust before training started · if it runs each job in its own pod, "
+            "the pod may not have got the CPU, memory or GPU it asked for in time"
+        )
+
+    if row.event_type == FLLogEvent.CLIENT_RETURNED:
+        return "Contact with this trust was restored"
+
     if row.event_type is not None:
         return f"Round {row.global_round} · {row.event_type}"
 

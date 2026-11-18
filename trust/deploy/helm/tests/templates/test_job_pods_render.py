@@ -124,7 +124,10 @@ def test_job_pods_reach_the_parent_through_a_service_that_selects_only_the_paren
 def test_the_init_container_switches_the_kit_before_nvflare_starts():
     """fl-client-init does the switch, after rendering resources.json; the client, whose kit is read-only
     (FLIP#1570), refuses to start without the switched kit's study_runtime.yaml."""
-    docs = _enabled("--set", f"{JOB_PODS}.maxGpus=2", "--set", f"{JOB_PODS}.pendingTimeout=1200")
+    docs = _enabled(
+        "--set", f"{JOB_PODS}.maxGpus=2", "--set", f"{JOB_PODS}.pendingTimeout=1200",
+        "--set", f"{JOB_PODS}.ephemeralStorage=40Gi",
+    )  # fmt: skip
     container = _init_container(docs)
     client = _client_container(docs)
 
@@ -142,6 +145,7 @@ def test_the_init_container_switches_the_kit_before_nvflare_starts():
     assert env["FL_K8S_JOB_IMAGE"]["value"] == client["image"], "jobs run the image the client runs"
     assert env["FL_K8S_MAX_GPUS"]["value"] == "2"
     assert env["FL_K8S_PENDING_TIMEOUT"]["value"] == "1200"
+    assert env["FL_K8S_EPHEMERAL_STORAGE"]["value"] == "40Gi"
     assert env["FL_K8S_POD_TEMPLATE"]["value"] == "/app/k8s/job-pod.yaml"
     mount = next(m for m in container["volumeMounts"] if m["mountPath"] == "/app/k8s")
     volume = next(v for v in _client(docs)["spec"]["template"]["spec"]["volumes"] if v["name"] == mount["name"])
@@ -164,13 +168,20 @@ def test_a_job_pod_gets_what_the_client_container_has():
     env = _env(job)
     for name in ("TRUST_INTERNAL_SERVICE_KEY_HEADER", "TRUST_INTERNAL_SERVICE_KEY"):
         assert env[name] == _env(client)[name]
-    images = next(m for m in client["volumeMounts"] if m["name"] == "images")
-    assert images in job["volumeMounts"], "only this net's slice, at the path imaging-api returns"
-    assert {"name": "dshm", "mountPath": "/dev/shm"} in job["volumeMounts"]
+    # No images volume: a job pod streams its studies into its own run directory (FLIP#1049), and its
+    # IMAGES_DIR is a scratch folder of its own for the files add_resource uploads.
+    assert env["IMAGES_TRANSPORT"]["value"] == "stream"
+    assert job["volumeMounts"] == [
+        {"name": "dshm", "mountPath": "/dev/shm"},
+        {"name": "images-scratch", "mountPath": "/app/data/images"},
+    ]
     client_spec = _client(docs)["spec"]["template"]["spec"]
     volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
-    assert volumes["images"] == next(v for v in client_spec["volumes"] if v["name"] == "images")
+    assert "images" not in volumes
     assert volumes["dshm"]["emptyDir"]["medium"] == "Memory"
+    assert volumes["images-scratch"] == {"name": "images-scratch", "emptyDir": {}}
+    assert "affinity" not in pod["spec"]
+    assert pod["spec"]["automountServiceAccountToken"] is False
     # None by default: both backends dial the hub's public FL name.
     assert "hostAliases" not in pod["spec"]
     assert "hostAliases" not in client_spec
@@ -290,3 +301,43 @@ def test_process_mode_keeps_the_app_workspace():
     assert {"/app/local", "/app/startup", "/app/transfer"} <= mount_paths
     assert WORKSPACE not in mount_paths
     assert "cd /app/startup" in container["command"][-1]
+
+
+# --- job-pod leftovers (FLIP#1428): a CPU/memory reservation, and finished pods deleted -------------------------
+
+
+def test_a_job_pod_reserves_cpu_and_memory_through_a_no_op_init_container():
+    """NVFLARE replaces the job container's resources, so the reservation sits on an init container, which also keeps
+    the pod out of BestEffort, the class the XNAT conversion quota counts."""
+    docs = _enabled("--set", f"{JOB_PODS}.requests.cpu=2", "--set", f"{JOB_PODS}.requests.memory=8Gi")
+    [reserve] = _job_pod(docs)["spec"]["initContainers"]
+
+    assert reserve["command"] == ["/bin/true"]
+    assert reserve["resources"] == {"requests": {"cpu": 2, "memory": "8Gi"}}
+    assert reserve["image"] == _env(_init_container(docs))["FL_K8S_JOB_IMAGE"]["value"]
+    assert reserve["securityContext"] == _client_container(docs)["securityContext"]
+
+
+def test_a_pruner_beside_the_parent_deletes_this_nets_finished_job_pods():
+    docs = _enabled("--set", f"{JOB_PODS}.keepFinishedHours=6")
+    containers = {c["name"]: c for c in _client(docs)["spec"]["template"]["spec"]["containers"]}
+    pruner = containers["job-pod-pruner"]
+    env = _env(pruner)
+
+    assert pruner["command"] == ["/app/.venv/bin/python", "-m", "flip.nvflare.prune_job_pods"]
+    assert pruner["image"] == containers["fl-client"]["image"]
+    assert pruner["resources"]["requests"], "a BestEffort container would count against the XNAT conversion quota"
+    assert env["FL_JOB_POD_KEEP_HOURS"]["value"] == "6"
+    assert env["FL_K8S_NAMESPACE"]["valueFrom"]["fieldRef"]["fieldPath"] == "metadata.namespace"
+    # The selector picks exactly this release's job pods on this net.
+    wanted = dict(pair.split("=") for pair in env["FL_JOB_POD_SELECTOR"]["value"].split(","))
+    job_labels = _job_pod(docs)["metadata"]["labels"]
+    assert wanted.items() <= job_labels.items()
+    assert wanted["app.kubernetes.io/component"] == "fl-job"
+    assert wanted["flip/network"] == "net-1"
+
+
+def test_process_mode_runs_no_pruner():
+    names = [c["name"] for c in _client(_docs())["spec"]["template"]["spec"]["containers"]]
+
+    assert names == ["fl-client"]

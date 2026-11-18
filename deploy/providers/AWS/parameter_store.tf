@@ -55,21 +55,6 @@ resource "aws_ssm_parameter" "flip_app_bundles_bucket" {
   value       = local.flip_app_bundles_bucket_uri
 }
 
-# FL kit-slot pool names — flip-api's runtime source in production, read at boot
-# seeding and re-read when a trust registration finds the pool exhausted
-# (resolve_fl_kit_slot_names, reconcile-on-miss). Growing the pool is an env-file
-# edit + `make apply-fl-kit-slots` (targeted apply of this parameter): no
-# task-definition change, no flip-api restart. The value stays the JSON-list
-# *string* from the env file (flip-api json.loads it). Not a secret — just the
-# roster of pre-provisioned kit slots, hence SSM per the /flip convention above.
-resource "aws_ssm_parameter" "fl_kit_slot_names" {
-  # checkov:skip=CKV2_AWS_34:non-secret operational config by design (see file header and the comment above) — SecureString adds KMS coupling for no confidentiality gain
-  name        = "${local.ssm_prefix}/fl_kit_slot_names"
-  description = "JSON list of FL kit-slot names seeding/reconciling flip-api's fl_kit_slot pool (register_trust claims from it)"
-  type        = "String"
-  value       = var.FL_KIT_SLOT_NAMES
-}
-
 # The EC2 keypair's public key, for the Terraform CI workflows (FLIP#962,
 # FLIP#1199). aws_key_pair.flip_keypair reads its key with file() from
 # ~/.ssh/host-aws.pub, and public_key is ForceNew — a runner without that file

@@ -10,43 +10,51 @@
 # limitations under the License.
 #
 
-"""Tests for imaging_api.main app construction (docs gating, the lifespan's approved-cohort reconcile)."""
+"""Tests for imaging_api.main app construction (docs gating, the lifespan's background tasks)."""
 
 import asyncio
 import importlib
 import threading
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from imaging_api import config, main
 
 
 class TestLifespan:
-    """The lifespan runs the approved-cohort reconcile (FLIP#1860) unless its interval is 0."""
+    """The lifespan runs the image-cache sweeper (FLIP#1050) and the approved-cohort reconcile (FLIP#1860), each
+    unless its setting is 0."""
 
-    def test_reconcile_runs_for_the_app_lifetime(self, monkeypatch):
-        started = threading.Event()
+    @pytest.fixture
+    def started(self, monkeypatch):
+        started = {"run_sweeper": threading.Event(), "run_reconcile": threading.Event()}
+        for name, event in started.items():
 
-        async def fake_reconcile():
-            started.set()
-            await asyncio.Event().wait()
+            async def fake(event=event):
+                event.set()
+                await asyncio.Event().wait()
 
-        monkeypatch.setattr(main, "run_reconcile", fake_reconcile)
+            monkeypatch.setattr(main, name, fake)
+        return started
+
+    def test_both_tasks_run_for_the_app_lifetime(self, started):
         with TestClient(main.app):
-            assert started.wait(timeout=5)
+            assert all(event.wait(timeout=5) for event in started.values())
 
-    def test_zero_minutes_turns_the_reconcile_off(self, monkeypatch):
-        started = threading.Event()
-
-        async def fake_reconcile():
-            started.set()
-
-        monkeypatch.setattr(main, "run_reconcile", fake_reconcile)
-        monkeypatch.setattr(config.get_settings(), "COHORT_RECONCILE_MINUTES", 0)
+    @pytest.mark.parametrize(
+        ("setting", "off", "on"),
+        [
+            ("IMAGE_CACHE_RETENTION_HOURS", "run_sweeper", "run_reconcile"),
+            ("COHORT_RECONCILE_MINUTES", "run_reconcile", "run_sweeper"),
+        ],
+    )
+    def test_zero_turns_a_task_off(self, started, monkeypatch, setting, off, on):
+        monkeypatch.setattr(config.get_settings(), setting, 0)
         with TestClient(main.app):
-            pass
-        assert not started.is_set()
+            assert started[on].wait(timeout=5)
+        assert not started[off].is_set()
 
 
 class TestDocsGating:

@@ -14,11 +14,14 @@
 # Trust Compose Stack
 
 > **Deploys: trust only.** The trust-side container stack as Docker Compose, in [`compose/`](compose/), with
-> its siblings [`helm/`](helm/README.md) (the same stack for Kubernetes), [`ansible/`](ansible/README.md)
+> its siblings [`helm/`](helm/README.md) (the same stack for Kubernetes), [`snowflake/`](snowflake/README.md)
+> (the same stack on Snowpark Container Services, FLIP#1582), [`ansible/`](ansible/README.md)
 > (prepares a site-owned host for these files), [`terraform/`](terraform/) (trust infrastructure, one root
 > per target: [`azure/`](terraform/azure/README.md), [`aws/ec2/`](terraform/aws/ec2/README.md), [`aws/eks/`](terraform/aws/eks/)) and [`scripts/`](scripts/) (the trust lifecycle and node
 > self-test scripts). The Central Hub stack lives in [`deploy/`](../../deploy/README.md); see
 > [where things live](../../deploy/README.md#where-things-live) for the rule behind the layout.
+> The operator runbook for the Snowflake shape is
+> [`docs/source/deploy-flip/deploy-flip-node-snowflake.rst`](../../docs/source/deploy-flip/deploy-flip-node-snowflake.rst).
 
 Do not run these files directly — they are driven by [`trust/Makefile`](../Makefile), which selects the right
 combination for the environment, FL backend, GPU availability and kit slot. Start here instead:

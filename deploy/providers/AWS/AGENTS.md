@@ -64,8 +64,7 @@ make ssh-config                               # Generate SSH config with SSM Pro
 make provision-local-trust                     # Provision an on-prem trust host (run ON the host)
 make package-onprem-trust-kit KIT=<CODE> [KIT_FILE=<path>]  # Tarball a filled-in kit (trust/.env.<CODE>.<hub>, or the one at KIT_FILE) + the FL kit slice of its FL_KIT_SLOT for an on-prem operator
 make delete-trust NAME=<name>                 # Hard-delete a trust on the hub (frees the slot)
-make add-fl-kits N=<n> HUB=<stag|prod>       # Ensure N more claimable FL kit slots — activate spares first, mint only the shortfall (FLARE; no restart — see README)
-make apply-fl-kit-slots                       # Targeted plan/apply of the /flip/fl_kit_slot_names SSM parameter (slot activation path)
+make add-fl-kits N=<n> HUB=<stag|prod>       # Mint N more claimable FL kit slots (both backends; the hub reads complete kits or SuperNode key pairs from S3, so no Terraform, no restart; Flower registers the keys with the running SuperLink by `aws ecs run-task` — see README)
 make destroy                                  # Selective destroy (preserves Cognito, Secrets, S3)
 make aws-login                                # AWS SSO login
 make print-tf-env                             # Print resolved TF_VAR_* as KEY=value (consumed by the CI workflows)
@@ -120,6 +119,13 @@ Things worth knowing before touching any of it:
   Every lookup **fails closed**: absence is recognised only from ECS's own
   `failures[].reason == "MISSING"`, so an expired session or a wrong `ECS_CLUSTER`
   stops the run instead of reading as "empty account" and emitting the mutable tag.
+  An apply waits for this commit's image per group, `GHCR_WAIT_SECONDS_HUB` and
+  `GHCR_WAIT_SECONDS_FL` (each defaulting to `GHCR_WAIT_SECONDS`), which
+  `terraform_apply.yml` sets with `scripts/image-wait-budgets.sh`: the full budget only
+  while the group's build workflow has a queued, running or green push run for the
+  commit, else one probe; an API error waits in full (FLIP#1811). fl-server and fl-api
+  share the FL budget: once one exhausts it the other probes once. A build started by
+  hand after a red push run is not seen: re-dispatch the apply once it is green.
 - **`RELEASE_TAG` (`v<X.Y.Z>`, FLIP#1283) makes the resolver release-aware.** When
   set, every hub/FL image resolves to that release instead of `sha-<short7>` and is
   pinned by **digest** as `v<X.Y.Z>@sha256:…`: `:v<X.Y.Z>` is republished by design
@@ -136,9 +142,6 @@ Things worth knowing before touching any of it:
   (the index digest for multi-platform images), and `reconcile_ci_env.py` writes
   only the tag part to an env file, since the Makefile reuses `DOCKER_TAG` for
   the trust images.
-  A release image not yet published is waited for (`GHCR_WAIT_SECONDS`), but fl-server
-  and fl-api share one wait budget: once one exhausts it the other probes once, so the
-  worst case is two waits for three images, not three.
   It is ignored when `RESOLVE_SHA_TAG=false` (plan, drift). `active_tag()` reads a
   running `repo:tag@sha256:…` back whole, so an infrastructure-only apply keeps the
   pin; a bare `repo@sha256:…` still yields no tag, since Terraform interpolates
