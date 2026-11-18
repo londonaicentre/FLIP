@@ -321,9 +321,16 @@ fi
 # https://wiki.xnat.org/container-service/container-service-administration#ContainerServiceAdministration-EnablingaContainerManager
 echo " "
 echo "Assigning role 'ContainerManager' to admin account..."
-xnat_curl -X PUT "$XNAT_URL/xapi/users/${XNAT_ADMIN_USER}/roles/ContainerManager" \
+# On a fresh install XNAT 1.10.2.1 can add the role and still answer 500 (a duplicate-key error
+# within the same request, FLIP#1954), so a failed grant is judged by the roles admin holds after it.
+if ! xnat_curl -X PUT "$XNAT_URL/xapi/users/${XNAT_ADMIN_USER}/roles/ContainerManager" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
-  -H "accept: application/json"
+  -H "accept: application/json"; then
+  xnat_curl "$XNAT_URL/xapi/users/${XNAT_ADMIN_USER}/roles" -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+    | jq -e 'index("ContainerManager")' >/dev/null \
+    || { echo "ERROR: admin does not hold the ContainerManager role" >&2; exit 1; }
+  echo "admin holds ContainerManager despite the error above; continuing."
+fi
 
 # Assign roles to service account (including 'ContainerManager' role)
 echo " "

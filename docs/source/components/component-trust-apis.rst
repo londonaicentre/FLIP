@@ -11,7 +11,8 @@ Three FastAPI services make up FLIP's footprint inside a Trust's Secure Enclave:
 - ``data-access-api`` — runs cohort queries against the Trust's OMOP database.
 
 They run as containers alongside XNAT, the OMOP database, the FL clients and the logging stack, either under
-Docker Compose on a Trust host or from the Kubernetes Helm chart. This page is for engineers and Trust operators
+Docker Compose on a Trust host, from the Kubernetes Helm chart, or as a Snowflake Snowpark
+Container Services node. This page is for engineers and Trust operators
 who need to know what each service does, what it talks to and which privacy controls it enforces.
 
 .. contents:: On this page
@@ -215,6 +216,10 @@ Download cache
 The first time an FL client asks for an accession's resources, ``imaging-api`` pulls the study out of XNAT onto
 the Trust host, under that net's own images directory. Later requests are served from disk: the next FL round
 and, on Flower, the next job.
+
+A study unused for seven days is deleted from disk; it is downloaded again from XNAT if a job asks for it later.
+Trust operators can change the period with ``IMAGE_CACHE_RETENTION_HOURS`` in the kit file (``imagingApi.env`` on
+Kubernetes); ``0`` keeps every study.
 
 What this means for training code:
 

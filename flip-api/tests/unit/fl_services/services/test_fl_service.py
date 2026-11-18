@@ -242,48 +242,29 @@ def test_add_fl_backend_job_id_raises_if_job_missing(fl_job_id, fake_session):
 
 
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_all_offline(mock_get_status):
-    # The backend is passed in explicitly now (resolved per-net at runtime), not read from settings.
+def test_unavailable_clients_names_only_the_clients_not_connected(mock_get_status):
     mock_get_status.return_value = [
         IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY),
         IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS),
     ]
 
-    with pytest.raises(fl_service.ClientAvailabilityError, match="Clients unavailable: trust-1"):
-        fl_service.validate_client_availability(["trust-1"], "endpoint", FLBackend.NVFLARE)
+    # Trust_3 is not in the statuses at all, which counts as not connected.
+    assert fl_service.unavailable_clients(["Trust_2", "Trust_1", "Trust_3"], "endpoint") == ["Trust_2", "Trust_3"]
 
 
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_some_online(mock_get_status):
-    mock_get_status.return_value = [
-        IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY),
-        IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS),
-    ]
-
-    # This has to raise an error for Trust_2 only.
-    with pytest.raises(fl_service.ClientAvailabilityError, match="Clients unavailable: Trust_2"):
-        fl_service.validate_client_availability(["Trust_2", "Trust_1"], "endpoint", FLBackend.NVFLARE)
-
-
-@pytest.mark.parametrize(
-    "statuses", [[], [IClientStatus(name="Trust_1", status=ClientStatus.DISCONNECTED)]], ids=["empty", "unavailable"]
-)
-@patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_flower_soft(mock_get_status, statuses):
-    """Flower backend: empty or unavailable client statuses log a warning instead of raising."""
-    mock_get_status.return_value = statuses
-
-    # Should NOT raise — Flower degrades gracefully
-    fl_service.validate_client_availability(["Trust_1"], "endpoint", FLBackend.FLOWER)
-
-
-@patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_nvflare_still_raises(mock_get_status):
-    """FLARE backend: empty client statuses raise a researcher-facing refusal."""
+def test_unavailable_clients_names_every_client_when_none_is_connected(mock_get_status):
     mock_get_status.return_value = []
 
-    with pytest.raises(fl_service.ClientAvailabilityError, match="Unable to fetch client statuses"):
-        fl_service.validate_client_availability(["Trust_1"], "endpoint", FLBackend.NVFLARE)
+    assert fl_service.unavailable_clients(["Trust_1", "Trust_2"], "endpoint") == ["Trust_1", "Trust_2"]
+
+
+@patch("flip_api.fl_services.services.fl_service.check_client_status")
+def test_unavailable_clients_never_raises_when_the_fl_api_reports_nothing(mock_get_status):
+    """No statuses means nothing is known: no client is named and the submission goes ahead (#1133)."""
+    mock_get_status.return_value = None
+
+    assert fl_service.unavailable_clients(["Trust_1"], "endpoint") == []
 
 
 @patch("flip_api.fl_services.services.fl_service.http_delete")
@@ -1480,9 +1461,17 @@ def test_check_client_status_success(mock_http_get):
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
 def test_check_client_status_returns_none_when_no_response(mock_http_get):
-    mock_http_get.return_value = []
+    mock_http_get.return_value = None
 
     assert fl_service.check_client_status("endpoint") is None
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_check_client_status_returns_an_empty_list_when_no_client_is_connected(mock_http_get):
+    """FLARE drops a client from its list once it stops answering, so [] means every client is offline."""
+    mock_http_get.return_value = []
+
+    assert fl_service.check_client_status("endpoint") == []
 
 
 # --- fetch_* unavailable branches ----------------------------------------------------------------

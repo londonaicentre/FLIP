@@ -30,7 +30,7 @@ from flip_api.db.models.main_models import FLJob, FLNets, FLScheduler, Model
 from flip_api.domain.interfaces.fl import IJobMetaData
 from flip_api.domain.schemas.status import FLJobStatus, JobStatus, ModelStatus, NetStatus
 from flip_api.fl_services.services.fl_scheduler_service import release_scheduler_for_model
-from flip_api.fl_services.services.fl_service import list_backend_jobs
+from flip_api.fl_services.services.fl_service import abort_job, list_backend_jobs
 from flip_api.model_services.services.model_service import add_log, update_model_status
 from flip_api.utils.logger import logger
 
@@ -98,6 +98,7 @@ def why_job_is_dead(
     backend_jobs: list[IJobMetaData] | None,
     now: datetime,
     prepare_timeout: timedelta,
+    start_timeout: timedelta | None = None,
 ) -> str | None:
     """Say why a job the hub believes is running has in fact ended, or None if it has not.
 
@@ -106,6 +107,8 @@ def why_job_is_dead(
         backend_jobs (list[IJobMetaData] | None): Every job on the job's net, or None if its FL API could not say.
         now (datetime): The current UTC time, naive like ``FLJob.started``.
         prepare_timeout (timedelta): How long after pickup a job may still have no backend id.
+        start_timeout (timedelta | None): How long after pickup the backend may still hold the job unstarted. None
+            for no limit.
 
     Returns:
         str | None: The log line to show on the model, or None while the job is alive or its state unknown.
@@ -125,6 +128,19 @@ def why_job_is_dead(
     statuses = {j.status for j in backend_jobs if j.job_id == job.fl_backend_job_id}
     if not statuses:
         return f"The FL server on {job.net_name} no longer has this job, for example because it restarted."
+    if (
+        statuses == {FLJobStatus.PENDING}
+        and start_timeout is not None
+        and job.started is not None
+        and now - job.started > start_timeout
+    ):
+        # FLARE never tries to schedule a job while no client at all is connected to its server, so it never
+        # gives up on one either (FLIP#1133).
+        minutes = int(start_timeout.total_seconds() // 60)
+        return (
+            f"The FL server on {job.net_name} did not start this job within {minutes} minutes, "
+            "for example because the selected trusts never connected."
+        )
     if statuses & _ALIVE:
         return None
     for status, reason in _ENDED.items():
@@ -171,6 +187,22 @@ def _fail_job(job: WatchedJob, reason: str, session: Session) -> bool:
     return True
 
 
+def _abort_if_still_held(job: WatchedJob, backend_jobs: list[IJobMetaData] | None) -> None:
+    """Abort a job its backend still holds, so it cannot start after its model has failed (FLIP#1133).
+
+    Only a job failed for never starting is still listed as alive. A failed abort is logged and does not stop
+    the model being failed.
+    """
+    if job.fl_backend_job_id is None or not any(
+        j.job_id == job.fl_backend_job_id and j.status in _ALIVE for j in backend_jobs or []
+    ):
+        return
+    try:
+        abort_job(job.net_endpoint, job.fl_backend_job_id)
+    except Exception:
+        logger.exception({"message": "Could not abort an FL job that never started", "model": job.model_id})
+
+
 def _list_or_unknown(net_endpoint: str) -> list[IJobMetaData] | None:
     """List one net's jobs, or None for any error, so one broken net cannot stop the others being watched."""
     try:
@@ -187,11 +219,13 @@ class JobWatchdog:
     Args:
         strikes (int): Consecutive ticks a job must look dead before its model is failed.
         prepare_timeout (timedelta): How long after pickup a job may still have no backend id.
+        start_timeout (timedelta | None): How long after pickup the backend may still hold the job unstarted.
     """
 
-    def __init__(self, strikes: int, prepare_timeout: timedelta) -> None:
+    def __init__(self, strikes: int, prepare_timeout: timedelta, start_timeout: timedelta | None = None) -> None:
         self.strikes = strikes
         self.prepare_timeout = prepare_timeout
+        self.start_timeout = start_timeout
         self._looked_dead: dict[UUID, int] = {}
 
     def tick(self, session: Session, now: datetime) -> list[UUID]:
@@ -211,7 +245,9 @@ class JobWatchdog:
         failed: list[UUID] = []
         looked_dead: dict[UUID, int] = {}
         for job in jobs:
-            reason = why_job_is_dead(job, backend_jobs.get(job.net_endpoint), now, self.prepare_timeout)
+            reason = why_job_is_dead(
+                job, backend_jobs.get(job.net_endpoint), now, self.prepare_timeout, self.start_timeout
+            )
             if reason is None:
                 continue
             count = self._looked_dead.get(job.job_id, 0) + 1
@@ -226,6 +262,7 @@ class JobWatchdog:
                     }
                 )
                 continue
+            _abort_if_still_held(job, backend_jobs.get(job.net_endpoint))
             try:
                 if _fail_job(job, reason, session):
                     failed.append(job.model_id)
@@ -248,6 +285,7 @@ def _watchdog() -> JobWatchdog:
     return JobWatchdog(
         strikes=settings.FL_JOB_WATCHDOG_STRIKES,
         prepare_timeout=timedelta(minutes=settings.FL_JOB_PREPARE_TIMEOUT_MINUTES),
+        start_timeout=timedelta(minutes=settings.FL_JOB_START_TIMEOUT_MINUTES),
     )
 
 
