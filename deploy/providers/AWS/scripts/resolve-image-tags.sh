@@ -97,6 +97,20 @@
 #
 # When RELEASE_TAG is unset or empty the release path is skipped entirely.
 #
+# CATCH_UP — staging follows develop (FLIP#1375).
+#
+# Images are path-filtered, so most develop merges build none, and step 2 keeps
+# whatever runs. When the one apply that would move an image forward is held by
+# the FL gate and another merge lands on top, the quiesced re-dispatch runs at
+# the new tip, finds no image for it, and keeps the old one: staging stays behind
+# until the next merge that rebuilds that image. With CATCH_UP=true (develop
+# only), step 2 first looks for the newest build of an earlier develop commit:
+# it walks first parents (only those get push builds) back from this commit and
+# pins the first published image, stopping where the running commit is no longer
+# an ancestor, so a service only ever moves forward. A running tag that names no
+# commit here (`:stag`, a branch build deployed by hand) is left alone, and so is
+# anything git cannot answer: those cases keep step 2's behaviour.
+#
 # Usage:
 #     resolve-image-tags.sh
 #
@@ -113,6 +127,9 @@
 #     RESOLVE_SHA_TAG            true (default) to look for this commit's image;
 #                                false to resolve the live tag only, which needs
 #                                no registry access at all (plan, drift)
+#     CATCH_UP                   true to pin the newest build of an earlier
+#                                develop commit before reusing the running tag;
+#                                needs the full git history (default false)
 #     GHCR_WAIT_SECONDS          default bound on waiting for an image (default
 #                                900); 0 probes once and moves on
 #     GHCR_WAIT_SECONDS_HUB      per-group bounds, for the hub image and for the
@@ -174,9 +191,14 @@ GHCR_WAIT_SECONDS_FL=$((10#${GHCR_WAIT_SECONDS_FL}))
 
 command -v jq >/dev/null 2>&1 || die "jq is required (the ECS responses are parsed as JSON so a failure is distinguishable from an absence)"
 
+CATCH_UP="${CATCH_UP:-false}"
 case "${RESOLVE_SHA_TAG}" in
     true | false) ;;
     *) die "RESOLVE_SHA_TAG must be 'true' or 'false' (got '${RESOLVE_SHA_TAG}')" ;;
+esac
+case "${CATCH_UP}" in
+    true | false) ;;
+    *) die "CATCH_UP must be 'true' or 'false' (got '${CATCH_UP}')" ;;
 esac
 
 # Unset and empty mean the same thing — the dispatch input is an empty string on
@@ -380,6 +402,34 @@ active_tag() {
     ACTIVE_TAG="${tag}"
 }
 
+# Newest `sha-<short7>` of image_name built for a first-parent ancestor of
+# GIT_SHA that descends from the running commit, into CAUGHT_UP_TAG (CATCH_UP,
+# see the header). Empty when there is none, or when git cannot say: that keeps
+# the running tag. A registry error is still fatal (image_exists).
+CAUGHT_UP_TAG=""
+
+newer_ancestor_build() {
+    local image_name="$1" running="$2" running_commit commit
+    CAUGHT_UP_TAG=""
+    case "${running}" in
+        sha-*) running_commit="${running#sha-}" ;;
+        v*) running_commit="${running%%@*}" ;;
+        *) return 0 ;;
+    esac
+    running_commit="$(git rev-parse -q --verify "${running_commit}^{commit}" 2>/dev/null)" || {
+        log "   not catching up: ${running} is not a commit in this checkout."
+        return 0
+    }
+    while read -r commit; do
+        [[ "${commit}" != "${running_commit}" ]] || return 0
+        git merge-base --is-ancestor "${running_commit}" "${commit}" 2>/dev/null || return 0
+        if image_exists "${PROBE_REGISTRY}${image_name}:sha-${commit:0:7}"; then
+            CAUGHT_UP_TAG="sha-${commit:0:7}"
+            return 0
+        fi
+    done < <(git rev-list --first-parent --skip=1 --max-count=50 "${GIT_SHA}" 2>/dev/null)
+}
+
 # Wait groups whose publishing workflow has already been waited out in full.
 # fl-server and fl-api are built and pushed by one workflow
 # (fl-docker-build-<backend>.yml), so a full timeout on the first is a timeout
@@ -463,6 +513,14 @@ resolve() {
     fi
 
     active_tag "${service}" "${container}"
+    if [[ "${RESOLVE_SHA_TAG}" == "true" && "${CATCH_UP}" == "true" ]]; then
+        newer_ancestor_build "${image_name}" "${ACTIVE_TAG}"
+        if [[ -n "${CAUGHT_UP_TAG}" ]]; then
+            log "   catching up from ${ACTIVE_TAG} to ${CAUGHT_UP_TAG}, the newest earlier develop build."
+            RESOLVED_TAG="${CAUGHT_UP_TAG}"
+            return 0
+        fi
+    fi
     if [[ -n "${ACTIVE_TAG}" ]]; then
         log "   reusing the tag ${service} is already running: ${ACTIVE_TAG}"
         RESOLVED_TAG="${ACTIVE_TAG}"
