@@ -703,7 +703,8 @@ make sync-project-studies PROJECTS="<id> ..."   # or exactly these
 ```
 
 It builds one entry per project from the template above and replaces the ConfigMap; the client picks the
-change up within a minute or so, with no restart. Run it after the first deploy, after each project is
+change up within a minute or so, with no restart. When it finds no approved project (data-access-api's snapshot
+folder empty or not mounted) it stops and replaces nothing, since an empty file would stop every project's jobs. Run it after the first deploy, after each project is
 approved at this trust, after an upgrade (the entries carry the job image and the pod template), and after
 changing `jobPods.images`: the file outlives a redeploy, so until it is synced again every project keeps
 the entries of the previous mode. Until
