@@ -163,6 +163,9 @@ spec:
                   value: {{ .Values.trustApi.env.CENTRAL_HUB_API_URL | quote }}
                 - name: TRUST_API_KEY_HEADER
                   value: {{ .Values.trustApi.env.TRUST_API_KEY_HEADER | quote }}
+                # trust-api's Service: the pod's own loopback has nothing on it (the host agent's default).
+                - name: TRUST_API_URL
+                  value: "http://trust-api.{{ $ns }}.svc:{{ .Values.trustApi.service.port }}"
                 # Helm records, in ConfigMaps rather than Secrets (see the header comment).
                 - name: HELM_DRIVER
                   value: configmap

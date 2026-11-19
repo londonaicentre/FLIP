@@ -260,11 +260,21 @@ def kit_identity(kit_file: Path) -> tuple[str, str]:
     return parts[2], ENV_TOKEN_TO_HUB[parts[3]]
 
 
+def trust_api_base(kit: dict[str, str]) -> str:
+    """Where trust-api answers: ``TRUST_API_URL`` in a pod, else loopback on the host's published port.
+
+    On a host the agent runs beside the compose stack, which publishes trust-api on 127.0.0.1. A
+    CronJob pod has its own network namespace, so nothing listens on its loopback: the chart hands it
+    the in-cluster Service URL instead.
+    """
+    url = kit.get("TRUST_API_URL", "").rstrip("/")
+    return url or f"http://127.0.0.1:{kit.get('TRUST_API_PORT', '8020')}"
+
+
 def read_health(kit: dict[str, str]) -> Health:
-    """trust-api's own ``/health``, read over loopback. Never raises: unreachable is a Health too."""
-    port = kit.get("TRUST_API_PORT", "8020")
+    """trust-api's own ``/health``. Never raises: unreachable is a Health too."""
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=HTTP_TIMEOUT_S) as resp:  # noqa: S310
+        with urllib.request.urlopen(f"{trust_api_base(kit)}/health", timeout=HTTP_TIMEOUT_S) as resp:  # noqa: S310
             body = json.loads(resp.read())
     except (urllib.error.URLError, OSError, ValueError):
         return Health(False, None, None, None, ())
@@ -306,9 +316,14 @@ def cluster_kit(cluster: Cluster) -> dict[str, str]:
         "CENTRAL_HUB_API_URL": os.environ.get("CENTRAL_HUB_API_URL", ""),
         "TRUST_API_KEY_HEADER": os.environ.get("TRUST_API_KEY_HEADER") or DEFAULT_TRUST_API_KEY_HEADER,
         "TRUST_API_KEY": key,
+        "TRUST_API_URL": os.environ.get("TRUST_API_URL", ""),
     }
     if not kit["CENTRAL_HUB_API_URL"]:
         raise ValueError("CENTRAL_HUB_API_URL is empty; the CronJob takes it from trustApi.env")
+    # Without it read_health would fall back to the pod's own loopback, where nothing listens, and
+    # every tick would report the healthy site as SITE_UNHEALTHY.
+    if not kit["TRUST_API_URL"]:
+        raise ValueError("TRUST_API_URL is empty; the CronJob sets it to the trust-api Service")
     return kit
 
 

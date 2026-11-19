@@ -279,3 +279,15 @@ def test_the_agent_user_can_read_its_projected_key():
     assert ctx.get("fsGroup") == ctx.get("runAsGroup") == 65534
     assert mode & 0o040, f"group cannot read the key (mode {mode:o})"
     assert not mode & 0o007, f"others can read the key (mode {mode:o})"
+
+
+def test_the_agent_reads_health_from_the_trust_api_service():
+    """FLIP#1644: the pod's loopback has no trust-api; the URL must name the Service the chart renders."""
+    docs = _render("--set", "autoUpgrade.enabled=true", "--set", "trustApi.service.port=8123")
+    pod = _agent(docs, "CronJob")["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    env = {e["name"]: e.get("value") for e in pod["containers"][0]["env"]}
+    services = [d for d in docs if d.get("kind") == "Service" and d["metadata"]["name"] == "trust-api"]
+    assert len(services) == 1, "the URL below names a Service called trust-api"
+    port = services[0]["spec"]["ports"][0]["port"]
+    assert env["TRUST_API_URL"] == f"http://trust-api.flip-trust.svc:{port}"
+    assert port == 8123

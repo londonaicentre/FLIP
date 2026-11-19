@@ -526,6 +526,17 @@ class TickRollsBack(unittest.TestCase):
         self.assertEqual(reports[-1]["state"], "SUCCEEDED")
 
 
+class TrustApiBase(unittest.TestCase):
+    def test_a_host_kit_reads_loopback_on_its_published_port(self):
+        self.assertEqual(agent.trust_api_base({}), "http://127.0.0.1:8020")
+        self.assertEqual(agent.trust_api_base({"TRUST_API_PORT": "9000"}), "http://127.0.0.1:9000")
+
+    def test_a_url_wins_and_loses_its_trailing_slash(self):
+        self.assertEqual(
+            agent.trust_api_base({"TRUST_API_URL": "http://t:8000/", "TRUST_API_PORT": "1"}), "http://t:8000"
+        )
+
+
 class ClusterKit(unittest.TestCase):
     """The pod gets one key from a projected volume and the rest from its env — never a kit file."""
 
@@ -536,6 +547,7 @@ class ClusterKit(unittest.TestCase):
         self.env = {
             "CENTRAL_HUB_API_URL": "https://hub.example/api",
             "TRUST_API_KEY_HEADER": "X-Key",  # pragma: allowlist secret
+            "TRUST_API_URL": "http://trust-api.flip-trust.svc:8000",
         }
 
     def test_reads_the_projected_key_and_the_rest_from_the_env(self):
@@ -544,6 +556,17 @@ class ClusterKit(unittest.TestCase):
         self.assertEqual(kit["TRUST_API_KEY"], "k")
         self.assertEqual(kit["CENTRAL_HUB_API_URL"], "https://hub.example/api")
         self.assertEqual(kit["TRUST_API_KEY_HEADER"], "X-Key")
+
+    def test_health_is_read_from_the_trust_api_service_not_the_pods_loopback(self):
+        """FLIP#1644, found on kind: from loopback every tick reported a healthy site as SITE_UNHEALTHY."""
+        with mock.patch.dict("os.environ", self.env, clear=False):
+            kit = agent.cluster_kit(self.cluster)
+        self.assertEqual(agent.trust_api_base(kit), "http://trust-api.flip-trust.svc:8000")
+
+    def test_an_empty_trust_api_url_fails_rather_than_reading_loopback(self):
+        with mock.patch.dict("os.environ", {**self.env, "TRUST_API_URL": ""}, clear=False):
+            with self.assertRaises(ValueError):
+                agent.cluster_kit(self.cluster)
 
     def test_a_missing_projection_fails_before_anything_is_claimed(self):
         self.cluster = agent.Cluster("ns", "rel", "oci://x", "GSTT", "prod", self.dir / "absent")
@@ -557,7 +580,8 @@ class ClusterKit(unittest.TestCase):
                 agent.cluster_kit(self.cluster)
 
     def test_the_header_defaults_rather_than_going_out_unheaded(self):
-        with mock.patch.dict("os.environ", {"CENTRAL_HUB_API_URL": "https://h/api"}, clear=False):
+        env = {"CENTRAL_HUB_API_URL": "https://h/api", "TRUST_API_URL": "http://t:8000"}
+        with mock.patch.dict("os.environ", env, clear=False):
             os.environ.pop("TRUST_API_KEY_HEADER", None)
             kit = agent.cluster_kit(self.cluster)
         self.assertEqual(kit["TRUST_API_KEY_HEADER"], agent.DEFAULT_TRUST_API_KEY_HEADER)
