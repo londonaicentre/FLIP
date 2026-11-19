@@ -76,6 +76,7 @@ const mockUpdateUserRoles = vi.fn();
 const mockUpdateUserDisabledState = vi.fn();
 const mockResetUserMfa = vi.fn();
 const mockResetUserPassword = vi.fn();
+const mockDeleteUser = vi.fn();
 
 vi.mock("@/services/user-service", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/services/user-service")>();
@@ -86,7 +87,8 @@ vi.mock("@/services/user-service", async (importOriginal) => {
         updateUserRoles: (...args: unknown[]) => mockUpdateUserRoles(...args),
         updateUserDisabledState: (...args: unknown[]) => mockUpdateUserDisabledState(...args),
         resetUserMfa: (...args: unknown[]) => mockResetUserMfa(...args),
-        resetUserPassword: (...args: unknown[]) => mockResetUserPassword(...args)
+        resetUserPassword: (...args: unknown[]) => mockResetUserPassword(...args),
+        deleteUser: (...args: unknown[]) => mockDeleteUser(...args)
     };
 });
 
@@ -128,7 +130,7 @@ const stubs = {
     },
     AiConfirmModal: {
         name: "AiConfirmModal",
-        props: ["dialog", "continueAction", "confirmationText"],
+        props: ["dialog", "continueAction", "confirmationText", "typingConfirmation"],
         emits: ["close-modal"],
         // Surface the confirmation text so tests can distinguish each instance.
         template: "<div data-test='confirm-modal' :data-dialog='dialog' :data-text='confirmationText' />"
@@ -235,6 +237,7 @@ beforeEach(() => {
     mockUpdateUserDisabledState.mockReset();
     mockResetUserMfa.mockReset();
     mockResetUserPassword.mockReset();
+    mockDeleteUser.mockReset();
     mockSnackbarSuccess.mockReset();
     mockSnackbarError.mockReset();
     mockRouteChangeViewProjects.mockReset();
@@ -453,6 +456,81 @@ describe("admin/users", () => {
         await flushPromises();
 
         expect(mockSnackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "User not updated" }));
+    });
+
+    describe("Delete User (FLIP#1996)", () => {
+        const deleteModal = (wrapper: ReturnType<typeof mountPage>) =>
+            wrapper.findAllComponents({ name: "AiConfirmModal" }).find(c => c.props("typingConfirmation") !== undefined)!;
+
+        it("is offered only once the user is disabled", async () => {
+            const wrapper = mountPage();
+            await nextTick();
+            await wrapper.findAll("[data-test='user']")[0].trigger("click");
+            expect(wrapper.find("[data-test='delete-user-btn']").exists()).toBe(false);
+
+            await wrapper.findAll("[data-test='user']")[1].trigger("click");
+            expect(wrapper.find("[data-test='delete-user-btn']").exists()).toBe(true);
+        });
+
+        it("asks for the user's email typed back, then deletes by id and refreshes the list", async () => {
+            mockDeleteUser.mockResolvedValue(undefined);
+            const wrapper = mountPage();
+            await nextTick();
+            await wrapper.findAll("[data-test='user']")[1].trigger("click");
+            await wrapper.find("[data-test='delete-user-btn']").trigger("click");
+
+            const modal = deleteModal(wrapper);
+            expect(modal.props("dialog")).toBe(true);
+            expect(modal.props("typingConfirmation")).toBe("bob@example.com");
+
+            await modal.props("continueAction")();
+            await flushPromises();
+
+            expect(mockDeleteUser).toHaveBeenCalledWith("u2");
+            expect(mutateUsers).toHaveBeenCalled();
+            expect(mockSnackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "User deleted" }));
+            expect(wrapper.find("[data-test='delete-user-btn']").exists()).toBe(false);
+        });
+
+        it("shows the hub's reason when the delete is refused", async () => {
+            const detail = "The user owns project(s) Spleen; hand these over before deleting them.";
+            mockDeleteUser.mockRejectedValue({
+                response: {
+                    status: 409,
+                    data: { detail }
+                }
+            });
+            const wrapper = mountPage();
+            await nextTick();
+            await wrapper.findAll("[data-test='user']")[1].trigger("click");
+
+            await deleteModal(wrapper).props("continueAction")();
+            await flushPromises();
+
+            expect(mockSnackbarError).toHaveBeenCalledWith({
+                title: "User not deleted",
+                text: detail
+            });
+            expect(mockSnackbarSuccess).not.toHaveBeenCalled();
+        });
+
+        it("does not echo the detail of an unexpected failure", async () => {
+            mockDeleteUser.mockRejectedValue({
+                response: {
+                    status: 500,
+                    data: { detail: "internal" }
+                }
+            });
+            const wrapper = mountPage();
+            await nextTick();
+            await wrapper.findAll("[data-test='user']")[1].trigger("click");
+
+            await deleteModal(wrapper).props("continueAction")();
+            await flushPromises();
+
+            const text = "There was an error deleting the user, please try again.";
+            expect(mockSnackbarError).toHaveBeenCalledWith(expect.objectContaining({ text }));
+        });
     });
 
     it("resetPassword asks flip-api to reset by user id, then reports success", async () => {

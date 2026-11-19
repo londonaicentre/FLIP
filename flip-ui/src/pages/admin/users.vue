@@ -372,6 +372,15 @@
                                     >
                                         Enable User
                                     </AiButton>
+                                    <AiButton
+                                        v-if="selectedUser.isDisabled"
+                                        data-test="delete-user-btn"
+                                        error
+                                        block
+                                        @click="dialogDelete = true;"
+                                    >
+                                        Delete User
+                                    </AiButton>
                                 </div>
                             </div>
                         </div>
@@ -430,6 +439,32 @@
         @close-modal="dialogEnable = false;"
     />
     <AiConfirmModal
+        :dialog="dialogDelete"
+        :typing-confirmation="selectedUser?.email ?? ''"
+        :submitting="deletingUser"
+        title="Delete this user?"
+        placeholder="User email"
+        close-button-text="Cancel"
+        continue-button-text="Delete User"
+        :continue-action="deleteSelectedUser"
+        @close-modal="dialogDelete = false;"
+    >
+        <template #confirmation>
+            <div class="my-4 space-y-2">
+                <strong>This cannot be undone.</strong>
+                <p>
+                    The account and its sign-in are removed. Projects, models and approvals keep their history and show
+                    the user as "Former user ({{ selectedUser?.name || 'no name' }})".
+                </p>
+                <p>
+                    To delete this user, enter
+                    <code class="p-1 font-bold tracking-tight bg-gray-100 rounded dark:bg-dark-raised dark:text-primary-200">{{ selectedUser?.email }}</code>
+                    below.
+                </p>
+            </div>
+        </template>
+    </AiConfirmModal>
+    <AiConfirmModal
         :dialog="dialogResetPassword"
         confirmation-text="Are you sure you want to reset this user's password?"
         close-button-text="Cancel"
@@ -462,7 +497,8 @@ import UserAvatar from "@/partials/users/UserAvatar.vue";
 import { routeChange } from "@/router";
 import { getRoles, IRole, TRUST_ADMIN_ROLE_NAME } from "@/services/role-service";
 import { getTrustStatuses } from "@/services/trust-service";
-import { getUsers,
+import { deleteUser,
+    getUsers,
     IUser,
     IUserDisabledStateDto,
     resetUserMfa,
@@ -492,6 +528,8 @@ const mobileDetailOpen = ref(false);
 const showRegisterUserModal = ref(false);
 const dialogDisable = ref(false);
 const dialogEnable = ref(false);
+const dialogDelete = ref(false);
+const deletingUser = ref(false);
 const dialogResetPassword = ref(false);
 const dialogResetMfa = ref(false);
 
@@ -695,6 +733,37 @@ const updateUserState = async (disabled: boolean) => {
             title: "User not updated"
         });
         errorStore.setError();
+    }
+};
+
+// The hub explains a refused delete (still enabled, owns a project, is a Trust Admin) with a 409; show it verbatim.
+const deleteRefusal = (error: unknown): string | undefined => {
+    const response = (error as { response?: { status?: number, data?: { detail?: unknown } } })?.response;
+
+    return response?.status === 409 && typeof response.data?.detail === "string" ? response.data.detail : undefined;
+};
+
+const deleteSelectedUser = async () => {
+    if (!selectedUser.value) return;
+    deletingUser.value = true;
+
+    try {
+        await deleteUser(selectedUser.value.id);
+        selectedUser.value = undefined;
+        mobileDetailOpen.value = false;
+        await refreshUsers();
+        Snackbar.success({
+            text: "The user has been deleted.",
+            title: "User deleted"
+        });
+    } catch (error) {
+        Snackbar.error({
+            text: deleteRefusal(error) ?? "There was an error deleting the user, please try again.",
+            title: "User not deleted"
+        });
+    } finally {
+        deletingUser.value = false;
+        dialogDelete.value = false;
     }
 };
 

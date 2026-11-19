@@ -17,15 +17,30 @@ import pytest
 from fastapi import HTTPException, status
 
 from flip_api.db.models.user_models import PermissionRef, UsersAudit
+from flip_api.domain.schemas.users import CognitoUser
 from flip_api.user_services.delete_user import delete_user
 
 USERNAME = "test@example.com"
+
+
+@pytest.fixture(autouse=True)
+def no_blockers():
+    """The user owns nothing; ``test_delete_user_db_flow`` covers the refusals against real tables."""
+    with patch("flip_api.user_services.delete_user.deletion_blockers", return_value=[]) as blockers:
+        yield blockers
+
+
+@pytest.fixture
+def disabled_user(fake_idp, user_id):
+    """The identity provider knows the user, already disabled."""
+    fake_idp.get_user.return_value = CognitoUser(id=user_id, email=USERNAME, is_disabled=True)
 
 
 @pytest.fixture
 def mock_db():
     """Mock database session fixture."""
     db = MagicMock()
+    db.get.return_value = None  # no profile row
     db.begin.return_value.__enter__ = MagicMock()
     db.begin.return_value.__exit__ = MagicMock()
     return db
@@ -59,18 +74,18 @@ def test_permission_denied(fake_idp, mock_request, mock_db, user_id, token_id):
         assert f"User with ID: {token_id} was unable to manage users" in exc_info.value.detail
         mock_logger.error.assert_called_once()
         mock_has_permissions.assert_called_once_with(token_id, [PermissionRef.CAN_MANAGE_USERS], mock_db)
-        fake_idp.get_username.assert_not_called()
+        fake_idp.get_user.assert_not_called()
         fake_idp.delete_user.assert_not_called()
 
 
 def test_provider_user_already_gone_still_drops_role_grants(fake_idp, mock_request, mock_db, user_id, token_id):
-    """If get_username 404s (provider side already gone), still reap any ghost role grants and
+    """If get_user 404s (provider side already gone), still reap any ghost role grants and
     write the audit row — but skip the provider-side delete itself.
 
     This is the idempotency contract: a retry after a partial failure should clean up the DB
     state instead of raising 404 and leaving dangling grants behind.
     """
-    fake_idp.get_username.side_effect = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    fake_idp.get_user.side_effect = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
 
     with patch("flip_api.user_services.delete_user.has_permissions") as mock_has_permissions:
         mock_has_permissions.return_value = True
@@ -78,9 +93,9 @@ def test_provider_user_already_gone_still_drops_role_grants(fake_idp, mock_reque
         result = delete_user(user_id, mock_request, mock_db, token_id, idp=fake_idp)
 
         assert result == {}
-        fake_idp.get_username.assert_called_once_with(user_id)
+        fake_idp.get_user.assert_called_once_with(user_id=user_id)
         # DB cleanup runs even though the provider-side user is gone — that's the whole point.
-        mock_db.execute.assert_called_once()
+        assert mock_db.execute.call_count == 2  # role grants, project access
         mock_db.add.assert_called_once()
         audit_row = mock_db.add.call_args[0][0]
         assert isinstance(audit_row, UsersAudit)
@@ -90,12 +105,12 @@ def test_provider_user_already_gone_still_drops_role_grants(fake_idp, mock_reque
         fake_idp.delete_user.assert_not_called()
 
 
-def test_get_username_non_404_propagates(fake_idp, mock_request, mock_db, user_id, token_id):
-    """A 5xx from get_username (e.g. an identity-provider read failure) must propagate untouched.
+def test_get_user_non_404_propagates(fake_idp, mock_request, mock_db, user_id, token_id):
+    """A 5xx from get_user (e.g. an identity-provider read failure) must propagate untouched.
 
     Without this, a transient provider read error would silently drop the user's role grants.
     """
-    fake_idp.get_username.side_effect = HTTPException(
+    fake_idp.get_user.side_effect = HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="identity provider error"
     )
 
@@ -114,9 +129,40 @@ def test_get_username_non_404_propagates(fake_idp, mock_request, mock_db, user_i
         fake_idp.delete_user.assert_not_called()
 
 
-def test_user_deleted_successfully(fake_idp, mock_request, mock_db, user_id, token_id):
+def test_enabled_user_is_refused(fake_idp, mock_request, mock_db, user_id, token_id):
+    """Delete is the step after Disable: an enabled user is refused before anything is touched."""
+    fake_idp.get_user.return_value = CognitoUser(id=user_id, email=USERNAME, is_disabled=False)
+
+    with patch("flip_api.user_services.delete_user.has_permissions", return_value=True):
+        with pytest.raises(HTTPException) as exc_info:
+            delete_user(user_id, mock_request, mock_db, token_id, idp=fake_idp)
+
+    assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+    mock_db.execute.assert_not_called()
+    mock_db.commit.assert_not_called()
+    fake_idp.delete_user.assert_not_called()
+
+
+def test_blockers_are_named_in_the_refusal(
+    fake_idp, disabled_user, no_blockers, mock_request, mock_db, user_id, token_id
+):
+    """A user who still owns projects or a trust is refused, and the detail says what to hand over."""
+    no_blockers.return_value = ["owns project(s) Spleen", "is Trust Admin of GSTT"]
+
+    with patch("flip_api.user_services.delete_user.has_permissions", return_value=True):
+        with pytest.raises(HTTPException) as exc_info:
+            delete_user(user_id, mock_request, mock_db, token_id, idp=fake_idp)
+
+    assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+    assert exc_info.value.detail == (
+        "The user owns project(s) Spleen and is Trust Admin of GSTT; hand these over before deleting them."
+    )
+    mock_db.commit.assert_not_called()
+    fake_idp.delete_user.assert_not_called()
+
+
+def test_user_deleted_successfully(fake_idp, disabled_user, mock_request, mock_db, user_id, token_id):
     """Happy path: user_role rows dropped, audit row written, provider-side user removed."""
-    fake_idp.get_username.return_value = USERNAME
 
     with patch("flip_api.user_services.delete_user.has_permissions") as mock_has_permissions:
         mock_has_permissions.return_value = True
@@ -124,10 +170,10 @@ def test_user_deleted_successfully(fake_idp, mock_request, mock_db, user_id, tok
         result = delete_user(user_id, mock_request, mock_db, token_id, idp=fake_idp)
 
         assert result == {}
-        fake_idp.get_username.assert_called_once_with(user_id)
+        fake_idp.get_user.assert_called_once_with(user_id=user_id)
 
-        # user_role rows deleted in a single execute() call
-        mock_db.execute.assert_called_once()
+        # user_role and project_user_access rows deleted, one execute() each
+        assert mock_db.execute.call_count == 2
 
         # Audit row written
         mock_db.add.assert_called_once()
@@ -142,7 +188,9 @@ def test_user_deleted_successfully(fake_idp, mock_request, mock_db, user_id, tok
         fake_idp.delete_user.assert_called_once_with(USERNAME)
 
 
-def test_db_cleanup_durable_when_provider_delete_fails(fake_idp, mock_request, mock_db, user_id, token_id):
+def test_db_cleanup_durable_when_provider_delete_fails(
+    fake_idp, disabled_user, mock_request, mock_db, user_id, token_id
+):
     """Lock the documented ordering: DB cleanup commits BEFORE the provider-side delete.
 
     If the identity provider raises after the DB commit, the role grants are already gone and the
@@ -150,7 +198,6 @@ def test_db_cleanup_durable_when_provider_delete_fails(fake_idp, mock_request, m
     must name the half-deleted state explicitly so the operator knows the user can still
     authenticate but has zero app authority, and that manual provider-side cleanup is required.
     """
-    fake_idp.get_username.return_value = USERNAME
     # Production path: the provider wraps its client error as HTTPException.
     fake_idp.delete_user.side_effect = HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete user"
@@ -173,7 +220,7 @@ def test_db_cleanup_durable_when_provider_delete_fails(fake_idp, mock_request, m
         assert "manual" in detail
 
         # DB cleanup ran and committed BEFORE the provider call.
-        mock_db.execute.assert_called_once()
+        assert mock_db.execute.call_count == 2
         mock_db.add.assert_called_once()
         audit_row = mock_db.add.call_args[0][0]
         assert isinstance(audit_row, UsersAudit)

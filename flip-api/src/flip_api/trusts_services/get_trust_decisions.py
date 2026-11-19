@@ -26,6 +26,7 @@ from flip_api.domain.interfaces.trust import ITrustCohortCount, ITrustDecision
 from flip_api.domain.schemas.actions import ProjectAuditAction
 from flip_api.domain.schemas.status import TrustApprovalStatus
 from flip_api.utils.logger import logger
+from flip_api.utils.user_roles import profile_display_name
 
 router = APIRouter(prefix="/trust", tags=["trusts_services"])
 
@@ -99,7 +100,7 @@ def get_trust_decisions(
         )
 
     rows = db.exec(
-        select(ProjectTrustIntersect, Projects, UserProfile.name)
+        select(ProjectTrustIntersect, Projects, profile_display_name())
         .join(Projects, col(Projects.id) == col(ProjectTrustIntersect.project_id))
         .join(UserProfile, col(UserProfile.user_id) == col(ProjectTrustIntersect.decided_by), isouter=True)
         .where(ProjectTrustIntersect.trust_id == trust_id)
