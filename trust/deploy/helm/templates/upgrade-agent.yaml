@@ -133,6 +133,10 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 65534
+            runAsGroup: 65534
+            # The kubelet writes the projected key root-owned; fsGroup hands it to this pod's group,
+            # and defaultMode 0440 below lets that group (and nothing else) read it.
+            fsGroup: 65534
             seccompProfile:
               type: RuntimeDefault
           containers:
@@ -182,5 +186,5 @@ spec:
                 items:
                   - key: trust-api-key
                     path: trust-api-key
-                defaultMode: 0400
+                defaultMode: 0440
 {{- end }}

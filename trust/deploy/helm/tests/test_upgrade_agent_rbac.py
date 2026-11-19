@@ -263,3 +263,19 @@ def test_the_agent_sheds_every_capability_it_does_not_need():
     assert container["securityContext"]["readOnlyRootFilesystem"] is True
     assert container["securityContext"]["capabilities"]["drop"] == ["ALL"]
     assert pod["securityContext"]["runAsNonRoot"] is True
+
+
+def test_the_agent_user_can_read_its_projected_key():
+    """FLIP#1644: found on kind. The kubelet writes the key root-owned; at 0400 with no fsGroup the
+    agent (uid 65534) got EACCES on every tick. fsGroup must hand the file to the pod's group, the
+    mode must grant that group read, and nobody else."""
+    pod = _agent(_render("--set", "autoUpgrade.enabled=true"), "CronJob")["spec"]["jobTemplate"]["spec"]["template"][
+        "spec"
+    ]
+    ctx = pod["securityContext"]
+    (volume,) = pod["volumes"]
+    mode = volume["secret"]["defaultMode"]
+    assert ctx["runAsUser"] != 0
+    assert ctx.get("fsGroup") == ctx.get("runAsGroup") == 65534
+    assert mode & 0o040, f"group cannot read the key (mode {mode:o})"
+    assert not mode & 0o007, f"others can read the key (mode {mode:o})"
