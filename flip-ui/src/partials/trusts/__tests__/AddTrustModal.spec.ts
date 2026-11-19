@@ -49,53 +49,56 @@ function mountModal() {
 
 describe("addTrustSchema", () => {
     it("rejects a missing or blank code (code is required)", async () => {
-        await expect(addTrustSchema.validate({ name: "Guy's Trust" })).rejects.toThrow();
+        await expect(addTrustSchema.validate({ name: "Guys Trust" })).rejects.toThrow();
         await expect(addTrustSchema.validate({
-            name: "Guy's Trust",
+            name: "Guys Trust",
             code: ""
         })).rejects.toThrow();
         await expect(addTrustSchema.validate({
-            name: "Guy's Trust",
+            name: "Guys Trust",
             code: "   "
         })).rejects.toThrow();
     });
 
     it("rejects a code with characters outside [A-Za-z0-9_-]", async () => {
         await expect(addTrustSchema.validate({
-            name: "Guy's Trust",
+            name: "Guys Trust",
             code: "G S"
         })).rejects.toThrow();
     });
 
     it("rejects a code that starts with an underscore or hyphen, as the hub does", async () => {
         await expect(addTrustSchema.validate({
-            name: "Guy's Trust",
+            name: "Guys Trust",
             code: "-GSTT"
         })).rejects.toThrow();
     });
 
     it.each([
         ["$", "$ isn't allowed"],
-        ["`", "` isn't allowed"],
+        ["'", "' isn't allowed"],
+        ["&", "& isn't allowed"],
+        ["-", "- isn't allowed"],
         ["\\", "\\ isn't allowed"],
-        ["\n", "Line breaks aren't allowed"],
-        ["\r", "Line breaks aren't allowed"]
-    ])("rejects %j in the name or region, which a kit file cannot carry", async (ch, message) => {
+        ["\n", "Only spaces are allowed between words"],
+        ["\t", "Only spaces are allowed between words"]
+    ])("rejects %j in the name or region: letters, digits and spaces only", async (ch, message) => {
         await expect(addTrustSchema.validate({
             name: `Guy${ch}s`,
             code: "GSTT"
         })).rejects.toThrow(message);
         await expect(addTrustSchema.validate({
-            name: "Guy's Trust",
+            name: "Guys Trust",
             code: "GSTT",
             region: `Lon${ch}don`
         })).rejects.toThrow(message);
     });
 
-    it("accepts a name with punctuation and a well-formed code", async () => {
+    it("accepts letters, digits and spaces, accented letters included", async () => {
         const value = await addTrustSchema.validate({
-            name: "Guy's & St Thomas' NHS Foundation Trust",
-            code: "GSTT"
+            name: "Guys and St Thomas NHS Foundation Trust 2",
+            code: "GSTT",
+            region: "Île de France"
         });
         expect(value.code).toBe("GSTT");
     });
@@ -145,7 +148,7 @@ describe("AddTrustModal rendering", () => {
         vi.mocked(createAdminTrust).mockRejectedValueOnce({ response: { data: { detail: "No FL kit slots available. Pre-provision more FL kits and try again." } } });
         const wrapper = mountModal();
 
-        await wrapper.find("[data-test=trust-name-field]").setValue("Guy's Trust");
+        await wrapper.find("[data-test=trust-name-field]").setValue("Guys Trust");
         await wrapper.find("[data-test=trust-code-field]").setValue("GSTT");
         await wrapper.find("[data-test=confirm-create-trust-btn]").trigger("click");
 

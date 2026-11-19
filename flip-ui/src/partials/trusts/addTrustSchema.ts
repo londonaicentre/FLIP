@@ -17,28 +17,29 @@ import { object, string, TestContext } from "yup";
 // rules can be unit-tested directly (the vee-validate form round-trip is awkward
 // to drive in jsdom). `code` is required: names are admin-chosen and non-unique,
 // so the short code is the stable handle the hub and deploy tooling key on.
-// The character rules mirror the hub's (register_trust.py TRUST_CODE / KIT_UNSAFE),
-// which refuses what a kit file could not carry.
-const KIT_UNSAFE = /[\r\n$`\\]/;
+// The code rule mirrors the hub's (register_trust.py TRUST_CODE). Name and region allow
+// letters, digits and spaces only: stricter than the hub, which refuses just what a kit
+// file could not carry (KIT_UNSAFE).
+const NOT_ALLOWED = /[^\p{L}\p{N} ]/u;
 
-// Names the character the user typed, e.g. "$ isn't allowed".
-const kitSafe = (value: string | undefined, ctx: TestContext) => {
-    const ch = KIT_UNSAFE.exec(value ?? "")?.[0];
+// Names the character the user typed, e.g. "& isn't allowed".
+const lettersDigitsSpaces = (value: string | undefined, ctx: TestContext) => {
+    const ch = NOT_ALLOWED.exec(value ?? "")?.[0];
     if (!ch) return true;
 
-    return ctx.createError({ message: /[\r\n]/.test(ch) ? "Line breaks aren't allowed" : `${ch} isn't allowed` });
+    return ctx.createError({ message: /\s/.test(ch) ? "Only spaces are allowed between words" : `${ch} isn't allowed` });
 };
 
 export const addTrustSchema = object().shape({
     name: string()
         .required("Trust name is required")
         .max(120, "Trust name must be 120 characters or fewer")
-        .test("kit-safe", kitSafe),
+        .test("letters-digits-spaces", lettersDigitsSpaces),
     code: string()
         .required("Short code is required")
         .matches(/^[A-Za-z0-9][A-Za-z0-9_-]*$/, "Use letters, digits, underscore, or hyphen, starting with a letter or digit")
         .max(16, "Short code must be 16 characters or fewer"),
     region: string()
         .max(60, "Region must be 60 characters or fewer")
-        .test("kit-safe", kitSafe)
+        .test("letters-digits-spaces", lettersDigitsSpaces)
 });
