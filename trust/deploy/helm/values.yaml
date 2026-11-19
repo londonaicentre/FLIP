@@ -1080,8 +1080,9 @@ autoUpgrade:
     pullPolicy: IfNotPresent
   # The published chart, pulled per release. Its --version is the release tag without the leading v.
   chartRepository: oci://ghcr.io/londonaicentre/charts/flip-trust
-  # The Secret holding this trust's API key, under `trust-api-key`. Empty means the chart's own
-  # <fullname>-secrets. Only that one key is projected into the pod.
+  # The Secret holding this trust's API key, under `trust-api-key`. Empty means the Secret the trust
+  # services read: `secrets.existingName`, or <fullname>-secrets when `secrets.create` is true.
+  # Only that one key is projected into the pod.
   kitSecretName: ""
   backoffLimit: 0
   # Under the hub's 2h lease, so a stuck tick reports FAILED instead of dying holding the lease.

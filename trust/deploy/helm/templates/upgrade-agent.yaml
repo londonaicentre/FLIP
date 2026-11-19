@@ -27,7 +27,10 @@
 {{- if .Values.autoUpgrade.enabled }}
 {{- $fullname := include "flip-trust.fullname" . }}
 {{- $ns := include "flip-trust.namespace" . }}
-{{- $secret := .Values.autoUpgrade.kitSecretName | default (printf "%s-secrets" $fullname) }}
+{{- /* The same Secret every trust service reads its keys from: the chart's own when it creates one,
+     else the site's `secrets.existingName`. */}}
+{{- $chartSecret := ternary (printf "%s-secrets" $fullname) .Values.secrets.existingName (.Values.secrets.create | default false) }}
+{{- $secret := .Values.autoUpgrade.kitSecretName | default $chartSecret }}
 {{- $tag := .Values.autoUpgrade.image.tag | default .Values.global.image.tag }}
 apiVersion: v1
 kind: ServiceAccount

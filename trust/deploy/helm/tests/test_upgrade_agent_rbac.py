@@ -151,6 +151,48 @@ def test_the_api_key_arrives_as_a_one_key_projection():
     assert volume["secret"]["secretName"] == "flip-trust-secrets"  # pragma: allowlist secret
 
 
+def _kit_secret(*extra: str) -> str:
+    cronjob = _agent(_render("--set", "autoUpgrade.enabled=true", *extra), "CronJob")
+    (volume,) = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["volumes"]
+    return volume["secret"]["secretName"]
+
+
+def _service_secret(docs: list[dict]) -> set[str]:
+    """Every Secret name the trust-api Deployment reads an env var from."""
+    (deploy,) = [d for d in docs if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-trust-api")]
+    names = set()
+    for container in deploy["spec"]["template"]["spec"]["containers"]:
+        for env in container.get("env", []):
+            ref = env.get("valueFrom", {}).get("secretKeyRef")
+            if ref:
+                names.add(ref["name"])
+    return names
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        pytest.param((), id="default existing Secret"),
+        pytest.param(("--set", "secrets.existingName=site-kit"), id="site-named existing Secret"),
+        pytest.param(("--set", "secrets.create=true", "--set", "secrets.data.trust-api-key=x"), id="chart-created"),
+    ],
+)
+def test_the_agent_reads_the_same_secret_as_the_trust_services(extra):
+    """FLIP#1644: under any release name, the agent mounts the Secret trust-api reads, not a guessed name.
+
+    Rendered with fullname ``site-release`` so ``<fullname>-secrets`` cannot coincide with the default
+    ``secrets.existingName`` (it did for the release name ``flip-trust``, which hid a kind-cluster
+    failure: the tick pod waited forever on a Secret that did not exist).
+    """
+    cmd = ("--set", "fullnameOverride=site-release", *extra)
+    docs = _render("--set", "autoUpgrade.enabled=true", *cmd)
+    assert {_kit_secret(*cmd)} == _service_secret(docs)
+
+
+def test_kit_secret_name_overrides_the_default():
+    assert _kit_secret("--set", "autoUpgrade.kitSecretName=agent-only") == "agent-only"  # pragma: allowlist secret
+
+
 @pytest.mark.parametrize("variant,extra", VARIANTS)
 def test_the_role_covers_every_kind_the_chart_renders(variant, extra):
     """The rot guard: a template that renders a kind the Role lacks fails here, not on a live trust."""
