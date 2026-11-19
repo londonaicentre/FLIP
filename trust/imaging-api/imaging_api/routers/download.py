@@ -28,7 +28,7 @@ from imaging_api.services.archive_layout import study_layout
 from imaging_api.services.download import download_and_unzip_images, tar_study
 from imaging_api.utils.auth import get_xnat_auth_headers
 from imaging_api.utils.encryption import PROJECT_ID_CONTEXT, decrypt
-from imaging_api.utils.exceptions import LocalStorageError, NotFoundError
+from imaging_api.utils.exceptions import LocalStorageError, NotFoundError, NotInProjectArchiveError
 from imaging_api.utils.internal_auth import authenticate_internal_service
 from imaging_api.utils.logger import logger
 
@@ -216,7 +216,8 @@ async def study_layout_by_accession_number(
 
     Raises:
         HTTPException: 400 for a project id that does not open or an invalid request, 404 if the project, the study
-            or its files are not in XNAT or the study has left the project's approved cohort, 503 if that cohort
+            or its files are not in XNAT or the study has left the project's approved cohort, 409 if its files are not
+            all in the project's own directory of the archive (the client streams it instead), 503 if that cohort
             cannot be read, 500 for any other failure.
     """
     central_hub_project_id = open_project_id(request_data.encrypted_central_hub_project_id)
@@ -229,6 +230,9 @@ async def study_layout_by_accession_number(
     except NotFoundError as e:
         logger.warning(f"No layout for {request_data.accession_id} on {net_id}: {e}")
         raise HTTPException(status_code=404, detail=f"Resource not found: {e}")
+    except NotInProjectArchiveError as e:
+        logger.warning(f"{request_data.accession_id} on {net_id} cannot be read in place: {e}")
+        raise HTTPException(status_code=409, detail=f"Not in the project's archive: {e}")
     except ValueError as e:
         logger.warning(f"Invalid layout request for {request_data.accession_id} on {net_id}: {e}")
         raise HTTPException(status_code=400, detail=f"Invalid layout request: {e}")

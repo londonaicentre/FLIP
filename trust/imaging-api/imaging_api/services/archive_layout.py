@@ -27,7 +27,7 @@ from typing import Any
 import requests
 
 from imaging_api.services.projects import get_experiment, get_experiment_field, get_project_from_central_hub_project_id
-from imaging_api.utils.exceptions import NotFoundError, XnatFetchError
+from imaging_api.utils.exceptions import NotFoundError, NotInProjectArchiveError, XnatFetchError
 from imaging_api.utils.logger import logger
 from imaging_api.utils.xnat_url import XNAT_REQUEST_TIMEOUT, xnat_url
 
@@ -68,8 +68,9 @@ def study_layout(
     Raises:
         imaging_api.utils.exceptions.NotFoundError: If the project or the experiment is not found, or it has no
             such files.
-        imaging_api.utils.exceptions.XnatFetchError: If XNAT's listing fails or names a file outside the session's
-            scans in this project's archive.
+        imaging_api.utils.exceptions.NotInProjectArchiveError: If XNAT names a file outside the session's scans in
+            this project's directory of the archive (a session shared in from another project): stream it instead.
+        imaging_api.utils.exceptions.XnatFetchError: If XNAT's listing fails.
         requests.RequestException: If a request fails or times out.
     """
     project_id = get_project_from_central_hub_project_id(central_hub_project_id, headers).ID
@@ -98,7 +99,7 @@ def study_layout(
         # <arc>/<session>/SCANS/<scan id>/<resource directory>/<file, which may be nested>
         if len(parts) < 6 or parts[1] != accession_id or parts[2] != "SCANS" or ".." in parts:
             logger.warning(f"XNAT lists {row['absolutePath']} for {accession_id}, outside its scans")
-            raise XnatFetchError(f"XNAT lists a file outside {accession_id}'s scans in project {project_id}")
+            raise NotInProjectArchiveError(f"XNAT lists a file outside {accession_id}'s scans in project {project_id}")
         scan_id, name = parts[3], "/".join(parts[5:])
         folder = scan_folder(scan_id, scan_types.get(scan_id, ""))
         label = row.get("collection") or row["cat_ID"]

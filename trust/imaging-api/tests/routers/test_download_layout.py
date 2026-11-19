@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from imaging_api.utils.exceptions import NotFoundError, XnatFetchError
+from imaging_api.utils.exceptions import NotFoundError, NotInProjectArchiveError, XnatFetchError
 
 _REQUEST_BODY = {"encrypted_central_hub_project_id": "encrypted-id", "accession_id": "ACC123"}
 _FILE = {
@@ -54,8 +54,23 @@ def test_layout_answers_404_for_a_study_xnat_does_not_have(client):
     assert response.status_code == 404
 
 
-@pytest.mark.parametrize("error", [RuntimeError("boom"), XnatFetchError("XNAT lists a file outside ACC123's scans")])
-def test_layout_answers_500_when_xnat_cannot_be_listed_or_lists_a_file_it_should_not(client, error):
+def test_layout_answers_409_for_a_study_not_in_the_projects_own_archive(client):
+    """A session shared into the project: distinct from an XNAT failure, so the client can stream it instead."""
+    with (
+        patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),
+        patch(
+            "imaging_api.routers.download.study_layout",
+            side_effect=NotInProjectArchiveError("XNAT lists a file outside ACC123's scans"),
+        ),
+    ):
+        response = client.post("/download/images/net1/layout", json=_REQUEST_BODY)
+
+    assert response.status_code == 409
+    assert response.json()["detail"].startswith("Not in the project's archive:")
+
+
+@pytest.mark.parametrize("error", [RuntimeError("boom"), XnatFetchError("XNAT file listing failed: 502")])
+def test_layout_answers_500_when_xnat_cannot_be_listed(client, error):
     with (
         patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),
         patch("imaging_api.routers.download.study_layout", side_effect=error),

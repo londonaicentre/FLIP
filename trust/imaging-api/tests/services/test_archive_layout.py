@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from imaging_api.services.archive_layout import scan_folder, study_layout
-from imaging_api.utils.exceptions import NotFoundError, XnatFetchError
+from imaging_api.utils.exceptions import NotFoundError, NotInProjectArchiveError, XnatFetchError
 
 PROJECT = "7e2cc411-ba93-48af-8474-79e56c266013"
 ARCHIVE = f"/data/xnat/archive/{PROJECT}/arc001/FAK03765414"
@@ -129,9 +129,10 @@ def test_a_resource_without_a_label_is_named_by_its_id(xnat):
     ],
 )
 def test_a_file_outside_the_sessions_scans_in_this_project_is_refused(xnat, path):
+    """Its own error, not an XNAT failure: the client streams such a study instead (a session shared in)."""
     xnat.get.return_value = _listing(("NIFTI", "919", path))
 
-    with pytest.raises(XnatFetchError):
+    with pytest.raises(NotInProjectArchiveError):
         study_layout("hub-project", "FAK03765414", "NIFTI", {})
 
 

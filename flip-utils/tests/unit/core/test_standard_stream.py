@@ -216,6 +216,28 @@ def test_a_refused_layout_fails_the_fetch_with_imaging_apis_reason(archive_const
     assert post.call_args.kwargs["timeout"] == standard._LAYOUT_TIMEOUT_SECONDS
 
 
+def test_a_study_not_in_the_projects_own_archive_is_streamed_instead(archive_constants, tmp_path):
+    """imaging-api answers 409 for a session shared in from another project: stream it, not fail the run."""
+    not_here = Mock(
+        status_code=409, ok=False, text="Not in the project's archive: XNAT lists a file outside ACC001's scans"
+    )
+    tar = Mock(status_code=200, raw=_Raw(_tar("ACC001/scans/1-T1/resources/NIFTI/files/a.nii.gz", b"streamed")))
+
+    flip = FLIPStandardProd()
+    with (
+        patch("flip.core.standard.requests.post", side_effect=[not_here, tar]) as post,
+        patch.object(flip, "logger") as logger,
+    ):
+        result = flip.get_by_accession_number("proj-1", "ACC001", ResourceType.NIFTI)
+
+    assert [call.args[0].rsplit("/", 1)[1] for call in post.call_args_list] == ["layout", "stream"]
+    assert post.call_args.kwargs["params"]["resource_type"] == "NIFTI"
+    streamed = result / "scans/1-T1/resources/NIFTI/files/a.nii.gz"
+    assert not streamed.is_symlink()
+    assert streamed.read_bytes() == b"streamed"
+    assert "Streaming NIFTI images for ACC001: Not in the project's archive" in logger.warning.call_args.args[0]
+
+
 def test_a_listed_file_missing_from_the_mount_fails_the_fetch(archive_constants):
     missing = (_NIFTI[0], "arc001/ACC001/SCANS/1/NIFTI/gone.nii.gz")
 

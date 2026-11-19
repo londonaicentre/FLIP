@@ -386,12 +386,13 @@ class FLIPStandardProd(FLIPBase):
 
         For a job pod that mounts its project's directory of XNAT's archive read-only (FLIP#1857): imaging-api
         names each file's place in the archive and in the layout a download has, and nothing is copied. XNAT keeps
-        assessor resources elsewhere, so those are streamed.
+        assessor resources elsewhere, and a session shared in from another project under that project's directory,
+        so those are streamed.
         """
         endpoint = _join_url(FlipConstants.IMAGING_API_URL, f"download/images/{FlipConstants.NET_ID}/layout")
-        assessors = [r for r in resources if _resource_params(r)["assessor_type"] == "assessor"]
+        streamed = [r for r in resources if _resource_params(r)["assessor_type"] == "assessor"]
         for resource in resources:
-            if resource in assessors:
+            if resource in streamed:
                 continue
             response = requests.post(
                 endpoint,
@@ -400,6 +401,10 @@ class FLIPStandardProd(FLIPBase):
                 headers=_trust_internal_headers(),
                 timeout=_LAYOUT_TIMEOUT_SECONDS,
             )
+            if response.status_code == 409:  # not all in this project's directory of the archive
+                self.logger.warning(f"Streaming {resource} images for {accession_id}: {response.text[:200]}")
+                streamed.append(resource)
+                continue
             if not response.ok:
                 raise HTTPError(
                     f"imaging-api could not lay out {accession_id}: {response.status_code} {response.text[:200]}",
@@ -414,8 +419,8 @@ class FLIPStandardProd(FLIPBase):
                 link.unlink(missing_ok=True)  # a later round links the study again
                 link.symlink_to(target)
             self.logger.info(f"Linked {resource} images for {accession_id}")
-        if assessors:
-            self._stream_study(payload, assessors, accession_id)
+        if streamed:
+            self._stream_study(payload, streamed, accession_id)
         return _study_dir() / accession_id
 
     @override
