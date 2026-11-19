@@ -24,7 +24,7 @@ PREREQUISITES:
 WHAT IT CHECKS:
   ✓ Prerequisites (kubectl, helm)
   ✓ Namespace and Helm release status
-  ✓ Pod readiness (all trust-side services)
+  ✓ Pod readiness (all trust-side services; fl-client only when flClient.enabled)
   ✓ GPU allocation (fl-client)
   ✓ PersistentVolumeClaims
   ✓ XNAT plugins (XNAT on every running xnat-web pod loaded each one)
@@ -375,17 +375,15 @@ def ask_xnat_plugins(pod: str, namespace: str) -> XnatAnswer:
     return XnatAnswer(plugins=plugins, dqr_status=dqr_status.strip())
 
 
-def xnat_enabled(helm_release: str, namespace: str) -> tuple[bool | None, str]:
-    """Ask the live release whether it runs XNAT (``helm get values --all``).
+def release_values(helm_release: str, namespace: str) -> tuple[dict | None, str]:
+    """Read the live release's values (``helm get values --all``).
 
     Args:
         helm_release: Helm release name.
         namespace: Kubernetes namespace.
 
     Returns:
-        ``(enabled, "")``, or ``(None, why not)`` when the values cannot tell. That stays distinct
-        from "off", which skips the check: values that cannot be read warn, and the pods are still
-        checked.
+        ``(values, "")``, or ``(None, why not)`` when they cannot be read.
     """
     if not check_command("helm"):
         return None, "helm is not on PATH"
@@ -399,14 +397,22 @@ def xnat_enabled(helm_release: str, namespace: str) -> tuple[bool | None, str]:
         values = json.loads(output)
     except json.JSONDecodeError as exc:
         return None, f"helm's values are not valid JSON: {exc}"
-    xnat = values.get("xnat") if isinstance(values, dict) else None
-    enabled = xnat.get("enabled") if isinstance(xnat, dict) else None
-    if not isinstance(enabled, bool):
-        return None, "the release's values carry no xnat.enabled"
-    return enabled, ""
+    if not isinstance(values, dict):
+        return None, "helm returned no values"
+    return values, ""
 
 
-def check_xnat_plugins(helm_release: str, namespace: str) -> None:
+def component_enabled(values: dict | None, component: str) -> bool | None:
+    """Return ``<component>.enabled`` from the release's values, or None when they do not say.
+
+    None stays distinct from "off": only an explicit false skips a component's checks.
+    """
+    section = values.get(component) if values else None
+    enabled = section.get("enabled") if isinstance(section, dict) else None
+    return enabled if isinstance(enabled, bool) else None
+
+
+def check_xnat_plugins(helm_release: str, namespace: str, values: dict | None, why: str = "") -> None:
     """Assert XNAT on every running xnat-web pod lists every plugin and answers its DQR route.
 
     XNAT that answers wrongly, or lists a plugin short, FAILs; a pod XNAT cannot be asked on WARNs.
@@ -416,12 +422,15 @@ def check_xnat_plugins(helm_release: str, namespace: str) -> None:
     Args:
         helm_release: Helm release name.
         namespace: Kubernetes namespace.
+        values: The release's values from release_values, or None when unreadable.
+        why: Why the values could not be read.
     """
-    enabled, why = xnat_enabled(helm_release, namespace)
+    enabled = component_enabled(values, "xnat")
     if enabled is False:
         print_status("INFO", "Skipping the XNAT plugin check (xnat.enabled is false in this release)")
         return
     if enabled is None:
+        why = why or "the release's values carry no xnat.enabled"
         print_status("WARN", f"Cannot tell whether this release runs XNAT ({why}); checking any xnat-web pod anyway")
 
     pods = release_pods(helm_release, "xnat-web", namespace, "--field-selector=status.phase=Running")
@@ -686,6 +695,11 @@ def main(
         "xnat-db": 1,
         "minio": 0,  # Optional — warn if missing, pass if present
     }
+    values, values_why = release_values(helm_release, namespace)
+    # Unreadable values keep fl-client expected; only an explicit false drops it.
+    if component_enabled(values, "flClient") is False:
+        del expected_services["fl-client"]
+        print_status("INFO", "FL client disabled (flClient.enabled is false in this release)")
 
     for svc, min_ready in expected_services.items():
         svc_pods = release_pods(helm_release, svc, namespace)
@@ -835,7 +849,7 @@ def main(
     # ── XNAT plugins ──────────────────────────────────────────────────────
     print_section("XNAT Plugins")
 
-    check_xnat_plugins(helm_release, namespace)
+    check_xnat_plugins(helm_release, namespace, values, values_why)
 
     # ── HTTP endpoint checks (via port-forward) ───────────────────────────
     if not skip_endpoints:

@@ -105,7 +105,7 @@ def test_the_commands_it_prints_name_the_context(tmp_path, monkeypatch):
     monkeypatch.setattr(check_status, "HELM", ["helm", "--kube-context", "kind-other"])
     monkeypatch.setattr(check_status, "check_command", lambda _cmd: True)
     monkeypatch.setattr(check_status, "run_command", lambda *_a, **_k: (False, "release: not found"))
-    _, why = check_status.xnat_enabled("flip-trust", "flip-trust")
+    _, why = check_status.release_values("flip-trust", "flip-trust")
     assert why.startswith("`helm --kube-context kind-other get values flip-trust"), why
 
 

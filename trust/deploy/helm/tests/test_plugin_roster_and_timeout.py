@@ -128,7 +128,8 @@ def test_xnat_enabled_reads_the_live_release(monkeypatch: pytest.MonkeyPatch, en
     monkeypatch.setattr(check_status, "check_command", lambda _cmd: True)
     monkeypatch.setattr(check_status, "run_command", fake_run)
 
-    assert check_status.xnat_enabled("trust-release", "flip-trust") == (enabled, "")
+    values, why = check_status.release_values("trust-release", "flip-trust")
+    assert (check_status.component_enabled(values, "xnat"), why) == (enabled, "")
     assert seen["args"][:4] == ["helm", "get", "values", "trust-release"]
     assert seen["args"][4:6] == ["-n", "flip-trust"]
     assert "--all" in seen["args"], "without --all, chart defaults are absent and xnat.enabled looks off"
@@ -152,10 +153,10 @@ def test_values_that_cannot_be_read_are_not_reported_as_off(
     monkeypatch.setattr(check_status, "check_command", lambda _cmd: command_ok)
     monkeypatch.setattr(check_status, "run_command", lambda *_a, **_k: result)
 
-    enabled, why = check_status.xnat_enabled("trust-release", "flip-trust")
+    values, why = check_status.release_values("trust-release", "flip-trust")
 
-    assert enabled is None, because
-    assert why, "unreadable values must say why, or the operator cannot act on it"
+    assert check_status.component_enabled(values, "xnat") is None, because
+    assert values is not None or why, "unreadable values must say why, or the operator cannot act on it"
 
 
 # ── The C-STORE smoke ────────────────────────────────────────────────────────────────
@@ -243,8 +244,10 @@ def reported(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     """Collect ``print_status`` calls instead of printing them, for a release that runs XNAT."""
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(check_status, "print_status", lambda status, message: calls.append((status, message)))
-    monkeypatch.setattr(check_status, "xnat_enabled", lambda *_a: (True, ""))
     return calls
+
+
+XNAT_ON = {"xnat": {"enabled": True}}
 
 
 def _xapi_plugins(*plugin_ids: str, status: str = "200", dqr: str = "200") -> str:
@@ -273,7 +276,7 @@ def test_every_running_pod_is_checked_so_a_surge_cannot_mask_a_broken_one(
     """
     _pods(monkeypatch, {"pod/xnat-new": _xapi_plugins(*ALL_IDS), "pod/xnat-old": _xapi_plugins("containers")})
 
-    check_status.check_xnat_plugins("trust-release", "flip-trust")
+    check_status.check_xnat_plugins("trust-release", "flip-trust", XNAT_ON)
 
     fails = [message for status, message in reported if status == "FAIL"]
     assert any("xnat-old" in message and "dicom-query-retrieve" in message for message in fails), (
@@ -290,7 +293,7 @@ def test_a_pod_xnat_cannot_be_asked_on_does_not_end_the_check(
 ) -> None:
     _pods(monkeypatch, {"pod/xnat-a": None, "pod/xnat-b": _xapi_plugins("containers")})
 
-    check_status.check_xnat_plugins("trust-release", "flip-trust")
+    check_status.check_xnat_plugins("trust-release", "flip-trust", XNAT_ON)
 
     assert any(status == "WARN" and "xnat-a" in message for status, message in reported)
     assert any(status == "FAIL" and "xnat-b" in message for status, message in reported), (
@@ -302,10 +305,9 @@ def test_unreadable_values_warn_and_the_pods_are_still_checked(
     monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]
 ) -> None:
     """helm is only asked whether XNAT is on; not knowing is no reason to skip the pods."""
-    monkeypatch.setattr(check_status, "xnat_enabled", lambda *_a: (None, "helm timed out"))
     _pods(monkeypatch, {"pod/xnat-1": _xapi_plugins(*ALL_IDS)})
 
-    check_status.check_xnat_plugins("trust-release", "flip-trust")
+    check_status.check_xnat_plugins("trust-release", "flip-trust", None, "helm timed out")
 
     assert [status for status, _ in reported] == ["WARN", "PASS"]
     assert "helm timed out" in reported[0][1]
@@ -315,9 +317,7 @@ def test_a_release_with_xnat_off_is_skipped_without_a_warning(
     monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]
 ) -> None:
     """XNAT off is a legitimate configuration (kind CI), not a degraded run."""
-    monkeypatch.setattr(check_status, "xnat_enabled", lambda *_a: (False, ""))
-
-    check_status.check_xnat_plugins("trust-release", "flip-trust")
+    check_status.check_xnat_plugins("trust-release", "flip-trust", {"xnat": {"enabled": False}})
 
     assert [status for status, _ in reported] == ["INFO"]
 
@@ -326,7 +326,7 @@ def test_no_running_pod_warns(monkeypatch: pytest.MonkeyPatch, reported: list[tu
     """Nothing to inspect is unverified, not verified."""
     _pods(monkeypatch, {})
 
-    check_status.check_xnat_plugins("trust-release", "flip-trust")
+    check_status.check_xnat_plugins("trust-release", "flip-trust", XNAT_ON)
 
     assert [status for status, _ in reported] == ["WARN"]
 
@@ -344,7 +344,7 @@ def test_a_pod_with_every_plugin_and_the_dqr_route_passes_naming_each_version(
     }
     _pods(monkeypatch, {"pod/xnat-1": json.dumps(body) + "\n200\n200"})
 
-    check_status.check_xnat_plugins("trust-release", "flip-trust")
+    check_status.check_xnat_plugins("trust-release", "flip-trust", XNAT_ON)
 
     assert reported == [
         (
@@ -358,7 +358,7 @@ def test_a_pod_with_every_plugin_and_the_dqr_route_passes_naming_each_version(
 def test_each_plugin_xnat_did_not_load_fails(monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]) -> None:
     _pods(monkeypatch, {"pod/xnat-1": _xapi_plugins("containers", "ohifViewerPlugin")})
 
-    check_status.check_xnat_plugins("trust-release", "flip-trust")
+    check_status.check_xnat_plugins("trust-release", "flip-trust", XNAT_ON)
 
     assert [status for status, _ in reported] == ["FAIL", "FAIL"]
     assert "did not load the batch-launch plugin" in reported[0][1]
@@ -384,7 +384,7 @@ def test_a_wrong_answer_fails_and_no_answer_warns(
     """XNAT replying wrongly is a broken XNAT; nothing replying leaves the pod unverified."""
     _pods(monkeypatch, {"pod/xnat-1": fetched})
 
-    check_status.check_xnat_plugins("trust-release", "flip-trust")
+    check_status.check_xnat_plugins("trust-release", "flip-trust", XNAT_ON)
 
     assert [s for s, _ in reported] == [status], reported
     assert reason in reported[0][1]
@@ -401,7 +401,7 @@ def test_the_dqr_route_must_exist(
     """XNAT lists a plugin whose configuration failed to load; its route 404s. Any other answer means it exists."""
     _pods(monkeypatch, {"pod/xnat-1": _xapi_plugins(*ALL_IDS, dqr=dqr)})
 
-    check_status.check_xnat_plugins("trust-release", "flip-trust")
+    check_status.check_xnat_plugins("trust-release", "flip-trust", XNAT_ON)
 
     assert [s for s, _ in reported] == statuses, reported
 
@@ -435,7 +435,7 @@ def test_a_timed_out_command_reports_text_rather_than_crashing(
     monkeypatch.setattr(check_status, "kubectl_list", lambda *_a, **_k: ["pod/xnat-1"])
     monkeypatch.setattr(check_status.subprocess, "run", run)
 
-    check_status.check_xnat_plugins("trust-release", "flip-trust")
+    check_status.check_xnat_plugins("trust-release", "flip-trust", XNAT_ON)
 
     assert [status for status, _ in reported] == ["WARN"], reported
     assert "timed out after 45s" in reported[0][1]
