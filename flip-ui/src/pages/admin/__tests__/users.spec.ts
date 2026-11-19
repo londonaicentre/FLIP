@@ -133,7 +133,8 @@ const stubs = {
         props: ["dialog", "continueAction", "confirmationText", "typingConfirmation"],
         emits: ["close-modal"],
         // Surface the confirmation text so tests can distinguish each instance.
-        template: "<div data-test='confirm-modal' :data-dialog='dialog' :data-text='confirmationText' />"
+        template: "<div data-test='confirm-modal' :data-dialog='dialog' :data-text='confirmationText'>"
+            + "<slot name='confirmation' /></div>"
     },
     RegisterUserModal: {
         name: "RegisterUserModal",
@@ -458,6 +459,16 @@ describe("admin/users", () => {
         expect(mockSnackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "User not updated" }));
     });
 
+    it("darkens the selected row's organisation so it keeps AA contrast on the purple highlight", async () => {
+        const wrapper = mountPage();
+        await nextTick();
+        await wrapper.findAll("[data-test='user']")[1].trigger("click");
+
+        const orgs = wrapper.findAll("[data-test='user-organisation']");
+        expect(orgs[1].classes()).toContain("text-gray-600");
+        expect(orgs[0].classes()).toContain("text-gray-500");
+    });
+
     describe("Delete User (FLIP#1996)", () => {
         const deleteModal = (wrapper: ReturnType<typeof mountPage>) =>
             wrapper.findAllComponents({ name: "AiConfirmModal" }).find(c => c.props("typingConfirmation") !== undefined)!;
@@ -547,6 +558,35 @@ describe("admin/users", () => {
 
             expect(mutateUsers).toHaveBeenCalled();
             expect(wrapper.find("[data-test='delete-user-btn']").exists()).toBe(false);
+        });
+
+        it("names a user without a name as 'no name' in the dialog, and Cancel closes it", async () => {
+            const wrapper = mountPage({
+                users: [{
+                    ...USERS[1],
+                    name: ""
+                }]
+            });
+            await nextTick();
+            await wrapper.findAll("[data-test='user']")[0].trigger("click");
+            await wrapper.find("[data-test='delete-user-btn']").trigger("click");
+
+            const modal = deleteModal(wrapper);
+            expect(modal.text()).toContain("Former user (no name)");
+            expect(modal.text()).toContain("bob@example.com");
+
+            await modal.vm.$emit("close-modal");
+            expect(deleteModal(wrapper).props("dialog")).toBe(false);
+        });
+
+        it("does nothing when no user is selected", async () => {
+            const wrapper = mountPage();
+            await nextTick();
+
+            await deleteModal(wrapper).props("continueAction")();
+            await flushPromises();
+
+            expect(mockDeleteUser).not.toHaveBeenCalled();
         });
 
         it("does not echo the detail of an unexpected failure", async () => {

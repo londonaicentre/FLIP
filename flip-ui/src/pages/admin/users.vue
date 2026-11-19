@@ -85,7 +85,12 @@
                                         Disabled
                                     </span>
                                 </div>
-                                <div class="text-note text-gray-500 truncate dark:text-gray-300">
+                                <!-- gray-500 is 4.41:1 on the selected primary-100 row; gray-600 keeps AA. -->
+                                <div
+                                    data-test="user-organisation"
+                                    class="text-note truncate dark:text-gray-300"
+                                    :class="row.id === selectedUser?.id ? 'text-gray-600' : 'text-gray-500'"
+                                >
                                     {{ row.organisation || "—" }}
                                 </div>
                             </div>
