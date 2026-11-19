@@ -65,7 +65,7 @@
                                         </span>
                                         <button
                                             type="button"
-                                            class="text-xs font-semibold text-primary-600 hover:underline"
+                                            class="text-xs font-semibold text-primary-600 dark:text-primary-300 hover:underline"
                                             data-test="kit-save-again-btn"
                                             @click="kit && saveKitFile(kit)"
                                         >
@@ -87,7 +87,7 @@
                                         </span>
                                         <button
                                             type="button"
-                                            class="text-xs font-semibold text-primary-600 hover:underline"
+                                            class="text-xs font-semibold text-primary-600 dark:text-primary-300 hover:underline"
                                             data-test="copy-passphrase-btn"
                                             @click="copyPassphrase"
                                         >
