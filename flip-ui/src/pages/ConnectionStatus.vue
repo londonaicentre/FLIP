@@ -374,7 +374,7 @@
                                             </span>
                                         </div>
                                     </td>
-                                    <td class="px-4 py-4 align-middle text-base text-gray-600 dark:text-gray-300 whitespace-nowrap">
+                                    <td class="px-4 py-4 align-middle text-base text-gray-600 dark:text-gray-300 break-words">
                                         {{ t.region ?? "—" }}
                                     </td>
                                     <td class="px-4 py-4 align-middle text-right text-base tabular-nums text-gray-900 dark:text-gray-100">
