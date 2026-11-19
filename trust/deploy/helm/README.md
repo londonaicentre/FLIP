@@ -528,7 +528,9 @@ loaded** (`helm install` prints a warning).
    ```
 
    On kind it copies with `docker cp`, on any other node through a short-lived pod (as `stage-kit`).
-   `stage-vocab` empties the destination first, so a re-stage leaves no file of the previous
+   With more than one node, `NODE=<name>` names the node; `stage-kit` and `stage-vocab` refuse to
+   guess. For the kit that is the FL client's node (imaging-api's unless `flClient.affinity` says
+   otherwise). `stage-vocab` empties the destination first, so a re-stage leaves no file of the previous
    bundle behind.
 3. **Point the chart at it**: `OMOP_VOCAB_DIR=/opt/flip/omop-vocab` in the kit file
    (`sync-kit` writes `omopDb.vocabLoad.hostPath` from it), or

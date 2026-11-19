@@ -69,6 +69,12 @@ def test_nvflare_kit_is_chowned_to_the_nvflare_uid(nvflare_kit):
     assert "nvflare kit" in result.stdout
 
 
+def test_node_names_the_node_and_none_leaves_the_choice_to_the_script(nvflare_kit):
+    """NODE= picks the node on a multi-node cluster; the script refuses one without it (tests/test_stage_to_node.py)."""
+    assert '--node "node-2"' in make_n_stage_kit(nvflare_kit, "NODE=node-2").stdout
+    assert "--node" not in make_n_stage_kit(nvflare_kit).stdout
+
+
 def test_flower_kit_is_chowned_to_the_supernode_uid_without_fl_backend(flower_kit):
     """The documented invocation names no backend; the kit's shape is enough."""
     result = make_n_stage_kit(flower_kit)

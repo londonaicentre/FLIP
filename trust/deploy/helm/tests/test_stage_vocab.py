@@ -49,6 +49,12 @@ def test_stage_vocab_copies_the_folder_where_the_chart_mounts_it(bundle):
     assert f"omopDb.vocabLoad.hostPath={DEST}" in result.stdout
 
 
+def test_stage_vocab_passes_node_to_the_script(bundle):
+    result = make_n("stage-vocab", f"VOCAB_DIR={bundle}", "KUBE_CONTEXT=test", "NODE=node-2")
+    assert result.returncode == 0, result.stderr
+    assert '--world-readable --node "node-2"' in result.stdout
+
+
 @pytest.mark.parametrize("vocab_dir", ["", "/nonexistent", "EMPTY"])
 def test_stage_vocab_refuses_a_folder_without_the_bundle(vocab_dir, tmp_path):
     # EMPTY: an existing folder with no CONCEPT.csv (the still-zipped bundle, or its parent).

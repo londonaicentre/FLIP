@@ -333,6 +333,8 @@ the FL client starts.
 - The kit goes to ``KIT_DEST`` on the node (default ``/opt/flip/fl-kit``), and the deploy targets mount that same
   path, whatever the kit's ``FL_KIT_DIR`` says. Any previous kit there is removed first. To use another path, pass
   the same ``KIT_DEST=<path>`` to ``stage-kit`` and to the deploy.
+- ``NODE=<name>`` names the node the kit goes to. A one-node cluster needs none. With several, ``stage-kit`` refuses
+  to guess: name the node the FL client runs on, which is imaging-api's unless ``flClient.affinity`` says otherwise.
 
 .. note::
 
@@ -530,8 +532,8 @@ onto the node; it fetches nothing and needs no cloud credentials, so this works 
    it from OHDSI Athena as step 7 of :doc:`onboarding-a-trust` describes, and unzip the export into a folder.
 2. Stage it onto the node: ``make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<kube-context>``.
    It lands at ``/opt/flip/omop-vocab``, the same way ``stage-kit`` reaches the node (Step 3). With more than
-   one node, pin the load job to that node with ``omopDb.vocabLoad.nodeSelector`` (for example
-   ``kubernetes.io/hostname: <node>``). The folder is read only for the first load: once the database holds the
+   one node, name it with ``NODE=<name>`` and pin the load job to it with ``omopDb.vocabLoad.nodeSelector`` (for
+   example ``kubernetes.io/hostname: <node>``). The folder is read only for the first load: once the database holds the
    vocabulary, later upgrades skip it, so you may remove it.
 3. Set ``OMOP_VOCAB_DIR=/opt/flip/omop-vocab`` in the kit and re-run Step 4. ``sync-kit`` writes it into
    ``omopDb.vocabLoad.hostPath`` and a load job runs after each install or upgrade, loading only what is missing.

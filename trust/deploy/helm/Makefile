@@ -239,10 +239,13 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	## wipes before its sync: re-staging after a kit-date bump, a backend switch, or a corrected
 	## over-broad sync would otherwise leave credentials that should no longer be on the node.
 	## The mounted subdirectories are created and the whole kit is made private to KIT_UID.
+	##
+	## With several nodes, NODE=<name> is required: the node the FL client runs on, which is
+	## imaging-api's unless flClient.affinity says otherwise. One node needs no NODE.
 	@[ -n "$(KUBE_CONTEXT)" ] || (echo "❌  KUBE_CONTEXT is required — this writes to a node's filesystem, and defaulting to kubectl's current context ($$(kubectl config current-context 2>/dev/null || echo none)) would stage into whichever cluster that happens to be. e.g. KUBE_CONTEXT=kind-flip-kch"; exit 1)
 	@echo "📦 Staging $(KIT_SRC) ($(KIT_BACKEND) kit, owner uid $(KIT_UID)) → [$(KUBE_CONTEXT)] $(KIT_DEST)"
 	NAMESPACE=$(NAMESPACE) $(CHART_DIR)/scripts/stage-to-node.sh --context "$(KUBE_CONTEXT)" \
-	  --src "$(KIT_SRC)" --dest "$(KIT_DEST)" --subdirs "$(KIT_SUBDIRS)" --owner $(KIT_UID)
+	  --src "$(KIT_SRC)" --dest "$(KIT_DEST)" --subdirs "$(KIT_SUBDIRS)" --owner $(KIT_UID) $(if $(NODE),--node "$(NODE)")
 	@echo "✅ Kit staged. Deploy with --set flClient.kitHostPath=$(KIT_DEST)"
 
 download-vocab: ## Download the OMOP core vocabulary from the AI Centre bucket to this host (your AWS CLI profile)
@@ -257,7 +260,7 @@ stage-vocab: ## Place the unpacked OMOP core vocabulary onto the node (omopDb.vo
 	##
 	##   make stage-vocab VOCAB_DIR=<folder with CONCEPT.csv, ...> KUBE_CONTEXT=<context>
 	##
-	## With several nodes this lands on the first one: pin the load Job there
+	## With several nodes, name one with NODE=<name> and pin the load Job there
 	## (omopDb.vocabLoad.nodeSelector). It is read only for the first load. World-readable, as
 	## the loader runs as the image user.
 	##
@@ -266,7 +269,7 @@ stage-vocab: ## Place the unpacked OMOP core vocabulary onto the node (omopDb.vo
 	@[ -n "$(KUBE_CONTEXT)" ] || (echo "❌  KUBE_CONTEXT is required — this writes to a node's filesystem. e.g. KUBE_CONTEXT=kind-flip-kch"; exit 1)
 	@echo "📦 Staging $(VOCAB_DIR) → [$(KUBE_CONTEXT)] $(VOCAB_DEST)"
 	NAMESPACE=$(NAMESPACE) $(CHART_DIR)/scripts/stage-to-node.sh --context "$(KUBE_CONTEXT)" \
-	  --src "$(VOCAB_DIR)" --dest "$(VOCAB_DEST)" --world-readable
+	  --src "$(VOCAB_DIR)" --dest "$(VOCAB_DEST)" --world-readable $(if $(NODE),--node "$(NODE)")
 	@echo "✅ Vocabulary staged. Deploy with --set omopDb.vocabLoad.hostPath=$(VOCAB_DEST) (or OMOP_VOCAB_DIR=$(VOCAB_DEST) in the kit)"
 
 # Deliberately NO --force-conflicts here. Helm 4 applies the release server-side, and

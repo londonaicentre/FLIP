@@ -46,7 +46,7 @@ esac
 FAKE_KUBECTL = """#!/bin/sh
 echo "kubectl $*" >> "$STAGE_LOG"
 case "$*" in
-  *"get nodes"*) printf 'node-1' ;;
+  *"get nodes"*) printf '%s' "${NODES:-node-1}" ;;
   *"apply -f -"*) manifest=$(cat); printf '%s\n' "$manifest" >> "$STAGE_MANIFESTS"
     [ -z "$FAIL_APPLY" ] || { echo 'pods "flip-stage" is forbidden: violates PodSecurity' >&2; exit 1; } ;;
   *"wait pod"*) [ -z "$FAIL_WAIT" ] || exit 1 ;;
@@ -292,3 +292,37 @@ def test_the_staging_image_is_the_charts_pinned_busybox():
     init = values["xnat"]["web"]["initImage"]
 
     assert image == f"{init['repository']}:{init['tag']}@{init['digest']}"
+
+
+def test_several_nodes_and_none_named_is_refused_before_anything_is_staged(tmp_path, kit):
+    """The API server's first node need not be the one the FL client runs on, so with several the operator names it."""
+    dest = tmp_path / "node" / "fl-kit"
+    _previous_kit(dest)
+
+    result, calls, docs = _stage(
+        tmp_path, "--src", str(kit), "--dest", "/data/flip-k8s/fl-kit", "--owner", str(os.getuid()),
+        kind=False, STAGE_ROOT=str(dest), NODES="node-1 node-2",
+    )  # fmt: skip
+
+    assert result.returncode == 2
+    assert "2 nodes in context ctx (node-1 node-2)" in result.stderr
+    assert "--node (NODE=<name>)" in result.stderr
+    assert "flClient.affinity" in result.stderr
+    assert not docs, "no pod is started"
+    assert not [c for c in calls if " cp " in c], "nothing is copied"
+    assert (dest / "startup" / "old-client.key").exists(), "the previous kit is left alone"
+
+
+def test_the_named_node_gets_the_pod_and_an_unknown_one_is_refused(tmp_path, kit):
+    dest = tmp_path / "node" / "fl-kit"
+    common = ["--src", str(kit), "--dest", "/data/flip-k8s/fl-kit", "--world-readable"]
+
+    result, _calls, docs = _stage(
+        tmp_path, *common, "--node", "node-2", kind=False, STAGE_ROOT=str(dest), NODES="node-1 node-2"
+    )
+    assert result.returncode == 0, result.stderr
+    assert next(d for d in docs if d["kind"] == "Pod")["spec"]["nodeName"] == "node-2"
+
+    result, _calls, _docs = _stage(tmp_path, *common, "--node", "node-3", kind=False, NODES="node-1 node-2")
+    assert result.returncode == 2
+    assert "no node node-3 in context ctx: node-1 node-2" in result.stderr

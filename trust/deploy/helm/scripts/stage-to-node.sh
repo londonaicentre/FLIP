@@ -14,6 +14,11 @@
 # The chart mounts the FL kit and the OMOP vocabulary from the node by hostPath; nothing in the cluster fetches them.
 #
 #   stage-to-node.sh --context <ctx> --src <dir> --dest <node path> [--subdirs "a b"] (--owner <uid> | --world-readable)
+#                    [--node <name>]
+#
+# --node names the node that will mount the folder. A cluster of one node needs none; with several, it is required:
+# the FL client runs where flClient.affinity puts it (by default beside imaging-api), the vocabulary load Job where
+# omopDb.vocabLoad.nodeSelector does, and neither follows the order the API server lists nodes in.
 #
 # How it reaches the node:
 #   - a kind node is a Docker container of the same name: `docker exec` / `docker cp`;
@@ -34,7 +39,7 @@ set -euo pipefail
 # FLIP's mirror of busybox (it has the tar kubectl cp needs), the chart's xnat.web.initImage; a test keeps them equal.
 STAGE_IMAGE="ghcr.io/londonaicentre/mirror/library/busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662"
 
-context="" src="" dest="" subdirs="" owner="" world_readable=""
+context="" src="" dest="" subdirs="" owner="" world_readable="" node=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --context) context="$2"; shift 2 ;;
@@ -43,6 +48,7 @@ while [ $# -gt 0 ]; do
     --subdirs) subdirs="$2"; shift 2 ;;
     --owner) owner="$2"; shift 2 ;;
     --world-readable) world_readable=1; shift ;;
+    --node) node="$2"; shift 2 ;;
     *) echo "❌ unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -69,10 +75,25 @@ read -r -a kubectl <<< "${KUBECTL:-kubectl}"
 kubectl+=(--context "$context")
 docker="${DOCKER:-docker}"
 
-node=$("${kubectl[@]}" get nodes -o jsonpath='{.items[0].metadata.name}') && [ -n "$node" ] || {
+nodes=$("${kubectl[@]}" get nodes -o jsonpath='{.items[*].metadata.name}') && [ -n "$nodes" ] || {
   echo "❌ no node found in context $context: is the cluster reachable?" >&2
   exit 1
 }
+# shellcheck disable=SC2086 # node names hold no spaces or globs: split them into $1, $2...
+set -- $nodes
+if [ -n "$node" ]; then
+  case " $nodes " in
+    *" $node "*) ;;
+    *) echo "❌ no node $node in context $context: $nodes" >&2; exit 2 ;;
+  esac
+elif [ $# -eq 1 ]; then
+  node="$1"
+else
+  echo "❌ $# nodes in context $context ($nodes): name the one that mounts $dest with --node (NODE=<name>)." >&2
+  echo "   The FL client runs where flClient.affinity puts it (by default beside imaging-api), the vocabulary" >&2
+  echo "   load Job where omopDb.vocabLoad.nodeSelector does." >&2
+  exit 2
+fi
 
 if [ -n "$owner" ]; then
   permissions="chmod -R go-rwx \"\$1\" && chown -R $owner:$owner \"\$1\""
