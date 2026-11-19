@@ -366,9 +366,7 @@ To change it:
 #      services.tf, module "cognito" → callback_urls
 # 2. Apply — TARGETED at the app client. Never run a full `make apply` on stag/prod for
 #    this: it also applies whatever else is pending in the plan, FL task-definition
-#    replacements included. Same reasoning as `apply-fl-kit-slots` ("Growing the FL
-#    kit-slot pool", below). The apply
-#    updates Cognito immediately …
+#    replacements included. The apply updates Cognito immediately …
 make init HUB=stag
 terraform plan -target=module.cognito.aws_cognito_user_pool_client.client -out=cognito.tfplan
 terraform apply cognito.tfplan
@@ -399,39 +397,64 @@ because the allowlist the API is *serving* only changes at the restart in step 3
 
 ### Growing the FL kit-slot pool (`add-fl-kits`)
 
-When to run `make add-fl-kits N=<n>`, what it asks and how to recover a failed final apply:
+When to run `make add-fl-kits N=<n>`, what it asks and how to recover a failed run:
 [Deploy the Central Hub → Running out of FL kit slots](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#deploy-central-hub-kit-slots).
 This section is the mechanism.
 
-**Activation vs minting is automatic.** A slot is claimable only when its name is in `FL_KIT_SLOT_NAMES` *and* its
-kit exists in S3, and those two can drift — a deployment provisioned with a batch of spare kits has kits nobody can
-claim. `add-fl-kits N=<n>` treats `N` as *"ensure N more live slots"*, not a mint count: it **activates** up to `N`
-such spares first (lowest-numbered first — just an env-file edit, no certs, no upload, no restart) and only
-**mints** the shortfall. When spares cover the request it mints nothing and skips the CA workspace entirely, so
-growing the pool past over-provisioned kits needs none of the provisioning toolchain. (Stag on 2026-07-14 held 48
-spare kits: `add-fl-kits N=1` activated the idle `Trust_3` in seconds instead of minting `Trust_51`.)
+**The kits are the pool (FLIP#1720).** On an NVFLARE hub flip-api's slot pool is every slot whose kit is complete on
+**every** net under `fl-flare-participant-kits/<FLARE_KIT_DATE>/` (task env `FLARE_KITS_S3_URI`): its
+`startup/{client.crt,client.key,rootCA.pem,fed_client.json,sub_start.sh}` all present. flip-api reads S3 at every
+registration and claims only from the kits complete at that moment, so a new kit is claimable by the next
+`register-trusts` with **no Terraform apply and no restart**, and a kit deleted from S3 is no longer handed out
+(a trust that already holds the slot keeps it). Every complete kit under the kit date is claimable, so delete one
+that should not be. A kit left out as incomplete is named in a flip-api warning, with the files it lacks.
+If S3 cannot be listed, registration answers that the slot source could not be read (503), not that the pool is empty.
 
-It runs `scripts/add_fl_kits.sh`: discovers the deployment's nets from S3, activates any spares toward `N`, and for
-the remaining shortfall restores + fingerprint-verifies each net's CA workspace
-(`fl-services/nvflare/provision/workspace-<env>/`) and mints the next `Trust_<n>` names on **every** net via
-`nvflare provision --add_client` (existing kits untouched — no CA rotation), uploads **only** the new kits
-additively (never `aws s3 sync --delete`) plus a refresh of each net's mirrored CA state (`cert.json` under
-`fl-flare-ca-state/`, a prefix no ECS task role can read; see the nvflare README for estates that still hold it
-among the kits), and appends the
-activated + minted names to `FL_KIT_SLOT_NAMES` in the env file. The make target then re-invokes make for
-`apply-fl-kit-slots` (so the sub-make re-reads the edited env file) — a targeted plan/apply of only the
-`/flip/fl_kit_slot_names` SSM parameter, plus the flip-api task-role policy that grants its read so the first
-rollout is self-contained. flip-api re-reads the parameter when its slot pool runs dry (reconcile-on-miss), so the
-new slots are claimable by the next `register-trusts` with **no restart and no task-definition change**.
+**The nets are the `net-N/` prefixes in S3**, the same list `add_fl_kits.sh` mints on, so a net counts from its
+first object. To add a net to a hub that already has kits, provision it with every existing slot name and upload
+it whole, in a window with no registration: until each slot's kit is complete on the new net, none is claimable
+(flip-api warns once per kit), and `add-fl-kits` cannot fill the gap, since it only mints new names.
 
-> **The targeted apply is not literally one resource.** `-target` applies the target's whole dependency closure,
-> and the flip-api task-role policy references the bucket modules, whose server-access logging points at
-> `aws_s3_bucket.flip_access_logs`. On an environment whose state predates that S3-logging hardening, the first
-> `apply-fl-kit-slots` therefore *also* creates `flip-access-logs-<subdomain>` and its ACL/ownership controls. It is
-> additive (stag, 2026-07-14: **4 to add, 1 to change, 0 to destroy**). Nothing is replaced or destroyed — but read
-> the plan before confirming.
+`make add-fl-kits N=<n>` runs `scripts/add_fl_kits.sh`: discovers the deployment's nets from S3, restores +
+fingerprint-verifies each net's CA workspace (`fl-services/nvflare/provision/workspace-<env>/`), mints the next
+`Trust_<n>` names on **every** net (numbered past every kit in S3 and every name in the CA's `cert.json`, so a name
+whose kit was deleted is never signed twice) via `nvflare provision --add_client` (existing kits untouched — no CA rotation),
+uploads **only** the new kits additively (never `aws s3 sync --delete`), the five required startup files last so a
+half-uploaded kit never counts, and refreshes each net's mirrored CA state (`cert.json` under `fl-flare-ca-state/`,
+a prefix no ECS task role can read; see the nvflare README for estates that still hold it among the kits).
 
-The script has a black-box test harness (`scripts/tests/test_add_fl_kits.sh`, `aws`/`make`/`openssl`
+**On a Flower hub the SuperNode keys are the pool (FLIP#1942).** flip-api's slot pool is every slot `Trust_<N>`
+whose key pair `keys/supernode_credentials_<N>` and `.pub` is complete on every net under
+`fl-flower-participant-kits/<FLOWER_KIT_DATE>/` (task env `FLOWER_KITS_S3_URI`), with the same read at every
+registration, the same warning for a pair left out and the same 503 when S3 cannot be listed. The registration
+one-shot (`ecs_flower.tf`) names each node from its key's file name too, so the keys are the only slot list:
+`FL_KIT_SLOT_NAMES` is a dev-only setting.
+
+There, `make add-fl-kits N=<n>` hands over to `scripts/add_fl_kits_flower.sh`: it numbers the new keys past every
+key in S3 and every name in `fl-flower-kit-state/<FLOWER_KIT_DATE>/minted_slot_names` (a prefix no ECS task role
+can read; Flower has no CA registry, so this record is what keeps a withdrawn name from being minted twice), mints
+the pairs (`make -C fl-services/flower provision-add-supernode`; the CA and existing keys are untouched), uploads
+the **public** keys, runs the `efs-provision-certs` task definition with the key sync alone as its command and
+then the `flower-register-supernode-keys` task definition as Terraform defines it (`aws ecs run-task`, in the
+subnets and security groups of the live `fl-server-net-1` and `fl-api-net-1` services), and uploads the
+**private** keys last, once the registration task's exit code and its log both say every key is registered.
+Nothing is replaced or restarted, and a running job is not disturbed. Before the plan it checks that
+`FLOWER_KIT_DATE` is the date the hub runs (flip-api's `FLOWER_KITS_S3_URI`), since the copy to the hub syncs that
+date's keys onto the live EFS. The operator needs `ecs:DescribeServices`, `ecs:DescribeTaskDefinition`,
+`ecs:RunTask`, `ecs:DescribeTasks` and `iam:PassRole` for those two task definitions, `logs:GetLogEvents` on
+`/ecs/fl-server-net-1`, and S3 read and write under `fl-flower-participant-kits/` and `fl-flower-kit-state/`.
+
+**After a backend switch, a minted slot can already be assigned.** The hub has one slot table for both backends
+(a trust keeps its `Trust_<N>` across a switch), but each script numbers past its own backend's kits or keys only.
+On a hub that grew its pool under the other backend, the first names minted can be ones a trust already holds:
+the run says they are claimable and registration still finds no free slot. Mint enough to pass the highest slot
+the hub has assigned. A hub that stays on one backend never meets this.
+
+The SuperLink keeps registrations in memory. Terraform replays the one-shot when it registers a new SuperLink task
+definition; a SuperLink restarted any other way (`make deploy-centralhub` or `rollback-centralhub` (new task-definition revisions made outside Terraform), staging power-on, a forced deployment, a crash or a Fargate retirement) has none until it runs again (see the
+[Flower README](../../../fl-services/flower/README.md#adding-supernode-keys-to-a-deployed-hub); FLIP#1947).
+
+The scripts have a black-box test harness (`scripts/tests/test_add_fl_kits.sh`, `aws`/`make`/`openssl`
 stubbed — no credentials or network) that CI runs in the `Deploy script tests` job of
 `validate_terraform.yml` on any `deploy/providers/AWS/**` change; it also runs standalone with plain `bash`.
 
@@ -1113,8 +1136,7 @@ absent, everything else stops the run.
 The operator `.env` files drift, and seeding GitHub from a stale one bakes that
 drift into every future CI plan. `scripts/reconcile_ci_env.py` rebuilds the
 Terraform inputs from what is actually deployed — live state, plus the things
-state cannot answer (the running image tags, the FL kit-slot list, the live
-secret material):
+state cannot answer (the running image tags, the live secret material):
 
 ```bash
 python3 scripts/reconcile_ci_env.py --env prod --compare ../../../.env.prod
@@ -1139,7 +1161,7 @@ Run against staging this found a batch of differences from the checked-out
 plans as `must be replaced` against a `prevent_destroy` lifecycle rule, a stale
 `FLARE_KIT_DATE`, and rotated service keys. Several
 were not stale but **absent**, which is worse: the Makefile exports
-`JOB_RESOURCE_SPEC_*` and `FL_KIT_SLOT_NAMES` either
+`JOB_RESOURCE_SPEC_*` either
 unconditionally or behind a `?=` default, so an absent key arrives at Terraform as
 `""` or as the Makefile's own default and **does not** fall back to the
 `variables.tf` one.
@@ -1312,6 +1334,17 @@ tag. The guarantee is about substitution: the configured tag can never replace a
 deployed one. An environment genuinely running `:stag` (staging, today) gets
 `:stag` back, which is a no-op; what cannot happen is a sha-pinned service being
 moved onto a mutable tag.
+
+**On staging it will not stay behind develop** (FLIP#1375). Before reusing a
+running image, a develop apply looks for the newest build of an earlier develop
+commit, newer than the one running, and pins that. So when the FL gate holds the
+apply that built new FL images and more merges land on top, the `fl_quiesced`
+re-dispatch can run from the new tip and still deploys those images, and on a
+stopped staging estate (where the gate does not hold) the next merge catches up
+with nobody dispatching anything. The walk only moves forward: it stops at the
+running commit, and leaves alone a running tag that names no develop commit, such
+as `:stag` or a branch build deployed by hand. Production is unchanged: it moves
+by `release_tag`.
 
 Every lookup in that script **fails closed**. An expired session, a throttle, an
 AccessDenied or a wrong `ECS_CLUSTER` all used to look exactly like "there is no

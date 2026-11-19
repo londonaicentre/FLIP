@@ -342,8 +342,9 @@ To check a host before deploying, run the preflight alone:
 The wait budget: ``HELM_TIMEOUT``
 =================================
 
-The deploy waits for the ``xnat-init`` job, which configures XNAT after install. ``HELM_TIMEOUT`` (default ``30m``)
-bounds that wait, and the standalone ``make -C trust/deploy/helm xnat-init`` uses the same budget. Time one run on
+The deploy waits for the core workloads to roll out, then for the ``xnat-init`` job, which configures XNAT after
+install. ``HELM_TIMEOUT`` (default ``30m``) bounds each of those waits (the rollout wait is one budget shared by all the
+core workloads), and the standalone ``make -C trust/deploy/helm xnat-init`` uses the same budget. Time one run on
 your cluster (``kubectl get job -n flip-trust -w``), then raise it if needed:
 
 .. code-block:: shell
@@ -352,8 +353,9 @@ your cluster (``kubectl get job -n flip-trust -w``), then raise it if needed:
 
 .. warning::
 
-   Set below the job's real duration, the deploy fails with ``resource Job/... not ready`` **after** Helm has already
-   applied the new spec, so the error names Helm rather than the wait. The job itself keeps running in the cluster.
+   Set below the job's real duration, the deploy fails **after** the new release is applied and rolled out, with
+   ``xnat-init did not complete``. The job itself keeps running in the cluster; re-run
+   ``make -C trust/deploy/helm xnat-init`` once it has finished or with a larger budget.
 
 If you add ``--wait`` to your own ``helm upgrade``, note that Helm 4 waits until workloads are genuinely ready, so size
 ``--timeout`` for the slowest service rather than for the API call.

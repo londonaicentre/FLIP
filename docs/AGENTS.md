@@ -27,7 +27,7 @@
 | `source/components/` | Per-component deep dives: `overview` (component map), `component-central-hub` (hub services, deployment-agnostic), `component-fl-nets` (nets, kit slots, scheduler, GPUs, quiesce), `component-fl-jobs` (job types, required files, config.json, meta.json, `flip.*` calls), `component-fl-privacy` (privacy filters, site policy, governance document), `component-trust-apis` (trust-api / imaging-api / data-access-api), OMOP, XNAT, PACS, logging stack |
 | `source/sys-admin/` | Admin tasks: project/user management, user roles, platform support, upgrading sites, backup and restore |
 | `source/user-guides/` | Researcher guides: `getting-started`, `user-common` (landing) with `user-account` / `user-projects` / `user-models` / `user-training`, data enrichment, trust admin |
-| `source/deploy-flip/` | Deployment guides: `deploy-central-hub` (shared hub operations) with child `deploy-central-hub-aws-lza` (the architecture and the generated diagrams; the old `deploy-central-hub-aws` URL redirects there); `deploy-trust-node` (landing) with `trust-readiness-checklist` (the prerequisites for a trust's IG, data, PACS and IT leads: plain language, by owner, in order), `onboarding-a-trust` (the shared runbook) and the per-platform pages `deploy-flip-node-on-prem` (Docker Compose), `deploy-flip-node-kubernetes` (Helm on an existing cluster), `deploy-flip-node-aws-ec2` (AWS EC2), `deploy-flip-node-aws-eks` (Amazon EKS), `deploy-flip-node-azure` (Azure VM), `deploy-flip-node-azure-aks` (Azure AKS), `deploy-flip-node-in-tre`; `deploy-local-dev` (the one-host `make up` walkthrough) |
+| `source/deploy-flip/` | Deployment guides: `deploy-central-hub` (shared hub operations) with child `deploy-central-hub-aws-lza` (the architecture and the generated diagrams; the old `deploy-central-hub-aws` URL redirects there); `deploy-trust-node` (landing) with `trust-readiness-checklist` (the prerequisites for a trust's IG, data, PACS and IT leads: plain language, by owner, in order), `onboarding-a-trust` (the shared runbook) and the per-platform pages `deploy-flip-node-on-prem` (Docker Compose), `deploy-flip-node-kubernetes` (Helm on an existing cluster), `deploy-flip-node-aws-ec2` (AWS EC2), `deploy-flip-node-aws-eks` (Amazon EKS), `deploy-flip-node-azure` (Azure VM), `deploy-flip-node-azure-aks` (Azure AKS), `deploy-flip-node-in-tre`, `deploy-flip-node-snowflake` (Snowflake SPCS); `deploy-local-dev` (the one-host `make up` walkthrough) |
 | `source/working-with-flip-apps/` | `choosing-an-fl-framework`, `flip-utils-package` (the flip-utils SDK), the paired FLARE / Flower app-authoring pages, `wrap-model-for-deployment` (MAP tutorial) and `map-toolchain-reference` |
 | `source/troubleshooting/` | Symptom-first troubleshooting: FL training/projects, Central Hub on AWS, trust on Compose, trust on Kubernetes (index: `source/troubleshooting.rst`) |
 
@@ -50,7 +50,10 @@ cd docs && make test     # pytest over tests/ + ruff over scripts/, tests/, conf
 The build needs graphviz (`dot`) on PATH: `conf.py`'s `builder-inited` hook renders the Central Hub AWS
 diagrams from `deploy/providers/AWS/architecture/central_hub.py` into the gitignored
 `source/assets/generated/` and fails loudly without it (ReadTheDocs installs it via `build.apt_packages`,
-the docs CI job via `apt-get`). `FLIP_DOCS_SKIP_DIAGRAMS=1 make docs` builds text-only on a host without
+the CI jobs via `.github/actions/install-graphviz`, which retries a mirror outage, FLIP#1988). A ReadTheDocs build
+that fails in its `apt_packages` step (`apt-get update`, `Failed to fetch … archive.ubuntu.com`) never reached
+Sphinx: it is an Ubuntu mirror outage, which no project setting can retry (that step runs before any build job,
+and the jobs have no root), so rebuild it from the ReadTheDocs UI rather than looking for a docs error. `FLIP_DOCS_SKIP_DIAGRAMS=1 make docs` builds text-only on a host without
 graphviz — with a warning, and missing-image warnings on the Central Hub page. Pages renamed in FLIP#364
 keep their old URLs through `sphinx-reredirects` (`redirects` in `conf.py`).
 

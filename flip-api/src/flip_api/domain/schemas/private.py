@@ -171,7 +171,7 @@ class TrainingLog(BaseModel):
     # emit-on-change dedup (which compares against any stored row).
     event_type: str | None = Field(default=None, max_length=64)
     # 1-based on both backends; every event this endpoint accepts is round-scoped except
-    # the ROUND_LESS_EVENTS, which describe a job FLARE has not started yet (the
+    # the ROUND_LESS_EVENTS, which may come before the first round (the
     # hub-emitted, round-less QUEUE_POSITION is written directly by the FL
     # scheduler and rejected at this boundary). The ceiling is the PG INTEGER max
     # of the fl_logs.global_round column — without it an oversized round passes
@@ -285,6 +285,13 @@ class ServiceHealthEntry(BaseModel):
     status: ServiceHealthStatus
     version: str | None = Field(default=None, max_length=64)
     response_ms: int | None = Field(default=None, ge=0, le=1_000_000)
+    # How the trust runs an FL job: ``process`` (inside the fl-client's own container) or ``pods`` (a pod per job).
+    # The trust sends it on the fl-client entry only; the hub does not check which entry. A string, not an enum, so
+    # a well-formed new mode does not cost the trust its whole snapshot; left out of the stored entry when absent
+    # (FLIP#1739).
+    job_mode: str | None = Field(
+        default=None, max_length=16, pattern=r"^[a-z0-9-]+$", exclude_if=lambda mode: mode is None
+    )
 
 
 # Roster keys are the trust collector's wire contract; the hub stays roster-agnostic

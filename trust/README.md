@@ -27,6 +27,12 @@ Deploy components at the trust level:
 
 See also the dedicated README files under each folder.
 
+This page covers the stack under Docker Compose on a host. The same stack also runs on Kubernetes
+([deploy/helm](deploy/helm/README.md)) and on Snowflake Snowpark Container Services
+([deploy/snowflake](deploy/snowflake/README.md), operator runbook
+`docs/source/deploy-flip/deploy-flip-node-snowflake.rst`); [deploy/README.md](deploy/README.md)
+lists every shape.
+
 ## Setup
 
 ### Start Orthanc and trust services

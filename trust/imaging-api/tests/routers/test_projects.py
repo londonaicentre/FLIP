@@ -95,6 +95,31 @@ async def test_create_project_event_subscription_active_matches_dicom_to_nifti(
     mock_event_sub.assert_called_once_with(TEST_XNAT_PROJECT_ID, get_settings().DCM2NIIX_IMAGE, dicom_to_nifti, headers)
 
 
+@patch("imaging_api.routers.projects.add_central_hub_users_to_project", return_value=([], []))
+@patch("imaging_api.routers.projects.create_project_event_subscription")
+@patch("imaging_api.routers.projects.set_project_prearchive_settings")
+@patch("imaging_api.routers.projects.create_project")
+@patch("imaging_api.routers.projects.get_settings")
+def test_a_snowflake_node_creates_the_project_without_an_event_subscription(
+    mock_settings, mock_create, mock_prearchive, mock_event_sub, mock_add_users, mock_project
+):
+    """The subscription launches dcm2niix through XNAT's Container Service, which a Snowflake
+    node does not run: creating it raised, the project answered 500 and no image was pulled."""
+    mock_settings.return_value.CONVERTER_BACKEND = "snowflake"
+    mock_create.return_value = mock_project
+    central_hub_project = CentralHubProject(
+        project_id=uuid4(), trust_id=uuid4(), project_name="Test Project", query="SELECT 1", users=[]
+    )
+
+    from imaging_api.routers.projects import create_project_from_central_hub_project
+
+    background_tasks = MagicMock()
+    create_project_from_central_hub_project(central_hub_project, {"Cookie": "JSESSIONID=mock"}, background_tasks)
+
+    mock_event_sub.assert_not_called()
+    background_tasks.add_task.assert_called_once()
+
+
 def test_create_project_from_central_hub_project_runs_in_the_threadpool():
     """Its XNAT calls block; as a coroutine they would stall the single event loop, /health included."""
     from imaging_api.routers.projects import create_project_from_central_hub_project

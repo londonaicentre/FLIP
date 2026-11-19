@@ -100,8 +100,17 @@ compares them:
   XNAT answers the lookups, and never served unchecked.
 
 `force_refresh=true` takes the same delete-then-download step. The cache is also invalidated when an upload through
-imaging-api changes the accession (see Upload), and — on the FLARE backend — by `CleanupImages`, which empties the
-whole net directory at job start and end.
+imaging-api changes the accession (see Upload), and — on the FLARE backend, where a job mounts the net's whole
+folder — by `CleanupImages`, which empties that folder at job start and end. A Kubernetes job pod mounts only its
+project's folder, read-only, or none, and deletes nothing: there the retention sweep bounds the cache.
+
+**Retention (FLIP#1050).** Every cache hit refreshes the sentinel's mtime, the entry's last-used time, and an hourly
+sweep (`services/cache_retention.py`) removes accession folders whose newest sentinel is older than
+`IMAGE_CACHE_RETENTION_HOURS` (default `168`; `0` turns the sweep off). A folder's own mtime counts too, so a
+half-extracted study is never expired, and the sweep runs on the single-worker event loop, yielding only between
+studies, so a check and removal never interleave with a download or a hit. Net folders and `upload/` are never touched. This is what bounds the cache on Flower,
+whose clients read a study every round, and on NVFLARE job pods; an NVFLARE client reads a study once per job, so the
+TTL must be far longer than any job. An expired study is downloaded again from XNAT on its next request.
 
 The download URL pins `structure=default`, XNAT's own default. Every zip member then sits under the session label,
 which FLIP sets to the accession id at import, so a study extracts as
@@ -110,6 +119,12 @@ tutorial matches the `<scan id>-<description>` folder), and XNAT's other layouts
 session folder, `simplified` and `legacy` reshape the folders below it. A zip with no files, or with a member not
 lexically under `<accession_id>/`, is refused before anything is extracted (HTTP 500) and never marked complete. The
 check reads the member names, not the folder afterwards, because a re-download lands in an already-populated folder.
+
+`POST /download/images/{net_id}/stream` takes the same body and query and, after the same cache fill, answers with
+the cached study as an uncompressed tar rooted at `<accession_id>/` (`application/x-tar`, the cache's sentinels left
+out) instead of a path. It is for a client with no mount of the net's images folder, such as an NVFLARE job pod on
+Kubernetes (FLIP#1049): flip-utils uses it when `IMAGES_TRANSPORT=stream` and extracts the tar into the job's own
+directory.
 
 ### Imaging
 
@@ -184,6 +199,43 @@ lists the archived scans that have DICOM and no NIfTI and, with `--launch`, conv
 Container Service bulk launch per project. See
 [`../deploy/helm/TROUBLESHOOTING.md` §2.3e](../deploy/helm/TROUBLESHOOTING.md#23e-scans-archived-without-nifti-converting-the-backlog).
 
+#### Converting on Snowflake: `CONVERTER_BACKEND=snowflake`
+
+Snowpark Container Services has no Docker socket, no swarm and no Kubernetes backend, so XNAT's
+Container Service cannot launch dcm2niix there at all. `CONVERTER_BACKEND` selects which machinery
+converts, and it stays at `container-service` on Compose and Kubernetes, which are unchanged.
+
+On `snowflake` (`imaging_api/services/snowflake_converter.py`, FLIP#1583):
+
+1. imaging-api CALLs `APP.CONVERT_SCAN(project, session, scan)` instead of launching a wrapper. That
+   is an owner's-rights procedure owned by `FLIP_<CODE>_CONVERTER` and created by Terraform
+   (FLIP#1581), because launching a job needs `CREATE SERVICE` and a service's OAuth token carries
+   the role that OWNS it: granting the services role that privilege would let the fl-client, which
+   runs researcher code, start arbitrary containers. The procedure validates the three identifiers
+   and launches a specification fixed in Terraform, so the image, pool, command and mounts are not
+   parameters this service can influence.
+2. It polls `APP.CONVERT_STATUS`. An empty status (`[]`) means the job exists and has not been
+   scheduled yet, which is **pending**: reading it as a failure relaunches a healthy conversion on
+   every poll.
+3. It reads the converter's output from its own mount of the `CONVERTER_IO` stage, at
+   `<CONVERTER_IO_DIR>/<project>/<session>/<scan>/`, and registers it in XNAT over REST as a `NIFTI`
+   resource (`PUT .../resources/NIFTI`, then one `PUT .../files/<name>?inbody=true` per file). That
+   is the step the Container Service output handler performed before; nothing else does it here.
+
+`session` is the XNAT session **label**, because the archive tree is
+`<project>/arc001/<label>/SCANS/<scan>/DICOM` and that is the path the procedure mounts; the REST
+registration addresses the **experiment id**. Both appear on this path and they are not the same.
+
+`reconvert_nifti` takes the same route (`make -C trust/deploy/snowflake reconvert-nifti KIT=<CODE>`
+runs it as a job service). The scan selection is identical, because it reads XNAT and nothing else.
+Two things it cannot do there: `--max-attempts` has nothing to act on, since `CONVERT_SCAN` drops
+and replaces a scan's job on each launch and leaves no history to count; and there is no
+wrapper-image check, since the image is fixed in the procedure rather than chosen per launch.
+
+The credential is the OAuth session token SPCS mounts at `SNOWFLAKE_TOKEN_FILE`
+(`authenticator="oauth"`). There is no password and no private key on this path, and
+`snowflake-connector-python` is imported lazily so a Compose trust never loads it.
+
 ### Retrieval
 
 Get import status or count for a project:
@@ -240,9 +292,41 @@ leaves it in place and fails the request.
 A missing resource is created with the first file, and a missing `scan_id` with the type of the session's first
 scan; in a session with no scans, the upload fails.
 
+`PUT /upload/images/{net_id}/files` is the multipart twin for a client with no mount of the net's upload folder
+(FLIP#1049): the same fields as form data, the files themselves as `files` parts, each named by the same path
+relative to the net's upload folder that `files` holds above. They are staged at `<net_id>/upload/<request id>/<path>`
+for the upload and removed afterwards; a path that would leave its request's folder is refused with a 400.
+
 ### Users
 
 Create users, update user details, or add a user to an XNAT project.
+
+#### Imaging follows the approved cohort
+
+A patient who leaves a project's approved cohort (the national data opt-out, a removal from OMOP) stops being served
+by data-access-api at once (FLIP#857). Their imaging follows (FLIP#1860), from the same list: the accessions
+data-access-api serves for the project now (`/cohort/accession-ids`).
+
+| What | When | How |
+| --- | --- | --- |
+| Downloads | Within a minute | The route answers `404` for an accession that is not on the list. The list is read at most once a minute per project. |
+| The cached copy | Within `COHORT_RECONCILE_MINUTES` (15) | `<net_id>/<central_hub_project_id>/<accession_id>/` is removed in every net's folder. |
+| XNAT | After `COHORT_REMOVAL_GRACE_HOURS` (24) off the list | The session is deleted from the project's archive and prearchive with its files, then the subject when none of their studies is left. The log names the project and the accession when it is first seen off the list, and again at each removal. |
+
+- **Why XNAT waits.** A cached copy is downloaded again on demand, but only a new pull from the PACS refills XNAT,
+  and the list is short for a while whenever a trust reloads its OMOP tables. An accession that is back on the list
+  before the wait ends is kept, and the wait starts again if it leaves again. The count is held in memory, so a
+  restart of imaging-api starts it again: a removal can come late, never early.
+- **When nothing is removed.** While data-access-api cannot answer, or refuses the whole list (`403`): a refusal does
+  not say whether the cohort fell below the trust's threshold or its lookup failed. Downloads are refused in both
+  cases (`503` and `404`). An empty list is an answer, not a refusal: the approved cohort has no imaging, and the
+  project's sessions are removed like any other that is off the list.
+- **What is removed.** Imaging sessions the project owns whose label is not a served accession, with their files. XNAT keeps no copy of them while its `backupDeletedToCache` site setting is off, its default (FLIP does not set it). An assessor (a
+  segmentation) goes with its session, never on its own; a session shared in from another project is left to that
+  project.
+- **Not pulled again.** A study removed this way is not imported again if the patient returns to OMOP. Their rows are
+  served again (the frozen membership still holds them), the download answers `404`, and the import status shows the
+  study as processing.
 
 ## Configuration
 
@@ -258,6 +342,14 @@ Key environment variables. Most come from the trust kit file — template at [`.
 | `DATA_ACCESS_API_URL` | Internal URL of the data-access-api (default `http://data-access-api:8000`) |
 | `DCM2NIIX_IMAGE` | Container Service image used for automatic DICOM→NIfTI conversion. The default is `ghcr.io/londonaicentre/xnat-dcm2niix:<version>` at the tag `ARG DCM2NIIX_VERSION` in `trust/xnat/dcm2niix/Dockerfile` names — the one source of truth, which `trust/xnat/dcm2niix/check_image_pin_sync.sh` (pre-commit + CI, FLIP#980) checks `imaging_api/config.py` against. The per-project event subscription looks the XNAT command up by this **exact** image string, so it must match what `trust/xnat/xnat/config/dcm2niix_command.json` registers — pinned by version tag, never `latest` |
 | `BASE_IMAGES_DOWNLOAD_DIR` | **Required.** Root of the downloaded-images tree as seen **inside the container** — the composes and the Helm chart inject the literal `/app/data/images`. The kit file's same-named `BASE_IMAGES_DOWNLOAD_DIR` is a different value: the *host* directory the composes bind-mount onto that path (the same host-vs-container dual meaning the trust-api README notes for the kit's `OMOP_DB_PORT`). imaging-api mounts the whole tree; each fl-client mounts only its own `net-N` slice |
+| `COHORT_RECONCILE_MINUTES` | How often imaging-api brings each project's cached studies and XNAT sessions to its approved cohort (default `15`; see "Imaging follows the approved cohort"). `0` turns the removal off; a download of an accession that left the cohort is refused either way |
+| `COHORT_REMOVAL_GRACE_HOURS` | How long an accession must have been off a project's approved cohort before its XNAT session is deleted (default `24`). The cached copy does not wait |
+| `CONVERTER_BACKEND` | Which machinery converts DICOM to NIfTI: `container-service` (default, Compose and Kubernetes) or `snowflake` (SPCS, where Container Service cannot run). See "Converting on Snowflake" above. A setting rather than an auto-detection, because "am I on SPCS?" has no reliable answer and a wrong guess silently picks a converter that cannot run |
+| `SNOWFLAKE_HOST`, `SNOWFLAKE_ACCOUNT` | Injected into every SPCS container by the platform; not set by the spec, which is why both default to empty. Read only when `CONVERTER_BACKEND=snowflake` |
+| `SNOWFLAKE_DATABASE`, `SNOWFLAKE_SCHEMA` | Where the converter procedures live: `FLIP_TRUST_<CODE>` and `APP` |
+| `SNOWFLAKE_TOKEN_FILE` | The SPCS OAuth session token (default `/snowflake/session/token`). This **is** the credential; the service spec must set `mountSessionToken: true` |
+| `CONVERTER_IO_DIR` | This container's mount of the `CONVERTER_IO` stage (default `/converter-io`), where the converter job writes and imaging-api reads |
+| `CONVERT_POLL_SECONDS`, `CONVERT_TIMEOUT_SECONDS` | Seconds between `CONVERT_STATUS` polls (default 15) and the ceiling on one scan's conversion (default 1800) |
 | `REIMPORT_STUDIES_ENABLED` | Whether the retry-failed-imports route is available (default `true`). When `false`, `PUT` to the reimport endpoint returns `418` with "Reimport studies feature is not enabled" |
 | `AES_KEY_BASE64` | AES-256 key shared with the hub, used to open the AES-256-GCM-enveloped project identifiers the FL client forwards (FLIP#1179). Must be byte-identical to the hub's and to trust-api's; a mismatch fails closed |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
