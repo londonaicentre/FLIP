@@ -17,8 +17,9 @@ ARG LOCAL_DEV=false
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:${PATH}"
-# torch's native Triton kernels compile a C helper on first use, and this image has no C compiler:
-# without this, a GPU backward through one of them fails (FLIP#1700). torch reads it at import.
+# torch 2.13's native Triton kernels compiled a C helper on first use, and this image has no C compiler,
+# so a GPU backward through one of them failed (FLIP#1700). torch 2.15 no longer routes those ops there
+# (re-checked in FLIP#1836); the switch stays as a guard for any other native kernel. Read at import.
 ENV TORCH_DISABLE_NATIVE_JIT=1
 
 # Minimal OS deps including procps for pkill
