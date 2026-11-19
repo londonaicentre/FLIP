@@ -202,3 +202,50 @@ jobs:
           path: flip-ui/test/cypress/screenshots
           if-no-files-found: ignore
           retention-days: 7
+
+  public-demo:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    # Builds the public demo bundle (FLIP#1746) and walks it as a visitor would.
+    # The demo shares src/ with the real UI and is republished at each release
+    # (FLIP#2008), so a UI change that breaks it has to fail here. No env: the
+    # demo build reads none, and its Mirage server answers every request.
+    name: Public demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ./flip-ui
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set Node.js version
+        uses: actions/setup-node@v5
+        with:
+          # Node 24 LTS bundles npm >=11.10; see the comment in the flip-ui job above.
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: flip-ui/package-lock.json
+
+      - name: Build and walk the demo
+        uses: cypress-io/github-action@v7
+        with:
+          working-directory: flip-ui
+          browser: chrome
+          build: npm run build:demo
+          # The walk's baseUrl is 127.0.0.1, so bind there rather than to
+          # whichever address "localhost" resolves to on the runner.
+          start: npm run serve:demo -- --host 127.0.0.1
+          wait-on: "http://127.0.0.1:4174/demo/"
+          wait-on-timeout: 120
+          config-file: cypress.public-demo.config.ts
+
+      - name: Upload Cypress screenshots
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: cypress-screenshots-public-demo
+          path: flip-ui/test/cypress/screenshots
+          if-no-files-found: ignore
+          retention-days: 7

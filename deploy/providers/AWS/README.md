@@ -199,9 +199,11 @@ make deploy-demo HUB=prod
 ```
 
 `deploy-demo` uses the same cache-control split as `scripts/publish-ui.sh`, and its `--delete` is
-scoped to `demo/`. It is a separate command from `deploy-ui` on purpose: the demo is republished only
-when its fixtures are re-captured. The build's own check (`demo-fixtures.mjs check --dist dist`)
-fails it if an unscrubbed fixture reaches `dist/`.
+scoped to `demo/`. It is a separate command from `deploy-ui` on purpose: no apply publishes the demo,
+and the CI publish role cannot write under `demo/`. Run it at every release, from a checkout at the
+release tag (the release's after-merge checklist carries the step, FLIP#2008), and whenever the
+fixtures are re-captured. The build's own check (`demo-fixtures.mjs check --dist dist`) fails it if an
+unscrubbed fixture reaches `dist/`.
 
 **The edge is in another repository.** The networking account's distribution
 ([aicentre-lza-iac](https://github.com/londonaicentre/aicentre-lza-iac)) carries a `/demo/*` ordered

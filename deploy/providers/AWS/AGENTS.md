@@ -58,7 +58,7 @@ make deploy-centralhub                        # ECS deploy at env branch tip via
 make rollback-centralhub                      # Repoint ECS services at the previous ACTIVE task-def revision + deregister the rolled-away one; on FLARE, resets the fl-server's EFS local/ first (FLIP#1390; SKIP_FL_LOCAL_RESET=1 skips)
 make register-trusts KIT=<CODE> HUB=<stag|prod>  # Register CODE-named trust kit(s) on the hub + write trust/.env.<CODE>.<hub> — runs `scripts/register-trusts.sh` (a one-off ECS task + SSM SecureString handoff, mirroring the dev `make register-trusts` contract)
 make deploy-ui                                # Manual fallback: build + publish UI via scripts/publish-ui.sh (excludes demo/*; no invalidation, the edge distribution is the networking account's). CI publishes after every apply (FLIP#1186)
-make deploy-demo                              # Build the public demo + sync to S3 under demo/ (refused unless PUBLIC_DEMO=true, FLIP#1746)
+make deploy-demo                              # Build the public demo + sync to S3 under demo/ (refused unless PUBLIC_DEMO=true, FLIP#1746); by hand, at every release from the tag (FLIP#2008)
 make status                                   # Health checks
 make ssh-config                               # Generate SSH config with SSM ProxyCommand
 make provision-local-trust                     # Provision an on-prem trust host (run ON the host)

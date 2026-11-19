@@ -97,7 +97,11 @@ The merge triggers two prod Terraform applies: the push apply at `sha-`, then th
 
 Then check that the Release page, GHCR `:v<X.Y.Z>` (every image the fourteen builds publish) and PyPI (if bumped)
 are correct, and that prod `/api/health` reports `v<X.Y.Z>`. The release apply publishes flip-ui itself (#1186):
-check that its *Publish flip-ui (prod)* job passed. Sites upgrade themselves: point operators to *Site upgrade* and
+check that its *Publish flip-ui (prod)* job passed. No apply publishes the public demo (#2008), so it is republished
+at every release: from a checkout at `v<X.Y.Z>`, `make -C deploy/providers/AWS deploy-demo HUB=prod`. That writes to
+prod, so run it only when asked, or hand the user the command. Then check the live `/demo/`: it loads, its
+`content-security-policy` carries `connect-src 'none'`, and `/ark_demo/` answers 301 (the two `curl` commands under
+*Public demo* in `deploy/providers/AWS/README.md`). Sites upgrade themselves: point operators to *Site upgrade* and
 `docs/source/sys-admin/admin-upgrading-sites.rst`.
 
 Last, write the team announcement for the core team's `#aic-flip` Slack channel, from the published notes: a

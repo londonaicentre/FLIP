@@ -99,7 +99,7 @@ npm run serve:demo    # preview the built bundle at http://127.0.0.1:4174/demo/
 With `serve:demo` running, `npm run test:public-demo` walks the built bundle as a visitor would
 ([`test/cypress/public-demo/walk.cy.ts`](test/cypress/public-demo/walk.cy.ts): every project opens,
 a cold deep link renders, Connection Status names the two demo sites, no download control shows).
-It is a local check, not part of CI.
+CI runs the build and the walk on every flip-ui change (the *Public demo* job of `test_flip_ui.yml`).
 
 The build regenerates `dist/js/window.js` from
 [`scripts/generate-demo-window-js.sh`](scripts/generate-demo-window-js.sh), which reads no
