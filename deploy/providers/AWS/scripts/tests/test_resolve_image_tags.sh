@@ -939,6 +939,82 @@ else
     no "rejects GHCR_WAIT_SECONDS_FL=15m" "exit ${RC}, stderr: ${STDERR}"
 fi
 
+# 35. CATCH_UP (FLIP#1375). The FL images were built at BUILT, that apply was held,
+#     and TIP (hub-only) merged on top: a dispatch at TIP must still deploy BUILT's
+#     FL images. A real git history, since the walk is git's answer. FEATURE is a
+#     merged branch commit, newer than BUILT, with an image from a branch build
+#     dispatched by hand: only first parents are develop builds.
+REPO="${TEST_ROOT}/repo"
+git init -q "${REPO}"
+# Increasing dates, so date order alone would visit FEATURE before BUILT.
+git_t() {
+    GIT_COMMITTER_DATE="@$1 +0000" GIT_AUTHOR_DATE="@$1 +0000" \
+        git -C "${REPO}" -c user.name=t -c user.email=t@example.com "${@:2}"
+}
+commit() {
+    git_t "$2" commit -q --allow-empty -m "$1"
+    git -C "${REPO}" rev-parse HEAD
+}
+git -C "${REPO}" checkout -q -b develop
+OLD="$(commit old 1000)"
+git -C "${REPO}" tag v1.0.0
+BUILT="$(commit built 2000)"
+git -C "${REPO}" checkout -q -b side "${OLD}"
+SIDE="$(commit side 3000)"
+git -C "${REPO}" checkout -q -b feature "${BUILT}"
+FEATURE="$(commit feature 4000)"
+git -C "${REPO}" checkout -q develop
+git_t 5000 merge -q --no-ff -m merged feature
+TIP="$(commit tip 6000)"
+FL="ghcr.io/londonaicentre/flare-fl-server"
+
+catch_up_fixture() {
+    fixture "ghcr.io/londonaicentre/flip-api:sha-${TIP:0:7}
+${FL}:sha-${OLD:0:7}
+${FL}:sha-${BUILT:0:7}
+${FL}:sha-${FEATURE:0:7}" \
+        "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-${OLD:0:7}" \
+        "fl-server-net-1:12" "${FL}:$1"
+}
+
+catch_up_fixture "sha-${OLD:0:7}"
+run_resolve "catch-up pins the newest earlier develop build" CATCH_UP=true GIT_SHA="${TIP}" GIT_DIR="${REPO}/.git"
+expect_rc 0 "exits 0"
+expect_tag DOCKER_TAG "sha-${TIP:0:7}"
+expect_tag DOCKER_FL_TAG "sha-${BUILT:0:7}"
+expect_tag DOCKER_FL_API_TAG "sha-${BUILT:0:7}"
+
+run_resolve "without CATCH_UP the running tag is kept" GIT_SHA="${TIP}" GIT_DIR="${REPO}/.git"
+expect_tag DOCKER_FL_TAG "sha-${OLD:0:7}"
+
+catch_up_fixture "v1.0.0@sha256:$(printf 'a%.0s' {1..64})"
+run_resolve "catch-up from a release names its commit" CATCH_UP=true GIT_SHA="${TIP}" GIT_DIR="${REPO}/.git"
+expect_tag DOCKER_FL_TAG "sha-${BUILT:0:7}"
+
+# Never backwards: the walk stops at the running commit, though OLD has a build.
+fixture "${FL}:sha-${OLD:0:7}" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-${OLD:0:7}" \
+    "fl-server-net-1:12" "${FL}:sha-${BUILT:0:7}"
+run_resolve "catch-up never moves a service back" CATCH_UP=true GIT_SHA="${TIP}" GIT_DIR="${REPO}/.git"
+expect_tag DOCKER_FL_TAG "sha-${BUILT:0:7}"
+
+# A branch build deployed by hand is not an ancestor of TIP, and `:stag` names no
+# commit: both are left running.
+catch_up_fixture "sha-${SIDE:0:7}"
+run_resolve "catch-up leaves a non-ancestor build alone" CATCH_UP=true GIT_SHA="${TIP}" GIT_DIR="${REPO}/.git"
+expect_tag DOCKER_FL_TAG "sha-${SIDE:0:7}"
+
+catch_up_fixture "stag"
+run_resolve "catch-up leaves a mutable tag alone" CATCH_UP=true GIT_SHA="${TIP}" GIT_DIR="${REPO}/.git"
+expect_tag DOCKER_FL_TAG "stag"
+
+run_resolve "CATCH_UP must be true or false" CATCH_UP=yes GIT_SHA="${TIP}" GIT_DIR="${REPO}/.git"
+if [[ "${RC}" -ne 0 && "${STDERR}" == *"CATCH_UP must be"* && -z "${STDOUT}" ]]; then
+    ok "rejects CATCH_UP=yes"
+else
+    no "rejects CATCH_UP=yes" "exit ${RC}, stderr: ${STDERR}"
+fi
+
 echo ""
 echo "==== ${PASS} passed, ${FAIL} failed ===="
 [[ "${FAIL}" -eq 0 ]]

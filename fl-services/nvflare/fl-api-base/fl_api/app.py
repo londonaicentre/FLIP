@@ -10,13 +10,16 @@
 # limitations under the License.
 #
 
+from pathlib import Path
+
 from fastapi import Depends, FastAPI
 from fastapi.exceptions import RequestValidationError
 from nvflare.fuel.flare_api.api_spec import JobNotFound
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from fl_api.config import get_settings
 from fl_api.routers import application, health, jobs, system
-from fl_api.startup.session_manager import create_fl_session
+from fl_api.startup.session_manager import create_fl_session, open_study_session
 from fl_api.utils.auth import require_fl_api_key, warn_if_fl_api_key_missing
 from fl_api.utils.exception_handlers import (
     file_not_found_handler,
@@ -28,6 +31,7 @@ from fl_api.utils.exception_handlers import (
 )
 from fl_api.utils.logger import logger
 from fl_api.utils.refusals import ResearcherRefusal, researcher_refusal_handler
+from fl_api.utils.study_sessions import StudySessions
 from fl_api.utils.validation import warn_if_bundle_url_allow_list_empty
 from fl_api.utils.version import build_identity
 
@@ -67,4 +71,8 @@ def on_startup() -> None:
     warn_if_bundle_url_allow_list_empty()
     warn_if_fl_api_key_missing()
     app.state.session = create_fl_session()
+    # Each project is an NVFLARE study (FLIP#1678); its jobs are only visible from a session in it.
+    app.state.studies = StudySessions(
+        app.state.session, open_study_session, Path(get_settings().FL_ADMIN_DIRECTORY) / "startup"
+    )
     logger.info("FL session initialized successfully.")

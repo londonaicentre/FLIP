@@ -104,6 +104,12 @@ Start with the pod's events and logs:
    * - FL client ``Pending`` with ``hostPath type check failed``
      - The FL participant kit is not on the node.
      - Step 3 of :doc:`../deploy-flip/deploy-flip-node-kubernetes`, then deploy again.
+   * - FL client in ``Init`` after an upgrade, with ``hostPath type check failed``
+     - The upgrade was run without the path the kit is staged at.
+     - :ref:`ts-k8s-fl-client-kit-path`
+   * - ``omop-db-0`` and ``xnat-db-0`` never ready, with no logs, on Ubuntu 26.04
+     - AppArmor denies signals inside containers.
+     - :ref:`ts-k8s-apparmor-signals`
    * - ``xnat-web`` ``Running`` but ``0/1`` ready for several minutes
      - Its readiness check fails: ``000`` means XNAT is still starting; ``401`` or ``403`` means this XNAT version
        closed the path the check uses.
@@ -118,6 +124,98 @@ Start with the pod's events and logs:
 
    The "Troubleshooting" section of the :gh:`chart README <trust/deploy/helm/README.md>` for pods stuck in
    ``Pending`` or ``CrashLoopBackOff``, a slow XNAT start and the FL client checklist.
+
+.. _ts-k8s-apparmor-signals:
+
+Database pods never start on an Ubuntu 26.04 node
+=================================================
+
+**Symptom.** After an install or upgrade, ``omop-db-0`` and ``xnat-db-0`` never become ready. They show
+``PostStartHookError`` or stay in ``ContainerCreating``, ``kubectl logs`` prints nothing, and a deleted pod stays
+``Terminating``. Inside the container, process 1 is still ``gosu postgres ...``, running as root at the pod's CPU
+limit. In any container on the node, a shell that kills its own child gets ``Permission denied``.
+
+**Cause.** Ubuntu 26.04 sets ``kernel.apparmor_restrict_unprivileged_unconfined = 1``. With it, containerd's
+containers run under a stacked AppArmor label, ``cri-containerd.apparmor.d//&unconfined``, while the profile only
+allows signals between processes labelled ``cri-containerd.apparmor.d``. Every signal sent inside a container is
+then denied. The Postgres images drop root with ``gosu``, which must signal its own threads to do so and spins
+forever. Containers that never take that step keep running, so the node can look healthy while the kernel log
+fills with denials, including those of Postgres processes that are already up.
+
+**Check.** The label of any running container, the denials, and the setting:
+
+.. code-block:: shell
+
+   kubectl exec -n flip-trust deploy/trust-release-flip-trust-orthanc -- cat /proc/1/attr/current
+   sudo journalctl -k | grep 'apparmor="DENIED"' | grep 'operation="signal"' | tail -3
+   sysctl kernel.apparmor_restrict_unprivileged_unconfined
+
+``cri-containerd.apparmor.d//&unconfined (enforce)`` is this problem; a node without it shows
+``cri-containerd.apparmor.d (enforce)`` and logs no signal denial.
+
+**Fix.** As root on the node, change the setting and keep it across reboots:
+
+.. code-block:: shell
+
+   sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0
+   echo 'kernel.apparmor_restrict_unprivileged_unconfined=0' | sudo tee /etc/sysctl.d/90-flip-apparmor.conf
+
+A container keeps the label it was created with, so only new pods are fixed. Remove the stuck database pods, which
+will not terminate on their own, and let the StatefulSets recreate them:
+
+.. code-block:: shell
+
+   kubectl delete pod -n flip-trust trust-release-flip-trust-omop-db-0 trust-release-flip-trust-xnat-db-0 \
+     --grace-period=0 --force
+
+Restart the release's other pods at a quiet time, so they also run under the plain label.
+
+**Without root on the node.** A pod whose security context sets ``appArmorProfile.type: Unconfined`` starts
+normally. The chart has no value for it, so patch the two StatefulSets and force-delete the stuck pods as above.
+Undo the patch once the node is fixed:
+
+.. code-block:: shell
+
+   for s in omop-db xnat-db; do
+     kubectl patch statefulset -n flip-trust trust-release-flip-trust-$s --type merge \
+       -p '{"spec":{"template":{"spec":{"securityContext":{"appArmorProfile":{"type":"Unconfined"}}}}}}'
+   done
+
+Seen on Ubuntu 26.04 with AppArmor 5.0 and k3s 1.36. An Ubuntu 24.04 node has the setting at ``0`` and is not
+affected.
+
+.. _ts-k8s-fl-client-kit-path:
+
+The FL client stays in ``Init`` after an upgrade: ``hostPath type check failed``
+================================================================================
+
+**Symptom.** ``upgrade-trust-k8s`` reports success, but the FL client's new pod stays in ``Init:0/2`` and the trust
+drops off the FL network. The pod's events carry::
+
+   MountVolume.SetUp failed for volume "fl-client-kit" : hostPath type check failed, /opt/flip/fl-kit is not a directory
+
+**Cause.** The kit was staged at a path other than the default, with ``KIT_DEST=<path>`` on ``stage-kit`` and on
+the first deploy, and the upgrade was run without it. Every deploy target passes ``flClient.kitHostPath`` on the
+Helm command line, where it beats the kit file and any values file, and its default is ``/opt/flip/fl-kit``. The
+upgrade's rollout wait does not cover the FL client, so the command can still exit 0.
+
+**Check.** Compare the path in the previous revision with the current one:
+
+.. code-block:: shell
+
+   helm history trust-release -n flip-trust | tail -3
+   helm get values trust-release -n flip-trust --revision <previous> | grep kitHostPath
+   helm get values trust-release -n flip-trust | grep kitHostPath
+
+**Fix.** Run the same upgrade again with the path the kit is staged at:
+
+.. code-block:: shell
+
+   make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env> TAG=<tag> \
+     FL_CLIENT_KIT_HOST_PATH=<path> YES=1
+
+``FL_CLIENT_KIT_HOST_PATH`` is what the targets render; it takes its default from ``KIT_DEST``. Before any upgrade
+of a release someone else deployed, read ``helm get values`` for settings that were passed on the command line.
 
 .. _ts-k8s-xnat-db-roles:
 
@@ -242,11 +340,16 @@ Setting ``rollingUpdate: null`` in the chart does not help. Helm 3 applies clien
 
 .. _ts-k8s-xnat-init-timeout:
 
-Deploy fails with ``resource Job/flip-trust/trust-release-flip-trust-xnat-init not ready``
-==========================================================================================
+Deploy reports ``xnat-init did not complete``
+=============================================
 
-**Cause.** The ``xnat-init`` job, which configures XNAT after each install or upgrade, ran longer than the deploy's
-wait budget. Helm has already applied the new spec by then, so the error names Helm, not the wait.
+**Symptom.** ``make deploy`` (or ``deploy-trust-k8s`` / ``upgrade-trust-k8s``) prints ``the release is live and
+rolled out, but xnat-init did not complete`` after ``❌  XNAT init failed — check logs:``. A plain ``helm install``
+or ``helm upgrade`` of the chart, which still runs ``xnat-init`` as a hook, reports the same thing as
+``resource Job/flip-trust/trust-release-flip-trust-xnat-init not ready``.
+
+**Cause.** The ``xnat-init`` job, which configures XNAT after each install or upgrade, ran longer than the wait
+budget. The release is already applied and rolled out by then; only XNAT's configuration step is unfinished.
 
 **Fix.** Time one run of the job, then deploy with a larger budget (the default is ``30m``):
 
@@ -255,10 +358,93 @@ wait budget. Helm has already applied the new spec by then, so the error names H
    kubectl get job -n flip-trust -w
    make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> HELM_TIMEOUT=45m
 
-If the job is wedged rather than slow, set ``xnat.initJob.enabled: false`` in your values file (``VALUES_FILE``, see
-"Key values" on :doc:`../deploy-flip/deploy-flip-node-kubernetes`), deploy, and run
-``make -C trust/deploy/helm xnat-init`` on its own, where its logs are easy to read. "The wait budget" under Step 4
+If the job is wedged rather than slow, run ``make -C trust/deploy/helm xnat-init`` on its own, where its logs are
+easy to read; the release does not need deploying again. "The wait budget" under Step 4
 of :doc:`../deploy-flip/deploy-flip-node-kubernetes` explains the setting.
+
+.. _ts-k8s-namespaced-account:
+
+Deploying with an account limited to one namespace
+==================================================
+
+**Symptom.** With a kubeconfig that holds the built-in ``admin`` role in the trust's namespace only:
+
+- ``make preflight`` fails with ``Cluster unreachable``, although ``kubectl get pods`` works in the namespace;
+- the deploy fails with ``resourcequotas "trust-release-flip-trust-xnat-container-jobs" is forbidden``, after
+  most of the release has been applied.
+
+**Cause.** The preflight tests reachability with ``kubectl cluster-info``, which lists Services in
+``kube-system``. The chart creates a ResourceQuota for XNAT's conversion jobs, and ``admin`` may read quotas but
+not write them. The make targets also read the nodes and the StorageClasses, and apply the namespace itself.
+
+**Fix.** Have a cluster administrator create the namespace and grant the account these rights beside ``admin``:
+
+.. code-block:: yaml
+
+   apiVersion: rbac.authorization.k8s.io/v1
+   kind: Role
+   metadata: {name: flip-operator-quota, namespace: <namespace>}
+   rules:
+     - apiGroups: [""]
+       resources: [resourcequotas, limitranges]
+       verbs: [get, list, watch, create, update, patch, delete]
+   ---
+   apiVersion: rbac.authorization.k8s.io/v1
+   kind: Role
+   metadata: {name: flip-operator-cluster-info, namespace: kube-system}
+   rules:
+     - apiGroups: [""]
+       resources: [services]
+       verbs: [get, list]
+   ---
+   apiVersion: rbac.authorization.k8s.io/v1
+   kind: ClusterRole
+   metadata: {name: flip-operator-cluster-read}
+   rules:
+     - apiGroups: [""]
+       resources: [nodes]
+       verbs: [get, list]
+     - apiGroups: [storage.k8s.io]
+       resources: [storageclasses]
+       verbs: [get, list]
+     - apiGroups: [""]
+       resources: [namespaces]
+       resourceNames: [<namespace>]
+       verbs: [get, patch]
+
+Bind each to the account (two RoleBindings and a ClusterRoleBinding). The preflight then passes with one warning,
+that the account cannot create namespaces, which is expected. If a deploy already failed on the quota, run it
+again: nothing needs removing.
+
+.. _ts-k8s-second-release:
+
+A second release on a cluster that already runs one
+===================================================
+
+Two trusts can share a cluster, each in its own namespace, for example a staging trust beside a production one.
+The targets do not know about the other release, so guard against these:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Risk
+     - What to do
+   * - Every target defaults to namespace ``flip-trust`` and release ``trust-release``. A command for the second
+       trust that omits ``NAMESPACE=`` acts on the first: an upgrade would point it at the other trust's hub.
+     - Run the second trust only through a wrapper that always passes ``KIT``, ``HUB``, ``NAMESPACE`` and
+       ``KUBE_CONTEXT``, with a kubeconfig that has no rights in the first namespace
+       (:ref:`ts-k8s-namespaced-account`). A slip is then refused by the cluster.
+   * - Both releases mount the FL kit from ``/opt/flip/fl-kit`` on the node by default.
+     - Give the second its own ``KIT_DEST``, or deliver its kit as a Secret (``flClient.kit.source: secret``,
+       ``make kit-secret``), which puts no file on the node.
+   * - Each release's log collector is a DaemonSet that reads every pod's logs on the node, so each trust's log
+       store would hold the other's logs.
+     - Set ``observability.enabled: false`` on the release that must not hold the other's logs.
+   * - With ``flClient.gpu.allocation: runtime``, each FL client takes the node's GPU 0 without a reservation.
+     - Enable the GPU on one release only, or accept that two jobs running at once share its memory.
+
+Put those values in a file named by the kit's ``K8S_PLATFORM_VALUES``, so every deploy and upgrade keeps them.
 
 ****************************
 DICOM import into XNAT
@@ -322,6 +508,32 @@ this XNAT: check the receiver first (:ref:`ts-k8s-pacs-not-storable`).
 
    How ``smoke-cstore`` judges a run, and its exit codes and settings, are in
    :gh:`trust/deploy/helm/TROUBLESHOOTING.md` (section 2.7).
+
+.. _ts-k8s-dicom-receiver-disabled:
+
+C-STORE is refused: ``Unable to access DICOM SCP port 8104``
+============================================================
+
+**Symptom.** ``smoke-cstore`` and the self-test's ``xnat c-store`` check fail with ``the C-STORE association
+failed outright``. Orthanc's log carries::
+
+   DicomAssociation - connecting to AET "FLIP_XNAT": TCP Initialization Error: Connection refused
+
+and XNAT's ``/data/xnat/home/logs/dicom.log``::
+
+   Unable to access DICOM SCP port 8104. The port may be already in use ... Starting with the DICOM receiver disabled.
+
+**Cause.** XNAT could not open its receiver port when ``xnat-init`` configured the receiver, and left it
+disabled. Why the port was busy is not established. It was seen once, on a first install where XNAT had waited
+half an hour for its database.
+
+**Fix.** Restart ``xnat-web``, which opens the receiver from its saved configuration, then run the check again:
+
+.. code-block:: shell
+
+   kubectl rollout restart -n flip-trust deploy/trust-release-flip-trust-xnat-web
+   kubectl rollout status  -n flip-trust deploy/trust-release-flip-trust-xnat-web --timeout=15m
+   make -C trust/deploy/helm smoke-cstore
 
 .. _ts-k8s-pacs-not-storable:
 

@@ -83,7 +83,6 @@ BASE_ENV=(
     DOCKER_TAG=stag
     DOCKER_FL_TAG=stag
     FL_BACKEND=nvflare
-    FL_KIT_SLOT_NAMES='["Trust_1", "Trust_2"]'
     FLARE_KIT_DATE=20260429
     ACCESS_LOGS_BUCKET_NAME=flip-access-logs-lza
     EFS_PROVISION_IMAGE=123456789012.dkr.ecr.eu-west-2.amazonaws.com/ecr-public/aws-cli/aws-cli:2.22.35
@@ -445,16 +444,6 @@ if [[ "${got}" == 'pa#ss$word' ]]; then
     ok "make reads back the exact value"
 else
     no "make reads back the exact value" "make saw a different value than was supplied"
-fi
-
-# 11. The HCL list literal in FL_KIT_SLOT_NAMES must survive verbatim — it is
-#     handed to Terraform as a list, not a string.
-run_case "HCL list literal survives"
-got="$(make_value_of FL_KIT_SLOT_NAMES "${OUT_FILE}")"
-if [[ "${got}" == '["Trust_1", "Trust_2"]' ]]; then
-    ok "FL_KIT_SLOT_NAMES round-trips through make"
-else
-    no "FL_KIT_SLOT_NAMES round-trips through make" "make saw: ${got}"
 fi
 
 # 12. FL_BACKEND selects which kit date is required. Requiring both would block a

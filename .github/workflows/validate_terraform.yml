@@ -28,6 +28,10 @@ on:
       - "flip-api/src/flip_api/auth/identity/cognito.py"
       # test_flare_kit_required_files.py reads it: add_fl_kits.sh uploads the same files last.
       - "flip-api/src/flip_api/db/seed/fl_kit_slots.py"
+      # test_flower_kit_slots.py and the add_fl_kits.sh harness read or stand in for these (FLIP#1942).
+      - "fl-services/flower/register-supernode-keys.sh"
+      - "fl-services/flower/provision/scripts/generate_creds.py"
+      - "fl-services/flower/Makefile"
       # test_site_roles.py, test_trust_kit_staging.py and the seed tests read the EC2 host plays
       # site.yml imports and the shared roles they compose.
       - "trust/deploy/ansible/aws-ec2-host.yml"
@@ -53,6 +57,10 @@ on:
       - "flip-api/src/flip_api/auth/identity/cognito.py"
       # test_flare_kit_required_files.py reads it: add_fl_kits.sh uploads the same files last.
       - "flip-api/src/flip_api/db/seed/fl_kit_slots.py"
+      # test_flower_kit_slots.py and the add_fl_kits.sh harness read or stand in for these (FLIP#1942).
+      - "fl-services/flower/register-supernode-keys.sh"
+      - "fl-services/flower/provision/scripts/generate_creds.py"
+      - "fl-services/flower/Makefile"
       # test_site_roles.py, test_trust_kit_staging.py and the seed tests read the EC2 host plays
       # site.yml imports and the shared roles they compose.
       - "trust/deploy/ansible/aws-ec2-host.yml"
@@ -257,7 +265,7 @@ jobs:
 
       # graphviz lets test_architecture_diagram.py's render smoke test run rather than skip.
       - name: Install graphviz
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz
+        uses: ./.github/actions/install-graphviz
 
       - name: Run AWS deploy test suite
         working-directory: deploy/providers/AWS
@@ -348,7 +356,7 @@ jobs:
 
       # graphviz lets test_architecture_diagram.py's render smoke test run rather than skip.
       - name: Install graphviz
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz
+        uses: ./.github/actions/install-graphviz
 
       - name: Terraform tests and static guards
         working-directory: trust/deploy/terraform/azure
@@ -399,7 +407,7 @@ jobs:
 
       # graphviz lets test_architecture_diagram.py's render smoke test run rather than skip.
       - name: Install graphviz
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz
+        uses: ./.github/actions/install-graphviz
 
       - name: Terraform tests and Makefile checks
         working-directory: trust/deploy/terraform/${{ matrix.root }}
