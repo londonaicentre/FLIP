@@ -68,7 +68,7 @@
                                     type="text"
                                     name="name"
                                     label="Trust name"
-                                    hint="Full display name shown across the platform. Any characters allowed."
+                                    hint="Full display name shown across the platform."
                                     placeholder="e.g. Guy's & St Thomas' NHS Foundation Trust"
                                     :required="true"
                                 />

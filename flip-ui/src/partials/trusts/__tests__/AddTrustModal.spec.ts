@@ -67,7 +67,32 @@ describe("addTrustSchema", () => {
         })).rejects.toThrow();
     });
 
-    it("accepts a name with arbitrary characters and a well-formed code", async () => {
+    it("rejects a code that starts with an underscore or hyphen, as the hub does", async () => {
+        await expect(addTrustSchema.validate({
+            name: "Guy's Trust",
+            code: "-GSTT"
+        })).rejects.toThrow();
+    });
+
+    it.each([
+        ["$", "$ isn't allowed"],
+        ["`", "` isn't allowed"],
+        ["\\", "\\ isn't allowed"],
+        ["\n", "Line breaks aren't allowed"],
+        ["\r", "Line breaks aren't allowed"]
+    ])("rejects %j in the name or region, which a kit file cannot carry", async (ch, message) => {
+        await expect(addTrustSchema.validate({
+            name: `Guy${ch}s`,
+            code: "GSTT"
+        })).rejects.toThrow(message);
+        await expect(addTrustSchema.validate({
+            name: "Guy's Trust",
+            code: "GSTT",
+            region: `Lon${ch}don`
+        })).rejects.toThrow(message);
+    });
+
+    it("accepts a name with punctuation and a well-formed code", async () => {
         const value = await addTrustSchema.validate({
             name: "Guy's & St Thomas' NHS Foundation Trust",
             code: "GSTT"
