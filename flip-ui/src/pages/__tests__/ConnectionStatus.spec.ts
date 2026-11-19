@@ -439,12 +439,77 @@ describe("ConnectionStatus", () => {
         expect(legend.findAll("span.rounded-full")).toHaveLength(3);
     });
 
-    it("lightens the offline dashed spoke in dark mode so it reads on the dark card", async () => {
+    it("pulses the spoke of an online trust drawn straight above the hub (FLIP#1980)", async () => {
+        // A lone trust sits at 12 o'clock, so its spoke is vertical: a zero-width
+        // bounding box, on which a bounding-box gradient paints nothing.
+        const wrapper = await mountLoaded([fixture[0]]);
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        const pulses = wrapper.findAll("[data-test='spoke-pulse']");
+        expect(pulses).toHaveLength(1);
+        const pulse = pulses[0];
+        expect(pulse.attributes("x1")).toBe(pulse.attributes("x2"));
+
+        // Its gradient lives in user space along the spoke, never in bounding-box units.
+        const gradient = wrapper.find("[data-test='spoke-pulse-gradient']");
+        expect(pulse.attributes("stroke")).toBe(`url(#${gradient.attributes("id")})`);
+        expect(gradient.attributes("gradientUnits")).toBe("userSpaceOnUse");
+        expect(gradient.attributes("x1")).toBe(pulse.attributes("x1"));
+        expect(gradient.attributes("y1")).toBe(pulse.attributes("y1"));
+        expect(gradient.attributes("x2")).toBe(pulse.attributes("x2"));
+        expect(gradient.attributes("y2")).toBe(pulse.attributes("y2"));
+
+        // The band sweeps along the spoke: x stays put on a vertical spoke, y travels.
+        const sweep = Object.fromEntries(
+            gradient.findAll("animate").map(a => [a.attributes("attributeName"), a.attributes("values")])
+        );
+        const [hx, hy, ny] = ["x1", "y1", "y2"].map(k => Number(pulse.attributes(k)));
+        expect(sweep.x1).toBe(`${hx};${hx}`);
+        expect(sweep.y1).toBe(`${2 * hy - ny};${ny}`);
+        expect(sweep.y2).toBe(`${hy};${2 * ny - hy}`);
+    });
+
+    it("gives each online spoke its own pulse gradient", async () => {
+        const wrapper = await mountLoaded([fixture[0], {
+            ...fixture[0],
+            id: "second-online"
+        }]);
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        const strokes = wrapper.findAll("[data-test='spoke-pulse']").map(l => l.attributes("stroke"));
+        expect(strokes).toHaveLength(2);
+        expect(new Set(strokes).size).toBe(2);
+    });
+
+    it("draws no pulse on spokes of trusts that are not online", async () => {
+        const wrapper = await mountLoaded([fixture[1], fixture[2]]); // Acme offline, Maple degraded
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+        expect(wrapper.findAll("[data-test='spoke-pulse']")).toHaveLength(0);
+    });
+
+    it("draws an offline spoke as a solid line broken in the middle", async () => {
+        const wrapper = await mountLoaded([fixture[1]]); // Acme has a null heartbeat
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        const spoke = wrapper.find("[data-test='spoke']");
+        expect(spoke.attributes("pathLength")).toBe("100");
+        expect(spoke.attributes("stroke-dasharray")).toBe("45 10 45");
+
+        // A tiny dot caps each side of the break, 45% and 55% along hub->trust.
+        const [hx, hy, nx, ny] = ["x1", "y1", "x2", "y2"].map(k => Number(spoke.attributes(k)));
+        const caps = wrapper.findAll("[data-test='spoke-break-cap']");
+        expect(caps.map(c => [Number(c.attributes("cx")), Number(c.attributes("cy"))])).toEqual([
+            [hx + (nx - hx) * 0.45, hy + (ny - hy) * 0.45],
+            [hx + (nx - hx) * 0.55, hy + (ny - hy) * 0.55]
+        ]);
+    });
+
+    it("lightens the offline broken spoke in dark mode so it reads on the dark card", async () => {
         const wrapper = await mountLoaded();
         await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
 
-        // Offline spokes are the dashed ones (Acme has a null heartbeat).
-        const offlineSpokes = wrapper.findAll("line").filter(l => l.attributes("stroke-dasharray") === "3 4");
+        // Offline spokes are the broken ones (Acme has a null heartbeat).
+        const offlineSpokes = wrapper.findAll("[data-test='spoke']").filter(l => l.attributes("stroke-dasharray") !== "none");
         expect(offlineSpokes.length).toBeGreaterThan(0);
         for (const spoke of offlineSpokes) {
             // CSS wins over the SVG stroke attribute, so these utilities recolour
@@ -452,6 +517,29 @@ describe("ConnectionStatus", () => {
             expect(spoke.classes()).toContain("dark:stroke-red-400");
             expect(spoke.classes()).toContain("dark:[stroke-opacity:0.7]");
         }
+    });
+
+    it("lightens the online and degraded spokes and the ring guides in dark mode", async () => {
+        const wrapper = await mountLoaded([fixture[0], fixture[2]]); // Zebra online, Maple degraded
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        const [online, degraded] = wrapper.findAll("[data-test='spoke']").map(s => s.classes());
+        expect(online).toEqual(expect.arrayContaining(["dark:stroke-emerald-400", "dark:[stroke-opacity:0.7]"]));
+        expect(degraded).toEqual(expect.arrayContaining(["dark:stroke-amber-400", "dark:[stroke-opacity:0.5]"]));
+        for (const ring of wrapper.findAll("[data-test='radial-ring']")) {
+            expect(ring.classes()).toContain("dark:stroke-gray-600");
+        }
+    });
+
+    it("keeps the project count of the trust above the hub clear of its dot", async () => {
+        const wrapper = await mountLoaded([fixture[0]]);
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        const svg = wrapper.find("[data-test='connection-radial-svg']");
+        const dot = svg.findAll("circle").find(c => c.attributes("fill") === "#ffffff" && c.attributes("r") !== "40")!;
+        const count = svg.findAll("text").find(t => t.text().includes("project"))!;
+        // The count's baseline sits well above the dot's top edge, leaving room for descenders.
+        expect(Number(count.attributes("y"))).toBeLessThanOrEqual(Number(dot.attributes("cy")) - Number(dot.attributes("r")) - 8);
     });
 
     it("renders the radial topology on the plain card surface with dark-visible labels", async () => {
