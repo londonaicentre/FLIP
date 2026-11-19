@@ -95,50 +95,49 @@ class FlipReleaseBuildArg(unittest.TestCase):
 
 
 class XnatBuildTriggers(unittest.TestCase):
-    """An image-context edit rebuilds that image; the dcm2niix command is baked into xnat-web."""
+    """The XNAT images publish only after "Trust - XNAT CI" passes (FLIP#880), so its push filter is
+    their path filter: an input it misses would never be rebuilt."""
 
-    workflows = ("web", "db", "nginx")
+    workflows = ("web", "db", "nginx", "dcm2niix", "export_mask")
+    suite = WORKFLOWS / "test_trust_xnat.yml"
 
-    def test_changed_paths_select_the_required_images(self) -> None:
-        cases: tuple[tuple[list[str], set[str]], ...] = (
-            (["trust/xnat/postgres/Dockerfile"], {"db", "web"}),
-            (["trust/xnat/postgres/XNAT.sql"], {"db", "web"}),
-            (["trust/xnat/postgres/guard-xnat-db-passwords.sh"], {"db", "web"}),
-            (["trust/xnat/scripts/xnat_db_migrate_dump.sh"], {"db", "web"}),
-            (["trust/xnat/nginx/custom-nginx.conf"], {"nginx", "web"}),
-            (["trust/xnat/xnat/Dockerfile"], {"web"}),
-            (["trust/xnat/xnat/config/anon_script.das"], {"web"}),
-            (["trust/xnat/.env"], {"web"}),
-            (["trust/xnat/artifacts.manifest"], {"web"}),
-            (["trust/xnat/dcm2niix/Dockerfile"], set()),
-            (
-                ["trust/xnat/dcm2niix/Dockerfile", "trust/xnat/xnat/config/dcm2niix_command.json"],
-                {"web"},
-            ),
-            (["flip-api/src/flip_api/main.py"], set()),
-        )
-        for changed_paths, expected in cases:
-            for changed_path in changed_paths:
-                assert (GITHUB_DIR.parent / changed_path).is_file(), changed_path
-            selected = set()
-            for image in self.workflows:
-                text = code_text(WORKFLOWS / f"docker_build_xnat_{image}.yml")
-                push = re.search(r"\n  push:\n((?: {4}[^\n]*\n|\n)+)", text)
+    def _suite_push_paths(self) -> list[str]:
+        push = re.search(r"\n  push:\n((?: {4}[^\n]*\n|\n)+)", code_text(self.suite))
+        assert push, self.suite.name
+        return re.findall(r"      - [\"\']([^\"\']+)[\"\']", push[1])
+
+    def test_builds_are_gated_on_the_xnat_suite(self) -> None:
+        name = re.search(r"^name: (.+)$", self.suite.read_text(), re.M)
+        assert name, self.suite.name
+        for image in self.workflows:
+            text = code_text(WORKFLOWS / f"docker_build_xnat_{image}.yml")
+            push = re.search(r"\n  push:\n((?: {4}[^\n]*\n)+)", text)
+            with self.subTest(image=image):
+                assert f'workflows: ["{name[1]}"]' in text, image
+                assert "github.event.workflow_run.conclusion == 'success'" in text, image
                 assert push, image
-                paths = re.search(r"\n    paths:\n((?:      - .*\n)+)", "\n" + push[1])
-                assert paths, image
-                patterns = re.findall(r"      - [\"\']([^\"\']+)[\"\']", paths[1])
-                # GitHub evaluates positive/negative path filters in order; any included
-                # changed file starts the workflow. Reuse the service gate's GitHub matcher.
-                for changed_path in changed_paths:
-                    included = False
-                    for pattern in patterns:
-                        if glob_to_regex(pattern.removeprefix("!")).match(changed_path):
-                            included = not pattern.startswith("!")
-                    if included:
-                        selected.add(image)
-            with self.subTest(changed_paths=changed_paths):
-                assert selected == expected, f"selected={selected}, expected={expected}"
+                assert "branches:" not in push[1], f"{image}: a branch push still publishes ungated"
+
+    def test_every_image_input_triggers_the_suite(self) -> None:
+        patterns = [glob_to_regex(p) for p in self._suite_push_paths()]
+        inputs = [
+            "trust/xnat/postgres/Dockerfile",
+            "trust/xnat/postgres/XNAT.sql",
+            "trust/xnat/scripts/xnat_db_migrate_dump.sh",
+            "trust/xnat/nginx/custom-nginx.conf",
+            "trust/xnat/xnat/Dockerfile",
+            "trust/xnat/xnat/config/dcm2niix_command.json",
+            "trust/xnat/.env",
+            "trust/xnat/artifacts.manifest",
+            "trust/xnat/dcm2niix/Dockerfile",
+            "trust/xnat/export-mask/Dockerfile",
+            *(f".github/workflows/docker_build_xnat_{image}.yml" for image in self.workflows),
+        ]
+        for changed_path in inputs:
+            with self.subTest(changed_path=changed_path):
+                assert (GITHUB_DIR.parent / changed_path).is_file(), changed_path
+                assert any(p.match(changed_path) for p in patterns), changed_path
+        assert not any(p.match("flip-api/src/flip_api/main.py") for p in patterns)
 
     def test_published_base_images_match_the_local_build(self) -> None:
         """CI builds from the workflow's build args, a local build and the upgrade verbs read .env.
@@ -155,19 +154,14 @@ class XnatBuildTriggers(unittest.TestCase):
                 assert published, image
                 assert local[1] == published[1], (local[1], published[1])
 
-    def test_own_workflow_edits_still_trigger_each_build(self) -> None:
+    def test_tags_name_the_tested_commit(self) -> None:
+        """Under workflow_run, github.sha is the default branch's head, not the commit built."""
         for image in self.workflows:
-            name = f"docker_build_xnat_{image}.yml"
-            text = code_text(WORKFLOWS / name)
+            tags = step_block(code_text(WORKFLOWS / f"docker_build_xnat_{image}.yml"), "Determine tags")
             with self.subTest(image=image):
-                assert f'      - ".github/workflows/{name}"' in text, image
-
-    def test_push_triggered_builds_do_not_read_workflow_run_context(self) -> None:
-        for image in self.workflows:
-            text = code_text(WORKFLOWS / f"docker_build_xnat_{image}.yml")
-            with self.subTest(image=image):
-                assert "workflow_run" not in text, image
-                assert "GH_WR_" not in text, image
+                assert 'SHA="$GH_WR_SHA"' in tags, image
+                assert 'REF_NAME="$GH_WR_BRANCH"' in tags, image
+                assert "${{ github.sha }}" not in tags.split("run: |", 1)[1], image
 
     def test_xnat_web_pulls_its_moving_base(self) -> None:
         """The Tomcat base tag moves: without --pull a runner holding an old copy would build on it."""
