@@ -132,6 +132,15 @@ class TestManifest(unittest.TestCase):
         with _expect(bundle.BundleError, "environment files"):
             bundle.select_files("trust/", root)
 
+    def test_a_public_defaults_env_file_ships_when_it_holds_no_secret(self):
+        root = _repo({"trust/xnat/.env": "XNAT_VERSION=1.9.1\nXNAT_SMTP_PASSWORD=\n"})
+        assert bundle.select_files("trust/xnat/", root) == ["trust/xnat/.env"]
+
+    def test_a_public_defaults_env_file_is_refused_once_a_secret_gains_a_value(self):
+        root = _repo({"trust/xnat/.env": "XNAT_VERSION=1.9.1\nXNAT_SMTP_PASSWORD=hunter2\n"})
+        with _expect(bundle.BundleError, "XNAT_SMTP_PASSWORD"):
+            bundle.select_files("trust/xnat/", root)
+
     def test_an_empty_manifest_is_refused(self):
         with _expect(bundle.BundleError, "lists nothing"):
             bundle.read_manifest("# nothing here\n\n")
@@ -239,11 +248,14 @@ class TestTheRealManifest(unittest.TestCase):
             "trust/deploy/scripts/onboard_onprem_trust.py",
             "trust/deploy/scripts/trust_kit_lib.py",
             "scripts/trust_upgrade_agent.py",
+            "trust/xnat/Makefile",
+            "trust/xnat/.env",
         ):
             assert required in self.files, f"{required} is called by the upgrade path"
 
     def test_it_ships_no_kit_file_and_no_private_key(self):
-        assert [f for f in self.files if Path(f).name.startswith(".env")] == []
+        envs = [f for f in self.files if Path(f).name.startswith(".env")]
+        assert set(envs) <= bundle.PUBLIC_ENV_FILES, envs
         assert [f for f in self.files if f.endswith((".pem", ".key"))] == []
 
     def test_it_does_not_ship_the_hub_or_the_frontend(self):

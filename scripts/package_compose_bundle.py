@@ -27,7 +27,9 @@ name of the pattern — not on a site.
 Two things the builder refuses outright:
 
 * any ``.env*`` file, because the bundle is downloaded by a trust and published publicly, and a
-  kit file is the trust's API key;
+  kit file is the trust's API key. The one exception is ``PUBLIC_ENV_FILES``: tracked, public
+  defaults the upgrade needs (``trust/xnat/.env`` carries the XNAT version, heap and paths), and
+  even those are refused if a secret-named key ever gains a value;
 * a manifest pattern that matches nothing, because a renamed file must be a packaging failure
   rather than a silent hole in the artifact.
 
@@ -54,6 +56,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = REPO_ROOT / "deploy" / "compose.bundle.manifest"
 BUNDLE_NAME = "flip-compose-bundle"
 MANIFEST_INSIDE = "BUNDLE.json"
+# Tracked ``.env`` files that hold public defaults, not credentials. trust/xnat/Makefile includes
+# trust/xnat/.env for XNAT_VERSION, heap and paths; without it a site would upgrade XNAT with blanks.
+PUBLIC_ENV_FILES = frozenset({"trust/xnat/.env"})
+_SECRET_KEY = re.compile(r"(PASSWORD|SECRET|TOKEN|API_KEY|PRIVATE)", re.IGNORECASE)
 
 _VERSION = re.compile(r"^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$")
 
@@ -151,11 +157,29 @@ def select_files(manifest_text: str, repo_root: Path = REPO_ROOT) -> list[str]:
 
     # A kit file is a trust's API key. It is gitignored, so this can only trip on a manifest entry
     # that starts selecting it -- which is exactly the accident worth failing the release for.
-    secrets = sorted(path for path in chosen if Path(path).name.startswith(".env"))
+    secrets = sorted(path for path in chosen if Path(path).name.startswith(".env") and path not in PUBLIC_ENV_FILES)
     if secrets:
         raise BundleError(f"the bundle would ship environment files: {', '.join(secrets)}")
+    for path in sorted(chosen & PUBLIC_ENV_FILES):
+        filled = _filled_secret_keys((repo_root / path).read_text())
+        if filled:
+            raise BundleError(f"{path} is shipped as public defaults but sets {', '.join(filled)}")
 
     return sorted(chosen)
+
+
+def _filled_secret_keys(text: str) -> list[str]:
+    """Secret-named keys that have a value in an env file. A public defaults file must have none."""
+    filled = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.removeprefix("export ").strip()
+        if _SECRET_KEY.search(key) and value.strip().strip("'\"").strip():
+            filled.append(key)
+    return filled
 
 
 def _tracked_files(repo_root: Path) -> list[str]:
