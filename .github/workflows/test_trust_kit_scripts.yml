@@ -76,6 +76,8 @@ on:
       - ".github/workflows/docker_build_*.yml"
       - ".github/workflows/fl-docker-build-*.yml"
       - ".github/workflows/release.yml"
+      # test_install_graphviz.py scans every workflow for a graphviz install outside the action (FLIP#1988).
+      - ".github/workflows/*.yml"
       - ".github/actions/**"
       - ".github/tests/**"
       - "tests/**"
