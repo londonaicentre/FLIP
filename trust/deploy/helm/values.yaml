@@ -524,8 +524,9 @@ flClient:
       #   predates studies) mounts nothing and streams.
       # - archive: its job pods mount that project's own directory of XNAT's archive, read-only, and
       #   read the studies in place (FLIP#1857): no copy in imaging-api's cache or in the pod. Needs this
-      #   chart's XNAT. The job pods attach XNAT's volume, so on a ReadWriteOnce one they run on
-      #   xnat-web's node; a separate GPU pool needs a ReadWriteMany one. Opt-in. The mount shows
+      #   chart's XNAT. Only a project that mounts its directory attaches XNAT's volume, so on a
+      #   ReadWriteOnce one its job pods run on xnat-web's node (a separate GPU pool needs a
+      #   ReadWriteMany one); a job that streams runs anywhere, xnat-web up or not. Opt-in. The mount shows
       #   every session XNAT holds for the project, so a patient who leaves its approved cohort stays
       #   readable there until imaging-api removes their session from XNAT, after
       #   imagingApi.env.COHORT_REMOVAL_GRACE_HOURS (FLIP#1860; the chart refuses archive with

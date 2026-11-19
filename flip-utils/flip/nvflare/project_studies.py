@@ -23,8 +23,10 @@ it prints::
 
 A project's entry is the default study's job image and pod template and, where the template declares the shared
 images volume, a read-only mount of the project's own folder of it. A job pod therefore sees only its own
-project's studies, at the paths imaging-api returns. Where the template declares XNAT's volume instead, the mount
-is the project's own directory of XNAT's archive, read-only (FLIP#1857), and the job reads its studies in place.
+project's studies, at the paths imaging-api returns. Where the chart rendered an archive patch beside the template
+(``jobPods.images: archive``, FLIP#1857), a project whose sessions XNAT has archived gets the patch (XNAT's volume,
+group and placement) and a read-only mount of its own directory of XNAT's archive, and its jobs read their studies in
+place. Every other job pod, a tabular project's among them, carries nothing of XNAT's and runs on any node.
 
 The template itself mounts no images, so a job outside a project's study never sees the cache: one in the default
 study streams its studies, and a study with no entry has no job image, so NVFLARE does not start its job.
@@ -42,11 +44,11 @@ import yaml
 
 from flip.constants import FlipConstants
 from flip.constants.flip_constants import XNAT_ARCHIVE_DIR
-from flip.nvflare.k8s_job_mode import STUDY_RUNTIME_DEFAULT
+from flip.nvflare.k8s_job_mode import ARCHIVE_POD_PATCH, STUDY_RUNTIME_DEFAULT
 
 # The chart's name for the shared images volume in the job-pod template.
 IMAGES_VOLUME = "images"
-# ...and for XNAT's own volume, whose archive/<XNAT project> is the project's directory.
+# ...and for XNAT's own volume, declared by the archive patch, whose archive/<XNAT project> is the project's directory.
 ARCHIVE_VOLUME = "xnat-archive"
 IMAGES_TRANSPORT = "IMAGES_TRANSPORT"
 _REQUEST_TIMEOUT = 30
@@ -120,17 +122,32 @@ def xnat_project(project: str) -> str | None:
         return None
 
 
-def mount_project_archive(pod: dict[str, Any], project: str) -> None:
-    """Mount the project's own directory of XNAT's archive, read-only, in a pod that declares XNAT's volume.
+def _apply_patch(pod: dict[str, Any], patch: dict[str, Any]) -> None:
+    """Add the patch's ``spec`` to the pod's: its lists (volumes) appended, its objects (affinity...) merged."""
+    spec = pod["spec"]
+    for key, value in patch["spec"].items():
+        if isinstance(value, list):
+            spec[key] = [*spec.get(key, []), *value]
+        elif isinstance(value, dict):
+            spec[key] = {**spec.get(key, {}), **value}
+        else:
+            spec[key] = value
 
-    Only once the project has archived sessions: the directory does not exist before, and a pod whose ``subPath``
-    is missing on a read-only volume does not start. Until then the pod streams, as the template has it.
+
+def mount_project_archive(pod: dict[str, Any], project: str, patch: dict[str, Any] | None) -> None:
+    """Mount the project's own directory of XNAT's archive, read-only, where the chart rendered an archive patch.
+
+    The patch (XNAT's volume, its group, and on a ReadWriteOnce volume a place on xnat-web's node) is applied here,
+    to this project's pod only, so a job that streams never waits for XNAT to be scheduled. Only once the project has
+    archived sessions: the directory does not exist before, and a pod whose ``subPath`` is missing on a read-only
+    volume does not start. Until then the pod streams, as the template has it.
     """
-    if not any(volume["name"] == ARCHIVE_VOLUME for volume in pod["spec"].get("volumes", [])):
+    if patch is None:
         return
     xnat_id = xnat_project(project)
     if xnat_id is None:
         return
+    _apply_patch(pod, patch)
     mount = {
         "name": ARCHIVE_VOLUME,
         "mountPath": XNAT_ARCHIVE_DIR,
@@ -156,8 +173,10 @@ def project_entry(local_dir: Path, default: dict[str, Any], project: str) -> dic
     entry: dict[str, Any] = {"container": default["container"]}
     if "pod_template" in default:
         pod = yaml.safe_load((local_dir / default["pod_template"]).read_text(encoding="utf-8"))
+        patch_file = local_dir / ARCHIVE_POD_PATCH
+        patch = yaml.safe_load(patch_file.read_text(encoding="utf-8")) if patch_file.is_file() else None
         mount_project_images(pod, project)
-        mount_project_archive(pod, project)
+        mount_project_archive(pod, project, patch)
         entry["pod_template"] = pod
     return entry
 

@@ -233,6 +233,22 @@ def test_the_entrypoint_switches_a_staged_kit(tmp_path):
     assert (local / "pod_specs" / "job-pod.yaml").read_text() == template.read_text()
 
 
+def test_the_charts_archive_patch_is_copied_beside_the_template_and_removed_when_it_goes(tmp_path):
+    """jobPods.images: archive renders it beside the template (FLIP#1857); another mode leaves none behind."""
+    local = _kit(tmp_path)
+    template = tmp_path / "job-pod.yaml"
+    template.write_text("apiVersion: v1\nkind: Pod\n")
+    patch = tmp_path / "job-pod-archive.yaml"
+    patch.write_text("spec:\n  volumes: []\n")
+
+    assert main([str(local)], env={**ENV, "FL_K8S_POD_TEMPLATE": str(template)}) == 0
+    assert (local / "pod_specs" / "job-pod-archive.yaml").read_text() == patch.read_text()
+
+    patch.unlink()
+    assert main([str(local)], env={**ENV, "FL_K8S_POD_TEMPLATE": str(template)}) == 0
+    assert not (local / "pod_specs" / "job-pod-archive.yaml").exists()
+
+
 def test_the_entrypoint_reads_the_kit_default_when_nothing_was_rendered(tmp_path):
     local = _kit(tmp_path, resources_name="resources.json.default")
 

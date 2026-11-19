@@ -21,13 +21,21 @@ import requests
 import yaml
 from nvflare.app_opt.job_launcher.study_runtime import load_study_runtime_file, resolve_study_runtime
 
-from flip.nvflare.k8s_job_mode import POD_TEMPLATE, STUDY_RUNTIME, STUDY_RUNTIME_DEFAULT
+from flip.nvflare.k8s_job_mode import ARCHIVE_POD_PATCH, POD_TEMPLATE, STUDY_RUNTIME, STUDY_RUNTIME_DEFAULT
 from flip.nvflare.project_studies import study_runtime
 
 PROJECT = "8b2e9d6e-5a53-4f2e-9c37-2c8f4f0f2d11"
 XNAT_PROJECT = "7e2cc411-ba93-48af-8474-79e56c266013"
 IMAGE = "ghcr.io/londonaicentre/flare-fl-client:stag"
 STREAM = {"name": "IMAGES_TRANSPORT", "value": "stream"}
+ARCHIVE_VOLUME = {"name": "xnat-archive", "persistentVolumeClaim": {"claimName": "xnat-web", "readOnly": True}}
+XNAT_WEB_NODE = {
+    "podAffinity": {
+        "requiredDuringSchedulingIgnoredDuringExecution": [
+            {"labelSelector": {"matchLabels": {"app.kubernetes.io/component": "xnat-web"}}, "topologyKey": "h"}
+        ]
+    }
+}
 
 
 def add_project_study(local: Path, project: str) -> None:
@@ -37,16 +45,21 @@ def add_project_study(local: Path, project: str) -> None:
 
 @pytest.fixture
 def local(tmp_path) -> Path:
-    """A switched kit's ``local/`` with the chart's template for ``jobPods.images: archive``."""
+    """A switched kit's ``local/`` with the chart's template and archive patch for ``jobPods.images: archive``."""
     local = tmp_path / "local"
     (local / "pod_specs").mkdir(parents=True)
     job = {"name": "nvflare_job", "env": [STREAM], "volumeMounts": [{"name": "dshm", "mountPath": "/dev/shm"}]}
-    volumes = [
-        {"name": "dshm", "emptyDir": {"medium": "Memory"}},
-        {"name": "xnat-archive", "persistentVolumeClaim": {"claimName": "xnat-web", "readOnly": True}},
-    ]
+    volumes = [{"name": "dshm", "emptyDir": {"medium": "Memory"}}]
     pod = {"apiVersion": "v1", "kind": "Pod", "spec": {"containers": [job], "volumes": volumes}}
     (local / POD_TEMPLATE).write_text(yaml.safe_dump(pod))
+    patch = {
+        "spec": {
+            "securityContext": {"supplementalGroups": [1001]},
+            "affinity": XNAT_WEB_NODE,
+            "volumes": [ARCHIVE_VOLUME],
+        }
+    }
+    (local / ARCHIVE_POD_PATCH).write_text(yaml.safe_dump(patch))
     default = {"container": {"image": IMAGE}, "pod_template": POD_TEMPLATE}
     (local / STUDY_RUNTIME_DEFAULT).write_text(json.dumps({"format_version": 2, "studies": {"default": default}}))
     return local
@@ -72,14 +85,34 @@ def imaging_api():
         yield api
 
 
+def _pod(local: Path) -> dict:
+    return json.loads((local / STUDY_RUNTIME).read_text())["studies"][PROJECT]["pod_template"]
+
+
 def _job(local: Path) -> dict:
-    [job] = json.loads((local / STUDY_RUNTIME).read_text())["studies"][PROJECT]["pod_template"]["spec"]["containers"]
+    [job] = _pod(local)["spec"]["containers"]
     return job
+
+
+def _assert_streams(local: Path) -> None:
+    """The pod streams and carries nothing of XNAT's, so it runs on any node while xnat-web is down."""
+    pod = _pod(local)
+    [job] = pod["spec"]["containers"]
+    assert job["volumeMounts"] == [{"name": "dshm", "mountPath": "/dev/shm"}]
+    assert job["env"] == [STREAM]
+    assert [v["name"] for v in pod["spec"]["volumes"]] == ["dshm"]
+    assert "affinity" not in pod["spec"]
+    assert "securityContext" not in pod["spec"]
 
 
 def test_a_projects_job_pods_mount_only_that_projects_archive_directory_read_only(local, imaging_api):
     add_project_study(local, PROJECT)
 
+    pod = _pod(local)
+    assert pod["spec"]["volumes"] == [{"name": "dshm", "emptyDir": {"medium": "Memory"}}, ARCHIVE_VOLUME]
+    # XNAT's group reads the archive; on a ReadWriteOnce volume the pod lands on xnat-web's node.
+    assert pod["spec"]["securityContext"] == {"supplementalGroups": [1001]}
+    assert pod["spec"]["affinity"] == XNAT_WEB_NODE
     job = _job(local)
     assert job["volumeMounts"] == [
         {"name": "dshm", "mountPath": "/dev/shm"},
@@ -127,9 +160,7 @@ def test_without_one_archived_xnat_project_the_pod_mounts_nothing_and_streams(
 
     add_project_study(local, PROJECT)
 
-    job = _job(local)
-    assert job["volumeMounts"] == [{"name": "dshm", "mountPath": "/dev/shm"}]
-    assert job["env"] == [STREAM]
+    _assert_streams(local)
 
 
 def test_the_operator_is_told_why_a_project_streams(local, imaging_api, capsys):
@@ -154,9 +185,7 @@ def test_the_pod_streams_when_imaging_api_answers_with_an_error_or_an_unexpected
     with patch("flip.nvflare.project_studies.requests.get", return_value=reply):
         add_project_study(local, PROJECT)
 
-    job = _job(local)
-    assert job["volumeMounts"] == [{"name": "dshm", "mountPath": "/dev/shm"}]
-    assert job["env"] == [STREAM]
+    _assert_streams(local)
 
 
 def test_the_pod_streams_when_imaging_api_cannot_answer(local, imaging_api):
@@ -164,6 +193,14 @@ def test_the_pod_streams_when_imaging_api_cannot_answer(local, imaging_api):
     with patch("flip.nvflare.project_studies.requests.get", side_effect=requests.ReadTimeout("slow")):
         add_project_study(local, PROJECT)
 
-    job = _job(local)
-    assert job["volumeMounts"] == [{"name": "dshm", "mountPath": "/dev/shm"}]
-    assert job["env"] == [STREAM]
+    _assert_streams(local)
+
+
+def test_without_the_charts_archive_patch_nothing_is_asked_of_imaging_api_and_the_pod_streams(local, imaging_api):
+    """images: project or stream renders no patch: the sync does not look for an XNAT archive."""
+    (local / ARCHIVE_POD_PATCH).unlink()
+
+    add_project_study(local, PROJECT)
+
+    _assert_streams(local)
+    assert imaging_api.calls == []

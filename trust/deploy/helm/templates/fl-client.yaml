@@ -117,7 +117,7 @@ spec:
         {{- if $jobPods }}
         # The job pod template is copied into the kit by fl-client-init, so a change to it must roll the
         # parent.
-        checksum/fl-job-pod: {{ include "flip-trust.flJobPod" . | sha256sum }}
+        checksum/fl-job-pod: {{ print (include "flip-trust.flJobPod" .) (include "flip-trust.flJobPodArchive" .) | sha256sum }}
         {{- end }}
         {{- if $governed }}
         # Editing the client's section of the governance document must roll this pod: a

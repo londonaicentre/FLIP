@@ -34,13 +34,11 @@ inside that scratch directory, where the job then reads by path (flip.nvflare.pr
 A job outside a project's study therefore never sees the cache. Declaring the volume makes the pod attach
 it, so it follows the fl-client's placement rule.
 
-With images: archive the volume it declares is XNAT's own, read-only, and the study mounts the project's
-directory of XNAT's archive instead (FLIP#1857): the job reads its studies in place, through XNAT's group,
-and nothing is copied. A ReadWriteOnce XNAT volume keeps the pod on xnat-web's node.
+With images: archive the template declares nothing of XNAT's: flip-trust.flJobPodArchive below holds it, and
+only a project whose study mounts its directory of XNAT's archive gets it (FLIP#1857).
 */}}
 {{- define "flip-trust.flJobPod" -}}
 {{- $projectImages := eq .Values.flClient.nvflare.jobPods.images "project" -}}
-{{- $archive := eq .Values.flClient.nvflare.jobPods.images "archive" -}}
 apiVersion: v1
 kind: Pod
 metadata:
@@ -92,21 +90,6 @@ spec:
     {{- . | nindent 4 }}
   {{- end }}
   {{- end }}
-  {{- if $archive }}
-  securityContext:
-    # XNAT's group: its archive is 0750/0640, owned by 1001:1001. Never fsGroup, which would re-own it.
-    supplementalGroups: [1001]
-  {{- if eq .Values.xnat.web.persistence.accessMode "ReadWriteOnce" }}
-  affinity:
-    podAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        - labelSelector:
-            matchLabels:
-              {{- include "flip-trust.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: xnat-web
-          topologyKey: kubernetes.io/hostname
-  {{- end }}
-  {{- end }}
   containers:
     - name: nvflare_job
       imagePullPolicy: {{ .Values.flClient.image.pullPolicy }}
@@ -145,18 +128,42 @@ spec:
       persistentVolumeClaim:
         claimName: {{ include "flip-trust.fullname" . }}-shared-images
     {{- end }}
-    {{- if $archive }}
-    - name: xnat-archive
-      persistentVolumeClaim:
-        claimName: {{ include "flip-trust.fullname" . }}-xnat-web
-        readOnly: true
-    {{- end }}
     - name: dshm
       emptyDir:
         medium: Memory
         sizeLimit: {{ .Values.flClient.shmSize }}
     - name: images-scratch
       emptyDir: {}
+{{- end }}
+
+
+{{- /*
+What a job pod adds to the template when its project's study mounts the project's directory of XNAT's
+archive (images: archive, FLIP#1857), in the ConfigMap beside the template: flip.nvflare.project_studies
+applies it to that project's entry with the mount, and to no other. XNAT's volume, read-only; XNAT's group,
+since its archive is 0750/0640, owned by 1001:1001 (never fsGroup, which would re-own it); and on a
+ReadWriteOnce XNAT volume a place on xnat-web's node. A job that streams, a tabular project's or one whose
+imaging is not archived yet, therefore never waits for xnat-web to be scheduled.
+*/}}
+{{- define "flip-trust.flJobPodArchive" -}}
+spec:
+  securityContext:
+    supplementalGroups: [1001]
+  {{- if eq .Values.xnat.web.persistence.accessMode "ReadWriteOnce" }}
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              {{- include "flip-trust.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: xnat-web
+          topologyKey: kubernetes.io/hostname
+  {{- end }}
+  volumes:
+    - name: xnat-archive
+      persistentVolumeClaim:
+        claimName: {{ include "flip-trust.fullname" . }}-xnat-web
+        readOnly: true
 {{- end }}
 
 {{- if and .Values.flClient.enabled (eq .Values.flBackend "nvflare") .Values.flClient.nvflare.jobPods.enabled }}
@@ -232,6 +239,10 @@ metadata:
 data:
   job-pod.yaml: |
     {{- include "flip-trust.flJobPod" . | nindent 4 }}
+  {{- if eq .Values.flClient.nvflare.jobPods.images "archive" }}
+  job-pod-archive.yaml: |
+    {{- include "flip-trust.flJobPodArchive" . | nindent 4 }}
+  {{- end }}
 {{- if and .Values.networkPolicies.enabled .Values.flClient.nvflare.jobPods.apiServer.cidrs }}
 ---
 # The launcher calls the Kubernetes API from the parent. NetworkPolicy matches the API server's real

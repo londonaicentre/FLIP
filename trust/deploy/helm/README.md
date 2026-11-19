@@ -738,10 +738,13 @@ Prerequisites and trade-offs:
     (`archive/<XNAT project>` of XNAT's volume), read-only, so a job reads its studies in place with no copy
     in imaging-api's cache or in the pod (FLIP#1857). imaging-api's `/layout` route names each file's place in
     the archive and in the layout a download has, and `flip.get_by_accession_number` builds that layout as
-    links into the mount. It needs this chart's XNAT on a persistent volume (the chart refuses otherwise), and
-    the job pods join XNAT's group (1001) to read it. On a ReadWriteOnce XNAT volume they run on xnat-web's
-    node, and a separate GPU pool needs a ReadWriteMany class. A project with nothing archived yet, and any
-    assessor resource, is streamed. **The mount shows every session XNAT holds for the project.** imaging-api
+    links into the mount. It needs this chart's XNAT on a persistent volume (the chart refuses otherwise). The
+    base template carries nothing of XNAT's: the chart renders an archive patch beside it
+    (`pod_specs/job-pod-archive.yaml`: XNAT's volume, XNAT's group 1001, and on a ReadWriteOnce XNAT volume a
+    place on xnat-web's node), and the sync applies it only to a project whose archive directory it mounts. Such
+    a project's job pods therefore need xnat-web scheduled, and a separate GPU pool needs a ReadWriteMany class;
+    every other job, a tabular project's or one that streams, runs on any node, xnat-web up or not. A project
+    with nothing archived yet, and any assessor resource, is streamed. **The mount shows every session XNAT holds for the project.** imaging-api
     refuses `/layout` for a patient who has left the approved cohort, but their files stay readable in the
     mount until imaging-api removes the session from XNAT: after `COHORT_REMOVAL_GRACE_HOURS` (24 h by
     default, counted again from an imaging-api restart), and not while data-access-api cannot return the
