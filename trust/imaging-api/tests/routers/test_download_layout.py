@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from imaging_api.utils.exceptions import NotFoundError
+from imaging_api.utils.exceptions import NotFoundError, XnatFetchError
 
 _REQUEST_BODY = {"encrypted_central_hub_project_id": "encrypted-id", "accession_id": "ACC123"}
 _FILE = {
@@ -54,14 +54,26 @@ def test_layout_answers_404_for_a_study_xnat_does_not_have(client):
     assert response.status_code == 404
 
 
-def test_layout_answers_500_when_xnat_cannot_be_listed(client):
+@pytest.mark.parametrize("error", [RuntimeError("boom"), XnatFetchError("XNAT lists a file outside ACC123's scans")])
+def test_layout_answers_500_when_xnat_cannot_be_listed_or_lists_a_file_it_should_not(client, error):
     with (
         patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),
-        patch("imaging_api.routers.download.study_layout", side_effect=RuntimeError("boom")),
+        patch("imaging_api.routers.download.study_layout", side_effect=error),
     ):
         response = client.post("/download/images/net1/layout", json=_REQUEST_BODY)
 
     assert response.status_code == 500
+    assert "files" not in response.json()
+
+
+def test_layout_answers_400_for_an_invalid_request(client):
+    with (
+        patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),
+        patch("imaging_api.routers.download.study_layout", side_effect=ValueError("bad experiment")),
+    ):
+        response = client.post("/download/images/net1/layout", json=_REQUEST_BODY)
+
+    assert response.status_code == 400
 
 
 def test_layout_refuses_an_accession_that_is_not_one_path_segment(client):

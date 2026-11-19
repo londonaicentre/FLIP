@@ -16,7 +16,7 @@ For a client that mounts its project's directory of XNAT's archive instead of re
 in place and lays them out as a download does. The two layouts differ, and the scan's type, part of the download's
 folder name, is in XNAT's database only:
 
-- archive:  ``arc001/<session>/SCANS/<scan id>/<resource>/<file>``, under ``<archive>/<project>/``
+- archive:  ``<arc, usually arc001>/<session>/SCANS/<scan id>/<resource>/<file>``, under ``<archive>/<project>/``
 - download: ``<session>/scans/<scan id>-<type>/resources/<resource>/files/<file>``
 """
 
@@ -28,6 +28,7 @@ import requests
 
 from imaging_api.services.projects import get_experiment, get_experiment_field, get_project_from_central_hub_project_id
 from imaging_api.utils.exceptions import NotFoundError, XnatFetchError
+from imaging_api.utils.logger import logger
 from imaging_api.utils.xnat_url import XNAT_REQUEST_TIMEOUT, xnat_url
 
 _NOT_A_WORD_CHARACTER = re.compile(r"\W", re.ASCII)  # Java's \W, which XNAT replaces with "_"
@@ -85,12 +86,18 @@ def study_layout(
     if response.status_code != 200:
         raise XnatFetchError(f"XNAT file listing failed: {response.status_code} - {response.text[:200]}")
 
+    try:
+        rows = response.json()["ResultSet"]["Result"]
+    except (ValueError, KeyError, TypeError) as e:  # an HTML login page on a 200 is an expired XNAT session
+        raise XnatFetchError(f"XNAT's file listing is not the JSON expected: {type(e).__name__}: {e}") from e
+
     files = []
-    for row in response.json()["ResultSet"]["Result"]:
+    for row in rows:
         archive = str(row["absolutePath"]).partition(f"/{project_id}/")[2]
         parts = PurePosixPath(archive).parts
         # <arc>/<session>/SCANS/<scan id>/<resource directory>/<file, which may be nested>
         if len(parts) < 6 or parts[1] != accession_id or parts[2] != "SCANS" or ".." in parts:
+            logger.warning(f"XNAT lists {row['absolutePath']} for {accession_id}, outside its scans")
             raise XnatFetchError(f"XNAT lists a file outside {accession_id}'s scans in project {project_id}")
         scan_id, name = parts[3], "/".join(parts[5:])
         folder = scan_folder(scan_id, scan_types.get(scan_id, ""))

@@ -148,3 +148,11 @@ def test_a_failed_listing_is_an_xnat_error(xnat):
 
     with pytest.raises(XnatFetchError, match="500"):
         study_layout("hub-project", "FAK03765414", "NIFTI", {})
+
+
+def test_a_listing_that_is_not_xnats_json_is_an_xnat_error(xnat):
+    """An expired XNAT session answers 200 with its login page."""
+    xnat.get.return_value = MagicMock(status_code=200, json=MagicMock(side_effect=ValueError("Expecting value")))
+
+    with pytest.raises(XnatFetchError, match="not the JSON expected"):
+        study_layout("hub-project", "FAK03765414", "NIFTI", {})

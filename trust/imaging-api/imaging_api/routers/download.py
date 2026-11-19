@@ -215,8 +215,9 @@ async def study_layout_by_accession_number(
         StudyLayoutResponse: The study's files.
 
     Raises:
-        HTTPException: 404 if the project, the study or its files are not in XNAT or the study has left the
-            project's approved cohort, 503 if that cohort cannot be read, 500 for any other failure.
+        HTTPException: 400 for a project id that does not open or an invalid request, 404 if the project, the study
+            or its files are not in XNAT or the study has left the project's approved cohort, 503 if that cohort
+            cannot be read, 500 for any other failure.
     """
     central_hub_project_id = open_project_id(request_data.encrypted_central_hub_project_id)
     await require_served(central_hub_project_id, request_data.accession_id)
@@ -226,7 +227,11 @@ async def study_layout_by_accession_number(
         )
         return StudyLayoutResponse.model_validate({"files": files})
     except NotFoundError as e:
+        logger.warning(f"No layout for {request_data.accession_id} on {net_id}: {e}")
         raise HTTPException(status_code=404, detail=f"Resource not found: {e}")
+    except ValueError as e:
+        logger.warning(f"Invalid layout request for {request_data.accession_id} on {net_id}: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid layout request: {e}")
     except Exception as e:
-        logger.error(f"Failed to list the study's files: {e}")
+        logger.exception(f"Failed to list the files of {request_data.accession_id} on {net_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to list the study's files: {e}")

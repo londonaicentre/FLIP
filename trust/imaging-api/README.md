@@ -129,7 +129,7 @@ directory.
 `POST /download/images/{net_id}/layout` takes the same body and `resource_type`, and copies nothing: it answers
 with `{"files": [{"path", "archive"}]}`, one entry per scan file a download would hold. `path` is the file's place
 in the download layout above and `archive` its place in the project's own directory of XNAT's archive
-(`arc001/<accession_id>/SCANS/<scan id>/<resource>/…`). It is for a client that mounts that directory read-only, an
+(`<arc, usually arc001>/<accession_id>/SCANS/<scan id>/<resource>/…`). It is for a client that mounts that directory read-only, an
 NVFLARE job pod with `flClient.nvflare.jobPods.images: archive` (FLIP#1857): flip-utils uses it when
 `IMAGES_TRANSPORT=archive` and lays the study out as links into the mount. The scan's folder is named as XNAT
 names it in the zip, `<scan id>-<type>` with every character outside `[A-Za-z0-9_]` of the type replaced by `_`
