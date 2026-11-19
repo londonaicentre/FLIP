@@ -21,18 +21,20 @@ import { issuedKit } from "@/utils/issued-trust-kit";
 
 import TrustKitSection from "../TrustKitSection.vue";
 
-const { swrvKeys, swrvKeyFns } = vi.hoisted(() => ({
+const { swrvKeys, swrvKeyFns, swrvFetchers } = vi.hoisted(() => ({
     swrvKeys: [] as (string | null)[],
-    swrvKeyFns: [] as (() => string | null)[]
+    swrvKeyFns: [] as (() => string | null)[],
+    swrvFetchers: [] as (() => unknown)[]
 }));
 const statusRef = ref<ITrustKitStatus | undefined>(undefined);
 const statusError = ref<unknown>(null);
 const mutateStatus = vi.fn();
 
 vi.mock("swrv", () => ({
-    default: (keyFn: () => string | null) => {
+    default: (keyFn: () => string | null, fetcher: () => unknown) => {
         swrvKeys.push(keyFn());
         swrvKeyFns.push(keyFn);
+        swrvFetchers.push(fetcher);
 
         return {
             data: statusRef,
@@ -44,9 +46,11 @@ vi.mock("swrv", () => ({
 
 const mockDownload = vi.fn();
 const mockRotate = vi.fn();
+const mockGetStatus = vi.fn();
 vi.mock("@/services/trust-service", async (importOriginal) => ({
     ...await importOriginal<typeof import("@/services/trust-service")>(),
     downloadTrustKit: (...args: unknown[]) => mockDownload(...args),
+    getTrustKitStatus: (...args: unknown[]) => mockGetStatus(...args),
     rotateTrustKit: (...args: unknown[]) => mockRotate(...args)
 }));
 
@@ -100,6 +104,7 @@ const stubs = {
             <h3>{{ title }}</h3>
             <p data-test="confirm-text"><slot name="confirmation">{{ confirmationText }}</slot></p>
             <button data-test="confirm-modal-btn" @click="continueAction">{{ continueButtonText }}</button>
+            <button data-test="cancel-modal-btn" @click="$emit('close-modal')">Cancel</button>
         </div>`
     }
 };
@@ -155,6 +160,7 @@ describe("TrustKitSection", () => {
         vi.clearAllMocks();
         swrvKeys.length = 0;
         swrvKeyFns.length = 0;
+        swrvFetchers.length = 0;
         statusRef.value = status();
         statusError.value = null;
         issuedKit.value = null;
@@ -175,6 +181,8 @@ describe("TrustKitSection", () => {
 
             expect(wrapper.find("[data-test='trust-kit-section']").exists()).toBe(true);
             expect(swrvKeys).toEqual(["/trust/t1/kit"]);
+            swrvFetchers[0]();
+            expect(mockGetStatus).toHaveBeenCalledWith("t1");
         });
 
         it("shows to a hub admin", () => {
@@ -388,6 +396,19 @@ describe("TrustKitSection", () => {
             expect(mutateStatus).toHaveBeenCalled();
         });
     });
+
+    it.each(["kit-download-btn", "kit-rotate-btn"])("%s: Cancel closes the dialog and sends nothing", async (button) => {
+        statusRef.value = issued();
+        const wrapper = mountSection();
+        await wrapper.find(`[data-test='${button}']`).trigger("click");
+
+        await wrapper.find("[data-test='cancel-modal-btn']").trigger("click");
+
+        expect(wrapper.find("[data-test='confirm-modal']").exists()).toBe(false);
+        expect(mockDownload).not.toHaveBeenCalled();
+        expect(mockRotate).not.toHaveBeenCalled();
+    });
+
     describe("compact (the Connection Status table cell)", () => {
         it("is the download button alone, and asks the hub nothing until it is clicked", async () => {
             const wrapper = mountSection(HUB_ADMIN, TRUST, true);

@@ -272,6 +272,14 @@ def test_a_hub_shared_value_the_installer_would_refuse_is_not_handed_out(flare_k
         _build(_registered())
 
 
+def test_a_hub_with_no_fl_net_hands_out_no_kit(flare_kits, hub, monkeypatch):
+    hub(str(flare_kits))
+    monkeypatch.setattr(get_settings(), "NET_ENDPOINTS", {})
+
+    with pytest.raises(TrustKitError, match="runs no FL net"):
+        _build(_registered())
+
+
 def test_a_flower_slot_without_its_key_is_not_handed_out(flower_kits, hub):
     hub(str(flower_kits), FLBackend.FLOWER)
 
