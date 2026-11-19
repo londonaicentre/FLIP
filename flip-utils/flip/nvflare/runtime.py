@@ -37,6 +37,7 @@ from typing import Any
 
 from nvflare.apis.fl_constant import FLContextKey
 from nvflare.apis.fl_context import FLContext
+from nvflare.apis.job_def import JobMetaKey
 
 from flip.utils.utils import Utils
 
@@ -47,8 +48,8 @@ FLIP_MODEL_ID_CONFIG_KEY = "FLIP_MODEL_ID"
 FLIP_PARTICIPATING_CLIENTS_KEY = "participating_clients"
 
 
-def get_job_custom_props(fl_ctx: FLContext) -> dict[str, Any]:
-    """Return the ``custom_props`` dict from the job's ``meta.json``, or ``{}`` if absent.
+def _get_job_meta(fl_ctx: FLContext) -> dict[str, Any]:
+    """Return the job's ``meta.json``, or ``{}`` if absent.
 
     FLARE sets ``FLContextKey.JOB_META`` with ``sticky=False``, so it's only on the
     fl_ctx during the component-build phase — gone by the time controllers fire events.
@@ -57,10 +58,25 @@ def get_job_custom_props(fl_ctx: FLContext) -> dict[str, Any]:
     meta = fl_ctx.get_prop(FLContextKey.JOB_META, None)
     if not isinstance(meta, dict):
         meta = _load_meta_from_workspace(fl_ctx)
-    if not isinstance(meta, dict):
-        return {}
-    props = meta.get(FLIP_CUSTOM_PROPS_KEY, {})
+    return meta if isinstance(meta, dict) else {}
+
+
+def get_job_custom_props(fl_ctx: FLContext) -> dict[str, Any]:
+    """Return the ``custom_props`` dict from the job's ``meta.json``, or ``{}`` if absent."""
+    props = _get_job_meta(fl_ctx).get(FLIP_CUSTOM_PROPS_KEY, {})
     return props if isinstance(props, dict) else {}
+
+
+def get_flip_project_id(fl_ctx: FLContext) -> str | None:
+    """Return the job's FLIP project id, or None.
+
+    It is the job's NVFLARE study, which the FL API sets to the project and a researcher cannot choose (FLIP#1678).
+    The client config's ``project_id`` is the hub's encrypted envelope, which the client cannot read. None unless
+    the study is a UUID, so a caller can compare it with a folder name safely; a job from a hub older than FLIP#1678
+    runs in the "default" study.
+    """
+    study = _get_job_meta(fl_ctx).get(JobMetaKey.STUDY.value)
+    return study if isinstance(study, str) and Utils.is_valid_uuid(study) else None
 
 
 def _read_run_json(fl_ctx: FLContext, resolve: Callable[[Any, str], Any]) -> dict[str, Any] | None:
@@ -104,16 +120,6 @@ def get_app_config(fl_ctx: FLContext) -> dict[str, Any]:
         )
         or {}
     )
-
-
-def get_flip_project_id(fl_ctx: FLContext) -> str | None:
-    """Return the job's FLIP project id, which the FL API writes into ``config_fed_client.json``, or None.
-
-    None unless the value is a UUID, so a caller can compare it with a folder name safely.
-    """
-    config = _read_run_json(fl_ctx, lambda ws, job_id: ws.get_client_app_config_file_path(job_id)) or {}
-    candidate = config.get("project_id")
-    return str(candidate) if candidate and Utils.is_valid_uuid(candidate) else None
 
 
 def get_flip_model_id(fl_ctx: FLContext, fallback: str | None = None) -> str:

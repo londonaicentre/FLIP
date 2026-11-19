@@ -163,24 +163,21 @@ def test_app_config_never_opens_a_non_path_as_a_file_descriptor(app_dir):
     os.fstat(1)  # raises EBADF if the read closed stdout
 
 
-# ── the job's project id, which the FL API writes into config_fed_client.json ────────
+# ── the job's project id: its NVFLARE study, which the FL API sets (FLIP#1678) ────────
 
 
-def _ctx_client_config(tmp_path, config):
-    path = tmp_path / "config_fed_client.json"
-    path.write_text(json.dumps(config))
-    ctx = _ctx_workspace()
-    ctx.get_engine.return_value.get_workspace.return_value.get_client_app_config_file_path.return_value = str(path)
-    return ctx
+def test_project_id_is_the_jobs_study(tmp_path):
+    meta = tmp_path / "meta.json"
+    meta.write_text(json.dumps({"study": _VALID}))
+
+    assert get_flip_project_id(_ctx_workspace(meta_path=str(meta))) == _VALID
+    assert get_flip_project_id(_ctx({"study": _VALID})) == _VALID
 
 
-def test_project_id_is_read_from_the_client_config(tmp_path):
-    assert get_flip_project_id(_ctx_client_config(tmp_path, {"project_id": _VALID})) == _VALID
-
-
-@pytest.mark.parametrize("config", [{}, {"project_id": "{project_id}"}, {"project_id": "../net-2"}, ["project_id"]])
-def test_project_id_is_none_unless_it_is_a_uuid(tmp_path, config):
-    assert get_flip_project_id(_ctx_client_config(tmp_path, config)) is None
+@pytest.mark.parametrize("meta", [{}, {"study": "default"}, {"study": "../net-2"}, {"study": 1}])
+def test_project_id_is_none_unless_the_study_is_a_uuid(meta):
+    """A job from a hub older than FLIP#1678 runs in NVFLARE's "default" study."""
+    assert get_flip_project_id(_ctx(meta)) is None
 
 
 def test_project_id_is_none_without_an_engine():
