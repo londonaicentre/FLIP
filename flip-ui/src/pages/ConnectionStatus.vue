@@ -456,19 +456,6 @@
                                 <stop offset="60%" stop-color="#61366E" stop-opacity="0.08" />
                                 <stop offset="100%" stop-color="#61366E" stop-opacity="0" />
                             </radialGradient>
-                            <linearGradient
-                                id="link-pulse"
-                                x1="0%"
-                                y1="0%"
-                                x2="100%"
-                                y2="0%"
-                            >
-                                <stop offset="0%" stop-color="#a78bfa" stop-opacity="0.1" />
-                                <stop offset="50%" stop-color="#d946ef" stop-opacity="0.9" />
-                                <stop offset="100%" stop-color="#a78bfa" stop-opacity="0.1" />
-                                <animate attributeName="x1" values="-100%;100%" dur="2.4s" repeatCount="indefinite" />
-                                <animate attributeName="x2" values="0%;200%" dur="2.4s" repeatCount="indefinite" />
-                            </linearGradient>
                         </defs>
 
                         <!-- Concentric ring guides -->
@@ -509,10 +496,23 @@
                                     :y1="radial.cy"
                                     :x2="node.x"
                                     :y2="node.y"
-                                    stroke="url(#link-pulse)"
+                                    data-test="spoke-pulse"
+                                    pathLength="100"
+                                    stroke="#d946ef"
+                                    stroke-opacity="0.8"
                                     stroke-width="2.6"
                                     stroke-linecap="round"
-                                />
+                                    stroke-dasharray="16 84"
+                                >
+                                    <!-- A dash, not a gradient: a bounding-box gradient paints
+                                         nothing on a vertical or horizontal spoke (FLIP#1980) -->
+                                    <animate
+                                        attributeName="stroke-dashoffset"
+                                        values="100;0"
+                                        dur="2.4s"
+                                        repeatCount="indefinite"
+                                    />
+                                </line>
                             </g>
                         </g>
 

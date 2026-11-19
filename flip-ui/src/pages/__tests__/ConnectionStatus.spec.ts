@@ -439,6 +439,28 @@ describe("ConnectionStatus", () => {
         expect(legend.findAll("span.rounded-full")).toHaveLength(3);
     });
 
+    it("pulses the spoke of an online trust drawn straight above the hub (FLIP#1980)", async () => {
+        // A lone trust sits at 12 o'clock, so its spoke is vertical: a zero-width
+        // bounding box, on which a bounding-box gradient paints nothing.
+        const wrapper = await mountLoaded([fixture[0]]);
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        const pulses = wrapper.findAll("[data-test='spoke-pulse']");
+        expect(pulses).toHaveLength(1);
+        const pulse = pulses[0];
+        expect(pulse.attributes("x1")).toBe(pulse.attributes("x2"));
+        expect(pulse.attributes("stroke")).not.toMatch(/^url\(/);
+        expect(pulse.attributes("pathLength")).toBe("100");
+        expect(pulse.find("animate").attributes("attributeName")).toBe("stroke-dashoffset");
+        expect(wrapper.find("linearGradient").exists()).toBe(false);
+    });
+
+    it("draws no pulse on spokes of trusts that are not online", async () => {
+        const wrapper = await mountLoaded([fixture[1], fixture[2]]); // Acme offline, Maple degraded
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+        expect(wrapper.findAll("[data-test='spoke-pulse']")).toHaveLength(0);
+    });
+
     it("lightens the offline dashed spoke in dark mode so it reads on the dark card", async () => {
         const wrapper = await mountLoaded();
         await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
