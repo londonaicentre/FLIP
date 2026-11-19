@@ -42,7 +42,7 @@ jobs:
 
       # The conf.py build hook renders the architecture diagrams with graphviz; without `dot` the build fails.
       - name: Install graphviz
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz
+        uses: ./.github/actions/install-graphviz
 
       - name: Make docs
         run: make docs
