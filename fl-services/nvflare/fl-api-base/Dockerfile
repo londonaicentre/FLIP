@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-FROM python:3.12-slim-bookworm AS development
+FROM python:3.13-slim-bookworm AS development
 
 # Build identity: CI passes the release tag (v<X.Y.Z>) or the sha-<short7> tag it is
 # publishing; /health reports it. Empty for a local build, where /health falls back to

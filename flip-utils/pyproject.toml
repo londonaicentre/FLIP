@@ -19,7 +19,7 @@ name = "flip-utils"
 dynamic = ["version"]
 description = "FLIP - Federated Learning and Interoperability Platform library"
 readme = {file = "docs/overview.rst", content-type = "text/x-rst"}
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 license = "Apache-2.0"
 authors = [
     { name = "AI Centre for Value Based Healthcare" },
@@ -43,7 +43,7 @@ classifiers = [
     "Intended Audience :: Healthcare Industry",
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
@@ -220,7 +220,7 @@ testpaths = ["tests/unit"]
 norecursedirs = ["fl-services", "fl-base", ".venv", "workspace", ".test_*"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false

@@ -77,7 +77,7 @@ Prerequisites
 1. **AWS CLI with SSO access.** Configure it once with ``aws configure sso``, then sign in with
    ``aws sso login --profile <profile>`` whenever the session expires.
 2. **Terraform >= 1.13.1** (or OpenTofu).
-3. **Python 3.12 or 3.13** with `UV <https://docs.astral.sh/uv/guides/install-python/>`_.
+3. **Python 3.13** with `UV <https://docs.astral.sh/uv/guides/install-python/>`_.
 4. **GitHub CLI** (``gh``), and a **GitHub Container Registry login** to pull the pre-built images. Create a GitHub
    personal access token with the ``read:packages`` scope, then:
 

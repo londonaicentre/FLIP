@@ -67,7 +67,7 @@ The shifted ports let a prod-pointed trust run on a developer laptop next to `ma
 ## Prerequisites
 
 1. **Operator workstation** — The machine where you run the commands (typically your laptop). It needs:
-   - Python 3.12+ and [UV](https://docs.astral.sh/uv/guides/install-python/)
+   - Python 3.13+ and [UV](https://docs.astral.sh/uv/guides/install-python/)
    - Ansible (installed via `uv sync` in `deploy/providers/AWS/`)
    - Terraform outputs available (you must have run `make init` + `make apply` in `deploy/providers/AWS/` first)
    - SSH access to the trust host (if provisioning remotely)

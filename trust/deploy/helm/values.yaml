@@ -123,8 +123,8 @@ trustData:
     # (trust/deploy/mirror-images.manifest).
     image:
       repository: ghcr.io/londonaicentre/mirror/astral-sh/uv
-      tag: "python3.12-bookworm-slim"
-      digest: "sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58"
+      tag: "python3.13-bookworm-slim"
+      digest: "sha256:531f855bda2c73cd6ef67d56b733b357cea384185b3022bd09f05e002cd144ca"
       pullPolicy: IfNotPresent
     # The Apache-licensed DICOM vocabulary bundle on the dataset (omop-vocab/<name>.zip), loaded
     # before the rows so their imaging concepts resolve even without the core vocabulary.

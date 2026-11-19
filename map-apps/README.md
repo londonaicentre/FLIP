@@ -108,7 +108,7 @@ That matters because this corner is capped and the rest of the repo is not:
 | | Python | why |
 | --- | --- | --- |
 | `map-apps/` | **3.12, fixed** | `monai-deploy-app-sdk` declares `>=3.10,<3.14`; the holoscan CLI pins Ubuntu 24.04 package versions, so the base image must match |
-| everything else | `>=3.12,<3.14` | a deliberate cap (FLIP#1018), not a hard limit — every Python service's unit suite passes on 3.14 |
+| everything else | `>=3.13,<3.14` | a deliberate cap (FLIP#1018); 3.14 waits on a `flwr/base` image built on it (FLIP#944) |
 
 So when FLIP lifts its own cap to allow 3.14 or later, **leave these templates alone**. The cap is the App SDK's,
 it is not ours to lift, and it costs nothing: the MAP is a self-contained container. Bumping it

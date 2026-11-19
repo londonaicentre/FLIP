@@ -19,7 +19,7 @@ authors = [
     { name = "R. Garcia-Dias", email = "rafaelagd@gmail.com" },
     { name = "A. Triay Bagur", email = "alexandre.triay_bagur@kcl.ac.uk" },
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
     # Renders the architecture diagrams (deploy/providers/AWS, trust/deploy/terraform) at build time (needs `dot`).
     "diagrams>=0.25.1",

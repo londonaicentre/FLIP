@@ -1,8 +1,8 @@
 [project]
 name = "xnat-export-mask"
-version = "1.0.0"
+version = "1.0.1"
 description = "XNAT Container Service command: convert an OHIF DICOM-SEG assessor to NIfTI and upload it back"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "highdicom>=0.28",
     "numpy>=2",
