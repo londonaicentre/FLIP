@@ -69,7 +69,6 @@ def imaging_api():
         constants.IMAGING_API_URL = "http://imaging-api:8000/"
         constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"  # pragma: allowlist secret
         constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"  # pragma: allowlist secret
-        constants.XNAT_ARCHIVE_DIR = "/app/data/xnat-archive"
         yield api
 
 
@@ -127,6 +126,33 @@ def test_without_one_archived_xnat_project_the_pod_mounts_nothing_and_streams(
     imaging_api.projects, imaging_api.experiments = projects, experiments
 
     add_project_study(local, PROJECT)
+
+    job = _job(local)
+    assert job["volumeMounts"] == [{"name": "dshm", "mountPath": "/dev/shm"}]
+    assert job["env"] == [STREAM]
+
+
+def test_the_operator_is_told_why_a_project_streams(local, imaging_api, capsys):
+    imaging_api.experiments = []
+
+    add_project_study(local, PROJECT)
+
+    err = capsys.readouterr().err
+    assert f"project {PROJECT}: its job pods stream" in err
+    assert "sync again once its imaging is pulled" in err
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        Mock(raise_for_status=Mock(side_effect=requests.HTTPError("500 Server Error"))),
+        Mock(json=lambda: {"detail": "not a list"}),  # a dict: its keys are strings, not projects
+        Mock(json=lambda: [{"secondary_ID": PROJECT}]),  # a project with no ID
+    ],
+)
+def test_the_pod_streams_when_imaging_api_answers_with_an_error_or_an_unexpected_shape(local, imaging_api, reply):
+    with patch("flip.nvflare.project_studies.requests.get", return_value=reply):
+        add_project_study(local, PROJECT)
 
     job = _job(local)
     assert job["volumeMounts"] == [{"name": "dshm", "mountPath": "/dev/shm"}]

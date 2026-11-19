@@ -32,7 +32,6 @@ study streams its studies, and a study with no entry has no job image, so NVFLAR
 
 import argparse
 import json
-import logging
 import sys
 import uuid
 from pathlib import Path
@@ -42,9 +41,8 @@ import requests
 import yaml
 
 from flip.constants import FlipConstants
+from flip.constants.flip_constants import XNAT_ARCHIVE_DIR
 from flip.nvflare.k8s_job_mode import STUDY_RUNTIME_DEFAULT
-
-logger = logging.getLogger(__name__)
 
 # The chart's name for the shared images volume in the job-pod template.
 IMAGES_VOLUME = "images"
@@ -87,26 +85,38 @@ def mount_project_images(pod: dict[str, Any], project: str) -> None:
         _read_studies_by(container, "project")
 
 
+def _streams(project: str, reason: str) -> None:
+    """Tell the operator, on stderr (stdout is the file), that a project's job pods stream rather than mount."""
+    print(f"⚠️  project {project}: its job pods stream their studies, {reason}", file=sys.stderr)
+
+
 def xnat_project(project: str) -> str | None:
     """The XNAT project holding the hub project's sessions, from imaging-api; None until it has archived one.
 
     None as well when imaging-api cannot say: a job of a project with no imaging must still start while XNAT is
-    down, and a pod with no mount streams, which keeps it to its own project.
+    down, and a pod with no mount streams, which keeps it to its own project. Each None says why on stderr.
     """
     url = str(FlipConstants.IMAGING_API_URL).rstrip("/")
     headers = {FlipConstants.TRUST_INTERNAL_SERVICE_KEY_HEADER: FlipConstants.TRUST_INTERNAL_SERVICE_KEY}
     try:
         projects = requests.get(f"{url}/projects/", headers=headers, timeout=_REQUEST_TIMEOUT)
         projects.raise_for_status()
-        ids = [p["ID"] for p in projects.json() if p.get("secondary_ID") == project]
+        ids: list[str] = [p["ID"] for p in projects.json() if p.get("secondary_ID") == project]
+        if not ids:
+            _streams(project, "as XNAT holds no project for it (a tabular project, or no imaging pulled yet)")
+            return None
         # FLIP names its XNAT projects with a UUID; anything else is not used as a folder name here.
         if len(ids) != 1 or not is_project(ids[0]):
+            _streams(project, f"as more than one XNAT project, or one not named with a UUID, claims it: {ids}")
             return None
         experiments = requests.get(f"{url}/projects/{ids[0]}/experiments", headers=headers, timeout=_REQUEST_TIMEOUT)
         experiments.raise_for_status()
-        return ids[0] if experiments.json() else None
-    except requests.RequestException as e:
-        logger.warning(f"imaging-api could not name project {project}'s XNAT archive ({e}); its job pods will stream")
+        if not experiments.json():
+            _streams(project, "as XNAT has archived nothing for it yet: sync again once its imaging is pulled")
+            return None
+        return ids[0]
+    except (requests.RequestException, KeyError, TypeError, AttributeError) as e:
+        _streams(project, f"as imaging-api could not name its XNAT archive ({type(e).__name__}: {e})")
         return None
 
 
@@ -123,7 +133,7 @@ def mount_project_archive(pod: dict[str, Any], project: str) -> None:
         return
     mount = {
         "name": ARCHIVE_VOLUME,
-        "mountPath": FlipConstants.XNAT_ARCHIVE_DIR,
+        "mountPath": XNAT_ARCHIVE_DIR,
         "subPath": f"archive/{xnat_id}",
         "readOnly": True,
     }

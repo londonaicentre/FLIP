@@ -24,6 +24,10 @@ from typing import Literal
 from pydantic import HttpUrl
 from pydantic_settings import BaseSettings
 
+# Where a job pod in IMAGES_TRANSPORT=archive finds its project's directory of XNAT's archive (FLIP#1857). Fixed, not
+# a setting: the fl-client mounts it here when it builds the study entry, and the job pod reads it here.
+XNAT_ARCHIVE_DIR = "/app/data/xnat-archive"
+
 
 class _Common(BaseSettings):
     """Base settings shared by both development and production environments."""
@@ -96,7 +100,6 @@ class ProdSettings(_Common):
     # (FLIP#1049); or "archive", links into the project's own directory of XNAT's archive, mounted
     # read-only at XNAT_ARCHIVE_DIR by the same study mount (FLIP#1857), so nothing is copied.
     IMAGES_TRANSPORT: Literal["mount", "project", "stream", "archive"] = "mount"
-    XNAT_ARCHIVE_DIR: str = "/app/data/xnat-archive"
     NET_ID: str = "default"
 
 
@@ -143,7 +146,6 @@ class _FlipConstantsProxy:
     TRUST_INTERNAL_SERVICE_KEY: str
     IMAGES_DIR: str
     IMAGES_TRANSPORT: Literal["mount", "project", "stream", "archive"]
-    XNAT_ARCHIVE_DIR: str
     NET_ID: str
 
     def __getattribute__(self, name: str) -> object:

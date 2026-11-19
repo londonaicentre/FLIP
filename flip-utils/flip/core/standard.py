@@ -36,7 +36,7 @@ import requests
 from pydantic import ValidationError
 from requests import HTTPError
 
-from flip.constants.flip_constants import FlipConstants, ModelStatus, ResourceType
+from flip.constants.flip_constants import XNAT_ARCHIVE_DIR, FlipConstants, ModelStatus, ResourceType
 from flip.core.base import FLIPBase
 from flip.exceptions import ResultsUploadError
 from flip.schemas import DEFAULT_X_AXIS_LABEL, FLLogEvent, TrainingLog, TrainingMetrics
@@ -129,6 +129,8 @@ def _hub_internal_headers(model_id: str) -> dict[str, str]:
 
 # (connect, read) bound on the PUT of one results part to the object store.
 _PART_PUT_TIMEOUT_SECONDS: tuple[int, int] = (5, 600)
+# imaging-api's layout of a study: three XNAT reads of up to 30 s each, and the approved-cohort check.
+_LAYOUT_TIMEOUT_SECONDS: tuple[int, int] = (5, 150)
 _PART_PUT_ATTEMPTS = 3
 
 
@@ -396,13 +398,18 @@ class FLIPStandardProd(FLIPBase):
                 json=payload,
                 params={"resource_type": resource.value},
                 headers=_trust_internal_headers(),
+                timeout=_LAYOUT_TIMEOUT_SECONDS,
             )
-            response.raise_for_status()
+            if not response.ok:
+                raise HTTPError(
+                    f"imaging-api could not lay out {accession_id}: {response.status_code} {response.text[:200]}",
+                    response=response,
+                )
             for file in response.json()["files"]:
                 link = _under(_study_dir(), file["path"])
-                target = _under(Path(FlipConstants.XNAT_ARCHIVE_DIR), file["archive"])
+                target = _under(Path(XNAT_ARCHIVE_DIR), file["archive"])
                 if not target.is_file():
-                    raise FileNotFoundError(f"{target} is not in the mounted XNAT archive")
+                    raise FileNotFoundError(f"{target} is not in the mounted XNAT archive, or its group cannot read it")
                 link.parent.mkdir(parents=True, exist_ok=True)
                 link.unlink(missing_ok=True)  # a later round links the study again
                 link.symlink_to(target)

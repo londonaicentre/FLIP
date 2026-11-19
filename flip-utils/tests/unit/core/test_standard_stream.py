@@ -17,6 +17,7 @@ import tarfile
 from unittest.mock import Mock, patch
 
 import pytest
+import requests
 
 from flip.constants.flip_constants import ResourceType
 from flip.core import standard
@@ -131,7 +132,7 @@ def test_a_mounted_project_folder_still_uploads_the_files_themselves(project_con
 def archive_constants(stream_constants, tmp_path, monkeypatch):
     """The project's directory of XNAT's archive is mounted read-only (an NVFLARE study mount, FLIP#1857)."""
     stream_constants.IMAGES_TRANSPORT = "archive"
-    stream_constants.XNAT_ARCHIVE_DIR = str(tmp_path / "archive")
+    monkeypatch.setattr(standard, "XNAT_ARCHIVE_DIR", str(tmp_path / "archive"))
     monkeypatch.setattr(standard, "_study_dir_path", tmp_path / "studies")
     nifti = tmp_path / "archive" / "arc001" / "ACC001" / "SCANS" / "1" / "NIFTI"
     nifti.mkdir(parents=True)
@@ -141,7 +142,7 @@ def archive_constants(stream_constants, tmp_path, monkeypatch):
 
 
 def _layout(*files: tuple[str, str]) -> Mock:
-    return Mock(status_code=200, json=lambda: {"files": [{"path": p, "archive": a} for p, a in files]})
+    return Mock(status_code=200, ok=True, json=lambda: {"files": [{"path": p, "archive": a} for p, a in files]})
 
 
 _NIFTI = ("ACC001/scans/1-unknown/resources/NIFTI/files/a.nii.gz", "arc001/ACC001/SCANS/1/NIFTI/a.nii.gz")
@@ -201,6 +202,18 @@ def test_a_listed_path_that_leaves_its_directory_is_refused(archive_constants, t
         FLIPStandardProd().get_by_accession_number("proj-1", "ACC001", ResourceType.NIFTI)
 
     assert not list((tmp_path / "studies").rglob("*.nii.gz"))
+
+
+def test_a_refused_layout_fails_the_fetch_with_imaging_apis_reason(archive_constants):
+    refused = Mock(status_code=404, ok=False, text="accession ACC001 is not in the project's approved cohort")
+
+    with (
+        patch("flip.core.standard.requests.post", return_value=refused) as post,
+        pytest.raises(requests.HTTPError, match="404 accession ACC001 is not in the project's approved cohort"),
+    ):
+        FLIPStandardProd().get_by_accession_number("proj-1", "ACC001", ResourceType.NIFTI)
+
+    assert post.call_args.kwargs["timeout"] == standard._LAYOUT_TIMEOUT_SECONDS
 
 
 def test_a_listed_file_missing_from_the_mount_fails_the_fetch(archive_constants):
