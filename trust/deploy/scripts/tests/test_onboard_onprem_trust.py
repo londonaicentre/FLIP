@@ -1120,43 +1120,6 @@ def test_55_hub_shared_keys_are_trust_kit_libs_minus_the_optional_ones() -> None
     _assert(check.label == "Hub-shared block (10 keys)", "the row label still counts ten keys", check.label)
 
 
-def test_56_fl_kit_contents_survive_a_folder_the_operator_cannot_enter() -> None:
-    """A root install leaves the FL files to the client's uid at 0700; on 3.12 the stat raised (FLIP#1990)."""
-    print("▶ FL kit contents: a folder the operator cannot enter -> judged by its owner, no traceback")
-    if os.geteuid() == 0:
-        print("  (skipped: root enters every folder)")
-        return
-    me, other = str(os.getuid()), str(os.getuid() + 1)
-    with tempfile.TemporaryDirectory() as td:
-        slot = Path(td) / "net-1" / "services" / "Trust_1"
-        keys = Path(td) / "net-1" / "keys"
-        for d in ("local", "startup", "transfer"):
-            (slot / d).mkdir(parents=True)
-        (Path(td) / "net-1" / "certificates").mkdir()
-        keys.mkdir()
-        # No search bit, even for the owner: the operator's view of a 1000:1000 0700 folder.
-        slot.chmod(0o600)
-        keys.chmod(0o600)
-        rows = {}
-        try:
-            for backend in ("nvflare", "flower"):
-                base = {"FL_KIT_DIR": td, "FL_BACKEND": backend, "FL_KIT_SLOT": "Trust_1", "FL_KIT_SLOT_NUMBER": "1"}
-                rows[backend, "client"] = mod.check_fl_kit_contents({**base, "FLIP_UID": me}, True)
-                rows[backend, "other"] = mod.check_fl_kit_contents({**base, "FLIP_UID": other}, True)
-        except PermissionError as exc:
-            _assert(False, "no traceback", repr(exc))
-            return
-        finally:
-            slot.chmod(0o700)
-            keys.chmod(0o700)
-    for backend, closed in (("nvflare", slot), ("flower", keys)):
-        client, theirs = rows[backend, "client"], rows[backend, "other"]
-        _assert(client.status == mod.Status.PASS, f"{backend}: owned by the client's uid -> PASS", str(client))
-        _assert(f"{closed} is owned by uid {me} mode 600" in client.detail, f"{backend}: names it", client.detail)
-        _assert(theirs.status == mod.Status.WARN, f"{backend}: owned by another uid -> WARN", str(theirs))
-        _assert(f"setfacl -R -m u:$USER:rX {closed}" in theirs.hints[0], f"{backend}: hint", theirs.hints[0])
-
-
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -1216,7 +1179,6 @@ def main() -> None:
     test_53_log_level_info_passes_and_unset_warns()
     test_54_hub_shared_allows_the_other_backends_kit_date_empty()
     test_55_hub_shared_keys_are_trust_kit_libs_minus_the_optional_ones()
-    test_56_fl_kit_contents_survive_a_folder_the_operator_cannot_enter()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

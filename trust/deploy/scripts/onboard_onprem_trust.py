@@ -714,47 +714,7 @@ def _client_cannot_read(path: Path, kit_vars: dict[str, str], image_uid: int) ->
     return f"{path} is owned by uid {st.st_uid} mode {st.st_mode & 0o777:o}, and the client runs as uid {uid}"
 
 
-def _cannot_enter(path: Path) -> bool:
-    try:
-        return path.is_dir() and not os.access(path, os.X_OK)
-    except OSError:
-        return False
-
-
-def _fl_kit_closed(path: Path, kit_vars: dict[str, str]) -> Check:
-    """The kit row when this user cannot enter a folder on the way to ``path`` (FLIP#1990).
-
-    Installed as root, the FL files belong to the client's uid at mode 700, which only the client can
-    enter, and Python 3.12 raises on the stat instead of answering False. Judge the closed folder.
-    """
-    backend = kit_vars.get("FL_BACKEND", "")
-    closed = next((p for p in (*reversed(path.parents), path) if _cannot_enter(p)), path)
-    st = closed.stat()
-    raw_uid = kit_vars.get("FLIP_UID", "").strip()
-    client = int(raw_uid) if raw_uid.isdigit() else 49999 if backend == "flower" else 1000
-    found = f"{closed} is owned by uid {st.st_uid} mode {st.st_mode & 0o777:o}"
-    if st.st_uid == client:
-        return Check(
-            f"FL kit contents ({backend})",
-            Status.PASS,
-            f"{found}, the FL client's, so only it can look inside (sudo checks the files)",
-        )
-    return Check(
-        f"FL kit contents ({backend})",
-        Status.WARN,
-        f"{found}, which uid {os.getuid()} cannot enter, so the kit cannot be checked",
-        hints=[f"Re-run with sudo, or give this user read access: setfacl -R -m u:$USER:rX {closed}"],
-    )
-
-
 def check_fl_kit_contents(kit_vars: dict[str, str], kit_present: bool) -> Check:
-    try:
-        return _check_fl_kit_contents(kit_vars, kit_present)
-    except PermissionError as error:
-        return _fl_kit_closed(Path(error.filename or kit_vars.get("FL_KIT_DIR", "")), kit_vars)
-
-
-def _check_fl_kit_contents(kit_vars: dict[str, str], kit_present: bool) -> Check:
     if not kit_present:
         return Check("FL kit contents", Status.PENDING, "pending — needs kit file")
     fl_kit_dir = kit_vars.get("FL_KIT_DIR", "")
