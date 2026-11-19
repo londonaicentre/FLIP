@@ -1084,6 +1084,10 @@ autoUpgrade:
   # services read: `secrets.existingName`, or <fullname>-secrets when `secrets.create` is true.
   # Only that one key is projected into the pod.
   kitSecretName: ""
+  # The Kubernetes API server's ports as pods reach them after the `kubernetes` Service's DNAT
+  # (`kubectl get endpointslice -n default -l kubernetes.io/service-name=kubernetes`). The egress
+  # NetworkPolicy opens only these, only while the agent is enabled.
+  apiServerPorts: [443, 6443]
   backoffLimit: 0
   # Under the hub's 2h lease, so a stuck tick reports FAILED instead of dying holding the lease.
   activeDeadlineSeconds: 6600

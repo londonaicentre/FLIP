@@ -220,8 +220,7 @@ spec:
     - metadata:
         name: data
         labels:
-          {{- include "flip-trust.labels" . | nindent 10 }}
-          app.kubernetes.io/component: omop-db
+          {{- include "flip-trust.claimTemplateLabels" (list . (printf "%s-omop-db" (include "flip-trust.fullname" .)) "data" "omop-db") | nindent 10 }}
       spec:
         accessModes:
           - {{ .Values.omopDb.persistence.accessMode }}

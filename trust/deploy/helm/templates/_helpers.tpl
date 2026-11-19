@@ -260,3 +260,31 @@ Deployment.
 - name: FL_SITE_PRIVACY_GAMMA
   value: {{ .Values.flClient.nvflare.sitePrivacy.gamma | quote }}
 {{- end }}
+
+{{/*
+Labels for a StatefulSet's volumeClaimTemplate. Call with (list $ $stsName $claimName $component).
+
+volumeClaimTemplates is immutable, so these must not change between releases: no helm.sh/chart and
+no app.kubernetes.io/version, which every release bumps and which made every `helm upgrade` of a
+trust fail on omop-db (FLIP#1644, found on a kind cluster). A release installed before this fix
+still carries those labels in its live template; `lookup` keeps them verbatim so its next upgrade
+leaves the field untouched. `helm template` has no cluster, so it always renders the stable set.
+*/}}
+{{- define "flip-trust.claimTemplateLabels" -}}
+{{- $ctx := index . 0 -}}
+{{- $live := lookup "apps/v1" "StatefulSet" (include "flip-trust.namespace" $ctx) (index . 1) -}}
+{{- $kept := dict -}}
+{{- if $live -}}
+{{- range $live.spec.volumeClaimTemplates -}}
+{{- if eq .metadata.name (index $ 2) -}}
+{{- $kept = .metadata.labels | default dict -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if $live -}}
+{{- toYaml $kept -}}
+{{- else -}}
+{{ include "flip-trust.selectorLabels" $ctx }}
+app.kubernetes.io/component: {{ index . 3 }}
+{{- end -}}
+{{- end }}
