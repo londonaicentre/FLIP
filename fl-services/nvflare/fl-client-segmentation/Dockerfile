@@ -44,9 +44,18 @@ USER root
 # config.json is written first, so TotalSegmentator keeps it: its own would carry a random id and
 # usage statistics on, and a job at a trust must not report to a third party. Every timestamp is
 # then set to the epoch, so the same weights give the same layer and a trust pulls them once.
+# A download is tried three times: the weights come from GitHub release assets, which now and then
+# answer with a server error. A retry skips the sets already in place, and the digest check below
+# refuses whatever a half-finished one left.
 RUN mkdir -p ${TOTALSEG_HOME_DIR} && cd ${TOTALSEG_HOME_DIR} && \
     printf '{\n    "totalseg_id": "flip",\n    "send_usage_stats": false,\n    "prediction_counter": 0\n}\n' > config.json && \
-    for task in ${TOTALSEG_TASKS}; do totalseg_download_weights -t "$task" || exit 1; done && \
+    for task in ${TOTALSEG_TASKS}; do \
+        for attempt in 1 2 3; do \
+            totalseg_download_weights -t "$task" && break; \
+            if [ "$attempt" = 3 ]; then exit 1; fi; \
+            echo "Downloading the $task weights failed (attempt $attempt of 3); trying again." >&2; sleep 20; \
+        done; \
+    done && \
     found=$(find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1) && \
     if [ "$found" != "${TOTALSEG_WEIGHTS_SHA256}" ]; then echo "The digest of ${TOTALSEG_HOME_DIR} (weights and config.json) is $found, expected ${TOTALSEG_WEIGHTS_SHA256}" >&2; exit 1; fi && \
     chmod -R a+rX,go-w . && find . -exec touch -h -d @0 {} +
