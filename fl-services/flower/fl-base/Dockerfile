@@ -42,7 +42,7 @@ RUN python -m pip check
 # (#767), and fails without it.
 #
 # --extra-index-url points pip at PyTorch's CUDA-13.0 wheel index, where the lock's
-# torch 2.13.x+cu130 lives.
+# torch 2.15.x+cu132 lives.
 # COPY's default root ownership is deliberate: user-submitted apps execute in
 # this container as the same non-root `app` user that flwr/base runs as, so an
 # app-writable copy could be mutated by app code, poisoning anything that later
@@ -61,7 +61,7 @@ COPY flip-utils/flip/ /opt/flip-utils/flip/
 RUN cd /opt/flip-utils \
  && python -m uv export --frozen --extra flower --extra full --no-dev --no-emit-project -o /tmp/flip-utils.txt \
  && python -m pip install --no-cache-dir --require-hashes -r /tmp/flip-utils.txt \
-      --extra-index-url https://download.pytorch.org/whl/cu130 \
+      --extra-index-url https://download.pytorch.org/whl/cu132 \
  && python -m uv build --wheel --no-cache --out-dir /tmp/dist \
  && python -m pip install --no-cache-dir --no-deps /tmp/dist/*.whl \
  && python -m pip check \
