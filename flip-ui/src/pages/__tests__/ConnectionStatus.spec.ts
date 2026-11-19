@@ -487,12 +487,21 @@ describe("ConnectionStatus", () => {
         expect(wrapper.findAll("[data-test='spoke-pulse']")).toHaveLength(0);
     });
 
-    it("lightens the offline dashed spoke in dark mode so it reads on the dark card", async () => {
+    it("draws an offline spoke as a solid line broken in the middle", async () => {
+        const wrapper = await mountLoaded([fixture[1]]); // Acme has a null heartbeat
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        const spoke = wrapper.find("[data-test='spoke']");
+        expect(spoke.attributes("pathLength")).toBe("100");
+        expect(spoke.attributes("stroke-dasharray")).toBe("45 10 45");
+    });
+
+    it("lightens the offline broken spoke in dark mode so it reads on the dark card", async () => {
         const wrapper = await mountLoaded();
         await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
 
-        // Offline spokes are the dashed ones (Acme has a null heartbeat).
-        const offlineSpokes = wrapper.findAll("line").filter(l => l.attributes("stroke-dasharray") === "3 4");
+        // Offline spokes are the broken ones (Acme has a null heartbeat).
+        const offlineSpokes = wrapper.findAll("[data-test='spoke']").filter(l => l.attributes("stroke-dasharray") !== "none");
         expect(offlineSpokes.length).toBeGreaterThan(0);
         for (const spoke of offlineSpokes) {
             // CSS wins over the SVG stroke attribute, so these utilities recolour
@@ -500,6 +509,29 @@ describe("ConnectionStatus", () => {
             expect(spoke.classes()).toContain("dark:stroke-red-400");
             expect(spoke.classes()).toContain("dark:[stroke-opacity:0.7]");
         }
+    });
+
+    it("lightens the online and degraded spokes and the ring guides in dark mode", async () => {
+        const wrapper = await mountLoaded([fixture[0], fixture[2]]); // Zebra online, Maple degraded
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        const [online, degraded] = wrapper.findAll("[data-test='spoke']").map(s => s.classes());
+        expect(online).toEqual(expect.arrayContaining(["dark:stroke-emerald-400", "dark:[stroke-opacity:0.7]"]));
+        expect(degraded).toEqual(expect.arrayContaining(["dark:stroke-amber-400", "dark:[stroke-opacity:0.5]"]));
+        for (const ring of wrapper.findAll("[data-test='radial-ring']")) {
+            expect(ring.classes()).toContain("dark:stroke-gray-600");
+        }
+    });
+
+    it("keeps the project count of the trust above the hub clear of its dot", async () => {
+        const wrapper = await mountLoaded([fixture[0]]);
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        const svg = wrapper.find("[data-test='connection-radial-svg']");
+        const dot = svg.findAll("circle").find(c => c.attributes("fill") === "#ffffff" && c.attributes("r") !== "40")!;
+        const count = svg.findAll("text").find(t => t.text().includes("project"))!;
+        // The count's baseline sits well above the dot's top edge, leaving room for descenders.
+        expect(Number(count.attributes("y"))).toBeLessThanOrEqual(Number(dot.attributes("cy")) - Number(dot.attributes("r")) - 8);
     });
 
     it("renders the radial topology on the plain card surface with dark-visible labels", async () => {

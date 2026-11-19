@@ -466,8 +466,9 @@
                             :cy="radial.cy"
                             :r="radial.R * m"
                             fill="none"
-                            class="stroke-gray-200 dark:stroke-dark-border"
-                            :stroke-width="i === 2 ? 1 : 0.6"
+                            class="stroke-gray-200 dark:stroke-gray-600"
+                            data-test="radial-ring"
+                            :stroke-width="i === 2 ? 1.2 : 0.8"
                             :stroke-dasharray="i === 2 ? 'none' : '2 4'"
                         />
 
@@ -477,18 +478,20 @@
                         <!-- Spokes -->
                         <g>
                             <g v-for="node in radialNodes" :key="`spoke-${node.id}`">
+                                <!-- An offline spoke is a solid line broken in the middle; pathLength
+                                     makes the dash pattern a share of the spoke, whatever its length. -->
                                 <line
                                     :x1="radial.cx"
                                     :y1="radial.cy"
                                     :x2="node.x"
                                     :y2="node.y"
                                     :stroke="node.state === 'offline' ? '#ef4444' : DOT_HEX[node.state]"
-                                    :stroke-width="node.state === 'online' ? 1.4 : 0.8"
-                                    :stroke-opacity="node.state === 'offline' ? 0.4 : node.state === 'online' ? 0.5 : 0.2"
-                                    :stroke-dasharray="node.state === 'offline' ? '3 4' : 'none'"
-                                    :class="node.state === 'offline'
-                                        ? 'dark:stroke-red-400 dark:[stroke-opacity:0.7]'
-                                        : ''"
+                                    :stroke-width="SPOKE_WIDTH[node.state]"
+                                    :stroke-opacity="node.state === 'offline' ? 0.6 : node.state === 'online' ? 0.5 : 0.2"
+                                    pathLength="100"
+                                    :stroke-dasharray="node.state === 'offline' ? '45 10 45' : 'none'"
+                                    :class="SPOKE_DARK[node.state]"
+                                    data-test="spoke"
                                 />
                                 <!-- Each pulse gradient runs hub to trust in user space. A shared
                                      bounding-box gradient paints nothing on a vertical or horizontal
@@ -524,7 +527,7 @@
                                         :y2="node.y"
                                         data-test="spoke-pulse"
                                         :stroke="`url(#link-pulse-${node.id})`"
-                                        stroke-width="2.6"
+                                        stroke-width="3.2"
                                         stroke-linecap="round"
                                     />
                                 </template>
@@ -1039,6 +1042,20 @@ const DOT_HEX: Record<TrustState, string> = {
     offline: "#ef4444"
 };
 
+const SPOKE_WIDTH: Record<TrustState, number> = {
+    online: 1.8,
+    degraded: 1.1,
+    offline: 1.5
+};
+
+// Spokes in dark mode: a lighter shade at a higher opacity so each reads on the
+// near-black card. CSS beats the SVG stroke attributes, so these apply in dark only.
+const SPOKE_DARK: Record<TrustState, string> = {
+    online: "dark:stroke-emerald-400 dark:[stroke-opacity:0.7]",
+    degraded: "dark:stroke-amber-400 dark:[stroke-opacity:0.5]",
+    offline: "dark:stroke-red-400 dark:[stroke-opacity:0.7]"
+};
+
 const radial = {
     cx: 380,
     cy: 380,
@@ -1101,9 +1118,12 @@ const radialNodes = computed<IRadialNode[]>(() => {
         const x = radial.cx + Math.cos(angle) * radial.R;
         const y = radial.cy + Math.sin(angle) * radial.R;
         const labelX = radial.cx + Math.cos(angle) * (radial.R + 34);
-        const labelY = radial.cy + Math.sin(angle) * (radial.R + 34);
         const anchor: "start" | "end" | "middle" =
             Math.cos(angle) > 0.1 ? "start" : Math.cos(angle) < -0.1 ? "end" : "middle";
+        // The project-count line hangs below the name, so a label centred above its
+        // dot is lifted by one line to clear it as far as a label below the hub does.
+        const lift = anchor === "middle" && Math.sin(angle) < 0 ? 12 : 0;
+        const labelY = radial.cy + Math.sin(angle) * (radial.R + 34) - lift;
         const r = 9 + Math.min(t.project_count, 6) * 1.2;
 
         return {
