@@ -33,8 +33,10 @@ class Settings(BaseSettings):
     # for local development.
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
+    # Constant on purpose: model_config is built once, here, and inherited by DevSettings and
+    # ProdSettings, so it cannot follow ENV. Deployed hubs read the process environment instead.
     model_config = SettingsConfigDict(
-        env_file=f"../.env.{ENV}",
+        env_file="../.env.development",
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -42,8 +44,11 @@ class Settings(BaseSettings):
     # Per-trust API key header name (for authenticating requests from trusts to the FLIP API)
     TRUST_API_KEY_HEADER: str
 
-    # Internal service auth (fl-server on the Central Hub)
-    INTERNAL_SERVICE_KEY_HEADER: str
+    # FL API auth (flip-api → fl-api-net-N): sent on every FL API call, required by every FL API
+    # route but /health. Dedicated to that hop. Dev: minted into the
+    # env file by `make up`; prod: a `secrets` entry of the ECS task (FLIP_API secret, `fl_api_key`).
+    FL_API_KEY_HEADER: str = "X-FL-API-Key"
+    FL_API_KEY: str
 
     # AWS settings
     AWS_PROFILE: str | None = None
@@ -123,6 +128,9 @@ class Settings(BaseSettings):
     # weights, ~1.5 GiB for the multimodel variant) can be uploaded; the FL API
     # stages such checkpoints server-side rather than bundling them into the app.
     MAX_MODEL_FILE_BYTES: int = 5 * 1024 * 1024 * 1024
+    # Hard cap on the results zip an FL job uploads (private_services/results_upload.py). The upper bound is
+    # what S3 takes in the 64 MiB parts the hub signs: 10,000 of them.
+    MAX_RESULTS_FILE_BYTES: int = Field(default=50 * 1024 * 1024 * 1024, gt=0, le=10_000 * 64 * 1024 * 1024)
     # Default equals the MAX_PRESIGNED_URL_TTL_SECONDS security ceiling in
     # utils/s3_client.py: anything higher would be silently clamped anyway,
     # with a per-call warning — so a default-configured deployment would log
@@ -178,6 +186,9 @@ class Settings(BaseSettings):
     FL_JOB_WATCHDOG_STRIKES: int = 3
     # A picked-up job with no backend id after this long never reached the FL server. upload_app alone allows 15.
     FL_JOB_PREPARE_TIMEOUT_MINUTES: int = 30
+    # A job its FL server still holds unstarted this long after pickup is failed. Longer than FLARE's own tries
+    # (about 41 minutes), which never start while no client at all is connected to the server (FLIP#1133).
+    FL_JOB_START_TIMEOUT_MINUTES: int = 60
     SCHEDULER_KEEP_FL_API_SESSION_ALIVE_RATE: int = 2  # in minutes
     SCHEDULER_REIMPORT_IMAGING_PROJECT_STUDIES_RATE: int = (
         30  # How often to check for projects with unimported studies (in minutes)
@@ -211,22 +222,17 @@ class Settings(BaseSettings):
     # Which email backend send_templated_email (utils/email_sender.py) uses.
     # "ses" sends through AWS SESv2; "console" logs the would-be email
     # instead, so development needs no SES identity, templates or verified
-    # addresses (FLIP#919). The effective value always comes from the
-    # subclass — DevSettings overrides to "console", ProdSettings narrows
-    # the type to Literal["ses"] so console is rejected at boot there. This
-    # base default is only observed by the ENV probe below and by direct
-    # Settings() construction in tests; unlike ENFORCE_MFA (declared only
-    # here, so an unknown environment inherits the secure value) it is NOT
-    # a fallback for a misconfigured deploy: coerce_empty_env maps an unset
-    # ENV to "development", which selects DevSettings and therefore
-    # "console". A deploy that loses ENV fails on DevSettings' other
-    # required fields (POSTGRES_PASSWORD, AES_KEY_BASE64) rather than
-    # silently logging, but do not rely on this default for that.
-    # A dedicated flag rather than an ENV branch (same rationale as
-    # ENFORCE_MFA) so the integration tests can select the SES path on the
-    # base class without flipping ENV — which also drives DB auth, encryption
-    # and docs. Each subclass pins one value (DevSettings "console",
-    # ProdSettings "ses"), so no environment ever chooses.
+    # addresses (FLIP#919). Each subclass pins one value (DevSettings
+    # "console", ProdSettings Literal["ses"], so console is rejected at boot
+    # there), so no environment chooses. This base default is seen only by the
+    # ENV probe below and by Settings() in tests. Unlike ENFORCE_MFA it is NOT
+    # a fallback for a misconfigured deploy: an unset ENV coerces to
+    # "development", which selects DevSettings and so "console". Such a deploy
+    # should then fail on DevSettings' required POSTGRES_PASSWORD /
+    # AES_KEY_BASE64, but do not rely on that. It is a dedicated flag rather
+    # than an ENV branch (as with ENFORCE_MFA) so integration tests can select
+    # SES on the base class without flipping ENV, which also drives DB auth,
+    # encryption and docs.
     EMAIL_BACKEND: Literal["ses", "console"] = "ses"
 
     @field_validator("ENV", mode="before")
@@ -340,19 +346,18 @@ class Settings(BaseSettings):
             return v.upper()
         return v
 
-    @field_validator("MAX_MODEL_FILE_BYTES", mode="before")
+    @field_validator("MAX_MODEL_FILE_BYTES", "MAX_RESULTS_FILE_BYTES", mode="before")
     @classmethod
-    def coerce_empty_max_model_file_bytes(cls, v: object) -> object:
-        """Treat empty-string MAX_MODEL_FILE_BYTES as the field default 5 GiB.
+    def coerce_empty_max_model_file_bytes(cls, v: object, info: ValidationInfo) -> object:
+        """Treat an empty-string size cap as the field's default.
 
         GitHub Actions environments inject empty-string env vars for every
         var that isn't explicitly set in the environment scope; Pydantic
         treats that as a real override and rejects it against ``int``.
-        Same shape as ``coerce_empty_env``. Must stay
-        in sync with the ``MAX_MODEL_FILE_BYTES`` field default above.
+        Same shape as ``coerce_empty_env``.
         """
         if v is None or v == "":
-            return 5 * 1024 * 1024 * 1024
+            return cls.model_fields[str(info.field_name)].default
         return v
 
     @field_validator("PRE_SIGNED_URL_EXPIRATION_SECONDS", mode="before")
@@ -489,14 +494,12 @@ class DevSettings(Settings):
 
     AES_KEY_BASE64: str  # in dev, get AES key from env variable
 
-    INTERNAL_SERVICE_KEY_HASH: str  # in dev, get internal service auth key hash from env variable
-
     # FL kit slot pool names — one per pre-provisioned FL kit (workspace/net-N/services/<slot>).
     # Seeded into `fl_kit_slot` so POST /admin/trusts can hand each joining trust the next
-    # free slot regardless of the trust's friendly name. Dev-only on purpose: in production
-    # the pool's single source is the /flip/fl_kit_slot_names SSM parameter (see
-    # db/seed/fl_kit_slots.resolve_fl_kit_slot_names) — there is no env-var fallback, so a
-    # broken parameter can't be silently masked by stale task-definition env. Defaults to []
+    # free slot regardless of the trust's friendly name. Dev-only on purpose, so a stale env
+    # copy can never mask production's source: the kits (NVFLARE) or SuperNode keys
+    # (Flower) in S3 — see
+    # db/seed/fl_kit_slots.resolve_fl_kit_slot_names. Defaults to []
     # so existing dev envs aren't required to set it; in that case the pool is empty until
     # the admin provisions kits and adds them here.
     FL_KIT_SLOT_NAMES: list[str] = []
@@ -534,6 +537,14 @@ class ProdSettings(Settings):
     EMAIL_BACKEND: Literal["ses"] = "ses"
     AWS_SES_ADMIN_EMAIL_ADDRESS: EmailStr  # e.g. admin@example.com
     AWS_SES_SENDER_EMAIL_ADDRESS: EmailStr  # e.g. no-reply@example.com, but can be same as admin email
+
+    # NVFLARE only: s3://<bucket>/fl-flare-participant-kits/<FLARE_KIT_DATE>. The kit-slot
+    # pool is every slot whose kit is complete on every net under it (FLIP#1720).
+    FLARE_KITS_S3_URI: str = ""
+
+    # Flower only: s3://<bucket>/fl-flower-participant-kits/<FLOWER_KIT_DATE>. The kit-slot
+    # pool is every slot whose SuperNode key pair is complete on every net under it (FLIP#1942).
+    FLOWER_KITS_S3_URI: str = ""
 
 
 # Eager load once (for app use)

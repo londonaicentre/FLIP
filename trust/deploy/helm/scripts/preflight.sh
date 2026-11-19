@@ -152,29 +152,6 @@ else
     fi
 fi
 
-if ! command -v aws >/dev/null 2>&1; then
-    warn "aws CLI not found — required for the OMOP core-vocabulary load Job when it authenticates via omopDb.vocabLoad.hostAwsMount. Not needed for the mock-data seed (anonymous Hugging Face fetch) nor for the FL kit, which is staged onto the node with 'make stage-kit'"
-    hint "Install: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
-else
-    AWS_VER="$(aws --version 2>&1 | extract_semver || true)"
-    pass "aws CLI ${AWS_VER:-found}"
-    # Warn about stale SSO session early. Not for the FL kit — that is staged onto the
-    # node beforehand and the cluster holds no credentials — but the OMOP vocab-load
-    # Job reads the operator AWS config through a host mount.
-    # Every deployed environment (HUB set) reads its vocabulary bundle this way.
-    if [ -n "$HUB" ]; then
-        # Unset, the profile the vocab-load Job uses by default (omopDb.vocabLoad.awsProfile).
-        AWS_PROFILE_CHECK="${AWS_PROFILE:-default}"
-        if ! aws sts get-caller-identity --profile "$AWS_PROFILE_CHECK" >/dev/null 2>&1; then
-            warn "AWS SSO session not active for profile '${AWS_PROFILE_CHECK}'"
-            hint "Login before deploying: aws sso login --profile ${AWS_PROFILE_CHECK}"
-            hint "(Required by the OMOP vocab-load Job via omopDb.vocabLoad.hostAwsMount)"
-        else
-            pass "AWS SSO session active  (profile: ${AWS_PROFILE_CHECK})"
-        fi
-    fi
-fi
-
 if ! command -v kubeconform >/dev/null 2>&1; then
     warn "kubeconform not installed — 'make validate' schema checks will be skipped"
     hint "macOS:  brew install kubeconform"

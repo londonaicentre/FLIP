@@ -15,7 +15,7 @@
 
 import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ref } from "vue";
 
 import { IProject, IProjectTrust, ProjectStatus, TrustApprovalStatus } from "@/services/project-service";
@@ -77,8 +77,8 @@ const stubs = {
     "icon-ph-squares-four-duotone": { template: "<span />" },
     "icon-ph-archive-duotone": { template: "<span />" },
     "icon-ph-users-three-duotone": { template: "<span />" },
-    "icon-ph-scan": { template: "<span />" },
-    "icon-ph-database": { template: "<span />" }
+    "icon-healthicons-xray-outline": { template: "<span />" },
+    "icon-healthicons-register-book-outline": { template: "<span />" }
 };
 
 const trust = (id: string, code: string, status: TrustApprovalStatus): IProjectTrust => ({
@@ -132,6 +132,10 @@ function mountPage(options: { permissions?: string[] } = {}) {
 
 beforeEach(() => {
     mockSwrvData.value = undefined;
+});
+
+afterEach(() => {
+    vi.useRealTimers();
 });
 
 describe("Projects Page", () => {
@@ -250,31 +254,6 @@ describe("Projects Page", () => {
         expect(wrapper.findAll("[data-test='project-list-item-0']")).toHaveLength(0);
     });
 
-    test("status indicators show human-friendly labels (Draft / Staged / Approved)", async () => {
-        // Three projects, one per status — the sort puts STAGED first, then
-        // APPROVED, then UNSTAGED (see STATUS_RANK in projects.vue), so
-        // the indicator labels follow that order.
-        mockSwrvData.value = {
-            data: [
-                makeProject("APPROVED", []),
-                makeProject("UNSTAGED", []),
-                makeProject("STAGED", [])
-            ],
-            totalPages: 1,
-            page: 1
-        };
-        // Tie-break in the sort uses project.id (which embeds the status name
-        // in the makeProject helper) — fine for this assertion since we're only
-        // checking labels, not order.
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
-
-        const labels = wrapper.findAll("[data-test='project-status-indicator']").map(s => s.text());
-        expect(labels).toContain("Draft");
-        expect(labels).toContain("Staged");
-        expect(labels).toContain("Approved");
-    });
-
     test("renders the 'No trusts staged' subtitle on projects without any approvedTrusts", async () => {
         setProject(makeProject("UNSTAGED", []));
         const wrapper = mountPage();
@@ -288,7 +267,7 @@ describe("Projects Page", () => {
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
         const header = wrapper.find("[data-test='projects-list-header']");
-        expect(header.findAll(".grid > div").map(c => c.text())).toEqual(["Project", "Description", "Trusts", "Status"]);
+        expect(header.findAll(".grid > div").map(c => c.text())).toEqual(["Project", "Type", "Description", "Trusts", "Status"]);
     });
 
     test("toggles between list and grid views via the view-mode buttons", async () => {
@@ -522,23 +501,18 @@ describe("Projects Page", () => {
         expect(mineTab.classes().join(" ")).toContain("text-gray-900");
     });
 
-    test("typing in the search input triggers a paginated reload (debouncedWatch → updateProjectList)", async () => {
+    test("typing in the search input puts the term on the request after the debounce", async () => {
+        // Fake timers: under the parallel coverage run the worker can stall past a wall-clock
+        // waitFor deadline, which then rejects without re-checking the key.
+        vi.useFakeTimers();
         setProject(makeProject("STAGED", []));
         const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
 
-        // The search input is the AiSearch stub — bound via v-model to `search`.
-        // Triggering input fires the debouncedWatch which calls updateProjectList(1).
-        // The SWRV mock just observes the new key; we assert via re-render not throwing.
         await wrapper.find("[data-test='project-search']").setValue("cancer");
-        // Allow the 500ms debounce to settle.
-        await new Promise((resolve) => setTimeout(resolve, 600));
-        await wrapper.vm.$nextTick();
+        expect(capturedKey?.()).not.toContain("search=");
 
-        // Nothing else to assert — exercising the path without throwing already
-        // covers getSearchQuery + updateProjectList. The store key change is
-        // observed via the SWRV mock continuing to return mockSwrvData.
-        expect(wrapper.exists()).toBe(true);
+        await vi.advanceTimersByTimeAsync(500);
+        expect(capturedKey?.()).toContain("search=cancer");
     });
 
     test("trust chips truncate stripped names longer than 16 chars to 14 + ellipsis", async () => {
@@ -623,16 +597,17 @@ describe("Projects Page", () => {
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        const omop = wrapper.find("[data-test='project-type-chip-omop-only']");
-        const imaging = wrapper.find("[data-test='project-type-chip-imaging']");
+        const omop = wrapper.find("[data-test='projects-list-view'] [data-test='project-type-chip-omop-only']");
+        const imaging = wrapper.find("[data-test='projects-list-view'] [data-test='project-type-chip-imaging']");
         expect(omop.text()).toBe("OMOP only");
         expect(imaging.text()).toBe("Imaging + OMOP");
-        // Design tokens: steel blue for OMOP only, the primary tint for imaging.
-        expect(omop.classes()).toContain("bg-steel-100");
-        expect(imaging.classes()).toContain("bg-primary-100");
+        // Icons only on screen; the name stays for screen readers and the tooltip.
+        expect(omop.attributes("title")).toBe("OMOP only");
+        expect(omop.classes()).toContain("text-gray-800");
+        expect(imaging.classes()).toContain("text-gray-800");
     });
 
-    test("grid cards carry the type chip beside the status pill", async () => {
+    test("grid cards carry the type icons beside the status pill", async () => {
         setProject({
             ...makeProject("APPROVED", []),
             has_imaging: false

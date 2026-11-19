@@ -36,7 +36,7 @@ the schema and the `data_analyst_reader` role (the compose file passes `DATA_ACC
 for that) — and then seeds this trust's slice of the default projects into it (see "Seeding a
 running trust" below). The seeded volume persists; a later `up` does nothing. The version is
 `trust/.data_version` — a git tag on that dataset, one pin for the OMOP and Orthanc data together;
-see "Data versions" in `trust/README.md`.
+see "Data versions" in [trust/README.md](../README.md).
 
 The OMOP database container is normally started as part of a full trust stack from the repository root:
 
@@ -49,8 +49,7 @@ make -C trust up-trust KIT=KCH     # KCH only
 The seeded databases carry **no licensed vocabulary**: after the stack is
 up, load the core vocabulary into each trust database once (idempotent — safe
 to re-run; needs the bundle, see "The core vocabulary bundle" below, and
-`psql` on the host). Unlike the stack commands above, these run from this
-directory — `make -C trust/omop-db …` from the repository root:
+`psql` on the host). These targets live in this directory's Makefile. From the repository root, run them with `make -C trust/omop-db`:
 
 ```sh
 make -C trust/omop-db load-omop-vocab                    # Trust_1 (GSTT, port 5434)
@@ -59,32 +58,29 @@ make -C trust/omop-db load-omop-vocab OMOP_DB_PORT=5436  # Trust_2 (KCH)
 
 Cohort queries that join `omop.concept` return nothing until this step has
 run. On EC2 trusts the equivalent load is part of the EC2 root's `make seed` (Ansible);
-on Kubernetes it is the chart's `omop-vocab-load` post-install job — when
-`omopDb.vocabLoad.s3Bucket` is set and the Job can reach AWS credentials, which
-on a local `kind` cluster it cannot without extra setup (the node is a container
-that does not see your `~/.aws`). The chart README's "Local clusters (kind)"
-covers both routes: an `extraMounts` mapping, or pre-seeding over a port-forward
-with this script directly.
+on Kubernetes it is the chart's `omop-vocab-load` post-install job, which loads
+the unpacked bundle the operator staged onto the node (`make -C trust/deploy/helm
+download-vocab` or an Athena export, then `stage-vocab`; FLIP#923) — the chart
+README's "OMOP core vocabulary".
 
 To ask a database whether it has been loaded — without a bundle, and without
 loading anything — run the script's probe mode. It exits 0 only when every
-vocabulary table already holds core rows, which is how the Kubernetes hook
-decides whether it needs to download the bundle at all:
+vocabulary table already holds core rows:
 
 ```sh
 cd trust/omop-db && OMOP_DB_PORT=5434 OMOP_POSTGRES_USER=… OMOP_POSTGRES_PASSWORD=… \
   OMOP_POSTGRES_DB=… ./files/load_core_vocab.sh --check
 ```
 
-### Seeding a running trust with datasets (FLIP#1100)
+### Seeding a running trust with datasets
 
-Seeding is how every trust gets its data: `up-trust` seeds the default projects at
-bring-up (`ensure-seeded`, which skips itself when the marker below already says
-so), and the same targets load any other published project into a **running**
-trust — a different set, a third trust. Idempotent, persisting in the bind-mounted
-volume; a `.data_version` bump makes the next `up-trust` re-seed at the new tag.
-Run from `trust/` with the kit, which supplies the slot number, the port and the
-credentials:
+Seeding is how every trust gets its data:
+
+- At bring-up, `up-trust` seeds the default projects (`ensure-seeded`, which skips itself when the marker below says the trust is already seeded). A `.data_version` bump makes the next `up-trust` re-seed at the new tag.
+- On a **running** trust, the targets below load any other published project: a different set, or a third trust.
+
+Seeding is idempotent and persists in the bind-mounted volume.
+Run from the repository root with `KIT=<CODE>`. The kit supplies the slot number, the port and the credentials:
 
 ```sh
 make -C trust seed-omop KIT=GSTT PROJECTS="spleen_project cxr_project"   # OMOP rows only
@@ -101,7 +97,7 @@ slice, one transaction per project. It works on the fresh, unconstrained databas
 trust starts as and on the constrained, vocab-loaded one it becomes after
 `load-omop-vocab`: the (Apache-licensed) DICOM vocabulary is loaded first
 (`load-dicom-vocab`, skipped when present), so the rows' imaging concepts resolve
-either way. `seed-orthanc` (see `trust/orthanc/README.md`) puts the same trust's
+either way. `seed-orthanc` (see [trust/orthanc/README.md](../orthanc/README.md)) puts the same trust's
 studies into its PACS, selected by the same column, so OMOP and PACS agree by
 construction rather than by keeping two snapshots in lockstep.
 
@@ -109,12 +105,17 @@ A seed writes a `.seeded` marker beside the trust's `db_data` recording projects
 partition and data version — what `ensure-seeded` compares to decide whether to
 re-seed. There is no `FORCE`: a re-seed replaces only the listed projects' rows.
 
-For database-only debugging (without the rest of the trust stack), `make -C trust/omop-db up-test-omop-trust1` will start just the first dev trust's OMOP container.
+#### Starting the database alone
 
-The container's first start on an empty data dir runs the image's init scripts (schema, primary keys,
-indices, the read-only role); later starts find `PG_VERSION` and skip them.
+For database-only debugging, without the rest of the trust stack, start just the first dev trust's OMOP container:
 
-### The Synthea EHR cohort (for the EHR risk-prediction tutorial)
+```sh
+make -C trust/omop-db up-test-omop-trust1
+```
+
+On its first start on an empty data dir the container runs the image's init scripts (schema, primary keys, indices, the read-only role). Later starts find `PG_VERSION` and skip them.
+
+### Tutorial cohorts: Synthea EHR and ADNI
 
 The shipped mock OMOP is built from the imaging projects and carries **no `condition_occurrence`
 rows**. The EHR risk-prediction tutorial
@@ -131,6 +132,17 @@ make -C trust/omop-db load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434   # Trust
 make -C trust/omop-db load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # Trust_2 (KCH)
 ```
 
+The biomarker causal-discovery tutorial's cohort is **ADNI**, which is access-controlled, so there is
+no download: `load-adni-cohort` reads the cohort the licence holder built from their own IDA download
+(`make -C fl-tutorials convert-adni-cohort`, gitignored) and appends each trust's `person_id`-modulo
+slice as `person` / `measurement` / `observation` rows — for a **local** dev stack only, nothing
+ADNI-derived may reach a shared trust:
+
+```sh
+make -C trust/omop-db load-adni-cohort TRUST_INDEX=1 OMOP_DB_PORT=5434   # Trust_1 (GSTT)
+make -C trust/omop-db load-adni-cohort TRUST_INDEX=2 OMOP_DB_PORT=5436   # Trust_2 (KCH)
+```
+
 A Kubernetes trust publishes no host port: port-forward `svc/omop-db` and pass the connection as
 `make` variables instead — recipe in
 [`trust/deploy/helm/README.md`](../deploy/helm/README.md), "Local clusters (kind)".
@@ -141,11 +153,70 @@ they never collide with the imaging cohorts' existing keys at insert time, and t
 transparently excluding the imaging-only persons. That offset is not what makes reloading safe,
 though: imaging `person_id` is derived from a real NHS number and scatters across the whole 9-digit
 range, so idempotency deletes by **provenance** (the `synthea-` prefix each loaded row carries in
-`person_source_value`) rather than by an id-range threshold — the latter was tried first and
-silently deleted a chunk of the imaging cohort (and its cascaded rows) on every reload. The load is
+`person_source_value`). Do not change this to an id-range threshold: that silently deletes part of the
+imaging cohort (and its cascaded rows) on every reload. The load is
 FK-safe (it keeps Synthea's standard gender concepts and zeroes the rest, matching conditions on
 their SNOMED `condition_source_value`) and idempotent. It is a dev/demo convenience: a real trust
 already holds real condition data, so `query.sql` runs against it unchanged.
+
+## Seeding a Snowflake-hosted OMOP (FLIP#1580)
+
+A trust whose OMOP lives in Snowflake rather than in this Postgres image is seeded by
+`src/omop_db_tools/snowflake_seed.py`, the twin of `import_tables.py`. It shares this package's
+dataset fetch (`dataset.fetch_canonical`) and partition split (`dataset.split_for_trust`), so a
+Snowflake trust and a Postgres trust holding the same `source_trust` hold the same rows, and only
+the load mechanism differs: internal stage + `COPY INTO` instead of row inserts.
+
+```sh
+# Print the whole seed as SQL (no account, no credentials, no network)
+make -C trust/omop-db seed-omop-snowflake KIT=GSTT SNOW_CONNECTION=<name> DRY_RUN=1
+
+# Run it, as FLIP_GSTT_OMOP_LOADER, through a `snow connection add` entry
+make -C trust/omop-db seed-omop-snowflake KIT=GSTT SNOW_CONNECTION=<name> SOURCE_TRUST=1 PROJECTS="cxr_project"
+
+# Only if the marker does not already record exactly this (the ensure-seeded equivalent)
+make -C trust/omop-db ensure-seeded-snowflake KIT=GSTT
+
+# Take a project out, as the tables at a given revision describe it
+make -C trust/omop-db unseed-omop-snowflake KIT=GSTT SNOW_CONNECTION=<name> PROJECTS=spleen_project HF_TRUST_DATA_REVISION=20260911
+```
+
+What a run does, in order:
+
+1. **Creates the tables.** The OMOP CDM DDL is translated from this directory's own
+   `files/OMOPCDM_postgresql_5.4_ddl.sql` by `snowflake_ddl.py`: one schema of record, so a column
+   added for Postgres (as `image_occurrence.accession_id` was) reaches Snowflake with no second
+   edit. `tests/unit/test_snowflake_ddl.py` fails if the translation misses a table. Foreign keys
+   and indices are not translated: Snowflake enforces neither and prunes micro-partitions instead.
+2. **Loads the DICOM vocabulary first**, and skips it when already present, because `concept_relationship`
+   carries no unique key, so a blind re-load would duplicate its rows. Same rule, same reason, as
+   `load-dicom-vocab`.
+3. **Replaces the listed projects' rows.** Per project it `PUT`s the filtered CSVs to
+   `FLIP_TRUST_<CODE>.STAGES.SEED`, then deletes the project's rows by their own `person_id`s and
+   `COPY INTO`s the CSVs as one transaction, so a failed upload costs nothing and a failed load
+   leaves the previous rows in place. `COPY INTO` carries `FORCE = TRUE`: Snowflake otherwise skips
+   a staged file it has loaded before, which emptied the tables on a re-seed.
+4. **Counts what it loaded.** Each table's rows for the project are compared with the staged CSV.
+   A mismatch fails the run and the marker is not written.
+5. **Writes the marker last**, to `OMOP._FLIP_SEED_MARKER` (`projects` / `source_trust` /
+   `provenance`): the Snowflake equivalent of the Postgres path's `.seeded` file, rendering the
+   same text. A matching marker means nothing to do; a differing one (a `.data_version` bump, a
+   changed `PROJECTS`, a re-partition) re-seeds those projects and leaves every other project and
+   any Synthea rows alone. Last, so a run that fails part way leaves a marker that does not match
+   and the next run re-seeds.
+
+Object names follow the epic #1589 naming contract: database `FLIP_TRUST_<CODE>`, schemas `OMOP`
+and `STAGES`, stage `STAGES.SEED`, role `FLIP_<CODE>_OMOP_LOADER`, warehouse `FLIP_<CODE>_WH`.
+Those objects are created by the Terraform root (FLIP#1581); this seeder only writes inside them,
+and `USE ROLE` pins the loader explicitly so a connection with a broader default role still seeds
+as the loader and nothing else. The read side is the separate SELECT-only
+`FLIP_<CODE>_OMOP_READER`, granted by
+[`trust/data-access-api/sql/snowflake_readonly_grants.sql`](../data-access-api/sql/snowflake_readonly_grants.sql).
+
+`SNOW_CONNECTION` (required, no default) names a `snow connection add` entry; it is a connection
+name, never a credential. When the Snowflake node shape (FLIP#1582) merges, its
+`trust/deploy/snowflake/Makefile` will forward its seed target to these ones rather than
+reimplementing the fetch and the split.
 
 ## Building the image
 
@@ -166,9 +237,10 @@ make build                         # plain docker build — no data inputs
 
 `vocab_aicentre_core_20240916` is an [OHDSI Athena](https://athena.ohdsi.org/)
 vocabulary export (snapshot `v5.0 30-AUG-24`): nine tab-separated files
-(~600 MB as the distributed zip, ~3.6 GB unpacked — so a loader that unpacks
-beside the zip needs ~4.2 GB of scratch space, which is what sizes the
-Kubernetes vocab-load Job's work dir — `CONCEPT.csv` 819 MB, `CONCEPT_RELATIONSHIP.csv` 2.0 GB,
+(~600 MB as the distributed zip, ~3.6 GB unpacked — a loader that unpacks
+beside the zip needs ~4.2 GB of scratch space; the Kubernetes vocab-load Job
+needs none, as it reads the ~3.6 GB folder staged onto the node in place —
+`CONCEPT.csv` 819 MB, `CONCEPT_RELATIONSHIP.csv` 2.0 GB,
 `CONCEPT_ANCESTOR.csv` 704 MB, `CONCEPT_SYNONYM.csv` 139 MB,
 `DRUG_STRENGTH.csv` 159 MB, plus the small `CONCEPT_CLASS` / `DOMAIN` /
 `RELATIONSHIP` / `VOCABULARY` tables) that
@@ -188,12 +260,7 @@ FLIP's cohort queries and the licensing-relevant ones are:
 | OMOP structural vocabularies (Domain, Concept Class, Type Concept, Visit, ...) | — | Apache 2.0 (OHDSI) |
 
 Because of the licensed entries the bundle is **never tracked in git**, never
-part of the published image, and not fetchable in CI. Two ways to obtain it
-(not needed to build the image, but needed both to populate fresh datasets and
-to run the one-time `make load-omop-vocab` seeding of any stack — see
-"Using the database (dev trust stacks)" above; a stack whose vocabulary was never loaded
-starts cleanly but returns nothing from cohort queries that join
-`omop.concept`):
+part of the published image, and not fetchable in CI. You do not need it to build the image. You do need it to populate fresh datasets and to run the one-time `make load-omop-vocab` on any stack (see "Using the database (dev trust stacks)" above, including what happens if you skip it). Two ways to obtain it:
 
 1. **AI Centre developers** — `AWS_PROFILE=dev make fetch-vocab-core`:
    downloads `s3://flip-lza-stag-aicentre/vocab/vocab_aicentre_core_20240916.zip`
@@ -211,6 +278,10 @@ starts cleanly but returns nothing from cohort queries that join
    [NHS TRUD](https://isd.digital.nhs.uk/)), then place the export's CSV files
    at `data/vocab_aicentre_core_20240916/`. Concept coverage may differ
    slightly from the org snapshot depending on release dates.
+
+Either folder is what the Helm chart loads too: `make -C trust/deploy/helm download-vocab` runs
+route 1 for you, and `make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder>` puts the folder
+on the node (chart README, "OMOP core vocabulary").
 
 ### The DICOM vocabulary bundle
 
@@ -262,20 +333,14 @@ Populating runs from the host and needs `psql`/`pg_isready`
 trusts additionally needs an `omop-db-trust<N>` service in `compose.yml` and
 an `OMOP_DB_PORT_TRUST_<N>` in `.env.build` — `make populate NUM_TRUSTS=3
 PARTITION=modulo` fails fast until they exist (and `modulo` implies
-regenerating the matching imaging data). `populate` and `seed-omop` are the
-same loader (`omop_db_tools.import_tables`): `populate` passes `--clean all`
-(empty build databases), `seed-omop` uses the default `--clean projects`
-(`CLEAN=all` overrides — the one-time move off a re-cut project whose person
-ids all changed, e.g. spleen at the FLIP#1221 cut, since `projects` deletes by
-the *new* ids and would leave the old rows behind). `seed-omop` fetches the
-published tables at the pinned tag (`fetch-dataset --projects $(PROJECTS)`);
-`CANONICAL_DIR=<dir>` loads a local canonical tree (`<dir>/<project>/<table>.csv`,
-what `omop_db_tools.dataset build` writes) instead, which is how a project is
-proven on a running trust before its data version is tagged
-(`make -C fl-tutorials seed-brain-mri KIT=<CODE>`, FLIP#1221). `unseed-omop`
-(`import_tables --remove-only`) is the surgical reverse: it deletes the listed
-projects' rows by the person ids in the given tables — point it at the cut the
-trust actually holds, e.g. `HF_TRUST_DATA_REVISION=20260911` — and loads nothing.
+regenerating the matching imaging data).
+
+`populate` and `seed-omop` are the same loader (`omop_db_tools.import_tables`) with different defaults:
+
+- `populate` passes `--clean all` (empty build databases).
+- `seed-omop` uses the default `--clean projects`. `CLEAN=all` overrides it. You need that once when a project is re-cut and all its person ids change (e.g. spleen at the FLIP#1221 cut), because `projects` deletes by the *new* ids and would leave the old rows behind.
+- `seed-omop` fetches the published tables at the pinned tag (`fetch-dataset --projects $(PROJECTS)`). `CANONICAL_DIR=<dir>` loads a local canonical tree instead (`<dir>/<project>/<table>.csv`, what `omop_db_tools.dataset build` writes). This is how a project is proven on a running trust before its data version is tagged (`make -C fl-tutorials seed-brain-mri KIT=<CODE>`).
+- `unseed-omop` (`import_tables --remove-only`) is the surgical reverse: it deletes the listed projects' rows by the person ids in the given tables and loads nothing. Point it at the cut the trust actually holds, e.g. `HF_TRUST_DATA_REVISION=20260911`.
 
 ### Publishing the image and the canonical tables
 

@@ -17,14 +17,14 @@
         class="px-4 pb-3"
         data-test="cohort-snapshot-summary"
     >
-        <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300">
+        <p class="text-xs leading-tight text-gray-500 dark:text-gray-300">
             Approved cohort (frozen at approval)
         </p>
         <ul class="mt-1.5 space-y-1">
             <li
                 v-for="snapshot in snapshots"
                 :key="snapshot.trustId"
-                class="flex flex-wrap items-baseline gap-x-2 text-[13px] leading-snug"
+                class="flex flex-wrap items-baseline gap-x-2 text-note leading-snug"
                 data-test="cohort-snapshot-row"
                 :data-status="snapshot.status"
             >
@@ -35,14 +35,14 @@
                     </span>
                     <span
                         v-if="hasDrifted(snapshot)"
-                        class="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+                        class="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
                         data-test="cohort-snapshot-drift"
                     >
                         drifted — approved on {{ formatCount(snapshot.approvedRecordCount) }}
                     </span>
                     <span
                         v-if="snapshot.hasAccessions === false"
-                        class="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300"
+                        class="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300"
                         data-test="cohort-snapshot-tabular"
                     >
                         tabular — no imaging
@@ -57,7 +57,7 @@
                 </template>
                 <template v-else-if="snapshot.status === 'pending'">
                     <span
-                        class="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+                        class="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
                         data-test="cohort-snapshot-pending"
                     >
                         freezing
@@ -68,7 +68,7 @@
                 </template>
                 <template v-else>
                     <span
-                        class="rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-700 dark:bg-red-500/10 dark:text-red-300"
+                        class="rounded bg-red-50 px-1.5 py-0.5 text-xs font-medium text-red-700 dark:bg-red-500/10 dark:text-red-300"
                         data-test="cohort-snapshot-failed"
                     >
                         not frozen

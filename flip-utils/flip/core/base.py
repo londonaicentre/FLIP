@@ -100,7 +100,8 @@ class FLIPBase(ABC):
             accession_id (str): The accession ID
             scan_id (str): The scan ID
             resource_id (str): The resource type ID
-            files (list[str]): List of file paths to upload
+            files (list[str]): Paths of the files to upload, relative to this net's upload folder,
+                ``IMAGES_DIR/NET_ID/upload``
         """
 
     @abstractmethod

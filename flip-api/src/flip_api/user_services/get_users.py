@@ -67,20 +67,15 @@ def get_users(
                 status_code=status.HTTP_403_FORBIDDEN, detail=f"User with ID: {token_id} was unable to manage users"
             )
 
-        # Create paging info
         paging_info = get_paging_details(dict(request.query_params))
 
-        # Get users from the identity provider
         users = idp.list_users()
 
         data: list[IUser] = []
 
-        # Get user role data if users exist
         if users:
             data = get_user_role_data(paging_info, users, db)
-            # data = [row["data"] for row in rows]
 
-        # Calculate pagination info
         total_records = len(data)
         total_pages = get_total_pages(total_records, paging_info.page_size)
 

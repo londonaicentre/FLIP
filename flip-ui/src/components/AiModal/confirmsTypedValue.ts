@@ -18,8 +18,6 @@
  * `typed` is undefined on the first yup validation pass (before the user
  * touches the input). Coalescing to "" inside the function keeps callers
  * — and the schema's test() callback — from having to guard against that.
- * `expected` is required and typed as `string`, so callers can't pass
- * undefined; if they ever do, the early-return on "" still applies.
  */
 export function confirmsTypedValue(
     typed: unknown,

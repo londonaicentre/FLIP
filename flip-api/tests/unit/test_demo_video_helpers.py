@@ -58,54 +58,60 @@ def _clear_credential_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(var, raising=False)
 
 
-def test_demo_users_used_when_fully_configured(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DEMO_RESEARCHER_EMAIL", "researcher@example.com")
-    monkeypatch.setenv("DEMO_RESEARCHER_PASSWORD", "researcher-pw")
-    monkeypatch.setenv("DEMO_ADMIN_EMAIL", "admin@example.com")
-    monkeypatch.setenv("DEMO_ADMIN_PASSWORD", "admin-pw")
+RESEARCHER_ENV = {
+    "DEMO_RESEARCHER_EMAIL": "researcher@example.com",
+    "DEMO_RESEARCHER_PASSWORD": "researcher-pw",  # pragma: allowlist secret
+}
+ADMIN_ENV = {"DEMO_ADMIN_EMAIL": "admin@example.com", "DEMO_ADMIN_PASSWORD": "admin-pw"}  # pragma: allowlist secret
+WELL_KNOWN = (constants.ADMIN_EMAIL_1, "well-known-pw")
+
+
+@pytest.mark.parametrize(
+    ("env", "expected_researcher", "expected_admin", "expected_fallback"),
+    [
+        (
+            {**RESEARCHER_ENV, **ADMIN_ENV},
+            ("researcher@example.com", "researcher-pw"),
+            ("admin@example.com", "admin-pw"),
+            [],
+        ),
+        (
+            {**ADMIN_ENV, "ADMIN_USER_PASSWORD": "well-known-pw"},  # pragma: allowlist secret
+            WELL_KNOWN,
+            ("admin@example.com", "admin-pw"),
+            ["researcher"],
+        ),
+        (
+            {**RESEARCHER_ENV, "ADMIN_USER_PASSWORD": "well-known-pw"},  # pragma: allowlist secret
+            ("researcher@example.com", "researcher-pw"),
+            WELL_KNOWN,
+            ["admin"],
+        ),
+        # An email without its password (or vice versa) must not half-configure a persona.
+        (
+            {
+                "DEMO_RESEARCHER_EMAIL": "researcher@example.com",
+                "DEMO_ADMIN_PASSWORD": "admin-pw",  # pragma: allowlist secret
+                "ADMIN_USER_PASSWORD": "well-known-pw",  # pragma: allowlist secret
+            },
+            WELL_KNOWN,
+            WELL_KNOWN,
+            ["researcher", "admin"],
+        ),
+    ],
+    ids=["fully-configured", "no-researcher", "no-admin", "partial"],
+)
+def test_resolve_ui_credentials(
+    monkeypatch: pytest.MonkeyPatch, env, expected_researcher, expected_admin, expected_fallback
+) -> None:
+    for var, value in env.items():
+        monkeypatch.setenv(var, value)
 
     researcher, admin, fallback_roles = resolve_ui_credentials()
 
-    assert researcher == ("researcher@example.com", "researcher-pw")
-    assert admin == ("admin@example.com", "admin-pw")
-    assert fallback_roles == []
-
-
-def test_missing_researcher_falls_back_to_well_known_admin(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DEMO_ADMIN_EMAIL", "admin@example.com")
-    monkeypatch.setenv("DEMO_ADMIN_PASSWORD", "admin-pw")
-    monkeypatch.setenv("ADMIN_USER_PASSWORD", "well-known-pw")
-
-    researcher, admin, fallback_roles = resolve_ui_credentials()
-
-    assert researcher == (constants.ADMIN_EMAIL_1, "well-known-pw")
-    assert admin == ("admin@example.com", "admin-pw")
-    assert fallback_roles == ["researcher"]
-
-
-def test_missing_admin_falls_back_to_well_known_admin(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DEMO_RESEARCHER_EMAIL", "researcher@example.com")
-    monkeypatch.setenv("DEMO_RESEARCHER_PASSWORD", "researcher-pw")
-    monkeypatch.setenv("ADMIN_USER_PASSWORD", "well-known-pw")
-
-    researcher, admin, fallback_roles = resolve_ui_credentials()
-
-    assert researcher == ("researcher@example.com", "researcher-pw")
-    assert admin == (constants.ADMIN_EMAIL_1, "well-known-pw")
-    assert fallback_roles == ["admin"]
-
-
-def test_partial_demo_credentials_count_as_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    # An email without its password (or vice versa) must not half-configure a persona.
-    monkeypatch.setenv("DEMO_RESEARCHER_EMAIL", "researcher@example.com")
-    monkeypatch.setenv("DEMO_ADMIN_PASSWORD", "admin-pw")
-    monkeypatch.setenv("ADMIN_USER_PASSWORD", "well-known-pw")
-
-    researcher, admin, fallback_roles = resolve_ui_credentials()
-
-    assert researcher == (constants.ADMIN_EMAIL_1, "well-known-pw")
-    assert admin == (constants.ADMIN_EMAIL_1, "well-known-pw")
-    assert fallback_roles == ["researcher", "admin"]
+    assert researcher == expected_researcher
+    assert admin == expected_admin
+    assert fallback_roles == expected_fallback
 
 
 def test_no_usable_credentials_raises() -> None:
@@ -214,6 +220,14 @@ SOMEONE_ELSE = "22222222-2222-2222-2222-222222222222"
 TRUSTS = [{"id": "t1", "code": "GSTT"}]
 
 
+def _response(body=None, status: int = 200) -> requests.Response:
+    response = requests.Response()
+    response.status_code = status
+    if body is not None:
+        response._content = json.dumps(body).encode()
+    return response
+
+
 class FakeHub(requests.Session):
     """Paged GETs answered from a path→pages table; every DELETE is recorded."""
 
@@ -226,17 +240,12 @@ class FakeHub(requests.Session):
     def paged_get(self, client, path: str, headers) -> requests.Response:  # signature of tests.e2e_smoke._get
         prefix, _, query = path.partition("&pageNumber=")
         page = int(query.split("&")[0])
-        response = requests.Response()
-        response.status_code = 200
         rows = self.pages[prefix]
-        response._content = json.dumps({"data": rows[page - 1], "totalPages": len(rows)}).encode()
-        return response
+        return _response({"data": rows[page - 1], "totalPages": len(rows)})
 
     def delete(self, url, **kwargs) -> requests.Response:
         self.deleted.append(str(url).rsplit("/", 1)[-1])
-        response = requests.Response()
-        response.status_code = 204
-        return response
+        return _response(status=204)
 
 
 def _hub(monkeypatch: pytest.MonkeyPatch, users: list[list[dict]], projects: list[list[dict]]) -> FakeHub:
@@ -358,13 +367,6 @@ class FakeXnat(requests.Session):
         self.container_polls = container_polls
         self.calls: list[tuple[str, str]] = []
 
-    @staticmethod
-    def _json(body) -> requests.Response:
-        response = requests.Response()
-        response.status_code = 200
-        response._content = json.dumps(body).encode()
-        return response
-
     def get(self, url, **kwargs) -> requests.Response:
         url = str(url)
         self.calls.append(("GET", url))
@@ -372,18 +374,16 @@ class FakeXnat(requests.Session):
             poll = self.container_polls.pop(0) if len(self.container_polls) > 1 else self.container_polls[0]
             if isinstance(poll, Exception):
                 raise poll
-            return self._json([{"status": status} for status in poll])
+            return _response([{"status": status} for status in poll])
         if "/data/projects?" in url:
-            return self._json({"ResultSet": {"Result": [{"ID": "xp1", "secondary_ID": "flip-1"}]}})
+            return _response({"ResultSet": {"Result": [{"ID": "xp1", "secondary_ID": "flip-1"}]}})
         if "/experiments?" in url:
-            return self._json({"ResultSet": {"Result": [{"ID": "XNAT_E1"}]}})
-        return self._json({"ResultSet": {"Result": []}})  # assessors
+            return _response({"ResultSet": {"Result": [{"ID": "XNAT_E1"}]}})
+        return _response({"ResultSet": {"Result": []}})  # assessors
 
     def delete(self, url, **kwargs) -> requests.Response:
         self.calls.append(("DELETE", str(url)))
-        response = requests.Response()
-        response.status_code = 200
-        return response
+        return _response()
 
 
 @pytest.fixture
@@ -480,9 +480,7 @@ def test_trust_admin_grant_is_revoked_after_the_segment(monkeypatch: pytest.Monk
 
     def post(client, path, body, headers):
         posts.append((path, body))
-        response = requests.Response()
-        response.status_code = 200
-        return response
+        return _response()
 
     monkeypatch.setattr(seed_demo_projects, "find_user_id", lambda client, headers, email: RESEARCHER_ID)
     monkeypatch.setattr(demo_video.e2e_smoke, "_post", post)

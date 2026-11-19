@@ -12,10 +12,11 @@
 
 """Render the FLARE site privacy policy (``local/privacy.json``) from the trust's governance config.
 
-Run by the fl-client at container start (``python -m flip.nvflare.site_policy /app/local/privacy.json``)
-so each trust can enforce its own update-privacy filter through its kit env file, independently of
-whatever ``task_result_filters`` the submitted job carries: FLARE applies site scope filters *before*
-job filters and never lets a job's *configuration* opt out (``nvflare/apis/utils/task_utils.py::apply_filters``).
+Run by the fl-client's init step (``python -m flip.nvflare.site_policy /app/local/privacy.json``; the
+client itself only checks the render, ``--assert-rendered``, FLIP#1570) so each trust can enforce its own
+update-privacy filter through its kit env file, independently of whatever ``task_result_filters`` the
+submitted job carries: FLARE applies site scope filters *before* job filters and never lets a job's
+*configuration* opt out (``nvflare/apis/utils/task_utils.py::apply_filters``).
 What the filter binds is the job's configuration, not its code: every FLARE app template sets
 ``"execution_mode": "in_process"``, so the job's training code runs in the FL client's job process, alongside the
 privacy service and the filter objects, and is not currently isolated from them (FLIP#1572).
@@ -464,12 +465,43 @@ def render(env: Mapping[str, str], out_path: Path, check_only: bool = False) -> 
     return "written", policy, source
 
 
+def assert_rendered(env: Mapping[str, str], out_path: Path) -> tuple[str, SitePolicy | None, str]:
+    """Checks, without writing, that ``out_path`` is what :func:`render` leaves for this configuration.
+
+    The fl-client mounts the kit's ``local/`` read-only (FLIP#1570) and an init step renders it, so the
+    client starts only on a render that matches its own configuration: a missing, stale or edited file
+    stops it (fail closed).
+
+    Returns:
+        The same ``(status, policy, source)`` triple as :func:`render`, with ``status`` ``"written"`` or
+        ``"absent"``.
+
+    Raises:
+        SitePolicyError: On invalid configuration, or a file that does not match it.
+    """
+    policy, source = resolve_policy(env)
+    if policy is None:
+        if out_path.exists():
+            raise SitePolicyError(f"{out_path} exists but no site privacy policy is configured — re-run the init step")
+        return "absent", None, source
+    try:
+        rendered = json.loads(out_path.read_text())
+    except FileNotFoundError:
+        raise SitePolicyError(f"{out_path} is missing for the configured policy — re-run the init step") from None
+    except json.JSONDecodeError as e:
+        raise SitePolicyError(f"{out_path} is not valid JSON: {e}") from None
+    if rendered != build_policy_json(policy):
+        raise SitePolicyError(f"{out_path} does not match the configured policy ({source}) — re-run the init step")
+    return "written", policy, source
+
+
 def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) -> int:
     """CLI entry point.
 
     ``python -m flip.nvflare.site_policy [--check [--fl-backend NAME]] <out_path>`` renders (or, with
-    ``--check``, validates) ``privacy.json``. ``python -m flip.nvflare.site_policy --extract SRC DEST``
-    is the fl-client's init step: it writes the governance document's ``[fl_privacy]`` table alone.
+    ``--check``, validates) ``privacy.json``; with ``--assert-rendered`` it checks, without writing, that the
+    file matches the configuration (the fl-client's start). ``python -m flip.nvflare.site_policy --extract
+    SRC DEST`` writes the governance document's ``[fl_privacy]`` table alone.
 
     Args:
         argv (list[str] | None): Command-line arguments; ``None`` reads ``sys.argv``.
@@ -485,6 +517,11 @@ def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) ->
         "out_path", type=Path, nargs="?", help="Target privacy.json path (e.g. /app/local/privacy.json)"
     )
     parser.add_argument("--check", action="store_true", help="Validate the configuration without writing")
+    parser.add_argument(
+        "--assert-rendered",
+        action="store_true",
+        help="Fail unless out_path is what the configuration renders (the fl-client's start; never writes)",
+    )
     parser.add_argument(
         "--fl-backend",
         default=_ENFORCING_BACKEND,
@@ -521,12 +558,15 @@ def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) ->
             check_backend(env, backend)
             print(f"[site-privacy] no site privacy policy configured — not applicable on FL_BACKEND={backend}")
             return 0
-        status, policy, source = render(env, parsed.out_path, check_only=parsed.check)
+        if parsed.assert_rendered:
+            status, policy, source = assert_rendered(env, parsed.out_path)
+        else:
+            status, policy, source = render(env, parsed.out_path, check_only=parsed.check)
     except (SitePolicyError, OSError) as e:
         print(f"[site-privacy] FATAL: {e}", file=sys.stderr)
         return 1
 
-    verb = "validated (--check, not written)" if parsed.check else "wrote"
+    verb = "validated (--check, not written)" if parsed.check else "verified" if parsed.assert_rendered else "wrote"
     if status == "written":
         assert policy is not None  # "written" implies a configured policy
         print(

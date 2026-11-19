@@ -1,0 +1,8 @@
+{
+    "_comment": "Tooling input for scripts/demo-fixtures.mjs, never imported by the app: the run this capture came from and its captured-trust -> demo-site map (null = a trust that only answered the cohort query).",
+    "sourceRun": "Production Ark+ evaluation runs (FLARE), captured 2026-07-17; scored before the FLIP#821 orientation fix.",
+    "trustMap": {
+        "f43abcd0-be77-4dc8-89c6-4b8aa98b6183": "00000000-0000-4000-8000-00000000a001",
+        "16f5b300-8ff4-4f1a-9a60-1989b3b54489": "00000000-0000-4000-8000-00000000a002"
+    }
+}

@@ -136,9 +136,7 @@ def retrieve_model(
                 text(query_sql),
                 {"model_id": str(model_id)},
             )
-            # mappings() tells SQLAlchemy to return each row as a dictionary-like object instead of tuple.
             .mappings()
-            # first() retrieves the first result of the query or None if no results were found.
             .first()
         )
 

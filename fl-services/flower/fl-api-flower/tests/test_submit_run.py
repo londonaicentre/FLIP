@@ -32,23 +32,20 @@ _NUMPY_RUN_OK = (
 # --- Production submit: /submit_run + /submit_job are UUID-strict ---
 
 
-def test_submit_run_with_uuid_success(client, src_root, mock_flwr_run):
+@pytest.mark.parametrize(
+    ("endpoint", "stdout"),
+    [
+        ("/submit_run", _NUMPY_RUN_OK),
+        # The /submit_job alias (what flip-api calls) behaves identically, here on a minimal output.
+        ("/submit_job", '{"success": true,"run-id":"123"}'),
+    ],
+)
+def test_submit_with_uuid_success(client, src_root, mock_flwr_run, endpoint, stdout):
     model_id = str(uuid4())
     (src_root / model_id).mkdir(parents=True, exist_ok=True)
-    mock_flwr_run(stdout=_NUMPY_RUN_OK)
+    mock_flwr_run(stdout=stdout)
 
-    response = client.post(f"/submit_run/{model_id}")
-
-    assert response.status_code == 200
-
-
-def test_submit_job_alias_with_uuid_success(client, src_root, mock_flwr_run):
-    """The /submit_job alias (what flip-api calls) behaves identically and is UUID-strict."""
-    model_id = str(uuid4())
-    (src_root / model_id).mkdir(parents=True, exist_ok=True)
-    mock_flwr_run(stdout='{"success": true,"run-id":"123"}')
-
-    response = client.post(f"/submit_job/{model_id}")
+    response = client.post(f"{endpoint}/{model_id}")
 
     assert response.status_code == 200
 

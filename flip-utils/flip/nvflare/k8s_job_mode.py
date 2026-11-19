@@ -28,12 +28,16 @@ Three files in ``local/`` change:
   scheduling reporter tells the hub. The kit's GPU resource consumer becomes NVFLARE's passthrough one:
   NVFLARE will not start a job without a consumer once GPUs are allocated, and the GPU consumer would
   probe the parent's (absent) GPUs and set ``CUDA_VISIBLE_DEVICES`` in the parent's own process. The job
-  pod gets its GPU from its ``nvidia.com/gpu`` request.
+  pod gets its GPU from its ``nvidia.com/gpu`` request. The launcher is also told how much local storage
+  a job pod may use (``FL_K8S_EPHEMERAL_STORAGE``), which is where a job's streamed studies land.
 - ``comm_config.json``: job pods reach the parent through its Service (``FL_K8S_PARENT_SERVICE``).
-- ``study_runtime.yaml``: the default study, which every FLIP job lands in (FLIP jobs carry no study),
-  gets the job image and the site's pod template. The template is where the chart puts what a job
-  pod needs from the trust: its labels, the images volume, the trust-internal key and the FL server's
-  host aliases. It is copied into ``local/pod_specs/``, the path NVFLARE resolves it from.
+- ``study_runtime.yaml``: the default study gets the job image and the site's pod template. The template is
+  where the chart puts what a job pod needs from the trust: its labels, the trust-internal key and the FL
+  server's host aliases. It is copied into ``local/pod_specs/``, the path NVFLARE resolves it from. A FLIP job
+  runs in its project's study (FLIP#1678), and only a job from a hub older than that lands in the default one.
+  The site's operator maintains the projects' entries outside the kit (``flip.nvflare.project_studies``): where
+  the chart names that file (``FL_K8S_STUDIES_FILE``), ``study_runtime.yaml`` becomes a link to it and the
+  default study is kept beside it, in ``study_runtime.default.yaml``, for the operator's command to build from.
 
 NVFLARE hands each job pod the parent's workspace path, and the launcher mounts the job's (empty)
 workspace at that same path. The parent's workspace therefore cannot be a directory the job image needs:
@@ -51,6 +55,7 @@ import argparse
 import copy
 import json
 import os
+import re
 import shutil
 import sys
 from collections.abc import Mapping
@@ -75,10 +80,13 @@ _REPLACED_COMPONENT_IDS = {
 }
 DEFAULT_PARENT_PORT = 8102
 DEFAULT_PENDING_TIMEOUT = 900
+# NVFLARE's own default is 1Gi, and a job pod's streamed studies count against it (FLIP#1049).
+DEFAULT_EPHEMERAL_STORAGE = "10Gi"
 DEFAULT_MEMORY_PER_GPU_IN_GIB = 16
 DEFAULT_EXPIRATION_PERIOD = 300
 POD_TEMPLATE = "pod_specs/job-pod.yaml"
 STUDY_RUNTIME = "study_runtime.yaml"
+STUDY_RUNTIME_DEFAULT = "study_runtime.default.yaml"
 
 
 @dataclass(frozen=True)
@@ -92,7 +100,9 @@ class K8sJobMode:
     max_gpus: int
     mem_per_gpu_gib: float
     pending_timeout: int
+    ephemeral_storage: str
     pod_template: Path | None
+    studies_file: Path | None = None
 
 
 def _required(env: Mapping[str, str], name: str) -> str:
@@ -130,6 +140,13 @@ def _float(env: Mapping[str, str], name: str, default: float) -> float:
     return value
 
 
+def _storage(env: Mapping[str, str], name: str, default: str) -> str:
+    raw = env.get(name, "").strip() or default
+    if not re.fullmatch(r"[1-9][0-9]*(Mi|Gi|Ti)", raw):
+        raise ValueError(f"{name} must be a size such as 10Gi, got {raw!r}")
+    return raw
+
+
 def config_from_env(env: Mapping[str, str]) -> K8sJobMode:
     """Read the switch's settings from the environment the chart gives the fl-client.
 
@@ -137,6 +154,7 @@ def config_from_env(env: Mapping[str, str]) -> K8sJobMode:
         ValueError: naming the first missing or invalid setting.
     """
     template = env.get("FL_K8S_POD_TEMPLATE", "").strip()
+    studies_file = env.get("FL_K8S_STUDIES_FILE", "").strip()
     return K8sJobMode(
         namespace=_required(env, "FL_K8S_NAMESPACE"),
         parent_service=_required(env, "FL_K8S_PARENT_SERVICE"),
@@ -145,7 +163,9 @@ def config_from_env(env: Mapping[str, str]) -> K8sJobMode:
         max_gpus=_int(env, "FL_K8S_MAX_GPUS"),
         mem_per_gpu_gib=_float(env, "MEMORY_PER_GPU_IN_GIB", DEFAULT_MEMORY_PER_GPU_IN_GIB),
         pending_timeout=_int(env, "FL_K8S_PENDING_TIMEOUT", DEFAULT_PENDING_TIMEOUT),
+        ephemeral_storage=_storage(env, "FL_K8S_EPHEMERAL_STORAGE", DEFAULT_EPHEMERAL_STORAGE),
         pod_template=Path(template) if template else None,
+        studies_file=Path(studies_file) if studies_file else None,
     )
 
 
@@ -184,6 +204,7 @@ def patch_resources(resources: Mapping[str, Any], mode: K8sJobMode, workspace: s
                 "config_file_path": None,
                 "namespace": mode.namespace,
                 "pending_timeout": mode.pending_timeout,
+                "ephemeral_storage": mode.ephemeral_storage,
                 "default_python_path": sys.executable,
                 "workspace_mount_path": workspace,
             },
@@ -260,7 +281,15 @@ def apply(local_dir: Path, mode: K8sJobMode) -> None:
         tmp = target.with_name(f".{target.name}.tmp")
         shutil.copyfile(mode.pod_template, tmp)
         os.replace(tmp, target)
-    _write_json(local_dir / STUDY_RUNTIME, study_runtime(mode))
+    if mode.studies_file is None:
+        _write_json(local_dir / STUDY_RUNTIME, study_runtime(mode))
+    else:
+        # The operator's file may not exist yet: NVFLARE then finds no job image and starts no job.
+        _write_json(local_dir / STUDY_RUNTIME_DEFAULT, study_runtime(mode))
+        tmp = local_dir / f".{STUDY_RUNTIME}.tmp"
+        tmp.unlink(missing_ok=True)
+        tmp.symlink_to(mode.studies_file)
+        os.replace(tmp, local_dir / STUDY_RUNTIME)
     _write_json(comm_path, comm_config)
     _write_json(resources_path, resources)
 

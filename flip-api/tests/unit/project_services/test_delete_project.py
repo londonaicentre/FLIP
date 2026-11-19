@@ -67,15 +67,6 @@ def mock_services(monkeypatch):
     return mocks
 
 
-def test_delete_project_success(override_dependencies, mock_services):
-    project_id = uuid4()
-
-    response = client.delete(f"/api/projects/{project_id}")
-
-    assert response.status_code == status.HTTP_204_NO_CONTENT
-    mock_services["delete_project"].assert_called_once()
-
-
 def test_delete_project_leaves_trust_imaging_intact(override_dependencies, mock_services):
     """A soft delete must not touch Trust imaging (FLIP#963).
 

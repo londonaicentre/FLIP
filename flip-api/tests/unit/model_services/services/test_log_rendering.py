@@ -130,6 +130,19 @@ class TestRenderLog:
 
     # ── FLARE's scheduling verdict (FLIP#1390) ─────────────────────────────────────
 
+    def test_a_lost_trust_names_the_round_or_the_likely_cause_before_the_first(self):
+        """FLARE lost the trust's FL client: mid-run it says when, before training the usual cause (FLIP#1428)."""
+        mid_run = render_log(_row(event_type=FLLogEvent.CLIENT_LOST.value, global_round=3))
+        before = render_log(_row(event_type=FLLogEvent.CLIENT_LOST.value))
+
+        assert mid_run == "Lost contact with this trust in round 3"
+        assert before.startswith("Lost contact with this trust before training started · ")
+        assert "CPU, memory or GPU" in before
+
+    def test_a_trust_that_came_back_says_so(self):
+        """FLARE's disconnect is provisional; the row after it stops the loss reading as the run's failure."""
+        assert render_log(_row(event_type=FLLogEvent.CLIENT_RETURNED.value)) == "Contact with this trust was restored"
+
     def test_waiting_for_resources_says_what_the_trust_was_asked_for_and_which_try(self):
         row = _row(
             event_type=FLLogEvent.JOB_WAITING_FOR_RESOURCES.value,

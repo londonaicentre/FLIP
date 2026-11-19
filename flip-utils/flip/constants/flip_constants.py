@@ -19,8 +19,9 @@ This module provides:
 """
 
 from enum import StrEnum
+from typing import Literal
 
-from pydantic import HttpUrl, field_validator
+from pydantic import HttpUrl
 from pydantic_settings import BaseSettings
 
 
@@ -47,22 +48,20 @@ class ProdSettings(_Common):
 
     Used when LOCAL_DEV=false. Settings are grouped by which FL role uses them:
 
-    - **Server-only** (fl-server on Central Hub): FLIP_API_INTERNAL_URL, INTERNAL_SERVICE_KEY*
+    - **Server-only** (fl-server on Central Hub): FLIP_API_INTERNAL_URL, JOB_CREDENTIAL_DIR
     - **Client-only** (fl-client on trust side): DATA_ACCESS_API_URL, IMAGING_API_URL,
       TRUST_INTERNAL_SERVICE_KEY*
-    - **Shared**: IMAGES_DIR, NET_ID, UPLOADED_FEDERATED_DATA_BUCKET
+    - **Shared**: IMAGES_DIR, NET_ID
     """
 
     LOCAL_DEV: bool = False
 
     # -- Server-only: fl-server on Central Hub calls flip-api using these.
     # FLIP_API_INTERNAL_URL must point at flip-api over the shared Docker network
-    # (e.g. http://flip-api:8000/api), never at the public CloudFront URL — the
-    # CloudFront distribution whitelists only Authorization/Content-Type/Origin
-    # and strips X-Internal-Service-Key at the edge, which would break auth.
+    # (e.g. http://flip-api:8000/api), never at the public CloudFront URL: these
+    # callbacks stay on the hub's own network, and on a platform-managed estate the
+    # FL server has no route to the public edge.
     FLIP_API_INTERNAL_URL: HttpUrl = "http://localhost:8000"  # type: ignore[assignment]
-    INTERNAL_SERVICE_KEY_HEADER: str = "X-Internal-Service-Key"
-    INTERNAL_SERVICE_KEY: str = ""
 
     # Hub-local shared volume where the FL API stages a de-bundled evaluation
     # checkpoint (keyed by <model_id>/<checkpoint>) for the fl-server to read from
@@ -70,6 +69,11 @@ class ProdSettings(_Common):
     # never bundled into the FLARE app, so it is never deployed to clients. The
     # fl-server mounts this path; clients do not.
     SERVER_CHECKPOINT_ROOT: str = "/app/server-checkpoints"
+
+    # Where the FL API leaves each job's hub credential, one file named after the model id: a directory
+    # on the hub-local volume it shares with the fl-server, so it never reaches a client. Every hub call
+    # about a model presents that model's credential (flip.core.standard._hub_internal_headers).
+    JOB_CREDENTIAL_DIR: str = ""
 
     # -- Client-only: fl-client on trust side calls local APIs using these --
     DATA_ACCESS_API_URL: HttpUrl = "http://localhost:8001"  # type: ignore[assignment]
@@ -85,15 +89,12 @@ class ProdSettings(_Common):
 
     # -- Shared --
     IMAGES_DIR: str = ""
+    # How a study reaches the job: "mount", a path on the net's images folder shared with imaging-api;
+    # "project", the same path where only the project's own folder is mounted, read-only (an NVFLARE
+    # study mount, FLIP#1678), so uploads travel in the request; or "stream", a tar from imaging-api
+    # extracted into this process's own directory, for a job pod that mounts no images volume (FLIP#1049).
+    IMAGES_TRANSPORT: Literal["mount", "project", "stream"] = "mount"
     NET_ID: str = "default"
-    UPLOADED_FEDERATED_DATA_BUCKET: str = "s3://default-bucket"
-
-    @field_validator("UPLOADED_FEDERATED_DATA_BUCKET")
-    @classmethod
-    def _validate_s3_url(cls, v: str) -> str:
-        if not v.startswith("s3://"):
-            raise ValueError(f"Invalid S3 URL: {v}")
-        return v
 
 
 _flip_constants_instance: DevSettings | ProdSettings | None = None
@@ -131,16 +132,15 @@ class _FlipConstantsProxy:
     DEV_IMAGES_DIR: str
     # ProdSettings
     FLIP_API_INTERNAL_URL: HttpUrl
-    INTERNAL_SERVICE_KEY_HEADER: str
-    INTERNAL_SERVICE_KEY: str
     SERVER_CHECKPOINT_ROOT: str
+    JOB_CREDENTIAL_DIR: str
     DATA_ACCESS_API_URL: HttpUrl
     IMAGING_API_URL: HttpUrl
     TRUST_INTERNAL_SERVICE_KEY_HEADER: str
     TRUST_INTERNAL_SERVICE_KEY: str
     IMAGES_DIR: str
+    IMAGES_TRANSPORT: Literal["mount", "project", "stream"]
     NET_ID: str
-    UPLOADED_FEDERATED_DATA_BUCKET: str
 
     def __getattribute__(self, name: str) -> object:
         if name.startswith("_"):

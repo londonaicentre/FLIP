@@ -61,6 +61,18 @@ variable "templates_dir" {
   description = "Path to the directory containing invite.html, password_reset_code.html and password_reset_link.html. Callers typically pass $${path.module}/templates/cognito."
 }
 
+variable "ses_identity_arn" {
+  type        = string
+  description = "ARN of a verified SES identity the pool sends its emails through. Empty (default) keeps Cognito's built-in sender."
+  default     = ""
+}
+
+variable "ses_from_email" {
+  type        = string
+  description = "Address the pool's emails come from when ses_identity_arn is set; must belong to that identity."
+  default     = ""
+}
+
 variable "mfa_configuration" {
   type        = string
   description = "Pool-level MFA mode. \"OPTIONAL\" honours per-user TOTP enrolment (the stag/prod default — see main.tf for the reasoning). \"OFF\" disables MFA at the Cognito layer entirely; useful in dev where the app-layer gate (Settings.ENFORCE_MFA) is the only enforcement point. \"ON\" forces every user through TOTP."

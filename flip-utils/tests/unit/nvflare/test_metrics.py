@@ -22,6 +22,26 @@ from nvflare.apis.fl_context import FLContext
 from flip.constants.flip_constants import FlipEvents
 from flip.nvflare.metrics import handle_metrics_event, send_metrics_value
 
+_MODEL_ID = "123e4567-e89b-12d3-a456-426614174000"
+
+
+def _handle(data, global_round=1, origin="site-1", flip=None):
+    """Run handle_metrics_event on a METRICS DXO from ``origin``; return the flip mock."""
+    event_data = DXO(data_kind=DataKind.METRICS, data=data).to_shareable()
+    event_data.set_header(FedEventHeader.ORIGIN, origin)
+    flip = flip or Mock()
+    handle_metrics_event(event_data=event_data, global_round=global_round, model_id=_MODEL_ID, flip=flip)
+    return flip
+
+
+def _sent_dxo(fl_ctx):
+    """The DXO send_metrics_value put into the context's EVENT_DATA."""
+    event_data_shareable = next(
+        c.args[1] for c in fl_ctx.set_prop.call_args_list if c.args[0] == FLContextKey.EVENT_DATA
+    )
+    assert event_data_shareable is not None
+    return from_shareable(event_data_shareable)
+
 
 class TestSendMetricsValue:
     """Test send_metrics_value method."""
@@ -45,86 +65,45 @@ class TestSendMetricsValue:
         # Should not raise, just logs error
         send_metrics_value("loss", 0.5, fl_ctx, x_value=1)
 
-    def test_send_metrics_value_fires_event(self):
-        """send_metrics_value should fire event when engine is available."""
+    @pytest.fixture
+    def fl_ctx(self):
         fl_ctx = Mock(spec=FLContext)
-        mock_engine = Mock()
-        fl_ctx.get_engine.return_value = mock_engine
+        fl_ctx.get_engine.return_value = Mock()
+        return fl_ctx
 
-        send_metrics_value("loss", 0.5, fl_ctx, x_value=1)
+    @pytest.mark.parametrize(
+        ("args", "kwargs", "expected"),
+        [
+            pytest.param(
+                ("loss", 0.5), {"x_value": 1}, {"label": "loss", "value": 0.5, "x_value": 1}, id="with_x_value"
+            ),
+            pytest.param(("accuracy", 0.9), {}, {"label": "accuracy", "value": 0.9}, id="without_x_value"),
+            # FLIP#148
+            pytest.param(
+                ("loss", 0.5),
+                {"x_value": 2.5, "x_label": "epoch"},
+                {"label": "loss", "value": 0.5, "x_value": 2.5, "x_label": "epoch"},
+                id="with_x_label",
+            ),
+        ],
+    )
+    def test_send_metrics_value_event_data(self, fl_ctx, args, kwargs, expected):
+        """send_metrics_value fires SEND_RESULT carrying the metric as a METRICS DXO."""
+        send_metrics_value(args[0], args[1], fl_ctx, **kwargs)
 
-        mock_engine.fire_event.assert_called_once()
-
-    def test_send_metrics_value_fires_event_with_correct_data(self):
-        """send_metrics_value should fire event with correct data."""
-        fl_ctx = Mock(spec=FLContext)
-        mock_engine = Mock()
-        fl_ctx.get_engine.return_value = mock_engine
-
-        send_metrics_value("loss", 0.5, fl_ctx, x_value=1)
-
-        # fire_event called with (event_name, fl_ctx)
-        mock_engine.fire_event.assert_called_once_with(FlipEvents.SEND_RESULT, fl_ctx)
-
-        # Pull the actual Shareable passed into EVENT_DATA and validate its contents
-        event_data_shareable = next(
-            c.args[1] for c in fl_ctx.set_prop.call_args_list if c.args[0] == FLContextKey.EVENT_DATA
-        )
-
-        assert event_data_shareable is not None
-
-        dxo = from_shareable(event_data_shareable)
+        fl_ctx.get_engine.return_value.fire_event.assert_called_once_with(FlipEvents.SEND_RESULT, fl_ctx)
+        dxo = _sent_dxo(fl_ctx)
         assert dxo.data_kind == DataKind.METRICS
-        assert dxo.data == {"label": "loss", "value": 0.5, "x_value": 1}
+        assert dxo.data == expected
 
-    def test_send_metrics_value_fires_event_without_x_value(self):
-        """send_metrics_value should fire event without x_value if not provided."""
-        fl_ctx = Mock(spec=FLContext)
-        mock_engine = Mock()
-        fl_ctx.get_engine.return_value = mock_engine
-
-        send_metrics_value("accuracy", 0.9, fl_ctx)
-
-        mock_engine.fire_event.assert_called_once_with(FlipEvents.SEND_RESULT, fl_ctx)
-
-        # Pull the actual Shareable passed into EVENT_DATA and validate its contents
-        event_data_shareable = next(
-            c.args[1] for c in fl_ctx.set_prop.call_args_list if c.args[0] == FLContextKey.EVENT_DATA
-        )
-
-        dxo = from_shareable(event_data_shareable)
-        assert dxo.data_kind == DataKind.METRICS
-        assert dxo.data == {"label": "accuracy", "value": 0.9}
-
-    def test_send_metrics_value_omits_non_finite_x_value(self):
+    def test_send_metrics_value_omits_non_finite_x_value(self, fl_ctx):
         """A non-finite coordinate is caught at its source: omitted from the DXO with a warning."""
-        fl_ctx = Mock(spec=FLContext)
-        mock_engine = Mock()
-        fl_ctx.get_engine.return_value = mock_engine
         flip = Mock()
 
         send_metrics_value("loss", 0.5, fl_ctx, x_value=float("inf"), flip=flip)
 
-        event_data_shareable = next(
-            c.args[1] for c in fl_ctx.set_prop.call_args_list if c.args[0] == FLContextKey.EVENT_DATA
-        )
-        dxo = from_shareable(event_data_shareable)
-        assert dxo.data == {"label": "loss", "value": 0.5}
+        assert _sent_dxo(fl_ctx).data == {"label": "loss", "value": 0.5}
         flip.logger.warning.assert_called_once()
-
-    def test_send_metrics_value_includes_x_label_when_provided(self):
-        """send_metrics_value should include x_label in the DXO data when given (FLIP#148)."""
-        fl_ctx = Mock(spec=FLContext)
-        mock_engine = Mock()
-        fl_ctx.get_engine.return_value = mock_engine
-
-        send_metrics_value("loss", 0.5, fl_ctx, x_value=2.5, x_label="epoch")
-
-        event_data_shareable = next(
-            c.args[1] for c in fl_ctx.set_prop.call_args_list if c.args[0] == FLContextKey.EVENT_DATA
-        )
-        dxo = from_shareable(event_data_shareable)
-        assert dxo.data == {"label": "loss", "value": 0.5, "x_value": 2.5, "x_label": "epoch"}
 
 
 class TestHandleMetricsEvent:
@@ -140,164 +119,69 @@ class TestHandleMetricsEvent:
         """handle_metrics_event should raise TypeError if global_round is not an int."""
         event_data = Mock()
         with pytest.raises(TypeError, match="global_round must be type int"):
-            handle_metrics_event(event_data, "not_an_int", "123e4567-e89b-12d3-a456-426614174000")
+            handle_metrics_event(event_data, "not_an_int", _MODEL_ID)
 
     def test_handle_metrics_event_validates_event_data_is_shareable(self):
         """handle_metrics_event should raise TypeError if event_data is not a Shareable."""
         with pytest.raises(TypeError, match="event_data must be type Shareable"):
-            handle_metrics_event("not_a_shareable", 1, "123e4567-e89b-12d3-a456-426614174000")
+            handle_metrics_event("not_a_shareable", 1, _MODEL_ID)
 
-    def test_handle_metrics_event_never_overrides_global_round(self):
-        """A client x_value places the point on the plot; global_round stays the server's true round."""
-        # Create mock event_data
-        dxo = DXO(data_kind=DataKind.METRICS, data={"label": "loss", "value": 0.5, "x_value": 7})
-        event_data = dxo.to_shareable()
-        event_data.set_header(FedEventHeader.ORIGIN, "site-1")
-
-        flip = Mock()
-
-        handle_metrics_event(
-            event_data=event_data,
-            global_round=1,
-            model_id="123e4567-e89b-12d3-a456-426614174000",
-            flip=flip,
-        )
-
-        flip.send_metrics.assert_called_once_with(
-            client_name="site-1",
-            model_id="123e4567-e89b-12d3-a456-426614174000",
-            label="loss",
-            value=0.5,
-            global_round=1,  # provenance: always the server's round
-            x_value=7,  # the client's plot coordinate
-            x_label=None,
-        )
-
-    def test_handle_metrics_event_with_no_x_value(self):
-        """handle_metrics_event should forward x_value=None (the hub plots at the global round)."""
-        # Create mock event_data
-        dxo = DXO(data_kind=DataKind.METRICS, data={"label": "accuracy", "value": 0.9})
-        event_data = dxo.to_shareable()
-        event_data.set_header(FedEventHeader.ORIGIN, "site-2")
-
-        flip = Mock()
-
-        handle_metrics_event(
-            event_data=event_data,
-            global_round=3,
-            model_id="123e4567-e89b-12d3-a456-426614174000",
-            flip=flip,
-        )
+    @pytest.mark.parametrize(
+        ("data", "origin", "global_round", "x_value", "x_label"),
+        [
+            # A client x_value places the point on the plot; global_round stays the server's true round.
+            pytest.param(
+                {"label": "loss", "value": 0.5, "x_value": 7}, "site-1", 1, 7, None, id="x_value_never_overrides_round"
+            ),
+            # No x_value: forwarded as None, and the hub plots at the global round.
+            pytest.param({"label": "accuracy", "value": 0.9}, "site-2", 3, None, None, id="no_x_value"),
+            # A pre-x_value client image sends 'round' in the DXO; it must land as the plot coordinate.
+            pytest.param({"label": "loss", "value": 0.5, "round": 7}, "site-1", 1, 7, None, id="legacy_round_key"),
+            # An explicit None x_value must still fall back to the legacy 'round' coordinate.
+            pytest.param(
+                {"label": "loss", "value": 0.5, "x_value": None, "round": 4},
+                "site-1",
+                1,
+                4,
+                None,
+                id="none_x_value_falls_back_to_round",
+            ),
+            # A client-supplied x_label is forwarded to the hub (FLIP#148).
+            pytest.param(
+                {"label": "loss", "value": 0.5, "x_value": 5, "x_label": "epoch"},
+                "site-3",
+                1,
+                5,
+                "epoch",
+                id="x_label_forwarded",
+            ),
+        ],
+    )
+    def test_handle_metrics_event_forwards_call(self, data, origin, global_round, x_value, x_label):
+        flip = _handle(data, global_round, origin)
 
         flip.send_metrics.assert_called_once_with(
-            client_name="site-2",
-            model_id="123e4567-e89b-12d3-a456-426614174000",
-            label="accuracy",
-            value=0.9,
-            global_round=3,
-            x_value=None,
-            x_label=None,
+            client_name=origin,
+            model_id=_MODEL_ID,
+            label=data["label"],
+            value=data["value"],
+            global_round=global_round,  # provenance: always the server's round
+            x_value=x_value,
+            x_label=x_label,
         )
-
-    def test_handle_metrics_event_reads_legacy_round_key_as_x_value(self):
-        """A pre-x_value client image sends 'round' in the DXO; it must land as the plot coordinate."""
-        dxo = DXO(data_kind=DataKind.METRICS, data={"label": "loss", "value": 0.5, "round": 7})
-        event_data = dxo.to_shareable()
-        event_data.set_header(FedEventHeader.ORIGIN, "site-1")
-
-        flip = Mock()
-
-        handle_metrics_event(
-            event_data=event_data,
-            global_round=1,
-            model_id="123e4567-e89b-12d3-a456-426614174000",
-            flip=flip,
-        )
-
-        flip.send_metrics.assert_called_once_with(
-            client_name="site-1",
-            model_id="123e4567-e89b-12d3-a456-426614174000",
-            label="loss",
-            value=0.5,
-            global_round=1,
-            x_value=7,
-            x_label=None,
-        )
-
-    def test_handle_metrics_event_falls_back_to_round_when_x_value_is_none(self):
-        """An explicit None x_value must still fall back to the legacy 'round' coordinate."""
-        dxo = DXO(data_kind=DataKind.METRICS, data={"label": "loss", "value": 0.5, "x_value": None, "round": 4})
-        event_data = dxo.to_shareable()
-        event_data.set_header(FedEventHeader.ORIGIN, "site-1")
-
-        flip = Mock()
-
-        handle_metrics_event(
-            event_data=event_data,
-            global_round=1,
-            model_id="123e4567-e89b-12d3-a456-426614174000",
-            flip=flip,
-        )
-
-        assert flip.send_metrics.call_args.kwargs["x_value"] == 4
 
     def test_handle_metrics_event_drops_non_finite_x_value(self):
         """A NaN/inf coordinate is dropped to None (hub plots at the global round), mirroring Flower."""
-        dxo = DXO(data_kind=DataKind.METRICS, data={"label": "loss", "value": 0.5, "x_value": float("nan")})
-        event_data = dxo.to_shareable()
-        event_data.set_header(FedEventHeader.ORIGIN, "site-1")
-
-        flip = Mock()
-
-        handle_metrics_event(
-            event_data=event_data,
-            global_round=2,
-            model_id="123e4567-e89b-12d3-a456-426614174000",
-            flip=flip,
-        )
+        flip = _handle({"label": "loss", "value": 0.5, "x_value": float("nan")}, global_round=2)
 
         assert flip.send_metrics.call_args.kwargs["x_value"] is None
         flip.logger.warning.assert_called_once()
 
     def test_handle_metrics_event_survives_send_metrics_failure(self):
         """One bad metric must not propagate out of FLARE's event dispatch (matches the Flower loop)."""
-        dxo = DXO(data_kind=DataKind.METRICS, data={"label": "loss", "value": 0.5})
-        event_data = dxo.to_shareable()
-        event_data.set_header(FedEventHeader.ORIGIN, "site-1")
-
         flip = Mock()
         flip.send_metrics.side_effect = RuntimeError("validation blew up")
 
-        handle_metrics_event(
-            event_data=event_data,
-            global_round=1,
-            model_id="123e4567-e89b-12d3-a456-426614174000",
-            flip=flip,
-        )
+        _handle({"label": "loss", "value": 0.5}, flip=flip)
 
         flip.logger.exception.assert_called_once()
-
-    def test_handle_metrics_event_forwards_x_label(self):
-        """handle_metrics_event should forward a client-supplied x_label to the hub (FLIP#148)."""
-        dxo = DXO(data_kind=DataKind.METRICS, data={"label": "loss", "value": 0.5, "x_value": 5, "x_label": "epoch"})
-        event_data = dxo.to_shareable()
-        event_data.set_header(FedEventHeader.ORIGIN, "site-3")
-
-        flip = Mock()
-
-        handle_metrics_event(
-            event_data=event_data,
-            global_round=1,
-            model_id="123e4567-e89b-12d3-a456-426614174000",
-            flip=flip,
-        )
-
-        flip.send_metrics.assert_called_once_with(
-            client_name="site-3",
-            model_id="123e4567-e89b-12d3-a456-426614174000",
-            label="loss",
-            value=0.5,
-            global_round=1,
-            x_value=5,
-            x_label="epoch",
-        )

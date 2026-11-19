@@ -58,7 +58,7 @@ def test_prepare_and_start_training_success(fake_session, model_id, fl_job_id):
         ) as mock_bundle,
         patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id") as mock_get_net,
         patch(
-            "flip_api.fl_services.services.fl_scheduler_service.validate_client_availability"
+            "flip_api.fl_services.services.fl_scheduler_service.unavailable_clients", return_value=[]
         ) as mock_validate_clients,
         patch("flip_api.fl_services.services.fl_scheduler_service.get_bundle_urls", return_value=["url1", "url2"]),
         patch("flip_api.fl_services.services.fl_scheduler_service.start_training") as mock_start,
@@ -80,6 +80,57 @@ def test_prepare_and_start_training_success(fake_session, model_id, fl_job_id):
         mock_validate_clients.assert_called_once()
         mock_start.assert_called_once()
         mock_log.assert_called()
+
+
+@pytest.mark.parametrize("fl_backend", [FLBackend.NVFLARE, FLBackend.FLOWER])
+def test_prepare_and_start_training_submits_despite_an_offline_trust(fake_session, model_id, fl_job_id, fl_backend):
+    """An offline trust is logged on the model by its hub name and the job is still submitted (#1133)."""
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS
+    # The slot lookup, then the hub names of the offline slots.
+    fake_session.exec.return_value.all.side_effect = [["Trust_1", "Trust_2"], ["KCH"]]
+    with (
+        patch("flip_api.fl_services.services.fl_scheduler_service.bundle_nvflare_application", return_value="s3://d"),
+        patch("flip_api.fl_services.services.fl_scheduler_service.bundle_flower_application", return_value="s3://d"),
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id") as mock_get_net,
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.unavailable_clients", return_value=["Trust_2"]
+        ) as mock_unavailable,
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_bundle_urls", return_value=["url1"]),
+        patch("flip_api.fl_services.services.fl_scheduler_service.start_training") as mock_start,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_log,
+        patch("flip_api.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
+    ):
+        mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-1", fl_backend=fl_backend)
+
+        started = fl_scheduler_service.prepare_and_start_training(
+            model_id=model_id, fl_job_id=fl_job_id, trust_ids=[uuid4(), uuid4()], session=fake_session
+        )
+
+    assert started is True
+    # The FL boundary is addressed by slot name, never by the hub name.
+    mock_unavailable.assert_called_once_with(["Trust_1", "Trust_2"], "endpoint")
+    assert mock_start.call_args.kwargs["clients"] == ["Trust_1", "Trust_2"]
+    mock_log.assert_called_with(
+        model_id, fl_scheduler_service.offline_trusts_message(["KCH"], "net-1", fl_backend), fake_session
+    )
+    mock_remove.assert_not_called()
+    mock_status.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_settings")
+def test_offline_trusts_message_says_what_each_backend_does(mock_settings):
+    # The wait FLARE gets is the hub's start timeout, so a site that changes it sees its own value.
+    mock_settings.return_value.FL_JOB_START_TIMEOUT_MINUTES = 90
+    nvflare = fl_scheduler_service.offline_trusts_message(["GSTT", "KCH"], "net-1", FLBackend.NVFLARE)
+    flower = fl_scheduler_service.offline_trusts_message(["GSTT"], "net-2", FLBackend.FLOWER)
+
+    assert nvflare.startswith("Not connected to 'net-1' when training was submitted: GSTT, KCH. FLARE starts")
+    assert "within 90 minutes, the model fails" in nvflare
+    assert flower == (
+        "Not connected to 'net-2' when training was submitted: GSTT. "
+        "Flower starts the job once as many trusts are connected as were selected."
+    )
 
 
 def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
@@ -109,7 +160,12 @@ def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
 
         mock_remove.assert_called_once_with(fl_job_id, fake_session)
         mock_status.assert_called_once_with(model_id, ModelStatus.ERROR, fake_session)
-        mock_log.assert_called_once_with(model_id, "bundle failed", fake_session, success=False)
+        mock_log.assert_called_once_with(
+            model_id,
+            f"Training could not be started; the platform team has the details (job {fl_job_id}).",
+            fake_session,
+            success=False,
+        )
         # The failure handler must actually free the BUSY net, not leave it to the watchdog.
         mock_release.assert_called_once_with(model_id, fake_session)
 
@@ -121,7 +177,7 @@ def test_prepare_and_start_training_aborted_mid_prepare_returns_false(fake_sessi
             return_value="s3://dest/model",
         ),
         patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id") as mock_get_net,
-        patch("flip_api.fl_services.services.fl_scheduler_service.validate_client_availability"),
+        patch("flip_api.fl_services.services.fl_scheduler_service.unavailable_clients", return_value=[]),
         patch("flip_api.fl_services.services.fl_scheduler_service.get_bundle_urls", return_value=["url1"]),
         patch(
             "flip_api.fl_services.services.fl_scheduler_service.start_training",
@@ -242,7 +298,12 @@ def test_prepare_and_start_training_genuine_net_not_found_still_errors(fake_sess
         )
 
     mock_remove.assert_called_once_with(fl_job_id, fake_session)
-    mock_log.assert_called_once_with(model_id, "Net not found", fake_session, success=False)
+    mock_log.assert_called_once_with(
+        model_id,
+        f"Training could not be started; the platform team has the details (job {fl_job_id}).",
+        fake_session,
+        success=False,
+    )
     mock_status.assert_called_once_with(model_id, ModelStatus.ERROR, fake_session)
     mock_release.assert_called_once_with(model_id, fake_session)
 
@@ -672,17 +733,27 @@ class TestLogQueuePositions:
         mock_add_log.assert_not_called()
         fake_session.commit.assert_not_called()
 
-    def test_new_job_gets_its_position_logged(self, fake_session):
-        job = _queued_job()
-        fake_session.exec.side_effect = _exec_returning([job], [])
+    @pytest.mark.parametrize(
+        ("n_jobs", "prior", "emitted_index", "position"),
+        [
+            pytest.param(1, [], 0, 1, id="new_job_gets_its_position_logged"),
+            pytest.param(1, [(0, 2)], 0, 1, id="moved_job_logs_its_new_position"),
+            pytest.param(2, [(0, 1)], 1, 2, id="second_of_two_queued_jobs_gets_position_two"),
+        ],
+    )
+    def test_changed_position_is_logged(self, fake_session, n_jobs, prior, emitted_index, position):
+        # prior: (job_index, position) pairs, each the job's OWN latest row (keyed by job id).
+        jobs = [_queued_job() for _ in range(n_jobs)]
+        fake_session.exec.side_effect = _exec_returning(jobs, [_position_details(jobs[i].id, p) for i, p in prior])
         with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
             fl_scheduler_service.log_queue_positions(fake_session)
+        emitted = jobs[emitted_index]
         mock_add_log.assert_called_once_with(
-            job.model_id,
+            emitted.model_id,
             None,
             fake_session,
             event_type=FLLogEvent.QUEUE_POSITION.value,
-            details={"position": 1, "job_id": str(job.id)},
+            details={"position": position, "job_id": str(emitted.id)},
             transaction=fake_session,
         )
         # The rows are batched: one commit for the whole emission, not one per row.
@@ -695,34 +766,6 @@ class TestLogQueuePositions:
             fl_scheduler_service.log_queue_positions(fake_session)
         mock_add_log.assert_not_called()
         fake_session.commit.assert_not_called()
-
-    def test_moved_job_logs_its_new_position(self, fake_session):
-        job = _queued_job()
-        fake_session.exec.side_effect = _exec_returning([job], [_position_details(job.id, 2)])
-        with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
-            fl_scheduler_service.log_queue_positions(fake_session)
-        mock_add_log.assert_called_once_with(
-            job.model_id,
-            None,
-            fake_session,
-            event_type=FLLogEvent.QUEUE_POSITION.value,
-            details={"position": 1, "job_id": str(job.id)},
-            transaction=fake_session,
-        )
-
-    def test_second_of_two_queued_jobs_gets_position_two(self, fake_session):
-        first, second = _queued_job(), _queued_job()
-        fake_session.exec.side_effect = _exec_returning([first, second], [_position_details(first.id, 1)])
-        with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
-            fl_scheduler_service.log_queue_positions(fake_session)
-        mock_add_log.assert_called_once_with(
-            second.model_id,
-            None,
-            fake_session,
-            event_type=FLLogEvent.QUEUE_POSITION.value,
-            details={"position": 2, "job_id": str(second.id)},
-            transaction=fake_session,
-        )
 
     def test_two_queued_jobs_of_the_same_model_do_not_oscillate(self, fake_session):
         # FLJob has no uniqueness on model_id, so a double initiate can queue the
@@ -857,3 +900,77 @@ def test_check_for_queued_jobs_ignores_an_expired_lease(fake_session, scheduler_
         result = fl_scheduler_service.check_for_queued_jobs(scheduler_id, fake_session)
 
     assert isinstance(result, IJobResponse)
+
+
+@pytest.mark.parametrize(
+    ("function", "arg", "message", "rolls_back"),
+    [
+        ("remove_job", uuid4(), "Error reverting job pickup", True),
+        ("remove_job_from_queue", uuid4(), "Error removing job from queue", True),
+        ("revert_scheduler_pickup", uuid4(), "Error reverting scheduler pickup", True),
+        ("update_fl_scheduler", uuid4(), "Error updating FL scheduler", True),
+        ("get_net_by_model_id", uuid4(), "Error getting net by model ID", False),
+        ("get_net_by_name", "net-1", "Database error while getting net by name", False),
+        ("get_required_training_details", uuid4(), "Error getting required training details", False),
+    ],
+)
+def test_db_failure_is_raised_as_database_error(fake_session, function, arg, message, rolls_back):
+    """Writers roll back before raising; readers have nothing to roll back."""
+    fake_session.get.side_effect = SQLAlchemyError("db down")
+    fake_session.exec.side_effect = SQLAlchemyError("db down")
+
+    with pytest.raises(DatabaseError, match=message):
+        getattr(fl_scheduler_service, function)(arg, fake_session)
+
+    assert fake_session.rollback.called is rolls_back
+    fake_session.commit.assert_not_called()
+
+
+def test_get_nets_db_error(fake_session):
+    fake_session.exec.side_effect = SQLAlchemyError("db down")
+
+    with pytest.raises(DatabaseError, match="Error getting nets"):
+        fl_scheduler_service.get_nets(fake_session)
+
+
+def test_check_for_available_net_db_error_rolls_back(fake_session):
+    fake_session.exec.side_effect = SQLAlchemyError("db down")
+
+    with pytest.raises(DatabaseError, match="Error checking for available net"):
+        fl_scheduler_service.check_for_available_net(fake_session)
+
+    fake_session.rollback.assert_called_once()
+
+
+def test_check_for_queued_jobs_db_error_frees_the_scheduler(fake_session, scheduler_id):
+    """The net was marked BUSY for this pickup, so a failed lookup must hand it back."""
+    fake_session.exec.side_effect = SQLAlchemyError("db down")
+
+    with (
+        patch.object(fl_scheduler_service, "revert_scheduler_pickup") as mock_revert,
+        pytest.raises(DatabaseError, match="Error checking for queued jobs"),
+    ):
+        fl_scheduler_service.check_for_queued_jobs(scheduler_id, fake_session)
+
+    fake_session.rollback.assert_called_once()
+    mock_revert.assert_called_once_with(scheduler_id, fake_session)
+
+
+def test_resolve_backend_uses_the_given_net_without_querying(fake_session):
+    net = INetDetails(endpoint="endpoint", name="net-1", fl_backend=FLBackend.FLOWER)
+
+    assert fl_scheduler_service.resolve_backend(fake_session, net) == FLBackend.FLOWER
+    fake_session.exec.assert_not_called()
+
+
+def test_resolve_backend_reads_any_net_when_none_given(fake_session):
+    fake_session.exec.return_value.first.return_value = FLBackend.NVFLARE
+
+    assert fl_scheduler_service.resolve_backend(fake_session) == FLBackend.NVFLARE
+
+
+def test_resolve_backend_without_nets_raises(fake_session):
+    fake_session.exec.return_value.first.return_value = None
+
+    with pytest.raises(ValueError, match="no FL nets are registered"):
+        fl_scheduler_service.resolve_backend(fake_session)

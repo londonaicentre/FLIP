@@ -18,7 +18,7 @@
         <AiCard class="flex flex-col flex-1 min-h-0">
             <div class="flex flex-col flex-1 min-h-0">
                 <div class="flex items-center gap-3 p-4 shrink-0">
-                    <h2 class="text-lg font-semibold leading-loose font-heading grow">
+                    <h2 class="text-lg font-semibold leading-loose grow">
                         Model Files
                     </h2>
                     <AiButton
@@ -40,18 +40,18 @@
                          guess. Training.vue carries the explanation and the retry. -->
                     <div v-if="showRequired" class="px-4 pt-3 pb-2 space-y-2.5 shrink-0" data-test="required-files-header">
                         <div class="flex items-baseline justify-between gap-2">
-                            <span class="text-xs font-semibold tracking-[0.08em] text-gray-500 dark:text-gray-300">
-                                FILES · REQUIRED
+                            <span class="text-xs font-semibold text-gray-500 dark:text-gray-300">
+                                Files · required
                             </span>
                             <span
                                 data-test="required-files-counter"
-                                class="font-mono text-xs"
+                                class="text-xs tabular-nums"
                                 :class="requiredComplete ? 'text-green-600 dark:text-green-400' : 'text-amber-700 dark:text-amber-400'"
                             >
                                 {{ requiredUploadedCount }} / {{ requiredFiles.length }}
                             </span>
                         </div>
-                        <div class="flex flex-wrap items-center gap-1.5 text-[13px] text-gray-600 dark:text-gray-300">
+                        <div class="flex flex-wrap items-center gap-1.5 text-note text-gray-600 dark:text-gray-300">
                             <span v-if="flBackendLabel" :class="backendChipClass" data-test="fl-backend-chip">
                                 {{ flBackendLabel }}
                             </span>
@@ -111,7 +111,7 @@
                                         row.file.status === FileUploadStatus.INFECTED && 'ring-red-600 dark:ring-red-500',
                                     ]"
                                 >
-                                    <div class="relative flex items-center justify-center w-full h-full text-gray-700 bg-gray-100 border border-gray-300 rounded-full shadow dark:bg-dark-surface dark:text-gray-300 dark:border-dark-border-strong text-[10px]">
+                                    <div class="relative flex items-center justify-center w-full h-full text-gray-700 bg-gray-100 border border-gray-300 rounded-full shadow dark:bg-dark-surface dark:text-gray-300 dark:border-dark-border-strong text-xs">
                                         <Transition name="fade" mode="out-in">
                                             <AiLoader v-if="row.file.status === FileUploadStatus.UPLOADING" small data-test="file-upload-status-uploading" aria-label="Uploading" />
                                             <!-- Its own mark, not the upload spinner: the bytes are safely
@@ -144,7 +144,7 @@
                                     <div class="flex flex-row items-center gap-2 min-w-0">
                                         <p
                                             data-test="file-name"
-                                            class="font-mono text-[13px] truncate"
+                                            class="font-mono text-note truncate"
                                             :class="row.file
                                                 ? 'font-semibold text-primary-500 dark:text-primary-200'
                                                 : 'text-gray-500 dark:text-gray-300'"
@@ -163,7 +163,7 @@
                                         />
                                     </div>
                                     <p
-                                        class="text-xs"
+                                        class="text-note"
                                         :class="row.file ? 'text-gray-500 dark:text-gray-300' : 'text-amber-700 dark:text-amber-400'"
                                     >
                                         {{ rowMeta(row) }}
@@ -222,7 +222,7 @@ import AiCard from "@/components/AiCard/AiCard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
 import { usePermissions } from "@/composables/usePermissions";
-import { DEMO_MODEL_FILES_ZIP_URLS, IS_DEMO } from "@/demo/bootstrap";
+import { IS_DEMO } from "@/demo/bootstrap";
 import { BanditFinding, FileInfo, FileUploadStatus } from "@/interfaces/model/types";
 import { deleteModelFile,
     downloadModelFile,
@@ -356,9 +356,10 @@ const rowMeta = (row: IFileRow): string => {
 
 // "Download all" is offered only when every visible file finished uploading
 // + scanning. Any in-flight or errored file would either be missing from S3
-// or unsafe to bundle, so we hide the button rather than partial-zip.
+// or unsafe to bundle, so we hide the button rather than partial-zip. The
+// public demo is browse-only (FLIP#1746): nothing is downloadable there.
 const canDownloadAll = computed(() =>
-    allFiles.value.length > 0 && allFiles.value.every(f => f.status === FileUploadStatus.COMPLETED));
+    !IS_DEMO && allFiles.value.length > 0 && allFiles.value.every(f => f.status === FileUploadStatus.COMPLETED));
 
 watch(props, () => {
     handleFiles();
@@ -544,37 +545,6 @@ const DOWNLOAD_ALL_CONCURRENCY = 3;
 const downloadAllAsZip = async () => {
     if (downloadingAll.value) return;
 
-    // Public Ark+ demo: each recorded run's file bundle (including the ~795 MB
-    // checkpoints) is a pre-built zip served through the CloudFront
-    // demo-assets behaviour — the in-browser mock can't stream file bodies of
-    // that size. Vite inlines IS_DEMO, so normal builds keep the JSZip path only.
-    if (IS_DEMO) {
-        const zipUrl = DEMO_MODEL_FILES_ZIP_URLS[props.modelId];
-        if (!zipUrl) {
-            // An id missing from the map means the bundle was never staged for
-            // this model. Say so: silently returning left the button looking
-            // broken, with no snackbar and no spinner, unlike the real path
-            // directly below (FLIP#794 review).
-            Snackbar.error({
-                title: "Download unavailable",
-                text: "No file bundle was staged for this model in the demo."
-            });
-
-            return;
-        }
-
-        const link = document.createElement("a");
-        link.href = zipUrl;
-        // Without `download` the browser follows Content-Disposition, and any
-        // response served as HTML (e.g. a mis-provisioned behaviour falling
-        // through to the SPA rewrite) navigates the tab instead of downloading.
-        link.download = zipUrl.split("/").pop() ?? "model-files.zip";
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-
-        return;
-    }
     downloadingAll.value = true;
     try {
         const all = allFiles.value;

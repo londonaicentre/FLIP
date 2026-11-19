@@ -20,12 +20,12 @@
         <div class="w-full px-8 pt-8 pb-8 overflow-y-auto">
             <!-- Header — design ref: ConnectionA (CSHeader) in design_handoff_full/05_connection/connection.jsx -->
             <div class="mb-4">
-                <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                <p class="text-xs text-gray-500 dark:text-gray-300">
                     Federation · {{ trusts?.length ?? 0 }} {{ (trusts?.length ?? 0) === 1 ? "trust" : "trusts" }}
                     <span class="mx-1 text-gray-300 dark:text-gray-600">·</span>
                     <!-- The release the hub runs (FLIP#1204) — what a site's `make upgrade-onprem-trust`
                          moves it to, and what the drawer compares each trust's build against. -->
-                    <span data-test="hub-version" class="normal-case tracking-normal">Hub {{ hubVersion ?? "—" }}</span>
+                    <span data-test="hub-version">Hub {{ hubVersion ?? "—" }}</span>
                 </p>
                 <div class="flex items-center justify-between gap-4">
                     <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100">
@@ -49,11 +49,39 @@
                 <p class="mt-2 text-sm text-gray-500 dark:text-gray-300" data-test="subtitle">
                     {{ subtitle }}
                 </p>
+                <!-- Phones get one count line instead of the tiles. A trust in trouble is a link to its row;
+                     zero counts stay muted. -->
+                <p
+                    v-if="trusts"
+                    data-test="state-counts"
+                    class="flex flex-wrap items-center gap-x-2 mt-1 text-sm text-gray-500 dark:text-gray-300 md:hidden"
+                >
+                    <template v-for="(tile, i) in TILES" :key="tile.key">
+                        <span v-if="i" aria-hidden="true">·</span>
+                        <component
+                            :is="isCountLink(tile) ? 'button' : 'span'"
+                            :type="isCountLink(tile) ? 'button' : undefined"
+                            :data-test="`state-count-${tile.key}`"
+                            class="inline-flex items-center gap-1.5"
+                            :class="isCountLink(tile)
+                                ? ['font-bold hover:underline', tile.text]
+                                : stateCounts[tile.key] ? 'text-gray-700 dark:text-gray-200' : ''"
+                            @click="isCountLink(tile) && focusFirstTrust(tile.key)"
+                        >
+                            <span
+                                class="inline-block w-2 h-2 rounded-full"
+                                :class="stateCounts[tile.key] ? tile.dot : 'bg-gray-300 dark:bg-gray-600'"
+                                aria-hidden="true"
+                            />
+                            {{ stateCounts[tile.key] }} {{ tile.label.toLowerCase() }}
+                        </component>
+                    </template>
+                </p>
             </div>
 
             <!-- View toggle: list (ConnectionA) vs radial (ConnectionD) -->
             <div class="flex items-center justify-end mb-3 gap-2">
-                <span class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">View</span>
+                <span class="text-xs text-gray-500 dark:text-gray-300">View</span>
                 <div
                     role="tablist"
                     aria-label="Connection view"
@@ -92,7 +120,7 @@
 
             <!-- Filter tiles: one per connection state, each a toggle (models-page idiom).
                  Click the active tile to reset. -->
-            <div v-if="viewMode === 'list'" class="flex flex-wrap gap-3 mb-4">
+            <div v-if="viewMode === 'list'" class="hidden md:flex flex-wrap gap-3 mb-4">
                 <button
                     v-for="tile in TILES"
                     :key="tile.key"
@@ -107,13 +135,13 @@
                 >
                     <div class="flex items-center gap-2">
                         <span class="inline-block w-2 h-2 rounded-full" :class="tile.dot" />
-                        <span class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                        <span class="text-xs text-gray-500 dark:text-gray-300">
                             {{ tile.label }}
                         </span>
                     </div>
                     <div
                         :data-test="`filter-tile-count-${tile.key}`"
-                        class="mt-1 text-2xl font-heading font-bold text-gray-900 dark:text-gray-100"
+                        class="mt-1 text-2xl font-bold tabular-nums text-gray-900 dark:text-gray-100"
                     >
                         {{ stateCounts[tile.key] }}
                     </div>
@@ -121,7 +149,7 @@
             </div>
 
             <!-- Status table (ConnectionA table) -->
-            <AiCard v-if="viewMode === 'list'">
+            <AiCard v-if="viewMode === 'list'" ref="trustList">
                 <div v-if="!trusts" class="p-8 text-center">
                     <AiLoader />
                 </div>
@@ -134,7 +162,7 @@
                             class="flex items-center gap-2 px-4 py-2 bg-gray-50 border-b border-gray-200
                             dark:bg-dark-surface dark:border-dark-border"
                         >
-                            <span class="flex-1 text-[10.5px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                            <span class="flex-1 text-xs text-gray-500 dark:text-gray-300">
                                 Trusts
                             </span>
                             <Menu as="div" class="relative">
@@ -179,6 +207,7 @@
                                 v-for="t in displayedTrusts"
                                 :key="t.id"
                                 data-test="trust-row-mobile"
+                                :data-trust-state="t._state"
                                 role="button"
                                 tabindex="0"
                                 class="px-4 py-3 cursor-pointer focus-visible:outline focus-visible:outline-2
@@ -191,32 +220,32 @@
                                 <div class="flex items-start gap-2.5">
                                     <span class="inline-block w-2 h-2 mt-[5px] rounded-full shrink-0" :class="dotClass(t._state)" />
                                     <div class="flex-1 min-w-0">
-                                        <div class="font-heading font-semibold text-sm text-gray-900 dark:text-gray-100">
+                                        <div class="font-semibold text-sm text-gray-900 dark:text-gray-100">
                                             {{ t.name }}
                                         </div>
                                         <div
                                             v-if="t.code && t.code !== t.name"
                                             data-test="trust-code-mobile"
-                                            class="font-mono text-[11px] text-gray-500 dark:text-gray-300 mt-0.5"
+                                            class="font-mono text-xs text-gray-500 dark:text-gray-300 mt-0.5"
                                         >
                                             {{ t.code }}
                                         </div>
                                     </div>
                                     <span
-                                        class="inline-block px-2 py-0.5 rounded text-[11px] font-medium shrink-0"
+                                        class="inline-block px-2 py-0.5 rounded text-xs font-medium shrink-0"
                                         :class="pillClass(t._state)"
                                     >
                                         {{ stateLabel(t._state) }}
                                     </span>
                                 </div>
                                 <div class="flex items-center gap-1.5 mt-2 pl-[18px]">
-                                    <span class="font-mono text-[11px] text-gray-600 dark:text-gray-300">
+                                    <span class="text-note text-gray-600 dark:text-gray-300">
                                         {{ t.region ?? "—" }}
                                     </span>
                                     <span class="text-gray-300 dark:text-gray-600">·</span>
                                     <span
                                         data-test="trust-heartbeat-mobile"
-                                        class="font-mono text-[11px]"
+                                        class="text-note tabular-nums"
                                         :class="t._state === 'offline'
                                             ? 'text-red-600 dark:text-red-400'
                                             : 'text-gray-600 dark:text-gray-300'"
@@ -224,7 +253,7 @@
                                         {{ heartbeatText(t.last_heartbeat) }}
                                     </span>
                                     <span class="text-gray-300 dark:text-gray-600">·</span>
-                                    <span class="font-mono text-[11px] text-gray-600 dark:text-gray-300">
+                                    <span class="text-note tabular-nums text-gray-600 dark:text-gray-300">
                                         {{ t.project_count }} {{ t.project_count === 1 ? "project" : "projects" }}
                                     </span>
                                     <span class="flex-1" />
@@ -259,7 +288,7 @@
                                         v-for="col in columns"
                                         :key="col.key ?? col.label"
                                         :data-test="col.key ? `sort-header-${col.key}` : undefined"
-                                        class="px-4 py-3 text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300 font-medium select-none"
+                                        class="px-4 py-3 text-xs text-gray-500 dark:text-gray-300 font-medium select-none"
                                         :class="[
                                             col.align === 'right' ? 'text-right' : 'text-left',
                                             col.width ?? '',
@@ -280,6 +309,7 @@
                                     v-for="(t, idx) in displayedTrusts"
                                     :key="t.id"
                                     data-test="trust-row"
+                                    :data-trust-state="t._state"
                                     role="button"
                                     tabindex="0"
                                     class="cursor-pointer group hover:bg-gray-50 dark:hover:bg-dark-surface/60
@@ -313,7 +343,7 @@
                                     <td class="px-4 py-4 align-middle w-full max-w-0">
                                         <div class="flex flex-col min-w-0">
                                             <span
-                                                class="font-semibold font-heading text-base text-gray-900 dark:text-gray-100 truncate"
+                                                class="font-semibold text-base text-gray-900 dark:text-gray-100 truncate"
                                                 data-test="trust-name"
                                             >
                                                 {{ t.name }}
@@ -328,7 +358,7 @@
                                             <span
                                                 v-if="t._failing.length"
                                                 data-test="trust-failing"
-                                                class="font-mono text-[11px] mt-0.5 truncate"
+                                                class="text-note mt-0.5 truncate"
                                                 :class="t._state === 'offline'
                                                     ? 'text-red-600 dark:text-red-400'
                                                     : 'text-amber-600 dark:text-amber-400'"
@@ -352,13 +382,13 @@
                                         </div>
                                     </td>
                                     <td
-                                        class="px-4 py-4 align-middle font-mono text-sm"
+                                        class="px-4 py-4 align-middle text-sm tabular-nums"
                                         :class="t._state === 'offline' ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-300'"
                                         data-test="trust-heartbeat"
                                     >
                                         {{ heartbeatText(t.last_heartbeat) }}
                                     </td>
-                                    <td class="px-4 py-4 align-middle text-right font-mono text-base text-gray-900 dark:text-gray-100">
+                                    <td class="px-4 py-4 align-middle text-right text-base tabular-nums text-gray-900 dark:text-gray-100">
                                         {{ t.project_count }}
                                     </td>
                                     <td class="px-4 py-4 align-middle w-10">
@@ -385,10 +415,10 @@
                     class="relative overflow-hidden h-[560px]"
                 >
                     <div class="absolute top-4 left-5 z-10">
-                        <div class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                        <div class="text-xs text-gray-500 dark:text-gray-300">
                             Federation topology · Live
                         </div>
-                        <div class="mt-1 text-xs text-gray-500 dark:text-gray-300">
+                        <div class="mt-1 text-note text-gray-500 dark:text-gray-300">
                             {{ trusts?.length ?? 0 }}
                             {{ (trusts?.length ?? 0) === 1 ? "trust" : "trusts" }} connected to FLIP
                         </div>
@@ -400,12 +430,12 @@
                         dark:bg-dark-canvas px-3 py-2 border border-gray-200 dark:border-dark-border rounded-lg"
                     >
                         <span
-                            v-for="legend in radialLegend"
-                            :key="legend.state"
-                            class="inline-flex items-center gap-1.5 text-[11px] text-gray-700 dark:text-gray-300"
+                            v-for="tile in TILES"
+                            :key="tile.key"
+                            class="inline-flex items-center gap-1.5 text-xs text-gray-700 dark:text-gray-300"
                         >
-                            <span class="inline-block w-2 h-2 rounded-full" :class="legend.dotClass" />
-                            {{ legend.label }}
+                            <span class="inline-block w-2 h-2 rounded-full" :class="tile.dot" />
+                            {{ tile.label }}
                         </span>
                     </div>
 
@@ -426,19 +456,6 @@
                                 <stop offset="60%" stop-color="#61366E" stop-opacity="0.08" />
                                 <stop offset="100%" stop-color="#61366E" stop-opacity="0" />
                             </radialGradient>
-                            <linearGradient
-                                id="link-pulse"
-                                x1="0%"
-                                y1="0%"
-                                x2="100%"
-                                y2="0%"
-                            >
-                                <stop offset="0%" stop-color="#a78bfa" stop-opacity="0.1" />
-                                <stop offset="50%" stop-color="#d946ef" stop-opacity="0.9" />
-                                <stop offset="100%" stop-color="#a78bfa" stop-opacity="0.1" />
-                                <animate attributeName="x1" values="-100%;100%" dur="2.4s" repeatCount="indefinite" />
-                                <animate attributeName="x2" values="0%;200%" dur="2.4s" repeatCount="indefinite" />
-                            </linearGradient>
                         </defs>
 
                         <!-- Concentric ring guides -->
@@ -449,8 +466,9 @@
                             :cy="radial.cy"
                             :r="radial.R * m"
                             fill="none"
-                            class="stroke-gray-200 dark:stroke-dark-border"
-                            :stroke-width="i === 2 ? 1 : 0.6"
+                            class="stroke-gray-200 dark:stroke-gray-600"
+                            data-test="radial-ring"
+                            :stroke-width="i === 2 ? 1.2 : 0.8"
                             :stroke-dasharray="i === 2 ? 'none' : '2 4'"
                         />
 
@@ -460,29 +478,73 @@
                         <!-- Spokes -->
                         <g>
                             <g v-for="node in radialNodes" :key="`spoke-${node.id}`">
+                                <!-- An offline spoke is a solid line broken in the middle, a tiny dot
+                                     capping each side of the break; pathLength makes the dash pattern
+                                     a share of the spoke, whatever its length. -->
                                 <line
                                     :x1="radial.cx"
                                     :y1="radial.cy"
                                     :x2="node.x"
                                     :y2="node.y"
                                     :stroke="node.state === 'offline' ? '#ef4444' : DOT_HEX[node.state]"
-                                    :stroke-width="node.state === 'online' ? 1.4 : 0.8"
-                                    :stroke-opacity="node.state === 'offline' ? 0.4 : node.state === 'online' ? 0.5 : 0.2"
-                                    :stroke-dasharray="node.state === 'offline' ? '3 4' : 'none'"
-                                    :class="node.state === 'offline'
-                                        ? 'dark:stroke-red-400 dark:[stroke-opacity:0.7]'
-                                        : ''"
+                                    :stroke-width="SPOKE_WIDTH[node.state]"
+                                    :stroke-opacity="node.state === 'offline' ? 0.6 : node.state === 'online' ? 0.5 : 0.2"
+                                    pathLength="100"
+                                    :stroke-dasharray="node.state === 'offline' ? OFFLINE_DASH : 'none'"
+                                    :class="SPOKE_DARK[node.state]"
+                                    data-test="spoke"
                                 />
-                                <line
-                                    v-if="node.state === 'online'"
-                                    :x1="radial.cx"
-                                    :y1="radial.cy"
-                                    :x2="node.x"
-                                    :y2="node.y"
-                                    stroke="url(#link-pulse)"
-                                    stroke-width="2.6"
-                                    stroke-linecap="round"
-                                />
+                                <template v-if="node.state === 'offline'">
+                                    <circle
+                                        v-for="end in OFFLINE_BREAK"
+                                        :key="end"
+                                        :cx="radial.cx + (node.x - radial.cx) * end / 100"
+                                        :cy="radial.cy + (node.y - radial.cy) * end / 100"
+                                        r="2.2"
+                                        fill="#ef4444"
+                                        fill-opacity="0.8"
+                                        class="dark:fill-red-400"
+                                        data-test="spoke-break-cap"
+                                    />
+                                </template>
+                                <!-- Each pulse gradient runs hub to trust in user space. A shared
+                                     bounding-box gradient paints nothing on a vertical or horizontal
+                                     spoke (zero-width box) and slides along x on the rest (FLIP#1980). -->
+                                <template v-if="node.state === 'online'">
+                                    <defs>
+                                        <linearGradient
+                                            :id="`link-pulse-${node.id}`"
+                                            data-test="spoke-pulse-gradient"
+                                            gradientUnits="userSpaceOnUse"
+                                            :x1="radial.cx"
+                                            :y1="radial.cy"
+                                            :x2="node.x"
+                                            :y2="node.y"
+                                        >
+                                            <stop offset="0%" stop-color="#a78bfa" stop-opacity="0.1" />
+                                            <stop offset="50%" stop-color="#d946ef" stop-opacity="0.9" />
+                                            <stop offset="100%" stop-color="#a78bfa" stop-opacity="0.1" />
+                                            <animate
+                                                v-for="a in pulseSweep(node)"
+                                                :key="a.attr"
+                                                :attributeName="a.attr"
+                                                :values="a.values"
+                                                dur="2.4s"
+                                                repeatCount="indefinite"
+                                            />
+                                        </linearGradient>
+                                    </defs>
+                                    <line
+                                        :x1="radial.cx"
+                                        :y1="radial.cy"
+                                        :x2="node.x"
+                                        :y2="node.y"
+                                        data-test="spoke-pulse"
+                                        :stroke="`url(#link-pulse-${node.id})`"
+                                        stroke-width="3.2"
+                                        stroke-linecap="round"
+                                    />
+                                </template>
                             </g>
                         </g>
 
@@ -567,7 +629,7 @@
                                     :y="node.labelY + 1"
                                     :text-anchor="node.anchor"
                                     font-family="ui-monospace, monospace"
-                                    font-size="11"
+                                    font-size="12"
                                     font-weight="600"
                                     class="fill-gray-700 dark:fill-gray-100"
                                     letter-spacing="0.04em"
@@ -576,9 +638,9 @@
                                 </text>
                                 <text
                                     :x="node.labelX"
-                                    :y="node.labelY + 14"
+                                    :y="node.labelY + 15"
                                     :text-anchor="node.anchor"
-                                    font-size="10"
+                                    font-size="12"
                                     class="fill-gray-500 dark:fill-gray-300"
                                 >
                                     {{ node.project_count }} {{ node.project_count === 1 ? "project" : "projects" }}
@@ -591,7 +653,7 @@
                     <div class="absolute bottom-4 left-5 z-10 flex gap-4 items-center">
                         <span class="inline-flex items-center gap-2">
                             <span class="inline-block w-2 h-2 rounded-full bg-fuchsia-500 animate-pulse" />
-                            <span class="font-mono text-[11px] uppercase tracking-widest text-gray-700 dark:text-gray-300">
+                            <span class="text-xs tabular-nums text-gray-700 dark:text-gray-300">
                                 {{ onlineCount }} online
                             </span>
                         </span>
@@ -601,7 +663,7 @@
                 <!-- Side panel: incidents + hover detail -->
                 <AiCard class="p-0 flex flex-col overflow-hidden">
                     <div class="px-5 py-4 border-b border-gray-200 dark:border-dark-border">
-                        <div class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                        <div class="text-xs text-gray-500 dark:text-gray-300">
                             Incidents · open
                         </div>
                     </div>
@@ -612,15 +674,15 @@
                             class="px-5 py-3.5 border-b border-gray-100 dark:border-dark-border flex flex-col gap-1.5"
                         >
                             <div class="flex justify-between items-center">
-                                <span class="font-heading font-semibold text-[13px] text-gray-900 dark:text-gray-100">
+                                <span class="font-semibold text-note text-gray-900 dark:text-gray-100">
                                     {{ t.code || t.name }}
                                 </span>
-                                <span class="inline-block px-2 py-0.5 rounded text-[11px] font-medium" :class="pillClass(t._state)">
+                                <span class="inline-block px-2 py-0.5 rounded text-xs font-medium" :class="pillClass(t._state)">
                                     {{ stateLabel(t._state) }}
                                 </span>
                             </div>
                             <span
-                                class="text-xs"
+                                class="text-note"
                                 :class="t._state === 'offline' ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'"
                             >
                                 {{ t._state === "offline" ? "Unreachable" : "Heartbeat" }} ·
@@ -628,12 +690,12 @@
                             </span>
                         </div>
                     </div>
-                    <div v-else class="px-5 py-4 text-xs text-gray-500 dark:text-gray-300">
+                    <div v-else class="px-5 py-4 text-sm text-gray-500 dark:text-gray-300">
                         No open incidents.
                     </div>
 
                     <div class="px-5 py-4 border-t border-gray-200 dark:border-dark-border mt-auto">
-                        <div class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                        <div class="text-xs text-gray-500 dark:text-gray-300">
                             Trust detail
                         </div>
                     </div>
@@ -642,16 +704,16 @@
                         class="px-5 py-3 flex flex-col gap-1 border-t border-gray-100 dark:border-dark-border"
                         data-test="radial-hover-detail"
                     >
-                        <span class="font-heading font-semibold text-[13px] text-gray-900 dark:text-gray-100">
+                        <span class="font-semibold text-note text-gray-900 dark:text-gray-100">
                             {{ hoveredTrust.code || hoveredTrust.name }}
                         </span>
-                        <span class="font-mono text-[11px] text-gray-500 dark:text-gray-300">
+                        <span class="text-note text-gray-500 dark:text-gray-300">
                             {{ hoveredTrust.region ?? "—" }} · {{ heartbeatText(hoveredTrust.last_heartbeat) }}
                         </span>
                     </div>
                     <div
                         v-else
-                        class="px-5 py-3 text-[11px] text-gray-400 dark:text-gray-300 border-t border-gray-100 dark:border-dark-border"
+                        class="px-5 py-3 text-sm text-gray-500 dark:text-gray-300 border-t border-gray-100 dark:border-dark-border"
                     >
                         Hover a trust on the topology to see details.
                     </div>
@@ -687,18 +749,18 @@
 
 <script setup lang="ts">
 import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/vue";
-import useSWRV from "swrv";
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
+import { useHubVersion, useTrustStatuses } from "@/composables/useTrustPolls";
 import FLNetsCard from "@/partials/connection/FLNetsCard.vue";
 import TrustDetailDrawer from "@/partials/connection/TrustDetailDrawer.vue";
 import AddTrustModal from "@/partials/trusts/AddTrustModal.vue";
 import TrustKitModal from "@/partials/trusts/TrustKitModal.vue";
 import { ICreatedTrust } from "@/services/admin-trusts-service";
-import { getHubHealth, getTrustStatuses, IHubHealth, ITrustResponse, ServiceStatus } from "@/services/trust-service";
+import { ITrustResponse, ServiceStatus } from "@/services/trust-service";
 import { useAuthStore } from "@/store/auth";
 import { deriveTrust,
     deriveTrustState,
@@ -718,30 +780,9 @@ type ViewMode = "list" | "radial";
 const viewMode = ref<ViewMode>("list");
 const hoverTrustId = ref<string | null>(null);
 
-// SWRV handles 5s dedupe + 15s polling so the heartbeat column stays fresh
-// without per-page setInterval bookkeeping.
-const { data: trusts, mutate: refresh } = useSWRV<ITrustResponse[]>(
-    "trust-connection-status",
-    getTrustStatuses,
-    {
-        dedupingInterval: 5_000,
-        shouldRetryOnError: false,
-        refreshInterval: 15_000
-    }
-);
-
-// The hub's own build (FLIP#1204). Changes only on a hub deploy, so a slow poll is plenty;
-// the value is what the header shows and what the drawer flags trust versions against.
-const { data: hubHealth } = useSWRV<IHubHealth>(
-    "hub-health",
-    getHubHealth,
-    {
-        dedupingInterval: 30_000,
-        shouldRetryOnError: false,
-        refreshInterval: 60_000
-    }
-);
-const hubVersion = computed<string | null>(() => hubHealth.value?.version ?? null);
+const { data: trusts, mutate: refresh } = useTrustStatuses();
+// What the header shows and what the drawer flags trust versions against.
+const hubVersion = useHubVersion();
 
 // Labels + pill classes are shared with the drawer via connection-health.ts.
 const stateLabel = (s: TrustState): string => STATE_LABELS[s];
@@ -931,6 +972,8 @@ interface ITile {
     label: string;
     dot: string;
     ring: string;
+    // The phone count line's ink when a trust is in this state; set only on states worth a link.
+    text?: string;
 }
 
 const TILES: ITile[] = [
@@ -944,13 +987,15 @@ const TILES: ITile[] = [
         key: "degraded",
         label: "Degraded",
         dot: "bg-amber-500",
-        ring: "border-amber-500 ring-amber-500/40"
+        ring: "border-amber-500 ring-amber-500/40",
+        text: "text-amber-700 dark:text-amber-300"
     },
     {
         key: "offline",
         label: "Offline",
         dot: "bg-red-500",
-        ring: "border-red-500 ring-red-500/40"
+        ring: "border-red-500 ring-red-500/40",
+        text: "text-red-700 dark:text-red-400"
     }
 ];
 
@@ -959,6 +1004,21 @@ const activeTile = ref<TrustState | null>(null);
 // Toggle a tile: clicking the active tile clears the filter, otherwise filters to its state.
 const toggleTile = (key: TrustState): void => {
     activeTile.value = activeTile.value === key ? null : key;
+};
+
+// The list card, so a count on the phone line can take the user to the first trust in its state.
+const trustList = ref<InstanceType<typeof AiCard> | null>(null);
+
+const isCountLink = (tile: ITile): boolean => !!tile.text && stateCounts.value[tile.key] > 0;
+
+const focusFirstTrust = async (state: TrustState): Promise<void> => {
+    viewMode.value = "list";
+    activeTile.value = null;
+    await nextTick();
+    const card = trustList.value?.$el as HTMLElement | undefined;
+    const rows = [...(card?.querySelectorAll<HTMLElement>(`[data-trust-state="${state}"]`) ?? [])];
+    // The phone and desktop lists are both in the DOM; focusing the visible row scrolls it into view.
+    (rows.find(row => row.offsetParent !== null) ?? rows[0])?.focus();
 };
 
 // Counted off the already-derived rows, not re-derived: a second derivation takes
@@ -996,6 +1056,24 @@ const DOT_HEX: Record<TrustState, string> = {
     offline: "#ef4444"
 };
 
+const SPOKE_WIDTH: Record<TrustState, number> = {
+    online: 1.8,
+    degraded: 1.1,
+    offline: 1.5
+};
+
+// Where an offline spoke's break starts and ends, as a percentage of the spoke.
+const OFFLINE_BREAK = [45, 55] as const;
+const OFFLINE_DASH = `${OFFLINE_BREAK[0]} ${OFFLINE_BREAK[1] - OFFLINE_BREAK[0]} ${100 - OFFLINE_BREAK[1]}`;
+
+// Spokes in dark mode: a lighter shade at a higher opacity so each reads on the
+// near-black card. CSS beats the SVG stroke attributes, so these apply in dark only.
+const SPOKE_DARK: Record<TrustState, string> = {
+    online: "dark:stroke-emerald-400 dark:[stroke-opacity:0.7]",
+    degraded: "dark:stroke-amber-400 dark:[stroke-opacity:0.5]",
+    offline: "dark:stroke-red-400 dark:[stroke-opacity:0.7]"
+};
+
 const radial = {
     cx: 380,
     cy: 380,
@@ -1019,6 +1097,33 @@ interface IRadialNode {
     shortLabel: string;
 }
 
+// The pulse band is one spoke long and slides from a spoke's length behind the hub
+// to a spoke's length past the trust: along hub->trust the gradient's start moves
+// -1 -> 1 and its end 0 -> 2, as the old bounding-box gradient did along x.
+function pulseSweep(node: { x: number; y: number }) {
+    const at = (from: number, to: number, t: number) => from + (to - from) * t;
+    const sweep = (from: number, to: number, t0: number, t1: number) => `${at(from, to, t0)};${at(from, to, t1)}`;
+
+    return [
+        {
+            attr: "x1",
+            values: sweep(radial.cx, node.x, -1, 1)
+        },
+        {
+            attr: "y1",
+            values: sweep(radial.cy, node.y, -1, 1)
+        },
+        {
+            attr: "x2",
+            values: sweep(radial.cx, node.x, 0, 2)
+        },
+        {
+            attr: "y2",
+            values: sweep(radial.cy, node.y, 0, 2)
+        }
+    ];
+}
+
 // Pre-compute spoke endpoints + label positions so the template stays declarative.
 // Node radius scales mildly with project count (capped at 6) to mirror the design.
 const radialNodes = computed<IRadialNode[]>(() => {
@@ -1031,9 +1136,12 @@ const radialNodes = computed<IRadialNode[]>(() => {
         const x = radial.cx + Math.cos(angle) * radial.R;
         const y = radial.cy + Math.sin(angle) * radial.R;
         const labelX = radial.cx + Math.cos(angle) * (radial.R + 34);
-        const labelY = radial.cy + Math.sin(angle) * (radial.R + 34);
         const anchor: "start" | "end" | "middle" =
             Math.cos(angle) > 0.1 ? "start" : Math.cos(angle) < -0.1 ? "end" : "middle";
+        // The project-count line hangs below the name, so a label centred above its
+        // dot is lifted by one line to clear it as far as a label below the hub does.
+        const lift = anchor === "middle" && Math.sin(angle) < 0 ? 12 : 0;
+        const labelY = radial.cy + Math.sin(angle) * (radial.R + 34) - lift;
         const r = 9 + Math.min(t.project_count, 6) * 1.2;
 
         return {
@@ -1054,24 +1162,6 @@ const radialNodes = computed<IRadialNode[]>(() => {
         };
     });
 });
-
-const radialLegend = computed(() => [
-    {
-        state: "online" as TrustState,
-        label: "Online",
-        dotClass: "bg-emerald-600"
-    },
-    {
-        state: "degraded" as TrustState,
-        label: "Degraded",
-        dotClass: "bg-amber-500"
-    },
-    {
-        state: "offline" as TrustState,
-        label: "Offline",
-        dotClass: "bg-red-500"
-    }
-]);
 
 const onlineCount = computed(() => radialNodes.value.filter(n => n.state === "online").length);
 

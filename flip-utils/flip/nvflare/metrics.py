@@ -10,6 +10,7 @@
 # limitations under the License.
 
 import math
+from typing import Any
 
 from nvflare.apis.dxo import DXO, DataKind, from_shareable
 from nvflare.apis.fl_constant import EventScope, FedEventHeader, FLContextKey
@@ -19,6 +20,18 @@ from nvflare.apis.shareable import Shareable
 from flip import FLIP, FLIPBase
 from flip.constants.flip_constants import FlipEvents
 from flip.utils.utils import Utils
+
+
+def _plottable_x_value(x_value: Any, label: Any, flip: FLIPBase) -> Any:
+    """Return x_value if it is a finite number (or None), else warn and return None.
+
+    The hub rejects a NaN/inf coordinate (its schema enforces allow_inf_nan=False); None makes it plot the
+    metric at the global round instead.
+    """
+    if x_value is None or (isinstance(x_value, (int, float)) and math.isfinite(x_value)):
+        return x_value
+    flip.logger.warning(f"Dropping non-finite x_value {x_value!r} for metric {label}; plotting at the global round")
+    return None
 
 
 def send_metrics_value(
@@ -57,12 +70,8 @@ def send_metrics_value(
         flip.logger.error("Error: no engine in fl_ctx, cannot fire metrics event")
         return
 
-    # Catch a degenerate coordinate at its source: a NaN/inf x_value would be rejected server-side
-    # anyway (the hub schema enforces allow_inf_nan=False), so drop it here with a warning and let the
-    # metric plot at the global round instead.
-    if x_value is not None and not (isinstance(x_value, (int, float)) and math.isfinite(x_value)):
-        flip.logger.warning(f"Dropping non-finite x_value {x_value!r} for metric {label}; plotting at the global round")
-        x_value = None
+    # Catch a degenerate coordinate at its source.
+    x_value = _plottable_x_value(x_value, label, flip)
 
     # Build the DXO data. 'x_value' (x-coordinate) and 'x_label' (x-axis label) are optional and only
     # included when provided, so the server can fall back to the global round / the "Global Rounds" label.
@@ -121,25 +130,16 @@ def handle_metrics_event(event_data: Shareable, global_round: int, model_id: str
     # an 'x_value' (x-coordinate) and 'x_label' (x-axis label).
     metrics_data = from_shareable(event_data).data
 
-    # global_round is provenance — always the server's current round, never overridden by the client. The
-    # client may place the point elsewhere on the plot via 'x_value' (e.g. an epoch/step counter) and name
-    # the axis via 'x_label'; absent, the hub plots it at the global round on the "Global Rounds" axis. A
-    # plot's identity is (label, x_label), so distinct x-labels render as separate plots (see
-    # https://github.com/londonaicentre/FLIP/issues/148). 'round' is the pre-x_value DXO spelling, read as
-    # a fallback — including when 'x_value' is present but None — so a stale client image doesn't
-    # silently lose its per-epoch coordinates.
+    # global_round is provenance: always the server's current round, never overridden by the client. Plot
+    # placement (x_value/x_label) is documented on send_metrics_value. 'round' is the pre-x_value DXO spelling,
+    # read as a fallback (also when 'x_value' is present but None) so a stale client image keeps its coordinates.
     x_value = metrics_data.get("x_value")
     if x_value is None:
         x_value = metrics_data.get("round")
 
     # Keep the finite metric when an old/foreign client sends an invalid coordinate. Mirror
     # Flower's _parse_metric_key: None makes the hub plot it at the global round.
-    if x_value is not None and not (isinstance(x_value, (int, float)) and math.isfinite(x_value)):
-        flip.logger.warning(
-            f"Dropping non-finite x_value {x_value!r} for metric {metrics_data.get('label')}; "
-            f"plotting at the global round"
-        )
-        x_value = None
+    x_value = _plottable_x_value(x_value, metrics_data.get("label"), flip)
 
     try:
         flip.send_metrics(

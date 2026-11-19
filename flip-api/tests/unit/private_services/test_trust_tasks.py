@@ -367,6 +367,24 @@ def test_heartbeat_with_body_persists_services_and_stamps_server_time(mock_auth,
     app.dependency_overrides.pop(get_session, None)
 
 
+@pytest.mark.parametrize("job_mode", ["pods", "process", "a-future-mode", "k8s-pods2"])
+def test_heartbeat_stores_the_fl_client_job_mode_and_leaves_other_entries_as_sent(mock_auth, mock_trust, job_mode):
+    """The fl-client entry's job_mode is stored, any well-formed mode included, so a newer trust's new mode does not
+    cost it its whole snapshot; entries without one are stored exactly as sent (FLIP#1739)."""
+    body = _snapshot_body()
+    body["services"]["fl-client"] = {"status": "unknown", "version": "sha-abc1234", "job_mode": job_mode}
+    mock_db = MagicMock()
+    app.dependency_overrides[get_session] = lambda: mock_db
+
+    response = client.post("/api/trust/heartbeat", json=body)
+
+    assert response.status_code == 200
+    assert mock_trust.services_health["fl-client"]["job_mode"] == job_mode
+    assert {k: v for k, v in mock_trust.services_health.items() if k != "fl-client"} == _snapshot_body()["services"]
+
+    app.dependency_overrides.pop(get_session, None)
+
+
 @pytest.mark.parametrize(
     ("mutate", "reason"),
     [
@@ -380,6 +398,8 @@ def test_heartbeat_with_body_persists_services_and_stamps_server_time(mock_auth,
         (lambda b: b["services"]["xnat"].update(version="v" * 65), "version over 64 chars"),
         (lambda b: b["services"]["xnat"].update(response_ms=-1), "negative response_ms"),
         (lambda b: b["services"]["xnat"].update(response_ms=1_000_001), "response_ms over cap"),
+        (lambda b: b["services"]["xnat"].update(job_mode="m" * 17), "job_mode over 16 chars"),
+        (lambda b: b["services"]["xnat"].update(job_mode="<pods>"), "job_mode with markup"),
         (lambda b: b.pop("services"), "body present but services missing"),
         (lambda b: b.update(services={}), "empty snapshot (would overwrite a good one and stamp it fresh)"),
     ],
@@ -434,23 +454,6 @@ def test_heartbeat_accepts_values_at_the_caps(mutate, reason, mock_auth, mock_tr
 
 
 # ---- Email notification on CREATE_IMAGING result ----
-
-
-@patch("flip_api.private_services.trust_tasks.handle_imaging_task_completed")
-def test_submit_create_imaging_result_triggers_email(mock_send_emails, trust_id, task_id, mock_auth):
-    mock_task = _mock_task_owned_by(trust_id, task_id, TaskType.CREATE_IMAGING)
-    mock_db = MagicMock()
-    mock_db.exec.return_value.first.return_value = mock_task
-    app.dependency_overrides[get_session] = lambda: mock_db
-
-    response = client.post(
-        f"/api/tasks/{task_id}/result",
-        json={"success": True, "result": '{"ID": "img-1", "name": "Test", "created_users": []}'},
-    )
-
-    assert response.status_code == 200
-    mock_send_emails.assert_called_once_with(mock_task, mock_db)
-    app.dependency_overrides.pop(get_session, None)
 
 
 @patch("flip_api.private_services.trust_tasks.handle_imaging_task_completed")

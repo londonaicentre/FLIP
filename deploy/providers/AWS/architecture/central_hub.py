@@ -126,20 +126,19 @@ TERRAFORM_ADDRESSES: dict[str, tuple[str, ...]] = {
         "aws_ssm_parameter.flip_model_files_uploads_bucket",
         "aws_ssm_parameter.flip_fl_results_bucket",
         "aws_ssm_parameter.flip_app_bundles_bucket",
-        "aws_ssm_parameter.fl_kit_slot_names",
         "aws_ssm_parameter.ci_host_aws_public_key",
     ),
     "KMS": ("aws_kms_key.flip_app_key",),
     "Model files bucket": ("module.flip_model_files_uploads_bucket",),
     "FL results bucket": ("module.flip_fl_results_bucket",),
     "App bundles bucket": ("module.flip_app_bundles_bucket",),
-    "Demo assets bucket": ("module.flip_demo_assets_bucket",),
     "Participant kits bucket": ("aws_s3_bucket.aicentre_bucket",),
     "Access logs buckets": ("aws_s3_bucket.flip_access_logs",),
     "CloudWatch Logs": (
         "aws_cloudwatch_log_group.ecs_flip_api",
         "aws_cloudwatch_log_group.ecs_fl_api_net_1",
         "aws_cloudwatch_log_group.ecs_fl_server_net_1",
+        "aws_cloudwatch_log_group.rds_proxy",
     ),
 }
 
@@ -252,13 +251,6 @@ def _fargate_services(drawn: _Drawn) -> tuple[Node, Node, Node]:
     return flip_api, fl_api, fl_server
 
 
-def _hub_internal_edges(flip_api: Node, fl_api: Node, fl_server: Node, cloud_map: Node) -> None:
-    """The hub-internal control edges, shared by both pictures."""
-    fl_server >> Edge(label="logs, metrics, status\nINTERNAL_SERVICE_KEY", style="dashed") >> flip_api
-    flip_api >> Edge(label="submit job") >> fl_api >> Edge(label="admin API") >> fl_server
-    cloud_map - Edge(style="dotted", label="service discovery") - fl_api
-
-
 def _draw_network(drawn: _Drawn) -> None:
     """Request and FL paths: the networking account's edge, the Transit Gateway, one internal NLB."""
     users = drawn.node("Users", Users)
@@ -311,7 +303,10 @@ def _draw_network(drawn: _Drawn) -> None:
     internal_nlb >> Edge(label=":443 → ecs-flip-api-lza") >> flip_api
     internal_nlb >> Edge(label=":8002 → ecs-fl-server-lza\n(mTLS pass-through)") >> fl_server
     zone - Edge(style="dotted", label="A → NLB IPs") - internal_nlb
-    _hub_internal_edges(flip_api, fl_api, fl_server, cloud_map)
+    # Hub-internal control edges.
+    fl_server >> Edge(label="logs, metrics, status\nper-job credential", style="dashed") >> flip_api
+    flip_api >> Edge(label="submit job") >> fl_api >> Edge(label="admin API") >> fl_server
+    cloud_map - Edge(style="dotted", label="service discovery") - fl_api
 
     # The two-phase handoff: this root publishes the NLB's static IPs and ports, the edge stack registers them once.
     # The read-back edge points against the flow, so it is left out of the ranking to keep the layout left-to-right.
@@ -347,9 +342,6 @@ def _draw_data(drawn: _Drawn) -> None:
         model_files = drawn.node("Model files bucket", S3, caption="Model files bucket\nuploaded → scanned")
         fl_results = drawn.node("FL results bucket", S3, caption="FL results\nbucket")
         drawn.node("Access logs buckets", S3, caption="Access logs\nbucket")
-        # Read by the networking account's edge over cross-account OAC, which is why it carries no edge of its own
-        # in this picture — the edge is in another repository.
-        drawn.node("Demo assets bucket", S3, caption="Ark+ demo bucket\n(public downloads)")
 
     with _cluster("Regional services"):
         cognito = drawn.node("Cognito", Cognito, caption="Cognito user pool\n(TOTP MFA)")

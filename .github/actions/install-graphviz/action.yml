@@ -1,0 +1,41 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Install graphviz
+description: |
+  Install graphviz (`dot`), riding out a few minutes of Ubuntu mirror outage (FLIP#1988).
+
+  The architecture diagrams render with `dot`: the docs build needs it, and the diagram tests run their
+  render smoke test only when it is there. A bare `apt-get update && apt-get install` failed whole jobs
+  on one unreachable mirror, although apt already retries each download: the mirror stayed down for
+  minutes. So the whole update and install retries, up to four times, 30 to 90 seconds apart, with a
+  30-second timeout per request so a dead mirror fails an attempt quickly instead of hanging it.
+  Every workflow installs graphviz through this action (.github/tests/actions/test_install_graphviz.py).
+
+runs:
+  using: composite
+  steps:
+    - name: Install graphviz
+      shell: bash
+      run: |
+        opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+        for attempt in 1 2 3 4; do
+          if sudo apt-get "${opts[@]}" update -qq && sudo apt-get "${opts[@]}" install -y -qq graphviz; then
+            dot -V
+            exit 0
+          fi
+          if [ "$attempt" -lt 4 ]; then
+            echo "::warning::graphviz install attempt $attempt failed; retrying in $((attempt * 30))s"
+            sleep $((attempt * 30))
+          fi
+        done
+        echo "::error::graphviz could not be installed after 4 attempts: the Ubuntu mirror is unreachable. Re-run the job."
+        exit 1

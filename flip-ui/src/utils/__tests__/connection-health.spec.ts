@@ -187,7 +187,7 @@ describe("deriveServices", () => {
         const derived = deriveServices(t, NOW);
 
         expect(derived).toHaveLength(SERVICE_REGISTRY.length);
-        expect(derived.some(s => s.key === "mystery-svc")).toBe(false);
+        expect(derived.some(s => (s.key as string) === "mystery-svc")).toBe(false);
     });
 
     it("treats a snapshot without a timestamp as no data", () => {
@@ -250,20 +250,12 @@ describe("deriveTrustState", () => {
         expect(deriveTrustState(t, NOW)).toBe("offline");
     });
 
-    it("is degraded when any service is down while trust-api is alive", () => {
+    it.each([
+        ["xnat", "down"],
+        ["omop", "degraded"]
+    ] as const)("is degraded when %s is %s while trust-api is alive", (key, status) => {
         const services = healthyServices();
-        services.xnat.status = "down";
-        const t = makeTrust({
-            services,
-            services_updated_at: secondsAgo(5)
-        });
-
-        expect(deriveTrustState(t, NOW)).toBe("degraded");
-    });
-
-    it("is degraded when a service is degraded", () => {
-        const services = healthyServices();
-        services.omop.status = "degraded";
+        services[key].status = status;
         const t = makeTrust({
             services,
             services_updated_at: secondsAgo(5)

@@ -120,27 +120,10 @@ def test_retrieve_model_success(
         },
     }
 
-    mock_result = MagicMock()
-    mock_result.mappings.return_value.first.return_value = mock_raw_sql_result
-    override_dependencies.execute.return_value = mock_result
+    # Follow-up queries all empty, so the lifecycle fields stay None, `trusts` stays empty, there is no GPU
+    # override and no queue position.
+    _stub_model(override_dependencies, mock_raw_sql_result)
 
-    # Four follow-up SQLModel queries after the raw SQL: Model.creation_timestamp,
-    # ModelsAudit rows, the participating trusts, then the FL queue. All empty so
-    # the lifecycle fields stay None, `trusts` stays empty and there is no queue
-    # position.
-    creation_call = MagicMock()
-    creation_call.first.return_value = None
-    audit_call = MagicMock()
-    audit_call.all.return_value = []
-    trusts_call = MagicMock()
-    trusts_call.all.return_value = []
-    queue_call = MagicMock()
-    queue_call.all.return_value = []
-    resources_call = MagicMock()
-    resources_call.first.return_value = None  # no job, or no GPU override for its run
-    override_dependencies.exec.side_effect = [creation_call, audit_call, trusts_call, resources_call, queue_call]
-
-    # response = client.get(f"/model/{test_model_id}")
     result = retrieve_model(model_id=test_model_id, db=override_dependencies, user_id=test_user_id)
 
     assert result.model_id == test_model_id
@@ -155,6 +138,31 @@ def test_retrieve_model_success(
     # `.get()`, which would silently swallow a dropped SQL column otherwise.
     assert result.files[0].bandit_findings == mock_raw_sql_result["files"][0]["bandit_findings"]
     assert result.queue_position is None
+
+
+def _model_row(status: ModelStatus) -> dict:
+    return {
+        "model_id": str(test_model_id),
+        "model_name": "Test Model",
+        "model_description": "Desc",
+        "project_id": str(uuid4()),
+        "status": status.value,
+        "files": [],
+        "query": None,
+    }
+
+
+def _stub_model(session, row, *, trusts=(), resources=None, queue=()):
+    """Stub the raw model SQL with ``row``, then the follow-up SQLModel queries in order: Model.creation_timestamp,
+    ModelsAudit rows, the participating trusts, the latest run's GPU override and the FL queue."""
+    session.execute.return_value.mappings.return_value.first.return_value = row
+    creation, audit, trusts_call, resources_call, queue_call = (MagicMock() for _ in range(5))
+    creation.first.return_value = None
+    audit.all.return_value = []
+    trusts_call.all.return_value = list(trusts)
+    resources_call.first.return_value = resources
+    queue_call.all.return_value = list(queue)
+    session.exec.side_effect = [creation, audit, trusts_call, resources_call, queue_call]
 
 
 def test_retrieve_model_forbidden(override_dependencies, mock_can_access_false):
@@ -223,32 +231,11 @@ def test_retrieve_model_reports_the_trusts_that_took_part(
     """A dispatched model carries its run trusts, so the UI can show which took part."""
     gstt_id, kch_id = uuid4(), uuid4()
 
-    mock_result = MagicMock()
-    mock_result.mappings.return_value.first.return_value = {
-        "model_id": str(test_model_id),
-        "model_name": "Test Model",
-        "model_description": "Desc",
-        "project_id": str(uuid4()),
-        "status": ModelStatus.RUNNING.value,
-        "files": [],
-        "query": None,
-    }
-    override_dependencies.execute.return_value = mock_result
-
-    creation_call = MagicMock()
-    creation_call.first.return_value = None
-    audit_call = MagicMock()
-    audit_call.all.return_value = []
-    trusts_call = MagicMock()
-    trusts_call.all.return_value = [
-        (gstt_id, "Guy's and St Thomas'", "GSTT"),
-        (kch_id, "King's College Hospital", None),
-    ]
-    queue_call = MagicMock()
-    queue_call.all.return_value = []
-    resources_call = MagicMock()
-    resources_call.first.return_value = None  # no job, or no GPU override for its run
-    override_dependencies.exec.side_effect = [creation_call, audit_call, trusts_call, resources_call, queue_call]
+    _stub_model(
+        override_dependencies,
+        _model_row(ModelStatus.RUNNING),
+        trusts=[(gstt_id, "Guy's and St Thomas'", "GSTT"), (kch_id, "King's College Hospital", None)],
+    )
 
     result = retrieve_model(model_id=test_model_id, db=override_dependencies, user_id=test_user_id)
 
@@ -271,30 +258,8 @@ def test_retrieve_model_reports_the_queue_position(
     mock_load_sql,
 ):
     """A queued model carries its 1-based place in the FL training queue (issue #788)."""
-    mock_result = MagicMock()
-    mock_result.mappings.return_value.first.return_value = {
-        "model_id": str(test_model_id),
-        "model_name": "Test Model",
-        "model_description": "Desc",
-        "project_id": str(uuid4()),
-        "status": ModelStatus.INITIATED.value,
-        "files": [],
-        "query": None,
-    }
-    override_dependencies.execute.return_value = mock_result
-
-    creation_call = MagicMock()
-    creation_call.first.return_value = None
-    audit_call = MagicMock()
-    audit_call.all.return_value = []
-    trusts_call = MagicMock()
-    trusts_call.all.return_value = []
-    queue_call = MagicMock()
     # One queued job ahead of this model's, so it sits at position 2.
-    queue_call.all.return_value = [uuid4(), test_model_id]
-    resources_call = MagicMock()
-    resources_call.first.return_value = None  # no job, or no GPU override for its run
-    override_dependencies.exec.side_effect = [creation_call, audit_call, trusts_call, resources_call, queue_call]
+    _stub_model(override_dependencies, _model_row(ModelStatus.INITIATED), queue=[uuid4(), test_model_id])
 
     result = retrieve_model(model_id=test_model_id, db=override_dependencies, user_id=test_user_id)
 
@@ -309,24 +274,7 @@ def test_retrieve_model_reports_the_runs_gpu_override(
     override_dependencies, mock_can_access_true, mock_load_sql, row, expected
 ):
     """The UI shows the override a dispatched run was given, from the latest job (FLIP#70)."""
-    mock_result = MagicMock()
-    mock_result.mappings.return_value.first.return_value = {
-        "model_id": str(test_model_id),
-        "model_name": "Test Model",
-        "model_description": "Desc",
-        "project_id": str(uuid4()),
-        "status": ModelStatus.RUNNING.value,
-        "files": [],
-        "query": None,
-    }
-    override_dependencies.execute.return_value = mock_result
-    creation_call, audit_call, trusts_call, resources_call, queue_call = (MagicMock() for _ in range(5))
-    creation_call.first.return_value = None
-    audit_call.all.return_value = []
-    trusts_call.all.return_value = []
-    resources_call.first.return_value = row
-    queue_call.all.return_value = []
-    override_dependencies.exec.side_effect = [creation_call, audit_call, trusts_call, resources_call, queue_call]
+    _stub_model(override_dependencies, _model_row(ModelStatus.RUNNING), resources=row)
 
     result = retrieve_model(model_id=test_model_id, db=override_dependencies, user_id=test_user_id)
 

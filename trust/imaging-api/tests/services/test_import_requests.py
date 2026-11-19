@@ -14,7 +14,7 @@
 
 Requests are prepared for real and only the network dispatch is replaced, so the URL, its query
 string and the POST body are checked as XNAT would receive them. Responses are shaped like the JSON
-DQR 3.0.0 and xnat-web 1.10.0 serve: camelCase fields, epoch-millisecond times, null fields left out.
+DQR 3.1.0 and xnat-web 1.10.0 serve: camelCase fields, epoch-millisecond times, null fields left out.
 """
 
 import json

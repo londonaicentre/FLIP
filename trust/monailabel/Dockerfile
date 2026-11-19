@@ -71,9 +71,8 @@ RUN pip install --no-cache-dir -c /workspace/constraints.txt \
 # Fail the build rather than ship a broken image. Two ways it silently breaks, neither of
 # which surfaces until runtime:
 #   1. the unreleased XNAT auth fix disappearing from the pinned ref;
-#   2. pip resolving a CUDA 13 torch. PyPI serves cu13 by default, and cu13 requires NVIDIA
-#      driver >= 580 while the trust hosts run 575.x — so it installs cleanly and then dies
-#      at first inference with an opaque CUDA error.
+#   2. pip resolving a CUDA 13 torch (see the torch install above): it installs, then dies at
+#      first inference with an opaque CUDA error.
 #
 # The wheel's local version tag (+cu128) is the signal to check. torch.cuda.get_arch_list()
 # looks like the more direct test for Blackwell (sm_120) kernels, but it returns [] whenever

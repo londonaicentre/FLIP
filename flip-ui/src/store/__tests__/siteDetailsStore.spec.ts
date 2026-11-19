@@ -84,33 +84,21 @@ describe("siteDetailsStore", () => {
     });
 
     describe("updateBanner", () => {
-        it("calls updateSiteDetails with correct payload and updates state on success", async () => {
-            store.setSiteDetails({ deploymentMode: true });
-            vi.mocked(updateSiteDetails).mockResolvedValue(mockResponse);
-
-            await store.updateBanner(mockBanner);
-
-            expect(updateSiteDetails).toHaveBeenCalledWith("/site/details", {
-                banner: mockBanner,
-                deploymentMode: true
-            });
-            expect(store.banner).toEqual(mockBanner);
-            expect(store.deploymentMode).toBe(true);
-        });
-
-        it("preserves current deploymentMode in the API call", async () => {
-            store.setSiteDetails({ deploymentMode: false });
+        it.each([true, false])("sends the current deploymentMode (%s) with the banner and stores the response", async (mode) => {
+            store.setSiteDetails({ deploymentMode: mode });
             vi.mocked(updateSiteDetails).mockResolvedValue({
                 banner: mockBanner,
-                deploymentMode: false
+                deploymentMode: mode
             });
 
             await store.updateBanner(mockBanner);
 
             expect(updateSiteDetails).toHaveBeenCalledWith("/site/details", {
                 banner: mockBanner,
-                deploymentMode: false
+                deploymentMode: mode
             });
+            expect(store.banner).toEqual(mockBanner);
+            expect(store.deploymentMode).toBe(mode);
         });
 
         it("shows success snackbar on success", async () => {
@@ -153,24 +141,6 @@ describe("siteDetailsStore", () => {
                 deploymentMode: true
             });
             expect(store.deploymentMode).toBe(true);
-        });
-
-        it("includes current banner in the API call", async () => {
-            store.setSiteDetails({
-                banner: mockBanner,
-                deploymentMode: false
-            });
-            vi.mocked(updateSiteDetails).mockResolvedValue({
-                banner: mockBanner,
-                deploymentMode: true
-            });
-
-            await store.updateDeploymentMode(true);
-
-            expect(updateSiteDetails).toHaveBeenCalledWith("/site/details", {
-                banner: mockBanner,
-                deploymentMode: true
-            });
         });
 
         it("shows success snackbar on success", async () => {

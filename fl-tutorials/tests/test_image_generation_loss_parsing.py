@@ -84,6 +84,7 @@ def _write(tmp_path, text: str):  # noqa: ANN001, ANN202
 
 def test_a_single_line_message_yields_one_point_per_term(plot_utils, tmp_path) -> None:
     series = plot_utils.parse_log(_write(tmp_path, ITERATION_LINE))
+    # The exact key set: the ``21:22:20,945`` timestamp at the head of the line yields no series.
     assert {name: len(values) for name, values in series.items()} == {
         "KL": 1,
         "l1": 1,
@@ -104,17 +105,6 @@ def test_a_multi_line_message_is_not_dropped(plot_utils, tmp_path) -> None:
     assert series["Validation SSIM (foreground)"] == [0.21366519071161746]
     # No space after the comma, and parenthesised names: both must survive.
     assert series["Validation loss (L1)"] == [0.04388631265610456]
-
-
-def test_the_timestamp_is_not_read_as_data(plot_utils, tmp_path) -> None:
-    """``21:22:20,945`` is three colon-separated numbers at the head of every single line."""
-    series = plot_utils.parse_log(_write(tmp_path, ITERATION_LINE))
-    assert not [name for name in series if any(character.isdigit() for character in name)] or set(series) == {
-        "KL",
-        "l1",
-        "perceptual",
-        "gan",
-    }
 
 
 def test_non_finite_values_are_kept_rather_than_skipped(plot_utils, tmp_path) -> None:

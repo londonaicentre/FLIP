@@ -25,7 +25,7 @@ emit around configure_train/aggregate_train; an evaluation-only strategy
 type yields a coherent round timeline without double-emission.
 
 Like ``flip.flower.privacy``, importing this module requires the ``flwr`` package
-(present in the Flower fl-server images) — it subclasses the real ``FedAvg``.
+(the ``flower`` extra; present in the Flower fl-server images) — it subclasses the real ``FedAvg``.
 Keep logic in the helpers; this class is wiring.
 """
 
@@ -132,8 +132,8 @@ class FlipFedAvg(FedAvg):
         if min_clients is not None:
             if min_clients < 1:
                 # Reachable: slot_names is a DB lookup that returns [] when a participating trust
-                # has no assigned FL kit slot, and validate_client_availability passes an empty
-                # list. len([]) == 0 would zero every threshold, and flwr's sample_size is
+                # has no assigned FL kit slot, and the hub submits that empty list as it is.
+                # len([]) == 0 would zero every threshold, and flwr's sample_size is
                 # max(n, 0) — so the round would start against no one.
                 raise ValueError(
                     f"min_clients must be >= 1, got {min_clients} — a zero or negative quorum "
