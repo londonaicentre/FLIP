@@ -100,8 +100,9 @@ compares them:
   XNAT answers the lookups, and never served unchecked.
 
 `force_refresh=true` takes the same delete-then-download step. The cache is also invalidated when an upload through
-imaging-api changes the accession (see Upload), and — on the FLARE backend — by `CleanupImages`, which empties the
-whole net directory at job start and end.
+imaging-api changes the accession (see Upload), and — on the FLARE backend, where a job mounts the net's whole
+folder — by `CleanupImages`, which empties that folder at job start and end. A Kubernetes job pod mounts only its
+project's folder, read-only, or none, and deletes nothing: there the retention sweep bounds the cache.
 
 **Retention (FLIP#1050).** Every cache hit refreshes the sentinel's mtime, the entry's last-used time, and an hourly
 sweep (`services/cache_retention.py`) removes accession folders whose newest sentinel is older than
@@ -118,6 +119,12 @@ tutorial matches the `<scan id>-<description>` folder), and XNAT's other layouts
 session folder, `simplified` and `legacy` reshape the folders below it. A zip with no files, or with a member not
 lexically under `<accession_id>/`, is refused before anything is extracted (HTTP 500) and never marked complete. The
 check reads the member names, not the folder afterwards, because a re-download lands in an already-populated folder.
+
+`POST /download/images/{net_id}/stream` takes the same body and query and, after the same cache fill, answers with
+the cached study as an uncompressed tar rooted at `<accession_id>/` (`application/x-tar`, the cache's sentinels left
+out) instead of a path. It is for a client with no mount of the net's images folder, such as an NVFLARE job pod on
+Kubernetes (FLIP#1049): flip-utils uses it when `IMAGES_TRANSPORT=stream` and extracts the tar into the job's own
+directory.
 
 ### Imaging
 
@@ -285,9 +292,41 @@ leaves it in place and fails the request.
 A missing resource is created with the first file, and a missing `scan_id` with the type of the session's first
 scan; in a session with no scans, the upload fails.
 
+`PUT /upload/images/{net_id}/files` is the multipart twin for a client with no mount of the net's upload folder
+(FLIP#1049): the same fields as form data, the files themselves as `files` parts, each named by the same path
+relative to the net's upload folder that `files` holds above. They are staged at `<net_id>/upload/<request id>/<path>`
+for the upload and removed afterwards; a path that would leave its request's folder is refused with a 400.
+
 ### Users
 
 Create users, update user details, or add a user to an XNAT project.
+
+#### Imaging follows the approved cohort
+
+A patient who leaves a project's approved cohort (the national data opt-out, a removal from OMOP) stops being served
+by data-access-api at once (FLIP#857). Their imaging follows (FLIP#1860), from the same list: the accessions
+data-access-api serves for the project now (`/cohort/accession-ids`).
+
+| What | When | How |
+| --- | --- | --- |
+| Downloads | Within a minute | The route answers `404` for an accession that is not on the list. The list is read at most once a minute per project. |
+| The cached copy | Within `COHORT_RECONCILE_MINUTES` (15) | `<net_id>/<central_hub_project_id>/<accession_id>/` is removed in every net's folder. |
+| XNAT | After `COHORT_REMOVAL_GRACE_HOURS` (24) off the list | The session is deleted from the project's archive and prearchive with its files, then the subject when none of their studies is left. The log names the project and the accession when it is first seen off the list, and again at each removal. |
+
+- **Why XNAT waits.** A cached copy is downloaded again on demand, but only a new pull from the PACS refills XNAT,
+  and the list is short for a while whenever a trust reloads its OMOP tables. An accession that is back on the list
+  before the wait ends is kept, and the wait starts again if it leaves again. The count is held in memory, so a
+  restart of imaging-api starts it again: a removal can come late, never early.
+- **When nothing is removed.** While data-access-api cannot answer, or refuses the whole list (`403`): a refusal does
+  not say whether the cohort fell below the trust's threshold or its lookup failed. Downloads are refused in both
+  cases (`503` and `404`). An empty list is an answer, not a refusal: the approved cohort has no imaging, and the
+  project's sessions are removed like any other that is off the list.
+- **What is removed.** Imaging sessions the project owns whose label is not a served accession, with their files. XNAT keeps no copy of them while its `backupDeletedToCache` site setting is off, its default (FLIP does not set it). An assessor (a
+  segmentation) goes with its session, never on its own; a session shared in from another project is left to that
+  project.
+- **Not pulled again.** A study removed this way is not imported again if the patient returns to OMOP. Their rows are
+  served again (the frozen membership still holds them), the download answers `404`, and the import status shows the
+  study as processing.
 
 ## Configuration
 
@@ -303,6 +342,8 @@ Key environment variables. Most come from the trust kit file — template at [`.
 | `DATA_ACCESS_API_URL` | Internal URL of the data-access-api (default `http://data-access-api:8000`) |
 | `DCM2NIIX_IMAGE` | Container Service image used for automatic DICOM→NIfTI conversion. The default is `ghcr.io/londonaicentre/xnat-dcm2niix:<version>` at the tag `ARG DCM2NIIX_VERSION` in `trust/xnat/dcm2niix/Dockerfile` names — the one source of truth, which `trust/xnat/dcm2niix/check_image_pin_sync.sh` (pre-commit + CI, FLIP#980) checks `imaging_api/config.py` against. The per-project event subscription looks the XNAT command up by this **exact** image string, so it must match what `trust/xnat/xnat/config/dcm2niix_command.json` registers — pinned by version tag, never `latest` |
 | `BASE_IMAGES_DOWNLOAD_DIR` | **Required.** Root of the downloaded-images tree as seen **inside the container** — the composes and the Helm chart inject the literal `/app/data/images`. The kit file's same-named `BASE_IMAGES_DOWNLOAD_DIR` is a different value: the *host* directory the composes bind-mount onto that path (the same host-vs-container dual meaning the trust-api README notes for the kit's `OMOP_DB_PORT`). imaging-api mounts the whole tree; each fl-client mounts only its own `net-N` slice |
+| `COHORT_RECONCILE_MINUTES` | How often imaging-api brings each project's cached studies and XNAT sessions to its approved cohort (default `15`; see "Imaging follows the approved cohort"). `0` turns the removal off; a download of an accession that left the cohort is refused either way |
+| `COHORT_REMOVAL_GRACE_HOURS` | How long an accession must have been off a project's approved cohort before its XNAT session is deleted (default `24`). The cached copy does not wait |
 | `CONVERTER_BACKEND` | Which machinery converts DICOM to NIfTI: `container-service` (default, Compose and Kubernetes) or `snowflake` (SPCS, where Container Service cannot run). See "Converting on Snowflake" above. A setting rather than an auto-detection, because "am I on SPCS?" has no reliable answer and a wrong guess silently picks a converter that cannot run |
 | `SNOWFLAKE_HOST`, `SNOWFLAKE_ACCOUNT` | Injected into every SPCS container by the platform; not set by the spec, which is why both default to empty. Read only when `CONVERTER_BACKEND=snowflake` |
 | `SNOWFLAKE_DATABASE`, `SNOWFLAKE_SCHEMA` | Where the converter procedures live: `FLIP_TRUST_<CODE>` and `APP` |

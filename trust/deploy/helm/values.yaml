@@ -335,6 +335,11 @@ imagingApi:
     # DQR use its default query/retrieve PACS, and each import reads that PACS's id from XNAT.
     DATA_ACCESS_API_URL: "http://data-access-api:8000"
     BASE_IMAGES_DOWNLOAD_DIR: "/app/data/images"
+    # Imaging follows the approved cohort (FLIP#1860): every COHORT_RECONCILE_MINUTES the cached studies of an
+    # accession that left a project's cohort are removed, and its XNAT session once it has been off the cohort for
+    # COHORT_REMOVAL_GRACE_HOURS. "0" minutes turns the removal off; downloads of it are refused either way.
+    COHORT_RECONCILE_MINUTES: "15"
+    COHORT_REMOVAL_GRACE_HOURS: "24"
     # A cached study unused for this long is removed (FLIP#1050); "0" keeps every study.
     IMAGE_CACHE_RETENTION_HOURS: "168"
 
@@ -506,16 +511,31 @@ flClient:
     # node pool that scales from zero, a GPU is billed only while a job runs. Leave flClient.gpu off:
     # the parent holds no GPU (the chart refuses both).
     #
-    # Job pods mount the shared images volume, so they follow flClient.affinity. On a multi-node
-    # cluster with a separate GPU pool, sharedImagesPvc needs a ReadWriteMany class and
-    # flClient.affinity: {} (an RWO disk attaches to one node only). They inherit the fl-client's
-    # NetworkPolicy reach: every rule in network-policy.yaml is namespace-wide.
+    # Job pods inherit the fl-client's NetworkPolicy reach: every rule in network-policy.yaml is
+    # namespace-wide.
     jobPods:
       enabled: false
+      # How a job pod gets its studies. Either way it holds only its own project's.
+      # - project: each FLIP project is an NVFLARE study, and its job pods mount that project's own
+      #   folder of the shared images volume, read-only (FLIP#1678). Nothing is copied into the pod, and
+      #   a job never deletes from the cache: IMAGE_CACHE_RETENTION_HOURS bounds it. The job pods
+      #   attach sharedImagesPvc, so on a ReadWriteOnce volume they run on the fl-client's node; a
+      #   separate GPU pool needs a ReadWriteMany one. A job outside a project's study (from a hub that
+      #   predates studies) mounts nothing and streams.
+      # Either way a project's jobs start only once the site has given it a study entry:
+      # `make sync-project-studies`, after the first deploy, each approval, each upgrade and each change
+      # of this setting.
+      # - stream: no images volume. Each job streams its studies from imaging-api into its own run
+      #   directory (FLIP#1049), so job pods run on any node; size ephemeralStorage for them.
+      images: project
       # GPUs the site lends to jobs at once. NVFLARE queues a job asking for more, and the hub shows
       # why (FLIP#1423); 0 keeps every job on CPU. Set it to the GPU pool's maximum node count x GPUs
       # per node.
       maxGpus: 1
+      # Local disk each job pod may use, as both its request and its limit. With images: stream a job's
+      # studies land here (FLIP#1049) and Kubernetes evicts a pod that writes past it, so size it to the
+      # largest cohort a job trains on at this site, and keep that much free on the nodes job pods run on.
+      ephemeralStorage: 10Gi
       # Seconds a job pod may wait for its node while Kubernetes reports "Insufficient" CPU, memory or
       # GPU (an autoscaler adding a node) before NVFLARE fails the job. Size it to a cold scale-up.
       # A pod that can never be scheduled (no matching node at all) fails at once whatever this is.

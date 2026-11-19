@@ -157,11 +157,11 @@ locals {
       # uv's cache on the task's /tmp volume: its default, under HOME, is on the
       # read-only root filesystem (FLIP#1795).
       UV_CACHE_DIR = "/tmp/uv-cache"
-      # The NVFLARE kit-slot pool: every slot whose kit is complete on every net under
-      # this prefix (resolve_fl_kit_slot_names, FLIP#1720). A Flower hub reads the
-      # /flip/fl_kit_slot_names SSM parameter instead, so FL_KIT_SLOT_NAMES is
-      # deliberately not in the task env.
-      FLARE_KITS_S3_URI = var.fl_backend == "nvflare" ? local.flare_kits_base_s3 : ""
+      # The kit-slot pool (resolve_fl_kit_slot_names): every slot whose kit (NVFLARE,
+      # FLIP#1720) or SuperNode key pair (Flower, FLIP#1942) is complete on every net
+      # under this prefix. FL_KIT_SLOT_NAMES is deliberately not in the task env.
+      FLARE_KITS_S3_URI  = var.fl_backend == "nvflare" ? local.flare_kits_base_s3 : ""
+      FLOWER_KITS_S3_URI = var.fl_backend == "flower" ? local.flower_kits_base_s3 : ""
     })
     fl_server = {
       LOCAL_DEV             = "false"

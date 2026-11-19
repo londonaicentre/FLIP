@@ -72,8 +72,8 @@ Issues = "https://github.com/londonaicentre/FLIP/issues"
 # One extra per FL backend (FLIP#1047). `flip.nvflare` needs `nvflare`, `flip.flower` needs `flower`;
 # `import flip` and the backend-neutral modules need neither.
 nvflare = [
-    "nvflare==2.9.0",
-    # NVFLARE's ClientK8sJobLauncher (FLIP#1428 job pods) imports it. Capped below 36: NVFLARE 2.9.0
+    "nvflare==2.9.1",
+    # NVFLARE's ClientK8sJobLauncher (FLIP#1428 job pods) imports it. Capped below 36: NVFLARE 2.9.1
     # passes the GPU count as an int, and the 37.x client validates request bodies and rejects a
     # non-string nvidia.com/gpu quantity, failing every GPU job at pod creation (NVFLARE itself
     # excludes 36.0.0).

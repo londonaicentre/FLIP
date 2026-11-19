@@ -80,6 +80,15 @@ Every GitHub Release has a *Site upgrade* section. It says:
 
 If the hub goes first, wait for the FLIP admin to confirm the hub is on the release.
 
+A site running NVFLARE job pods on Kubernetes (``flClient.nvflare.jobPods.enabled``) upgrades **before the hub** to
+the release that runs each job in its project's NVFLARE study (FLIP#1678). Such a hub submits every NVFLARE job in
+its project's study, and a job-pod site on an older release has no job image for that study, so the job does not
+start there. Every other site is unaffected: a site that runs jobs inside the FL client ignores the study.
+
+After the upgrade, and again whenever a project is approved at the site, such a site runs
+``make -C trust/deploy/helm sync-project-studies``. It gives each approved project its entry in NVFLARE's study
+file, which the site maintains; a project without one has no job image and its jobs do not start there.
+
 Step 2 — Replace the Hub-shared block (refreshed kit only)
 ==========================================================
 
