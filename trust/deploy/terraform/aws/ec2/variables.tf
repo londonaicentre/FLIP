@@ -40,7 +40,7 @@ variable "private_ip" {
   default     = ""
 
   validation {
-    condition     = var.private_ip == "" || (var.subnet_id != "" && can(cidrhost("${var.private_ip}/32", 0)))
+    condition     = var.private_ip == "" || (var.subnet_id != "" && try(cidrhost("${var.private_ip}/32", 0) == var.private_ip, false))
     error_message = "private_ip must be a single IPv4 address, and needs subnet_id: a VPC this root creates has no firewall allowlist to pin an address for."
   }
 }

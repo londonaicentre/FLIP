@@ -137,24 +137,34 @@ In the hub's own account
 A mock trust can run in the hub's own account on the Landing Zone Accelerator estate. That account has
 no internet egress: the estate's central firewall drops every connection it has no rule for. The platform
 team allows the hosts in :ref:`deploy-trust-node-network` from the node's address, and from nothing else in
-the VPC, so the hub keeps no internet access. Agree the address with them before ``plan``. Otherwise the
-node differs from one in its own account in four ways:
+the VPC, so the hub keeps no internet access. Agree the address with them before ``plan``. The node's FL
+traffic leaves the estate by its egress NAT gateway, so the hub's FL endpoint must also admit that
+gateway's address, which is not the node's. Otherwise the node differs from one in its own account in
+four ways:
 
 - **An existing subnet and a fixed address.** The estate denies ``ec2:CreateVpc``, so ``SUBNET_ID`` is one
-  of the hub VPC's ``app`` subnets, and ``PRIVATE_IP`` is the address the firewall allows. Changing
-  ``PRIVATE_IP`` later replaces the node, and its data with it.
+  of the hub VPC's ``app`` subnets, and ``PRIVATE_IP`` is the address the firewall allows. Pick a high
+  host in that subnet's range: AWS reserves the first four and the last, the hub's FL load balancer
+  holds host 251 and its test harness host 250, and the hub's tasks take free addresses as they start.
+  Changing ``PRIVATE_IP`` later replaces the node, and its data with it.
 - **A permissions boundary.** Pass the estate's as ``BOUNDARY_ARN``; the hub's own roles carry it too.
 - **No** ``SSM_ENDPOINTS``. The estate's central endpoints already serve SSM and CloudWatch, and the
   VPC's gateway endpoint serves S3.
 - **The kit from the hub's bucket.** ``KIT_BUCKET`` and ``KIT_KMS_KEY_ARN`` are the hub's kit bucket and
   its key, and ``FL_KIT_DATE`` the hub's kit date for its FL backend. The node reads its slot's kit and the
-  vocabulary itself, so ``provision`` and ``stage-kit`` need no ``KIT_SRC``.
+  vocabulary itself, so ``stage-kit`` needs no ``KIT_SRC``. Every step that configures the host takes
+  ``KIT_BUCKET`` and ``FL_KIT_DATE``: without them ``stage-kit`` stops, and ``deploy`` seeds no
+  vocabulary.
+
+The steps are those in *Build the node and join* below, with these flags:
 
 .. code-block:: bash
 
-   make plan KIT=$KIT HUB=stag SUBNET_ID=<hub app subnet> PRIVATE_IP=<allowed address> \
+   make plan      KIT=$KIT HUB=stag SUBNET_ID=<hub app subnet> PRIVATE_IP=<allowed address> \
      BOUNDARY_ARN=<estate boundary ARN> KIT_BUCKET=<hub kit bucket> KIT_KMS_KEY_ARN=<bucket key ARN>
    make provision KIT=$KIT HUB=stag KIT_BUCKET=<hub kit bucket> FL_KIT_DATE=<hub kit date>
+   make stage-kit KIT=$KIT HUB=stag KIT_BUCKET=<hub kit bucket> FL_KIT_DATE=<hub kit date>
+   make deploy    KIT=$KIT HUB=stag KIT_BUCKET=<hub kit bucket> FL_KIT_DATE=<hub kit date>
 
 ****
 Cost

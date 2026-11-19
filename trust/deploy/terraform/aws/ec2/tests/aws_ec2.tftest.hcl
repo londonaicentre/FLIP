@@ -97,6 +97,28 @@ run "private_ip_must_be_one_address" {
   expect_failures = [var.private_ip]
 }
 
+run "private_ip_must_be_ipv4" {
+  command = plan
+
+  variables {
+    subnet_id  = "subnet-0site"
+    private_ip = "2001:db8::1"
+  }
+
+  expect_failures = [var.private_ip]
+}
+
+run "private_ip_refuses_an_ipv4_mapped_address" {
+  command = plan
+
+  variables {
+    subnet_id  = "subnet-0site"
+    private_ip = "::ffff:10.20.0.200"
+  }
+
+  expect_failures = [var.private_ip]
+}
+
 run "no_subnet_creates_its_own_network_with_a_nat_gateway" {
   command = apply
 
