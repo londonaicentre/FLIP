@@ -169,10 +169,22 @@ spec:
                 # Helm records, in ConfigMaps rather than Secrets (see the header comment).
                 - name: HELM_DRIVER
                   value: configmap
+                # The root filesystem is read-only: helm's cache/config/data and the chart pull go to
+                # the scratch volume at /tmp.
+                - name: HOME
+                  value: /tmp
+                - name: HELM_CACHE_HOME
+                  value: /tmp/helm/cache
+                - name: HELM_CONFIG_HOME
+                  value: /tmp/helm/config
+                - name: HELM_DATA_HOME
+                  value: /tmp/helm/data
               volumeMounts:
                 - name: kit
                   mountPath: /etc/flip/upgrade-kit
                   readOnly: true
+                - name: scratch
+                  mountPath: /tmp
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
@@ -181,6 +193,10 @@ spec:
               resources:
                 {{- toYaml .Values.autoUpgrade.resources | nindent 16 }}
           volumes:
+            # Writable scratch for a read-only root: the pulled chart, helm's caches. Gone with the pod.
+            - name: scratch
+              emptyDir:
+                sizeLimit: 256Mi
             - name: kit
               secret:
                 secretName: {{ $secret }}

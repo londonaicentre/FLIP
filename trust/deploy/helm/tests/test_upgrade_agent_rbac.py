@@ -143,7 +143,7 @@ def test_the_role_never_grants_secrets():
 def test_the_api_key_arrives_as_a_one_key_projection():
     cronjob = _agent(_render("--set", "autoUpgrade.enabled=true"), "CronJob")
     pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
-    (volume,) = pod["volumes"]
+    (volume,) = [v for v in pod["volumes"] if v["name"] == "kit"]
     assert volume["name"] == "kit"
     assert volume["secret"]["items"] == [{"key": "trust-api-key", "path": "trust-api-key"}], (
         "only the trust's API key may be projected; anything else is a credential the pod has no use for"
@@ -153,7 +153,7 @@ def test_the_api_key_arrives_as_a_one_key_projection():
 
 def _kit_secret(*extra: str) -> str:
     cronjob = _agent(_render("--set", "autoUpgrade.enabled=true", *extra), "CronJob")
-    (volume,) = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["volumes"]
+    (volume,) = [v for v in cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["volumes"] if v["name"] == "kit"]
     return volume["secret"]["secretName"]
 
 
@@ -273,7 +273,7 @@ def test_the_agent_user_can_read_its_projected_key():
         "spec"
     ]
     ctx = pod["securityContext"]
-    (volume,) = pod["volumes"]
+    (volume,) = [v for v in pod["volumes"] if v["name"] == "kit"]
     mode = volume["secret"]["defaultMode"]
     assert ctx["runAsUser"] != 0
     assert ctx.get("fsGroup") == ctx.get("runAsGroup") == 65534
@@ -291,3 +291,20 @@ def test_the_agent_reads_health_from_the_trust_api_service():
     port = services[0]["spec"]["ports"][0]["port"]
     assert env["TRUST_API_URL"] == f"http://trust-api.flip-trust.svc:{port}"
     assert port == 8123
+
+
+def test_a_read_only_root_still_gets_a_writable_tmp_and_helm_home():
+    """FLIP#1644, found on kind: with readOnlyRootFilesystem and no /tmp volume the upgrade died with
+    "No usable temporary directory" after claiming the lease. Every path helm and tempfile write to
+    must sit on a pod-scoped emptyDir."""
+    pod = _agent(_render("--set", "autoUpgrade.enabled=true"), "CronJob")["spec"]["jobTemplate"]["spec"]["template"][
+        "spec"
+    ]
+    (container,) = pod["containers"]
+    assert container["securityContext"]["readOnlyRootFilesystem"] is True
+    mounts = {m["mountPath"]: m["name"] for m in container["volumeMounts"]}
+    volumes = {v["name"]: v for v in pod["volumes"]}
+    assert "emptyDir" in volumes[mounts["/tmp"]], "/tmp must be a pod-scoped emptyDir"
+    env = {e["name"]: e.get("value") for e in container["env"]}
+    for var in ("HOME", "HELM_CACHE_HOME", "HELM_CONFIG_HOME", "HELM_DATA_HOME"):
+        assert env.get(var, "").startswith("/tmp"), f"{var} must be under the writable /tmp"
