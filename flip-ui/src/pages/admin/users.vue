@@ -335,7 +335,12 @@
                                         </p>
                                     </div>
                                 </div>
-                                <div class="grid gap-2 mt-3 sm:grid-cols-2 lg:grid-cols-3">
+                                <!-- A disabled user has a fourth action (Delete User); keep all of them on one row. -->
+                                <div
+                                    data-test="danger-zone-actions"
+                                    class="grid gap-2 mt-3 sm:grid-cols-2"
+                                    :class="selectedUser.isDisabled ? 'lg:grid-cols-4' : 'lg:grid-cols-3'"
+                                >
                                     <AiButton
                                         data-test="reset-password-btn"
                                         error
@@ -761,6 +766,8 @@ const deleteSelectedUser = async () => {
             text: deleteRefusal(error) ?? "There was an error deleting the user, please try again.",
             title: "User not deleted"
         });
+        // A failure after the hub's own cleanup can still have removed the account; show what is there now.
+        await refreshUsers();
     } finally {
         deletingUser.value = false;
         dialogDelete.value = false;
@@ -824,6 +831,9 @@ const refreshUsers = async () => {
         userData.value?.data.find((user) => user.id === previous.id);
     if (newSelectedUser) {
         setSelectedUser(newSelectedUser);
+    } else {
+        selectedUser.value = undefined;
+        mobileDetailOpen.value = false;
     }
 };
 </script>

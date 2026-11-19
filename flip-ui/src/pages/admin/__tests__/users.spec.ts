@@ -472,6 +472,16 @@ describe("admin/users", () => {
             expect(wrapper.find("[data-test='delete-user-btn']").exists()).toBe(true);
         });
 
+        it("keeps the four Danger Zone actions of a disabled user on one row at lg", async () => {
+            const wrapper = mountPage();
+            await nextTick();
+            await wrapper.findAll("[data-test='user']")[0].trigger("click");
+            expect(wrapper.find("[data-test='danger-zone-actions']").classes()).toContain("lg:grid-cols-3");
+
+            await wrapper.findAll("[data-test='user']")[1].trigger("click");
+            expect(wrapper.find("[data-test='danger-zone-actions']").classes()).toContain("lg:grid-cols-4");
+        });
+
         it("asks for the user's email typed back, then deletes by id and refreshes the list", async () => {
             mockDeleteUser.mockResolvedValue(undefined);
             const wrapper = mountPage();
@@ -512,6 +522,31 @@ describe("admin/users", () => {
                 text: detail
             });
             expect(mockSnackbarSuccess).not.toHaveBeenCalled();
+        });
+
+        it("refreshes after a failure and closes the card when the account is gone anyway", async () => {
+            // The hub revoked access, then the identity provider timed out after removing the account.
+            mockDeleteUser.mockRejectedValue({
+                response: {
+                    status: 500,
+                    data: { detail: "manual cleanup" }
+                }
+            });
+            mutateUsers.mockImplementation(() => {
+                userPage.value = {
+                    ...userPage.value!,
+                    data: USERS.filter(u => u.id !== "u2")
+                };
+            });
+            const wrapper = mountPage();
+            await nextTick();
+            await wrapper.findAll("[data-test='user']")[1].trigger("click");
+
+            await deleteModal(wrapper).props("continueAction")();
+            await flushPromises();
+
+            expect(mutateUsers).toHaveBeenCalled();
+            expect(wrapper.find("[data-test='delete-user-btn']").exists()).toBe(false);
         });
 
         it("does not echo the detail of an unexpected failure", async () => {
