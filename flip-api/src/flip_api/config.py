@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     # Per-trust API key header name (for authenticating requests from trusts to the FLIP API)
     TRUST_API_KEY_HEADER: str
 
+    # Staged key rotation (FLIP#1714): how long a rotated trust key stays pending next to the live
+    # one. A site that never installs its new kit within this window keeps its old key, and the
+    # unused new key is dropped (audited as KEY_EXPIRED). Long enough to post a kit to a site.
+    TRUST_KEY_ROTATION_GRACE_DAYS: int = Field(default=14, ge=1)
+
     # FL API auth (flip-api → fl-api-net-N): sent on every FL API call, required by every FL API
     # route but /health. Dedicated to that hop. Dev: minted into the
     # env file by `make up`; prod: a `secrets` entry of the ECS task (FLIP_API secret, `fl_api_key`).
