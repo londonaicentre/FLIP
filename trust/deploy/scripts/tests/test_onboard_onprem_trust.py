@@ -1131,14 +1131,16 @@ def test_56_fl_kit_contents_a_kit_private_to_another_uid_is_not_called_missing()
             (slot / d).mkdir(parents=True)
         (Path(td) / "net-1" / "certificates").mkdir()
         base = {"FL_KIT_DIR": td, "FL_BACKEND": "nvflare", "FL_KIT_SLOT": "Trust_1", "FL_KIT_SLOT_NUMBER": "1"}
-        sealed = {str(slot), str(Path(td) / "net-1")}
+        sealed: set[str] = set()
         real_access = os.access
 
         def access(path, mode):
             return False if str(path) in sealed else real_access(path, mode)
 
         with mock.patch.object(mod.os, "access", side_effect=access):
+            sealed = {str(slot)}
             flare = mod.check_fl_kit_contents(base, True)
+            sealed = {str(Path(td) / "net-1")}
             flower = mod.check_fl_kit_contents({**base, "FL_BACKEND": "flower"}, True)
         open_kit = mod.check_fl_kit_contents(base, True)
     _assert(flare.status == mod.Status.WARN, "nvflare: WARN, not FAIL", str(flare))
@@ -1146,6 +1148,52 @@ def test_56_fl_kit_contents_a_kit_private_to_another_uid_is_not_called_missing()
     _assert("sudo -E make onboard-onprem-trust" in flare.hints[0], "says how to check it", flare.hints[0])
     _assert(flower.status == mod.Status.WARN and "net-1 belongs to uid" in flower.detail, "flower too", str(flower))
     _assert(open_kit.status == mod.Status.PASS, "a kit this uid can enter is still checked", str(open_kit))
+
+
+def test_57_fl_kit_contents_a_closed_folder_above_the_slot_is_named_not_crashed_on() -> None:
+    """A closed net-1 above the slot (a `chown -R` one level too high): before Python 3.14 pathlib raises on every
+    path below it, and from 3.14 answers False. Both are simulated here, so the row must come from os.access
+    alone and name net-1, on every interpreter."""
+    print("▶ FL kit contents: a net-1 this uid cannot enter, above the slot -> WARN naming net-1, no traceback")
+    with tempfile.TemporaryDirectory() as td:
+        net = Path(td) / "net-1"
+        slot = net / "services" / "Trust_1"
+        for d in ("local", "startup", "transfer"):
+            (slot / d).mkdir(parents=True)
+        (net / "keys").mkdir()
+        (net / "keys" / "supernode_credentials_1").touch()
+        base = {"FL_KIT_DIR": td, "FL_BACKEND": "nvflare", "FL_KIT_SLOT": "Trust_1", "FL_KIT_SLOT_NUMBER": "1"}
+        real_access, real_is_dir, real_is_file = os.access, mod.Path.is_dir, mod.Path.is_file
+
+        def below_net(path) -> bool:
+            return str(path).startswith(f"{net}/")
+
+        def access(path, mode):
+            return False if str(path) == str(net) else real_access(path, mode)
+
+        def raises(real):  # Python 3.12 and 3.13
+            def probe(self, *args, **kwargs):
+                if below_net(self):
+                    raise PermissionError(13, "Permission denied", str(self))
+                return real(self, *args, **kwargs)
+
+            return probe
+
+        def answers_false(real):  # Python 3.14 on
+            return lambda self, *args, **kwargs: False if below_net(self) else real(self, *args, **kwargs)
+
+        rows = []
+        with mock.patch.object(mod.os, "access", side_effect=access):
+            for backend in ("nvflare", "flower"):
+                for pathlib_says in (raises, answers_false):
+                    with (
+                        mock.patch.object(mod.Path, "is_dir", pathlib_says(real_is_dir)),
+                        mock.patch.object(mod.Path, "is_file", pathlib_says(real_is_file)),
+                    ):
+                        rows.append(mod.check_fl_kit_contents({**base, "FL_BACKEND": backend}, True))
+    for row in rows:
+        _assert(row.status == mod.Status.WARN, "WARN, not FAIL or a traceback", str(row))
+        _assert(row.detail.startswith(f"not checked: {net} belongs to uid"), "names net-1", row.detail)
 
 
 def main() -> None:
@@ -1208,6 +1256,7 @@ def main() -> None:
     test_54_hub_shared_allows_the_other_backends_kit_date_empty()
     test_55_hub_shared_keys_are_trust_kit_libs_minus_the_optional_ones()
     test_56_fl_kit_contents_a_kit_private_to_another_uid_is_not_called_missing()
+    test_57_fl_kit_contents_a_closed_folder_above_the_slot_is_named_not_crashed_on()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
