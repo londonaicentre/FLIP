@@ -273,6 +273,21 @@ def test_an_archive_mount_is_refused_without_the_charts_own_xnat_volume(off):
     assert "images: project or stream" in result.stderr
 
 
+@pytest.mark.parametrize(
+    "off",
+    [
+        ("--set-string", "imagingApi.env.COHORT_RECONCILE_MINUTES=0"),
+        ("--set", "imagingApi.env.COHORT_RECONCILE_MINUTES=0.0"),
+    ],
+)
+def test_an_archive_mount_is_refused_while_imaging_api_removes_no_departed_session(off):
+    """The pod reads every session XNAT holds for the project, so departed patients' sessions must go (FLIP#1860)."""
+    result = _helm("--set", f"{JOB_PODS}.enabled=true", "--set", f"{JOB_PODS}.images=archive", *off)
+
+    assert result.returncode != 0
+    assert "COHORT_RECONCILE_MINUTES above 0" in result.stderr
+
+
 def test_a_project_mount_is_refused_without_the_shared_images_volume():
     result = _helm("--set", f"{JOB_PODS}.enabled=true", "--set", "sharedImagesPvc.enabled=false")
 

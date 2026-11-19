@@ -20,6 +20,9 @@
 {{- if and $jobPods (eq .Values.flClient.nvflare.jobPods.images "archive") (not (and .Values.xnat.enabled .Values.xnat.web.persistence.enabled)) }}
 {{- fail "flClient.nvflare.jobPods.images: archive mounts each project's directory of XNAT's archive into its job pods, so it needs this chart's XNAT on a persistent volume (xnat.enabled and xnat.web.persistence.enabled). With an external XNAT, set images: project or stream." }}
 {{- end }}
+{{- if and $jobPods (eq .Values.flClient.nvflare.jobPods.images "archive") (eq (float64 .Values.imagingApi.env.COHORT_RECONCILE_MINUTES) 0.0) }}
+{{- fail "flClient.nvflare.jobPods.images: archive lets a project's job pods read every session XNAT holds for it, so imaging-api must remove the sessions of patients who leave the approved cohort: set imagingApi.env.COHORT_RECONCILE_MINUTES above 0, or images: project or stream." }}
+{{- end }}
 {{- if and $jobPods (eq .Values.flClient.nvflare.jobPods.images "project") (not .Values.sharedImagesPvc.enabled) }}
 {{- fail "flClient.nvflare.jobPods.images: project mounts each project's folder of the shared images volume into its job pods, so it needs sharedImagesPvc.enabled. Without that volume, set images: stream." }}
 {{- end }}
