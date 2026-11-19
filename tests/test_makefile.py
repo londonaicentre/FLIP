@@ -296,6 +296,15 @@ class FlEnvironment(unittest.TestCase):
             result = self.client_name(kit)
             assert result.stdout.split() == [expected], (kit, result.stdout + result.stderr)
 
+    def test_upgrade_trust_names_the_image_it_will_run(self):
+        """site_upgrade.py checks the registry for the client image make derived, not one it works out itself."""
+        for extra, image in (
+            ((), "flare-fl-client"),
+            (("FL_ENVIRONMENT=segmentation",), "flare-fl-client-segmentation"),
+        ):
+            plan = next(ln for ln in dry_run("upgrade-trust", *extra, subdir="trust").splitlines() if " plan " in ln)
+            assert f"--fl-client-image {image} " in plan + " ", plan
+
     def test_an_unknown_environment_and_a_flower_one_are_refused(self):
         for kit, message in (
             (("FL_BACKEND=nvflare", "FL_ENVIRONMENT=other"), "Invalid FL_ENVIRONMENT 'other'"),
