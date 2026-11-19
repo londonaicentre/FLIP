@@ -42,6 +42,10 @@ IMAGES = {
 }
 
 
+# Images a workflow builds in a job of their own, after the main one, from the tags that job computed.
+OWN_JOB = {"fl-docker-build-nvflare.yml": ("CLIENT_SEGMENTATION",)}
+
+
 class FlDockerBuildReleaseTags(ReleaseTagContract, unittest.TestCase):
     """The "Determine image tags" step is the one list each image is pushed at; a release run's list is the
     release tag alone (the sha tags belong to the branch build of the same commit and stay immutable)."""
@@ -73,9 +77,24 @@ class FlDockerBuildReleaseTags(ReleaseTagContract, unittest.TestCase):
                 pushes = re.findall(r"^\s+docker push (.*)$", text, re.M)
                 assert pushes == ['"$tag"'] * len(IMAGES[wf.name]), f"{wf.name}: stray pushes"
             for image in IMAGES[wf.name]:
+                source = "needs.build-and-push.outputs" if image in OWN_JOB.get(wf.name, ()) else "steps.tags.outputs"
                 with self.subTest(workflow=wf.name, image=image):
-                    assert f"TAGS: ${{{{ steps.tags.outputs.{image.lower()}_tags }}}}" in text, image
+                    assert f"TAGS: ${{{{ {source}.{image.lower()}_tags }}}}" in text, image
                     assert f'docker tag "$REGISTRY/$ORG/${image}_IMAGE:${{{{ github.sha }}}}" "$tag"' in text, image
+
+
+class SegmentationBuildCannotFailTheRun(unittest.TestCase):
+    """release.yml waits on this workflow and re-pins production only if it is green, so the optional
+    segmentation image is built after the core ones, in a job that may fail without failing the run."""
+
+    def test_it_is_a_later_job_that_is_allowed_to_fail(self) -> None:
+        text = code_text(GITHUB_DIR / "workflows" / "fl-docker-build-nvflare.yml")
+        core, segmentation = text.split("\n  build-segmentation:\n")
+        assert "fl-client-segmentation/Dockerfile" not in core
+        assert "fl-client-segmentation/Dockerfile" in segmentation
+        header = segmentation.split("\n    steps:\n")[0]
+        assert "    needs: build-and-push\n" in header
+        assert "    continue-on-error: true\n" in header
 
 
 # The FL API image each workflow builds, the only one of its four with a /health to report FLIP_RELEASE from.

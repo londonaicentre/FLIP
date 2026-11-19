@@ -33,6 +33,10 @@ jobs:
     permissions:
       contents: read
       packages: write
+    # What the segmentation job below builds on and pushes at.
+    outputs:
+      client_tags: ${{ steps.tags.outputs.client_tags }}
+      client_segmentation_tags: ${{ steps.tags.outputs.client_segmentation_tags }}
 
     env:
       REGISTRY: ghcr.io
@@ -40,7 +44,7 @@ jobs:
       BASE_IMAGE: flare-fl-base
       SERVER_IMAGE: flare-fl-server
       CLIENT_IMAGE: flare-fl-client
-      # The segmentation FL environment (FLIP#32): the client image plus flip-utils' `segmentation` extra.
+      # The segmentation FL environment (FLIP#32), built by the build-segmentation job; its tags are computed here.
       CLIENT_SEGMENTATION_IMAGE: flare-fl-client-segmentation
       API_IMAGE: flare-fl-api
       # No UID/GID/UNAME: the Dockerfiles fix the image identity at flip/1000/1000
@@ -224,16 +228,22 @@ jobs:
           done
           echo "✅ Pushed FL Client."
 
+      - name: Cleanup after FL Client
+        env:
+          TAGS: ${{ steps.tags.outputs.client_tags }}
+        run: |
+          # The two build tags plus every pushed tag (:prod/:stag, or :v<X.Y.Z> on a release run).
+          img="$REGISTRY/$ORG/$CLIENT_IMAGE"
+          for tag in $(printf '%s\n' "$img:${{ github.sha }}" "$img:sha-$SHORT_SHA" ${TAGS//,/ } | sort -u); do
+            docker rmi "$tag" || true
+          done
+          docker system prune -f
+          echo "Disk space after FL Client cleanup:"
+          df -h
+
       ###########################################
       # 4️⃣ Build and Push FL API
       ###########################################
-      # The client image stays for the segmentation build below, so only what nothing references goes:
-      # the FL API build gets the room it had when the client's cleanup ran here.
-      - name: Free disk before FL API
-        run: |
-          docker system prune -f
-          df -h
-
       - name: Build FL API Image
         env:
           # Baked into the image as FLIP_RELEASE so /health names the build.
@@ -257,67 +267,6 @@ jobs:
           done
           echo "✅ Pushed FL API."
 
-      ###########################################
-      # 5️⃣ Build and Push the segmentation FL Client
-      ###########################################
-      # Last, so a failed weights download or a full disk cannot stop a core image being published. It is
-      # built on the client image, which is why that image's cleanup waits until after this.
-      - name: Build segmentation FL Client Image
-        run: |
-          docker build \
-            -f fl-services/nvflare/fl-client-segmentation/Dockerfile \
-            --build-arg BASE_REF=$REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} \
-            -t $REGISTRY/$ORG/$CLIENT_SEGMENTATION_IMAGE:${{ github.sha }} \
-            -t $REGISTRY/$ORG/$CLIENT_SEGMENTATION_IMAGE:sha-$SHORT_SHA fl-services/nvflare/fl-client-segmentation
-
-          # With no network and a read-only filesystem, as at a trust: the extra's packages and
-          # TotalSegmentator's API import beside the torch the lock pins for every FL image, the
-          # weights are there, usage statistics are off and a job cannot turn them on.
-          docker run --rm --network none --read-only --tmpfs /tmp --entrypoint python \
-            $REGISTRY/$ORG/$CLIENT_SEGMENTATION_IMAGE:${{ github.sha }} -c "
-          import json, os, pathlib
-          import nnunetv2, SimpleITK, torch
-          from totalsegmentator.python_api import totalsegmentator
-          home = pathlib.Path(os.environ['TOTALSEG_HOME_DIR'])
-          assert json.loads((home / 'config.json').read_text())['send_usage_stats'] is False, 'usage statistics are on'
-          assert any((home / 'nnunet' / 'results').glob('Dataset*')), 'no weights'
-          assert not os.access(home / 'config.json', os.W_OK), 'config.json is writable'
-          print(torch.__version__)"
-
-          echo "✅ Built segmentation FL Client."
-
-      - name: Push segmentation FL Client Image
-        env:
-          TAGS: ${{ steps.tags.outputs.client_segmentation_tags }}
-        run: |
-          for tag in ${TAGS//,/ }; do
-            docker tag "$REGISTRY/$ORG/$CLIENT_SEGMENTATION_IMAGE:${{ github.sha }}" "$tag"
-            docker push "$tag"
-          done
-          echo "✅ Pushed segmentation FL Client."
-
-      - name: Cleanup after segmentation FL Client
-        env:
-          TAGS: ${{ steps.tags.outputs.client_segmentation_tags }}
-        run: |
-          img="$REGISTRY/$ORG/$CLIENT_SEGMENTATION_IMAGE"
-          for tag in $(printf '%s\n' "$img:${{ github.sha }}" "$img:sha-$SHORT_SHA" ${TAGS//,/ } | sort -u); do
-            docker rmi "$tag" || true
-          done
-
-      - name: Cleanup after FL Client
-        env:
-          TAGS: ${{ steps.tags.outputs.client_tags }}
-        run: |
-          # The two build tags plus every pushed tag (:prod/:stag, or :v<X.Y.Z> on a release run).
-          img="$REGISTRY/$ORG/$CLIENT_IMAGE"
-          for tag in $(printf '%s\n' "$img:${{ github.sha }}" "$img:sha-$SHORT_SHA" ${TAGS//,/ } | sort -u); do
-            docker rmi "$tag" || true
-          done
-          docker system prune -f
-          echo "Disk space after FL Client cleanup:"
-          df -h
-
       - name: Final cleanup
         env:
           TAGS: ${{ steps.tags.outputs.api_tags }}
@@ -332,3 +281,81 @@ jobs:
           docker system prune -af
           echo "Final disk space:"
           df -h
+
+  # The segmentation FL environment (FLIP#32): the client image plus flip-utils' `segmentation` extra and
+  # TotalSegmentator's weights. A job of its own, allowed to fail: a weights download that fails, or an
+  # upstream change the pinned digest refuses, must not turn this run red, because release.yml waits on
+  # the run before it re-pins production. A failure still shows on this job, and leaves the image
+  # unpublished at that tag, where upgrade-trust refuses a site that runs it.
+  build-segmentation:
+    needs: build-and-push
+    if: github.repository == 'londonaicentre/FLIP'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      REGISTRY: ghcr.io
+      ORG: londonaicentre
+      CLIENT_SEGMENTATION_IMAGE: flare-fl-client-segmentation
+      CLIENT_TAGS: ${{ needs.build-and-push.outputs.client_tags }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login $REGISTRY -u ${{ github.actor }} --password-stdin
+
+      - name: Free up disk space
+        run: |
+          sudo apt-get clean
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          docker system prune -af
+          df -h
+
+      - name: Build segmentation FL Client Image
+        run: |
+          # On the client image the job above pushed for this run: the first of its tags, which is the
+          # commit's on a branch run and the release's on a release run.
+          docker build \
+            -f fl-services/nvflare/fl-client-segmentation/Dockerfile \
+            --build-arg BASE_REF="${CLIENT_TAGS%%,*}" \
+            -t $REGISTRY/$ORG/$CLIENT_SEGMENTATION_IMAGE:${{ github.sha }} fl-services/nvflare/fl-client-segmentation
+
+          echo "Disk space after the build:"
+          df -h
+
+          # With no network and a read-only filesystem, as at a trust: the extra's packages and
+          # TotalSegmentator's API import beside the torch the lock pins for every FL image; every
+          # weights set of the `total` task is in place, since TotalSegmentator's own lookup would
+          # otherwise try to download it; and usage statistics are off in a config.json a job cannot
+          # change, whatever filesystem it runs on.
+          docker run --rm --network none --read-only --tmpfs /tmp --entrypoint python \
+            $REGISTRY/$ORG/$CLIENT_SEGMENTATION_IMAGE:${{ github.sha }} -c "
+          import json, os, pathlib
+          import nnunetv2, SimpleITK, torch
+          from totalsegmentator.bin.totalseg_download_weights import TASK_TO_ID
+          from totalsegmentator.libs import download_pretrained_weights
+          from totalsegmentator.python_api import totalsegmentator
+          for task_id in TASK_TO_ID['total']:
+              download_pretrained_weights(task_id)
+          config = pathlib.Path(os.environ['TOTALSEG_HOME_DIR']) / 'config.json'
+          assert json.loads(config.read_text())['send_usage_stats'] is False, 'usage statistics are on'
+          st = config.stat()
+          assert st.st_uid == 0 and not st.st_mode & 0o022, 'a job can write config.json'
+          print(torch.__version__)"
+
+          echo "✅ Built segmentation FL Client."
+
+      - name: Push segmentation FL Client Image
+        env:
+          TAGS: ${{ needs.build-and-push.outputs.client_segmentation_tags }}
+        run: |
+          for tag in ${TAGS//,/ }; do
+            docker tag "$REGISTRY/$ORG/$CLIENT_SEGMENTATION_IMAGE:${{ github.sha }}" "$tag"
+            docker push "$tag"
+          done
+          echo "✅ Pushed segmentation FL Client."
