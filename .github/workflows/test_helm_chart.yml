@@ -88,7 +88,8 @@ jobs:
 
       - name: Run sync-kit unit tests
         working-directory: trust/deploy/helm
-        # tests/templates renders with helm, pinned in the helm-template job below.
+        # Everything that runs helm lives in tests/templates, run by the helm-template job below: this job has
+        # no helm, so a helm test left in tests/ is skipped here and run nowhere.
         run: uv run --no-project --with pytest --with "pyyaml==6.0.3" pytest tests/ -v --ignore=tests/templates
 
   helm-lint:
@@ -125,9 +126,10 @@ jobs:
 
       - name: Rendered-chart tests (tests/templates/)
         working-directory: trust/deploy/helm
-        # Everything under tests/templates asserts `helm template` output rather than template
-        # text: image-tag precedence (test_helpers.py) and the web/DICOM Service split parsed per
-        # rendered Service document (test_dicom_service_render.py, FLIP#993).
+        # Everything under tests/templates runs helm: it asserts `helm template` output rather than
+        # template text (image-tag precedence in test_helpers.py, the web/DICOM Service split parsed per
+        # rendered Service document in test_dicom_service_render.py, FLIP#993) or packages the chart
+        # (test_helmignore.py).
         run: uv run --no-project --with pytest --with "pyyaml==6.0.3" pytest tests/templates -v
 
       - name: Render template (default/nvflare)

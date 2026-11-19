@@ -22,7 +22,7 @@ every future CI plan.
 
 So this derives the values from the deployed infrastructure instead: the live
 Terraform state, plus the handful of things state cannot answer (the current
-image tags, the FL kit-slot list, the live secret material). What comes out is
+image tags, the live secret material). What comes out is
 what a plan would have to see to be a no-op — which is the definition of correct
 for this purpose.
 
@@ -305,15 +305,6 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         or "{}"
     )
 
-    # Live, not state: the kit-slot list is grown by `make apply-fl-kit-slots`,
-    # which is a targeted apply — state and the parameter can legitimately differ
-    # between full applies.
-    slots = aws(
-        ["ssm", "get-parameter", "--name", "/flip/fl_kit_slot_names", "--query", "Parameter.Value", "--output", "text"],
-        profile,
-        region,
-    )
-
     # The OAC is named after the subdomain (cloudfront.tf); the Route 53 records once read
     # for both subdomains never existed on an LZA estate.
     oac_name = st.attrs("aws_cloudfront_origin_access_control", "flip_ui").get("name", "")
@@ -340,7 +331,6 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "DOCKER_REGISTRY": registry,
         "DOCKER_TAG": live_image_tag("flip-api", "flip-api", cluster, profile, region),
         "DOCKER_FL_TAG": live_image_tag("fl-server-net-1", "fl-server-net-1", cluster, profile, region),
-        "FL_KIT_SLOT_NAMES": slots,
         # Empty is meaningful: locals.tf omits ENFORCE_MFA from the task env when
         # unset so flip-api's secure Pydantic default applies.
         "ENFORCE_MFA": api_env.get("ENFORCE_MFA", ""),
@@ -364,7 +354,6 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
     sources: dict[str, str] = {}
     for group, keys in (
         ("live ECS service", ("DOCKER_TAG", "DOCKER_FL_TAG")),
-        ("live SSM parameter", ("FL_KIT_SLOT_NAMES",)),
         ("live Secrets Manager", ("AES_KEY_BASE64", "FL_API_KEY")),
     ):
         sources.update(dict.fromkeys(keys, group))

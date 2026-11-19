@@ -25,6 +25,7 @@ from flip_api.trusts_services.services.register_trust import (
     DuplicateTrustError,
     EmptyTrustCodeError,
     EmptyTrustNameError,
+    KitSlotSourceUnreadableError,
     NoFreeKitSlotError,
     register_trust,
 )
@@ -42,7 +43,7 @@ def admin_create_trust(
     """Create a trust and return its newly-generated plaintext keys (returned once).
 
     Thin HTTP wrapper over ``register_trust`` — translates service errors to
-    400 / 409 / 500 responses. The hub stores only the SHA-256 hash of the trust
+    400 / 409 / 500 / 503 responses. The hub stores only the SHA-256 hash of the trust
     API key. The trust internal service key is returned to the caller but not
     stored on the hub — it only lives in the trust-side environment and protects
     trust-internal services (imaging-api, data-access-api).
@@ -59,7 +60,8 @@ def admin_create_trust(
     Raises:
         HTTPException: 403 if the caller lacks ``CAN_ACCESS_ADMIN_PANEL``;
             400 if the name or code is empty; 409 if a trust with the given name
-            exists or no FL kit slot is available; 500 on database error.
+            exists or no FL kit slot is available; 503 if the kit-slot source could
+            not be read; 500 on database error.
     """
     if not has_permissions(token_id, [PermissionRef.CAN_ACCESS_ADMIN_PANEL], db):
         logger.error(f"User {token_id} attempted to create a trust without admin permission")
@@ -84,6 +86,9 @@ def admin_create_trust(
     except (DuplicateTrustError, NoFreeKitSlotError) as e:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+    except KitSlotSourceUnreadableError as e:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e
     except SQLAlchemyError as e:
         db.rollback()
         logger.exception("Error creating trust")

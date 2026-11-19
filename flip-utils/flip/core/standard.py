@@ -17,13 +17,16 @@ This module contains the production and development implementations of FLIP
 for the standard, evaluation, and fed_opt job types.
 """
 
+import atexit
 import contextlib
 import json
 import math
 import os
 import shutil
+import tarfile
 import tempfile
 from collections.abc import Iterator
+from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
 from typing import Any, BinaryIO, override
@@ -208,6 +211,24 @@ def _upload_file_via_hub(file_path: Path, model_id: str) -> None:
     hub("/complete", {"upload": upload, "etags": etags})
 
 
+def _resource_params(resource: ResourceType) -> dict[str, str]:
+    """The query that selects one XNAT resource on imaging-api's download routes."""
+    assessor_type = "assessor" if resource == ResourceType.SEGMENTATION else "scan"
+    return {"assessor_type": assessor_type, "resource_type": resource.value}
+
+
+_study_dir_path: Path | None = None
+
+
+def _study_dir() -> Path:
+    """This process's directory for streamed studies: created on first use, removed at exit."""
+    global _study_dir_path
+    if _study_dir_path is None:
+        _study_dir_path = Path(tempfile.mkdtemp(prefix="flip-studies-"))
+        atexit.register(shutil.rmtree, _study_dir_path, ignore_errors=True)
+    return _study_dir_path
+
+
 class FLIPStandardProd(FLIPBase):
     """Production implementation of FLIP for standard job types.
 
@@ -304,21 +325,16 @@ class FLIPStandardProd(FLIPBase):
             "accession_id": accession_id,
         }
 
+        if FlipConstants.IMAGES_TRANSPORT == "stream":
+            return self._stream_study(payload, resources, accession_id)
+
         endpoint = _join_url(FlipConstants.IMAGING_API_URL, f"download/images/{FlipConstants.NET_ID}")
 
         for resource in resources:
-            if resource != ResourceType.SEGMENTATION:
-                assessor_type = "scan"
-            else:
-                assessor_type = "assessor"
-
             response = requests.post(
                 endpoint,
                 json=payload,
-                params={
-                    "assessor_type": assessor_type,
-                    "resource_type": resource.value,
-                },
+                params=_resource_params(resource),
                 headers=_trust_internal_headers(),
             )
             self.logger.info(f"Received response status code: {response.status_code}")
@@ -330,6 +346,28 @@ class FLIPStandardProd(FLIPBase):
             imaging_service_response_json = response.json()
 
         return Path(imaging_service_response_json["path"])
+
+    def _stream_study(self, payload: dict[str, str], resources: list[ResourceType], accession_id: str) -> Path:
+        """Fetch each resource as a tar from imaging-api and extract it under this process's own study directory.
+
+        For a job pod with no mount of the net's images folder (FLIP#1049): the directory holds this job's studies
+        alone and goes with the process.
+        """
+        endpoint = _join_url(FlipConstants.IMAGING_API_URL, f"download/images/{FlipConstants.NET_ID}/stream")
+        for resource in resources:
+            response = requests.post(
+                endpoint,
+                json=payload,
+                params=_resource_params(resource),
+                headers=_trust_internal_headers(),
+                stream=True,
+            )
+            response.raise_for_status()
+            response.raw.decode_content = True
+            with tarfile.open(fileobj=response.raw, mode="r|") as tar:
+                tar.extractall(_study_dir(), filter="data")
+            self.logger.info(f"Streamed {resource} images for {accession_id}")
+        return _study_dir() / accession_id
 
     @override
     def add_resource(
@@ -349,7 +387,8 @@ class FLIPStandardProd(FLIPBase):
             accession_id (str): Accession ID to upload the resource to
             scan_id (str): ID of the scan to upload
             resource_id (str): Type of resource that is being uploaded (e.g. NIFTI)
-            files (list[str]): List of files to upload
+            files (list[str]): Paths of the files to upload, relative to this net's upload folder,
+                ``IMAGES_DIR/NET_ID/upload``: write each file there first. The same on both transports.
         """
         if not isinstance(project_id, str):
             raise TypeError(f"expect project id to be string, but got {type(project_id)}")
@@ -380,11 +419,24 @@ class FLIPStandardProd(FLIPBase):
 
         endpoint = _join_url(FlipConstants.IMAGING_API_URL, f"upload/images/{FlipConstants.NET_ID}")
 
-        response = requests.put(
-            endpoint,
-            json=payload,
-            headers=_trust_internal_headers(),
-        )
+        if FlipConstants.IMAGES_TRANSPORT != "mount":
+            # No mount of the net's upload folder: the files travel in the request, each named by the same
+            # relative path the mount route takes (FLIP#1049).
+            upload_dir = Path(FlipConstants.IMAGES_DIR) / FlipConstants.NET_ID / "upload"
+            with ExitStack() as stack:
+                parts = [("files", (f, stack.enter_context(open(upload_dir / f, "rb")))) for f in files]
+                response = requests.put(
+                    f"{endpoint}/files",
+                    data={key: value for key, value in payload.items() if key != "files"},
+                    files=parts,
+                    headers=_trust_internal_headers(),
+                )
+        else:
+            response = requests.put(
+                endpoint,
+                json=payload,
+                headers=_trust_internal_headers(),
+            )
 
         response.raise_for_status()
 
