@@ -70,15 +70,20 @@ def _run(task, fl_ctx=None):
 def test_the_start_of_a_job_keeps_what_its_trainer_already_downloaded(constants, project_id, tmp_path, task):
     """The trainer starts before the first task and may already be downloading (FLIP#1830)."""
     own = _study(tmp_path, PROJECT)
-    other = _study(tmp_path, OTHER_PROJECT)
-    upload = tmp_path / "images" / "net-1" / "upload"
-    upload.mkdir()
+    _study(tmp_path, OTHER_PROJECT)
+    net = tmp_path / "images" / "net-1"
+    (net / "upload").mkdir()
+    (net / "stray.zip").write_bytes(b"zip")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (net / "link").symlink_to(outside)
 
     assert _run(task).get_return_code() == ReturnCode.OK
 
     assert own.read_bytes() == b"dicom"
-    assert not other.parent.parent.exists()
-    assert not upload.exists()
+    assert sorted(p.name for p in net.iterdir()) == [PROJECT]
+    # A link is removed, never followed.
+    assert outside.is_dir()
 
 
 def test_without_a_project_id_the_start_of_a_job_deletes_every_project(constants, project_id, tmp_path):
