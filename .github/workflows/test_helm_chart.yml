@@ -160,7 +160,7 @@ jobs:
       - name: Render template (flower backend)
         run: helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit --set flBackend=flower > /dev/null
 
-      # The kind E2E installs with flClient.enabled=false (no GPU/S3 in CI), so
+      # The kind E2E installs with flClient.enabled=false (no GPU or FL kit in CI), so
       # nothing at runtime exercises the fl-client's per-net images slice — these
       # renders are the only guard on the subPath mount and the images-init
       # ownership handoff (root-created net dir => imaging-api EACCES on every
