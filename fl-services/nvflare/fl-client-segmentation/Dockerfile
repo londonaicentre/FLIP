@@ -34,8 +34,9 @@ RUN uv sync --frozen --no-cache --compile-bytecode --extra nvflare --extra full 
 # the final image takes only the directory, and what the download leaves elsewhere stays behind.
 FROM env AS weights
 
-# TotalSegmentator task names, space separated, and the digest of what they download: a sha256 over
-# the sha256 of every file. Change both together; a failed check prints the digest it found.
+# TotalSegmentator task names, space separated, and the digest of the directory they leave: a sha256
+# over the sha256 of every file, the weights and config.json. Change both together; a failed check
+# prints the digest it found, and an upstream change to either fails it.
 ARG TOTALSEG_TASKS="total"
 ARG TOTALSEG_WEIGHTS_SHA256=61836a548422fea4f49bdd33985f316ecd53e18f2ad9fc08a8f342ff18e819f9
 
@@ -47,7 +48,7 @@ RUN mkdir -p ${TOTALSEG_HOME_DIR} && cd ${TOTALSEG_HOME_DIR} && \
     printf '{\n    "totalseg_id": "flip",\n    "send_usage_stats": false,\n    "prediction_counter": 0\n}\n' > config.json && \
     for task in ${TOTALSEG_TASKS}; do totalseg_download_weights -t "$task" || exit 1; done && \
     found=$(find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1) && \
-    if [ "$found" != "${TOTALSEG_WEIGHTS_SHA256}" ]; then echo "TotalSegmentator weights digest is $found, expected ${TOTALSEG_WEIGHTS_SHA256}" >&2; exit 1; fi && \
+    if [ "$found" != "${TOTALSEG_WEIGHTS_SHA256}" ]; then echo "The digest of ${TOTALSEG_HOME_DIR} (weights and config.json) is $found, expected ${TOTALSEG_WEIGHTS_SHA256}" >&2; exit 1; fi && \
     chmod -R a+rX,go-w . && find . -exec touch -h -d @0 {} +
 
 FROM env

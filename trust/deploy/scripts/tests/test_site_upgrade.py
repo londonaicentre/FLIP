@@ -569,7 +569,11 @@ class Plan(_PlanHarness):
             text = kit.read_text()
             assert "DOCKER_TAG=sha-1234567" in text
             assert "DOCKER_FL_TAG=sha-03fdb61" in text  # pragma: allowlist secret
-        assert self.missing_images.call_args.args[1:] == ("sha-1234567", "sha-03fdb61", None)  # pragma: allowlist secret
+        assert self.missing_images.call_args.args[1:] == (
+            "sha-1234567",
+            "sha-03fdb61",
+            None,
+        )  # pragma: allowlist secret
 
     def test_plan_rejects_a_floating_fl_tag(self):
         with tempfile.TemporaryDirectory() as tmp:
