@@ -124,7 +124,7 @@ dev = [
     { name = "simpleeval", specifier = ">=1.0.4" },
     { name = "taskipy", specifier = ">=1.14.1" },
     { name = "terraform-local", specifier = ">=0.24.1" },
-    { name = "tornado", specifier = ">=6.6" },
+    { name = "tornado", specifier = ">=6.6.1" },
 ]
 
 [[package]]
