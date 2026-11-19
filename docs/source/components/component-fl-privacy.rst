@@ -66,9 +66,11 @@ uses these values. In your own FLARE runs (the simulator, or a job exported with
 .. warning::
 
    **A high** ``percentile`` **sharply degrades training.** At 95, only the top 5 % of every update survives,
-   which stalls FedAvg convergence. On a frozen-backbone (head-only) fine-tune the filter would reset the global
-   head every round, so with ``AGGREGATE_ONLY_REGEX`` set (see :ref:`fl-training-configuration`) FLIP drops the
-   frozen parameters first and computes the percentile over the trainable ones only.
+   which stalls FedAvg convergence.
+
+   On a frozen-backbone (head-only) fine-tune the filter would reset the global head every round. With
+   ``AGGREGATE_ONLY_REGEX`` set (see :ref:`fl-training-configuration`), FLIP therefore drops the frozen
+   parameters first and computes the percentile over the trainable ones only.
 
 .. important::
 
@@ -120,15 +122,20 @@ The parameters live in ``[tool.flwr.app.config]`` and can be overridden per run 
 
 Also worth knowing:
 
+- **Size the clipping norm to your model.** The norm is absolute and bounds the whole update, so a value far
+  below your model's typical update shrinks every update: the run trains and learns next to nothing. The mod logs
+  each round's pre-clip norm and the factor it scaled the update by, and warns when that factor is below a tenth;
+  set ``dp-clipping-norm`` in your ``app/config.toml`` near the norms it reports (FLIP#1754).
 - **It applies to training rounds only**, not evaluation, matching the FLARE filter's scope.
 - **Integer buffers pass through unprivatised.** Counters such as BatchNorm's ``num_batches_tracked`` are step
   counts, not learned parameters.
 
 .. warning::
 
-   The template values are demonstration values that favour utility, not a defensible privacy budget. A real
-   budget calibrates ``dp-sensitivity`` to the local dataset and accounts for composition across rounds, which this
-   mod does not: every round spends the budget again.
+   The template values are placeholders, not a defensible privacy budget. The noise comes from ``dp-sensitivity``
+   alone, so raising ``dp-clipping-norm`` does not raise it. A real budget calibrates the noise to the clipping norm
+   and the local dataset, and accounts for composition across rounds, which this mod does not: every round spends
+   the budget again (FLIP#1760).
 
 ****************************************
 Site-enforced privacy policy (per trust)
@@ -141,7 +148,8 @@ different policies in the same federation, with no hub redeploy.
 **To enable it** (*Who: Trust operator*):
 
 #. Set the ``FL_SITE_PRIVACY_*`` variables in the Trust's kit file (``trust/.env.<CODE>.<env>``, Host-local
-   profile section), or the same settings in the Trust's governance document (see below), not both:
+   profile section), or the same settings in the Trust's governance document
+   (:ref:`trust-governance-document`), not both:
 
    .. list-table::
       :header-rows: 1
@@ -158,14 +166,14 @@ different policies in the same federation, with no hub redeploy.
           value, and a larger one only weakens the truncation.
         - ``10`` / ``0.01``
 
-#. Restart the Trust's FL clients:
+#. Restart the Trust's FL clients, between runs:
 
    .. code-block:: shell
 
       make -C trust up-fl-clients-kit KIT=<CODE>
 
-   The client writes the policy into its workspace at start-up. With nothing set, no policy is written and only
-   the app's filter applies.
+   A one-shot init step writes the policy into the client's kit before the client starts; the running client
+   mounts that configuration read-only. With nothing set, no policy is written and only the app's filter applies.
 
 .. important::
 
@@ -191,6 +199,8 @@ How the site policy behaves (verified against FLARE 2.9.0):
   audit trail. A filter that raises never sends the update unfiltered.
 - **FLARE only.** Flower has no site-side filter hook, so on Flower the review of uploaded training code remains
   the control.
+
+.. _trust-governance-document:
 
 *************************************
 Trust governance document (per trust)

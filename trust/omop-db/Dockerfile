@@ -42,7 +42,7 @@ RUN chmod +x /docker-entrypoint-initdb.d/50_create_readonly_users.sh
 # Job free of any dependency on a package mirror: a trust behind an egress
 # allowlist can reach its S3 bucket but not necessarily Amazon Linux's repos.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends unzip \
+    && apt-get install -y --no-install-recommends unzip awscli \
     && rm -rf /var/lib/apt/lists/*
 
 # Seed-time helpers, shipped in the image so any environment (dev host, EC2,

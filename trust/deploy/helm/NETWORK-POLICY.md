@@ -48,7 +48,7 @@ boundary — see [Residual risk](#residual-risk).
 | `allowedIngressCIDRsWithPorts` (default `[]`) | listed CIDRs, one port, **inbound** to xnat-web | The DICOM C-STORE return leg. FLIP pulls, so after XNAT issues C-MOVE the PACS opens a new association back to XNAT; without this it is dropped and retrievals silently time out (FLIP#993). | Scope to the PACS itself, never the whole trust network. Default-deny is unchanged while the list is empty. |
 | `allowedEgressCIDRs` (default `[]`) | listed CIDRs, **all ports** | Operator escape hatch to reach an external OMOP/PACS/XNAT on arbitrary ports. | Scoped to listed CIDRs; all-ports is broad — keep the list tight. |
 | `allowedEgressCIDRsWithPorts` (default `[]`) | listed CIDRs, one port | Operator escape hatch for CIDR+port egress (e.g. an on-prem service on a fixed IP). Not populated by `sync-kit` — the FL-server allowance is port-only (see `allowedEgressPorts`). | Scoped CIDR+port — tightest rule. |
-| AWS IMDS | `169.254.169.254/32` | EC2 metadata / IAM-role credentials, **rendered only for its one consumer**: the omop-db vocab-load Job reaching S3 through the node instance role (the Job is rendered — `vocabLoad.enabled` with an `s3Bucket` — and `hostAwsMount` is off). The fl-client holds no AWS credentials and the trust-seed Job fetches anonymously, so on kind, AKS (FLIP#1390) and any trust without the vocab load it is unreachable: the explicit rule is absent **and** the any-destination ports rule (DNS/HTTP/HTTPS and the FL port) excludes `169.254.169.254/32`, since IMDS listens on port 80. | IMDS is a known SSRF/cred-theft target — see hardening note. Still open to every pod while it is rendered: the chart has no IRSA path, so closing it on an AWS cluster means giving the vocab-load Job an explicit credential path first. |
+| Cloud instance metadata (**excluded**) | `169.254.169.254/32` | Not allowed. No pod needs it: the fl-client holds no AWS credentials, the trust-seed Job fetches anonymously, and the vocab-load Job reads a folder staged onto the node (FLIP#923). The endpoint listens on port 80, so the any-destination ports rule above carries it as an `except`, and no other rule names it. | None from the chart: no values open it. An operator who lists it in `allowedEgressCIDRs` opens it to every pod. |
 
 ## Residual risk
 
@@ -65,11 +65,7 @@ boundary — see [Residual risk](#residual-risk).
      proxy/Squid allowlisting `*.aicentre.co.uk`, `*.amazonaws.com`): the only
      way to safely allow 443 to *named* hosts rather than any IP. Out of scope
      for a CNI-portable chart; recommended for high-security trusts.
-2. **IMDS reachable from all pods while the vocab-load Job needs it.** Only that Job uses it.
-   A per-pod tightening (allow IMDS egress only on the omop-db vocab-load Job's `podSelector`,
-   deny elsewhere) is a future hardening — pairs with IMDSv2 hop-limit=1 and the
-   RBAC/securityContext work in [#530](https://github.com/londonaicentre/FLIP/issues/530).
-3. **NetworkPolicy is L3/L4 only.** It cannot inspect payloads; it is not a DLP
+2. **NetworkPolicy is L3/L4 only.** It cannot inspect payloads; it is not a DLP
    control. Treat the data-governance boundary as the trust perimeter itself.
 
 ## Hardening example
@@ -87,7 +83,7 @@ networkPolicies:
   allowedEgressCIDRs:
     - "10.20.0.0/24"                  # e.g. on-prem OMOP/PACS subnet
   allowedEgressCIDRsWithPorts:
-    - { cidrs: ["13.43.162.56/32", "13.43.208.193/32"], port: 8002 }  # fl-server NLB
+    - { cidrs: ["203.0.113.10/32"], port: 8002 }  # the hub's FL address (resolve the kit's NLB_SUBDOMAIN)
 ```
 
 ## CI coverage

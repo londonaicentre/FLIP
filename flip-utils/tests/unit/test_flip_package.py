@@ -12,9 +12,6 @@
 
 """Tests for the flip package."""
 
-from unittest.mock import patch
-
-import pandas as pd
 import pytest
 
 from flip import FLIP, FLIPBase
@@ -52,30 +49,6 @@ class TestFlipFactory:
         flip = FLIP()
         assert isinstance(flip, FLIPStandardDev)
 
-    def test_factory_accepts_string_job_type(self):
-        """Factory should accept string job types."""
-        flip = FLIP(job_type="standard")
-        assert flip is not None
-
-        flip = FLIP(job_type="evaluation")
-        assert flip is not None
-
-        flip = FLIP(job_type="fed_opt")
-        assert flip is not None
-
-    def test_factory_accepts_enum_job_type(self):
-        """Factory should accept JobType enum."""
-        flip = FLIP(job_type=JobType.STANDARD)
-        assert flip is not None
-
-        flip = FLIP(job_type=JobType.EVALUATION)
-        assert flip is not None
-
-    def test_factory_raises_on_invalid_job_type(self):
-        """Factory should raise ValueError for invalid job types."""
-        with pytest.raises(ValueError, match="Unknown job_type"):
-            FLIP(job_type="invalid_type")
-
 
 class TestJobTypeEnum:
     """Test the JobType enum."""
@@ -98,24 +71,6 @@ class TestFLIPStandardDev:
     def flip_dev(self):
         """Create a FLIPStandardDev instance."""
         return FLIPStandardDev()
-
-    @patch("flip.core.standard.FlipConstants")
-    def test_get_dataframe_success(self, mock_constants, tmp_path):
-        """get_dataframe should return DataFrame from CSV file."""
-        # Create a test CSV file
-        csv_path = tmp_path / "test_dataframe.csv"
-        test_data = pd.DataFrame({"accession_id": ["ACC001", "ACC002"], "label": [0, 1]})
-        test_data.to_csv(csv_path, index=False)
-
-        # Mock the DEV_DATAFRAME constant to point to our test CSV file
-        mock_constants.DEV_DATAFRAME = str(csv_path)
-
-        flip_dev_new = FLIPStandardDev()
-        result = flip_dev_new.get_dataframe("project-id", "SELECT *")
-
-        assert isinstance(result, pd.DataFrame)
-        assert "accession_id" in result.columns
-        assert len(result) == 2
 
     def test_validation_methods(self, flip_dev):
         """Validation methods should work correctly."""

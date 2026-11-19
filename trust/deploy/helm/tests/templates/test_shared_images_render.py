@@ -56,7 +56,12 @@ def test_rwo_holds_both_pods_on_one_node():
     for name, deployment in deployments.items():
         assert deployment["spec"]["template"]["metadata"]["labels"].get("flip/shared-images") == "true", name
         assert TERM in _required(deployment), name
-        assert deployment["spec"]["strategy"]["type"] == "Recreate", name
+        # rollingUpdate must be explicitly cleared, not just type set to Recreate: a fresh install
+        # never has a live object to carry the API server's RollingUpdate defaults, so this render
+        # passes either way, but an upgrade from an existing RollingUpdate Deployment then fails
+        # server-side apply on "spec.strategy.rollingUpdate: Forbidden" (FLIP#1950 -- the same
+        # failure class as FLIP#857/FLIP#1524, caught here instead of only on a live upgrade).
+        assert deployment["spec"]["strategy"] == {"type": "Recreate", "rollingUpdate": None}, name
 
 
 @pytest.mark.parametrize(

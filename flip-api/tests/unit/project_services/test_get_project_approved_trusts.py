@@ -46,10 +46,6 @@ def client(app_fixture: FastAPI) -> TestClient:
     return TestClient(app_fixture)
 
 
-def mock_verify_token():
-    return TEST_USER_ID
-
-
 def test_get_project_approved_trusts_success(
     app_fixture,
     user_id,
@@ -77,7 +73,6 @@ def test_get_project_approved_trusts_success(
 def test_get_project_approved_trusts_forbidden(
     app_fixture,
     client: TestClient,
-    session: MagicMock,
 ):
     # Arrange
     mock_db_session = MagicMock()
@@ -95,7 +90,6 @@ def test_get_project_approved_trusts_forbidden(
 def test_get_project_approved_trusts_not_found(
     app_fixture,
     client: TestClient,
-    session: MagicMock,
 ):
     # Arrange
     mock_db_session = MagicMock()
@@ -111,9 +105,6 @@ def test_get_project_approved_trusts_not_found(
 
     # Assert
     assert response.status_code == status.HTTP_404_NOT_FOUND
-
-    # Note: The imports above (ProjectStatus, Trust, Projects) might need to be moved
-    # to the top of your test file if they are not already present.
 
 
 def test_get_project_approved_trusts_project_not_approved(

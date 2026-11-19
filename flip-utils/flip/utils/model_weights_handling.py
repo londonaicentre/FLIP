@@ -17,10 +17,9 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING
 
 import torch
-from nvflare.apis.dxo import DXO, DataKind, MetaKey
 
 if TYPE_CHECKING:
-    pass
+    from nvflare.apis.dxo import DXO
 
 
 def get_model_weights_diff(original_weights: OrderedDict, new_weights: OrderedDict, iterations: int) -> DXO:
@@ -34,6 +33,8 @@ def get_model_weights_diff(original_weights: OrderedDict, new_weights: OrderedDi
     Returns:
         DXO: DXO containing the weight updates for the server.
     """
+    # Imported here so `flip.utils` stays importable without the nvflare extra (FLIP#1047).
+    from nvflare.apis.dxo import DXO, DataKind, MetaKey
 
     # Build the diff one tensor at a time. Converting the whole model to a second
     # ``{name: ndarray}`` dict before subtracting holds an extra full copy of the

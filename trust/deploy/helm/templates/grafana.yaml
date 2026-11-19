@@ -88,7 +88,7 @@ spec:
       {{- end }}
       containers:
         - name: grafana
-          image: "{{ .Values.observability.grafana.image.repository }}:{{ .Values.observability.grafana.image.tag }}"
+          image: "{{ .Values.observability.grafana.image.repository }}:{{ .Values.observability.grafana.image.tag }}{{ with .Values.observability.grafana.image.digest }}@{{ . }}{{ end }}"
           imagePullPolicy: {{ .Values.observability.grafana.image.pullPolicy }}
           ports:
             - name: http

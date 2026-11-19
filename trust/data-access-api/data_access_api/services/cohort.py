@@ -18,7 +18,6 @@ import pandas as pd
 import sqlglot
 from fastapi import HTTPException
 from pandas.errors import DatabaseError as PandasDatabaseError
-from psycopg2 import errors as pg_errors
 from sqlalchemy import bindparam, text
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 from sqlalchemy.sql.elements import TextClause
@@ -28,41 +27,41 @@ from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
 from sqlglot.optimizer.scope import traverse_scope
 
 from data_access_api.config import get_settings
-from data_access_api.db.database import engine
+from data_access_api.db.backend import OmopBackend, get_backend
+from data_access_api.db.database import get_engine
 from data_access_api.routers.schema import CohortQueryInput, StatisticsResponse
 from data_access_api.services.query_cache import get_cached_result, set_cached_result
 from data_access_api.utils.logger import logger
-from data_access_api.utils.sql_parsers import extract_missing_identifier
 
 # OMOP schema is the only schema callers may reference. Any qualified
 # reference to a different schema is rejected by validate_query.
 ALLOWED_SCHEMA = "omop"
 
-# Set-returning functions permitted in a FROM clause. An unqualified table-valued function carries
-# no name and no schema on its exp.Table node, so the schema pin cannot reach it — and Postgres
-# resolves it through the implicit pg_catalog, the same route the pin exists to close. There is no
-# schema to pin it to (these live in pg_catalog, not omop), so the only available control is an
-# allowlist. Keep it an allowlist, never a denylist of dangerous names: ``query_to_xml`` executes a
-# SQL string that sqlglot never parses, so it bypasses every other rule in validate_query, and the
-# next such function is one Postgres release away.
-_ALLOWED_TABLE_FUNCTIONS = frozenset({"generate_series", "unnest"})
+# The dialect cohort SQL is AUTHORED in. The central hub fans out ONE query string to every
+# trust in a project and every ``query.sql`` in this repo is written as PostgreSQL, so the
+# source dialect is a constant and only the EMIT dialect follows the backend (FLIP#13).
+# Parsing and identifier folding therefore stay Postgres-shaped on every backend, which is
+# what keeps the ``omop`` schema pin and the CTE exemption comparing against the same folded
+# names the author wrote. Snowflake upper-folds UNQUOTED identifiers itself, so the
+# lower-case names sqlglot emits resolve to the upper-case OMOP objects, while a quoted
+# identifier survives emission quoted and keeps its case on both backends.
+SOURCE_DIALECT = "postgres"
 
-# Functions permitted anywhere an expression is — select list, WHERE, a LATERAL FROM item, a
-# subquery. A dangerous function is not confined to the FROM clause: the schema pin and the
-# FROM-clause allowlist above both key on exp.Table nodes, so ``FROM LATERAL query_to_xml(...)``
-# (an exp.Lateral, not an exp.Table), ``SELECT pg_read_file(...)`` and ``WHERE pg_ls_dir(...) IS
-# NOT NULL`` all slipped past while Postgres still resolved them through the implicit pg_catalog.
-# sqlglot models the ordinary cohort functions (COUNT, SUM, DATE_PART, COALESCE, SUBSTRING, ...) as
-# typed nodes and wraps everything it does not recognise in exp.Anonymous — and the dangerous
-# pg_catalog functions all land there: the query_to_xml family executes an unparsed SQL string,
-# pg_read_file / pg_ls_dir / pg_stat_file read the server filesystem, current_setting / dblink /
-# lo_import reach further still. So an unrecognised (Anonymous) function is rejected wherever it
-# appears unless it is on this allowlist. This stays an allowlist for the same reason the table one
-# does; the table functions are a subset (they are also legitimate in a lateral or scalar
-# position), and ``age`` is included because deriving patient age is an ordinary cohort filter and
-# sqlglot happens to leave it Anonymous. Every real cohort query in the tutorials uses only typed
-# nodes, so the false-positive surface is small.
-_ALLOWED_FUNCTIONS = _ALLOWED_TABLE_FUNCTIONS | frozenset({"age"})
+# The dangerous-surface allowlists live on the BACKEND (``db/backend.py``), because the
+# surface itself is backend-specific while the posture is not. Postgres's is about
+# ``pg_catalog`` reachability (``query_to_xml``, ``pg_read_file``, ``dblink``); Snowflake's is
+# about ``SYSTEM$...``, ``RESULT_SCAN(LAST_QUERY_ID())``, external functions and stages. What
+# both share — and what makes this tractable — is the reject-unknown-by-default stance:
+# sqlglot models the ordinary cohort functions (COUNT, SUM, DATE_PART, COALESCE, SUBSTRING,
+# ...) as typed nodes and wraps everything it does not recognise in ``exp.Anonymous``, and
+# every dangerous name lands there. So an unrecognised function is rejected wherever it
+# appears — a FROM item, a LATERAL item, the select list, a WHERE predicate, a subquery —
+# unless the backend's allowlist names it. The schema pin and the FROM-clause allowlist both
+# key on ``exp.Table`` nodes, which is why the tree-wide Anonymous walk exists at all:
+# ``FROM LATERAL query_to_xml(...)`` is an ``exp.Lateral``, and ``SELECT pg_read_file(...)``
+# is neither. Keep each list an allowlist, never a denylist of dangerous names:
+# ``query_to_xml`` executes a SQL string that sqlglot never parses, so it bypasses every
+# other rule in validate_query, and the next such function is one release away.
 
 # Cheapest possible "is the vocabulary there?" test: an existence probe, not a count. On a
 # loaded trust concept_ancestor holds ~33M rows, so COUNT(*) would be a seq scan on the very
@@ -84,7 +83,7 @@ def _warn_if_vocabulary_missing() -> None:
     proves the vocabulary is fine.
     """
     try:
-        with engine.connect() as connection:
+        with get_engine().connect() as connection:
             if connection.execute(_VOCABULARY_PROBE).first() is not None:
                 return
     except SQLAlchemyError as exc:
@@ -142,32 +141,43 @@ _DATA_MODIFYING_TYPES: tuple[type[exp.Expression], ...] = (
 )
 
 
+# What a table reference may carry besides its name. An allowlist, so a clause sqlglot learns to
+# parse later is refused until someone adds it here. It leaves out Snowflake time travel
+# (``AT`` / ``BEFORE``, sqlglot's ``when``) and ``CHANGES``, which read rows as they were before
+# a patient was withdrawn, and the ``FILE_FORMAT`` / ``PATTERN`` options of a staged-file read.
+_ALLOWED_TABLE_ARGS = frozenset(
+    {"this", "db", "catalog", "alias", "joins", "laterals", "pivots", "sample", "only", "ordinality"}
+)
+
+
 def _invalid_query(detail: str) -> HTTPException:
     logger.warning(f"Query validation failed: {detail}")
     return HTTPException(status_code=400, detail=detail)
 
 
-def _reject_disallowed_table_function(table: exp.Table) -> None:
-    """Reject a function-shaped ``exp.Table`` whose function is not on the allowlist.
+def _reject_disallowed_table_function(table: exp.Table, backend: OmopBackend) -> None:
+    """Reject a function-shaped ``exp.Table`` whose function is not on the backend's allowlist.
 
     Takes the name from the rendered call rather than the node: sqlglot models some functions as
     typed nodes whose ``.name`` is empty and whose ``sql_name()`` is an internal label
     (``generate_series`` renders from ExplodingGenerateSeries), while unrecognised ones are
-    exp.Anonymous. Rendering gives the real Postgres name for both.
+    exp.Anonymous. Rendering gives the real authored name for both — rendered in the SOURCE
+    dialect, because the allowlist judges what the author wrote, not what will be emitted.
 
     Args:
         table (exp.Table): A FROM-clause item with an empty ``.name`` — the shape sqlglot gives a
             table-valued function call, qualified or not.
+        backend (OmopBackend): The configured OMOP backend, which owns the allowlist.
 
     Raises:
-        HTTPException: 400 if the rendered function name is not in ``_ALLOWED_TABLE_FUNCTIONS``.
+        HTTPException: 400 if the rendered function name is not allowlisted for this backend.
     """
-    rendered = table.this.sql(dialect="postgres") if table.this else ""
+    rendered = table.this.sql(dialect=SOURCE_DIALECT) if table.this else ""
     function_name = rendered.split("(", 1)[0].strip().lower()
-    if function_name not in _ALLOWED_TABLE_FUNCTIONS:
+    if function_name not in backend.allowed_table_functions:
         raise _invalid_query(
             f"'{function_name}' is not an allowed table-valued function. "
-            f"Allowed: {', '.join(sorted(_ALLOWED_TABLE_FUNCTIONS))}."
+            f"Allowed: {', '.join(sorted(backend.allowed_table_functions)) or 'none'}."
         )
 
 
@@ -213,8 +223,11 @@ def validate_query(query: str) -> str:
        parses as a ``Select`` and would otherwise pass. The read-only role rejects
        the write regardless, so this is defence in depth, not the only barrier.
     5. Every table reference is pinned to the ``omop`` schema. A qualified
-       reference to any other schema is rejected, as is a three-part
-       ``db.schema.table`` reference; an *unqualified* reference is rewritten to
+       reference to any other schema is rejected. A three-part
+       ``db.schema.table`` reference is rejected on PostgreSQL (which has no
+       cross-database references, so it can only be an attempt to confuse the
+       check) and pinned to the trust's own OMOP database on Snowflake, where
+       ``DB.SCHEMA.TABLE`` is the ordinary form; an *unqualified* reference is rewritten to
        ``omop.<table>`` in the AST before emission. Rewriting rather than
        trusting ``search_path`` is the load-bearing part: Postgres searches
        ``pg_catalog`` implicitly and first, whatever ``search_path`` says, so an
@@ -253,9 +266,25 @@ def validate_query(query: str) -> str:
     Args:
         query: The SQL query string from the caller.
 
+    Backends
+    --------
+    The rules and their guarantees are identical on every backend; the *implementation* is
+    not, and must not be (FLIP#13). The query is always PARSED and identifier-folded as
+    PostgreSQL — the dialect the hub authors in and every ``query.sql`` in this repo is
+    written in — and EMITTED in the configured backend's dialect, so one string fanned out by
+    the hub runs on a Postgres trust and a Snowflake trust alike. The dangerous-surface
+    allowlist, the catalog rule and any backend-specific name shape come from
+    ``db.backend.get_backend()``, because ``pg_catalog`` reachability and Snowflake's
+    ``SYSTEM$…`` / ``RESULT_SCAN`` / stage surface are different problems with the same answer:
+    reject what is not recognised. The backend also says how a schema or database name
+    resolves (Snowflake folds unquoted names to upper case and keeps quoted ones exact) and
+    which functions sqlglot types that it must still refuse (Snowflake's ``AI_*``). On every
+    backend a table reference may carry only the clauses in ``_ALLOWED_TABLE_ARGS``, which
+    leaves out Snowflake time travel (``AT`` / ``BEFORE``) and ``CHANGES``.
+
     Returns:
-        The validated query re-emitted from its parsed AST — pass *this* to the
-        database, never the caller's original string.
+        The validated query re-emitted from its parsed AST, in the backend's dialect — pass
+        *this* to the database, never the caller's original string.
 
     Raises:
         HTTPException(400): When any of the rules above is violated, or when the validation
@@ -279,11 +308,13 @@ def _validate_query_ast(query: str) -> str:
     Kept separate so the public wrapper can convert anything unexpected escaping this pass into
     a fail-closed 400; the rule set is documented on :func:`validate_query`.
     """
+    backend = get_backend()
+
     if len(query) > MAX_QUERY_LENGTH:
         raise _invalid_query(f"Query exceeds maximum length of {MAX_QUERY_LENGTH} characters.")
 
     try:
-        statements = sqlglot.parse(query, read="postgres")
+        statements = sqlglot.parse(query, read=SOURCE_DIALECT)
     except SqlglotError as e:
         # SqlglotError is the parent of both ParseError (e.g. "SELECT FROM") and
         # TokenError (e.g. unterminated string literals); catch the parent so a
@@ -324,13 +355,27 @@ def _validate_query_ast(query: str) -> str:
     # Normalising first makes both sides agree with the engine. It is identity-preserving for
     # Postgres (an unquoted identifier is folded at parse time anyway), so the emitted SQL means
     # exactly what the caller wrote.
-    stmt = normalize_identifiers(stmt, dialect="postgres")
+    stmt = normalize_identifiers(stmt, dialect=SOURCE_DIALECT)
+
+    for table in stmt.find_all(exp.Table):
+        for arg, value in table.args.items():
+            if value and arg not in _ALLOWED_TABLE_ARGS:
+                raise _invalid_query(
+                    f"Table clause '{arg}' is not allowed. Time travel, change tracking and "
+                    "file-format clauses cannot be used on a table reference."
+                )
 
     # A CTE reference and an unqualified physical table have the same exp.Table shape. Walk each
     # lexical scope so only a CTE visible from that exact SELECT is exempted; a flat set of every
     # CTE name would let an inner CTE exempt a physical table in an enclosing query.
     for scope in traverse_scope(stmt):
         for table in scope.tables:
+            # A reference the backend refuses whatever it is qualified with — a Snowflake stage
+            # (``FROM @stage``) reads staged FILES, not a table.
+            refusal = backend.reject_table_reference(table)
+            if refusal is not None:
+                raise _invalid_query(refusal)
+
             # Validate the schema FIRST, before any name-based skip. A schema-qualified
             # table-valued function — ``FROM pg_catalog.pg_ls_dir('/')`` — parses as an exp.Table
             # with an empty ``.name`` but a populated ``.db``, so skipping empty names ahead of
@@ -339,12 +384,20 @@ def _validate_query_ast(query: str) -> str:
             if schema_node is not None:
                 # ``catalog`` holds the leading part of a three-part db.schema.table reference,
                 # which the schema check below does not see — ``otherdb.omop.person`` has db=omop
-                # and passes it. Postgres has no cross-database references, so this can only be an
-                # attempt to confuse the check; reject it rather than emit it. Checked first
-                # because ``otherdb..person`` parses with catalog=otherdb and an *empty* ``db``,
-                # and this is the rejection that actually describes that shape.
-                if table.args.get("catalog") is not None:
-                    raise _invalid_query("Cross-database table references are not allowed.")
+                # and passes it. Checked first because ``otherdb..person`` parses with
+                # catalog=otherdb and an *empty* ``db``, and this is the rejection that actually
+                # describes that shape.
+                #
+                # Whether a catalog is admissible at all is the backend's to answer. Postgres has
+                # no cross-database references, so there it can only be an attempt to confuse the
+                # check and is rejected outright. On Snowflake ``DB.SCHEMA.TABLE`` is the ordinary
+                # form, so the rule becomes "pin the catalog too" rather than "reject": the
+                # reference is allowed only when it names this trust's own OMOP database, and any
+                # other database is refused exactly as any other schema is.
+                catalog_node = table.args.get("catalog")
+                if catalog_node is not None:
+                    if not isinstance(catalog_node, exp.Identifier) or not backend.allows_catalog(catalog_node):
+                        raise _invalid_query("Cross-database table references are not allowed.")
 
                 # ``db`` is usually an Identifier, but not always: sqlglot hands back a bare
                 # ``str`` for degenerate shapes such as the empty schema slot above, so reading
@@ -353,13 +406,14 @@ def _validate_query_ast(query: str) -> str:
                 if not isinstance(schema_node, exp.Identifier):
                     raise _invalid_query("Malformed table reference.")
 
-                # Compare the name as-is: ``normalize_identifiers`` above already folded it the
-                # way Postgres does. Lowering here instead would re-open the same gap the
-                # normalisation closes — ``"OMOP".person`` is a quoted identifier Postgres keeps
-                # distinct from ``omop``, so a lowered comparison calls it allowed and then emits
-                # it untouched, approving one schema while the engine reads another.
-                schema_name = schema_node.name
-                if schema_name != ALLOWED_SCHEMA:
+                # Compare the way the engine resolves the name, which is the backend's to say, and
+                # never by lowering it here: the identifier is emitted as written, so a comparison
+                # looser than the engine's approves one schema while the engine reads another.
+                # Postgres keeps a quoted ``"OMOP"`` distinct from ``omop``; Snowflake folds
+                # unquoted names to upper case, so there ``"OMOP"`` is the schema and ``"omop"``
+                # is a different one.
+                if not backend.names_schema(schema_node, ALLOWED_SCHEMA):
+                    schema_name = schema_node.sql(dialect=SOURCE_DIALECT)
                     raise _invalid_query(
                         f"Schema '{schema_name}' is not accessible. Only the '{ALLOWED_SCHEMA}' schema is allowed."
                     )
@@ -370,7 +424,7 @@ def _validate_query_ast(query: str) -> str:
                 # owns — so without this check it was the one spelling that reached the emit
                 # without touching either allowlist.
                 if not table.name:
-                    _reject_disallowed_table_function(table)
+                    _reject_disallowed_table_function(table, backend)
 
                 # Already qualified to omop — nothing to pin.
                 continue
@@ -383,7 +437,7 @@ def _validate_query_ast(query: str) -> str:
                 # not omop — so the allowlist is the only control available here. Skipping instead
                 # would leave the FROM-clause function shape as a hole straight through every rule
                 # above (FLIP#879).
-                _reject_disallowed_table_function(table)
+                _reject_disallowed_table_function(table, backend)
                 continue
 
             if table_name in scope.cte_sources:
@@ -401,6 +455,13 @@ def _validate_query_ast(query: str) -> str:
             # the cohort queries researchers write, and rejecting them would break saved queries to
             # close a hole that pinning closes completely.
             table.set("db", exp.to_identifier(ALLOWED_SCHEMA))
+            # On a backend with a catalog namespace (Snowflake), pin that too: a session's
+            # current database is a connection property, and pinning it in the tree means the
+            # emitted query names the trust's own OMOP database explicitly rather than relying
+            # on whatever database the session happens to be in.
+            pinned_catalog = backend.pinned_catalog()
+            if pinned_catalog is not None:
+                table.set("catalog", exp.to_identifier(pinned_catalog))
 
     # The scope walk above only reaches functions that sqlglot parsed into an exp.Table (a bare
     # ``FROM func(...)`` item). A dangerous function reached any other way — ``FROM LATERAL
@@ -413,10 +474,17 @@ def _validate_query_ast(query: str) -> str:
         if isinstance(function.parent, exp.Table):
             continue
         function_name = function.name.lower()
-        if function_name not in _ALLOWED_FUNCTIONS:
+        if function_name not in backend.allowed_functions:
             raise _invalid_query(
-                f"'{function_name}' is not an allowed function. Allowed: {', '.join(sorted(_ALLOWED_FUNCTIONS))}."
+                f"'{function_name}' is not an allowed function. "
+                f"Allowed: {', '.join(sorted(backend.allowed_functions)) or 'none'}."
             )
+
+    # sqlglot types some functions a backend must refuse (Snowflake's AI_AGG and friends), so
+    # the walk above never sees them.
+    if backend.refused_functions:
+        for typed_function in stmt.find_all(*backend.refused_functions):
+            raise _invalid_query(f"'{typed_function.sql_name().lower()}' is not an allowed function.")
 
     for clause_type, label in ((exp.Limit, "LIMIT"), (exp.Offset, "OFFSET")):
         for node in stmt.find_all(clause_type):
@@ -431,7 +499,13 @@ def _validate_query_ast(query: str) -> str:
     # whitespace. Emitting here — instead of in a second helper that re-parses —
     # keeps one parse and one policy: there is no second copy of the
     # single-statement and SELECT-shape rules to drift out of step with these.
-    return stmt.sql(dialect="postgres")
+    #
+    # Emitted in the BACKEND's dialect, which is the whole transpilation hook (FLIP#13): the
+    # hub authors one Postgres string, every trust parses and checks it identically, and each
+    # emits it for its own engine. Because the string that reaches the database was always
+    # generated from the checked tree rather than forwarded, transpiling here adds no new
+    # trust in the caller's text.
+    return stmt.sql(dialect=backend.sqlglot_dialect)
 
 
 def get_records(
@@ -465,6 +539,8 @@ def get_records(
         if cached is not None:
             return cached
 
+    backend = get_backend()
+
     try:
         # TODO: Trace the query filtering to understand what the final user can see.
         # Executing the query with pandas allows the user to query anything in the database.
@@ -472,59 +548,44 @@ def get_records(
         # Therefore, we need to validate the query is safe, e.g. only SELECT queries, and does not contain sensitive
         # data.
         # TODO check if we can check column types -- could be used to exclude primary keys, foreign keys, etc.
-        df = pd.read_sql(query, engine, params=params)
+        df = pd.read_sql(query, get_engine(), params=params)
+        # Fold result column names to the canonical lower case BEFORE anything downstream sees
+        # the frame, including the cache. Postgres lower-folds unquoted identifiers, Snowflake
+        # upper-folds them, and every consumer indexes in lower case — ``routers/cohort.py``'s
+        # ``df[ACCESSION_ID_COLUMN]``, ``flip.get_dataframe()`` callers, the tutorial transform
+        # chains. On the Postgres backend this is the identity (nothing to fold), so the default
+        # path is unchanged.
+        df = backend.normalise_columns(df)
         set_cached_result(query, df, params)
         return df
 
     # Error responses are deliberately category-only (S-8): the trust forwards
     # this HTTPException detail to the central hub, which surfaces it through
-    # the cohort UI to every project member. Raw psycopg / SQLAlchemy text can
+    # the cohort UI to every project member. Raw driver / SQLAlchemy text can
     # leak row values, constraint names, and connection-pool internals — so we
     # log the full error here for ops and return only a category to the caller.
-    # UndefinedTable / UndefinedColumn are an intentional exception: they echo
+    # Missing-table / missing-column are an intentional exception: they echo
     # back identifiers the OPERATOR typed in their own SQL (against the public
     # OMOP CDM schema), so they leak no data while remaining a useful diagnostic.
     #
+    # Recognising them is the BACKEND's job (``classify_error``), not an isinstance
+    # against psycopg2's error classes: on a Snowflake trust there is no psycopg2 in the
+    # call path, and binding the diagnostic to one driver is exactly what made these
+    # degrade to an opaque 500 on any other (FLIP#13).
+    #
     # Pandas 3.x wraps SQLAlchemy errors in pandas.errors.DatabaseError (a subclass
     # of OSError, not SQLAlchemyError) with the original SQLAlchemy exception as
-    # __cause__. We unwrap the cause here so the UndefinedTable / UndefinedColumn
-    # diagnostic path still works when pd.read_sql is used directly.
+    # __cause__. We unwrap the cause here so the diagnostic path still works when
+    # pd.read_sql is used directly.
     except PandasDatabaseError as e:
         cause = e.__cause__
         if isinstance(cause, DBAPIError):
-            orig = cause.orig
-            error_msg = str(orig).strip()
-            if isinstance(orig, pg_errors.UndefinedTable):
-                table_name = extract_missing_identifier(error_msg, r'relation "([^"]+)" does not exist')
-                logger.error(f"UndefinedTable: {error_msg}")
-                raise HTTPException(status_code=400, detail=f"The table '{table_name}' does not exist.") from e
-            elif isinstance(orig, pg_errors.UndefinedColumn):
-                column_name = extract_missing_identifier(error_msg, r'column "([^"]+)" does not exist')
-                logger.error(f"UndefinedColumn: {error_msg}")
-                raise HTTPException(status_code=400, detail=f"The column '{column_name}' does not exist.") from e
-            else:
-                logger.error(f"Database error (via pandas): {error_msg}")
-                raise HTTPException(status_code=500, detail="query_failed") from e
+            raise _database_error(backend, cause.orig, e, via_pandas=True) from e
         logger.error(f"Pandas database error: {str(e)}")
         raise HTTPException(status_code=500, detail="internal_error") from e
 
     except DBAPIError as e:
-        orig = e.orig
-        error_msg = str(orig).strip()
-
-        if isinstance(orig, pg_errors.UndefinedTable):
-            table_name = extract_missing_identifier(error_msg, r'relation "([^"]+)" does not exist')
-            logger.error(f"UndefinedTable: {error_msg}")
-            raise HTTPException(status_code=400, detail=f"The table '{table_name}' does not exist.") from e
-
-        elif isinstance(orig, pg_errors.UndefinedColumn):
-            column_name = extract_missing_identifier(error_msg, r'column "([^"]+)" does not exist')
-            logger.error(f"UndefinedColumn: {error_msg}")
-            raise HTTPException(status_code=400, detail=f"The column '{column_name}' does not exist.") from e
-
-        else:
-            logger.error(f"Database error: {error_msg}")
-            raise HTTPException(status_code=500, detail="query_failed") from e
+        raise _database_error(backend, e.orig, e, via_pandas=False) from e
 
     except SQLAlchemyError as e:
         logger.error(f"SQLAlchemy error: {str(e)}")
@@ -532,6 +593,34 @@ def get_records(
     except Exception as e:
         logger.error(f"Unexpected error executing query: {str(e)}")
         raise HTTPException(status_code=500, detail="internal_error") from e
+
+
+def _database_error(
+    backend: OmopBackend,
+    orig: BaseException | None,
+    error: Exception,
+    via_pandas: bool,
+) -> HTTPException:
+    """Map one driver error onto the HTTPException the caller should see.
+
+    Args:
+        backend (OmopBackend): The configured backend, which recognises its own driver's
+            missing-table / missing-column diagnostics.
+        orig (BaseException | None): The DBAPI exception SQLAlchemy wrapped.
+        error (Exception): The exception being handled, for the log line.
+        via_pandas (bool): Whether the error arrived wrapped by pandas, for the log line.
+
+    Returns:
+        HTTPException: A 400 naming the missing identifier, or a category-only 500.
+    """
+    error_msg = str(orig).strip()
+    classified = backend.classify_error(orig, error_msg)
+    if classified is not None:
+        kind, identifier = classified
+        logger.error(f"Missing {kind}: {error_msg}")
+        return HTTPException(status_code=400, detail=f"The {kind} '{identifier}' does not exist.")
+    logger.error(f"Database error{' (via pandas)' if via_pandas else ''}: {error_msg or str(error)}")
+    return HTTPException(status_code=500, detail="query_failed")
 
 
 def count_distinct_subjects(df: pd.DataFrame, use_cache: bool = True) -> int | None:
@@ -749,8 +838,6 @@ def get_age_distribution(df: pd.DataFrame) -> dict:
     """
     Returns the distribution of ages in the DataFrame.
 
-    Assumes the DataFrame has accesion_id, query the table to get the age distribution.
-
     Args:
         df (pd.DataFrame): The cohort DataFrame. Must include a ``person_id`` column; otherwise an
             empty result set is returned.
@@ -764,9 +851,14 @@ def get_age_distribution(df: pd.DataFrame) -> dict:
 
     person_ids = [int(pid) for pid in df["person_id"].unique()]
 
-    age_distribution_database_query = text("""
+    # FLIP's own statistics SQL is raw text that never passes through validate_query, so it is
+    # not transpiled either: the one expression OMOP's CDM cannot state portably — completed
+    # years from a birth datetime — comes from the backend. PostgreSQL's ``AGE()`` does not
+    # exist on Snowflake at all, so leaving it hardcoded failed /cohort at runtime there
+    # (FLIP#13). Both forms yield the same integer, so the decade buckets agree across backends.
+    age_distribution_database_query = text(f"""
     SELECT
-    FLOOR(DATE_PART('year', AGE(CURRENT_DATE, p.birth_datetime)) / 10) * 10 AS age_group,
+    FLOOR({get_backend().age_years_sql("p.birth_datetime")} / 10) * 10 AS age_group,
     COUNT(*) AS count
     FROM omop.person p
     WHERE p.person_id IN :person_ids

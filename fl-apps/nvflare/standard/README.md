@@ -17,30 +17,27 @@
 
 This is the FLARE **Client API** federated-training job type (`JOB_TYPE=standard`). It performs a
 **Federated Averaging** round-trip, driving client training through the FLARE Client API
-(`ClientAPIExecutor`, in-process mode). It replaced the retired Executor-based `standard` template, which
-drove the clients through the legacy `RUN_TRAINER`/`RUN_VALIDATOR` executor pair.
-The server side is: `InitTraining` → `ScatterAndGather` → stock `GlobalModelEval` → `BroadcastTask` cleanup.
+(`ClientAPIExecutor`, in-process mode).
 
 The base configs (`app/config/config_fed_server.json`, `app/config/config_fed_client.json`) and
 `meta.json` are **recipe-generated** from `flip.nvflare.recipes.FlipFedAvgRecipe`. Do not
-hand-edit them — regenerate via `recipe.py` after any recipe change and commit the result.
+hand-edit them; see [Regenerating the committed configs](#regenerating-the-committed-configs).
 
-## What's the logic?
+## How a round works
 
 For each global round (`num_rounds` in the recipe / `ScatterAndGather` args):
 
 1. The server sends the current global model to every site.
 2. Each site runs the user's `trainer.py` via `ClientAPIExecutor` (in-process mode), using the FLARE
    Client API (`flare.receive()` / `flare.send()`) to receive and return model params.
-3. Sites return their update as a weight **diff** — `FLModel(params=<local minus global>,
-   params_type="DIFF")` → `DataKind.WEIGHT_DIFF` (a `WEIGHTS` return is rejected by the
-   aggregator) — filtered through `PercentilePrivacy`.
+3. Each site returns its update as a weight **diff** (see `trainer.py` below). The update passes
+   through the `PercentilePrivacy` filter before it leaves the site.
 4. The server averages the diffs with `InTimeAccumulateWeightedAggregator` (weighted by samples),
    `FullModelShareableGenerator` adds the averaged diff onto the global model, and
    `PTFileModelPersistor` persists it.
 
-There is **no `validator.py`** — validation is orchestrated server-side via `GlobalModelEval` and
-`ValidationJsonGenerator`. The `PercentilePrivacy` filter applies on training task results only.
+There is **no `validator.py`**: validation is orchestrated server-side via `GlobalModelEval` and
+`ValidationJsonGenerator`. The `PercentilePrivacy` filter applies to training task results only.
 
 ## Execution sequence
 
@@ -55,12 +52,13 @@ There is **no `validator.py`** — validation is orchestrated server-side via `G
 
 - `init_training`, `post_validation` → `flip.nvflare.components.CleanupImages`
 - `train`, `validate` → `nvflare.app_common.executors.ClientAPIExecutor` (in-process mode)
-- `train` result → `flip.nvflare.components.PercentilePrivacy` (DP noise filter)
+- `train` result → `flip.nvflare.components.PercentilePrivacy` (percentile filter on the model update; see
+  [Privacy controls on model updates](../../../docs/source/components/component-fl-privacy.rst))
 - Event handlers: `ClientEventHandler`, `FlipAnalyticsBridge`
 
 Post-training evaluation sends only the aggregated global model to each trust. The default template does not
-request or redistribute client-local models; callers constructing `FlipFedAvgRecipe` directly can explicitly
-set `submit_model_task_name="submit_model"` to restore full cross-site evaluation.
+request or redistribute client-local models. For full cross-site evaluation, construct `FlipFedAvgRecipe`
+directly and set `submit_model_task_name="submit_model"`.
 
 ## What does the user upload?
 
@@ -68,17 +66,16 @@ The required files (see [`required_files.json`](./required_files.json)) are:
 
 - `trainer.py` — the local training loop using the FLARE Client API (`flare.receive()` /
   `flare.send()`). Return the update as a diff: `FLModel(params=<local minus global>,
-  params_type="DIFF")` → `DataKind.WEIGHT_DIFF`.
+  params_type="DIFF")` → `DataKind.WEIGHT_DIFF`. A `WEIGHTS` return is rejected by the aggregator.
 - `models.py` — defines the model; `models.get_model` is what the server persistor instantiates.
 - `config.json` — model/training configuration consumed by the custom code (e.g. hyper-parameters,
   the cohort `query`).
 
-Note: there is no `validator.py` for this job type — validation runs server-side.
-
 ## Regenerating the committed configs
 
 After any change to `FlipFedAvgRecipe` (in `flip-utils/flip/nvflare/recipes/`), regenerate the
-committed JSONs by running from the `flip-utils` venv:
+committed JSONs. Run this from the repository root; it uses the `flip-utils` environment and stubs
+`models.get_model` with a one-layer model, because the recipe only needs a model shape to write the configs:
 
 ```bash
 cd flip-utils && uv run --no-sync python - <<'PY'

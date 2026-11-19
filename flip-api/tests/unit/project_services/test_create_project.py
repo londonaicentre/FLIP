@@ -17,14 +17,12 @@ import pytest
 from fastapi import HTTPException, status
 from psycopg2 import DatabaseError
 
-from flip_api.db.models.main_models import Projects
 from flip_api.db.models.user_models import PermissionRef
 from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.project_services.create_project import create_project_endpoint
 
 # Common test data
 TEST_USER_ID = uuid.uuid4()
-TEST_PROJECT_ID = uuid.uuid4()
 TEST_PROJECT_NAME = "Test Project Alpha"
 TEST_PROJECT_DESCRIPTION = "A detailed description for Test Project Alpha."
 
@@ -32,17 +30,7 @@ TEST_PROJECT_DESCRIPTION = "A detailed description for Test Project Alpha."
 @pytest.fixture
 def mock_valid_payload():
     """Fixture for a valid project details payload."""
-    payload = MagicMock(spec=ProjectDetails)
-    payload.name = TEST_PROJECT_NAME
-    payload.description = TEST_PROJECT_DESCRIPTION
-    # Mock the dict() method to return what Projects(**payload.dict()) would expect
-    payload_dict = {
-        "name": TEST_PROJECT_NAME,
-        "description": TEST_PROJECT_DESCRIPTION,
-        "users": [],
-    }
-    payload = ProjectDetails(**payload_dict)
-    return payload
+    return ProjectDetails(name=TEST_PROJECT_NAME, description=TEST_PROJECT_DESCRIPTION, users=[])
 
 
 @patch("flip_api.project_services.create_project.logger")
@@ -141,9 +129,6 @@ def test_create_project_endpoint_db_commit_fails(
     """Test project creation when database commit fails."""
     # Arrange
     mock_has_permissions.return_value = True
-
-    mock_new_project_instance = MagicMock(spec=Projects)
-    mock_new_project_instance.id = TEST_PROJECT_ID  # Needed for potential logging if refresh was reached
 
     commit_error = DatabaseError("DB Commit Error")
     mock_db_session.commit.side_effect = commit_error

@@ -26,8 +26,7 @@ export function mountComponent(component: any, options?: MountingOptions<any, an
                 stubActions: false,
                 createSpy: vi.fn
             })],
-            renderStubDefaultSlot: true,
-            mocks: { getRandomId: () => "random-id" }
+            renderStubDefaultSlot: true
         },
         ...options
     });

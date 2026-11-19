@@ -49,8 +49,6 @@
         "--cov=src/",
         "--cov-report=html",
         "--cov-report=term-missing",
-        "--skip-client",
-        "--skip-db",
     ],
     // ========== IMAGING-API (COMMENT OUT ABOVE, UNCOMMENT BELOW) ==========
     // "python.testing.pytestArgs": [

@@ -30,24 +30,42 @@ def mock_db():
     return MagicMock()
 
 
-@pytest.fixture
-def stale_task():
+def _stale_task(task_type=TaskType.COHORT_QUERY, retry_count=0):
     """A task that's been IN_PROGRESS for longer than the timeout."""
     task = MagicMock(spec=TrustTask)
     task.id = uuid4()
     task.trust_id = uuid4()
-    task.task_type = TaskType.COHORT_QUERY
+    task.task_type = task_type
     task.status = TaskStatus.IN_PROGRESS
-    task.retry_count = 0
+    task.retry_count = retry_count
     task.updated_at = datetime.now(timezone.utc) - timedelta(minutes=60)
     return task
 
 
-@patch("flip_api.private_services.stale_task_recovery.get_settings")
-def test_recover_stale_tasks_resets_to_pending(mock_settings, mock_db, stale_task):
+def _post_processing_task(task_type):
+    task = MagicMock(spec=TrustTask)
+    task.id = uuid4()
+    task.status = TaskStatus.COMPLETED
+    task.task_type = task_type
+    task.needs_post_processing = True
+    return task
+
+
+@pytest.fixture
+def stale_task():
+    return _stale_task()
+
+
+@pytest.fixture
+def recovery_settings():
+    with patch("flip_api.private_services.stale_task_recovery.get_settings") as m:
+        m.return_value.TASK_STALE_TIMEOUT_MINUTES = 30
+        m.return_value.TASK_MAX_RETRIES = 3
+        yield m.return_value
+
+
+def test_recover_stale_tasks_resets_to_pending(recovery_settings, mock_db, stale_task):
     """Stale IN_PROGRESS tasks should be reset to PENDING and retry_count incremented."""
-    mock_settings.return_value.TASK_STALE_TIMEOUT_MINUTES = 30
-    mock_settings.return_value.TASK_MAX_RETRIES = 3
     mock_db.exec.return_value.all.return_value = [stale_task]
 
     count = recover_stale_tasks(mock_db)
@@ -59,11 +77,8 @@ def test_recover_stale_tasks_resets_to_pending(mock_settings, mock_db, stale_tas
     assert mock_db.commit.called
 
 
-@patch("flip_api.private_services.stale_task_recovery.get_settings")
-def test_recover_stale_tasks_no_stale(mock_settings, mock_db):
+def test_recover_stale_tasks_no_stale(recovery_settings, mock_db):
     """Should return 0 when no stale tasks found."""
-    mock_settings.return_value.TASK_STALE_TIMEOUT_MINUTES = 30
-    mock_settings.return_value.TASK_MAX_RETRIES = 3
     mock_db.exec.return_value.all.return_value = []
 
     count = recover_stale_tasks(mock_db)
@@ -72,19 +87,9 @@ def test_recover_stale_tasks_no_stale(mock_settings, mock_db):
     assert not mock_db.commit.called
 
 
-@patch("flip_api.private_services.stale_task_recovery.get_settings")
-def test_recover_stale_tasks_marks_failed_when_max_retries_exceeded(mock_settings, mock_db):
+def test_recover_stale_tasks_marks_failed_when_max_retries_exceeded(recovery_settings, mock_db):
     """Tasks exceeding max retries should be marked FAILED instead of re-queued."""
-    mock_settings.return_value.TASK_STALE_TIMEOUT_MINUTES = 30
-    mock_settings.return_value.TASK_MAX_RETRIES = 3
-
-    task = MagicMock(spec=TrustTask)
-    task.id = uuid4()
-    task.trust_id = uuid4()
-    task.task_type = TaskType.CREATE_IMAGING
-    task.status = TaskStatus.IN_PROGRESS
-    task.retry_count = 3  # Already at max
-    task.updated_at = datetime.now(timezone.utc) - timedelta(minutes=60)
+    task = _stale_task(TaskType.CREATE_IMAGING, retry_count=3)  # Already at max
     mock_db.exec.return_value.all.return_value = [task]
 
     count = recover_stale_tasks(mock_db)
@@ -95,25 +100,12 @@ def test_recover_stale_tasks_marks_failed_when_max_retries_exceeded(mock_setting
     assert mock_db.commit.called
 
 
-@patch("flip_api.private_services.stale_task_recovery.get_settings")
-def test_recover_stale_tasks_mixed_retryable_and_exhausted(mock_settings, mock_db):
+def test_recover_stale_tasks_mixed_retryable_and_exhausted(recovery_settings, mock_db):
     """Should handle a mix of retryable and exhausted tasks correctly."""
-    mock_settings.return_value.TASK_STALE_TIMEOUT_MINUTES = 30
-    mock_settings.return_value.TASK_MAX_RETRIES = 2
+    recovery_settings.TASK_MAX_RETRIES = 2
 
-    retryable_task = MagicMock(spec=TrustTask)
-    retryable_task.id = uuid4()
-    retryable_task.task_type = TaskType.COHORT_QUERY
-    retryable_task.status = TaskStatus.IN_PROGRESS
-    retryable_task.retry_count = 1
-    retryable_task.updated_at = datetime.now(timezone.utc) - timedelta(minutes=60)
-
-    exhausted_task = MagicMock(spec=TrustTask)
-    exhausted_task.id = uuid4()
-    exhausted_task.task_type = TaskType.CREATE_IMAGING
-    exhausted_task.status = TaskStatus.IN_PROGRESS
-    exhausted_task.retry_count = 2
-    exhausted_task.updated_at = datetime.now(timezone.utc) - timedelta(minutes=60)
+    retryable_task = _stale_task(TaskType.COHORT_QUERY, retry_count=1)
+    exhausted_task = _stale_task(TaskType.CREATE_IMAGING, retry_count=2)
 
     mock_db.exec.return_value.all.return_value = [retryable_task, exhausted_task]
 
@@ -129,11 +121,7 @@ def test_recover_stale_tasks_mixed_retryable_and_exhausted(mock_settings, mock_d
 @patch("flip_api.private_services.imaging_notifications.handle_imaging_task_completed")
 def test_retry_failed_post_processing_success(mock_handle, mock_db):
     """Should retry post-processing for tasks with needs_post_processing=True."""
-    task = MagicMock(spec=TrustTask)
-    task.id = uuid4()
-    task.status = TaskStatus.COMPLETED
-    task.task_type = TaskType.CREATE_IMAGING
-    task.needs_post_processing = True
+    task = _post_processing_task(TaskType.CREATE_IMAGING)
     mock_db.exec.return_value.all.return_value = [task]
 
     count = retry_failed_post_processing(mock_db)
@@ -149,26 +137,13 @@ def test_retry_failed_post_processing_failure(mock_handle, mock_db):
     """Should handle post-processing retry failure gracefully."""
     mock_handle.side_effect = Exception("SES unavailable")
 
-    task = MagicMock(spec=TrustTask)
-    task.id = uuid4()
-    task.status = TaskStatus.COMPLETED
-    task.task_type = TaskType.CREATE_IMAGING
-    task.needs_post_processing = True
+    task = _post_processing_task(TaskType.CREATE_IMAGING)
     mock_db.exec.return_value.all.return_value = [task]
 
     count = retry_failed_post_processing(mock_db)
 
     assert count == 0
     assert mock_db.rollback.called
-
-
-def _post_processing_task(task_type):
-    task = MagicMock(spec=TrustTask)
-    task.id = uuid4()
-    task.status = TaskStatus.COMPLETED
-    task.task_type = task_type
-    task.needs_post_processing = True
-    return task
 
 
 @patch("flip_api.private_services.snapshot_notifications.handle_snapshot_task_completed")

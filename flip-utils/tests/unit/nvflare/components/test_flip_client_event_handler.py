@@ -16,18 +16,9 @@ from flip.nvflare.components.flip_client_event_handler import ClientEventHandler
 
 
 class TestClientEventHandler:
-    def test_init(self):
-        """Test that ClientEventHandler initializes correctly"""
-        handler = ClientEventHandler()
-        assert handler is not None
-        assert isinstance(handler, ClientEventHandler)
-
     def test_handle_event_does_nothing(self):
-        """Test that handle_event method executes without error"""
+        """ClientEventHandler constructs and its handle_event is a no-op."""
         handler = ClientEventHandler()
-        fl_ctx = MagicMock()
 
-        # Should not raise any exception
-        result = handler.handle_event("some_event", fl_ctx)
-        assert result is None
-        assert result is None
+        assert isinstance(handler, ClientEventHandler)
+        assert handler.handle_event("some_event", MagicMock()) is None

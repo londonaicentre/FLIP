@@ -90,6 +90,9 @@ class FLJob(SQLModel, table=True):
     # The researcher's GPU override for this run, per trust (FLIP#70). NULL = no override: the job's
     # meta.json resource_spec, or the fl-api default, applies.
     num_gpus: int | None = None
+    # SHA-256 of the credential minted when the job is dispatched; its FL server presents the plaintext on
+    # every callback about the model (auth/job_callback.py). NULL until then.
+    credential_hash: str | None = None
 
     scheduler: Optional["FLScheduler"] = Relationship(back_populates="job")
     trusts: list["Trust"] = Relationship(link_model=FLJobTrust)
@@ -354,11 +357,11 @@ class FLKitSlot(SQLModel, table=True):
     one global slot row covers all nets, so the assignment doesn't need a net_id column.
 
     Lifecycle: rows are seeded at boot from the resolved slot names (one per
-    pre-provisioned FL kit slot; ``resolve_fl_kit_slot_names`` — the
-    ``/flip/fl_kit_slot_names`` SSM parameter in production, the ``FL_KIT_SLOT_NAMES``
-    env var in dev) and additively reconciled from the same source when a registration
-    finds the pool exhausted. ``POST /admin/trusts`` claims the next
-    ``assigned_to_trust_id IS NULL`` row in the same transaction as the trust insert.
+    pre-provisioned FL kit slot; ``resolve_fl_kit_slot_names`` — the complete kits (NVFLARE)
+    or SuperNode key pairs (Flower) in S3 in production,
+    the ``FL_KIT_SLOT_NAMES`` env var in dev) and added to, never deleted, from the same source
+    at every registration. ``POST /admin/trusts`` claims the next ``assigned_to_trust_id IS NULL``
+    row the source still names, in the same transaction as the trust insert.
     """
 
     __tablename__ = "fl_kit_slot"  # type: ignore

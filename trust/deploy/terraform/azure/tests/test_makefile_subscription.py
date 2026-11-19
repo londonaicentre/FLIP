@@ -17,8 +17,13 @@ subscription id. These tests run the real targets with az stubbed on PATH.
 
 from __future__ import annotations
 
+from functools import partial
+
 import pytest
-from conftest import run_make
+from conftest import run_make as run_any_make
+
+# Every test here runs vm/Makefile.
+run_make = partial(run_any_make, root="vm")
 
 
 def test_one_run_reads_the_subscription_once(tmp_path):

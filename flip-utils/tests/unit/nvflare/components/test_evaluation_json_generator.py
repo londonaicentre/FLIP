@@ -11,11 +11,10 @@
 #
 
 import json
-import os
-import tempfile
 from unittest.mock import MagicMock, Mock
 
 import numpy as np
+import pytest
 from nvflare.apis.dxo import DXO, DataKind
 from nvflare.apis.event_type import EventType
 from nvflare.apis.fl_constant import ReturnCode
@@ -55,6 +54,17 @@ class TestEvaluationJsonGenerator:
         self._set_props(data_client, validation_result, model_owner)
         self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
 
+    def _end_run(self, tmp_path):
+        """Fire END_RUN into a fresh run dir; return the results dir (asserted absent beforehand)."""
+        run_dir = tmp_path / "run_1"
+        run_dir.mkdir()
+        self.fl_ctx.get_engine.return_value.get_workspace.return_value.get_run_dir.return_value = str(run_dir)
+        self.fl_ctx.get_job_id.return_value = "job_123"
+        eval_dir = run_dir / self.generator._results_dir
+        assert not eval_dir.exists()
+        self.generator.handle_evaluation_events(EventType.END_RUN, self.fl_ctx)
+        return eval_dir
+
     @staticmethod
     def _metrics(metrics=None, supplementary=None, /, **kwargs):
         """Build the shareable a client returns on a successful validate task, as ``FLModelUtils.to_shareable`` does."""
@@ -84,152 +94,54 @@ class TestEvaluationJsonGenerator:
 
     def test_handle_validation_result_received_success(self):
         """Test successful handling of VALIDATION_RESULT_RECEIVED event"""
-        data_client = "client1"
         metrics_data = {"accuracy": 0.95, "loss": 0.05}
 
-        # Create DXO with METRICS data
-        dxo = DXO(data_kind=DataKind.METRICS, data=metrics_data)
-        shareable = dxo.to_shareable()
+        self._receive("client1", self._metrics(metrics_data))
 
-        self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
-            AppConstants.DATA_CLIENT: data_client,
-            AppConstants.VALIDATION_RESULT: shareable,
-        }.get(key, default)
+        assert self.generator._eval_results["client1"] == metrics_data
 
-        self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
+    @pytest.mark.parametrize(
+        ("client", "result"),
+        [
+            pytest.param(None, MagicMock(), id="no_data_client"),
+            pytest.param("client1", None, id="no_result"),
+            pytest.param("client1", "invalid_shareable", id="unparseable_result"),
+            pytest.param(
+                "client1",
+                DXO(data_kind=DataKind.WEIGHTS, data={"weight": [1, 2, 3]}).to_shareable(),
+                id="wrong_data_kind",
+            ),
+        ],
+    )
+    def test_handle_validation_result_received_records_no_result(self, client, result):
+        """Missing client, missing/unparseable result, or a non-METRICS DXO records no metrics."""
+        self._receive(client, result)
 
-        assert data_client in self.generator._eval_results
-        assert self.generator._eval_results[data_client] == metrics_data
+        assert self.generator._eval_results == {}
 
-    def test_handle_validation_result_received_no_data_client(self):
-        """Test handling when data_client is missing"""
-        self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
-            AppConstants.DATA_CLIENT: None,
-            AppConstants.VALIDATION_RESULT: MagicMock(),
-        }.get(key, default)
+    def test_handle_end_run_creates_json_file(self, tmp_path):
+        """END_RUN creates the results directory and writes the JSON file into it"""
+        self.generator._eval_results = {
+            "client1": {"accuracy": 0.95, "loss": 0.05},
+            "client2": {"accuracy": 0.92, "loss": 0.08},
+        }
 
-        self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
+        eval_dir = self._end_run(tmp_path)
 
-        # Should log error, results should remain empty
-        assert len(self.generator._eval_results) == 0
-
-    def test_handle_validation_result_received_wrong_data_kind(self):
-        """Test handling when DXO has wrong data kind"""
-        data_client = "client1"
-
-        # Create DXO with WEIGHTS data kind instead of METRICS
-        dxo = DXO(data_kind=DataKind.WEIGHTS, data={"weight": [1, 2, 3]})
-        shareable = dxo.to_shareable()
-
-        self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
-            AppConstants.DATA_CLIENT: data_client,
-            AppConstants.VALIDATION_RESULT: shareable,
-        }.get(key, default)
-
-        self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
-
-        # Should not add to results due to wrong data kind
-        assert data_client not in self.generator._eval_results
-
-    def test_handle_validation_result_received_no_result(self):
-        """Test handling when validation result is None"""
-        self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
-            AppConstants.DATA_CLIENT: "client1",
-            AppConstants.VALIDATION_RESULT: None,
-        }.get(key, default)
-
-        self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
-
-        assert len(self.generator._eval_results) == 0
-
-    def test_handle_validation_result_received_exception(self):
-        """Test handling when exception occurs processing result"""
-        self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
-            AppConstants.DATA_CLIENT: "client1",
-            AppConstants.VALIDATION_RESULT: "invalid_shareable",
-        }.get(key, default)
-
-        # Should handle exception gracefully
-        self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
-
-        assert len(self.generator._eval_results) == 0
-
-    def test_handle_end_run_creates_json_file(self):
-        """Test that END_RUN event creates JSON file"""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            run_dir = os.path.join(tmpdir, "run_1")
-            os.makedirs(run_dir)
-
-            # Setup mock engine and workspace
-            mock_workspace = Mock()
-            mock_workspace.get_run_dir.return_value = run_dir
-            mock_engine = Mock()
-            mock_engine.get_workspace.return_value = mock_workspace
-            self.fl_ctx.get_engine.return_value = mock_engine
-            self.fl_ctx.get_job_id.return_value = "job_123"
-
-            # Add some test results
-            self.generator._eval_results = {
-                "client1": {"accuracy": 0.95, "loss": 0.05},
-                "client2": {"accuracy": 0.92, "loss": 0.08},
-            }
-
-            self.generator.handle_evaluation_events(EventType.END_RUN, self.fl_ctx)
-
-            # Check that JSON file was created
-            eval_dir = os.path.join(run_dir, self.generator._results_dir)
-            json_file = os.path.join(eval_dir, self.generator._json_file_name)
-
-            assert os.path.exists(json_file)
-
-            # Verify contents
-            with open(json_file, "r") as f:
-                saved_results = json.load(f)
-
-            assert saved_results == self.generator._eval_results
-
-    def test_handle_end_run_creates_directory_if_not_exists(self):
-        """Test that END_RUN creates results directory if it doesn't exist"""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            run_dir = os.path.join(tmpdir, "run_1")
-            os.makedirs(run_dir)
-
-            mock_workspace = Mock()
-            mock_workspace.get_run_dir.return_value = run_dir
-            mock_engine = Mock()
-            mock_engine.get_workspace.return_value = mock_workspace
-            self.fl_ctx.get_engine.return_value = mock_engine
-            self.fl_ctx.get_job_id.return_value = "job_123"
-
-            self.generator._eval_results = {"client1": {"accuracy": 0.9}}
-
-            eval_dir = os.path.join(run_dir, self.generator._results_dir)
-            assert not os.path.exists(eval_dir)
-
-            self.generator.handle_evaluation_events(EventType.END_RUN, self.fl_ctx)
-
-            assert os.path.exists(eval_dir)
+        assert eval_dir.is_dir()
+        json_file = eval_dir / self.generator._json_file_name
+        assert json_file.exists()
+        assert json.loads(json_file.read_text()) == self.generator._eval_results
 
     def test_handle_multiple_clients(self):
         """Test handling results from multiple clients"""
         clients = ["client1", "client2", "client3"]
 
-        for client in clients:
-            metrics_data = {"accuracy": 0.9 + (0.01 * clients.index(client))}
-            dxo = DXO(data_kind=DataKind.METRICS, data=metrics_data)
-            shareable = dxo.to_shareable()
-
-            self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
-                AppConstants.DATA_CLIENT: client,
-                AppConstants.VALIDATION_RESULT: shareable,
-            }.get(key, default)
-
-            self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
+        for i, client in enumerate(clients):
+            self._receive(client, self._metrics(accuracy=0.9 + 0.01 * i))
 
         assert len(self.generator._eval_results) == 3
         for client in clients:
-            assert client in self.generator._eval_results
-            assert client in self.generator._eval_results
             assert client in self.generator._eval_results
 
     # --- de-fork contract: deduped as a subclass of FLIP's ValidationJsonGenerator ---
@@ -242,33 +154,20 @@ class TestEvaluationJsonGenerator:
     def test_handle_event_is_a_noop(self):
         """Auto-dispatched handle_event must not process events; ServerEventHandler drives
         handle_evaluation_events instead (else each result is recorded twice)."""
-        dxo = DXO(data_kind=DataKind.METRICS, data={"accuracy": 0.9})
-        self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
-            AppConstants.DATA_CLIENT: "c",
-            AppConstants.VALIDATION_RESULT: dxo.to_shareable(),
-        }.get(key, default)
+        self._set_props("c", self._metrics(accuracy=0.9))
 
         self.generator.handle_event(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
 
         assert self.generator._eval_results == {}
 
-    def test_handle_end_run_encodes_numpy_floats(self):
+    def test_handle_end_run_encodes_numpy_floats(self, tmp_path):
         """Gained from the shared base: np.float32 metrics serialise (fork's json.dump raised)."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            run_dir = os.path.join(tmpdir, "run_1")
-            os.makedirs(run_dir)
-            mock_engine = Mock()
-            mock_engine.get_workspace.return_value.get_run_dir.return_value = run_dir
-            self.fl_ctx.get_engine.return_value = mock_engine
-            self.fl_ctx.get_job_id.return_value = "job_123"
-            self.generator._eval_results = {"client1": {"dice": np.float32(0.5)}}
+        self.generator._eval_results = {"client1": {"dice": np.float32(0.5)}}
 
-            self.generator.handle_evaluation_events(EventType.END_RUN, self.fl_ctx)
+        eval_dir = self._end_run(tmp_path)
 
-            json_file = os.path.join(run_dir, self.generator._results_dir, self.generator._json_file_name)
-            with open(json_file) as f:
-                saved = json.load(f)
-            assert saved["client1"]["dice"] == 0.5
+        saved = json.loads((eval_dir / self.generator._json_file_name).read_text())
+        assert saved["client1"]["dice"] == 0.5
 
     # --- FLIP#754: task-level failures must be recorded, not swallowed ---
 
@@ -319,37 +218,19 @@ class TestEvaluationJsonGenerator:
 
         assert self.generator._eval_failures == []
 
-    def test_end_run_writes_failures_file_alongside_results(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            run_dir = os.path.join(tmpdir, "run_1")
-            os.makedirs(run_dir)
-            mock_engine = Mock()
-            mock_engine.get_workspace.return_value.get_run_dir.return_value = run_dir
-            self.fl_ctx.get_engine.return_value = mock_engine
-            self.fl_ctx.get_job_id.return_value = "job_123"
-            self.generator._eval_failures = [{"model": "SRV_model", "client": "Trust_1", "return_code": "TASK_ABORTED"}]
+    def test_end_run_writes_failures_file_alongside_results(self, tmp_path):
+        self.generator._eval_failures = [{"model": "SRV_model", "client": "Trust_1", "return_code": "TASK_ABORTED"}]
 
-            self.generator.handle_evaluation_events(EventType.END_RUN, self.fl_ctx)
+        eval_dir = self._end_run(tmp_path)
 
-            failures_file = os.path.join(run_dir, self.generator._results_dir, PTConstants.EvalFailuresFilename)
-            with open(failures_file) as f:
-                assert json.load(f) == self.generator._eval_failures
+        failures_file = eval_dir / PTConstants.EvalFailuresFilename
+        assert json.loads(failures_file.read_text()) == self.generator._eval_failures
 
-    def test_end_run_writes_empty_failures_file_for_a_clean_run(self):
+    def test_end_run_writes_empty_failures_file_for_a_clean_run(self, tmp_path):
         """The file is always written, so its absence never has to be interpreted."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            run_dir = os.path.join(tmpdir, "run_1")
-            os.makedirs(run_dir)
-            mock_engine = Mock()
-            mock_engine.get_workspace.return_value.get_run_dir.return_value = run_dir
-            self.fl_ctx.get_engine.return_value = mock_engine
-            self.fl_ctx.get_job_id.return_value = "job_123"
+        eval_dir = self._end_run(tmp_path)
 
-            self.generator.handle_evaluation_events(EventType.END_RUN, self.fl_ctx)
-
-            failures_file = os.path.join(run_dir, self.generator._results_dir, PTConstants.EvalFailuresFilename)
-            with open(failures_file) as f:
-                assert json.load(f) == []
+        assert json.loads((eval_dir / PTConstants.EvalFailuresFilename).read_text()) == []
 
     # --- FLIP#754: GlobalModelEval sends one validate task per (model, client) ---
 

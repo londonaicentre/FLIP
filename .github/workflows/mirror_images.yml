@@ -1,0 +1,64 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Keeps ghcr.io/londonaicentre/mirror/ at trust/deploy/mirror-images.manifest (FLIP#1721): the
+# third-party images a trust node runs, copied by digest so a site allowlists GHCR alone. A push to
+# develop or main copies what is missing; a pull request only checks (upstream still serves each
+# digest, every mirror exists at it). Dispatch it on a bump branch before the PR merges, so no branch
+# ever names a mirror that is not there yet. Pushes with GITHUB_TOKEN: a mirror package created by
+# hand must grant this repository write access (package settings → Manage Actions access).
+
+name: Mirror third-party images
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, develop]
+    paths:
+      - "trust/deploy/mirror-images.manifest"
+      - "scripts/mirror_images.sh"
+      - ".github/workflows/mirror_images.yml"
+  pull_request:
+    paths:
+      - "trust/deploy/mirror-images.manifest"
+      - "scripts/mirror_images.sh"
+      - ".github/workflows/mirror_images.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    # Forks cannot push to ghcr.io/londonaicentre.
+    if: github.repository == 'londonaicentre/FLIP'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      # On a pull request the token is read-only; the login still lets the check see a mirror
+      # that is not public yet.
+      - name: Log in to GitHub Container Registry
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+
+      - name: Check the mirror
+        if: github.event_name == 'pull_request'
+        run: bash scripts/mirror_images.sh --check
+
+      - name: Mirror what is missing
+        if: github.event_name != 'pull_request'
+        run: bash scripts/mirror_images.sh

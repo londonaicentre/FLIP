@@ -24,12 +24,17 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import roster from "../../mocks/demo/roster.json";
 import { demoUserId, runCli, scan, sentinels } from "../assert-no-demo-artefacts.mjs";
 
 let dist: string;
 
 function makeIo() {
-    return { log: vi.fn(), error: vi.fn(), exit: vi.fn() };
+    return {
+        log: vi.fn(),
+        error: vi.fn(),
+        exit: vi.fn()
+    };
 }
 
 /** Write a file into the fake dist tree, creating parents. */
@@ -44,11 +49,14 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-    rmSync(dist, { recursive: true, force: true });
+    rmSync(dist, {
+        recursive: true,
+        force: true
+    });
 });
 
 describe("sentinels", () => {
-    it("reads the demo user id out of the register instead of hardcoding it", () => {
+    it("reads the demo user id out of the roster instead of hardcoding it", () => {
         // If this drifts, the check is asserting on a value nothing emits and
         // would pass a build that genuinely leaked.
         expect(demoUserId()).toMatch(/^[0-9a-f-]{36}$/i);
@@ -58,8 +66,8 @@ describe("sentinels", () => {
     it("covers each class of recorded content", () => {
         const needles = sentinels().map(s => s.needle);
         expect(needles).toContain("WITH project_images AS");
-        expect(needles).toContain("Bangkok Dusit Medical Services");
-        expect(needles).toContain("Running in Ark+ demo mode");
+        expect(needles).toContain(roster.sites[0].id);
+        expect(needles).toContain("Running in FLIP demo mode");
     });
 
     it("covers the Mirage/Pretender library code, not just register data", () => {
@@ -103,13 +111,14 @@ describe("scan", () => {
     });
 
     it("scans nested directories and non-JS text output", () => {
-        write("static/nested/deep/chunk.js", "'Bangkok Dusit Medical Services'");
-        write("index.html", "<!-- Running in Ark+ demo mode -->");
+        write("static/nested/deep/chunk.js", `'${roster.sites[0].id}'`);
+        write("index.html", "<!-- Running in FLIP demo mode -->");
 
         expect(scan(dist).hits).toHaveLength(2);
     });
 
     it("ignores binary asset formats", () => {
+        write("assets/index-abc123.js", "clean");
         write("assets/font.woff2", `binary ${demoUserId()} blob`);
         expect(scan(dist).hits).toHaveLength(0);
     });
@@ -132,6 +141,17 @@ describe("runCli", () => {
         expect(runCli([dist], io)).toBe(1);
         expect(io.exit).toHaveBeenCalledWith(1);
         expect(io.error.mock.calls.map(c => c[0]).join("\n")).toContain("index.js");
+    });
+
+    it("fails rather than passing vacuously when the build output holds no scannable file", () => {
+        // A dist that exists but is empty (a build that wrote nothing, or wrote
+        // only images) is the same vacuous pass as a missing one.
+        write("assets/logo.png", "not scanned");
+        const io = makeIo();
+
+        expect(runCli([dist], io)).toBe(1);
+        expect(io.exit).toHaveBeenCalledWith(1);
+        expect(io.error.mock.calls[0][0]).toContain("no build output");
     });
 
     it("fails rather than passing vacuously when there is no build output", () => {

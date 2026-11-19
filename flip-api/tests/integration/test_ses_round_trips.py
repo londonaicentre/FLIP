@@ -31,6 +31,7 @@ template handling.
 import json
 from uuid import UUID, uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import select
 
@@ -147,10 +148,8 @@ def _seed_completed_imaging_task(session, trust_id: UUID, project_id: UUID) -> T
     return task
 
 
-def test_handle_imaging_task_sends_one_email_per_user_and_persists_status(
-    session, ses_send_email_recorder, trust_factory, project_factory
-):
-    """Status row gets persisted; one email per user (created + added)."""
+@pytest.fixture
+def trust_and_project(session, trust_factory, project_factory):
     trust = trust_factory()
     project = project_factory()
     session.add(trust)
@@ -159,6 +158,25 @@ def test_handle_imaging_task_sends_one_email_per_user_and_persists_status(
     # Latest query for the project — required by the persistence helper.
     session.add(Queries(id=uuid4(), name="b2-q", query="select 1", project_id=project.id, created_by=uuid4()))
     session.commit()
+    return trust, project
+
+
+def _statuses(session, trust, project) -> list[XNATProjectStatus]:
+    return list(
+        session.exec(
+            select(XNATProjectStatus).where(
+                XNATProjectStatus.trust_id == trust.id,
+                XNATProjectStatus.project_id == project.id,
+            )
+        ).all()
+    )
+
+
+def test_handle_imaging_task_sends_one_email_per_user_and_persists_status(
+    session, ses_send_email_recorder, trust_and_project
+):
+    """Status row gets persisted; one email per user (created + added)."""
+    trust, project = trust_and_project
     task = _seed_completed_imaging_task(session, trust.id, project.id)
 
     handle_imaging_task_completed(task, session)
@@ -168,55 +186,31 @@ def test_handle_imaging_task_sends_one_email_per_user_and_persists_status(
     assert template_names.count(IMAGING_PROJECT_ACCESS_TEMPLATE_NAME) == 1
 
     # Status row: persisted exactly once.
-    statuses = session.exec(
-        select(XNATProjectStatus).where(
-            XNATProjectStatus.trust_id == trust.id,
-            XNATProjectStatus.project_id == project.id,
-        )
-    ).all()
+    statuses = _statuses(session, trust, project)
     assert len(statuses) == 1
     assert statuses[0].retrieve_image_status == XNATImageStatus.CREATED
 
 
-def test_handle_imaging_task_idempotent_on_status_row(session, ses_send_email_recorder, trust_factory, project_factory):
+def test_handle_imaging_task_idempotent_on_status_row(session, ses_send_email_recorder, trust_and_project):
     """Re-running for the same trust+project must not double-insert the status row.
 
     Locks in the explicit "skip if already exists from a prior attempt"
     branch in ``handle_imaging_task_completed`` — if that branch ever
     silently regresses, the duplicate row is a real DB problem.
     """
-    trust = trust_factory()
-    project = project_factory()
-    session.add(trust)
-    session.add(project)
-    session.commit()
-    session.add(Queries(id=uuid4(), name="b2-q", query="select 1", project_id=project.id, created_by=uuid4()))
-    session.commit()
+    trust, project = trust_and_project
     task = _seed_completed_imaging_task(session, trust.id, project.id)
 
     handle_imaging_task_completed(task, session)
     handle_imaging_task_completed(task, session)
 
-    statuses = session.exec(
-        select(XNATProjectStatus).where(
-            XNATProjectStatus.trust_id == trust.id,
-            XNATProjectStatus.project_id == project.id,
-        )
-    ).all()
+    statuses = _statuses(session, trust, project)
     assert len(statuses) == 1
 
 
-def test_handle_imaging_task_no_users_skips_email_path(
-    session, ses_send_email_recorder, trust_factory, project_factory
-):
+def test_handle_imaging_task_no_users_skips_email_path(session, ses_send_email_recorder, trust_and_project):
     """A completed task with no created/added users should not call SES."""
-    trust = trust_factory()
-    project = project_factory()
-    session.add(trust)
-    session.add(project)
-    session.commit()
-    session.add(Queries(id=uuid4(), name="b2-q", query="select 1", project_id=project.id, created_by=uuid4()))
-    session.commit()
+    trust, project = trust_and_project
     task = TrustTask(
         id=uuid4(),
         trust_id=trust.id,

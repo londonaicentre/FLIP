@@ -48,9 +48,12 @@ case "$1 $2" in
         printf '%s\\n' "$KIT_JSON" ;;
 esac
 """
-# The kit writer: record that it ran, swallow the kit, exit as told.
+# The kit writer: record that it ran, swallow the kit, exit as told. The hub-shared sync reads no
+# stdin (the script closes it), so the stub never drains it there: a terminal would block on it.
 STUB_UV = """#!/usr/bin/env bash
-printf 'uv %s\\n' "$*" >>"$CALLS"; cat >/dev/null; exit "${UV_EXIT:-0}"
+printf 'uv %s\\n' "$*" >>"$CALLS"
+case "$*" in *sync_trust_kit.py*) exit "${SYNC_EXIT:-0}" ;; esac
+cat >/dev/null; exit "${UV_EXIT:-0}"
 """
 
 pytestmark = pytest.mark.skipif(shutil.which("jq") is None, reason="jq not installed")
@@ -80,6 +83,7 @@ def _rotate(tmp_path: Path, kits: int = 1, **env: str) -> tuple[int, list[str], 
             "AWS_REGION": "eu-west-2",
             "KIT": "T0",
             "ROTATE_KEYS": "1",
+            "ENV_CLASS": "stag",
             "KIT_FILES": " ".join(kit_files),
             "KIT_JSON": json.dumps(KIT),
             **env,
@@ -116,6 +120,16 @@ def test_a_failed_kit_write_keeps_the_parameter(tmp_path: Path) -> None:
     _failed_after_the_task(code, calls, out)
     assert not _ran(calls, "ssm delete-parameter")
     assert "still in SSM parameter" in out
+
+
+def test_a_failed_sync_after_the_write_says_the_rotation_happened(tmp_path: Path) -> None:
+    code, calls, out = _rotate(tmp_path, SYNC_EXIT="1", MAIN_ENV_FILE="/hub/.env.stag")
+    _failed_after_the_task(code, calls, out)
+    assert _ran(calls, "ssm delete-parameter"), "the kit file holds the keys, so the parameter goes"
+    assert "the hub refuses the old key" in out
+    assert "Do not re-run rotate-trust-keys" in out
+    assert "/hub/.env.stag" in out
+    assert "make sync-trust-kit KIT=T0 HUB=stag" in out
 
 
 def test_a_failed_ssm_read_keeps_the_parameter(tmp_path: Path) -> None:

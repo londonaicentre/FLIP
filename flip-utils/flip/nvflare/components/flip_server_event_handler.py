@@ -12,6 +12,7 @@
 
 from nvflare.apis.event_type import EventType
 from nvflare.apis.fl_component import FLComponent
+from nvflare.apis.fl_constant import FLContextKey
 from nvflare.apis.fl_context import FLContext
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
@@ -126,6 +127,32 @@ class ServerEventHandler(FLComponent):
             event_type=event,
             global_round=current_round + 1,
             details=details,
+        )
+
+    def _report_client_contact(self, fl_ctx: FLContext, lost: bool) -> None:
+        """Tell the hub which trust FLARE lost during the run, or got back, and in which round (FLIP#1428).
+
+        FLARE deems a client disconnected when it stops answering for this job, for example because the
+        trust could not start its job pod. The job then ends with a bare ERROR, so this row is what says
+        which trust and when. The client knows the exact cause but holds no hub credentials. A disconnect
+        is provisional: when the client answers again FLARE carries on, and a second row says so, so the
+        first is not read as the reason a run failed.
+
+        Args:
+            fl_ctx (FLContext): The FL context carrying the client's name.
+            lost (bool): True for FLARE's disconnected event, False for its reconnected one.
+        """
+        name_key = FLContextKey.DISCONNECTED_CLIENT_NAME if lost else FLContextKey.RECONNECTED_CLIENT_NAME
+        client_name = fl_ctx.get_prop(name_key)
+        if not client_name:
+            return
+        current_round = fl_ctx.get_prop(AppConstants.CURRENT_ROUND)
+        self.flip.send_event(
+            model_id=self._resolve_model_id(fl_ctx),
+            event_type=FLLogEvent.CLIENT_LOST if lost else FLLogEvent.CLIENT_RETURNED,
+            global_round=None if current_round is None else current_round + 1,
+            client_name=client_name,
+            success=not lost,
         )
 
     def _expected_client_count(self, fl_ctx: FLContext) -> int | None:
@@ -257,6 +284,12 @@ class ServerEventHandler(FLComponent):
         elif event_type == FlipEvents.ABORTED:
             self.log_info(fl_ctx, "Aborted event received")
             self.final_status = ModelStatus.STOPPED
+
+        elif event_type == EventType.CLIENT_DISCONNECTED:
+            self._report_client_contact(fl_ctx, lost=True)
+
+        elif event_type == EventType.CLIENT_RECONNECTED:
+            self._report_client_contact(fl_ctx, lost=False)
 
         elif event_type == EventType.START_RUN:
             self.log_info(fl_ctx, "Start run event received")

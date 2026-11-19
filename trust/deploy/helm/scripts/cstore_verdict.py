@@ -204,16 +204,11 @@ def build_evidence(env: Mapping[str, str]) -> dict:
     pod_lines = _nonblank(env.get("POD_LOG", ""))
     received_lines = _nonblank(env.get("NEW_RECEIVED", ""))
     sender_ae = (env.get("SENDER_AE") or "").strip()
-    # Prefer lines whose calling AE is SENDER_AE when they are distinguishable, so an unrelated
-    # sender's receipts are set aside. This narrows the evidence; it does not identify the object.
-    # A DQR/C-MOVE retrieval reaches XNAT from the same Orthanc under the same calling AE, no line
-    # carries the AE on some receivers (the fallback below keeps all lines), and the shell's poll
-    # stop condition tests the unfiltered set. So what this evidence shows is a new receipt during
-    # the window, preferring SENDER_AE lines when they are distinguishable — not that the object
-    # received is the one this smoke sent. A concurrent import from the same PACS cannot be told
-    # apart; matching the stored object properly (a value anon_script.das leaves intact, or the
-    # hashed SOP UID in the stored file name) is a follow-up. The importer-crash signatures are
-    # unaffected: they fail the run whichever import hits them.
+    # Prefer SENDER_AE's lines when any carry it. This narrows, it does not identify: a DQR/C-MOVE
+    # retrieval from the same Orthanc arrives under the same calling AE, some receivers log no AE (the
+    # fallback below keeps all lines), and the shell's poll stops on the unfiltered set. Matching the
+    # stored object (a value anon_script.das keeps, or the hashed SOP UID in its file name) is a
+    # follow-up. Importer-crash signatures still fail the run whichever import hits them.
     if sender_ae:
         mine = [line for line in received_lines if f"{sender_ae}@" in line]
         if mine:
