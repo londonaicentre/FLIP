@@ -22,6 +22,7 @@ from flip.nvflare.runtime import (
     FLIP_MODEL_ID_KEY,
     get_app_config,
     get_flip_model_id,
+    get_flip_project_id,
     get_job_custom_props,
 )
 
@@ -160,3 +161,27 @@ def test_app_config_never_opens_a_non_path_as_a_file_descriptor(app_dir):
 
     assert get_app_config(ctx) == {}
     os.fstat(1)  # raises EBADF if the read closed stdout
+
+
+# ── the job's project id, which the FL API writes into config_fed_client.json ────────
+
+
+def _ctx_client_config(tmp_path, config):
+    path = tmp_path / "config_fed_client.json"
+    path.write_text(json.dumps(config))
+    ctx = _ctx_workspace()
+    ctx.get_engine.return_value.get_workspace.return_value.get_client_app_config_file_path.return_value = str(path)
+    return ctx
+
+
+def test_project_id_is_read_from_the_client_config(tmp_path):
+    assert get_flip_project_id(_ctx_client_config(tmp_path, {"project_id": _VALID})) == _VALID
+
+
+@pytest.mark.parametrize("config", [{}, {"project_id": "{project_id}"}, {"project_id": "../net-2"}, ["project_id"]])
+def test_project_id_is_none_unless_it_is_a_uuid(tmp_path, config):
+    assert get_flip_project_id(_ctx_client_config(tmp_path, config)) is None
+
+
+def test_project_id_is_none_without_an_engine():
+    assert get_flip_project_id(_ctx_workspace(engine=False)) is None

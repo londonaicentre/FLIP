@@ -106,6 +106,16 @@ def get_app_config(fl_ctx: FLContext) -> dict[str, Any]:
     )
 
 
+def get_flip_project_id(fl_ctx: FLContext) -> str | None:
+    """Return the job's FLIP project id, which the FL API writes into ``config_fed_client.json``, or None.
+
+    None unless the value is a UUID, so a caller can compare it with a folder name safely.
+    """
+    config = _read_run_json(fl_ctx, lambda ws, job_id: ws.get_client_app_config_file_path(job_id)) or {}
+    candidate = config.get("project_id")
+    return str(candidate) if candidate and Utils.is_valid_uuid(candidate) else None
+
+
 def get_flip_model_id(fl_ctx: FLContext, fallback: str | None = None) -> str:
     """Resolve the FLIP ``model_id`` for the current job.
 

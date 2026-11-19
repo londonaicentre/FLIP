@@ -10,252 +10,160 @@
 # limitations under the License.
 #
 
-import os
-import tempfile
 from unittest.mock import MagicMock, patch
 
 import pytest
+from nvflare.apis.event_type import EventType
 from nvflare.apis.fl_constant import ReturnCode
 
 from flip.constants import FlipTasks
 from flip.nvflare.components.cleanup import CleanupImages
 
+PROJECT = "abcdef01-2345-6789-abcd-ef0123456789"
+OTHER_PROJECT = "00000000-0000-0000-0000-000000000001"
 
-class TestCleanupImages:
-    def test_init(self):
-        """Test that CleanupImages initializes correctly"""
-        cleanup = CleanupImages()
-        assert cleanup is not None
 
-    @patch("flip.nvflare.components.cleanup.FlipConstants")
-    def test_execute_post_validation_dev_mode(self, mock_constants):
-        """Test POST_VALIDATION task in dev mode"""
-        mock_constants.IMAGES_TRANSPORT = "mount"
-        mock_constants.LOCAL_DEV = True
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            job_id = "test_job_123"
-            job_dir = os.path.join(tmpdir, job_id)
-            os.makedirs(job_dir, exist_ok=True)
-
-            cleanup = CleanupImages()
-            fl_ctx = MagicMock()
-            fl_ctx.get_peer_context.return_value = None
-            fl_ctx.get_job_id.return_value = job_id
-            fl_ctx.get_identity_name.return_value = "test_client"
-            shareable = MagicMock()
-            abort_signal = MagicMock()
-
-            with patch("os.getcwd", return_value=tmpdir):
-                cleanup.execute(FlipTasks.POST_VALIDATION, shareable, fl_ctx, abort_signal)
-
-            # In dev mode, directory should NOT be deleted
-            assert os.path.exists(job_dir)
-
-    @patch("flip.nvflare.components.cleanup.FlipConstants")
-    def test_execute_init_training_dev_mode(self, mock_constants):
-        """Test INIT_TRAINING task in dev mode"""
-        mock_constants.IMAGES_TRANSPORT = "mount"
-        mock_constants.LOCAL_DEV = True
-
-        cleanup = CleanupImages()
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        fl_ctx.get_job_id.return_value = "test_job"
-        fl_ctx.get_identity_name.return_value = "test_client"
-        shareable = MagicMock()
-        abort_signal = MagicMock()
-
-        result = cleanup.execute(FlipTasks.INIT_TRAINING, shareable, fl_ctx, abort_signal)
-
-        assert result.get_return_code() == ReturnCode.OK
-
-    def test_execute_unknown_task(self):
-        """Test execution with unknown task"""
-        cleanup = CleanupImages()
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        fl_ctx.get_job_id.return_value = "test_job"
-        fl_ctx.get_identity_name.return_value = "test_client"
-        shareable = MagicMock()
-        abort_signal = MagicMock()
-
-        result = cleanup.execute("UNKNOWN_TASK", shareable, fl_ctx, abort_signal)
-
-        assert result.get_return_code() == ReturnCode.TASK_UNKNOWN
-
-    @patch("flip.nvflare.components.cleanup.FlipConstants")
-    @patch("shutil.rmtree")
-    def test_execute_post_validation_production_mode(self, mock_rmtree, mock_constants):
-        """Test POST_VALIDATION task in production mode deletes job directory"""
+@pytest.fixture
+def constants(tmp_path):
+    with patch("flip.nvflare.components.cleanup.FlipConstants") as mock_constants:
         mock_constants.IMAGES_TRANSPORT = "mount"
         mock_constants.LOCAL_DEV = False
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            job_id = "test_job_123"
-            job_dir = os.path.join(tmpdir, job_id)
-            os.makedirs(job_dir, exist_ok=True)
-
-            cleanup = CleanupImages()
-            fl_ctx = MagicMock()
-            fl_ctx.get_peer_context.return_value = None
-            fl_ctx.get_job_id.return_value = job_id
-            fl_ctx.get_identity_name.return_value = "test_client"
-            shareable = MagicMock()
-            abort_signal = MagicMock()
-
-            with patch("os.getcwd", return_value=tmpdir):
-                with patch("os.path.isdir", return_value=True):
-                    cleanup.execute(FlipTasks.POST_VALIDATION, shareable, fl_ctx, abort_signal)
-
-            # In production mode, rmtree should be called to delete job_dir
-            mock_rmtree.assert_called()
-
-    @patch("flip.nvflare.components.cleanup.FlipConstants")
-    def test_execute_init_training_production_mode_no_directory(self, mock_constants):
-        """Test INIT_TRAINING in production mode when net_directory doesn't exist"""
-        mock_constants.IMAGES_TRANSPORT = "mount"
-        mock_constants.LOCAL_DEV = False
-        mock_constants.IMAGES_DIR = "/images"
+        mock_constants.IMAGES_DIR = str(tmp_path / "images")
         mock_constants.NET_ID = "net-1"
+        yield mock_constants
 
-        cleanup = CleanupImages()
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        fl_ctx.get_job_id.return_value = "test_job"
-        fl_ctx.get_identity_name.return_value = "test_client"
-        shareable = MagicMock()
-        abort_signal = MagicMock()
 
-        with patch("os.path.exists", return_value=False):
-            result = cleanup.execute(FlipTasks.INIT_TRAINING, shareable, fl_ctx, abort_signal)
+@pytest.fixture
+def project_id():
+    with patch("flip.nvflare.components.cleanup.get_flip_project_id", return_value=PROJECT) as mock_get:
+        yield mock_get
 
-        assert result.get_return_code() == ReturnCode.OK
 
-    @patch("flip.nvflare.components.cleanup.FlipConstants")
-    @patch("shutil.rmtree")
-    @patch("os.unlink")
-    def test_execute_init_training_production_mode_with_files(self, mock_unlink, mock_rmtree, mock_constants):
-        """Test INIT_TRAINING in production mode with files and directories to clean"""
-        mock_constants.IMAGES_TRANSPORT = "mount"
-        mock_constants.LOCAL_DEV = False
-        mock_constants.IMAGES_DIR = "/images"
-        mock_constants.NET_ID = "net-1"
+def _study(tmp_path, project, accession="ACC001"):
+    study = tmp_path / "images" / "net-1" / project / accession / "a.dcm"
+    study.parent.mkdir(parents=True)
+    study.write_bytes(b"dicom")
+    return study
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            net_dir = os.path.join(tmpdir, "net-1")
-            os.makedirs(net_dir)
 
-            # Create test files and directories
-            test_file = os.path.join(net_dir, "test_file.txt")
-            test_dir = os.path.join(net_dir, "test_dir")
-            with open(test_file, "w") as f:
-                f.write("test")
-            os.makedirs(test_dir)
+def _fl_ctx(job_id="test_job"):
+    fl_ctx = MagicMock()
+    fl_ctx.get_peer_context.return_value = None
+    fl_ctx.get_job_id.return_value = job_id
+    return fl_ctx
 
-            cleanup = CleanupImages()
-            fl_ctx = MagicMock()
-            fl_ctx.get_peer_context.return_value = None
-            fl_ctx.get_job_id.return_value = "test_job"
-            fl_ctx.get_identity_name.return_value = "test_client"
-            shareable = MagicMock()
-            abort_signal = MagicMock()
 
-            with patch("os.path.exists", return_value=True):
-                with patch("os.listdir", return_value=["test_file.txt", "test_dir"]):
-                    with patch("os.path.isfile") as mock_isfile:
-                        with patch("os.path.isdir") as mock_isdir:
-                            # First call for file, second for directory
-                            mock_isfile.side_effect = [True, False]
-                            mock_isdir.side_effect = [False, True]
+def _cleanup():
+    """A CleanupImages with its warnings and errors recorded: NVFLARE's own fire an event, which needs a real fl_ctx."""
+    cleanup = CleanupImages()
+    cleanup.log_warning = MagicMock()
+    cleanup.log_error = MagicMock()
+    return cleanup
 
-                            with patch("flip.nvflare.components.cleanup.Path") as mock_path:
-                                mock_path_instance = MagicMock()
-                                mock_path_instance.glob.return_value = []
-                                mock_path.return_value = mock_path_instance
 
-                                result = cleanup.execute(FlipTasks.INIT_TRAINING, shareable, fl_ctx, abort_signal)
+def _run(task, fl_ctx=None):
+    return _cleanup().execute(task, MagicMock(), fl_ctx or _fl_ctx(), MagicMock())
 
-            assert result.get_return_code() == ReturnCode.OK
-            # Verify cleanup functions were called
-            assert mock_unlink.called or mock_rmtree.called
 
-    @patch("flip.nvflare.components.cleanup.FlipConstants")
-    @patch("shutil.rmtree")
-    @patch("os.unlink")
-    def test_execute_post_validation_production_mode_with_files(self, mock_unlink, mock_rmtree, mock_constants):
-        """Test POST_VALIDATION in production mode with files and directories to clean"""
-        mock_constants.IMAGES_TRANSPORT = "mount"
-        mock_constants.LOCAL_DEV = False
-        mock_constants.IMAGES_DIR = "/images"
-        mock_constants.NET_ID = "net-1"
+@pytest.mark.parametrize("task", [FlipTasks.INIT_TRAINING, FlipTasks.INIT_TASK])
+def test_the_start_of_a_job_keeps_what_its_trainer_already_downloaded(constants, project_id, tmp_path, task):
+    """The trainer starts before the first task and may already be downloading (FLIP#1830)."""
+    own = _study(tmp_path, PROJECT)
+    other = _study(tmp_path, OTHER_PROJECT)
+    upload = tmp_path / "images" / "net-1" / "upload"
+    upload.mkdir()
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            job_id = "test_job_123"
-            job_dir = os.path.join(tmpdir, job_id)
-            os.makedirs(job_dir)
+    assert _run(task).get_return_code() == ReturnCode.OK
 
-            cleanup = CleanupImages()
-            fl_ctx = MagicMock()
-            fl_ctx.get_peer_context.return_value = None
-            fl_ctx.get_job_id.return_value = job_id
-            fl_ctx.get_identity_name.return_value = "test_client"
-            shareable = MagicMock()
-            abort_signal = MagicMock()
+    assert own.read_bytes() == b"dicom"
+    assert not other.parent.parent.exists()
+    assert not upload.exists()
 
-            with patch("os.getcwd", return_value=tmpdir):
-                with patch("os.path.isdir", return_value=True):
-                    with patch("os.path.exists", return_value=True):
-                        with patch("os.listdir", return_value=["file1.txt"]):
-                            with patch("os.path.isfile", return_value=True):
-                                with patch("flip.nvflare.components.cleanup.Path") as mock_path:
-                                    mock_path_instance = MagicMock()
-                                    mock_path_instance.glob.return_value = []
-                                    mock_path.return_value = mock_path_instance
 
-                                    result = cleanup.execute(FlipTasks.POST_VALIDATION, shareable, fl_ctx, abort_signal)
+def test_without_a_project_id_the_start_of_a_job_deletes_every_project(constants, project_id, tmp_path):
+    project_id.return_value = None
+    study = _study(tmp_path, PROJECT)
 
-            assert result.get_return_code() == ReturnCode.OK
+    assert _run(FlipTasks.INIT_TRAINING).get_return_code() == ReturnCode.OK
 
-    @patch("flip.nvflare.components.cleanup.FlipConstants")
-    def test_execute_exception_handling(self, mock_constants):
-        """Test exception handling in execute method"""
-        mock_constants.IMAGES_TRANSPORT = "mount"
-        mock_constants.LOCAL_DEV = False
+    assert list((tmp_path / "images" / "net-1").iterdir()) == []
+    assert not study.exists()
 
-        cleanup = CleanupImages()
-        cleanup.log_info = MagicMock()
-        cleanup.log_error = MagicMock()
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        shareable = MagicMock()
-        abort_signal = MagicMock()
 
-        # Force an exception by making get_job_id raise
-        with patch("os.getcwd", side_effect=Exception("Test exception")):
-            result = cleanup.execute(FlipTasks.POST_VALIDATION, shareable, fl_ctx, abort_signal)
+def test_the_end_of_the_run_deletes_every_project(constants, project_id, tmp_path):
+    """ABOUT_TO_END_RUN fires when the job completes, fails or is aborted, with no task from the server."""
+    _study(tmp_path, PROJECT)
+    _study(tmp_path, OTHER_PROJECT)
 
-        assert result.get_return_code() == ReturnCode.EXECUTION_EXCEPTION
-        assert result.get_header("exception") is not None
+    _cleanup().handle_event(EventType.ABOUT_TO_END_RUN, _fl_ctx())
+
+    assert list((tmp_path / "images" / "net-1").iterdir()) == []
+
+
+def test_an_error_at_the_end_of_the_run_is_logged_not_raised(constants, tmp_path):
+    _study(tmp_path, PROJECT)
+    cleanup = _cleanup()
+
+    with patch("flip.nvflare.components.cleanup.shutil.rmtree", side_effect=OSError("busy")):
+        cleanup.handle_event(EventType.ABOUT_TO_END_RUN, _fl_ctx())
+
+    cleanup.log_error.assert_called_once()
+
+
+@pytest.mark.parametrize("task", [FlipTasks.POST_VALIDATION, FlipTasks.POST_TASK])
+def test_the_last_task_deletes_the_job_directory_and_leaves_images_to_the_end_of_the_run(
+    constants, tmp_path, monkeypatch, task
+):
+    job_dir = tmp_path / "workspace" / "test_job"
+    job_dir.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path / "workspace")
+    study = _study(tmp_path, PROJECT)
+
+    assert _run(task).get_return_code() == ReturnCode.OK
+
+    assert not job_dir.exists()
+    assert study.exists()
+
+
+def test_dev_mode_deletes_nothing(constants, project_id, tmp_path, monkeypatch):
+    constants.LOCAL_DEV = True
+    job_dir = tmp_path / "workspace" / "test_job"
+    job_dir.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path / "workspace")
+    study = _study(tmp_path, OTHER_PROJECT)
+
+    for task in (FlipTasks.INIT_TRAINING, FlipTasks.POST_VALIDATION):
+        assert _run(task).get_return_code() == ReturnCode.OK
+    _cleanup().handle_event(EventType.ABOUT_TO_END_RUN, _fl_ctx())
+
+    assert job_dir.exists()
+    assert study.exists()
+
+
+def test_a_missing_net_folder_is_nothing_to_clean(constants, project_id):
+    assert _run(FlipTasks.INIT_TRAINING).get_return_code() == ReturnCode.OK
+
+
+def test_an_unknown_task_is_refused():
+    assert _run("UNKNOWN_TASK").get_return_code() == ReturnCode.TASK_UNKNOWN
+
+
+def test_a_failing_task_reports_its_traceback(constants):
+    with patch("os.getcwd", side_effect=Exception("Test exception")):
+        result = _run(FlipTasks.POST_VALIDATION)
+
+    assert result.get_return_code() == ReturnCode.EXECUTION_EXCEPTION
+    assert result.get_header("exception") is not None
 
 
 @pytest.mark.parametrize("transport", ["project", "stream"])
-@patch("flip.nvflare.components.cleanup.FlipConstants")
-def test_a_job_that_does_not_mount_the_net_folder_deletes_no_images(mock_constants, transport, tmp_path):
+def test_a_job_that_does_not_mount_the_net_folder_deletes_no_images(constants, project_id, transport, tmp_path):
     """Its images, if any, are a read-only mount of imaging-api's cache (FLIP#1678), or none at all (FLIP#1049)."""
-    mock_constants.LOCAL_DEV = False
-    mock_constants.IMAGES_TRANSPORT = transport
-    mock_constants.IMAGES_DIR = str(tmp_path)
-    mock_constants.NET_ID = "net-1"
-    study = tmp_path / "net-1" / "project" / "ACC001" / "a.nii.gz"
-    study.parent.mkdir(parents=True)
-    study.write_bytes(b"nifti")
-    fl_ctx = MagicMock()
-    fl_ctx.get_peer_context.return_value = None
-    fl_ctx.get_job_id.return_value = "test_job"
+    constants.IMAGES_TRANSPORT = transport
+    study = _study(tmp_path, OTHER_PROJECT)
 
     for task in (FlipTasks.INIT_TRAINING, FlipTasks.POST_VALIDATION):
-        result = CleanupImages().execute(task, MagicMock(), fl_ctx, MagicMock())
-        assert result.get_return_code() == ReturnCode.OK
+        assert _run(task).get_return_code() == ReturnCode.OK
+    _cleanup().handle_event(EventType.ABOUT_TO_END_RUN, _fl_ctx())
 
-    assert study.read_bytes() == b"nifti"
+    assert study.read_bytes() == b"dicom"
