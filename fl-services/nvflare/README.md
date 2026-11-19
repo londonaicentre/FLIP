@@ -44,10 +44,11 @@ Provisioning mints, per participant, a signed **startup kit** under `provision/w
 
 ## Images: built in CI, or locally as `:dev`
 
-The four FL images — `flare-fl-base`, `flare-fl-server`, `flare-fl-client`, `flare-fl-api` — are built
+The four core FL images — `flare-fl-base`, `flare-fl-server`, `flare-fl-client`, `flare-fl-api` — are built
 in CI by [`fl-docker-build-nvflare.yml`](../../.github/workflows/fl-docker-build-nvflare.yml) whenever
 `fl-services/nvflare/**` or `flip-utils/**` change, and published to GHCR as `:<sha>`, `:stag` (on `develop`)
-and `:prod` (on `main`). The same workflow builds `flare-fl-client-segmentation` on the client image: see
+and `:prod` (on `main`). The same workflow builds a fifth, `flare-fl-client-segmentation`, on the client image, in a job that may fail
+without failing the run: see
 [`fl-client-segmentation/README.md`](./fl-client-segmentation/README.md).
 Deployments pull them via `DOCKER_FL_TAG`, so a change to fl-api code or the `flip` package flows into the
 next deployment on that tag.

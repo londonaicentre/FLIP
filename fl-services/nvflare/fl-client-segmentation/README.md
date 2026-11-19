@@ -29,8 +29,8 @@ unchanged:
 | `uv sync --frozen ... --extra segmentation` | The packages `flip-utils/uv.lock` adds for the extra. No package of the client image changes version | about 1.1 GB |
 | `COPY --from=weights` | TotalSegmentator's weights for the tasks in the `TOTALSEG_TASKS` build argument (default `total`), under `/opt/totalsegmentator` (`TOTALSEG_HOME_DIR`) | about 1.4 GB |
 
-The weights are downloaded in a build stage of their own and checked against the `TOTALSEG_WEIGHTS_SHA256`
-build argument, so a changed download fails the build. Their timestamps are fixed, so the same weights give
+The weights are downloaded in a build stage of their own and the directory, `config.json` included, is checked
+against the `TOTALSEG_WEIGHTS_SHA256` build argument, so a changed download fails the build. Their timestamps are fixed, so the same weights give
 the same layer in every build and a trust pulls it once. To change `TOTALSEG_TASKS`, change the digest with
 it: a failed check prints the one it found.
 
@@ -72,6 +72,10 @@ from totalsegmentator.python_api import totalsegmentator
 
 totalsegmentator(ct_path, output_path, task="total", ml=True, quiet=True)
 ```
+
+Only the `total` task's weights are in the image. `fast=True` needs a further set that `total` does not
+download, so it tries to fetch it and fails on the read-only weights directory. To support it, add
+`total_fast` to `TOTALSEG_TASKS` and update the digest.
 
 To add a package to this environment, add it to the `segmentation` extra, refresh the lockfile with
 `make lock`, and rebuild.

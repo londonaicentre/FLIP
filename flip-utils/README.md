@@ -74,7 +74,7 @@ Each FL backend is an extra, so an install carries only the one it runs (FLIP#10
 | `nvflare` | NVFLARE, and the `kubernetes` client its K8s job launcher imports | `flip.nvflare` |
 | `flower` | flwr | `flip.flower` |
 | `full` | The ML stack (torch, MONAI, …); no FL backend | FL training and evaluation code, `flip.export` |
-| `segmentation` | TotalSegmentator, with nnU-Net and SimpleITK; add it to `full` | Jobs that run in the `flare-fl-client-segmentation` image |
+| `segmentation` | TotalSegmentator, with nnU-Net and SimpleITK; install it with `full` | Jobs that run in the `flare-fl-client-segmentation` image |
 
 `import flip` and every module outside `flip.nvflare` / `flip.flower` need neither backend; importing a
 backend package without its extra fails with an `ImportError` naming the extra. A plain `flip-utils`

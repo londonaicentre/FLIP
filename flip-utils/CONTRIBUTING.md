@@ -24,7 +24,7 @@ root guide. This file documents that path.
 ## Local development setup
 
 ```bash
-uv sync --all-extras
+uv sync --all-extras --no-extra segmentation   # every extra but TotalSegmentator's, which only the flare-fl-client-segmentation image needs
 make unit-test        # ruff --fix, then mypy, then pytest with coverage
 ```
 
@@ -66,7 +66,7 @@ Publishing is automatic on merge to `main`. [`release-pypi.yml`](../.github/work
 1. Extracts `__version__` from `flip/__init__.py`.
 2. **Skips the whole release** if the tag `flip-utils-v<VERSION>` already exists — so an unbumped version is a no-op,
    not a failure, and merges to `main` that do not touch this package cost nothing.
-3. Runs `uv sync --all-extras`, `ruff check .`, and `pytest`.
+3. Runs `uv sync --all-extras --no-extra segmentation`, `ruff check .`, and `pytest`.
 4. Builds with `uv build` and publishes to PyPI with `uv publish --trusted-publishing always` — OIDC trusted
    publishing against the `flip` GitHub environment, so no PyPI token is stored as a repository secret.
 5. Pushes the annotated tag `flip-utils-v<VERSION>`.
