@@ -712,8 +712,8 @@ jobs:
       - name: Install k3s
         env:
           K3S_VERSION: v1.37.2+k3s1
-          K3S_SHA256: 265b3ee6a3198ef14033c63ef46cbb32370d83795199fb6d1b01f21575eddbda
-          K3S_INSTALL_SHA256: ed01f89fd977bf20ac1516bbebf8370bf3ddbaa55dac8aba610956a4c78cc00b
+          K3S_SHA256: 265b3ee6a3198ef14033c63ef46cbb32370d83795199fb6d1b01f21575eddbda  # pragma: allowlist secret
+          K3S_INSTALL_SHA256: ed01f89fd977bf20ac1516bbebf8370bf3ddbaa55dac8aba610956a4c78cc00b  # pragma: allowlist secret
         run: |
           cd "$RUNNER_TEMP"
           tag="${K3S_VERSION//+/%2B}"
