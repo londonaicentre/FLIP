@@ -26,6 +26,8 @@ on:
       - "fl-services/flower/fl-api-flower/**"
       - "fl-services/flower/fleet-proxy/**"
       - "fl-services/flower/register-supernode-keys.sh"
+      # tests/test_generate_creds.py runs the credential generator's --add-supernode (FLIP#1942).
+      - "fl-services/flower/provision/scripts/generate_creds.py"
       # The flwr/base tag and flip-utils' locked flwr, which tests/test_fleet_proxy_allowlist.py checks agree.
       - "fl-services/flower/fl-base/Dockerfile"
       - "flip-utils/uv.lock"
@@ -39,6 +41,8 @@ on:
       - "fl-services/flower/fl-api-flower/**"
       - "fl-services/flower/fleet-proxy/**"
       - "fl-services/flower/register-supernode-keys.sh"
+      # tests/test_generate_creds.py runs the credential generator's --add-supernode (FLIP#1942).
+      - "fl-services/flower/provision/scripts/generate_creds.py"
       # The flwr/base tag and flip-utils' locked flwr, which tests/test_fleet_proxy_allowlist.py checks agree.
       - "fl-services/flower/fl-base/Dockerfile"
       - "flip-utils/uv.lock"

@@ -382,7 +382,8 @@ cat >&2 <<'EOF'
      2. Wait until GET /fl/quiesce reports deployment mode ON and no BUSY net.
      3. Re-run terraform_apply.yml on this branch via workflow_dispatch, with the
         `fl_quiesced` input set to true. That input is what skips this gate — a
-        plain re-run reads the same plan and holds again.
+        plain re-run reads the same plan and holds again. On develop it need not be
+        this commit: a dispatch from a later one still deploys the newest builds.
      4. Disable deployment mode afterwards.
 
    Runbook: deploy/providers/AWS/README.md, "Terraform CI: plan on PR, apply on

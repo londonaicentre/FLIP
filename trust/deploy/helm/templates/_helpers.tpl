@@ -240,6 +240,14 @@ carry it, so whichever restarts follows the one still running; at install the fi
 {{- end }}
 
 {{/*
+How the trust runs an FL job, reported by trust-api in its heartbeat (FLIP#1739):
+"pods" when NVFLARE starts each job in its own pod, "process" otherwise.
+*/}}
+{{- define "flip-trust.flClientJobMode" -}}
+{{- if and (eq .Values.flBackend "nvflare") .Values.flClient.nvflare.jobPods.enabled }}pods{{ else }}process{{ end }}
+{{- end }}
+
+{{/*
 The NVFLARE site privacy policy (FLIP#851): fl-client-init renders it and the fl-client checks that render
 at start (FLIP#1570). In the pod template rather than only the ConfigMap, so a Helm value change rolls the
 Deployment.

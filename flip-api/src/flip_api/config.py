@@ -502,8 +502,8 @@ class DevSettings(Settings):
     # FL kit slot pool names — one per pre-provisioned FL kit (workspace/net-N/services/<slot>).
     # Seeded into `fl_kit_slot` so POST /admin/trusts can hand each joining trust the next
     # free slot regardless of the trust's friendly name. Dev-only on purpose, so a stale env
-    # copy can never mask production's source: the kits in S3 (NVFLARE) or the
-    # /flip/fl_kit_slot_names SSM parameter (Flower) — see
+    # copy can never mask production's source: the kits (NVFLARE) or SuperNode keys
+    # (Flower) in S3 — see
     # db/seed/fl_kit_slots.resolve_fl_kit_slot_names. Defaults to []
     # so existing dev envs aren't required to set it; in that case the pool is empty until
     # the admin provisions kits and adds them here.
@@ -546,6 +546,10 @@ class ProdSettings(Settings):
     # NVFLARE only: s3://<bucket>/fl-flare-participant-kits/<FLARE_KIT_DATE>. The kit-slot
     # pool is every slot whose kit is complete on every net under it (FLIP#1720).
     FLARE_KITS_S3_URI: str = ""
+
+    # Flower only: s3://<bucket>/fl-flower-participant-kits/<FLOWER_KIT_DATE>. The kit-slot
+    # pool is every slot whose SuperNode key pair is complete on every net under it (FLIP#1942).
+    FLOWER_KITS_S3_URI: str = ""
 
 
 # Eager load once (for app use)

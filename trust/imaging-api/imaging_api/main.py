@@ -27,20 +27,28 @@ from imaging_api.routers.projects import router as projects_router
 from imaging_api.routers.retrieval import router as retrieval_router
 from imaging_api.routers.upload import router as upload_router
 from imaging_api.routers.users import router as users_router
+from imaging_api.services.approved_cohort import run_reconcile
 from imaging_api.services.cache_retention import run_sweeper
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Runs the image-cache sweeper (FLIP#1050) for the app's lifetime; a TTL of 0 or less turns it off."""
-    if get_settings().IMAGE_CACHE_RETENTION_HOURS <= 0:
-        yield
-        return
-    sweeper = asyncio.create_task(run_sweeper())
+    """Runs the background tasks for the app's lifetime, each turned off by a setting of 0 or less.
+
+    The image-cache sweeper (FLIP#1050) and the approved-cohort reconcile (FLIP#1860).
+    """
+    settings = get_settings()
+    tasks = []
+    if settings.IMAGE_CACHE_RETENTION_HOURS > 0:
+        tasks.append(asyncio.create_task(run_sweeper()))
+    if settings.COHORT_RECONCILE_MINUTES > 0:
+        tasks.append(asyncio.create_task(run_reconcile()))
     yield
-    sweeper.cancel()
-    with suppress(asyncio.CancelledError):
-        await sweeper
+    for task in tasks:
+        task.cancel()
+    for task in tasks:
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 # Disable Swagger / OpenAPI / ReDoc in production. Imaging-api proxies privileged

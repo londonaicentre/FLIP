@@ -803,6 +803,10 @@ make -C trust/deploy/helm kit-secret KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
 # health, OMOP/Orthanc seeded, Orthanc auth, a real C-STORE, a dcm2niix conversion, FL client
 # steady; writes a JSON + markdown report under build/selftest/ and needs no hub
 make -C trust/deploy/helm selftest KUBE_CONTEXT=<ctx>
+
+# NVFLARE job pods: give each approved project its entry in the site's NVFLARE study file (FLIP#1678);
+# run after the first deploy, each project approval and each upgrade
+make -C trust/deploy/helm sync-project-studies KUBE_CONTEXT=<ctx>
 ```
 
 `make -C trust/deploy/helm deploy` (and `deploy-trust-k8s`) take `HELM_TIMEOUT` (default

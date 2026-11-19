@@ -215,10 +215,8 @@ def register_trust(
         # remediation lives here in the logs.
         logger.error(
             "No free FL kit slot among those the slot source names. Development: add slots to FL_KIT_SLOT_NAMES and "
-            "restart flip-api. Stag/prod NVFLARE: `make -C deploy/providers/AWS add-fl-kits N=<n> HUB=<stag|prod>`. "
-            "Stag/prod Flower: provision SuperNode keys for the new slots, add them to FL_KIT_SLOT_NAMES and run a "
-            "Terraform apply (it replaces the SuperLink, so quiesce first). If kits already exist and still don't "
-            "appear, check earlier logs for a kit left out as incomplete."
+            "restart flip-api. Stag/prod: `make -C deploy/providers/AWS add-fl-kits N=<n> HUB=<stag|prod>`. "
+            "If kits already exist and still don't appear, check earlier logs for a kit left out as incomplete."
         )
         raise NoFreeKitSlotError("No FL kit slots available. Pre-provision more FL kits and try again.")
 

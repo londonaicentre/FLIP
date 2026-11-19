@@ -303,30 +303,53 @@ Running out of FL kit slots
 
 Registration fails with ``NoFreeKitSlotError`` ("No FL kit slots available…") when the hub has no claimable FL kit
 slot left. (If it says instead that the kit-slot source could not be read, the hub could not list its kits: there is
-nothing to add, so try again and check the hub's log.) One command adds more (FLARE only):
+nothing to add, so try again and check the hub's log.) One command adds more, on either FL backend:
 
 .. code-block:: shell
 
    make -C deploy/providers/AWS add-fl-kits N=2 HUB=<stag|prod>
 
-``N`` is the number of new kits to make. The command restores and verifies each net's CA workspace, which needs the
-FLARE provisioning tools, then makes and uploads the kits. Existing kits are never touched and no CA is rotated.
+``N`` is the number of new kits to make. Existing kits are never touched and no CA is rotated.
+
+- On a **FLARE** hub the command restores and verifies each net's CA workspace, which needs the FLARE provisioning
+  tools, then makes and uploads the kits.
+- On a **Flower** hub it makes new SuperNode key pairs, uploads the public keys, registers them with the running
+  SuperLink by running two of the hub's one-off ECS tasks, and uploads the private keys last. The SuperLink is not
+  restarted and a running job is not disturbed.
 
 It pauses for you to confirm the plan it prints (``YES=1`` skips the prompt). The hub reads its slots straight from
 the kits in S3 at every registration, so the next ``register-trusts`` can claim one: no Terraform apply and no
-restart. Every complete kit in S3 can be claimed, so delete a kit there rather than keep one that should not be handed
-out; a trust that already holds that slot keeps it.
+restart. Every complete kit in S3 can be claimed, so delete a kit there rather than keep one that should not be
+handed out; a trust that already holds that slot keeps it. On Flower, delete only the private key: the public key
+keeps the number from being used again, and the hub's log then lists that slot as not claimable.
 
 .. warning::
 
-   If a run stops part-way, it prints which kits it uploaded. A kit that is not complete on every net is never
+   If a run stops part-way, it prints what it uploaded. A kit that is not complete on every net is never
    claimed, and the hub's log names it with the files it lacks. Re-run ``add-fl-kits`` with the number of kits still
-   needed: it numbers past every kit in S3 and every name it has already signed, so a name is never used twice and
-   the numbering can skip one. Delete the incomplete kit from S3, or the hub keeps warning about it.
+   needed: it numbers past every kit in S3 and every name it has already issued, so a name is never used twice and
+   the numbering can skip one. Delete the incomplete kit from S3 (on Flower, the public keys the run names), or the
+   hub keeps warning about it.
+
+.. warning::
+
+   On a hub that has been switched between NVFLARE and Flower, the first kits a run makes can carry names that
+   trusts registered under the other backend already hold, so they add no free slot. Ask for enough kits to pass
+   the highest slot the hub has assigned.
+
+.. note::
+
+   A Flower SuperLink holds its registered SuperNodes in memory. A Terraform apply that replaces the SuperLink
+   registers every key again. A SuperLink restarted any other way, including ``deploy-centralhub``, a rollback,
+   staging power-on or a crash, does not, and its trusts are refused until the registration runs again.
+   :gh:`fl-services/flower/README.md` has the command.
 
 .. seealso::
 
    :gh:`fl-services/nvflare/README.md` — minting kits by hand, and onboarding a new client onto an existing network.
+
+   :gh:`fl-services/flower/README.md` — how a Flower hub adds SuperNode keys, and what the order of its steps
+   protects.
 
 .. _deploy-central-hub-rotate-trust-keys:
 
@@ -561,7 +584,12 @@ check and is often junked or dropped. So FLIP also creates an SES identity for t
         - TXT
         - ``v=DMARC1; p=quarantine``
 
-2. **Wait for the domain identity to show Verified** in the SES console.
+2. **Wait for the domain identity to show Verified** in the SES console. It usually does within minutes of the records
+   resolving. SES looks for the DKIM and MAIL FROM records for only 72 hours after the identity is created, then marks
+   both **Failed** and stops looking, so a DNS change that takes longer, through another team's zone say, needs one
+   more step: once the records resolve, open the domain identity in the SES console and choose **Retry DKIM
+   verification**, then **Retry configuring MAIL FROM domain**. Both keep the same tokens, so the published records
+   stay valid.
 3. **Set** ``SES_SENDER_EMAIL=no-reply@<ALB_SUBDOMAIN>`` in the hub env file and apply. FLIP's own emails now come from
    that address. ``SES_VERIFIED_EMAIL`` stays the address access-request notifications are sent to, so keep it a
    mailbox somebody reads.
@@ -575,8 +603,22 @@ check and is often junked or dropped. So FLIP also creates an SES identity for t
    while the account is in the sandbox delivers only to verified addresses, so users stop receiving invitations and
    reset codes that Cognito's built-in sender delivers today.
 
-**To check email works end to end**, register a new user in FLIP. The invitation email with the temporary password
-comes from Cognito, so this tests the invitation templates in a real mail client.
+**To check email works end to end**, send each email once and open it in a real mail client. While the account is in
+the sandbox, verify each recipient address in the SES console first (*Configuration → Identities → Create identity →
+Email address*).
+
+- **Invitation:** register a new user in FLIP. This one comes from Cognito, so it checks Cognito's sender, not SES.
+- **Access request:** submit the *Request Access* form on the sign-in page. The notification goes to
+  ``SES_VERIFIED_EMAIL``.
+- **XNAT invite:** create a project with that new user in it, then stage and approve it at a trust. When the trust has
+  created the project in its XNAT, each project user without an XNAT account there gets an invite with a set-password
+  link.
+- **Added to a project:** approve a second project at the same trust with the same user. The trust sends this notice
+  only to users who have signed in to its XNAT before (opening the set-password link counts); anyone else gets the
+  invite again.
+
+In the mail client's view of the original message (*Show original* in Gmail), SPF, DKIM and DMARC should all show
+**PASS**, with DKIM signed for ``ALB_SUBDOMAIN``.
 
 .. note::
 
