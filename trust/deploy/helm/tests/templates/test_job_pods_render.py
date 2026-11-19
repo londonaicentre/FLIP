@@ -21,6 +21,7 @@ key, this net's images slice, /dev/shm and the FL server's host aliases).
 They also pin the other half: off by default, and a default install renders none of it.
 """
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -205,7 +206,11 @@ def test_the_template_never_mounts_images_and_streams():
         [job] = _job_pod(_enabled(*extra))["spec"]["containers"]
 
         assert _env(job)["IMAGES_TRANSPORT"]["value"] == "stream"
-        assert job["volumeMounts"] == [{"name": "dshm", "mountPath": "/dev/shm"}]
+        # Its IMAGES_DIR is a scratch folder of its own, for the files add_resource uploads (FLIP#1049).
+        assert job["volumeMounts"] == [
+            {"name": "dshm", "mountPath": "/dev/shm"},
+            {"name": "images-scratch", "mountPath": "/app/data/images"},
+        ]
 
 
 def test_by_default_a_job_pod_declares_the_shared_images_volume_for_its_study_to_mount():
@@ -224,7 +229,9 @@ def test_a_streaming_job_pod_mounts_no_images_volume_and_runs_anywhere():
     """It streams its studies into its own run directory (FLIP#1049)."""
     pod = _job_pod(_enabled("--set", f"{JOB_PODS}.images=stream"))
 
-    assert [v["name"] for v in pod["spec"]["volumes"]] == ["dshm"]
+    volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
+    assert list(volumes) == ["dshm", "images-scratch"]
+    assert volumes["images-scratch"] == {"name": "images-scratch", "emptyDir": {}}
     assert "affinity" not in pod["spec"]
 
 
@@ -234,9 +241,12 @@ def test_an_archive_job_pod_declares_xnats_volume_read_only_for_its_study_to_mou
     [job] = pod["spec"]["containers"]
 
     assert _env(job)["IMAGES_TRANSPORT"]["value"] == "stream"
-    assert job["volumeMounts"] == [{"name": "dshm", "mountPath": "/dev/shm"}]
+    assert job["volumeMounts"] == [
+        {"name": "dshm", "mountPath": "/dev/shm"},
+        {"name": "images-scratch", "mountPath": "/app/data/images"},
+    ]
     volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
-    assert set(volumes) == {"xnat-archive", "dshm"}
+    assert set(volumes) == {"xnat-archive", "dshm", "images-scratch"}
     claim = volumes["xnat-archive"]["persistentVolumeClaim"]
     assert claim["readOnly"] is True
     assert claim["claimName"].endswith("-xnat-web")
@@ -317,6 +327,30 @@ def test_job_pods_are_refused_on_flower():
     assert "NVFLARE" in result.stderr
 
 
+@pytest.mark.parametrize(
+    ("values", "mode"),
+    [
+        ((), "process"),
+        (("--set", f"{JOB_PODS}.enabled=true"), "pods"),
+        (("--set", "flBackend=flower"), "process"),
+        # Only reachable with the fl-client off (the chart refuses job pods on Flower otherwise): pins the
+        # backend check.
+        (
+            ("--set", "flBackend=flower", "--set", "flClient.enabled=false", "--set", f"{JOB_PODS}.enabled=true"),
+            "process",
+        ),
+    ],
+)
+def test_trust_api_reports_how_the_trust_runs_fl_jobs(values, mode):
+    """trust-api reports "pods" exactly when NVFLARE job pods are on, so the hub knows how jobs run (FLIP#1739)."""
+    result = _helm(*values)
+    assert result.returncode == 0, f"helm template failed: {result.stderr}"
+
+    assert re.findall(r'FL_CLIENT_JOB_MODE: "(\w+)"', result.stdout) == [mode]
+    # trust-api reads the mode once, at start, so its pod template carries it too: a changed mode rolls the pod.
+    assert re.findall(r'flip-trust/fl-client-job-mode: "(\w+)"', result.stdout) == [mode]
+
+
 def test_a_parent_that_holds_a_gpu_is_refused():
     """The GPUs go to the job pods; a GPU on the parent would sit idle between jobs, the cost this mode removes."""
     result = _helm("--set", f"{JOB_PODS}.enabled=true", "--set", "flClient.gpu.enabled=true")
@@ -390,3 +424,43 @@ def test_process_mode_keeps_the_app_workspace():
     assert {"/app/local", "/app/startup", "/app/transfer"} <= mount_paths
     assert WORKSPACE not in mount_paths
     assert "cd /app/startup" in container["command"][-1]
+
+
+# --- job-pod leftovers (FLIP#1428): a CPU/memory reservation, and finished pods deleted -------------------------
+
+
+def test_a_job_pod_reserves_cpu_and_memory_through_a_no_op_init_container():
+    """NVFLARE replaces the job container's resources, so the reservation sits on an init container, which also keeps
+    the pod out of BestEffort, the class the XNAT conversion quota counts."""
+    docs = _enabled("--set", f"{JOB_PODS}.requests.cpu=2", "--set", f"{JOB_PODS}.requests.memory=8Gi")
+    [reserve] = _job_pod(docs)["spec"]["initContainers"]
+
+    assert reserve["command"] == ["/bin/true"]
+    assert reserve["resources"] == {"requests": {"cpu": 2, "memory": "8Gi"}}
+    assert reserve["image"] == _env(_init_container(docs))["FL_K8S_JOB_IMAGE"]["value"]
+    assert reserve["securityContext"] == _client_container(docs)["securityContext"]
+
+
+def test_a_pruner_beside_the_parent_deletes_this_nets_finished_job_pods():
+    docs = _enabled("--set", f"{JOB_PODS}.keepFinishedHours=6")
+    containers = {c["name"]: c for c in _client(docs)["spec"]["template"]["spec"]["containers"]}
+    pruner = containers["job-pod-pruner"]
+    env = _env(pruner)
+
+    assert pruner["command"] == ["/app/.venv/bin/python", "-m", "flip.nvflare.prune_job_pods"]
+    assert pruner["image"] == containers["fl-client"]["image"]
+    assert pruner["resources"]["requests"], "a BestEffort container would count against the XNAT conversion quota"
+    assert env["FL_JOB_POD_KEEP_HOURS"]["value"] == "6"
+    assert env["FL_K8S_NAMESPACE"]["valueFrom"]["fieldRef"]["fieldPath"] == "metadata.namespace"
+    # The selector picks exactly this release's job pods on this net.
+    wanted = dict(pair.split("=") for pair in env["FL_JOB_POD_SELECTOR"]["value"].split(","))
+    job_labels = _job_pod(docs)["metadata"]["labels"]
+    assert wanted.items() <= job_labels.items()
+    assert wanted["app.kubernetes.io/component"] == "fl-job"
+    assert wanted["flip/network"] == "net-1"
+
+
+def test_process_mode_runs_no_pruner():
+    names = [c["name"] for c in _client(_docs())["spec"]["template"]["spec"]["containers"]]
+
+    assert names == ["fl-client"]

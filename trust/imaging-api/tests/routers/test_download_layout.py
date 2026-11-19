@@ -12,7 +12,9 @@
 
 """The layout route (FLIP#1857): a study's files named in XNAT's archive and in the download layout, no content."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from imaging_api.utils.exceptions import NotFoundError
 
@@ -21,6 +23,13 @@ _FILE = {
     "path": "ACC123/scans/1-T1/resources/NIFTI/files/a.nii.gz",
     "archive": "arc001/ACC123/SCANS/1/NIFTI/a.nii.gz",
 }
+
+
+@pytest.fixture(autouse=True)
+def is_served():
+    """Every accession is in the approved cohort; the refusal is test_download's guard over every route."""
+    with patch("imaging_api.routers.download.is_served", new_callable=AsyncMock, return_value=True) as is_served:
+        yield is_served
 
 
 def test_layout_names_the_studys_files_for_the_opened_project(client):

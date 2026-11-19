@@ -16,10 +16,19 @@ import io
 import tarfile
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from imaging_api.services.image_cache import SENTINEL_PREFIX
 from imaging_api.utils.exceptions import NotFoundError
 
 _REQUEST_BODY = {"encrypted_central_hub_project_id": "encrypted-id", "accession_id": "ACC123"}
+
+
+@pytest.fixture(autouse=True)
+def is_served():
+    """The accession is in the project's approved cohort (FLIP#1860; its refusal is tested with the download route)."""
+    with patch("imaging_api.routers.download.is_served", new_callable=AsyncMock, return_value=True):
+        yield
 
 
 def _cached_study(tmp_path):

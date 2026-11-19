@@ -235,6 +235,9 @@ case "$url" in
     # The plugin-readiness wait's first probe: every plugin the fixture jars in XNAT_HOME declare.
     body="$PLUGINS_JSON"
     ;;
+  *"/xapi/users/"*"/roles")
+    body="${USER_ROLES:-[\"Administrator\",\"ContainerManager\"]}"
+    ;;
 esac
 
 # Lets a test make one specific call fail, to exercise the error paths.
@@ -1292,6 +1295,15 @@ def test_credentials_are_not_echoed_when_a_call_fails(tmp_path):
     assert "<redacted>" in output, "the failing request was echoed without redaction"
     for secret in ("rotated", "initial", "service"):
         assert secret not in output, f"the {secret!r} password reached the configure log"
+
+
+@pytest.mark.parametrize(
+    ("roles", "expected_exit"), [('["Administrator","ContainerManager"]', 0), ('["Administrator"]', 1)]
+)
+def test_a_failed_container_manager_grant_is_judged_by_the_roles_admin_holds(tmp_path, roles, expected_exit):
+    """XNAT 1.10.2.1 can add the role on a fresh install and still answer 500 (FLIP#1954)."""
+    code, _, output = run_configure(tmp_path, {"FAIL_ON_URL": "/roles/ContainerManager", "USER_ROLES": roles})
+    assert code == expected_exit, output
 
 
 # ── Which admin password XNAT accepts picks the mode (FLIP#1204) ─────────────────────────────

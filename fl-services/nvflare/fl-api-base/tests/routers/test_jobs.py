@@ -207,6 +207,24 @@ def test_list_jobs_merges_default_and_named_studies(client, study_sessions):
     assert [j["job_id"] for j in response.json()] == ["1234", "5678", "s1"]
 
 
+@pytest.mark.parametrize(("reverse", "expected"), [(False, ["d2", "s1"]), (True, ["s1", "d2"])])
+def test_list_jobs_limit_keeps_the_newest_jobs_across_studies(
+    client, override_session, study_sessions, reverse, expected
+):
+    """A busy default study must not push a named study's newer job out of a limited list."""
+    old = [{"job_id": f"d{i}", "status": "FINISHED:COMPLETED", "submit_time": f"2026-11-0{i}T10:00:00"} for i in (1, 2)]
+    override_session.list_jobs.side_effect = None
+    override_session.list_jobs.return_value = old
+    study_sessions["p1"] = MagicMock()
+    study_sessions["p1"].list_jobs.return_value = [
+        {"job_id": "s1", "status": "RUNNING", "submit_time": "2026-11-17T10:00:00"}
+    ]
+
+    response = client.get("/list_jobs", params=[("study", "p1"), ("limit", 2), ("reverse", reverse)])
+
+    assert [j["job_id"] for j in response.json()] == expected
+
+
 def test_list_jobs_skips_an_unknown_study(client, override_studies):
     with patch.object(
         override_studies,

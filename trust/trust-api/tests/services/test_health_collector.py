@@ -21,6 +21,7 @@ import trust_api.services.health_collector as health_collector
 from trust_api.services.health_collector import (
     _probe_dicom,
     _probe_health_endpoint,
+    _probe_omop,
     _probe_tcp,
     _probe_xnat,
     _ThrottledProbe,
@@ -452,8 +453,30 @@ async def test_collect_once_names_the_fl_client_image_when_the_deploy_says_which
     ):
         snapshot = await collect_once(mock_client)
 
-    assert snapshot["services"]["fl-client"] == {"status": "unknown", "version": "sha-abc1234", "response_ms": None}
+    assert snapshot["services"]["fl-client"] == {
+        "status": "unknown",
+        "version": "sha-abc1234",
+        "response_ms": None,
+        "job_mode": "process",
+    }
     assert set(snapshot["services"].keys()) == ROSTER | {"fl-client"}
+
+
+@pytest.mark.asyncio
+async def test_collect_once_says_when_each_fl_job_runs_in_a_pod_of_its_own(monkeypatch):
+    """The chart with NVFLARE job pods sets the mode; the hub needs it before two jobs share a net (FLIP#1739)."""
+    monkeypatch.setattr(health_collector, "FL_CLIENT_IMAGE_TAG", "sha-abc1234")
+    monkeypatch.setattr(health_collector, "FL_CLIENT_JOB_MODE", "pods")
+    mock_client = AsyncMock()
+    mock_client.get.return_value = _response(200, {"status": "ok", "successful": True, "pingTime": 5})
+
+    with patch(
+        "trust_api.services.health_collector.asyncio.open_connection",
+        side_effect=ConnectionRefusedError("refused"),
+    ):
+        snapshot = await collect_once(mock_client)
+
+    assert snapshot["services"]["fl-client"]["job_mode"] == "pods"
 
 
 @pytest.mark.asyncio
@@ -851,3 +874,64 @@ async def test_run_health_collector_drops_snapshot_when_a_later_cycle_fails():
 
     # Good cycle publishes; the failed cycle drops it rather than re-publishing.
     assert seen_during_loop == [{"services": {}, "collected_at": "t0"}, None]
+
+
+# ---- _probe_omop: the backend decides how OMOP is reachable (FLIP#13) ----
+
+
+@pytest.mark.asyncio
+async def test_probe_omop_uses_the_tcp_connect_on_the_postgres_backend(monkeypatch):
+    """Unchanged default: a local Postgres is a port on the trust network, and trust-api
+    deliberately carries no database driver."""
+    monkeypatch.setattr(health_collector, "OMOP_BACKEND", "postgres")
+    with patch(
+        "trust_api.services.health_collector._probe_tcp",
+        new_callable=AsyncMock,
+        return_value=_fixed_entry("healthy"),
+    ) as probe_tcp:
+        result = await _probe_omop(AsyncMock())
+
+    probe_tcp.assert_awaited_once()
+    assert result["status"] == "healthy"
+
+
+@pytest.mark.asyncio
+async def test_probe_omop_asks_data_access_api_on_the_snowflake_backend(monkeypatch):
+    """A Snowflake account is not a TCP port on the trust network, so a port probe could only
+    ever answer "down". The service that holds the driver reports instead."""
+    monkeypatch.setattr(health_collector, "OMOP_BACKEND", "snowflake")
+    client = AsyncMock()
+    client.get.return_value = _response(body={"status": "ok", "backend": "snowflake"})
+
+    result = await _probe_omop(client)
+
+    assert client.get.await_args.args[0].endswith("/health/omop")
+    assert result["status"] in {"healthy", "degraded"}
+
+
+@pytest.mark.asyncio
+async def test_probe_omop_is_down_when_the_warehouse_is_unreachable(monkeypatch):
+    monkeypatch.setattr(health_collector, "OMOP_BACKEND", "snowflake")
+    client = AsyncMock()
+    client.get.return_value = _response(body={"status": "down", "backend": "snowflake"})
+
+    assert (await _probe_omop(client))["status"] == "down"
+
+
+@pytest.mark.asyncio
+async def test_probe_omop_is_down_when_the_probe_endpoint_errors(monkeypatch):
+    monkeypatch.setattr(health_collector, "OMOP_BACKEND", "snowflake")
+    client = AsyncMock()
+    client.get.side_effect = RuntimeError("connection refused")
+
+    assert (await _probe_omop(client))["status"] == "down"
+
+
+@pytest.mark.asyncio
+async def test_probe_omop_is_unknown_when_the_body_cannot_be_read(monkeypatch):
+    """A 2xx this probe cannot parse proves nothing about the warehouse either way."""
+    monkeypatch.setattr(health_collector, "OMOP_BACKEND", "snowflake")
+    client = AsyncMock()
+    client.get.return_value = _response(json_error=True)
+
+    assert (await _probe_omop(client))["status"] == "unknown"

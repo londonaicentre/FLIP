@@ -79,7 +79,8 @@ def list_jobs(
 
     Args:
         detailed (bool, optional): whether extensive description is demanded. Defaults to False.
-        limit (int | None, optional): maximum number of jobs to display. Defaults to None.
+        limit (int | None, optional): maximum number of jobs to display, the most recently submitted across all the
+            studies listed. Defaults to None.
         id_prefix (str | None, optional): prefix for job ID search. Defaults to None.
         name_prefix (str | None, optional): prefix for the job NAME search. Defaults to None.
         reverse (bool, optional): if True, the order will be the reverse of submission time (otherwise it's the
@@ -102,8 +103,11 @@ def list_jobs(
                 name, detailed=detailed, limit=limit, id_prefix=id_prefix, name_prefix=name_prefix, reverse=reverse
             )
         )
+    # Merged as NVFLARE orders and cuts one study's list (job_cmds.list_jobs): by submission time, and the limit keeps
+    # the newest jobs, so a busy default study cannot push a named study's job out of the answer.
+    raw_jobs.sort(key=lambda job: job.get("submit_time", ""), reverse=reverse)
     if limit:
-        raw_jobs = raw_jobs[:limit]
+        raw_jobs = raw_jobs[:limit] if reverse else raw_jobs[-limit:]
     # FLARE's list_jobs always includes job_id + status on every entry (verified against
     # nvflare 2.7.1 job_cmds.py, both the summary and detailed paths) — bracket access is intentional.
     return [JobMetadata(job_id=str(job["job_id"]), status=normalize_status(job["status"])) for job in raw_jobs]

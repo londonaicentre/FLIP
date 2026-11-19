@@ -86,7 +86,8 @@ async def upload_files(
     Args:
         net_id (str): The FL net ID.
         headers (XNATAuthHeaders): The XNAT authentication headers.
-        files (list[UploadFile]): The files to upload, each by its own name.
+        files (list[UploadFile]): The files to upload, each named by its path relative to the net's upload folder,
+            as ``files`` is on the route above.
         encrypted_central_hub_project_id (str): The hub's sealed project id.
         accession_id (str): The XNAT experiment label.
         scan_id (str): The scan to upload into, created if missing.

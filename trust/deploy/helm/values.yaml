@@ -335,6 +335,13 @@ imagingApi:
     # DQR use its default query/retrieve PACS, and each import reads that PACS's id from XNAT.
     DATA_ACCESS_API_URL: "http://data-access-api:8000"
     BASE_IMAGES_DOWNLOAD_DIR: "/app/data/images"
+    # Imaging follows the approved cohort (FLIP#1860): every COHORT_RECONCILE_MINUTES the cached studies of an
+    # accession that left a project's cohort are removed, and its XNAT session once it has been off the cohort for
+    # COHORT_REMOVAL_GRACE_HOURS. "0" minutes turns the removal off; downloads of it are refused either way.
+    COHORT_RECONCILE_MINUTES: "15"
+    COHORT_REMOVAL_GRACE_HOURS: "24"
+    # A cached study unused for this long is removed (FLIP#1050); "0" keeps every study.
+    IMAGE_CACHE_RETENTION_HOURS: "168"
 
 # ---------------------------------------------------------------------------
 # data-access-api — OMOP database queries for cohort analysis
@@ -541,6 +548,13 @@ flClient:
       pendingTimeout: 900
       # The parent's internal port, which job pods connect back to through its Service.
       parentPort: 8102
+      # CPU and memory Kubernetes reserves for each job pod. Size it to a training job on this site's nodes.
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      # Finished job pods (and their logs) are kept this long, then deleted; NVFLARE itself never deletes them.
+      # A pod still Pending after this long is deleted too, so keep it well above pendingTimeout.
+      keepFinishedHours: 24
       # Placement of job pods only, e.g. a GPU pool's taint (key: sku, value: gpu, effect:
       # NoSchedule). Prefer the nvidia.com/gpu request plus a toleration over a nodeSelector aimed at
       # a pool at zero: Kubernetes reports that pod Unschedulable rather than Insufficient, and
