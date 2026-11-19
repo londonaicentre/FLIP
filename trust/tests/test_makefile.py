@@ -495,5 +495,45 @@ class DeployedPull(unittest.TestCase):
             assert "up -d --pull always" in dry_run("up-trust")
 
 
+class FlKitOwner(unittest.TestCase):
+    """prepare-host-dirs gives the FL kit to its client's uid, owner-only (FLIP#1964)."""
+
+    PROBE = "probe-kit:\n\t$(ensure_fl_kit_owner)\n"
+    FLOWER = kit_with("FL_BACKEND=nvflare", "FL_BACKEND=flower")
+
+    def test_prepare_host_dirs_owns_the_kit(self):
+        assert "go-rwx" in dry_run("prepare-host-dirs"), "prepare-host-dirs no longer reaches ensure_fl_kit_owner"
+
+    def test_the_owner_and_path_follow_the_backend(self):
+        flare = run_target("probe-kit", probe=self.PROBE, dry=True).stdout
+        assert 'kit="/nonexistent/fl-kit/net-1/services/Trust_9"; owner="1000:1000"' in flare, flare
+        flower = run_target("probe-kit", kit=self.FLOWER, probe=self.PROBE, dry=True).stdout
+        assert 'kit="/nonexistent/fl-kit/net-1"; owner="49999:49999"' in flower, flower
+        uid = run_target("probe-kit", kit=self.FLOWER + "FLIP_UID=4242\nFLIP_GID=4243\n", probe=self.PROBE, dry=True)
+        assert 'owner="4242:4243"' in uid.stdout, uid.stdout
+
+    def test_a_kit_not_unpacked_yet_is_left_for_a_rerun(self):
+        result = run_target("probe-kit", probe=self.PROBE)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "No FL kit at /nonexistent/fl-kit/net-1/services/Trust_9 yet" in result.stdout, result.stdout
+
+    def test_the_kit_ends_up_private_to_its_owner(self):
+        """Run for real with FLIP_UID as this user, so chown needs no root; a world-readable kit is closed."""
+        ids = f"FLIP_UID={os.getuid()}\nFLIP_GID={os.getgid()}\n"
+        for kit, sub in ((KIT, "net-1/services/Trust_9"), (self.FLOWER, "net-1")):
+            with tempfile.TemporaryDirectory() as td, self.subTest(sub=sub):
+                key = Path(td, "net-1/services/Trust_9/startup/client.key")
+                key.parent.mkdir(parents=True)
+                key.write_text("key")
+                for p in (key, *key.parents):
+                    if str(p).startswith(td + "/"):
+                        p.chmod(0o755 if p.is_dir() else 0o644)
+                kit = kit.replace("FL_KIT_DIR=/nonexistent/fl-kit", f"FL_KIT_DIR={td}") + ids
+                result = run_target("probe-kit", kit=kit, probe=self.PROBE)
+                assert result.returncode == 0, result.stdout + result.stderr
+                for p in [Path(td, sub), *Path(td, sub).rglob("*")]:
+                    assert p.stat().st_mode & 0o077 == 0, f"{p} is {oct(p.stat().st_mode & 0o777)}"
+
+
 if __name__ == "__main__":
     main()

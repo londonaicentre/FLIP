@@ -65,8 +65,8 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
 
        make -C trust prepare-host-dirs KIT=<CODE> HUB=prod
 
-    It creates every directory below with its owner, refuses to create that parent, and deletes nothing, so it is
-    safe to re-run.
+    It creates every directory below with its owner (the FL kit it only gives to its uid, once you have unpacked
+    it), refuses to create that parent, and deletes nothing, so it is safe to re-run.
 
   On the first route ``make up-onprem-trust`` creates the XNAT tree itself; on the second it only checks the
   ownership, and a failed check names the fix.
@@ -85,14 +85,15 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
        - 1000
        - ``FL_KIT_DIR/net-<N>/services/<slot>``: the kit itself. The client reads ``startup/client.key``, which
          like the rest of the kit is readable by its owner alone, and writes ``local/`` and ``transfer/`` at
-         start, so the whole slot directory must be that uid's. ``prepare-host-dirs`` does not touch the kit:
-         ``chown -R 1000:1000`` the slot directory (Step 2; the playbook does it when it downloads the kit from S3;
-         under ``FLIP_UID`` the kit you extracted is already yours).
+         start, so the whole slot directory must be that uid's. ``prepare-host-dirs`` gives it to 1000, or
+         ``chown -R 1000:1000`` it yourself (Step 2); the playbook does it when it downloads the kit from S3, and
+         under ``FLIP_UID`` the kit you extracted is already yours.
      * - the Flower SuperNode alone
        - 49999
        - ``FL_KIT_DIR/net-1``: ``certificates/`` and ``keys/supernode_credentials_<N>``, readable by their owner
-         alone. ``chown -R 49999:49999`` the ``net-1`` directory (Step 2; the playbook does it when it downloads the
-         kit from S3; under ``FLIP_UID`` the kit you extracted is already yours).
+         alone. ``prepare-host-dirs`` gives the ``net-1`` directory to 49999, or ``chown -R 49999:49999`` it
+         yourself (Step 2); the playbook does it when it downloads the kit from S3, and under ``FLIP_UID`` the kit
+         you extracted is already yours.
      * - xnat-web
        - 1001
        - ``XNAT_DATA_DIR``
@@ -229,9 +230,10 @@ from uid 1000 too.
 
    sudo chown -R 49999:49999 $HOME/flip-trust-kit/fl-kit/net-1
 
-Skip the ``chown`` when the kit sets ``FLIP_UID`` to your own uid. Run the readiness checklist with
-``sudo -E`` afterwards to let it look inside the kit, or it reports the kit as not checked. A kit unpacked from an
-older tarball has world-readable files: run ``chmod -R go-rwx`` on its ``fl-kit/`` folder too.
+Skip the ``chown`` when the kit sets ``FLIP_UID`` to your own uid, or when the host owner runs ``prepare-host-dirs``
+in Step 4: it gives the kit to the same uid. Run the readiness checklist with ``sudo -E`` afterwards to let it look
+inside the kit, or it reports the kit as not checked. A kit unpacked from an older tarball has world-readable files:
+run ``chmod -R go-rwx`` on its ``fl-kit/`` folder too (``prepare-host-dirs`` does that as well).
 
 ***********************************
 Step 3 — Edit the kit for your host

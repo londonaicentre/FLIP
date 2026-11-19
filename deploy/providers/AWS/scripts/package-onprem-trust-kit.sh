@@ -253,6 +253,9 @@ cat <<EOF
 
        sudo chown -R ${client_owner} \$HOME/flip-trust-kit/${client_kit}
 
+     (make -C trust prepare-host-dirs, run as root before the bring-up,
+     does the same.)
+
   3. From your FLIP checkout, copy the env file in:
 
        cp \$HOME/flip-trust-kit/${KIT_NAME} trust/${KIT_NAME}
