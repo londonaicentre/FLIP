@@ -168,7 +168,7 @@ mkdir -p "$KIT_STAGE_DIR"
 # the admin sees the bad config immediately.
 log_info "Syncing FL kit slice from S3 ($fl_backend; bucket=$bucket_name; date=$fl_kit_date; slot=$slot)..."
 if [ "$fl_backend" = "nvflare" ]; then
-    client_owner="${flip_uid:-1000}:${flip_gid:-${flip_uid:-1000}}"
+    client_owner="${flip_uid:-1000}:${flip_gid:-1000}"
     client_kit="fl-kit/net-1/services/$slot"
     target="$KIT_STAGE_DIR/net-1/services/$slot"
     mkdir -p "$target"
@@ -189,7 +189,7 @@ if [ "$fl_backend" = "nvflare" ]; then
     # `onboard-onprem-trust` expects.
     mkdir -p "$target/transfer"
 else
-    client_owner="${flip_uid:-49999}:${flip_gid:-${flip_uid:-49999}}"
+    client_owner="${flip_uid:-49999}:${flip_gid:-49999}"
     client_kit="fl-kit/net-1"
     certs_target="$KIT_STAGE_DIR/net-1/certificates"
     mkdir -p "$certs_target" "$KIT_STAGE_DIR/net-1/keys"

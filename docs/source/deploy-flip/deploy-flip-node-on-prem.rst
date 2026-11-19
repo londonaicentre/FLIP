@@ -210,17 +210,26 @@ Step 2 — Unpack the kit
    mkdir -p $HOME/flip-trust-kit
    tar -C $HOME/flip-trust-kit -xzf flip-trust-kit-<slot>-<date>.tar.gz
    cp $HOME/flip-trust-kit/.env.<CODE>.prod trust/
-   # Give the kit to the uid the FL client runs as. FLARE (uid 1000):
-   sudo chown -R 1000:1000 $HOME/flip-trust-kit/fl-kit/net-1/services/<slot>
-   # Flower (uid 49999):
-   sudo chown -R 49999:49999 $HOME/flip-trust-kit/fl-kit/net-1
 
 The tarball holds the kit file ``.env.<CODE>.prod`` (``.stag`` for the staging hub) and an ``fl-kit/`` folder. Keep ``fl-kit/`` exactly as it is: the
 stack mounts that layout into the FL client.
 
 Everything in ``fl-kit/`` is readable by its owner alone (files ``600``, folders ``700``), because it holds the FL
-client's private key, so the client's uid must own it. Skip the ``chown`` when the kit sets ``FLIP_UID`` to your own
-uid. The FLIP admin's packager prints the exact command for your kit. Run the readiness checklist with
+client's private key, so the client's uid must own it. Run the one command for your kit's backend; the FLIP admin's
+packager prints it for you. On FLARE (uid 1000), the slot directory:
+
+.. code-block:: shell
+
+   sudo chown -R 1000:1000 $HOME/flip-trust-kit/fl-kit/net-1/services/<slot>
+
+On Flower (uid 49999), the whole ``net-1`` directory. Never run this on a FLARE kit: it takes the slot directory
+from uid 1000 too.
+
+.. code-block:: shell
+
+   sudo chown -R 49999:49999 $HOME/flip-trust-kit/fl-kit/net-1
+
+Skip the ``chown`` when the kit sets ``FLIP_UID`` to your own uid. Run the readiness checklist with
 ``sudo -E`` afterwards to let it look inside the kit, or it reports the kit as not checked. A kit unpacked from an
 older tarball has world-readable files: run ``chmod -R go-rwx`` on its ``fl-kit/`` folder too.
 
