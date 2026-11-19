@@ -58,5 +58,23 @@ def _render(*extra: str) -> str:
 def test_trust_api_reports_how_the_trust_runs_fl_jobs(values, mode):
     out = _render(*values)
     assert re.findall(r'FL_CLIENT_JOB_MODE: "(\w+)"', out) == [mode]
-    # trust-api reads the mode once, at start, so its pod template carries it too: a changed mode rolls the pod.
-    assert re.findall(r'flip-trust/fl-client-job-mode: "(\w+)"', out) == [mode]
+
+
+def _trust_api_config_checksum(*extra: str) -> str:
+    (deployment,) = [
+        d
+        for d in _render(*extra).split("\n---\n")
+        if "kind: Deployment\nmetadata:\n  name: t-flip-trust-trust-api\n" in d
+    ]
+    (checksum,) = re.findall(r"checksum/config: (\w+)", deployment)
+    return checksum
+
+
+@pytest.mark.skipif(shutil.which("helm") is None, reason="helm is not installed")
+def test_a_changed_fl_client_tag_or_job_mode_rolls_trust_api():
+    """trust-api reads its ConfigMap once, at start (envFrom), so its pod template hashes the ConfigMap's data."""
+    base = _trust_api_config_checksum()
+    assert _trust_api_config_checksum() == base, "the same values roll nothing"
+    assert _trust_api_config_checksum("--set", "flClient.image.pin=v9.9.9") != base, "a new FL client tag rolls it"
+    job_pods = ("--set", "flClient.nvflare.jobPods.enabled=true", "--set", "flClient.gpu.enabled=false")
+    assert _trust_api_config_checksum(*job_pods) != base, "a new job mode rolls it"
