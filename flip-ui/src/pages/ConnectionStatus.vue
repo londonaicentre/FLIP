@@ -319,9 +319,9 @@
                                     :data-trust-state="t._state"
                                     role="button"
                                     tabindex="0"
-                                    class="cursor-pointer group whitespace-nowrap
-                                    hover:bg-gray-50 dark:hover:bg-dark-surface/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500
-                                    dark:focus-visible:outline-primary-300"
+                                    class="cursor-pointer group whitespace-nowrap hover:bg-gray-50
+                                    dark:hover:bg-dark-surface/60 focus-visible:outline focus-visible:outline-2
+                                    focus-visible:outline-primary-500 dark:focus-visible:outline-primary-300"
                                     :class="[
                                         idx > 0 ? 'border-t border-gray-100 dark:border-dark-border' : '',
                                         t._state === 'offline' ? 'bg-red-50/40 dark:bg-red-900/10' : ''
