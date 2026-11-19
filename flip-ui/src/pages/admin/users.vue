@@ -88,8 +88,10 @@
                                 <!-- gray-500 is 4.41:1 on the selected primary-100 row; gray-600 keeps AA. -->
                                 <div
                                     data-test="user-organisation"
-                                    class="text-note truncate dark:text-gray-300"
-                                    :class="row.id === selectedUser?.id ? 'text-gray-600' : 'text-gray-500'"
+                                    class="text-note truncate"
+                                    :class="row.id === selectedUser?.id
+                                        ? 'text-gray-600 dark:text-gray-300'
+                                        : 'text-gray-500 dark:text-gray-300'"
                                 >
                                     {{ row.organisation || "—" }}
                                 </div>
