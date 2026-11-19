@@ -494,6 +494,14 @@ describe("ConnectionStatus", () => {
         const spoke = wrapper.find("[data-test='spoke']");
         expect(spoke.attributes("pathLength")).toBe("100");
         expect(spoke.attributes("stroke-dasharray")).toBe("45 10 45");
+
+        // A tiny dot caps each side of the break, 45% and 55% along hub->trust.
+        const [hx, hy, nx, ny] = ["x1", "y1", "x2", "y2"].map(k => Number(spoke.attributes(k)));
+        const caps = wrapper.findAll("[data-test='spoke-break-cap']");
+        expect(caps.map(c => [Number(c.attributes("cx")), Number(c.attributes("cy"))])).toEqual([
+            [hx + (nx - hx) * 0.45, hy + (ny - hy) * 0.45],
+            [hx + (nx - hx) * 0.55, hy + (ny - hy) * 0.55]
+        ]);
     });
 
     it("lightens the offline broken spoke in dark mode so it reads on the dark card", async () => {

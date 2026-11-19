@@ -478,8 +478,9 @@
                         <!-- Spokes -->
                         <g>
                             <g v-for="node in radialNodes" :key="`spoke-${node.id}`">
-                                <!-- An offline spoke is a solid line broken in the middle; pathLength
-                                     makes the dash pattern a share of the spoke, whatever its length. -->
+                                <!-- An offline spoke is a solid line broken in the middle, a tiny dot
+                                     capping each side of the break; pathLength makes the dash pattern
+                                     a share of the spoke, whatever its length. -->
                                 <line
                                     :x1="radial.cx"
                                     :y1="radial.cy"
@@ -489,10 +490,23 @@
                                     :stroke-width="SPOKE_WIDTH[node.state]"
                                     :stroke-opacity="node.state === 'offline' ? 0.6 : node.state === 'online' ? 0.5 : 0.2"
                                     pathLength="100"
-                                    :stroke-dasharray="node.state === 'offline' ? '45 10 45' : 'none'"
+                                    :stroke-dasharray="node.state === 'offline' ? OFFLINE_DASH : 'none'"
                                     :class="SPOKE_DARK[node.state]"
                                     data-test="spoke"
                                 />
+                                <template v-if="node.state === 'offline'">
+                                    <circle
+                                        v-for="end in OFFLINE_BREAK"
+                                        :key="end"
+                                        :cx="radial.cx + (node.x - radial.cx) * end / 100"
+                                        :cy="radial.cy + (node.y - radial.cy) * end / 100"
+                                        r="2.2"
+                                        fill="#ef4444"
+                                        fill-opacity="0.8"
+                                        class="dark:fill-red-400"
+                                        data-test="spoke-break-cap"
+                                    />
+                                </template>
                                 <!-- Each pulse gradient runs hub to trust in user space. A shared
                                      bounding-box gradient paints nothing on a vertical or horizontal
                                      spoke (zero-width box) and slides along x on the rest (FLIP#1980). -->
@@ -1047,6 +1061,10 @@ const SPOKE_WIDTH: Record<TrustState, number> = {
     degraded: 1.1,
     offline: 1.5
 };
+
+// Where an offline spoke's break starts and ends, as a percentage of the spoke.
+const OFFLINE_BREAK = [45, 55] as const;
+const OFFLINE_DASH = `${OFFLINE_BREAK[0]} ${OFFLINE_BREAK[1] - OFFLINE_BREAK[0]} ${100 - OFFLINE_BREAK[1]}`;
 
 // Spokes in dark mode: a lighter shade at a higher opacity so each reads on the
 // near-black card. CSS beats the SVG stroke attributes, so these apply in dark only.
