@@ -281,12 +281,12 @@
                              table chrome (ring, shadow, dark:bg-gray-800 tbody, gray-700
                              dividers) so dark mode shows the card canvas through the rows,
                              matching the stacked mobile list. -->
-                        <!-- table-fixed: each pinned column gets exactly its width and Trust takes what is
-                             left. Under the automatic layout a w-full Trust column took nearly everything and
-                             squeezed the others to their longest word. The minimum width keeps Trust readable
+                        <!-- Automatic layout: every column but Trust shrinks to its content and never wraps
+                             (whitespace-nowrap on the rows and headers), so none is squeezed; Trust (w-full,
+                             max-w-0) takes what is left and truncates. The minimum width keeps Trust readable
                              on a narrow screen, where the wrapper scrolls instead. -->
                         <table
-                            class="w-full table-fixed ring-0 shadow-none"
+                            class="w-full ring-0 shadow-none"
                             :class="showKitColumn ? 'min-w-[1080px]' : 'min-w-[880px]'"
                         >
                             <thead>
@@ -295,7 +295,7 @@
                                         v-for="col in columns"
                                         :key="col.key ?? col.label"
                                         :data-test="col.key ? `sort-header-${col.key}` : undefined"
-                                        class="px-4 py-3 text-xs text-gray-500 dark:text-gray-300 font-medium select-none"
+                                        class="px-4 py-3 text-xs text-gray-500 dark:text-gray-300 font-medium select-none whitespace-nowrap"
                                         :class="[
                                             col.align === 'right' ? 'text-right' : 'text-left',
                                             col.width ?? '',
@@ -319,8 +319,8 @@
                                     :data-trust-state="t._state"
                                     role="button"
                                     tabindex="0"
-                                    class="cursor-pointer group hover:bg-gray-50 dark:hover:bg-dark-surface/60
-                                    focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500
+                                    class="cursor-pointer group whitespace-nowrap
+                                    hover:bg-gray-50 dark:hover:bg-dark-surface/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500
                                     dark:focus-visible:outline-primary-300"
                                     :class="[
                                         idx > 0 ? 'border-t border-gray-100 dark:border-dark-border' : '',
@@ -374,7 +374,7 @@
                                             </span>
                                         </div>
                                     </td>
-                                    <td class="px-4 py-4 align-middle text-base text-gray-600 dark:text-gray-300 break-words">
+                                    <td class="px-4 py-4 align-middle text-base text-gray-600 dark:text-gray-300">
                                         {{ t.region ?? "—" }}
                                     </td>
                                     <td class="px-4 py-4 align-middle text-right text-base tabular-nums text-gray-900 dark:text-gray-100">
@@ -832,8 +832,8 @@ interface IColumn {
     key?: SortKey;
     label: string;
     align?: "left" | "right";
-    // Tailwind width class applied to the <th> to bias column sizing. Every column
-    // but Trust is pinned; Trust takes w-full and truncates via the cell's max-w-0.
+    // Tailwind width class applied to the <th>: w-px shrinks a column to its content,
+    // and Trust's w-full takes the rest (its cell truncates via max-w-0).
     width?: string;
 }
 
@@ -844,39 +844,36 @@ const BASE_COLUMNS: IColumn[] = [
     {
         key: "severity",
         label: "Status",
-        width: "w-28"
+        width: "w-px"
     },
     {
         key: "name",
-        label: "Trust"
-        // No width: under table-fixed it takes what the pinned columns leave, and the
-        // cell truncates.
+        label: "Trust",
+        width: "w-full"
     },
     {
         key: "region",
         label: "Region",
-        // Region/Services/Heartbeat are pinned (144/144/112px, approximating the
-        // design grid).
-        width: "w-36"
+        width: "w-px"
     },
     {
         key: "projects",
         label: "Projects",
         align: "right",
-        width: "w-28"
+        width: "w-px"
     },
     {
         key: "heartbeat",
         label: "Heartbeat",
-        width: "w-28"
+        width: "w-px"
     },
     {
         label: "Services",
-        width: "w-36"
+        width: "w-px"
     },
     {
         label: "",
-        width: "w-12"
+        width: "w-px"
     }
 ];
 
@@ -886,7 +883,7 @@ const showKitColumn = computed(() => isAdmin.value || !!authStore.trustAdminOf);
 const columns = computed<IColumn[]>(() => (showKitColumn.value
     ? [...BASE_COLUMNS.slice(0, -1), {
         label: "Download",
-        width: "w-52"
+        width: "w-px"
     }, ...BASE_COLUMNS.slice(-1)]
     : BASE_COLUMNS));
 

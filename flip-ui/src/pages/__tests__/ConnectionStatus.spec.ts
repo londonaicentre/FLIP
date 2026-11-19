@@ -700,16 +700,16 @@ describe("ConnectionStatus", () => {
         expect(detail().exists()).toBe(false);
     });
 
-    it("pins every column but Trust, which takes what is left and truncates", async () => {
+    it("sizes every column but Trust to its content, and Trust takes what is left and truncates", async () => {
         const wrapper = await mountLoaded();
 
-        // Fixed layout: a pinned column gets exactly its width. Under the automatic layout a
-        // w-full Trust column took nearly everything and squeezed the others (FLIP#1852).
-        expect(wrapper.find("table").classes()).toContain("table-fixed");
-        const th = wrapper.find("[data-test='sort-header-name']");
-        expect(th.classes().filter(c => /^(w-|min-w-)/.test(c))).toEqual([]);
-        const pinned = wrapper.findAll("th").filter(h => h.classes().some(c => c.startsWith("w-")));
-        expect(pinned).toHaveLength(wrapper.findAll("th").length - 1);
+        // Automatic layout: a column that cannot wrap cannot be squeezed, so a long region
+        // widens its own column instead of running into the next one (FLIP#1852).
+        expect(wrapper.find("table").classes()).not.toContain("table-fixed");
+        expect(wrapper.find("[data-test='sort-header-name']").classes()).toContain("w-full");
+        const others = wrapper.findAll("th").filter(h => h.attributes("data-test") !== "sort-header-name");
+        expect(others.every(h => h.classes().includes("w-px") && h.classes().includes("whitespace-nowrap"))).toBe(true);
+        expect(wrapper.find("[data-test='trust-row']").classes()).toContain("whitespace-nowrap");
         // max-w-0 gives the cell zero min-content, so the truncate spans clip.
         const nameCell = wrapper.find("[data-test='trust-name']").element.closest("td");
         expect(nameCell?.className).toContain("max-w-0");
@@ -719,9 +719,6 @@ describe("ConnectionStatus", () => {
         const wrapper = await mountLoaded(fixture, { permissions: [] });
 
         expect(wrapper.findAll("th")).toHaveLength(7);
-        // Region/Services/Heartbeat keep their design-grid widths (~148/150/104px).
-        expect(wrapper.find("[data-test='sort-header-region']").classes()).toContain("w-36");
-        expect(wrapper.find("[data-test='sort-header-heartbeat']").classes()).toContain("w-28");
         const row = wrapper.find("[data-test='trust-row']");
         expect(row.findAll("td")).toHaveLength(7);
         // The placeholder 7d-uptime sparkline is gone (replaced by real service dots).
