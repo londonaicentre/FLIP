@@ -82,6 +82,8 @@ interface IAiButtonProps {
     primary?: boolean;
     light?: boolean;
     error?: boolean;
+    // Filled red, for the one irreversible action in a group (e.g. Delete User).
+    danger?: boolean;
     small?: boolean;
     large?: boolean;
     clear?: boolean;
@@ -124,6 +126,7 @@ const buttonClass = computed(() => ({
     "btn-text-primary": props.textPrimary,
     "btn-text-secondary": props.textSecondary,
     "btn-text-error": props.error,
+    "btn-danger": props.danger,
     "btn-block": props.block
 }));
 
@@ -159,6 +162,10 @@ const buttonClass = computed(() => ({
 
 .btn-base.btn-text-error {
     @apply text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-500;
+}
+
+.btn-base.btn-danger {
+    @apply border-0 text-white bg-red-600 hover:bg-red-700 focus:bg-red-600 focus:ring-red-500 dark:bg-red-700 dark:hover:bg-red-600 dark:focus:bg-red-700;
 }
 
 .btn-base.btn-primary {

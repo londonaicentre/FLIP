@@ -380,7 +380,7 @@
                                     <AiButton
                                         v-if="selectedUser.isDisabled"
                                         data-test="delete-user-btn"
-                                        error
+                                        danger
                                         block
                                         @click="dialogDelete = true;"
                                     >
