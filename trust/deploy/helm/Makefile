@@ -27,7 +27,7 @@ KIT_DEST ?= /opt/flip/fl-kit
 # uid 1000 and leave the SuperNode unable to read its own certs, with nothing
 # saying so until the pod logs. FL_BACKEND=<backend> on the command line still
 # overrides the shape, and so does an explicit KIT_UID=. Resolved at parse time,
-# scoped to the stage-kit goal, so `make -n stage-kit` shows the real chown and an
+# scoped to the stage-kit goal, so `make -n stage-kit` shows the resolved owner uid and an
 # unrecognisable kit fails before anything is copied.
 KIT_SHAPE_NVFLARE := $(if $(wildcard $(KIT_SRC)/startup/),nvflare,)
 KIT_SHAPE_FLOWER := $(if $(wildcard $(KIT_SRC)/certificates/ $(KIT_SRC)/keys/),flower,)
@@ -231,16 +231,14 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	## needed; a kit with neither or both shapes is refused before anything is copied.
 	## scripts/stage-to-node.sh does the copy (FLIP#1958): on a kind node with docker exec/cp, on
 	## any other node (k3s, a VM) through a short-lived root pod pinned to it, with KIT_DEST as a
-	## hostPath and kubectl cp, so neither docker nor root on the host is needed. A namespace under
-	## Pod Security "baseline" or stricter refuses that pod: use the kit Secret route there
-	## (flClient.kit.source=secret, `make kit-secret`).
+	## hostPath and kubectl cp. A namespace under Pod Security "baseline" refuses that pod and the
+	## chart's own kit hostPath alike: use the kit Secret route there (flClient.kit.source=secret,
+	## `make kit-secret`).
 	##
-	## KIT_DEST is emptied before the copy, for the same reason the EC2 play wipes before
-	## its sync: a copy merges into whatever is already there, so re-staging after a
-	## kit-date bump, a backend switch, or a corrected over-broad sync would leave the
-	## previous kit's files in place beside the new ones — including credentials that
-	## should no longer be on the node. Then the mounted subdirectories are created and the
-	## whole kit is made private to KIT_UID.
+	## KIT_DEST's previous contents are replaced, not merged, for the same reason the EC2 play
+	## wipes before its sync: re-staging after a kit-date bump, a backend switch, or a corrected
+	## over-broad sync would otherwise leave credentials that should no longer be on the node.
+	## The mounted subdirectories are created and the whole kit is made private to KIT_UID.
 	@[ -n "$(KUBE_CONTEXT)" ] || (echo "❌  KUBE_CONTEXT is required — this writes to a node's filesystem, and defaulting to kubectl's current context ($$(kubectl config current-context 2>/dev/null || echo none)) would stage into whichever cluster that happens to be. e.g. KUBE_CONTEXT=kind-flip-kch"; exit 1)
 	@echo "📦 Staging $(KIT_SRC) ($(KIT_BACKEND) kit, owner uid $(KIT_UID)) → [$(KUBE_CONTEXT)] $(KIT_DEST)"
 	NAMESPACE=$(NAMESPACE) $(CHART_DIR)/scripts/stage-to-node.sh --context "$(KUBE_CONTEXT)" \
@@ -553,9 +551,8 @@ xnat-init: ## Run the XNAT post-install init job (a no-op when xnat.enabled=fals
 	@# all (templates/xnat-init-job.yaml is guarded on both). `kubectl apply --selector` is then
 	@# handed zero objects and fails with "no objects passed to apply", which turned a deploy of a
 	@# trust that has no XNAT to configure into exit 3.
-	@# The wait ends on Complete or Failed, whichever comes first (FLIP#1958): a Job past its
-	@# backoffLimit never completes, and waiting only for that held the deploy for all of
-	@# HELM_TIMEOUT before it said anything.
+	@# The wait ends on Complete or Failed, whichever comes first: a Job past its backoffLimit never
+	@# completes. Only a Failed condition fails it; a Failed-waiter that errors is dropped.
 	@echo "▶  Rendering XNAT init job from chart templates..."
 	@tmp=$$(mktemp); \
 	trap 'rm -f "$$tmp"' EXIT; \
@@ -576,13 +573,21 @@ xnat-init: ## Run the XNAT post-install init job (a no-op when xnat.enabled=fals
 	init="--selector app.kubernetes.io/component=xnat-init --namespace $(NAMESPACE) --timeout=$(HELM_TIMEOUT)"; \
 	$(KUBECTL) wait job $$init --for=condition=complete > /dev/null & complete=$$!; \
 	$(KUBECTL) wait job $$init --for=condition=failed > /dev/null 2>&1 & failed=$$!; \
-	while kill -0 $$complete 2>/dev/null && kill -0 $$failed 2>/dev/null; do sleep 2; done; \
-	if ! kill -0 $$complete 2>/dev/null && wait $$complete; then \
-		kill $$failed 2>/dev/null; \
+	job_failed=; \
+	while kill -0 $$complete 2>/dev/null; do \
+		if [ -n "$$failed" ] && ! kill -0 $$failed 2>/dev/null; then \
+			if wait $$failed; then job_failed=1; break; fi; \
+			failed=; \
+		fi; \
+		sleep 2; \
+	done; \
+	if [ -z "$$job_failed" ] && wait $$complete; then \
+		[ -z "$$failed" ] || kill $$failed 2>/dev/null; \
 		echo "✅  XNAT init complete."; \
 	else \
 		kill $$complete $$failed 2>/dev/null; \
-		echo "❌  XNAT init failed — check logs:"; \
+		if [ -n "$$job_failed" ]; then reason="the Job failed"; else reason="it did not complete in $(HELM_TIMEOUT)"; fi; \
+		echo "❌  XNAT init failed ($$reason) — check logs:"; \
 		$(KUBECTL) logs -n $(NAMESPACE) -l app.kubernetes.io/component=xnat-init --tail=40; \
 		exit 1; \
 	fi

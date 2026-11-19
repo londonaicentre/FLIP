@@ -38,7 +38,7 @@ boundary — see [Residual risk](#residual-risk).
 | `*-default-deny-ingress` | Ingress | `podSelector: {}` with no `ingress:` rules ⇒ **deny all inbound** to every pod. Optionally allows `kube-system` (kubelet probes/metrics) when `allowKubeSystemIngress=true` (default `false`). |
 | `*-allow-intra-namespace` | Ingress | Allows inbound **only** from pods in the same namespace (`namespaceSelector` on `kubernetes.io/metadata.name`). This is what lets trust-api reach imaging-api / data-access-api. |
 | `*-egress` | Egress | Default-deny egress with the allowlist below. |
-| `*-xnat-web-api-server`, `*-fl-client-api-server` | Egress | Only with `networkPolicies.apiServer.cidrs` set (FLIP#1958): `xnat-web` (XNAT's Container Service) and the NVFLARE job-pod parent may reach the Kubernetes API server's real endpoint on its port, for clusters where it is not 443 (k3s and kind 6443, minikube 8443). Job pods never get it. |
+| `*-xnat-web-api-server`, `*-fl-client-api-server` | Egress | Only with an API server named (`networkPolicies.apiServer.cidrs`, or `flClient.nvflare.jobPods.apiServer.cidrs` for the parent) and the component enabled (FLIP#1958): `xnat-web` (XNAT's Container Service) and the NVFLARE job-pod parent may reach the Kubernetes API server's real endpoint on its port, for clusters where it is not 443 (k3s and kind 6443, minikube 8443). Job pods never get it. |
 
 ### Egress allowlist (audited)
 

@@ -104,8 +104,10 @@ helm upgrade --install trust-release ./trust/deploy/helm/ \
   re-stage leaves no stale credentials, and pre-creates the subPath directories the chart mounts. On a
   kind node it copies with `docker cp`; on any other node (k3s, a VM) through a short-lived root pod pinned
   to the node with `KIT_DEST` as a hostPath, and `kubectl cp` (`scripts/stage-to-node.sh`, FLIP#1958).
-  A cluster that will not run that pod (Pod Security `baseline` or stricter, or the image out of reach) gets
-  the same steps printed as one command to run as root on the node (FLIP#1477). `stage-vocab` goes the same way.
+  That needs RBAC to read nodes and to create and exec into the pod, as good as root on the node. A cluster that
+  will not run the pod (the image out of reach, an admission policy) gets the same steps printed as one command
+  to run as root on the node (FLIP#1477). Under Pod Security `baseline` the chart's own hostPath mounts are refused
+  too, so use the kit Secret there. `stage-vocab` goes the same way.
 - **`undeploy`** (aliases `down`, `undeploy-trust-k8s`) is `helm uninstall`. Every standalone PVC in the
   chart has no `helm.sh/resource-policy: keep`, so uninstall deletes them (orthanc, xnat-web,
   data-access-api's cohort snapshots, grafana, shared images); only StatefulSet `volumeClaimTemplates`
@@ -1156,8 +1158,8 @@ there; the omop-db image CI asserts every published image carries it.
 - **Secrets**: Separate from ConfigMaps; recommend External Secrets Operator
 - **FL clients**: No Central Hub credentials; connect outbound to FL server only
 - **ServiceAccounts**: each stateless service runs under its own ServiceAccount
-  with no RBAC role bindings (none of the pods call the Kubernetes API — least
-  privilege by default).
+  with no RBAC role bindings (none of them calls the Kubernetes API — least
+  privilege by default; xnat-web and the NVFLARE job-pod parent do, with their own RBAC).
 - **Pod Security & container hardening**: the chart-created namespace
   carries Pod Security Standards labels (`enforce=baseline`, `warn`/`audit=restricted`
   by default — tune via `podSecurity.*`; `baseline` does not admit `hostPath` volumes, which
@@ -1278,7 +1280,7 @@ make -C trust/deploy/helm xnat-init
 It re-renders only the `xnat-init` job from the chart (`--set
 xnat.initJob.enabled=true`, applied with the
 `app.kubernetes.io/component=xnat-init` selector), waits up to `HELM_TIMEOUT` (default
-`30m`) for it to complete, and on failure tails the job's logs before exiting non-zero.
+`30m`) for it to complete or fail, and on failure tails the job's logs before exiting non-zero.
 
 Two things worth knowing now that `make deploy` calls this target itself:
 

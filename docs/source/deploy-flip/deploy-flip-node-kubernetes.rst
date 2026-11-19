@@ -103,14 +103,17 @@ Cluster
 - **A default StorageClass.** Without one, every PersistentVolumeClaim stays ``Pending``. Default sizes are below;
   change any with ``<block>.persistence.size`` and pick a class with ``<block>.persistence.storageClassName``.
 - **A CNI that enforces NetworkPolicy** (Calico, Cilium, Antrea and similar). On one that ignores them, such as
-  default flannel, the chart's policies render but do nothing.
+  default flannel, the chart's policies render but do nothing (k3s pairs flannel with its own policy controller, so
+  it does enforce them).
 - **The API server's address, where it does not listen on 443.** XNAT's Container Service (which runs dcm2niix as
   Jobs) and NVFLARE's job launcher call the Kubernetes API, and NetworkPolicy matches the API server's real endpoint,
   not the ``kubernetes`` Service. k3s and kind listen on 6443, minikube on 8443: find it with
   ``kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes`` and set
   ``networkPolicies.apiServer`` (``cidrs`` and ``port``). AKS and EKS listen on 443, which the chart already allows.
 - **RBAC** to create Secrets in the namespace (required) and to create the namespace itself, or have a cluster
-  administrator create it first. The namespace is ``flip-trust`` unless you pass ``NAMESPACE=``.
+  administrator create it first. The namespace is ``flip-trust`` unless you pass ``NAMESPACE=``. ``stage-kit`` and
+  ``stage-vocab`` outside kind also read the nodes and create and exec into a root pod with a ``hostPath``, which is
+  as good as root on that node (Step 3).
 
 .. list-table:: Default volume sizes
    :header-rows: 1
@@ -196,17 +199,19 @@ for development only. *Who: the node's administrator, with root for the install 
 .. code-block:: shell
 
    curl -sfL https://get.k3s.io | sudo INSTALL_K3S_EXEC="--data-dir /data/k3s --disable traefik \
-     --write-kubeconfig-mode 644 --default-runtime nvidia" sh -
+     --default-runtime nvidia" sh -
+   sudo install -D -o "$USER" -m 600 /etc/rancher/k3s/k3s.yaml ~/.kube/config   # once, for the operator
 
-- ``--data-dir``: where container images and every volume go (the default ``local-path`` StorageClass writes under
-  ``<data-dir>/storage``). Pick a disk with room for the volumes above plus about 30 GB of images.
+- ``--data-dir``: where container images and every PersistentVolume go (the default ``local-path`` StorageClass
+  writes under ``<data-dir>/storage``). Pick a disk with room for the volumes above plus about 30 GB of images.
 - ``--disable traefik``: the chart brings no Ingress, and nothing on the node needs to listen on 80 or 443.
-- ``--write-kubeconfig-mode 644``: the operator can copy ``/etc/rancher/k3s/k3s.yaml`` to ``~/.kube/config``
-  without root. Its context is ``default`` (``KUBE_CONTEXT=default``).
+- The kubeconfig is cluster-admin, and with ``hostPath`` pods that is root on the node, so keep it ``600`` and copy
+  it only to the operator. Its context is ``default`` (``KUBE_CONTEXT=default``).
 - ``--default-runtime nvidia``: on a GPU node only, once the NVIDIA driver (580 or newer) and the NVIDIA Container
   Toolkit are installed. The chart sets no ``runtimeClassName``, so pods reach the GPU only through containerd's
   default runtime. To add it to an existing install, put ``default-runtime: nvidia`` in
-  ``/etc/rancher/k3s/config.yaml`` and run ``sudo systemctl restart k3s``; running pods carry on.
+  ``/etc/rancher/k3s/config.yaml`` and run ``sudo systemctl restart k3s``; pods that use the GPU, and the device
+  plugin, pick it up only when recreated.
 
 Then, as the operator, without root:
 
@@ -236,8 +241,8 @@ Then, as the operator, without root:
      kubectl label node <node> nvidia.com/gpu.present=true
      kubectl get node <node> -o jsonpath='{.status.allocatable.nvidia\.com/gpu}'   # the GPU count
 
-- Stage the FL kit with ``stage-kit`` (Step 3). It reaches the node through a short-lived pod, so it needs neither
-  docker nor root on the host.
+- Stage the FL kit with ``stage-kit`` (Step 3). It reaches the node through a short-lived pod, so it needs no
+  docker or shell on the host.
 
 *****************************************************
 Step 1 — Check out the release and copy in the kit
@@ -333,10 +338,12 @@ the FL client starts.
 
    On a kind development cluster ``stage-kit`` copies with ``docker cp``. On any other cluster (k3s, a VM) it starts
    a short-lived root pod on the node, with ``KIT_DEST`` mounted as a ``hostPath``, and copies with
-   ``kubectl cp``: no docker and no root on the host, only permission to create that pod in the namespace. Pod
-   Security ``baseline`` or stricter refuses it, and then ``stage-kit`` prints the same steps as one command to run
-   as root on the node. Otherwise use the kit Secret below, or place the kit at ``KIT_DEST`` by your site's own
-   means, owned by uid 1000 (FLARE) or 49999 (Flower) and readable by no one else. On a host
+   ``kubectl cp``. That needs no docker or shell on the host, but RBAC to read the nodes and to create and exec
+   into that pod, which is as good as root on the node. If the cluster will not run the pod, ``stage-kit`` prints
+   the same steps as one command to run as root on the node. A namespace under Pod Security ``baseline`` refuses
+   every ``hostPath``, the chart's own kit mount included, so use the kit Secret below there. Otherwise place the
+   kit at ``KIT_DEST`` by your site's own means, owned by uid 1000 (FLARE) or 49999 (Flower) and readable by no one
+   else. On a host
    shared with people, check that uid isn't a person's account: whoever holds it can read the kit's private key.
 
 If you skip this step, the FL client pod stays ``Pending`` with a ``hostPath type check failed`` event naming the
@@ -714,9 +721,10 @@ Troubleshooting
    * - FL client ``Pending`` with ``hostPath type check failed``
      - The FL kit is not on the node at ``flClient.kitHostPath``. Run Step 3, then deploy again.
    * - ``xnat-init`` fails with ``Container Service cannot reach its kubernetes backend (HTTP 500)``
-     - The API server does not listen on 443 and ``networkPolicies.apiServer`` is not set (see `Cluster`_).
+     - The API server does not listen on 443 and ``networkPolicies.apiServer`` is not set:
+       :ref:`ts-k8s-api-server-egress`.
    * - Job pods on: a project's jobs never start at this trust
-     - The project has no NVFLARE study entry yet: run ``sync-project-studies`` (see `GPUs`_).
+     - The project has no NVFLARE study entry yet: run ``sync-project-studies`` (:ref:`ts-k8s-job-pods-no-study`).
    * - Flower SuperNode logs ``Permission denied`` on ``/certs`` or ``/keys``
      - The kit was staged for the wrong backend. Re-stage from the slot's own kit directory, or pass
        ``FL_BACKEND=flower``.

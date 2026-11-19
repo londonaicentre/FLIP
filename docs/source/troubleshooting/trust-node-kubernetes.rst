@@ -382,13 +382,13 @@ does not allow.
 .. code-block:: shell
 
    kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes \
-     -o jsonpath='{.items[0].endpoints[0].addresses} {.items[0].ports[0].port}'
+     -o jsonpath='{.items[0].endpoints[*].addresses[0]} {.items[0].ports[0].port}'
 
 .. code-block:: yaml
 
    networkPolicies:
      apiServer:
-       cidrs: ["<address>/32"]
+       cidrs: ["<address>/32"]   # one per address, on a cluster with several control-plane nodes
        port: <port>
 
 .. _ts-k8s-namespaced-account:

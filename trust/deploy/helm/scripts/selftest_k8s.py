@@ -235,7 +235,7 @@ def nvflare_startup_dir(cluster: Cluster, pod: str) -> str | None:
     """The fl-client's mount of the kit's startup/ folder, read from the pod (FLIP#1958).
 
     templates/fl-client.yaml mounts it at /app/startup, or with job pods under the workspace the parent runs NVFLARE
-    in. Reading the pod follows the chart wherever it puts the kit; a path written here went stale once already.
+    in. Reading the pod follows the chart wherever it puts the kit.
     """
     mounts = cluster.mounts(pod, "fl-client")
     return next((m["mountPath"] for m in mounts if m.get("subPath") == "startup"), None)

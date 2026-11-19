@@ -92,3 +92,21 @@ def test_the_job_pods_own_setting_still_wins_for_the_parent():
     ]
     (xnat,) = _named(docs, "NetworkPolicy", "-xnat-web-api-server")
     assert xnat["spec"]["egress"] == RULE, "xnat-web reads only the cluster setting"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        ("--set", "networkPolicies.apiServer.cidr[0]=10.0.0.1/32"),
+        ("--set", "networkPolicies.apiServer.cidrs=10.0.0.1/32"),
+        ("--set", "networkPolicies.apiServer.port=0"),
+        ("--set", "networkPolicies.apiServer.port=70000"),
+    ],
+    ids=["misspelt-key", "scalar-cidrs", "port-zero", "port-too-high"],
+)
+def test_a_mistyped_api_server_setting_fails_the_render_instead_of_rendering_no_policy(bad):
+    args = ["helm", "template", "trust-release", str(CHART_DIR), "--set", "flClient.kitHostPath=/opt/flip/fl-kit"]
+    result = subprocess.run([*args, *bad], capture_output=True, text=True, timeout=120)
+
+    assert result.returncode != 0
+    assert "apiServer" in result.stderr

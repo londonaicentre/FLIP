@@ -16,17 +16,16 @@
 #   stage-to-node.sh --context <ctx> --src <dir> --dest <node path> [--subdirs "a b"] (--owner <uid> | --world-readable)
 #
 # How it reaches the node:
-#   - a kind node is a Docker container of the same name: `docker exec` / `docker cp`, as before;
+#   - a kind node is a Docker container of the same name: `docker exec` / `docker cp`;
 #   - any other node (k3s, a VM, bare metal): a short-lived root pod pinned to the node mounts <dest> as a hostPath,
-#     and the folder goes in with `kubectl cp`. Neither docker nor root on the host is needed, only RBAC to create
-#     that pod in $NAMESPACE. A namespace under Pod Security "baseline" or stricter refuses it (FLIP#1477): the
-#     script then prints the same steps as one command to run as root on the node. The kit Secret route
-#     (flClient.kit.source=secret) is the other way round it.
+#     and the folder goes in with `kubectl cp`. That needs no docker or shell on the host, but RBAC to read nodes and
+#     to create and exec into a pod in $NAMESPACE, which is as good as root on that node. If the cluster will not run
+#     the pod, the script prints the same steps as one command to run as root on the node.
 #
-# The same steps on both paths, in this order: create <dest>, empty it (both copies merge, so a re-stage would keep
-# the previous kit's files beside the new ones), copy <src>'s contents, create the --subdirs (a subPath missing from
-# the hostPath is created by kubelet as root 0700, which the non-root client cannot write), then the permissions:
-# --owner <uid> makes it private to that uid (chmod -R go-rwx, chown -R uid:uid), --world-readable runs chmod -R a+rX.
+# The same steps on both paths: copy <src> into a staging folder inside <dest> (made 0700 first with --owner), then
+# swap it in for the previous contents, create the --subdirs (kubelet would make a missing subPath root 0700) and set
+# the permissions: --owner <uid> is chmod -R go-rwx + chown -R uid:uid, --world-readable is chmod -R a+rX. A failed
+# copy leaves the previous contents in place.
 #
 # Env: NAMESPACE (default flip-trust), KUBECTL (default kubectl), DOCKER (default docker),
 #      STAGE_TIMEOUT for the pod to start (default 180s).
@@ -50,10 +49,16 @@ done
 
 [ -n "$context" ] || { echo "❌ --context is required: this writes to a node's filesystem" >&2; exit 2; }
 [ -d "$src" ] || { echo "❌ --src $src is not a directory" >&2; exit 2; }
-case "$dest" in
-  /?*) ;;
-  *) echo "❌ --dest must be an absolute path other than / (it is emptied before the copy): '$dest'" >&2; exit 2 ;;
+# <dest> is emptied as root, so refuse anything that could name / or a top-level folder.
+dest="${dest%/}"
+case "$dest/" in
+  /*/*/) case "$dest/" in *//*|*/./*|*/../*) dest_ok="" ;; *) dest_ok=1 ;; esac ;;
+  *) dest_ok="" ;;
 esac
+[ -n "$dest_ok" ] || {
+  echo "❌ --dest must be an absolute path at least two levels deep, without . or .. (it is emptied): '$dest'" >&2
+  exit 2
+}
 case "$owner" in
   '') [ -n "$world_readable" ] || { echo "❌ say who reads it: --owner <uid> or --world-readable" >&2; exit 2; } ;;
   *[!0-9]*) echo "❌ --owner must be a numeric uid: '$owner'" >&2; exit 2 ;;
@@ -76,8 +81,12 @@ else
   permissions="chmod -R a+rX \"\$1\""
   permissions_by_hand="chmod -R a+rX $dest"
 fi
-# Runs on the node, with $1 the destination: everything after the copy.
-finish="set -e${subdirs:+; for d in $subdirs; do mkdir -p \"\$1/\$d\"; done}; $permissions"
+# Run on the node with $1 the destination and $2 the staging folder inside it: before and after the copy.
+staging=".flip-staging-$$"
+prepare="set -e; mkdir -p \"\$1/\$2\"${owner:+; chmod 700 \"\$1\"}"
+finish="set -e; find \"\$1\" -mindepth 1 -maxdepth 1 ! -name \"\$2\" -exec rm -rf {} \\;"
+finish+="; find \"\$1/\$2\" -mindepth 1 -maxdepth 1 -exec mv {} \"\$1/\" \\;; rmdir \"\$1/\$2\""
+finish+="${subdirs:+; for d in $subdirs; do mkdir -p \"\$1/\$d\"; done}; $permissions"
 
 kind_cluster=""
 if command -v "$docker" > /dev/null 2>&1; then
@@ -86,10 +95,9 @@ fi
 
 if [ -n "$kind_cluster" ]; then
   echo "📦 $src → kind node $node:$dest (docker cp)"
-  "$docker" exec "$node" mkdir -p "$dest"
-  "$docker" exec "$node" find "$dest" -mindepth 1 -delete
-  "$docker" cp "$src/." "$node:$dest/"
-  "$docker" exec "$node" sh -c "$finish" sh "$dest"
+  "$docker" exec "$node" sh -c "$prepare" sh "$dest" "$staging"
+  "$docker" cp "$src/." "$node:$dest/$staging/"
+  "$docker" exec "$node" sh -c "$finish" sh "$dest" "$staging"
   exit 0
 fi
 
@@ -102,9 +110,15 @@ by_hand() {
 
 pod="flip-stage-$(date +%s)-$$"
 echo "📦 $src → node $node:$dest (pod $namespace/$pod, kubectl cp)"
-"${kubectl[@]}" create namespace "$namespace" --dry-run=client -o yaml | "${kubectl[@]}" apply -f - > /dev/null
-# busybox's sleep ignores SIGTERM, so the default 30 s grace period would only leave the pod Terminating.
-trap '"${kubectl[@]}" -n "$namespace" delete pod "$pod" --ignore-not-found --wait=false --grace-period=1 > /dev/null 2>&1 || true' EXIT
+# An account limited to the namespace cannot read it; the pod's apply below then names what is wrong.
+"${kubectl[@]}" get namespace "$namespace" > /dev/null 2>&1 \
+  || "${kubectl[@]}" create namespace "$namespace" > /dev/null 2>&1 || true
+# sleep runs as PID 1, which has no SIGTERM handler, so the default 30 s grace period would only leave it Terminating.
+remove_pod() {
+  "${kubectl[@]}" -n "$namespace" delete pod "$pod" --ignore-not-found --wait=false --grace-period=1 > /dev/null 2>&1 \
+    || echo "⚠️  could not remove the staging pod: kubectl --context $context -n $namespace delete pod $pod" >&2
+}
+trap remove_pod EXIT
 if ! "${kubectl[@]}" -n "$namespace" apply -f - > /dev/null << YAML
 apiVersion: v1
 kind: Pod
@@ -120,7 +134,7 @@ spec:
   containers:
     - name: stage
       image: $STAGE_IMAGE
-      command: ["sleep", "900"]
+      command: ["sleep", "14400"]  # outlives a slow vocabulary copy; remove_pod deletes it at once
       securityContext:
         runAsUser: 0
       volumeMounts:
@@ -133,10 +147,10 @@ spec:
         type: DirectoryOrCreate
 YAML
 then
-  by_hand "the cluster would not run the staging pod (a namespace under Pod Security \"baseline\" or stricter refuses it)"
+  by_hand "the cluster would not run the staging pod (kubectl's reason is above)"
 fi
 "${kubectl[@]}" -n "$namespace" wait pod "$pod" --for=condition=Ready --timeout="${STAGE_TIMEOUT:-180s}" > /dev/null \
   || by_hand "the staging pod did not start within ${STAGE_TIMEOUT:-180s} (is $STAGE_IMAGE reachable from the node?)"
-"${kubectl[@]}" -n "$namespace" exec "$pod" -- find /stage -mindepth 1 -delete
-"${kubectl[@]}" -n "$namespace" cp "$src/." "$pod:/stage"
-"${kubectl[@]}" -n "$namespace" exec "$pod" -- sh -c "$finish" sh /stage
+"${kubectl[@]}" -n "$namespace" exec "$pod" -- sh -c "$prepare" sh /stage "$staging"
+"${kubectl[@]}" -n "$namespace" cp "$src/." "$pod:/stage/$staging"
+"${kubectl[@]}" -n "$namespace" exec "$pod" -- sh -c "$finish" sh /stage "$staging"
