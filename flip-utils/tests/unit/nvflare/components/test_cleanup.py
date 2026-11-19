@@ -17,6 +17,7 @@ from nvflare.apis.event_type import EventType
 from nvflare.apis.fl_constant import ReturnCode
 
 from flip.constants import FlipTasks
+from flip.constants.flip_constants import DevSettings
 from flip.nvflare.components.cleanup import CleanupImages
 
 PROJECT = "abcdef01-2345-6789-abcd-ef0123456789"
@@ -125,17 +126,20 @@ def test_the_last_task_deletes_the_job_directory_and_leaves_images_to_the_end_of
     assert study.exists()
 
 
-def test_dev_mode_deletes_nothing(constants, project_id, tmp_path, monkeypatch):
-    constants.LOCAL_DEV = True
+def test_dev_mode_deletes_nothing(project_id, tmp_path, monkeypatch):
+    """The real DevSettings: it has none of the production-only settings, IMAGES_TRANSPORT among them."""
     job_dir = tmp_path / "workspace" / "test_job"
     job_dir.mkdir(parents=True)
     monkeypatch.chdir(tmp_path / "workspace")
     study = _study(tmp_path, OTHER_PROJECT)
+    cleanup = _cleanup()
 
-    for task in (FlipTasks.INIT_TRAINING, FlipTasks.POST_VALIDATION):
-        assert _run(task).get_return_code() == ReturnCode.OK
-    _cleanup().handle_event(EventType.ABOUT_TO_END_RUN, _fl_ctx())
+    with patch("flip.nvflare.components.cleanup.FlipConstants", DevSettings()):
+        for task in (FlipTasks.INIT_TRAINING, FlipTasks.POST_VALIDATION):
+            assert cleanup.execute(task, MagicMock(), _fl_ctx(), MagicMock()).get_return_code() == ReturnCode.OK
+        cleanup.handle_event(EventType.ABOUT_TO_END_RUN, _fl_ctx())
 
+    cleanup.log_error.assert_not_called()
     assert job_dir.exists()
     assert study.exists()
 

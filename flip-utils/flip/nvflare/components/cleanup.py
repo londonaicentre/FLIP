@@ -74,14 +74,15 @@ class CleanupImages(Executor):
 
     def _delete_images(self, fl_ctx: FLContext, keep: str | None = None) -> None:
         """Delete everything in the net's images folder except the project folder named ``keep``."""
+        # LOCAL_DEV first: the other settings exist only in production.
+        if FlipConstants.LOCAL_DEV:
+            self.log_info(fl_ctx, "[DEV] Cleanup → images")
+            return
         if FlipConstants.IMAGES_TRANSPORT != "mount":
             # Only a client that mounts the net's whole images folder wipes it. A job pod that mounts
             # its project's folder (read-only, FLIP#1678) or none (FLIP#1049) leaves the cache to
             # imaging-api, which keeps and bounds it.
             self.log_info(fl_ctx, "Cleanup → the image cache is imaging-api's; nothing to delete here")
-            return
-        if FlipConstants.LOCAL_DEV:
-            self.log_info(fl_ctx, "[DEV] Cleanup → images")
             return
 
         net_directory = Path(FlipConstants.IMAGES_DIR, FlipConstants.NET_ID)
