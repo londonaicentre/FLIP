@@ -490,29 +490,44 @@
                                         ? 'dark:stroke-red-400 dark:[stroke-opacity:0.7]'
                                         : ''"
                                 />
-                                <line
-                                    v-if="node.state === 'online'"
-                                    :x1="radial.cx"
-                                    :y1="radial.cy"
-                                    :x2="node.x"
-                                    :y2="node.y"
-                                    data-test="spoke-pulse"
-                                    pathLength="100"
-                                    stroke="#d946ef"
-                                    stroke-opacity="0.8"
-                                    stroke-width="2.6"
-                                    stroke-linecap="round"
-                                    stroke-dasharray="16 84"
-                                >
-                                    <!-- A dash, not a gradient: a bounding-box gradient paints
-                                         nothing on a vertical or horizontal spoke (FLIP#1980) -->
-                                    <animate
-                                        attributeName="stroke-dashoffset"
-                                        values="100;0"
-                                        dur="2.4s"
-                                        repeatCount="indefinite"
+                                <!-- Each pulse gradient runs hub to trust in user space. A shared
+                                     bounding-box gradient paints nothing on a vertical or horizontal
+                                     spoke (zero-width box) and slides along x on the rest (FLIP#1980). -->
+                                <template v-if="node.state === 'online'">
+                                    <defs>
+                                        <linearGradient
+                                            :id="`link-pulse-${node.id}`"
+                                            data-test="spoke-pulse-gradient"
+                                            gradientUnits="userSpaceOnUse"
+                                            :x1="radial.cx"
+                                            :y1="radial.cy"
+                                            :x2="node.x"
+                                            :y2="node.y"
+                                        >
+                                            <stop offset="0%" stop-color="#a78bfa" stop-opacity="0.1" />
+                                            <stop offset="50%" stop-color="#d946ef" stop-opacity="0.9" />
+                                            <stop offset="100%" stop-color="#a78bfa" stop-opacity="0.1" />
+                                            <animate
+                                                v-for="a in pulseSweep(node)"
+                                                :key="a.attr"
+                                                :attributeName="a.attr"
+                                                :values="a.values"
+                                                dur="2.4s"
+                                                repeatCount="indefinite"
+                                            />
+                                        </linearGradient>
+                                    </defs>
+                                    <line
+                                        :x1="radial.cx"
+                                        :y1="radial.cy"
+                                        :x2="node.x"
+                                        :y2="node.y"
+                                        data-test="spoke-pulse"
+                                        :stroke="`url(#link-pulse-${node.id})`"
+                                        stroke-width="2.6"
+                                        stroke-linecap="round"
                                     />
-                                </line>
+                                </template>
                             </g>
                         </g>
 
@@ -1045,6 +1060,33 @@ interface IRadialNode {
     anchor: "start" | "end" | "middle";
     r: number;
     shortLabel: string;
+}
+
+// The pulse band is one spoke long and slides from a spoke's length behind the hub
+// to a spoke's length past the trust: along hub->trust the gradient's start moves
+// -1 -> 1 and its end 0 -> 2, as the old bounding-box gradient did along x.
+function pulseSweep(node: { x: number; y: number }) {
+    const at = (from: number, to: number, t: number) => from + (to - from) * t;
+    const sweep = (from: number, to: number, t0: number, t1: number) => `${at(from, to, t0)};${at(from, to, t1)}`;
+
+    return [
+        {
+            attr: "x1",
+            values: sweep(radial.cx, node.x, -1, 1)
+        },
+        {
+            attr: "y1",
+            values: sweep(radial.cy, node.y, -1, 1)
+        },
+        {
+            attr: "x2",
+            values: sweep(radial.cx, node.x, 0, 2)
+        },
+        {
+            attr: "y2",
+            values: sweep(radial.cy, node.y, 0, 2)
+        }
+    ];
 }
 
 // Pre-compute spoke endpoints + label positions so the template stays declarative.

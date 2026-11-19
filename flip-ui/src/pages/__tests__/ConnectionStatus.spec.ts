@@ -449,10 +449,36 @@ describe("ConnectionStatus", () => {
         expect(pulses).toHaveLength(1);
         const pulse = pulses[0];
         expect(pulse.attributes("x1")).toBe(pulse.attributes("x2"));
-        expect(pulse.attributes("stroke")).not.toMatch(/^url\(/);
-        expect(pulse.attributes("pathLength")).toBe("100");
-        expect(pulse.find("animate").attributes("attributeName")).toBe("stroke-dashoffset");
-        expect(wrapper.find("linearGradient").exists()).toBe(false);
+
+        // Its gradient lives in user space along the spoke, never in bounding-box units.
+        const gradient = wrapper.find("[data-test='spoke-pulse-gradient']");
+        expect(pulse.attributes("stroke")).toBe(`url(#${gradient.attributes("id")})`);
+        expect(gradient.attributes("gradientUnits")).toBe("userSpaceOnUse");
+        expect(gradient.attributes("x1")).toBe(pulse.attributes("x1"));
+        expect(gradient.attributes("y1")).toBe(pulse.attributes("y1"));
+        expect(gradient.attributes("x2")).toBe(pulse.attributes("x2"));
+        expect(gradient.attributes("y2")).toBe(pulse.attributes("y2"));
+
+        // The band sweeps along the spoke: x stays put on a vertical spoke, y travels.
+        const sweep = Object.fromEntries(
+            gradient.findAll("animate").map(a => [a.attributes("attributeName"), a.attributes("values")])
+        );
+        const [hx, hy, ny] = ["x1", "y1", "y2"].map(k => Number(pulse.attributes(k)));
+        expect(sweep.x1).toBe(`${hx};${hx}`);
+        expect(sweep.y1).toBe(`${2 * hy - ny};${ny}`);
+        expect(sweep.y2).toBe(`${hy};${2 * ny - hy}`);
+    });
+
+    it("gives each online spoke its own pulse gradient", async () => {
+        const wrapper = await mountLoaded([fixture[0], {
+            ...fixture[0],
+            id: "second-online"
+        }]);
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        const strokes = wrapper.findAll("[data-test='spoke-pulse']").map(l => l.attributes("stroke"));
+        expect(strokes).toHaveLength(2);
+        expect(new Set(strokes).size).toBe(2);
     });
 
     it("draws no pulse on spokes of trusts that are not online", async () => {
