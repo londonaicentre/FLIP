@@ -114,6 +114,57 @@ imaging-api and the FL client:
    Wherever a non-root container bind-mounts a host path, create that path with the right owner before the
    container starts. A path Docker creates is owned by root.
 
+.. _ts-compose-upgrade-data-dirs:
+
+``upgrade-onprem-trust`` stops at ``Data dir paths: cannot create``
+===================================================================
+
+**Symptom.** On a site that is already running, the upgrade stops at its readiness checklist::
+
+   ❌ Data dir paths:  cannot create: OMOP_DATA_DIR (/opt/flip/omop is not writable, and the seed marker is written there); ...
+   Status: NOT READY
+
+Nothing has been changed at that point.
+
+**Cause.** The checklist asks whether you can write the folder that holds each data directory, because a first
+install writes its seed marker there. On a site that root installed, those folders belong to root. An upgrade
+never seeds and writes nothing there, but it runs the same checklist.
+
+**Fix.** Read the checklist once on its own and confirm this is the only failing row:
+
+.. code-block:: shell
+
+   make onboard-onprem-trust KIT=<CODE>
+
+Then run the upgrade verb itself, which is what ``upgrade-onprem-trust`` calls after the checklist:
+
+.. code-block:: shell
+
+   make -C trust upgrade-trust KIT=<CODE> HUB=<env> TAG=vX.Y.Z
+
+It still refuses a release your checkout is not at, checks the registry for every image, and asks before it
+changes anything.
+
+.. _ts-compose-xnat-backup-writable:
+
+The upgrade stops: ``backups is not writable by uid``
+=====================================================
+
+**Symptom.** The upgrade prints the new tags, then stops before any container changes::
+
+   ✅ .env.<CODE>.<env>: DOCKER_TAG=vX.Y.Z, DOCKER_FL_TAG=vX.Y.Z
+   ❌ <XNAT_DATA_DIR>/backups is not writable by uid 1001:1001, which writes the XNAT backup ...
+      chown -R 1001:1001 <XNAT_DATA_DIR>/backups
+
+**Cause.** The upgrade dumps the XNAT database before touching XNAT, as the user XNAT runs as. On a site
+installed by an older release the ``backups`` folder belongs to root.
+
+**Fix.** Run the printed ``chown`` as root, then the same upgrade command again.
+
+The kit file already names the new release while the containers still run the old one, so do not start or
+restart the stack in between. If the retry has to wait, put ``DOCKER_TAG`` and ``DOCKER_FL_TAG`` in the kit back
+to the old release until then.
+
 *****************
 Imaging and XNAT
 *****************
