@@ -265,7 +265,7 @@ jobs:
 
       # graphviz lets test_architecture_diagram.py's render smoke test run rather than skip.
       - name: Install graphviz
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz
+        uses: ./.github/actions/install-graphviz
 
       - name: Run AWS deploy test suite
         working-directory: deploy/providers/AWS
@@ -356,7 +356,7 @@ jobs:
 
       # graphviz lets test_architecture_diagram.py's render smoke test run rather than skip.
       - name: Install graphviz
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz
+        uses: ./.github/actions/install-graphviz
 
       - name: Terraform tests and static guards
         working-directory: trust/deploy/terraform/azure
@@ -407,7 +407,7 @@ jobs:
 
       # graphviz lets test_architecture_diagram.py's render smoke test run rather than skip.
       - name: Install graphviz
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz
+        uses: ./.github/actions/install-graphviz
 
       - name: Terraform tests and Makefile checks
         working-directory: trust/deploy/terraform/${{ matrix.root }}
