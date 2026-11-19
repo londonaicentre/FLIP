@@ -75,6 +75,19 @@ class PublishUi(unittest.TestCase):
         assert "npm run build:deploy" in build
         assert "AUTH_BACKEND: cognito" in build
 
+    def test_the_demo_is_built_only_where_the_environment_says_so(self) -> None:
+        """PUBLIC_DEMO attests the edge's /demo/* behaviour; the publish job then checks it (FLIP#2008)."""
+        build = job("publish_ui.yml", "build")
+        assert "PUBLIC_DEMO: ${{ vars.PUBLIC_DEMO }}" in build
+        assert re.search(
+            r'if \[\[ "\$\{PUBLIC_DEMO\}" == "true" \]\]; then\n\s+npm run build:deploy:with-demo\n\s+else\n'
+            r"\s+npm run build:deploy\n",
+            build,
+        )
+        publish = job("publish_ui.yml", "publish")
+        assert "served demo/js/window.js" in publish
+        assert "connect-src 'none'" in publish
+
     def test_only_the_publish_job_assumes_the_ui_role(self) -> None:
         publish = job("publish_ui.yml", "publish")
         assert permissions(publish) == {"contents": "read", "id-token": "write"}

@@ -703,8 +703,7 @@ class MainCheck(unittest.TestCase):
         assert "fl_quiesced" in body
         assert "`:v0.13.0` on every image the fourteen builds publish" in body
         assert "deploy-ui" not in body  # the apply publishes the UI (#1186)
-        assert "from a checkout at `v0.13.0`, `make -C deploy/providers/AWS deploy-demo HUB=prod`" in body  # (#2008)
-        assert "connect-src 'none'" in body
+        assert "open the live `/demo/`" in body  # published by the same job (#2008)
         assert "- [ ] Delete JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB" in body
 
 

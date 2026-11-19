@@ -94,6 +94,7 @@ over the built bundle.
 npm run demo          # dev server at http://localhost:4174/ (base "/")
 npm run build:demo    # production bundle under dist/ with base "/demo/"
 npm run serve:demo    # preview the built bundle at http://127.0.0.1:4174/demo/
+npm run build:deploy:with-demo   # what a deploy publishes where PUBLIC_DEMO=true: the real build, with the demo under dist/demo/
 ```
 
 With `serve:demo` running, `npm run test:public-demo` walks the built bundle as a visitor would

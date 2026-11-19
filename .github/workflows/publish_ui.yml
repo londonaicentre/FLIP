@@ -24,6 +24,10 @@
 #            can write the UI bucket and nothing else, and runs the same
 #            scripts/publish-ui.sh as `make deploy-ui`.
 #
+# Where the environment sets PUBLIC_DEMO=true, the build also carries the public
+# demo under demo/ and the same sync publishes it (FLIP#2008): staging serves the
+# demo of every develop merge, and production the one of each release.
+#
 # The role trusts this file at the environment's branch: a job inside a reusable
 # workflow presents the called file as job_workflow_ref, whoever calls it.
 
@@ -119,6 +123,7 @@ jobs:
           CENTRAL_HUB_API_URL: ${{ vars.CENTRAL_HUB_API_URL }}
           AWS_REGION: ${{ vars.AWS_REGION }}
           BLACKLISTED_MODEL_FILES: ${{ vars.BLACKLISTED_MODEL_FILES }}
+          PUBLIC_DEMO: ${{ vars.PUBLIC_DEMO }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           GIT_SHA: ${{ github.sha }}
         run: |
@@ -127,8 +132,13 @@ jobs:
           # sha-<short7>, the name of this commit's image builds.
           export RELEASE_VERSION="${RELEASE_TAG:-sha-${GIT_SHA:0:7}}"
           npm ci
-          # postbuild:deploy writes dist/js/window.js from the env above.
-          npm run build:deploy
+          # postbuild:deploy writes dist/js/window.js from the env above. The
+          # demo build reads no environment and lands in dist/demo/.
+          if [[ "${PUBLIC_DEMO}" == "true" ]]; then
+            npm run build:deploy:with-demo
+          else
+            npm run build:deploy
+          fi
 
       # Artifacts of a public repository are public downloads. This one holds
       # only what the site itself serves.
@@ -180,20 +190,34 @@ jobs:
 
       # index.html and window.js are no-cache, so the edge serves the new
       # window.js once it has re-fetched it. Reading it back proves the build
-      # reached users, not just the bucket.
+      # reached users, not just the bucket. The demo's is read back the same
+      # way, and its page must carry the edge's demo policy: under the app's own
+      # CSP the unauthenticated demo could reach Cognito and S3 (FLIP#1746).
       - name: Check the served window.js
         env:
           CENTRAL_HUB_API_URL: ${{ vars.CENTRAL_HUB_API_URL }}
         run: |
           set -euo pipefail
-          expected="$(grep -o 'window.RELEASE_VERSION *= *"[^"]*"' dist/js/window.js)"
-          url="${CENTRAL_HUB_API_URL%/api}/js/window.js"
-          for attempt in 1 2 3 4 5 6 7 8; do
-            if curl -fsS "${url}" | grep -Fq "${expected}"; then
-              echo "${url} serves ${expected}."
-              exit 0
-            fi
-            sleep 15
-          done
-          echo "::error::${url} does not serve ${expected} after two minutes. The objects are in the bucket; check the edge's caching of js/window.js."
-          exit 1
+          site="${CENTRAL_HUB_API_URL%/api}"
+          served() {
+            local expected url="${site}/$1"
+            expected="$(grep -o 'window.RELEASE_VERSION *= *"[^"]*"' "dist/$1")"
+            for attempt in 1 2 3 4 5 6 7 8; do
+              if curl -fsS "${url}" | grep -Fq "${expected}"; then
+                echo "${url} serves ${expected}."
+                return 0
+              fi
+              sleep 15
+            done
+            echo "::error::${url} does not serve ${expected} after two minutes. The objects are in the bucket; check the edge's caching of $1."
+            return 1
+          }
+          served js/window.js
+          [[ -d dist/demo ]] || exit 0
+          served demo/js/window.js
+          if curl -fsSI "${site}/demo/" | grep -i '^content-security-policy:' | grep -Fq "connect-src 'none'"; then
+            echo "${site}/demo/ is served under the demo's own policy."
+          else
+            echo "::error::${site}/demo/ is served without connect-src 'none'. The edge has no /demo/* behaviour with the demo's policy: unset PUBLIC_DEMO for this environment until it does."
+            exit 1
+          fi

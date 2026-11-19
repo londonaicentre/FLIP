@@ -18,8 +18,9 @@
 #
 #   * hashed bundles are content-addressed, so they are cached for a year;
 #   * index.html and js/window.js reference those bundles and must never be cached;
-#   * --delete removes the previous build, but never demo/, the public demo published into the same
-#     bucket by `make deploy-demo` (FLIP#1746).
+#   * a build that carries the public demo under demo/ (`npm run build:deploy:with-demo`, FLIP#2008)
+#     publishes it in the same sync, its own entry points uncached too;
+#   * --delete removes the previous build. A build without demo/ leaves the bucket's demo/ alone.
 #
 # Nothing is invalidated: the networking account's edge serves the bucket (FLIP#749), and the no-cache
 # objects are re-fetched anyway.
@@ -38,8 +39,17 @@ fail() {
     exit 1
 }
 
+entries=(index.html js/window.js)
+excludes=(--exclude "index.html" --exclude "js/window.js")
+if [[ -d "${dist}/demo" ]]; then
+    entries+=(demo/index.html demo/js/window.js)
+    excludes+=(--exclude "demo/index.html" --exclude "demo/js/window.js")
+else
+    excludes+=(--exclude "demo/*")
+fi
+
 # Without these the sync would publish a site whose entry point is the previous build's, or none.
-for entry in index.html js/window.js; do
+for entry in "${entries[@]}"; do
     [[ -f "${dist}/${entry}" ]] || fail "${dist}/${entry} is missing: run npm run build:deploy first."
 done
 
@@ -47,12 +57,15 @@ echo "📦 Syncing ${dist} to s3://${bucket}/ ..."
 aws s3 sync "${dist}/" "s3://${bucket}/" \
     --delete \
     --cache-control "public, max-age=31536000, immutable" \
-    --exclude "index.html" --exclude "js/window.js" --exclude "demo/*"
-aws s3 cp "${dist}/index.html" "s3://${bucket}/index.html" \
-    --cache-control "no-cache, no-store, must-revalidate" \
-    --content-type "text/html; charset=utf-8"
-aws s3 cp "${dist}/js/window.js" "s3://${bucket}/js/window.js" \
-    --cache-control "no-cache, no-store, must-revalidate" \
-    --content-type "application/javascript; charset=utf-8"
+    "${excludes[@]}"
+for entry in "${entries[@]}"; do
+    case "${entry}" in
+        *.html) type="text/html; charset=utf-8" ;;
+        *) type="application/javascript; charset=utf-8" ;;
+    esac
+    aws s3 cp "${dist}/${entry}" "s3://${bucket}/${entry}" \
+        --cache-control "no-cache, no-store, must-revalidate" \
+        --content-type "${type}"
+done
 
 echo "✅ flip-ui published to s3://${bucket}/."
