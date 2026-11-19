@@ -33,7 +33,7 @@ rather than an error:
 
 These parse the templates as text for the same reason ``test_chart_secrets.py``
 does: ``helm template`` only reaches the branches its values enable (XNAT is
-disabled in the kind CI values), so a rendered-output check would silently skip
+disabled in the k3s CI values), so a rendered-output check would silently skip
 most of the chart.
 """
 
@@ -394,7 +394,7 @@ def test_the_omop_db_hook_heredoc_is_indented_with_tabs() -> None:
     tabs to spaces and the manifest stays valid YAML, every other assertion in
     this file stays green, and the shell simply never matches the terminator: it
     reads the rest of the script looking for one. Nothing in CI executes the hook
-    — the kind E2E installs with ``omopDb.enabled=false`` — so the first sign
+    — the k3s E2E installs with ``omopDb.enabled=false`` — so the first sign
     would be a trust's first pod start.
     """
     lines = _omop_db_post_start_script().splitlines()

@@ -9,8 +9,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Test values for CI pipeline — overrides production defaults for kind-based
-# testing where resources are limited.
+# Test values for CI pipeline — overrides production defaults for the
+# k3s E2E job, where resources are limited.
 
 # Reduce resource requirements for CI
 trustApi:
@@ -83,8 +83,5 @@ observability:
 
 sharedImagesPvc:
   size: 1Gi
-  accessMode: ReadWriteOnce  # Kind's local-path provisioner only supports RWO
+  accessMode: ReadWriteOnce  # k3s's local-path provisioner only supports RWO
 
-# Use default storage class
-persistence:
-  storageClassName: "standard"
