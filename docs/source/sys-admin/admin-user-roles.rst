@@ -171,7 +171,8 @@ Both are in the user's **Danger Zone** in the Admin Area and need the *Manage us
      - Delete
    * - When
      - Any time. Use it to suspend access.
-     - Only once the account is disabled. Use it when someone leaves or asks to be erased.
+     - Once the account is disabled (the button is greyed out until then). Use it when someone leaves or asks to be
+       erased.
    * - Sign-in
      - Refused until the account is re-enabled.
      - The account is removed from the identity provider.

@@ -342,12 +342,7 @@
                                         </p>
                                     </div>
                                 </div>
-                                <!-- A disabled user has a fourth action (Delete User); keep all of them on one row. -->
-                                <div
-                                    data-test="danger-zone-actions"
-                                    class="grid gap-2 mt-3 sm:grid-cols-2"
-                                    :class="selectedUser.isDisabled ? 'lg:grid-cols-4' : 'lg:grid-cols-3'"
-                                >
+                                <div data-test="danger-zone-actions" class="grid gap-2 mt-3 sm:grid-cols-2 lg:grid-cols-4">
                                     <AiButton
                                         data-test="reset-password-btn"
                                         error
@@ -384,11 +379,13 @@
                                     >
                                         Enable User
                                     </AiButton>
+                                    <!-- Always shown, so admins can find it; usable once the user is disabled. -->
                                     <AiButton
-                                        v-if="selectedUser.isDisabled"
                                         data-test="delete-user-btn"
                                         danger
                                         block
+                                        :disabled="!selectedUser.isDisabled"
+                                        :tooltip="selectedUser.isDisabled ? '' : 'Disable the user first'"
                                         @click="dialogDelete = true;"
                                     >
                                         Delete User

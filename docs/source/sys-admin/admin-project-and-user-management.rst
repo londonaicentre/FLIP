@@ -146,8 +146,8 @@ To revoke access, disable the account; re-enable it to restore access.
 1. Select the user in the user list.
 2. In the **Danger Zone**, click **Disable User**. Re-enabling works the same way.
 
-Deleting is a second step, offered only once the account is disabled, and it cannot be undone. In the **Danger Zone**
-of a disabled user, click **Delete User** and type the user's email address to confirm. See
+Deleting is a second step and cannot be undone. **Delete User** stays greyed out until the account is disabled. Once
+it is, click **Delete User** in the **Danger Zone** and type the user's email address to confirm. See
 :ref:`disable-or-delete-a-user` for what a delete removes and what it keeps.
 
 .. figure:: ../assets/generated/gifs/admin/user-enable-disable.gif

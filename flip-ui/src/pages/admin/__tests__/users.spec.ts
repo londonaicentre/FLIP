@@ -473,23 +473,24 @@ describe("admin/users", () => {
         const deleteModal = (wrapper: ReturnType<typeof mountPage>) =>
             wrapper.findAllComponents({ name: "AiConfirmModal" }).find(c => c.props("typingConfirmation") !== undefined)!;
 
-        it("is offered only once the user is disabled", async () => {
+        it("is always shown, but usable only once the user is disabled", async () => {
             const wrapper = mountPage();
             await nextTick();
             await wrapper.findAll("[data-test='user']")[0].trigger("click");
-            expect(wrapper.find("[data-test='delete-user-btn']").exists()).toBe(false);
+            const active = wrapper.find("[data-test='delete-user-btn']");
+            expect(active.attributes("disabled")).toBeDefined();
+            expect(active.attributes("data-tooltip")).toBe("Disable the user first");
 
             await wrapper.findAll("[data-test='user']")[1].trigger("click");
-            expect(wrapper.find("[data-test='delete-user-btn']").exists()).toBe(true);
+            const disabled = wrapper.find("[data-test='delete-user-btn']");
+            expect(disabled.attributes("disabled")).toBeUndefined();
+            expect(disabled.attributes("data-tooltip")).toBeUndefined();
         });
 
-        it("keeps the four Danger Zone actions of a disabled user on one row at lg", async () => {
+        it("keeps the four Danger Zone actions on one row at lg", async () => {
             const wrapper = mountPage();
             await nextTick();
             await wrapper.findAll("[data-test='user']")[0].trigger("click");
-            expect(wrapper.find("[data-test='danger-zone-actions']").classes()).toContain("lg:grid-cols-3");
-
-            await wrapper.findAll("[data-test='user']")[1].trigger("click");
             expect(wrapper.find("[data-test='danger-zone-actions']").classes()).toContain("lg:grid-cols-4");
         });
 
