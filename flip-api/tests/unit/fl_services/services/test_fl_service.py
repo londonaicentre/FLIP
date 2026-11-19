@@ -268,32 +268,63 @@ def test_unavailable_clients_never_raises_when_the_fl_api_reports_nothing(mock_g
 
 
 @pytest.mark.parametrize("status_code", [200, 401, 500])
-def test_fl_api_is_serving_counts_any_answer(status_code):
-    """An FL API only listens once its startup has reached the FL server, so any answer means it is serving."""
-    with patch.object(fl_service.httpx, "get", return_value=httpx.Response(status_code)):
+def test_fl_api_is_serving_counts_any_nvflare_answer(status_code):
+    """NVFLARE's FL API only listens once its startup has reached the FL server, so any answer means it is serving."""
+    with patch.object(fl_service.httpx, "get", return_value=httpx.Response(status_code)) as mock_get:
         assert fl_service.fl_api_is_serving("http://fl-api-net-1:8000", FLBackend.NVFLARE) is True
 
+    # The health route takes no key, and redirects are not followed: the first answer is the answer.
+    mock_get.assert_called_once_with(
+        "http://fl-api-net-1:8000/health/", timeout=fl_service.FL_API_PROBE_TIMEOUT_SECONDS, follow_redirects=False
+    )
 
-@pytest.mark.parametrize(
+
+_NOT_ANSWERING = pytest.mark.parametrize(
     "error",
     [httpx.ConnectError("Connection refused"), httpx.ConnectTimeout("timed out"), httpx.ReadTimeout("timed out")],
     ids=["refused", "connect-timeout", "read-timeout"],
 )
-def test_fl_api_is_serving_is_false_when_the_fl_api_does_not_answer(error, caplog):
+
+
+@_NOT_ANSWERING
+def test_fl_api_is_serving_is_false_when_the_nvflare_fl_api_does_not_answer(error, caplog):
     with patch.object(fl_service.httpx, "get", side_effect=error):
         assert fl_service.fl_api_is_serving("http://fl-api-net-1:8000", FLBackend.NVFLARE) is False
     assert "http://fl-api-net-1:8000 is not answering" in caplog.text
 
 
-@pytest.mark.parametrize(("fl_backend", "path"), [(FLBackend.NVFLARE, "/health/"), (FLBackend.FLOWER, "/health")])
-def test_fl_api_is_serving_probes_the_backends_health_route(fl_backend, path):
-    """Both health routes take no key, and redirects are not followed: the first answer is the answer."""
-    with patch.object(fl_service.httpx, "get", return_value=httpx.Response(200)) as mock_get:
-        fl_service.fl_api_is_serving("http://fl-api-net-1:8000", fl_backend)
+@pytest.mark.parametrize(
+    "error", [httpx.UnsupportedProtocol("no scheme"), httpx.InvalidURL("bad")], ids=["no-scheme", "invalid-url"]
+)
+def test_fl_api_is_serving_leaves_a_malformed_endpoint_to_fail_the_run(error):
+    """A misconfigured endpoint is not a restart to wait out: counted as serving, the run fails on it as before."""
+    with patch.object(fl_service.httpx, "get", side_effect=error):
+        assert fl_service.fl_api_is_serving("fl-api-net-1:8000", FLBackend.NVFLARE) is True
+
+
+@pytest.mark.parametrize(("reply", "serving"), [({"status": "RUNNING"}, True), ({"status": "STOPPED"}, False)])
+def test_fl_api_is_serving_asks_the_flower_fl_api_about_its_superlink(reply, serving, caplog):
+    """Flower's FL API listens before its SuperLink is up and its /health looks no further, so the probe asks."""
+    with patch.object(fl_service, "http_get", return_value=reply) as mock_get:
+        assert fl_service.fl_api_is_serving("http://fl-api-net-2:8000", FLBackend.FLOWER) is serving
 
     mock_get.assert_called_once_with(
-        f"http://fl-api-net-1:8000{path}", timeout=fl_service.FL_API_PROBE_TIMEOUT_SECONDS, follow_redirects=False
+        "http://fl-api-net-2:8000/check_server_status", timeout=fl_service.FL_API_PROBE_TIMEOUT_SECONDS
     )
+    assert ("its SuperLink is not running" in caplog.text) is not serving
+
+
+@_NOT_ANSWERING
+def test_fl_api_is_serving_is_false_when_the_flower_fl_api_does_not_answer(error):
+    with patch.object(fl_service, "http_get", side_effect=error):
+        assert fl_service.fl_api_is_serving("http://fl-api-net-2:8000", FLBackend.FLOWER) is False
+
+
+def test_fl_api_is_serving_counts_a_flower_error_status_as_serving():
+    """An error answer (a wrong FL API key, say) is not an outage: the run fails on it as before."""
+    error = httpx.HTTPStatusError("401", request=httpx.Request("GET", "http://x"), response=httpx.Response(401))
+    with patch.object(fl_service, "http_get", side_effect=error):
+        assert fl_service.fl_api_is_serving("http://fl-api-net-2:8000", FLBackend.FLOWER) is True
 
 
 @patch("flip_api.fl_services.services.fl_service.http_delete")

@@ -11,7 +11,7 @@
 #
 
 from collections.abc import Collection
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import cast
 from uuid import UUID
 
@@ -576,15 +576,55 @@ def check_for_available_net(session: Session, exclude_net_ids: Collection[UUID] 
         raise DatabaseError("Error checking for available net") from e
 
 
+FL_API_OUTAGE_ALERT_AFTER = timedelta(minutes=10)
+# When each net's FL API was first found not answering, while jobs wait on it. Process memory is enough: the hub runs
+# one flip-api replica (see log_queue_positions), and a restart only resets the clock.
+_fl_api_quiet_since: dict[UUID, datetime] = {}
+_fl_api_outage_alerted: set[UUID] = set()
+
+
+def _any_job_queued(session: Session) -> bool:
+    try:
+        return session.exec(select(FLJob.id).where(FLJob.status == JobStatus.QUEUED).limit(1)).first() is not None
+    except SQLAlchemyError as e:
+        logger.error(f"Error checking for queued jobs: {e}")
+        raise DatabaseError("Error checking for queued jobs") from e
+
+
+def _note_fl_api_answer(net_id: UUID, net_name: str, serving: bool) -> None:
+    """Log a net's FL API going quiet, once at ERROR when that outlasts FL_API_OUTAGE_ALERT_AFTER, and its return."""
+    now = datetime.utcnow()
+    since = _fl_api_quiet_since.get(net_id)
+    if since is None:
+        if not serving:
+            _fl_api_quiet_since[net_id] = now
+            logger.warning(f"{net_name}'s FL API is not answering; queued jobs wait for a pass that finds it serving")
+        return
+    minutes = int((now - since).total_seconds() // 60)
+    if serving:
+        del _fl_api_quiet_since[net_id]
+        _fl_api_outage_alerted.discard(net_id)
+        logger.info(f"{net_name}'s FL API answers again after {minutes} min")
+    elif now - since >= FL_API_OUTAGE_ALERT_AFTER and net_id not in _fl_api_outage_alerted:
+        _fl_api_outage_alerted.add(net_id)
+        logger.error(
+            f"{net_name}'s FL API has not answered for {minutes} min, and queued jobs are waiting on it: check the FL "
+            "API and its FL server (FLIP#1962)"
+        )
+
+
 def check_for_serving_net(session: Session) -> ISchedulerResponse | None:
     """
     Pick an available net whose FL API answers, marking it busy (FLIP#1962).
 
     A net whose FL API is starting or restarting (a staging start, a deploy, ECS replacing the task) would fail any
     job handed to it before the job reached it, so it is released for this pass and the next available net is tried.
-    No job has been picked up yet, so a queued job simply waits for a pass that finds a serving net. A net that cannot
-    be probed (no such net, no endpoint) is returned as is: that is a misconfiguration, and preparing the job reports
-    it as before.
+    No job has been picked up yet, so a queued job simply waits for a pass that finds a serving net. An outage that
+    outlasts ``FL_API_OUTAGE_ALERT_AFTER`` is logged once at ERROR, since the jobs behind it wait without an error.
+
+    A net is only probed when a job is waiting: with an empty queue the net is returned as is, and the job pickup
+    releases it. A net that cannot be probed (no such net, no endpoint) is also returned as is: that is a
+    misconfiguration, and preparing the job reports it as before.
 
     Args:
         session (Session): The database session.
@@ -595,12 +635,20 @@ def check_for_serving_net(session: Session) -> ISchedulerResponse | None:
     Raises:
         DatabaseError: If a lookup or update fails at the DB layer.
     """
+    if not _any_job_queued(session):
+        # Nothing waits on an outage now, so a later one starts its own clock.
+        _fl_api_quiet_since.clear()
+        _fl_api_outage_alerted.clear()
+        return check_for_available_net(session)
     not_serving: list[UUID] = []
     while (scheduler := check_for_available_net(session, exclude_net_ids=not_serving)) is not None:
         net = get_net_by_id(scheduler.netId, session)
-        if net is None or not net.endpoint or fl_api_is_serving(net.endpoint, resolve_backend(session, net)):
+        if net is None or not net.endpoint:
             return scheduler
-        logger.warning(f"{net.name}'s FL API is not answering; its queued jobs wait for a later pass")
+        serving = fl_api_is_serving(net.endpoint, resolve_backend(session, net))
+        _note_fl_api_answer(scheduler.netId, net.name, serving)
+        if serving:
+            return scheduler
         revert_scheduler_pickup(scheduler.id, session)
         not_serving.append(scheduler.netId)
     return None
@@ -857,7 +905,8 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         # not connect never reached it, so nothing was started and nothing needs undoing; a retry re-mints the job
         # credential and re-uploads the app, which both FL APIs overwrite. A read timeout is not caught here: that
         # request was sent and may have been acted on.
-        if requeue_job(fl_job_id, session):
+        requeued = requeue_job(fl_job_id, session)
+        if requeued:
             logger.warning(
                 f"The FL API could not be reached ({e!r}); job {fl_job_id} for model {model_id} is back in the queue "
                 "for the next pass"
@@ -865,6 +914,9 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         else:
             logger.info(f"Job {fl_job_id} for model {model_id} is no longer being prepared; skipping submission.")
         release_scheduler_for_model(model_id, session)
+        if requeued:
+            # The pickup moved every queued model up one place; the requeue moves them back.
+            log_queue_positions(session)
         return False
 
     except Exception as e:

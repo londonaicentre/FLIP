@@ -97,9 +97,11 @@ Starting training on a model creates a **job** in the hub's queue. On each sched
 
 #. frees any net whose job has finished or been deleted;
 #. stops here if **deployment mode** is on (see `Deployment mode (quiescing the nets)`_);
-#. locks one ``AVAILABLE`` net whose FL API answers and marks it ``BUSY``. A net whose FL API does not answer, as
-   while it starts or restarts (a hub deploy, a staging start, ECS replacing the task), is released for this tick
-   and the next ``AVAILABLE`` net is tried; queued jobs wait, and nothing fails;
+#. locks one ``AVAILABLE`` net whose FL API answers and marks it ``BUSY``. While a job is waiting, a net whose FL
+   API does not answer, as while it starts or restarts (a hub deploy, a staging start, ECS replacing the task), is
+   released for this tick and the next ``AVAILABLE`` net is tried; queued jobs wait, and nothing fails. On a Flower
+   net the FL API is also asked whether its SuperLink is running. An outage that lasts 10 minutes while jobs wait is
+   logged once as an error on the hub, since those jobs wait without one;
 #. takes the oldest ``QUEUED`` job and marks it ``IN_PROGRESS``. Any job whose Trusts are no longer approved
    for the model is retired instead. If the queue is empty, it releases the net again;
 #. bundles the app from the platform's template for the job type and the researcher's uploaded files (see
