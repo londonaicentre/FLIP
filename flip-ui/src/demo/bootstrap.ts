@@ -12,7 +12,7 @@
  */
 
 /**
- * Boot helpers for the public Ark+ demo (VITE_DEMO build). Offline API config
+ * Boot helpers for the public demo (VITE_DEMO build, FLIP#1746). Offline API config
  * (window.AWS_BASE_URL = "/api", placeholder Cognito values) is supplied by the
  * generated public/js/window.js — a classic <script> that runs before any ES
  * module — and re-pinned in src/main.ts as belt-and-braces. This module only
@@ -23,33 +23,6 @@
  */
 
 export const IS_DEMO = import.meta.env.VITE_DEMO === "true";
-
-/**
- * Pre-built zips of each recorded run's uploaded model files (including the
- * ~795 MB checkpoints), keyed by model id. Used by the "Download all" button
- * in demo builds — the in-browser mock cannot stream file bodies of that
- * size. Served through the production CloudFront distribution
- * (/ark_demo/assets/* behaviour → OAC-locked S3 origin, WAF in path), never
- * from a public S3 URL — see deploy/providers/AWS/cloudfront.tf
- * ("Public Ark+ demo download assets").
- *
- * Deliberately relative, not "https://app.flip.aicentre.co.uk/ark_demo/assets":
- * the demo SPA is always served same-origin under /ark_demo/, so a relative
- * path resolves through CloudFront identically wherever the bundle is
- * hosted — and survives a domain change, whereas an absolute URL would
- * silently point a stag-hosted or locally-previewed build's downloads at
- * prod. Downloads stay anchor-click navigations, so this has no effect on
- * the demo CSP (connect-src 'none').
- */
-const DEMO_ASSETS = "/ark_demo/assets";
-export const DEMO_MODEL_FILES_ZIP_URLS: Record<string, string> = {
-    // Fine-tuning run (re-captured post-FLIP#821 — see ark-plus-register.ts)
-    "31569b0b-7698-4bf4-a446-59643c6674e0": `${DEMO_ASSETS}/model-31569b0b-7698-4bf4-a446-59643c6674e0-files.zip`,
-    // Evaluation: single-model baseline
-    "db780699-61a9-4701-990f-8f43ac03f4ab": `${DEMO_ASSETS}/model-db780699-61a9-4701-990f-8f43ac03f4ab-files.zip`,
-    // Evaluation: pretrained-vs-finetuned comparison
-    "fcf8cb36-5685-4085-abc1-14bd25151566": `${DEMO_ASSETS}/model-fcf8cb36-5685-4085-abc1-14bd25151566-files.zip`
-};
 
 /**
  * Seed a read-only "viewer" identity so the app chrome renders a signed-in

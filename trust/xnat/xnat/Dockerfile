@@ -8,8 +8,9 @@
 
 # XNAT 1.10.0 is the first release compiled against JDK 21 (it will not run on JDK 8).
 # Tomcat stays on the 9.x line — 1.10 still targets Tomcat 9, matching upstream's
-# reference stack (NrgXnat/xnat-docker-compose, branch 1.10.0-update).
-FROM tomcat:9.0.108-jdk21-temurin-noble AS development
+# reference stack (NrgXnat/xnat-docker-compose, branch 1.10.0-update). The 9.0 tag follows every
+# Tomcat and JDK release; a patch tag stops being rebuilt once the next patch ships.
+FROM tomcat:9.0-jdk21-temurin-noble AS development
 
 # Non-secret build args only. Datasource credentials, SMTP credentials, and
 # the admin password are loaded at container start from the runtime
@@ -50,15 +51,38 @@ RUN rm -f /tmp/xnat-web-${XNAT_VERSION}.war
 # the webapp (not a bind mount) so it is present in dev and prod alike.
 COPY branding/flip-logo.png ${TOMCAT_XNAT_FOLDER_PATH}/images/flip-logo.png
 
-# Create a non-root xnat user and group, and set ownership on all XNAT paths
+# Create a non-root xnat user and group, and set ownership on all XNAT paths.
+#
+# conf/Catalina/localhost is pre-created because Tomcat creates it on first start for its
+# per-host context descriptors, and under Snowpark Container Services it could not:
+# ${CATALINA_HOME}/conf is root-owned and the process is uid 1001, so every boot logged a
+# SEVERE (non-fatal, but it recurs and hides real errors). Creating it here makes the
+# runtime write unnecessary on every platform (FLIP#1583, spike FLIP#1577).
+#
+# /usr/local/share/xnat is the default destination of make-xnat-config.sh's convenience
+# copy of the rendered configuration; owned by xnat so the copy succeeds for the same reason.
 RUN groupadd --system --gid 1001 xnat \
     && useradd --system --uid 1001 --gid xnat --home "${XNAT_HOME}" --shell /sbin/nologin xnat \
+    && mkdir -p "${CATALINA_HOME}/conf/Catalina/localhost" /usr/local/share/xnat \
     && chown -R xnat:xnat \
         "${TOMCAT_XNAT_FOLDER_PATH}" \
+        "${CATALINA_HOME}/conf/Catalina" \
+        /usr/local/share/xnat \
         "${XNAT_HOME}" \
         "${XNAT_ROOT}"
 
 # Switch to the non-root user before running the application
+# The paths XNAT writes inside the image at run time are world-writable with the sticky bit — the
+# mode the Tomcat base image already gives its own temp/, work/ and logs/ — so the container also
+# runs as a kit's FLIP_UID (FLIP#1731), which owns nothing here: config/ is written by
+# make-xnat-config.sh at start, work/, logs/ and ROOT/logs by XNAT and Turbine, prearchive/ by
+# every DICOM receipt, ftp/ and pipeline/ by the matching XNAT features when a site turns them on.
+# archive/, build/, cache/ and tomcat_logs/ are bind mounts the host owns. So is prearchive/ on Compose
+# and Helm, where the mount hides the mode set here; it is kept for a container run without that mount.
+RUN mkdir -p ${TOMCAT_XNAT_FOLDER_PATH}/logs \
+    && chmod 1777 ${TOMCAT_XNAT_FOLDER_PATH}/logs ${XNAT_HOME}/config ${XNAT_HOME}/logs ${XNAT_HOME}/work \
+         ${XNAT_ROOT}/ftp ${XNAT_ROOT}/pipeline ${XNAT_ROOT}/prearchive
+
 USER xnat
 
 EXPOSE 8080

@@ -11,35 +11,56 @@
     limitations under the License.
 -->
 
-# Federated Learning with MONAI and Flower (Quickstart Example)
+# Spleen segmentation on CT
 
-This example of Flower uses a small MONAI UNet based on FLIP's implementation and a training-only `ClientApp`. It reads NIfTI data from the local `./data` folder and does not write any outputs.
+Flower port of the [NVFLARE spleen segmentation tutorial](../../../nvflare/image_segmentation/3d_spleen_segmentation),
+adapted from Flower's MONAI quickstart. It trains the same MONAI 3D UNet on CT volumes from the
+[Medical Segmentation Decathlon](http://medicaldecathlon.com/); [Data Location](#data-location) says where
+the local data lives, and [data enrichment](#running-on-a-real-flip-project-data-enrichment) covers a real FLIP project.
 
-## Set up the project
+## At a glance
 
-### Folder structure
+| Item | Value |
+|---|---|
+| What you upload | everything in `app/` |
+| Job type | standard |
+| Imaging | on, DICOM to NIfTI on; labels uploaded as [data enrichment](#running-on-a-real-flip-project-data-enrichment) |
+| Cohort query | `query.sql` |
+| Dataset | `make -C fl-tutorials download-spleen-data` |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower` (GPU) |
+
+## Folder structure
 
 ```shell
 3d_spleen_segmentation
 ├── app
 │   ├── __init__.py
-│   ├── client_app.py   # Defines your ClientApp
-│   ├── data_loading.py # MONAI transforms + datalist
-│   ├── get_data.py     # Placeholder function for FLIP API, reads local data
-│   ├── server_app.py   # Defines your ServerApp
-│   └── task.py         # Defines model creation
-├── pyproject.toml      # Project metadata like dependencies and configs
+│   ├── client_app.py   # @app.train + @app.evaluate
+│   ├── task.py         # train / validate / test loops
+│   ├── data_loading.py # FLIP_BASE: cohort dataframe + NIfTI pairs, local or via flip
+│   ├── transforms.py   # MONAI transforms + the sliding-window inferer
+│   ├── models.py       # get_model(): the MONAI UNet
+│   ├── config.json     # job_type + per-tutorial hyperparameters
+│   ├── config.toml     # run-config overrides fl-api applies on a platform submit
+│   ├── server_app.py   # copy of fl-apps/flower/standard/app/server_app.py
+│   └── strategy.py     # copy of fl-apps/flower/standard/app/strategy.py
+├── pyproject.toml      # flwr app definition + run-config defaults (local simulator only)
+├── query.sql           # Cohort SQL — verbatim from the FLARE tutorial
 └── README.md
 ```
 
 ## Running this tutorial
 
-> **Two paths.** `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower`
-> (alias `sim-tutorial`) runs the flwr simulator with no containers at all, as FLARE's tutorials
-> do — what the release check runs. `fl-services/flower` runs the Flower containers by hand. The
-> deployment wiring (the FL images, fl-api submit, SuperNode registration) is exercised by
-> `make -C flip-api e2e_smoke_spleen FL_BACKEND=flower` against the dev stack (FLIP#1435). The app
-> code is identical in both, and both give each site a disjoint slice of the cohort.
+There are two ways to run this tutorial locally:
+
+- **The flwr simulator** (`make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower`,
+  alias `sim-tutorial`) runs with no containers at all, as FLARE's tutorials do.
+  It is what the release check runs.
+- **The Flower containers** (`fl-services/flower`) run the SuperLink and SuperNodes by hand.
+
+The app code is identical in both, and both give each site a disjoint slice of the cohort. The
+deployment wiring (the FL images, fl-api submit, SuperNode registration) is exercised by
+`make -C flip-api e2e_smoke_spleen FL_BACKEND=flower` against the dev stack.
 
 ### Run on the flwr simulator (`make run-tutorial`)
 
@@ -48,7 +69,7 @@ make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flo
 ```
 
 Runs every ClientApp in-process — **no SuperLink container, no SuperNodes, no fl-api, no
-Docker**. The deployment wiring is exercised by the e2e smoke against the dev stack (above).
+Docker**.
 
 **The app code is identical either way.** Site identity comes from `context.node_config`'s
 `partition-id`, which the simulator populates and a deployed SuperNode accepts via
@@ -84,9 +105,7 @@ command — `sim-tutorial.sh` handles all five:
    it is `finished:completed` — so a shell loop over `make run-tutorial` really does stop at the
    first failure.
 
-FLIP's `DevSettings` singleton is pinned at import time, so the data and `WORKING_DIR` settings
-above must be set *before* the process starts; the script does that, but it does mean you cannot
-change them mid-run.
+FLIP's `DevSettings` singleton reads the data paths and `WORKING_DIR` once, at import time. The script sets them for you; you cannot change them during a run.
 
 **Each site gets a disjoint slice.** `flip.flower.identity.partition_cohort` splits the fetched
 dataframe by this client's `partition-id`, so the split is the same under the simulator and under
@@ -100,7 +119,14 @@ ends, but uv's cache keeps the downloaded wheels, so later runs start faster.
 
 ### On the Flower containers, by hand
 
-From the Flower service directory:
+Before `make up`, point the SuperNodes at this tutorial's data. If these are unset, `make up` mounts empty placeholders and the clients train on nothing:
+
+```bash
+export DEV_DATAFRAME="$(git rev-parse --show-toplevel)/fl-tutorials/data/spleen/dataframe.csv"
+export DEV_IMAGES_DIR="$(git rev-parse --show-toplevel)/fl-tutorials/data/spleen/images"
+```
+
+Then, from the repository root:
 
 ```bash
 cd fl-services/flower
@@ -131,8 +157,8 @@ the compose file and re-running `make up`.
   the SuperLink reads a tutorial and its checkpoint), and the `environment:` blocks
   point the app at those paths, so relative paths in tutorial code resolve
   consistently regardless of your host layout.
-- `make up` runs the stack `--insecure` (the SuperLink's mode and health server
-  are set by `command:`); `make up-secure` runs it with TLS and SuperNode auth after
+- `make up` runs the stack `--insecure` (the SuperLink's mode is set by
+  `command:`); `make up-secure` runs it with TLS and SuperNode auth after
   `make provision`.
 
 ## Best-model selection
@@ -176,26 +202,30 @@ It is wired in `app/client_app.py` as `@app.train(mods=[flip_local_dp_mod])`, so
 rounds only — `@app.evaluate` is untouched. That mirrors the scope of the FLARE apps'
 `PercentilePrivacy` result filter, though the mechanism is stronger: FLARE sparsifies by
 percentile and adds no noise, while this is a real (epsilon, delta) mechanism built on Flower's own
-`compute_clip_model_update` / `add_gaussian_noise_inplace`.
+`clip_inputs_inplace` / `add_gaussian_noise_inplace`. These unroll Flower's `compute_clip_model_update` so the mod
+can log the pre-clip norm.
 
 | Key                | Default | Meaning |
 |--------------------|---------|---------|
 | `dp-enabled`       | `true`  | Master switch. `false` makes the mod a pass-through, so DP-on / DP-off runs use an identical app |
-| `dp-clipping-norm` | `1.0`   | L2 norm the update is clipped to before noise |
+| `dp-clipping-norm` | `20.0`  | L2 norm the update is clipped to before noise; sized to this model's measured update norm (21-22) |
 | `dp-sensitivity`   | `1e-4`  | How much one training example can move the update |
 | `dp-epsilon`       | `10.0`  | Privacy budget — smaller means more privacy and more noise |
 | `dp-delta`         | `1e-5`  | Probability the guarantee fails outright |
 
-Override per run without editing the app:
+To override per run without editing the app, pass `--run-config` to `sim-tutorial.sh` (what
+`make run-tutorial` runs); it forwards everything after the tutorial name to `flwr run`:
 
 ```bash
-flwr run . --run-config "dp-enabled=false"
-flwr run . --run-config "dp-epsilon=1.0 dp-clipping-norm=0.5"
+bash fl-tutorials/flower/sim-tutorial.sh 3d_spleen_segmentation --run-config "dp-enabled=false"
+bash fl-tutorials/flower/sim-tutorial.sh 3d_spleen_segmentation --run-config "dp-epsilon=1.0 dp-clipping-norm=0.5"
 ```
 
-> ⚠️ **The defaults are demonstration values, chosen utility-first** so this tutorial still
-> converges with the mechanism live (they give sigma ≈ 4.8e-5). They are **not** a defensible
-> privacy budget. A real one calibrates `dp-sensitivity` to the local dataset — roughly
+> ⚠️ **The defaults are demonstration values, not a privacy budget.** `dp-clipping-norm` is sized
+> to this model's update so clipping does not throttle training, but the noise comes from
+> `dp-sensitivity` alone (sigma ≈ 4.8e-5), which is negligible beside an update of that norm. The
+> configured `dp-epsilon` is therefore not the guarantee these runs get until the noise is
+> calibrated to the clipping norm (FLIP#1760). A real budget calibrates `dp-sensitivity` to the local dataset — roughly
 > `2 * dp-clipping-norm / |D|` for an average-of-examples update — and accounts for composition
 > across rounds, which this mod does not do: every round spends the budget again. With only a
 > handful of trusts the noise also does not average down the way central DP's does.
@@ -212,12 +242,17 @@ PACS — and PACS supply images only. A segmentation mask is a 3D volume with no
 the labels must be uploaded into each Trust's XNAT before training. That is the platform's **data
 enrichment** stage.
 
-(Contrast the chest X-ray classification tutorial, whose labels *are* in OMOP: its cohort query projects
-them as dataframe columns and it needs no enrichment. See the Data Enrichment user guide.)
+(Contrast the [chest X-ray classification tutorial](../../image_classification/xray_classification/README.md), whose labels *are* in OMOP: its cohort query projects
+them as dataframe columns and it needs no enrichment. See the [Data Enrichment user guide](../../../../docs/source/user-guides/user-data-enrichment.rst).)
 
 Each label must land in the **same scan's `NIFTI` resource** as its image, named to match — the app
 pairs them by filename, substituting `/input_` with `/label_`. Run the upload **after the image pull and
 after DICOM-to-NIfTI conversion**.
+
+> **Download the whole cohort before enriching.** `download-spleen-data` defaults to
+> `NUM_CASES=10` while the accession mapping spans 41. Enriching from a partial download succeeds
+> but leaves most of the cohort unlabelled, and the command says so; use
+> `make -C fl-tutorials download-spleen-data NUM_CASES=41` for full coverage.
 
 ```bash
 make -C fl-tutorials download-spleen-data FL_BACKEND=flower
@@ -231,14 +266,11 @@ make -C fl-tutorials upload-spleen-labels FL_BACKEND=flower FLIP_PROJECT_ID=<pro
 ```
 
 `DRY_RUN=1` reports what would happen without changing anything — do that first, then drop it to upload.
-One invocation covers every Trust in `XNAT_URLS` (above, the dev roster: GSTT on 8105, KCH on 8107 —
-the XNAT **web** ports; 8104 and 8106 are the DICOM receivers and will not answer a REST call), which
-matters because each Trust's XNAT holds only its own studies and a Trust left without labels fails training.
 
-> **Download the whole cohort before enriching.** `download-spleen-data` defaults to
-> `NUM_CASES=10` while the accession mapping spans 41. Enriching from a partial download succeeds
-> but leaves most of the cohort unlabelled, and the command says so; use
-> `make -C fl-tutorials download-spleen-data NUM_CASES=41` for full coverage.
+One invocation covers every Trust in `XNAT_URLS`, with `XNAT_USER` / `XNAT_PASS` as the credentials;
+`XNAT_HOST` is the single-server fallback when no `XNAT_URLS` is given. List every Trust in the project: each Trust's XNAT holds only its own studies, and a Trust left without labels fails training.
+
+In the example, `XNAT_URLS` is the dev roster: GSTT on 8105 and KCH on 8107. These are the XNAT **web** ports. Ports 8104 and 8106 are the DICOM receivers and will not answer a REST call.
 
 Enrichment is **backend-agnostic**: the labels live in XNAT, so a project enriched once can be trained by
 either backend. The upload script is a single copy in
@@ -249,10 +281,9 @@ the full walkthrough and options.
 
 ## Data Location
 
-By default, the app reads from the shared gitignored `fl-tutorials/data/` root:
+Locally, the app reads from the shared gitignored `fl-tutorials/data/` root:
 
 - `data/spleen/dataframe.csv`
 - `data/spleen/images`
 
-Both are the MSD build the FLARE tutorials read, so the two backends train on the same cases
-(`NUM_CASES`, default 10 — see `fl-tutorials/datasets/README.md`).
+These files are the same MSD download the FLARE tutorial reads, so both backends train on the same cases (`NUM_CASES`, default 10 — see [`fl-tutorials/datasets/README.md`](../../../datasets/README.md)). On a FLIP project the images come from each Trust's PACS instead; see [data enrichment](#running-on-a-real-flip-project-data-enrichment).

@@ -31,20 +31,11 @@ import random
 from datetime import date, timedelta
 
 import names
+from utils.synthetic_identity import with_seeded_global_rng
 
 # The LOINC procedure the OMOP export records for every study (3047951, "MR Prostate WO contrast");
 # the same words on the DICOM so the two never say different things about the same scan.
 STUDY_DESCRIPTION = "MR Prostate WO contrast"
-
-
-def _with_seeded_global_rng(seed: str, draw):
-    """Run ``draw()`` with the global RNG seeded from ``seed``, then put the RNG back as it was."""
-    state = random.getstate()
-    try:
-        random.seed(seed)
-        return draw()
-    finally:
-        random.setstate(state)
 
 
 def patient_name(patient_id: str) -> str:
@@ -56,7 +47,7 @@ def patient_name(patient_id: str) -> str:
     Returns:
         str: The same name for the same id on every call and every run.
     """
-    return _with_seeded_global_rng(
+    return with_seeded_global_rng(
         f"picai-patient-{patient_id}",
         lambda: f"{names.get_last_name()}^{names.get_first_name(gender='male')}",
     )
@@ -64,7 +55,7 @@ def patient_name(patient_id: str) -> str:
 
 def referring_physician_name(patient_id: str, study_id: str) -> str:
     """``LAST^FIRST`` for the referring physician of one study, fixed by the study's ids."""
-    return _with_seeded_global_rng(
+    return with_seeded_global_rng(
         f"picai-referrer-{patient_id}-{study_id}",
         lambda: f"{names.get_last_name()}^{names.get_first_name()}",
     )

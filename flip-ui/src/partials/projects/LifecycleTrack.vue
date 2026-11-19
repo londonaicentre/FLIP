@@ -68,14 +68,14 @@
                         />
                     </div>
                     <div
-                        class="font-heading font-semibold text-xs leading-tight"
+                        class="font-semibold text-xs leading-tight"
                         :class="stepTextClass(idx)"
                     >
                         {{ step.name }}
                     </div>
                     <div
                         v-if="stageSubLabel(idx)"
-                        class="text-[10px] text-gray-500 dark:text-gray-300 mt-0.5 font-mono"
+                        class="text-xs text-gray-500 dark:text-gray-300 mt-0.5 tabular-nums"
                     >
                         {{ stageSubLabel(idx) }}
                     </div>

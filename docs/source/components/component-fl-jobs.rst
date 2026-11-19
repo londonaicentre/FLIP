@@ -91,7 +91,11 @@ To list the tutorials for each backend:
 
 A job type describes the federated algorithm, not the data: the same ``standard`` job type runs imaging and
 tabular apps alike. What to fetch is your script's decision (an imaging app calls ``flip.get_by_accession_number``,
-a tabular one only ``flip.get_dataframe``).
+a tabular one only ``flip.get_dataframe``). Nor does the job have to train: the biomarker causal-discovery
+tutorial (:gh:`fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery
+<fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery>`) federates a bootstrapped FCI (Fast
+Causal Inference) analysis through ``standard`` by choosing what the sites send so that the weighted average
+*is* the analysis.
 
 Evaluation metrics
 ==================
@@ -232,7 +236,7 @@ Every setting has a default, so an app that declares only ``job_type`` is valid.
 Some further keys are used by FLIP's FLARE components but are **not validated**:
 
 - ``SERVER_CHECKPOINT``: a model file (string, or list of strings) to stage on the FL server instead of bundling
-  it into the app.
+  it into the app (see `What ends up in the bundle`_).
 - ``models``: the checkpoints an evaluation job loads, each entry naming a ``checkpoint`` file.
 
 **Any other key is passed through untouched** for your code to read at run time, such as ``LEARNING_RATE`` or
@@ -324,6 +328,13 @@ round) return the local copy after a small check with XNAT, which downloads agai
 
    To force a re-download (for example a file replaced by one of the same size), the Imaging API's download route
    accepts ``force_refresh=true``. Uploads through ``flip.add_resource`` invalidate the cache automatically.
+
+``flip.add_resource(project_id, accession_id, scan_id, resource_id, files)``
+   Uploads files into a scan's resource in the project's XNAT (through the Imaging API), creating the scan or the
+   resource if missing. Write each file under ``<IMAGES_DIR>/<NET_ID>/upload/`` first (both are in
+   ``flip.constants.FlipConstants``) and pass its path relative to that folder, for example
+   ``["run-1/seg.nii.gz"]``. That holds wherever the job runs, including a Kubernetes job pod, where the files
+   travel in the request because the pod mounts no images volume.
 
 **Communication with the Central Hub:**
 

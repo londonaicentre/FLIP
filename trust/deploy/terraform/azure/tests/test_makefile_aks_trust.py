@@ -8,7 +8,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""The trust on the AKS cluster: the azure targets that drive trust/deploy/helm (FLIP#1390).
+"""The trust on the AKS cluster: the aks/ targets that drive trust/deploy/helm (FLIP#1390).
 
 The chart's own targets are replaced by `echo make`, so these read what would be handed to them.
 """
@@ -16,15 +16,20 @@ The chart's own targets are replaced by `echo make`, so these read what would be
 from __future__ import annotations
 
 import json
+from functools import partial
 
 import pytest
-from conftest import AZURE_DIR, REPO_ROOT, run_make
+from conftest import AZURE_DIR, REPO_ROOT
+from conftest import run_make as run_any_make
+
+# Every test here runs aks/Makefile, except destroy-bootstrap's (the tree's own).
+run_make = partial(run_any_make, root="aks")
 
 HELM = f"make -C {REPO_ROOT}/trust/deploy/helm KUBE_CONTEXT=flipaz-aks NAMESPACE=flip-trust"
 
 
 def test_deploy_layers_the_aks_overlays(tmp_path):
-    result, _ = run_make(tmp_path, "aks-deploy", MAKE="echo make", KIT="Trust_3", HUB="stag")
+    result, _ = run_make(tmp_path, "deploy", MAKE="echo make", KIT="Trust_3", HUB="stag")
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == (
@@ -33,7 +38,7 @@ def test_deploy_layers_the_aks_overlays(tmp_path):
 
 
 def test_mock_pacs_seeds_orthanc_last(tmp_path):
-    result, _ = run_make(tmp_path, "aks-deploy", MAKE="echo make", KIT="Trust_3", HUB="stag", MOCK_PACS="1")
+    result, _ = run_make(tmp_path, "deploy", MAKE="echo make", KIT="Trust_3", HUB="stag", MOCK_PACS="1")
 
     overlay = AZURE_DIR / "aks" / "values-mock-pacs.yaml"
     recorded = result.stdout.split()[-1]
@@ -44,13 +49,13 @@ def test_mock_pacs_seeds_orthanc_last(tmp_path):
 
 @pytest.mark.parametrize("value", ["0", "false"])
 def test_mock_pacs_off_values_add_no_overlay(tmp_path, value):
-    result, _ = run_make(tmp_path, "aks-deploy", MAKE="echo make", KIT="Trust_3", HUB="stag", MOCK_PACS=value)
+    result, _ = run_make(tmp_path, "deploy", MAKE="echo make", KIT="Trust_3", HUB="stag", MOCK_PACS=value)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "values-mock-pacs.yaml" not in result.stdout
 
 
-@pytest.mark.parametrize("target", ["aks-deploy", "aks-join"])
+@pytest.mark.parametrize("target", ["deploy", "join"])
 def test_kit_and_env_are_required(tmp_path, target):
     result, calls = run_make(tmp_path, target, MAKE="echo make", KIT="Trust_3")
 
@@ -62,7 +67,7 @@ def test_kit_and_env_are_required(tmp_path, target):
 
 def test_join_installs_the_kit_then_its_secrets_then_deploys(tmp_path):
     tarball = tmp_path / "flip-trust-kit-Trust_3-20261009.tar.gz"
-    result, _ = run_make(tmp_path, "-n", "aks-join", MAKE="echo make", TARBALL=str(tarball), KIT="Trust_3", HUB="stag")
+    result, _ = run_make(tmp_path, "-n", "join", MAKE="echo make", TARBALL=str(tarball), KIT="Trust_3", HUB="stag")
 
     out = result.stdout
     assert result.returncode == 0, out + result.stderr
@@ -72,10 +77,10 @@ def test_join_installs_the_kit_then_its_secrets_then_deploys(tmp_path):
         "K8S_PLATFORM_VALUES=%s",
         f"--secrets-file {REPO_ROOT}/trust/deploy/helm/values-secrets.yaml",
         "kubectl --context flipaz-aks create namespace flip-trust",
-        "make _aks-fl-kit",
+        "make _fl-kit",
         "s/^FL_KIT_SLOT=//p",
-        f'{HELM} kit-secret KIT_SRC="{AZURE_DIR}/{kit_dir}/fl-kit-secret"',
-        "make aks-deploy KIT=Trust_3 HUB=stag",
+        f'{HELM} kit-secret KIT_SRC="{AZURE_DIR}/aks/{kit_dir}/fl-kit-secret"',
+        "make deploy KIT=Trust_3 HUB=stag",
     ]
     positions = [out.find(s) for s in steps]
     assert -1 not in positions, (steps[positions.index(-1)], out)
@@ -99,11 +104,11 @@ FLOWER_TARBALL = {
 
 def test_a_flower_kit_secret_holds_only_what_the_supernode_reads(tmp_path):
     """The hub's tarball ships the whole certificates/ (with the SuperLink's server.key); kit-secret
-    refuses that, so aks-join hands it ca.crt and the slot's credential only."""
+    refuses that, so join hands it ca.crt and the slot's credential only."""
     kit = tmp_path / "kit"
     _kit(kit, FLOWER_TARBALL)
 
-    result, _ = run_make(tmp_path, "_aks-fl-kit", AKS_KIT_DIR=str(kit), SLOT="Trust_3")
+    result, _ = run_make(tmp_path, "_fl-kit", KIT_DIR=str(kit), SLOT="Trust_3")
 
     assert result.returncode == 0, result.stdout + result.stderr
     secret = kit / "fl-kit-secret"
@@ -115,7 +120,7 @@ def test_an_nvflare_kit_secret_is_the_slots_directory(tmp_path):
     kit = tmp_path / "kit"
     _kit(kit, {"fl-kit/net-1/services/Trust_3/startup/fed_client.json": "{}", "fl-kit/net-1/services/Trust_1/x": "no"})
 
-    result, _ = run_make(tmp_path, "_aks-fl-kit", AKS_KIT_DIR=str(kit), SLOT="Trust_3")
+    result, _ = run_make(tmp_path, "_fl-kit", KIT_DIR=str(kit), SLOT="Trust_3")
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert (kit / "fl-kit-secret/startup/fed_client.json").read_text() == "{}"
@@ -127,7 +132,7 @@ def test_a_kit_without_a_slot_is_refused(tmp_path):
     kit = tmp_path / "kit"
     _kit(kit, {"fl-kit/net-1/services/Trust_3/startup/fed_client.json": "{}"})
 
-    result, _ = run_make(tmp_path, "_aks-fl-kit", AKS_KIT_DIR=str(kit), SLOT="")
+    result, _ = run_make(tmp_path, "_fl-kit", KIT_DIR=str(kit), SLOT="")
 
     assert result.returncode != 0
     assert "FL_KIT_SLOT" in result.stdout + result.stderr
@@ -143,7 +148,7 @@ JOBS = json.dumps({"items": [_job("old-1", "1"), _job("capped", None), _job("old
 
 
 def test_clear_jobs_deletes_only_the_jobs_from_before_the_cap_after_a_yes(tmp_path):
-    result, calls = run_make(tmp_path, "aks-clear-jobs", kubectl_jobs=JOBS, stdin="yes\n")
+    result, calls = run_make(tmp_path, "clear-jobs", kubectl_jobs=JOBS, stdin="yes\n")
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "old-1\nold-2\n2 Jobs from before the cap" in result.stdout, "the names come before the prompt"
@@ -151,23 +156,32 @@ def test_clear_jobs_deletes_only_the_jobs_from_before_the_cap_after_a_yes(tmp_pa
 
 
 def test_clear_jobs_deletes_nothing_without_a_yes(tmp_path):
-    result, calls = run_make(tmp_path, "aks-clear-jobs", kubectl_jobs=JOBS, stdin="no\n")
+    result, calls = run_make(tmp_path, "clear-jobs", kubectl_jobs=JOBS, stdin="no\n")
 
     assert result.returncode != 0
     assert not [c for c in calls if " delete " in c]
 
 
 def test_clear_jobs_fails_when_the_cluster_cannot_be_read(tmp_path):
-    result, calls = run_make(tmp_path, "aks-clear-jobs", kubectl_jobs="not json", stdin="yes\n")
+    result, calls = run_make(tmp_path, "clear-jobs", kubectl_jobs="not json", stdin="yes\n")
 
     assert result.returncode != 0
     assert "No Container Service Jobs" not in result.stdout, "an unreadable answer is not an empty one"
     assert not [c for c in calls if " delete " in c]
 
 
+def test_apply_refuses_while_the_vm_exists(tmp_path):
+    """The trial's 4 vCPUs fit the VM or the cluster, not both."""
+    result, calls = run_make(tmp_path, "apply", existing_rg="flipaz-node-rg", stdin="yes\n")
+
+    assert result.returncode != 0
+    assert "make -C ../vm destroy" in result.stdout + result.stderr, "the refusal says what to do"
+    assert not [c for c in calls if c.startswith("terraform ")], "the plan was neither shown nor applied"
+
+
 @pytest.mark.parametrize("rg", ["flipaz-node-rg", "flipaz-aks-rg"])
 def test_destroy_bootstrap_refuses_while_the_node_or_the_cluster_exists(tmp_path, rg):
-    result, calls = run_make(tmp_path, "destroy-bootstrap", existing_rg=rg)
+    result, calls = run_any_make(tmp_path, "destroy-bootstrap", existing_rg=rg)
 
     assert result.returncode != 0
     assert f"{rg} still exists" in result.stdout + result.stderr

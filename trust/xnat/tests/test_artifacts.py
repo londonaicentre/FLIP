@@ -139,15 +139,21 @@ def test_manifest_lists_one_jar_per_required_plugin_family() -> None:
     assert len(jars) == len(REQUIRED_FAMILIES), f"unexpected plugins in the manifest: {jars}"
 
 
+def _warm_cache(tmp_path: Path, upstream: Path) -> Path:
+    """A cache holding every fixture plugin exactly as upstream serves it."""
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    for name in FIXTURE_PLUGINS:
+        (cache / name).write_bytes((upstream / name).read_bytes())
+    return cache
+
+
 # --- check ------------------------------------------------------------------------------------
 
 
 def test_check_passes_a_complete_cache_without_downloading(tmp_path: Path) -> None:
     upstream, manifest = _make_upstream(tmp_path)
-    cache = tmp_path / "cache"
-    cache.mkdir()
-    for name in FIXTURE_PLUGINS:
-        (cache / name).write_bytes((upstream / name).read_bytes())
+    cache = _warm_cache(tmp_path, upstream)
 
     result = _run("check", "plugin", cache, _env(tmp_path, manifest, NO_CURL))
 
@@ -176,10 +182,7 @@ def test_check_fails_on_a_cold_cache_naming_the_prep_step(tmp_path: Path) -> Non
 def test_check_rejects_a_jar_that_is_not_the_pinned_build(tmp_path: Path, corruption: bytes) -> None:
     """Dev bind-mounts the cache into the running XNAT, so a wrong jar would boot without its routes."""
     upstream, manifest = _make_upstream(tmp_path)
-    cache = tmp_path / "cache"
-    cache.mkdir()
-    for name in FIXTURE_PLUGINS:
-        (cache / name).write_bytes((upstream / name).read_bytes())
+    cache = _warm_cache(tmp_path, upstream)
     (cache / FIXTURE_PLUGINS[1]).write_bytes(corruption)
 
     result = _run("check", "plugin", cache, _env(tmp_path, manifest, NO_CURL))
@@ -191,10 +194,7 @@ def test_check_rejects_a_jar_that_is_not_the_pinned_build(tmp_path: Path, corrup
 def test_check_rejects_a_jar_the_manifest_does_not_list(tmp_path: Path) -> None:
     """XNAT loads every jar in the directory, so a stale version beside the new one loads both."""
     upstream, manifest = _make_upstream(tmp_path)
-    cache = tmp_path / "cache"
-    cache.mkdir()
-    for name in FIXTURE_PLUGINS:
-        (cache / name).write_bytes((upstream / name).read_bytes())
+    cache = _warm_cache(tmp_path, upstream)
     (cache / "batch-launch-0.9-xpl.jar").write_bytes(b"old")
 
     result = _run("check", "plugin", cache, _env(tmp_path, manifest, NO_CURL))
@@ -237,10 +237,7 @@ def test_fetch_bounds_a_stalled_download(tmp_path: Path) -> None:
 
 def test_fetch_keeps_matching_files_and_downloads_nothing(tmp_path: Path) -> None:
     upstream, manifest = _make_upstream(tmp_path)
-    cache = tmp_path / "cache"
-    cache.mkdir()
-    for name in FIXTURE_PLUGINS:
-        (cache / name).write_bytes((upstream / name).read_bytes())
+    cache = _warm_cache(tmp_path, upstream)
 
     result = _run("fetch", "plugin", cache, _env(tmp_path, manifest, NO_CURL))
 

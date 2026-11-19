@@ -95,6 +95,7 @@ module "terraform_ci" {
   state_bucket_sse_algorithm         = var.state_bucket_sse_algorithm
   state_noncurrent_versions_retained = var.state_noncurrent_versions_retained
   state_noncurrent_version_days      = var.state_noncurrent_version_days
+  state_access_log_bucket            = var.state_access_log_bucket
   restrict_state_writes              = var.restrict_state_writes
   state_writer_principal_arns        = var.state_writer_principal_arns
 }

@@ -16,28 +16,53 @@
 
 import { validProject } from "../common";
 
+const visitStagedProject = (projectFixture: string) => {
+    cy.restoreLocalStorage();
+    cy.intercept("GET", "/projects/*/image/status", { fixture: "project/getProjectStatus" })
+        .as("getImagingProjectsStatus");
+
+    cy.intercept("GET",
+        "/projects/" + validProject.id,
+        { fixture: projectFixture }
+    ).as("projectWithQuery");
+
+    cy.intercept("GET", "/users/*/permissions", { fixture: "user/getPermissions" })
+        .as("getAdminPermissions");
+
+    cy.intercept("POST", "/projects/*/unstage", { statusCode: 200 })
+        .as("unstageProject");
+
+    cy.visit("/project/" + validProject.id);
+};
+
+// Walks the delete flow from the edit panel through the typed confirmation, answering DELETE with `statusCode`.
+const deleteProject = (statusCode: number) => {
+    cy.intercept("DELETE", `/projects/${validProject.id}`, {
+        statusCode,
+        body: {}
+    });
+
+    cy.getBySel("edit-project-btn").click();
+    cy.getBySel("delete-project-btn").click();
+
+    cy.contains("Any active training jobs performed on the models within the project will be stopped.")
+        .should("be.visible");
+
+    cy.getBySel("confirmation-input")
+        .should("exist")
+        .clear()
+        .type(validProject.name);
+
+    cy.getBySel("confirm-modal-btn").click();
+};
+
 describe("Project Page: STAGED", () => {
     before(() => {
         cy.login();
     });
 
     beforeEach(() => {
-        cy.restoreLocalStorage();
-        cy.intercept("GET", "/projects/*/image/status", { fixture: "project/getProjectStatus" })
-            .as("getImagingProjectsStatus");
-
-        cy.intercept("GET",
-            "/projects/" + validProject.id,
-            { fixture: "project/getStagedProject" }
-        ).as("projectWithQuery");
-
-        cy.intercept("GET", "/users/*/permissions", { fixture: "user/getPermissions" })
-            .as("getAdminPermissions");
-
-        cy.intercept("POST", "/projects/*/unstage", { statusCode: 200 })
-            .as("unstageProject");
-
-        cy.visit("/project/" + validProject.id);
+        visitStagedProject("project/getStagedProject");
     });
 
     it("can unstage a staged project", () => {
@@ -62,23 +87,7 @@ describe("Project Page: STAGED", () => {
     });
 
     it("Allows the user to delete a staged project", () => {
-        cy.intercept("DELETE", `/projects/${validProject.id}`, {
-            statusCode: 200,
-            body: {}
-        });
-
-        cy.getBySel("edit-project-btn").click();
-        cy.getBySel("delete-project-btn").click();
-
-        cy.contains("Any active training jobs performed on the models within the project will be stopped.")
-            .should("be.visible");
-
-        cy.getBySel("confirmation-input")
-            .should("exist")
-            .clear()
-            .type(validProject.name);
-
-        cy.getBySel("confirm-modal-btn").click();
+        deleteProject(200);
 
         cy.contains("Project deleted").should("be.visible");
 
@@ -86,23 +95,7 @@ describe("Project Page: STAGED", () => {
     });
 
     it("Shows the correct error message when the API for deleting a staged project returns an error", () => {
-        cy.intercept("DELETE", `/projects/${validProject.id}`, {
-            statusCode: 500,
-            body: {}
-        });
-
-        cy.getBySel("edit-project-btn").click();
-        cy.getBySel("delete-project-btn").click();
-
-        cy.contains("Any active training jobs performed on the models within the project will be stopped.")
-            .should("be.visible");
-
-        cy.getBySel("confirmation-input")
-            .should("exist")
-            .clear()
-            .type(validProject.name);
-
-        cy.getBySel("confirm-modal-btn").click();
+        deleteProject(500);
 
         cy.contains("Unable to delete this project").should("be.visible");
 
@@ -172,22 +165,7 @@ describe("Project Page: STAGED with only one trust", () => {
     });
 
     beforeEach(() => {
-        cy.restoreLocalStorage();
-        cy.intercept("GET", "/projects/*/image/status", { fixture: "project/getProjectStatus" })
-            .as("getImagingProjectsStatus");
-
-        cy.intercept("GET",
-            "/projects/" + validProject.id,
-            { fixture: "project/getStagedProjectOneTrust" }
-        ).as("projectWithQuery");
-
-        cy.intercept("GET", "/users/*/permissions", { fixture: "user/getPermissions" })
-            .as("getAdminPermissions");
-
-        cy.intercept("POST", "/projects/*/unstage", { statusCode: 200 })
-            .as("unstageProject");
-
-        cy.visit("/project/" + validProject.id);
+        visitStagedProject("project/getStagedProjectOneTrust");
     });
 
     it("successfully approves the project", () => {
@@ -338,23 +316,7 @@ describe("Project Page: Researcher & Owner [APPROVED]", () => {
     });
 
     it("Allows the user to delete an approved project", () => {
-        cy.intercept("DELETE", `/projects/${validProject.id}`, {
-            statusCode: 200,
-            body: {}
-        });
-
-        cy.getBySel("edit-project-btn").click();
-        cy.getBySel("delete-project-btn").click();
-
-        cy.contains("Any active training jobs performed on the models within the project will be stopped.")
-            .should("be.visible");
-
-        cy.getBySel("confirmation-input")
-            .should("exist")
-            .clear()
-            .type(validProject.name);
-
-        cy.getBySel("confirm-modal-btn").click();
+        deleteProject(200);
 
         cy.contains("Project deleted").should("be.visible");
 
@@ -362,23 +324,7 @@ describe("Project Page: Researcher & Owner [APPROVED]", () => {
     });
 
     it("Shows the correct error message when the API for deleting an approved project returns an error", () => {
-        cy.intercept("DELETE", `/projects/${validProject.id}`, {
-            statusCode: 500,
-            body: {}
-        });
-
-        cy.getBySel("edit-project-btn").click();
-        cy.getBySel("delete-project-btn").click();
-
-        cy.contains("Any active training jobs performed on the models within the project will be stopped.")
-            .should("be.visible");
-
-        cy.getBySel("confirmation-input")
-            .should("exist")
-            .clear()
-            .type(validProject.name);
-
-        cy.getBySel("confirm-modal-btn").click();
+        deleteProject(500);
 
         cy.contains("Unable to delete this project").should("be.visible");
 

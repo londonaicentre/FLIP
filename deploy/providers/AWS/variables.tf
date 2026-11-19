@@ -51,7 +51,7 @@ variable "lza_web_edge_domain" {
 }
 
 variable "lza_web_edge_distribution_arn" {
-  description = "ARN of the networking account's edge CloudFront distribution, granted s3:GetObject on the flip-ui (and demo-assets) buckets via cross-account OAC."
+  description = "ARN of the networking account's edge CloudFront distribution, granted s3:GetObject on the flip-ui bucket via cross-account OAC."
   type        = string
   default     = ""
 }
@@ -120,21 +120,10 @@ variable "AES_KEY_BASE64" {
   type = string
 }
 
-variable "INTERNAL_SERVICE_KEY_HASH" {
-  description = "SHA-256 hash of the internal service key used for fl-server-to-hub auth"
-  type        = string
-}
-
-variable "INTERNAL_SERVICE_KEY" {
-  description = "Raw internal service key used by fl-server to authenticate callbacks to flip-api. Stored in Secrets Manager (FLIP_API secret) and consumed by the fl-server ECS task definition via the secrets block."
+variable "FL_API_KEY" {
+  description = "Key flip-api presents to the FL API (fl-api-net-1), which requires it on every route but /health. Stored in Secrets Manager (FLIP_API secret, key fl_api_key) and consumed via the secrets block by the flip-api, fl-api and Flower key-registration task definitions. Dedicated to that hop."
   type        = string
   sensitive   = true
-}
-
-variable "FL_KIT_SLOT_NAMES" {
-  description = "JSON list (as a string) of FL kit-slot names for the fl_kit_slot pool register_trust claims from. Rendered ONLY into the /flip/fl_kit_slot_names SSM parameter (parameter_store.tf) — flip-api's single production source, read at boot seeding and re-read when a registration finds the pool exhausted. Growing the pool is an env-file edit + `make apply-fl-kit-slots` (no restart, no task-definition change). Empty ⇒ NoFreeKitSlotError on trust registration. Set via the env file (TF_VAR_FL_KIT_SLOT_NAMES)."
-  type        = string
-  default     = "[]"
 }
 
 variable "docker_image_tag" {
@@ -298,23 +287,6 @@ variable "FLIP_UI_BUCKET_NAME" {
   type        = string
 }
 
-variable "DEMO_ASSETS_BUCKET_NAME" {
-  description = <<-EOT
-    S3 bucket holding the public Ark+ demo download bundles (results + model
-    files zips), served through CloudFront at /ark_demo/assets/* via OAC.
-    Created and owned by module.flip_demo_assets_bucket (services.tf), with the
-    cross-account OAC grant to the networking account's edge distribution in its
-    policy. Serving it needs a /ark_demo/assets/* behaviour on that edge
-    distribution, which lives in aicentre-lza-iac, not here.
-    Leave empty (the default) to disable all demo-assets resources — e.g. on
-    stag, which hosts no public demo. Clearing it on an estate that already
-    has the bucket proposes a destroy, which prevent_destroy turns into an
-    apply failure rather than silent data loss.
-  EOT
-  type        = string
-  default     = ""
-}
-
 variable "flip_user_pool_name" {
   description = "Cognito User Pool name for FLIP"
   type        = string
@@ -353,7 +325,7 @@ variable "FL_SERVER_PORT" {
 }
 
 variable "manage_dns" {
-  description = "Whether this account hosts the Route53 zone for flip_alb_subdomain. false (the LZA estates until the zone moves in the platform DNS migration — FLIP#749) skips the zone lookup, every Route53 record and the DNS-validated ACM cert, so the internal NLB's web listener serves plain TCP until a cert can be ISSUED, then TLS."
+  description = "Whether this account hosts the Route53 zone for flip_alb_subdomain. false (the LZA estates, whose zones stay in the networking account — FLIP#749) skips the zone lookup, every Route53 record and the DNS-validated ACM cert."
   type        = bool
   default     = true
 }
@@ -371,19 +343,36 @@ variable "flip_nlb_subdomain" {
 }
 
 variable "SES_VERIFIED_EMAIL" {
-  description = "SES verified email address for FLIP"
+  description = "Address the access-request notifications go to, verified as an SES email identity. Also the address FLIP sends from while SES_SENDER_EMAIL is empty."
   type        = string
+}
+
+variable "SES_SENDER_EMAIL" {
+  description = "Address FLIP's emails come from, on the SES sender domain (flip_alb_subdomain), e.g. no-reply@<flip_alb_subdomain>. Empty (default) sends from SES_VERIFIED_EMAIL. Set it only once the domain identity is verified, i.e. its DKIM records are published (FLIP#592)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.SES_SENDER_EMAIL == "" || endswith(var.SES_SENDER_EMAIL, "@${var.flip_alb_subdomain}")
+    error_message = "SES_SENDER_EMAIL must be an address on the SES sender domain, <local-part>@<flip_alb_subdomain>."
+  }
+}
+
+variable "cognito_email_via_ses" {
+  description = "Send Cognito's own emails (invitations, password-reset codes) through SES as SES_SENDER_EMAIL instead of Cognito's built-in sender. Default false. Turn on only once the SES account has production access: in the SES sandbox Cognito delivers to verified addresses only, which would stop the resets that work on the built-in sender (FLIP#592)."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.cognito_email_via_ses || var.SES_SENDER_EMAIL != ""
+    error_message = "cognito_email_via_ses needs SES_SENDER_EMAIL: Cognito sends as that address."
+  }
 }
 
 variable "TRUST_API_KEY_HEADER" {
   description = "HTTP header name carrying per-trust API keys on trust-to-hub calls. Compose default: Authorization."
   type        = string
   default     = "Authorization"
-}
-
-variable "INTERNAL_SERVICE_KEY_HEADER" {
-  description = "HTTP header name carrying the internal service key on fl-server-to-flip-api callbacks. Required — no default so every env file must set it explicitly."
-  type        = string
 }
 
 variable "FL_ADMIN_DIRECTORY" {
@@ -406,7 +395,7 @@ variable "ENFORCE_MFA" {
 }
 
 variable "ecs_exec_enabled" {
-  description = "Enable ECS Exec (execute-command) on Fargate tasks. Default false; set to true for debugging sessions via 'aws ecs execute-command'."
+  description = "Enable ECS Exec (execute-command) on the Fargate services, for debugging sessions via 'aws ecs execute-command'. Default false. ECS Exec needs a writable root filesystem, so this also lifts the services' read-only one and Security Hub ECS.5 fails while it is on (FLIP#1795)."
   type        = bool
   default     = false
 }

@@ -80,13 +80,10 @@ class TestProjectDetailsSchema:
             ProjectDetails(name="Test", description="b" * 251, users=users)
         assert any("String should have at most 250 characters" in e["msg"] for e in exc_info.value.errors())
 
-    def test_users_list_invalid_guid(self):
+    @pytest.mark.parametrize("bad_users", [[users[0], "not-a-guid"], "not-a-list"], ids=["invalid_guid", "not_a_list"])
+    def test_users_list_invalid(self, bad_users):
         with pytest.raises(ValidationError):
-            ProjectDetails(name="Test Project", users=[users[0], "not-a-guid"])
-
-    def test_users_list_not_a_list(self):
-        with pytest.raises(ValidationError):
-            ProjectDetails(name="Test Project", users="not-a-list")
+            ProjectDetails(name="Test Project", users=bad_users)
 
 
 class TestStageProjectRequestSchema:
@@ -101,14 +98,11 @@ class TestStageProjectRequestSchema:
             StageProjectRequest.model_validate({})  # trusts field missing
         assert any(e["type"] == "missing" and "trusts" in e["loc"] for e in exc_info.value.errors())
 
-    def test_stage_project_empty_trusts_list(self):  # List is present but empty
+    @pytest.mark.parametrize(
+        "bad_trusts",
+        [[], [str(uuid4()), "not-a-guid"], "not-a-list"],  # empty: the list is present but empty (min_length=1)
+        ids=["empty", "invalid_guid", "not_a_list"],
+    )
+    def test_stage_project_trusts_invalid(self, bad_trusts):
         with pytest.raises(ValidationError):
-            StageProjectRequest(trusts=[])
-
-    def test_stage_project_trusts_invalid_guid(self):
-        with pytest.raises(ValidationError):
-            StageProjectRequest(trusts=[str(uuid4()), "not-a-guid"])
-
-    def test_stage_project_trusts_not_a_list(self):
-        with pytest.raises(ValidationError):
-            StageProjectRequest(trusts="not-a-list")
+            StageProjectRequest(trusts=bad_trusts)

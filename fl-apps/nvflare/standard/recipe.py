@@ -41,11 +41,9 @@ from flip.nvflare.recipes import FlipFedAvgRecipe  # noqa: E402  (imported after
 
 
 def _copy_json(src: Path, dest: Path) -> None:
-    """Copy a generated JSON file, guaranteeing exactly one trailing newline.
+    """Copy a generated JSON file, appending a trailing newline if it is missing.
 
-    FLARE's ``export_job`` emits ``config_fed_server.json`` / ``meta.json`` without a trailing
-    newline. Normalising on copy keeps the committed templates stable across regenerations and
-    satisfies the ``end-of-file-fixer`` pre-commit hook.
+    FLARE's ``export_job`` omits it, and the ``end-of-file-fixer`` pre-commit hook requires it.
     """
     text = src.read_text()
     if not text.endswith("\n"):

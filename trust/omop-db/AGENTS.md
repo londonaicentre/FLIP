@@ -6,9 +6,10 @@ Two halves of one pipeline (merged from the retired private `flip-omop-db` repo,
 
 1. **Image build source** for `ghcr.io/londonaicentre/omop-db`: `Dockerfile` on `postgres:17` bakes the
    `files/` init chain (create `omop` schema → OMOP CDM 5.4 DDL → primary keys → indices → read-only
-   roles) plus the seed-time helpers (`load_core_vocab.sh`, `OMOPCDM_postgresql_5.4_constraints.sql`, and `unzip` — the
-   k8s vocab-load Job unpacks the bundle with the image's own copy so it installs nothing at
-   run time, keeping S3 the only host it must reach). The image is
+   roles) plus the seed-time helpers (`load_core_vocab.sh`, `OMOPCDM_postgresql_5.4_constraints.sql`). It also
+   still bakes `unzip` and Debian's `awscli` (FLIP#1721) for the k8s vocab-load Job's in-cluster S3 fetch, which
+   FLIP#923 removed: that Job now reads an unpacked folder from the node and reaches no host, so nothing in the
+   chart uses them. The image is
    **vocab-free** (FLIP#842) — nothing licensed in any layer — so it is published by CI
    (`docker_build_omop_db.yml`, gated on the "Trust - OMOP DB CI" test workflow like the other
    services). FK **constraints are deliberately absent from init** — they are applied only AFTER data
@@ -35,10 +36,13 @@ tolerate the DICOM vocab the seed has already loaded):
 - **EC2**: the `flip_omop_vocab` Ansible role (part of the EC2 root's `make seed`; throwaway container on
   loopback port 15499; kit credentials passed by that root's Makefile).
 - **Kubernetes**: the chart's `omop-vocab-load` post-install/post-upgrade hook Job
-  (`omopDb.vocabLoad` values; bundle from S3, loader + constraints from the image). Its first
-  stage runs `load_core_vocab.sh --check` and skips the multi-GB fetch when the database is
-  already loaded — the hook sits on the critical path of every `helm upgrade`, so the fetch
-  must stay conditional. The loader still runs (constraints).
+  (`omopDb.vocabLoad.hostPath`: the unpacked bundle staged onto the node with the chart's
+  `stage-vocab`, loader + constraints from the image; no S3 fetch since FLIP#923). The hook runs on
+  every upgrade, so it is on the critical path of each one (a failed hook fails the release): it asks
+  the database first and, with the vocabulary loaded, reads nothing from the folder and only re-applies
+  the constraints. The folder is needed for the first load only, and the volume is
+  `DirectoryOrCreate` so a folder removed afterwards (or a rebuilt node) does not hold the pod.
+  On a multi-node cluster `omopDb.vocabLoad.nodeSelector` pins the Job to the node holding it.
 
 ## Load-bearing facts
 
@@ -88,6 +92,18 @@ tolerate the DICOM vocab the seed has already loaded):
   records `source=<dir>` in place of a version. `unseed-omop` (`import_tables --remove-only`) deletes
   the listed projects' rows by the person ids in the given tables and loads nothing — the surgical
   move off a re-cut project (point `HF_TRUST_DATA_REVISION` at the cut the trust holds).
+- **Seeding a Snowflake trust** (#1580): `omop_db_tools.snowflake_seed` is the twin of `import_tables`,
+  reached by `make -C trust/omop-db seed-omop-snowflake KIT=<CODE>` (and `ensure-seeded-snowflake` /
+  `unseed-omop-snowflake`). Same canonical source, same `source_trust` selection (it calls
+  `dataset.split_for_trust`, it does not reimplement it), same re-seed contract; the load is an internal
+  stage PUT + `COPY INTO`, and the marker is the table `OMOP._FLIP_SEED_MARKER` instead of the `.seeded`
+  file, rendering the same text. The OMOP tables are **translated from
+  `files/OMOPCDM_postgresql_5.4_ddl.sql`** by `snowflake_ddl.py`, never maintained separately, and
+  `tests/unit/test_snowflake_ddl.py` fails if a table is missed. The DICOM vocabulary is loaded first and
+  skipped when present. Everything runs through `snow sql --stdin` as `FLIP_<CODE>_OMOP_LOADER` (role pinned
+  by `USE ROLE`); `DRY_RUN=1` prints the SQL and executes nothing. Object names follow the epic #1589
+  contract. The loader lives here, not in `trust/deploy/snowflake/` (#1582), so the fetch and the split
+  have one implementation; that Makefile forwards to these targets.
 - **Synthea EHR cohort** (`src/omop_db_tools/synthea_ehr.py`, `make load-synthea-ehr`): the populate
   side of the EHR risk-prediction tutorial. The shipped mock OMOP has NO `condition_occurrence`
   rows, so that tutorial's `query.sql` returns nothing until this loads the public 1k-person
@@ -96,7 +112,7 @@ tolerate the DICOM vocab the seed has already loaded):
   with the imaging cohorts' keys at INSERT time (the per-trust split is taken on the raw id before
   the shift, and the raw id is kept in `person_source_value` — never re-derive a trust from a
   shifted id) — but that offset is not what makes reloading safe: imaging `person_id` is
-  `nhs_number_to_integer(PatientID)`, the first 9 digits of a real NHS number, so it scatters across
+  `person_id(PatientID)`, the first 9 digits of a real NHS number, so it scatters across
   the whole 9-digit range rather than staying "small", and a plain id-range delete silently destroys
   imaging persons (and, via `ON DELETE CASCADE`, their `image_occurrence`/`procedure_occurrence`
   rows) that happen to land above the threshold — confirmed live at ~10% of one trust's imaging
@@ -107,6 +123,13 @@ tolerate the DICOM vocab the seed has already loaded):
   8507/8532 (`query.sql` reads it), every other `*_concept_id` is zeroed to `0` ("No matching
   concept"), conditions match on the `condition_source_value` SNOMED string. Idempotent; unit-tested
   in `tests/unit/test_synthea_ehr.py`.
+- **ADNI biomarker cohort** (`src/omop_db_tools/adni_cohort.py`, `make load-adni-cohort`): the populate
+  side of the biomarker causal-discovery tutorial on a LOCAL dev stack. Downloads nothing — ADNI is
+  access-controlled, so it reads the licence holder's own converted cohort
+  (`fl-tutorials/data/ad_biomarkers/dataframe.csv`, from `make -C fl-tutorials convert-adni-cohort`) and
+  appends this trust's `person_id`-modulo slice as `person` / `measurement` / `observation` rows, ids
+  shifted to `PERSON_ID_OFFSET` (1.2e9, clear of the imaging and Synthea bands), reloads deleting by
+  provenance (`person_source_value` `adni-cohort-…`). Never point it at a shared or published trust.
 - The populate scripts run on the **host** against published ports (`OMOP_DB_HOST` defaults to
   localhost) and need postgresql-client (`psql`/`pg_isready`).
 
@@ -115,6 +138,10 @@ tolerate the DICOM vocab the seed has already loaded):
 ```bash
 make load-omop-vocab [OMOP_DB_PORT=5436]  # seed the licensed vocab + constraints into a running trust DB
 make load-dicom-vocab [OMOP_DB_PORT=5436] # the Apache-licensed DICOM vocab (anonymous HF fetch); no-op when present
+make load-adni-cohort TRUST_INDEX=1 OMOP_DB_PORT=5434  # biomarker causal-discovery tutorial: load the user's
+                                    # OWN converted ADNI cohort (fl-tutorials/data/ad_biomarkers/dataframe.csv,
+                                    # from `make -C fl-tutorials convert-adni-cohort`) into a LOCAL trust DB —
+                                    # nothing downloaded, nothing ADNI-derived may reach a shared trust
 make load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434  # EHR risk-prediction tutorial: load public
                                     # Synthea-in-OMOP conditions/visits/persons into a running trust DB
                                     # (once per trust; downloads ~5MB from AWS Open Data at run time)

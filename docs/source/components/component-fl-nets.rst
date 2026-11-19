@@ -96,10 +96,10 @@ How a job reaches a net
 Starting training on a model creates a **job** in the hub's queue. On each scheduler tick the Central Hub API:
 
 #. frees any net whose job has finished or been deleted;
-#. stops here if **deployment mode** is on (see below);
+#. stops here if **deployment mode** is on (see `Deployment mode (quiescing the nets)`_);
 #. locks one ``AVAILABLE`` net and marks it ``BUSY``;
-#. takes the oldest ``QUEUED`` job and marks it ``IN_PROGRESS``, retiring any job whose Trusts are no longer
-   approved for the model; if the queue is empty, it releases the net again;
+#. takes the oldest ``QUEUED`` job and marks it ``IN_PROGRESS``. Any job whose Trusts are no longer approved
+   for the model is retired instead. If the queue is empty, it releases the net again;
 #. bundles the app from the platform's template for the job type and the researcher's uploaded files (see
    :doc:`component-fl-jobs`), uploads it to that net's FL API and submits it.
 
@@ -112,21 +112,25 @@ bundling or submitting. The model is then set to ``ERROR`` with the reason in it
 
 **Which clients train** differs by backend:
 
-- **FLARE** trains on exactly the Trusts selected for the run, and every one of them is mandatory. Before
-  submitting, the hub checks that all of them are connected; if one is not, the model fails straight away with
-  *Clients unavailable* and the Trust's slot name.
+- **FLARE** trains on exactly the Trusts selected for the run, and every one of them is mandatory. FLARE's
+  scheduler holds the job until all of them are connected. It retries for about 40 minutes, and then the job ends
+  and the model is set to ``ERROR``. While no client at all is connected to the net, FLARE does not try, so the hub
+  fails the job itself once it has waited ``FL_JOB_START_TIMEOUT_MINUTES``.
 - **Flower** waits until at least as many SuperNodes are connected as Trusts were selected, then trains on
-  **every SuperNode connected to the net**, selected or not. The hub only logs a warning about a selected Trust
-  that is not connected.
+  **every SuperNode connected to the net**, selected or not.
+
+On both backends a selected Trust that is not connected when the job is submitted does not stop it: the model's
+log names the Trust and says what the backend does next.
 
 When a job dies without reporting
 ---------------------------------
 
 A job's server-side process reports the model's final status to the hub itself. If that process dies first (out
 of memory, killed, or lost in a server restart), the hub's **job watchdog** catches it. It compares each running
-job with its net's job list; a job the FL server has ended or no longer has, while the model is still running,
-is set to ``ERROR`` after several checks in a row. The model's log records what the FL server reported, and the
-net moves on to the next queued job. A job still being prepared after a timeout is treated the same way.
+job with its net's job list. A job the FL server has ended or no longer has, while the model is still running,
+is set to ``ERROR`` after ``FL_JOB_WATCHDOG_STRIKES`` checks in a row. The model's log records what the FL server
+reported, and the net moves on to the next queued job. A job still in preparation after
+``FL_JOB_PREPARE_TIMEOUT_MINUTES`` is treated the same way (both are listed under `Scheduler settings`_).
 
 An FL API the hub cannot reach fails nothing: the net shows as offline on the Connection Status page instead.
 
@@ -154,12 +158,18 @@ These are Central Hub API settings. All are in minutes except the strike count.
    * - ``FL_JOB_PREPARE_TIMEOUT_MINUTES``
      - How long a job may stay in preparation after pickup.
      - 30
+   * - ``FL_JOB_START_TIMEOUT_MINUTES``
+     - How long after pickup the FL server may hold a job unstarted.
+     - 60
 
 GPU requirements and FLARE's scheduler
 ========================================
 
+This section applies to FLARE. On Flower, a GPU request is recorded but not enforced: Flower's deployment
+runtime does not schedule jobs by GPU.
+
 On FLARE, a job states how many GPUs it needs at each Trust (``num_of_gpus`` in its ``meta.json``; see
-:ref:`fl-nvflare-meta-json`). The count comes from, first match wins:
+:ref:`fl-nvflare-meta-json`). The count is taken from the first of these that is set:
 
 #. an override the researcher sets when starting training;
 #. the job's own ``meta.json``;
@@ -187,10 +197,8 @@ either the Trust adds GPUs or the model goes to Trusts that have them.
    FLARE keeps retrying, but lists the job as pending, so the job watchdog does not catch it either. The model
    stays ``INITIATED`` and the net ``BUSY`` until someone clicks **Abort job**.
 
-**Abort job** also removes a job still waiting in the FL server's queue (FLARE marks it ``FINISHED:ABORTED``),
-so it cannot start later or report to the model once that model has been queued again.
-
-On Flower, a GPU request is recorded but not enforced: Flower's deployment runtime does not schedule jobs by GPU.
+**Abort job** also removes a job still waiting in the FL server's queue (FLARE marks it ``FINISHED:ABORTED``).
+The aborted job therefore cannot start later, or report into the model after the model is queued again.
 
 GPU on demand on Kubernetes (NVFLARE job pods)
 ==============================================
@@ -202,9 +210,14 @@ GPUs the job requests, so a Trust can put its GPUs on a node pool that scales fr
 only while a job trains.
 
 From the hub's side nothing changes: a job's GPU request reaches the site in its ``resource_spec``, and a
-site that cannot meet it holds the job in NVFLARE's queue, as on any other trust. The site declares how
+site that cannot meet it holds the job in FLARE's queue, as on any other Trust. The site declares how
 many GPUs it lends at once (``jobPods.maxGpus``). A job that arrives while the pool's node is still booting
 waits for it, up to ``jobPods.pendingTimeout``, and then trains as usual.
+
+Every NVFLARE job runs in its project's own NVFLARE *study*: the hub registers the study with the job's
+sites when it submits, and lists, aborts and watches the job through that study. A study is where NVFLARE lets
+a site decide what a job pod may mount, and a job-pod Trust uses it to give each job pod its own project's
+images and no other project's. A Trust that runs jobs inside the FL client ignores the study.
 
 Set-up, prerequisites and trade-offs (cold start, the images volume, NetworkPolicy) are in the chart's
 README, under "NVFLARE job pods". Flower Trusts are not covered.

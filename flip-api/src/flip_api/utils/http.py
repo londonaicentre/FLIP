@@ -15,17 +15,31 @@
 Used exclusively by the FL service to communicate with FL Net API endpoints
 (e.g. the compose service name fl-api-net-1:8000, or fl-api-net-1.flip.local:8000
 on ECS). These are plain HTTP calls between co-located Docker services — no TLS
-required.
+required. Every call carries the FL API key (``FL_API_KEY`` in ``FL_API_KEY_HEADER``),
+which every FL API route but /health requires.
 
 NOT used for hub↔trust communication, which is handled via the task polling
 system (trusts poll the hub; see private_services/trust_tasks.py).
 """
 
+from collections.abc import Sequence
 from typing import Any
 
 import httpx
 
+from flip_api.config import get_settings
 from flip_api.utils.logger import logger
+
+
+def _headers(request_id: str | None, json_body: bool = False) -> dict[str, str]:
+    """The FL API key, plus the tracing id and content type when the call carries them."""
+    settings = get_settings()
+    headers = {settings.FL_API_KEY_HEADER: settings.FL_API_KEY}
+    if request_id:
+        headers["x-request-id"] = request_id
+    if json_body:
+        headers["Content-Type"] = "application/json"
+    return headers
 
 
 def _researcher_refusal(response: httpx.Response) -> str | None:
@@ -49,7 +63,17 @@ def fl_api_error_message(error: httpx.HTTPStatusError) -> str:
     return f"The FL server refused the job (HTTP {error.response.status_code})."
 
 
-def http_get(url: str, request_id: str | None = None, timeout: float | None = None) -> Any:
+def _optional(**kwargs: Any) -> dict[str, Any]:
+    """The keyword arguments that were given, so httpx keeps its own defaults for the rest."""
+    return {key: value for key, value in kwargs.items() if value is not None}
+
+
+def http_get(
+    url: str,
+    request_id: str | None = None,
+    timeout: float | None = None,
+    params: Sequence[tuple[str, str]] | None = None,
+) -> Any:
     """Perform an HTTP GET request to the specified URL with optional request ID for tracing.
 
     Args:
@@ -59,6 +83,7 @@ def http_get(url: str, request_id: str | None = None, timeout: float | None = No
         timeout (float | None): Optional request timeout in seconds. When None, httpx defaults
             are used (5s) — too tight for slower Flower FL API endpoints, so pass an explicit
             value for those (see ``check_client_status``).
+        params (Sequence[tuple[str, str]] | None): Optional query parameters; a key may repeat.
 
     Returns:
         Any: Parsed JSON body when the response is JSON; otherwise the raw response text.
@@ -67,13 +92,10 @@ def http_get(url: str, request_id: str | None = None, timeout: float | None = No
         httpx.RequestError: If the request cannot be sent (connection, timeout, etc.).
         httpx.HTTPStatusError: If the response status is 4xx/5xx (via ``raise_for_status``).
     """
-    headers = {"x-request-id": request_id} if request_id else {}
+    headers = _headers(request_id)
     with httpx.Client() as client:
         try:
-            if timeout is None:
-                response = client.get(url, headers=headers)
-            else:
-                response = client.get(url, headers=headers, timeout=timeout)
+            response = client.get(url, headers=headers, **_optional(timeout=timeout, params=params))
             response.raise_for_status()
             try:
                 return response.json()
@@ -84,7 +106,13 @@ def http_get(url: str, request_id: str | None = None, timeout: float | None = No
             raise
 
 
-def http_post(url: str, request_id: str | None = None, data: dict | None = None, timeout: float | None = None) -> Any:
+def http_post(
+    url: str,
+    request_id: str | None = None,
+    data: dict | None = None,
+    timeout: float | None = None,
+    params: Sequence[tuple[str, str]] | None = None,
+) -> Any:
     """Perform an HTTP POST request to the specified URL with optional request ID for tracing.
 
     Args:
@@ -94,6 +122,7 @@ def http_post(url: str, request_id: str | None = None, data: dict | None = None,
         data (dict | None): JSON-serialisable body to send.
         timeout (float | None): Optional request timeout in seconds. When None, httpx defaults
             are used.
+        params (Sequence[tuple[str, str]] | None): Optional query parameters; a key may repeat.
 
     Returns:
         Any: Parsed JSON body when the response is JSON; otherwise the raw response text.
@@ -102,17 +131,10 @@ def http_post(url: str, request_id: str | None = None, data: dict | None = None,
         httpx.RequestError: If the request cannot be sent (connection, timeout, etc.).
         httpx.HTTPStatusError: If the response status is 4xx/5xx (via ``raise_for_status``).
     """
-    headers = (
-        {"Content-Type": "application/json", "x-request-id": request_id}
-        if request_id
-        else {"Content-Type": "application/json"}
-    )
+    headers = _headers(request_id, json_body=True)
     with httpx.Client() as client:
         try:
-            if timeout is None:
-                response = client.post(url, headers=headers, json=data)
-            else:
-                response = client.post(url, headers=headers, json=data, timeout=timeout)
+            response = client.post(url, headers=headers, json=data, **_optional(timeout=timeout, params=params))
 
             response.raise_for_status()
             try:
@@ -124,13 +146,14 @@ def http_post(url: str, request_id: str | None = None, data: dict | None = None,
             raise
 
 
-def http_delete(url: str, request_id: str | None = None) -> Any:
+def http_delete(url: str, request_id: str | None = None, params: Sequence[tuple[str, str]] | None = None) -> Any:
     """Perform an HTTP DELETE request to the specified URL with optional request ID for tracing.
 
     Args:
         url (str): The URL to DELETE.
         request_id (str | None): Optional value for the ``x-request-id`` header used for
             distributed tracing.
+        params (Sequence[tuple[str, str]] | None): Optional query parameters; a key may repeat.
 
     Returns:
         Any: Parsed JSON body when the response is JSON; otherwise the raw response text.
@@ -139,10 +162,10 @@ def http_delete(url: str, request_id: str | None = None) -> Any:
         httpx.RequestError: If the request cannot be sent (connection, timeout, etc.).
         httpx.HTTPStatusError: If the response status is 4xx/5xx (via ``raise_for_status``).
     """
-    headers = {"x-request-id": request_id} if request_id else {}
+    headers = _headers(request_id)
     with httpx.Client() as client:
         try:
-            response = client.delete(url, headers=headers)
+            response = client.delete(url, headers=headers, **_optional(params=params))
             response.raise_for_status()
             try:
                 return response.json()

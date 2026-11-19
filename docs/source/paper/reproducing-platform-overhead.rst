@@ -72,7 +72,7 @@ Internet access                Hugging Face dataset download, AWS API calls
 .. tip::
 
    To contribute only a **simulator data point** (for example your site's GPU baseline), you need just the GPU,
-   ``uv`` and internet access. Do Step 1 and skip the rest.
+   ``uv`` and internet access. Do Step 1, then send the bundle as described in :ref:`overhead-third-site`.
 
 .. _overhead-simulator:
 
@@ -178,9 +178,11 @@ For example:
        'https://app.flip.aicentre.co.uk/project/f48850b7-3101-46d1-8fa7-a00bf01d2597/model/24985ec3-3349-435b-afcd-f38972d8695d' \
        -o round_metrics
 
-The script finds the run's time window itself by searching the last 7 days of hub logs for the model ID (CloudWatch
-keeps 365 days in production, 90 elsewhere). To search further back use ``--search-days``; to set the window yourself pass ``--start`` and ``--end``
-(ISO 8601).
+The script finds the run's time window itself by searching the last 7 days of hub logs for the model ID. For an
+older run:
+
+* search further back with ``--search-days`` (CloudWatch keeps 365 days in production, 90 elsewhere); or
+* set the window yourself with ``--start`` and ``--end`` (ISO 8601).
 
 It writes these files under ``<output-directory>/<model_id>/``:
 
@@ -204,6 +206,9 @@ Pass the platform's ``rounds.tsv`` to the simulator's ``round-metrics`` target:
 
    cd fl-tutorials/nvflare/image_classification/arkplus_fine_tuning
    make round-metrics COMPARE=../../../../round_metrics/24985ec3-3349-435b-afcd-f38972d8695d/rounds.tsv
+
+``COMPARE`` is the path to the ``rounds.tsv`` written in Step 3. The path above matches the Step 3 example, which ran
+from the repository root with ``-o round_metrics``; substitute your own output directory and model ID.
 
 The new ``summary.md`` in ``round_metrics/simulator-<workspace>-<timestamp>/`` adds a side-by-side table with the
 platform − simulator difference for every metric, and a short interpretation.
@@ -267,7 +272,7 @@ How to read your results:
 .. _overhead-third-site:
 
 ***********************************************
-Adding a third site's simulator results
+Adding another site's simulator results
 ***********************************************
 
 A collaborating site produces its own simulator baseline with the same commands as Step 1:

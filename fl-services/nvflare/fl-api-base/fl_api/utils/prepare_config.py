@@ -485,10 +485,11 @@ def configure_server(
     config["global_rounds"] = global_rounds
 
     for workflow in config["workflows"]:
-        if "args" in workflow and "participating_clients" in workflow["args"]:
-            workflow["args"]["participating_clients"] = trusts
-        if "args" in workflow and "ignore_result_error" in workflow["args"]:
-            workflow["args"]["ignore_result_error"] = ignore_result_error
+        args = workflow.get("args", {})
+        if "participating_clients" in args:
+            args["participating_clients"] = trusts
+        if "ignore_result_error" in args:
+            args["ignore_result_error"] = ignore_result_error
         # Recipe-generated templates (standard) carry LITERAL num_rounds/min_clients
         # baked in by FedJob serialisation instead of the executor templates' "{global_rounds}"
         # placeholder, so the top-level key set above never reaches the workflow.
@@ -497,19 +498,13 @@ def configure_server(
         # ScatterAndGather close every round on the first (fastest) trust's update, silently
         # dropping all slower trusts' contributions (observed live: a 2-trust 20-round job
         # aggregated 20/20 updates from one trust and 0 from the other).
-        if (
-            "args" in workflow
-            and "num_rounds" in workflow["args"]
-            and not isinstance(workflow["args"]["num_rounds"], str)
-        ):
-            workflow["args"]["num_rounds"] = global_rounds
-        if "args" in workflow and "min_clients" in workflow["args"]:
-            workflow["args"]["min_clients"] = len(trusts)
+        if "num_rounds" in args and not isinstance(args["num_rounds"], str):
+            args["num_rounds"] = global_rounds
+        if "min_clients" in args:
+            args["min_clients"] = len(trusts)
 
     for component in config["components"]:
-        if ("name" in component and "aggregator" in component["name"]) or (
-            "id" in component and "aggregator" in component["id"]
-        ):
+        if "aggregator" in component.get("name", "") or "aggregator" in component.get("id", ""):
             component["name"] = aggregator  # override the aggregator if specified in the config, otherwise use default
             component["args"]["aggregation_weights"] = aggregation_weights  # override the aggregation weights
 

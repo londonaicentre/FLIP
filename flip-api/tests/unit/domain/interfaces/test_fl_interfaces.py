@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from flip_api.domain.interfaces.fl import (
     ClientStatus,
     IClientStatus,
@@ -19,45 +21,18 @@ class TestIClientStatusSchema:
         assert client_status.name == "client1"
         assert client_status.status == "no_jobs"
 
-    def test_online_true_when_status_not_no_reply(self):
-        client_status = IClientStatus(
-            name="client1",
-            status=ClientStatus.NO_JOBS,
-        )
-
-        assert client_status.online is True
-
-    def test_online_false_when_status_no_reply(self):
-        client_status = IClientStatus(
-            name="client1",
-            status=ClientStatus.NO_REPLY,
-        )
-
-        assert client_status.online is False
-
-    def test_online_true_when_status_connected(self):
-        client_status = IClientStatus(
-            name="client1",
-            status=ClientStatus.CONNECTED,
-        )
-
-        assert client_status.online is True
-
-    def test_online_false_when_status_disconnected(self):
-        client_status = IClientStatus(
-            name="client1",
-            status=ClientStatus.DISCONNECTED,
-        )
-
-        assert client_status.online is False
-
-    def test_online_true_when_status_disconnected_lowercase(self):
-        client_status = IClientStatus(
-            name="client1",
-            status="disconnected",
-        )
-
-        assert client_status.online is True
+    @pytest.mark.parametrize(
+        ("status", "online"),
+        [
+            pytest.param(ClientStatus.NO_JOBS, True, id="no_jobs-online"),
+            pytest.param(ClientStatus.NO_REPLY, False, id="no_reply-offline"),
+            pytest.param(ClientStatus.CONNECTED, True, id="connected-online"),
+            pytest.param(ClientStatus.DISCONNECTED, False, id="disconnected-offline"),
+            pytest.param("disconnected", True, id="lowercase-disconnected-string-is-online"),
+        ],
+    )
+    def test_online_reflects_status(self, status, online):
+        assert IClientStatus(name="client1", status=status).online is online
 
     def test_online_reacts_to_status_change(self):
         client_status = IClientStatus(

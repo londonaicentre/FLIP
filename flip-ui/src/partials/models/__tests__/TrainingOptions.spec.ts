@@ -27,12 +27,17 @@ const aiSwitchStub = {
         ":aria-label=\"ariaLabel\" :data-label=\"label && JSON.stringify(label)\" :disabled=\"disabled\" />"
 };
 
+interface MountOptions {
+    disabled?: boolean;
+    hasImaging?: boolean;
+    flBackendLabel?: string;
+    requiredFiles?: IRequiredFile[];
+    errors?: Record<string, string>;
+}
+
 function mountTrainingOptions(
     approvedTrusts: IProjectTrust[],
-    disabled = false,
-    hasImaging: boolean | undefined = undefined,
-    flBackendLabel: string | undefined = undefined,
-    files: { requiredFiles?: IRequiredFile[] } = {}
+    { disabled = false, hasImaging, flBackendLabel, requiredFiles, errors = {} }: MountOptions = {}
 ) {
     return mount(TrainingOptions, {
         global: {
@@ -53,10 +58,10 @@ function mountTrainingOptions(
             stubs: { AiSwitch: aiSwitchStub }
         },
         props: {
-            errors: {},
+            errors,
             disabled,
             flBackendLabel,
-            ...files
+            requiredFiles
         }
     });
 }
@@ -174,21 +179,10 @@ describe("TrainingOptions trust selection", () => {
     });
 
     it("surfaces the trust_ids validation error when present", () => {
-        const wrapper = mount(TrainingOptions, {
-            global: {
-                plugins: [
-                    createTestingPinia({
-                        createSpy: vi.fn,
-                        stubActions: false,
-                        initialState: { project: { project: { approvedTrusts: trusts } } }
-                    })
-                ],
-                stubs: { AiSwitch: aiSwitchStub }
-            },
-            props: { errors: { trust_ids: "You must select a minimum of one trust for training." } }
-        });
+        const message = "You must select a minimum of one trust for training.";
+        const wrapper = mountTrainingOptions(trusts, { errors: { trust_ids: message } });
 
-        expect(wrapper.text()).toContain("You must select a minimum of one trust for training.");
+        expect(wrapper.text()).toContain(message);
     });
 });
 
@@ -200,7 +194,7 @@ describe("TrainingOptions disabled", () => {
     }];
 
     it("locks every control once the run is under way, so the choices stay readable", () => {
-        const comp = mountTrainingOptions(trust, true);
+        const comp = mountTrainingOptions(trust, { disabled: true });
 
         const switches = comp.findAll("button");
         expect(switches.length).toBeGreaterThan(0);
@@ -216,17 +210,17 @@ describe("TrainingOptions disabled", () => {
 
 describe("TrainingOptions enrichment copy", () => {
     it("asks to confirm dataset enrichment for an imaging project", () => {
-        const wrapper = mountTrainingOptions([], false, true);
+        const wrapper = mountTrainingOptions([], { hasImaging: true });
         expect(wrapper.text()).toContain("Confirm your dataset has been enriched as required before training");
     });
 
     it("keeps the imaging copy when the hub omits has_imaging (a hub predating the flag)", () => {
-        const wrapper = mountTrainingOptions([], false);
+        const wrapper = mountTrainingOptions([]);
         expect(wrapper.text()).toContain("Confirm your dataset has been enriched as required before training");
     });
 
     it("explains there is no imaging to enrich for a tabular-only project", () => {
-        const wrapper = mountTrainingOptions([], false, false);
+        const wrapper = mountTrainingOptions([], { hasImaging: false });
         expect(wrapper.text()).toContain("This project has no imaging to enrich");
         expect(wrapper.find("[data-test=data-enrichment-btn]").exists()).toBe(true); // the gate itself stays
     });
@@ -244,19 +238,19 @@ describe("TrainingOptions GPU request (FLIP#70)", () => {
     });
 
     it("locks the override with the rest of a dispatched run's options", () => {
-        const wrapper = mountTrainingOptions([], true);
+        const wrapper = mountTrainingOptions([], { disabled: true });
 
         expect(wrapper.get("[data-test=gpu-override-switch]").attributes("disabled")).toBeDefined();
     });
 
     it("says on a Flower net that the request is recorded, not enforced", () => {
-        const wrapper = mountTrainingOptions([], false, undefined, "Flower");
+        const wrapper = mountTrainingOptions([], { flBackendLabel: "Flower" });
 
         expect(wrapper.text()).toContain("Flower does not schedule jobs by GPU");
     });
 
     it("says nothing about Flower on a FLARE net", () => {
-        const wrapper = mountTrainingOptions([], false, undefined, "FLARE");
+        const wrapper = mountTrainingOptions([], { flBackendLabel: "FLARE" });
 
         expect(wrapper.text()).not.toContain("Flower does not schedule jobs by GPU");
     });
@@ -265,7 +259,7 @@ describe("TrainingOptions GPU request (FLIP#70)", () => {
 describe("TrainingOptions required files row", () => {
     const { COMPLETED, SCANNING, UPLOADING, ERROR, INFECTED } = FileUploadStatus;
     const mountWithFiles = (requiredFiles: IRequiredFile[]) =>
-        mountTrainingOptions([], false, undefined, undefined, { requiredFiles });
+        mountTrainingOptions([], { requiredFiles });
     const summary = (w: ReturnType<typeof mountWithFiles>) => w.find("[data-test=required-files-summary]");
     const pill = (w: ReturnType<typeof mountWithFiles>) => w.find("[data-test=required-files-status]");
 

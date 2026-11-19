@@ -12,6 +12,8 @@
 
 import json
 import os
+import secrets
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
@@ -20,9 +22,10 @@ import httpx
 from sqlalchemy import Column
 from sqlmodel import Session, col, select
 
+from flip_api.auth.job_callback import hash_job_credential
 from flip_api.config import get_settings
 from flip_api.db.database import get_engine
-from flip_api.db.models.main_models import FLJob, Trust
+from flip_api.db.models.main_models import FLJob, Model, Trust
 from flip_api.domain.interfaces.fl import (
     DEFAULT_JOB_TYPE,
     IClientStatus,
@@ -41,10 +44,20 @@ from flip_api.utils.logger import logger
 from flip_api.utils.s3_client import PresignAudience, S3Client
 
 
-class UnknownJobTypeError(Exception):
+class ResearcherFacingError(Exception):
+    """An error whose message is written for the researcher, so the activity feed may show it (FLIP#1408)."""
+
+
+class UnknownJobTypeError(ResearcherFacingError):
     """Custom exception for unknown job types in FL"""
 
-    pass
+
+class ClientAvailabilityError(ResearcherFacingError, ValueError):
+    """Required FL clients are unavailable."""
+
+
+class ModelFilesError(ResearcherFacingError, FileNotFoundError):
+    """A problem with the researcher's own uploaded model files, which they can fix."""
 
 
 # Pre-rename aliases: the Client-API templates originally lived under ``*_client_api`` names and
@@ -375,6 +388,14 @@ def _check_base_template(base_dir: Path, base_rel_paths: list[str], fl_backend: 
     return app_folders
 
 
+def _study_params(*studies: str | None) -> list[tuple[str, str]]:
+    """The FL API's ``?study=`` query, once per study (FLIP#1678); empty when there is none.
+
+    An NVFLARE job lives in its project's study, and the FL API sees a job only through that study's session.
+    """
+    return [("study", study) for study in studies if study]
+
+
 def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: str) -> Any:
     """
     Upload the application to the FL server.
@@ -463,7 +484,7 @@ def add_fl_backend_job_id(fl_job_id: UUID, fl_backend_job_id: str, session: Sess
     session.commit()
 
 
-def submit_job(fl_job_id: UUID, endpoint: str, model_id: UUID, session: Session) -> None:
+def submit_job(fl_job_id: UUID, endpoint: str, model_id: UUID, session: Session, study: str) -> None:
     """
     Submits a job to the FL API that is going to kick off training
 
@@ -472,17 +493,42 @@ def submit_job(fl_job_id: UUID, endpoint: str, model_id: UUID, session: Session)
         endpoint (str): The endpoint of the FL API service.
         model_id (UUID): The ID of the model to start submit the job for.
         session (Session): An instance of the database connection.
+        study (str): The model's project id, the NVFLARE study the job runs in.
 
     Raises:
         ValueError: If the backend job ID is not returned in the response.
     """
     url = f"{endpoint}/submit_job/{model_id}"
     # NOTE we increased the timeout here as Flower submit takes slightly longer to return a response compared to FLARE.
-    fl_backend_job_id = http_post(url, timeout=30)
+    fl_backend_job_id = http_post(url, timeout=30, params=_study_params(study))
     # Validate that the fl_backend_job_id is returned and is a string
     if not fl_backend_job_id or not isinstance(fl_backend_job_id, str):
         raise ValueError("No backend job id returned or invalid format")
     add_fl_backend_job_id(fl_job_id, fl_backend_job_id, session)
+
+
+def _get_fl_status(endpoint: str, subject: str, noun: str) -> Any | None:
+    """GET the FL API's ``check_<subject>_status`` route; ``None`` when unreachable, an error status or no answer."""
+    url = f"{endpoint}/check_{subject}_status"
+    logger.debug(f"Checking {subject} status at '{url}'")
+    # NOTE the Flower FL API queries the SuperLink on each call (ControlServicer.ShowFederation for the
+    # clients), which can take ~9s — past httpx's 5s default — so a single check would time out and fail
+    # the whole run (run_jobs marks the model ERROR). Use the same generous timeout as Flower submit.
+    try:
+        response = http_get(url, timeout=30)
+    except httpx.HTTPError as e:
+        # HTTPError covers an unreachable FL API (RequestError) and an FL API that answers 4xx/5xx
+        # (HTTPStatusError), e.g. FLARE's FL API returning 500 while the fl-server behind it is down.
+        # Either way there is no status to report, so the caller shows the net offline. http_get has
+        # already logged a RequestError, so only an error response is logged here.
+        if isinstance(e, httpx.HTTPStatusError):
+            logger.error(f"HTTP GET failed for {url}: {e}")
+        return None
+    logger.debug(f"{subject.capitalize()} status response: {response}")
+    if response is None:
+        logger.error(f"No response from FL API for {noun} at endpoint {endpoint}")
+        return None
+    return response
 
 
 def check_server_status(endpoint: str) -> IServerStatus | None:
@@ -496,26 +542,8 @@ def check_server_status(endpoint: str) -> IServerStatus | None:
         IServerStatus | None: The server status, or ``None`` when the FL API cannot be reached or
             answers with an error status.
     """
-    url = f"{endpoint}/check_server_status"
-    logger.debug(f"Checking server status at '{url}'")
-    # Same generous timeout as check_client_status: the Flower FL API hits the SuperLink and can
-    # be slower than httpx's 5s default.
-    try:
-        response = http_get(url, timeout=30)
-    except httpx.HTTPError as e:
-        # HTTPError covers an unreachable FL API (RequestError) and an FL API that answers 4xx/5xx
-        # (HTTPStatusError), e.g. FLARE's FL API returning 500 while the fl-server behind it is down.
-        # Either way there is no status to report, so the caller shows the net offline. http_get has
-        # already logged a RequestError, so only an error response is logged here.
-        if isinstance(e, httpx.HTTPStatusError):
-            logger.error(f"HTTP GET failed for {url}: {e}")
-        return None
-    logger.debug(f"Server status response: {response}")
-    if not response:
-        logger.error(f"No response from FL API for server at endpoint {endpoint}")
-        return None
-    server_status = IServerStatus.model_validate(response)
-    return server_status
+    response = _get_fl_status(endpoint, "server", "server")
+    return IServerStatus.model_validate(response) if response else None
 
 
 def check_client_status(endpoint: str) -> list[IClientStatus] | None:
@@ -526,30 +554,12 @@ def check_client_status(endpoint: str) -> list[IClientStatus] | None:
         endpoint (str): The endpoint of the server to check the status from.
 
     Returns:
-        list[IClientStatus] | None: A list of client statuses, or ``None`` when the FL API cannot be
-            reached or answers with an error status.
+        list[IClientStatus] | None: A list of client statuses, empty when no client is connected, or
+            ``None`` when the FL API cannot be reached, answers with an error status or sends nothing.
     """
-    url = f"{endpoint}/check_client_status"
-    logger.debug(f"Checking client status at '{url}'")
-    # NOTE the Flower FL API queries the SuperLink (ControlServicer.ShowFederation) on each call,
-    # which can take ~9s — past httpx's 5s default — so a single check would time out and fail the
-    # whole run (run_jobs marks the model ERROR). Use the same generous timeout as Flower submit.
-    try:
-        response = http_get(url, timeout=30)
-    except httpx.HTTPError as e:
-        # HTTPError covers an unreachable FL API (RequestError) and an FL API that answers 4xx/5xx
-        # (HTTPStatusError), e.g. FLARE's FL API returning 500 while the fl-server behind it is down.
-        # Either way there is no status to report, so the caller shows the net offline. http_get has
-        # already logged a RequestError, so only an error response is logged here.
-        if isinstance(e, httpx.HTTPStatusError):
-            logger.error(f"HTTP GET failed for {url}: {e}")
-        return None
-    logger.debug(f"Client status response: {response}")
-    if not response:
-        logger.error(f"No response from FL API for clients at endpoint {endpoint}")
-        return None
-    client_statuses = [IClientStatus.model_validate(c) for c in response]
-    return client_statuses
+    # An empty list is an answer (no client connected), so only no answer at all maps to None.
+    response = _get_fl_status(endpoint, "client", "clients")
+    return None if response is None else [IClientStatus.model_validate(c) for c in response]
 
 
 def fetch_server_status(endpoint: str) -> IServerStatus | None:
@@ -606,58 +616,44 @@ def is_client_available(client_name: str, client_statuses: list[IClientStatus]) 
     return False
 
 
-def validate_client_availability(clients: list[str], endpoint: str, fl_backend: FLBackend) -> None:
+def unavailable_clients(clients: list[str], endpoint: str) -> list[str]:
     """
-    Validate the availability of clients by checking their status.
-    It sends a GET request to the FL API service to check the status of the clients.
-    For FLARE, raises ValueError if any client is unavailable.
-    For Flower, logs a warning instead — Flower's SuperLink handles client selection at runtime.
+    List the clients that are not connected to the net's FL server.
+
+    Neither backend needs them connected at submission, so this informs and never stops a submission (#1133):
+    FLARE's scheduler holds the job until every mandatory client connects, and Flower's strategy waits until as
+    many nodes are connected as trusts were selected.
 
     Args:
-        clients (list[str]): A list of client names to check the availability of.
+        clients (list[str]): The client names to check.
         endpoint (str): The endpoint of the FL API service.
-        fl_backend (FLBackend): The FL backend of the net being validated (``nvflare`` or ``flower``).
 
     Returns:
-        None
-
-    Raises:
-        ValueError: If any client is unavailable (FLARE backend only).
+        list[str]: The clients that are not connected, in the order given; all of them when none is. Empty when
+            the FL API cannot say, since then nothing is known.
     """
-    is_flower = fl_backend == FLBackend.FLOWER
-
     client_statuses = check_client_status(endpoint)
-    if not client_statuses:
-        if is_flower:
-            logger.warning(f"No client status response from FL API at {endpoint} — Flower will handle client selection")
-            return
-        logger.error(f"No response from FL API for clients at endpoint {endpoint}")
-        raise ValueError("Unable to fetch client statuses to validate client availability")
-
+    if client_statuses is None:
+        logger.warning(f"No client status response from FL API at {endpoint}")
+        return []
     logger.info(f"Client status: {client_statuses}")
-
-    unavailable = [client for client in clients if not is_client_available(client, client_statuses)]
-
-    if unavailable:
-        if is_flower:
-            logger.warning(f"Clients unavailable: {', '.join(unavailable)} — Flower will handle client selection")
-            return
-        raise ValueError(f"Clients unavailable: {', '.join(unavailable)}")
+    return [client for client in clients if not is_client_available(client, client_statuses)]
 
 
-def abort_job(endpoint: str, job_id: str) -> dict:
+def abort_job(endpoint: str, job_id: str, study: str | None = None) -> dict:
     """
     Aborts a job on the FL server.
 
     Args:
         endpoint (str): The endpoint of the FL API service.
         job_id (str): The ID of the job to abort.
+        study (str | None): The NVFLARE study the job runs in (its project id).
 
     Returns:
         dict: The response from the server after aborting the job.
     """
     url = f"{endpoint}/abort_job/{job_id}"
-    response = http_delete(url)
+    response = http_delete(url, params=_study_params(study))
     return response
 
 
@@ -696,6 +692,23 @@ def _job_gpu_override(fl_job_id: UUID, session: Session) -> IJobResources | None
     if job is None or job.num_gpus is None:
         return None
     return IJobResources(num_gpus=job.num_gpus)
+
+
+def _mint_job_credential(fl_job_id: UUID, session: Session) -> str:
+    """Mint the credential the job's FL server presents on its callbacks, keeping only its hash.
+
+    Args:
+        fl_job_id (UUID): The FL job.
+        session (Session): SQLModel session.
+
+    Returns:
+        str: the plaintext, which goes to the FL API with the app and nowhere else.
+    """
+    credential = secrets.token_urlsafe(32)
+    job = session.exec(select(FLJob).where(FLJob.id == fl_job_id)).one()
+    job.credential_hash = hash_job_credential(credential)
+    session.commit()
+    return credential
 
 
 _RESOURCE_SOURCES = {
@@ -787,6 +800,7 @@ def start_training(
         trusts=clients,
         bundle_urls=bundle_urls,
         resources=_job_gpu_override(fl_job_id, session),
+        job_credential=_mint_job_credential(fl_job_id, session),
     )
 
     # Gate before the (up to 900s) app transfer, and again right before submission: submit_job
@@ -797,7 +811,7 @@ def start_training(
     _log_applied_gpu_request(model_id, training_details.resources, upload_reply, session)
     _raise_if_job_aborted(fl_job_id, session)
     logger.info(f"Submitting job for training for model {model_id} with FL job ID {fl_job_id}")
-    submit_job(fl_job_id, endpoint, model_id, session)
+    submit_job(fl_job_id, endpoint, model_id, session, study=required_info.project_id)
 
 
 def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) -> str:
@@ -867,10 +881,11 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
 
     Raises:
         EnvironmentError: If the S3 bucket environment variables are not set.
-        FileNotFoundError: If the base or model files are missing.
-        FileNotFoundError: If no config.json is among the scanned model files — it is required for
+        FileNotFoundError: If the base files are missing.
+        ModelFilesError: If the model files are missing.
+        ModelFilesError: If no config.json is among the scanned model files — it is required for
             every job type, and declares the job_type that selects the base application.
-        FileNotFoundError: If required files for the job type are missing.
+        ModelFilesError: If required files for the job type are missing.
         RuntimeError: If the required-files manifest lookup returns no files for the job type,
             i.e. the manifest under FL_APP_BASE_DIR is missing or malformed, or if the completed
             bundle has missing or unexpected files.
@@ -893,7 +908,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     # List objects in the model bucket
     model_files = s3.list_objects(model_bucket_s3_path)
     if not model_files:
-        raise FileNotFoundError("Model files missing on the S3 bucket")
+        raise ModelFilesError("Model files missing on the S3 bucket")
 
     # Determine job_type from config.json. The file itself is non-negotiable — every nvflare job
     # type requires it — so refuse here rather than logging a doomed job_type=standard guess that
@@ -901,7 +916,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     input_config: dict = {}
     config_file = next((k for k in model_files if k.endswith("/config.json")), None)
     if not config_file:
-        raise FileNotFoundError(
+        raise ModelFilesError(
             "No config.json found in the scanned model files. config.json is a required file for every "
             "nvflare job type — it declares the job_type that selects the base application. Upload it "
             "and let the scan complete, then start training again."
@@ -954,7 +969,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     }  # relative paths of model files (i.e. without the bucket prefix)
     missing_files = [f for f in required_files if f not in model_rel]
     if len(missing_files) > 0:
-        raise FileNotFoundError(f"Missing required files for job type {job_type}: {', '.join(missing_files)}. ")
+        raise ModelFilesError(f"Missing required files for job type {job_type}: {', '.join(missing_files)}. ")
 
     # Upload the base application tree into the destination bucket (1:1 paths under base_dir)
     for rel in base_rel_paths:
@@ -1082,10 +1097,11 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
 
     Raises:
         EnvironmentError: If the S3 bucket environment variables are not set.
-        FileNotFoundError: If the base or model files are missing.
-        FileNotFoundError: If no config.json is among the scanned model files — it is required for
+        FileNotFoundError: If the base files are missing.
+        ModelFilesError: If the model files are missing.
+        ModelFilesError: If no config.json is among the scanned model files — it is required for
             every job type, and declares the job_type that selects the base application.
-        FileNotFoundError: If required files for the job type are missing.
+        ModelFilesError: If required files for the job type are missing.
         RuntimeError: If the required-files manifest lookup returns no files for the job type,
             i.e. the manifest under FL_APP_BASE_DIR is missing or malformed, or if the completed
             bundle has missing or unexpected files.
@@ -1108,14 +1124,14 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
     # List objects in the model bucket
     model_files = s3.list_objects(model_bucket_s3_path)
     if not model_files:
-        raise FileNotFoundError("Model files missing on the S3 bucket")
+        raise ModelFilesError("Model files missing on the S3 bucket")
 
     # Determine job_type from config.json. The file itself is non-negotiable — every flower job
     # type requires it — so refuse here rather than logging a doomed job_type=standard guess that
     # the required-files check below would reject anyway (FLIP#1053).
     config_file = next((k for k in model_files if k.endswith("/config.json")), None)
     if not config_file:
-        raise FileNotFoundError(
+        raise ModelFilesError(
             "No config.json found in the scanned model files. config.json is a required file for every "
             "flower job type — it declares the job_type that selects the base application. Upload it "
             "and let the scan complete, then start training again."
@@ -1182,7 +1198,7 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
     }  # relative paths of model files (i.e. without the bucket prefix)
     missing_files = [f for f in required_files if f not in model_rel]
     if len(missing_files) > 0:
-        raise FileNotFoundError(f"Missing required files for job type {job_type}: {', '.join(missing_files)}. ")
+        raise ModelFilesError(f"Missing required files for job type {job_type}: {', '.join(missing_files)}. ")
 
     # Upload the base application tree into the destination bucket (1:1 paths under base_dir)
     for rel in base_rel_paths:
@@ -1328,7 +1344,7 @@ def get_bundle_urls(s3_path: str) -> list[str]:
         raise RuntimeError(error_msg)
 
 
-def list_backend_jobs(net_endpoint: str) -> list[IJobMetaData] | None:
+def list_backend_jobs(net_endpoint: str, studies: Sequence[str] = ()) -> list[IJobMetaData] | None:
     """List every job one net's FL API knows about, whatever its status.
 
     Unlike ``extract_current_job_data`` (the abort path, which fails loudly), this answers ``None`` when the FL API
@@ -1337,6 +1353,7 @@ def list_backend_jobs(net_endpoint: str) -> list[IJobMetaData] | None:
 
     Args:
         net_endpoint (str): The net's FL API base URL.
+        studies (Sequence[str]): The NVFLARE studies to list besides the default one.
 
     Returns:
         list[IJobMetaData] | None: The jobs, or ``None`` if the FL API could not say.
@@ -1344,7 +1361,7 @@ def list_backend_jobs(net_endpoint: str) -> list[IJobMetaData] | None:
     url = f"{net_endpoint}/list_jobs"
     try:
         # Same timeout as the other FL status calls: the Flower FL API lists runs through the flwr CLI.
-        response = http_get(url, timeout=30)
+        response = http_get(url, timeout=30, params=_study_params(*studies))
         if not isinstance(response, list):
             raise ValueError(f"expected a list of jobs, got {type(response).__name__}")
         # pydantic's ValidationError is a ValueError, so an unknown status lands in the except below.
@@ -1354,7 +1371,9 @@ def list_backend_jobs(net_endpoint: str) -> list[IJobMetaData] | None:
         return None
 
 
-def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobMetaData | None:
+def extract_current_job_data(
+    net_endpoint: str, fl_backend_job_id: str, study: str | None = None
+) -> IJobMetaData | None:
     """
     Extract the FL job matching ``fl_backend_job_id`` while it is running or still waiting to start.
 
@@ -1365,6 +1384,7 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
     Args:
         net_endpoint (str): The endpoint of the FL API service.
         fl_backend_job_id (str): The FL job ID to look for.
+        study (str | None): The NVFLARE study the job runs in (its project id).
 
     Returns:
         IJobMetaData | None: The job's metadata, or ``None`` if no running or waiting job
@@ -1381,7 +1401,7 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
     # Same generous timeout as the other FL status checks: the Flower FL API lists runs from the
     # SuperLink and can exceed httpx's 5s default; this is polled during a run, so a 5s timeout
     # would risk flipping a healthy in-flight model to ERROR.
-    current_job_data = http_get(url, timeout=30)
+    current_job_data = http_get(url, timeout=30, params=_study_params(study))
     logger.debug(f"Current job data: {current_job_data}")
 
     # Validate the response format
@@ -1472,6 +1492,10 @@ def abort_model_training(model_id: UUID, session: Session) -> None:
         add_log(model_id, "Training job aborted before start; training slot released.", session)
         return
 
+    # The job runs in its project's NVFLARE study, and the FL API sees it only through that study's session.
+    model = session.get(Model, model_id)
+    study = str(model.project_id) if model is not None and model.project_id is not None else None
+
     server_status = fetch_server_status(net_endpoint)
     logger.debug(f"Server status: {server_status}")
 
@@ -1484,7 +1508,7 @@ def abort_model_training(model_id: UUID, session: Session) -> None:
     # idempotent no-op. The jobs were just dequeued above, so free the net promptly instead of
     # leaving it to the stale-BUSY watchdog.
     try:
-        current_job = extract_current_job_data(net_endpoint, fl_backend_job_id)
+        current_job = extract_current_job_data(net_endpoint, fl_backend_job_id, study=study)
     except httpx.HTTPStatusError as error:
         record_fl_api_failure(model_id, error, session)
         raise
@@ -1499,7 +1523,7 @@ def abort_model_training(model_id: UUID, session: Session) -> None:
     logger.debug(f"Attempting abort request for model ID: {model_id} on {net_name} (job ID: {fl_backend_job_id})")
 
     try:
-        response = abort_job(net_endpoint, fl_backend_job_id)
+        response = abort_job(net_endpoint, fl_backend_job_id, study=study)
     except httpx.HTTPStatusError as error:
         record_fl_api_failure(model_id, error, session)
         raise

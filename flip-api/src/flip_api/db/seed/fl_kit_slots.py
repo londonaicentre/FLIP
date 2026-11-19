@@ -10,24 +10,31 @@
 # limitations under the License.
 #
 
-import json
 import re
+from collections import defaultdict
 
-from botocore.exceptions import BotoCoreError, ClientError
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from flip_api.config import get_settings
 from flip_api.db.models.main_models import FLKitSlot
 from flip_api.db.seed.seed_logger import logger
-from flip_api.utils.get_parameters import get_parameter
+from flip_api.domain.schemas.types import FLBackend
+from flip_api.utils.s3_client import S3Client
 
-# SSM parameter holding the JSON list of slot names (Terraform-managed, see
-# deploy/providers/AWS/parameter_store.tf). The parameter is the runtime source of
-# truth in production so operators can grow the pool with a targeted `terraform
-# apply` of just this parameter — no task-definition revision, no flip-api restart
-# (register_trust reconciles on a pool miss). Slot names are plain configuration,
-# not secrets, hence Parameter Store per the /flip/* convention.
-_FL_KIT_SLOT_NAMES_PARAMETER = "/flip/fl_kit_slot_names"
+# A FLARE client kit is complete on a net once these startup files are there (FLIP#1720).
+# add_fl_kits.sh uploads them last, so a half-uploaded kit never qualifies; the hub's own
+# server and admin kits have no fed_client.json, so they never do either.
+FLARE_KIT_REQUIRED_FILES = frozenset({"client.crt", "client.key", "rootCA.pem", "fed_client.json", "sub_start.sh"})
+# What marks a kit as the hub's own (server, admin): expected to fall short, so not warned about.
+_HUB_KIT_FILES = frozenset({"fed_server.json", "fed_admin.json"})
+_KIT_KEY_RE = re.compile(r"(net-\d+)/(?:services/([^/]+)/(?:startup/([^/]+)$)?)?")
+
+# A Flower slot is complete on a net once both halves of its SuperNode key pair are there
+# (FLIP#1942). add_fl_kits_flower.sh uploads the private key last, after the SuperLink has
+# registered the public one, so a slot is never claimable before its SuperNode is admitted.
+# Slot Trust_<N> is keys/supernode_credentials_<N>{,.pub}: the name
+# register-supernode-keys.sh gives the same key at the SuperLink.
+_FLOWER_KEY_RE = re.compile(r"(net-\d+)/(?:keys/(supernode_credentials_(\d+)(?:\.pub)?)$)?")
 
 _SLOT_NUMBER_RE = re.compile(r"_(\d+)$")
 
@@ -51,57 +58,132 @@ def _slot_number(slot_name: str) -> int:
     return int(match.group(1)) if match else _NON_NUMERIC_SLOT_NUMBER
 
 
-def resolve_fl_kit_slot_names() -> list[str]:
-    """Resolve the configured FL kit-slot names from their environment's single source.
+def resolve_fl_kit_slot_names() -> list[str] | None:
+    """Resolve the FL kit-slot names from their environment's single source.
 
-    In production the source is the ``/flip/fl_kit_slot_names`` SSM parameter (a JSON
-    list string, rendered by Terraform from the env file's ``FL_KIT_SLOT_NAMES``), so
-    the pool can grow via a targeted apply of just that parameter without a
-    task-definition change or restart. In development the source is the
-    ``FL_KIT_SLOT_NAMES`` env var (a ``DevSettings``-only field).
+    - Development: the ``FL_KIT_SLOT_NAMES`` env var (a ``DevSettings``-only field).
+    - Production, NVFLARE: the kits themselves — every slot with a complete kit on every
+      net under ``FLARE_KITS_S3_URI``.
+    - Production, Flower: the SuperNode keys themselves — every slot with a complete key
+      pair on every net under ``FLOWER_KITS_S3_URI``.
 
-    Deliberately no prod fallback: a failure to fetch or parse the parameter returns
-    an empty list — the boot seed and the registration reconcile are additive, so
-    existing pool rows and assignments are untouched; the pool simply cannot grow
-    until the parameter is fixed, and nothing stale masks that. The log level splits
-    the two situations: a missing parameter is a not-yet-provisioned source (WARNING);
-    any other AWS error or a malformed value means the source of truth is broken (ERROR).
+    register_trust reads this at every registration and claims only from the names it
+    returns: a slot added since boot is claimable with no restart, and one withdrawn
+    since is never handed out.
 
-    Note the pre-activation state is ERROR, not WARNING: ``make apply-fl-kit-slots``
-    creates the parameter *and* grants the task role's ``ssm:GetParameter``, so an
-    image deployed before that apply gets ``AccessDeniedException`` (ERROR) rather than
-    ``ParameterNotFound`` — observed on stag 2026-07-14. Either way the pool is intact
-    and the log names the fix.
+    Deliberately no fallback: an unreadable source returns ``None``, logged, and no slot
+    can be claimed until it is fixed. Rows and assignments already in the pool are
+    untouched.
 
     Returns:
-        list[str]: The configured slot names; empty when none are configured or the
-        parameter is unreadable.
+        list[str] | None: The slot names, empty when none are configured; ``None`` when the
+        source could not be read (an AWS error).
     """
-    if get_settings().ENV != "production":
+    settings = get_settings()
+    if settings.ENV != "production":
         # getattr: the field exists only on DevSettings, and mypy sees the
         # DevSettings | ProdSettings union here.
-        return getattr(get_settings(), "FL_KIT_SLOT_NAMES", []) or []
+        return getattr(settings, "FL_KIT_SLOT_NAMES", []) or []
+    if settings.FL_BACKEND == FLBackend.NVFLARE:
+        return _complete_flare_kit_names(getattr(settings, "FLARE_KITS_S3_URI", ""))
+    return _complete_flower_key_names(getattr(settings, "FLOWER_KITS_S3_URI", ""))
 
-    try:
-        slot_names = json.loads(get_parameter(_FL_KIT_SLOT_NAMES_PARAMETER))
-        if not isinstance(slot_names, list) or not all(isinstance(name, str) for name in slot_names):
-            raise ValueError(f"expected a JSON list of strings, got: {slot_names!r}"[:200])
-        return slot_names
-    except (BotoCoreError, ClientError, TypeError, ValueError) as e:
-        if isinstance(e, ClientError) and e.response.get("Error", {}).get("Code") == "ParameterNotFound":
-            logger.warning(
-                f"SSM parameter '{_FL_KIT_SLOT_NAMES_PARAMETER}' does not exist yet — run "
-                "`make -C deploy/providers/AWS apply-fl-kit-slots HUB=<stag|prod>` to create it. The kit-slot pool "
-                "cannot grow until then (existing slots and assignments are unaffected)."
-            )
-            return []
-        logger.error(
-            f"Could not read SSM parameter '{_FL_KIT_SLOT_NAMES_PARAMETER}' ({e!r}). The kit-slot pool "
-            "cannot grow until this is fixed — new slots applied with "
-            "`make -C deploy/providers/AWS apply-fl-kit-slots HUB=<stag|prod>` will NOT become claimable "
-            "(existing slots and assignments are unaffected)."
-        )
+
+def _complete_flare_kit_names(kits_uri: str) -> list[str] | None:
+    """List the slots whose FLARE kit is complete on every net under ``kits_uri``.
+
+    A trust needs a working kit for every net, so a kit incomplete or missing on any net
+    is left out, with a warning naming what is missing.
+
+    Args:
+        kits_uri (str): ``s3://<bucket>/fl-flare-participant-kits/<FLARE_KIT_DATE>``.
+
+    Returns:
+        list[str] | None: The complete slot names, empty when there are none; ``None`` when
+        the listing fails.
+    """
+    if not kits_uri:
+        logger.error("FLARE_KITS_S3_URI is not set. No kit slot can be claimed until it is.")
         return []
+    prefix = f"{kits_uri.rstrip('/')}/"
+    try:
+        paths = S3Client().list_objects(prefix)
+    except Exception:
+        logger.exception(f"Could not list the FLARE kits under '{prefix}'. No kit slot can be claimed until fixed.")
+        return None
+
+    nets: set[str] = set()
+    kits: defaultdict[str, dict[str, set[str]]] = defaultdict(dict)  # slot -> net -> startup file names
+    for path in paths:
+        if match := _KIT_KEY_RE.match(path.removeprefix(prefix)):
+            net, slot_name, file_name = match.groups()
+            nets.add(net)
+            if slot_name:
+                files = kits[slot_name].setdefault(net, set())
+                if file_name:
+                    files.add(file_name)
+
+    if not nets:
+        logger.error(f"No FLARE kits under '{prefix}' — is FLARE_KIT_DATE right? No kit slot can be claimed.")
+        return []
+    complete = []
+    for slot, files_by_net in kits.items():
+        missing = {net: FLARE_KIT_REQUIRED_FILES - files_by_net.get(net, set()) for net in sorted(nets)}
+        if not any(missing.values()):
+            complete.append(slot)
+        elif not any(files & _HUB_KIT_FILES for files in files_by_net.values()):
+            # Not one of the hub's own kits, so a client kit: say why it is left out.
+            gaps = "; ".join(f"{net} lacks {', '.join(sorted(files))}" for net, files in missing.items() if files)
+            logger.warning(f"FLARE kit '{slot}' is not claimable: {gaps}.")
+    return sorted(complete, key=lambda name: (_slot_number(name), name))
+
+
+def _complete_flower_key_names(kits_uri: str) -> list[str] | None:
+    """List the slots whose SuperNode key pair is complete on every net under ``kits_uri``.
+
+    A trust needs a working key for every net, so a pair incomplete or missing on any net
+    is left out, with a warning naming what is missing.
+
+    Args:
+        kits_uri (str): ``s3://<bucket>/fl-flower-participant-kits/<FLOWER_KIT_DATE>``.
+
+    Returns:
+        list[str] | None: The complete slot names, empty when there are none; ``None`` when
+        the listing fails.
+    """
+    if not kits_uri:
+        logger.error("FLOWER_KITS_S3_URI is not set. No kit slot can be claimed until it is.")
+        return []
+    prefix = f"{kits_uri.rstrip('/')}/"
+    try:
+        paths = S3Client().list_objects(prefix)
+    except Exception:
+        logger.exception(f"Could not list the Flower keys under '{prefix}'. No kit slot can be claimed until fixed.")
+        return None
+
+    nets: set[str] = set()
+    keys: defaultdict[int, dict[str, set[str]]] = defaultdict(dict)  # slot number -> net -> key file names
+    for path in paths:
+        if match := _FLOWER_KEY_RE.match(path.removeprefix(prefix)):
+            net, file_name, number = match.groups()
+            nets.add(net)
+            if file_name:
+                keys[int(number)].setdefault(net, set()).add(file_name)
+
+    if not nets:
+        logger.error(f"No Flower keys under '{prefix}' — is FLOWER_KIT_DATE right? No kit slot can be claimed.")
+        return []
+    complete = []
+    for number, files_by_net in sorted(keys.items()):
+        slot = f"Trust_{number}"
+        required = {f"supernode_credentials_{number}", f"supernode_credentials_{number}.pub"}
+        missing = {net: required - files_by_net.get(net, set()) for net in sorted(nets)}
+        if not any(missing.values()):
+            complete.append(slot)
+        else:
+            gaps = "; ".join(f"{net} lacks {', '.join(sorted(files))}" for net, files in missing.items() if files)
+            logger.warning(f"Flower key '{slot}' is not claimable: {gaps}.")
+    return complete
 
 
 def insert_missing_slots(session: Session, slot_names: list[str]) -> list[str]:
@@ -119,12 +201,12 @@ def insert_missing_slots(session: Session, slot_names: list[str]) -> list[str]:
     Returns:
         list[str]: The slot names that were newly inserted.
     """
-    inserted: list[str] = []
-    for slot_name in slot_names:
-        existing = session.exec(select(FLKitSlot).where(FLKitSlot.slot_name == slot_name)).first()
-        if existing is None:
-            session.add(FLKitSlot(slot_name=slot_name, slot_number=_slot_number(slot_name)))
-            inserted.append(slot_name)
+    if not slot_names:
+        return []
+    existing = set(session.exec(select(FLKitSlot.slot_name).where(col(FLKitSlot.slot_name).in_(slot_names))).all())
+    inserted = [slot_name for slot_name in dict.fromkeys(slot_names) if slot_name not in existing]
+    for slot_name in inserted:
+        session.add(FLKitSlot(slot_name=slot_name, slot_number=_slot_number(slot_name)))
     return inserted
 
 
@@ -139,7 +221,7 @@ def seed_fl_kit_slots(session: Session) -> None:
     Args:
         session (Session): The SQLModel session used for reads and inserts.
     """
-    slot_names = resolve_fl_kit_slot_names()
+    slot_names = resolve_fl_kit_slot_names() or []  # an unreadable source seeds nothing; it is logged
     insert_missing_slots(session, slot_names)
     session.commit()
 

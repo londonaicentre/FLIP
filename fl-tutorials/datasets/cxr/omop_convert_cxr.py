@@ -23,7 +23,7 @@ import shutil
 
 import pandas as pd
 from tqdm import tqdm
-from utils.omop_ids import surrogate_ids
+from utils.omop_ids import person_id, surrogate_ids
 from utils.omop_mappings import (
     EHR_TYPE_CONCEPT_ID,
     INPATIENT_VISIT_CONCEPT_ID,
@@ -38,7 +38,7 @@ from utils.omop_mappings import (
 from utils.omop_schemas import schemas
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     args = argparse.ArgumentParser()
     args.add_argument(
         "--dataset_table", type=str, default="data/cxr_metadata.csv", help="Path to the Dicom data table."
@@ -117,13 +117,7 @@ TRUSTS = {
     "trust_1": ("Dummy"),
     "trust_2": ("Dummy"),
 }
-DICOM_FOLDER_PATH = "./dicom_output"
 PROJECT = "cxr_project"
-
-
-def nhs_number_to_integer(s):
-    """Converts the PatientID (NHS number e.g. '123 456 789') to an integer"""
-    return int(f"{s.replace(' ', '')[:9]}")
 
 
 def transform_dicom_metadata_to_omop_tables(csv_file_path: str, omop_root: str = "") -> dict[str, pd.DataFrame]:
@@ -148,7 +142,7 @@ def transform_dicom_metadata_to_omop_tables(csv_file_path: str, omop_root: str =
     # ---------------- Person table ----------------
     # ----------------------------------------------
     person = pd.DataFrame()
-    person["person_id"] = df["PatientID"].apply(nhs_number_to_integer)
+    person["person_id"] = df["PatientID"].apply(person_id)
     person["gender_concept_id"] = df["PatientSex"].map(MAPPING_SEX)
     person["birth_datetime"] = pd.to_datetime(df["PatientBirthDate"], format="%Y%m%d")
     person["year_of_birth"] = person["birth_datetime"].dt.year.astype(
@@ -167,6 +161,10 @@ def transform_dicom_metadata_to_omop_tables(csv_file_path: str, omop_root: str =
     person["trust"] = df["trust"]
     combined_tables["person"] = person
 
+    df["StudyTime"] = df["StudyTime"].str.zfill(6)
+    study_date = pd.to_datetime(df["StudyDate"], format="%Y%m%d")
+    study_datetime = pd.to_datetime(df["StudyDate"] + df["StudyTime"], format="%Y%m%d%H%M%S")
+
     # ----------------------------------------------
     # --------- Visit Occurrence table -------------
     # ----------------------------------------------
@@ -176,9 +174,8 @@ def transform_dicom_metadata_to_omop_tables(csv_file_path: str, omop_root: str =
     visit_occurrence["visit_concept_id"] = (
         INPATIENT_VISIT_CONCEPT_ID  # Inpatient visit (https://athena.ohdsi.org/search-terms/terms/9201)
     )
-    visit_occurrence["visit_start_date"] = pd.to_datetime(df["StudyDate"], format="%Y%m%d")
-    df["StudyTime"] = df["StudyTime"].str.zfill(6)
-    visit_occurrence["visit_start_datetime"] = pd.to_datetime(df["StudyDate"] + df["StudyTime"], format="%Y%m%d%H%M%S")
+    visit_occurrence["visit_start_date"] = study_date
+    visit_occurrence["visit_start_datetime"] = study_datetime
     visit_occurrence["visit_end_date"] = visit_occurrence["visit_start_date"]
     visit_occurrence["visit_end_datetime"] = visit_occurrence["visit_start_datetime"]
     visit_occurrence["visit_type_concept_id"] = (
@@ -198,10 +195,8 @@ def transform_dicom_metadata_to_omop_tables(csv_file_path: str, omop_root: str =
     procedure_occurrence["procedure_occurrence_id"] = surrogate_ids(PROJECT, len(df))
     procedure_occurrence["person_id"] = person["person_id"]
     procedure_occurrence["procedure_concept_id"] = MAPPING_CXR["plain_xray"]
-    procedure_occurrence["procedure_date"] = pd.to_datetime(df["StudyDate"], format="%Y%m%d")
-    procedure_occurrence["procedure_datetime"] = pd.to_datetime(
-        df["StudyDate"] + df["StudyTime"], format="%Y%m%d%H%M%S"
-    )
+    procedure_occurrence["procedure_date"] = study_date
+    procedure_occurrence["procedure_datetime"] = study_datetime
     procedure_occurrence["procedure_type_concept_id"] = (
         EHR_TYPE_CONCEPT_ID  # EHR, copying https://github.com/paulnagy/DICOM2OMOP/blob/main/demonstration/transform_imaging_metadata.ipynb
     )
@@ -224,11 +219,10 @@ def transform_dicom_metadata_to_omop_tables(csv_file_path: str, omop_root: str =
     image_occurrence["procedure_occurrence_id"] = procedure_occurrence["procedure_occurrence_id"]
     image_occurrence["visit_occurrence_id"] = visit_occurrence["visit_occurrence_id"]
     image_occurrence["anatomic_site_concept_id"] = MAPPING_CXR["lung_structure"]  # Lung structure  # CSV does have BPE
-    # "FileName" in the cxr metadata table holds a bare filename, not a path, so dirname() yields ""
-    # and local_path is blank for every row. (Upstream this comment said "spleen metadata CSV" — a
-    # copy-paste from omop_convert_spleen.py. The behaviour it describes is right; the dataset was not.)
+    # "FileName" in the cxr metadata table holds a bare filename, so dirname() yields "" and
+    # local_path is blank for every row.
     image_occurrence["local_path"] = df["FileName"].apply(os.path.dirname)
-    image_occurrence["image_occurrence_date"] = pd.to_datetime(df["StudyDate"], format="%Y%m%d")
+    image_occurrence["image_occurrence_date"] = study_date
     if "StudyInstanceUID" in df.columns:
         image_occurrence["image_study_uid"] = df["StudyInstanceUID"]
     else:

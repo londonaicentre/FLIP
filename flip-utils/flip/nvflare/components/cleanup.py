@@ -57,6 +57,13 @@ class CleanupImages(Executor):
                 FlipTasks.INIT_TASK,
                 FlipTasks.POST_TASK,
             ):
+                if FlipConstants.IMAGES_TRANSPORT != "mount":
+                    # Only a client that mounts the net's whole images folder wipes it. A job pod that mounts
+                    # its project's folder (read-only, FLIP#1678) or none (FLIP#1049) leaves the cache to
+                    # imaging-api, which keeps and bounds it.
+                    self.log_info(fl_ctx, "Cleanup → the image cache is imaging-api's; nothing to delete here")
+                    return make_reply(ReturnCode.OK)
+
                 if not FlipConstants.LOCAL_DEV:
                     net_directory = os.path.join(FlipConstants.IMAGES_DIR, FlipConstants.NET_ID)
 

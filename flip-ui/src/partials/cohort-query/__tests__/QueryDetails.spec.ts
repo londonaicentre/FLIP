@@ -112,3 +112,25 @@ describe("QueryDetails View Query button", () => {
         expect(routerPush).toHaveBeenCalledWith({ path: "/project/p-1/cohort-query" });
     });
 });
+
+describe("QueryDetails summary", () => {
+    it("shows the cohort size with thousands separators and the number of trusts queried", () => {
+        const wrapper = mountQueryDetails({
+            ...baseQuery(),
+            totalCohort: 12345,
+            queriedTrustIds: ["t1", "t2"]
+        });
+
+        expect(wrapper.find("[data-test=model-dashboard-cohort-size]").text()).toBe((12345).toLocaleString());
+        expect(wrapper.find("[data-test=model-dashboard-cohort-trusts-queried]").text()).toBe("2");
+    });
+
+    it("offers to create a cohort query when the project has none, and navigates to the query page", async () => {
+        const wrapper = mountQueryDetails();
+
+        expect(wrapper.find("[data-test=empty-cohort-query]").text()).toContain("There is no cohort query assigned");
+        await wrapper.find("[data-test=create-query-btn]").trigger("click");
+
+        expect(routerPush).toHaveBeenCalledWith({ path: "/project/p-1/cohort-query" });
+    });
+});

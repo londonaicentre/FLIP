@@ -14,7 +14,7 @@
 <template>
     <AiCard v-if="projectStore.project" class="dark:bg-dark-canvas">
         <div class="p-4">
-            <h2 class="text-lg font-semibold font-heading grow leading-loose">
+            <h2 class="text-lg font-semibold grow leading-loose">
                 Project Details
             </h2>
         </div>
@@ -41,7 +41,7 @@
                     >
                         {{ projectStore.project.description }}
                         <template v-if="!projectStore.project.description">
-                            <span class="italic text-gray-400 dark:text-gray-300">No description provided...</span>
+                            <span class="text-gray-500 dark:text-gray-300">No description provided...</span>
                         </template>
                     </dd>
                 </div>

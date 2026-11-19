@@ -43,6 +43,8 @@ services:
       - XNAT_HOME=${XNAT_HOME}
       - XNAT_ROOT=${XNAT_ROOT}
       - XNAT_EMAIL=${XNAT_EMAIL}
+      # The zone DQR reads the PACS availability window in (FLIP#1880); set in trust/xnat/.env.
+      - TZ=${XNAT_TZ}
       # Site branding for the enclave XNAT login page. TRUST_NAME comes from the trust kit
       # (exported by trust/xnat/Makefile); configure-xnat.sh turns it into the site description
       # ("Welcome to FLIP's XNAT at <trust>"). XNAT_SITE_DESCRIPTION overrides the whole string.
@@ -54,7 +56,7 @@ services:
       - XNAT_SERVICE_USER=${XNAT_SERVICE_USER}
       - XNAT_SERVICE_PASSWORD=${XNAT_SERVICE_PASSWORD}
       - XNAT_PORT=${XNAT_PORT}
-      - XNAT_AETITLE=${XNAT_AETITLE-XNAT}
+      - XNAT_AETITLE=${XNAT_AETITLE-FLIP_XNAT}
       # Upstream PACS, read by configure-xnat.sh. Defaults are the mocked Orthanc, so an
       # unconfigured stack behaves exactly as before; a real trust sets these in its kit file.
       # ${VAR-default}, not ${VAR:-default}: compose substitutes the default for a set-but-empty
@@ -169,7 +171,8 @@ services:
   # the services API that dcm2niix launches require can itself create services
   # with host bind mounts (FLIP#485).
   xnat-socket-proxy:
-    image: tecnativa/docker-socket-proxy:v0.4.2
+    # FLIP's GHCR mirror of the upstream image, pinned by digest (trust/deploy/mirror-images.manifest).
+    image: ghcr.io/londonaicentre/mirror/tecnativa/docker-socket-proxy:v0.4.2@sha256:1f3a6f303320723d199d2316a3e82b2e2685d86c275d5e3deeaf182573b47476
     deploy:
       replicas: 1
       restart_policy:

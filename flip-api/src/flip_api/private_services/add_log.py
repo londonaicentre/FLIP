@@ -15,7 +15,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
-from flip_api.auth.access_manager import authenticate_internal_service
+from flip_api.auth.job_callback import authorise_job_callback
 from flip_api.db.database import get_session
 from flip_api.domain.schemas.private import TrainingLog
 from flip_api.model_services.services.model_service import (
@@ -34,13 +34,14 @@ def add_log_endpoint(
     model_id: UUID,
     training_log: TrainingLog,
     db: Session = Depends(get_session),
-    _: None = Depends(authenticate_internal_service),
+    _: None = Depends(authorise_job_callback),
 ) -> dict[str, str]:
     """
     Add a log entry to the database for a specific model.
 
     This endpoint is internal-only: it accepts requests from the fl-server on the
-    Central Hub (authenticated via INTERNAL_SERVICE_KEY_HEADER). The payload is
+    Central Hub, and only under the credential of a job still reporting on the model
+    (``authorise_job_callback``). The payload is
     either a free-text row (``log`` set) or a typed round event (``event_type``
     set) — ``TrainingLog`` enforces the two shapes.
 

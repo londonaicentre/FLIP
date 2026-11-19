@@ -153,9 +153,12 @@ def create_project_from_central_hub_project(
 
     # Create a project-scoped event subscription for automatic DICOM-to-NIfTI conversion
     # Active when dicom_to_nifti=True, deactivated when False (can be toggled later via XNAT API)
-    create_project_event_subscription(
-        project.ID, get_settings().DCM2NIIX_IMAGE, central_hub_project.dicom_to_nifti, headers
-    )
+    # Only where XNAT's Container Service runs the converter: a Snowflake node has none, the
+    # subscription cannot be created there, and conversion is the job reconvert-nifti starts.
+    if get_settings().CONVERTER_BACKEND == "container-service":
+        create_project_event_subscription(
+            project.ID, get_settings().DCM2NIIX_IMAGE, central_hub_project.dicom_to_nifti, headers
+        )
 
     # Add central hub users to imaging project
     # Will create XNAT users if they do not exist, and add them to the XNAT project
@@ -212,34 +215,8 @@ def get_project_endpoint(project_id: str, headers: XNATAuthHeaders) -> Project:
     """
     Retrieves details of a specific project in XNAT.
 
-    The reason we are not using the specific XNAT endpoint ``GET /data/projects/{id}`` is because it returns something
-    like the below, which I am not sure is very useful, is missing fields like ``pi_firstname``, ``pi_lastname``,
-    ``URI`` which we may want to retrieve.
-
-    .. code-block:: json
-
-        {
-            "project": {
-                "items": [
-                {
-                    "children": [],
-                    "meta": {
-                    "create_event_id": 270,
-                    "xsi:type": "xnat:projectData",
-                    "isHistory": false,
-                    "start_date": "Mon Mar 24 18:21:46 UTC 2025"
-                    },
-                    "data_fields": {
-                    "secondary_ID": "dc5c1758-1a4d-4fca-80ce-fa208d11874d",
-                    "name": "string:3fa85f64-5717-4562-b3fc-2c963f66afa6-FL-Project",
-                    "description": "Project corresponding to central hub project 3fa85f64-5717-4562-b3fc-2c963f66afa6",
-                    "active": "true",
-                    "ID": "dc5c1758-1a4d-4fca-80ce-fa208d11874d"
-                    }
-                }
-                ]
-            }
-        }
+    Reads the project from the filtered projects listing rather than XNAT's ``GET /data/projects/{id}``, whose
+    response lacks fields such as ``pi_firstname``, ``pi_lastname`` and ``URI``.
 
     Args:
         project_id (str): Unique identifier for the project.
