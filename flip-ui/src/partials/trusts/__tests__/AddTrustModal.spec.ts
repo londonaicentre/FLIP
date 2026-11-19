@@ -76,13 +76,13 @@ describe("addTrustSchema", () => {
 
     it.each([
         ["$", "$ isn't allowed"],
-        ["'", "' isn't allowed"],
-        ["&", "& isn't allowed"],
-        ["-", "- isn't allowed"],
+        ["(", "( isn't allowed"],
+        ["_", "_ isn't allowed"],
+        ["/", "/ isn't allowed"],
         ["\\", "\\ isn't allowed"],
         ["\n", "Only spaces are allowed between words"],
         ["\t", "Only spaces are allowed between words"]
-    ])("rejects %j in the name or region: letters, digits and spaces only", async (ch, message) => {
+    ])("rejects %j in the name or region: letters, digits, spaces, ', & and - only", async (ch, message) => {
         await expect(addTrustSchema.validate({
             name: `Guy${ch}s`,
             code: "GSTT"
@@ -94,11 +94,11 @@ describe("addTrustSchema", () => {
         })).rejects.toThrow(message);
     });
 
-    it("accepts letters, digits and spaces, accented letters included", async () => {
+    it("accepts letters, digits, spaces, apostrophes, & and -, accented letters included", async () => {
         const value = await addTrustSchema.validate({
-            name: "Guys and St Thomas NHS Foundation Trust 2",
+            name: "Guy's & St Thomas’ NHS Foundation Trust 2",
             code: "GSTT",
-            region: "Île de France"
+            region: "North-East Île de France"
         });
         expect(value.code).toBe("GSTT");
     });

@@ -46,6 +46,9 @@ from flip_api.utils.logger import logger
 TRUST_CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 # What install-kit refuses in a value: the kit file is read by make and compose, which both expand `$`.
 KIT_UNSAFE = re.compile(r"[\r\n$`\\]")
+# A new trust's name and region: letters, digits, spaces, apostrophes, & and -, the Add Trust form's
+# rule (flip-ui addTrustSchema.ts). Narrower than KIT_UNSAFE, which still guards trusts named before.
+NAME_NOT_ALLOWED = re.compile(r"[^\w '’&-]|_")
 
 
 class TrustRegistrationError(Exception):
@@ -162,8 +165,10 @@ def register_trust(
     # Checked here because a trust that fails it could never be given a kit, and so never keys.
     if not TRUST_CODE.fullmatch(code):
         raise InvalidTrustError("Trust code must be letters, digits, - or _, starting with a letter or digit.")
-    if KIT_UNSAFE.search(f"{name}{region or ''}"):
-        raise InvalidTrustError("Trust name and region cannot hold $, `, \\ or a line break.")
+    if bad := NAME_NOT_ALLOWED.search(f"{name}{region or ''}"):
+        raise InvalidTrustError(
+            f"{bad.group()!r} isn't allowed: a trust name and region take letters, digits, spaces, ', & and -."
+        )
 
     if session.exec(select(Trust).where(Trust.name == name)).first() is not None:
         raise DuplicateTrustError(f"A trust named {name!r} already exists.")

@@ -69,7 +69,7 @@
                                     name="name"
                                     label="Trust name"
                                     hint="Full display name shown across the platform."
-                                    placeholder="e.g. Guys and St Thomas NHS Foundation Trust"
+                                    placeholder="e.g. Guy's & St Thomas' NHS Foundation Trust"
                                     :required="true"
                                     validate-on-input
                                 />

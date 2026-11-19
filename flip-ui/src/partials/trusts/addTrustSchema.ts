@@ -17,13 +17,12 @@ import { object, string, TestContext } from "yup";
 // rules can be unit-tested directly (the vee-validate form round-trip is awkward
 // to drive in jsdom). `code` is required: names are admin-chosen and non-unique,
 // so the short code is the stable handle the hub and deploy tooling key on.
-// The code rule mirrors the hub's (register_trust.py TRUST_CODE). Name and region allow
-// letters, digits and spaces only: stricter than the hub, which refuses just what a kit
-// file could not carry (KIT_UNSAFE).
-const NOT_ALLOWED = /[^\p{L}\p{N} ]/u;
+// The rules mirror the hub's (register_trust.py TRUST_CODE and NAME_NOT_ALLOWED): name and
+// region take letters, digits, spaces, apostrophes, & and -.
+const NOT_ALLOWED = /[^\p{L}\p{N} '’&-]/u;
 
-// Names the character the user typed, e.g. "& isn't allowed".
-const lettersDigitsSpaces = (value: string | undefined, ctx: TestContext) => {
+// Names the character the user typed, e.g. "( isn't allowed".
+const nameCharacters = (value: string | undefined, ctx: TestContext) => {
     const ch = NOT_ALLOWED.exec(value ?? "")?.[0];
     if (!ch) return true;
 
@@ -34,12 +33,12 @@ export const addTrustSchema = object().shape({
     name: string()
         .required("Trust name is required")
         .max(120, "Trust name must be 120 characters or fewer")
-        .test("letters-digits-spaces", lettersDigitsSpaces),
+        .test("name-characters", nameCharacters),
     code: string()
         .required("Short code is required")
         .matches(/^[A-Za-z0-9][A-Za-z0-9_-]*$/, "Use letters, digits, underscore, or hyphen, starting with a letter or digit")
         .max(16, "Short code must be 16 characters or fewer"),
     region: string()
         .max(60, "Region must be 60 characters or fewer")
-        .test("letters-digits-spaces", lettersDigitsSpaces)
+        .test("name-characters", nameCharacters)
 });
