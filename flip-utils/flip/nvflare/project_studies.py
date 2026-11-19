@@ -44,12 +44,10 @@ import yaml
 
 from flip.constants import FlipConstants
 from flip.constants.flip_constants import XNAT_ARCHIVE_DIR
-from flip.nvflare.k8s_job_mode import ARCHIVE_POD_PATCH, STUDY_RUNTIME_DEFAULT
+from flip.nvflare.k8s_job_mode import ARCHIVE_POD_PATCH, ARCHIVE_VOLUME, STUDY_RUNTIME_DEFAULT
 
 # The chart's name for the shared images volume in the job-pod template.
 IMAGES_VOLUME = "images"
-# ...and for XNAT's own volume, declared by the archive patch, whose archive/<XNAT project> is the project's directory.
-ARCHIVE_VOLUME = "xnat-archive"
 IMAGES_TRANSPORT = "IMAGES_TRANSPORT"
 _REQUEST_TIMEOUT = 30
 

@@ -718,6 +718,15 @@ a project has its entry NVFLARE has no job image for its study and does not star
 itself mounts no images, so a job from a hub that predates studies, which lands in the default study,
 streams its studies.
 
+**Leaving `images: archive`** (for `project` or `stream`) takes three steps, in this order, because the
+entries already synced keep mounting XNAT's archive until the next sync, and the chart checks
+`COHORT_RECONCILE_MINUTES` only while the mode is still `archive`:
+
+1. Upgrade with the new `jobPods.images`, leaving `imagingApi.env.COHORT_RECONCILE_MINUTES` as it is.
+2. Run `make sync-project-studies`. Until it has run, the fl-client logs an error at every start naming the
+   projects whose entries still mount the archive (`kubectl logs <fl-client pod> -c fl-client-init`).
+3. Only then, if you mean to, set `COHORT_RECONCILE_MINUTES` to 0 in a later upgrade.
+
 Prerequisites and trade-offs:
 
 - **GPU nodes** carry the NVIDIA device plugin (or the GPU Operator), with a 580+ driver as above.

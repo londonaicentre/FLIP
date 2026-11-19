@@ -90,6 +90,8 @@ POD_TEMPLATE = "pod_specs/job-pod.yaml"
 # and placement): the chart renders it beside the template only with jobPods.images: archive, and
 # flip.nvflare.project_studies applies it to the entry of each project it mounts the archive for (FLIP#1857).
 ARCHIVE_POD_PATCH = "pod_specs/job-pod-archive.yaml"
+# ...and its name for XNAT's volume, which an archive project's entry declares.
+ARCHIVE_VOLUME = "xnat-archive"
 STUDY_RUNTIME = "study_runtime.yaml"
 STUDY_RUNTIME_DEFAULT = "study_runtime.default.yaml"
 
@@ -307,6 +309,26 @@ def apply(local_dir: Path, mode: K8sJobMode) -> None:
     _write_json(resources_path, resources)
 
 
+def archive_entries(studies_file: Path) -> list[str]:
+    """The studies whose entry in the operator's file still mounts XNAT's archive (FLIP#1857).
+
+    Leaving ``jobPods.images: archive`` takes the patch out of the kit, but not out of the entries already synced into
+    the operator's file, which only ``make sync-project-studies`` rewrites. A file that is missing or not JSON names
+    none: NVFLARE reports it at launch.
+    """
+    try:
+        studies = _read_json(studies_file).get("studies", {})
+    except (OSError, ValueError):
+        return []
+    return sorted(
+        name
+        for name, entry in studies.items()
+        if isinstance(entry, dict)
+        and isinstance(entry.get("pod_template"), dict)
+        and any(v.get("name") == ARCHIVE_VOLUME for v in entry["pod_template"].get("spec", {}).get("volumes", []))
+    )
+
+
 def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) -> int:
     """CLI entry point: ``python -m flip.nvflare.k8s_job_mode <local_dir>``.
 
@@ -323,6 +345,15 @@ def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) ->
     except (OSError, ValueError) as e:
         print(f"❌ cannot switch the FL client to Kubernetes job pods: {e}", file=sys.stderr)
         return 1
+    if mode.studies_file is not None and not (parsed.local_dir / ARCHIVE_POD_PATCH).exists():
+        if stale := archive_entries(mode.studies_file):
+            # Not fatal: sync-project-studies, the fix, runs in this client.
+            print(
+                f"❌ this site no longer reads images from XNAT's archive, but the study entries of {', '.join(stale)} "
+                "still mount it, with every session XNAT holds for the project: run "
+                "make -C trust/deploy/helm sync-project-studies now",
+                file=sys.stderr,
+            )
     template = f", pod template {POD_TEMPLATE}" if mode.pod_template else ""
     print(
         f"✅ FL client runs each job in its own pod: image {mode.job_image}, namespace {mode.namespace}, "
