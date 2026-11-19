@@ -40,7 +40,7 @@ XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 async def require_served(central_hub_project_id: str, accession_id: str) -> None:
     """Refuses an accession the project's approved cohort does not hold now (FLIP#1860).
 
-    Every route of this router calls it, through ``_cached_study``, before it reads a study. A 404, the status of a
+    Every route of this router calls it before it reads a study. A 404, the status of a
     study XNAT does not hold: the study is not there for this project to read.
 
     Raises:
