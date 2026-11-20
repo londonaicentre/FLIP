@@ -210,8 +210,9 @@ its viewer-request function rewrites `/demo/` deep links to `/demo/index.html` a
 one, with the real app's report-only CSP. The build cannot see the edge, so it leaves the demo out
 unless the environment sets `PUBLIC_DEMO=true`: in the hub env file for `make deploy-ui`, and as the
 GitHub environment variable of the same name for CI (`setup-github-environments.sh` copies it from
-the env file). Set it only once the edge serves `/demo/*` under that policy and the UI-publish role is
-the current bootstrap module's, which no longer denies writes under `demo/`. The CI publish checks the
+the env file). Set it only once the edge serves `/demo/*` under that policy and the bootstrap module that made
+the UI-publish role is applied with `public_demo = true`; until then the role is denied every write under
+`demo/`. The CI publish checks the
 first before it syncs anything and fails without it, so a demo never reaches the bucket of an edge
 that would serve it unprotected; it also refuses any `PUBLIC_DEMO` other than `true`, `false` or unset.
 By hand:
@@ -641,7 +642,8 @@ Maintainer notes the manual leaves out:
   SSE-S3 by default, and on LZA production SSE-KMS under the AWS-managed `aws/s3` key (no CMK).
 - The execution role's `ecr:BatchImportUpstreamImage`/`ecr:CreateRepository` grant for first-pull imports IS
   Terraform-managed (`iam_ecs.tf`, LZA-gated); only the cache rules and their secret are out-of-band.
-- `PUBLIC_DEMO=true` belongs in an environment's env file once its edge's `/demo/*` behaviour is live (see
+- `PUBLIC_DEMO=true` belongs in an environment's env file once its edge's `/demo/*` behaviour is live and the
+  bootstrap module runs with `public_demo = true` (see
   [Public demo](#public-demo-demo-flip1746)). `make deploy-ui` reads it there, and CI reads the GitHub
   environment variable `setup-github-environments.sh` copies from it.
 - The log buckets default to subdomain-derived names (`flip-access-logs-`/`flip-cf-logs-<ALB_SUBDOMAIN>`), and

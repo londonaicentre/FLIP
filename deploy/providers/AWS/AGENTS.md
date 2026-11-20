@@ -225,7 +225,8 @@ Things worth knowing before touching any of it:
   when the caller sets `ui_bucket_name`). That role trusts `publish_ui.yml@refs/heads/<branch>`
   — for a reusable workflow, `job_workflow_ref` names the called file — and can list the
   bucket and write its objects. Where the environment sets `PUBLIC_DEMO=true` the build
-  carries the public demo under `demo/` and the same sync publishes it (FLIP#2008). `scripts/publish-ui.sh` is the one
+  carries the public demo under `demo/` and the same sync publishes it (FLIP#2008); the role may write there only
+  where the module's `public_demo` is set. `scripts/publish-ui.sh` is the one
   sync recipe, shared with `make deploy-ui`; `.github/tests/workflows/test_publish_ui.py`
   and `scripts/tests/test_publish_ui.sh` pin both halves.
 - **The pytest suite under `tests/` runs in CI** as the `AWS deploy tests` job in

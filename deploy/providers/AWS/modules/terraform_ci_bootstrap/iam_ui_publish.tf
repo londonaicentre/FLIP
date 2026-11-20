@@ -87,6 +87,23 @@ data "aws_iam_policy_document" "ui_publish" {
     ]
     resources = ["${local.ui_bucket_arn}/*"]
   }
+
+  # The demo shares the app's origin, so only an estate whose edge serves
+  # /demo/* under the demo's own policy may publish it (FLIP#2008). Everywhere
+  # else nothing this role does can put a demo in, or take one out of, demo/.
+  dynamic "statement" {
+    for_each = var.public_demo ? [] : [1]
+
+    content {
+      sid    = "NeverTouchThePublicDemo"
+      effect = "Deny"
+      actions = [
+        "s3:DeleteObject",
+        "s3:PutObject",
+      ]
+      resources = ["${local.ui_bucket_arn}/demo/*"]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "ui_publish" {

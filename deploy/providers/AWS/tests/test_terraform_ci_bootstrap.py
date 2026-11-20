@@ -897,8 +897,19 @@ def test_the_ui_publish_role_reaches_the_ui_bucket_and_nothing_else() -> None:
     assert sync["effect"] == '"Allow"'
     assert set(_list(sync["actions"])) == {'"s3:DeleteObject"', '"s3:GetObject"', '"s3:PutObject"'}
     assert sync["resources"] == '["${local.ui_bucket_arn}/*"]'
-    # The same sync publishes the public demo under demo/ (FLIP#2008), so nothing denies that prefix.
-    assert "Deny" not in _normalise(_module_block(document))
+    # Only an estate that serves the public demo (FLIP#2008) lifts the deny on demo/.
+    static_sids = [_arguments(body).get("sid") for body in _blocks(_module_block(document), "statement")]
+    assert '"NeverTouchThePublicDemo"' not in static_sids, "the deny must follow public_demo"
+    dynamic = _block(_module_block(document), 'dynamic "statement"')
+    assert _arguments(dynamic)["for_each"] == _normalise("var.public_demo ? [] : [1]")
+    deny = _arguments(_block(dynamic, "content"))
+    assert (deny["sid"], deny["effect"], deny["resources"]) == (
+        '"NeverTouchThePublicDemo"',
+        '"Deny"',
+        '["${local.ui_bucket_arn}/demo/*"]',
+    )
+    assert set(_list(deny["actions"])) == {'"s3:DeleteObject"', '"s3:PutObject"'}
+    assert _arguments(_module_block('variable "public_demo"'))["default"] == "false"
 
     body = _normalise(_module_block(document))
     actions = set(re.findall(r'"((?:[a-z0-9-]+):[A-Za-z*]+)"', body))
