@@ -35,6 +35,10 @@ for key, value in _TEST_ENV_DEFAULTS.items():
     if not current or (current.startswith("<") and current.endswith(">")):
         os.environ[key] = value
 
+# Resolve the temp root once, as pytest does for tmp_path: the code under test realpaths its
+# directories, and on macOS the default /var/folders/... is a symlink to /private/var/...
+tempfile.tempdir = os.path.realpath(tempfile.gettempdir())
+
 # BASE_IMAGES_DOWNLOAD_DIR must point at a writable directory: download_and_unzip_images
 # now calls os.makedirs() on it before any mocks can intercept. The service Makefile
 # injects /tmp/images for `local_test`, which on hosts where an earlier docker-as-root

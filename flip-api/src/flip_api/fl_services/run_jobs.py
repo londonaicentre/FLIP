@@ -17,8 +17,8 @@ from sqlmodel import Session
 from flip_api.db.database import get_engine
 from flip_api.domain.schemas.status import NetStatus
 from flip_api.fl_services.services.fl_scheduler_service import (
-    check_for_available_net,
     check_for_queued_jobs,
+    check_for_serving_net,
     log_queue_positions,
     prepare_and_start_training,
 )
@@ -78,8 +78,8 @@ def run_jobs_core(db: Session) -> None:
             logger.info("Deployment mode enabled — pausing FL job pickup. 🚧")
             return
 
-        # Step 1: Find an available net
-        scheduler = check_for_available_net(db)
+        # Step 1: Find an available net whose FL API answers (FLIP#1962)
+        scheduler = check_for_serving_net(db)
 
         if not scheduler or not scheduler.id:
             logger.info("No available nets, will check again soon... 🔃")
@@ -112,7 +112,7 @@ def run_jobs_core(db: Session) -> None:
 
         started = prepare_and_start_training(job.model_id, job.id, job.trust_ids, db)
 
-        message = "Training started successfully! 🚀" if started else "Job aborted before submission; net released. 🛑"
+        message = "Training started successfully! 🚀" if started else "Job not submitted this pass; net released. 🛑"
         logger.info({"message": message, "net": scheduler.netId, "job": job.id, "model": job.model_id})
 
     except Exception as e:

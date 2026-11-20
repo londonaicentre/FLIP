@@ -143,7 +143,7 @@ constraint-dependencies = [
     "python-dotenv>=1.2.2",      # CVE-2026-28684
     "requests>=2.33.0",          # CVE-2026-25645
     "setuptools>=84.1.0",        # GHSA-xmj3-9gf7-h52w, CVE-2026-59890
-    "soupsieve>=2.9.0",          # CVE-2026-85999, CVE-2026-86000
+    "soupsieve>=4.1.1",          # CVE-2026-85999, CVE-2026-86000, GHSA-4j63-6c4x-wfg4, GHSA-mmhr-3c5m-f64f, GHSA-7g44-g9rc-x53w, GHSA-6655-6qjp-jx7x
     "urllib3>=2.8.0",            # GHSA-8988-9cw3-xx77, GHSA-gh4c-6fx4-qh6g, GHSA-vxq7-64xx-v4gw, CVE-2026-44431, CVE-2025-66471/66418
     "werkzeug>=3.1.9",           # GHSA-g6x2-hccm-hh4m, CVE-2026-27199, CVE-2026-21860, CVE-2025-66221, CVE-2024-49767/49766
 ]

@@ -101,8 +101,8 @@ access-controlled dataset rule of the repo's `tutorial-contract` skill.
 
 ### Running on real ADNI data
 
-Four steps; the converter reproduces the cohort behind "Expected performance" exactly (560
-participants with the April 2025 plasma release):
+Four steps. The converter reproduces the cohort behind "Expected performance" exactly from the
+April 2025 plasma release (560 participants). The November 2026 release gives 618:
 
 1. **Apply for access** at https://adni.loni.usc.edu/data-samples/adni-data/ → *Apply for
    access*. You accept the [Data Use Agreement](https://adni.loni.usc.edu/wp-content/themes/adni_2023/documents/ADNI_Data_Use_Agreement.pdf)
@@ -112,17 +112,21 @@ participants with the April 2025 plasma release):
    educational institution. The Data and Publications Committee reviews within about two weeks and
    emails the decision; the account then needs an annual update to stay active.
 
-2. **Download five study tables** from the IDA (*Download → Study Data*; each CSV is named
-   `<TABLE>_<DDMonYYYY>.csv` after the download date). Put them in one directory outside the
+2. **Download five study tables** from the IDA. Open *Search & Download → Study Files* and tick
+   the five tables below. The search box finds each by name. Then use the **Download** button at the
+   bottom of the list. It fetches all five in one zip, along with the data dictionary
+   (`DATADIC_*.csv`), which the converter ignores. Each row's own *Download* link starts a separate
+   browser download, and browsers block every one after the first. Each CSV is named
+   `<TABLE>_<DDMonYYYY>.csv` after the download date. Unzip them into one directory outside the
    repository:
 
-   | Table | IDA section | Columns the converter reads |
+   | Table | Study Files section → file | Columns the converter reads |
    |---|---|---|
-   | `PTDEMOG` | Subjects → Demographics | `RID`, `PTGENDER`, `PTEDUCAT`, `PTDOB` |
-   | `APOERES` | Biospecimen → ApoE Genotyping Results | `RID`, `GENOTYPE` |
-   | `ADAS` (all phases) | Assessments → Neuropsychological → ADAS-Cog | `RID`, `VISCODE2`, `TOTAL13` |
-   | `UCSFFSX7` | Imaging → UCSF Cross-Sectional FreeSurfer (7.x) | `RID`, `EXAMDATE`, `ST10CV`, `ST29SV`, `ST88SV` |
-   | `UPENN_PLASMA_FUJIREBIO_QUANTERIX` | Biospecimen → Biospecimen Results → *UPENN Plasma Biomarkers (Aβ42, Aβ40, pTau217, NfL, GFAP) measured by Fujirebio & Quanterix* | `RID`, `VISCODE2`, `EXAMDATE`, `AB42_F`, `AB40_F`, `pT217_F`, `NfL_Q`, `GFAP_Q` |
+   | `PTDEMOG` | Subject Characteristics → *Subject Demographics [ADNI1,GO,2,3,4,TEAM]* | `RID`, `PTGENDER`, `PTEDUCAT`, `PTDOB` |
+   | `APOERES` | Biospecimen → Biospecimen Results → *ApoE Genotyping - Results [ADNI1,GO,2,3,4]* (not the ADNI4-only *[DIG]* file) | `RID`, `GENOTYPE` |
+   | `ADAS` (all phases) | Assessments → Neuropsychological → *ADAS-Cognitive Behavior [ADNI1,GO,2,3,4]* | `RID`, `VISCODE2`, `TOTAL13` |
+   | `UCSFFSX7` | Imaging → MR Image Analysis → *UCSF - Cross-Sectional FreeSurfer (7.x) [ADNI1,GO,2,3,4]* | `RID`, `EXAMDATE`, `ST10CV`, `ST29SV`, `ST88SV` |
+   | `UPENN_PLASMA_FUJIREBIO_QUANTERIX` | Biospecimen → Biospecimen Results → *UPENN - Plasma Biomarkers (AB42, AB40, ptau217, NfL, GFAP) measured by Fujirebio & Quanterix [ADNI1,GO,2,3,4]* (the data table, not the *Methods (PDF)* row above it) | `RID`, `VISCODE2`, `EXAMDATE`, `AB42_F`, `AB40_F`, `pT217_F`, `NfL_Q`, `GFAP_Q` |
 
 3. **Convert** them into the tutorial's twelve-column cohort:
 
@@ -150,7 +154,8 @@ participants with the April 2025 plasma release):
    pointing at its three CSVs. Then
    `make -C fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery summarise`
    gives the edge-frequency table to compare with "Expected performance". A newer plasma release
-   adds participants, so expect the count and the weaker edges to move a little.
+   adds participants (618 with the November 2026 release, 309 per site), so expect the count and
+   the weaker edges to move a little.
 
 **What the agreement requires of you.** Keep the converted cohort out of git and out of any
 shared drive the agreement does not cover; only summary results (such as edge frequencies) may be
