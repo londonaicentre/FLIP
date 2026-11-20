@@ -38,7 +38,7 @@ RUN python -m pip check
 # "/opt/flip-utils" }` resolves against this copy rather than a PyPI release
 # (#767), and fails without it.
 #
-# --extra-index-url points pip at PyTorch's CUDA-13.0 wheel index, where the lock's
+# --extra-index-url points pip at PyTorch's CUDA-13.2 wheel index, where the lock's
 # torch 2.15.x+cu132 lives.
 # COPY's default root ownership is deliberate: user-submitted apps execute in
 # this container as the same non-root `app` user that flwr/base runs as, so an

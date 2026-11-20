@@ -580,7 +580,7 @@ FLIP run-config keys (placeholder values are fine) and your training hyperparame
    time: the ``ServerApp`` and every ``ClientApp`` run in the FL image's own environment, which carries every package
    the template's code imports.
 
-   That environment's ``torch`` / ``torchvision`` are PyTorch's CUDA 13.0 builds (Torch 2.13 / torchvision 0.28), so
+   That environment's ``torch`` / ``torchvision`` are PyTorch's CUDA 13.2 builds (Torch 2.15 / torchvision 0.29.2), so
    GPU hosts need **NVIDIA driver 580 or newer**.
 
    If your app needs a package the FL images do not carry, ask the platform operators to add it to the images.
