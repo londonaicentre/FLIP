@@ -156,6 +156,9 @@ constraint-dependencies = [
 # operators must meet the documented driver floor.
 #
 # Mirrors the --extra-index-url flag in the flower fl-base Dockerfile.
+#
+# The FL images install torch with hashes, so tests/unit/test_lock_hashes.py fails if a relock leaves one of their
+# torch or torchvision wheels without a sha256 (the cu130 index published none for cp313, FLIP#944).
 [[tool.uv.index]]
 name = "pytorch-cu132"
 url = "https://download.pytorch.org/whl/cu132"
