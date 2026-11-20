@@ -691,8 +691,10 @@ deploy-ui: ## Build flip-ui from the working tree and publish it to the UI bucke
 	@echo "🖼️  Building flip-ui from working tree..."
 	@# Uses build:deploy (vite build only); test_flip_ui.yml runs the vue-tsc
 	@# typecheck. Its postbuild:deploy hook writes dist/js/window.js from $(MAIN_ENV_FILE), which
-	@# this Makefile exports.
-	@cd ../../../flip-ui && npm ci && npm run build:deploy
+	@# this Makefile exports. PUBLIC_DEMO=true in that file attests the edge's /demo/*
+	@# behaviour (aicentre-lza-iac) and adds the public demo under dist/demo/ (FLIP#2008).
+	@cd ../../../flip-ui && npm ci && \
+		if [ "$$PUBLIC_DEMO" = "true" ]; then npm run build:deploy:with-demo; else npm run build:deploy; fi
 	@# The sync and its cache-control split are scripts/publish-ui.sh, shared with
 	@# .github/workflows/publish_ui.yml. There is no workload distribution to
 	@# invalidate (the networking account's edge distribution serves the bucket) and
@@ -702,40 +704,6 @@ deploy-ui: ## Build flip-ui from the working tree and publish it to the UI bucke
 	@UI_BUCKET=$$($(_AWS_ENV) terraform output -raw FlipUiBucketName); \
 	[ -n "$$UI_BUCKET" ] || { echo "❌ Terraform output FlipUiBucketName is empty"; exit 1; }; \
 	$(_AWS_ENV) ./scripts/publish-ui.sh ../../../flip-ui/dist "$$UI_BUCKET"
-
-.PHONY: deploy-demo
-deploy-demo: ## Build the public demo SPA from the working tree and deploy it to S3 (demo/ prefix, FLIP#1746)
-	@# Refuse an estate whose edge has no /demo/* behaviour (aicentre-lza-iac): served
-	@# under the default behaviour, the unauthenticated demo would run on the same
-	@# origin as real Cognito tokens without its connect-src 'none' CSP (FLIP#794
-	@# review). PUBLIC_DEMO=true in the hub env file attests that behaviour is live.
-	@if [ "$$PUBLIC_DEMO" != "true" ]; then \
-		echo "❌ PUBLIC_DEMO is not true for this environment, which hosts no public demo."; \
-		echo "   Give the edge distribution its /demo/* behaviour, then set PUBLIC_DEMO=true in its env file."; \
-		exit 1; \
-	fi
-	@echo "🖼️  Building flip-ui demo bundle from working tree..."
-	@# build:demo regenerates dist/js/window.js itself and checks dist for
-	@# unscrubbed fixtures (scripts/demo-fixtures.mjs check --dist dist).
-	@cd ../../../flip-ui && npm ci && npm run build:demo
-	@echo "📦 Syncing the demo to the deployed UI bucket (demo/ prefix)..."
-	@# Same cache-control split as scripts/publish-ui.sh. --delete is scoped to the
-	@# demo/ prefix, and publish-ui.sh excludes demo/*, so neither sync touches the
-	@# other's objects.
-	@UI_BUCKET=$$($(_AWS_ENV) terraform output -raw FlipUiBucketName); \
-	[ -n "$$UI_BUCKET" ] || { echo "❌ Terraform output FlipUiBucketName is empty"; exit 1; }; \
-	echo "   s3://$$UI_BUCKET/demo/"; \
-	$(_AWS_ENV) aws s3 sync ../../../flip-ui/dist/ s3://$$UI_BUCKET/demo/ \
-		--delete \
-		--cache-control "public, max-age=31536000, immutable" \
-		--exclude "index.html" --exclude "js/window.js"; \
-	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/index.html s3://$$UI_BUCKET/demo/index.html \
-		--cache-control "no-cache, no-store, must-revalidate" \
-		--content-type "text/html; charset=utf-8"; \
-	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/demo/js/window.js \
-		--cache-control "no-cache, no-store, must-revalidate" \
-		--content-type "application/javascript; charset=utf-8"
-	@echo "✅ deploy-demo complete."
 
 # Identity of the trust kit a hub-admin target acts on — a trust CODE that selects its kit
 # file trust/.env.<KIT>.<env>. REQUIRED on the command line (no default, so a prod op can't

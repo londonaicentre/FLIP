@@ -19,8 +19,9 @@
 # call, so a test can check the cache-control split and the demo/ exclusion.
 #
 # The invariants under test: hashed bundles are cached for a year and index.html / js/window.js never;
-# --delete never reaches demo/; the entry points are written after the bundles they reference; a build
-# missing its entry points publishes nothing.
+# --delete never reaches demo/ unless the build carries the demo, whose entry points are then uncached
+# too; the entry points are written after the bundles they reference; a build missing its entry points
+# publishes nothing.
 #
 # Usage:
 #     bash deploy/providers/AWS/scripts/tests/test_publish_ui.sh
@@ -139,6 +140,29 @@ if [[ -n "${sync_at}" && -n "${index_at}" && "${sync_at}" -lt "${index_at}" ]]; 
 else
     no "writes index.html after the bundles it references" "calls: ${CALLS}"
 fi
+
+# 1b. A build that carries the public demo publishes it in the same sync (FLIP#2008).
+fixture
+mkdir -p "${DIST}/demo/js" "${DIST}/demo/static"
+printf '<!doctype html>\n' >"${DIST}/demo/index.html"
+printf 'window.AWS_BASE_URL = "/api";\n' >"${DIST}/demo/js/window.js"
+printf 'console.log(2)\n' >"${DIST}/demo/static/index-def456.js"
+run_publish "a build with the public demo" "${DIST}" flip-ui-bucket
+expect_rc 0 "succeeds"
+expect_no_call '--exclude demo/*' "lets the sync reach demo/"
+expect_call '--exclude index.html --exclude js/window.js --exclude demo/index.html --exclude demo/js/window.js' \
+    "keeps all four entry points out of the sync"
+expect_call "s3 cp ${DIST}/demo/index.html s3://flip-ui-bucket/demo/index.html --cache-control no-cache, no-store, must-revalidate --content-type text/html; charset=utf-8" \
+    "writes demo/index.html uncached, as HTML"
+expect_call "s3 cp ${DIST}/demo/js/window.js s3://flip-ui-bucket/demo/js/window.js --cache-control no-cache, no-store, must-revalidate --content-type application/javascript; charset=utf-8" \
+    "writes demo/js/window.js uncached, as JavaScript"
+
+fixture
+mkdir -p "${DIST}/demo/js"
+printf 'window.AWS_BASE_URL = "/api";\n' >"${DIST}/demo/js/window.js"
+run_publish "the demo has no index.html" "${DIST}" flip-ui-bucket
+expect_rc 1 "fails"
+expect_no_call "s3" "publishes nothing"
 
 # 2. A build without its entry points would leave the bucket serving the previous index.html, or none.
 fixture

@@ -177,9 +177,9 @@ The UI is served from S3 by the networking account's edge CloudFront at the cano
 **The UI ships with the apply (FLIP#1186).** Once `terraform_apply.yml` has applied a push to `develop` or `main`, its `ui` job runs [`publish_ui.yml`](../../../.github/workflows/publish_ui.yml), which publishes flip-ui from the same commit to that environment's bucket. A held or failed apply publishes nothing, so the UI never reaches users ahead of the API it calls; the `fl_quiesced: true` re-dispatch that releases a held apply publishes it. The workflow has two jobs:
 
 - **`build`** runs `npm ci && npm run build:deploy` with no AWS credentials and no secrets, because `npm ci` runs third-party install scripts. `window.js` is generated from the environment's variables `AWS_COGNITO_USER_POOL_ID`, `AWS_COGNITO_APP_CLIENT_ID`, `CENTRAL_HUB_API_URL`, `AWS_REGION` and `BLACKLISTED_MODEL_FILES`. These values are public: every browser receives them. `RELEASE_VERSION` is the release tag, or `sha-<short7>`. The apply job warns when the two Cognito variables no longer match `terraform output`.
-- **`publish`** assumes `TF_UI_PUBLISH_ROLE_ARN` and runs `scripts/publish-ui.sh` against `FLIP_UI_BUCKET_NAME`. That role is the bootstrap module's `AICentre-FLIPUiPublishRole` (set `ui_bucket_name` on the module): it can list the bucket and write its objects, never `demo/*`, and nothing else. Afterwards the job reads `js/window.js` back through the site to confirm the new build is being served. While `TF_UI_PUBLISH_ROLE_ARN` is unset the job only warns.
+- **`publish`** assumes `TF_UI_PUBLISH_ROLE_ARN` and runs `scripts/publish-ui.sh` against `FLIP_UI_BUCKET_NAME`. That role is the bootstrap module's `AICentre-FLIPUiPublishRole` (set `ui_bucket_name` on the module): it can list the bucket and write its objects, and nothing else. Afterwards the job reads `js/window.js` back through the site to confirm the new build is being served. While `TF_UI_PUBLISH_ROLE_ARN` is unset the job only warns.
 
-If the `ui` job fails, re-run it from the apply run once the cause is fixed, or publish from a laptop with `make deploy-ui HUB=stag|prod`, which is also the rollback: run it from the previous release's checkout. There is no invalidation, since the distribution is in another account: `index.html` is served `no-cache` and the hashed assets as immutable. Both paths run `scripts/publish-ui.sh`, which syncs `dist/` to the bucket **root** with `--delete` and always excludes the `demo/*` prefix. The real build's `dist/` has no `demo/` output, so without the exclude every routine UI deploy (including `deploy-centralhub`, which calls `deploy-ui` as its last step) would delete the demo. Publishing the demo bundle itself is a separate target, described below.
+If the `ui` job fails, re-run it from the apply run once the cause is fixed, or publish from a laptop with `make deploy-ui HUB=stag|prod`, which is also the rollback: run it from the previous release's checkout. There is no invalidation, since the distribution is in another account: `index.html` is served `no-cache` and the hashed assets as immutable. Both paths run `scripts/publish-ui.sh`, which syncs `dist/` to the bucket **root** with `--delete`. Where the environment sets `PUBLIC_DEMO=true` the build carries the public demo under `dist/demo/` and the same sync publishes it, as described below; a build without it excludes the `demo/*` prefix, so it never deletes a demo already in the bucket.
 
 `make deploy-ui` builds from your working tree, so it is also how to try a branch's UI on staging: run `make deploy-ui HUB=stag` from the branch checkout. `window.js` takes its values from `.env.stag`, where `make update-env` writes the two Cognito IDs. Three things limit it:
 
@@ -194,24 +194,29 @@ scrubbed fixtures. It is published to the **same** `FLIP_UI_BUCKET_NAME` bucket 
 prefix, and the old `/ark_demo/` path answers with a 301 to `/demo/`. It offers no downloads, so it
 has no bucket of its own.
 
-```bash
-cd deploy/providers/AWS
-make deploy-demo HUB=prod
-```
-
-`deploy-demo` uses the same cache-control split as `scripts/publish-ui.sh`, and its `--delete` is
-scoped to `demo/`. It is a separate command from `deploy-ui` on purpose: the demo is republished only
-when its fixtures are re-captured. The build's own check (`demo-fixtures.mjs check --dist dist`)
-fails it if an unscrubbed fixture reaches `dist/`.
+It is published with the UI, never by itself (FLIP#2008). Where the environment sets
+`PUBLIC_DEMO=true`, the UI publish runs `npm run build:deploy:with-demo`, which puts the demo build
+under `dist/demo/`, and `scripts/publish-ui.sh` syncs it with the rest, its `index.html` and
+`js/window.js` uncached like the real app's. So staging serves the demo of every `develop` merge, and
+production the one of each release; `make deploy-ui` does the same from a laptop. The demo build's own
+check (`demo-fixtures.mjs check --dist dist`) fails it if an unscrubbed fixture reaches `dist/`, and
+`test_flip_ui.yml` runs the same `build:deploy:with-demo` with stub values on every flip-ui change,
+checks the layout it would publish and walks the demo.
 
 **The edge is in another repository.** The networking account's distribution
 ([aicentre-lza-iac](https://github.com/londonaicentre/aicentre-lza-iac)) carries a `/demo/*` ordered
 behaviour with an enforcing response-headers policy (`connect-src 'none'`, `style-src 'self'`), and
 its viewer-request function rewrites `/demo/` deep links to `/demo/index.html` and redirects
 `/ark_demo/<rest>` to `/demo/<rest>`. Without that behaviour the demo would be served by the default
-one, with the real app's report-only CSP. `deploy-demo` cannot see the edge, so it refuses to publish
-unless the hub env file sets `PUBLIC_DEMO=true`. Set it only once the edge change is applied (prod
-only; stag hosts no demo), and check after every publish:
+one, with the real app's report-only CSP. The build cannot see the edge, so it leaves the demo out
+unless the environment sets `PUBLIC_DEMO=true`: in the hub env file for `make deploy-ui`, and as the
+GitHub environment variable of the same name for CI (`setup-github-environments.sh` copies it from
+the env file). Set it only once the edge serves `/demo/*` under that policy and the bootstrap module that made
+the UI-publish role is applied with `public_demo = true`; until then the role is denied every write under
+`demo/`. The CI publish checks the
+first before it syncs anything and fails without it, so a demo never reaches the bucket of an edge
+that would serve it unprotected; it also refuses any `PUBLIC_DEMO` other than `true`, `false` or unset.
+By hand:
 
 ```bash
 curl -sI https://app.flip.aicentre.co.uk/demo/ | grep -i content-security-policy   # connect-src 'none'
@@ -638,8 +643,10 @@ Maintainer notes the manual leaves out:
   SSE-S3 by default, and on LZA production SSE-KMS under the AWS-managed `aws/s3` key (no CMK).
 - The execution role's `ecr:BatchImportUpstreamImage`/`ecr:CreateRepository` grant for first-pull imports IS
   Terraform-managed (`iam_ecs.tf`, LZA-gated); only the cache rules and their secret are out-of-band.
-- `PUBLIC_DEMO=true` belongs in `.env.prod` only, once the edge's `/demo/*` behaviour is live (see
-  [Public demo](#public-demo-demo-flip1746)). It is read by `make deploy-demo` alone; CI never needs it.
+- `PUBLIC_DEMO=true` belongs in an environment's env file once its edge's `/demo/*` behaviour is live and the
+  bootstrap module runs with `public_demo = true` (see
+  [Public demo](#public-demo-demo-flip1746)). `make deploy-ui` reads it there, and CI reads the GitHub
+  environment variable `setup-github-environments.sh` copies from it.
 - The log buckets default to subdomain-derived names (`flip-access-logs-`/`flip-cf-logs-<ALB_SUBDOMAIN>`), and
   `ALB_SUBDOMAIN` keeps its post-cutover value on LZA, so `ACCESS_LOGS_BUCKET_NAME` is overridden into the
   `flip-lza-*` namespace — bucket names are global.

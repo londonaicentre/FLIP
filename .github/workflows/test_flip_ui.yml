@@ -202,3 +202,76 @@ jobs:
           path: flip-ui/test/cypress/screenshots
           if-no-files-found: ignore
           retention-days: 7
+
+  public-demo:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    # Builds what a demo-carrying publish builds (build:deploy:with-demo: the
+    # real UI with the demo under dist/demo/, FLIP#2008) and walks the demo as a
+    # visitor would. The demo shares src/ with the real UI, so a UI change that
+    # breaks it, or a change to how the two builds are combined, fails here. The
+    # stub values stand in for an environment's; the demo build reads none, and
+    # its Mirage server answers every request.
+    name: Public demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ./flip-ui
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set Node.js version
+        uses: actions/setup-node@v5
+        with:
+          # Node 24 LTS bundles npm >=11.10; see the comment in the flip-ui job above.
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: flip-ui/package-lock.json
+
+      - name: Build and walk the demo
+        uses: cypress-io/github-action@v7
+        env:
+          AUTH_BACKEND: cognito
+          AWS_COGNITO_USER_POOL_ID: eu-west-2_DUMMY1234
+          AWS_COGNITO_APP_CLIENT_ID: dummyclientid1234567890ab
+          AWS_REGION: eu-west-2
+          CENTRAL_HUB_API_URL: http://localhost:8080/api
+          BLACKLISTED_MODEL_FILES: flip.py,server_app.py
+          RELEASE_VERSION: ci-stub
+        with:
+          working-directory: flip-ui
+          browser: chrome
+          build: npm run build:deploy:with-demo
+          # The walk's baseUrl is 127.0.0.1, so bind there rather than to
+          # whichever address "localhost" resolves to on the runner. The demo
+          # is the composite's dist/demo/, served under /demo/ as on the site.
+          start: npm run serve:demo -- --host 127.0.0.1 --outDir dist/demo
+          wait-on: "http://127.0.0.1:4174/demo/"
+          wait-on-timeout: 120
+          config-file: cypress.public-demo.config.ts
+
+      # The composite rests on build order: build:deploy must not keep the demo's
+      # window.js, and the demo must keep its own. Check what would be published.
+      - name: Check the composite build
+        run: |
+          set -euo pipefail
+          grep -Fq 'window.RELEASE_VERSION         = "ci-stub";' dist/js/window.js
+          grep -Fq 'eu-west-2_DUMMY1234' dist/js/window.js
+          grep -Eq 'window.RELEASE_VERSION = "demo/[^"]+";' dist/demo/js/window.js
+          if grep -rlF -e ci-stub -e DUMMY1234 dist/demo; then
+            echo "::error::The demo carries the real UI's values (files above)."
+            exit 1
+          fi
+          compgen -G "dist/demo/static/*.js" > /dev/null
+          echo "dist/ is the real UI with the stub values; dist/demo/ is the demo, with none of them."
+
+      - name: Upload Cypress screenshots
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: cypress-screenshots-public-demo
+          path: flip-ui/test/cypress/screenshots
+          if-no-files-found: ignore
+          retention-days: 7

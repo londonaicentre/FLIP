@@ -97,8 +97,9 @@ The merge triggers two prod Terraform applies: the push apply at `sha-`, then th
 
 Then check that the Release page, GHCR `:v<X.Y.Z>` (every image the fourteen builds publish) and PyPI (if bumped)
 are correct, and that prod `/api/health` reports `v<X.Y.Z>`. The release apply publishes flip-ui itself (#1186):
-check that its *Publish flip-ui (prod)* job passed. Sites upgrade themselves: point operators to *Site upgrade* and
-`docs/source/sys-admin/admin-upgrading-sites.rst`.
+check that its *Publish flip-ui (prod)* job passed. That job publishes the public demo too and checks its CSP
+(#2008), and staging has served the same demo since its `develop` merge: open the live `/demo/` and see that it loads.
+Sites upgrade themselves: point operators to *Site upgrade* and `docs/source/sys-admin/admin-upgrading-sites.rst`.
 
 Last, write the team announcement for the core team's `#aic-flip` Slack channel, from the published notes: a
 `:flip-logo-gif-alpha-med: FLIP v<X.Y.Z> is out` line, one short bullet per *Highlights* item (its bold title, then

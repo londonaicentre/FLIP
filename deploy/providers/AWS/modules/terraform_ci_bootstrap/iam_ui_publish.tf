@@ -88,17 +88,21 @@ data "aws_iam_policy_document" "ui_publish" {
     resources = ["${local.ui_bucket_arn}/*"]
   }
 
-  # The public demo shares the bucket under demo/ and is published by hand
-  # (make deploy-demo, FLIP#1746). The sync already excludes it; this makes a
-  # broken sync unable to delete it either.
-  statement {
-    sid    = "NeverTouchThePublicDemo"
-    effect = "Deny"
-    actions = [
-      "s3:DeleteObject",
-      "s3:PutObject",
-    ]
-    resources = ["${local.ui_bucket_arn}/demo/*"]
+  # The demo shares the app's origin, so only an estate whose edge serves
+  # /demo/* under the demo's own policy may publish it (FLIP#2008). Everywhere
+  # else nothing this role does can put a demo in, or take one out of, demo/.
+  dynamic "statement" {
+    for_each = var.public_demo ? [] : [1]
+
+    content {
+      sid    = "NeverTouchThePublicDemo"
+      effect = "Deny"
+      actions = [
+        "s3:DeleteObject",
+        "s3:PutObject",
+      ]
+      resources = ["${local.ui_bucket_arn}/demo/*"]
+    }
   }
 }
 

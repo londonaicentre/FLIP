@@ -54,7 +54,8 @@ def after_merge(tag: str) -> list[str]:
         "Nothing merges to `main` until the release apply has run.",
         f"Check the Release page, GHCR `:{tag}` on every image the fourteen builds publish, PyPI if flip-utils was "
         f"bumped, and that prod `/api/health` reports `{tag}`.",
-        "Check that the release apply's *Publish flip-ui (prod)* job passed (#1186).",
+        "Check that the release apply's *Publish flip-ui (prod)* job passed (#1186). It publishes the public demo "
+        "too and checks its CSP (#2008): open the live `/demo/` and see that it loads.",
         "Sites upgrade themselves: point operators to *Site upgrade* and "
         "`docs/source/sys-admin/admin-upgrading-sites.rst`.",
     ]

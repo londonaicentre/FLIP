@@ -218,6 +218,12 @@ variable "ui_bucket_name" {
   default     = ""
 }
 
+variable "public_demo" {
+  description = "Let the UI-publish role write the public demo under demo/ (FLIP#2008), once the edge serves /demo/* under the demo's policy; false denies it."
+  type        = bool
+  default     = false
+}
+
 variable "ui_publish_workflow_file" {
   description = "Reusable workflow permitted to assume the UI-publish role."
   type        = string

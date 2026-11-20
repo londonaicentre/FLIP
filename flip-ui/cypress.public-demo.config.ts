@@ -13,7 +13,7 @@
 
 // Walks the built public demo (FLIP#1746) served by `npm run serve:demo` at
 // http://127.0.0.1:4174/demo/. No login, no intercepts: the bundle's own
-// MirageJS server answers every request. Local tool, not run in CI — see
+// MirageJS server answers every request. CI runs it (test_flip_ui.yml) — see
 // README.md "Public demo build".
 import { defineConfig } from "cypress";
 

@@ -24,6 +24,10 @@
 #            can write the UI bucket and nothing else, and runs the same
 #            scripts/publish-ui.sh as `make deploy-ui`.
 #
+# Where the environment sets PUBLIC_DEMO=true, the build also carries the public
+# demo under demo/ and the same sync publishes it (FLIP#2008): staging serves the
+# demo of every develop merge, and production the one of each release.
+#
 # The role trusts this file at the environment's branch: a job inside a reusable
 # workflow presents the called file as job_workflow_ref, whoever calls it.
 
@@ -119,16 +123,26 @@ jobs:
           CENTRAL_HUB_API_URL: ${{ vars.CENTRAL_HUB_API_URL }}
           AWS_REGION: ${{ vars.AWS_REGION }}
           BLACKLISTED_MODEL_FILES: ${{ vars.BLACKLISTED_MODEL_FILES }}
+          PUBLIC_DEMO: ${{ vars.PUBLIC_DEMO }}
+          ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           GIT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          # A mistyped value (True, 1, a trailing space) must not quietly
+          # publish without the demo.
+          case "${PUBLIC_DEMO}" in
+            true) build=build:deploy:with-demo ;;
+            "" | false) build=build:deploy ;;
+            *) echo "::error::${ENVIRONMENT}'s PUBLIC_DEMO must be true, false or unset, got '${PUBLIC_DEMO}'."; exit 1 ;;
+          esac
           # The build's own version, shown in the user menu: the release, or
           # sha-<short7>, the name of this commit's image builds.
           export RELEASE_VERSION="${RELEASE_TAG:-sha-${GIT_SHA:0:7}}"
           npm ci
-          # postbuild:deploy writes dist/js/window.js from the env above.
-          npm run build:deploy
+          # postbuild:deploy writes dist/js/window.js from the env above. The
+          # demo build reads no environment and lands in dist/demo/.
+          npm run "${build}"
 
       # Artifacts of a public repository are public downloads. This one holds
       # only what the site itself serves.
@@ -171,6 +185,30 @@ jobs:
           role-session-name: flip-ui-publish-${{ github.run_id }}
           aws-region: ${{ vars.AWS_REGION }}
 
+      # The demo is unauthenticated, so the edge must serve /demo/ under its own
+      # policy before the demo reaches the bucket: under the app's CSP it could
+      # reach Cognito and S3 (FLIP#1746), and a later publish without the demo
+      # leaves demo/ in place. The /demo/* behaviour sends that policy whether
+      # or not a demo is there yet.
+      - name: Check the edge before publishing the demo
+        env:
+          CENTRAL_HUB_API_URL: ${{ vars.CENTRAL_HUB_API_URL }}
+          PUBLIC_DEMO: ${{ vars.PUBLIC_DEMO }}
+        run: |
+          set -euo pipefail
+          if [[ "${PUBLIC_DEMO}" != "true" ]]; then
+            [[ ! -d dist/demo ]] || { echo "::error::The build carries demo/, but PUBLIC_DEMO is not true."; exit 1; }
+            exit 0
+          fi
+          [[ -d dist/demo ]] || { echo "::error::PUBLIC_DEMO is true, but the build has no demo/."; exit 1; }
+          site="${CENTRAL_HUB_API_URL%/api}"
+          if curl -sSI "${site}/demo/" | grep -i '^content-security-policy:' | grep -Fq "connect-src 'none'"; then
+            echo "${site}/demo/ is served under the demo's own policy."
+          else
+            echo "::error::${site}/demo/ is served without connect-src 'none', so nothing was published. The edge has no /demo/* behaviour with the demo's policy: unset PUBLIC_DEMO for this environment until it does."
+            exit 1
+          fi
+
       # The bucket is the variable cloudfront.tf creates it from, which is also
       # the role's scope.
       - name: Publish
@@ -180,20 +218,27 @@ jobs:
 
       # index.html and window.js are no-cache, so the edge serves the new
       # window.js once it has re-fetched it. Reading it back proves the build
-      # reached users, not just the bucket.
+      # reached users, not just the bucket. The demo's is read back the same way.
       - name: Check the served window.js
         env:
           CENTRAL_HUB_API_URL: ${{ vars.CENTRAL_HUB_API_URL }}
+          PUBLIC_DEMO: ${{ vars.PUBLIC_DEMO }}
         run: |
           set -euo pipefail
-          expected="$(grep -o 'window.RELEASE_VERSION *= *"[^"]*"' dist/js/window.js)"
-          url="${CENTRAL_HUB_API_URL%/api}/js/window.js"
-          for attempt in 1 2 3 4 5 6 7 8; do
-            if curl -fsS "${url}" | grep -Fq "${expected}"; then
-              echo "${url} serves ${expected}."
-              exit 0
-            fi
-            sleep 15
-          done
-          echo "::error::${url} does not serve ${expected} after two minutes. The objects are in the bucket; check the edge's caching of js/window.js."
-          exit 1
+          site="${CENTRAL_HUB_API_URL%/api}"
+          served() {
+            local expected url="${site}/$1"
+            expected="$(grep -o 'window.RELEASE_VERSION *= *"[^"]*"' "dist/$1")"
+            for attempt in 1 2 3 4 5 6 7 8; do
+              if curl -fsS "${url}" | grep -Fq "${expected}"; then
+                echo "${url} serves ${expected}."
+                return 0
+              fi
+              sleep 15
+            done
+            echo "::error::${url} does not serve ${expected} after two minutes. The objects are in the bucket; check the edge's caching of $1."
+            return 1
+          }
+          served js/window.js
+          [[ "${PUBLIC_DEMO}" == "true" ]] || exit 0
+          served demo/js/window.js
