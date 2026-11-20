@@ -174,7 +174,6 @@ def _service_secret(docs: list[dict]) -> set[str]:
     [
         pytest.param((), id="default existing Secret"),
         pytest.param(("--set", "secrets.existingName=site-kit"), id="site-named existing Secret"),
-        pytest.param(("--set", "secrets.create=true", "--set", "secrets.data.trust-api-key=x"), id="chart-created"),
     ],
 )
 def test_the_agent_reads_the_same_secret_as_the_trust_services(extra):
@@ -189,11 +188,71 @@ def test_the_agent_reads_the_same_secret_as_the_trust_services(extra):
     assert {_kit_secret(*cmd)} == _service_secret(docs)
 
 
+def test_a_chart_created_secret_is_refused_with_the_agent():
+    """With secrets.create the passwords are release values, stored in the record the agent reads.
+
+    The chart's own Secret would also need `secrets` verbs to upgrade. So the render stops, naming
+    the setting, instead of producing an agent that leaks or cannot work.
+    """
+    cmd = [
+        "helm",
+        "template",
+        "flip-trust",
+        str(CHART_DIR),
+        "--set",
+        "flClient.kitHostPath=/opt/flip/fl-kit",
+        "--set",
+        "autoUpgrade.enabled=true",
+        "--set",
+        "secrets.create=true",
+        "--set",
+        "secrets.data.trust-api-key=x",
+    ]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=CHART_DIR)
+    assert out.returncode != 0
+    assert "secrets.create=false" in out.stderr
+
+
+def test_a_chart_created_secret_still_renders_without_the_agent():
+    docs = _render("--set", "secrets.create=true", "--set", "secrets.data.trust-api-key=x")
+    assert any(d.get("kind") == "Secret" for d in docs)
+
+
+def test_the_agent_finishes_inside_the_job_deadline():
+    """The agent's budget is under activeDeadlineSeconds, so it reports FAILED before it is killed."""
+    spec = _agent(_render("--set", "autoUpgrade.enabled=true"), "CronJob")["spec"]["jobTemplate"]["spec"]
+    deadline = spec["activeDeadlineSeconds"]
+    pod = spec["template"]["spec"]
+    args = pod["containers"][0]["args"]
+    budget = int(args[args.index("--budget-seconds") + 1])
+    assert budget == deadline - 300
+    # SIGTERM on the deadline is the backstop: the grace period has to cover the report's retries.
+    assert pod["terminationGracePeriodSeconds"] >= 120
+
+
+def test_a_deadline_too_short_for_the_report_is_refused():
+    cmd = [
+        "helm",
+        "template",
+        "flip-trust",
+        str(CHART_DIR),
+        "--set",
+        "flClient.kitHostPath=/opt/flip/fl-kit",
+        "--set",
+        "autoUpgrade.enabled=true",
+        "--set",
+        "autoUpgrade.activeDeadlineSeconds=600",
+    ]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=CHART_DIR)
+    assert out.returncode != 0
+    assert "activeDeadlineSeconds" in out.stderr
+
+
 def test_kit_secret_name_overrides_the_default():
     assert _kit_secret("--set", "autoUpgrade.kitSecretName=agent-only") == "agent-only"  # pragma: allowlist secret
 
 
-@pytest.mark.parametrize("variant,extra", VARIANTS)
+@pytest.mark.parametrize(("variant", "extra"), VARIANTS)
 def test_the_role_covers_every_kind_the_chart_renders(variant, extra):
     """The rot guard: a template that renders a kind the Role lacks fails here, not on a live trust."""
     docs = _render(*extra)
@@ -244,7 +303,8 @@ def test_the_agent_runs_the_cluster_mode_against_the_published_chart():
     cronjob = _agent(_render("--set", "autoUpgrade.enabled=true"), "CronJob")
     container = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
     args = container["args"]
-    assert "cluster" in args and "--mode" in args
+    assert "cluster" in args
+    assert "--mode" in args
     assert "--chart-repository" in args
     assert args[args.index("--chart-repository") + 1].startswith("oci://")
     env = {e["name"]: e["value"] for e in container["env"]}

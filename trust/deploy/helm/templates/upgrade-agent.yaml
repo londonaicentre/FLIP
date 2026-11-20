@@ -24,13 +24,23 @@
 # ConfigMap records cost this identity configmap write access (it could rewrite the rendered
 # governance document), which is a smaller exposure than read-every-credential. The deploy side has
 # to use the same driver, or it cannot see the release this agent upgrades.
+#
+# The trust's Secret must live outside the release (secrets.create=false). With secrets.create the AES
+# key and the OMOP, XNAT and Orthanc passwords are values of the release, so they are stored in its
+# release record — a ConfigMap this identity reads — and `helm get values` returns them. The chart's
+# own Secret would also need `secrets` verbs to upgrade. `make deploy AUTO_UPGRADE=1` applies the
+# Secret with kubectl from values-secrets.yaml instead, outside the release.
 {{- if .Values.autoUpgrade.enabled }}
+{{- if .Values.secrets.create }}
+{{- fail "autoUpgrade.enabled needs the trust Secret managed outside the release: set secrets.create=false and secrets.existingName (make -C trust/deploy/helm deploy AUTO_UPGRADE=1 does both). With secrets.create the passwords are stored in the release record the agent can read, and the agent cannot patch the chart's Secret." }}
+{{- end }}
+{{- if le (int .Values.autoUpgrade.activeDeadlineSeconds) 600 }}
+{{- fail "autoUpgrade.activeDeadlineSeconds must be more than 600: the agent keeps 300 s of it to report before the Job is stopped" }}
+{{- end }}
 {{- $fullname := include "flip-trust.fullname" . }}
 {{- $ns := include "flip-trust.namespace" . }}
-{{- /* The same Secret every trust service reads its keys from: the chart's own when it creates one,
-     else the site's `secrets.existingName`. */}}
-{{- $chartSecret := ternary (printf "%s-secrets" $fullname) .Values.secrets.existingName (.Values.secrets.create | default false) }}
-{{- $secret := .Values.autoUpgrade.kitSecretName | default $chartSecret }}
+{{- /* The same Secret every trust service reads its keys from: the site's `secrets.existingName`. */}}
+{{- $secret := .Values.autoUpgrade.kitSecretName | default .Values.secrets.existingName }}
 {{- $tag := .Values.autoUpgrade.image.tag | default .Values.global.image.tag }}
 apiVersion: v1
 kind: ServiceAccount
@@ -130,6 +140,9 @@ spec:
         spec:
           serviceAccountName: {{ $fullname }}-upgrade-agent
           restartPolicy: Never
+          # On the Job deadline the pod gets SIGTERM; the agent turns it into a FAILED report, which needs
+          # a few HTTP attempts. The agent's own --budget-seconds should make this the backstop, not the path.
+          terminationGracePeriodSeconds: 120
           securityContext:
             runAsNonRoot: true
             runAsUser: 65534
@@ -157,6 +170,10 @@ spec:
                 - {{ .Values.trustName }}
                 - --hub
                 - {{ .Values.environment | replace "production" "prod" | replace "staging" "stag" }}
+                # The agent's own clock, five minutes inside the Job's: it stops its helm calls and
+                # health wait in time to report FAILED, rather than being killed holding the lease.
+                - --budget-seconds
+                - {{ sub (int .Values.autoUpgrade.activeDeadlineSeconds) 300 | quote }}
               env:
                 # The non-secret halves of the kit; the API key itself comes from the volume below.
                 - name: CENTRAL_HUB_API_URL

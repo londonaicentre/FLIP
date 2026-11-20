@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import json
 import os
+import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -845,6 +847,55 @@ class TickChecksGovernance(unittest.TestCase):
         rc, reports, _ = self._tick(None)
         self.assertEqual(rc, 0)
         self.assertEqual(reports[-1]["state"], "SUCCEEDED")
+
+
+class Budget(unittest.TestCase):
+    """Cluster mode: finish and report before the Job deadline kills the pod (#1644 review)."""
+
+    def tearDown(self):
+        agent.set_budget(None)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+    def test_no_budget_in_host_mode(self):
+        agent.set_budget(None)
+        self.assertIsNone(agent.remaining_budget())
+
+    def test_the_budget_keeps_a_reserve_for_the_report(self):
+        agent.set_budget(1000, now=lambda: 0.0)
+        self.assertEqual(agent.remaining_budget(now=lambda: 100.0), 1000 - 100 - agent.REPORT_RESERVE_S)
+        self.assertEqual(agent.remaining_budget(now=lambda: 5000.0), 0.0)
+
+    def test_a_command_is_stopped_when_the_budget_runs_out(self):
+        agent.set_budget(1000)
+        with mock.patch.object(agent.subprocess, "run", side_effect=subprocess.TimeoutExpired(["helm"], 1)) as sp:
+            out = agent.run(["helm", "upgrade"], Path("."))
+        self.assertEqual(out.returncode, 124)
+        self.assertIn("time budget", out.stderr)
+        self.assertGreater(sp.call_args.kwargs["timeout"], 0)
+
+    def test_without_a_budget_commands_get_no_timeout(self):
+        agent.set_budget(None)
+        done = subprocess.CompletedProcess(["helm"], 0, "", "")
+        with mock.patch.object(agent.subprocess, "run", return_value=done) as sp:
+            agent.run(["helm", "version"], Path("."))
+        self.assertNotIn("timeout", sp.call_args.kwargs)
+
+    def test_the_health_wait_is_capped_by_the_budget(self):
+        agent.set_budget(agent.REPORT_RESERVE_S + 30)
+        unhealthy = agent.Health(reachable=False, status=None, version=None, hub_key_match=None, dead_tasks=())
+        clock = iter(range(0, 10_000, 10))
+        with mock.patch.object(agent, "read_health", return_value=unhealthy):
+            ok, why = agent.verify({}, "v1.3.0", sleep=lambda _s: None, now=lambda: next(clock))
+        self.assertFalse(ok)
+        self.assertRegex(why, r"within (29|30)s")
+
+    def test_sigterm_becomes_systemexit_so_the_report_still_goes_out(self):
+        with self.assertRaises(SystemExit):
+            agent._terminated(signal.SIGTERM, None)
+
+    def test_a_budget_smaller_than_the_reserve_is_refused(self):
+        with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+            agent.main(["tick", "--kit-file", "/nonexistent", "--budget-seconds", str(agent.REPORT_RESERVE_S)])
 
 
 class KitFile(unittest.TestCase):

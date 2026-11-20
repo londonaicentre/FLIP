@@ -56,6 +56,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -97,6 +98,33 @@ VERIFY_POLL_S = 10
 # A rollback is judged on a shorter leash than a forward upgrade: the previous release is known to
 # have worked on this site, so a slow return is itself the finding rather than something to wait out.
 ROLLBACK_VERIFY_TIMEOUT_S = 300
+# Cluster mode: the Job's activeDeadlineSeconds kills the pod, and a killed pod does not report, so the
+# hub would hold the lease for its full TTL and retry the same release without latching the failure.
+# The chart therefore passes --budget-seconds (the deadline minus a margin), and every helm call and
+# health wait gets only what is left of it, less this reserve for the terminal report
+# (REPORT_ATTEMPTS x HTTP_TIMEOUT_S plus the retry waits is about 90 s).
+REPORT_RESERVE_S = 120
+_deadline: float | None = None
+
+
+def set_budget(seconds: int | None, now: Callable[[], float] = time.monotonic) -> None:
+    """Start the agent's own clock; None (host mode) means no budget."""
+    global _deadline
+    _deadline = None if seconds is None else now() + seconds
+
+
+def remaining_budget(now: Callable[[], float] = time.monotonic) -> float | None:
+    """Seconds left for work before the report reserve, or None when there is no budget."""
+    if _deadline is None:
+        return None
+    return max(0.0, _deadline - now() - REPORT_RESERVE_S)
+
+
+def _terminated(signum: int, _frame: object) -> None:
+    """SIGTERM (the kubelet stopping the pod) becomes SystemExit, so tick's `finally` still reports."""
+    raise SystemExit(f"stopped by signal {signum} before the upgrade finished")
+
+
 # While `make` runs, re-post STARTING this often. The hub already treats a same-release STARTING as a
 # renewal, so this needs no new protocol: it means the 2h TTL only ever expires on a dead agent,
 # never on a slow-but-working upgrade.
@@ -268,7 +296,14 @@ def hub_call(kit: dict[str, str], method: str, route: str, body: dict | None = N
 
 
 def run(cmd: list[str], cwd: Path, **kw) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, check=False, **kw)  # noqa: S603
+    """Run ``cmd``; under a budget, stop it when the budget runs out and return exit 124."""
+    budget = remaining_budget()
+    if budget is not None:
+        kw.setdefault("timeout", budget)
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, check=False, **kw)  # noqa: S603
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(cmd, 124, "", f"{cmd[0]} stopped: the agent's time budget ran out")
 
 
 def kit_identity(kit_file: Path) -> tuple[str, str]:
@@ -524,6 +559,9 @@ def verify(
     now=time.monotonic,
 ) -> tuple[bool, str]:
     """Poll /health until the site is up ON ``tag``. Returns (verified, what the last read said)."""
+    budget = remaining_budget()
+    if budget is not None:
+        timeout_s = min(timeout_s, int(budget))
     deadline = now() + timeout_s
     health = read_health(kit)
     while True:
@@ -724,7 +762,17 @@ def main(argv: list[str] | None = None) -> int:
     cluster_args.add_argument("--chart-repository", help="e.g. oci://ghcr.io/londonaicentre/charts/flip-trust")
     cluster_args.add_argument("--kit-name", help="TRUST_CODE, for the hub's log line")
     cluster_args.add_argument("--hub", help="prod | stag (the kit token, not the URL)")
+    cluster_args.add_argument(
+        "--budget-seconds",
+        type=int,
+        help="finish (and report) within this many seconds; the chart passes the Job deadline minus a margin",
+    )
     args = parser.parse_args(argv)
+    if args.budget_seconds is not None:
+        if args.budget_seconds <= REPORT_RESERVE_S:
+            t.error(f"--budget-seconds must be more than the {REPORT_RESERVE_S}s kept for the report")
+        set_budget(args.budget_seconds)
+        signal.signal(signal.SIGTERM, _terminated)
     cluster = None
     if args.mode == "cluster":
         missing = [k for k in ("namespace", "release", "chart_repository", "kit_name", "hub") if not getattr(args, k)]

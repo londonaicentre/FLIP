@@ -83,6 +83,38 @@ class TestDescribe(unittest.TestCase):
         assert "no release" in why
 
 
+class TestDeployRefusal(unittest.TestCase):
+    """A deploy must never use the driver that cannot see the live release: --install would duplicate it."""
+
+    def test_a_first_install_is_safe_with_either_driver(self):
+        for driver in (subject.SECRET, subject.CONFIGMAP):
+            assert subject.deploy_refusal("flip-trust", driver, {}, {}) is None
+
+    def test_each_driver_is_safe_on_its_own_records(self):
+        assert subject.deploy_refusal("flip-trust", subject.SECRET, {"flip-trust": 3}, {}) is None
+        assert subject.deploy_refusal("flip-trust", subject.CONFIGMAP, {}, {"flip-trust": 3}) is None
+
+    def test_auto_upgrade_on_a_secret_recorded_release_is_refused(self):
+        why = subject.deploy_refusal("flip-trust", subject.CONFIGMAP, {"flip-trust": 7}, {})
+        assert why is not None
+        assert "second release" in why
+        assert "7" in why
+
+    def test_a_plain_deploy_of_an_auto_upgrade_release_is_refused(self):
+        why = subject.deploy_refusal("flip-trust", subject.SECRET, {}, {"flip-trust": 4})
+        assert why is not None
+        assert "AUTO_UPGRADE=1" in why
+
+    def test_a_half_migrated_release_is_refused_either_way(self):
+        for driver in (subject.SECRET, subject.CONFIGMAP):
+            why = subject.deploy_refusal("flip-trust", driver, {"flip-trust": 9}, {"flip-trust": 10})
+            assert why is not None
+            assert "not finished" in why
+
+    def test_other_releases_in_the_namespace_do_not_count(self):
+        assert subject.deploy_refusal("flip-trust", subject.CONFIGMAP, {"other": 2}, {}) is None
+
+
 class TestReport(unittest.TestCase):
     def _kubectl(self, secrets: list[dict], configmaps: list[dict]):
         def fake(cmd, **kwargs):

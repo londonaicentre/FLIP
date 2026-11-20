@@ -1111,9 +1111,26 @@ The chart can carry the auto-upgrade agent (#1644): the same tick the host runs 
 failed-release latch are the hub's and are identical on both sides.
 
 ```bash
-helm upgrade flip-trust oci://ghcr.io/londonaicentre/charts/flip-trust \
-  -n flip-trust --reuse-values --set autoUpgrade.enabled=true
+make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> AUTO_UPGRADE=1
+# or K8S_AUTO_UPGRADE=true in the kit file, so every later deploy and upgrade keeps it
 ```
+
+`AUTO_UPGRADE=1` changes three things together, because the agent needs all three:
+
+- **The release is recorded in ConfigMaps** (`HELM_DRIVER=configmap`), where an identity with no `secrets`
+  verbs can find it.
+- **The trust Secret moves out of the release.** `apply-trust-secret` renders the chart's own Secret from
+  `values-secrets.yaml` and applies it with `kubectl`, and the chart gets `secrets.create=false` with
+  `secrets.existingName` pointing at it. With `secrets.create` the AES key and the OMOP, XNAT and Orthanc
+  passwords would be values of the release, stored in a record the agent reads (`helm get values` returns
+  them), and the agent could not patch the chart's Secret anyway. The chart refuses `autoUpgrade.enabled`
+  together with `secrets.create`.
+- **`autoUpgrade.enabled=true`.**
+
+`preflight` refuses a deploy whose driver cannot see the live release (`release_driver.py
+--deploy-driver`): `helm upgrade --install` would otherwise put a second release on top of the running one.
+That holds both ways — an existing Secret-recorded trust cannot be deployed with `AUTO_UPGRADE=1` until its
+record is moved (below), and a trust that is on cannot be deployed without it.
 
 **Off by default.** Enabling it hands a ServiceAccount the ability to rewrite every workload in the
 namespace, so it is an opt-in with a written-down blast radius rather than something a chart update
@@ -1168,7 +1185,10 @@ been reproduced, a Secret-recorded trust keeps upgrading by hand with `make upgr
 ### What a tick does
 
 The CronJob fires hourly (`autoUpgrade.schedule`), one Job per tick, `concurrencyPolicy: Forbid`, no
-retries (`backoffLimit: 0`) and a deadline under the hub's two-hour lease. It asks the hub whether to
+retries (`backoffLimit: 0`) and a deadline under the hub's two-hour lease (`activeDeadlineSeconds`). The agent
+runs on its own clock five minutes inside that deadline (`--budget-seconds`): its helm calls and its health wait
+get only what is left, so it reports FAILED before the Job is stopped instead of dying holding the lease, and a
+SIGTERM on the deadline itself is turned into the same report. It asks the hub whether to
 move; when it does, it claims the lease, pulls the chart at the target release, upgrades with
 `--reset-then-reuse-values` so the new chart's defaults apply, the live per-trust values are kept on top,
 and only `global.image.tag` moves, then waits

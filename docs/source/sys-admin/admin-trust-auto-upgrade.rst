@@ -222,8 +222,13 @@ opt-in rather than something a chart update turns on.
 
 .. code-block:: bash
 
-   helm upgrade flip-trust oci://ghcr.io/londonaicentre/charts/flip-trust \
-     -n flip-trust --reuse-values --set autoUpgrade.enabled=true
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> AUTO_UPGRADE=1
+
+or set ``K8S_AUTO_UPGRADE=true`` in the kit file so every later deploy keeps it. This records the release in
+ConfigMaps, applies the Trust's Secret outside the release (so no password is stored where the agent can read it),
+and switches the agent on. The deploy refuses to run when the release is recorded the other way, because it would
+install a second copy; a Trust deployed before this setting existed needs its release record moved first (see the
+chart's README).
 
 What differs from the host:
 
@@ -234,6 +239,8 @@ What differs from the host:
   and only the image tag moves. It never passes
   ``--install``: a release it cannot see fails the check instead of being installed a second time underneath the
   running one.
+- **It stops in time to report.** The agent runs on its own clock, five minutes inside the Job's deadline, so a
+  slow upgrade is reported as **Failed** rather than leaving the hub waiting on a lease nobody holds.
 - **The identity is narrow on purpose.** It holds no ``secrets`` permission at all — its API key arrives as a
   projected volume carrying that one key — and its Role covers only the kinds the chart renders, in that one
   namespace. Helm's own record of the release lives in ConfigMaps rather than Secrets, because finding a release in

@@ -85,11 +85,47 @@ def _kubectl_json(kubectl: str, args: list[str]) -> list[dict]:
     return json.loads(out.stdout).get("items", [])
 
 
-def report(release: str, namespace: str, kubectl: str = "kubectl") -> tuple[str, str]:
-    """Read both stores with ``kubectl`` and describe where ``release`` is recorded."""
+def records(namespace: str, kubectl: str = "kubectl") -> tuple[dict[str, int], dict[str, int]]:
+    """Every release recorded in this namespace's Secrets and ConfigMaps, with its latest revision."""
     secrets = _kubectl_json(kubectl, ["get", "secrets", "-n", namespace, "-l", "owner=helm"])
     configmaps = _kubectl_json(kubectl, ["get", "configmaps", "-n", namespace, "-l", "owner=helm"])
-    return describe(release, release_names(secrets, "secrets"), release_names(configmaps, "configmaps"))
+    return release_names(secrets, "secrets"), release_names(configmaps, "configmaps")
+
+
+def report(release: str, namespace: str, kubectl: str = "kubectl") -> tuple[str, str]:
+    """Read both stores with ``kubectl`` and describe where ``release`` is recorded."""
+    return describe(release, *records(namespace, kubectl))
+
+
+def deploy_refusal(release: str, driver: str, in_secrets: dict[str, int], in_configmaps: dict[str, int]) -> str | None:
+    """Why ``helm upgrade --install`` with ``driver`` must not run, or None when it is safe.
+
+    A Helm client cannot see a release recorded with the other driver, so ``--install`` would put a
+    second release on top of the running one. A deploy may use ``driver`` only when the release is
+    recorded with that driver alone, or not at all (a first install).
+    """
+    other = in_secrets if driver == CONFIGMAP else in_configmaps
+    mine = in_configmaps if driver == CONFIGMAP else in_secrets
+    if release not in other:
+        return None
+    if release in mine:
+        return (
+            f"{release} is recorded in both Secrets (revision {in_secrets[release]}) and ConfigMaps "
+            f"(revision {in_configmaps[release]}): a driver migration was started and not finished. "
+            "Finish it before deploying."
+        )
+    if driver == CONFIGMAP:
+        return (
+            f"{release} is recorded in Secrets (revision {in_secrets[release]}), so a deploy with automatic "
+            "upgrades (HELM_DRIVER=configmap) would not see it and would install a second release on top. "
+            "Move the release record to ConfigMaps first (README, 'The deploy side has to agree on the driver'), "
+            "or deploy without AUTO_UPGRADE."
+        )
+    return (
+        f"{release} is recorded in ConfigMaps (revision {in_configmaps[release]}): this trust deploys with "
+        "automatic upgrades. Deploy with AUTO_UPGRADE=1 (or K8S_AUTO_UPGRADE=true in the kit), or the "
+        "Secret-driver client would install a second release on top."
+    )
 
 
 def main(argv: list[str] | None = None, run: Callable[..., tuple[str, str]] = report) -> int:
@@ -97,7 +133,23 @@ def main(argv: list[str] | None = None, run: Callable[..., tuple[str, str]] = re
     parser.add_argument("--release", default="flip-trust")
     parser.add_argument("--namespace", default="flip-trust")
     parser.add_argument("--kubectl", default="kubectl")
+    parser.add_argument(
+        "--deploy-driver",
+        choices=(SECRET, CONFIGMAP),
+        help="check that a deploy with this driver is safe instead of reporting; exit 1 with the reason if not",
+    )
     args = parser.parse_args(argv)
+
+    if args.deploy_driver:
+        try:
+            refusal = deploy_refusal(args.release, args.deploy_driver, *records(args.namespace, args.kubectl))
+        except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+            print(f"could not read the release records: {exc}", file=sys.stderr)
+            return 2
+        if refusal:
+            print(f"❌ {refusal}", file=sys.stderr)
+            return 1
+        return 0
 
     try:
         driver, why = run(args.release, args.namespace, args.kubectl)
