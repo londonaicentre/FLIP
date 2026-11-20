@@ -134,9 +134,30 @@ HELM_TIMEOUT ?= 30m
 # keeps the recursion without that flag; `make -n` then prints the step like any other line.
 SUBMAKE := $(MAKE)
 
+# Automatic upgrades (FLIP#1644): AUTO_UPGRADE=1, or K8S_AUTO_UPGRADE=true in the kit file so that every deploy and
+# upgrade of that trust keeps it. Three things change together, because the in-cluster agent needs all three:
+#   - HELM_DRIVER=configmap, so the release is recorded where the agent (which has no `secrets` verbs) can see it;
+#   - the trust Secret moves out of the release: values-secrets.yaml is applied with kubectl (apply-trust-secret)
+#     and the chart gets secrets.create=false, so no password is stored in the release record the agent reads;
+#   - autoUpgrade.enabled=true.
+# preflight refuses a deploy whose driver cannot see the live release (release_driver.py --deploy-driver), because
+# `helm upgrade --install` would then put a second release on top of it. So switching an EXISTING trust on needs
+# its release record moved to ConfigMaps first, and a trust that is on cannot be deployed without it.
+AUTO_UPGRADE ?= $(if $(KIT),$(shell sed -n 's/^K8S_AUTO_UPGRADE=//p' $(KIT_FILE) 2>/dev/null | tail -1))
+AUTO_UPGRADE_ON := $(filter 1 true yes,$(strip $(AUTO_UPGRADE)))
+# The name the chart gives its own Secret, and the one patch-kit-secrets patches.
+TRUST_SECRET_NAME ?= $(RELEASE_NAME)-flip-trust-secrets
+DEPLOY_HELM_DRIVER := $(if $(AUTO_UPGRADE_ON),configmap,secret)
+ifneq ($(AUTO_UPGRADE_ON),)
+export HELM_DRIVER := configmap
+endif
+
 # Determine which values files to pass
 VALUES_OPTS := -f $(VALUES_FILE)
-ifneq ($(strip $(SECRETS_FILE)),)
+ifneq ($(AUTO_UPGRADE_ON),)
+	VALUES_OPTS := $(VALUES_OPTS) --set autoUpgrade.enabled=true --set secrets.create=false \
+		--set secrets.existingName=$(TRUST_SECRET_NAME)
+else ifneq ($(strip $(SECRETS_FILE)),)
 	VALUES_OPTS := $(VALUES_OPTS) -f $(SECRETS_FILE)
 endif
 ifneq ($(strip $(OVERRIDES_FILE)),)
@@ -179,7 +200,7 @@ ifneq ($(strip $(TAG)),)
 	VALUES_OPTS := $(VALUES_OPTS) --set global.image.tag=$(TAG)
 endif
 
-.PHONY: sync-project-studies help lint template deploy deploy-release failing-hooks undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init kit-secret stage-kit download-vocab stage-vocab preflight template-egress-variants smoke-cstore selftest xnat-db-migrate-dump xnat-db-remove-old-cluster
+.PHONY: sync-project-studies help lint template deploy deploy-release failing-hooks undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init kit-secret stage-kit download-vocab stage-vocab preflight apply-trust-secret template-egress-variants smoke-cstore selftest xnat-db-migrate-dump xnat-db-remove-old-cluster
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -208,6 +229,18 @@ preflight: ## Check all prerequisites before deploying (tools, cluster, files, k
 	 HELM="$(HELM_BIN)" \
 	 KUBE_CONTEXT="$(KUBE_CONTEXT)" \
 	 bash $(CHART_DIR)/scripts/preflight.sh
+	@python3 $(CHART_DIR)/scripts/release_driver.py --release $(RELEASE_NAME) --namespace $(NAMESPACE) \
+		--kubectl "$(KUBECTL)" --deploy-driver $(DEPLOY_HELM_DRIVER)
+
+# AUTO_UPGRADE only: the trust Secret, applied from values-secrets.yaml with kubectl rather than as part of the
+# release, so the passwords never enter the release record. Rendered by the chart's own template so its keys and
+# encoding cannot drift from what the services read; autoUpgrade is forced off for this one render, since the chart
+# refuses secrets.create alongside it.
+apply-trust-secret: ## (AUTO_UPGRADE) Apply the trust Secret from values-secrets.yaml, outside the Helm release
+	@[ -n "$(SECRETS_FILE)" ] || { echo "❌ $(CHART_DIR)/values-secrets.yaml is required (make sync-kit KIT=<CODE> writes it)"; exit 1; }
+	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) --namespace $(NAMESPACE) $(VALUES_OPTS) -f $(SECRETS_FILE) \
+		--set secrets.create=true --set autoUpgrade.enabled=false --show-only templates/secrets.yaml \
+		| $(KUBECTL) apply --namespace $(NAMESPACE) -f -
 
 kit-secret: ## Put this trust's FL kit in a Secret for flClient.kit.source=secret (managed node pools, e.g. AKS)
 	@[ -n "$(KIT_SRC)" ] || { echo "❌ KIT_SRC=<the slot's kit directory: local/ startup/ … or certificates/ keys/> is required"; exit 1; }
@@ -295,6 +328,7 @@ stage-vocab: ## Place the unpacked OMOP core vocabulary onto the node (omopDb.vo
 # switched first, or Helm 4's server-side apply refuses it (FLIP#1524; scripts/migrate-strategy.sh).
 deploy-release: preflight ## Apply the chart and wait for the core workloads to roll out (no xnat-init)
 	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	$(if $(AUTO_UPGRADE_ON),@$(SUBMAKE) --no-print-directory apply-trust-secret)
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) --namespace $(NAMESPACE) $(VALUES_OPTS) | \
 		NAMESPACE=$(NAMESPACE) RELEASE_NAME=$(RELEASE_NAME) KUBECTL="$(KUBECTL)" $(CHART_DIR)/scripts/migrate-strategy.sh
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \

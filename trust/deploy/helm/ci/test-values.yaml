@@ -46,7 +46,7 @@ dataAccessApi:
       cpu: "200m"
 
 flClient:
-  enabled: false  # Disable fl-client in CI (no GPU, no S3 access)
+  enabled: false  # Disable fl-client in CI (no GPU, no FL participant kit)
 
 orthanc:
   persistence:

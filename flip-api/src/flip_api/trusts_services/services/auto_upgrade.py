@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo
 from fastapi import HTTPException, status
 from sqlmodel import Session, col, select
 
+from flip_api.config import get_settings
 from flip_api.db.models.main_models import FLJob, FLJobTrust, Trust
 from flip_api.domain.schemas.status import JobStatus
 from flip_api.domain.schemas.trusts import (
@@ -54,6 +55,8 @@ AGENT_STALE_AFTER = timedelta(hours=3)
 
 # Only an immutable CI tag is comparable between the hub and a trust (mirrors flip-ui's isImageTag).
 _IMAGE_TAG = re.compile(r"^v\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$")
+# An unattended upgrade only ever moves to a stable release: a hub on a release candidate offers nothing.
+_STABLE_RELEASE = re.compile(r"^v\d+\.\d+\.\d+$")
 
 
 def _now() -> datetime:
@@ -66,13 +69,19 @@ def _iso(value: datetime | None) -> str | None:
 
 
 def target_release() -> str | None:
-    """The release a trust upgrades to: the one this hub runs, and only if it is a release tag.
+    """The release a trust upgrades to, or ``None`` for "none".
 
-    A ``sha-`` build or a local build names no release a site can check out, so it yields ``None`` and the agent
-    does nothing until the hub is on a tag.
+    ``AUTO_UPGRADE_TARGET_RELEASE`` wins when the hub operator sets it (validated as a stable
+    ``vX.Y.Z`` at boot): that is how staging, whose hub runs ``sha-`` builds, exercises the feature
+    before production, and how a release is held back. Otherwise it is the release this hub runs, and
+    only if that is a stable release tag: a ``sha-`` build or a local build names no release a site can
+    check out, and a release candidate (``vX.Y.Z-rc.N``) is not something to move a site to unattended.
     """
+    override = get_settings().AUTO_UPGRADE_TARGET_RELEASE
+    if override:
+        return override
     identity = build_identity()
-    return identity if identity and _IMAGE_TAG.match(identity) else None
+    return identity if identity and _STABLE_RELEASE.match(identity) else None
 
 
 def current_release(trust: Trust) -> str | None:
@@ -286,15 +295,21 @@ def record_status(trust_id: UUID, report: UpgradeStatusInput, db: Session) -> Up
             raise HTTPException(status.HTTP_409_CONFLICT, "Another upgrade holds the lease.")
         if is_busy(trust.id, db):
             raise HTTPException(status.HTTP_409_CONFLICT, "A training job that uses this trust is running.")
+        # The agent re-posts STARTING every LEASE_RENEW_EVERY_S to extend its lease; only the first
+        # claim for a release is news to anyone.
+        renewal = lease_active(trust, now) and trust.upgrade_lease_release == report.release
         trust.upgrade_lease_release = report.release
         trust.upgrade_lease_expires_at = now + LEASE_TTL
         trust.upgrade_blocker = None
         db.add(trust)
         db.commit()
-        logger.info(f"Trust {trust.name}: upgrade to {report.release} claimed")
-        # After the commit, deliberately: the lease is the fact, the email is a
-        # courtesy, and notify_* swallows its own failures either way.
-        notify_upgrade_started(trust, report.release, db)
+        if renewal:
+            logger.info(f"Trust {trust.name}: upgrade lease for {report.release} renewed")
+        else:
+            logger.info(f"Trust {trust.name}: upgrade to {report.release} claimed")
+            # After the commit, deliberately: the lease is the fact, the email is a
+            # courtesy, and notify_* swallows its own failures either way.
+            notify_upgrade_started(trust, report.release, db)
         return UpgradeLease(release=report.release, expires_at=_iso(trust.upgrade_lease_expires_at) or "")
 
     if report.state == UpgradeReportState.BLOCKED:

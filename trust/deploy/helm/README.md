@@ -1102,6 +1102,100 @@ the same rule as for xnat-db applies: the reason is in the container log
 such file` means the image predates FLIP#834, which first shipped the file
 there; the omop-db image CI asserts every published image carries it.
 
+## Automatic upgrades
+
+The chart can carry the auto-upgrade agent (#1644): the same tick the host runs from a systemd timer
+(`make setup-auto-upgrade`), as a CronJob in this namespace. There is no host on a cluster, so
+"current release" comes from the Helm record and "upgrade" is `helm pull` + `helm upgrade` instead of
+`make upgrade-onprem-trust`. The policy, the lease, the report, the maintenance window and the
+failed-release latch are the hub's and are identical on both sides.
+
+```bash
+make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> AUTO_UPGRADE=1
+# or K8S_AUTO_UPGRADE=true in the kit file, so every later deploy and upgrade keeps it
+```
+
+`AUTO_UPGRADE=1` changes three things together, because the agent needs all three:
+
+- **The release is recorded in ConfigMaps** (`HELM_DRIVER=configmap`), where an identity with no `secrets`
+  verbs can find it.
+- **The trust Secret moves out of the release.** `apply-trust-secret` renders the chart's own Secret from
+  `values-secrets.yaml` and applies it with `kubectl`, and the chart gets `secrets.create=false` with
+  `secrets.existingName` pointing at it. With `secrets.create` the AES key and the OMOP, XNAT and Orthanc
+  passwords would be values of the release, stored in a record the agent reads (`helm get values` returns
+  them), and the agent could not patch the chart's Secret anyway. The chart refuses `autoUpgrade.enabled`
+  together with `secrets.create`.
+- **`autoUpgrade.enabled=true`.**
+
+`preflight` refuses a deploy whose driver cannot see the live release (`release_driver.py
+--deploy-driver`): `helm upgrade --install` would otherwise put a second release on top of the running one.
+That holds both ways — an existing Secret-recorded trust cannot be deployed with `AUTO_UPGRADE=1` until its
+record is moved (below), and a trust that is on cannot be deployed without it.
+
+**Off by default.** Enabling it hands a ServiceAccount the ability to rewrite every workload in the
+namespace, so it is an opt-in with a written-down blast radius rather than something a chart update
+turns on.
+
+### What the identity can and cannot do
+
+| | |
+|---|---|
+| Cannot read Secrets | The Role grants no `secrets` verb at all. The trust's API key reaches the pod as a projected volume with an `items:` list — one key, mounted by the kubelet without consulting the ServiceAccount. The pod never holds the OMOP, XNAT or Grafana passwords. |
+| Namespace-scoped only | One Role and one RoleBinding in the trust's namespace. No ClusterRole, no cluster-scoped resource. |
+| Enumerated kinds, not `*` | The Role lists the kinds this chart renders. `tests/test_upgrade_agent_rbac.py` re-renders the chart across its value variants and fails when a template renders a kind the Role does not cover, so the list cannot silently rot. |
+| Writes its own release records | `HELM_DRIVER=configmap`. Helm's Secret driver finds a release by *listing* Secrets with a label selector, and RBAC cannot narrow a list to a name — a list returns contents. ConfigMap records cost this identity configmap write, which is the smaller exposure. |
+
+That last point is a real trade, not a free win: an identity that can write ConfigMaps can rewrite
+the rendered governance document. It is still strictly smaller than read-every-credential, and it is
+the reason the driver is pinned in `values.yaml`, asserted in the chart tests, and repeated here.
+
+The trade is **checked**, not just documented. Before the agent reports an upgrade as done it compares
+the live governance ConfigMap with the `governance.document` in the release's own values (a 4-space
+indentation difference does not count, content does). If they differ — a rewrite by anything holding
+that access, including the agent itself — the tick reports FAILED naming both digests instead of
+SUCCEEDED, so the change cannot pass unnoticed as a healthy upgrade. It deliberately does *not* roll
+back: the document is not something the upgrade changed, and reverting it would discard whatever the
+site meant to say. Set no `governance.document` and there is nothing to compare, and no extra read.
+
+### The deploy side has to agree on the driver
+
+The agent runs `helm upgrade` with `HELM_DRIVER=configmap`, so it can only see a release *recorded*
+that way. A release still recorded as Secrets is invisible to it: the agent's `helm upgrade` has no
+`--install`, so it fails the tick and reports FAILED rather than installing a second copy underneath
+the running one. Moving an existing trust across therefore needs a one-off driver migration, which is
+a deliberate flag day, not something this chart does to a live site on a `helm upgrade`.
+
+Before pointing an agent at a trust, ask which store that trust's release is in — read-only, nothing
+to install:
+
+```bash
+python3 trust/deploy/helm/scripts/release_driver.py --release flip-trust --namespace flip-trust
+```
+
+It reads both stores and answers `configmap` (the agent can upgrade this trust), `secret` (it cannot;
+the migration has to run first, and the agent would report Failed until it does), `none`, or — for a
+migration that was started and not finished — both, with both revision numbers, which is the case
+worth stopping on rather than guessing about. Exit code 1 means "this trust needs the migration".
+
+The migration itself is not shipped here, and deliberately: it rewrites a release record, and the
+only way to be sure the procedure is safe is to run it end to end on a disposable cluster — an
+adoption step that gets it wrong can take the trust's PersistentVolumeClaims with it. Until that has
+been reproduced, a Secret-recorded trust keeps upgrading by hand with `make upgrade-trust-k8s`.
+
+### What a tick does
+
+The CronJob fires hourly (`autoUpgrade.schedule`), one Job per tick, `concurrencyPolicy: Forbid`, no
+retries (`backoffLimit: 0`) and a deadline under the hub's two-hour lease (`activeDeadlineSeconds`). The agent
+runs on its own clock five minutes inside that deadline (`--budget-seconds`): its helm calls and its health wait
+get only what is left, so it reports FAILED before the Job is stopped instead of dying holding the lease, and a
+SIGTERM on the deadline itself is turned into the same report. It asks the hub whether to
+move; when it does, it claims the lease, pulls the chart at the target release, upgrades with
+`--reset-then-reuse-values` so the new chart's defaults apply, the live per-trust values are kept on top,
+and only `global.image.tag` moves, then waits
+for `trust-api /health` to report the new release before telling the hub it succeeded. The per-image
+pins (`omopDb`, `orthanc`, `xnat`, `flClient`) are deliberately *not* touched: those are kit settings,
+not upgrades.
+
 ## Architecture
 
 ### Service Dependencies

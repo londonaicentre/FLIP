@@ -58,6 +58,24 @@ Two rules hold in both states:
   GitHub". A Trust cannot be upgraded past a hub that has not moved yet.
 - **A running training job is never interrupted.** The agent only starts when no job that involves this Trust is
   running. If the Trust is busy it waits and tries again on the next hourly check.
+- **Only forward, only to a stable release.** The target is a stable ``vX.Y.Z``, never a release candidate, and
+  the agent refuses a target older than what the Trust already runs, so rolling the hub back does not walk the
+  Trusts back with it.
+
+Choosing the target
+===================
+
+By default the target is the release the hub itself runs. The hub operator can name a different one with
+``AUTO_UPGRADE_TARGET_RELEASE`` (a stable ``vX.Y.Z``) in the hub's environment, or, on AWS, the GitHub
+environment variable of the same name, which Terraform passes to flip-api. Use it to:
+
+- **Test on staging first.** A staging hub runs ``sha-`` builds, which name no release, so without this setting
+  automatic upgrades never act there. Set it to the release under test so staging Trusts exercise the upgrade
+  before it reaches production.
+- **Hold a release back.** On production, pin the target to the current release while a new hub release beds in,
+  then clear it.
+
+A value that is not a stable release tag stops flip-api from starting, rather than being ignored.
 
 ***********************
 How the three parts fit
@@ -194,6 +212,51 @@ Admin can change it any time in My Trust. A Trust that is driven remotely (``DOC
 
 The agent runs ``make upgrade-onprem-trust`` itself, after moving its own checkout to the release tag, so what it
 does is exactly what ``admin-upgrading-sites`` describes for an operator.
+
+Installing it on a Kubernetes Trust
+===================================
+
+A cluster has no host to put a timer on, so the same agent runs as a CronJob in the Trust's own namespace. It is off
+by default: enabling it hands a ServiceAccount the ability to rewrite every workload in that namespace, so it is an
+opt-in rather than something a chart update turns on.
+
+.. code-block:: bash
+
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> AUTO_UPGRADE=1
+
+or set ``K8S_AUTO_UPGRADE=true`` in the kit file so every later deploy keeps it. This records the release in
+ConfigMaps, applies the Trust's Secret outside the release (so no password is stored where the agent can read it),
+and switches the agent on. The deploy refuses to run when the release is recorded the other way, because it would
+install a second copy; a Trust deployed before this setting existed needs its release record moved first (see the
+chart's README).
+
+What differs from the host:
+
+- **The current release comes from the Helm record**, not a checkout. There is also nothing to be dirty, so the
+  "local modifications" check has no cluster equivalent and never blocks here.
+- **The upgrade is Helm's**: the agent pulls the published chart at the target release and runs ``helm upgrade
+  --reset-then-reuse-values``, so the new release's defaults apply, the live per-Trust values are kept on top,
+  and only the image tag moves. It never passes
+  ``--install``: a release it cannot see fails the check instead of being installed a second time underneath the
+  running one.
+- **It stops in time to report.** The agent runs on its own clock, five minutes inside the Job's deadline, so a
+  slow upgrade is reported as **Failed** rather than leaving the hub waiting on a lease nobody holds.
+- **The identity is narrow on purpose.** It holds no ``secrets`` permission at all — its API key arrives as a
+  projected volume carrying that one key — and its Role covers only the kinds the chart renders, in that one
+  namespace. Helm's own record of the release lives in ConfigMaps rather than Secrets, because finding a release in
+  Secrets means *listing* them, and a list returns their contents. That write access reaches the Trust's
+  governance document too, so before reporting an upgrade as done the agent compares the live document with the
+  one the release carries and reports **Failed** if they differ; see the chart's README for why it does not
+  instead roll back.
+
+Everything the Trust Admin sees is the same: the switch, the window, the pending-since date, the blocker and the
+failure in My Trust. The questions below apply to both.
+
+.. warning::
+
+   A Kubernetes Trust whose release is still recorded the old way (Helm's Secret driver) cannot be upgraded by the
+   agent; it will report **Failed** instead. Moving such a Trust across is a deliberate one-off migration, not
+   something a chart upgrade does to a live site.
 
 Off
 ===

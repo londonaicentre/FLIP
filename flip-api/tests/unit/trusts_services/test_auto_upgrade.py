@@ -82,11 +82,25 @@ class TestInWindow:
 class TestTarget:
     @pytest.mark.parametrize(
         ("identity", "expected"),
-        [("v1.3.0", "v1.3.0"), ("v1.3.0-rc.1", "v1.3.0-rc.1"), ("sha-abc1234", None), (None, None)],
+        [("v1.3.0", "v1.3.0"), ("v1.3.0-rc.1", None), ("sha-abc1234", None), (None, None)],
     )
-    def test_only_a_release_tag_is_a_target(self, identity, expected):
+    def test_only_a_stable_release_tag_is_a_target(self, identity, expected):
         with patch(f"{SVC}.build_identity", return_value=identity):
             assert svc.target_release() == expected
+
+    def test_the_operator_target_wins_over_the_hub_release(self):
+        """Staging runs sha- builds: the operator names the release its trusts move to."""
+        settings = MagicMock(AUTO_UPGRADE_TARGET_RELEASE="v1.2.5")
+        with (
+            patch(f"{SVC}.get_settings", return_value=settings),
+            patch(f"{SVC}.build_identity", return_value="sha-abc1234"),
+        ):
+            assert svc.target_release() == "v1.2.5"
+
+    def test_unset_operator_target_falls_back_to_the_hub_release(self):
+        settings = MagicMock(AUTO_UPGRADE_TARGET_RELEASE=None)
+        with patch(f"{SVC}.get_settings", return_value=settings), patch(f"{SVC}.build_identity", return_value="v1.3.0"):
+            assert svc.target_release() == "v1.3.0"
 
     def test_current_release_reads_trust_api_version(self):
         assert svc.current_release(_trust()) == "v1.2.0"
@@ -539,6 +553,40 @@ class TestRenewal:
         assert lease is not None
         assert t.upgrade_lease_expires_at > datetime.utcnow() + timedelta(hours=1)
         db.commit.assert_called_once()
+
+    def test_a_renewal_sends_no_second_started_email(self):
+        """Renewing every 20 minutes must not mail "upgrade started" again; the first claim does."""
+        t = _trust(
+            auto_upgrade_enabled=True,
+            upgrade_lease_release="v1.3.0",
+            upgrade_lease_expires_at=datetime.utcnow() + timedelta(minutes=2),
+        )
+        db = MagicMock()
+        db.exec.return_value.one.return_value = t
+        with patch(f"{SVC}.is_busy", return_value=False), patch(f"{SVC}.notify_upgrade_started") as started:
+            svc.record_status(t.id, UpgradeStatusInput(state=UpgradeReportState.STARTING, release="v1.3.0"), db)
+        started.assert_not_called()
+
+    def test_a_fresh_claim_sends_the_started_email_once(self):
+        t = _trust(auto_upgrade_enabled=True)
+        db = MagicMock()
+        db.exec.return_value.one.return_value = t
+        with patch(f"{SVC}.is_busy", return_value=False), patch(f"{SVC}.notify_upgrade_started") as started:
+            svc.record_status(t.id, UpgradeStatusInput(state=UpgradeReportState.STARTING, release="v1.3.0"), db)
+        started.assert_called_once()
+
+    def test_a_claim_after_the_lease_expired_is_news_again(self):
+        """An expired lease is not a renewal: that attempt died, and this one is a new start."""
+        t = _trust(
+            auto_upgrade_enabled=True,
+            upgrade_lease_release="v1.3.0",
+            upgrade_lease_expires_at=datetime.utcnow() - timedelta(minutes=1),
+        )
+        db = MagicMock()
+        db.exec.return_value.one.return_value = t
+        with patch(f"{SVC}.is_busy", return_value=False), patch(f"{SVC}.notify_upgrade_started") as started:
+            svc.record_status(t.id, UpgradeStatusInput(state=UpgradeReportState.STARTING, release="v1.3.0"), db)
+        started.assert_called_once()
 
 
 class TestManualMove:

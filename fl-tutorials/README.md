@@ -59,6 +59,8 @@ Each example needs its data step first, in place of `download-xray-data` above:
 | Biomarker causal discovery (tabular/OMOP-only) | both | `convert-adni-cohort ADNI_DIR=<your IDA download>` |
 | Ark+ fine-tuning | FLARE only | `download-arkplus-finetuning-data`, plus the raw Ark+ checkpoint |
 | Ark+ evaluations (baseline and multi-model) | FLARE only | `download-arkplus-eval-data`, plus the raw Ark+ checkpoint |
+| Brain MRI latent diffusion (stage 1 autoencoder, stage 2 diffusion) | FLARE only | `download-brain-mri-msd-raw`, then `download-brain-mri-data NUM_CASES=20`; stage 2 also needs `make prepare-checkpoint` in its directory |
+| Chest X-ray diffusion | FLARE only | `download-arkplus-finetuning-data` (or `download-xray-data` for the 300-image code check) |
 | Prostate zonal segmentation | Flower only | `prepare-prostate-local-data NUM_CASES=12` (simulator) |
 
 - **ADNI:** the data is access-controlled and never enters the repository. You apply for ADNI access yourself, and the converter builds the cohort from the tables you download. The tutorial README has the application and download steps.

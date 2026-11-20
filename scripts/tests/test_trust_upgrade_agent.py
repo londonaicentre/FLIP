@@ -17,6 +17,10 @@ Stdlib only, run as ``python scripts/tests/test_trust_upgrade_agent.py`` like it
 
 from __future__ import annotations
 
+import json
+import os
+import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -79,6 +83,27 @@ class Decide(unittest.TestCase):
 
     def test_already_current(self):
         self.assertEqual(agent.decide(policy(target_release="v1.2.0"), CLEAN, NOW).action, "SKIP")
+
+    def test_never_moves_to_a_release_candidate(self):
+        d = agent.decide(policy(target_release="v1.3.0-rc.1"), CLEAN, NOW)
+        self.assertEqual(d.action, "SKIP")
+        self.assertIn("not a stable release", d.reason)
+
+    def test_never_follows_the_hub_down(self):
+        for target in ("v1.1.9", "v1.0.0", "v0.9.0"):
+            d = agent.decide(policy(target_release=target), CLEAN, NOW)
+            self.assertEqual(d.action, "SKIP", target)
+            self.assertIn("older than v1.2.0", d.reason)
+
+    def test_moves_off_a_release_candidate_to_its_release(self):
+        on_rc = agent.Local(current_release="v1.3.0-rc.2", checkout_clean=True, unsupported=False, health=HEALTHY)
+        self.assertEqual(agent.decide(policy(target_release="v1.3.0"), on_rc, NOW).action, "UPGRADE")
+
+    def test_release_key_orders_versions_numerically(self):
+        self.assertLess(agent.release_key("v1.9.0"), agent.release_key("v1.10.0"))
+        self.assertLess(agent.release_key("v1.3.0-rc.1"), agent.release_key("v1.3.0"))
+        self.assertIsNone(agent.release_key("sha-abc1234"))
+        self.assertIsNone(agent.release_key(None))
 
     def test_a_failed_release_is_not_retried(self):
         d = agent.decide(policy(failed_release="v1.3.0"), CLEAN, NOW)
@@ -522,6 +547,355 @@ class TickRollsBack(unittest.TestCase):
         self.assertEqual(rc, 0)
         rollback.assert_not_called()
         self.assertEqual(reports[-1]["state"], "SUCCEEDED")
+
+
+class TrustApiBase(unittest.TestCase):
+    def test_a_host_kit_reads_loopback_on_its_published_port(self):
+        self.assertEqual(agent.trust_api_base({}), "http://127.0.0.1:8020")
+        self.assertEqual(agent.trust_api_base({"TRUST_API_PORT": "9000"}), "http://127.0.0.1:9000")
+
+    def test_a_url_wins_and_loses_its_trailing_slash(self):
+        self.assertEqual(
+            agent.trust_api_base({"TRUST_API_URL": "http://t:8000/", "TRUST_API_PORT": "1"}), "http://t:8000"
+        )
+
+
+class ClusterKit(unittest.TestCase):
+    """The pod gets one key from a projected volume and the rest from its env — never a kit file."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        (self.dir / "trust-api-key").write_text("k\n")
+        self.cluster = agent.Cluster("flip-trust", "flip-trust", "oci://x/y", "GSTT", "prod", self.dir)
+        self.env = {
+            "CENTRAL_HUB_API_URL": "https://hub.example/api",
+            "TRUST_API_KEY_HEADER": "X-Key",  # pragma: allowlist secret
+            "TRUST_API_URL": "http://trust-api.flip-trust.svc:8000",
+        }
+
+    def test_reads_the_projected_key_and_the_rest_from_the_env(self):
+        with mock.patch.dict("os.environ", self.env, clear=False):
+            kit = agent.cluster_kit(self.cluster)
+        self.assertEqual(kit["TRUST_API_KEY"], "k")
+        self.assertEqual(kit["CENTRAL_HUB_API_URL"], "https://hub.example/api")
+        self.assertEqual(kit["TRUST_API_KEY_HEADER"], "X-Key")
+
+    def test_health_is_read_from_the_trust_api_service_not_the_pods_loopback(self):
+        """FLIP#1644, found on kind: from loopback every tick reported a healthy site as SITE_UNHEALTHY."""
+        with mock.patch.dict("os.environ", self.env, clear=False):
+            kit = agent.cluster_kit(self.cluster)
+        self.assertEqual(agent.trust_api_base(kit), "http://trust-api.flip-trust.svc:8000")
+
+    def test_an_empty_trust_api_url_fails_rather_than_reading_loopback(self):
+        with mock.patch.dict("os.environ", {**self.env, "TRUST_API_URL": ""}, clear=False):
+            with self.assertRaises(ValueError):
+                agent.cluster_kit(self.cluster)
+
+    def test_a_missing_projection_fails_before_anything_is_claimed(self):
+        self.cluster = agent.Cluster("ns", "rel", "oci://x", "GSTT", "prod", self.dir / "absent")
+        with mock.patch.dict("os.environ", self.env, clear=False):
+            with self.assertRaises(ValueError):
+                agent.cluster_kit(self.cluster)
+
+    def test_an_empty_hub_url_fails_rather_than_building_a_relative_url(self):
+        with mock.patch.dict("os.environ", {"CENTRAL_HUB_API_URL": ""}, clear=False):
+            with self.assertRaises(ValueError):
+                agent.cluster_kit(self.cluster)
+
+    def test_the_header_defaults_rather_than_going_out_unheaded(self):
+        env = {"CENTRAL_HUB_API_URL": "https://h/api", "TRUST_API_URL": "http://t:8000"}
+        with mock.patch.dict("os.environ", env, clear=False):
+            os.environ.pop("TRUST_API_KEY_HEADER", None)
+            kit = agent.cluster_kit(self.cluster)
+        self.assertEqual(kit["TRUST_API_KEY_HEADER"], agent.DEFAULT_TRUST_API_KEY_HEADER)
+
+
+class ClusterState(unittest.TestCase):
+    """Helm's record is the release the next upgrade acts on, so it wins over /health."""
+
+    CLUSTER = agent.Cluster("flip-trust", "flip-trust", "oci://x/y", "GSTT", "prod")
+
+    def _state(self, helm_json, health_version=None, returncode=0):
+        health = agent.Health(True, "ok", health_version, True, ())
+        with (
+            mock.patch.object(agent, "cluster_kit", return_value={}),
+            mock.patch.object(agent, "read_health", return_value=health),
+            mock.patch.object(agent, "run", return_value=mock.Mock(returncode=returncode, stdout=helm_json, stderr="")),
+        ):
+            return agent.cluster_state(self.CLUSTER)
+
+    def test_reads_the_release_tag_from_app_version(self):
+        local = self._state('[{"name": "flip-trust", "app_version": "v0.13.0"}]')
+        self.assertEqual(local.current_release, "v0.13.0")
+
+    def test_a_cluster_has_no_checkout_to_be_dirty(self):
+        """`cluster mode` must never report LOCAL_MODIFICATIONS, which has no meaning here."""
+        self.assertTrue(self._state('[{"app_version": "v0.13.0"}]').checkout_clean)
+
+    def test_it_is_not_the_unsupported_remote_docker_case(self):
+        """The host agent refuses a DOCKER_HOST trust; the cluster agent is the supported case."""
+        self.assertFalse(self._state('[{"app_version": "v0.13.0"}]').unsupported)
+
+    def test_a_helm_that_cannot_be_read_falls_back_to_health(self):
+        local = self._state("", health_version="v0.12.0", returncode=1)
+        self.assertEqual(local.current_release, "v0.12.0")
+
+    def test_an_empty_release_list_is_not_a_release(self):
+        local = self._state("[]", health_version="v0.12.0")
+        self.assertEqual(local.current_release, "v0.12.0")
+
+    def test_malformed_helm_output_does_not_crash_the_tick(self):
+        self.assertEqual(self._state("not json", health_version="v0.12.0").current_release, "v0.12.0")
+
+
+class ClusterUpgrade(unittest.TestCase):
+    """helm pull of the published chart, then an upgrade that keeps the live values."""
+
+    CLUSTER = agent.Cluster(
+        "flip-trust", "flip-trust", "oci://ghcr.io/londonaicentre/charts/flip-trust", "GSTT", "prod"
+    )
+
+    def _run(self, pull_ok=True):
+        calls = []
+
+        def fake_run(cmd, cwd, **kw):
+            calls.append((cmd, kw.get("env", {})))
+            ok = pull_ok or cmd[:2] != ["helm", "pull"]
+            return mock.Mock(returncode=0 if ok else 1, stdout="pulled" if ok else "", stderr="boom")
+
+        with mock.patch.object(agent, "run", fake_run):
+            result = agent.cluster_upgrade(self.CLUSTER, "v0.13.0")
+        return result, calls
+
+    def test_pulls_the_chart_version_the_release_tag_names(self):
+        _, calls = self._run()
+        pull = calls[0][0]
+        self.assertEqual(pull[:3], ["helm", "pull", "oci://ghcr.io/londonaicentre/charts/flip-trust"])
+        # The chart's `version` is SemVer and cannot carry the release tag's leading v.
+        self.assertEqual(pull[pull.index("--version") + 1], "0.13.0")
+
+    def test_upgrades_the_release_and_moves_only_the_global_tag(self):
+        _, calls = self._run()
+        upgrade = calls[1][0]
+        self.assertEqual(upgrade[:3], ["helm", "upgrade", "flip-trust"])
+        # The new chart's defaults with the stored overrides on top; plain --reuse-values would
+        # render with the previous chart's defaults and drop any value the release adds.
+        self.assertIn("--reset-then-reuse-values", upgrade)
+        self.assertNotIn("--reuse-values", upgrade)
+        self.assertEqual(upgrade[upgrade.index("--set") + 1], "global.image.tag=v0.13.0")
+
+    def test_it_never_installs(self):
+        """A release the configmap driver cannot see must fail, not be installed a second time."""
+        _, calls = self._run()
+        upgrade = calls[1][0]
+        self.assertNotIn("--install", upgrade)
+
+    def test_both_calls_use_the_configmap_driver(self):
+        _, calls = self._run()
+        for cmd, env in calls:
+            self.assertEqual(env.get("HELM_DRIVER"), "configmap", cmd)
+
+    def test_a_failed_pull_never_reaches_helm_upgrade(self):
+        (ok, detail), calls = self._run(pull_ok=False)
+        self.assertFalse(ok)
+        self.assertIn("helm pull", detail)
+        self.assertEqual(len(calls), 1)
+
+
+class ClusterTick(unittest.TestCase):
+    """`tick` picks the backend from the mode; the host path is untouched."""
+
+    CLUSTER = agent.Cluster("flip-trust", "flip-trust", "oci://x/y", "GSTT", "prod")
+
+    def test_cluster_mode_never_touches_a_checkout(self):
+        policy = {"enabled": True, "target_release": "v0.13.0", "lease": None}
+        local = agent.Local("v0.12.0", True, False, agent.Health(True, "ok", "v0.12.0", True, ()))
+        with (
+            mock.patch.object(agent, "cluster_kit", return_value={}),
+            mock.patch.object(agent, "hub_call", side_effect=[(200, policy), (409, None)]),
+            mock.patch.object(agent, "cluster_state", return_value=local),
+            mock.patch.object(agent, "upgrade") as host_upgrade,
+            mock.patch.object(agent, "checkout") as host_checkout,
+        ):
+            rc = agent.tick(Path("/nonexistent"), Path("/nope"), False, self.CLUSTER)
+        self.assertEqual(rc, 0)
+        host_upgrade.assert_not_called()
+        host_checkout.assert_not_called()
+
+    def test_the_cluster_upgrade_is_what_runs(self):
+        policy = {"enabled": True, "target_release": "v0.13.0", "lease": None}
+        local = agent.Local("v0.12.0", True, False, agent.Health(True, "ok", "v0.12.0", True, ()))
+        with (
+            mock.patch.object(agent, "cluster_kit", return_value={}),
+            mock.patch.object(agent, "hub_call", side_effect=[(200, policy), (200, None), (200, None)]),
+            mock.patch.object(agent, "cluster_state", return_value=local),
+            mock.patch.object(agent, "cluster_upgrade", return_value=(True, "fine")) as upgrade,
+            mock.patch.object(agent, "verify", return_value=(True, "v0.13.0")),
+            mock.patch.object(agent, "governance_drift", return_value=None),
+            mock.patch.object(agent, "LeaseRenewal"),
+        ):
+            rc = agent.tick(Path("/nonexistent"), Path("/nope"), False, self.CLUSTER)
+        self.assertEqual(rc, 0)
+        upgrade.assert_called_once_with(self.CLUSTER, "v0.13.0")
+
+
+class GovernanceDrift(unittest.TestCase):
+    """The agent can write ConfigMaps for Helm's records, so it checks it did not change the document."""
+
+    DOC = "[fl_privacy]\nminimum_cohort_size = 10\n"
+    CLUSTER = agent.Cluster(
+        namespace="flip-trust", release="flip-trust", chart_repository="oci://x", kit_name="GSTT", hub="prod"
+    )
+
+    def _drift(self, values=None, items=None, helm_rc=0, kubectl_rc=0):
+        values_cm = mock.Mock(returncode=helm_rc, stdout=json.dumps(values or {}), stderr="boom")
+        items_json = json.dumps({"items": items if items is not None else [{"data": {agent.GOVERNANCE_KEY: self.DOC}}]})
+        kubectl_cm = mock.Mock(returncode=kubectl_rc, stdout=items_json, stderr="nope")
+        calls = []
+
+        def fake_run(cmd, cwd, env=None):
+            calls.append(cmd)
+            return values_cm if cmd[0] == "helm" else kubectl_cm
+
+        with mock.patch.object(agent, "run", fake_run):
+            return agent.governance_drift(self.CLUSTER), calls
+
+    def test_a_document_that_matches_is_not_drift(self):
+        drift, _ = self._drift(values={"governance": {"document": self.DOC}})
+        self.assertIsNone(drift)
+
+    def test_a_document_changed_in_the_cluster_is_drift(self):
+        drift, _ = self._drift(
+            values={"governance": {"document": self.DOC}},
+            items=[{"data": {agent.GOVERNANCE_KEY: "[fl_privacy]\nminimum_cohort_size = 1\n"}}],
+        )
+        self.assertIn("changed outside Helm", drift)
+
+    def test_the_comparison_ignores_the_indentation_helm_renders_with(self):
+        drift, _ = self._drift(
+            values={"governance": {"document": self.DOC}},
+            items=[{"data": {agent.GOVERNANCE_KEY: "    " + self.DOC.replace("\n", "\n    ").rstrip()}}],
+        )
+        self.assertIsNone(drift)
+
+    def test_a_missing_configmap_is_drift(self):
+        drift, _ = self._drift(values={"governance": {"document": self.DOC}}, items=[])
+        self.assertIn("no governance ConfigMap", drift)
+
+    def test_two_configmaps_with_the_label_are_drift(self):
+        item = {"data": {agent.GOVERNANCE_KEY: self.DOC}}
+        drift, _ = self._drift(values={"governance": {"document": self.DOC}}, items=[item, item])
+        self.assertIn("2 ConfigMaps", drift)
+
+    def test_a_trust_with_no_governance_document_has_nothing_to_compare(self):
+        drift, calls = self._drift(values={"governance": {}})
+        self.assertIsNone(drift)
+        self.assertEqual([c[0] for c in calls], ["helm"], "no document means no ConfigMap read either")
+
+    def test_values_it_cannot_read_are_reported_rather_than_passed(self):
+        drift, _ = self._drift(helm_rc=1)
+        self.assertIn("could not read the release values", drift)
+
+    def test_values_that_are_not_json_are_reported(self):
+        values_cm = mock.Mock(returncode=0, stdout="not json", stderr="")
+        with mock.patch.object(agent, "run", return_value=values_cm):
+            drift = agent.governance_drift(self.CLUSTER)
+        self.assertIn("not JSON", drift)
+
+
+class TickChecksGovernance(unittest.TestCase):
+    """A drifted document does not get reported as a successful upgrade — and does not roll back."""
+
+    def _tick(self, drift):
+        policy = {"enabled": True, "target_release": "v0.13.0", "lease": None}
+        local = agent.Local("v0.12.0", True, False, agent.Health(True, "ok", "v0.12.0", True, ()))
+        cluster = agent.Cluster(
+            namespace="ns", release="flip-trust", chart_repository="oci://x", kit_name="G", hub="prod"
+        )
+        reports = []
+
+        def fake_hub_call(kit, method, route, body=None):
+            if body and body.get("state") in ("SUCCEEDED", "FAILED", "BLOCKED"):
+                reports.append(body)
+            return (200, policy if method == "GET" else None)
+
+        with (
+            mock.patch.object(agent, "cluster_kit", return_value={}),
+            mock.patch.object(agent, "hub_call", fake_hub_call),
+            mock.patch.object(agent, "cluster_state", return_value=local),
+            mock.patch.object(agent, "cluster_upgrade", return_value=(True, "applied")),
+            mock.patch.object(agent, "verify", return_value=(True, "up")),
+            mock.patch.object(agent, "rollback", return_value=(True, "rolled back")) as rollback,
+            mock.patch.object(agent, "governance_drift", return_value=drift),
+            mock.patch.object(agent, "LeaseRenewal"),
+        ):
+            rc = agent.tick(Path("/nonexistent"), Path("/nope"), False, cluster)
+        return rc, reports, rollback
+
+    def test_drift_stops_the_success_report(self):
+        rc, reports, _ = self._tick("the governance document in the cluster does not match ...")
+        self.assertEqual(rc, 1)
+        self.assertEqual(reports[-1]["state"], "FAILED")
+        self.assertIn("governance document", reports[-1]["detail"])
+
+    def test_drift_does_not_roll_the_release_back(self):
+        """The document is not changed by the upgrade, so a rollback would revert what the site means to say."""
+        _, _, rollback = self._tick("drift")
+        rollback.assert_not_called()
+
+    def test_no_drift_reports_success(self):
+        rc, reports, _ = self._tick(None)
+        self.assertEqual(rc, 0)
+        self.assertEqual(reports[-1]["state"], "SUCCEEDED")
+
+
+class Budget(unittest.TestCase):
+    """Cluster mode: finish and report before the Job deadline kills the pod (#1644 review)."""
+
+    def tearDown(self):
+        agent.set_budget(None)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+    def test_no_budget_in_host_mode(self):
+        agent.set_budget(None)
+        self.assertIsNone(agent.remaining_budget())
+
+    def test_the_budget_keeps_a_reserve_for_the_report(self):
+        agent.set_budget(1000, now=lambda: 0.0)
+        self.assertEqual(agent.remaining_budget(now=lambda: 100.0), 1000 - 100 - agent.REPORT_RESERVE_S)
+        self.assertEqual(agent.remaining_budget(now=lambda: 5000.0), 0.0)
+
+    def test_a_command_is_stopped_when_the_budget_runs_out(self):
+        agent.set_budget(1000)
+        with mock.patch.object(agent.subprocess, "run", side_effect=subprocess.TimeoutExpired(["helm"], 1)) as sp:
+            out = agent.run(["helm", "upgrade"], Path("."))
+        self.assertEqual(out.returncode, 124)
+        self.assertIn("time budget", out.stderr)
+        self.assertGreater(sp.call_args.kwargs["timeout"], 0)
+
+    def test_without_a_budget_commands_get_no_timeout(self):
+        agent.set_budget(None)
+        done = subprocess.CompletedProcess(["helm"], 0, "", "")
+        with mock.patch.object(agent.subprocess, "run", return_value=done) as sp:
+            agent.run(["helm", "version"], Path("."))
+        self.assertNotIn("timeout", sp.call_args.kwargs)
+
+    def test_the_health_wait_is_capped_by_the_budget(self):
+        agent.set_budget(agent.REPORT_RESERVE_S + 30)
+        unhealthy = agent.Health(reachable=False, status=None, version=None, hub_key_match=None, dead_tasks=())
+        clock = iter(range(0, 10_000, 10))
+        with mock.patch.object(agent, "read_health", return_value=unhealthy):
+            ok, why = agent.verify({}, "v1.3.0", sleep=lambda _s: None, now=lambda: next(clock))
+        self.assertFalse(ok)
+        self.assertRegex(why, r"within (29|30)s")
+
+    def test_sigterm_becomes_systemexit_so_the_report_still_goes_out(self):
+        with self.assertRaises(SystemExit):
+            agent._terminated(signal.SIGTERM, None)
+
+    def test_a_budget_smaller_than_the_reserve_is_refused(self):
+        with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+            agent.main(["tick", "--kit-file", "/nonexistent", "--budget-seconds", str(agent.REPORT_RESERVE_S)])
 
 
 class KitFile(unittest.TestCase):
