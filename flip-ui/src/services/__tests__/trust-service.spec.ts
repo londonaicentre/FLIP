@@ -14,7 +14,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { _http } from "@/services/api";
-import { getHubHealth, getTrustDecisions, getTrusts, getTrustStatuses, isImageTag } from "@/services/trust-service";
+import { downloadTrustKit,
+    getHubHealth,
+    getTrustDecisions,
+    getTrustKitStatus,
+    getTrusts,
+    getTrustStatuses,
+    isImageTag,
+    rotateTrustKit } from "@/services/trust-service";
 
 vi.mock("@/services/api", () => ({
     _http: {
@@ -28,6 +35,7 @@ vi.mock("@/services/api", () => ({
 describe("trust-service", () => {
     beforeEach(() => {
         vi.mocked(_http.get).mockReset();
+        vi.mocked(_http.post).mockReset();
     });
 
     describe("getTrusts", () => {
@@ -162,6 +170,46 @@ describe("trust-service", () => {
 
         it.each(["0.6.0", "sha-xyz", "", null, undefined])("rejects %s, which is not a CI image tag", (tag) => {
             expect(isImageTag(tag)).toBe(false);
+        });
+    });
+
+    describe("trust kit", () => {
+        const kit = {
+            file_name: "flip-trust-kit-GSTT.tar.gz.enc",
+            kind: "full",
+            passphrase: "one-time",  // pragma: allowlist secret
+            content_base64: "a2l0"
+        };
+
+        it("GETs one trust's kit status", async () => {
+            const status = {
+                keys_issued: false,
+                download_count: 0
+            };
+            vi.mocked(_http.get).mockResolvedValue({ data: status } as never);
+
+            expect(await getTrustKitStatus("t-1")).toEqual(status);
+            expect(_http.get).toHaveBeenCalledWith("/trust/t-1/kit");
+        });
+
+        it("POSTs to download the kit and returns the file with its passphrase", async () => {
+            vi.mocked(_http.post).mockResolvedValue({ data: kit } as never);
+
+            expect(await downloadTrustKit("t-1")).toEqual(kit);
+            expect(_http.post).toHaveBeenCalledWith("/trust/t-1/kit");
+        });
+
+        it("POSTs the typed trust code to issue new keys", async () => {
+            vi.mocked(_http.post).mockResolvedValue({ data: kit } as never);
+
+            expect(await rotateTrustKit("t-1", "GSTT")).toEqual(kit);
+            expect(_http.post).toHaveBeenCalledWith("/trust/t-1/kit/rotate", { confirm_code: "GSTT" });
+        });
+
+        it("lets a refusal reach the caller, which shows the hub's reason", async () => {
+            vi.mocked(_http.post).mockRejectedValue(new Error("409"));
+
+            await expect(downloadTrustKit("t-1")).rejects.toThrow("409");
         });
     });
 });

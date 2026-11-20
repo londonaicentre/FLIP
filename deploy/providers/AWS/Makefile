@@ -173,6 +173,10 @@ endif
 ifneq ($(JOB_RESOURCE_SPEC_NUM_GPUS),)
 export TF_VAR_JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS}
 endif
+# Unset means the trusts dial FL_SERVER_PORT (variables.tf).
+ifneq ($(FL_EDGE_PORT),)
+export TF_VAR_fl_edge_port=${FL_EDGE_PORT}
+endif
 # Uncomment to enable ECS Exec on Fargate tasks for debugging. It also makes the services' root
 # filesystems writable, which ECS Exec needs, so Security Hub ECS.5 fails until it is off again (FLIP#1795):
 # export TF_VAR_ecs_exec_enabled=true
