@@ -58,6 +58,8 @@ IAM_ADDRESSES = {
     ("aws_iam_policy", "apply_boundary"),
     ("aws_iam_role", "ui_publish"),
     ("aws_iam_role_policy", "ui_publish"),
+    ("aws_iam_role", "demo_publish"),
+    ("aws_iam_role_policy", "demo_publish"),
 }
 
 # What the old ci/ root declared directly, which the wrapper's moved blocks re-address. Its
@@ -465,6 +467,7 @@ def test_the_apply_role_cannot_escalate_itself() -> None:
     assert arguments["effect"] == '"Deny"'
     assert sorted(_list(arguments["resources"])) == [
         "local.apply_role_arn",
+        "local.demo_publish_role_arn",
         "local.plan_role_arn",
         "local.ui_publish_role_arn",
     ]
@@ -843,12 +846,14 @@ def test_the_ui_publish_role_exists_only_when_the_bucket_is_named() -> None:
     variable = _arguments(_module_block('variable "ui_bucket_name"'))
     assert variable["default"] == '""'
     for header in (
-        'data "aws_iam_policy_document" "ui_publish_assume_role"',
         'resource "aws_iam_role" "ui_publish"',
         'data "aws_iam_policy_document" "ui_publish"',
         'resource "aws_iam_role_policy" "ui_publish"',
     ):
         assert _arguments(_module_block(header))["count"] == _normalise("local.ui_publish ? 1 : 0"), header
+    # The trust is shared with the demo-publish role (FLIP#2012).
+    trust = _arguments(_module_block('data "aws_iam_policy_document" "ui_publish_assume_role"'))
+    assert trust["count"] == _normalise("local.ui_publish || local.demo_publish ? 1 : 0")
 
 
 def test_the_ui_publish_role_trusts_the_reusable_workflow_at_the_apply_branch() -> None:
@@ -897,23 +902,53 @@ def test_the_ui_publish_role_reaches_the_ui_bucket_and_nothing_else() -> None:
     assert sync["effect"] == '"Allow"'
     assert set(_list(sync["actions"])) == {'"s3:DeleteObject"', '"s3:GetObject"', '"s3:PutObject"'}
     assert sync["resources"] == '["${local.ui_bucket_arn}/*"]'
-    # Only an estate that serves the public demo (FLIP#2008) lifts the deny on demo/.
-    static_sids = [_arguments(body).get("sid") for body in _blocks(_module_block(document), "statement")]
-    assert '"NeverTouchThePublicDemo"' not in static_sids, "the deny must follow public_demo"
-    dynamic = _block(_module_block(document), 'dynamic "statement"')
-    assert _arguments(dynamic)["for_each"] == _normalise("var.public_demo ? [] : [1]")
-    deny = _arguments(_block(dynamic, "content"))
-    assert (deny["sid"], deny["effect"], deny["resources"]) == (
-        '"NeverTouchThePublicDemo"',
-        '"Deny"',
-        '["${local.ui_bucket_arn}/demo/*"]',
-    )
-    assert set(_list(deny["actions"])) == {'"s3:DeleteObject"', '"s3:PutObject"'}
-    assert _arguments(_module_block('variable "public_demo"'))["default"] == "false"
+    # The demo has its own bucket and role (FLIP#2012), so nothing here needs a Deny.
+    assert "Deny" not in _normalise(_module_block(document))
 
     body = _normalise(_module_block(document))
     actions = set(re.findall(r'"((?:[a-z0-9-]+):[A-Za-z*]+)"', body))
     assert actions == {
+        "s3:ListBucket",
+        "s3:DeleteObject",
+        "s3:GetObject",
+        "s3:PutObject",
+    }
+
+
+def test_the_demo_publish_role_exists_only_when_the_demo_bucket_is_named() -> None:
+    """Off by default (FLIP#2012), and it trusts exactly what the UI-publish role trusts."""
+    assert _module_locals()["demo_publish"] == _normalise('var.demo_bucket_name != ""')
+    assert _module_locals()["demo_bucket_arn"] == (
+        '"arn:${data.aws_partition.current.partition}:s3:::${var.demo_bucket_name}"'
+    )
+    assert _arguments(_module_block('variable "demo_bucket_name"'))["default"] == '""'
+    for header in (
+        'resource "aws_iam_role" "demo_publish"',
+        'data "aws_iam_policy_document" "demo_publish"',
+        'resource "aws_iam_role_policy" "demo_publish"',
+    ):
+        assert _arguments(_module_block(header))["count"] == _normalise("local.demo_publish ? 1 : 0"), header
+    role = _arguments(_module_block('resource "aws_iam_role" "demo_publish"'))
+    assert role["assume_role_policy"] == "data.aws_iam_policy_document.ui_publish_assume_role[0].json"
+    assert role["name"] == "var.demo_publish_role_name"
+
+
+def test_the_demo_publish_role_reaches_the_demo_bucket_and_nothing_else() -> None:
+    """List the demo bucket, sync its objects; never the UI bucket, no KMS, no other service."""
+    document = 'data "aws_iam_policy_document" "demo_publish"'
+    listing = _arguments(_statement(document, "ListTheDemoBucket"))
+    assert (listing["effect"], listing["actions"], listing["resources"]) == (
+        '"Allow"',
+        '["s3:ListBucket"]',
+        "[local.demo_bucket_arn]",
+    )
+    sync = _arguments(_statement(document, "SyncTheDemoObjects"))
+    assert sync["effect"] == '"Allow"'
+    assert set(_list(sync["actions"])) == {'"s3:DeleteObject"', '"s3:GetObject"', '"s3:PutObject"'}
+    assert sync["resources"] == '["${local.demo_bucket_arn}/*"]'
+    body = _normalise(_module_block(document))
+    assert "ui_bucket" not in body
+    assert set(re.findall(r'"((?:[a-z0-9-]+):[A-Za-z*]+)"', body)) == {
         "s3:ListBucket",
         "s3:DeleteObject",
         "s3:GetObject",

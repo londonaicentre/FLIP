@@ -317,6 +317,9 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "FLIP_APP_BUNDLES_BUCKET_NAME": bucket_of("flip_app_bundles_bucket"),
         "FLIP_FL_RESULTS_BUCKET_NAME": bucket_of("flip_fl_results_bucket"),
         "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": bucket_of("flip_model_files_uploads_bucket"),
+        # Every flip_s3_bucket caller contributes an aws_s3_bucket.this, so the
+        # demo bucket (FLIP#2012) is matched by its module.
+        "FLIP_DEMO_BUCKET_NAME": st.module_attrs("module.flip_demo_bucket", "aws_s3_bucket", "this").get("bucket", ""),
         "SES_VERIFIED_EMAIL": st.attrs("aws_ses_email_identity", "flip_sender").get("email", ""),
         "ALB_SUBDOMAIN": oac_name.removeprefix("flip-ui-") if oac_name.startswith("flip-ui-") else "",
         "NLB_SUBDOMAIN": st.output("FlServerEndpoint"),
@@ -363,10 +366,11 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
 def keys_expected_empty() -> set[str]:
     """Keys whose empty value is a real answer rather than a failed recovery.
 
-    ``ENFORCE_MFA`` unset means "use flip-api's secure Pydantic default". (Only one
-    of the two FL kit dates is ever provisioned; main() adds the other.)
+    ``ENFORCE_MFA`` unset means "use flip-api's secure Pydantic default", and
+    ``FLIP_DEMO_BUCKET_NAME`` unset means the estate serves no public demo. (Only
+    one of the two FL kit dates is ever provisioned; main() adds the other.)
     """
-    return {"ENFORCE_MFA"}
+    return {"ENFORCE_MFA", "FLIP_DEMO_BUCKET_NAME"}
 
 
 def shown(key: str, value: str) -> str:

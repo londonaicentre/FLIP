@@ -31,6 +31,11 @@ output "ui_publish_role_arn" {
   value       = try(aws_iam_role.ui_publish[0].arn, null)
 }
 
+output "demo_publish_role_arn" {
+  description = "Role ARN for the public demo's publish, when demo_bucket_name is set, otherwise null. Set as TF_DEMO_PUBLISH_ROLE_ARN on the GitHub environment."
+  value       = try(aws_iam_role.demo_publish[0].arn, null)
+}
+
 output "account_id" {
   description = "Account these roles were created in — check it against the intended FLIP environment before wiring the ARNs up."
   value       = data.aws_caller_identity.current.account_id

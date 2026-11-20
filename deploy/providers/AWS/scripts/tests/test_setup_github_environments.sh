@@ -106,7 +106,7 @@ case "$1 $2" in
                 # The UI-publish role trusts publish_ui.yml at the apply role's branch,
                 # unless STUB_UI_REF says otherwise.
                 if [[ "${name}" == *Apply* ]]; then echo "${STUB_APPLY_REF}"
-                elif [[ "${name}" == *UiPublish* ]]; then echo "${STUB_UI_REF:-${STUB_APPLY_REF/terraform_apply.yml/publish_ui.yml}}"
+                elif [[ "${name}" == *UiPublish* || "${name}" == *DemoPublish* ]]; then echo "${STUB_UI_REF:-${STUB_APPLY_REF/terraform_apply.yml/publish_ui.yml}}"
                 else echo "None"; fi ;;
             *) echo "unexpected get-role query" >&2; exit 98 ;;
         esac ;;
@@ -349,8 +349,28 @@ expect_mentions "- AWS_COGNITO_USER_POOL_ID" "and so are the Cognito ids"
 expect_mentions "BLACKLISTED_MODEL_FILES" "an optional UI input is listed as absent"
 expect_silent_about "- BLACKLISTED_MODEL_FILES" "but not as required"
 
-run_case "without the UI-publish role the UI inputs are not asked for" \
-    STUB_MISSING_ROLES="AICentre-FLIPUiPublishRole" -- \
+# FLIP#2012: the demo-publish role, read from IAM the same way.
+run_case "the demo-publish role is wired" -- \
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip
+expect_rc 0 "succeeds"
+expect_mentions "the demo-publish role and its trust policy check out" "the role is checked"
+expect_mentions "- DEMO_SITE_URL" "its inputs are required"
+if grep -A1 '^gh variable set TF_DEMO_PUBLISH_ROLE_ARN ' "${CALLS}" | grep -qF 'role/AICentre-FLIPDemoPublishRole-ARNMARKER'; then
+    ok "its ARN is set from IAM, not from the env file"
+else
+    no "its ARN is set from IAM, not from the env file" "$(grep -A1 'TF_DEMO_PUBLISH_ROLE_ARN' "${CALLS}")"
+fi
+
+run_case "without the demo-publish role the run still succeeds" \
+    STUB_MISSING_ROLES="AICentre-FLIPDemoPublishRole" -- \
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
+expect_rc 0 "dry run succeeds"
+expect_mentions "CI will not publish the demo" "the missing role is reported, not fatal"
+expect_silent_about "TF_DEMO_PUBLISH_ROLE_ARN" "no role ARN is set"
+expect_silent_about "- FLIP_DEMO_BUCKET_NAME" "and the demo inputs are not required"
+
+run_case "without either publish role the UI inputs are not asked for" \
+    STUB_MISSING_ROLES="AICentre-FLIPUiPublishRole AICentre-FLIPDemoPublishRole" -- \
     --hub stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
 expect_rc 0 "dry run succeeds"
 expect_mentions "CI will not publish the UI" "the missing role is reported, not fatal"

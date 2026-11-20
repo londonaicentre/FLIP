@@ -23,9 +23,10 @@
 # The trust pins the reusable workflow, not its callers. For a job inside a
 # reusable workflow GitHub sets job_workflow_ref to the *called* file, so
 # terraform_apply.yml's `ui` job presents `publish_ui.yml@refs/heads/<branch>`,
-# and a pull request presents `@refs/pull/<n>/merge` and is denied.
+# and a pull request presents `@refs/pull/<n>/merge` and is denied. The
+# demo-publish role (iam_demo_publish.tf) trusts the same workflow.
 data "aws_iam_policy_document" "ui_publish_assume_role" {
-  count = local.ui_publish ? 1 : 0
+  count = local.ui_publish || local.demo_publish ? 1 : 0
 
   statement {
     effect  = "Allow"
@@ -86,23 +87,6 @@ data "aws_iam_policy_document" "ui_publish" {
       "s3:PutObject",
     ]
     resources = ["${local.ui_bucket_arn}/*"]
-  }
-
-  # The demo shares the app's origin, so only an estate whose edge serves
-  # /demo/* under the demo's own policy may publish it (FLIP#2008). Everywhere
-  # else nothing this role does can put a demo in, or take one out of, demo/.
-  dynamic "statement" {
-    for_each = var.public_demo ? [] : [1]
-
-    content {
-      sid    = "NeverTouchThePublicDemo"
-      effect = "Deny"
-      actions = [
-        "s3:DeleteObject",
-        "s3:PutObject",
-      ]
-      resources = ["${local.ui_bucket_arn}/demo/*"]
-    }
   }
 }
 

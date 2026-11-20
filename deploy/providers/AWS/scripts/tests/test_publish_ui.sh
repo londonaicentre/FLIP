@@ -141,26 +141,11 @@ else
     no "writes index.html after the bundles it references" "calls: ${CALLS}"
 fi
 
-# 1b. A build that carries the public demo publishes it in the same sync (FLIP#2008).
-fixture
-mkdir -p "${DIST}/demo/js" "${DIST}/demo/static"
-printf '<!doctype html>\n' >"${DIST}/demo/index.html"
-printf 'window.AWS_BASE_URL = "/api";\n' >"${DIST}/demo/js/window.js"
-printf 'console.log(2)\n' >"${DIST}/demo/static/index-def456.js"
-run_publish "a build with the public demo" "${DIST}" flip-ui-bucket
-expect_rc 0 "succeeds"
-expect_no_call '--exclude demo/*' "lets the sync reach demo/"
-expect_call '--exclude index.html --exclude js/window.js --exclude demo/index.html --exclude demo/js/window.js' \
-    "keeps all four entry points out of the sync"
-expect_call "s3 cp ${DIST}/demo/index.html s3://flip-ui-bucket/demo/index.html --cache-control no-cache, no-store, must-revalidate --content-type text/html; charset=utf-8" \
-    "writes demo/index.html uncached, as HTML"
-expect_call "s3 cp ${DIST}/demo/js/window.js s3://flip-ui-bucket/demo/js/window.js --cache-control no-cache, no-store, must-revalidate --content-type application/javascript; charset=utf-8" \
-    "writes demo/js/window.js uncached, as JavaScript"
-
+# 1b. The demo is published to its own bucket (FLIP#2012), never beside the app.
 fixture
 mkdir -p "${DIST}/demo/js"
-printf 'window.AWS_BASE_URL = "/api";\n' >"${DIST}/demo/js/window.js"
-run_publish "the demo has no index.html" "${DIST}" flip-ui-bucket
+printf '<!doctype html>\n' >"${DIST}/demo/index.html"
+run_publish "a build that carries a demo/" "${DIST}" flip-ui-bucket
 expect_rc 1 "fails"
 expect_no_call "s3" "publishes nothing"
 

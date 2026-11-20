@@ -69,6 +69,8 @@ module "flip_stag_terraform_ci" {
 - **`environment`** — `stag` or `prod`. Only staging's plan role accepts pull-request merge refs.
 - **`ui_bucket_name`** — the FLIP root's `FLIP_UI_BUCKET_NAME`. Setting it creates the UI-publish role CI uses to
   ship flip-ui after an apply; left empty, the module creates no such role.
+- **`demo_bucket_name`** — the FLIP root's `FLIP_DEMO_BUCKET_NAME`. Setting it creates the demo-publish role CI uses
+  to ship the public demo to its own bucket (FLIP#2012); left empty, the module creates no such role.
 - **`create_permissions_boundary` / `permissions_boundary_name`** — by default the module declares
   `AICentre-FLIPTerraformBoundary`. Where the platform already deploys a boundary and requires it on every role, as an
   AWS Landing Zone Accelerator estate does, set `create_permissions_boundary = false` and name that policy instead: the
@@ -92,9 +94,11 @@ Least privilege, with each grant explained where it is declared:
 - **UI-publish role** ([`iam_ui_publish.tf`](iam_ui_publish.tf), FLIP#1186): created only when `ui_bucket_name` is
   set. Trusts the reusable `publish_ui.yml` at `apply_branch` (a reusable workflow's jobs present the called file as
   `job_workflow_ref`). `s3:ListBucket` on the UI bucket, `Get`/`Put`/`DeleteObject` on its objects, and nothing else.
-  Writes under `demo/`, the public demo, are denied unless `public_demo` is set (FLIP#2008): set it only once the edge
-  serves `/demo/*` under the demo's own policy, together with the environment's `PUBLIC_DEMO`. Its ARN, the
-  `ui_publish_role_arn` output, goes in the environment variable `TF_UI_PUBLISH_ROLE_ARN`.
+  Its ARN, the `ui_publish_role_arn` output, goes in the environment variable `TF_UI_PUBLISH_ROLE_ARN`.
+- **Demo-publish role** ([`iam_demo_publish.tf`](iam_demo_publish.tf), FLIP#2012): created only when `demo_bucket_name`
+  is set. The public demo has its own host and bucket, so its publish has its own role, with the UI-publish role's
+  trust and the same three object actions on the demo bucket only. Its ARN, the `demo_publish_role_arn` output, goes
+  in `TF_DEMO_PUBLISH_ROLE_ARN`.
 - **Boundary** ([`boundary.tf`](boundary.tf)): allow everything, deny identity management, Organizations and Account.
 
 `tests/test_terraform_ci_bootstrap.py` holds `apply_service_prefixes` equal to the services the FLIP root's resource

@@ -16,7 +16,7 @@ import { checkViteE2e } from "./scripts/check-build-flags.mjs";
 import iconStubPlugin from "./test/iconStubPlugin";
 
 // https://vitejs.dev/config/
-export default defineConfig(({ mode, command, isPreview }) => {
+export default defineConfig(({ mode, command }) => {
 
     const env = loadEnv(mode, process.cwd());
 
@@ -30,11 +30,10 @@ export default defineConfig(({ mode, command, isPreview }) => {
     }
 
     // Public demo build (`vite --mode demo` / `vite build --mode demo`).
-    // The deployable build (and `vite preview`, which serves that build) lives
-    // under /demo/; the dev server stays at "/" so local eyeballing needs
-    // no path juggling.
+    // It is served at the root of its own origin (FLIP#2012), so its base is
+    // "/" like the real app's; it builds into dist-demo/ (and `vite preview`
+    // serves it from there) so the real build's dist/ never carries it.
     const isDemo = mode === "demo";
-    const demoBase = isDemo && (command === "build" || isPreview);
 
     // Belt-and-braces guard for `vite build` invoked directly (bypassing
     // the npm prebuild hook in package.json). Vite inlines VITE_LOCAL at
@@ -79,7 +78,7 @@ export default defineConfig(({ mode, command, isPreview }) => {
     );
 
     return {
-        base: demoBase ? "/demo/" : "/",
+        base: "/",
         plugins: [
             progress(),
             vue(
@@ -162,12 +161,13 @@ export default defineConfig(({ mode, command, isPreview }) => {
             "import.meta.env.VITE_DEMO": JSON.stringify(isDemo ? "true" : "false")
         },
         build: {
+            outDir: isDemo ? "dist-demo" : "dist",
             sourcemap: false,
             chunkSizeWarningLimit: 1024,
-            // Demo build only: the bundle's own JS/CSS/fonts live under /demo/static/*
-            // rather than Vite's default "assets", keeping the SPA's files apart
-            // from any other path a CloudFront behaviour may claim under the demo
-            // prefix. Non-demo builds keep Vite's default.
+            // Demo build only: its JS/CSS/fonts live under static/ rather than
+            // Vite's default "assets", so a demo bundle is told apart from the
+            // real UI's at a glance (CI checks for it). Non-demo builds keep
+            // Vite's default.
             assetsDir: isDemo ? "static" : "assets",
             rolldownOptions: {
                 output: {

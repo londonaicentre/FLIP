@@ -36,3 +36,8 @@ state_bucket_name = "your-org-flip-terraform-state-stag"
 # Optional: let CI publish flip-ui after each apply (FLIP#1186). The FLIP root's
 # FLIP_UI_BUCKET_NAME. Set the ui_publish_role_arn output as TF_UI_PUBLISH_ROLE_ARN.
 # ui_bucket_name = "your-org-flip-ui-stag"
+
+# Optional: let CI publish the public demo to its own bucket (FLIP#2012). The FLIP
+# root's FLIP_DEMO_BUCKET_NAME. Set the demo_publish_role_arn output as
+# TF_DEMO_PUBLISH_ROLE_ARN.
+# demo_bucket_name = "your-org-flip-demo-stag"

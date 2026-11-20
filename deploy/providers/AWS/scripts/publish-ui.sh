@@ -12,15 +12,15 @@
 # limitations under the License.
 #
 
-# Publish a built flip-ui (`npm run build:deploy`, which writes dist/js/window.js) to the UI bucket.
-# `make deploy-ui` and the CI publish (.github/workflows/publish_ui.yml, FLIP#1186) both run it, so the
-# cache-control split lives in one place:
+# Publish a built flip-ui to its bucket: the app (`npm run build:deploy`, dist/) to the UI bucket, or the
+# public demo (`npm run build:demo`, dist-demo/, FLIP#2012) to its own. `make deploy-ui`, `make deploy-demo`
+# and the CI publish (.github/workflows/publish_ui.yml, FLIP#1186) all run it, so the cache-control split
+# lives in one place:
 #
 #   * hashed bundles are content-addressed, so they are cached for a year;
 #   * index.html and js/window.js reference those bundles and must never be cached;
-#   * a build that carries the public demo under demo/ (`npm run build:deploy:with-demo`, FLIP#2008)
-#     publishes it in the same sync, its own entry points uncached too;
-#   * --delete removes the previous build. A build without demo/ leaves the bucket's demo/ alone.
+#   * --delete removes the previous build, except under demo/: until the old /demo/ URLs redirect to the
+#     demo's own host, the UI bucket still holds the last demo published there (FLIP#2012).
 #
 # Nothing is invalidated: the networking account's edge serves the bucket (FLIP#749), and the no-cache
 # objects are re-fetched anyway.
@@ -40,24 +40,19 @@ fail() {
 }
 
 entries=(index.html js/window.js)
-excludes=(--exclude "index.html" --exclude "js/window.js")
-if [[ -d "${dist}/demo" ]]; then
-    entries+=(demo/index.html demo/js/window.js)
-    excludes+=(--exclude "demo/index.html" --exclude "demo/js/window.js")
-else
-    excludes+=(--exclude "demo/*")
-fi
 
 # Without these the sync would publish a site whose entry point is the previous build's, or none.
 for entry in "${entries[@]}"; do
-    [[ -f "${dist}/${entry}" ]] || fail "${dist}/${entry} is missing: run npm run build:deploy first."
+    [[ -f "${dist}/${entry}" ]] || fail "${dist}/${entry} is missing: run the build first."
 done
+# The demo is never published beside the app (FLIP#2012).
+[[ ! -e "${dist}/demo" ]] || fail "${dist}/demo exists: the demo is published to its own bucket, never under the app."
 
 echo "📦 Syncing ${dist} to s3://${bucket}/ ..."
 aws s3 sync "${dist}/" "s3://${bucket}/" \
     --delete \
     --cache-control "public, max-age=31536000, immutable" \
-    "${excludes[@]}"
+    --exclude "index.html" --exclude "js/window.js" --exclude "demo/*"
 for entry in "${entries[@]}"; do
     case "${entry}" in
         *.html) type="text/html; charset=utf-8" ;;
@@ -68,4 +63,4 @@ for entry in "${entries[@]}"; do
         --content-type "${type}"
 done
 
-echo "✅ flip-ui published to s3://${bucket}/."
+echo "✅ ${dist} published to s3://${bucket}/."

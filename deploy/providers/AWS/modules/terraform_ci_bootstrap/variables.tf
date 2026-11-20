@@ -299,12 +299,6 @@ variable "ui_bucket_name" {
   default     = ""
 }
 
-variable "public_demo" {
-  description = "Let the UI-publish role write the public demo under demo/ (FLIP#2008). Set it, with the environment's PUBLIC_DEMO, only once the edge serves /demo/* under the demo's own policy; while false the role is denied every write there."
-  type        = bool
-  default     = false
-}
-
 variable "ui_publish_workflow_file" {
   description = "Reusable workflow permitted to assume the UI-publish role."
   type        = string
@@ -315,6 +309,19 @@ variable "ui_publish_role_name" {
   description = "Name of the UI-publish role."
   type        = string
   default     = "AICentre-FLIPUiPublishRole"
+}
+
+# The demo-publish role (FLIP#2012). Off unless the bucket is named.
+variable "demo_bucket_name" {
+  description = "Name of the public demo's bucket (the FLIP root's FLIP_DEMO_BUCKET_NAME). Setting it creates the demo-publish role, scoped to this bucket; empty creates none."
+  type        = string
+  default     = ""
+}
+
+variable "demo_publish_role_name" {
+  description = "Name of the demo-publish role."
+  type        = string
+  default     = "AICentre-FLIPDemoPublishRole"
 }
 
 variable "manage_state_bucket" {

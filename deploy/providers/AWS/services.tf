@@ -92,6 +92,60 @@ module "flip_app_bundles_bucket" {
 }
 
 ############################
+# Public demo bucket (FLIP#2012)
+############################
+#
+# The public demo is served from its own host, by its own distribution in the
+# networking account, so the browser's same-origin policy keeps it away from the
+# real app's tokens. Created whenever FLIP_DEMO_BUCKET_NAME is set.
+#
+# Two deliberate departures from the sibling buckets:
+#
+#   * AES256, not the app CMK. CloudFront in ANOTHER account reads it through
+#     OAC, and a cross-account service principal cannot decrypt with this
+#     account's CMK without a key-policy grant. aws_s3_bucket.flip_ui is on
+#     AES256 for the same reason. The demo is public: nothing to protect.
+#   * An extra bucket-policy statement rather than a second policy resource:
+#     S3 allows one policy per bucket, and the module already owns it.
+#
+# The grant is read-only with no s3:ListBucket, so a missing key 403s rather
+# than listing the bucket; the distribution's own function serves index.html for
+# the SPA's routes. AWS:SourceArn is empty until that distribution exists, which
+# matches nothing, so the grant is closed until the second apply fills it in.
+locals {
+  demo_enabled = var.FLIP_DEMO_BUCKET_NAME != ""
+}
+
+module "flip_demo_bucket" {
+  count = local.demo_enabled ? 1 : 0
+
+  source                = "./modules/flip_s3_bucket"
+  bucket_name           = var.FLIP_DEMO_BUCKET_NAME
+  logging_target_bucket = local.access_logs_bucket_name
+  sse_algorithm         = "AES256"
+
+  extra_bucket_policy_statements_json = jsonencode([{
+    Sid       = "AllowCloudFrontOACDemo"
+    Effect    = "Allow"
+    Principal = { Service = "cloudfront.amazonaws.com" }
+    Action    = "s3:GetObject"
+    Resource  = "arn:aws:s3:::${var.FLIP_DEMO_BUCKET_NAME}/*"
+    Condition = {
+      StringEquals = {
+        "AWS:SourceArn" = var.lza_web_demo_distribution_arn
+      }
+    }
+  }])
+
+  depends_on = [aws_s3_bucket_acl.flip_access_logs]
+}
+
+output "FlipDemoBucketName" {
+  description = "S3 bucket holding the public demo (FLIP#2012), or null when FLIP_DEMO_BUCKET_NAME is empty"
+  value       = try(module.flip_demo_bucket[0].bucket_id, null)
+}
+
+############################
 # AI Centre S3 Bucket
 ############################
 

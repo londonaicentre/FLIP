@@ -229,6 +229,8 @@ endif
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
 export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
 export TF_VAR_FLIP_UI_BUCKET_NAME=${FLIP_UI_BUCKET_NAME}
+# Optional: the public demo's own bucket (FLIP#2012). Unset => no demo bucket.
+export TF_VAR_FLIP_DEMO_BUCKET_NAME=${FLIP_DEMO_BUCKET_NAME}
 # flip-api / fl-* env vars consumed by the ECS task definitions (locals.tf) —
 # the canonical definition of production container config (#936). The prod
 # compose files mirror a subset as the local prod-image harness only; the hub
@@ -691,10 +693,8 @@ deploy-ui: ## Build flip-ui from the working tree and publish it to the UI bucke
 	@echo "🖼️  Building flip-ui from working tree..."
 	@# Uses build:deploy (vite build only); test_flip_ui.yml runs the vue-tsc
 	@# typecheck. Its postbuild:deploy hook writes dist/js/window.js from $(MAIN_ENV_FILE), which
-	@# this Makefile exports. PUBLIC_DEMO=true in that file attests the edge's /demo/*
-	@# behaviour (aicentre-lza-iac) and adds the public demo under dist/demo/ (FLIP#2008).
-	@cd ../../../flip-ui && npm ci && \
-		if [ "$$PUBLIC_DEMO" = "true" ]; then npm run build:deploy:with-demo; else npm run build:deploy; fi
+	@# this Makefile exports. The public demo is published by deploy-demo, never here.
+	@cd ../../../flip-ui && npm ci && npm run build:deploy
 	@# The sync and its cache-control split are scripts/publish-ui.sh, shared with
 	@# .github/workflows/publish_ui.yml. There is no workload distribution to
 	@# invalidate (the networking account's edge distribution serves the bucket) and
@@ -704,6 +704,17 @@ deploy-ui: ## Build flip-ui from the working tree and publish it to the UI bucke
 	@UI_BUCKET=$$($(_AWS_ENV) terraform output -raw FlipUiBucketName); \
 	[ -n "$$UI_BUCKET" ] || { echo "❌ Terraform output FlipUiBucketName is empty"; exit 1; }; \
 	$(_AWS_ENV) ./scripts/publish-ui.sh ../../../flip-ui/dist "$$UI_BUCKET"
+
+.PHONY: deploy-demo
+deploy-demo: ## Build the public demo from the working tree and publish it to its own bucket (CI does this after every apply, FLIP#2012)
+	@echo "🖼️  Building the public demo from working tree..."
+	@# build:demo reads no environment: it writes dist-demo/js/window.js itself and
+	@# checks dist-demo for unscrubbed fixtures. The demo has its own host and
+	@# bucket, so the browser keeps it away from the app's origin and tokens.
+	@cd ../../../flip-ui && npm ci && npm run build:demo
+	@DEMO_BUCKET=$$($(_AWS_ENV) terraform output -raw FlipDemoBucketName 2>/dev/null); \
+	[ -n "$$DEMO_BUCKET" ] || { echo "❌ Terraform output FlipDemoBucketName is empty: set FLIP_DEMO_BUCKET_NAME and apply first."; exit 1; }; \
+	$(_AWS_ENV) ./scripts/publish-ui.sh ../../../flip-ui/dist-demo "$$DEMO_BUCKET"
 
 # Identity of the trust kit a hub-admin target acts on — a trust CODE that selects its kit
 # file trust/.env.<KIT>.<env>. REQUIRED on the command line (no default, so a prod op can't

@@ -56,6 +56,12 @@ variable "lza_web_edge_distribution_arn" {
   default     = ""
 }
 
+variable "lza_web_demo_distribution_arn" {
+  description = "ARN of the networking account's CloudFront distribution for the public demo's own host (FLIP#2012), granted s3:GetObject on the demo bucket via cross-account OAC. Empty until that distribution exists: the grant then matches no distribution."
+  type        = string
+  default     = ""
+}
+
 # POSTGRES_USER / POSTGRES_DB are configuration, not credentials, and are treated
 # as such consistently (FLIP#962): NOT `sensitive` here, and stored as GitHub
 # environment *variables* rather than environment secrets.
@@ -294,6 +300,21 @@ variable "AICENTRE_BUCKET_NAME" {
 variable "FLIP_UI_BUCKET_NAME" {
   description = "S3 bucket name for flip-ui static assets served by CloudFront. Must be globally unique."
   type        = string
+}
+
+variable "FLIP_DEMO_BUCKET_NAME" {
+  description = <<-EOT
+    S3 bucket holding the public demo (FLIP#2012), a second build of flip-ui that
+    runs on fixtures with no backend. It is served from its own host by its own
+    distribution in the networking account (aicentre-lza-iac), so the browser keeps
+    it away from the real app's origin and tokens. Created by
+    module.flip_demo_bucket (services.tf) with the cross-account OAC grant to that
+    distribution. Leave empty (the default) for no demo. Clearing it on an estate
+    that has the bucket proposes a destroy, which prevent_destroy turns into an
+    apply failure.
+  EOT
+  type        = string
+  default     = ""
 }
 
 variable "flip_user_pool_name" {

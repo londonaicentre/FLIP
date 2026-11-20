@@ -278,6 +278,18 @@ elif [[ "${out}" != *NoSuchEntity* ]]; then
     die "could not read the role ${TF_UI_PUBLISH_ROLE_NAME}: $(tail -1 <<<"${out}")"
 fi
 
+# The demo-publish role (FLIP#2012) is optional the same way: the module creates
+# it only when its caller names the demo bucket. It trusts the same workflow.
+TF_DEMO_PUBLISH_ROLE_NAME="${TF_DEMO_PUBLISH_ROLE_NAME:-AICentre-FLIPDemoPublishRole}"
+DEMO_ARN=""
+if out="$(aws_q iam get-role --role-name "${TF_DEMO_PUBLISH_ROLE_NAME}" --query Role.Arn --output text 2>&1)"; then
+    DEMO_ARN="${out}"
+    expect_trust "${TF_DEMO_PUBLISH_ROLE_NAME}" StringEquals sub "${EXPECTED_SUB}"
+    expect_trust "${TF_DEMO_PUBLISH_ROLE_NAME}" StringEquals job_workflow_ref "${EXPECTED_UI_REF}"
+elif [[ "${out}" != *NoSuchEntity* ]]; then
+    die "could not read the role ${TF_DEMO_PUBLISH_ROLE_NAME}: $(tail -1 <<<"${out}")"
+fi
+
 # The FLIP root attaches this boundary to every role it owns; an apply against an
 # account without it fails every role update with NoSuchEntity.
 boundary_arn="arn:${PARTITION}:iam::${ACCOUNT}:policy/${TF_BOUNDARY_NAME}"
@@ -293,6 +305,11 @@ if [[ -n "${UI_ARN}" ]]; then
     echo "   the UI-publish role and its trust policy check out"
 else
     echo "   no ${TF_UI_PUBLISH_ROLE_NAME}: CI will not publish the UI (set ui_bucket_name on the bootstrap module)"
+fi
+if [[ -n "${DEMO_ARN}" ]]; then
+    echo "   the demo-publish role and its trust policy check out"
+else
+    echo "   no ${TF_DEMO_PUBLISH_ROLE_NAME}: CI will not publish the demo (set demo_bucket_name on the bootstrap module)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -383,6 +400,10 @@ if [[ -n "${UI_ARN}" ]]; then
     set_gh variable TF_UI_PUBLISH_ROLE_ARN "${UI_ARN}"
     echo "   set TF_UI_PUBLISH_ROLE_ARN"
 fi
+if [[ -n "${DEMO_ARN}" ]]; then
+    set_gh variable TF_DEMO_PUBLISH_ROLE_ARN "${DEMO_ARN}"
+    echo "   set TF_DEMO_PUBLISH_ROLE_ARN"
+fi
 
 # ---------------------------------------------------------------------------
 # 3. Everything the workflows dereference
@@ -402,10 +423,10 @@ read_lines SECRET_KEYS < <(
     grep -oE '^[[:space:]]+[A-Z][A-Z0-9_]*:[[:space:]]+\$\{\{[[:space:]]*secrets\.[A-Z0-9_]+' "${PLAN_WORKFLOW}" |
         sed -E 's/.*secrets\.//' | sort -u
 )
-# The UI publish's variables count only where its role exists; elsewhere nothing
-# reads them.
+# The UI publish's variables count only where one of its roles exists; elsewhere
+# nothing reads them.
 VARIABLE_SOURCES=("${PLAN_WORKFLOW}")
-[[ -n "${UI_ARN}" ]] && VARIABLE_SOURCES+=("${UI_WORKFLOW}")
+[[ -n "${UI_ARN}" || -n "${DEMO_ARN}" ]] && VARIABLE_SOURCES+=("${UI_WORKFLOW}")
 read_lines VARIABLE_KEYS < <(
     grep -ohE '^[[:space:]]+[A-Z][A-Z0-9_]*:[[:space:]]+\$\{\{[[:space:]]*vars\.[A-Z0-9_]+' "${VARIABLE_SOURCES[@]}" |
         sed -E 's/.*vars\.//' | sort -u
@@ -459,6 +480,15 @@ if [[ -n "${UI_ARN}" ]]; then
     ((${#UI_KEYS[@]} > 0)) || die "could not read the window.js inputs from ${UI_WORKFLOW}"
     REQUIRED_KEYS+=("${UI_KEYS[@]}")
 fi
+# And the demo publish's, on its `for demo_key in …` line (FLIP#2012).
+if [[ -n "${DEMO_ARN}" ]]; then
+    read_lines DEMO_KEYS < <(
+        grep -oE '^[[:space:]]+for demo_key in [A-Z0-9_ ]+; do' "${UI_WORKFLOW}" | head -1 |
+            sed -E 's/^[[:space:]]+for demo_key in //; s/; do$//' | tr ' ' '\n' | sed '/^$/d'
+    )
+    ((${#DEMO_KEYS[@]} > 0)) || die "could not read the demo publish's inputs from ${UI_WORKFLOW}"
+    REQUIRED_KEYS+=("${DEMO_KEYS[@]}")
+fi
 
 SET=()
 MISSING=()
@@ -467,7 +497,7 @@ UNSET_HERE=()
 for key in "${SECRET_KEYS[@]}"; do set_one secret "${key}"; done
 for key in ${VARIABLE_KEYS[@]+"${VARIABLE_KEYS[@]}"}; do
     # Written in step 2 from the flag and IAM, never from the env file.
-    [[ "${key}" == "TF_HUB" || "${key}" == "TF_UI_PUBLISH_ROLE_ARN" ]] && continue
+    [[ "${key}" == "TF_HUB" || "${key}" == "TF_UI_PUBLISH_ROLE_ARN" || "${key}" == "TF_DEMO_PUBLISH_ROLE_ARN" ]] && continue
     set_one variable "${key}"
 done
 

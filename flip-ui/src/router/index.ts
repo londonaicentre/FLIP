@@ -32,8 +32,8 @@ import { authCheck } from "@/utils/auth";
 const CHUNK_RELOAD_KEY = "flip:chunk-reload";
 
 const router = createRouter({
-    // BASE_URL is "/" for normal/dev builds and "/demo/" for the demo build
-    // (vite.config sets `base`), so deep links resolve under the hosting prefix.
+    // BASE_URL is vite.config's `base` ("/" for every build, the demo included:
+    // it has its own origin, FLIP#2012), so deep links resolve under it.
     history: createWebHistory(import.meta.env.BASE_URL),
     routes,
     scrollBehavior(to) {
