@@ -80,6 +80,27 @@ class Decide(unittest.TestCase):
     def test_already_current(self):
         self.assertEqual(agent.decide(policy(target_release="v1.2.0"), CLEAN, NOW).action, "SKIP")
 
+    def test_never_moves_to_a_release_candidate(self):
+        d = agent.decide(policy(target_release="v1.3.0-rc.1"), CLEAN, NOW)
+        self.assertEqual(d.action, "SKIP")
+        self.assertIn("not a stable release", d.reason)
+
+    def test_never_follows_the_hub_down(self):
+        for target in ("v1.1.9", "v1.0.0", "v0.9.0"):
+            d = agent.decide(policy(target_release=target), CLEAN, NOW)
+            self.assertEqual(d.action, "SKIP", target)
+            self.assertIn("older than v1.2.0", d.reason)
+
+    def test_moves_off_a_release_candidate_to_its_release(self):
+        on_rc = agent.Local(current_release="v1.3.0-rc.2", checkout_clean=True, unsupported=False, health=HEALTHY)
+        self.assertEqual(agent.decide(policy(target_release="v1.3.0"), on_rc, NOW).action, "UPGRADE")
+
+    def test_release_key_orders_versions_numerically(self):
+        self.assertLess(agent.release_key("v1.9.0"), agent.release_key("v1.10.0"))
+        self.assertLess(agent.release_key("v1.3.0-rc.1"), agent.release_key("v1.3.0"))
+        self.assertIsNone(agent.release_key("sha-abc1234"))
+        self.assertIsNone(agent.release_key(None))
+
     def test_a_failed_release_is_not_retried(self):
         d = agent.decide(policy(failed_release="v1.3.0"), CLEAN, NOW)
         self.assertEqual(d.action, "SKIP")
