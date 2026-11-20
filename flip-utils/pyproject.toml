@@ -19,7 +19,7 @@ name = "flip-utils"
 dynamic = ["version"]
 description = "FLIP - Federated Learning and Interoperability Platform library"
 readme = {file = "docs/overview.rst", content-type = "text/x-rst"}
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 license = "Apache-2.0"
 authors = [
     { name = "AI Centre for Value Based Healthcare" },
@@ -43,7 +43,7 @@ classifiers = [
     "Intended Audience :: Healthcare Industry",
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
@@ -157,6 +157,12 @@ constraint-dependencies = [
 # operators must meet the documented driver floor.
 #
 # Mirrors the --extra-index-url flag in the flower fl-base Dockerfile.
+#
+# The index publishes no sha256 for any of torch 2.13.0+cu130's cp313 wheels (only cp312 has them),
+# so uv.lock carries the three by hand (Linux x86_64 and aarch64, Windows), each the digest of the
+# wheel fetched twice from download-r2.pytorch.org (FLIP#944). Without them the flower fl-base fails
+# `pip --require-hashes` and the nvflare fl-base installs torch unverified. `uv lock` keeps
+# hand-added hashes; tests/unit/test_lock_hashes.py fails if a relock leaves a wheel without one.
 [[tool.uv.index]]
 name = "pytorch-cu130"
 url = "https://download.pytorch.org/whl/cu130"
@@ -220,7 +226,7 @@ testpaths = ["tests/unit"]
 norecursedirs = ["fl-services", "fl-base", ".venv", "workspace", ".test_*"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false

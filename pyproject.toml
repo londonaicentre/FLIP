@@ -17,7 +17,7 @@ readme = "README.md"
 authors = [
     { name = "R. Garcia-Dias", email = "rafaelagd@gmail.com" }
 ]
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.13,<3.14"
 dependencies = []
 
 [build-system]
@@ -35,7 +35,7 @@ filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py312"
+target-version = "py313"
 
 [tool.ruff.lint]
 preview = true

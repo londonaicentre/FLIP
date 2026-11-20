@@ -6,7 +6,7 @@
   "schema-version": "1.0",
   "info-url": "https://github.com/londonaicentre/FLIP/tree/develop/trust/xnat/export-mask",
   "type": "docker",
-  "image": "ghcr.io/londonaicentre/xnat-export-mask:1.0.0",
+  "image": "ghcr.io/londonaicentre/xnat-export-mask:1.0.1",
   "network": "#PLACEHOLDER_NETWORK#",
   "command-line": "python /app/src/export_mask.py -i /segmentation-in -o /output --experiment #SESSION# --assessor #ASSESSOR#",
   "mounts": [

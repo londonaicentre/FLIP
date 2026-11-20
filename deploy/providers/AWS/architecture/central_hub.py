@@ -34,7 +34,7 @@ Two consumers render them:
 Graphviz is not installed on the dev hosts; without ``dot`` this module refuses to render rather than
 producing an empty file. Run it in docker instead::
 
-    docker run --rm -v "$PWD:/work" -w /work/deploy/providers/AWS python:3.12-slim sh -c \\
+    docker run --rm -v "$PWD:/work" -w /work/deploy/providers/AWS python:3.13-slim sh -c \\
       "apt-get update -qq && apt-get install -y -qq graphviz >/dev/null && \\
        pip -q install diagrams && python -m architecture.central_hub --out docs"
 """

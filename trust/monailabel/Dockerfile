@@ -16,6 +16,10 @@
 # obvious alternative — nvcr.io/nvidia/pytorch — is ~20GB because it bundles the full CUDA
 # toolkit, TensorRT, DALI, Apex and JupyterLab, none of which this server runs; the cu128
 # wheels carry the CUDA runtime libraries MONAI Label actually needs.
+#
+# Python stays 3.12 while the rest of FLIP runs 3.13 (FLIP#944): constraints.txt pins numpy 1.26.4
+# and numpymaxflow 0.0.7, neither of which publishes a 3.13 wheel. Moving this image means
+# re-resolving constraints.txt on 3.13, as its header describes. Nothing shares this interpreter.
 FROM python:3.12-slim-bookworm
 
 ARG DEBIAN_FRONTEND=noninteractive

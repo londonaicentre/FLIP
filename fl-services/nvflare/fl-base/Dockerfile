@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-FROM python:3.12-slim-bookworm AS base
+FROM python:3.13-slim-bookworm AS base
 
 ARG LOCAL_DEV=false
 # Set log level
