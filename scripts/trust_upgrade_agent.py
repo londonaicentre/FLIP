@@ -103,6 +103,18 @@ ROLLBACK_VERIFY_TIMEOUT_S = 300
 LEASE_RENEW_EVERY_S = 20 * 60
 # Same shape the hub and flip-ui accept as a comparable release identity.
 RELEASE_TAG = re.compile(r"^v\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$")
+# What an unattended upgrade may move TO: a stable release only, whatever the hub offers.
+STABLE_RELEASE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+_VERSION = re.compile(r"^v(\d+)\.(\d+)\.(\d+)(.*)$")
+
+
+def release_key(tag: str | None) -> tuple[int, int, int, int] | None:
+    """Sortable key for a ``vX.Y.Z[suffix]`` tag; a pre-release sorts below its release. None if unparseable."""
+    m = _VERSION.match(tag or "")
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2)), int(m.group(3)), 0 if m.group(4) else 1
+
 
 # Why a tick did nothing; also what is reported for the blockers only this host can see.
 LOCAL_MODIFICATIONS = "LOCAL_MODIFICATIONS"
@@ -194,8 +206,15 @@ def decide(policy: dict, local: Local, now_utc: datetime) -> Decision:
     target = policy.get("target_release")
     if not target or not RELEASE_TAG.match(target):
         return Decision("SKIP", "the hub runs no release tag to move to")
+    if not STABLE_RELEASE.match(target):
+        return Decision("SKIP", f"{target} is not a stable release; only vX.Y.Z is applied unattended")
     if target == local.current_release:
         return Decision("SKIP", f"already on {target}")
+    # Never follow the hub down: a hub rollback must not walk every opted-in site back across
+    # migrations it has already run. Moving down is an operator's decision.
+    here, there = release_key(local.current_release), release_key(target)
+    if here is not None and there is not None and there < here:
+        return Decision("SKIP", f"{target} is older than {local.current_release}; not moving a site down")
     if policy.get("failed_release") == target:
         return Decision("SKIP", f"{target} failed earlier; an operator must clear it in the portal")
     if local.unsupported:

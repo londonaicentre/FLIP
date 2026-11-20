@@ -616,6 +616,43 @@ def is_client_available(client_name: str, client_statuses: list[IClientStatus]) 
     return False
 
 
+FL_API_PROBE_TIMEOUT_SECONDS = 10.0
+
+
+def fl_api_is_serving(endpoint: str, fl_backend: FLBackend) -> bool:
+    """
+    Whether the net's FL API can take a job now (FLIP#1962).
+
+    NVFLARE's FL API only opens its listener once its startup has connected to the FL server, so any answer from its
+    unauthenticated ``/health/`` means it is serving. Flower's listens at once and its ``/health`` looks no further than
+    itself, so for Flower the probe asks the FL API for its SuperLink's status and takes ``STOPPED`` as not serving.
+
+    Only a connection that fails or no answer in time means not serving. Anything else (an error status, a malformed
+    endpoint) counts as serving, so a job handed to the net fails on it as before rather than waiting.
+
+    Args:
+        endpoint (str): The endpoint of the FL API service.
+        fl_backend (FLBackend): The net's backend.
+
+    Returns:
+        bool: False when the FL API (or, on Flower, its SuperLink) is not answering; True otherwise.
+    """
+    try:
+        if fl_backend == FLBackend.FLOWER:
+            reply = http_get(f"{endpoint}/check_server_status", timeout=FL_API_PROBE_TIMEOUT_SECONDS)
+            if isinstance(reply, dict) and reply.get("status") == "STOPPED":
+                logger.warning(f"The FL API at {endpoint} answers, but its SuperLink is not running")
+                return False
+        else:
+            httpx.get(f"{endpoint}/health/", timeout=FL_API_PROBE_TIMEOUT_SECONDS, follow_redirects=False)
+    except (httpx.ConnectError, httpx.TimeoutException) as e:
+        logger.warning(f"The FL API at {endpoint} is not answering: {e!r}")
+        return False
+    except (httpx.HTTPError, httpx.InvalidURL):
+        return True
+    return True
+
+
 def unavailable_clients(clients: list[str], endpoint: str) -> list[str]:
     """
     List the clients that are not connected to the net's FL server.

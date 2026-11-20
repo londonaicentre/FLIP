@@ -9,10 +9,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
+import logging
+from contextlib import ExitStack
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+import httpx
 import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -168,6 +172,89 @@ def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
         )
         # The failure handler must actually free the BUSY net, not leave it to the watchdog.
         mock_release.assert_called_once_with(model_id, fake_session)
+
+
+def _start_training_raising(error, requeued=True):
+    """The patches for a prepare that reaches start_training, which raises ``error``, keyed by what they patch."""
+    return {
+        "bundle_nvflare_application": patch.object(
+            fl_scheduler_service, "bundle_nvflare_application", return_value="s3://d"
+        ),
+        "get_net_by_model_id": patch.object(
+            fl_scheduler_service,
+            "get_net_by_model_id",
+            return_value=INetDetails(endpoint="http://fl-api-net-1:8000", name="net-1", fl_backend=FLBackend.NVFLARE),
+        ),
+        "unavailable_clients": patch.object(fl_scheduler_service, "unavailable_clients", return_value=[]),
+        "get_bundle_urls": patch.object(fl_scheduler_service, "get_bundle_urls", return_value=["url1"]),
+        "start_training": patch.object(fl_scheduler_service, "start_training", side_effect=error),
+        "requeue_job": patch.object(fl_scheduler_service, "requeue_job", return_value=requeued),
+        "release_scheduler_for_model": patch.object(fl_scheduler_service, "release_scheduler_for_model"),
+        "log_queue_positions": patch.object(fl_scheduler_service, "log_queue_positions"),
+        "remove_job": patch.object(fl_scheduler_service, "remove_job"),
+        "add_log": patch.object(fl_scheduler_service, "add_log"),
+        "update_model_status": patch.object(fl_scheduler_service, "update_model_status"),
+    }
+
+
+@pytest.mark.parametrize(
+    "error", [httpx.ConnectError("Connection refused"), httpx.ConnectTimeout("timed out")], ids=["refused", "timeout"]
+)
+def test_prepare_and_start_training_requeues_when_the_fl_api_cannot_be_reached(
+    fake_session, model_id, fl_job_id, error, caplog
+):
+    """FLIP#1962: the request never reached the FL API, so nothing started; the job waits for the next pass."""
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS
+    patches = _start_training_raising(error)
+    with ExitStack() as stack:
+        mocks = {name: stack.enter_context(p) for name, p in patches.items()}
+        started = fl_scheduler_service.prepare_and_start_training(
+            model_id=model_id, fl_job_id=fl_job_id, trust_ids=[uuid4()], session=fake_session
+        )
+
+    assert started is False
+    mocks["requeue_job"].assert_called_once_with(fl_job_id, fake_session)
+    mocks["release_scheduler_for_model"].assert_called_once_with(model_id, fake_session)
+    mocks["remove_job"].assert_not_called()
+    mocks["update_model_status"].assert_not_called()
+    mocks["add_log"].assert_not_called()
+    # The pickup moved every queued model up one place; the requeue moves them back.
+    mocks["log_queue_positions"].assert_called_once_with(fake_session)
+    assert "back in the queue for the next pass" in caplog.text
+
+
+def test_prepare_and_start_training_does_not_bring_back_a_job_aborted_meanwhile(fake_session, model_id, fl_job_id):
+    """The requeue finds the job no longer IN_PROGRESS (a user abort): it stays aborted and the net is freed."""
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS
+    patches = _start_training_raising(httpx.ConnectError("Connection refused"), requeued=False)
+    with ExitStack() as stack:
+        mocks = {name: stack.enter_context(p) for name, p in patches.items()}
+        started = fl_scheduler_service.prepare_and_start_training(
+            model_id=model_id, fl_job_id=fl_job_id, trust_ids=[uuid4()], session=fake_session
+        )
+
+    assert started is False
+    mocks["release_scheduler_for_model"].assert_called_once_with(model_id, fake_session)
+    mocks["update_model_status"].assert_not_called()
+    mocks["log_queue_positions"].assert_not_called()
+
+
+def test_prepare_and_start_training_fails_the_model_when_the_fl_api_stops_answering_mid_request(
+    fake_session, model_id, fl_job_id
+):
+    """A read timeout means the request was sent and may have been acted on, so it is not retried."""
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS
+    patches = _start_training_raising(httpx.ReadTimeout("timed out"))
+    with ExitStack() as stack:
+        mocks = {name: stack.enter_context(p) for name, p in patches.items()}
+        with pytest.raises(httpx.ReadTimeout):
+            fl_scheduler_service.prepare_and_start_training(
+                model_id=model_id, fl_job_id=fl_job_id, trust_ids=[uuid4()], session=fake_session
+            )
+
+    mocks["requeue_job"].assert_not_called()
+    mocks["remove_job"].assert_called_once_with(fl_job_id, fake_session)
+    mocks["update_model_status"].assert_called_once_with(model_id, ModelStatus.ERROR, fake_session)
 
 
 def test_prepare_and_start_training_aborted_mid_prepare_returns_false(fake_session, model_id, fl_job_id):
@@ -494,6 +581,221 @@ def test_check_for_available_net_none(fake_session):
     fake_session.exec.return_value.first.return_value = None
     result = fl_scheduler_service.check_for_available_net(fake_session)
     assert result is None
+
+
+def test_check_for_available_net_leaves_out_the_excluded_nets(fake_session):
+    fake_session.exec.return_value.first.return_value = None
+    skipped = uuid4()
+
+    fl_scheduler_service.check_for_available_net(fake_session, exclude_net_ids=[skipped])
+
+    compiled = fake_session.exec.call_args.args[0].compile()
+    assert "fl_scheduler.net_id NOT IN" in str(compiled)
+    assert [skipped] in compiled.params.values()
+
+
+def test_get_net_by_id(fake_session):
+    fake_session.exec.return_value.first.return_value = ("http://fl-api-net-1:8000", "net-1", FLBackend.NVFLARE)
+
+    net = fl_scheduler_service.get_net_by_id(uuid4(), fake_session)
+
+    assert net == INetDetails(endpoint="http://fl-api-net-1:8000", name="net-1", fl_backend=FLBackend.NVFLARE)
+
+
+def test_get_net_by_id_not_found(fake_session):
+    fake_session.exec.return_value.first.return_value = None
+
+    assert fl_scheduler_service.get_net_by_id(uuid4(), fake_session) is None
+
+
+def test_get_net_by_id_db_error(fake_session):
+    fake_session.exec.side_effect = SQLAlchemyError("db down")
+
+    with pytest.raises(DatabaseError, match="Database error while getting net by id"):
+        fl_scheduler_service.get_net_by_id(uuid4(), fake_session)
+
+
+def _scheduler():
+    return ISchedulerResponse(id=uuid4(), netId=uuid4())
+
+
+_NET_1 = INetDetails(endpoint="http://fl-api-net-1:8000", name="net-1", fl_backend=FLBackend.NVFLARE)
+_NET_2 = INetDetails(endpoint="http://fl-api-net-2:8000", name="net-2", fl_backend=FLBackend.FLOWER)
+
+
+_ANY_JOB_QUEUED = fl_scheduler_service._any_job_queued  # the real one, which the fixture below patches
+
+
+@pytest.fixture(autouse=True)
+def fl_api_outages():
+    """A job is waiting unless a test says otherwise, and every test starts with no FL API outage on record."""
+    fl_scheduler_service._fl_api_quiet_since.clear()
+    fl_scheduler_service._fl_api_outage_alerted.clear()
+    with patch.object(fl_scheduler_service, "_any_job_queued", return_value=True) as mock_queued:
+        yield mock_queued
+    fl_scheduler_service._fl_api_quiet_since.clear()
+    fl_scheduler_service._fl_api_outage_alerted.clear()
+
+
+def test_check_for_serving_net_returns_a_serving_net(fake_session):
+    scheduler = _scheduler()
+    with (
+        patch.object(fl_scheduler_service, "check_for_available_net", return_value=scheduler) as mock_available,
+        patch.object(fl_scheduler_service, "get_net_by_id", return_value=_NET_1),
+        patch.object(fl_scheduler_service, "fl_api_is_serving", return_value=True) as mock_serving,
+        patch.object(fl_scheduler_service, "revert_scheduler_pickup") as mock_revert,
+    ):
+        assert fl_scheduler_service.check_for_serving_net(fake_session) == scheduler
+
+    mock_available.assert_called_once_with(fake_session, exclude_net_ids=[])
+    mock_serving.assert_called_once_with(_NET_1.endpoint, FLBackend.NVFLARE)
+    mock_revert.assert_not_called()
+
+
+def test_check_for_serving_net_releases_a_net_whose_fl_api_does_not_answer_and_tries_the_next(fake_session, caplog):
+    """FLIP#1962: a net whose FL API is (re)starting keeps no queued job; the next available net is tried."""
+    down, up = _scheduler(), _scheduler()
+    with (
+        patch.object(fl_scheduler_service, "check_for_available_net", side_effect=[down, up]) as mock_available,
+        patch.object(fl_scheduler_service, "get_net_by_id", side_effect=[_NET_1, _NET_2]),
+        patch.object(fl_scheduler_service, "fl_api_is_serving", side_effect=[False, True]),
+        patch.object(fl_scheduler_service, "revert_scheduler_pickup") as mock_revert,
+    ):
+        assert fl_scheduler_service.check_for_serving_net(fake_session) == up
+
+    mock_revert.assert_called_once_with(down.id, fake_session)
+    assert mock_available.call_args_list[1].kwargs == {"exclude_net_ids": [down.netId]}
+    assert "net-1's FL API is not answering" in caplog.text
+
+
+def test_check_for_serving_net_returns_none_when_no_fl_api_answers(fake_session):
+    first, second = _scheduler(), _scheduler()
+    with (
+        patch.object(fl_scheduler_service, "check_for_available_net", side_effect=[first, second, None]),
+        patch.object(fl_scheduler_service, "get_net_by_id", side_effect=[_NET_1, _NET_2]),
+        patch.object(fl_scheduler_service, "fl_api_is_serving", return_value=False),
+        patch.object(fl_scheduler_service, "revert_scheduler_pickup") as mock_revert,
+    ):
+        assert fl_scheduler_service.check_for_serving_net(fake_session) is None
+
+    assert [c.args[0] for c in mock_revert.call_args_list] == [first.id, second.id]
+
+
+@pytest.mark.parametrize("net", [None, INetDetails(endpoint="", name="net-1", fl_backend=FLBackend.NVFLARE)])
+def test_check_for_serving_net_leaves_a_net_it_cannot_probe_to_prepare(fake_session, net):
+    """A missing net or endpoint is not a restart to wait out: prepare_and_start_training fails the run as before."""
+    scheduler = _scheduler()
+    with (
+        patch.object(fl_scheduler_service, "check_for_available_net", return_value=scheduler),
+        patch.object(fl_scheduler_service, "get_net_by_id", return_value=net),
+        patch.object(fl_scheduler_service, "fl_api_is_serving") as mock_serving,
+        patch.object(fl_scheduler_service, "revert_scheduler_pickup") as mock_revert,
+    ):
+        assert fl_scheduler_service.check_for_serving_net(fake_session) == scheduler
+
+    mock_serving.assert_not_called()
+    mock_revert.assert_not_called()
+
+
+def test_check_for_serving_net_does_not_probe_with_an_empty_queue(fake_session, fl_api_outages):
+    """Nothing to hand over: the net is returned unprobed and the job pickup releases it, so an idle hub sends no
+    request to its FL APIs and a stopped net logs nothing. An outage on record is forgotten: nothing waits on it."""
+    fl_api_outages.return_value = False
+    fl_scheduler_service._fl_api_quiet_since[uuid4()] = datetime.utcnow()
+    scheduler = _scheduler()
+    with (
+        patch.object(fl_scheduler_service, "check_for_available_net", return_value=scheduler) as mock_available,
+        patch.object(fl_scheduler_service, "fl_api_is_serving") as mock_serving,
+    ):
+        assert fl_scheduler_service.check_for_serving_net(fake_session) == scheduler
+
+    mock_available.assert_called_once_with(fake_session)
+    mock_serving.assert_not_called()
+    assert fl_scheduler_service._fl_api_quiet_since == {}
+
+
+_NET_1_ID = uuid4()
+
+
+def _probe_net_1(fake_session, serving, now):
+    """One pass that finds only net-1 available, probing it at ``now``."""
+    scheduler = ISchedulerResponse(id=uuid4(), netId=_NET_1_ID)
+    with (
+        patch.object(fl_scheduler_service, "check_for_available_net", side_effect=[scheduler, None]),
+        patch.object(fl_scheduler_service, "get_net_by_id", return_value=_NET_1),
+        patch.object(fl_scheduler_service, "fl_api_is_serving", return_value=serving),
+        patch.object(fl_scheduler_service, "revert_scheduler_pickup"),
+        patch.object(fl_scheduler_service, "datetime") as mock_datetime,
+    ):
+        mock_datetime.utcnow.return_value = now
+        fl_scheduler_service.check_for_serving_net(fake_session)
+
+
+def test_an_fl_api_outage_is_logged_once_at_error_when_it_outlasts_the_alert_time(fake_session, caplog):
+    """Queued jobs wait on an outage without an error of their own, so a long one must reach the hub's errors."""
+    start = datetime(2026, 11, 19, 12, 0)
+    alert = fl_scheduler_service.FL_API_OUTAGE_ALERT_AFTER
+    with caplog.at_level(logging.INFO):
+        _probe_net_1(fake_session, False, start)
+        _probe_net_1(fake_session, False, start + alert / 2)
+        errors_before = [r for r in caplog.records if r.levelno == logging.ERROR]
+        _probe_net_1(fake_session, False, start + alert)
+        _probe_net_1(fake_session, False, start + alert * 2)
+        _probe_net_1(fake_session, True, start + alert * 3)
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING and "net-1" in r.getMessage()]
+    errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert warnings == ["net-1's FL API is not answering; queued jobs wait for a pass that finds it serving"]
+    assert errors_before == []
+    assert errors == [
+        "net-1's FL API has not answered for 10 min, and queued jobs are waiting on it: check the FL API and its FL "
+        "server (FLIP#1962)"
+    ]
+    assert "net-1's FL API answers again after 30 min" in caplog.text
+    assert fl_scheduler_service._fl_api_quiet_since == {}
+    assert fl_scheduler_service._fl_api_outage_alerted == set()
+
+
+@pytest.mark.parametrize(("first", "queued"), [(uuid4(), True), (None, False)], ids=["a-job-waits", "empty"])
+def test_any_job_queued(fake_session, first, queued):
+    fake_session.exec.return_value.first.return_value = first
+
+    assert _ANY_JOB_QUEUED(fake_session) is queued
+
+
+def test_any_job_queued_db_error(fake_session):
+    fake_session.exec.side_effect = SQLAlchemyError("db down")
+
+    with pytest.raises(DatabaseError, match="Error checking for queued jobs"):
+        _ANY_JOB_QUEUED(fake_session)
+
+
+@pytest.mark.parametrize(("rowcount", "requeued"), [(1, True), (0, False)], ids=["in-progress", "aborted"])
+def test_requeue_job_only_puts_back_a_job_still_being_prepared(fake_session, rowcount, requeued):
+    """The UPDATE is conditional on IN_PROGRESS, so a job a user aborted meanwhile stays DELETED."""
+    fake_session.execute.return_value.rowcount = rowcount
+    job_id = uuid4()
+
+    assert fl_scheduler_service.requeue_job(job_id, fake_session) is requeued
+
+    compiled = fake_session.execute.call_args.args[0].compile()
+    assert str(compiled).startswith("UPDATE fl_job SET status=:status, started=:started WHERE fl_job.id = :id_1 AND")
+    assert compiled.params == {
+        "status": JobStatus.QUEUED,
+        "started": None,
+        "id_1": job_id,
+        "status_1": JobStatus.IN_PROGRESS,
+    }
+    fake_session.commit.assert_called_once()
+
+
+def test_requeue_job_db_error_rolls_back(fake_session):
+    fake_session.execute.side_effect = SQLAlchemyError("db down")
+
+    with pytest.raises(DatabaseError, match="Error putting the job back in the queue"):
+        fl_scheduler_service.requeue_job(uuid4(), fake_session)
+
+    fake_session.rollback.assert_called_once()
 
 
 def test_check_for_queued_jobs_success(fake_session, scheduler_id, model_id):
