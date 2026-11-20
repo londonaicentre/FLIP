@@ -47,6 +47,7 @@ from flip_api.fl_services.services import fl_scheduler_service
 from flip_api.model_services.utils.audit_helper import audit_model_action, audit_model_actions
 from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import IPagedResponse, PagingInfo, get_paging_details
+from flip_api.utils.user_roles import profile_display_name
 
 
 def edit_model(model_id: UUID, model_details: IModelDetails, user_id: UUID, session: Session) -> None:
@@ -561,7 +562,7 @@ def get_all_models_service(
     access_join = and_(col(ProjectUserAccess.project_id) == Projects.id, ProjectUserAccess.user_id == user_id)
 
     rows_query = (
-        select(Model, Projects.name, UserProfile.name)  # type: ignore[call-overload]
+        select(Model, Projects.name, profile_display_name())  # type: ignore[call-overload]
         .join(Projects, col(Model.project_id) == Projects.id)
         .outerjoin(ProjectUserAccess, access_join)
         .outerjoin(UserProfile, col(UserProfile.user_id) == Model.owner_id)

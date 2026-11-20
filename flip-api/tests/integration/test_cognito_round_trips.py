@@ -134,10 +134,14 @@ def test_delete_user_removes_user_from_pool_and_drops_role_grants(client: TestCl
     session.add(UserRole(user_id=UUID(sub), role_id=RoleRef.RESEARCHER.value))
     session.commit()
 
+    # Delete is the step after Disable (FLIP#1996): refused while the pool still has the user enabled.
+    assert client.delete(f"/api/users/{sub}").status_code == 409
+    cognito = boto3.client("cognito-idp")
+    cognito.admin_disable_user(UserPoolId=cognito_user_pool["pool_id"], Username="delete.me@example.com")
+
     response = client.delete(f"/api/users/{sub}")
     assert response.status_code == 200, response.text
 
-    cognito = boto3.client("cognito-idp")
     remaining = cognito.list_users(UserPoolId=cognito_user_pool["pool_id"])["Users"]
     remaining_subs = {next(a["Value"] for a in u["Attributes"] if a["Name"] == "sub") for u in remaining}
     assert sub not in remaining_subs

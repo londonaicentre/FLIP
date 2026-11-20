@@ -33,7 +33,7 @@ def require_provisioned_user(session: Session, user_id: UUID) -> None:
     roles follow), so a subject with neither a profile nor a role row is an identity-provider
     account the hub never invited. The identity provider is configured to admit admin-created
     users only; this is the hub's own check, so a provider misconfiguration cannot turn a
-    signed token into access.
+    signed token into access. A deleted user's profile (FLIP#1996) does not count.
 
     Args:
         session (Session): Database session.
@@ -42,7 +42,8 @@ def require_provisioned_user(session: Session, user_id: UUID) -> None:
     Raises:
         HTTPException: 403 when the subject has no profile and no role on this hub.
     """
-    if session.get(UserProfile, user_id) is not None:
+    profile = session.get(UserProfile, user_id)
+    if profile is not None and profile.deleted_at is None:
         return
     if session.exec(select(UserRole.id).where(UserRole.user_id == user_id).limit(1)).first() is not None:
         return
