@@ -714,6 +714,34 @@ def _client_cannot_read(path: Path, kit_vars: dict[str, str], image_uid: int) ->
     return f"{path} is owned by uid {st.st_uid} mode {st.st_mode & 0o777:o}, and the client runs as uid {uid}"
 
 
+_KIT_AS_ROOT_HINT = (
+    "That is how it should be when the FL client runs as that uid. To check inside it, run the checklist as root:"
+    " sudo -E make onboard-onprem-trust KIT=<CODE>."
+)
+
+
+def _sealed_from_me(root: Path, target: Path) -> str:
+    """Why this user cannot look inside the kit on the way from ``root`` to ``target``, or "" when it can (FLIP#1964).
+
+    The kit is private to the FL client's uid, so an operator who is another uid, without sudo, cannot list it, and
+    everything inside would look missing. That is the kit as it should be, not a missing one. Each folder is asked
+    of os.access from the top down, never of pathlib: below a closed folder, is_dir() raises before Python 3.14 and
+    answers False from 3.14 on.
+    """
+    relative = target.relative_to(root)
+    for folder in (root / p for p in (*reversed(relative.parents), relative)):
+        try:
+            if not os.path.lexists(folder):  # missing, which the contents check reports
+                return ""
+            if not os.access(folder, os.R_OK | os.X_OK):
+                st = folder.stat()
+                mode = st.st_mode & 0o777
+                return f"{folder} belongs to uid {st.st_uid} (mode {mode:o}), so uid {os.getuid()} cannot look in"
+        except OSError:
+            return ""
+    return ""
+
+
 def check_fl_kit_contents(kit_vars: dict[str, str], kit_present: bool) -> Check:
     if not kit_present:
         return Check("FL kit contents", Status.PENDING, "pending — needs kit file")
@@ -736,6 +764,8 @@ def check_fl_kit_contents(kit_vars: dict[str, str], kit_present: bool) -> Check:
     root = Path(fl_kit_dir)
     if backend == "nvflare":
         target = root / "net-1" / "services" / slot
+        if sealed := _sealed_from_me(root, target):
+            return Check("FL kit contents (nvflare)", Status.WARN, f"not checked: {sealed}", hints=[_KIT_AS_ROOT_HINT])
         sub = {p: (target / p).is_dir() for p in ("local", "startup", "transfer")}
         if all(sub.values()):
             if why := _client_cannot_read(target / "startup" / "client.key", kit_vars, 1000):
@@ -760,6 +790,8 @@ def check_fl_kit_contents(kit_vars: dict[str, str], kit_present: bool) -> Check:
     # flower
     certs = root / "net-1" / "certificates"
     creds = root / "net-1" / "keys" / f"supernode_credentials_{slot_number}"
+    if sealed := _sealed_from_me(root, creds.parent):
+        return Check("FL kit contents (flower)", Status.WARN, f"not checked: {sealed}", hints=[_KIT_AS_ROOT_HINT])
     if certs.is_dir() and creds.is_file():
         if why := _client_cannot_read(creds, kit_vars, 49999):
             return Check(
