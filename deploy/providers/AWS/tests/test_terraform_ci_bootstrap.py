@@ -924,6 +924,14 @@ def test_a_publish_role_reaches_its_bucket_and_nothing_else(role: str, sid: str,
     }
 
 
+def test_the_ui_publish_role_never_writes_the_old_demo_prefix() -> None:
+    """demo/ in the UI bucket keeps serving the last demo until /demo/ redirects to the demo's host (FLIP#2012)."""
+    demo = _arguments(_statement('data "aws_iam_policy_document" "ui_publish"', "NeverTouchThePublicDemo"))
+    assert demo["effect"] == '"Deny"'
+    assert set(_list(demo["actions"])) == {'"s3:DeleteObject"', '"s3:PutObject"'}
+    assert demo["resources"] == '["${local.ui_bucket_arn}/demo/*"]'
+    assert "NeverTouchThePublicDemo" not in _module_block('data "aws_iam_policy_document" "demo_publish"')
+
 def _ci(name: str) -> str:
     return strip_comments((CI_DIR / name).read_text())
 

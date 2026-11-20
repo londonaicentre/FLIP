@@ -87,6 +87,19 @@ data "aws_iam_policy_document" "ui_publish" {
     ]
     resources = ["${local.ui_bucket_arn}/*"]
   }
+
+  # demo/ still holds the last demo published under the app's host, served until
+  # /demo/ redirects to the demo's own (FLIP#2012). The sync already excludes it;
+  # this makes a broken sync unable to delete it either. It goes with that redirect.
+  statement {
+    sid    = "NeverTouchThePublicDemo"
+    effect = "Deny"
+    actions = [
+      "s3:DeleteObject",
+      "s3:PutObject",
+    ]
+    resources = ["${local.ui_bucket_arn}/demo/*"]
+  }
 }
 
 resource "aws_iam_role_policy" "ui_publish" {
