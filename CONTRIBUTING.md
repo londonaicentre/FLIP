@@ -65,7 +65,7 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
   on GPU hosts
 - GNU Make, `jq`, and `curl`
-- [Python 3.12 or 3.13](https://www.python.org/downloads/) and [uv](https://docs.astral.sh/uv/) **>= 0.10.0** —
+- [Python 3.13](https://www.python.org/downloads/) and [uv](https://docs.astral.sh/uv/) **>= 0.10.0** —
   earlier uv cannot parse the `exclude-newer = "3 days"` cooldown (see
   [Dependency cooldown](#dependency-cooldown-supply-chain-protection)); it warns, ignores the setting and
   re-resolves `uv.lock` without any cooldown. `scripts/check-uv-version.sh` checks this at the two entry
@@ -676,7 +676,7 @@ The project-wide ruff rules are:
 ```toml
 [tool.ruff]
 line-length = 120
-target-version = "py312"
+target-version = "py313"
 
 [tool.ruff.lint]
 preview = true

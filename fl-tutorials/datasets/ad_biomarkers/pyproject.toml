@@ -2,7 +2,7 @@
 name = "ad-biomarkers-dataset-tools"
 version = "0.1.0"
 description = "Local uv environment for the ADNI → biomarker_causal_discovery cohort converter."
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.13,<3.14"
 # The converter reads five ADNI study tables and writes CSVs: numpy + pandas is the whole of it.
 # The project exists so that tests/datasets/ad_biomarkers/ runs in an environment declaring exactly
 # what the script imports (see fl-tutorials/tests/README.md).
