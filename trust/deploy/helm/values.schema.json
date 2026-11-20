@@ -492,6 +492,15 @@
       "additionalProperties": true,
       "properties": {
         "enabled": { "type": "boolean" },
+        "apiServer": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The Kubernetes API server's real endpoint, for xnat-web and the job-pod parent, where it does not listen on 443 (k3s and kind 6443, minikube 8443)",
+          "properties": {
+            "cidrs": { "type": "array", "items": { "type": "string" } },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+          }
+        },
         "allowedEgressCIDRsWithPorts": {
           "type": "array",
           "description": "Egress rules combining CIDRs with a specific port (e.g. fl-server gRPC on 8002)",
