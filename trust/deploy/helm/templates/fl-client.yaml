@@ -14,8 +14,14 @@
 {{- if and .Values.flClient.nvflare.jobPods.enabled (ne .Values.flBackend "nvflare") }}
 {{- fail "flClient.nvflare.jobPods.enabled starts each job in its own pod through NVFLARE's Kubernetes job launcher, so it needs flBackend: nvflare." }}
 {{- end }}
-{{- if and $jobPods (not (has .Values.flClient.nvflare.jobPods.images (list "project" "stream"))) }}
-{{- fail "flClient.nvflare.jobPods.images is how a job pod gets its project's studies: project (a mount of the project's folder of the shared images volume) or stream (no volume)." }}
+{{- if and $jobPods (not (has .Values.flClient.nvflare.jobPods.images (list "project" "stream" "archive"))) }}
+{{- fail "flClient.nvflare.jobPods.images is how a job pod gets its project's studies: project (a mount of the project's folder of the shared images volume), archive (a read-only mount of the project's directory of XNAT's archive) or stream (no volume)." }}
+{{- end }}
+{{- if and $jobPods (eq .Values.flClient.nvflare.jobPods.images "archive") (not (and .Values.xnat.enabled .Values.xnat.web.persistence.enabled)) }}
+{{- fail "flClient.nvflare.jobPods.images: archive mounts each project's directory of XNAT's archive into its job pods, so it needs this chart's XNAT on a persistent volume (xnat.enabled and xnat.web.persistence.enabled). With an external XNAT, set images: project or stream." }}
+{{- end }}
+{{- if and $jobPods (eq .Values.flClient.nvflare.jobPods.images "archive") (eq (float64 .Values.imagingApi.env.COHORT_RECONCILE_MINUTES) 0.0) }}
+{{- fail "flClient.nvflare.jobPods.images: archive lets a project's job pods read every session XNAT holds for it, so imaging-api must remove the sessions of patients who leave the approved cohort: set imagingApi.env.COHORT_RECONCILE_MINUTES above 0, or images: project or stream." }}
 {{- end }}
 {{- if and $jobPods (eq .Values.flClient.nvflare.jobPods.images "project") (not .Values.sharedImagesPvc.enabled) }}
 {{- fail "flClient.nvflare.jobPods.images: project mounts each project's folder of the shared images volume into its job pods, so it needs sharedImagesPvc.enabled. Without that volume, set images: stream." }}
@@ -111,7 +117,7 @@ spec:
         {{- if $jobPods }}
         # The job pod template is copied into the kit by fl-client-init, so a change to it must roll the
         # parent.
-        checksum/fl-job-pod: {{ include "flip-trust.flJobPod" . | sha256sum }}
+        checksum/fl-job-pod: {{ print (include "flip-trust.flJobPod" .) (include "flip-trust.flJobPodArchive" .) | sha256sum }}
         {{- end }}
         {{- if $governed }}
         # Editing the client's section of the governance document must roll this pod: a

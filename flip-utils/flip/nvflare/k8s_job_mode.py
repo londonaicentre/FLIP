@@ -33,7 +33,8 @@ Three files in ``local/`` change:
 - ``comm_config.json``: job pods reach the parent through its Service (``FL_K8S_PARENT_SERVICE``).
 - ``study_runtime.yaml``: the default study gets the job image and the site's pod template. The template is
   where the chart puts what a job pod needs from the trust: its labels, the trust-internal key and the FL
-  server's host aliases. It is copied into ``local/pod_specs/``, the path NVFLARE resolves it from. A FLIP job
+  server's host aliases. It is copied into ``local/pod_specs/``, the path NVFLARE resolves it from, with the
+  chart's archive patch beside it when there is one (``jobPods.images: archive``, FLIP#1857). A FLIP job
   runs in its project's study (FLIP#1678), and only a job from a hub older than that lands in the default one.
   The site's operator maintains the projects' entries outside the kit (``flip.nvflare.project_studies``): where
   the chart names that file (``FL_K8S_STUDIES_FILE``), ``study_runtime.yaml`` becomes a link to it and the
@@ -85,6 +86,12 @@ DEFAULT_EPHEMERAL_STORAGE = "10Gi"
 DEFAULT_MEMORY_PER_GPU_IN_GIB = 16
 DEFAULT_EXPIRATION_PERIOD = 300
 POD_TEMPLATE = "pod_specs/job-pod.yaml"
+# What a job pod that reads its project's directory of XNAT's archive adds to the template (XNAT's volume, group
+# and placement): the chart renders it beside the template only with jobPods.images: archive, and
+# flip.nvflare.project_studies applies it to the entry of each project it mounts the archive for (FLIP#1857).
+ARCHIVE_POD_PATCH = "pod_specs/job-pod-archive.yaml"
+# ...and its name for XNAT's volume, which an archive project's entry declares.
+ARCHIVE_VOLUME = "xnat-archive"
 STUDY_RUNTIME = "study_runtime.yaml"
 STUDY_RUNTIME_DEFAULT = "study_runtime.default.yaml"
 
@@ -252,6 +259,13 @@ def _write_json(path: Path, data: Mapping[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+def _copy(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f".{target.name}.tmp")
+    shutil.copyfile(source, tmp)
+    os.replace(tmp, target)
+
+
 def apply(local_dir: Path, mode: K8sJobMode) -> None:
     """Rewrite the kit's ``local/`` for job pods. Everything is read and checked before anything is written.
 
@@ -276,11 +290,12 @@ def apply(local_dir: Path, mode: K8sJobMode) -> None:
         raise FileNotFoundError(f"pod template {mode.pod_template} does not exist")
 
     if mode.pod_template is not None:
-        target = local_dir / POD_TEMPLATE
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_name(f".{target.name}.tmp")
-        shutil.copyfile(mode.pod_template, tmp)
-        os.replace(tmp, target)
+        _copy(mode.pod_template, local_dir / POD_TEMPLATE)
+        patch = mode.pod_template.with_name(Path(ARCHIVE_POD_PATCH).name)
+        if patch.is_file():
+            _copy(patch, local_dir / ARCHIVE_POD_PATCH)
+        else:  # the site has left archive mode
+            (local_dir / ARCHIVE_POD_PATCH).unlink(missing_ok=True)
     if mode.studies_file is None:
         _write_json(local_dir / STUDY_RUNTIME, study_runtime(mode))
     else:
@@ -292,6 +307,26 @@ def apply(local_dir: Path, mode: K8sJobMode) -> None:
         os.replace(tmp, local_dir / STUDY_RUNTIME)
     _write_json(comm_path, comm_config)
     _write_json(resources_path, resources)
+
+
+def archive_entries(studies_file: Path) -> list[str]:
+    """The studies whose entry in the operator's file still mounts XNAT's archive (FLIP#1857).
+
+    Leaving ``jobPods.images: archive`` takes the patch out of the kit, but not out of the entries already synced into
+    the operator's file, which only ``make sync-project-studies`` rewrites. A file that is missing or not JSON names
+    none: NVFLARE reports it at launch.
+    """
+    try:
+        studies = _read_json(studies_file).get("studies", {})
+    except (OSError, ValueError):
+        return []
+    return sorted(
+        name
+        for name, entry in studies.items()
+        if isinstance(entry, dict)
+        and isinstance(entry.get("pod_template"), dict)
+        and any(v.get("name") == ARCHIVE_VOLUME for v in entry["pod_template"].get("spec", {}).get("volumes", []))
+    )
 
 
 def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) -> int:
@@ -310,6 +345,15 @@ def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) ->
     except (OSError, ValueError) as e:
         print(f"❌ cannot switch the FL client to Kubernetes job pods: {e}", file=sys.stderr)
         return 1
+    if mode.studies_file is not None and not (parsed.local_dir / ARCHIVE_POD_PATCH).exists():
+        if stale := archive_entries(mode.studies_file):
+            # Not fatal: sync-project-studies, the fix, runs in this client.
+            print(
+                f"❌ this site no longer reads images from XNAT's archive, but the study entries of {', '.join(stale)} "
+                "still mount it, with every session XNAT holds for the project: run "
+                "make -C trust/deploy/helm sync-project-studies now",
+                file=sys.stderr,
+            )
     template = f", pod template {POD_TEMPLATE}" if mode.pod_template else ""
     print(
         f"✅ FL client runs each job in its own pod: image {mode.job_image}, namespace {mode.namespace}, "

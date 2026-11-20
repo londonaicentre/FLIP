@@ -18,6 +18,7 @@ is a test double, so each test isolates the gate's own decisions.
 """
 
 import uuid
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 from uuid import UUID
 
@@ -28,6 +29,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from flip_api.auth.dependencies import require_provisioned_user, verify_token, verify_token_no_mfa
 from flip_api.auth.identity import IdentityProvider
 from flip_api.auth.token_verifier import VerifiedIdentity
+from flip_api.db.models.user_models import UserProfile
 
 PATCH_VERIFY = "flip_api.auth.dependencies.verify_access_token"
 PATCH_SETTINGS = "flip_api.auth.dependencies.get_settings"
@@ -48,10 +50,12 @@ def idp() -> MagicMock:
     return MagicMock(spec=IdentityProvider)
 
 
-def _session(profile: bool = True, role: bool = False) -> MagicMock:
+def _session(profile: bool = True, role: bool = False, deleted: bool = False) -> MagicMock:
     """A session whose UserProfile lookup and UserRole query answer as asked."""
     session = MagicMock()
-    session.get.return_value = object() if profile else None
+    session.get.return_value = (
+        UserProfile(user_id=uuid.uuid4(), deleted_at=datetime.utcnow() if deleted else None) if profile else None
+    )
     session.exec.return_value.first.return_value = object() if role else None
     return session
 
@@ -154,3 +158,10 @@ def test_provisioned_user_check_accepts_profile_or_role():
     require_provisioned_user(_session(profile=False, role=True), uuid.uuid4())
     with pytest.raises(HTTPException):
         require_provisioned_user(_session(profile=False, role=False), uuid.uuid4())
+
+
+def test_provisioned_user_check_ignores_a_deleted_users_profile():
+    """A deleted user's profile stays for history (FLIP#1996) but no longer admits a token."""
+    with pytest.raises(HTTPException) as exc:
+        require_provisioned_user(_session(profile=True, role=False, deleted=True), uuid.uuid4())
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
