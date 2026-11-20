@@ -115,6 +115,12 @@ class TestProdSettings:
             settings = ProdSettings()
             assert settings.SERVER_CHECKPOINT_ROOT == "/custom/checkpoints"
 
+    @pytest.mark.parametrize("transport", ["mount", "project", "stream", "archive"])
+    def test_prod_settings_accepts_each_images_transport(self, transport):
+        """The chart and the study entries set IMAGES_TRANSPORT; archive is a job pod's (FLIP#1857)."""
+        with patch.dict(os.environ, {**self.get_valid_prod_env(), "IMAGES_TRANSPORT": transport}, clear=True):
+            assert ProdSettings().IMAGES_TRANSPORT == transport
+
 
 class TestCommonSettings:
     """Test _Common base settings class."""

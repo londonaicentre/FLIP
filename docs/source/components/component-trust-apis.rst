@@ -216,7 +216,8 @@ the Trust host, under that net's own images directory. Later requests are served
 and, on Flower, the next job. On a Kubernetes Trust running NVFLARE job pods, a job pod holds only its own
 project's studies. Each project is an NVFLARE study whose job pods mount that project's folder of the images
 directory, read-only, and nothing else; where job pods cannot attach that volume, they mount none and stream each study
-from ``imaging-api`` into their own directory.
+from ``imaging-api`` into their own directory. A Trust can instead have job pods mount the project's own directory
+of XNAT's archive, read-only, and read each study in place, in which case nothing is copied out of XNAT.
 
 A study unused for seven days is deleted from disk; it is downloaded again from XNAT if a job asks for it later.
 Trust operators can change the period with ``IMAGE_CACHE_RETENTION_HOURS`` in the kit file (``imagingApi.env`` on
