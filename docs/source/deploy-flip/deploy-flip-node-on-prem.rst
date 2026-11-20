@@ -65,8 +65,8 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
 
        make -C trust prepare-host-dirs KIT=<CODE> HUB=prod
 
-    It creates every directory below with its owner, refuses to create that parent, and deletes nothing, so it is
-    safe to re-run.
+    It creates every directory below with its owner (the FL kit it only gives to its uid, once you have unpacked
+    it), refuses to create that parent, and deletes nothing, so it is safe to re-run.
 
   On the first route ``make up-onprem-trust`` creates the XNAT tree itself; on the second it only checks the
   ownership, and a failed check names the fix.
@@ -83,10 +83,17 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
        - ``BASE_IMAGES_DOWNLOAD_DIR``, ``COHORT_SNAPSHOT_STORAGE_DIR``
      * - the FLARE client alone
        - 1000
-       - ``FL_KIT_DIR/net-<N>/services/<slot>``: the kit itself. The client reads ``startup/client.key`` (mode
-         660) and writes ``local/`` and ``transfer/`` at start, so the whole slot directory must be that uid's.
-         ``prepare-host-dirs`` does not touch the kit: extract it as uid 1000 or ``chown -R 1000`` the slot
-         directory (the Ansible playbook does; under ``FLIP_UID`` the kit you extracted is already yours).
+       - ``FL_KIT_DIR/net-<N>/services/<slot>``: the kit itself. The client reads ``startup/client.key``, which
+         like the rest of the kit is readable by its owner alone, and writes ``local/`` and ``transfer/`` at
+         start, so the whole slot directory must be that uid's. ``prepare-host-dirs`` gives it to 1000, or
+         ``chown -R 1000:1000`` it yourself (Step 2); the playbook does it when it downloads the kit from S3, and
+         under ``FLIP_UID`` the kit you extracted is already yours.
+     * - the Flower SuperNode alone
+       - 49999
+       - ``FL_KIT_DIR/net-1``: ``certificates/`` and ``keys/supernode_credentials_<N>``, readable by their owner
+         alone. ``prepare-host-dirs`` gives the ``net-1`` directory to 49999, or ``chown -R 49999:49999`` it
+         yourself (Step 2); the playbook does it when it downloads the kit from S3, and under ``FLIP_UID`` the kit
+         you extracted is already yours.
      * - xnat-web
        - 1001
        - ``XNAT_DATA_DIR``
@@ -207,6 +214,26 @@ Step 2 — Unpack the kit
 
 The tarball holds the kit file ``.env.<CODE>.prod`` (``.stag`` for the staging hub) and an ``fl-kit/`` folder. Keep ``fl-kit/`` exactly as it is: the
 stack mounts that layout into the FL client.
+
+Everything in ``fl-kit/`` is readable by its owner alone (files ``600``, folders ``700``), because it holds the FL
+client's private key, so the client's uid must own it. Run the one command for your kit's backend; the FLIP admin's
+packager prints it for you. On FLARE (uid 1000), the slot directory:
+
+.. code-block:: shell
+
+   sudo chown -R 1000:1000 $HOME/flip-trust-kit/fl-kit/net-1/services/<slot>
+
+On Flower (uid 49999), the whole ``net-1`` directory. Never run this on a FLARE kit: it takes the slot directory
+from uid 1000 too.
+
+.. code-block:: shell
+
+   sudo chown -R 49999:49999 $HOME/flip-trust-kit/fl-kit/net-1
+
+Skip the ``chown`` when the kit sets ``FLIP_UID`` to your own uid, or when the host owner runs ``prepare-host-dirs``
+in Step 4: it gives the kit to the same uid. Run the readiness checklist with ``sudo -E`` afterwards to let it look
+inside the kit, or it reports the kit as not checked. A kit unpacked from an older tarball has world-readable files:
+run ``chmod -R go-rwx`` on its ``fl-kit/`` folder too (``prepare-host-dirs`` does that as well).
 
 ***********************************
 Step 3 — Edit the kit for your host

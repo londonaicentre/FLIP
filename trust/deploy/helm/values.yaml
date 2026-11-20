@@ -464,8 +464,8 @@ flClient:
   # what is deployed here is what is deployed in production.
   #
   # On kind, either map it in with an extraMount at cluster-create time, or copy it into
-  # the node: `docker cp <kit>/. <cluster>-control-plane:/opt/flip/fl-kit/` (which is
-  # what `make stage-kit` does). /opt/flip/fl-kit is the kit file's FL_KIT_DIR — the same
+  # the node: `docker cp <kit>/. <cluster>-control-plane:/opt/flip/fl-kit/` (what `make stage-kit`
+  # does on kind; on any other node it uses a short-lived pod). /opt/flip/fl-kit is the kit file's FL_KIT_DIR — the same
   # path the Compose and Ansible trust deployments use — so keep any override in step
   # with the path the kit was actually staged to, or the pod stays Pending.
   kitHostPath: ""
@@ -565,12 +565,9 @@ flClient:
       # NVFLARE fails it immediately instead of waiting for the node.
       tolerations: []
       nodeSelector: {}
-      # The launcher calls the Kubernetes API from the parent. The chart's egress already allows port
-      # 443 to any address (networkPolicies.allowedEgressPorts), which covers an API server reached on
-      # 443 (AKS, EKS). NetworkPolicy matches the API server's real endpoint rather than the kubernetes
-      # Service, so where it listens on another port (minikube 8443, kind 6443) name it here, e.g. from
-      # `kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes`. Without it the
-      # launcher's first call hangs and no job pod is ever created. Only the parent gets this rule.
+      # The API server endpoint for the parent only (the launcher calls the Kubernetes API). With cidrs set it
+      # overrides networkPolicies.apiServer, cidrs and port together; with cidrs empty the parent follows that
+      # setting, which also covers xnat-web, so prefer it.
       apiServer:
         cidrs: []
         port: 443
@@ -1140,3 +1137,10 @@ networkPolicies:
       protocol: TCP
     - port: 443
       protocol: TCP
+  # The Kubernetes API server's real endpoint, for xnat-web (XNAT's Container Service) and the NVFLARE job-pod
+  # parent. NetworkPolicy matches it, not the kubernetes Service's 443: on k3s and kind the node's address on 6443,
+  # minikube 8443, from `kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes`.
+  # AKS and EKS answer on 443, which allowedEgressPorts already allows: leave it empty there.
+  apiServer:
+    cidrs: []
+    port: 443

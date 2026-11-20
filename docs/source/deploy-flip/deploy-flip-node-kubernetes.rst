@@ -30,7 +30,8 @@ optional inbound path is the DICOM receiver for a real PACS (see `Connect a real
    When the node is deployed and its DICOM path verified, continue at step 6 there.
 
 The chart is validated on single-node k3s, and its self-test passes on AKS (:doc:`deploy-flip-node-azure-aks`) and
-Amazon EKS (:doc:`deploy-flip-node-aws-eks`) with both FL backends. Read `Known limitations`_, particularly storage
+Amazon EKS (:doc:`deploy-flip-node-aws-eks`) with both FL backends. On a cluster the trust runs itself, use k3s (see
+`A self-managed cluster: k3s`_); kind is for development only. Read `Known limitations`_, particularly storage
 and Pod Security, before choosing it for a production trust. The :gh:`Helm chart README <trust/deploy/helm/README.md>` has the full values
 and secrets reference.
 
@@ -92,7 +93,8 @@ The machine you run the ``make`` targets from. It needs a FLIP checkout and:
 - ``helm`` 4.x (the version CI tests; 3.16 or newer also works);
 - ``uv``, which runs the kit sync and upgrade scripts with the Python and PyYAML they declare;
 - Python 3, for ``make status``;
-- ``docker``, only for ``stage-kit`` on a kind cluster (see `Step 3 — Stage the FL participant kit`_).
+- ``docker`` only for a kind development cluster, where ``stage-kit`` copies through it (see
+  `Step 3 — Stage the FL participant kit`_). On any other cluster it is not needed.
 
 Cluster
 =======
@@ -101,9 +103,17 @@ Cluster
 - **A default StorageClass.** Without one, every PersistentVolumeClaim stays ``Pending``. Default sizes are below;
   change any with ``<block>.persistence.size`` and pick a class with ``<block>.persistence.storageClassName``.
 - **A CNI that enforces NetworkPolicy** (Calico, Cilium, Antrea and similar). On one that ignores them, such as
-  default flannel, the chart's policies render but do nothing.
+  default flannel, the chart's policies render but do nothing (k3s pairs flannel with its own policy controller, so
+  it does enforce them).
+- **The API server's address, where it does not listen on 443.** XNAT's Container Service (which runs dcm2niix as
+  Jobs) and NVFLARE's job launcher call the Kubernetes API, and NetworkPolicy matches the API server's real endpoint,
+  not the ``kubernetes`` Service. k3s and kind listen on 6443, minikube on 8443: find it with
+  ``kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes`` and set
+  ``networkPolicies.apiServer`` (``cidrs`` and ``port``). AKS and EKS listen on 443, which the chart already allows.
 - **RBAC** to create Secrets in the namespace (required) and to create the namespace itself, or have a cluster
-  administrator create it first. The namespace is ``flip-trust`` unless you pass ``NAMESPACE=``.
+  administrator create it first. The namespace is ``flip-trust`` unless you pass ``NAMESPACE=``. ``stage-kit`` and
+  ``stage-vocab`` outside kind also read the nodes and create and exec into a root pod with a ``hostPath``, which is
+  as good as root on that node (Step 3).
 
 .. list-table:: Default volume sizes
    :header-rows: 1
@@ -156,6 +166,9 @@ The trust offers the FL scheduler only the GPUs it is configured with. A trust l
 the trust as "waiting for resources". To lend a cluster's GPUs one per job instead of holding one around the clock,
 use NVFLARE job pods (``flClient.nvflare.jobPods``, with ``maxGpus`` set to the GPUs FLIP may use); see the chart
 README's "NVFLARE job pods" section.
+With job pods, run ``make -C trust/deploy/helm sync-project-studies KUBE_CONTEXT=<ctx>`` after the first deploy,
+after each project is approved at this trust, and after every upgrade: until a project has its NVFLARE study entry,
+NVFLARE does not start its jobs here.
 
 Extra network egress
 ====================
@@ -177,6 +190,60 @@ On top of :ref:`deploy-trust-node-network`:
 
 To restrict egress further, see :gh:`NETWORK-POLICY.md <trust/deploy/helm/NETWORK-POLICY.md>`.
 
+A self-managed cluster: k3s
+===========================
+
+For a trust that runs its own Kubernetes, use single-node `k3s <https://k3s.io>`_, the shape FLIP tests; kind is
+for development only. *Who: the node's administrator, with root for the install only.*
+
+.. code-block:: shell
+
+   curl -sfL https://get.k3s.io | sudo INSTALL_K3S_EXEC="--data-dir /data/k3s --disable traefik \
+     --default-runtime nvidia" sh -
+   sudo install -D -o "$USER" -m 600 /etc/rancher/k3s/k3s.yaml ~/.kube/config   # once, for the operator
+
+- ``--data-dir``: where container images and every PersistentVolume go (the default ``local-path`` StorageClass
+  writes under ``<data-dir>/storage``). Pick a disk with room for the volumes above plus about 30 GB of images.
+- ``--disable traefik``: the chart brings no Ingress, and nothing on the node needs to listen on 80 or 443.
+- The kubeconfig is cluster-admin, and with ``hostPath`` pods that is root on the node, so keep it ``600`` and copy
+  it only to the operator. Its context is ``default`` (``KUBE_CONTEXT=default``).
+- ``--default-runtime nvidia``: on a GPU node only, once the NVIDIA driver (580 or newer) and the NVIDIA Container
+  Toolkit are installed. The chart sets no ``runtimeClassName``, so pods reach the GPU only through containerd's
+  default runtime. To add it to an existing install, put ``default-runtime: nvidia`` in
+  ``/etc/rancher/k3s/config.yaml`` and run ``sudo systemctl restart k3s``; pods that use the GPU, and the device
+  plugin, pick it up only when recreated.
+
+Then, as the operator, without root:
+
+- Install ``kubectl`` (the server's version) and ``helm`` in your own ``PATH``, ahead of ``/usr/local/bin``. k3s's
+  ``/usr/local/bin/kubectl`` is a link to the k3s binary, which, run as a normal user, unpacks itself into
+  ``~/.rancher`` (about 300 MB).
+- k3s enforces NetworkPolicy, and its API server listens on the node's address, port 6443. Set
+  ``networkPolicies.apiServer`` to the node's address (see `Cluster`_), for example in your values file:
+
+  .. code-block:: yaml
+
+     networkPolicies:
+       apiServer:
+         cidrs: ["<node IP>/32"]
+         port: 6443
+
+  Without it ``xnat-init`` fails with ``Container Service cannot reach its kubernetes backend``, and with job pods
+  no job pod is ever created.
+- On a GPU node, install the `NVIDIA device plugin <https://github.com/NVIDIA/k8s-device-plugin>`_ (or the GPU
+  Operator). The plugin's chart runs only on nodes labelled by Node Feature Discovery or
+  ``nvidia.com/gpu.present=true``; without Node Feature Discovery, label the node yourself:
+
+  .. code-block:: shell
+
+     helm repo add nvdp https://nvidia.github.io/k8s-device-plugin
+     helm upgrade --install nvdp nvdp/nvidia-device-plugin --namespace nvidia-device-plugin --create-namespace
+     kubectl label node <node> nvidia.com/gpu.present=true
+     kubectl get node <node> -o jsonpath='{.status.allocatable.nvidia\.com/gpu}'   # the GPU count
+
+- Stage the FL kit with ``stage-kit`` (Step 3). It reaches the node through a short-lived pod, so it needs no
+  docker or shell on the host.
+
 *****************************************************
 Step 1 — Check out the release and copy in the kit
 *****************************************************
@@ -197,7 +264,9 @@ itself: the kit file ``trust/.env.<CODE>.<env>`` is what the admin's registratio
 (``trustData.seed.enabled``), so FLIP's sample data never reaches your OMOP database or PACS. Any other ``deploy``
 that names ``KIT=<CODE>`` turns it off as well, with or without the override; only a ``deploy`` naming no kit leaves
 the chart's default, which seeds. On AKS and EKS, ``join`` installs the kit from the tarball and deploys in
-one step, so ask the hub admin to add the line before packaging the kit. Leave it unset on a test trust. For the
+one step, so ask the hub admin to add the line before packaging the kit. Leave it unset on a test trust. A test trust
+that takes part in imaging rounds also needs ``trustData.seed.orthanc: true`` in your values file (see `Key values`_):
+the default seeds OMOP only, so its cohorts match patients whose studies its PACS does not have. For the
 DICOM vocabulary that normally comes with the sample data, see :ref:`onprem-core-vocabulary`.
 
 **********************************
@@ -264,12 +333,20 @@ the FL client starts.
 - The kit goes to ``KIT_DEST`` on the node (default ``/opt/flip/fl-kit``), and the deploy targets mount that same
   path, whatever the kit's ``FL_KIT_DIR`` says. Any previous kit there is removed first. To use another path, pass
   the same ``KIT_DEST=<path>`` to ``stage-kit`` and to the deploy.
+- ``NODE=<name>`` names the node the kit goes to. A one-node cluster needs none. With several, ``stage-kit`` refuses
+  to guess: name the node the FL client runs on, which is imaging-api's unless ``flClient.affinity`` says otherwise.
 
 .. note::
 
-   ``stage-kit`` copies into the node with ``docker cp``, which works for a **kind** cluster only. On any other
-   cluster, place the kit on the node by whatever means your site allows, at ``/opt/flip/fl-kit`` (or the
-   ``KIT_DEST`` you deploy with), readable by uid 1000 (FLARE) or 49999 (Flower).
+   On a kind development cluster ``stage-kit`` copies with ``docker cp``. On any other cluster (k3s, a VM) it starts
+   a short-lived root pod on the node, with ``KIT_DEST`` mounted as a ``hostPath``, and copies with
+   ``kubectl cp``. That needs no docker or shell on the host, but RBAC to read the nodes and to create and exec
+   into that pod, which is as good as root on the node. If the cluster will not run the pod, ``stage-kit`` prints
+   the same steps as one command to run as root on the node. A namespace under Pod Security ``baseline`` refuses
+   every ``hostPath``, the chart's own kit mount included, so use the kit Secret below there. Otherwise place the
+   kit at ``KIT_DEST`` by your site's own means, owned by uid 1000 (FLARE) or 49999 (Flower) and readable by no one
+   else. On a host
+   shared with people, check that uid isn't a person's account: whoever holds it can read the kit's private key.
 
 If you skip this step, the FL client pod stays ``Pending`` with a ``hostPath type check failed`` event naming the
 missing path.
@@ -453,10 +530,10 @@ onto the node; it fetches nothing and needs no cloud credentials, so this works 
 1. Get the vocabulary as a folder of Athena CSVs. With access to the AI Centre bucket, run
    ``make -C trust/deploy/helm download-vocab`` on your own machine (it uses your AWS CLI profile). Otherwise export
    it from OHDSI Athena as step 7 of :doc:`onboarding-a-trust` describes, and unzip the export into a folder.
-2. Stage it onto the node: ``make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<kube-context>``
-   on kind; on any other cluster, copy the folder to ``/opt/flip/omop-vocab`` on the node yourself. With more than
-   one node, pin the load job to that node with ``omopDb.vocabLoad.nodeSelector`` (for example
-   ``kubernetes.io/hostname: <node>``). The folder is read only for the first load: once the database holds the
+2. Stage it onto the node: ``make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<kube-context>``.
+   It lands at ``/opt/flip/omop-vocab``, the same way ``stage-kit`` reaches the node (Step 3). With more than
+   one node, name it with ``NODE=<name>`` and pin the load job to it with ``omopDb.vocabLoad.nodeSelector`` (for
+   example ``kubernetes.io/hostname: <node>``). The folder is read only for the first load: once the database holds the
    vocabulary, later upgrades skip it, so you may remove it.
 3. Set ``OMOP_VOCAB_DIR=/opt/flip/omop-vocab`` in the kit and re-run Step 4. ``sync-kit`` writes it into
    ``omopDb.vocabLoad.hostPath`` and a load job runs after each install or upgrade, loading only what is missing.
@@ -527,7 +604,8 @@ overlay win for the keys they set. Do not pass settings with
        real data only turns it off with ``TRUST_DATA_SEED=false`` in the kit (see Step 1).
    * - ``trustData.seed.orthanc``
      - ``false``
-     - Also load the mock DICOM studies into Orthanc (about 2 GB per trust). ``smoke-cstore`` needs it.
+     - Also load the mock DICOM studies into Orthanc (about 2 GB per trust). A test trust taking part in imaging
+       rounds needs it, as do ``smoke-cstore`` and three of the self-test's checks.
    * - ``omopDb.vocabLoad.hostPath``
      - ``""``
      - Node folder holding the staged OMOP vocabulary; empty skips the load (see above).
@@ -546,6 +624,10 @@ overlay win for the keys they set. Do not pass settings with
    * - ``networkPolicies.allowedEgressCIDRs`` / ``allowedEgressCIDRsWithPorts``
      - ``[]``
      - Extra egress rules, for example to a PACS or an external database.
+   * - ``networkPolicies.apiServer.cidrs`` / ``.port``
+     - ``[]`` / ``443``
+     - The Kubernetes API server's real endpoint where it does not listen on 443 (k3s and kind 6443, minikube 8443),
+       so ``xnat-web`` and the job-pod parent can reach it (see `Cluster`_).
    * - ``imagePullSecrets``
      - ``[]``
      - Registry credentials for private images.
@@ -640,6 +722,11 @@ Troubleshooting
        default; change it only if your hub uses another header.
    * - FL client ``Pending`` with ``hostPath type check failed``
      - The FL kit is not on the node at ``flClient.kitHostPath``. Run Step 3, then deploy again.
+   * - ``xnat-init`` fails with ``Container Service cannot reach its kubernetes backend (HTTP 500)``
+     - The API server does not listen on 443 and ``networkPolicies.apiServer`` is not set:
+       :ref:`ts-k8s-api-server-egress`.
+   * - Job pods on: a project's jobs never start at this trust
+     - The project has no NVFLARE study entry yet: run ``sync-project-studies`` (:ref:`ts-k8s-job-pods-no-study`).
    * - Flower SuperNode logs ``Permission denied`` on ``/certs`` or ``/keys``
      - The kit was staged for the wrong backend. Re-stage from the slot's own kit directory, or pass
        ``FL_BACKEND=flower``.
