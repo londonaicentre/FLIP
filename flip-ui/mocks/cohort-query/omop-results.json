@@ -1,202 +1,144 @@
 {
-    "recordCount": 15465,
+    "recordCount": 1655,
+    "trustRecordCounts": {
+        "00000000-0000-0000-0000-000000000001": 742,
+        "00000000-0000-0000-0000-000000000002": 913
+    },
     "trustsResults": [
         {
-            "name": "age",
+            "name": "Age at image",
             "results": [
                 {
                     "trustName": "KCH",
-                    "trustId": "KCHID",
+                    "trustId": "00000000-0000-0000-0000-000000000001",
                     "data": [
                         {
-                            "value": "0",
-                            "count": 123
+                            "value": "18-29",
+                            "count": 41
                         },
                         {
-                            "value": "1",
-                            "count": 264
+                            "value": "30-39",
+                            "count": 68
                         },
                         {
-                            "value": "2",
-                            "count": 387
+                            "value": "40-49",
+                            "count": 97
                         },
                         {
-                            "value": "3",
-                            "count": 201
+                            "value": "50-59",
+                            "count": 132
                         },
                         {
-                            "value": "5",
-                            "count": 123
+                            "value": "60-69",
+                            "count": 171
                         },
                         {
-                            "value": "6",
-                            "count": 264
+                            "value": "70-79",
+                            "count": 149
                         },
                         {
-                            "value": "7",
-                            "count": 387
-                        },
-                        {
-                            "value": "8",
-                            "count": 201
-                        },
-                        {
-                            "value": "9",
-                            "count": 123
-                        },
-                        {
-                            "value": "65",
-                            "count": 264
-                        },
-                        {
-                            "value": "69",
-                            "count": 387
-                        },
-                        {
-                            "value": "70",
-                            "count": 201
-                        },
-                        {
-                            "value": "35",
-                            "count": 123
-                        },
-                        {
-                            "value": "36",
-                            "count": 264
-                        },
-                        {
-                            "value": "39",
-                            "count": 387
-                        },
-                        {
-                            "value": "40",
-                            "count": 201
+                            "value": "80+",
+                            "count": 84
                         }
                     ]
                 },
                 {
                     "trustName": "UCLH",
-                    "trustId": "UCLHID",
+                    "trustId": "00000000-0000-0000-0000-000000000002",
                     "data": [
                         {
-                            "value": "33",
-                            "count": 198
+                            "value": "18-29",
+                            "count": 58
                         },
                         {
-                            "value": "61",
-                            "count": 212
+                            "value": "30-39",
+                            "count": 83
                         },
                         {
-                            "value": "69",
-                            "count": 399
+                            "value": "40-49",
+                            "count": 121
                         },
                         {
-                            "value": "76",
-                            "count": 254
+                            "value": "50-59",
+                            "count": 160
+                        },
+                        {
+                            "value": "60-69",
+                            "count": 204
+                        },
+                        {
+                            "value": "70-79",
+                            "count": 178
+                        },
+                        {
+                            "value": "80+",
+                            "count": 109
                         }
                     ]
                 }
             ]
         },
         {
-            "name": "gender",
+            "name": "Sex",
             "results": [
                 {
                     "trustName": "KCH",
-                    "trustId": "KCHID",
+                    "trustId": "00000000-0000-0000-0000-000000000001",
                     "data": [
                         {
-                            "value": "M",
-                            "count": 1025
-                        },
-                        {
-                            "value": "F",
-                            "count": 715
-                        },
-                        {
-                            "value": "Unknown",
-                            "count": 301
-                        }
-                    ]
-                },
-                {
-                    "trustName": "UCLH",
-                    "trustId": "UCLHID",
-                    "data": [
-                        {
-                            "value": "M",
-                            "count": 5856
-                        },
-                        {
-                            "value": "F",
-                            "count": 3456
-                        }
-                    ]
-                },
-                {
-                    "trustName": "KINGS",
-                    "trustId": "KCHID",
-                    "data": [
-                        {
-                            "value": "M",
-                            "count": 1025
-                        },
-                        {
-                            "value": "F",
-                            "count": 715
-                        },
-                        {
-                            "value": "Unknown",
-                            "count": 301
-                        },
-                        {
-                            "value": "Indeterminate",
-                            "count": 26
-                        }
-                    ]
-                }
-            ]
-        },
-        {
-            "name": "diagnosis",
-            "results": [
-                {
-                    "trustName": "KCH",
-                    "trustId": "KCHID",
-                    "data": [
-                        {
-                            "value": "haemorrhage",
-                            "count": 211
-                        },
-                        {
-                            "value": "cavernoma",
-                            "count": 254
-                        },
-                        {
-                            "value": "stroke",
-                            "count": 645
-                        }
-                    ]
-                },
-                {
-                    "trustName": "UCLH",
-                    "trustId": "UCLHID",
-                    "data": [
-                        {
-                            "value": "haemorrhage",
-                            "count": 316
-                        },
-                        {
-                            "value": "cavernoma",
+                            "value": "Female",
                             "count": 359
                         },
                         {
-                            "value": "stroke",
-                            "count": 356
+                            "value": "Male",
+                            "count": 383
+                        }
+                    ]
+                },
+                {
+                    "trustName": "UCLH",
+                    "trustId": "00000000-0000-0000-0000-000000000002",
+                    "data": [
+                        {
+                            "value": "Female",
+                            "count": 447
                         },
                         {
-                            "value": "seizure",
-                            "count": 112
+                            "value": "Male",
+                            "count": 466
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "Pneumonia",
+            "results": [
+                {
+                    "trustName": "KCH",
+                    "trustId": "00000000-0000-0000-0000-000000000001",
+                    "data": [
+                        {
+                            "value": "0",
+                            "count": 655
+                        },
+                        {
+                            "value": "1",
+                            "count": 87
+                        }
+                    ]
+                },
+                {
+                    "trustName": "UCLH",
+                    "trustId": "00000000-0000-0000-0000-000000000002",
+                    "data": [
+                        {
+                            "value": "0",
+                            "count": 792
+                        },
+                        {
+                            "value": "1",
+                            "count": 121
                         }
                     ]
                 }
