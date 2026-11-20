@@ -256,6 +256,15 @@
                                     <span class="text-note tabular-nums text-gray-600 dark:text-gray-300">
                                         {{ t.project_count }} {{ t.project_count === 1 ? "project" : "projects" }}
                                     </span>
+                                    <template v-if="jobCount(t)">
+                                        <span class="text-gray-300 dark:text-gray-600">·</span>
+                                        <span
+                                            data-test="trust-jobs-mobile"
+                                            class="text-note tabular-nums text-gray-600 dark:text-gray-300"
+                                        >
+                                            {{ jobCount(t) }} {{ jobCount(t) === 1 ? "job" : "jobs" }}
+                                        </span>
+                                    </template>
                                     <span class="flex-1" />
                                     <span
                                         data-test="trust-services-mobile"
@@ -292,7 +301,7 @@
                             <thead>
                                 <tr class="bg-gray-50 dark:bg-dark-surface border-b border-gray-200 dark:border-dark-border">
                                     <th
-                                        v-for="col in columns"
+                                        v-for="col in visibleColumns"
                                         :key="col.key ?? col.label"
                                         :data-test="col.key ? `sort-header-${col.key}` : undefined"
                                         class="px-4 py-3 text-xs text-gray-500 dark:text-gray-300 font-medium select-none whitespace-nowrap"
@@ -398,6 +407,14 @@
                                             />
                                         </div>
                                     </td>
+                                    <td
+                                        v-if="isAdmin"
+                                        class="px-4 py-4 align-middle text-xs tabular-nums text-gray-600 dark:text-gray-300 whitespace-nowrap"
+                                        data-test="trust-jobs"
+                                    >
+                                        <span v-for="line in jobLines(t)" :key="line" class="block">{{ line }}</span>
+                                        <span v-if="!jobCount(t)">—</span>
+                                    </td>
                                     <td v-if="showKitColumn" class="px-4 py-4 align-middle" data-test="trust-kit">
                                         <TrustKitSection compact :trust="t" />
                                     </td>
@@ -409,7 +426,10 @@
                                     </td>
                                 </tr>
                                 <tr v-if="!displayedTrusts.length">
-                                    <td :colspan="columns.length" class="text-center py-6 text-gray-500 dark:text-gray-300">
+                                    <td
+                                        :colspan="visibleColumns.length"
+                                        class="text-center py-6 text-gray-500 dark:text-gray-300"
+                                    >
                                         {{ activeTile ? "No trusts match this filter." : "No trusts registered yet." }}
                                     </td>
                                 </tr>
@@ -732,7 +752,7 @@
 
             <!-- FL nets status — relocated from the standalone Connection Status (FL nets) page -->
             <div class="mt-6">
-                <FLNetsCard />
+                <FLNetsCard :trusts="trusts" />
             </div>
         </div>
     </div>
@@ -770,6 +790,7 @@ import { deriveTrust,
     deriveTrustState,
     heartbeatText,
     IDerivedTrust,
+    jobLines,
     PILL_CLASSES,
     STATE_LABELS,
     TrustState } from "@/utils/connection-health";
@@ -839,7 +860,7 @@ interface IColumn {
 
 // Header config drives both the rendered <th>s and the per-column sort handler.
 // Keys correspond to entries in `SORT_COMPARATORS`; columns without a key
-// (Services dots, drawer chevron) render as inert headers.
+// (Services dots, Jobs, drawer chevron) render as inert headers.
 const BASE_COLUMNS: IColumn[] = [
     {
         key: "severity",
@@ -872,6 +893,10 @@ const BASE_COLUMNS: IColumn[] = [
         width: "w-px"
     },
     {
+        label: "Jobs",
+        width: "w-px"
+    },
+    {
         label: "",
         width: "w-px"
     }
@@ -887,10 +912,15 @@ const columns = computed<IColumn[]>(() => (showKitColumn.value
     }, ...BASE_COLUMNS.slice(-1)]
     : BASE_COLUMNS));
 
+// The Jobs counts span every project, so the hub sends them to hub admins only (FLIP#1739).
+const visibleColumns = computed(() => columns.value.filter(col => col.label !== "Jobs" || isAdmin.value));
+
 // Severity-first is the default (design 1b): failing trusts surface on load;
 // admins can re-sort via the column headers when triaging.
 const sortKey = ref<SortKey>("severity");
 const sortDir = ref<SortDir>("asc");
+
+const jobCount = (t: ITrustResponse): number => (t.jobs_in_progress ?? 0) + (t.jobs_queued ?? 0);
 
 // Heartbeat age in seconds; null heartbeat = oldest (Infinity).
 const heartbeatAge = (t: ITrustResponse): number =>
