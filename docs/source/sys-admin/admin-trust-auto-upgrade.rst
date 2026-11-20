@@ -212,7 +212,8 @@ What differs from the host:
 - **The current release comes from the Helm record**, not a checkout. There is also nothing to be dirty, so the
   "local modifications" check has no cluster equivalent and never blocks here.
 - **The upgrade is Helm's**: the agent pulls the published chart at the target release and runs ``helm upgrade
-  --reuse-values``, so the live per-Trust values are kept and only the image tag moves. It never passes
+  --reset-then-reuse-values``, so the new release's defaults apply, the live per-Trust values are kept on top,
+  and only the image tag moves. It never passes
   ``--install``: a release it cannot see fails the check instead of being installed a second time underneath the
   running one.
 - **The identity is narrow on purpose.** It holds no ``secrets`` permission at all — its API key arrives as a

@@ -676,7 +676,10 @@ class ClusterUpgrade(unittest.TestCase):
         _, calls = self._run()
         upgrade = calls[1][0]
         self.assertEqual(upgrade[:3], ["helm", "upgrade", "flip-trust"])
-        self.assertIn("--reuse-values", upgrade)
+        # The new chart's defaults with the stored overrides on top; plain --reuse-values would
+        # render with the previous chart's defaults and drop any value the release adds.
+        self.assertIn("--reset-then-reuse-values", upgrade)
+        self.assertNotIn("--reuse-values", upgrade)
         self.assertEqual(upgrade[upgrade.index("--set") + 1], "global.image.tag=v0.13.0")
 
     def test_it_never_installs(self):

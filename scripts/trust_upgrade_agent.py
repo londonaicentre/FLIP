@@ -31,8 +31,8 @@ portal.
 
 On Kubernetes/AKS there is no host to put the timer on, so the same tick runs as a chart-owned
 CronJob with ``--mode cluster``: the current release comes from Helm instead of a checkout, and the
-upgrade is ``helm pull`` of the published chart plus ``helm upgrade --reuse-values`` (the live release
-already holds the per-trust values, so the pod needs no kit parsing and no generated override). The
+upgrade is ``helm pull`` of the published chart plus ``helm upgrade --reset-then-reuse-values`` (the live
+release already holds the per-trust values, so the pod needs no kit parsing and no generated override). The
 lease, the report, the window and the failed-release latch are the hub's and are identical either way.
 
 ``decide`` is pure and holds every rule; the rest of the file is I/O around it.
@@ -374,8 +374,11 @@ def cluster_state(cluster: Cluster) -> Local:
 def cluster_upgrade(cluster: Cluster, tag: str) -> tuple[bool, str]:
     """Pull the published chart for ``tag`` and move the release onto it, keeping the live values.
 
-    ``--reuse-values`` is what replaces the host path's per-trust override: the release already holds
-    the values ``sync-kit`` last wrote, so the pod parses no kit and generates no override file. Only
+    ``--reset-then-reuse-values`` is what replaces the host path's per-trust override: the release already
+    holds the values ``sync-kit`` last wrote, so the pod parses no kit and generates no override file. Not
+    plain ``--reuse-values``: that renders against the *previous* chart's defaults, so a value the new
+    release adds would be missing at render time. This flag takes the new chart's defaults and re-applies
+    the stored overrides on top (Helm 3.14+; the agent image pins 3.17.3). Only
     ``global.image.tag`` moves — the per-image pins (omopDb, orthanc, xnat, flClient) are deliberate
     settings the kit owns, and an upgrade must not quietly reset them.
 
@@ -401,7 +404,7 @@ def cluster_upgrade(cluster: Cluster, tag: str) -> tuple[bool, str]:
                 str(Path(tmp) / "flip-trust"),
                 "--namespace",
                 cluster.namespace,
-                "--reuse-values",
+                "--reset-then-reuse-values",
                 "--set",
                 f"global.image.tag={tag}",
                 "--history-max",

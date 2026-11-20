@@ -1170,7 +1170,8 @@ been reproduced, a Secret-recorded trust keeps upgrading by hand with `make upgr
 The CronJob fires hourly (`autoUpgrade.schedule`), one Job per tick, `concurrencyPolicy: Forbid`, no
 retries (`backoffLimit: 0`) and a deadline under the hub's two-hour lease. It asks the hub whether to
 move; when it does, it claims the lease, pulls the chart at the target release, upgrades with
-`--reuse-values` so the live per-trust values are kept and only `global.image.tag` moves, then waits
+`--reset-then-reuse-values` so the new chart's defaults apply, the live per-trust values are kept on top,
+and only `global.image.tag` moves, then waits
 for `trust-api /health` to report the new release before telling the hub it succeeded. The per-image
 pins (`omopDb`, `orthanc`, `xnat`, `flClient`) are deliberately *not* touched: those are kit settings,
 not upgrades.
