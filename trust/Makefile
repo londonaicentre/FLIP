@@ -829,7 +829,7 @@ upgrade-trust: require-xnat-aetitle
 	$(require_kit_file)
 	$(check_slot_not_taken)
 	$(refuse_remote_governance)
-	uv run --no-config deploy/scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
+	uv run --no-config deploy/scripts/site_upgrade.py plan --kit-file $(KIT_FILE) --fl-client-image $(DOCKER_FL_CLIENT_NAME) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
 	$(MAKE) _upgrade-trust-apply KIT=$(KIT) HUB=$(HUB) DEBUG=$(DEBUG)
 
 # FLIP_UID is a first-install choice (FLIP#1731): a site's data dirs carry the ids its install

@@ -134,6 +134,27 @@ KUBECTL: list[str] = ["kubectl"]
 IMMUTABLE_IMAGE_TAG = re.compile(r"^(?:v\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)?|sha-[0-9a-f]{7})$")
 
 
+class UnsupportedKitError(RuntimeError):
+    """The kit asks for something the chart does not deploy."""
+
+
+def refuse_fl_environment(kit: dict[str, str]) -> None:
+    """Refuse a kit that names an FL environment image (FLIP#32).
+
+    The chart's ``flClientImage`` helper always renders the backend's own client image, so the key
+    would be dropped without a word and every job that needs the environment would fail at import.
+
+    Raises:
+        UnsupportedKitError: If the kit sets ``FL_ENVIRONMENT``.
+    """
+    environment = kit.get("FL_ENVIRONMENT", "").strip()
+    if environment:
+        raise UnsupportedKitError(
+            f"the kit sets FL_ENVIRONMENT={environment}, which the Helm chart does not read yet: it would deploy "
+            "the plain FL client. Remove the key from the kit, or run this site with Compose."
+        )
+
+
 class GovernanceDocumentError(RuntimeError):
     """The kit's governance configuration cannot be deployed: its document is unreadable or
     invalid, or its site privacy filter is invalid or one this trust's backend would not
@@ -968,6 +989,12 @@ def main(
         print("   These come from registration + the Hub-shared block. Run:")
         print(f"     make -C deploy/providers/AWS register-trusts KIT={code}{hub}")
         print(f"     make sync-trust-kit KIT={code}{hub}")
+        sys.exit(1)
+
+    try:
+        refuse_fl_environment(kit)
+    except UnsupportedKitError as e:
+        print(f"❌ Kit {kit_path.name}: {e}")
         sys.exit(1)
 
     # ── 1. Patch the per-trust secrets into the cluster ──────────────────

@@ -265,6 +265,15 @@ def _override(tmp_path, document: str = _DOCUMENT, **kit: str) -> str:
     )
 
 
+def test_a_kit_naming_an_fl_environment_is_refused():
+    """The chart always renders the backend's own FL client image, so a kit's FL_ENVIRONMENT (FLIP#32)
+    would be dropped silently and the jobs that need it would fail at import."""
+    with pytest.raises(sync_k8s_kit.UnsupportedKitError, match="FL_ENVIRONMENT=segmentation"):
+        sync_k8s_kit.refuse_fl_environment({**_FL_KIT, "FL_ENVIRONMENT": "segmentation"})
+    sync_k8s_kit.refuse_fl_environment({**_FL_KIT, "FL_ENVIRONMENT": " "})
+    sync_k8s_kit.refuse_fl_environment(_FL_KIT)
+
+
 def _checksum(override: str) -> str:
     return next(line.split(": ", 1)[1] for line in override.splitlines() if "flPrivacyChecksum:" in line)
 

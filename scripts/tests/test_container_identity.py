@@ -420,7 +420,11 @@ def check_images_tolerate_a_foreign_uid(failures: list[str]) -> None:
 
 
 # Images that take a `USER root` step to apply those changes must hand back to their own user.
-IMAGES_ENDING_NON_ROOT = ("trust/orthanc/Dockerfile", "trust/xnat/xnat/Dockerfile")
+IMAGES_ENDING_NON_ROOT = (
+    "trust/orthanc/Dockerfile",
+    "trust/xnat/xnat/Dockerfile",
+    "fl-services/nvflare/fl-client-segmentation/Dockerfile",
+)
 
 # XNAT's Container Service jobs run as the uid the backend's `container-user` names; under FLIP_UID
 # that must be xnat-web's uid, or dcm2niix cannot read the 640 files it archives (FLIP#1731).
@@ -438,6 +442,20 @@ def check_images_hand_back_to_their_user(failures: list[str]) -> None:
         if not users or users[-1] in ("root", "0", "0:0"):
             last = users[-1] if users else "missing"
             failures.append(f"{rel}: the last USER directive is {last}; it must not be root.")
+
+
+def check_the_segmentation_image_syncs_what_fl_base_syncs(failures: list[str]) -> None:
+    """`uv sync` is exact: an extra fl-base installs and this image's sync omits is removed from it."""
+    extras = {}
+    for name in ("fl-base", "fl-client-segmentation"):
+        text = (REPO_ROOT / "fl-services/nvflare" / name / "Dockerfile").read_text()
+        sync = next(line for line in text.splitlines() if line.startswith("RUN uv sync"))
+        extras[name] = set(re.findall(r"--extra (\S+)", sync))
+    if extras["fl-client-segmentation"] != extras["fl-base"] | {"segmentation"}:
+        failures.append(
+            f"fl-client-segmentation syncs {sorted(extras['fl-client-segmentation'])}; it must sync fl-base's "
+            f"{sorted(extras['fl-base'])} plus segmentation, or the missing extra is uninstalled."
+        )
 
 
 def check_container_service_jobs_follow_flip_uid(failures: list[str]) -> None:
@@ -543,6 +561,7 @@ def main() -> int:
         check_production_user_follows_flip_uid(failures)
         check_images_tolerate_a_foreign_uid(failures)
         check_images_hand_back_to_their_user(failures)
+        check_the_segmentation_image_syncs_what_fl_base_syncs(failures)
         check_container_service_jobs_follow_flip_uid(failures)
         check_nvflare_client_kit_is_read_only(failures)
         check_no_uname_runtime_paths(failures)

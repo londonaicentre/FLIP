@@ -51,7 +51,8 @@ that `trust/deploy/scripts/trust_kit_lib.py` defines once (`SENTINEL`); `distrib
 whatever an older kit says, as an LZA hub's registry is an ECR cache no site can log in to (FLIP#1480).
 `UPLOADED_FEDERATED_DATA_BUCKET` is hub-only (flip-api's; no FL image reads
 it); `DOCKER_FL_CLIENT_NAME` is derived from `FL_BACKEND` by
-`deploy/fl_backend.mk` (trust/Makefile includes it).
+`deploy/fl_backend.mk` (trust/Makefile includes it), with the kit's own `FL_ENVIRONMENT` (site-owned, FLARE
+only) choosing an FL environment image such as `flare-fl-client-segmentation`.
 
 `make sync-trust-kit KIT=<CODE> HUB=<env>` refreshes the Hub-shared block in
 `trust/.env.<CODE>.<env>` from the admin's local `$(MAIN_ENV_FILE)` without

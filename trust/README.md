@@ -112,6 +112,22 @@ COHORT_QUERY_THRESHOLD=10
 
 This is the minimum cohort size the trust will release anything about. Cohort statistics below it are privacy-suppressed (a genuine zero and a small count are indistinguishable), and both row-level routes refuse outright — `/cohort/dataframe`, which supplies FL training data, and `/cohort/accession-ids`, which decides whose imaging is pulled into XNAT. Raise it to release less. It is the operator's setting, not the hub's: trusts need not agree on a value, and the hub cannot lower it. The FL client receives the same value, so an app that releases site-level statistics rather than model weights (the biomarker causal-discovery tutorial) refuses below the trust's floor too. See [`data-access-api/README.md`](data-access-api/README.md#row-level-data-and-the-disclosure-threshold).
 
+#### FL environment image (optional, FLARE only)
+
+A trust's FL client runs one image. By default that is `flare-fl-client`. To run jobs that need an FL
+environment (FLIP#32), set it in the kit file:
+
+```bash
+FL_ENVIRONMENT=segmentation   # flare-fl-client-segmentation: the client image plus TotalSegmentator
+```
+
+`up-trust`, `restart-trust` and `upgrade-trust` then run that image, and `upgrade-trust` checks it is
+published at the target tag before it changes anything. An unknown name, or one set with
+`FL_BACKEND=flower`, is refused. A job that needs an environment fails at import on a trust that does not
+run it. Compose only: the Helm chart does not read the key yet, and its `sync-kit` and `upgrade-trust-k8s`
+refuse a kit that sets it. See
+[`fl-services/nvflare/fl-client-segmentation/README.md`](../fl-services/nvflare/fl-client-segmentation/README.md).
+
 #### Site-enforced FL privacy policy (optional, FLARE only)
 
 The kit file's Host-local profile can set `FL_SITE_PRIVACY_POLICY=percentile` (plus optional

@@ -51,7 +51,7 @@ PROD_WORKSPACE_DIR ?= $(PROVISION)/workspace-prod
 STAG_NUM_CLIENTS   ?= 50
 PROD_NUM_CLIENTS   ?= 500
 
-.PHONY: build provision provision-2-nets provision-add-client provision-add-client-stag provision-add-client-prod provision-stag provision-prod upload-kits-to-s3 up down submit
+.PHONY: build build-segmentation provision provision-2-nets provision-add-client provision-add-client-stag provision-add-client-prod provision-stag provision-prod upload-kits-to-s3 up down submit
 
 # Build the FLARE images, tagged $(FL_BUILD_TAG) (:dev unless DOCKER_FL_TAG is given). fl-base must build first, in its own invocation:
 # a plain `FROM flare-fl-base` in the derived Dockerfiles is invisible to Compose's
@@ -61,6 +61,14 @@ build:
 	LOCAL_DEV=$(LOCAL_DEV) $(DEV_COMPOSE) --profile build-only build fl-base
 	@echo "🛠️  Building flare-fl-{server,api,client}:$(FL_BUILD_TAG)..."
 	$(DEV_COMPOSE) build fl-server flip-fl-api fl-client-1
+
+# Build the segmentation FL environment (FLIP#32) on the flare-fl-client:$(FL_BUILD_TAG) that `build`
+# made. Not part of `build`: it downloads TotalSegmentator's weights, which most local stacks do not need.
+build-segmentation:
+	@docker image inspect $(or $(CLIENT_REF),flare-fl-client:$(FL_BUILD_TAG)) >/dev/null 2>&1 || \
+		{ echo "❌ $(or $(CLIENT_REF),flare-fl-client:$(FL_BUILD_TAG)) is not built: run 'make build' first, and again after a flip-utils change."; exit 1; }
+	@echo "🛠️  Building flare-fl-client-segmentation:$(FL_BUILD_TAG) (LOCAL_DEV=$(LOCAL_DEV))..."
+	LOCAL_DEV=$(LOCAL_DEV) $(DEV_COMPOSE) --profile build-only build fl-segmentation
 
 # Dev: provision net-<NET_NUMBER> startup kits into DEV_WORKSPACE_DIR (gitignored),
 # where the dev compose mounts expect them.

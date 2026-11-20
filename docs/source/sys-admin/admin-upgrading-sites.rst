@@ -256,6 +256,14 @@ The upgrade never re-seeds data and never resets XNAT.
    for all three images. Never pin XNAT ahead of the trust APIs: from the release that ships DQR 3.1.0, xnat-web
    needs imaging-api from the same release or later (see the Kubernetes note on ``xnat.image.pin`` below).
 
+.. note::
+
+   **Sites on an FL environment image.** A Compose site whose kit sets ``FL_ENVIRONMENT`` (for example
+   ``segmentation``) runs ``flare-fl-client-<name>`` as its FL client, and the upgrade checks that image at the
+   target tag, not ``flare-fl-client``. Its build may fail without failing a release, so the upgrade can refuse a
+   release tag for such a site while other sites move; hold the FL client with ``FL_TAG`` until the image is
+   published. On Kubernetes the chart does not read the key yet, and ``upgrade-trust-k8s`` refuses a kit that sets it.
+
    Never hold the NVFLARE FL client behind the compose files or chart either. From FLIP#1570 on they mount the
    client's kit read-only and render it in a one-shot ``fl-client-init`` step that runs ``/app/fl-client-init.sh``
    from the fl-client image, so ``FL_TAG`` (or ``flClient.image.pin``) must name an fl-client image from that change
