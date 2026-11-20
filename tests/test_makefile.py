@@ -745,6 +745,13 @@ class RotateTrustKeys(unittest.TestCase):
         assert "--name" in line, line
         assert "--code" not in line, line
 
+    def test_it_stages_by_default_and_revokes_only_on_request(self):
+        """FLIP#1714: the old key keeps working unless REVOKE_OLD=1 asks for the immediate cutover."""
+        assert "--revoke-old" not in self.recipe()
+        out = dry_run("rotate-trust-keys", "REVOKE_OLD=1", subdir=".")
+        line = next((ln for ln in out.splitlines() if "flip_api.scripts.register_trust" in ln), "")
+        assert "--revoke-old" in line, out
+
     def test_it_does_not_call_a_separate_rotation_module(self):
         """Rotation is a flag on the registration CLI; there is no rotate_trust_keys module."""
         assert "rotate_trust_keys" not in dry_run("rotate-trust-keys", subdir=".")

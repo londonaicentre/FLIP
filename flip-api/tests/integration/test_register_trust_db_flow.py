@@ -91,8 +91,8 @@ def test_free_slot_the_source_no_longer_names_is_not_claimed(mock_resolve, sessi
 
 
 @patch("flip_api.trusts_services.services.register_trust.resolve_fl_kit_slot_names")
-def test_rotation_refuses_the_old_key_and_leaves_identity_untouched(mock_resolve, session):
-    """After rotation the old key 401s, the new one authenticates, and only the hash moved."""
+def test_revoke_old_rotation_refuses_the_old_key_and_leaves_identity_untouched(mock_resolve, session):
+    """After a REVOKE_OLD rotation the old key 401s, the new one authenticates, and only the hash moved."""
     mock_resolve.return_value = ["Trust_703"]
     registered = register_trust(name="Rotating Trust", code="ROT", region=None, session=session)
     trust_id, slot_name = registered.trust.id, registered.fl_kit_slot.slot_name
@@ -105,7 +105,7 @@ def test_rotation_refuses_the_old_key_and_leaves_identity_untouched(mock_resolve
     assert authenticate_trust(api_key=old_key, db=session).id == trust_id
 
     try:
-        rotated = rotate_trust_keys(session, name="Rotating Trust")
+        rotated = rotate_trust_keys(session, name="Rotating Trust", revoke_old=True)
 
         assert rotated.trust_api_key != old_key
         with pytest.raises(HTTPException) as excinfo:
@@ -135,4 +135,47 @@ def test_rotation_refuses_the_old_key_and_leaves_identity_untouched(mock_resolve
         assert len(rotations) == 1
     finally:
         # A failed assertion must not leak a warm entry into the tests that follow.
+        trust_key_cache.invalidate()
+
+
+@patch("flip_api.trusts_services.services.register_trust.resolve_fl_kit_slot_names")
+def test_staged_rotation_keeps_the_old_key_until_the_new_one_is_used(mock_resolve, session):
+    """FLIP#1714 against real Postgres: both keys work, first use of the new key promotes it, then the old key 401s."""
+    mock_resolve.return_value = ["Trust_704"]
+    registered = register_trust(name="Staged Trust", code="STG", region=None, session=session)
+    trust_id = registered.trust.id
+    old_key = registered.trust_api_key
+    old_key_hash = session.exec(select(Trust).where(Trust.id == trust_id)).one().api_key_hash
+
+    try:
+        rotated = rotate_trust_keys(session, name="Staged Trust")
+
+        # Staged: the site is still online on its old key.
+        assert authenticate_trust(api_key=old_key, db=session).id == trust_id
+        session.expire_all()
+        row = session.exec(select(Trust).where(Trust.id == trust_id)).one()
+        assert row.api_key_hash == old_key_hash
+        assert row.pending_api_key_hash is not None
+        assert row.pending_api_key_expires_at is not None
+
+        # First use of the new key promotes it, and that is committed.
+        assert authenticate_trust(api_key=rotated.trust_api_key, db=session).id == trust_id
+        session.expire_all()
+        row = session.exec(select(Trust).where(Trust.id == trust_id)).one()
+        assert row.pending_api_key_hash is None
+        assert row.api_key_hash != old_key_hash
+
+        # The old key is refused from now on, also through another worker's warm cache entry.
+        with pytest.raises(HTTPException) as excinfo:
+            authenticate_trust(api_key=old_key, db=session)
+        assert excinfo.value.status_code == 401
+        trust_key_cache.remember(old_key_hash, trust_id)
+        with pytest.raises(HTTPException) as cached_excinfo:
+            authenticate_trust(api_key=old_key, db=session)
+        assert cached_excinfo.value.status_code == 401
+
+        actions = [a.action for a in session.exec(select(TrustsAudit).where(TrustsAudit.trust_id == trust_id)).all()]
+        assert TrustAuditAction.ROTATED in actions
+        assert TrustAuditAction.KEY_PROMOTED in actions
+    finally:
         trust_key_cache.invalidate()

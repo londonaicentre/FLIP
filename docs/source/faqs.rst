@@ -141,5 +141,6 @@ What does a mismatched encryption key look like?
 
 How are a Trust's keys rotated?
    One command per Trust reissues its API key and internal service key in place; the Trust keeps its id, code and FL
-   kit slot. The refreshed kit then goes to the Trust's operator, whose upgrade command restarts every trust-internal
-   container together. XNAT's credentials do not rotate with it. See :ref:`deploy-central-hub-rotate-trust-keys`.
+   kit slot. The new key is staged: the hub accepts the old and the new key until the Trust first uses the new one, so
+   the site stays online while the refreshed kit goes to its operator, whose upgrade command restarts every
+   trust-internal container together. ``REVOKE_OLD=1`` cuts the old key off at once, for a leaked key. XNAT's credentials do not rotate with it. See :ref:`deploy-central-hub-rotate-trust-keys`.

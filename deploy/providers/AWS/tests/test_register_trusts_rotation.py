@@ -126,10 +126,28 @@ def test_a_failed_sync_after_the_write_says_the_rotation_happened(tmp_path: Path
     code, calls, out = _rotate(tmp_path, SYNC_EXIT="1", MAIN_ENV_FILE="/hub/.env.stag")
     _failed_after_the_task(code, calls, out)
     assert _ran(calls, "ssm delete-parameter"), "the kit file holds the keys, so the parameter goes"
-    assert "the hub refuses the old key" in out
+    assert "The rotation itself succeeded" in out
+    assert "the hub already refuses the old key" not in out  # staged: the old key still works
     assert "Do not re-run rotate-trust-keys" in out
     assert "/hub/.env.stag" in out
     assert "make sync-trust-kit KIT=T0 HUB=stag" in out
+
+
+def test_a_staged_rotation_does_not_pass_revoke_old(tmp_path: Path) -> None:
+    code, calls, out = _rotate(tmp_path)
+    assert code == 0, out
+    assert '"--revoke-old"' not in "\n".join(calls)
+
+
+def test_revoke_old_passes_revoke_old_and_a_failed_sync_says_the_old_key_is_refused(tmp_path: Path) -> None:
+    code, calls, out = _rotate(tmp_path, REVOKE_OLD="1")
+    assert code == 0, out
+    assert '"--revoke-old"' in "\n".join(calls)
+    second = tmp_path / "second"
+    second.mkdir()
+    code, calls, out = _rotate(second, REVOKE_OLD="1", SYNC_EXIT="1", MAIN_ENV_FILE="/hub/.env.stag")
+    _failed_after_the_task(code, calls, out)
+    assert "the hub already refuses the old key" in out
 
 
 def test_a_failed_ssm_read_keeps_the_parameter(tmp_path: Path) -> None:
