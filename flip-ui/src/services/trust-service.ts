@@ -85,6 +85,45 @@ export async function getTrustDecisions(trustId: string): Promise<ITrustDecision
     return Array.isArray(response.data) ? response.data : [];
 }
 
+/** Where a trust's kit stands: whether its keys exist yet, and the last download from the UI (FLIP#1852). */
+export interface ITrustKitStatus {
+    // False until the first download, which mints the trust's keys (a "full" kit).
+    keys_issued: boolean;
+    fl_backend: "nvflare" | "flower";
+    fl_kit_slot: string | null;
+    download_count: number;
+    // `by` is the downloader's profile name, when they have one.
+    last_download: { at: string; kind: "full" | "update"; by: string | null } | null;
+    update_available: boolean;
+}
+
+/** An encrypted kit file with the one-time passphrase that opens it. The hub keeps neither. */
+export interface ITrustKitDownload {
+    file_name: string;
+    kind: "full" | "update";
+    passphrase: string;
+    content_base64: string;
+}
+
+export async function getTrustKitStatus(trustId: string): Promise<ITrustKitStatus> {
+    const response = await _http.get<ITrustKitStatus>(`/trust/${trustId}/kit`);
+
+    return response.data;
+}
+
+export async function downloadTrustKit(trustId: string): Promise<ITrustKitDownload> {
+    const response = await _http.post<ITrustKitDownload>(`/trust/${trustId}/kit`);
+
+    return response.data;
+}
+
+// Replaces the trust's keys: the kit installed at the site stops working. The hub checks the typed code again.
+export async function rotateTrustKit(trustId: string, confirmCode: string): Promise<ITrustKitDownload> {
+    const response = await _http.post<ITrustKitDownload>(`/trust/${trustId}/kit/rotate`, { confirm_code: confirmCode });
+
+    return response.data;
+}
+
 // Connection-status view over the same GET /trust endpoint. Readable by any
 // authenticated user (Researcher / Viewer / Admin). Errors are intentionally
 // NOT swallowed: a rejection lets SWRV keep the page's loader rather than

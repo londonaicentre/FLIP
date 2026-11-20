@@ -298,9 +298,10 @@ class Trust(SQLModel, table=True):
     # Added for issue #506 — the `trust` table is the sole trust registry.
     # `code` is the short display label (e.g. "GSTT"); `region` is the NHS
     # region/geography (e.g. "London"). Both stay nullable because they are
-    # optional inputs to register_trust. `api_key_hash` is nullable only so a
-    # row can briefly exist mid-insert; every registered trust has it set —
-    # register_trust mints the key and stores its SHA-256 here.
+    # optional inputs to register_trust. `api_key_hash` is the SHA-256 of the
+    # trust's API key. It is NULL for a trust added from the UI until its kit is
+    # first downloaded, which is when the keys are minted (FLIP#1852); until then
+    # the trust cannot authenticate. The deploy CLI mints at registration.
     #
     # `created_at` is always set (register_trust stamps it).
     code: str | None = Field(default=None)
@@ -345,6 +346,9 @@ class TrustsAudit(SQLModel, table=True):
     # The user an ADMIN_ADDED / ADMIN_REMOVED row is about (the new or former Trust Admin); NULL on registry
     # events. modified_by_user_id stays the admin who made the change.
     subject_user_id: UUID | None = Field(default=None)
+    # What a KIT_DOWNLOADED row handed over (FLIP#1852): its kind and a digest of the hub-shared values, never
+    # a secret. NULL on every other action.
+    detail: dict | None = Field(default=None, sa_column=Column("detail", JSONB, nullable=True))
     audit_date: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
 
 

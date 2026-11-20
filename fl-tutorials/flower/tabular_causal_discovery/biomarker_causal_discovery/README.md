@@ -128,7 +128,9 @@ make -C fl-tutorials convert-adni-cohort ADNI_DIR=~/adni_tables
 ```
 
 This writes `dataframe.csv` to the gitignored `fl-tutorials/data/ad_biomarkers/`, which is where
-`sim-tutorial.sh` points `DEV_DATAFRAME` (`<data root>/ad_biomarkers/dataframe.csv`).
+`sim-tutorial.sh` points `DEV_DATAFRAME` (`<data root>/ad_biomarkers/dataframe.csv`). The April 2025
+plasma release behind "Expected performance" gives 560 participants. The November 2026 release
+gives 618 (309 per site), so expect the count and the weaker edges to move a little.
 
 To keep the cohort elsewhere, convert with `OUT=` and run with `SIM_DATA_ROOT=` set to its parent:
 

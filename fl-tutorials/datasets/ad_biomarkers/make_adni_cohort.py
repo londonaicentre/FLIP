@@ -39,20 +39,24 @@ up to the ADNI release downloaded:
 carries no ADNI identifier. The per-site CSVs split it by ``person_id`` modulo the site count,
 the same split the simulator's per-site files and the trust loader use.
 
-Tables (IDA → *Download* → *Study Data*; file names carry the download date, e.g.
-``PTDEMOG_14Oct2026.csv``, and are matched here by prefix):
+Tables (IDA → *Search & Download* → *Study Files*, fetched together with the bulk *Download*;
+file names carry the download date, e.g. ``PTDEMOG_14Oct2026.csv``, and are matched here by
+prefix):
 
 ====================  ==========================================  ===============================
-flag                  IDA table                                   columns read
+flag                  Study Files section → file                  columns read
 ====================  ==========================================  ===============================
-``--demographics``    Subjects → Demographics: ``PTDEMOG``          RID, PTGENDER, PTEDUCAT, PTDOB
-``--apoe``            Biospecimen → ApoE Genotyping: ``APOERES``    RID, GENOTYPE
-``--adas``            Assessments → Neuropsychological: ``ADAS``    RID, VISCODE2, TOTAL13
-``--freesurfer``      Imaging → UCSF Cross-Sectional FreeSurfer     RID, EXAMDATE, ST10CV,
-                      (7.x): ``UCSFFSX7``                           ST29SV, ST88SV (+ QC count)
-``--plasma``          Biospecimen → Biospecimen Results: UPENN      RID, VISCODE2, EXAMDATE,
-                      Plasma Biomarkers (Fujirebio & Quanterix):    AB42_F, AB40_F, pT217_F,
-                      ``UPENN_PLASMA_FUJIREBIO_QUANTERIX``          NfL_Q, GFAP_Q
+``--demographics``    Subject Characteristics → Subject           RID, PTGENDER, PTEDUCAT, PTDOB
+                      Demographics: ``PTDEMOG``
+``--apoe``            Biospecimen Results → ApoE Genotyping -     RID, GENOTYPE
+                      Results: ``APOERES``
+``--adas``            Neuropsychological → ADAS-Cognitive         RID, VISCODE2, TOTAL13
+                      Behavior: ``ADAS``
+``--freesurfer``      MR Image Analysis → UCSF Cross-Sectional    RID, EXAMDATE, ST10CV,
+                      FreeSurfer (7.x): ``UCSFFSX7``              ST29SV, ST88SV (+ QC count)
+``--plasma``          Biospecimen Results → UPENN Plasma          RID, VISCODE2, EXAMDATE,
+                      Biomarkers (Fujirebio & Quanterix):         AB42_F, AB40_F, pT217_F,
+                      ``UPENN_PLASMA_FUJIREBIO_QUANTERIX``        NfL_Q, GFAP_Q
 ====================  ==========================================  ===============================
 
     make -C fl-tutorials convert-adni-cohort ADNI_DIR=~/adni_tables [OUT=/secure/flip-data/ad_biomarkers]

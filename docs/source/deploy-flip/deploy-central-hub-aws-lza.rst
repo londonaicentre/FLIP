@@ -249,7 +249,9 @@ Create ``.env.prod`` (or ``.env.stag``) from the shipped example env file, then 
   used to name resources.
 - **Staging only:** the edge serves staging FL traffic on port 8003, while the staging FL server still listens on
   8002. Keep ``FL_SERVER_PORT=8002`` and set ``FL_EDGE_PORT=8003`` in ``.env.stag``; ``sync-trust-kit`` copies
-  it into each kit and refuses to run on ``HUB=stag`` without it. FLARE kits take the port from the staging
+  it into each kit and refuses to run on ``HUB=stag`` without it. Set the same value as the ``FL_EDGE_PORT``
+  variable on the staging GitHub environment: the hub puts it in the kits downloaded from the FLIP UI, and without it
+  they carry ``FL_SERVER_PORT``. FLARE kits take the port from the staging
   provisioning file instead (``connect_to`` in ``fl-services/nvflare/provision/net-1_project_stag.yml``).
 - Mint the secrets (``AES_KEY_BASE64``, ``FL_API_KEY``, ``ADMIN_USER_PASSWORD``) for the account. Do not
   reuse another account's Secrets Manager secret.

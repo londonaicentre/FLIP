@@ -26,6 +26,7 @@ import os
 import shutil
 import stat
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -63,7 +64,19 @@ case "$1" in
     elif [ "$(eval echo \\${$#})" = json ]; then
       echo '{"items":[]}'
     fi ;;
-  wait) exit "${KUBECTL_WAIT_RC:-0}" ;;
+  wait)
+    # JOB_FAILED: the Job is past its backoffLimit, so Failed is set at once and Complete never comes.
+    if [ -n "$JOB_FAILED" ]; then
+      case "$*" in *condition=failed*) exit 0 ;; *) exec sleep 60 ;; esac
+    fi
+    # COMPLETES_AFTER: Complete comes after that many seconds; the Failed-waiter blocks, or errors with WATCH_ERROR.
+    if [ -n "$COMPLETES_AFTER" ]; then
+      case "$*" in
+        *condition=failed*) [ -z "$WATCH_ERROR" ] || { echo 'error: watch closed' >&2; exit 1; }; exec sleep 60 ;;
+        *) sleep "$COMPLETES_AFTER"; exit 0 ;;
+      esac
+    fi
+    exit "${KUBECTL_WAIT_RC:-0}" ;;
 esac
 exit 0
 """
@@ -121,6 +134,28 @@ def test_deploy_says_the_release_is_live_when_only_xnat_init_failed(tmp_path):
     result, _ = _make(tmp_path, "deploy", KUBECTL_WAIT_RC="1")
     assert result.returncode != 0
     assert "the release is live and rolled out, but xnat-init did not complete" in result.stdout + result.stderr
+
+
+def test_a_failed_xnat_init_job_ends_the_wait_at_once(tmp_path):
+    """A Job past its backoffLimit never completes; the step used to wait out HELM_TIMEOUT (FLIP#1958)."""
+    started = time.monotonic()
+    result, calls = _make(tmp_path, "xnat-init", JOB_FAILED="1")
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert time.monotonic() - started < 30, "the step waited for a Complete that cannot come"
+    assert "XNAT init failed (the Job failed)" in result.stdout
+    assert "--for=condition=failed" in calls
+    assert "--for=condition=complete" in calls
+
+
+@pytest.mark.parametrize("watch_error", ["", "1"], ids=["failed-waiter-blocks", "failed-waiter-errors"])
+def test_a_job_that_completes_later_passes_even_if_the_failed_waiter_errors(tmp_path, watch_error):
+    started = time.monotonic()
+    result, _ = _make(tmp_path, "xnat-init", COMPLETES_AFTER="3", WATCH_ERROR=watch_error)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "XNAT init complete" in result.stdout
+    assert time.monotonic() - started < 30, "the step waited on the Failed-waiter after Complete"
 
 
 def test_an_unrenderable_chart_fails_xnat_init_instead_of_reporting_xnat_disabled(tmp_path):

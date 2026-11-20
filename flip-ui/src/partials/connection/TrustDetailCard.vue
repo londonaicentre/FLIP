@@ -53,6 +53,8 @@
             </div>
         </div>
 
+        <TrustKitSection :trust="trust" />
+
         <!-- Issue banner -->
         <div v-if="state !== 'online'" class="px-[14px] pt-[14px]">
             <div
@@ -123,6 +125,7 @@
 <script setup lang="ts">
 import { computed, type FunctionalComponent } from "vue";
 
+import TrustKitSection from "@/partials/connection/TrustKitSection.vue";
 import { isImageTag, ServiceStatus } from "@/services/trust-service";
 import { heartbeatText,
     IDerivedService,
