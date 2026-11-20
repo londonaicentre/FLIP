@@ -199,7 +199,8 @@ under `dist/demo/`, and `scripts/publish-ui.sh` syncs it with the rest, its `ind
 `js/window.js` uncached like the real app's. So staging serves the demo of every `develop` merge, and
 production the one of each release; `make deploy-ui` does the same from a laptop. The demo build's own
 check (`demo-fixtures.mjs check --dist dist`) fails it if an unscrubbed fixture reaches `dist/`, and
-`test_flip_ui.yml` builds and walks the demo on every flip-ui change.
+`test_flip_ui.yml` runs the same `build:deploy:with-demo` with stub values on every flip-ui change,
+checks the layout it would publish and walks the demo.
 
 **The edge is in another repository.** The networking account's distribution
 ([aicentre-lza-iac](https://github.com/londonaicentre/aicentre-lza-iac)) carries a `/demo/*` ordered
@@ -211,7 +212,9 @@ unless the environment sets `PUBLIC_DEMO=true`: in the hub env file for `make de
 GitHub environment variable of the same name for CI (`setup-github-environments.sh` copies it from
 the env file). Set it only once the edge serves `/demo/*` under that policy and the UI-publish role is
 the current bootstrap module's, which no longer denies writes under `demo/`. The CI publish checks the
-first after every publish and fails without it; by hand:
+first before it syncs anything and fails without it, so a demo never reaches the bucket of an edge
+that would serve it unprotected; it also refuses any `PUBLIC_DEMO` other than `true`, `false` or unset.
+By hand:
 
 ```bash
 curl -sI https://app.flip.aicentre.co.uk/demo/ | grep -i content-security-policy   # connect-src 'none'
