@@ -20,6 +20,7 @@ without one still makes a valid lock: `uv lock --check` cannot catch it. The Flo
 import re
 import tomllib
 from pathlib import Path
+from urllib.parse import urlparse
 
 FLIP_UTILS = Path(__file__).parents[2]
 FL_SERVICES = FLIP_UTILS.parent / "fl-services"
@@ -44,7 +45,7 @@ def test_every_pytorch_wheel_the_fl_images_install_carries_a_sha256():
         ]
         for package in lock["package"]
         if package["name"] in ("torch", "torchvision")
-        and "download.pytorch.org" in package["source"].get("registry", "")
+        and urlparse(package["source"].get("registry", "")).hostname == "download.pytorch.org"
     }
     assert set(wheels) == {"torch", "torchvision"}
     # Linux x86_64 for CI and the hosts, aarch64 for a native build on an arm64 workstation.
