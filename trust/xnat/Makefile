@@ -485,7 +485,12 @@ endef
 # written before the FLIP#993 split sets only XNAT_PORT (then the web UI's port), so the web port
 # derives from it and the stack would publish one port twice: xnat-web never starts. Checked before
 # the first install wipes anything and before an upgrade changes anything (trust/Makefile upgrade-trust).
+# The ports come from the kit, and `-include` skips one it cannot find: without this refusal both
+# fall back to 8104 and the message below would blame ports that are fine.
 xnat-check-ports:
+	$(require_kit)
+	@[ -f "$(KIT_FILE)" ] || { \
+		echo "ERROR: kit file $(KIT_FILE) not found from $$(pwd): XNAT_PORT and XNAT_WEB_PORT are read from it."; exit 1; }
 	@if ! echo "$(XNAT_PORT_EFFECTIVE)" | grep -qE '^[0-9]+$$'; then \
 		echo "ERROR: XNAT_PORT must be numeric for KIT=$(KIT), got '$(XNAT_PORT_EFFECTIVE)'"; exit 1; \
 	fi

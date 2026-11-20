@@ -118,6 +118,39 @@ def test_1_unreadable_dir_passes_not_crashes() -> None:
             rooted = _check(d)
         _assert(rooted.status == mod.Status.WARN and "root" in rooted.detail, "root-owned: WARN", str(rooted))
 
+        def as_uid(uid: int):
+            return os.stat_result((real.st_mode, real.st_ino, real.st_dev, real.st_nlink, uid, *real[5:]))
+
+        def orthanc(owner: int, **kit: str):
+            kit_vars = {"ORTHANC_STORAGE_DIR": str(d), **kit}
+            with (
+                mock.patch.object(mod.Path, "iterdir", side_effect=denied),
+                mock.patch.object(mod.Path, "stat", return_value=as_uid(owner)),
+            ):
+                return mod.check_data_dir(
+                    "Orthanc storage dir", "ORTHANC_STORAGE_DIR", kit_vars, True, SCRIPTS_DIR.parents[2], image_uid=999
+                )
+
+        # The owner must be the uid the container runs as: FLIP_UID, else the image's (FLIP#1731).
+        _assert(orthanc(999).status == mod.Status.PASS, "Orthanc dir owned by the image uid: PASS")
+        _assert(orthanc(4242, FLIP_UID="4242").status == mod.Status.PASS, "owned by FLIP_UID: PASS")
+        stale = orthanc(999, FLIP_UID="4242")
+        _assert(stale.status == mod.Status.WARN and "uid 4242" in stale.detail, "left at 999: WARN", str(stale))
+        _assert(orthanc(1234).status == mod.Status.WARN, "any other owner: WARN")
+        with (
+            mock.patch.object(mod.Path, "iterdir", side_effect=denied),
+            mock.patch.object(mod.Path, "is_dir", return_value=True),
+            mock.patch.object(mod.Path, "stat", side_effect=PermissionError(13, "Permission denied")),
+        ):
+            unknown = _check(d)
+        _assert(unknown.status == mod.Status.WARN, "owner unreadable: WARN, nothing is known", str(unknown))
+        with (
+            mock.patch.object(mod.Path, "iterdir", side_effect=denied),
+            mock.patch.object(mod.Path, "stat", return_value=as_uid(70)),
+        ):
+            postgres = _check(d)
+        _assert(postgres.status == mod.Status.PASS, "OMOP dir without FLIP_UID: Postgres's uid is not fixed, PASS")
+
 
 def test_2_populated_dir_passes() -> None:
     """A readable, non-empty data dir -> PASS."""

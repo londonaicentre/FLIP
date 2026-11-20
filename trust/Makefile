@@ -39,6 +39,9 @@ KIT_FILE := $(call kit_file,,$(KIT))
 endif
 -include $(KIT_FILE)
 KIT_FILE_LABEL = $(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),trust/$(KIT_FILE))
+# A KIT_FILE given on the command line reaches every sub-make as typed, and trust/xnat would resolve
+# a relative one against its own directory, find no kit and fall back to defaults: hand it the full path.
+XNAT_KIT_FILE_ARG = $(if $(filter command line,$(origin KIT_FILE)),KIT_FILE='$(subst ','"'"',$(abspath $(KIT_FILE)))')
 $(if $(KIT),$(call kit_hint,$(KIT_FILE_LABEL)))
 
 # Dev only: the kit's Hub-shared block is commented out (inert) — those values
@@ -591,7 +594,7 @@ prepare-host-dirs:
 	$(call ensure_data_dirs,$(OMOP_DATA_ABS),$(ORTHANC_STORAGE_ABS))
 	$(ensure_net_dirs)
 	$(ensure_snapshot_dir)
-	$(MAKE) --no-print-directory -C xnat xnat-prepare-dirs KIT=$(KIT) HUB=$(HUB)
+	$(MAKE) --no-print-directory -C xnat xnat-prepare-dirs KIT=$(KIT) HUB=$(HUB) $(XNAT_KIT_FILE_ARG)
 	$(ensure_fl_kit_owner)
 	@echo "✅ Host directories for $(KIT) are ready; the bring-up needs only Docker access from here."
 
@@ -622,7 +625,7 @@ up-trust: require-xnat-aetitle create-networks create-trust-network
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
 	$(MAKE) ensure-seeded KIT=$(KIT) HUB=$(HUB)
 	@echo "🩻 Starting XNAT for $(KIT)..."
-	$(MAKE) -C xnat up-xnat KIT=$(KIT) HUB=$(HUB)
+	$(MAKE) -C xnat up-xnat KIT=$(KIT) HUB=$(HUB) $(XNAT_KIT_FILE_ARG)
 	$(if $(MONAILABEL_OVERRIDE),$(rebind_monailabel_archive))
 
 # Validate the trust's governance document (FLIP#1259) WITHOUT starting anything.
@@ -802,7 +805,7 @@ down-trust:
 	@echo "🛑 Stopping Trust services (KIT=$(KIT))..."
 	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) down --remove-orphans
 	@echo "🩻 Stopping XNAT for $(KIT)..."
-	$(MAKE) -C xnat down-xnat KIT=$(KIT) HUB=$(HUB)
+	$(MAKE) -C xnat down-xnat KIT=$(KIT) HUB=$(HUB) $(XNAT_KIT_FILE_ARG)
 
 restart-trust: down-trust up-trust
 
@@ -829,7 +832,7 @@ upgrade-trust: require-xnat-aetitle
 	$(require_kit_file)
 	$(check_slot_not_taken)
 	$(refuse_remote_governance)
-	@$(MAKE) --no-print-directory -C xnat xnat-check-ports KIT=$(KIT) HUB=$(HUB)
+	@$(MAKE) --no-print-directory -C xnat xnat-check-ports KIT=$(KIT) HUB=$(HUB) $(XNAT_KIT_FILE_ARG)
 	uv run --no-config deploy/scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
 	$(MAKE) _upgrade-trust-apply KIT=$(KIT) HUB=$(HUB) DEBUG=$(DEBUG)
 
@@ -862,8 +865,8 @@ _upgrade-trust-apply:
 	$(require_kit_file)
 	$(check_slot_not_taken)
 	$(refuse_flip_uid_change)
-	$(MAKE) --no-print-directory -C xnat xnat-backup-writable KIT=$(KIT) HUB=$(HUB)
-	$(MAKE) --no-print-directory -C xnat xnat-web-dirs KIT=$(KIT) HUB=$(HUB)
+	$(MAKE) --no-print-directory -C xnat xnat-backup-writable KIT=$(KIT) HUB=$(HUB) $(XNAT_KIT_FILE_ARG)
+	$(MAKE) --no-print-directory -C xnat xnat-web-dirs KIT=$(KIT) HUB=$(HUB) $(XNAT_KIT_FILE_ARG)
 	@echo "⬆️  Upgrading trust services (KIT=$(KIT)) to $(DOCKER_TAG) (FL client $(DOCKER_FL_TAG))..."
 	@echo "$(GPU_STATUS_MSG)"
 	# A site upgrading from before the membership store (FLIP#857) has no directory for it yet.
@@ -871,7 +874,7 @@ _upgrade-trust-apply:
 	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) pull
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d
 	@echo "🩻 Upgrading XNAT for $(KIT) in place (no reset)..."
-	$(MAKE) -C xnat upgrade-xnat KIT=$(KIT) HUB=$(HUB)
+	$(MAKE) -C xnat upgrade-xnat KIT=$(KIT) HUB=$(HUB) $(XNAT_KIT_FILE_ARG)
 	@echo "✅ $(KIT) is on $(DOCKER_TAG). Verify: trust-api /health reports the new version and hub_key_match=true."
 
 # EC2 variant — no host-port override, --pull always. Networks and the trust's
@@ -917,7 +920,7 @@ up-trust-ec2: require-xnat-aetitle
 	$(MAKE) create-networks create-trust-network KIT=$(KIT) HUB=$(HUB)
 	$(TRUST_VARS) NUM_AVAILABLE_GPUS=0 DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) up -d --pull always
 	@echo "🩻 Starting XNAT for $(KIT)..."
-	$(MAKE) -C xnat up-xnat KIT=$(KIT) HUB=$(HUB)
+	$(MAKE) -C xnat up-xnat KIT=$(KIT) HUB=$(HUB) $(XNAT_KIT_FILE_ARG)
 
 down-trust-ec2:
 	$(require_kit)
@@ -925,7 +928,7 @@ down-trust-ec2:
 	@echo "🛑 Stopping Trust services on EC2 (KIT=$(KIT))..."
 	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) down --remove-orphans
 	@echo "🩻 Stopping XNAT for $(KIT)..."
-	$(MAKE) -C xnat down-xnat KIT=$(KIT) HUB=$(HUB)
+	$(MAKE) -C xnat down-xnat KIT=$(KIT) HUB=$(HUB) $(XNAT_KIT_FILE_ARG)
 
 # Dev convenience: bring up every registered dev trust. The kit files
 # (trust/.env.<CODE>.$(ENV), written by `make register-trusts`) ARE the list —

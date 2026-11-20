@@ -1128,8 +1128,12 @@ def check_data_dir(
     kit_vars: dict[str, str],
     kit_present: bool,
     repo_root: Path,
+    image_uid: int | None = None,
 ) -> Check:
     """Validate a per-trust data dir (OMOP, Orthanc) — set; exists and non-empty if real data.
+
+    `image_uid` is the uid the dir's container runs as when the kit sets no FLIP_UID, where
+    the image fixes one (deploy/portable.mk).
 
     A missing or empty dir is a WARN, not a FAIL: `make -C trust up-trust` creates
     the dir and seeds it from the canonical mock dataset at bring-up (FLIP#1187),
@@ -1171,18 +1175,28 @@ def check_data_dir(
         # Dir exists but isn't readable by us — almost always because a
         # container took ownership on a previous `up` (the omop-db postgres
         # image forces PGDATA to 0700 owned by its own uid). That is the
-        # normal state of a running site, so it passes; only a root-owned dir
-        # (a mount source Docker created) is one no container can use.
+        # normal state of a running site, so it passes when the owner is the
+        # uid its container runs as: FLIP_UID, else the image's (FLIP#1731).
+        # Postgres's is not fixed, so without FLIP_UID only root is wrong there
+        # (a mount source Docker created, which no container can use).
         try:
             owner = resolved.stat().st_uid
-        except OSError:
-            owner = None
+        except OSError as error:
+            return Check(label, Status.WARN, f"{resolved} (not readable as uid {os.getuid()}: {error.strerror})")
+        flip_uid = kit_vars.get("FLIP_UID", "").strip()
+        writer_uid = int(flip_uid) if flip_uid.isdigit() else image_uid
         if owner == 0:
             return Check(label, Status.WARN, f"{resolved} (owned by root, so no container can write it)")
+        if writer_uid is not None and owner != writer_uid:
+            return Check(
+                label,
+                Status.WARN,
+                f"{resolved} (owned by uid {owner}, but its container runs as uid {writer_uid} and cannot write it)",
+            )
         return Check(
             label,
             Status.PASS,
-            f"{resolved} (in use by {f'uid {owner}' if owner is not None else 'another user'}; "
+            f"{resolved} (in use by uid {owner}; "
             f"not readable as uid {os.getuid()}, as expected once the stack has run)",
         )
     if is_empty:
@@ -1375,7 +1389,7 @@ def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None) -> list[
         check_log_level(kit_vars, kit_present, kit_path),
         check_sample_data(kit_vars, kit_present, kit_path),
         check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, kit_present, repo_root),
-        check_data_dir("Orthanc storage dir", "ORTHANC_STORAGE_DIR", kit_vars, kit_present, repo_root),
+        check_data_dir("Orthanc storage dir", "ORTHANC_STORAGE_DIR", kit_vars, kit_present, repo_root, image_uid=999),
         check_data_dir_paths(kit_vars, kit_present, kit_path, kit),
         check_container_uid(kit_vars, kit_present, kit_path, kit),
     ]

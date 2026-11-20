@@ -56,6 +56,14 @@ class UpgradeXnat(unittest.TestCase):
         assert "must differ" in out, f"upgrade-xnat has no port guard:\n{out}"
         assert out.index("must differ") < out.index("xnat-backup"), f"the guard must come first:\n{out}"
 
+    def test_the_port_guard_refuses_a_kit_it_did_not_read(self):
+        """With no kit read both ports fall back to one default: say so, not that the ports collide."""
+        for kit, message in (("", "KIT is required"), ("NOPE", ".env.NOPE.prod not found")):
+            result = run_target("xnat-check-ports", f"KIT={kit}", subdir="trust/xnat")
+            assert result.returncode != 0, result.stdout
+            assert message in result.stdout, result.stdout
+            assert "must differ" not in result.stdout, result.stdout
+
     def test_upgrade_xnat_checks_ownership_where_the_directories_are(self):
         """With a remote (ssh://) docker context the XNAT dirs live on the trust host (FLIP#1204).
 
