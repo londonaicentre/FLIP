@@ -829,6 +829,7 @@ upgrade-trust: require-xnat-aetitle
 	$(require_kit_file)
 	$(check_slot_not_taken)
 	$(refuse_remote_governance)
+	@$(MAKE) --no-print-directory -C xnat xnat-check-ports KIT=$(KIT) HUB=$(HUB)
 	uv run --no-config deploy/scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
 	$(MAKE) _upgrade-trust-apply KIT=$(KIT) HUB=$(HUB) DEBUG=$(DEBUG)
 

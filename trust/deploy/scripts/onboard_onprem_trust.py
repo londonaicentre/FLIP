@@ -1170,18 +1170,20 @@ def check_data_dir(
     except PermissionError:
         # Dir exists but isn't readable by us — almost always because a
         # container took ownership on a previous `up` (the omop-db postgres
-        # image forces PGDATA to 0700 owned by its own uid). It's therefore
-        # in use and populated; we just can't introspect it, so don't block
-        # a re-run of onboarding after the stack has come up.
+        # image forces PGDATA to 0700 owned by its own uid). That is the
+        # normal state of a running site, so it passes; only a root-owned dir
+        # (a mount source Docker created) is one no container can use.
         try:
-            owner = f"uid {resolved.stat().st_uid}"
+            owner = resolved.stat().st_uid
         except OSError:
-            owner = "another user"
+            owner = None
+        if owner == 0:
+            return Check(label, Status.WARN, f"{resolved} (owned by root, so no container can write it)")
         return Check(
             label,
-            Status.WARN,
-            f"{resolved} (owned by {owner}, not readable as uid {os.getuid()} "
-            f"— assumed populated; expected after the stack has run once)",
+            Status.PASS,
+            f"{resolved} (in use by {f'uid {owner}' if owner is not None else 'another user'}; "
+            f"not readable as uid {os.getuid()}, as expected once the stack has run)",
         )
     if is_empty:
         return Check(
@@ -1220,19 +1222,27 @@ def invoking_ids() -> tuple[int, int]:
         return os.getuid(), os.getgid()
 
 
-def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: str) -> Check:
+def prepare_host_dirs_command(kit: str) -> str:
+    """The root step in full: without KIT and HUB, `make -C trust` would prepare the development paths."""
+    hub = os.environ.get("HUB", "prod")
+    command = f"sudo -E make -C trust prepare-host-dirs {quote_make_assignment('KIT', kit)}"
+    return f"{command} {quote_make_assignment('HUB', hub)}" if hub else command
+
+
+def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: str, kit: str = "<CODE>") -> Check:
     """Every data dir is absolute, and the bring-up can create it as this user (FLIP#1723).
 
     The kit template carries the development paths, which are relative: on a deployed trust they
     resolve inside this checkout, on whatever disk it sits on. An unset one falls back to its
-    /opt/flip default, which a non-root operator usually cannot create.
+    /opt/flip default, which a non-root operator usually cannot create — a site installed before
+    the membership store (FLIP#857) has no COHORT_SNAPSHOT_STORAGE_DIR, so its upgrade meets this.
     """
     label = "Data dir paths"
     if not kit_present:
         return Check(label, Status.PENDING, "pending — needs kit file")
     slot = kit_vars.get("FL_KIT_SLOT_NUMBER", "").strip() or "<N>"
     relative: list[str] = []
-    blocked: list[str] = []
+    blocked: dict[str, str] = {}
     for var, default in DATA_DIR_DEFAULTS.items():
         raw = kit_vars.get(var, "").strip()
         if raw and not raw.startswith("/"):
@@ -1241,32 +1251,49 @@ def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: 
         if not raw and default is None:
             continue
         path = Path(raw or default.format(slot=slot))  # type: ignore[union-attr]
+        unset = "" if raw else f"unset, so {path}; "
         try:
             nearest = next(p for p in (path, *path.parents) if p.exists())
         except OSError as error:  # Path.exists re-raises EACCES: a parent this user cannot traverse
-            blocked.append(f"{var} ({error.filename} is not traversable: {error.strerror})")
+            blocked[var] = f"{unset}{error.filename} is not traversable: {error.strerror}"
             continue
         if nearest != path and not os.access(nearest, os.W_OK):
-            blocked.append(f"{var} ({nearest} is not writable)")
+            blocked[var] = f"{unset}{nearest} is not writable"
         elif (
             var in SEED_MARKER_DIR_VARS
             and not sample_data_off(kit_vars)
             and path.parent.exists()
             and not os.access(path.parent, os.W_OK)
         ):
-            blocked.append(f"{var} ({path.parent} is not writable, and the seed marker is written there)")
+            blocked[var] = f"{path.parent} is not writable, and the seed marker is written there"
     if kit_vars.get("FLIP_UID", "").strip() == str(invoking_ids()[0]):
-        then = "create them yourself with mkdir -p: the containers run as you (FLIP_UID)."
+        create = "create them yourself with mkdir -p: the containers run as you (FLIP_UID)."
     else:
-        then = (
-            "have the host owner run `make -C trust prepare-host-dirs` once, as root:"
-            " it creates them with their owners."
+        create = (
+            "have the host owner run, once, as root (it creates them with their owners): "
+            + prepare_host_dirs_command(kit)
         )
-    hints = [f"Set {', '.join(DATA_DIR_VARS)} in {kit_path} to absolute paths on the data disk, then {then}"]
     if blocked:
-        return Check(label, Status.FAIL, f"cannot create: {'; '.join(blocked)}", hints=hints)
+        return Check(
+            label,
+            Status.FAIL,
+            "cannot create: " + "; ".join(f"{var} ({why})" for var, why in blocked.items()),
+            hints=[
+                f"Either {create}",
+                f"or set {', '.join(blocked)} in {kit_path} to absolute paths this user can create.",
+            ],
+        )
     if relative:
-        return Check(label, Status.WARN, f"relative, so inside this checkout: {', '.join(relative)}", hints=hints)
+        return Check(
+            label,
+            Status.WARN,
+            f"relative, so inside this checkout: {', '.join(relative)}",
+            hints=[
+                f"Set {', '.join(relative)} in {kit_path} to absolute paths on the data disk, then {create}",
+                "On a site that already holds data this moves the data too: a planned step with the stack stopped,",
+                "never part of an upgrade.",
+            ],
+        )
     return Check(label, Status.PASS, "absolute")
 
 
@@ -1275,7 +1302,7 @@ IMAGE_USERS = (
 )
 
 
-def check_container_uid(kit_vars: dict[str, str], kit_present: bool, kit_path: str) -> Check:
+def check_container_uid(kit_vars: dict[str, str], kit_present: bool, kit_path: str, kit: str = "<CODE>") -> Check:
     """Who the bind-mount writers run as, and whether that is this user (FLIP#1731).
 
     FLIP_UID/FLIP_GID set to the operator's own ids means the directories they create need no
@@ -1290,7 +1317,7 @@ def check_container_uid(kit_vars: dict[str, str], kit_present: bool, kit_path: s
     root_step = (
         "running as root: the bring-up sets the owners itself"
         if os.getuid() == 0
-        else "the bind-mount dirs need `make -C trust prepare-host-dirs`, as root"
+        else f"the bind-mount dirs need `{prepare_host_dirs_command(kit)}`"
     )
     if not uid and not gid:
         return Check(label, Status.PASS, f"unset: each image's own user ({IMAGE_USERS}); {root_step}")
@@ -1349,8 +1376,8 @@ def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None) -> list[
         check_sample_data(kit_vars, kit_present, kit_path),
         check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, kit_present, repo_root),
         check_data_dir("Orthanc storage dir", "ORTHANC_STORAGE_DIR", kit_vars, kit_present, repo_root),
-        check_data_dir_paths(kit_vars, kit_present, kit_path),
-        check_container_uid(kit_vars, kit_present, kit_path),
+        check_data_dir_paths(kit_vars, kit_present, kit_path, kit),
+        check_container_uid(kit_vars, kit_present, kit_path, kit),
     ]
 
 
@@ -1423,7 +1450,7 @@ def main() -> None:
             # one for the upgrade (up-onprem-trust resets XNAT) or the one already running.
             print("  Proceeding.")
         else:
-            print("  Bring the stack up:")
+            print("  Bring the stack up (first install):")
             # Docker socket access is all the stack needs. Only a checklist that itself ran under
             # sudo (the playbook-provisioned host, whose login user has no socket access) prints the
             # same prefix for the next step (FLIP#1723).
@@ -1432,10 +1459,16 @@ def main() -> None:
                 f"{prefix}make up-onprem-trust {quote_make_assignment('KIT', kit)} "
                 f"{quote_make_assignment('KIT_FILE', kit_file)}"
             )
+            upgrade = f"{prefix}make upgrade-onprem-trust {quote_make_assignment('KIT', kit)}"
             hub = os.environ.get("HUB", "prod")
             if hub and hub != "prod":
                 command += f" {quote_make_assignment('HUB', hub)}"
+                upgrade += f" {quote_make_assignment('HUB', hub)}"
             print(f"      {BOLD}{command}{RESET}")
+            # The checklist is also step one of a site upgrade, where the first-install verb would
+            # reset XNAT's archive and database.
+            print("  A site that is already running upgrades instead (the command above would reset XNAT):")
+            print(f"      {BOLD}{upgrade}{RESET}")
         if n_warn:
             print(
                 f"  {YELLOW}Heads-up:{RESET} review the {YELLOW}⚠️{RESET}  warning(s) above "

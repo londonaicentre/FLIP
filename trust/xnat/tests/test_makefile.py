@@ -46,6 +46,16 @@ class UpgradeXnat(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.recipe = dry_run("upgrade-xnat", subdir="trust/xnat")
 
+    def test_upgrade_xnat_refuses_a_port_collision_before_the_backup(self):
+        """A kit from before the FLIP#993 split sets only XNAT_PORT, so the web port derives from it.
+
+        xnat-reset always refused that; the upgrade deployed it, and xnat-web crash-looped on the one
+        port published twice (BDMS, v0.8.0 to v0.15.0). The guard must run before anything changes.
+        """
+        out = self.recipe
+        assert "must differ" in out, f"upgrade-xnat has no port guard:\n{out}"
+        assert out.index("must differ") < out.index("xnat-backup"), f"the guard must come first:\n{out}"
+
     def test_upgrade_xnat_checks_ownership_where_the_directories_are(self):
         """With a remote (ssh://) docker context the XNAT dirs live on the trust host (FLIP#1204).
 

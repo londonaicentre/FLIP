@@ -487,6 +487,17 @@ class Plan(_PlanHarness):
             assert code == 4, out
             assert "DOCKER_TAG=sha-badcff1" in kit.read_text()
 
+    def test_plan_treats_an_undecodable_answer_as_no(self):
+        # BDMS: with a Thai keyboard layout on, `y` reached Python as bytes it could not decode — a traceback.
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp))
+            undecodable = UnicodeDecodeError("utf-8", b"\xd1\n", 0, 1, "invalid continuation byte")
+            with mock.patch("builtins.input", side_effect=undecodable):
+                code, out = self._run(kit, "--tag", "v0.6.0", tty=True)
+            assert code == su.EXIT_NOT_CONFIRMED, out
+            assert "Latin layout" in out
+            assert "DOCKER_TAG=sha-badcff1" in kit.read_text()
+
     def test_plan_without_a_tty_needs_yes(self):
         with tempfile.TemporaryDirectory() as tmp:
             kit = _write_kit(Path(tmp))
@@ -624,6 +635,18 @@ class Plan(_PlanHarness):
             assert "unauthorized" in out
             assert "pick a tag" not in out
             assert "DOCKER_TAG=sha-badcff1" in kit.read_text()
+            assert "docker logout" not in out
+
+    def test_plan_names_a_stale_login_when_ghcr_denies(self):
+        # The site images are public: ghcr.io denies them only to a client presenting a bad login.
+        self.missing_images.side_effect = su.RegistryUnavailable(
+            "ghcr.io/londonaicentre/trust-api:v0.6.0: docker manifest inspect exited 1: denied: denied"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = _write_kit(Path(tmp))
+            code, out = self._run(kit, "--tag", "v0.6.0", "--yes")
+            assert code == su.EXIT_MISSING_IMAGES, out
+            assert "docker logout ghcr.io" in out
 
     def test_plan_targets_this_checkouts_release_when_the_hub_runs_its_sha_build(self):
         self.checkout_tags.return_value = ["v0.7.0"]

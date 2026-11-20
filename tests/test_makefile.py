@@ -110,6 +110,8 @@ class UpgradeOnpremTrust(unittest.TestCase):
         assert "--kit-file" in gate, gate
         assert ".env.SCR.prod" in gate, gate
         assert "_upgrade-trust-apply" in out, out
+        # XNAT's port guard runs before the plan rewrites the kit's tag: nothing changes on a refusal.
+        assert out.index("must differ") < out.index("site_upgrade.py plan"), out
         assert_data_safe(out, "upgrade-onprem-trust")
 
 
