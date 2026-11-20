@@ -16,9 +16,6 @@
 FROM flwr/base:${FLWR_VERSION:-1.43.0-py3.13-ubuntu24.04} AS base
 
 ARG LOCAL_DEV=false
-# torch's native Triton kernels compile a C helper on first use, and this image has no C compiler:
-# without this, a GPU backward through one of them fails (FLIP#1700). torch reads it at import.
-ENV TORCH_DISABLE_NATIVE_JIT=1
 WORKDIR /app
 # flwr/base on its own: a conflict it ships fails this step, not the `pip check` after flip-utils' install.
 RUN python -m pip check
@@ -41,8 +38,8 @@ RUN python -m pip check
 # "/opt/flip-utils" }` resolves against this copy rather than a PyPI release
 # (#767), and fails without it.
 #
-# --extra-index-url points pip at PyTorch's CUDA-13.0 wheel index, where the lock's
-# torch 2.13.x+cu130 lives.
+# --extra-index-url points pip at PyTorch's CUDA-13.2 wheel index, where the lock's
+# torch 2.15.x+cu132 lives.
 # COPY's default root ownership is deliberate: user-submitted apps execute in
 # this container as the same non-root `app` user that flwr/base runs as, so an
 # app-writable copy could be mutated by app code, poisoning anything that later
@@ -61,7 +58,7 @@ COPY flip-utils/flip/ /opt/flip-utils/flip/
 RUN cd /opt/flip-utils \
  && python -m uv export --frozen --extra flower --extra full --no-dev --no-emit-project -o /tmp/flip-utils.txt \
  && python -m pip install --no-cache-dir --require-hashes -r /tmp/flip-utils.txt \
-      --extra-index-url https://download.pytorch.org/whl/cu130 \
+      --extra-index-url https://download.pytorch.org/whl/cu132 \
  && python -m uv build --wheel --no-cache --out-dir /tmp/dist \
  && python -m pip install --no-cache-dir --no-deps /tmp/dist/*.whl \
  && python -m pip check \
