@@ -159,7 +159,14 @@ export default defineConfig(({ mode, command, isPreview }) => {
             // module does not propagate far enough for the fold, even with this
             // define in place. scripts/assert-no-demo-artefacts.mjs checks the built
             // artefact on every deploy build so neither half can silently regress.
-            "import.meta.env.VITE_DEMO": JSON.stringify(isDemo ? "true" : "false")
+            "import.meta.env.VITE_DEMO": JSON.stringify(isDemo ? "true" : "false"),
+            // FLIP#1556 cohort SQL drafting mock: canned drafts, no backend. Only the VITE_LOCAL
+            // dev server may enable it; every build folds it away like VITE_DEMO above.
+            "import.meta.env.VITE_COHORT_DRAFT_ASSISTANT": JSON.stringify(
+                command === "serve" && env.VITE_LOCAL === "true" && env.VITE_COHORT_DRAFT_ASSISTANT === "true"
+                    ? "true"
+                    : "false"
+            )
         },
         build: {
             sourcemap: false,

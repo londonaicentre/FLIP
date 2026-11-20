@@ -105,6 +105,18 @@ async function bootstrap(): Promise<void> {
         console.info("Running locally, will use mocked API.");
         const { makeServer } = await import("../mocks/server");
         makeServer();
+        // The mock has no sign-in, so act as a researcher: write controls (Run, the cohort
+        // editor) are hidden from a user with no permissions.
+        const { useAuthStore } = await import("./store/auth");
+        useAuthStore().user = {
+            username: "local-researcher",
+            userId: "local-researcher",
+            attributes: {
+                sub: "local-researcher",
+                email: "researcher@flip.local"
+            },
+            permissions: ["CanCreateProjects"]
+        };
     }
 
     if (isE2E) {

@@ -90,6 +90,17 @@ The flip-api is configured via environment variables. In development these are s
 
 See [`.env.development.example`](../.env.development.example) for the full list of required variables.
 
+### Cohort SQL drafting (Beta)
+
+`POST /api/cohort/draft` and `GET /api/cohort/draft/usage` draft cohort SQL from a description (FLIP#1556).
+Off by default (`COHORT_DRAFT_ENABLED=false`); the `COHORT_DRAFT_*` settings, the allowance and what is still
+needed before turning it on are in
+[the Central Hub page](../docs/source/components/component-central-hub.rst) ("Cohort SQL drafting (Beta)").
+It adds the `anthropic[bedrock]` dependency (the official SDK's `AnthropicBedrock` client, which calls InvokeModel on
+`bedrock-runtime`, signed with the ECS task role). The prompt is versioned files under `src/flip_api/cohort_services/drafting/assets/`; regenerate
+the OMOP schema copy after a DDL change with
+`uv run python -m flip_api.cohort_services.drafting.omop_schema ../trust/omop-db/files/OMOPCDM_postgresql_5.4_ddl.sql`.
+
 ### Tunables
 
 These scheduler and task-queue settings have `config.py` defaults that should be left alone in normal operation. Override them only when diagnosing or deliberately changing that behaviour. For that reason they are not in `.env.development.example`, except `SCHEDULER_MALWARE_SCAN_RECONCILE_RATE`, which appears there commented out under the malware-scan block.

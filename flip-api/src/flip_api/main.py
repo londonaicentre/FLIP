@@ -21,6 +21,8 @@ from slowapi.errors import RateLimitExceeded
 
 from flip_api.auth.identity import build_identity_provider
 from flip_api.cohort_services import (
+    draft_allowance_override,
+    draft_cohort_query,
     get_cohort_query_results,
     save_cohort_query,
     submit_cohort_query,
@@ -183,6 +185,8 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 ROUTERS: tuple[APIRouter, ...] = (
     # Cohort services
+    draft_allowance_override.router,
+    draft_cohort_query.router,
     get_cohort_query_results.router,
     save_cohort_query.router,
     submit_cohort_query.router,

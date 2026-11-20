@@ -409,3 +409,31 @@ variable "ecs_exec_enabled" {
   default     = false
 }
 
+
+# Cohort SQL drafting (Beta, FLIP#1556): bedrock_cohort_draft.tf. Plain variables
+# with safe defaults, like ecs_exec_enabled: off, nothing is created and the plan
+# is unchanged. The Bedrock Region is var.AWS_REGION, where the guardrail lives.
+variable "cohort_draft_enabled" {
+  description = "Create the cohort SQL drafting guardrail and IAM grant, and switch the assistant on in flip-api. Default false. Needs a bedrock-runtime VPC endpoint from the networking account first (the CohortDraftNetworkPrerequisite output)."
+  type        = bool
+  default     = false
+}
+
+variable "cohort_draft_bedrock_model_id" {
+  description = <<-EOT
+    Bedrock model ID or cross-Region inference profile ID flip-api drafts with
+    (COHORT_DRAFT_BEDROCK_MODEL_ID). The default matches flip-api's: Claude Sonnet
+    5.5 through the EU cross-Region inference profile, so requests are processed
+    in EU Regions (no patient data is sent; the guardrail blocks identifiers).
+    Claude Opus 5.5 (anthropic.claude-opus-5-5) is the UK-only alternative, on
+    demand in eu-west-2. Changing the model needs an information-governance check
+    (and not Claude 4.6 or older, which reject the API version the SDK sends).
+  EOT
+  type        = string
+  default     = "eu.anthropic.claude-sonnet-5-5"
+
+  validation {
+    condition     = can(regex("^([a-z-]+\\.)?[a-z0-9-]+\\.[A-Za-z0-9.:_-]+$", var.cohort_draft_bedrock_model_id))
+    error_message = "cohort_draft_bedrock_model_id must be a Bedrock model ID (provider.model) or an inference profile ID (geo.provider.model), not an ARN."
+  }
+}
