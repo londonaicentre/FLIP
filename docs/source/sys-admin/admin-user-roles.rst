@@ -36,7 +36,7 @@ Roles
      - Read-only access to the projects they have been added to.
    * - ``trust admin``
      - Everything a ``researcher`` can do, plus approving or declining projects for **one trust**, chosen when the
-       role is assigned (see :ref:`assigning-a-trust-admin`).
+       role is assigned (see :ref:`assigning-a-trust-admin`), and downloading that trust's kit.
 
 Researchers
 ===========
@@ -75,6 +75,9 @@ Trust Admins
 - **Where their authority stops.** The approval right applies at their one trust only. They see nothing of projects
   staged only at other trusts and have no say over them.
 - **Where they decide.** On the **My Trust** page (see :ref:`trust-admin-guide`).
+- **Their trust's kit.** A Trust Admin can download their trust's kit and issue it new keys, from the **Trust kit**
+  section of the same page (see :ref:`onboarding-kit-from-ui`). An ``admin`` can do the same for any trust, from its
+  card on the Connection Status page. Each download and each key change is written to the trust's audit log.
 
 Every change to who is a trust's Trust Admin is written to that trust's audit log.
 
@@ -106,6 +109,11 @@ Permissions
      - No
      - No
      - Yes
+   * - Download a trust's kit and issue it new keys
+     - Yes
+     - No
+     - No
+     - For their own trust
    * - Unstage projects
      - Yes
      - No

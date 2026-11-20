@@ -14,18 +14,21 @@ from typing import Annotated
 
 from cryptography.exceptions import InvalidTag
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 
 from imaging_api.routers.schemas import (
     DownloadImagesRequestData,
     DownloadImagesResponse,
     ResourceType,
+    StudyLayoutResponse,
 )
 from imaging_api.services.approved_cohort import is_served
+from imaging_api.services.archive_layout import study_layout
 from imaging_api.services.download import download_and_unzip_images, tar_study
 from imaging_api.utils.auth import get_xnat_auth_headers
 from imaging_api.utils.encryption import PROJECT_ID_CONTEXT, decrypt
-from imaging_api.utils.exceptions import LocalStorageError, NotFoundError
+from imaging_api.utils.exceptions import LocalStorageError, NotFoundError, NotInProjectArchiveError
 from imaging_api.utils.internal_auth import authenticate_internal_service
 from imaging_api.utils.logger import logger
 
@@ -37,7 +40,7 @@ XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 async def require_served(central_hub_project_id: str, accession_id: str) -> None:
     """Refuses an accession the project's approved cohort does not hold now (FLIP#1860).
 
-    Every route of this router calls it, through ``_cached_study``, before it reads a study. A 404, the status of a
+    Every route of this router calls it before it reads a study. A 404, the status of a
     study XNAT does not hold: the study is not there for this project to read.
 
     Raises:
@@ -183,3 +186,56 @@ async def stream_images_by_accession_number(
     """
     folder = await _cached_study(net_id, request_data, assessor_type, resource_type, force_refresh, headers)
     return StreamingResponse(tar_study(folder), media_type="application/x-tar")
+
+
+@router.post(
+    "/images/{net_id}/layout",
+    summary="List where a study's files sit in XNAT's archive",
+    response_model=StudyLayoutResponse,
+)
+async def study_layout_by_accession_number(
+    net_id: str,
+    request_data: DownloadImagesRequestData,
+    *,
+    resource_type: ResourceType = "NIFTI",
+    headers: XNATAuthHeaders,
+) -> StudyLayoutResponse:
+    """
+    For a client that mounts its project's directory of XNAT's archive (FLIP#1857): names each scan file's place in
+    that directory and in the layout a download has, so the client can read the study in place. No file content,
+    and nothing is cached. Assessor resources are not listed; such a client streams them.
+
+    Args:
+        net_id (str): The ID of the FL net that will run the training.
+        request_data (DownloadImagesRequestData): Contains encrypted central hub project ID and accession ID.
+        resource_type (ResourceType): XNAT resource type, one of DICOM, NIFTI, SEG or ALL.
+        headers (XNATAuthHeaders): XNAT authentication headers.
+
+    Returns:
+        StudyLayoutResponse: The study's files.
+
+    Raises:
+        HTTPException: 400 for a project id that does not open or an invalid request, 404 if the project, the study
+            or its files are not in XNAT or the study has left the project's approved cohort, 409 if its files are not
+            all in the project's own directory of the archive (the client streams it instead), 503 if that cohort
+            cannot be read, 500 for any other failure.
+    """
+    central_hub_project_id = open_project_id(request_data.encrypted_central_hub_project_id)
+    await require_served(central_hub_project_id, request_data.accession_id)
+    try:
+        files = await run_in_threadpool(
+            study_layout, central_hub_project_id, request_data.accession_id, resource_type, headers
+        )
+        return StudyLayoutResponse.model_validate({"files": files})
+    except NotFoundError as e:
+        logger.warning(f"No layout for {request_data.accession_id} on {net_id}: {e}")
+        raise HTTPException(status_code=404, detail=f"Resource not found: {e}")
+    except NotInProjectArchiveError as e:
+        logger.warning(f"{request_data.accession_id} on {net_id} cannot be read in place: {e}")
+        raise HTTPException(status_code=409, detail=f"Not in the project's archive: {e}")
+    except ValueError as e:
+        logger.warning(f"Invalid layout request for {request_data.accession_id} on {net_id}: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid layout request: {e}")
+    except Exception as e:
+        logger.exception(f"Failed to list the files of {request_data.accession_id} on {net_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to list the study's files: {e}")

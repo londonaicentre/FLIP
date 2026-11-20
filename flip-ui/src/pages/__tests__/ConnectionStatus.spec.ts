@@ -56,12 +56,6 @@ const stubs = {
         emits: ["close-modal", "on-success"],
         template: "<div data-test='add-trust-modal' :data-dialog='dialog' />"
     },
-    TrustKitModal: {
-        name: "TrustKitModal",
-        props: ["dialog", "trust"],
-        emits: ["close-modal"],
-        template: "<div data-test='trust-kit-modal' :data-dialog='dialog' />"
-    },
     // Stubbed: the shared swrv mock returns trust fixtures, which the partial
     // (which expects IFLStatus shape) would otherwise misinterpret.
     FLNetsCard: { template: "<div />" },
@@ -73,6 +67,15 @@ const stubs = {
         emits: ["close"],
         template: "<div data-test='trust-detail-drawer' :data-show='show' :data-trust-id='trust?.id ?? \"\"'"
             + " :data-hub-version='hubVersion ?? \"\"' />"
+    },
+    // Stubbed: who sees the button on which row is the partial's own rule (TrustKitSection.spec.ts).
+    TrustKitSection: {
+        name: "TrustKitSection",
+        props: {
+            trust: Object,
+            compact: Boolean
+        },
+        template: "<span data-test='kit-cell-stub' :data-trust-id='trust.id' :data-compact='compact' />"
     },
     "icon-ph-list-bullets-duotone": { template: "<span />" },
     "icon-ph-share-network-duotone": { template: "<span />" }
@@ -151,15 +154,23 @@ const fixture: ITrustResponse[] = [
 
 interface MountOptions {
     permissions?: string[];
+    trustAdminOf?: { id: string; name: string; code: string } | null;
 }
 
-function mountPage({ permissions = ["CanAccessAdminPanel"] }: MountOptions = {}) {
+function mountPage({ permissions = ["CanAccessAdminPanel"], trustAdminOf = null }: MountOptions = {}) {
     return mount(ConnectionStatus, {
         global: {
             plugins: [createTestingPinia({
                 createSpy: vi.fn,
                 stubActions: false,
-                initialState: { auth: { user: { permissions } } }
+                initialState: {
+                    auth: {
+                        user: {
+                            permissions,
+                            trustAdminOf
+                        }
+                    }
+                }
             })],
             stubs
         }
@@ -665,24 +676,25 @@ describe("ConnectionStatus", () => {
         expect(modal.props("dialog")).toBe(true);
     });
 
-    it("closes AddTrustModal and opens TrustKitModal when a trust is created", async () => {
+    it("closes AddTrustModal and opens the new trust's drawer, where its kit is downloaded", async () => {
         mockSwrvData.value = fixture;
         const wrapper = mountPage();
 
         await wrapper.find("[data-test='add-trust-btn']").trigger("click");
         const addModal = wrapper.findComponent({ name: "AddTrustModal" });
-        const kitModal = wrapper.findComponent({ name: "TrustKitModal" });
         expect(addModal.props("dialog")).toBe(true);
 
-        await addModal.vm.$emit("on-success", {
-            id: "new-id",
-            name: "New Trust"
+        addModal.vm.$emit("on-success", {
+            id: fixture[0].id,
+            name: fixture[0].name
         });
-        expect(addModal.props("dialog")).toBe(false);
-        expect(kitModal.props("dialog")).toBe(true);
+        await flushPromises();
 
-        await kitModal.vm.$emit("close-modal");
-        expect(kitModal.props("dialog")).toBe(false);
+        expect(addModal.props("dialog")).toBe(false);
+        expect(wrapper.find("[data-test='trust-kit-modal']").exists()).toBe(false);
+        const drawer = wrapper.find("[data-test='trust-detail-drawer']");
+        expect(drawer.attributes("data-show")).toBe("true");
+        expect(drawer.attributes("data-trust-id")).toBe(fixture[0].id);
     });
 
     it("returns to the table view when the List tab is clicked after switching to radial", async () => {
@@ -726,34 +738,76 @@ describe("ConnectionStatus", () => {
         expect(detail().exists()).toBe(false);
     });
 
-    it("lets the Trust column squash and truncate instead of locking at 18rem", async () => {
+    it("sizes every column but Trust to its content, and Trust takes what is left and truncates", async () => {
         const wrapper = await mountLoaded();
 
-        // The column absorbs the leftover width instead of pinning a 288px floor…
-        const th = wrapper.find("[data-test='sort-header-name']");
-        expect(th.classes()).toContain("w-full");
-        expect(th.classes()).not.toContain("min-w-[18rem]");
-        // …and max-w-0 gives the cell zero min-content, so the truncate spans
-        // actually clip when the table is squashed rather than forcing overflow.
+        // Automatic layout: a column that cannot wrap cannot be squeezed, so a long region
+        // widens its own column instead of running into the next one (FLIP#1852).
+        expect(wrapper.find("table").classes()).not.toContain("table-fixed");
+        expect(wrapper.find("[data-test='sort-header-name']").classes()).toContain("w-full");
+        const others = wrapper.findAll("th").filter(h => h.attributes("data-test") !== "sort-header-name");
+        expect(others.every(h => h.classes().includes("w-px") && h.classes().includes("whitespace-nowrap"))).toBe(true);
+        expect(wrapper.find("[data-test='trust-row']").classes()).toContain("whitespace-nowrap");
+        // max-w-0 gives the cell zero min-content, so the truncate spans clip.
         const nameCell = wrapper.find("[data-test='trust-name']").element.closest("td");
         expect(nameCell?.className).toContain("max-w-0");
     });
 
-    it("renders eight columns — Services dots + Jobs + drawer chevron, no sparkline", async () => {
-        const wrapper = await mountLoaded();
+    it("renders seven columns — Services dots + drawer chevron, no sparkline", async () => {
+        const wrapper = await mountLoaded(fixture, { permissions: [] });
 
-        expect(wrapper.findAll("th")).toHaveLength(8);
-        // Pinned column widths keep Region/Services/Heartbeat from being squeezed
-        // by the w-full Trust column (~ design grid 148/150/104px).
-        expect(wrapper.find("[data-test='sort-header-region']").classes()).toContain("w-36");
-        expect(wrapper.find("[data-test='sort-header-heartbeat']").classes()).toContain("w-28");
+        expect(wrapper.findAll("th")).toHaveLength(7);
         const row = wrapper.find("[data-test='trust-row']");
-        expect(row.findAll("td")).toHaveLength(8);
+        expect(row.findAll("td")).toHaveLength(7);
         // The placeholder 7d-uptime sparkline is gone (replaced by real service dots).
         expect(wrapper.find("[data-test='trust-uptime']").exists()).toBe(false);
         expect(row.find("polyline").exists()).toBe(false);
         // The trailing cell carries the drawer-affordance chevron.
         expect(row.find("svg[data-icon='ph:caret-right']").exists()).toBe(true);
+    });
+
+    describe("download column (FLIP#1852)", () => {
+        it("gives a hub admin a Download column with the kit button on every row", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const headers = wrapper.findAll("th").map(th => th.text());
+            // Jobs (FLIP#1739) and Download are the two admin-only columns.
+            expect(headers).toHaveLength(9);
+            expect(wrapper.find("[data-test='trust-row']").findAll("td")).toHaveLength(9);
+            // Before the drawer chevron's empty header.
+            expect(headers.slice(-2)).toEqual(["Download", ""]);
+            const cells = wrapper.findAll("[data-test='kit-cell-stub']");
+            expect(cells).toHaveLength(wrapper.findAll("[data-test='trust-row']").length);
+            expect(cells[0].attributes("data-compact")).toBe("true");
+            const rowIds = wrapper.findAllComponents({ name: "TrustKitSection" }).map(c => c.props("trust").id);
+            expect(rowIds.sort()).toEqual(fixture.map(t => t.id).sort());
+        });
+
+        it("shows the column to a Trust Admin too", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage({
+                permissions: [],
+                trustAdminOf: {
+                    id: fixture[0].id,
+                    name: fixture[0].name,
+                    code: "T"
+                }
+            });
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.findAll("th").map(th => th.text())).toContain("Download");
+        });
+
+        it("hides the column from everyone else", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage({ permissions: [] });
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.findAll("th").map(th => th.text())).not.toContain("Download");
+            expect(wrapper.find("[data-test='kit-cell-stub']").exists()).toBe(false);
+        });
     });
 
     describe("services column", () => {

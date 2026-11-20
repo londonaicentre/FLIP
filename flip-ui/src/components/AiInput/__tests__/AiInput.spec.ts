@@ -118,5 +118,19 @@ describe("Ai Input", () => {
             await settle();
             expect(comp.find(".error_message").exists()).toBe(false);
         });
+
+        it("validates while typing when validateOnInput is set", async () => {
+            const LiveForm = defineComponent(
+                () => () => h(Form, { validationSchema: schema }, () => h(AiInput, {
+                    name: "email",
+                    validateOnInput: true
+                }))
+            );
+            const comp = mount(LiveForm);
+
+            await comp.find("input").setValue("alex@");
+            await settle();
+            expect(comp.find(".error_message").text()).toBe("Please enter a valid email address");
+        });
     });
 });
