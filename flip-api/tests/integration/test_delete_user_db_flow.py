@@ -89,6 +89,21 @@ def test_refused_while_the_user_is_enabled(session, leaver, admin_id, fake_idp):
     fake_idp.delete_user.assert_not_called()
 
 
+def test_refused_for_the_callers_own_account(session, leaver, fake_idp):
+    """The leaver is an admin deleting themselves: refused before anything changes."""
+    session.add(UserRole(user_id=leaver, role_id=RoleRef.ADMIN.value))
+    session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        _delete(session, leaver, leaver, fake_idp)
+
+    assert exc.value.status_code == status.HTTP_409_CONFLICT
+    assert "your own account" in exc.value.detail
+    fake_idp.delete_user.assert_not_called()
+    assert session.get(UserProfile, leaver).deleted_at is None
+    assert session.exec(select(UserRole).where(UserRole.user_id == leaver)).first() is not None
+
+
 def test_delete_revokes_access_and_keeps_the_name_for_history(
     session, project_factory, model_factory, leaver, admin_id, fake_idp
 ):

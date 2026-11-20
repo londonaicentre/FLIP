@@ -69,7 +69,9 @@ def delete_user(
     """
     Delete a disabled user from the identity provider and revoke their role grants and project access.
 
-    Refused (409) while the user is still enabled, owns a live project or is a Trust Admin. The
+    Refused (409) for the caller's own account, and while the user is still enabled, owns a live project or is a
+    Trust Admin. The caller holds CAN_MANAGE_USERS, so refusing self-deletion also means the hub always keeps a user
+    who can manage users. The
     profile row stays, marked deleted with only the name kept, so history reads "Former user (name)";
     the audit row records that name too.
 
@@ -100,6 +102,12 @@ def delete_user(
             logger.error(f"User with ID: {token_id} was unable to manage users")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail=f"User with ID: {token_id} was unable to manage users"
+            )
+
+        if user_id == token_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="You cannot delete your own account; ask another admin to delete it.",
             )
 
         # `get_user` raises 404 if the sub is gone — treat that as "provider side

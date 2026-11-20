@@ -129,6 +129,19 @@ def test_get_user_non_404_propagates(fake_idp, mock_request, mock_db, user_id, t
         fake_idp.delete_user.assert_not_called()
 
 
+def test_own_account_is_refused(fake_idp, disabled_user, mock_request, mock_db, user_id):
+    """An admin who deleted themselves could leave no account able to manage users (FLIP#1996)."""
+    with patch("flip_api.user_services.delete_user.has_permissions", return_value=True):
+        with pytest.raises(HTTPException) as exc_info:
+            delete_user(user_id, mock_request, mock_db, user_id, idp=fake_idp)
+
+    assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+    assert "your own account" in exc_info.value.detail
+    fake_idp.get_user.assert_not_called()
+    fake_idp.delete_user.assert_not_called()
+    mock_db.commit.assert_not_called()
+
+
 def test_enabled_user_is_refused(fake_idp, mock_request, mock_db, user_id, token_id):
     """Delete is the step after Disable: an enabled user is refused before anything is touched."""
     fake_idp.get_user.return_value = CognitoUser(id=user_id, email=USERNAME, is_disabled=False)
