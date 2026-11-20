@@ -101,7 +101,8 @@ compares them:
 
 `force_refresh=true` takes the same delete-then-download step. The cache is also invalidated when an upload through
 imaging-api changes the accession (see Upload), and — on the FLARE backend, where a job mounts the net's whole
-folder — by `CleanupImages`, which empties that folder at job start and end. A Kubernetes job pod mounts only its
+folder — by `CleanupImages`, which deletes every other project's studies at job start and all of them at the end of
+the run (FLIP#1830). A Kubernetes job pod mounts only its
 project's folder, read-only, or none, and deletes nothing: there the retention sweep bounds the cache.
 
 **Retention (FLIP#1050).** Every cache hit refreshes the sentinel's mtime, the entry's last-used time, and an hourly
