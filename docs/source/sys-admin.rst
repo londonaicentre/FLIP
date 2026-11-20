@@ -14,6 +14,7 @@ user roles, supported platforms, upgrading sites, and backup and restore.
    sys-admin/admin-user-roles
    sys-admin/admin-platform-support
    sys-admin/admin-upgrading-sites
+   sys-admin/admin-trust-auto-upgrade
    sys-admin/admin-backup-and-restore
 
 .. seealso::

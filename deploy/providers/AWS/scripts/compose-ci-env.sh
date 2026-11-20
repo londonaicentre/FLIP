@@ -222,6 +222,10 @@ OPTIONAL_KEYS=(
     # configuration. Only stag sets it (to "false", for testing).
     ENFORCE_MFA
 
+    # AUTO_UPGRADE_TARGET_RELEASE (FLIP#1644): empty means "the release the hub runs", which is
+    # production's normal answer. Staging sets it, because its hub runs sha- builds.
+    AUTO_UPGRADE_TARGET_RELEASE
+
     # Email delivery (FLIP#592). Unset is today's behaviour: FLIP sends from
     # SES_VERIFIED_EMAIL and Cognito uses its built-in sender. Each is set per
     # environment once its precondition holds (README, "SES Prerequisites").

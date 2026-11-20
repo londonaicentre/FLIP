@@ -26,7 +26,8 @@ Two rules apply throughout:
   to the release the hub reports, and stops if the hub cannot say. It tells you when a newer release exists, but
   offers it only once the hub runs it.
 - **The site operator triggers the upgrade.** Nothing on the hub pushes an upgrade. The release notes' *Site upgrade*
-  section is the prompt; you run the command on your own host when you are ready.
+  section is the prompt; you run the command on your own host when you are ready. A Trust whose Trust Admin has
+  switched on automatic upgrades runs it for the operator instead: see :ref:`admin-trust-auto-upgrade`.
 
 .. warning::
 

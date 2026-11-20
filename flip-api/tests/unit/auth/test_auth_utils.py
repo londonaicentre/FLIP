@@ -229,6 +229,7 @@ def test_trust_scoped_permission_set_matches_the_enum():
     expected = {
         PermissionRef.CAN_APPROVE_FOR_TRUST.value,
         PermissionRef.CAN_MANAGE_TRUST_GOVERNANCE.value,
+        PermissionRef.CAN_MANAGE_TRUST_UPGRADES.value,
     }
 
     assert TRUST_SCOPED_PERMISSIONS == expected

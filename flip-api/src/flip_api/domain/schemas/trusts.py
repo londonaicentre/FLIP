@@ -10,10 +10,177 @@
 # limitations under the License.
 #
 
-from pydantic import BaseModel, Field
+import re
+from enum import StrEnum
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from flip_api.domain.schemas.types import TrimStr
+
+# ---------------------------------------------------------------------------
+# Automatic upgrades (trust auto-upgrade)
+# ---------------------------------------------------------------------------
+
+_HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+class UpgradeReportState(StrEnum):
+    """What a host agent reports (``POST /trust/upgrade-status``).
+
+    ``STARTING`` claims the lease; ``SUCCEEDED``, ``FAILED`` and ``BLOCKED`` release it.
+    """
+
+    STARTING = "STARTING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    BLOCKED = "BLOCKED"
+
+
+class UpgradeViewState(StrEnum):
+    """What My Trust shows for a trust (``GET /trust/{id}/auto-upgrade``)."""
+
+    UP_TO_DATE = "UP_TO_DATE"
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class UpgradeBlocker(StrEnum):
+    """Why an upgrade is waiting (``PENDING``) or blocked (``BLOCKED``).
+
+    Mirrored by flip-ui's ``AutoUpgradeBlocker``.
+    """
+
+    # Computed by the hub from the policy it just assembled.
+    JOBS_RUNNING = "JOBS_RUNNING"
+    OUTSIDE_WINDOW = "OUTSIDE_WINDOW"
+    AGENT_OFFLINE = "AGENT_OFFLINE"
+    # Reported by the host agent itself.
+    LOCAL_MODIFICATIONS = "LOCAL_MODIFICATIONS"
+    UNSUPPORTED_MODE = "UNSUPPORTED_MODE"
+    UNKNOWN_CHECKOUT = "UNKNOWN_CHECKOUT"
+    SITE_UNHEALTHY = "SITE_UNHEALTHY"
+
+
+# The codes a host agent may report: its own view of the host, never the hub's job/window findings.
+REPORTABLE_BLOCKERS = frozenset(
+    {
+        UpgradeBlocker.LOCAL_MODIFICATIONS,
+        UpgradeBlocker.UNSUPPORTED_MODE,
+        UpgradeBlocker.UNKNOWN_CHECKOUT,
+        UpgradeBlocker.SITE_UNHEALTHY,
+    }
+)
 
 
 class UpdateTrustStatusSchema(BaseModel):
     fl_client_endpoint: TrimStr = Field(..., description="'fl_client_endpoint' is required")
+
+
+def _check_timezone(name: str) -> str:
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError) as e:
+        raise ValueError(f"'{name}' is not a known IANA time zone, e.g. Europe/London") from e
+    return name
+
+
+class AutoUpgradeSettings(BaseModel):
+    """What a Trust Admin edits: the switch and the optional maintenance window."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    enabled: bool
+    window_start: str | None = Field(default=None, alias="windowStart")
+    window_end: str | None = Field(default=None, alias="windowEnd")
+    timezone: str | None = None
+
+    @model_validator(mode="after")
+    def _window_is_whole(self) -> "AutoUpgradeSettings":
+        times = (self.window_start, self.window_end)
+        if any(t is not None and not _HHMM.match(t) for t in times):
+            raise ValueError("The window times must be HH:MM, 24-hour")
+        if (self.window_start is None) != (self.window_end is None):
+            raise ValueError("Set both the start and the end of the window, or neither")
+        if self.window_start is not None and self.window_start == self.window_end:
+            raise ValueError("The window must not start and end at the same time")
+        if self.window_start is not None and not self.timezone:
+            raise ValueError("A window needs the Trust's time zone")
+        if self.timezone:
+            self.timezone = _check_timezone(self.timezone)
+        return self
+
+
+class AutoUpgradeLastAttempt(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    state: str
+    release: str
+    at: str
+    detail: str | None = None
+
+
+class AutoUpgradeView(BaseModel):
+    """A trust's auto-upgrade settings and status as its Trust Admin sees them (``GET /trust/{id}/auto-upgrade``)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    enabled: bool
+    target_release: str | None = Field(default=None, alias="targetRelease")
+    current_release: str | None = Field(default=None, alias="currentRelease")
+    window_start: str | None = Field(default=None, alias="windowStart")
+    window_end: str | None = Field(default=None, alias="windowEnd")
+    timezone: str | None = None
+    state: UpgradeViewState
+    blockers: list[UpgradeBlocker] = Field(default_factory=list)
+    # The agent's prose for the current blocker, when it sent any: a code like SITE_UNHEALTHY
+    # tells an admin a check failed but not which one.
+    blocker_detail: str | None = Field(default=None, alias="blockerDetail")
+    pending_since: str | None = Field(default=None, alias="pendingSince")
+    last_attempt: AutoUpgradeLastAttempt | None = Field(default=None, alias="lastAttempt")
+
+
+class UpgradeWindow(BaseModel):
+    start: str
+    end: str
+
+
+class UpgradeLease(BaseModel):
+    """The lease a host agent holds while it upgrades; absent when none is held."""
+
+    release: str
+    expires_at: str
+
+
+class UpgradePolicy(BaseModel):
+    """What the host agent is told on each tick (``GET /trust/upgrade-policy``). snake_case: it is machine-read."""
+
+    enabled: bool
+    target_release: str | None
+    maintenance_window: UpgradeWindow | None
+    timezone: str | None
+    is_busy: bool
+    lease: UpgradeLease | None
+    # A release whose last attempt FAILED and has not been cleared by an operator: never retried.
+    failed_release: str | None
+
+
+class UpgradeStatusInput(BaseModel):
+    """What the host agent reports (``POST /trust/upgrade-status``)."""
+
+    state: UpgradeReportState
+    release: str = Field(min_length=1, max_length=64)
+    # A captured log tail on FAILED, or the human-readable reason on BLOCKED.
+    detail: str | None = Field(default=None, max_length=8000)
+    # The machine-readable blocker code on BLOCKED (see REPORTABLE_BLOCKERS). Separate from
+    # `detail` because the UI keys its wording off the code while `detail` carries the specifics
+    # (which health field failed, which files are modified) that no fixed string can express.
+    blocker: str | None = Field(default=None, max_length=64)
+
+
+class UpgradeEnableInput(BaseModel):
+    """The install step's one setting (``PUT /trust/upgrade-policy``): the trust's own operator switching it."""
+
+    enabled: bool

@@ -17,7 +17,12 @@ import { isAxiosError } from "axios";
  * Extract the human-readable error message from a thrown value, preferring
  * the FastAPI-style ``{detail: "..."}`` body that flip-api returns on 4xx.
  * Falls back to ``fallback`` when the value is not an axios error or carries
- * no string detail, so callers always have something to show the user.
+ * no usable detail, so callers always have something to show the user.
+ *
+ * A request-validation failure is a **list** of per-field objects
+ * (``detail: [{loc, msg, type}]``), not a string, so a pydantic error used to
+ * fall through to the generic fallback and the user never saw which field was
+ * wrong. Flatten those into one sentence.
  */
 export const extractErrorDetail = (error: unknown, fallback: string): string => {
     if (!isAxiosError(error)) {
@@ -25,5 +30,18 @@ export const extractErrorDetail = (error: unknown, fallback: string): string => 
     }
     const detail = (error.response?.data as { detail?: unknown } | undefined)?.detail;
 
-    return typeof detail === "string" && detail.length > 0 ? detail : fallback;
+    if (typeof detail === "string" && detail.length > 0) {
+        return detail;
+    }
+    if (Array.isArray(detail)) {
+        const messages = detail
+            .map(item => (typeof item === "object" && item !== null ? (item as { msg?: unknown }).msg : undefined))
+            .filter((msg): msg is string => typeof msg === "string" && msg.length > 0);
+
+        if (messages.length > 0) {
+            return [...new Set(messages)].join(". ");
+        }
+    }
+
+    return fallback;
 };

@@ -432,3 +432,20 @@ def test_s3_public_endpoint_tolerates_an_empty_string():
     """The env-file trap of ``coerce_empty_email_backend``, for the public endpoint (#1291)."""
     assert DevSettings(S3_PUBLIC_ENDPOINT_URL="").S3_PUBLIC_ENDPOINT_URL == "http://localhost:9000"
     assert Settings(S3_PUBLIC_ENDPOINT_URL="").S3_PUBLIC_ENDPOINT_URL is None
+
+
+@pytest.mark.parametrize("blank", [None, "", "   "])
+def test_auto_upgrade_target_blank_is_unset(blank):
+    assert Settings(AUTO_UPGRADE_TARGET_RELEASE=blank).AUTO_UPGRADE_TARGET_RELEASE is None
+
+
+def test_auto_upgrade_target_accepts_a_stable_release():
+    assert Settings(AUTO_UPGRADE_TARGET_RELEASE=" v0.13.0 ").AUTO_UPGRADE_TARGET_RELEASE == "v0.13.0"
+
+
+@pytest.mark.parametrize("raw", ["0.13.0", "v0.13.0-rc.1", "sha-abc1234", "latest", "v0.13"])
+def test_auto_upgrade_target_refuses_anything_but_a_stable_release(raw):
+    # Failing the boot, not falling back to the hub's release: a typo must not move every
+    # opted-in trust somewhere the operator did not choose.
+    with pytest.raises(ValidationError, match="AUTO_UPGRADE_TARGET_RELEASE"):
+        Settings(AUTO_UPGRADE_TARGET_RELEASE=raw)
