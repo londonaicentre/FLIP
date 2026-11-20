@@ -12,6 +12,7 @@
 
 import os
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 
 from nvflare.apis.event_type import EventType
@@ -34,6 +35,10 @@ class CleanupImages(Executor):
     deletes them all, on ABOUT_TO_END_RUN, which NVFLARE fires when a job completes, fails or is aborted. An aborted
     job's process is killed 10 s after the abort, possibly before that event, so the start-of-job wipe is what keeps
     projects apart; imaging-api's retention sweep removes what is left.
+
+    The net's ``upload`` folder, where ``flip.add_resource`` stages files for imaging-api, is wiped at the start of a
+    job too. It is shared by every project on the net, so keeping it would hand one project's staged files to the
+    next job; the cost is that a trainer staging an upload before its first task arrives loses it.
     """
 
     def handle_event(self, event_type: str, fl_ctx: FLContext) -> None:
@@ -90,11 +95,25 @@ class CleanupImages(Executor):
             self.log_info(fl_ctx, f"Directory {net_directory} does not exist, nothing to clean up.")
             return
 
+        # imaging-api downloads into this folder and its retention sweep deletes from it while we walk, so an entry
+        # may vanish under us. Try every entry and fail once, at the end, for what could not be deleted.
+        failures = []
         for entry in net_directory.iterdir():
             if entry.name == keep:
                 continue
             self.log_info(fl_ctx, f"Deleting {entry}")
-            if entry.is_dir() and not entry.is_symlink():
-                shutil.rmtree(entry)
-            else:
-                entry.unlink()
+            try:
+                if entry.is_dir() and not entry.is_symlink():
+                    shutil.rmtree(entry, onexc=_ignore_vanished)
+                else:
+                    entry.unlink(missing_ok=True)
+            except OSError as e:
+                failures.append(f"{entry}: {e}")
+        if failures:
+            raise OSError("Could not delete " + "; ".join(failures))
+
+
+def _ignore_vanished(function: Callable[..., object], path: str, exc: BaseException) -> None:
+    """Let ``shutil.rmtree`` go on past a path that something else deleted first."""
+    if not isinstance(exc, FileNotFoundError):
+        raise exc

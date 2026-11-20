@@ -174,9 +174,22 @@ def test_project_id_is_the_jobs_study(tmp_path):
     assert get_flip_project_id(_ctx({"study": _VALID})) == _VALID
 
 
-@pytest.mark.parametrize("meta", [{}, {"study": "default"}, {"study": "../net-2"}, {"study": 1}])
-def test_project_id_is_none_unless_the_study_is_a_uuid(meta):
-    """A job from a hub older than FLIP#1678 runs in NVFLARE's "default" study."""
+@pytest.mark.parametrize(
+    "meta",
+    [
+        {},
+        {"study": "default"},
+        {"study": "../net-2"},
+        {"study": 1},
+        {"study": _VALID.upper()},
+        {"study": _VALID.replace("-", "")},
+        {"study": "{" + _VALID + "}"},
+        {"study": "urn:uuid:" + _VALID},
+    ],
+)
+def test_project_id_is_none_unless_the_study_is_a_canonical_uuid(meta):
+    """A job from a hub older than FLIP#1678 runs in NVFLARE's "default" study. Another spelling of a UUID names no
+    project folder, so it must not pass for one: the start-of-job wipe would delete the job's own images."""
     assert get_flip_project_id(_ctx(meta)) is None
 
 

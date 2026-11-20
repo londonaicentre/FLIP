@@ -39,6 +39,7 @@ from nvflare.apis.fl_constant import FLContextKey
 from nvflare.apis.fl_context import FLContext
 from nvflare.apis.job_def import JobMetaKey
 
+from flip.nvflare.project_studies import is_project
 from flip.utils.utils import Utils
 
 FLIP_CUSTOM_PROPS_KEY = "custom_props"
@@ -72,11 +73,12 @@ def get_flip_project_id(fl_ctx: FLContext) -> str | None:
 
     It is the job's NVFLARE study, which the FL API sets to the project and a researcher cannot choose (FLIP#1678).
     The client config's ``project_id`` is the hub's encrypted envelope, which the client cannot read. None unless
-    the study is a UUID, so a caller can compare it with a folder name safely; a job from a hub older than FLIP#1678
-    runs in the "default" study.
+    the study is a canonical (lowercase, dashed) UUID, the form imaging-api names the project's folder with, so a
+    caller can compare it with a folder name safely; a job from a hub older than FLIP#1678 runs in the "default"
+    study.
     """
     study = _get_job_meta(fl_ctx).get(JobMetaKey.STUDY.value)
-    return study if isinstance(study, str) and Utils.is_valid_uuid(study) else None
+    return study if is_project(study) else None
 
 
 def _read_run_json(fl_ctx: FLContext, resolve: Callable[[Any, str], Any]) -> dict[str, Any] | None:

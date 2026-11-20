@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import shutil
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -72,7 +73,6 @@ def test_the_start_of_a_job_keeps_what_its_trainer_already_downloaded(constants,
     own = _study(tmp_path, PROJECT)
     _study(tmp_path, OTHER_PROJECT)
     net = tmp_path / "images" / "net-1"
-    (net / "upload").mkdir()
     (net / "stray.zip").write_bytes(b"zip")
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -84,6 +84,54 @@ def test_the_start_of_a_job_keeps_what_its_trainer_already_downloaded(constants,
     assert sorted(p.name for p in net.iterdir()) == [PROJECT]
     # A link is removed, never followed.
     assert outside.is_dir()
+
+
+def test_the_start_of_a_job_wipes_the_nets_shared_upload_folder(constants, project_id, tmp_path):
+    """Every project on the net stages its add_resource files there, so a kept folder would hand them to the next
+    job. The accepted cost: a trainer that stages an upload before its first task arrives loses it."""
+    _study(tmp_path, PROJECT)
+    staged = tmp_path / "images" / "net-1" / "upload" / "mask.nii.gz"
+    staged.parent.mkdir()
+    staged.write_bytes(b"nifti")
+
+    assert _run(FlipTasks.INIT_TRAINING).get_return_code() == ReturnCode.OK
+
+    assert not staged.parent.exists()
+
+
+def test_one_entry_that_cannot_be_deleted_does_not_spare_the_others(constants, project_id, tmp_path):
+    """The wipe fails the task, but only after trying every entry."""
+    stuck = _study(tmp_path, OTHER_PROJECT)
+    other = _study(tmp_path, "00000000-0000-0000-0000-000000000002")
+    real_rmtree = shutil.rmtree
+
+    def rmtree(path, **kwargs):
+        if path.name == OTHER_PROJECT:
+            raise PermissionError(13, "Permission denied", str(path))
+        real_rmtree(path, **kwargs)
+
+    with patch("flip.nvflare.components.cleanup.shutil.rmtree", side_effect=rmtree):
+        reply = _run(FlipTasks.INIT_TRAINING)
+
+    assert reply.get_return_code() == ReturnCode.EXECUTION_EXCEPTION
+    assert OTHER_PROJECT in reply.get_header("exception")
+    assert stuck.exists()
+    assert not other.exists()
+
+
+def test_an_entry_another_process_deletes_mid_wipe_is_not_an_error(constants, project_id, tmp_path):
+    """imaging-api's retention sweep deletes accession folders from the same tree (FLIP#1050)."""
+    _study(tmp_path, OTHER_PROJECT)
+    real_rmtree = shutil.rmtree
+
+    def swept_first(path, **kwargs):
+        real_rmtree(path)
+        real_rmtree(path, **kwargs)
+
+    with patch("flip.nvflare.components.cleanup.shutil.rmtree", side_effect=swept_first):
+        assert _run(FlipTasks.INIT_TRAINING).get_return_code() == ReturnCode.OK
+
+    assert sorted(p.name for p in (tmp_path / "images" / "net-1").iterdir()) == []
 
 
 def test_without_a_project_id_the_start_of_a_job_deletes_every_project(constants, project_id, tmp_path):
