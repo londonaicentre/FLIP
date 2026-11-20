@@ -30,7 +30,6 @@ disposable cluster, not something a report script should do to a live site holdi
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import sys
 from collections.abc import Callable, Iterable
@@ -80,15 +79,21 @@ def describe(release: str, in_secrets: dict[str, int], in_configmaps: dict[str, 
     return NONE, "no release of that name is recorded in either store"
 
 
-def _kubectl_json(kubectl: str, args: list[str]) -> list[dict]:
-    out = subprocess.run([kubectl, *args, "-o", "json"], capture_output=True, text=True, check=True)
-    return json.loads(out.stdout).get("items", [])
+# Only the object names: a Helm release Secret carries the whole release (every value, the trust's
+# passwords included), and the answer here needs nothing but the record's name.
+_NAMES_ONLY = ["-o", "custom-columns=NAME:.metadata.name", "--no-headers"]
+
+
+def _kubectl_names(kubectl: str, args: list[str]) -> list[dict]:
+    """The listed objects' names, in the shape ``release_names`` reads, without fetching their data."""
+    out = subprocess.run([kubectl, *args, *_NAMES_ONLY], capture_output=True, text=True, check=True)
+    return [{"metadata": {"name": name}} for name in out.stdout.split() if name]
 
 
 def records(namespace: str, kubectl: str = "kubectl") -> tuple[dict[str, int], dict[str, int]]:
     """Every release recorded in this namespace's Secrets and ConfigMaps, with its latest revision."""
-    secrets = _kubectl_json(kubectl, ["get", "secrets", "-n", namespace, "-l", "owner=helm"])
-    configmaps = _kubectl_json(kubectl, ["get", "configmaps", "-n", namespace, "-l", "owner=helm"])
+    secrets = _kubectl_names(kubectl, ["get", "secrets", "-n", namespace, "-l", "owner=helm"])
+    configmaps = _kubectl_names(kubectl, ["get", "configmaps", "-n", namespace, "-l", "owner=helm"])
     return release_names(secrets, "secrets"), release_names(configmaps, "configmaps")
 
 
@@ -143,7 +148,7 @@ def main(argv: list[str] | None = None, run: Callable[..., tuple[str, str]] = re
     if args.deploy_driver:
         try:
             refusal = deploy_refusal(args.release, args.deploy_driver, *records(args.namespace, args.kubectl))
-        except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+        except subprocess.CalledProcessError as exc:
             print(f"could not read the release records: {exc}", file=sys.stderr)
             return 2
         if refusal:
@@ -153,7 +158,7 @@ def main(argv: list[str] | None = None, run: Callable[..., tuple[str, str]] = re
 
     try:
         driver, why = run(args.release, args.namespace, args.kubectl)
-    except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+    except subprocess.CalledProcessError as exc:
         print(f"could not read the release records: {exc}", file=sys.stderr)
         return 2
     print(f"{args.release}: {driver}")

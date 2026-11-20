@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import importlib.util
 import io
-import json
 import subprocess
 import unittest
 from contextlib import redirect_stdout
@@ -116,12 +115,24 @@ class TestDeployRefusal(unittest.TestCase):
 
 
 class TestReport(unittest.TestCase):
-    def _kubectl(self, secrets: list[dict], configmaps: list[dict]):
+    def _kubectl(self, secrets: list[dict], configmaps: list[dict], seen: list | None = None):
         def fake(cmd, **kwargs):
+            if seen is not None:
+                seen.append(cmd)
             items = secrets if "-l" in cmd and "secrets" in cmd else configmaps
-            return subprocess.CompletedProcess(cmd, 0, json.dumps({"items": items}), "")
+            return subprocess.CompletedProcess(cmd, 0, "".join(f"{i['metadata']['name']}\n" for i in items), "")
 
         return fake
+
+    def test_it_asks_kubectl_for_names_only(self):
+        """A release Secret holds the whole release, passwords included: never fetch its data."""
+        seen: list = []
+        with mock.patch.object(subject.subprocess, "run", side_effect=self._kubectl([], [], seen)):
+            subject.report("flip-trust", "flip-trust")
+        assert len(seen) == 2
+        for cmd in seen:
+            assert cmd[cmd.index("-o") + 1] == "custom-columns=NAME:.metadata.name"
+            assert "--no-headers" in cmd
 
     def test_it_reads_both_stores_through_kubectl(self):
         secrets = [_object("sh.helm.release.v1.flip-trust.v2")]
