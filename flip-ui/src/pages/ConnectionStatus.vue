@@ -399,7 +399,7 @@
                                         >
                                             {{ UPGRADE_LABELS[upgradeFor(t.id)!.state] }}
                                         </span>
-                                        <span v-else class="text-gray-400 dark:text-gray-500">—</span>
+                                        <span v-else class="text-gray-400 dark:text-gray-300">—</span>
                                     </td>
                                     <td
                                         class="px-4 py-4 align-middle text-sm tabular-nums"
