@@ -18,23 +18,26 @@ of that with one immutable reference::
 
     oci://ghcr.io/londonaicentre/charts/flip-trust:0.13.0
 
-Stamping is three edits, and every one of them is load-bearing:
+Three values carry the release, and every one of them is load-bearing:
 
-* ``Chart.yaml`` ``version`` -- the chart's own SemVer, which is what the OCI tag becomes. It
-  tracks the platform release exactly, so there is one number for an operator to reason about
-  rather than a chart version that drifts from the release it deploys.
-* ``Chart.yaml`` ``appVersion`` -- the release tag (``v0.13.0``), i.e. the thing this chart
-  deploys, named the way the git tag and the GHCR image tags name it.
+* the chart ``version`` -- the chart's own SemVer, which is what the OCI tag becomes. It tracks
+  the platform release exactly, so there is one number for an operator to reason about rather
+  than a chart version that drifts from the release it deploys. Set with ``helm package
+  --version``.
+* the chart ``appVersion`` -- the release tag (``v0.13.0``), i.e. the thing this chart deploys,
+  named the way the git tag and the GHCR image tags name it. Set with ``helm package
+  --app-version``.
 * ``values.yaml`` ``global.image.tag`` -- the pin every FLIP-built service already honours. The
   chart's checked-in default is empty, which means "each service's own mutable ``stag`` tag". A
   chart published with that default would be a release-numbered artifact that deploys whatever
   ``stag`` happens to point at today -- versioned in name only. Stamping it is what makes the
   published chart immutable in substance as well as in tag.
 
-The stamping functions are pure text in, text out, so the whole contract is testable without a
-cluster, a registry or helm. Every one of them fails closed: a version that is not SemVer, or a
-file that does not contain exactly the one line meant to be rewritten, raises rather than
-publishing a chart that is quietly wrong.
+The first two are helm's own flags, so ``Chart.yaml`` is never rewritten. Only the values pin is a
+file edit, because helm has no flag for a default value. That stamp is pure text in, text out, so
+the contract is testable without a cluster, a registry or helm, and it fails closed: a version that
+is not SemVer, or a file that does not contain exactly the one line meant to be rewritten, raises
+rather than publishing a chart that is quietly wrong.
 """
 
 from __future__ import annotations
@@ -54,11 +57,6 @@ DEFAULT_REGISTRY = "oci://ghcr.io/londonaicentre/charts"
 # SemVer for a chart version, and the registry would reject a bad one -- but only after the
 # release workflow had already tagged and built everything, so it is checked here instead.
 _VERSION = re.compile(r"^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$")
-
-# The `version:`/`appVersion:` keys at the top level of Chart.yaml. Anchored to the line start so
-# a `version:` nested under `dependencies:` or `maintainers:` can never be the one rewritten.
-_CHART_VERSION = re.compile(r"^version:.*$", re.MULTILINE)
-_CHART_APP_VERSION = re.compile(r"^appVersion:.*$", re.MULTILINE)
 
 # `global.image.tag` in values.yaml: the `tag:` indented four spaces that follows the `global:`
 # line and its `image:` child. Every other `tag:` in the file sits under a service and is indented
@@ -103,12 +101,6 @@ def _substitute_once(
     return new_text
 
 
-def stamp_chart(text: str, version: str, tag: str) -> str:
-    """Set the chart's own version to the release, and appVersion to the release tag."""
-    text = _substitute_once(_CHART_VERSION, lambda _m: f"version: {version}", text, "`version:` line")
-    return _substitute_once(_CHART_APP_VERSION, lambda _m: f'appVersion: "{tag}"', text, "`appVersion:` line")
-
-
 def stamp_values(text: str, tag: str) -> str:
     """Pin ``global.image.tag`` to the release tag.
 
@@ -148,16 +140,28 @@ def publish(
         if not path.is_file():
             raise StampError(f"{path} is missing -- is {chart_dir} a chart directory?")
 
-    chart_yaml.write_text(stamp_chart(chart_yaml.read_text(), version, tag))
     values_yaml.write_text(stamp_values(values_yaml.read_text(), tag))
-    print(f"stamped {chart_dir.name} {version} (appVersion {tag}, global.image.tag {tag})")
+    print(f"stamped {chart_dir.name} global.image.tag {tag}; packaging as {version} (appVersion {tag})")
 
     if shutil.which("helm") is None and not dry_run:
         raise StampError("helm is not on PATH")
 
     out_dir = destination or chart_dir
     out_dir.mkdir(parents=True, exist_ok=True)
-    _run(["helm", "package", str(chart_dir), "--destination", str(out_dir)], dry_run=dry_run)
+    _run(
+        [
+            "helm",
+            "package",
+            str(chart_dir),
+            "--version",
+            version,
+            "--app-version",
+            tag,
+            "--destination",
+            str(out_dir),
+        ],
+        dry_run=dry_run,
+    )
 
     package = out_dir / f"{chart_dir.name}-{version}.tgz"
     if push:

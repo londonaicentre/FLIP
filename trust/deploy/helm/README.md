@@ -77,8 +77,10 @@ helm pull oci://ghcr.io/londonaicentre/charts/flip-trust --version 0.13.0
 The chart version, `appVersion` and `global.image.tag` all carry that same release, so
 `flip-trust:0.13.0` deploys v0.13.0's images and nothing else. In-tree the chart is deliberately
 *un*versioned — `version: 0.0.0-dev` with a floating image tag — because a development checkout
-should deploy what you built, not the last release. `scripts/package_chart.py` does the stamping;
-it is runnable by hand for a dry run:
+should deploy what you built, not the last release. `scripts/package_chart.py` publishes it: the
+chart version and `appVersion` go to `helm package --version/--app-version`, and only
+`global.image.tag` is stamped into `values.yaml`, since helm has no flag for a default value. It is
+runnable by hand for a dry run:
 
 ```bash
 python3 trust/deploy/helm/scripts/package_chart.py --version v0.13.0 --no-push

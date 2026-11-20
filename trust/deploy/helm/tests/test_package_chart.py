@@ -38,7 +38,6 @@ from package_chart import (  # noqa: E402
     StampError,
     normalise_version,
     publish,
-    stamp_chart,
     stamp_values,
 )
 
@@ -71,45 +70,6 @@ class TestVersionNormalisation:
         for bad in ("v1.2.3 extra", "prefix v1.2.3", "v1.2.3\nv9.9.9"):
             with pytest.raises(StampError):
                 normalise_version(bad)
-
-
-class TestChartStamping:
-    """Chart.yaml carries the release twice: as the chart's SemVer and as what it deploys."""
-
-    def test_the_chart_version_becomes_the_release(self) -> None:
-        out = stamp_chart(REAL_CHART, "0.13.0", "v0.13.0")
-        assert "\nversion: 0.13.0\n" in out
-
-    def test_the_app_version_is_the_release_tag(self) -> None:
-        """appVersion names the thing deployed, spelled the way the git and image tags spell it."""
-        out = stamp_chart(REAL_CHART, "0.13.0", "v0.13.0")
-        assert '\nappVersion: "v0.13.0"\n' in out
-
-    def test_the_placeholder_version_is_gone(self) -> None:
-        """0.1.0/1.0 are the never-published defaults; shipping either would be the bug."""
-        out = stamp_chart(REAL_CHART, "0.13.0", "v0.13.0")
-        assert "version: 0.1.0" not in out
-        assert 'appVersion: "1.0"' not in out
-
-    def test_nothing_else_in_the_chart_is_touched(self) -> None:
-        out = stamp_chart(REAL_CHART, "0.13.0", "v0.13.0")
-        assert "name: flip-trust" in out
-        assert "apiVersion: v2" in out
-        assert len(out.splitlines()) == len(REAL_CHART.splitlines())
-
-    def test_a_chart_without_the_keys_is_refused(self) -> None:
-        with pytest.raises(StampError):
-            stamp_chart("apiVersion: v2\nname: flip-trust\n", "0.13.0", "v0.13.0")
-
-    def test_an_ambiguous_chart_is_refused_rather_than_guessed(self) -> None:
-        """Two top-level `version:` lines mean the file changed shape; stamping a guess is worse."""
-        with pytest.raises(StampError):
-            stamp_chart('version: 0.1.0\nappVersion: "1.0"\nversion: 0.2.0\n', "0.13.0", "v0.13.0")
-
-    def test_stamping_is_idempotent(self) -> None:
-        """A re-run of a release re-stamps an already-stamped checkout."""
-        once = stamp_chart(REAL_CHART, "0.13.0", "v0.13.0")
-        assert stamp_chart(once, "0.13.0", "v0.13.0") == once
 
 
 class TestValuesStamping:
@@ -191,19 +151,31 @@ class TestPublishing:
     def test_the_default_registry_is_the_projects_namespace(self) -> None:
         assert DEFAULT_REGISTRY == "oci://ghcr.io/londonaicentre/charts"
 
-    def test_the_files_are_stamped_before_helm_runs(self) -> None:
+    def test_the_values_are_stamped_before_helm_runs(self) -> None:
         """helm packages what is on disk, so a stamp after packaging would publish the default."""
         seen: list[str] = []
 
         def record(argv: list[str], **_: object) -> None:
-            seen.append((self.chart / "Chart.yaml").read_text())
+            seen.append((self.chart / "values.yaml").read_text())
 
         with (
             mock.patch("package_chart.subprocess.run", side_effect=record),
             mock.patch("package_chart.shutil.which", return_value="/usr/bin/helm"),
         ):
             publish(raw_version="v0.13.0", registry=DEFAULT_REGISTRY, chart_dir=self.chart)
-        assert "version: 0.13.0" in seen[0]
+        assert '    tag: "v0.13.0"' in seen[0]
+
+    def test_helm_package_sets_the_chart_version_and_app_version(self) -> None:
+        """The chart's SemVer and the release tag it deploys, through helm's own flags."""
+        _, calls = self._publish()
+        package = calls[0]
+        assert package[package.index("--version") + 1] == "0.13.0"
+        assert package[package.index("--app-version") + 1] == "v0.13.0"
+
+    def test_chart_yaml_is_never_rewritten(self) -> None:
+        """Only the values pin is a file edit; the checkout's Chart.yaml stays as committed."""
+        self._publish()
+        assert (self.chart / "Chart.yaml").read_text() == REAL_CHART
 
     def test_no_push_stops_after_packaging(self) -> None:
         _, calls = self._publish(push=False)
@@ -213,7 +185,7 @@ class TestPublishing:
         """Validation comes first: a failed publish must not leave a half-stamped checkout."""
         with pytest.raises(StampError):
             publish(raw_version="stag", registry=DEFAULT_REGISTRY, chart_dir=self.chart, push=False)
-        assert (self.chart / "Chart.yaml").read_text() == REAL_CHART
+        assert (self.chart / "values.yaml").read_text() == REAL_VALUES
 
     def test_a_missing_chart_directory_is_refused(self) -> None:
         with pytest.raises(StampError):
@@ -244,4 +216,4 @@ class TestPublishing:
         with mock.patch("package_chart.subprocess.run") as run:
             publish(raw_version="v0.13.0", registry=DEFAULT_REGISTRY, chart_dir=self.chart, dry_run=True)
         run.assert_not_called()
-        assert "version: 0.13.0" in (self.chart / "Chart.yaml").read_text()
+        assert '    tag: "v0.13.0"' in (self.chart / "values.yaml").read_text()
