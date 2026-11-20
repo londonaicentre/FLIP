@@ -8,15 +8,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Site-local rotation of TRUST_INTERNAL_SERVICE_KEY (FLIP#1714)."""
+"""Site-local rotation of TRUST_INTERNAL_SERVICE_KEY (FLIP#1714).
+
+Stdlib only: CI runs this directory as ``python <file>`` with no pytest installed.
+"""
 
 from __future__ import annotations
 
 import stat
 import sys
+import tempfile
+import unittest
 from pathlib import Path
-
-import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
@@ -32,50 +35,56 @@ FL_KIT_SLOT=Trust_1
 """
 
 
-def _kit(tmp_path: Path, text: str = KIT) -> Path:
-    path = tmp_path / ".env.SCR.prod"
-    path.write_text(text)
-    path.chmod(0o644)
-    return path
-
-
 def _values(path: Path) -> dict[str, str]:
     return dict(ln.split("=", 1) for ln in path.read_text().splitlines() if ln and not ln.startswith("#"))
 
 
-def test_only_the_internal_key_changes(tmp_path: Path) -> None:
-    kit = _kit(tmp_path)
+class RotateInternalServiceKey(unittest.TestCase):
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp_path = Path(tmp.name)
 
-    assert rotation.main(["--kit-file", str(kit)]) == 0
+    def _kit(self, text: str = KIT) -> Path:
+        path = self.tmp_path / ".env.SCR.prod"
+        path.write_text(text)
+        path.chmod(0o644)
+        return path
 
-    after = _values(kit)
-    assert after["TRUST_INTERNAL_SERVICE_KEY"] not in ("", "old-internal")
-    assert len(after["TRUST_INTERNAL_SERVICE_KEY"]) >= 43  # token_urlsafe(32)
-    assert after["TRUST_API_KEY"] == "api-key-stays"  # pragma: allowlist secret
-    assert after["FL_KIT_SLOT"] == "Trust_1"
-    assert "# TRUST_INTERNAL_SERVICE_KEY=a-commented-example" in kit.read_text()
+    def test_only_the_internal_key_changes(self) -> None:
+        kit = self._kit()
+
+        assert rotation.main(["--kit-file", str(kit)]) == 0
+
+        after = _values(kit)
+        assert after["TRUST_INTERNAL_SERVICE_KEY"] not in ("", "old-internal")
+        assert len(after["TRUST_INTERNAL_SERVICE_KEY"]) >= 43  # token_urlsafe(32)
+        assert after["TRUST_API_KEY"] == "api-key-stays"  # pragma: allowlist secret
+        assert after["FL_KIT_SLOT"] == "Trust_1"
+        assert "# TRUST_INTERNAL_SERVICE_KEY=a-commented-example" in kit.read_text()
+
+    def test_the_kit_ends_up_owner_only(self) -> None:
+        kit = self._kit()
+        rotation.main(["--kit-file", str(kit)])
+        assert stat.S_IMODE(kit.stat().st_mode) == 384
+
+    def test_two_rotations_give_two_different_keys(self) -> None:
+        kit = self._kit()
+        rotation.main(["--kit-file", str(kit)])
+        first = _values(kit)["TRUST_INTERNAL_SERVICE_KEY"]
+        rotation.main(["--kit-file", str(kit)])
+        assert _values(kit)["TRUST_INTERNAL_SERVICE_KEY"] != first
+
+    def test_a_kit_with_no_internal_key_is_refused_untouched(self) -> None:
+        for text in ("TRUST_NAME=Scratch\n", "# TRUST_INTERNAL_SERVICE_KEY=commented\n"):
+            with self.subTest(text=text):
+                kit = self._kit(text)
+                assert rotation.main(["--kit-file", str(kit)]) == 1
+                assert kit.read_text() == text
+
+    def test_a_missing_kit_is_an_error(self) -> None:
+        assert rotation.main(["--kit-file", str(self.tmp_path / "absent")]) == 1
 
 
-def test_the_kit_ends_up_owner_only(tmp_path: Path) -> None:
-    kit = _kit(tmp_path)
-    rotation.main(["--kit-file", str(kit)])
-    assert stat.S_IMODE(kit.stat().st_mode) == 0o600
-
-
-def test_two_rotations_give_two_different_keys(tmp_path: Path) -> None:
-    kit = _kit(tmp_path)
-    rotation.main(["--kit-file", str(kit)])
-    first = _values(kit)["TRUST_INTERNAL_SERVICE_KEY"]
-    rotation.main(["--kit-file", str(kit)])
-    assert _values(kit)["TRUST_INTERNAL_SERVICE_KEY"] != first
-
-
-@pytest.mark.parametrize("text", ["TRUST_NAME=Scratch\n", "# TRUST_INTERNAL_SERVICE_KEY=commented\n"])
-def test_a_kit_with_no_internal_key_is_refused_untouched(tmp_path: Path, text: str) -> None:
-    kit = _kit(tmp_path, text)
-    assert rotation.main(["--kit-file", str(kit)]) == 1
-    assert kit.read_text() == text
-
-
-def test_a_missing_kit_is_an_error(tmp_path: Path) -> None:
-    assert rotation.main(["--kit-file", str(tmp_path / "absent")]) == 1
+if __name__ == "__main__":
+    unittest.main()

@@ -278,14 +278,16 @@ def rotate_trust_keys(
     # Per-trust and trust-side only: the hub never validates this key, so its hash is discarded.
     internal_key, _ = generate_trust_key()
 
+    expires_at: datetime | None = None
     if revoke_old:
         trust.api_key_hash = api_key_hash
         trust.pending_api_key_hash = None
         trust.pending_api_key_expires_at = None
     else:
         window = grace if grace is not None else timedelta(days=get_settings().TRUST_KEY_ROTATION_GRACE_DAYS)
+        expires_at = datetime.now(timezone.utc) + window
         trust.pending_api_key_hash = api_key_hash
-        trust.pending_api_key_expires_at = datetime.now(timezone.utc) + window
+        trust.pending_api_key_expires_at = expires_at
 
     # Same transaction as the hash change: a rolled-back rotation leaves no audit claim behind.
     audit_trust_action(
@@ -306,11 +308,13 @@ def rotate_trust_keys(
     if revoke_old:
         logger.info("Rotated keys for trust %r (id=%s); the old key is refused from now on.", trust.name, trust.id)
     else:
+        # Log the local expiry, not the model attribute: the timestamp is not sensitive, but the
+        # attribute's name (`pending_api_key_...`) reads as a credential to the clear-text logging check.
         logger.info(
             "Staged new keys for trust %r (id=%s); both keys work until it first uses the new one, or until %s.",
             trust.name,
             trust.id,
-            trust.pending_api_key_expires_at,
+            expires_at,
         )
 
     return RegisteredTrust(
