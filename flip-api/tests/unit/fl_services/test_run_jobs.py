@@ -37,8 +37,8 @@ def deployment_mode_disabled():
 
 
 @pytest.fixture
-def mock_check_for_available_net():
-    with patch("flip_api.fl_services.run_jobs.check_for_available_net") as mock_check:
+def mock_check_for_serving_net():
+    with patch("flip_api.fl_services.run_jobs.check_for_serving_net") as mock_check:
         scheduler = MagicMock(id="sched-id", netId="net-123")
         mock_check.return_value = scheduler
         yield mock_check
@@ -57,13 +57,13 @@ def model_id():
     return str(uuid4())
 
 
-def test_run_jobs_success(mock_db, mock_check_for_available_net, mock_check_for_queued_jobs, caplog):
+def test_run_jobs_success(mock_db, mock_check_for_serving_net, mock_check_for_queued_jobs, caplog):
     with (
         patch("flip_api.fl_services.run_jobs.prepare_and_start_training", return_value=True) as mock_prepare,
     ):
         response = run_jobs_core(mock_db)
 
-        scheduler = mock_check_for_available_net.return_value
+        scheduler = mock_check_for_serving_net.return_value
         job = mock_check_for_queued_jobs.return_value
         assert response is None  # The function returns None on success
         assert "Training started successfully!" in caplog.text
@@ -73,9 +73,10 @@ def test_run_jobs_success(mock_db, mock_check_for_available_net, mock_check_for_
         mock_prepare.assert_called_once()
 
 
-def test_run_jobs_aborted_before_submission(mock_db, mock_check_for_available_net, mock_check_for_queued_jobs, caplog):
-    # prepare_and_start_training returning False means the job was aborted mid-prepare (#787):
-    # the tick must not claim training started.
+def test_run_jobs_not_submitted(mock_db, mock_check_for_serving_net, mock_check_for_queued_jobs, caplog):
+    # prepare_and_start_training returning False means nothing was submitted: the job was aborted mid-prepare
+    # (#787) or went back in the queue because the FL API could not be reached (#1962). The tick must not claim
+    # training started.
     with (
         patch("flip_api.fl_services.run_jobs.prepare_and_start_training", return_value=False),
     ):
@@ -83,18 +84,18 @@ def test_run_jobs_aborted_before_submission(mock_db, mock_check_for_available_ne
 
         assert response is None
         assert "Training started successfully!" not in caplog.text
-        assert "aborted before submission" in caplog.text
+        assert "Job not submitted this pass; net released." in caplog.text
 
 
-def test_run_jobs_no_available_net(mock_db, mock_check_for_available_net, caplog):
-    mock_check_for_available_net.return_value = None
+def test_run_jobs_no_available_net(mock_db, mock_check_for_serving_net, caplog):
+    mock_check_for_serving_net.return_value = None
     response = run_jobs_core(mock_db)
     assert response is None
     assert "No available nets, will check again soon... 🔃" in caplog.text
 
 
-def test_run_jobs_no_queued_job(mock_db, mock_check_for_available_net, mock_check_for_queued_jobs, caplog):
-    mock_check_for_available_net.return_value = MagicMock(id="sched-id")
+def test_run_jobs_no_queued_job(mock_db, mock_check_for_serving_net, mock_check_for_queued_jobs, caplog):
+    mock_check_for_serving_net.return_value = MagicMock(id="sched-id")
     mock_check_for_queued_jobs.return_value = None
 
     response = run_jobs_core(mock_db)
@@ -102,7 +103,7 @@ def test_run_jobs_no_queued_job(mock_db, mock_check_for_available_net, mock_chec
     assert "No jobs waiting, will check again soon... 🔃" in caplog.text
 
 
-def test_run_jobs_failure(mock_db, mock_check_for_available_net, mock_check_for_queued_jobs):
+def test_run_jobs_failure(mock_db, mock_check_for_serving_net, mock_check_for_queued_jobs):
     with (
         patch("flip_api.fl_services.run_jobs.prepare_and_start_training", side_effect=Exception("start error")),
     ):
@@ -130,7 +131,7 @@ def test_run_jobs_scheduled_task_failure_returns_generic_detail():
 
 
 def test_run_jobs_deployment_mode_pauses_job_pickup(
-    mock_db, deployment_mode_disabled, mock_check_for_available_net, mock_check_for_queued_jobs, caplog
+    mock_db, deployment_mode_disabled, mock_check_for_serving_net, mock_check_for_queued_jobs, caplog
 ):
     """Deployment mode enabled → no net lookup, no job pickup, no training start."""
     deployment_mode_disabled.return_value = True
@@ -140,7 +141,7 @@ def test_run_jobs_deployment_mode_pauses_job_pickup(
 
     assert response is None
     assert "Deployment mode enabled" in caplog.text
-    mock_check_for_available_net.assert_not_called()
+    mock_check_for_serving_net.assert_not_called()
     mock_check_for_queued_jobs.assert_not_called()
     mock_prepare.assert_not_called()
 
@@ -177,9 +178,7 @@ def test_recover_stale_busy_schedulers(rowcount, caplog):
 # ── queue-position re-emission ───────────────────────────────────────────────
 
 
-def test_run_jobs_reemits_queue_positions_after_pickup(
-    mock_db, mock_check_for_available_net, mock_check_for_queued_jobs
-):
+def test_run_jobs_reemits_queue_positions_after_pickup(mock_db, mock_check_for_serving_net, mock_check_for_queued_jobs):
     """A pickup advances every remaining queued model, so positions are re-logged."""
     with (
         patch("flip_api.fl_services.run_jobs.prepare_and_start_training"),
@@ -191,7 +190,7 @@ def test_run_jobs_reemits_queue_positions_after_pickup(
 
 
 def test_run_jobs_does_not_reemit_when_no_job_was_picked(
-    mock_db, mock_check_for_available_net, mock_check_for_queued_jobs
+    mock_db, mock_check_for_serving_net, mock_check_for_queued_jobs
 ):
     mock_check_for_queued_jobs.return_value = None
 

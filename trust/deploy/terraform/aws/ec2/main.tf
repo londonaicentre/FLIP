@@ -186,6 +186,7 @@ resource "aws_instance" "node" {
   ami                         = data.aws_ssm_parameter.ami.value
   instance_type               = var.instance_type
   subnet_id                   = module.network.subnet_id
+  private_ip                  = var.private_ip == "" ? null : var.private_ip
   key_name                    = aws_key_pair.node.key_name
   vpc_security_group_ids      = [aws_security_group.node.id]
   associate_public_ip_address = false
