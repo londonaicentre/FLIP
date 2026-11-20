@@ -932,6 +932,7 @@ def test_the_ui_publish_role_never_writes_the_old_demo_prefix() -> None:
     assert demo["resources"] == '["${local.ui_bucket_arn}/demo/*"]'
     assert "NeverTouchThePublicDemo" not in _module_block('data "aws_iam_policy_document" "demo_publish"')
 
+
 def _ci(name: str) -> str:
     return strip_comments((CI_DIR / name).read_text())
 
