@@ -19,7 +19,7 @@ name = "flip-utils"
 dynamic = ["version"]
 description = "FLIP - Federated Learning and Interoperability Platform library"
 readme = {file = "docs/overview.rst", content-type = "text/x-rst"}
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 license = "Apache-2.0"
 authors = [
     { name = "AI Centre for Value Based Healthcare" },
@@ -43,7 +43,7 @@ classifiers = [
     "Intended Audience :: Healthcare Industry",
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
@@ -72,8 +72,8 @@ Issues = "https://github.com/londonaicentre/FLIP/issues"
 # One extra per FL backend (FLIP#1047). `flip.nvflare` needs `nvflare`, `flip.flower` needs `flower`;
 # `import flip` and the backend-neutral modules need neither.
 nvflare = [
-    "nvflare==2.9.0",
-    # NVFLARE's ClientK8sJobLauncher (FLIP#1428 job pods) imports it. Capped below 36: NVFLARE 2.9.0
+    "nvflare==2.9.1",
+    # NVFLARE's ClientK8sJobLauncher (FLIP#1428 job pods) imports it. Capped below 36: NVFLARE 2.9.1
     # passes the GPU count as an int, and the 37.x client validates request bodies and rejects a
     # non-string nvidia.com/gpu quantity, failing every GPU job at pod creation (NVFLARE itself
     # excludes 36.0.0).
@@ -100,16 +100,15 @@ full = [
     # for FL apps that import them.
     "scikit-learn>=1.5.0",
     "timm>=1.0.0",
-    # Pin torch>=2.13,<2.14 (was 2.11 via MONAI transitive) so the FLARE
-    # supernode runs the same patched torch as the Flower one. PyTorch 2.13's
-    # cu130 build requires NVIDIA driver >=580.
-    "torch>=2.13.0,<2.14",
-    # torchvision MUST be a direct dep, kept in lock-step with torch (0.28 <-> 2.13).
+    # Pin torch>=2.15,<2.16 so the FLARE and Flower images run the same torch. Its cu132 build
+    # needs NVIDIA driver >=580 (verified on a TITAN RTX with 580.196, FLIP#1836).
+    "torch>=2.15.0,<2.16",
+    # torchvision MUST be a direct dep, kept in lock-step with torch (0.29.2 <-> 2.15).
     # timm pulls it in transitively, but [tool.uv.sources] index pins only apply to
     # DIRECT deps — a transitive-only torchvision resolves from PyPI's default build
-    # and mismatches torch's cu130 ABI ("operator torchvision::nms does not exist").
-    # Declaring it here routes it through the pinned cu130 index (-> 0.28.0+cu130).
-    "torchvision>=0.28.0,<0.29",
+    # and mismatches torch's CUDA build ("operator torchvision::nms does not exist").
+    # Declaring it here routes it through the pinned cu132 index (-> 0.29.2+cu132).
+    "torchvision>=0.29.2,<0.30",
     # Constraint-based causal discovery (FCI, the CI tests and the PAG orientation rules) for the
     # biomarker_causal_discovery tutorial on both backends. The FL images install this extra, so
     # the tutorial's app code can `import causallearn` deployed and under the simulators alike.
@@ -143,13 +142,13 @@ constraint-dependencies = [
     "python-dotenv>=1.2.2",      # CVE-2026-28684
     "requests>=2.33.0",          # CVE-2026-25645
     "setuptools>=84.1.0",        # GHSA-xmj3-9gf7-h52w, CVE-2026-59890
-    "soupsieve>=2.9.0",          # CVE-2026-85999, CVE-2026-86000
+    "soupsieve>=4.1.1",          # CVE-2026-85999, CVE-2026-86000, GHSA-4j63-6c4x-wfg4, GHSA-mmhr-3c5m-f64f, GHSA-7g44-g9rc-x53w, GHSA-6655-6qjp-jx7x
     "urllib3>=2.8.0",            # GHSA-8988-9cw3-xx77, GHSA-gh4c-6fx4-qh6g, GHSA-vxq7-64xx-v4gw, CVE-2026-44431, CVE-2025-66471/66418
     "werkzeug>=3.1.9",           # GHSA-g6x2-hccm-hh4m, CVE-2026-27199, CVE-2026-21860, CVE-2025-66221, CVE-2024-49767/49766
 ]
 
-# Pull torch from PyTorch's cu130 wheel index so every FL backend uses the
-# security-patched 2.13 line. cu130 needs NVIDIA driver >=580.
+# Pull torch from PyTorch's cu132 wheel index so every FL backend uses the same
+# 2.15 build. cu132 needs NVIDIA driver >=580.
 #
 # This line is FLIP's de facto minimum NVIDIA driver, so treat it as a
 # compatibility floor rather than a local convenience.
@@ -157,15 +156,18 @@ constraint-dependencies = [
 # operators must meet the documented driver floor.
 #
 # Mirrors the --extra-index-url flag in the flower fl-base Dockerfile.
+#
+# The FL images install torch with hashes, so tests/unit/test_lock_hashes.py fails if a relock leaves one of their
+# torch or torchvision wheels without a sha256 (the cu130 index published none for cp313, FLIP#944).
 [[tool.uv.index]]
-name = "pytorch-cu130"
-url = "https://download.pytorch.org/whl/cu130"
+name = "pytorch-cu132"
+url = "https://download.pytorch.org/whl/cu132"
 explicit = true
 
 [tool.uv.sources]
 # macOS uses native CPU/MPS wheels from PyPI; CUDA wheels are Linux/Windows only.
-torch = { index = "pytorch-cu130", marker = "sys_platform != 'darwin'" }
-torchvision = { index = "pytorch-cu130", marker = "sys_platform != 'darwin'" }
+torch = { index = "pytorch-cu132", marker = "sys_platform != 'darwin'" }
+torchvision = { index = "pytorch-cu132", marker = "sys_platform != 'darwin'" }
 
 [tool.hatch.version]
 path = "flip/__init__.py"
@@ -220,7 +222,7 @@ testpaths = ["tests/unit"]
 norecursedirs = ["fl-services", "fl-base", ".venv", "workspace", ".test_*"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false

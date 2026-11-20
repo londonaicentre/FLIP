@@ -68,9 +68,10 @@
                                     type="text"
                                     name="name"
                                     label="Trust name"
-                                    hint="Full display name shown across the platform. Any characters allowed."
+                                    hint="Full display name shown across the platform."
                                     placeholder="e.g. Guy's & St Thomas' NHS Foundation Trust"
                                     :required="true"
+                                    validate-on-input
                                 />
                                 <AiInput
                                     data-test="trust-code-field"
@@ -80,6 +81,7 @@
                                     hint="Short, stable identifier shown in tables and dashboards. Letters, digits, underscore, hyphen."
                                     placeholder="e.g. GSTT"
                                     :required="true"
+                                    validate-on-input
                                 />
                                 <AiInput
                                     data-test="trust-region-field"
@@ -88,6 +90,7 @@
                                     label="Region"
                                     hint="NHS region or geography."
                                     placeholder="e.g. London"
+                                    validate-on-input
                                 />
                             </div>
                             <div class="flex flex-row-reverse px-4 py-3 bg-gray-100 rounded-b-lg dark:bg-dark-canvas sm:px-6 shrink-0">

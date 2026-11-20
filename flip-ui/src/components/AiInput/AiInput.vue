@@ -142,6 +142,11 @@ export default defineComponent({
             type: String,
             required: false,
             default: ""
+        },
+        // Validate on every keystroke instead of waiting for blur.
+        validateOnInput: {
+            type: Boolean,
+            default: false
         }
     },
     emits: [
@@ -172,8 +177,8 @@ export default defineComponent({
         handleChangeEvent(event: Event) {
             // Validate on submit, and on blur once the value has changed: leaving an untouched field
             // (the browser focuses the sign-in email by itself) is not an error yet. While typing, only
-            // re-validate to clear a shown error.
-            this.handleChange(event, !!this.errorMessage);
+            // re-validate to clear a shown error, unless validateOnInput asks for every keystroke.
+            this.handleChange(event, this.validateOnInput || !!this.errorMessage);
             this.$emit("change", event);
         }
     }

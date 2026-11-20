@@ -168,6 +168,47 @@ only read. Editing, staging or deleting the project itself stays with the owner 
 
    To fully remove a former owner's access, transfer the project to another user or delete it.
 
+.. _disable-or-delete-a-user:
+
+***************************
+Disabling or deleting users
+***************************
+
+Both are in the user's **Danger Zone** in the Admin Area and need the *Manage users* permission.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 39 39
+
+   * -
+     - Disable
+     - Delete
+   * - When
+     - Any time. Use it to suspend access.
+     - Once the account is disabled (the button is greyed out until then). Use it when someone leaves or asks to be
+       erased.
+   * - Sign-in
+     - Refused until the account is re-enabled.
+     - The account is removed from the identity provider.
+   * - Roles and project memberships
+     - Kept.
+     - Removed.
+   * - Name, email, organisation
+     - Kept.
+     - The email and organisation are removed. The name is kept so that history can still say who did what.
+   * - History (projects, models, approvals)
+     - Shows the user's name.
+     - Shows "Former user (*name*)".
+   * - Undo
+     - Re-enable the account.
+     - Not possible. Register the person again as a new user.
+
+The hub refuses a delete while the user still owns a project that is not deleted, or is a Trust Admin. The refusal
+names the projects and trusts. Transfer or delete those projects, or move the Trust Admin to another role, then delete
+the user.
+
+Each delete is written to the users audit trail, with the admin who made it and the user's name at the time.
+
 *************************
 Who can see whose profile
 *************************

@@ -25,6 +25,8 @@ export interface IServiceHealth {
     status: ServiceStatus;
     version: string | null;
     response_ms: number | null;
+    // How the trust runs an FL job, on the fl-client entry only: "process" or "pods" (FLIP#1739).
+    job_mode?: string | null;
 }
 
 // Trust list item with connection status — benign metadata only (no secrets),
@@ -41,6 +43,9 @@ export interface ITrustResponse {
     region: string | null;
     last_heartbeat: string | null;
     project_count: number;
+    // FL jobs this trust takes part in that are waiting or running (FLIP#1739). Hub admins only: null for others.
+    jobs_queued?: number | null;
+    jobs_in_progress?: number | null;
     services?: Record<string, IServiceHealth> | null;
     services_updated_at?: string | null;
 }

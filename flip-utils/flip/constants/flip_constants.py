@@ -19,9 +19,14 @@ This module provides:
 """
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import HttpUrl
 from pydantic_settings import BaseSettings
+
+# Where a job pod in IMAGES_TRANSPORT=archive finds its project's directory of XNAT's archive (FLIP#1857). Fixed, not
+# a setting: the fl-client mounts it here when it builds the study entry, and the job pod reads it here.
+XNAT_ARCHIVE_DIR = "/app/data/xnat-archive"
 
 
 class _Common(BaseSettings):
@@ -88,6 +93,13 @@ class ProdSettings(_Common):
 
     # -- Shared --
     IMAGES_DIR: str = ""
+    # How a study reaches the job: "mount", a path on the net's images folder shared with imaging-api;
+    # "project", the same path where only the project's own folder is mounted, read-only (an NVFLARE
+    # study mount, FLIP#1678), so uploads travel in the request; "stream", a tar from imaging-api
+    # extracted into this process's own directory, for a job pod that mounts no images volume
+    # (FLIP#1049); or "archive", links into the project's own directory of XNAT's archive, mounted
+    # read-only at XNAT_ARCHIVE_DIR by the same study mount (FLIP#1857), so nothing is copied.
+    IMAGES_TRANSPORT: Literal["mount", "project", "stream", "archive"] = "mount"
     NET_ID: str = "default"
 
 
@@ -133,6 +145,7 @@ class _FlipConstantsProxy:
     TRUST_INTERNAL_SERVICE_KEY_HEADER: str
     TRUST_INTERNAL_SERVICE_KEY: str
     IMAGES_DIR: str
+    IMAGES_TRANSPORT: Literal["mount", "project", "stream", "archive"]
     NET_ID: str
 
     def __getattribute__(self, name: str) -> object:

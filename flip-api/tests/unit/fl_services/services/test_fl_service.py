@@ -203,7 +203,7 @@ def test_add_fl_backend_job_id_updates_db(fl_job_id, fake_session):
 def test_submit_job_raises_when_no_job_id(mock_post, fl_job_id, model_id, fake_session):
     mock_post.return_value = ""
     with pytest.raises(ValueError, match="No backend job id returned"):
-        fl_service.submit_job(fl_job_id, "endpoint", model_id, fake_session)
+        fl_service.submit_job(fl_job_id, "endpoint", model_id, fake_session, study="proj")
 
 
 # TODO add tests for fetch_server_status, fetch_client_status
@@ -265,6 +265,66 @@ def test_unavailable_clients_never_raises_when_the_fl_api_reports_nothing(mock_g
     mock_get_status.return_value = None
 
     assert fl_service.unavailable_clients(["Trust_1"], "endpoint") == []
+
+
+@pytest.mark.parametrize("status_code", [200, 401, 500])
+def test_fl_api_is_serving_counts_any_nvflare_answer(status_code):
+    """NVFLARE's FL API only listens once its startup has reached the FL server, so any answer means it is serving."""
+    with patch.object(fl_service.httpx, "get", return_value=httpx.Response(status_code)) as mock_get:
+        assert fl_service.fl_api_is_serving("http://fl-api-net-1:8000", FLBackend.NVFLARE) is True
+
+    # The health route takes no key, and redirects are not followed: the first answer is the answer.
+    mock_get.assert_called_once_with(
+        "http://fl-api-net-1:8000/health/", timeout=fl_service.FL_API_PROBE_TIMEOUT_SECONDS, follow_redirects=False
+    )
+
+
+_NOT_ANSWERING = pytest.mark.parametrize(
+    "error",
+    [httpx.ConnectError("Connection refused"), httpx.ConnectTimeout("timed out"), httpx.ReadTimeout("timed out")],
+    ids=["refused", "connect-timeout", "read-timeout"],
+)
+
+
+@_NOT_ANSWERING
+def test_fl_api_is_serving_is_false_when_the_nvflare_fl_api_does_not_answer(error, caplog):
+    with patch.object(fl_service.httpx, "get", side_effect=error):
+        assert fl_service.fl_api_is_serving("http://fl-api-net-1:8000", FLBackend.NVFLARE) is False
+    assert "http://fl-api-net-1:8000 is not answering" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "error", [httpx.UnsupportedProtocol("no scheme"), httpx.InvalidURL("bad")], ids=["no-scheme", "invalid-url"]
+)
+def test_fl_api_is_serving_leaves_a_malformed_endpoint_to_fail_the_run(error):
+    """A misconfigured endpoint is not a restart to wait out: counted as serving, the run fails on it as before."""
+    with patch.object(fl_service.httpx, "get", side_effect=error):
+        assert fl_service.fl_api_is_serving("fl-api-net-1:8000", FLBackend.NVFLARE) is True
+
+
+@pytest.mark.parametrize(("reply", "serving"), [({"status": "RUNNING"}, True), ({"status": "STOPPED"}, False)])
+def test_fl_api_is_serving_asks_the_flower_fl_api_about_its_superlink(reply, serving, caplog):
+    """Flower's FL API listens before its SuperLink is up and its /health looks no further, so the probe asks."""
+    with patch.object(fl_service, "http_get", return_value=reply) as mock_get:
+        assert fl_service.fl_api_is_serving("http://fl-api-net-2:8000", FLBackend.FLOWER) is serving
+
+    mock_get.assert_called_once_with(
+        "http://fl-api-net-2:8000/check_server_status", timeout=fl_service.FL_API_PROBE_TIMEOUT_SECONDS
+    )
+    assert ("its SuperLink is not running" in caplog.text) is not serving
+
+
+@_NOT_ANSWERING
+def test_fl_api_is_serving_is_false_when_the_flower_fl_api_does_not_answer(error):
+    with patch.object(fl_service, "http_get", side_effect=error):
+        assert fl_service.fl_api_is_serving("http://fl-api-net-2:8000", FLBackend.FLOWER) is False
+
+
+def test_fl_api_is_serving_counts_a_flower_error_status_as_serving():
+    """An error answer (a wrong FL API key, say) is not an outage: the run fails on it as before."""
+    error = httpx.HTTPStatusError("401", request=httpx.Request("GET", "http://x"), response=httpx.Response(401))
+    with patch.object(fl_service, "http_get", side_effect=error):
+        assert fl_service.fl_api_is_serving("http://fl-api-net-2:8000", FLBackend.FLOWER) is True
 
 
 @patch("flip_api.fl_services.services.fl_service.http_delete")
@@ -1176,7 +1236,7 @@ def test_extract_current_job_data_success(mock_http_get):
     assert result.status == "RUNNING"
 
     # Verify correct HTTP endpoint called (with the generous Flower-aware timeout)
-    mock_http_get.assert_called_once_with(f"{net_endpoint}/list_jobs", timeout=30)
+    mock_http_get.assert_called_once_with(f"{net_endpoint}/list_jobs", timeout=30, params=[])
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
@@ -1233,7 +1293,7 @@ def test_list_backend_jobs_parses_every_job(mock_http_get):
 
     assert jobs is not None
     assert [(j.job_id, j.status) for j in jobs] == [("a", FLJobStatus.RUNNING), ("b", FLJobStatus.FAILED)]
-    mock_http_get.assert_called_once_with("http://fl-api/list_jobs", timeout=30)
+    mock_http_get.assert_called_once_with("http://fl-api/list_jobs", timeout=30, params=[])
 
 
 @pytest.mark.parametrize(
@@ -1281,8 +1341,9 @@ def test_abort_model_training_success(
     abort_mocks.server.return_value = {"status": "stopped"}
     mock_extract_current_job_data.return_value = IJobMetaData(job_id="job123", status="RUNNING")
 
+    fake_session.get.return_value = MagicMock(project_id=None)
     fl_service.abort_model_training(model_id, fake_session)
-    abort_mocks.abort.assert_called_once_with("http://fl-api-endpoint", "job123")
+    abort_mocks.abort.assert_called_once_with("http://fl-api-endpoint", "job123", study=None)
     # The dequeue DELETEs the job, so update_fl_scheduler can no longer free the net —
     # the abort path must release it itself once the abort has been delivered.
     abort_mocks.release.assert_called_once_with(model_id, fake_session)
@@ -1320,9 +1381,10 @@ def test_abort_model_training_aborts_a_job_still_waiting_to_start(
     abort_mocks.server.return_value = {"status": "started"}
     mock_http_get.return_value = [{"job_id": "job123", "status": "PENDING"}]
 
+    fake_session.get.return_value = MagicMock(project_id=None)
     fl_service.abort_model_training(model_id, fake_session)
 
-    abort_mocks.abort.assert_called_once_with("http://fl-api-endpoint", "job123")
+    abort_mocks.abort.assert_called_once_with("http://fl-api-endpoint", "job123", study=None)
     abort_mocks.release.assert_called_once_with(model_id, fake_session)
 
 
@@ -1387,9 +1449,9 @@ def test_submit_job_persists_backend_id_on_success(mock_post, mock_add, fl_job_i
     """A valid backend job id from the FL API is persisted against the FLJob row."""
     mock_post.return_value = "backend-job-99"
 
-    fl_service.submit_job(fl_job_id, "endpoint", model_id, fake_session)
+    fl_service.submit_job(fl_job_id, "endpoint", model_id, fake_session, study="proj")
 
-    mock_post.assert_called_once_with(f"endpoint/submit_job/{model_id}", timeout=30)
+    mock_post.assert_called_once_with(f"endpoint/submit_job/{model_id}", timeout=30, params=[("study", "proj")])
     mock_add.assert_called_once_with(fl_job_id, "backend-job-99", fake_session)
 
 
@@ -2688,3 +2750,101 @@ def test_start_training_logs_nothing_about_gpus_when_flower_got_no_override(mode
     _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), reply)
 
     assert logged == []
+
+
+# --- the project's NVFLARE study on submit, list and abort (FLIP#1678) ---------------------------
+
+PROJECT_STUDY = "8b2e9d6e-5a53-4f2e-9c37-2c8f4f0f2d11"
+
+
+@patch("flip_api.fl_services.services.fl_service.submit_job")
+@patch("flip_api.fl_services.services.fl_service.upload_app")
+@patch("flip_api.fl_services.services.fl_service.encrypt")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_required_training_details")
+def test_start_training_submits_under_the_project_study(
+    mock_get_required, mock_encrypt, mock_upload, mock_submit, model_id, fl_job_id, fake_session
+):
+    mock_get_required.return_value = MagicMock(project_id=PROJECT_STUDY, cohort_query="query")
+    mock_encrypt.return_value = "encrypted"
+    fake_session.get.return_value = FLJob(id=fl_job_id, model_id=model_id)
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS
+
+    fl_service.start_training(
+        model_id=model_id,
+        fl_job_id=fl_job_id,
+        clients=["client1"],
+        endpoint="endpoint",
+        bundle_urls=["url"],
+        session=fake_session,
+    )
+
+    assert mock_submit.call_args.kwargs["study"] == PROJECT_STUDY
+
+
+@patch("flip_api.fl_services.services.fl_service.add_fl_backend_job_id")
+@patch("flip_api.fl_services.services.fl_service.http_post")
+def test_submit_job_sends_the_study(mock_post, mock_add, fl_job_id, model_id, fake_session):
+    mock_post.return_value = "backend-job-99"
+
+    fl_service.submit_job(fl_job_id, "endpoint", model_id, fake_session, study=PROJECT_STUDY)
+
+    mock_post.assert_called_once_with(f"endpoint/submit_job/{model_id}", timeout=30, params=[("study", PROJECT_STUDY)])
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_list_backend_jobs_sends_each_study(mock_http_get):
+    mock_http_get.return_value = []
+
+    fl_service.list_backend_jobs("http://fl-api-net-1:8000", ["a", "b"])
+
+    mock_http_get.assert_called_once_with(
+        "http://fl-api-net-1:8000/list_jobs", timeout=30, params=[("study", "a"), ("study", "b")]
+    )
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_extract_current_job_data_sends_the_study(mock_http_get):
+    mock_http_get.return_value = [{"job_id": "job123", "status": "RUNNING"}]
+
+    fl_service.extract_current_job_data("http://fl-api", "job123", study=PROJECT_STUDY)
+
+    mock_http_get.assert_called_once_with("http://fl-api/list_jobs", timeout=30, params=[("study", PROJECT_STUDY)])
+
+
+@patch("flip_api.fl_services.services.fl_service.http_delete")
+def test_abort_job_sends_the_study(mock_delete):
+    mock_delete.return_value = {"status": "aborted"}
+
+    fl_service.abort_job("endpoint", "job-id", study=PROJECT_STUDY)
+
+    mock_delete.assert_called_once_with("endpoint/abort_job/job-id", params=[("study", PROJECT_STUDY)])
+
+
+@patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
+@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
+@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_service.abort_job")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
+@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+@patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model")
+def test_abort_model_training_uses_the_models_project_study(
+    mock_release,
+    mock_remove,
+    mock_get_net,
+    mock_abort,
+    mock_fetch_server_status,
+    mock_get_fl_backend_job_id_by_model_id,
+    mock_extract_current_job_data,
+    model_id,
+    fake_session,
+):
+    mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
+    mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
+    mock_fetch_server_status.return_value = {"status": "running"}
+    mock_extract_current_job_data.return_value = IJobMetaData(job_id="job123", status="RUNNING")
+    fake_session.get.return_value = MagicMock(project_id=UUID(PROJECT_STUDY))
+
+    fl_service.abort_model_training(model_id, fake_session)
+
+    mock_extract_current_job_data.assert_called_once_with("http://fl-api-endpoint", "job123", study=PROJECT_STUDY)
+    mock_abort.assert_called_once_with("http://fl-api-endpoint", "job123", study=PROJECT_STUDY)

@@ -112,6 +112,12 @@ class Settings(BaseSettings):
     # Reimport settings
     REIMPORT_STUDIES_ENABLED: bool = True
 
+    # Imaging follows the approved cohort (FLIP#1860, services/approved_cohort.py). Every COHORT_RECONCILE_MINUTES
+    # the cached studies of an accession that left a project's cohort are removed, and its XNAT session once it has
+    # been off the cohort for COHORT_REMOVAL_GRACE_HOURS. 0 minutes turns the removal off; downloads of such an
+    # accession are refused either way.
+    COHORT_RECONCILE_MINUTES: float = 15.0
+    COHORT_REMOVAL_GRACE_HOURS: float = 24.0
     # A cached study unused for this long is removed (FLIP#1050, services/cache_retention.py); 0 turns the sweep off.
     # Must far exceed any FL job: an NVFLARE client reads a study once per job.
     IMAGE_CACHE_RETENTION_HOURS: float = 168.0

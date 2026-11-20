@@ -135,7 +135,7 @@ spec:
     - Ingress
 {{- end }}
 ---
-# Allow egress to specific destinations (Central Hub, FL server, DNS, IMDS)
+# Allow egress to specific destinations (Central Hub, FL server, DNS)
 # All other egress is denied
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -147,32 +147,22 @@ metadata:
 spec:
   podSelector: {}
   egress:
-{{- /* AWS IMDS (169.254.169.254, EC2 metadata / node IAM role) is opened for one consumer: the
-     omop-db vocab-load Job reaching S3 through the node instance role (it is rendered, and
-     carries no mounted credentials; the chart has no IRSA path). This policy selects every pod,
-     so while that Job is rendered IMDS is reachable namespace-wide, fl-client included; scoping
-     it to the Job needs its own policy with a pod selector. Otherwise (kind, AKS — FLIP#1390)
-     the metadata endpoint, an SSRF/credential-theft target, is excluded from the any-destination
-     ports rule below as well, since IMDS listens on port 80. */}}
-{{- $vocab := .Values.omopDb.vocabLoad }}
-{{- $imds := and .Values.omopDb.enabled $vocab.enabled $vocab.s3Bucket (not $vocab.hostAwsMount.enabled) }}
     # Allow configured egress ports (defaults include DNS/HTTP/HTTPS)
     - ports:
 {{- range .Values.networkPolicies.allowedEgressPorts }}
         - port: {{ .port }}
           protocol: {{ .protocol }}
 {{- end }}
-{{- if not $imds }}
-      # Anywhere but the instance-metadata endpoint, plus every pod in the cluster: some CNIs
-      # (Cilium) read a 0.0.0.0/0 ipBlock as outside-the-cluster only, so in-cluster peers such
-      # as kube-dns need their own selector.
+      # Anywhere but the cloud instance-metadata endpoint (it listens on port 80, and no pod
+      # needs it — FLIP#1390), plus every pod in the cluster: some CNIs (Cilium) read a
+      # 0.0.0.0/0 ipBlock as outside-the-cluster only, so in-cluster peers such as kube-dns
+      # need their own selector.
       to:
         - ipBlock:
             cidr: 0.0.0.0/0
             except:
               - 169.254.169.254/32
         - namespaceSelector: {}
-{{- end }}
     # Allow intra-namespace egress (all ports)
     - to:
         - namespaceSelector:
@@ -199,12 +189,36 @@ spec:
           protocol: {{ default "TCP" .protocol }}
 {{- end }}
 {{- end }}
-    # AWS IMDS for the vocab-load Job on a node role (see above; NETWORK-POLICY.md).
-{{- if $imds }}
-    - to:
-        - ipBlock:
-            cidr: 169.254.169.254/32
-{{- end }}
   policyTypes:
     - Egress
+{{- end }}
+{{- if and .Values.networkPolicies.enabled .Values.networkPolicies.apiServer.cidrs .Values.xnat.enabled .Values.xnat.web.enabled }}
+---
+# XNAT's Container Service starts its jobs (dcm2niix) through the Kubernetes API, from xnat-web. NetworkPolicy
+# matches the API server's real endpoint, so where it does not listen on 443 the egress above misses it and
+# xnat-init fails with "Container Service cannot reach its kubernetes backend" (FLIP#1958). xnat-web only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-xnat-web-api-server
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-web
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "flip-trust.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: xnat-web
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        {{- range .Values.networkPolicies.apiServer.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.networkPolicies.apiServer.port }}
+          protocol: TCP
 {{- end }}

@@ -34,7 +34,7 @@ Two consumers render them:
 Graphviz is not installed on the dev hosts; without ``dot`` this module refuses to render rather than
 producing an empty file. Run it in docker instead::
 
-    docker run --rm -v "$PWD:/work" -w /work/deploy/providers/AWS python:3.12-slim sh -c \\
+    docker run --rm -v "$PWD:/work" -w /work/deploy/providers/AWS python:3.13-slim sh -c \\
       "apt-get update -qq && apt-get install -y -qq graphviz >/dev/null && \\
        pip -q install diagrams && python -m architecture.central_hub --out docs"
 """
@@ -126,7 +126,6 @@ TERRAFORM_ADDRESSES: dict[str, tuple[str, ...]] = {
         "aws_ssm_parameter.flip_model_files_uploads_bucket",
         "aws_ssm_parameter.flip_fl_results_bucket",
         "aws_ssm_parameter.flip_app_bundles_bucket",
-        "aws_ssm_parameter.fl_kit_slot_names",
         "aws_ssm_parameter.ci_host_aws_public_key",
     ),
     "KMS": ("aws_kms_key.flip_app_key",),

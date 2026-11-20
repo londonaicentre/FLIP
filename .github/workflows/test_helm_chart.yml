@@ -81,14 +81,15 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install uv
         run: pip install uv
 
       - name: Run sync-kit unit tests
         working-directory: trust/deploy/helm
-        # tests/templates renders with helm, pinned in the helm-template job below.
+        # Everything that runs helm lives in tests/templates, run by the helm-template job below: this job has
+        # no helm, so a helm test left in tests/ is skipped here and run nowhere.
         run: uv run --no-project --with pytest --with "pyyaml==6.0.3" pytest tests/ -v --ignore=tests/templates
 
   helm-lint:
@@ -125,9 +126,10 @@ jobs:
 
       - name: Rendered-chart tests (tests/templates/)
         working-directory: trust/deploy/helm
-        # Everything under tests/templates asserts `helm template` output rather than template
-        # text: image-tag precedence (test_helpers.py) and the web/DICOM Service split parsed per
-        # rendered Service document (test_dicom_service_render.py, FLIP#993).
+        # Everything under tests/templates runs helm: it asserts `helm template` output rather than
+        # template text (image-tag precedence in test_helpers.py, the web/DICOM Service split parsed per
+        # rendered Service document in test_dicom_service_render.py, FLIP#993) or packages the chart
+        # (test_helmignore.py).
         run: uv run --no-project --with pytest --with "pyyaml==6.0.3" pytest tests/templates -v
 
       - name: Render template (default/nvflare)
@@ -158,7 +160,7 @@ jobs:
       - name: Render template (flower backend)
         run: helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit --set flBackend=flower > /dev/null
 
-      # The kind E2E installs with flClient.enabled=false (no GPU/S3 in CI), so
+      # The kind E2E installs with flClient.enabled=false (no GPU or FL kit in CI), so
       # nothing at runtime exercises the fl-client's per-net images slice — these
       # renders are the only guard on the subPath mount and the images-init
       # ownership handoff (root-created net dir => imaging-api EACCES on every
@@ -719,6 +721,28 @@ jobs:
             meta.helm.sh/release-namespace=flip-trust \
             --overwrite
           kubectl apply -f trust/deploy/helm/ci/test-secret.yaml
+
+      # stage-to-node.sh's pod path (any node that is not kind) on a real cluster: a DOCKER that does not exist
+      # skips the kind path. The node's result is checked through docker, which kind does have.
+      - name: Stage a kit through the staging pod
+        run: |
+          node=flip-helm-test-control-plane
+          mkdir -p /tmp/kit/startup /tmp/kit/local && echo '{}' > /tmp/kit/startup/fed_client.json
+          docker exec "$node" sh -c 'mkdir -p /opt/flip/ci-kit/startup && echo revoked > /opt/flip/ci-kit/startup/old.key'
+          DOCKER=/nonexistent trust/deploy/helm/scripts/stage-to-node.sh --context kind-flip-helm-test \
+            --src /tmp/kit --dest /opt/flip/ci-kit --subdirs "local startup transfer" --owner 1000
+          docker exec "$node" sh -euc '
+            test ! -e /opt/flip/ci-kit/startup/old.key
+            test "$(cat /opt/flip/ci-kit/startup/fed_client.json)" = "{}"
+            test "$(ls -A /opt/flip/ci-kit | tr "\n" " ")" = "local startup transfer "
+            test "$(stat -c "%u %a" /opt/flip/ci-kit)" = "1000 700"
+            test "$(stat -c "%u %a" /opt/flip/ci-kit/transfer)" = "1000 700"
+            test "$(stat -c "%u %a" /opt/flip/ci-kit/startup/fed_client.json)" = "1000 600"'
+          for _ in $(seq 30); do
+            [ -z "$(kubectl get pods -n flip-trust -l app.kubernetes.io/name=flip-stage-to-node -o name)" ] && exit 0
+            sleep 2
+          done
+          echo "the staging pod was not removed" >&2; exit 1
 
       # The trust-seed hook installs its loaders from FLIP at trustData.seed.sourceRef (a GitHub
       # source archive), so the install must point it at the commit under test — the chart

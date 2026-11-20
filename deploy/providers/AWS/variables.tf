@@ -126,12 +126,6 @@ variable "FL_API_KEY" {
   sensitive   = true
 }
 
-variable "FL_KIT_SLOT_NAMES" {
-  description = "JSON list (as a string) of FL kit-slot names for the fl_kit_slot pool register_trust claims from. Flower only: rendered into the /flip/fl_kit_slot_names SSM parameter (flip-api's slot source on a Flower hub) and the SuperLink's TRUST_NAMES. An NVFLARE hub ignores it — its pool is the complete kits in S3 (FLIP#1720). Set via the env file (TF_VAR_FL_KIT_SLOT_NAMES)."
-  type        = string
-  default     = "[]"
-}
-
 variable "docker_image_tag" {
   description = "Docker image tag for flip-api and flip-ui"
   type        = string

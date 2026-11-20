@@ -264,13 +264,18 @@ jobs:
       # runs. docker_build_flip_api.yml publishes only after the service's tests
       # pass — so an apply cannot deploy a flip-api that never went green. When
       # no image was published (an infrastructure-only merge) it reuses what the
-      # services are already running, never the mutable tag.
+      # services are already running, never the mutable tag; on develop it first
+      # catches up to a newer develop build if there is one.
       - name: Resolve the image tags to pin
         env:
           GIT_SHA: ${{ github.sha }}
           # Empty on every path but a release dispatch, which is exactly the
           # pre-FLIP#1283 sha behaviour — see scripts/resolve-image-tags.sh.
           RELEASE_TAG: ${{ inputs.release_tag }}
+          # Staging only (FLIP#1375): before reusing a running image, pin the newest
+          # build of an earlier develop commit, so a held apply's images still deploy
+          # after more merges land. Production moves by release_tag.
+          CATCH_UP: ${{ github.ref_name == 'develop' }}
           DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
           FALLBACK_DOCKER_TAG: ${{ vars.DOCKER_TAG }}
           FALLBACK_DOCKER_FL_TAG: ${{ vars.DOCKER_FL_TAG }}
@@ -315,7 +320,6 @@ jobs:
           NLB_SUBDOMAIN: ${{ vars.NLB_SUBDOMAIN }}
           DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
           FL_BACKEND: ${{ vars.FL_BACKEND }}
-          FL_KIT_SLOT_NAMES: ${{ vars.FL_KIT_SLOT_NAMES }}
           FLARE_KIT_DATE: ${{ vars.FLARE_KIT_DATE }}
           FLOWER_KIT_DATE: ${{ vars.FLOWER_KIT_DATE }}
           JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}

@@ -157,6 +157,10 @@ class UserProfile(SQLModel, table=True):
     `v-html`, export them to PDF/CSV, or paste them into an email template,
     re-escape at that boundary. The 255-char cap is a length bound, not a
     content filter.
+
+    The row outlives a deleted user (FLIP#1996): `deleted_at` is set and only
+    `name` is kept, so history can still say who created or approved
+    something (`flip_api.utils.user_display`).
     """
 
     __tablename__ = "user_profile"
@@ -166,6 +170,7 @@ class UserProfile(SQLModel, table=True):
     organisation: str = Field(default="", max_length=255)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    deleted_at: datetime | None = Field(default=None)
 
 
 class Role(SQLModel, table=True):
@@ -200,6 +205,8 @@ class UsersAudit(SQLModel, table=True):
     user_id: UUID
     modified_by_user_id: UUID
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+    # Display name at the time of the action, kept for a deletion so the trail names the person (FLIP#1996).
+    user_name: str | None = Field(default=None, max_length=255)
 
 
 class AccessRequest(SQLModel, table=True):

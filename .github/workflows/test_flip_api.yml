@@ -79,11 +79,11 @@ jobs:
         with:
           # Stated literally because flip-api, unlike the trust services, has no
           # .python-version file to point `python-version-file` at; keep this in
-          # step with requires-python and the Dockerfile base (both 3.12). Do not
+          # step with requires-python and the Dockerfile base (both 3.13). Do not
           # restore the previous `github.event.inputs.python-version || '3.11'`
           # form — this workflow has no workflow_dispatch trigger, so that input
           # was always empty and the job silently ran 3.11.
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install uv (if used for dependency management)
         run: pip install uv

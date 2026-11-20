@@ -21,11 +21,24 @@ template every job pod starts from.
 The job pod template. The launcher fills in the container NVFLARE names nvflare_job: image, command,
 the job workspace and startup-kit volumes, and resources (ephemeral storage plus nvidia.com/gpu from
 the job's resource_spec). Everything else a FLIP job needs from the trust comes from here, mirroring
-the fl-client container: its env, the trust-internal key, this net's images slice, /dev/shm and the FL
-server's host aliases (a job pod connects to the FL server itself, not only through the parent).
-Volumes, volumeMounts and env merge with the launcher's by name.
+the fl-client container: its env, the trust-internal key, /dev/shm and the FL server's host aliases (a
+job pod connects to the FL server itself, not only through the parent). Volumes, volumeMounts and env
+merge with the launcher's by name.
+
+A job pod holds only its own project's studies. The template mounts no images and streams each study
+from imaging-api into the job's own run directory (IMAGES_TRANSPORT=stream, FLIP#1049). Its IMAGES_DIR is
+a scratch emptyDir of its own, where training code writes the files flip.add_resource uploads, as on the
+mount. With flClient.nvflare.jobPods.images: project it also declares the shared images volume, unmounted,
+and the project's entry in the site's NVFLARE study file mounts the project's own folder of it, read-only
+inside that scratch directory, where the job then reads by path (flip.nvflare.project_studies, FLIP#1678).
+A job outside a project's study therefore never sees the cache. Declaring the volume makes the pod attach
+it, so it follows the fl-client's placement rule.
+
+With images: archive the template declares nothing of XNAT's: flip-trust.flJobPodArchive below holds it, and
+only a project whose study mounts its directory of XNAT's archive gets it (FLIP#1857).
 */}}
 {{- define "flip-trust.flJobPod" -}}
+{{- $projectImages := eq .Values.flClient.nvflare.jobPods.images "project" -}}
 apiVersion: v1
 kind: Pod
 metadata:
@@ -35,6 +48,8 @@ metadata:
     flip/network: {{ .Values.flClient.netId }}
 spec:
   enableServiceLinks: false
+  # A job pod never calls the Kubernetes API: no token to read.
+  automountServiceAccountToken: false
   {{- with .Values.flClient.hostAliases }}
   hostAliases:
     {{- toYaml . | nindent 4 }}
@@ -69,10 +84,11 @@ spec:
   tolerations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  {{- /* The same placement rule as the fl-client: both mount the shared images volume. */}}
-  {{- with .Values.flClient.affinity }}
+  {{- if $projectImages }}
+  {{- with include "flip-trust.sharedImagesAffinity" (dict "affinity" .Values.flClient.affinity "root" $) }}
   affinity:
-    {{- toYaml . | nindent 4 }}
+    {{- . | nindent 4 }}
+  {{- end }}
   {{- end }}
   containers:
     - name: nvflare_job
@@ -99,24 +115,55 @@ spec:
             secretKeyRef:
               name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
               key: trust-internal-service-key
+        - name: IMAGES_TRANSPORT
+          value: stream
       volumeMounts:
-        - name: images
-          mountPath: {{ .Values.flClient.imagesDir }}/{{ .Values.flClient.netId }}
-          subPath: {{ .Values.flClient.netId }}
         - name: dshm
           mountPath: /dev/shm
+        - name: images-scratch
+          mountPath: {{ .Values.flClient.imagesDir }}
   volumes:
+    {{- if $projectImages }}
     - name: images
-{{- if .Values.sharedImagesPvc.enabled }}
       persistentVolumeClaim:
         claimName: {{ include "flip-trust.fullname" . }}-shared-images
-{{- else }}
-      emptyDir: {}
-{{- end }}
+    {{- end }}
     - name: dshm
       emptyDir:
         medium: Memory
         sizeLimit: {{ .Values.flClient.shmSize }}
+    - name: images-scratch
+      emptyDir: {}
+{{- end }}
+
+
+{{- /*
+What a job pod adds to the template when its project's study mounts the project's directory of XNAT's
+archive (images: archive, FLIP#1857), in the ConfigMap beside the template: flip.nvflare.project_studies
+applies it to that project's entry with the mount, and to no other. XNAT's volume, read-only; XNAT's group,
+since its archive is 0750/0640, owned by 1001:1001 (never fsGroup, which would re-own it); and on a
+ReadWriteOnce XNAT volume a place on xnat-web's node. A job that streams, a tabular project's or one whose
+imaging is not archived yet, therefore never waits for xnat-web to be scheduled.
+*/}}
+{{- define "flip-trust.flJobPodArchive" -}}
+spec:
+  securityContext:
+    supplementalGroups: [1001]
+  {{- if eq .Values.xnat.web.persistence.accessMode "ReadWriteOnce" }}
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              {{- include "flip-trust.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: xnat-web
+          topologyKey: kubernetes.io/hostname
+  {{- end }}
+  volumes:
+    - name: xnat-archive
+      persistentVolumeClaim:
+        claimName: {{ include "flip-trust.fullname" . }}-xnat-web
+        readOnly: true
 {{- end }}
 
 {{- if and .Values.flClient.enabled (eq .Values.flBackend "nvflare") .Values.flClient.nvflare.jobPods.enabled }}
@@ -192,11 +239,18 @@ metadata:
 data:
   job-pod.yaml: |
     {{- include "flip-trust.flJobPod" . | nindent 4 }}
-{{- if and .Values.networkPolicies.enabled .Values.flClient.nvflare.jobPods.apiServer.cidrs }}
+  {{- if eq .Values.flClient.nvflare.jobPods.images "archive" }}
+  job-pod-archive.yaml: |
+    {{- include "flip-trust.flJobPodArchive" . | nindent 4 }}
+  {{- end }}
+{{- $apiServer := .Values.flClient.nvflare.jobPods.apiServer }}
+{{- if not $apiServer.cidrs }}{{ $apiServer = .Values.networkPolicies.apiServer }}{{ end }}
+{{- if and .Values.networkPolicies.enabled $apiServer.cidrs }}
 ---
 # The launcher calls the Kubernetes API from the parent. NetworkPolicy matches the API server's real
 # endpoint, not the kubernetes Service's 443, so where that endpoint listens on another port the
 # chart's 443 egress does not cover it. The parent alone gets this: job pods run researcher code.
+# jobPods.apiServer when set, else the cluster-wide networkPolicies.apiServer (FLIP#1958).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -215,12 +269,12 @@ spec:
     - Egress
   egress:
     - to:
-        {{- range .Values.flClient.nvflare.jobPods.apiServer.cidrs }}
+        {{- range $apiServer.cidrs }}
         - ipBlock:
             cidr: {{ . }}
         {{- end }}
       ports:
-        - port: {{ .Values.flClient.nvflare.jobPods.apiServer.port }}
+        - port: {{ $apiServer.port }}
           protocol: TCP
 {{- end }}
 {{- end }}

@@ -256,6 +256,15 @@
                                     <span class="text-note tabular-nums text-gray-600 dark:text-gray-300">
                                         {{ t.project_count }} {{ t.project_count === 1 ? "project" : "projects" }}
                                     </span>
+                                    <template v-if="jobCount(t)">
+                                        <span class="text-gray-300 dark:text-gray-600">·</span>
+                                        <span
+                                            data-test="trust-jobs-mobile"
+                                            class="text-note tabular-nums text-gray-600 dark:text-gray-300"
+                                        >
+                                            {{ jobCount(t) }} {{ jobCount(t) === 1 ? "job" : "jobs" }}
+                                        </span>
+                                    </template>
                                     <span class="flex-1" />
                                     <span
                                         data-test="trust-services-mobile"
@@ -281,21 +290,21 @@
                              table chrome (ring, shadow, dark:bg-gray-800 tbody, gray-700
                              dividers) so dark mode shows the card canvas through the rows,
                              matching the stacked mobile list. -->
-                        <!-- table-fixed: each pinned column gets exactly its width and Trust takes what is
-                             left. Under the automatic layout a w-full Trust column took nearly everything and
-                             squeezed the others to their longest word. The minimum width keeps Trust readable
+                        <!-- Automatic layout: every column but Trust shrinks to its content and never wraps
+                             (whitespace-nowrap on the rows and headers), so none is squeezed; Trust (w-full,
+                             max-w-0) takes what is left and truncates. The minimum width keeps Trust readable
                              on a narrow screen, where the wrapper scrolls instead. -->
                         <table
-                            class="w-full table-fixed ring-0 shadow-none"
+                            class="w-full ring-0 shadow-none"
                             :class="showKitColumn ? 'min-w-[1080px]' : 'min-w-[880px]'"
                         >
                             <thead>
                                 <tr class="bg-gray-50 dark:bg-dark-surface border-b border-gray-200 dark:border-dark-border">
                                     <th
-                                        v-for="col in columns"
+                                        v-for="col in visibleColumns"
                                         :key="col.key ?? col.label"
                                         :data-test="col.key ? `sort-header-${col.key}` : undefined"
-                                        class="px-4 py-3 text-xs text-gray-500 dark:text-gray-300 font-medium select-none"
+                                        class="px-4 py-3 text-xs text-gray-500 dark:text-gray-300 font-medium select-none whitespace-nowrap"
                                         :class="[
                                             col.align === 'right' ? 'text-right' : 'text-left',
                                             col.width ?? '',
@@ -319,9 +328,9 @@
                                     :data-trust-state="t._state"
                                     role="button"
                                     tabindex="0"
-                                    class="cursor-pointer group hover:bg-gray-50 dark:hover:bg-dark-surface/60
-                                    focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500
-                                    dark:focus-visible:outline-primary-300"
+                                    class="cursor-pointer group whitespace-nowrap hover:bg-gray-50
+                                    dark:hover:bg-dark-surface/60 focus-visible:outline focus-visible:outline-2
+                                    focus-visible:outline-primary-500 dark:focus-visible:outline-primary-300"
                                     :class="[
                                         idx > 0 ? 'border-t border-gray-100 dark:border-dark-border' : '',
                                         t._state === 'offline' ? 'bg-red-50/40 dark:bg-red-900/10' : ''
@@ -374,7 +383,7 @@
                                             </span>
                                         </div>
                                     </td>
-                                    <td class="px-4 py-4 align-middle text-base text-gray-600 dark:text-gray-300 whitespace-nowrap">
+                                    <td class="px-4 py-4 align-middle text-base text-gray-600 dark:text-gray-300">
                                         {{ t.region ?? "—" }}
                                     </td>
                                     <td class="px-4 py-4 align-middle text-right text-base tabular-nums text-gray-900 dark:text-gray-100">
@@ -398,6 +407,14 @@
                                             />
                                         </div>
                                     </td>
+                                    <td
+                                        v-if="isAdmin"
+                                        class="px-4 py-4 align-middle text-xs tabular-nums text-gray-600 dark:text-gray-300 whitespace-nowrap"
+                                        data-test="trust-jobs"
+                                    >
+                                        <span v-for="line in jobLines(t)" :key="line" class="block">{{ line }}</span>
+                                        <span v-if="!jobCount(t)">—</span>
+                                    </td>
                                     <td v-if="showKitColumn" class="px-4 py-4 align-middle" data-test="trust-kit">
                                         <TrustKitSection compact :trust="t" />
                                     </td>
@@ -409,7 +426,10 @@
                                     </td>
                                 </tr>
                                 <tr v-if="!displayedTrusts.length">
-                                    <td :colspan="columns.length" class="text-center py-6 text-gray-500 dark:text-gray-300">
+                                    <td
+                                        :colspan="visibleColumns.length"
+                                        class="text-center py-6 text-gray-500 dark:text-gray-300"
+                                    >
                                         {{ activeTile ? "No trusts match this filter." : "No trusts registered yet." }}
                                     </td>
                                 </tr>
@@ -466,19 +486,6 @@
                                 <stop offset="60%" stop-color="#61366E" stop-opacity="0.08" />
                                 <stop offset="100%" stop-color="#61366E" stop-opacity="0" />
                             </radialGradient>
-                            <linearGradient
-                                id="link-pulse"
-                                x1="0%"
-                                y1="0%"
-                                x2="100%"
-                                y2="0%"
-                            >
-                                <stop offset="0%" stop-color="#a78bfa" stop-opacity="0.1" />
-                                <stop offset="50%" stop-color="#d946ef" stop-opacity="0.9" />
-                                <stop offset="100%" stop-color="#a78bfa" stop-opacity="0.1" />
-                                <animate attributeName="x1" values="-100%;100%" dur="2.4s" repeatCount="indefinite" />
-                                <animate attributeName="x2" values="0%;200%" dur="2.4s" repeatCount="indefinite" />
-                            </linearGradient>
                         </defs>
 
                         <!-- Concentric ring guides -->
@@ -489,8 +496,9 @@
                             :cy="radial.cy"
                             :r="radial.R * m"
                             fill="none"
-                            class="stroke-gray-200 dark:stroke-dark-border"
-                            :stroke-width="i === 2 ? 1 : 0.6"
+                            class="stroke-gray-200 dark:stroke-gray-600"
+                            data-test="radial-ring"
+                            :stroke-width="i === 2 ? 1.2 : 0.8"
                             :stroke-dasharray="i === 2 ? 'none' : '2 4'"
                         />
 
@@ -500,29 +508,73 @@
                         <!-- Spokes -->
                         <g>
                             <g v-for="node in radialNodes" :key="`spoke-${node.id}`">
+                                <!-- An offline spoke is a solid line broken in the middle, a tiny dot
+                                     capping each side of the break; pathLength makes the dash pattern
+                                     a share of the spoke, whatever its length. -->
                                 <line
                                     :x1="radial.cx"
                                     :y1="radial.cy"
                                     :x2="node.x"
                                     :y2="node.y"
                                     :stroke="node.state === 'offline' ? '#ef4444' : DOT_HEX[node.state]"
-                                    :stroke-width="node.state === 'online' ? 1.4 : 0.8"
-                                    :stroke-opacity="node.state === 'offline' ? 0.4 : node.state === 'online' ? 0.5 : 0.2"
-                                    :stroke-dasharray="node.state === 'offline' ? '3 4' : 'none'"
-                                    :class="node.state === 'offline'
-                                        ? 'dark:stroke-red-400 dark:[stroke-opacity:0.7]'
-                                        : ''"
+                                    :stroke-width="SPOKE_WIDTH[node.state]"
+                                    :stroke-opacity="node.state === 'offline' ? 0.6 : node.state === 'online' ? 0.5 : 0.2"
+                                    pathLength="100"
+                                    :stroke-dasharray="node.state === 'offline' ? OFFLINE_DASH : 'none'"
+                                    :class="SPOKE_DARK[node.state]"
+                                    data-test="spoke"
                                 />
-                                <line
-                                    v-if="node.state === 'online'"
-                                    :x1="radial.cx"
-                                    :y1="radial.cy"
-                                    :x2="node.x"
-                                    :y2="node.y"
-                                    stroke="url(#link-pulse)"
-                                    stroke-width="2.6"
-                                    stroke-linecap="round"
-                                />
+                                <template v-if="node.state === 'offline'">
+                                    <circle
+                                        v-for="end in OFFLINE_BREAK"
+                                        :key="end"
+                                        :cx="radial.cx + (node.x - radial.cx) * end / 100"
+                                        :cy="radial.cy + (node.y - radial.cy) * end / 100"
+                                        r="2.2"
+                                        fill="#ef4444"
+                                        fill-opacity="0.8"
+                                        class="dark:fill-red-400"
+                                        data-test="spoke-break-cap"
+                                    />
+                                </template>
+                                <!-- Each pulse gradient runs hub to trust in user space. A shared
+                                     bounding-box gradient paints nothing on a vertical or horizontal
+                                     spoke (zero-width box) and slides along x on the rest (FLIP#1980). -->
+                                <template v-if="node.state === 'online'">
+                                    <defs>
+                                        <linearGradient
+                                            :id="`link-pulse-${node.id}`"
+                                            data-test="spoke-pulse-gradient"
+                                            gradientUnits="userSpaceOnUse"
+                                            :x1="radial.cx"
+                                            :y1="radial.cy"
+                                            :x2="node.x"
+                                            :y2="node.y"
+                                        >
+                                            <stop offset="0%" stop-color="#a78bfa" stop-opacity="0.1" />
+                                            <stop offset="50%" stop-color="#d946ef" stop-opacity="0.9" />
+                                            <stop offset="100%" stop-color="#a78bfa" stop-opacity="0.1" />
+                                            <animate
+                                                v-for="a in pulseSweep(node)"
+                                                :key="a.attr"
+                                                :attributeName="a.attr"
+                                                :values="a.values"
+                                                dur="2.4s"
+                                                repeatCount="indefinite"
+                                            />
+                                        </linearGradient>
+                                    </defs>
+                                    <line
+                                        :x1="radial.cx"
+                                        :y1="radial.cy"
+                                        :x2="node.x"
+                                        :y2="node.y"
+                                        data-test="spoke-pulse"
+                                        :stroke="`url(#link-pulse-${node.id})`"
+                                        stroke-width="3.2"
+                                        stroke-linecap="round"
+                                    />
+                                </template>
                             </g>
                         </g>
 
@@ -700,7 +752,7 @@
 
             <!-- FL nets status — relocated from the standalone Connection Status (FL nets) page -->
             <div class="mt-6">
-                <FLNetsCard />
+                <FLNetsCard :trusts="trusts" />
             </div>
         </div>
     </div>
@@ -738,6 +790,7 @@ import { deriveTrust,
     deriveTrustState,
     heartbeatText,
     IDerivedTrust,
+    jobLines,
     PILL_CLASSES,
     STATE_LABELS,
     TrustState } from "@/utils/connection-health";
@@ -800,51 +853,52 @@ interface IColumn {
     key?: SortKey;
     label: string;
     align?: "left" | "right";
-    // Tailwind width class applied to the <th> to bias column sizing. Every column
-    // but Trust is pinned; Trust takes w-full and truncates via the cell's max-w-0.
+    // Tailwind width class applied to the <th>: w-px shrinks a column to its content,
+    // and Trust's w-full takes the rest (its cell truncates via max-w-0).
     width?: string;
 }
 
 // Header config drives both the rendered <th>s and the per-column sort handler.
 // Keys correspond to entries in `SORT_COMPARATORS`; columns without a key
-// (Services dots, drawer chevron) render as inert headers.
+// (Services dots, Jobs, drawer chevron) render as inert headers.
 const BASE_COLUMNS: IColumn[] = [
     {
         key: "severity",
         label: "Status",
-        width: "w-28"
+        width: "w-px"
     },
     {
         key: "name",
-        label: "Trust"
-        // No width: under table-fixed it takes what the pinned columns leave, and the
-        // cell truncates.
+        label: "Trust",
+        width: "w-full"
     },
     {
         key: "region",
         label: "Region",
-        // Region/Services/Heartbeat are pinned (144/144/112px, approximating the
-        // design grid).
-        width: "w-36"
+        width: "w-px"
     },
     {
         key: "projects",
         label: "Projects",
         align: "right",
-        width: "w-28"
+        width: "w-px"
     },
     {
         key: "heartbeat",
         label: "Heartbeat",
-        width: "w-28"
+        width: "w-px"
     },
     {
         label: "Services",
-        width: "w-36"
+        width: "w-px"
+    },
+    {
+        label: "Jobs",
+        width: "w-px"
     },
     {
         label: "",
-        width: "w-12"
+        width: "w-px"
     }
 ];
 
@@ -854,14 +908,19 @@ const showKitColumn = computed(() => isAdmin.value || !!authStore.trustAdminOf);
 const columns = computed<IColumn[]>(() => (showKitColumn.value
     ? [...BASE_COLUMNS.slice(0, -1), {
         label: "Download",
-        width: "w-52"
+        width: "w-px"
     }, ...BASE_COLUMNS.slice(-1)]
     : BASE_COLUMNS));
+
+// The Jobs counts span every project, so the hub sends them to hub admins only (FLIP#1739).
+const visibleColumns = computed(() => columns.value.filter(col => col.label !== "Jobs" || isAdmin.value));
 
 // Severity-first is the default (design 1b): failing trusts surface on load;
 // admins can re-sort via the column headers when triaging.
 const sortKey = ref<SortKey>("severity");
 const sortDir = ref<SortDir>("asc");
+
+const jobCount = (t: ITrustResponse): number => (t.jobs_in_progress ?? 0) + (t.jobs_queued ?? 0);
 
 // Heartbeat age in seconds; null heartbeat = oldest (Infinity).
 const heartbeatAge = (t: ITrustResponse): number =>
@@ -1035,6 +1094,24 @@ const DOT_HEX: Record<TrustState, string> = {
     offline: "#ef4444"
 };
 
+const SPOKE_WIDTH: Record<TrustState, number> = {
+    online: 1.8,
+    degraded: 1.1,
+    offline: 1.5
+};
+
+// Where an offline spoke's break starts and ends, as a percentage of the spoke.
+const OFFLINE_BREAK = [45, 55] as const;
+const OFFLINE_DASH = `${OFFLINE_BREAK[0]} ${OFFLINE_BREAK[1] - OFFLINE_BREAK[0]} ${100 - OFFLINE_BREAK[1]}`;
+
+// Spokes in dark mode: a lighter shade at a higher opacity so each reads on the
+// near-black card. CSS beats the SVG stroke attributes, so these apply in dark only.
+const SPOKE_DARK: Record<TrustState, string> = {
+    online: "dark:stroke-emerald-400 dark:[stroke-opacity:0.7]",
+    degraded: "dark:stroke-amber-400 dark:[stroke-opacity:0.5]",
+    offline: "dark:stroke-red-400 dark:[stroke-opacity:0.7]"
+};
+
 const radial = {
     cx: 380,
     cy: 380,
@@ -1058,6 +1135,33 @@ interface IRadialNode {
     shortLabel: string;
 }
 
+// The pulse band is one spoke long and slides from a spoke's length behind the hub
+// to a spoke's length past the trust: along hub->trust the gradient's start moves
+// -1 -> 1 and its end 0 -> 2, as the old bounding-box gradient did along x.
+function pulseSweep(node: { x: number; y: number }) {
+    const at = (from: number, to: number, t: number) => from + (to - from) * t;
+    const sweep = (from: number, to: number, t0: number, t1: number) => `${at(from, to, t0)};${at(from, to, t1)}`;
+
+    return [
+        {
+            attr: "x1",
+            values: sweep(radial.cx, node.x, -1, 1)
+        },
+        {
+            attr: "y1",
+            values: sweep(radial.cy, node.y, -1, 1)
+        },
+        {
+            attr: "x2",
+            values: sweep(radial.cx, node.x, 0, 2)
+        },
+        {
+            attr: "y2",
+            values: sweep(radial.cy, node.y, 0, 2)
+        }
+    ];
+}
+
 // Pre-compute spoke endpoints + label positions so the template stays declarative.
 // Node radius scales mildly with project count (capped at 6) to mirror the design.
 const radialNodes = computed<IRadialNode[]>(() => {
@@ -1070,9 +1174,12 @@ const radialNodes = computed<IRadialNode[]>(() => {
         const x = radial.cx + Math.cos(angle) * radial.R;
         const y = radial.cy + Math.sin(angle) * radial.R;
         const labelX = radial.cx + Math.cos(angle) * (radial.R + 34);
-        const labelY = radial.cy + Math.sin(angle) * (radial.R + 34);
         const anchor: "start" | "end" | "middle" =
             Math.cos(angle) > 0.1 ? "start" : Math.cos(angle) < -0.1 ? "end" : "middle";
+        // The project-count line hangs below the name, so a label centred above its
+        // dot is lifted by one line to clear it as far as a label below the hub does.
+        const lift = anchor === "middle" && Math.sin(angle) < 0 ? 12 : 0;
+        const labelY = radial.cy + Math.sin(angle) * (radial.R + 34) - lift;
         const r = 9 + Math.min(t.project_count, 6) * 1.2;
 
         return {

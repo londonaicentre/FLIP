@@ -72,7 +72,7 @@ jobs:
           # cannot drift from requires-python. Do not go back to the previous
           # `github.event.inputs.python-version || '3.11'` form: this workflow has
           # no `workflow_dispatch` trigger, so that input was always empty and the
-          # job silently ran 3.11 while the file (and pyproject) pin 3.12.
+          # job silently ran 3.11 while the file (and pyproject) pinned 3.12.
           python-version-file: ./trust/imaging-api/.python-version
 
       - name: Install uv (if used for dependency management)

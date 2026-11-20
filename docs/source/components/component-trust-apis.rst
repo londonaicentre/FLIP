@@ -215,7 +215,11 @@ Download cache
 
 The first time an FL client asks for an accession's resources, ``imaging-api`` pulls the study out of XNAT onto
 the Trust host, under that net's own images directory. Later requests are served from disk: the next FL round
-and, on Flower, the next job.
+and, on Flower, the next job. On a Kubernetes Trust running NVFLARE job pods, a job pod holds only its own
+project's studies. Each project is an NVFLARE study whose job pods mount that project's folder of the images
+directory, read-only, and nothing else; where job pods cannot attach that volume, they mount none and stream each study
+from ``imaging-api`` into their own directory. A Trust can instead have job pods mount the project's own directory
+of XNAT's archive, read-only, and read each study in place, in which case nothing is copied out of XNAT.
 
 A study unused for seven days is deleted from disk; it is downloaded again from XNAT if a job asks for it later.
 Trust operators can change the period with ``IMAGE_CACHE_RETENTION_HOURS`` in the kit file (``imagingApi.env`` on
@@ -227,6 +231,22 @@ What this means for training code:
   study's file counts and sizes in XNAT and downloads it again if they have changed.
 - Uploads through ``flip.add_resource`` refresh the cached copy automatically.
 - Each FL client sees only its own net's directory, so a job cannot read another net's cached studies.
+
+Imaging follows the approved cohort
+===================================
+
+A patient who leaves a project's approved cohort after approval, for example through the national data opt-out,
+stops being served by ``data-access-api`` at once. ``imaging-api`` keeps the project's imaging to the same list:
+
+- **Downloads** of that patient's studies are refused within a minute.
+- **The cached copy** on the Trust host is removed within 15 minutes.
+- **The study in XNAT** is deleted once it has been off the list for 24 hours, and the patient's XNAT subject
+  with it when none of their studies is left. The wait is there because a Trust that reloads its OMOP tables
+  serves a shorter list for a while, and only a new pull from the PACS brings a deleted study back. Each removal
+  is logged at the Trust with the project and the accession number.
+
+Nothing is removed while ``data-access-api`` cannot say what the list is. Both times are settings of the Trust
+(``COHORT_RECONCILE_MINUTES``, ``COHORT_REMOVAL_GRACE_HOURS``).
 
 ***************
 Data Access API

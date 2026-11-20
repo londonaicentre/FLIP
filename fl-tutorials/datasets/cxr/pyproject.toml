@@ -2,7 +2,7 @@
 name = "cxr-dataset-tools"
 version = "0.1.0"
 description = "Local uv environment for the cxr_project OMOP conversion (FLIP#1092 wave 2)."
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.13,<3.14"
 # Deliberately narrower than spleen's: only the OMOP conversion lives in-tree for cxr, so there is
 # no DICOM-writing or image-download stage to carry dependencies for. The images themselves come
 # from londonaicentre/xraycat, outside this repo.

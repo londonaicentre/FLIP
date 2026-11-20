@@ -164,6 +164,26 @@ def test_register_trust_rejects_what_a_kit_file_could_not_carry(name, code, regi
     session.exec.assert_not_called()
 
 
+@pytest.mark.parametrize(("name", "region"), [("St Thomas (EC2)", None), ("Trust_1", None), ("St Thomas", "N/E")])
+def test_register_trust_rejects_other_symbols(name, region):
+    # The same rule as the Add Trust form: letters, digits, spaces, ', & and -.
+    session = MagicMock()
+    with pytest.raises(InvalidTrustError, match="isn't allowed"):
+        register_trust(name=name, code="STT", region=region, session=session)
+    session.exec.assert_not_called()
+
+
+def test_register_trust_accepts_apostrophes_ampersands_hyphens_and_accents():
+    slot = FLKitSlot(slot_name="Trust_007", slot_number=7)
+    session = _mock_session(existing_trust=None, free_slot=slot)
+
+    result = register_trust(
+        name="Guy’s & St Thomas' Trust", code="GSTT", region="North-East Île de France", session=session
+    )
+
+    assert result.trust.name == "Guy’s & St Thomas' Trust"
+
+
 @pytest.mark.parametrize("code", ["   ", "", None])
 def test_register_trust_rejects_blank_or_missing_code(code):
     # code is now required at registration — a blank/None code is rejected before

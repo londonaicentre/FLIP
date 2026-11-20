@@ -55,7 +55,7 @@ Example radiographs, one per target lesion, are in the fine-tuning tutorial's
 
 ## Prerequisites
 
-- Python 3.12+
+- Python 3.13+
 - A GPU (the Ark+ Swin-Large models run at 768×768) for a SimEnv run — both models are held on the
   device together, so this is more memory-hungry than the single-model baseline
 - Access to the Ark+ foundation-model checkpoint: request it with the [Ark+ checkpoint access form](https://forms.gle/qkoDGXNiKRPTDdCe8) (see [Checkpoint setup](#checkpoint-setup)). The fine-tuned checkpoint is downloaded automatically.

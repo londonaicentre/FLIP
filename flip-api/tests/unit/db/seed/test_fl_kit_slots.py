@@ -15,7 +15,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from botocore.exceptions import ClientError, EndpointConnectionError
 from sqlmodel import Session
 
 from flip_api.db.models.main_models import FLKitSlot
@@ -32,20 +31,6 @@ from flip_api.db.seed.fl_kit_slots import (
 @pytest.fixture
 def mock_session():
     return MagicMock(spec=Session)
-
-
-@pytest.fixture
-def prod_ssm():
-    """Production Flower settings (no FL_KIT_SLOT_NAMES attribute, so any env fallback would raise) plus a
-    get_parameter double."""
-    with (
-        patch(
-            "flip_api.db.seed.fl_kit_slots.get_settings",
-            return_value=SimpleNamespace(ENV="production", FL_BACKEND="flower"),
-        ),
-        patch("flip_api.db.seed.fl_kit_slots.get_parameter") as mock_get_parameter,
-    ):
-        yield mock_get_parameter
 
 
 class TestSlotNumberDerivation:
@@ -98,77 +83,14 @@ def test_seed_empty_pool_is_noop(mock_get_settings, mock_session):
     mock_session.commit.assert_called_once()
 
 
-class TestResolveFlKitSlotNames:
-    """Single source per env: dev = the DevSettings-only env var, prod Flower = the
-    /flip/fl_kit_slot_names SSM parameter with NO env fallback (a broken parameter
-    yields an empty list, loudly). Prod NVFLARE reads S3: TestCompleteFlareKitNames.
-    """
+@patch("flip_api.db.seed.fl_kit_slots.S3Client")
+@patch("flip_api.db.seed.fl_kit_slots.get_settings")
+def test_dev_reads_settings_and_never_touches_s3(mock_get_settings, mock_s3):
+    """Single source per env: dev = the DevSettings-only env var; prod reads S3 (the classes below)."""
+    mock_get_settings.return_value = SimpleNamespace(ENV="development", FL_KIT_SLOT_NAMES=["Trust_1"])
 
-    @patch("flip_api.db.seed.fl_kit_slots.get_parameter")
-    @patch("flip_api.db.seed.fl_kit_slots.get_settings")
-    def test_dev_reads_settings_and_never_touches_ssm(self, mock_get_settings, mock_get_parameter):
-        mock_get_settings.return_value = SimpleNamespace(ENV="development", FL_KIT_SLOT_NAMES=["Trust_1"])
-
-        assert resolve_fl_kit_slot_names() == ["Trust_1"]
-        mock_get_parameter.assert_not_called()
-
-    def test_prod_parses_json_list_from_parameter(self, prod_ssm):
-        prod_ssm.return_value = '["Trust_1", "Trust_2", "Trust_3"]'
-
-        assert resolve_fl_kit_slot_names() == ["Trust_1", "Trust_2", "Trust_3"]
-        # Pins the parameter name against Terraform's aws_ssm_parameter resource.
-        prod_ssm.assert_called_once_with("/flip/fl_kit_slot_names")
-
-    def test_prod_missing_parameter_returns_empty_and_warns(self, prod_ssm, caplog):
-        """A missing parameter is the not-yet-applied state — WARNING (not ERROR),
-        empty list, and no env-var resurrection.
-        """
-        prod_ssm.side_effect = ClientError({"Error": {"Code": "ParameterNotFound"}}, "GetParameter")
-
-        with caplog.at_level(logging.WARNING, logger="flip_api.seed"):
-            assert resolve_fl_kit_slot_names() == []
-
-        assert "fl_kit_slot_names" in caplog.text
-        assert caplog.records[-1].levelno == logging.WARNING
-
-    def test_prod_aws_error_is_unreadable_and_logs_error(self, prod_ssm, caplog):
-        """Any non-ParameterNotFound AWS failure (e.g. the IAM read not applied yet) is
-        broken config, not the rollout state — ERROR, not WARNING.
-        """
-        prod_ssm.side_effect = ClientError({"Error": {"Code": "AccessDeniedException"}}, "GetParameter")
-
-        with caplog.at_level(logging.ERROR, logger="flip_api.seed"):
-            assert resolve_fl_kit_slot_names() is None
-
-        assert caplog.records[-1].levelno == logging.ERROR
-
-    def test_prod_botocore_error_is_unreadable(self, prod_ssm):
-        """BotoCoreError subclasses (no credentials, endpoint unreachable) aren't ClientError."""
-        prod_ssm.side_effect = EndpointConnectionError(endpoint_url="https://ssm.test")
-
-        assert resolve_fl_kit_slot_names() is None
-
-    # GetParameter always returns a string, so the last two (non-string) payloads are
-    # theoretical — kept so the guard against a crash-looping boot seed stays pinned.
-    @pytest.mark.parametrize(
-        "payload", ["not json", '"Trust_1"', '{"Trust_1": 1}', '["Trust_1", 2]', ["Trust_1"], None]
-    )
-    def test_prod_malformed_parameter_value_is_unreadable_and_logs_error(self, prod_ssm, payload, caplog):
-        prod_ssm.return_value = payload
-
-        with caplog.at_level(logging.ERROR, logger="flip_api.seed"):
-            assert resolve_fl_kit_slot_names() is None
-
-        # A malformed value is broken config (not the transient rollout state), so the
-        # result must be loud: ERROR, naming the parameter.
-        assert "fl_kit_slot_names" in caplog.text
-        assert caplog.records[-1].levelno == logging.ERROR
-
-    def test_prod_empty_parameter_list_is_respected(self, prod_ssm):
-        """A valid empty list is configuration, not an error — no log noise, no growth."""
-        prod_ssm.return_value = "[]"
-
-        assert resolve_fl_kit_slot_names() == []
+    assert resolve_fl_kit_slot_names() == ["Trust_1"]
+    mock_s3.assert_not_called()
 
 
 _KITS = "s3://kits-bucket/fl-flare-participant-kits/20260704"
@@ -193,8 +115,7 @@ class TestCompleteFlareKitNames:
     def _settings(self, mock_get_settings, uri=_KITS):
         mock_get_settings.return_value = SimpleNamespace(ENV="production", FL_BACKEND="nvflare", FLARE_KITS_S3_URI=uri)
 
-    @patch("flip_api.db.seed.fl_kit_slots.get_parameter")
-    def test_kit_complete_on_every_net_is_claimable(self, mock_get_parameter, mock_get_settings, mock_s3, caplog):
+    def test_kit_complete_on_every_net_is_claimable(self, mock_get_settings, mock_s3, caplog):
         self._settings(mock_get_settings)
         mock_s3.return_value.list_objects.return_value = [
             *_SERVER_AND_ADMIN_KITS,
@@ -205,10 +126,9 @@ class TestCompleteFlareKitNames:
             f"{_KITS}/net-2/state/cert.json",
         ]
 
-        # Numeric order, server/admin kits left out, and the SSM parameter never consulted.
+        # Numeric order, server/admin kits left out.
         assert resolve_fl_kit_slot_names() == ["Trust_2", "Trust_10"]
         mock_s3.return_value.list_objects.assert_called_once_with(f"{_KITS}/")
-        mock_get_parameter.assert_not_called()
         # The hub's own kits are expected to fall short: no warning for them.
         assert not caplog.records
 
@@ -283,15 +203,113 @@ class TestCompleteFlareKitNames:
         assert caplog.records[-1].levelno == logging.ERROR
 
 
-def test_seed_reads_the_parameter_in_prod_flower(prod_ssm, mock_session):
-    """Boot seeding goes through the resolver: in prod the SSM parameter feeds the pool."""
-    prod_ssm.return_value = '["Trust_9"]'
-    mock_session.exec.side_effect = [MagicMock(first=MagicMock(return_value=None))]
+_KEYS = "s3://kits-bucket/fl-flower-participant-kits/20260811"
+# The hub's side of a Flower kit, as provisioned: names no slot.
+_CERTIFICATES = [f"{_KEYS}/net-1/certificates/{name}" for name in ("ca.crt", "server.pem", "server.key")]
 
-    seed_fl_kit_slots(mock_session)
 
-    assert [c.args[0].slot_name for c in mock_session.add.call_args_list] == ["Trust_9"]
-    mock_session.commit.assert_called_once()
+def _key_pair(net: str, number: int, halves=("", ".pub")) -> list[str]:
+    return [f"{_KEYS}/{net}/keys/supernode_credentials_{number}{half}" for half in halves]
+
+
+@patch("flip_api.db.seed.fl_kit_slots.S3Client")
+@patch("flip_api.db.seed.fl_kit_slots.get_settings")
+class TestCompleteFlowerKeyNames:
+    """Prod Flower: the pool is every slot whose SuperNode key pair is complete on every net."""
+
+    def _settings(self, mock_get_settings, uri=_KEYS):
+        mock_get_settings.return_value = SimpleNamespace(ENV="production", FL_BACKEND="flower", FLOWER_KITS_S3_URI=uri)
+
+    def test_key_pair_complete_on_every_net_is_claimable(self, mock_get_settings, mock_s3, caplog):
+        self._settings(mock_get_settings)
+        mock_s3.return_value.list_objects.return_value = [
+            *_CERTIFICATES,
+            *_key_pair("net-1", 10),
+            *_key_pair("net-2", 10),
+            *_key_pair("net-1", 2),
+            *_key_pair("net-2", 2),
+            f"{_KEYS}/net-2/certificates/ca.crt",
+        ]
+
+        # Numeric order, each slot named after its key's number.
+        assert resolve_fl_kit_slot_names() == ["Trust_2", "Trust_10"]
+        mock_s3.return_value.list_objects.assert_called_once_with(f"{_KEYS}/")
+        assert not caplog.records
+
+    def test_key_not_yet_registered_with_the_superlink_is_not_claimable(self, mock_get_settings, mock_s3, caplog):
+        """add_fl_kits.sh uploads the private key only after the registration: until then, left out."""
+        self._settings(mock_get_settings)
+        mock_s3.return_value.list_objects.return_value = [
+            *_CERTIFICATES,
+            *_key_pair("net-1", 1),
+            *_key_pair("net-1", 2, halves=(".pub",)),
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="flip_api.seed"):
+            assert resolve_fl_kit_slot_names() == ["Trust_1"]
+
+        assert [record.getMessage() for record in caplog.records] == [
+            "Flower key 'Trust_2' is not claimable: net-1 lacks supernode_credentials_2.",
+        ]
+
+    def test_key_pair_incomplete_or_missing_on_a_net_is_not_claimable(self, mock_get_settings, mock_s3, caplog):
+        """A withdrawn half, or a net added after the key was minted: left out, and the log says why."""
+        self._settings(mock_get_settings)
+        mock_s3.return_value.list_objects.return_value = [
+            *_key_pair("net-1", 1),
+            *_key_pair("net-2", 1),
+            *_key_pair("net-1", 2),
+            *_key_pair("net-2", 2, halves=("",)),
+            *_key_pair("net-1", 3),
+            f"{_KEYS}/net-2/keys/notes.txt",
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="flip_api.seed"):
+            assert resolve_fl_kit_slot_names() == ["Trust_1"]
+
+        assert [record.getMessage() for record in caplog.records] == [
+            "Flower key 'Trust_2' is not claimable: net-2 lacks supernode_credentials_2.pub.",
+            "Flower key 'Trust_3' is not claimable: net-2 lacks supernode_credentials_3, supernode_credentials_3.pub.",
+        ]
+
+    def test_listing_failure_is_unreadable_and_logs_error(self, mock_get_settings, mock_s3, caplog):
+        self._settings(mock_get_settings)
+        mock_s3.return_value.list_objects.side_effect = Exception("AccessDenied")
+
+        with caplog.at_level(logging.ERROR, logger="flip_api.seed"):
+            assert resolve_fl_kit_slot_names() is None
+
+        assert "AccessDenied" in caplog.text
+        assert caplog.records[-1].levelno == logging.ERROR
+
+    def test_unset_uri_returns_empty_without_listing(self, mock_get_settings, mock_s3, caplog):
+        self._settings(mock_get_settings, uri="")
+
+        with caplog.at_level(logging.ERROR, logger="flip_api.seed"):
+            assert resolve_fl_kit_slot_names() == []
+
+        mock_s3.return_value.list_objects.assert_not_called()
+        assert caplog.records[-1].levelno == logging.ERROR
+
+    def test_no_keys_returns_empty_and_logs_error(self, mock_get_settings, mock_s3, caplog):
+        self._settings(mock_get_settings)
+        mock_s3.return_value.list_objects.return_value = []
+
+        with caplog.at_level(logging.ERROR, logger="flip_api.seed"):
+            assert resolve_fl_kit_slot_names() == []
+
+        assert caplog.records[-1].levelno == logging.ERROR
+
+    def test_seed_reads_the_keys(self, mock_get_settings, mock_s3, mock_session):
+        """Boot seeding goes through the resolver: in prod the keys in S3 feed the pool."""
+        self._settings(mock_get_settings)
+        mock_s3.return_value.list_objects.return_value = _key_pair("net-1", 9)
+        mock_session.exec.return_value.all.return_value = []
+
+        seed_fl_kit_slots(mock_session)
+
+        assert [c.args[0].slot_name for c in mock_session.add.call_args_list] == ["Trust_9"]
+        mock_session.commit.assert_called_once()
 
 
 def test_insert_missing_slots_returns_only_new_names_and_never_commits(mock_session):

@@ -19,7 +19,7 @@ authors = [
     { name = "R. Garcia-Dias", email = "rafaelagd@gmail.com" },
     { name = "A. Triay Bagur", email = "alexandre.triay_bagur@kcl.ac.uk" },
 ]
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "alembic>=1.13",
     "fastapi[standard]>=0.115.11",
@@ -27,7 +27,7 @@ dependencies = [
     "uvicorn>=0.27.0",
     "sqlalchemy>=2.0.27",
     "boto3>=1.34.49",
-    "pydantic>=2.6.1",
+    "pydantic>=2.12",
     "python-multipart>=0.0.26",
     "asyncpg>=0.30.0",
     "sqlmodel>=0.0.24",
@@ -98,7 +98,7 @@ filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py312"
+target-version = "py313"
 
 [tool.ruff.lint]
 preview = true
@@ -128,6 +128,6 @@ exclude-newer = "3 days"
 constraint-dependencies = [
     "anyio>=4.14.2",  # CVE-2026-63374, CVE-2026-64847; transitive via httpx, starlette, watchfiles
     "certifi>=2026.10.19",  # GHSA-6q48-6c7w-9gw2
-    "dnspython>=2.9.0",  # GHSA-45c3-73f7-pv4m
-    "tornado>=6.6",  # GHSA-pcg2-g6cj-q92c, GHSA-pw9p-v7r6-gx4p, GHSA-r4j5-9xpp-3985; transitive via ipykernel (dev)
+    "dnspython>=2.9.2",  # GHSA-45c3-73f7-pv4m, GHSA-vvf4-9x63-8xvv
+    "tornado>=6.6.1",  # GHSA-pcg2-g6cj-q92c, GHSA-pw9p-v7r6-gx4p, GHSA-r4j5-9xpp-3985, GHSA-5cjw-f85j-cv6r; transitive via ipykernel (dev)
 ]

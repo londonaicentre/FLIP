@@ -97,7 +97,7 @@ From User Management you can:
 - review access requests sent from the login page;
 - register new users;
 - assign a user's role;
-- disable and re-enable accounts;
+- disable, re-enable and delete accounts;
 - reset passwords and MFA.
 
 .. note::
@@ -138,14 +138,17 @@ FLIP emails the user a one-time password for their :ref:`initial-login`.
 
    Registering a new user.
 
-Disable/enable user
-^^^^^^^^^^^^^^^^^^^
+Disable, enable or delete a user
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-FLIP does not delete user accounts. To revoke access, disable the account; re-enable it to restore access.
+To revoke access, disable the account; re-enable it to restore access.
 
 1. Select the user in the user list.
-2. Click **...**.
-3. Select **Disable User**. Re-enabling works the same way.
+2. In the **Danger Zone**, click **Disable User**. Re-enabling works the same way.
+
+Deleting is a second step and cannot be undone. **Delete User** stays greyed out until the account is disabled. Once
+it is, click **Delete User** in the **Danger Zone** and type the user's email address to confirm. See
+:ref:`disable-or-delete-a-user` for what a delete removes and what it keeps.
 
 .. figure:: ../assets/generated/gifs/admin/user-enable-disable.gif
    :align: center

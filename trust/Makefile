@@ -160,6 +160,23 @@ define ensure_net_dirs
 	  done; \
 	fi
 endef
+
+# Give the FL kit to the uid its client runs as, readable by it alone (FLIP#1964): the FLARE slot
+# directory to 1000 (the client also writes local/ and transfer/), Flower's net-1/ to 49999, or
+# either to the kit's FLIP_UID:FLIP_GID, as the prod compose files run them. The packager's tarball
+# is already owner-only, so this is the chown its printed steps ask for; go-rwx also closes a kit
+# unpacked from an older, world-readable tarball. A kit not unpacked yet is left for a re-run.
+define ensure_fl_kit_owner
+	@kit="$(abspath $(FL_KIT_DIR))/net-1$(if $(filter nvflare,$(FL_BACKEND)),/services/$(FL_KIT_SLOT))"; \
+	owner="$(if $(filter flower,$(FL_BACKEND)),$(or $(FLIP_UID),49999):$(or $(FLIP_GID),49999),$(API_UID):$(API_GID))"; \
+	if [ -z "$(FL_KIT_DIR)" ]; then \
+	  echo "⚠️  FL_KIT_DIR is not set: the FL kit is left as it is."; \
+	elif [ ! -d "$$kit" ]; then \
+	  echo "⚠️  No FL kit at $$kit yet: unpack it, then run prepare-host-dirs again to give it to $$owner."; \
+	else \
+	  chown -R "$$owner" "$$kit" && chmod -R go-rwx "$$kit" && echo "🔑 $$kit is $$owner's alone, the FL client's."; \
+	fi
+endef
 # --project-directory . keeps relative paths inside the compose files (./trust-api,
 # ./observability/, ./omop-db/volumes/, …) resolving from trust/ even though the compose
 # files now live in trust/deploy/. Avoids having to rewrite every ./X to ../X.
@@ -550,7 +567,8 @@ prepare-artifacts:
 # (FLIP#1723). Setting another uid's ownership needs root, so this is the one step of an on-prem
 # bring-up that does: whoever prepares the host runs it once, as root, on the host itself; a
 # non-root bring-up then only checks. It deletes nothing and never touches xnat-db's data dir,
-# so it is safe to re-run beside a live site. The on-prem Ansible playbook does the same for
+# so it is safe to re-run beside a live site. It also gives the FL kit to its client's uid
+# (ensure_fl_kit_owner). The on-prem Ansible playbook does the same for
 # /opt/flip. The images base hands its owner to the net dirs, so whoever created it (root, or
 # the operator before the first refusal) it goes to imaging-api's uid first. A kit whose
 # FLIP_UID/FLIP_GID are the operator's own ids needs none of this: its containers run as them (FLIP#1731).
@@ -574,6 +592,7 @@ prepare-host-dirs:
 	$(ensure_net_dirs)
 	$(ensure_snapshot_dir)
 	$(MAKE) --no-print-directory -C xnat xnat-prepare-dirs KIT=$(KIT) HUB=$(HUB)
+	$(ensure_fl_kit_owner)
 	@echo "✅ Host directories for $(KIT) are ready; the bring-up needs only Docker access from here."
 
 # Bring up the trust stack selected by KIT (e.g. KIT=GSTT) from trust/.env.<KIT>.<env>.

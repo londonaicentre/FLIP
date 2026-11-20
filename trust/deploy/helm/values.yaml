@@ -123,8 +123,8 @@ trustData:
     # (trust/deploy/mirror-images.manifest).
     image:
       repository: ghcr.io/londonaicentre/mirror/astral-sh/uv
-      tag: "python3.12-bookworm-slim"
-      digest: "sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58"
+      tag: "python3.13-bookworm-slim"
+      digest: "sha256:531f855bda2c73cd6ef67d56b733b357cea384185b3022bd09f05e002cd144ca"
       pullPolicy: IfNotPresent
     # The Apache-licensed DICOM vocabulary bundle on the dataset (omop-vocab/<name>.zip), loaded
     # before the rows so their imaging concepts resolve even without the core vocabulary.
@@ -335,6 +335,11 @@ imagingApi:
     # DQR use its default query/retrieve PACS, and each import reads that PACS's id from XNAT.
     DATA_ACCESS_API_URL: "http://data-access-api:8000"
     BASE_IMAGES_DOWNLOAD_DIR: "/app/data/images"
+    # Imaging follows the approved cohort (FLIP#1860): every COHORT_RECONCILE_MINUTES the cached studies of an
+    # accession that left a project's cohort are removed, and its XNAT session once it has been off the cohort for
+    # COHORT_REMOVAL_GRACE_HOURS. "0" minutes turns the removal off; downloads of it are refused either way.
+    COHORT_RECONCILE_MINUTES: "15"
+    COHORT_REMOVAL_GRACE_HOURS: "24"
     # A cached study unused for this long is removed (FLIP#1050); "0" keeps every study.
     IMAGE_CACHE_RETENTION_HOURS: "168"
 
@@ -459,8 +464,8 @@ flClient:
   # what is deployed here is what is deployed in production.
   #
   # On kind, either map it in with an extraMount at cluster-create time, or copy it into
-  # the node: `docker cp <kit>/. <cluster>-control-plane:/opt/flip/fl-kit/` (which is
-  # what `make stage-kit` does). /opt/flip/fl-kit is the kit file's FL_KIT_DIR — the same
+  # the node: `docker cp <kit>/. <cluster>-control-plane:/opt/flip/fl-kit/` (what `make stage-kit`
+  # does on kind; on any other node it uses a short-lived pod). /opt/flip/fl-kit is the kit file's FL_KIT_DIR — the same
   # path the Compose and Ansible trust deployments use — so keep any override in step
   # with the path the kit was actually staged to, or the pod stays Pending.
   kitHostPath: ""
@@ -506,16 +511,41 @@ flClient:
     # node pool that scales from zero, a GPU is billed only while a job runs. Leave flClient.gpu off:
     # the parent holds no GPU (the chart refuses both).
     #
-    # Job pods mount the shared images volume, so they follow flClient.affinity. On a multi-node
-    # cluster with a separate GPU pool, sharedImagesPvc needs a ReadWriteMany class and
-    # flClient.affinity: {} (an RWO disk attaches to one node only). They inherit the fl-client's
-    # NetworkPolicy reach: every rule in network-policy.yaml is namespace-wide.
+    # Job pods inherit the fl-client's NetworkPolicy reach: every rule in network-policy.yaml is
+    # namespace-wide.
     jobPods:
       enabled: false
+      # How a job pod gets its studies. In every mode it holds only its own project's.
+      # - project: each FLIP project is an NVFLARE study, and its job pods mount that project's own
+      #   folder of the shared images volume, read-only (FLIP#1678). Nothing is copied into the pod, and
+      #   a job never deletes from the cache: IMAGE_CACHE_RETENTION_HOURS bounds it. The job pods
+      #   attach sharedImagesPvc, so on a ReadWriteOnce volume they run on the fl-client's node; a
+      #   separate GPU pool needs a ReadWriteMany one. A job outside a project's study (from a hub that
+      #   predates studies) mounts nothing and streams.
+      # - archive: its job pods mount that project's own directory of XNAT's archive, read-only, and
+      #   read the studies in place (FLIP#1857): no copy in imaging-api's cache or in the pod. Needs this
+      #   chart's XNAT. Only a project that mounts its directory attaches XNAT's volume, so on a
+      #   ReadWriteOnce one its job pods run on xnat-web's node (a separate GPU pool needs a
+      #   ReadWriteMany one); a job that streams runs anywhere, xnat-web up or not. Opt-in. The mount shows
+      #   every session XNAT holds for the project, so a patient who leaves its approved cohort stays
+      #   readable there until imaging-api removes their session from XNAT, after
+      #   imagingApi.env.COHORT_REMOVAL_GRACE_HOURS (FLIP#1860; the chart refuses archive with
+      #   COHORT_RECONCILE_MINUTES at 0). A project mounts its directory only once XNAT has archived
+      #   one of its sessions; until then, and for assessor resources, its jobs stream.
+      # - stream: no images volume. Each job streams its studies from imaging-api into its own run
+      #   directory (FLIP#1049), so job pods run on any node; size ephemeralStorage for them.
+      # With project or archive a project's jobs start only once the site has given it a study entry:
+      # `make sync-project-studies`, after the first deploy, each approval, each upgrade and each change
+      # of this setting, and with archive also after each project's first imaging pull.
+      images: project
       # GPUs the site lends to jobs at once. NVFLARE queues a job asking for more, and the hub shows
       # why (FLIP#1423); 0 keeps every job on CPU. Set it to the GPU pool's maximum node count x GPUs
       # per node.
       maxGpus: 1
+      # Local disk each job pod may use, as both its request and its limit. With images: stream a job's
+      # studies land here (FLIP#1049) and Kubernetes evicts a pod that writes past it, so size it to the
+      # largest cohort a job trains on at this site, and keep that much free on the nodes job pods run on.
+      ephemeralStorage: 10Gi
       # Seconds a job pod may wait for its node while Kubernetes reports "Insufficient" CPU, memory or
       # GPU (an autoscaler adding a node) before NVFLARE fails the job. Size it to a cold scale-up.
       # A pod that can never be scheduled (no matching node at all) fails at once whatever this is.
@@ -535,12 +565,9 @@ flClient:
       # NVFLARE fails it immediately instead of waiting for the node.
       tolerations: []
       nodeSelector: {}
-      # The launcher calls the Kubernetes API from the parent. The chart's egress already allows port
-      # 443 to any address (networkPolicies.allowedEgressPorts), which covers an API server reached on
-      # 443 (AKS, EKS). NetworkPolicy matches the API server's real endpoint rather than the kubernetes
-      # Service, so where it listens on another port (minikube 8443, kind 6443) name it here, e.g. from
-      # `kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes`. Without it the
-      # launcher's first call hangs and no job pod is ever created. Only the parent gets this rule.
+      # The API server endpoint for the parent only (the launcher calls the Kubernetes API). With cidrs set it
+      # overrides networkPolicies.apiServer, cidrs and port together; with cidrs empty the parent follows that
+      # setting, which also covers xnat-web, so prefer it.
       apiServer:
         cidrs: []
         port: 443
@@ -1110,3 +1137,10 @@ networkPolicies:
       protocol: TCP
     - port: 443
       protocol: TCP
+  # The Kubernetes API server's real endpoint, for xnat-web (XNAT's Container Service) and the NVFLARE job-pod
+  # parent. NetworkPolicy matches it, not the kubernetes Service's 443: on k3s and kind the node's address on 6443,
+  # minikube 8443, from `kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes`.
+  # AKS and EKS answer on 443, which allowedEgressPorts already allows: leave it empty there.
+  apiServer:
+    cidrs: []
+    port: 443

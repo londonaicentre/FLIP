@@ -75,30 +75,39 @@ helm upgrade --install trust-release ./trust/deploy/helm/ \
   first install can adopt it, and regenerates the FL-server egress port (and, for Flower,
   `flClient.flower.superlink`) on every run so upgrades never lose them. `sync-kit-override` writes only
   the override; `patch-kit-secrets` only patches the Secret and restarts the three API deployments.
-- **`deploy-trust-k8s KIT=`** runs `sync-kit-override`, then `deploy` with that override, then
-  `patch-kit-secrets` — even when `deploy` failed, so trust-api never polls with a stale key (#595) — and
-  exits with the deploy status. Without `KIT=` it is plain `deploy`, which is also all the repo-root
+- **`deploy-trust-k8s KIT=`** runs `sync-kit-override`, then `deploy-release` and `xnat-init` with that
+  override, then `patch-kit-secrets` — even when a step failed, so trust-api never polls with a stale key
+  (#595) — and fails if either step did, naming which one. Without `KIT=` it is plain `deploy`, which is also all the repo-root
   `make deploy-trust-k8s` forwards to.
-- **`deploy`** depends on `preflight` (`scripts/preflight.sh`: tools and versions, cluster reachability,
+- **`deploy`** is `deploy-release` then `xnat-init`. **`deploy-release`** depends on `preflight` (`scripts/preflight.sh`: tools and versions, cluster reachability,
   the chart files, the kit when `KIT=` is given, `helm lint`) and passes `--timeout $(HELM_TIMEOUT)` but
-  **not** `--wait`. Helm 4 reimplemented `--wait` on
-  [kstatus](https://github.com/kubernetes-sigs/cli-utils/tree/master/pkg/kstatus), which is stricter than
-  Helm 3's readiness check; size `--timeout` for the slowest service if you add `--wait` yourself.
-- **`HELM_TIMEOUT`** (default `30m`) is the one budget for both ways of waiting on the `xnat-init` job:
-  `deploy` (a post-upgrade hook) and `xnat-init` (`kubectl wait`). It bounds the wait, not the Job — the
-  hook has no `activeDeadlineSeconds`, so when it expires Helm marks the release failed while the Job
-  keeps running. Raising one of the job's internal budgets (`templates/xnat-init-job.yaml`) without this
-  changes nothing. Set too low it reports `resource Job/... not ready` after the new pod spec is already
-  applied, which is how a corrected plugin roster sat undeployed across five upgrades in FLIP#1228 — see
+  **not** `--wait`: the rollout is waited for afterwards by `scripts/rollout_wait.py`, scoped to the core
+  workloads, because `--wait` is all-or-nothing and one permanently-Pending optional pod (an idle GPU
+  `fl-client`) would fail every upgrade — see
+  [Why the rollout wait is scoped](#why-the-rollout-wait-is-scoped-and-not-helm---wait).
+- **`HELM_TIMEOUT`** (default `30m`) is the deploy's wait budget. On the Makefile path it bounds, each
+  separately: helm's remaining hooks (`omop-vocab-load`, `trust-seed`), the rollout wait (ONE budget
+  shared by all the core workloads, not one each), and the `xnat-init` step's delete of the previous Job
+  and its `kubectl wait`. It bounds the waits, not the Jobs — they have no `activeDeadlineSeconds`, so
+  a Job keeps running after its wait expires. Raising one of the init job's internal budgets
+  (`templates/xnat-init-job.yaml`) without this changes nothing. A plain `helm install` (the chart's
+  default, xnat-init as a post-upgrade hook) still waits on that hook under helm's own timeout; set too
+  low it reports `resource Job/... not ready` after the new pod spec is already applied, which is how a
+  corrected plugin roster sat undeployed across five upgrades in FLIP#1228 — see
   [TROUBLESHOOTING §2.7](TROUBLESHOOTING.md#27-c-echo-passes-c-store-aborts-abstractmethoderror-in-dicomlog).
 - **`HUB`** takes the platform's three values — unset (development), `stag`, `prod` — and is itself the
   kit-file token (`trust/.env.<CODE>.<hub>`). The Makefile resolves the kit file through
   `deploy/env_mode.mk`'s `kit_file` and passes it to `scripts/preflight.sh` as `KIT_FILE` and to
   `sync_k8s_kit.py` as `--kit-file`, so the checklist reads the kit the site actually has.
 - **`stage-kit`** detects the backend from the kit's shape (FLARE `startup/`, Flower `certificates/` +
-  `keys/`), chowns to that image's uid (1000 / 49999), empties `KIT_DEST` before `docker cp` so a
-  re-stage leaves no stale credentials, and pre-creates the subPath directories the chart mounts. It
-  implements the kind case only.
+  `keys/`), chowns to that image's uid (1000 / 49999), empties `KIT_DEST` before the copy so a
+  re-stage leaves no stale credentials, and pre-creates the subPath directories the chart mounts. On a
+  kind node it copies with `docker cp`; on any other node (k3s, a VM) through a short-lived root pod pinned
+  to the node with `KIT_DEST` as a hostPath, and `kubectl cp` (`scripts/stage-to-node.sh`, FLIP#1958).
+  That needs RBAC to read nodes and to create and exec into the pod, as good as root on the node. A cluster that
+  will not run the pod (the image out of reach, an admission policy) gets the same steps printed as one command
+  to run as root on the node (FLIP#1477). Under Pod Security `baseline` the chart's own hostPath mounts are refused
+  too, so use the kit Secret there. `stage-vocab` goes the same way.
 - **`undeploy`** (aliases `down`, `undeploy-trust-k8s`) is `helm uninstall`. Every standalone PVC in the
   chart has no `helm.sh/resource-policy: keep`, so uninstall deletes them (orthanc, xnat-web,
   data-access-api's cohort snapshots, grafana, shared images); only StatefulSet `volumeClaimTemplates`
@@ -512,14 +521,16 @@ loaded** (`helm install` prints a warning).
    export the vocabularies from [OHDSI Athena](https://athena.ohdsi.org/) (plus
    [NHS TRUD](https://isd.digital.nhs.uk/) for the UK ones) and unzip the export into a
    folder — `trust/omop-db/README.md`, "The core vocabulary bundle".
-2. **Stage it onto the node** at `/opt/flip/omop-vocab` (`VOCAB_DEST=` to change it). On kind:
+2. **Stage it onto the node** at `/opt/flip/omop-vocab` (`VOCAB_DEST=` to change it):
 
    ```sh
    make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<ctx>
    ```
 
-   On any other cluster (k3s, a VM) copy the folder there yourself, readable by every user.
-   `stage-vocab` empties the destination first, so a re-stage leaves no file of the previous
+   On kind it copies with `docker cp`, on any other node through a short-lived pod (as `stage-kit`).
+   With more than one node, `NODE=<name>` names the node; `stage-kit` and `stage-vocab` refuse to
+   guess. For the kit that is the FL client's node (imaging-api's unless `flClient.affinity` says
+   otherwise). `stage-vocab` empties the destination first, so a re-stage leaves no file of the previous
    bundle behind.
 3. **Point the chart at it**: `OMOP_VOCAB_DIR=/opt/flip/omop-vocab` in the kit file
    (`sync-kit` writes `omopDb.vocabLoad.hostPath` from it), or
@@ -678,6 +689,8 @@ flClient:
     jobPods:
       enabled: true
       maxGpus: 1            # GPUs lent to jobs at once; NVFLARE queues beyond it and the hub says why
+      images: project       # how a job pod gets its studies: project or archive (study mounts), or stream
+      ephemeralStorage: 10Gi  # local disk per job pod; with images: stream, size it to the largest cohort
       pendingTimeout: 900   # seconds a job pod may wait for its node; size it to a cold scale-up
       tolerations:          # the GPU pool's taint
         - {key: sku, operator: Equal, value: gpu, effect: NoSchedule}
@@ -685,10 +698,41 @@ flClient:
 
 What the chart adds: a Role and RoleBinding for the launcher (job pods, their events, and the Secrets it
 mounts into them), a `<release>-fl-client-<net>-parent` Service that job pods connect back through, and the
-job pod template (ConfigMap `<release>-fl-job-pod-<net>`): the client's env and trust-internal key, this
-net's images slice, `/dev/shm` and the FL server's host aliases, since a job pod talks to the FL server
-itself. At start the client runs `python -m flip.nvflare.k8s_job_mode`, which switches the kit's launcher and
-declares the GPU pool. Each job runs in the fl-client image.
+job pod template (ConfigMap `<release>-fl-job-pod-<net>`): the client's env and trust-internal key,
+`/dev/shm` and the FL server's host aliases, since a job pod talks to the FL server itself. At start the
+client runs `python -m flip.nvflare.k8s_job_mode`, which switches the kit's launcher and declares the GPU
+pool. Each job runs in the fl-client image.
+
+Each FLIP project is an NVFLARE study (FLIP#1678), and NVFLARE takes a study's job image and pod template
+from the site's `local/study_runtime.yaml`, which the site's operator maintains and its launcher re-reads at
+every launch. The fl-client only reads it: the file is a ConfigMap (`<release>-fl-studies-<net>`) that the
+chart mounts and never writes, so a `helm upgrade` leaves it alone. Fill it, and refresh it, with:
+
+```bash
+make sync-project-studies                       # every project whose approved cohort this trust holds
+make sync-project-studies PROJECTS="<id> ..."   # or exactly these
+```
+
+It builds one entry per project from the template above and replaces the ConfigMap; the client picks the
+change up within a minute or so, with no restart. When it finds no approved project (data-access-api's snapshot
+folder empty or not mounted) it stops and replaces nothing, since an empty file would stop every project's jobs. Run it after the first deploy, after each project is
+approved at this trust, after an upgrade (the entries carry the job image and the pod template), after
+changing `jobPods.images`, and, with `images: archive`, after a project's first imaging pull (until XNAT has
+archived one of its sessions there is no directory to mount, so its entry streams; the sync prints a line for
+each project that streams, and why): the file outlives a redeploy, so until it is synced again every project keeps
+the entries of the previous mode. Until
+a project has its entry NVFLARE has no job image for its study and does not start its jobs. The template
+itself mounts no images, so a job from a hub that predates studies, which lands in the default study,
+streams its studies.
+
+**Leaving `images: archive`** (for `project` or `stream`) takes three steps, in this order, because the
+entries already synced keep mounting XNAT's archive until the next sync, and the chart checks
+`COHORT_RECONCILE_MINUTES` only while the mode is still `archive`:
+
+1. Upgrade with the new `jobPods.images`, leaving `imagingApi.env.COHORT_RECONCILE_MINUTES` as it is.
+2. Run `make sync-project-studies`. Until it has run, the fl-client logs an error at every start naming the
+   projects whose entries still mount the archive (`kubectl logs <fl-client pod> -c fl-client-init`).
+3. Only then, if you mean to, set `COHORT_RECONCILE_MINUTES` to 0 in a later upgrade.
 
 Prerequisites and trade-offs:
 
@@ -696,13 +740,45 @@ Prerequisites and trade-offs:
 - **Prefer a toleration to a `nodeSelector`.** NVFLARE waits only while Kubernetes reports the pod
   `Insufficient` CPU, memory or GPU (what an autoscaler adding a node looks like). A pod no node could ever
   take is `Unschedulable` and fails at once, which is what a `nodeSelector` aimed at a pool at zero reports.
-- **The images volume must reach the GPU node.** Job pods mount `sharedImagesPvc` and follow
-  `flClient.affinity`. With a separate GPU pool, give the PVC a ReadWriteMany class and set
-  `flClient.affinity: null` (an RWO disk attaches to one node only).
+- **A job pod holds only its own project's studies**, by `jobPods.images`. In every mode imaging-api keeps the
+  whole cache, bounded by `IMAGE_CACHE_RETENTION_HOURS`, and `flip.add_resource`'s files are sent in the
+  request: training code writes them in the job pod's `IMAGES_DIR`, a scratch `emptyDir` of its own.
+  - `project` (the default) is NVFLARE's own way to give a job pod its data, a mount set by its study: the
+    project's entry mounts `<net>/<project>`, the project's folder of imaging-api's cache, read-only, at
+    the path imaging-api returns. Nothing is copied into the pod, and the job cannot change or delete what
+    is cached: `CleanupImages` wipes only where a job mounts the net's whole folder, so a project's studies
+    stay cached between its jobs until the retention sweep removes them. It needs `sharedImagesPvc` (the
+    chart refuses without it), and the job pods attach it: on a ReadWriteOnce volume they follow the
+    fl-client's node, and a separate GPU pool needs a ReadWriteMany class.
+  - `archive` uses the same study mount for the project's own directory of XNAT's archive
+    (`archive/<XNAT project>` of XNAT's volume), read-only, so a job reads its studies in place with no copy
+    in imaging-api's cache or in the pod (FLIP#1857). imaging-api's `/layout` route names each file's place in
+    the archive and in the layout a download has, and `flip.get_by_accession_number` builds that layout as
+    links into the mount. It needs this chart's XNAT on a persistent volume (the chart refuses otherwise). The
+    base template carries nothing of XNAT's: the chart renders an archive patch beside it
+    (`pod_specs/job-pod-archive.yaml`: XNAT's volume, XNAT's group 1001, and on a ReadWriteOnce XNAT volume a
+    place on xnat-web's node), and the sync applies it only to a project whose archive directory it mounts. Such
+    a project's job pods therefore need xnat-web scheduled, and a separate GPU pool needs a ReadWriteMany class;
+    every other job, a tabular project's or one that streams, runs on any node, xnat-web up or not. A project
+    with nothing archived yet, and any assessor resource, is streamed. **The mount shows every session XNAT holds for the project.** imaging-api
+    refuses `/layout` for a patient who has left the approved cohort, but their files stay readable in the
+    mount until imaging-api removes the session from XNAT: after `COHORT_REMOVAL_GRACE_HOURS` (24 h by
+    default, counted again from an imaging-api restart), and not while data-access-api cannot return the
+    cohort (FLIP#1860). The chart refuses `archive` with `COHORT_RECONCILE_MINUTES` at 0, which turns the
+    removal off.
+  - `stream` mounts no images volume: a job streams each study from imaging-api into its own run directory
+    (`IMAGES_TRANSPORT=stream`, FLIP#1049). Job pods then run on any node and ignore `flClient.affinity`, so
+    a separate GPU pool needs no ReadWriteMany class.
+- **With `images: stream`, size `ephemeralStorage` to the cohort.** The streamed studies sit on the job
+  pod's own disk, and Kubernetes evicts a pod that writes past `jobPods.ephemeralStorage`, which fails the
+  job. It is the pod's request as well as its limit, so the node must have that much free. For scale: 21
+  spleen CT studies as NIfTI took 435 MB, and 300 chest X-rays about 80 MB.
 - **API server egress.** The launcher calls the Kubernetes API from the parent. The default egress allows
   port 443, which covers AKS and EKS. NetworkPolicy matches the API server's real endpoint, so where it
-  listens elsewhere (minikube 8443, kind 6443) set `flClient.nvflare.jobPods.apiServer.cidrs` and `.port`,
-  or the first launch hangs and no job pod appears. Only the parent gets that rule.
+  listens elsewhere (k3s and kind 6443, minikube 8443) set `networkPolicies.apiServer.cidrs` and `.port`,
+  or the first launch hangs and no job pod appears. That one setting also lets `xnat-web` reach the API,
+  which XNAT's Container Service needs on the same clusters (FLIP#1958). Of the FL pods only the parent
+  gets the rule; job pods never do. `flClient.nvflare.jobPods.apiServer` still works and wins for the parent.
 - **Cold start.** The first job waits for a node to boot and pull the FL image, and an idle GPU node lingers
   for the autoscaler's scale-down delay (around 10 minutes on AKS by default). The FL server's 20-second
   wait for a client to start a job does not sink a late pod: tested with a job pod held 3.5 minutes for its
@@ -1111,8 +1187,8 @@ there; the omop-db image CI asserts every published image carries it.
 - **Secrets**: Separate from ConfigMaps; recommend External Secrets Operator
 - **FL clients**: No Central Hub credentials; connect outbound to FL server only
 - **ServiceAccounts**: each stateless service runs under its own ServiceAccount
-  with no RBAC role bindings (none of the pods call the Kubernetes API — least
-  privilege by default).
+  with no RBAC role bindings (none of them calls the Kubernetes API — least
+  privilege by default; xnat-web and the NVFLARE job-pod parent do, with their own RBAC).
 - **Pod Security & container hardening**: the chart-created namespace
   carries Pod Security Standards labels (`enforce=baseline`, `warn`/`audit=restricted`
   by default — tune via `podSecurity.*`; `baseline` does not admit `hostPath` volumes, which
@@ -1160,6 +1236,66 @@ make -C trust/deploy/helm update-deps
 make -C trust/deploy/helm test
 ```
 
+### What a failed `make deploy` means
+
+`helm upgrade` exiting non-zero used to be ambiguous: it was usually the `xnat-init`
+post-upgrade hook timing out (#565) on a release that had deployed perfectly well, but it
+could equally be a genuine failure where nothing reached the cluster. Telling the two apart
+meant reading the output. Since FLIP#1645 the ambiguity is removed at the source rather than
+classified after the fact: `xnat-init` is the one hook that produces it, so `make deploy`
+takes it out of helm's path (`--set xnat.initJob.enabled=false`) and runs the existing
+`xnat-init` target as a separate step afterwards. Rollout is then waited for explicitly.
+
+The two steps are two targets, `deploy-release` and `xnat-init`, and `deploy` runs them in turn.
+Which one failed is the signal, not an exit code: GNU make exits 2 for any failed recipe whatever
+code the recipe returned, so no code can carry a distinction through make. An unattended caller
+(the auto-upgrade agent, FLIP#1640) runs the two targets itself; `deploy-trust-k8s` and
+`upgrade-trust-k8s` already do.
+
+| Step that failed | Meaning | What to do |
+|------|---------|------------|
+| none | The upgrade landed: applied, every core workload rolled out, every hook succeeded and `xnat-init` completed. | Nothing. |
+| `deploy-release` | Helm failed, or a core workload did not roll out within `HELM_TIMEOUT`, or a hook (`omop-vocab-load`, `trust-seed`) failed. | Read the helm error; the failing hook is named for you. If helm rejected the apply the trust is on its previous release; after a rollout timeout or a failed hook the new spec is already live, so look at which workloads or hooks are short. |
+| `xnat-init` | The release is live and every core workload rolled out, but `xnat-init` did not complete (or the chart could not be rendered for it). | The trust is on the new release; re-run `make -C trust/deploy/helm xnat-init`, raising `HELM_TIMEOUT` if the job simply needed longer. |
+
+#### Why the rollout wait is scoped, and not `helm --wait`
+
+Waiting matters because FLIP#1228 was a correct chart that never reached the running pod across
+five upgrades while the old pods stayed `Ready` throughout: an un-waited `helm upgrade` exits 0
+for exactly that.
+
+Helm's own `--wait` does that waiting correctly but is **all-or-nothing** — Helm 3 has no
+per-resource exclusion, and one unschedulable pod fails the entire upgrade. Verified against a
+live cluster: a single `Pending` pod alongside otherwise healthy workloads gives `UPGRADE
+FAILED: context deadline exceeded`, exit 1, and leaves the release in `failed` state. Two
+supported trust configurations sit in that state by design — an `flClient` on a scale-from-zero
+GPU node pool (`values-aks.yaml`, where Pending between FL jobs is the point of not billing an
+idle GPU), and one deployed before its kit is staged. Under `--wait` either turns *every*
+scheduled run of the auto-upgrade agent into a failed upgrade needing a human, inverting the
+agent's purpose.
+
+So `scripts/rollout_wait.py` waits on the workloads whose readiness means "the trust is
+serving", using `kubectl rollout status` — the same readiness semantics Helm applies
+(`observedGeneration` vs `generation`, the new ReplicaSet for a Deployment,
+`currentRevision == updateRevision` for a StatefulSet), so `Ready` old pods do not satisfy it
+either. The scope is a **deny list**: anything not named optional is waited on, because
+forgetting to exclude an optional workload is a loud timeout while forgetting to include a core
+one would silently stop checking it. Optional workloads that are unready are still **reported**,
+they just cannot change the exit code.
+
+| Not waited on | Why unready is a legitimate steady state |
+|---------------|------------------------------------------|
+| `fl-client` | Idle on a scale-from-zero GPU pool, or awaiting its kit |
+| `monailabel` | Optional annotation service, off by default |
+| `grafana`, `loki`, `alloy` | Observability; the trust serves while dashboards are down |
+
+On the failure path `scripts/failing_hooks.py` reads `helm status -o json` and names the hooks
+that did not succeed; it is diagnostics only and cannot change the exit code. All of this is
+tested without a cluster in `tests/test_deploy_split.py` and `tests/test_rollout_wait.py`.
+
+The hook annotation itself is unchanged, so a plain `helm install` of the chart still runs
+`xnat-init`; only the Makefile path opts out of it.
+
 ### Running the XNAT init job by hand
 
 XNAT's post-install init job normally runs as part of the chart. When it is
@@ -1173,7 +1309,19 @@ make -C trust/deploy/helm xnat-init
 It re-renders only the `xnat-init` job from the chart (`--set
 xnat.initJob.enabled=true`, applied with the
 `app.kubernetes.io/component=xnat-init` selector), waits up to `HELM_TIMEOUT` (default
-`30m`) for it to complete, and on failure tails the job's logs before exiting non-zero.
+`30m`) for it to complete or fail, and on failure tails the job's logs before exiting non-zero.
+
+Two things worth knowing now that `make deploy` calls this target itself:
+
+- **It runs on every deploy**, including on a trust that set `xnat.initJob.enabled=false`
+  deliberately. That is intended: the setting controls whether *helm* runs the hook, and the
+  Makefile path keeps the init out of helm's hands so a failed `deploy-release` stays unambiguous. There is no
+  way to opt out of the post-deploy step short of deploying with `helm` directly.
+- **On a trust with `xnat.enabled=false` it is a no-op.** The chart renders no init job at all
+  in that case, and an `apply` with no matching objects fails ("no objects passed to apply") —
+  which used to fail a perfectly good deploy of an XNAT-less trust. The target
+  now renders first (and fails outright if the chart cannot be rendered), checks for the job's `app.kubernetes.io/component: xnat-init` label, and
+  prints `nothing to initialise` instead of applying.
 
 ### CI Validation
 

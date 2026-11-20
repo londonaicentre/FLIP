@@ -77,7 +77,7 @@ def one_shot(tmp_path):
     (bin_dir / "python").chmod(0o755)
     calls = tmp_path / "flwr-calls.log"
 
-    def run(sans: list[str]) -> tuple[subprocess.CompletedProcess[str], str]:
+    def run(sans: list[str], **overrides: str) -> tuple[subprocess.CompletedProcess[str], str]:
         _write_server_cert(certs / "server.pem", sans)
         env = {
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
@@ -87,6 +87,7 @@ def one_shot(tmp_path):
             "SUPERLINK_ROOT_CERTIFICATES": str(certs / "ca.crt"),
             "TRUST_NAMES": '["Trust_1"]',
             "SUPERLINK_READY_ATTEMPTS": "1",
+            **overrides,
         }
         result = subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True, cwd=tmp_path)
         return result, calls.read_text() if calls.exists() else ""
@@ -107,3 +108,118 @@ def test_a_certificate_naming_the_superlink_host_proceeds_to_registration(one_sh
     result, calls = one_shot(["localhost", "superlink", "fl-server-net-1", HOST])
     assert "SuperLink Control API is ready." in result.stdout, result.stdout + result.stderr
     assert "supernode ls local" in calls
+
+
+def _keys(tmp_path: Path, *numbers: int) -> Path:
+    keys = tmp_path / "keys"
+    keys.mkdir()
+    for number in numbers:
+        (keys / f"supernode_credentials_{number}.pub").write_text("unused by the stub\n")
+    return keys
+
+
+def test_without_trust_names_each_key_is_named_after_its_own_number(one_shot, tmp_path):
+    """FLIP#1942: the keys are the slot list, so the tenth key is Trust_10 although it sorts second."""
+    keys = _keys(tmp_path, 1, 2, 10)
+    result, calls = one_shot([HOST], TRUST_NAMES="", KEYS_DIR=str(keys))
+    registered = [line.split() for line in calls.splitlines() if line.startswith("supernode register")]
+    assert [(Path(call[2]).name, call[call.index("--name") + 1]) for call in registered] == [
+        ("supernode_credentials_1.pub", "Trust_1"),
+        ("supernode_credentials_2.pub", "Trust_2"),
+        ("supernode_credentials_10.pub", "Trust_10"),
+    ], result.stdout + result.stderr
+
+
+def test_without_trust_names_a_key_that_names_no_slot_is_refused(one_shot, tmp_path):
+    keys = _keys(tmp_path, 1)
+    (keys / "stray.pub").write_text("unused by the stub\n")
+    result, calls = one_shot([HOST], TRUST_NAMES="", KEYS_DIR=str(keys))
+    assert result.returncode == 1
+    assert "stray.pub is not supernode_credentials_<N>.pub" in result.stderr
+    assert "supernode register" not in calls
+
+
+def test_a_registration_the_superlink_did_not_accept_fails_the_run(one_shot, tmp_path):
+    """Exit 0 with success false left the key unregistered while the one-shot reported success."""
+    keys = _keys(tmp_path, 1)
+    flwr = tmp_path / "bin" / "flwr"
+    flwr.write_text(STUB_FLWR.replace('{"success": true, "node-id": 42}', '{"success": false, "error-message": "x"}'))
+    result, _ = one_shot([HOST], TRUST_NAMES="", KEYS_DIR=str(keys))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "One or more registrations failed" in result.stderr
+
+
+# A SuperLink that already holds keys 1 and 2 as nodes 101 and 102: `ls` lists them, `register`
+# refuses those two keys as Flower does (exit 0, success false) and gives any other key node 42.
+# The FL API mapping is captured by a `python` stub that logs the POSTed name and node id.
+STUB_FLWR_HOLDING = """#!/usr/bin/env bash
+echo "$@" >> "$FLWR_CALLS"
+case "$2" in
+  ls) echo '{"success": true, "nodes": [{"node-id": "101"}, {"node-id": "102"}]}' ;;
+  register)
+    case "$3" in
+      *_1.pub|*_2.pub) echo '{"success": false, "error-message": "[code: 23] Public key already in use."}' ;;
+      *) echo '{"success": true, "node-id": 42}' ;;
+    esac ;;
+esac
+"""
+STUB_PYTHON_MAPPINGS = """#!/usr/bin/env bash
+if [ "$1" = "-c" ]; then
+  case "$2" in
+    *register_node*) echo "$2" | grep -o "'name': '[^']*', 'node_id': '[^']*'" >> "$MAPPINGS" ;;
+  esac
+  exit 0
+fi
+exec "{python}" "$@"
+"""
+
+
+def _holding_superlink(tmp_path: Path, flwr: str = STUB_FLWR_HOLDING) -> Path:
+    (tmp_path / "bin" / "flwr").write_text(flwr)
+    (tmp_path / "bin" / "python").write_text(STUB_PYTHON_MAPPINGS.replace("{python}", sys.executable))
+    return tmp_path / "mappings.log"
+
+
+def test_keys_already_registered_are_skipped_and_keep_their_node_ids(one_shot, tmp_path):
+    """Every add-fl-kits run re-registers the keys a running SuperLink already holds: they must be
+    skipped, not fail the run, and keep the node ids the SuperLink lists for them, in order."""
+    keys = _keys(tmp_path, 1, 2, 10)
+    mappings = _holding_superlink(tmp_path)
+    result, _ = one_shot(
+        [HOST], TRUST_NAMES="", KEYS_DIR=str(keys), FL_API_ADDRESS="http://fl-api:8000", MAPPINGS=str(mappings)
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "All SuperNode keys registered successfully." in result.stdout
+    assert "OK: supernode_credentials_10.pub node_id=42" in result.stdout
+    assert mappings.read_text().splitlines() == [
+        "'name': 'Trust_1', 'node_id': '101'",
+        "'name': 'Trust_2', 'node_id': '102'",
+        "'name': 'Trust_10', 'node_id': '42'",
+    ]
+
+
+def test_node_ids_that_cannot_be_matched_to_their_keys_are_not_guessed(one_shot, tmp_path):
+    """The SuperLink lists more nodes than the keys it refused (a node whose key left the disk): matching
+    by position would send the FL API the wrong trust for each id, so those mappings are left alone."""
+    keys = _keys(tmp_path, 1, 2, 10)
+    mappings = _holding_superlink(
+        tmp_path,
+        STUB_FLWR_HOLDING.replace('{"node-id": "102"}]', '{"node-id": "102"}, {"node-id": "103"}]'),
+    )
+    result, _ = one_shot(
+        [HOST], TRUST_NAMES="", KEYS_DIR=str(keys), FL_API_ADDRESS="http://fl-api:8000", MAPPINGS=str(mappings)
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "their FL API mappings are left as they are" in result.stdout
+    assert mappings.read_text().splitlines() == ["'name': 'Trust_10', 'node_id': '42'"]
+
+
+def test_a_reply_without_a_node_id_fails_the_run(one_shot, tmp_path):
+    """Output this script does not recognise used to pass as a warning, releasing a slot whose key
+    may not be registered."""
+    keys = _keys(tmp_path, 1)
+    flwr = tmp_path / "bin" / "flwr"
+    flwr.write_text(STUB_FLWR.replace('{"success": true, "node-id": 42}', "registered, probably"))
+    result, _ = one_shot([HOST], TRUST_NAMES="", KEYS_DIR=str(keys))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "All SuperNode keys registered successfully." not in result.stdout

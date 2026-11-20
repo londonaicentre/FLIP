@@ -232,3 +232,58 @@ def test_after_a_failed_deploy_the_dump_is_dropped_whatever_the_rollout_did(tmp_
 def test_no_xnat_db_means_no_rollout_wait_and_no_drop(tmp_path):
     calls = _drop_unused_dump(tmp_path, NO_DB="1")
     assert not any(c.startswith(("rollout", "exec")) for c in calls), calls
+
+
+# A stand-in for kubectl, for sync-project-studies (FLIP#1678): every call is logged to $CALLS, `get` finds a pod,
+# and `exec` runs data-access-api's listing here, against $COHORT_SNAPSHOT_DIR.
+STUB_STUDIES_KUBECTL = r"""#!/bin/sh
+echo "$*" >> "$CALLS"
+case "$*" in
+  get*) echo pod/x ;;
+  *"-c fl-client"*) echo '{"studies": {}}' ;;
+  exec*) while [ "$1" != "--" ]; do shift; done; shift; exec "$@" ;;
+  *"apply -f -"*) cat > /dev/null ;;
+  *) echo "kind: ConfigMap" ;;
+esac
+"""
+
+
+def _sync_project_studies(tmp_path: Path, snapshot_dir: Path, fails: bool) -> list[str]:
+    stub = tmp_path / "bin" / "kubectl"
+    stub.parent.mkdir()
+    stub.write_text(STUB_STUDIES_KUBECTL)
+    stub.chmod(0o755)
+    calls = tmp_path / "calls"
+    env = {"PATH": f"{stub.parent}:{os.environ['PATH']}", "CALLS": str(calls), "COHORT_SNAPSHOT_DIR": str(snapshot_dir)}
+    result = subprocess.run(
+        ["make", "-C", str(CHART_DIR), "sync-project-studies"],
+        capture_output=True,
+        text=True,
+        stdin=subprocess.DEVNULL,
+        env={**os.environ, **env},
+    )
+    assert (result.returncode != 0) == fails, result.stdout + result.stderr
+    return calls.read_text().splitlines()
+
+
+def test_sync_project_studies_gives_each_approved_project_its_entry(tmp_path):
+    project = "8b2e9d6e-5a53-4f2e-9c37-2c8f4f0f2d11"
+    (tmp_path / "snapshots" / project).mkdir(parents=True)
+    (tmp_path / "snapshots" / project / "membership.json").write_text("{}")
+
+    calls = _sync_project_studies(tmp_path, tmp_path / "snapshots", fails=False)
+
+    assert any("flip.nvflare.project_studies" in c and c.endswith(project) for c in calls), calls
+    assert any(c.startswith("create configmap") for c in calls), calls
+
+
+@pytest.mark.parametrize("folder", ["empty", "missing"])
+def test_sync_project_studies_never_replaces_the_file_when_it_finds_no_project(tmp_path, folder):
+    """An empty or unmounted snapshot folder would otherwise remove every project's entry, and report success."""
+    snapshot_dir = tmp_path / folder
+    if folder == "empty":
+        snapshot_dir.mkdir()
+
+    calls = _sync_project_studies(tmp_path, snapshot_dir, fails=True)
+
+    assert not any("project_studies" in c or "configmap" in c for c in calls), calls

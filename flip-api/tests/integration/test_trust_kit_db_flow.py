@@ -160,6 +160,17 @@ def test_status_reports_the_last_download_and_a_moved_hub_value(session, world, 
     assert get_trust_kit_status(trust_id=world["trust"], db=session, user_id=world["hub_admin"]).update_available
 
 
+def test_status_offers_no_update_from_a_hub_that_cannot_issue_one(session, world, monkeypatch):
+    _download(session, world["trust"], world["trust_admin"])
+    monkeypatch.delenv("CENTRAL_HUB_API_URL")
+    monkeypatch.setattr(get_settings(), "ENV", "production")
+
+    status = get_trust_kit_status(trust_id=world["trust"], db=session, user_id=world["hub_admin"])
+
+    assert status.download_count == 1
+    assert status.update_available is False
+
+
 def test_issuing_new_keys_refuses_the_old_one(session, world):
     old = _kit_json(_download(session, world["trust"], world["trust_admin"]))["kit"]["trust_api_key"]
 
