@@ -303,16 +303,7 @@ variable "FLIP_UI_BUCKET_NAME" {
 }
 
 variable "FLIP_DEMO_BUCKET_NAME" {
-  description = <<-EOT
-    S3 bucket holding the public demo (FLIP#2012), a second build of flip-ui that
-    runs on fixtures with no backend. It is served from its own host by its own
-    distribution in the networking account (aicentre-lza-iac), so the browser keeps
-    it away from the real app's origin and tokens. Created by
-    module.flip_demo_bucket (services.tf) with the cross-account OAC grant to that
-    distribution. Leave empty (the default) for no demo. Clearing it on an estate
-    that has the bucket proposes a destroy, which prevent_destroy turns into an
-    apply failure.
-  EOT
+  description = "S3 bucket for the public demo, served from its own host (FLIP#2012, module.flip_demo_bucket). Empty (the default) creates none; clearing it where the bucket exists fails the apply (prevent_destroy)."
   type        = string
   default     = ""
 }

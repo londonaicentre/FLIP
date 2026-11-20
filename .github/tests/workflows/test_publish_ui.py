@@ -72,18 +72,8 @@ class PublishUi(unittest.TestCase):
         """The same npm scripts as make deploy-ui; postbuild:deploy writes window.js."""
         build = job("publish_ui.yml", "build")
         assert "npm ci" in build
-        assert "npm run build:deploy\n" in build
+        assert "npm run build:deploy" in build
         assert "AUTH_BACKEND: cognito" in build
-
-    def test_the_demo_is_its_own_build_and_artefact(self) -> None:
-        """The demo has its own host and bucket (FLIP#2012), so it never travels inside the app's artefact."""
-        build = job("publish_ui.yml", "build")
-        assert "npm run build:demo" in build
-        assert re.search(r"name: flip-ui-dist\n\s+path: flip-ui/dist/\n", build)
-        assert re.search(r"name: flip-ui-demo\n\s+path: flip-ui/dist-demo/\n", build)
-        workflow = code("publish_ui.yml")
-        for gone in ("PUBLIC_DEMO", "with-demo", "dist/demo", "/demo/"):
-            assert gone not in workflow, gone
 
     def test_only_the_publish_job_assumes_the_ui_role(self) -> None:
         publish = job("publish_ui.yml", "publish")
@@ -95,68 +85,17 @@ class PublishUi(unittest.TestCase):
         assert '"${FLIP_UI_BUCKET_NAME}"' in publish
         others = [path.name for path in WORKFLOWS.glob("*.yml") if path.name != "publish_ui.yml"]
         assert not [name for name in others if "TF_UI_PUBLISH_ROLE_ARN" in code(name)]
-        assert "name: flip-ui-dist" in publish
-        assert "DEMO" not in publish
-
-    def test_only_the_demo_job_assumes_the_demo_role(self) -> None:
-        """Each publish holds the credential for its own bucket only."""
-        demo = job("publish_ui.yml", "publish-demo")
-        assert permissions(demo) == {"contents": "read", "id-token": "write"}
-        assert "needs: build" in demo
-        assert "if: needs.build.outputs.demo == 'true'" in demo
-        assert "role-to-assume: ${{ vars.TF_DEMO_PUBLISH_ROLE_ARN }}" in demo
-        assert "name: flip-ui-demo" in demo
-        assert "npm" not in demo
-        assert 'deploy/providers/AWS/scripts/publish-ui.sh dist-demo "${FLIP_DEMO_BUCKET_NAME}"' in demo
-        assert "TF_UI_PUBLISH_ROLE_ARN" not in demo
-        assert "FLIP_UI_BUCKET_NAME" not in demo
-        assert "flip-ui-dist" not in demo
-        assert '"${DEMO_SITE_URL}/js/window.js"' in demo
-        others = [path.name for path in WORKFLOWS.glob("*.yml") if path.name != "publish_ui.yml"]
-        assert not [name for name in others if "TF_DEMO_PUBLISH_ROLE_ARN" in code(name)]
 
     def test_an_environment_without_the_role_skips_rather_than_fails(self) -> None:
         """Merging this before the platform creates the role must not turn every apply run red."""
         build = job("publish_ui.yml", "build")
         steps = re.findall(r"^      - name: (.+)$", build, re.MULTILINE)
-        assert steps[:2] == ["Check for the UI-publish role", "Check for the demo-publish role"]
-        guard = (
-            r"^      - name: .+\n        if: (?:steps\.role\.outputs\.set == 'true'"
-            r"|steps\.demo_role\.outputs\.set == 'true'"
-            r"|steps\.role\.outputs\.set == 'true' \|\| steps\.demo_role\.outputs\.set == 'true')$"
-        )
+        assert steps[0] == "Check for the UI-publish role"
+        guard = r"^      - name: .+\n        if: steps\.role\.outputs\.set == 'true'$"
         guarded = re.findall(guard, build, re.MULTILINE)
-        assert len(guarded) == len(steps) - 2, "every build step after the role checks must be skipped without them"
+        assert len(guarded) == len(steps) - 1, "every build step after the role check must be skipped without it"
         assert "configured: ${{ steps.role.outputs.set }}" in build
-        assert "demo: ${{ steps.demo_role.outputs.set }}" in build
         assert "if: needs.build.outputs.configured == 'true'" in job("publish_ui.yml", "publish")
-        assert "if: needs.build.outputs.demo == 'true'" in job("publish_ui.yml", "publish-demo")
-
-    def test_the_demo_role_needs_its_bucket_and_an_https_host(self) -> None:
-        """The readback finds the demo at DEMO_SITE_URL, so a half-configured environment fails the build."""
-        step = re.search(
-            r"^      - name: Check for the demo-publish role\n(?:        [^\n]*\n)*?        run: \|\n"
-            r"(?P<run>(?:          [^\n]*\n)+)",
-            job("publish_ui.yml", "build"),
-            re.MULTILINE,
-        )
-        assert step, "no 'Check for the demo-publish role' step"
-        script = "\n".join(line[10:] for line in step["run"].splitlines())
-        base = {"PATH": os.environ["PATH"], "ENVIRONMENT": "aws-stag", "GITHUB_OUTPUT": os.devnull}
-        role = {"ROLE_ARN": "arn:aws:iam::000000000000:role/x", "FLIP_DEMO_BUCKET_NAME": "demo-bucket"}
-        for env, ok, says in [
-            ({}, True, "TF_DEMO_PUBLISH_ROLE_ARN"),
-            ({**role, "DEMO_SITE_URL": "https://demo.example.org"}, True, ""),
-            ({**role, "DEMO_SITE_URL": ""}, False, "DEMO_SITE_URL"),
-            ({**role, "FLIP_DEMO_BUCKET_NAME": "", "DEMO_SITE_URL": "https://demo.example.org"}, False, "FLIP_DEMO"),
-            ({**role, "DEMO_SITE_URL": "https://demo.example.org/"}, False, "no path"),
-            ({**role, "DEMO_SITE_URL": "http://demo.example.org"}, False, "no path"),
-        ]:
-            with self.subTest(env=env):
-                full = {"ROLE_ARN": "", "FLIP_DEMO_BUCKET_NAME": "", "DEMO_SITE_URL": "", **base, **env}
-                run = subprocess.run(["bash", "-c", script], env=full, capture_output=True, text=True)
-                assert (run.returncode == 0) is ok, run.stdout + run.stderr
-                assert says in run.stdout
 
     def test_the_api_url_must_end_in_api(self) -> None:
         """The check after the publish finds the site by dropping /api, so a URL without it fails the build."""

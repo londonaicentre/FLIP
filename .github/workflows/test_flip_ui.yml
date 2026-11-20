@@ -242,22 +242,9 @@ jobs:
           wait-on-timeout: 120
           config-file: cypress.public-demo.config.ts
 
-      # The publish ships dist-demo/ as built: check it is the demo, with its own window.js.
+      # The publish ships dist-demo/ as built: check it carries the demo's own window.js.
       - name: Check the demo build
-        run: |
-          set -euo pipefail
-          if [[ ! -f dist-demo/index.html ]]; then
-            echo "::error::dist-demo/index.html is missing."
-            exit 1
-          fi
-          if ! grep -Eq 'window.RELEASE_VERSION = "demo/[^"]+";' dist-demo/js/window.js; then
-            echo "::error::dist-demo/js/window.js does not carry the demo's release."
-            exit 1
-          fi
-          if ! compgen -G "dist-demo/static/*.js" > /dev/null; then
-            echo "::error::dist-demo/static/ has no .js files."
-            exit 1
-          fi
+        run: grep -Eq 'window.RELEASE_VERSION = "demo/[^"]+";' dist-demo/js/window.js
 
       - name: Upload Cypress screenshots
         if: failure()

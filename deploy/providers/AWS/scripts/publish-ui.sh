@@ -45,8 +45,6 @@ entries=(index.html js/window.js)
 for entry in "${entries[@]}"; do
     [[ -f "${dist}/${entry}" ]] || fail "${dist}/${entry} is missing: run the build first."
 done
-# The demo is never published beside the app (FLIP#2012).
-[[ ! -e "${dist}/demo" ]] || fail "${dist}/demo exists: the demo is published to its own bucket, never under the app."
 
 echo "📦 Syncing ${dist} to s3://${bucket}/ ..."
 aws s3 sync "${dist}/" "s3://${bucket}/" \

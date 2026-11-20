@@ -16,17 +16,49 @@
 # Demo-publish role (FLIP#2012)
 ############################
 
-# The public demo is served from its own host and bucket, so the browser keeps it
-# away from the app's tokens. Its publish gets its own role, scoped to that bucket:
-# the demo job never holds credentials for the app's bucket, nor the app job for
-# the demo's. Created only when the caller names the demo bucket. It trusts the
-# same reusable workflow as the UI-publish role (iam_ui_publish.tf).
+# The public demo has its own host and bucket, and its publish its own role:
+# created only when the caller names the demo bucket, scoped to that bucket, and
+# trusting only publish_demo.yml. A job's OIDC token names the workflow file, not
+# the job, so the separate file is what keeps this role and the UI-publish role
+# apart.
+data "aws_iam_policy_document" "demo_publish_assume_role" {
+  count = local.demo_publish ? 1 : 0
+
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [var.oidc_provider_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = [local.oidc_sub]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:job_workflow_ref"
+      values   = [local.demo_publish_workflow_ref]
+    }
+  }
+}
+
 resource "aws_iam_role" "demo_publish" {
   count = local.demo_publish ? 1 : 0
 
   name                 = var.demo_publish_role_name
   description          = "Role that publishes the public demo to its S3 bucket from GitHub Actions on ${var.apply_branch} (FLIP#2012)"
-  assume_role_policy   = data.aws_iam_policy_document.ui_publish_assume_role[0].json
+  assume_role_policy   = data.aws_iam_policy_document.demo_publish_assume_role[0].json
   max_session_duration = 3600
   tags                 = var.tags
 }

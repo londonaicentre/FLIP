@@ -91,8 +91,9 @@ module "terraform_ci" {
   ui_publish_workflow_file = var.ui_publish_workflow_file
   ui_publish_role_name     = var.ui_publish_role_name
 
-  demo_bucket_name       = var.demo_bucket_name
-  demo_publish_role_name = var.demo_publish_role_name
+  demo_bucket_name           = var.demo_bucket_name
+  demo_publish_workflow_file = var.demo_publish_workflow_file
+  demo_publish_role_name     = var.demo_publish_role_name
 
   manage_state_bucket                = var.manage_state_bucket
   state_bucket_sse_algorithm         = var.state_bucket_sse_algorithm

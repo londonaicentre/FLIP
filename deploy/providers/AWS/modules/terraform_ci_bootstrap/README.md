@@ -96,8 +96,9 @@ Least privilege, with each grant explained where it is declared:
   `job_workflow_ref`). `s3:ListBucket` on the UI bucket, `Get`/`Put`/`DeleteObject` on its objects, and nothing else.
   Its ARN, the `ui_publish_role_arn` output, goes in the environment variable `TF_UI_PUBLISH_ROLE_ARN`.
 - **Demo-publish role** ([`iam_demo_publish.tf`](iam_demo_publish.tf), FLIP#2012): created only when `demo_bucket_name`
-  is set. The public demo has its own host and bucket, so its publish has its own role, with the UI-publish role's
-  trust and the same three object actions on the demo bucket only. Its ARN, the `demo_publish_role_arn` output, goes
+  is set. Trusts its own reusable workflow, `publish_demo.yml` (`demo_publish_workflow_file`), at `apply_branch`, and
+  has the same three object actions on the demo bucket only. A job's token names its workflow file, not the job, so
+  the separate file is what keeps it apart from the UI-publish role. Its ARN, the `demo_publish_role_arn` output, goes
   in `TF_DEMO_PUBLISH_ROLE_ARN`.
 - **Boundary** ([`boundary.tf`](boundary.tf)): allow everything, deny identity management, Organizations and Account.
 

@@ -707,13 +707,13 @@ deploy-ui: ## Build flip-ui from the working tree and publish it to the UI bucke
 
 .PHONY: deploy-demo
 deploy-demo: ## Build the public demo from the working tree and publish it to its own bucket (CI does this after every apply, FLIP#2012)
-	@echo "🖼️  Building the public demo from working tree..."
+	@# The bucket first: an estate without a demo has none, so fail before building.
 	@# build:demo reads no environment: it writes dist-demo/js/window.js itself and
-	@# checks dist-demo for unscrubbed fixtures. The demo has its own host and
-	@# bucket, so the browser keeps it away from the app's origin and tokens.
-	@cd ../../../flip-ui && npm ci && npm run build:demo
+	@# checks dist-demo for unscrubbed fixtures.
 	@DEMO_BUCKET=$$($(_AWS_ENV) terraform output -raw FlipDemoBucketName 2>/dev/null); \
 	[ -n "$$DEMO_BUCKET" ] || { echo "❌ Terraform output FlipDemoBucketName is empty: set FLIP_DEMO_BUCKET_NAME and apply first."; exit 1; }; \
+	echo "🖼️  Building the public demo from working tree..."; \
+	(cd ../../../flip-ui && npm ci && npm run build:demo) && \
 	$(_AWS_ENV) ./scripts/publish-ui.sh ../../../flip-ui/dist-demo "$$DEMO_BUCKET"
 
 # Identity of the trust kit a hub-admin target acts on — a trust CODE that selects its kit

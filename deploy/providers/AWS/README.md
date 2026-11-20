@@ -195,11 +195,13 @@ offline on captured, scrubbed fixtures. It is served at the root of **its own ho
 `services.tf`), so the browser's same-origin policy keeps it away from the signed-in app: script on the
 demo host cannot read the app's Cognito tokens in `localStorage`, whatever any header says.
 
-It is published with the UI. The same `publish_ui.yml` run builds it as a second artefact, and its
-`publish-demo` job assumes `TF_DEMO_PUBLISH_ROLE_ARN`, runs `scripts/publish-ui.sh` against
-`FLIP_DEMO_BUCKET_NAME`, and reads `js/window.js` back from `DEMO_SITE_URL`. That role is the bootstrap
-module's `AICentre-FLIPDemoPublishRole` (set `demo_bucket_name` on the module): it can list and write the
-demo bucket and nothing else, and the UI-publish role cannot reach the demo bucket at all. While
+It is published with the UI: the apply's `demo` job runs
+[`publish_demo.yml`](../../../.github/workflows/publish_demo.yml) beside the `ui` job. Its publish job
+assumes `TF_DEMO_PUBLISH_ROLE_ARN`, runs `scripts/publish-ui.sh` against `FLIP_DEMO_BUCKET_NAME`, and reads
+`js/window.js` back from `DEMO_SITE_URL`. That role is the bootstrap module's
+`AICentre-FLIPDemoPublishRole` (set `demo_bucket_name` on the module): it can list and write the demo
+bucket and nothing else, and trusts only `publish_demo.yml`. A job's token names its workflow file, not
+the job, so the two files are what keep the demo and UI roles apart. While
 `TF_DEMO_PUBLISH_ROLE_ARN` is unset the job only warns; `make deploy-demo HUB=stag|prod` is the manual
 fallback. The demo build's own check (`demo-fixtures.mjs check --dist dist-demo`) fails it if an
 unscrubbed fixture reaches the output, and `test_flip_ui.yml` builds and walks it on every flip-ui

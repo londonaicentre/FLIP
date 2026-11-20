@@ -95,29 +95,14 @@ module "flip_app_bundles_bucket" {
 # Public demo bucket (FLIP#2012)
 ############################
 #
-# The public demo is served from its own host, by its own distribution in the
-# networking account, so the browser's same-origin policy keeps it away from the
-# real app's tokens. Created whenever FLIP_DEMO_BUCKET_NAME is set.
-#
-# Two deliberate departures from the sibling buckets:
-#
-#   * AES256, not the app CMK. CloudFront in ANOTHER account reads it through
-#     OAC, and a cross-account service principal cannot decrypt with this
-#     account's CMK without a key-policy grant. aws_s3_bucket.flip_ui is on
-#     AES256 for the same reason. The demo is public: nothing to protect.
-#   * An extra bucket-policy statement rather than a second policy resource:
-#     S3 allows one policy per bucket, and the module already owns it.
-#
-# The grant is read-only with no s3:ListBucket, so a missing key 403s rather
-# than listing the bucket; the distribution's own function serves index.html for
-# the SPA's routes. AWS:SourceArn is empty until that distribution exists, which
-# matches nothing, so the grant is closed until the second apply fills it in.
-locals {
-  demo_enabled = var.FLIP_DEMO_BUCKET_NAME != ""
-}
-
+# Read by the demo's own distribution in the networking account (see README,
+# "Public demo"). Two departures from the sibling buckets: AES256, because a
+# cross-account CloudFront cannot decrypt with this account's CMK (as for
+# aws_s3_bucket.flip_ui); and an extra statement in the module's one bucket
+# policy. The grant has no s3:ListBucket, so a missing key 403s, and an empty
+# AWS:SourceArn matches nothing until the distribution's ARN is set.
 module "flip_demo_bucket" {
-  count = local.demo_enabled ? 1 : 0
+  count = var.FLIP_DEMO_BUCKET_NAME != "" ? 1 : 0
 
   source                = "./modules/flip_s3_bucket"
   bucket_name           = var.FLIP_DEMO_BUCKET_NAME

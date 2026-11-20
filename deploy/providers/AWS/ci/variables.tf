@@ -236,6 +236,12 @@ variable "demo_bucket_name" {
   default     = ""
 }
 
+variable "demo_publish_workflow_file" {
+  description = "Reusable workflow permitted to assume the demo-publish role."
+  type        = string
+  default     = "publish_demo.yml"
+}
+
 variable "demo_publish_role_name" {
   description = "Name of the demo-publish role."
   type        = string

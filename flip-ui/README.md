@@ -104,8 +104,8 @@ CI runs the build and the walk on every flip-ui change (the *Public demo* job of
 The build regenerates `dist-demo/js/window.js` from
 [`scripts/generate-demo-window-js.sh`](scripts/generate-demo-window-js.sh), which reads no
 environment and points at no real backend. The demo is served at the root of its own host (FLIP#2012),
-never on the real app's origin: the UI publish workflow's `publish-demo` job (`publish_ui.yml`) publishes
-`dist-demo/` to its own bucket, and `make -C deploy/providers/AWS deploy-demo HUB=stag|prod` is the manual
+never on the real app's origin: `.github/workflows/publish_demo.yml` publishes `dist-demo/` to its own
+bucket after each apply, and `make -C deploy/providers/AWS deploy-demo HUB=stag|prod` is the manual
 fallback.
 
 The demo is a point-in-time capture, not a live system, and says so twice: `window.RELEASE_VERSION`

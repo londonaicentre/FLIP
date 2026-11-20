@@ -232,13 +232,13 @@ Things worth knowing before touching any of it:
   `TF_UI_PUBLISH_ROLE_ARN`, the module's optional `AICentre-FLIPUiPublishRole` (created
   when the caller sets `ui_bucket_name`). That role trusts `publish_ui.yml@refs/heads/<branch>`
   — for a reusable workflow, `job_workflow_ref` names the called file — and can list the
-  bucket and write its objects. The public demo is a second artefact with its own job,
-  `publish-demo`, which assumes `TF_DEMO_PUBLISH_ROLE_ARN` (`AICentre-FLIPDemoPublishRole`,
-  created when the caller sets `demo_bucket_name`; same trust, demo bucket only) and
-  publishes `dist-demo/` to `FLIP_DEMO_BUCKET_NAME`, served from its own host (FLIP#2012).
+  bucket and write its objects. The public demo has its own workflow, `publish_demo.yml`
+  (the apply's `demo` job), and role, `TF_DEMO_PUBLISH_ROLE_ARN` (`AICentre-FLIPDemoPublishRole`,
+  created when the caller sets `demo_bucket_name`, trusting only that file), which publishes
+  `dist-demo/` to `FLIP_DEMO_BUCKET_NAME`, served from its own host (FLIP#2012).
   `scripts/publish-ui.sh` is the one sync recipe, shared with `make deploy-ui` and
-  `make deploy-demo`; `.github/tests/workflows/test_publish_ui.py` and
-  `scripts/tests/test_publish_ui.sh` pin both halves.
+  `make deploy-demo`; `.github/tests/workflows/test_publish_{ui,demo}.py` and
+  `scripts/tests/test_publish_ui.sh` pin them.
 - **The pytest suite under `tests/` runs in CI** as the `AWS deploy tests` job in
   `validate_terraform.yml`. The root `make unit_test` does not reach this directory
   and this directory's Makefile has no `test` target, so

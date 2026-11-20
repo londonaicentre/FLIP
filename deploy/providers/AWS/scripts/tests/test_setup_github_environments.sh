@@ -106,7 +106,8 @@ case "$1 $2" in
                 # The UI-publish role trusts publish_ui.yml at the apply role's branch,
                 # unless STUB_UI_REF says otherwise.
                 if [[ "${name}" == *Apply* ]]; then echo "${STUB_APPLY_REF}"
-                elif [[ "${name}" == *UiPublish* || "${name}" == *DemoPublish* ]]; then echo "${STUB_UI_REF:-${STUB_APPLY_REF/terraform_apply.yml/publish_ui.yml}}"
+                elif [[ "${name}" == *UiPublish* ]]; then echo "${STUB_UI_REF:-${STUB_APPLY_REF/terraform_apply.yml/publish_ui.yml}}"
+                elif [[ "${name}" == *DemoPublish* ]]; then echo "${STUB_DEMO_REF:-${STUB_APPLY_REF/terraform_apply.yml/publish_demo.yml}}"
                 else echo "None"; fi ;;
             *) echo "unexpected get-role query" >&2; exit 98 ;;
         esac ;;
@@ -360,6 +361,12 @@ if grep -A1 '^gh variable set TF_DEMO_PUBLISH_ROLE_ARN ' "${CALLS}" | grep -qF '
 else
     no "its ARN is set from IAM, not from the env file" "$(grep -A1 'TF_DEMO_PUBLISH_ROLE_ARN' "${CALLS}")"
 fi
+
+run_case "a demo-publish role that trusts the UI's workflow is refused" \
+    STUB_DEMO_REF="acme/flip/.github/workflows/publish_ui.yml@refs/heads/develop" -- \
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
+expect_rc 1 "fails"
+expect_mentions "publish_demo.yml" "naming the workflow it must trust"
 
 run_case "without the demo-publish role the run still succeeds" \
     STUB_MISSING_ROLES="AICentre-FLIPDemoPublishRole" -- \

@@ -30,9 +30,8 @@ export default defineConfig(({ mode, command }) => {
     }
 
     // Public demo build (`vite --mode demo` / `vite build --mode demo`).
-    // It is served at the root of its own origin (FLIP#2012), so its base is
-    // "/" like the real app's; it builds into dist-demo/ (and `vite preview`
-    // serves it from there) so the real build's dist/ never carries it.
+    // It is served at the root of its own origin (FLIP#2012) and builds into
+    // dist-demo/ (where `vite preview` serves it), so dist/ never carries it.
     const isDemo = mode === "demo";
 
     // Belt-and-braces guard for `vite build` invoked directly (bypassing
@@ -78,7 +77,6 @@ export default defineConfig(({ mode, command }) => {
     );
 
     return {
-        base: "/",
         plugins: [
             progress(),
             vue(
@@ -164,11 +162,6 @@ export default defineConfig(({ mode, command }) => {
             outDir: isDemo ? "dist-demo" : "dist",
             sourcemap: false,
             chunkSizeWarningLimit: 1024,
-            // Demo build only: its JS/CSS/fonts live under static/ rather than
-            // Vite's default "assets", so a demo bundle is told apart from the
-            // real UI's at a glance (CI checks for it). Non-demo builds keep
-            // Vite's default.
-            assetsDir: isDemo ? "static" : "assets",
             rolldownOptions: {
                 output: {
                     manualChunks: (id) => {

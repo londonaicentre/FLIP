@@ -141,14 +141,6 @@ else
     no "writes index.html after the bundles it references" "calls: ${CALLS}"
 fi
 
-# 1b. The demo is published to its own bucket (FLIP#2012), never beside the app.
-fixture
-mkdir -p "${DIST}/demo/js"
-printf '<!doctype html>\n' >"${DIST}/demo/index.html"
-run_publish "a build that carries a demo/" "${DIST}" flip-ui-bucket
-expect_rc 1 "fails"
-expect_no_call "s3" "publishes nothing"
-
 # 2. A build without its entry points would leave the bucket serving the previous index.html, or none.
 fixture
 rm "${DIST}/index.html"

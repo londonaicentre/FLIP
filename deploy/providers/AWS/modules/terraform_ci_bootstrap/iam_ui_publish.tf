@@ -23,10 +23,9 @@
 # The trust pins the reusable workflow, not its callers. For a job inside a
 # reusable workflow GitHub sets job_workflow_ref to the *called* file, so
 # terraform_apply.yml's `ui` job presents `publish_ui.yml@refs/heads/<branch>`,
-# and a pull request presents `@refs/pull/<n>/merge` and is denied. The
-# demo-publish role (iam_demo_publish.tf) trusts the same workflow.
+# and a pull request presents `@refs/pull/<n>/merge` and is denied.
 data "aws_iam_policy_document" "ui_publish_assume_role" {
-  count = local.ui_publish || local.demo_publish ? 1 : 0
+  count = local.ui_publish ? 1 : 0
 
   statement {
     effect  = "Allow"

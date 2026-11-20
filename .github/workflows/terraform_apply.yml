@@ -518,6 +518,19 @@ jobs:
       environment: ${{ github.ref_name == 'main' && 'aws-prod' || 'aws-stag' }}
       release_tag: ${{ inputs.release_tag }}
 
+  # The public demo, from its own workflow so its role trusts nothing that can
+  # reach the UI bucket (FLIP#2012). Same gate as ui.
+  demo:
+    name: Publish the public demo (${{ github.ref_name == 'main' && 'prod' || 'stag' }})
+    needs: apply
+    if: always() && needs.apply.result == 'success'
+    uses: ./.github/workflows/publish_demo.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      environment: ${{ github.ref_name == 'main' && 'aws-prod' || 'aws-stag' }}
+
   # ---------------------------------------------------------------------------
   # The staging cycle after the apply (FLIP#1596): restore, check, hold, stop.
   # None of these jobs exists on a production apply. They are gated on the ref

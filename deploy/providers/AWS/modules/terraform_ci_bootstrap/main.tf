@@ -100,9 +100,10 @@ locals {
   ui_publish_workflow_ref = "${local.workflow_ref_prefix}/${var.ui_publish_workflow_file}@refs/heads/${var.apply_branch}"
   ui_bucket_arn           = "arn:${data.aws_partition.current.partition}:s3:::${var.ui_bucket_name}"
 
-  # The demo-publish role (iam_demo_publish.tf) shares that trust.
-  demo_publish    = var.demo_bucket_name != ""
-  demo_bucket_arn = "arn:${data.aws_partition.current.partition}:s3:::${var.demo_bucket_name}"
+  # The demo-publish role (iam_demo_publish.tf), the same way for its own workflow.
+  demo_publish              = var.demo_bucket_name != ""
+  demo_publish_workflow_ref = "${local.workflow_ref_prefix}/${var.demo_publish_workflow_file}@refs/heads/${var.apply_branch}"
+  demo_bucket_arn           = "arn:${data.aws_partition.current.partition}:s3:::${var.demo_bucket_name}"
 
   # Plan runs from two places, so its allowed set is a list of patterns rather
   # than one exact string.
