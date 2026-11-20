@@ -81,6 +81,20 @@ class TestTarget:
         with patch(f"{SVC}.build_identity", return_value=identity):
             assert svc.target_release() == expected
 
+    def test_the_operator_target_wins_over_the_hub_release(self):
+        """Staging runs sha- builds: the operator names the release its trusts move to."""
+        settings = MagicMock(AUTO_UPGRADE_TARGET_RELEASE="v1.2.5")
+        with (
+            patch(f"{SVC}.get_settings", return_value=settings),
+            patch(f"{SVC}.build_identity", return_value="sha-abc1234"),
+        ):
+            assert svc.target_release() == "v1.2.5"
+
+    def test_unset_operator_target_falls_back_to_the_hub_release(self):
+        settings = MagicMock(AUTO_UPGRADE_TARGET_RELEASE=None)
+        with patch(f"{SVC}.get_settings", return_value=settings), patch(f"{SVC}.build_identity", return_value="v1.3.0"):
+            assert svc.target_release() == "v1.3.0"
+
     def test_current_release_reads_trust_api_version(self):
         assert svc.current_release(_trust()) == "v1.2.0"
         assert svc.current_release(_trust(services_health=None)) is None

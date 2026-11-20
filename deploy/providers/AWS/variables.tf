@@ -381,6 +381,22 @@ variable "FL_ADMIN_DIRECTORY" {
   default     = "/app/admin"
 }
 
+variable "AUTO_UPGRADE_TARGET_RELEASE" {
+  description = <<-EOT
+    The release trusts with automatic upgrades switched on are moved to (FLIP#1644), as a
+    stable `vX.Y.Z`. Leave unset to target the release the hub itself runs. Staging sets it,
+    since its hub runs `sha-` builds; production sets it only to hold a release back. Empty
+    is treated as unset and the variable is omitted from the flip-api task env.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.AUTO_UPGRADE_TARGET_RELEASE == "" || can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+$", var.AUTO_UPGRADE_TARGET_RELEASE))
+    error_message = "AUTO_UPGRADE_TARGET_RELEASE must be empty or a stable release tag (vX.Y.Z)."
+  }
+}
+
 variable "ENFORCE_MFA" {
   description = <<-EOT
     Gate authenticated routes on TOTP enrolment. Leave unset for the secure
@@ -399,4 +415,3 @@ variable "ecs_exec_enabled" {
   type        = bool
   default     = false
 }
-

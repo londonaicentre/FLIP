@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo
 from fastapi import HTTPException, status
 from sqlmodel import Session, col, select
 
+from flip_api.config import get_settings
 from flip_api.db.models.main_models import FLJob, FLJobTrust, Trust
 from flip_api.domain.schemas.status import JobStatus
 from flip_api.domain.schemas.trusts import (
@@ -68,12 +69,17 @@ def _iso(value: datetime | None) -> str | None:
 
 
 def target_release() -> str | None:
-    """The release a trust upgrades to: the one this hub runs, and only if it is a stable release tag.
+    """The release a trust upgrades to, or ``None`` for "none".
 
-    A ``sha-`` build or a local build names no release a site can check out, and a release candidate
-    (``vX.Y.Z-rc.N``) is not something to move a site to unattended, so both yield ``None`` and the agent
-    does nothing until the hub is on a stable ``vX.Y.Z``.
+    ``AUTO_UPGRADE_TARGET_RELEASE`` wins when the hub operator sets it (validated as a stable
+    ``vX.Y.Z`` at boot): that is how staging, whose hub runs ``sha-`` builds, exercises the feature
+    before production, and how a release is held back. Otherwise it is the release this hub runs, and
+    only if that is a stable release tag: a ``sha-`` build or a local build names no release a site can
+    check out, and a release candidate (``vX.Y.Z-rc.N``) is not something to move a site to unattended.
     """
+    override = get_settings().AUTO_UPGRADE_TARGET_RELEASE
+    if override:
+        return override
     identity = build_identity()
     return identity if identity and _STABLE_RELEASE.match(identity) else None
 

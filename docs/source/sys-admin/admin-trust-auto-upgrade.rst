@@ -58,6 +58,24 @@ Two rules hold in both states:
   GitHub". A Trust cannot be upgraded past a hub that has not moved yet.
 - **A running training job is never interrupted.** The agent only starts when no job that involves this Trust is
   running. If the Trust is busy it waits and tries again on the next hourly check.
+- **Only forward, only to a stable release.** The target is a stable ``vX.Y.Z``, never a release candidate, and
+  the agent refuses a target older than what the Trust already runs, so rolling the hub back does not walk the
+  Trusts back with it.
+
+Choosing the target
+===================
+
+By default the target is the release the hub itself runs. The hub operator can name a different one with
+``AUTO_UPGRADE_TARGET_RELEASE`` (a stable ``vX.Y.Z``) in the hub's environment, or, on AWS, the GitHub
+environment variable of the same name, which Terraform passes to flip-api. Use it to:
+
+- **Test on staging first.** A staging hub runs ``sha-`` builds, which name no release, so without this setting
+  automatic upgrades never act there. Set it to the release under test so staging Trusts exercise the upgrade
+  before it reaches production.
+- **Hold a release back.** On production, pin the target to the current release while a new hub release beds in,
+  then clear it.
+
+A value that is not a stable release tag stops flip-api from starting, rather than being ignored.
 
 ***********************
 How the three parts fit
