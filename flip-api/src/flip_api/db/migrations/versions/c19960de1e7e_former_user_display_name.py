@@ -13,7 +13,7 @@
 """former user display name
 
 Revision ID: c19960de1e7e
-Revises: a6174749cbb5
+Revises: a4c8e1f52d07
 Create Date: 2026-11-19 12:00:00.000000
 
 """
@@ -24,7 +24,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'c19960de1e7e'
-down_revision: str | None = 'a6174749cbb5'
+down_revision: str | None = 'a4c8e1f52d07'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
