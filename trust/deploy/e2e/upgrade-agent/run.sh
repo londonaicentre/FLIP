@@ -15,7 +15,7 @@
 # See README.md. Stages (idempotent, run in this order):
 #   ./run.sh setup      cluster + TLS registry + images + charts + stub hub + release at v0.99.0
 #   ./run.sh tick       run one CronJob tick now; show its log, the hub's view and the release history
-#   ./run.sh rollback   publish a broken v0.99.2, point the hub at it, tick: expect FAILED + rollback
+#   ./run.sh failure    publish a broken v0.99.2, point the hub at it, tick: expect FAILED, left in place
 #   ./run.sh state      hub state, release history, pods
 #   ./run.sh down       delete the cluster, the registry and the work dir
 # Needs: docker, kind, kubectl, helm, openssl, python3.
@@ -37,7 +37,7 @@ REG_IP=""   # set in setup from the kind network's IPv4 subnet
 BASE_TAG="${BASE_TAG:-v0.15.0}"
 FROM=v0.99.0
 TO=v0.99.1
-BAD=v0.99.2   # the rollback stage's deliberately broken release
+BAD=v0.99.2   # the failure stage's deliberately broken release
 K="kubectl --context $CTX"
 export HELM_DRIVER=configmap   # the agent's driver: a Secret-driver release is invisible to it
 
@@ -199,7 +199,7 @@ state() {
   $K -n "$NS" get pods -o wide 2>&1 | head -30
 }
 
-rollback() {
+failure() {
   [ -n "$REG_IP" ] || { subnet="$(docker network inspect kind -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' | tr ' ' '\n' | grep -m1 '\.')"; REG_IP="${subnet%.*.*}.0.250"; }
   log "images $BAD: trust-api exits at start, the rest retagged"
   for svc in data-access-api imaging-api omop-db orthanc; do

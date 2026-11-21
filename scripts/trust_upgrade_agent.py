@@ -95,9 +95,6 @@ VERIFY_TIMEOUT_S = 600
 REPORT_ATTEMPTS = 4
 REPORT_RETRY_WAIT_S = 5
 VERIFY_POLL_S = 10
-# A rollback is judged on a shorter leash than a forward upgrade: the previous release is known to
-# have worked on this site, so a slow return is itself the finding rather than something to wait out.
-ROLLBACK_VERIFY_TIMEOUT_S = 300
 # Cluster mode: the Job's activeDeadlineSeconds kills the pod, and a killed pod does not report, so the
 # hub would hold the lease for its full TTL and retry the same release without latching the failure.
 # The chart therefore passes --budget-seconds (the deadline minus a margin), and every helm call and
@@ -468,7 +465,7 @@ def governance_drift(cluster: Cluster) -> str | None:
     document, which decides cohort disclosure and the FLARE privacy policy. The agent has no reason to
     touch it — and this is how a site finds out if it, or anything else holding that access, ever did:
     compare the ConfigMap against the document in the release's own values before reporting an upgrade
-    as done. A drifted document stops the tick reporting SUCCEEDED; it does not trigger a rollback,
+    as done. A drifted document stops the tick reporting SUCCEEDED; it does not move the release,
     because the document was not changed by the upgrade and rolling back would quietly revert whatever
     the site meant to say.
 
@@ -582,37 +579,19 @@ def verify(
     return False, f"the upgrade applied but the site did not come up on {tag} within {timeout_s}s: {last}"
 
 
-def rollback(
-    kit: dict[str, str],
-    run_upgrade: Callable[[str], tuple[bool, str]],
-    previous: str | None,
-    failed: str,
-) -> tuple[bool, str]:
-    """Put the site back on the release it came from, once, after a failed attempt.
+def stopped_note(previous: str | None, failed: str) -> str:
+    """What the failure report says about the way back, which is left to an operator.
 
-    A failed upgrade leaves the site half-applied — some containers on the new release, some on the
-    old, or a release Helm marked failed. Moving again is the only way back to something known to
-    work there, and waiting for a human means waiting with the site in that state.
-
-    Deliberately one attempt and no loop: a rollback that does not take is reported, not retried.
-    The distinction the operator needs is "failed, site is back on vX" versus "failed, site is still
-    on the release that broke it", so the outcome of this is part of the failure report either way.
+    The agent never moves a site back by itself. An upgrade recreates the database-bearing services
+    and runs XNAT's in-place schema upgrade, so once one has got that far the previous release's images
+    may no longer match the data. Redeploying them anyway is the case to avoid, and the agent cannot
+    tell from outside whether this attempt reached a migration. It stops and says where the site was.
     """
-    if not previous:
-        return False, "no previous release recorded, so nothing to roll back to"
-    if not RELEASE_TAG.match(previous):
-        return False, f"the previous release ({previous!r}) is not a tag, so it cannot be rolled back to"
-    if previous == failed:
-        return False, f"the site was already on {failed} before this attempt, so there is nothing to roll back to"
-
-    ok, tail = run_upgrade(previous)
-    if not ok:
-        return False, f"automatic rollback to {previous} failed:\n{tail}"
-
-    verified, what = verify(kit, previous, timeout_s=ROLLBACK_VERIFY_TIMEOUT_S)
-    if not verified:
-        return False, f"automatic rollback to {previous} applied but the site did not come up on it: {what}"
-    return True, f"rolled back to {previous}, which came up"
+    was = f"on {previous}" if previous and previous != failed else "on an unknown release"
+    return (
+        f"Stopped; nothing was rolled back. The site was {was} before this attempt and may now be partly on "
+        f"{failed}. An operator restores it (Upgrading sites: rolling back) and then clears the failure."
+    )
 
 
 def report_status(kit: dict[str, str], body: dict, attempts: int = REPORT_ATTEMPTS) -> bool:
@@ -709,12 +688,11 @@ def tick(kit_file: Path, repo: Path, dry_run: bool, cluster: Cluster | None = No
     try:
         # Renewal covers the verification too: it is a ten-minute wait on the site coming back.
         with LeaseRenewal(kit, decision.release):
-            run_upgrade = (
-                (lambda tag: upgrade(repo, kit_file, tag))
+            ok, tail = (
+                upgrade(repo, kit_file, decision.release)
                 if cluster is None
-                else (lambda tag: cluster_upgrade(cluster, tag))
+                else cluster_upgrade(cluster, decision.release)
             )
-            ok, tail = run_upgrade(decision.release)
             detail = tail
             if ok:
                 # The verb exiting 0 only says the deployment was applied. Confirm the site actually
@@ -722,10 +700,9 @@ def tick(kit_file: Path, repo: Path, dry_run: bool, cluster: Cluster | None = No
                 ok, detail = verify(kit, decision.release)
                 print(detail)
             if not ok:
-                # Either the verb failed or the site did not come back on the target. Both leave it
-                # half-applied, so put it back on the release it was on — inside the same lease, so
-                # no second agent can start while this is happening.
-                rolled, how = rollback(kit, run_upgrade, state.current_release, decision.release)
+                # Either the verb failed or the site did not come back on the target. Both can leave it
+                # half-applied, possibly past a migration, so stop here and say so (see stopped_note).
+                how = stopped_note(state.current_release, decision.release)
                 detail = f"{detail}\n{how}"
                 print(how)
             elif cluster is not None:

@@ -25,7 +25,7 @@ Needs docker, kind, kubectl, helm, openssl and python3. About 2 GB of images are
 cd trust/deploy/e2e/upgrade-agent
 ./run.sh setup      # cluster, registry, images, charts v0.99.0 + v0.99.1, stub hub, release at v0.99.0
 ./run.sh tick       # one tick now
-./run.sh rollback   # broken v0.99.2: expect FAILED, automatic rollback, no retry
+./run.sh failure    # broken v0.99.2: expect FAILED, the site left where it is, no retry
 ./run.sh down       # remove everything, including the work dir
 ```
 
@@ -37,10 +37,11 @@ generated CA, certificates, packaged charts and the test AES key. Nothing genera
 1. `tick` after `setup`: the job log says `UPGRADE: v0.99.0 -> v0.99.1`. The hub view shows `STARTING`, then
    `SUCCEEDED`, with the lease back to `null`. The release history shows revision 2, `flip-trust-0.99.1`, `deployed`.
 2. A second `tick`: `SKIP: already on v0.99.1`, with no new revision.
-3. `rollback` (about 11 minutes, because the agent waits `VERIFY_TIMEOUT_S` = 600 s for the new release):
-   - The hub view shows `FAILED` for v0.99.2, with the detail `... rolled back to v0.99.1, which came up`.
-   - `failed_release` is `v0.99.2`, and the newest revision is v0.99.1, `deployed`.
-   - trust-api's `/health` reports `v0.99.1`.
+3. `failure` (about 11 minutes, because the agent waits `VERIFY_TIMEOUT_S` = 600 s for the new release):
+   - The hub view shows `FAILED` for v0.99.2, with the detail `... Stopped; nothing was rolled back. The site was on
+     v0.99.1 ...`.
+   - `failed_release` is `v0.99.2`, and the newest revision is v0.99.2: the agent does not move the release back.
+   - trust-api does not answer (its v0.99.2 image exits on start), which is the state an operator is left to restore.
    - The follow-up tick says `SKIP: v0.99.2 failed earlier; an operator must clear it in the portal`.
 
 `setup` restarts the stub hub, which clears its lease, failed release and reports. To start again from v0.99.0, run

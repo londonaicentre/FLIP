@@ -195,7 +195,7 @@ spec:
 ---
 # The upgrade agent drives helm against the Kubernetes API (FLIP#1644). Policies are matched after the
 # `kubernetes` Service's DNAT, so this names the API server's real port: 443 on AKS/EKS/GKE, 6443 on
-# kubeadm, k3s, RKE2 and kind. Without it a tick can neither upgrade nor roll back. Selects the agent
+# kubeadm, k3s, RKE2 and kind. Without it a tick cannot upgrade. Selects the agent
 # alone: no other trust pod gets a path to the API server.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
