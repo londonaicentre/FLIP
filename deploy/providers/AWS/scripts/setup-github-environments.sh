@@ -194,6 +194,10 @@ case "${ENV}" in
 esac
 EXPECTED_SUB="repo:${REPO}:environment:${GH_ENV}"
 EXPECTED_APPLY_REF="${REPO}/.github/workflows/terraform_apply.yml@refs/heads/${APPLY_BRANCH}"
+# Staging's apply role also trusts the power on/off workflow (the bootstrap module's
+# apply_workflow_refs, FLIP#1596), one ref per line.
+[[ "${ENV}" != stag ]] ||
+    EXPECTED_APPLY_REF+=$'\n'"${REPO}/.github/workflows/staging_lifecycle.yml@refs/heads/${APPLY_BRANCH}"
 NOT_BOOTSTRAPPED="the platform repository (aicentre-iac / aicentre-lza-iac) has not applied
    terraform_ci_bootstrap in the account '${AWS_PROFILE_FOR_ENV}' reaches — or, outside AI Centre,
    deploy/providers/AWS/ci has not been applied there."
@@ -248,14 +252,15 @@ trust_values() {
         tr '\t' '\n' | sed '/^$/d; /^None$/d'
 }
 
-# Exactly one value, and it is the expected one. "Contains" would pass a policy
-# that also trusts another environment or branch.
+# Exactly the expected values (one per line, in any order). "Contains" would pass a
+# policy that also trusts another environment or branch.
 expect_trust() {
-    local name="$1" operator="$2" claim="$3" want="$4" got
-    got="$(trust_values "${name}" "${operator}" "${claim}")" ||
+    local name="$1" operator="$2" claim="$3" want got
+    want="$(sort <<<"$4")"
+    got="$(trust_values "${name}" "${operator}" "${claim}" | sort)" ||
         die "could not read the trust policy of ${name}"
     if [[ "${got}" != "${want}" ]]; then
-        die "${name} trusts ${claim} = '${got//$'\n'/, }', but ${GH_ENV} (${MODE}) needs '${want}'.
+        die "${name} trusts ${claim} = '${got//$'\n'/, }', but ${GH_ENV} (${MODE}) needs '${want//$'\n'/, }'.
    These are another environment's or repository's roles. Check the profile, --hub and --repo."
     fi
 }
