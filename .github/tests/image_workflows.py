@@ -44,6 +44,20 @@ def step_block(text: str, name: str) -> str:
     return text[text.index(f"- name: {name}") :].split("- name:", 2)[1]
 
 
+def push_block(text: str) -> str:
+    """The body of the workflow's ``push:`` trigger."""
+    block = re.search(r"^  push:\n((?:    .*\n)+)", text, re.M)
+    assert block, "no push trigger"
+    return block[1]
+
+
+def push_paths(text: str) -> list[str]:
+    """The ``paths:`` filter of the workflow's ``push:`` trigger."""
+    paths = re.search(r"^    paths:\n((?:      - .*\n)+)", push_block(text), re.M)
+    assert paths, "the push trigger has no paths filter"
+    return [p.strip().strip("\"'") for p in re.findall(r"- (.*)", paths[1])]
+
+
 # `push:` block carrying a `tags:` list (flow or block style) whose entry is the platform
 # release glob. The flip-utils train tags `flip-utils-v*` and must NOT trigger image builds,
 # so the glob is asserted exactly rather than loosely.

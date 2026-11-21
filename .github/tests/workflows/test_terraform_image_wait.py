@@ -32,7 +32,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from image_workflows import GITHUB_DIR, WORKFLOWS, code_text, step_block  # noqa: E402
+from image_workflows import GITHUB_DIR, WORKFLOWS, code_text, push_block, push_paths, step_block  # noqa: E402
 
 REPO = GITHUB_DIR.parent
 SCRIPTS = REPO / "deploy" / "providers" / "AWS" / "scripts"
@@ -51,18 +51,6 @@ else
     echo '{"workflow_runs":[]}'
 fi
 """
-
-
-def push_block(text: str) -> str:
-    block = re.search(r"^  push:\n((?:    .*\n)+)", text, re.M)
-    assert block, "no push trigger"
-    return block[1]
-
-
-def push_paths(text: str) -> list[str]:
-    paths = re.search(r"^    paths:\n((?:      - .*\n)+)", push_block(text), re.M)
-    assert paths, "the push trigger has no paths filter"
-    return [p.strip().strip("\"'") for p in re.findall(r"- (.*)", paths[1])]
 
 
 def covered(path: str, patterns: list[str]) -> bool:
