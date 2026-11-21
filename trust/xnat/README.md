@@ -183,15 +183,10 @@ when that pull fails, so a local `:stag` build would be replaced by the registry
 second stack on the same host (a release check) passes its own on the command line, e.g. `XNAT_TAG=rel0130`; an
 `XNAT_TAG` in the kit is a pull pin and is ignored under `BUILD=true`.
 
-**Pinning a site:** the three XNAT images share one `XNAT_TAG` pin, but their path-filtered CI builds
-do not share `sha-` tags. When moving a site to a `sha-` tag, set `XNAT_TAG` to a release tag (or
-`stag`/`prod`) published for all three images.
-
-Which pushes rebuild which image: on `main`/`develop` pushes, the database and nginx image workflows
-watch only their own `postgres/` and `nginx/` build contexts, plus their workflow files. The web
-workflow watches all of `trust/xnat/` except tool-only edits under `dcm2niix/`; a dcm2niix version bump
-still rebuilds it because it also updates the baked-in `xnat/config/dcm2niix_command.json`. Release
-tags rebuild every image; a manual dispatch builds its own image whatever changed.
+**Pinning a site:** the three XNAT images share one `XNAT_TAG` pin. On `main`/`develop` all of them
+(and the two Container Service tool images) are published together, after the `Trust - XNAT CI`
+workflow passes for a commit, so a `sha-` tag one of them carries exists for all three. Release
+tags rebuild every image; a manual dispatch builds its own image only.
 
 The DICOM→NIfTI converter the Container Service launches is a fourth, standalone image —
 `ghcr.io/londonaicentre/xnat-dcm2niix` (built from [`dcm2niix/`](dcm2niix/), published by its own

@@ -12,28 +12,15 @@
 
 name: Trust - XNAT CI
 
-# The suite covers the anonymization script, the weak-password guards, and the deployment wiring
-# that carries configuration into configure-xnat.sh. Those tests read their inputs from outside
-# trust/xnat/tests/, so every file they assert on has to trigger this workflow — otherwise a change
-# to a guard, to the credential minter, or to either deployment path's environment block lands with
-# the test that pins it unrun. That includes both trust-core compose files: test_deploy_wiring.py
-# asserts each wires XNAT_AETITLE to exactly its two consumers with the same default the XNAT stack
-# substitutes, and the AE titles on the two sides drifting apart is the queries-succeed /
-# retrievals-time-out failure, since DQR matches the C-MOVE destination by exact AE and port.
-# The dcm2niix-pin-sync job below likewise reads three files scattered across the
-# repo, so each of those triggers the workflow too. The same rule covers the
-# bind-mount ownership drift tests (test_data_dir_ownership.py): they assert that
-# the XNAT Dockerfile's uid and both Ansible playbooks' ownership tasks still
-# agree with trust/xnat/Makefile, so all three of those files trigger this
-# workflow — otherwise a change to the uid in the image, or to the ownership task
-# in either playbook, lands with the drift test that exists to catch it unrun. They also hold both
-# compose overlays' xnat-web mounts to the Makefile's dir lists, so those overlays trigger it too.
-# test_dcm2niix_registration.py runs configure-dcm2niix.sh for both Container Service backends and
-# holds its subscription name to imaging-api's (services/projects.py), so that file triggers this
-# workflow too (FLIP#1451).
 # The XNAT image builds (docker_build_xnat_*.yml) publish only after this workflow passes on
-# main/develop (FLIP#880), so it also triggers on every input of those images: all of trust/xnat/
-# and the build workflows themselves. A build input added outside trust/xnat/ belongs here too.
+# main/develop (FLIP#880), so it triggers on every input of those images: all of trust/xnat/ and the
+# build workflows themselves. A build input added outside trust/xnat/ belongs here too.
+# The other paths are files outside trust/xnat/ that the suite asserts on, so a change to one never
+# lands with the test that pins it unrun: both trust-core compose files (test_deploy_wiring.py holds
+# XNAT_AETITLE to the default the XNAT stack substitutes; DQR matches the C-MOVE destination by exact
+# AE and port), the Ansible playbooks and roles (test_data_dir_ownership.py holds their ownership
+# tasks to trust/xnat/Makefile), imaging-api's config.py and services/projects.py (the dcm2niix pin
+# and the subscription name test_dcm2niix_registration.py checks, FLIP#1451), and the credential minter.
 on:
   push:
     branches: [main, develop]
