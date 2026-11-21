@@ -165,13 +165,31 @@ jobs:
           done
           docker build "${TAG_FLAGS[@]}" .
 
+      # Sites pin the version tag, and every green "Trust - XNAT CI" run lands here whatever it
+      # changed (FLIP#880), so the tag moves only with this image's own source: each publish of it
+      # also tags the build context's git tree, and while that tag still names the same image as
+      # the version tag, the version tag is left alone.
       - name: Push Docker image
         if: github.event_name != 'pull_request'
         env:
           DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
+          VERSION: ${{ steps.tags.outputs.version }}
         run: |
+          digest() { docker buildx imagetools inspect "$1" 2>/dev/null | awk '/^Digest:/ {print $2; exit}'; }
+          VERSION_TAG="${REGISTRY}/${IMAGE_NAME}:${VERSION}"
+          CONTEXT_TAG="${REGISTRY}/${IMAGE_NAME}:context-$(git rev-parse HEAD:./)"
+          PUBLISHED="$(digest "$CONTEXT_TAG")"
+
           IFS=',' read -ra TAG_ARRAY <<< "$DOCKER_TAGS"
           for tag in "${TAG_ARRAY[@]}"; do
+            if [[ "$tag" == "$VERSION_TAG" ]]; then
+              if [[ -n "$PUBLISHED" && "$PUBLISHED" == "$(digest "$VERSION_TAG")" ]]; then
+                echo "Build context unchanged since ${VERSION_TAG} was published: tag left as it is"
+                continue
+              fi
+              docker tag "$tag" "$CONTEXT_TAG"
+              docker push "$CONTEXT_TAG"
+            fi
             docker push "$tag"
           done
 

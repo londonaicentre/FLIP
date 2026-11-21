@@ -190,7 +190,7 @@ tags rebuild every image; a manual dispatch builds its own image only.
 
 The DICOM→NIfTI converter the Container Service launches is a fourth, standalone image —
 `ghcr.io/londonaicentre/xnat-dcm2niix` (built from [`dcm2niix/`](dcm2niix/), published by its own
-GitHub workflow). Its immutable version tag is pinned in three places, which must be bumped together:
+GitHub workflow). Its version tag is pinned in three places, which must be bumped together:
 
 - the Dockerfile's `DCM2NIIX_VERSION`;
 - [`xnat/config/dcm2niix_command.json`](xnat/config/dcm2niix_command.json), which both deployment
@@ -216,6 +216,12 @@ MONAI Label trusts also run a fifth image, `ghcr.io/londonaicentre/xnat-export-m
 command that turns an OHIF DICOM-SEG assessor into NIfTI. Its version tag lives in the Dockerfile's
 `EXPORT_MASK_VERSION`, and `tests/test_export_mask_image_pin.py` holds
 [`xnat/config/export_mask_command.json`](xnat/config/export_mask_command.json) to it.
+
+Both tool images are rebuilt on every green `Trust - XNAT CI` run, but their version tag is
+republished only when the image's own directory changed: the workflow tags each published build
+context (`context-<git tree>`) and leaves the version tag alone while that tag still names the same
+image. A change that must reach sites under an unchanged version therefore still does; an unrelated
+merge never moves the tag.
 
 #### Operator action: the GHCR packages must be public
 

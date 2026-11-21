@@ -153,6 +153,14 @@ class XnatBuildTriggers(unittest.TestCase):
                 assert 'REF_NAME="$GH_WR_BRANCH"' in tags, wf.name
                 assert "${{ github.sha }}" not in tags.split("run: |", 1)[1], wf.name
 
+    def test_tool_version_tags_move_only_with_their_own_source(self) -> None:
+        """Every green suite run publishes these images; the tag the sites pin must not follow each one."""
+        for image in ("dcm2niix", "export_mask"):
+            push = step_block(code_text(WORKFLOWS / f"docker_build_xnat_{image}.yml"), "Push Docker image")
+            with self.subTest(image=image):
+                assert "context-$(git rev-parse HEAD:./)" in push, image
+                assert '"$PUBLISHED" == "$(digest "$VERSION_TAG")"' in push, image
+
     def test_xnat_web_pulls_its_moving_base(self) -> None:
         """The Tomcat base tag moves: without --pull a runner holding an old copy would build on it."""
         build = step_block(code_text(WORKFLOWS / "docker_build_xnat_web.yml"), "Build Docker image")
