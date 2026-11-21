@@ -570,7 +570,8 @@ accounts"). Full detail: [`deploy/providers/AWS/AGENTS.md`](deploy/providers/AWS
 **The application `docker_build_*.yml` workflows (`flip_api`, `trust_trust_api`, `trust_imaging_api`,
 `trust_data_access_api`, `omop_db`) auto-publish to GHCR only after their service's test workflow
 passes on `develop` or `main`** — they trigger via `workflow_run` and a job-level `if` gates on
-success, so a red test suite never publishes. Path filtering is inherited from the test workflow, so a
+success, so a red test suite never publishes, and on the suite's **push** run alone, so the run for the develop→main PR
+does not build the commit a second time and replace its `sha-<short7>` tag (FLIP#2020). Path filtering is inherited from the test workflow, so a
 build still only fires when that service changed. (`orthanc`, `xnat_*` and `monailabel` keep their direct push
 trigger, having no separate test workflow; `orthanc` runs an in-job auth smoke test instead, and
 `monailabel` an in-job import smoke after reclaiming runner disk — its image is ~10.4 GB against

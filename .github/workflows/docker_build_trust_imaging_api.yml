@@ -39,10 +39,14 @@ jobs:
     # copy of this file running in the fork. Rationale + regression guard:
     # scripts/tests/test_workflow_trust_guards.py; the same clause guards
     # terraform_plan.yml. One shared workflow for these copies: FLIP#1201.
+    # The event clause builds a commit once (FLIP#2020): the suite also runs for the
+    # develop→main PR, whose head branch passes the `branches` filter above, and a second
+    # build would replace the immutable sha-<short7> tag with a different image.
     if: >-
       (github.event_name == 'workflow_dispatch' ||
       github.event_name == 'push' ||
       (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_repository.full_name == github.repository)) &&
       github.repository == 'londonaicentre/FLIP'
     runs-on: ubuntu-latest
