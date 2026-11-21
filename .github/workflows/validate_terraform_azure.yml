@@ -1,0 +1,81 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Terraform Validate - Azure trust node
+
+# Split from validate_terraform.yml so a change to one tree runs only that tree's checks (FLIP#2021).
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "trust/deploy/terraform/azure/**"
+      - ".github/workflows/validate_terraform_azure.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "trust/deploy/terraform/azure/**"
+      - ".github/workflows/validate_terraform_azure.yml"
+
+permissions:
+  contents: read
+
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  # Azure trust node (FLIP#1390): fmt, validate and `terraform test` with a mocked azurerm
+  # provider in every root and module, the static pytest guards (no auto-approve, every
+  # provider and az call names its subscription, no real IDs, no inbound rules), tflint with
+  # the azurerm ruleset, and checkov with in-code, reasoned skips. Credential-free: nothing
+  # here talks to Azure.
+  azure:
+    name: Azure node checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~> 1.13"
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: v0.64.0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        run: pip install uv
+
+      # graphviz lets test_architecture_diagram.py's render smoke test run rather than skip.
+      - name: Install graphviz
+        uses: ./.github/actions/install-graphviz
+
+      - name: Terraform tests and static guards
+        working-directory: trust/deploy/terraform/azure
+        run: make test
+
+      # fmt, tflint and checkov (pinned in the Makefile, run through uvx).
+      - name: Lint
+        working-directory: trust/deploy/terraform/azure
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: make lint

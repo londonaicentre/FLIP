@@ -22,16 +22,28 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - "flip-ui/**"
+      # Everything the Dockerfile copies: the entrypoint and the npm manifests (FLIP#2021).
+      - "flip-ui/Dockerfile"
+      - "flip-ui/docker/**"
+      - "flip-ui/package*.json"
       - ".github/workflows/docker_build_flip_ui.yml"
   push:
     branches: [main, develop]
     paths:
-      - "flip-ui/**"
+      # Everything the Dockerfile copies: the entrypoint and the npm manifests (FLIP#2021).
+      - "flip-ui/Dockerfile"
+      - "flip-ui/docker/**"
+      - "flip-ui/package*.json"
       - ".github/workflows/docker_build_flip_ui.yml"
 
 permissions:
   contents: read
+
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   build:

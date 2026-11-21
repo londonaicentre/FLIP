@@ -19,11 +19,8 @@ on:
       - "deploy/providers/AWS/**"
       # The Makefile and test_env_mode.py read the HUB table.
       - "deploy/env_mode.mk"
-      # Every trust root: azure/, aws/ and the three Snowflake roots (FLIP#1581, epic #1589: the
-      # identity tier, the break-glass platform tier and the least-privilege workload tier). All credential-free
-      # checks. They are trust roots with their own state, so they are deliberately absent from
-      # terraform_plan/apply/drift, which drive the hub's state.
-      - "trust/deploy/terraform/**"
+      # The trust roots (azure/, aws/, the Snowflake roots) have their own workflows,
+      # validate_terraform_{azure,aws_node,snowflake}.yml, each on its own paths (FLIP#2021).
       # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
       - "flip-api/src/flip_api/auth/identity/cognito.py"
       # test_flare_kit_required_files.py reads it: add_fl_kits.sh uploads the same files last.
@@ -48,11 +45,8 @@ on:
       - "deploy/providers/AWS/**"
       # The Makefile and test_env_mode.py read the HUB table.
       - "deploy/env_mode.mk"
-      # Every trust root: azure/, aws/ and the three Snowflake roots (FLIP#1581, epic #1589: the
-      # identity tier, the break-glass platform tier and the least-privilege workload tier). All credential-free
-      # checks. They are trust roots with their own state, so they are deliberately absent from
-      # terraform_plan/apply/drift, which drive the hub's state.
-      - "trust/deploy/terraform/**"
+      # The trust roots (azure/, aws/, the Snowflake roots) have their own workflows,
+      # validate_terraform_{azure,aws_node,snowflake}.yml, each on its own paths (FLIP#2021).
       # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
       - "flip-api/src/flip_api/auth/identity/cognito.py"
       # test_flare_kit_required_files.py reads it: add_fl_kits.sh uploads the same files last.
@@ -75,6 +69,12 @@ on:
 permissions:
   contents: read
 
+# A new push to a PR cancels that PR's in-flight run. Any other run is a group of its own, so a
+# push to develop or main, a tag or a manual dispatch is never cancelled or queued (FLIP#2021).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   terraform-validate:
     runs-on: ubuntu-latest
@@ -90,15 +90,6 @@ jobs:
           # Never applied by CI, but validating it exercises the module — so a
           # broken trust policy is caught before any caller picks it up.
           - ./deploy/providers/AWS/ci
-          # The Snowflake trust node's three roots (FLIP#1581, epic #1589). Validated with a
-          # backend-free init, so neither the local backend nor any Snowflake credential is
-          # needed. snowflake-identity is the roles and the deploy user; snowflake-platform is
-          # the break-glass tier (account grants, EAI, account policies, event table, resource
-          # monitor); snowflake is the least-privilege workload tier applied as
-          # FLIP_<CODE>_DEPLOY_USER.
-          - ./trust/deploy/terraform/snowflake-identity
-          - ./trust/deploy/terraform/snowflake-platform
-          - ./trust/deploy/terraform/snowflake
     defaults:
       run:
         working-directory: ${{ matrix.root }}
@@ -120,58 +111,6 @@ jobs:
 
       - name: Terraform Validate
         run: terraform validate
-
-  # The Snowflake trust roots' own static gates (FLIP#1581, epic #1589): tflint with the bundled
-  # terraform ruleset (there is no Snowflake plugin), checkov, and the credential-free pytest
-  # guards that pin the invariants no plan can show without an account. For the workload root:
-  # no role, user, integration, account policy, account parameter or account-level grant, no
-  # PUBLIC grant, SSE on every stage, auto-suspend on every compute pool, no secret value in
-  # Terraform. For the platform root: exactly four account privileges to the deploy role and no
-  # others, MFA on the break-glass identity, no credential as a variable, egress off by default.
-  snowflake-trust-root:
-    name: Snowflake ${{ matrix.root }} static checks
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        root:
-          - snowflake-identity
-          - snowflake-platform
-          - snowflake
-    defaults:
-      run:
-        working-directory: trust/deploy/terraform/${{ matrix.root }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      - name: Setup TFLint
-        uses: terraform-linters/setup-tflint@v6
-        with:
-          # Keep in sync with TFLINT_VERSION in deploy/providers/AWS/scripts/tflint_lint.sh.
-          tflint_version: v0.64.0
-
-      - name: TFLint
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          tflint --init --config="$PWD/.tflint.hcl"
-          tflint --config="$PWD/.tflint.hcl"
-
-      - name: Install checkov
-        # Keep in sync with CHECKOV_VERSION in deploy/providers/AWS/scripts/checkov_lint.sh.
-        run: pip install checkov==3.3.14
-
-      - name: Checkov
-        run: checkov --directory . --framework terraform --quiet --compact
-
-      - name: Static guards
-        run: pip install pytest diagrams && pytest tests/ -v
 
   # Black-box harnesses for the deploy scripts, every external tool stubbed on
   # PATH — no credentials, no network, no checkov install. add_fl_kits.sh mints
@@ -323,103 +262,3 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: bash deploy/providers/AWS/scripts/tflint_lint.sh
-
-  # Azure trust node (FLIP#1390): fmt, validate and `terraform test` with a mocked azurerm
-  # provider in every root and module, the static pytest guards (no auto-approve, every
-  # provider and az call names its subscription, no real IDs, no inbound rules), tflint with
-  # the azurerm ruleset, and checkov with in-code, reasoned skips. Credential-free: nothing
-  # here talks to Azure.
-  azure:
-    name: Azure node checks
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_version: "~> 1.13"
-
-      - name: Setup TFLint
-        uses: terraform-linters/setup-tflint@v6
-        with:
-          tflint_version: v0.64.0
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      - name: Install uv
-        run: pip install uv
-
-      # graphviz lets test_architecture_diagram.py's render smoke test run rather than skip.
-      - name: Install graphviz
-        uses: ./.github/actions/install-graphviz
-
-      - name: Terraform tests and static guards
-        working-directory: trust/deploy/terraform/azure
-        run: make test
-
-      # fmt, tflint and checkov (pinned in the Makefile, run through uvx).
-      - name: Lint
-        working-directory: trust/deploy/terraform/azure
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: make lint
-
-  # AWS EC2 trust node (FLIP#1528): fmt, validate and `terraform test` with a mocked aws provider in
-  # the root and its network module, the Makefile and ssh-config pytest, tflint with the aws
-  # ruleset, and checkov with in-code, reasoned skips. Credential-free: nothing here talks to AWS.
-  aws-ec2:
-    name: ${{ matrix.name }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - root: aws/ec2
-            name: AWS EC2 node checks
-          - root: aws/eks
-            name: AWS EKS node checks
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_version: "~> 1.13"
-
-      - name: Setup TFLint
-        uses: terraform-linters/setup-tflint@v6
-        with:
-          tflint_version: v0.64.0
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      - name: Install uv
-        run: pip install uv
-
-      # graphviz lets test_architecture_diagram.py's render smoke test run rather than skip.
-      - name: Install graphviz
-        uses: ./.github/actions/install-graphviz
-
-      - name: Terraform tests and Makefile checks
-        working-directory: trust/deploy/terraform/${{ matrix.root }}
-        run: make test
-
-      - name: Lint
-        working-directory: trust/deploy/terraform/${{ matrix.root }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: make lint
-
-      - name: Checkov
-        run: |
-          pip install checkov==3.3.14
-          checkov -d trust/deploy/terraform/${{ matrix.root }} --framework terraform --skip-download --compact --quiet
