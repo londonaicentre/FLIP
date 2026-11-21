@@ -69,6 +69,8 @@ module "flip_stag_terraform_ci" {
 - **`environment`** — `stag` or `prod`. Only staging's plan role accepts pull-request merge refs.
 - **`ui_bucket_name`** — the FLIP root's `FLIP_UI_BUCKET_NAME`. Setting it creates the UI-publish role CI uses to
   ship flip-ui after an apply; left empty, the module creates no such role.
+- **`demo_bucket_name`** — the FLIP root's `FLIP_DEMO_BUCKET_NAME`. Setting it creates the demo-publish role CI uses
+  to ship the public demo to its own bucket (FLIP#2012); left empty, the module creates no such role.
 - **`create_permissions_boundary` / `permissions_boundary_name`** — by default the module declares
   `AICentre-FLIPTerraformBoundary`. Where the platform already deploys a boundary and requires it on every role, as an
   AWS Landing Zone Accelerator estate does, set `create_permissions_boundary = false` and name that policy instead: the
@@ -91,9 +93,14 @@ Least privilege, with each grant explained where it is declared:
   object and its lock.
 - **UI-publish role** ([`iam_ui_publish.tf`](iam_ui_publish.tf), FLIP#1186): created only when `ui_bucket_name` is
   set. Trusts the reusable `publish_ui.yml` at `apply_branch` (a reusable workflow's jobs present the called file as
-  `job_workflow_ref`). `s3:ListBucket` on the UI bucket, `Get`/`Put`/`DeleteObject` on its objects, a Deny on writes
-  and deletes under `demo/*` (the public demo, FLIP#1746), and nothing else. Its ARN, the `ui_publish_role_arn` output, goes in the environment
-  variable `TF_UI_PUBLISH_ROLE_ARN`.
+  `job_workflow_ref`). `s3:ListBucket` on the UI bucket, `Get`/`Put`/`DeleteObject` on its objects, and nothing else.
+  Writes under `demo/`, where the last demo published under the app's host still lives, are denied until `/demo/`
+  redirects to the demo's own host (FLIP#2012). Its ARN, the `ui_publish_role_arn` output, goes in the environment variable `TF_UI_PUBLISH_ROLE_ARN`.
+- **Demo-publish role** ([`iam_demo_publish.tf`](iam_demo_publish.tf), FLIP#2012): created only when `demo_bucket_name`
+  is set. Trusts its own reusable workflow, `publish_demo.yml` (`demo_publish_workflow_file`), at `apply_branch`, and
+  has the same three object actions on the demo bucket only. A job's token names its workflow file, not the job, so
+  the separate file is what keeps it apart from the UI-publish role. Its ARN, the `demo_publish_role_arn` output, goes
+  in `TF_DEMO_PUBLISH_ROLE_ARN`.
 - **Boundary** ([`boundary.tf`](boundary.tf)): allow everything, deny identity management, Organizations and Account.
 
 `tests/test_terraform_ci_bootstrap.py` holds `apply_service_prefixes` equal to the services the FLIP root's resource

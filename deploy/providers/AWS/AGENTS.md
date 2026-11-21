@@ -57,8 +57,8 @@ make init/plan/apply                          # Terraform workflow
 make deploy-centralhub                        # ECS deploy at env branch tip via sha-<short7> task-def revisions + the UI to S3 (FLIP#751; TAG= to pin). Prints an FL quiesce reminder (FLIP#770): enable Deployment Mode (pauses FL job pickup) + wait for the running job before deploying; GET /fl/quiesce reports deployment_mode + fl_quiesced. HUB=prod additionally asks "Are you sure you want to continue?" (stag stays non-interactive)
 make rollback-centralhub                      # Repoint ECS services at the previous ACTIVE task-def revision + deregister the rolled-away one; on FLARE, resets the fl-server's EFS local/ first (FLIP#1390; SKIP_FL_LOCAL_RESET=1 skips)
 make register-trusts KIT=<CODE> HUB=<stag|prod>  # Register CODE-named trust kit(s) on the hub + write trust/.env.<CODE>.<hub> — runs `scripts/register-trusts.sh` (a one-off ECS task + SSM SecureString handoff, mirroring the dev `make register-trusts` contract)
-make deploy-ui                                # Manual fallback: build + publish UI via scripts/publish-ui.sh (excludes demo/*; no invalidation, the edge distribution is the networking account's). CI publishes after every apply (FLIP#1186)
-make deploy-demo                              # Build the public demo + sync to S3 under demo/ (refused unless PUBLIC_DEMO=true, FLIP#1746)
+make deploy-ui                                # Manual fallback: build + publish UI via scripts/publish-ui.sh (no invalidation, the edge distribution is the networking account's). CI publishes after every apply (FLIP#1186)
+make deploy-demo                              # Manual fallback: build + publish the public demo to its own bucket (FLIP_DEMO_BUCKET_NAME) via the same script, FLIP#2012. CI publishes it after every apply too
 make status                                   # Health checks
 make ssh-config                               # Generate SSH config with SSM ProxyCommand
 make provision-local-trust                     # Provision an on-prem trust host (run ON the host)
@@ -232,9 +232,13 @@ Things worth knowing before touching any of it:
   `TF_UI_PUBLISH_ROLE_ARN`, the module's optional `AICentre-FLIPUiPublishRole` (created
   when the caller sets `ui_bucket_name`). That role trusts `publish_ui.yml@refs/heads/<branch>`
   — for a reusable workflow, `job_workflow_ref` names the called file — and can list the
-  bucket and write its objects, never `demo/*`. `scripts/publish-ui.sh` is the one
-  sync recipe, shared with `make deploy-ui`; `.github/tests/workflows/test_publish_ui.py`
-  and `scripts/tests/test_publish_ui.sh` pin both halves.
+  bucket and write its objects. The public demo has its own workflow, `publish_demo.yml`
+  (the apply's `demo` job), and role, `TF_DEMO_PUBLISH_ROLE_ARN` (`AICentre-FLIPDemoPublishRole`,
+  created when the caller sets `demo_bucket_name`, trusting only that file), which publishes
+  `dist-demo/` to `FLIP_DEMO_BUCKET_NAME`, served from its own host (FLIP#2012).
+  `scripts/publish-ui.sh` is the one sync recipe, shared with `make deploy-ui` and
+  `make deploy-demo`; `.github/tests/workflows/test_publish_{ui,demo}.py` and
+  `scripts/tests/test_publish_ui.sh` pin them.
 - **The pytest suite under `tests/` runs in CI** as the `AWS deploy tests` job in
   `validate_terraform.yml`. The root `make unit_test` does not reach this directory
   and this directory's Makefile has no `test` target, so
