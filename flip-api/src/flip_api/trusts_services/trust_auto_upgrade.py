@@ -24,6 +24,7 @@ from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Trust
 from flip_api.db.models.user_models import PermissionRef
 from flip_api.domain.schemas.trusts import (
+    AutoUpgradeFleetRow,
     AutoUpgradeSettings,
     AutoUpgradeView,
     UpgradeEnableInput,
@@ -121,6 +122,36 @@ def clear_auto_upgrade_failure(
     trust = _own_trust(trust_id, user_id, db)
     auto_upgrade.clear_failure(trust, db)
     return auto_upgrade.view_for_admin(trust, db)
+
+
+@router.get(
+    "/trusts/auto-upgrade",
+    summary="Every trust's automatic-upgrade state, for the Connection page's fleet column.",
+    response_model=list[AutoUpgradeFleetRow],
+)
+def get_auto_upgrade_fleet(
+    db: Session = Depends(get_session),
+    user_id: UUID = Depends(verify_token),
+) -> list[AutoUpgradeFleetRow]:
+    """One row per trust, ordered by name.
+
+    Admins only: this is the fleet-wide view a platform admin acts on, and unlike the shared trust list it
+    shows the failure detail an upgrade left on each site. A Trust Admin's own trust is on
+    ``GET /trust/{id}/auto-upgrade``.
+
+    Raises:
+        HTTPException: 403 unless the caller manages deployments.
+    """
+    if not has_permissions(user_id, [PermissionRef.CAN_MANAGE_DEPLOYMENTS], db):
+        logger.error(f"User {user_id} may not see the fleet's upgrade state")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User with ID: {user_id} may not see every trust's upgrade state",
+        )
+    return [
+        AutoUpgradeFleetRow(trust_id=trust.id, name=trust.name, code=trust.code, view=view)
+        for trust, view in auto_upgrade.fleet(db)
+    ]
 
 
 # --- The host agent: authenticated with the trust's own API key, like the task poll. ---

@@ -12,6 +12,7 @@
 
 import re
 from enum import StrEnum
+from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -140,6 +141,20 @@ class AutoUpgradeView(BaseModel):
     blocker_detail: str | None = Field(default=None, alias="blockerDetail")
     pending_since: str | None = Field(default=None, alias="pendingSince")
     last_attempt: AutoUpgradeLastAttempt | None = Field(default=None, alias="lastAttempt")
+
+
+class AutoUpgradeFleetRow(BaseModel):
+    """One row of the Connection page's upgrade column: a trust, and where it stands.
+
+    The same view its Trust Admin sees, plus the identity the fleet table is keyed by — so the column and
+    the My Trust card can never disagree about what a state means.
+    """
+
+    # snake_case, like the trust list this column sits in (``project_count``, ``last_heartbeat``)
+    trust_id: UUID
+    name: str
+    code: str | None = None
+    view: AutoUpgradeView
 
 
 class UpgradeWindow(BaseModel):
