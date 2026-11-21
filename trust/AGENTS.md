@@ -199,8 +199,8 @@ make reconvert-nifti KIT=GSTT [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_
   destination in `ImportStudyRequest` — DQR matches that destination against a registered receiver by
   exact `AE:port`, so all three must agree and no translation is possible on that leg. Both ports are
   host-published — the receiver so a real PACS can complete the C-STORE return leg of a retrieval,
-  and dev keeps the same wiring — so they must differ; the Makefile refuses to deploy if they
-  collide. Dev allocation: 8104/8105 (GSTT), 8106/8107 (KCH).
+  and dev keeps the same wiring — so they must differ; `xnat-check-ports` refuses a collision before
+  a first install (`xnat-reset`) or an upgrade (`upgrade-trust`, `upgrade-xnat`) changes anything. Dev allocation: 8104/8105 (GSTT), 8106/8107 (KCH).
 - `PACS_HOST` / `PACS_AETITLE` / `PACS_QR_PORT` / `PACS_LABEL` — the upstream PACS, defaulting to the
   mocked Orthanc (`orthanc` / `ORTHANC` / `4242`). `PACS_QR_PORT` must be reachable *from the XNAT
   container*, not a host-published port — conflating the two is what the retired `PACS_DICOM_PORT`

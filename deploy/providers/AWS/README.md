@@ -823,8 +823,9 @@ The hub checks only itself; a trust is checked from its own node (`make -C trust
 > receiver only, and the web UI has its own `XNAT_WEB_PORT`. Both are published on the host on
 > **every** deployment, not only where a real PACS is configured, so the two must differ. A kit
 > file that sets only `XNAT_PORT` resolves them to the same number — `XNAT_WEB_PORT` defaults to
-> `XNAT_PORT` — so the next `make up-trust` / `up-trust-ec2` on that kit is **refused** by the
-> collision guard, which names both values and the kit file to edit. The refusal is the intended
+> `XNAT_PORT` — so the next `make up-trust` / `up-trust-ec2` / `upgrade-trust` on that kit is
+> **refused** by the collision guard, which names both values and the kit file to edit (the
+> upgrade refuses before it changes anything). The refusal is the intended
 > upgrade path: deriving the web port from `XNAT_PORT` routes a pre-split kit into a loud
 > instruction instead of silently moving its web UI to a number nothing else expects. Add
 > `XNAT_WEB_PORT` to that trust's kit file before the next deploy (the shipped dev allocation is

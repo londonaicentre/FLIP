@@ -568,7 +568,25 @@ What can go wrong
 
 ``Could not ask the registry whether … is published``
    Not a missing image: the registry refused or did not answer. Check ``docker login`` for the registry and this host's
-   route to it, then re-run. Nothing was changed.
+   route to it, then re-run. Nothing was changed. The site images are public, so ``denied`` from ``ghcr.io`` means this
+   host presents a stale or expired login: run ``docker logout ghcr.io`` (with ``sudo`` as well, if you upgrade under
+   ``sudo``) and re-run.
+
+``XNAT_WEB_PORT (…) and XNAT_PORT (…) must differ``
+   A kit written before FLIP#993 sets only ``XNAT_PORT``, which was then the web UI's port and is now the DICOM
+   receiver's. Add ``XNAT_WEB_PORT`` to the kit with a free port for the web UI, then re-run. Nothing was changed.
+
+*Data dir paths* fails: ``COHORT_SNAPSHOT_STORAGE_DIR (unset, so /opt/flip/cohort-snapshots/trust-<N>; … is not writable)``
+   A site installed before approved cohorts were frozen (FLIP#857) has no ``COHORT_SNAPSHOT_STORAGE_DIR`` in its kit,
+   and its default under ``/opt/flip`` needs root to create. Either set it in the kit to a directory you can create,
+   beside your other data, or have the host owner run the printed command once, as root. That command names your kit
+   and hub (``sudo -E make -C trust prepare-host-dirs KIT=<CODE> HUB=prod``); without them it prepares the
+   development paths instead.
+
+*Data dir paths* warns that paths are relative
+   The kit keeps OMOP, Orthanc or XNAT data inside the FLIP checkout. That works, and the upgrade leaves the data where
+   it is. Moving it to the data disk means moving the data too: plan it as a separate step with the stack stopped,
+   never as part of an upgrade.
 
 ``git could not say which commit … is at``
    git refused to read the checkout, usually "dubious ownership" because the checkout belongs to another user than the
