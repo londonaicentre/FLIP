@@ -12,7 +12,7 @@
 
 name: Build and Push Docker Image for MONAI Label
 
-# Direct push trigger like orthanc — monailabel has no test suite to
+# Direct push trigger like orthanc / xnat_* — monailabel has no test suite to
 # gate on. workflow_dispatch covers branch-pinned testing (see AGENTS.md
 # "Docker image builds").
 on:
