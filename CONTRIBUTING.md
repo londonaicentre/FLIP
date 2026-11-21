@@ -488,7 +488,9 @@ job, which prints the file that matched or the number of files that did not.
 Two consequences worth knowing. A suite skips only if **none** of its paths matched, so if you believe your change
 affects a suite that skipped, the fix is to add the path it consumes to that workflow's list — in **both** copies,
 or `scripts/tests/test_pr_paths_changed.py` fails. And because the gate reads the PR's own file list, editing the
-gate re-runs every suite.
+gate re-runs every suite. The one edit it ignores is a workflow file changed only in its comments or blank lines:
+that runs nothing, so a comment fix in a gated workflow does not cost a suite (or, for
+`docker_build_monailabel.yml`, an image build).
 
 ### Checkov security lint (Terraform)
 

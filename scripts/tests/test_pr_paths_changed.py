@@ -35,7 +35,9 @@ a caller written differently enough to defeat it deserves a look anyway.
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
+import subprocess
 import sys
 import traceback
 from pathlib import Path
@@ -45,7 +47,8 @@ WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 GATE_WORKFLOW = "pr_paths_changed.yml"
 
 # The service test workflows that must call the gate. A new service test workflow that
-# filters its push trigger by path belongs here too.
+# filters its push trigger by path belongs here too. The MONAI Label build is the one image
+# workflow on it: its PR run builds a ~10 GB image, so it must not start for a reworded comment.
 GATED_WORKFLOWS = (
     "test_flip_ui.yml",
     "test_flip_api.yml",
@@ -56,6 +59,7 @@ GATED_WORKFLOWS = (
     "test_trust_data_tools.yml",
     "test_snowflake_specs.yml",
     "local_auth_smoke.yml",
+    "docker_build_monailabel.yml",
 )
 
 GATE_PATHS = ["flip-ui/**", ".github/workflows/test_flip_ui.yml"]
@@ -149,6 +153,50 @@ def test_touching_the_gate_runs_every_suite() -> None:
         run, reason = gate.decide("pull_request", "develop", [gate_file], GATE_PATHS)
         assert run, gate_file
         assert gate_file in reason, gate_file
+
+
+# --- comment-only workflow edits are not a change ---
+
+WORKFLOW = ".github/workflows/test_flip_ui.yml"
+
+
+def test_a_comment_only_workflow_edit_is_not_a_change() -> None:
+    patch = "@@ -1,4 +1,4 @@\n name: x\n-# old words\n+# new words\n+\n-      # indented, in a run block\n on:"
+    assert gate.comment_only(WORKFLOW, patch)
+
+
+def test_a_workflow_edit_that_touches_code_is_a_change() -> None:
+    for line in ("+    runs-on: ubuntu-latest", "-      - run: make test", "+on: push  # trailing", "+#!/bin/sh"):
+        assert not gate.comment_only(WORKFLOW, f"@@ -1 +1 @@\n-# old\n+# new\n{line}"), line
+
+
+def test_only_workflow_yaml_is_read_for_comments() -> None:
+    patch = "@@ -1 +1 @@\n-# noqa: E501\n+# checkov:skip=CKV_AWS_1:reason"
+    for filename in ("flip-ui/src/a.py", "deploy/providers/AWS/main.tf", ".github/actions/x/action.yml"):
+        assert not gate.comment_only(filename, patch), filename
+
+
+def test_a_file_without_a_patch_is_a_change() -> None:
+    """GitHub omits the patch of a large diff, and a pure rename has none."""
+    assert not gate.comment_only(WORKFLOW, None)
+    assert not gate.comment_only(WORKFLOW, "")
+
+
+def test_fetch_drops_comment_only_workflow_edits() -> None:
+    listing = "\n".join(
+        json.dumps(entry)
+        for entry in (
+            [WORKFLOW, "@@ -1 +1 @@\n-# old\n+# new"],
+            [".github/workflows/docs.yml", "@@ -1 +1 @@\n-  a: 1\n+  a: 2"],
+            ["flip-ui/logo.png", None],
+        )
+    )
+    real_run = gate.subprocess.run
+    gate.subprocess.run = lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=listing)
+    try:
+        assert gate.fetch_changed_files("o/r", "1") == [".github/workflows/docs.yml", "flip-ui/logo.png"]
+    finally:
+        gate.subprocess.run = real_run
 
 
 # --- the callers' wiring ---

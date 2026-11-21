@@ -12,7 +12,7 @@
 
 name: Build and Push Docker Image for MONAI Label
 
-# Direct push trigger like orthanc / xnat_* — monailabel has no test suite to
+# Direct push trigger like orthanc — monailabel has no test suite to
 # gate on. workflow_dispatch covers branch-pinned testing (see AGENTS.md
 # "Docker image builds").
 on:
@@ -25,19 +25,33 @@ on:
       - "trust/monailabel/**"
       - ".github/workflows/docker_build_monailabel.yml"
   # PR runs build + the import smoke only — the push steps are gated below,
-  # so nothing is published from a pull request.
+  # so nothing is published from a pull request. Unfiltered on purpose: the `changes`
+  # job decides, so a comment-only edit to this file skips the build (FLIP#2019).
   pull_request:
-    paths:
-      - "trust/monailabel/**"
-      - ".github/workflows/docker_build_monailabel.yml"
+    branches: [main, develop]
 
 permissions:
   contents: read
 
 jobs:
-  build-and-push:
-    # Skip on forks: they cannot push to ghcr.io/londonaicentre.
+  # Gate for pull requests into develop: build only when the PR touches this image
+  # (pr_paths_changed.yml; PRs into main always build). The list is the push `paths:`
+  # filter above, verbatim — scripts/tests/test_pr_paths_changed.py fails when the two drift.
+  changes:
+    # Skip on forks: they cannot push to ghcr.io/londonaicentre. A skipped gate skips the build.
     if: github.repository == 'londonaicentre/FLIP'
+    uses: ./.github/workflows/pr_paths_changed.yml
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      paths: |
+        trust/monailabel/**
+        .github/workflows/docker_build_monailabel.yml
+
+  build-and-push:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     permissions: # override top-level read-only default to allow GHCR push
       contents: read

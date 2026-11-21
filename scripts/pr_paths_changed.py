@@ -26,7 +26,10 @@ through ``.github/workflows/pr_paths_changed.yml``. Its answer is the whole poli
   proven against every suite it gates.
 
 The changed-file list comes from ``gh api .../pulls/N/files`` — the list GitHub shows on
-the PR, so the decision matches what a reviewer sees. Patterns use GitHub's own filter
+the PR, so the decision matches what a reviewer sees. One kind of change is dropped from
+it: a workflow file whose patch touches only comment and blank lines. A workflow lists
+itself in its own paths, so without that a reworded comment re-runs the whole suite (or
+rebuilds an image) to prove nothing. Patterns use GitHub's own filter
 syntax (``*`` stops at ``/``, ``**`` does not) so the two lists can be identical text.
 
 Deliberately stdlib-only: the runner has no project venv, only ``python3`` and ``gh``.
@@ -51,6 +54,8 @@ GATE_FILES = (
 # PRs into this branch always run the full suite: it is the release branch, and a release
 # is judged on everything, not on the diff.
 FULL_SUITE_BASE_REFS = ("main",)
+
+WORKFLOW_FILE = re.compile(r"\.github/workflows/[^/]+\.ya?ml")
 
 
 def glob_to_regex(pattern: str) -> re.Pattern[str]:
@@ -92,6 +97,19 @@ def parse_patterns(text: str) -> list[str]:
     return patterns
 
 
+def comment_only(filename: str, patch: str | None) -> bool:
+    """True when a workflow file's patch changes nothing but comment and blank lines.
+
+    Workflow YAML only: elsewhere a comment can carry meaning (``# noqa``, ``# checkov:skip``,
+    a Dockerfile's ``# syntax=``). A missing patch (GitHub omits large ones, and a pure rename
+    has none) is a change, and so is a ``#!`` line, which is a shebang inside a ``run:`` heredoc.
+    """
+    if not patch or not WORKFLOW_FILE.fullmatch(filename):
+        return False
+    changed = [line[1:].strip() for line in patch.splitlines() if line[:1] in ("+", "-")]
+    return all(not line or (line.startswith("#") and not line.startswith("#!")) for line in changed)
+
+
 def first_match(changed_files: Iterable[str], patterns: Iterable[str]) -> tuple[str, str] | None:
     """Return ``(file, pattern)`` for the first changed file a pattern matches, else None."""
     compiled = [(p, glob_to_regex(p)) for p in patterns]
@@ -116,14 +134,15 @@ def decide(event: str, base_ref: str, changed_files: list[str] | None, patterns:
 
 
 def fetch_changed_files(repo: str, pr_number: str) -> list[str]:
-    """The PR's changed files as GitHub lists them, following pagination."""
+    """The PR's changed files as GitHub lists them, following pagination, less comment-only workflow edits."""
     out = subprocess.run(
-        ["gh", "api", f"repos/{repo}/pulls/{pr_number}/files", "--paginate", "--jq", ".[].filename"],
+        ["gh", "api", f"repos/{repo}/pulls/{pr_number}/files", "--paginate", "--jq", ".[] | [.filename, .patch]"],
         check=True,
         capture_output=True,
         text=True,
     ).stdout
-    return [line for line in out.splitlines() if line]
+    files = [json.loads(line) for line in out.splitlines() if line]
+    return [filename for filename, patch in files if not comment_only(filename, patch)]
 
 
 def main(argv: list[str] | None = None) -> int:
