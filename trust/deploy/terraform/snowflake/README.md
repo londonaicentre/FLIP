@@ -217,7 +217,7 @@ credential, no account identifier. The role, user and integration names are deri
 
 ## CI
 
-Static and credential-free, in `validate_terraform.yml`: `tofu fmt`, `tofu validate`, tflint
+Static and credential-free, in `validate_terraform_snowflake.yml`: `tofu fmt`, `tofu validate`, tflint
 (bundled terraform ruleset, there is no Snowflake plugin), checkov, and the pytest guards in
 `tests/`, for **both** roots. No Snowflake credential exists in CI, so nothing plans or applies
 there. The workflow's path filter covers `trust/deploy/terraform/**` only, so a change here never

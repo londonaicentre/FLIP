@@ -29,11 +29,27 @@ on:
     branches: [main, develop]
     paths:
       - "flip-ui/**"
+      # Neither the production build nor the audit reads these: docs, the Cypress suites and
+      # their configs, unit specs and the dev image (FLIP#2021).
+      - "!flip-ui/**/*.md"
+      - "!flip-ui/test/cypress/**"
+      - "!flip-ui/cypress*.config.ts"
+      - "!flip-ui/**/*.spec.ts"
+      - "!flip-ui/Dockerfile"
+      - "!flip-ui/docker/**"
       - ".github/workflows/lighthouse_flip_ui.yml"
   pull_request:
     branches: [main, develop]
     paths:
       - "flip-ui/**"
+      # Neither the production build nor the audit reads these: docs, the Cypress suites and
+      # their configs, unit specs and the dev image (FLIP#2021).
+      - "!flip-ui/**/*.md"
+      - "!flip-ui/test/cypress/**"
+      - "!flip-ui/cypress*.config.ts"
+      - "!flip-ui/**/*.spec.ts"
+      - "!flip-ui/Dockerfile"
+      - "!flip-ui/docker/**"
       - ".github/workflows/lighthouse_flip_ui.yml"
   # Manual trigger so the audit can be re-run on demand against any branch.
   workflow_dispatch:
