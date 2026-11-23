@@ -55,6 +55,8 @@ class PermissionRef(Enum):
     # (see TRUST_SCOPED_PERMISSIONS below and `has_trust_permissions`).
     CAN_APPROVE_FOR_TRUST = UUID("3f9c5d21-7a64-4f0e-9b1d-2c8e6a4b7f35")
     CAN_MANAGE_TRUST_GOVERNANCE = UUID("b7e41a68-0d2f-4c95-8e37-5a1b9c6d4e82")
+    # Download the trust's kit and reissue its keys (FLIP#1852).
+    CAN_MANAGE_TRUST_KIT = UUID("c5d2e9a1-4b73-4f86-9a0c-7e1d3b5f8246")
 
 
 # Permissions that are only ever granted against a specific trust. A holder of
@@ -70,6 +72,7 @@ TRUST_SCOPED_PERMISSIONS: frozenset[UUID] = frozenset(
     {
         PermissionRef.CAN_APPROVE_FOR_TRUST.value,
         PermissionRef.CAN_MANAGE_TRUST_GOVERNANCE.value,
+        PermissionRef.CAN_MANAGE_TRUST_KIT.value,
     }
 )
 
@@ -154,6 +157,10 @@ class UserProfile(SQLModel, table=True):
     `v-html`, export them to PDF/CSV, or paste them into an email template,
     re-escape at that boundary. The 255-char cap is a length bound, not a
     content filter.
+
+    The row outlives a deleted user (FLIP#1996): `deleted_at` is set and only
+    `name` is kept, so history can still say who created or approved
+    something (`flip_api.utils.user_display`).
     """
 
     __tablename__ = "user_profile"
@@ -163,6 +170,7 @@ class UserProfile(SQLModel, table=True):
     organisation: str = Field(default="", max_length=255)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    deleted_at: datetime | None = Field(default=None)
 
 
 class Role(SQLModel, table=True):
@@ -197,6 +205,8 @@ class UsersAudit(SQLModel, table=True):
     user_id: UUID
     modified_by_user_id: UUID
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+    # Display name at the time of the action, kept for a deletion so the trail names the person (FLIP#1996).
+    user_name: str | None = Field(default=None, max_length=255)
 
 
 class AccessRequest(SQLModel, table=True):

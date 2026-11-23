@@ -274,6 +274,7 @@ data "aws_iam_policy_document" "apply_iam" {
       local.apply_role_arn,
       local.plan_role_arn,
       local.ui_publish_role_arn,
+      local.demo_publish_role_arn,
     ]
   }
 

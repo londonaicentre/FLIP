@@ -235,6 +235,78 @@ def test_a_streaming_job_pod_mounts_no_images_volume_and_runs_anywhere():
     assert "affinity" not in pod["spec"]
 
 
+def _archive_patch(docs: list[dict]) -> dict | None:
+    data = _one(docs, "ConfigMap", "-fl-job-pod-net-1")["data"]
+    return yaml.safe_load(data["job-pod-archive.yaml"]) if "job-pod-archive.yaml" in data else None
+
+
+def test_an_archive_job_pod_template_carries_nothing_of_xnats():
+    """Only a project whose study mounts its archive directory gets XNAT's volume and node (FLIP#1857)."""
+    pod = _job_pod(_enabled("--set", f"{JOB_PODS}.images=archive"))
+    [job] = pod["spec"]["containers"]
+
+    assert _env(job)["IMAGES_TRANSPORT"]["value"] == "stream"
+    assert job["volumeMounts"] == [
+        {"name": "dshm", "mountPath": "/dev/shm"},
+        {"name": "images-scratch", "mountPath": "/app/data/images"},
+    ]
+    assert [v["name"] for v in pod["spec"]["volumes"]] == ["dshm", "images-scratch"]
+    # A tabular or streaming job runs on any node, xnat-web up or not.
+    assert "affinity" not in pod["spec"]
+    assert "securityContext" not in pod["spec"]
+
+
+def test_the_archive_patch_holds_xnats_volume_read_only_its_group_and_its_node():
+    """flip.nvflare.project_studies applies it to a project's entry with the mount (FLIP#1857)."""
+    patch = _archive_patch(_enabled("--set", f"{JOB_PODS}.images=archive"))
+
+    [volume] = patch["spec"]["volumes"]
+    assert volume["name"] == "xnat-archive"
+    assert volume["persistentVolumeClaim"]["readOnly"] is True
+    assert volume["persistentVolumeClaim"]["claimName"].endswith("-xnat-web")
+    # XNAT's group reads the archive; fsGroup would re-own it.
+    assert patch["spec"]["securityContext"] == {"supplementalGroups": [1001]}
+    # XNAT's volume is ReadWriteOnce by default, so the pod lands on xnat-web's node.
+    [term] = patch["spec"]["affinity"]["podAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]
+    assert term["labelSelector"]["matchLabels"]["app.kubernetes.io/component"] == "xnat-web"
+
+
+def test_an_archive_job_pod_runs_anywhere_on_a_shared_xnat_volume():
+    patch = _archive_patch(
+        _enabled("--set", f"{JOB_PODS}.images=archive", "--set", "xnat.web.persistence.accessMode=ReadWriteMany")
+    )
+
+    assert "affinity" not in patch["spec"]
+
+
+@pytest.mark.parametrize("images", ["project", "stream"])
+def test_only_archive_renders_the_archive_patch(images):
+    assert _archive_patch(_enabled("--set", f"{JOB_PODS}.images={images}")) is None
+
+
+@pytest.mark.parametrize("off", ["xnat.enabled=false", "xnat.web.persistence.enabled=false"])
+def test_an_archive_mount_is_refused_without_the_charts_own_xnat_volume(off):
+    result = _helm("--set", f"{JOB_PODS}.enabled=true", "--set", f"{JOB_PODS}.images=archive", "--set", off)
+
+    assert result.returncode != 0
+    assert "images: project or stream" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "off",
+    [
+        ("--set-string", "imagingApi.env.COHORT_RECONCILE_MINUTES=0"),
+        ("--set", "imagingApi.env.COHORT_RECONCILE_MINUTES=0.0"),
+    ],
+)
+def test_an_archive_mount_is_refused_while_imaging_api_removes_no_departed_session(off):
+    """The pod reads every session XNAT holds for the project, so departed patients' sessions must go (FLIP#1860)."""
+    result = _helm("--set", f"{JOB_PODS}.enabled=true", "--set", f"{JOB_PODS}.images=archive", *off)
+
+    assert result.returncode != 0
+    assert "COHORT_RECONCILE_MINUTES above 0" in result.stderr
+
+
 def test_a_project_mount_is_refused_without_the_shared_images_volume():
     result = _helm("--set", f"{JOB_PODS}.enabled=true", "--set", "sharedImagesPvc.enabled=false")
 
@@ -309,8 +381,20 @@ def test_trust_api_reports_how_the_trust_runs_fl_jobs(values, mode):
     assert result.returncode == 0, f"helm template failed: {result.stderr}"
 
     assert re.findall(r'FL_CLIENT_JOB_MODE: "(\w+)"', result.stdout) == [mode]
-    # trust-api reads the mode once, at start, so its pod template carries it too: a changed mode rolls the pod.
-    assert re.findall(r'flip-trust/fl-client-job-mode: "(\w+)"', result.stdout) == [mode]
+
+
+def test_a_changed_fl_client_tag_or_job_mode_rolls_trust_api():
+    """trust-api reads its ConfigMap once, at start (envFrom), so its pod template hashes the ConfigMap's data."""
+
+    def checksum(*extra: str) -> str:
+        return _one(_docs(*extra), "Deployment", "-trust-api")["spec"]["template"]["metadata"]["annotations"][
+            "checksum/config"
+        ]
+
+    base = checksum()
+    assert checksum() == base, "the same values roll nothing"
+    assert checksum("--set", "flClient.image.pin=v9.9.9") != base, "a new FL client tag rolls it"
+    assert checksum("--set", f"{JOB_PODS}.enabled=true") != base, "a new job mode rolls it"
 
 
 def test_a_parent_that_holds_a_gpu_is_refused():

@@ -77,7 +77,7 @@ Prerequisites
 1. **AWS CLI with SSO access.** Configure it once with ``aws configure sso``, then sign in with
    ``aws sso login --profile <profile>`` whenever the session expires.
 2. **Terraform >= 1.13.1** (or OpenTofu).
-3. **Python 3.12 or 3.13** with `UV <https://docs.astral.sh/uv/guides/install-python/>`_.
+3. **Python 3.13** with `UV <https://docs.astral.sh/uv/guides/install-python/>`_.
 4. **GitHub CLI** (``gh``), and a **GitHub Container Registry login** to pull the pre-built images. Create a GitHub
    personal access token with the ``read:packages`` scope, then:
 
@@ -226,7 +226,8 @@ The hub uses two kinds of key and a per-job credential. See :doc:`/sys-admin` fo
      - Calls between services inside one trust. One key per trust; the hub mints it and never stores it.
      - Minted alongside the trust API key and written into the trust's kit file.
 
-The two per-trust keys are minted when you register the trust; see :ref:`deploy-central-hub-register-trusts`.
+The two per-trust keys are minted when you register the trust from the command line (see
+:ref:`deploy-central-hub-register-trusts`), or, for a trust added in the UI, when its kit is first downloaded.
 
 .. _deploy-central-hub-register-trusts:
 
@@ -239,6 +240,11 @@ one-off task inside it.
 
 A trust's **kit file**, ``trust/.env.<CODE>.<hub>``, is its identity and its configuration: ``HUB=prod`` reads
 ``trust/.env.<CODE>.prod``, ``HUB=stag`` ``trust/.env.<CODE>.stag``.
+
+This section is the command-line route. A site on a Docker Compose host can instead be added with **Add Trust** on
+the Connection Status page and download its own kit from the FLIP UI, with no kit file on your workstation:
+:ref:`onboarding-kit-from-ui`. Use the command line for Kubernetes, AWS EC2 and Azure nodes, and for nodes the hub
+team runs.
 
 1. **Create the kit file.** From the repository root:
 
@@ -351,8 +357,10 @@ keeps the number from being used again, and the hub's log then lists that slot a
 Rotating keys
 *************
 
-*Who: FLIP admin, with AWS access to the hub's account.* A trust's API key and trust-internal service key are reissued in
-place, without re-registering it:
+*Who: FLIP admin, with AWS access to the hub's account.* For a site on a Docker Compose host, the trust's Trust Admin
+or a FLIP admin can do this from the trust's card instead, with **Issue new keys** ("Later — issue new keys" on
+:doc:`onboarding-a-trust`); the three points below apply to both routes. From the command line, a trust's API key and
+trust-internal service key are reissued in place, without re-registering it:
 
 .. code-block:: shell
 

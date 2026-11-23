@@ -27,22 +27,22 @@ const PROJECTS = [
     "Spleen segmentation evaluation"
 ];
 // Ids come from the fixtures: they are the demo's own (re-keyed by scripts/demo-fixtures.mjs).
-const EHR_PROJECT = `/demo/project/${ehrProject.id}`;
-const ARK_MODEL = `/demo/project/${arkProject.id}/model/${arkModels.data[0].id}`;
+const EHR_PROJECT = `/project/${ehrProject.id}`;
+const ARK_MODEL = `/project/${arkProject.id}/model/${arkModels.data[0].id}`;
 const SITES = ["Guy's and St Thomas' Trust", "King's College Hospital"];
 const LOAD = { timeout: 15000 };
 
 describe("public demo walk", () => {
     it("lists five projects and opens each", () => {
-        cy.visit("/demo/projects");
+        cy.visit("/projects");
         cy.get("[data-test='demo-banner']", LOAD).should("contain.text", `${PROJECTS.length} federated projects`);
         for (const name of PROJECTS) {
             cy.contains(name, LOAD).should("be.visible");
         }
         for (const name of PROJECTS) {
-            cy.visit("/demo/projects");
+            cy.visit("/projects");
             cy.contains(name, LOAD).click();
-            cy.location("pathname", LOAD).should("match", /^\/demo\/project\/[0-9a-f-]{36}/);
+            cy.location("pathname", LOAD).should("match", /^\/project\/[0-9a-f-]{36}/);
             cy.contains(name, LOAD).should("be.visible");
             cy.contains("Something went wrong").should("not.exist");
         }
@@ -55,7 +55,7 @@ describe("public demo walk", () => {
     });
 
     it("shows Connection Status with the two demo sites online", () => {
-        cy.visit("/demo/ConnectionStatus");
+        cy.visit("/ConnectionStatus");
         // The topology view renders a hidden copy of each name: match visible text only.
         for (const site of SITES) {
             cy.contains(":visible", site, LOAD).should("be.visible");

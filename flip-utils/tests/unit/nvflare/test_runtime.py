@@ -22,6 +22,7 @@ from flip.nvflare.runtime import (
     FLIP_MODEL_ID_KEY,
     get_app_config,
     get_flip_model_id,
+    get_flip_project_id,
     get_job_custom_props,
 )
 
@@ -160,3 +161,37 @@ def test_app_config_never_opens_a_non_path_as_a_file_descriptor(app_dir):
 
     assert get_app_config(ctx) == {}
     os.fstat(1)  # raises EBADF if the read closed stdout
+
+
+# ── the job's project id: its NVFLARE study, which the FL API sets (FLIP#1678) ────────
+
+
+def test_project_id_is_the_jobs_study(tmp_path):
+    meta = tmp_path / "meta.json"
+    meta.write_text(json.dumps({"study": _VALID}))
+
+    assert get_flip_project_id(_ctx_workspace(meta_path=str(meta))) == _VALID
+    assert get_flip_project_id(_ctx({"study": _VALID})) == _VALID
+
+
+@pytest.mark.parametrize(
+    "meta",
+    [
+        {},
+        {"study": "default"},
+        {"study": "../net-2"},
+        {"study": 1},
+        {"study": _VALID.upper()},
+        {"study": _VALID.replace("-", "")},
+        {"study": "{" + _VALID + "}"},
+        {"study": "urn:uuid:" + _VALID},
+    ],
+)
+def test_project_id_is_none_unless_the_study_is_a_canonical_uuid(meta):
+    """A job from a hub older than FLIP#1678 runs in NVFLARE's "default" study. Another spelling of a UUID names no
+    project folder, so it must not pass for one: the start-of-job wipe would delete the job's own images."""
+    assert get_flip_project_id(_ctx(meta)) is None
+
+
+def test_project_id_is_none_without_an_engine():
+    assert get_flip_project_id(_ctx_workspace(engine=False)) is None

@@ -89,9 +89,12 @@ AWS_DIR="$(cd "${HERE}/.." && pwd)"
 REPO_ROOT="$(cd "${AWS_DIR}/../../.." && pwd)"
 PLAN_WORKFLOW="${REPO_ROOT}/.github/workflows/terraform_plan.yml"
 [[ -f "${PLAN_WORKFLOW}" ]] || die "cannot find ${PLAN_WORKFLOW} — the secret/variable split is read from it"
-# The UI publish's variables (FLIP#1186) are read from the workflow that uses them.
+# The publishes' variables (FLIP#1186, FLIP#2012) are read from the workflows that use them.
 UI_WORKFLOW="${REPO_ROOT}/.github/workflows/publish_ui.yml"
-[[ -f "${UI_WORKFLOW}" ]] || die "cannot find ${UI_WORKFLOW} — the UI publish's variables are read from it"
+DEMO_WORKFLOW="${REPO_ROOT}/.github/workflows/publish_demo.yml"
+for workflow in "${UI_WORKFLOW}" "${DEMO_WORKFLOW}"; do
+    [[ -f "${workflow}" ]] || die "cannot find ${workflow} — its publish's variables are read from it"
+done
 
 GH_ENV="aws-${ENV}"
 # The profile the CI roles of this estate are reached through. Matches the
@@ -191,6 +194,10 @@ case "${ENV}" in
 esac
 EXPECTED_SUB="repo:${REPO}:environment:${GH_ENV}"
 EXPECTED_APPLY_REF="${REPO}/.github/workflows/terraform_apply.yml@refs/heads/${APPLY_BRANCH}"
+# Staging's apply role also trusts the power on/off workflow (the bootstrap module's
+# apply_workflow_refs, FLIP#1596), one ref per line.
+[[ "${ENV}" != stag ]] ||
+    EXPECTED_APPLY_REF+=$'\n'"${REPO}/.github/workflows/staging_lifecycle.yml@refs/heads/${APPLY_BRANCH}"
 NOT_BOOTSTRAPPED="the platform repository (aicentre-iac / aicentre-lza-iac) has not applied
    terraform_ci_bootstrap in the account '${AWS_PROFILE_FOR_ENV}' reaches — or, outside AI Centre,
    deploy/providers/AWS/ci has not been applied there."
@@ -245,14 +252,15 @@ trust_values() {
         tr '\t' '\n' | sed '/^$/d; /^None$/d'
 }
 
-# Exactly one value, and it is the expected one. "Contains" would pass a policy
-# that also trusts another environment or branch.
+# Exactly the expected values (one per line, in any order). "Contains" would pass a
+# policy that also trusts another environment or branch.
 expect_trust() {
-    local name="$1" operator="$2" claim="$3" want="$4" got
-    got="$(trust_values "${name}" "${operator}" "${claim}")" ||
+    local name="$1" operator="$2" claim="$3" want got
+    want="$(sort <<<"$4")"
+    got="$(trust_values "${name}" "${operator}" "${claim}" | sort)" ||
         die "could not read the trust policy of ${name}"
     if [[ "${got}" != "${want}" ]]; then
-        die "${name} trusts ${claim} = '${got//$'\n'/, }', but ${GH_ENV} (${MODE}) needs '${want}'.
+        die "${name} trusts ${claim} = '${got//$'\n'/, }', but ${GH_ENV} (${MODE}) needs '${want//$'\n'/, }'.
    These are another environment's or repository's roles. Check the profile, --hub and --repo."
     fi
 }
@@ -263,20 +271,27 @@ expect_trust "${TF_PLAN_ROLE_NAME}" StringEquals sub "${EXPECTED_SUB}"
 expect_trust "${TF_APPLY_ROLE_NAME}" StringEquals sub "${EXPECTED_SUB}"
 expect_trust "${TF_APPLY_ROLE_NAME}" StringEquals job_workflow_ref "${EXPECTED_APPLY_REF}"
 
-# The UI-publish role (FLIP#1186) is optional: the bootstrap module creates it
-# only when its caller names the UI bucket. Without it CI does not publish the UI
-# and `make deploy-ui` stays the way to. When it exists it is held to the same
-# environment and branch as the apply role.
+# The publish roles (FLIP#1186, FLIP#2012) are optional: the bootstrap module creates
+# each only when its caller names its bucket. Without one, CI does not publish that
+# site and its `make deploy-*` stays the way to. One that exists is held to the same
+# environment and branch as the apply role, and to its own workflow file.
+# publish_role <variable> <role> <workflow file>: sets <variable> to the role's ARN, or to
+# empty when the role does not exist.
+publish_role() {
+    local out
+    printf -v "$1" '%s' ""
+    if out="$(aws_q iam get-role --role-name "$2" --query Role.Arn --output text 2>&1)"; then
+        expect_trust "$2" StringEquals sub "${EXPECTED_SUB}"
+        expect_trust "$2" StringEquals job_workflow_ref "${REPO}/.github/workflows/$3@refs/heads/${APPLY_BRANCH}"
+        printf -v "$1" '%s' "${out}"
+    elif [[ "${out}" != *NoSuchEntity* ]]; then
+        die "could not read the role $2: $(tail -1 <<<"${out}")"
+    fi
+}
 TF_UI_PUBLISH_ROLE_NAME="${TF_UI_PUBLISH_ROLE_NAME:-AICentre-FLIPUiPublishRole}"
-EXPECTED_UI_REF="${REPO}/.github/workflows/publish_ui.yml@refs/heads/${APPLY_BRANCH}"
-UI_ARN=""
-if out="$(aws_q iam get-role --role-name "${TF_UI_PUBLISH_ROLE_NAME}" --query Role.Arn --output text 2>&1)"; then
-    UI_ARN="${out}"
-    expect_trust "${TF_UI_PUBLISH_ROLE_NAME}" StringEquals sub "${EXPECTED_SUB}"
-    expect_trust "${TF_UI_PUBLISH_ROLE_NAME}" StringEquals job_workflow_ref "${EXPECTED_UI_REF}"
-elif [[ "${out}" != *NoSuchEntity* ]]; then
-    die "could not read the role ${TF_UI_PUBLISH_ROLE_NAME}: $(tail -1 <<<"${out}")"
-fi
+TF_DEMO_PUBLISH_ROLE_NAME="${TF_DEMO_PUBLISH_ROLE_NAME:-AICentre-FLIPDemoPublishRole}"
+publish_role UI_ARN "${TF_UI_PUBLISH_ROLE_NAME}" publish_ui.yml
+publish_role DEMO_ARN "${TF_DEMO_PUBLISH_ROLE_NAME}" publish_demo.yml
 
 # The FLIP root attaches this boundary to every role it owns; an apply against an
 # account without it fails every role update with NoSuchEntity.
@@ -293,6 +308,11 @@ if [[ -n "${UI_ARN}" ]]; then
     echo "   the UI-publish role and its trust policy check out"
 else
     echo "   no ${TF_UI_PUBLISH_ROLE_NAME}: CI will not publish the UI (set ui_bucket_name on the bootstrap module)"
+fi
+if [[ -n "${DEMO_ARN}" ]]; then
+    echo "   the demo-publish role and its trust policy check out"
+else
+    echo "   no ${TF_DEMO_PUBLISH_ROLE_NAME}: CI will not publish the demo (set demo_bucket_name on the bootstrap module)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -383,6 +403,10 @@ if [[ -n "${UI_ARN}" ]]; then
     set_gh variable TF_UI_PUBLISH_ROLE_ARN "${UI_ARN}"
     echo "   set TF_UI_PUBLISH_ROLE_ARN"
 fi
+if [[ -n "${DEMO_ARN}" ]]; then
+    set_gh variable TF_DEMO_PUBLISH_ROLE_ARN "${DEMO_ARN}"
+    echo "   set TF_DEMO_PUBLISH_ROLE_ARN"
+fi
 
 # ---------------------------------------------------------------------------
 # 3. Everything the workflows dereference
@@ -402,10 +426,10 @@ read_lines SECRET_KEYS < <(
     grep -oE '^[[:space:]]+[A-Z][A-Z0-9_]*:[[:space:]]+\$\{\{[[:space:]]*secrets\.[A-Z0-9_]+' "${PLAN_WORKFLOW}" |
         sed -E 's/.*secrets\.//' | sort -u
 )
-# The UI publish's variables count only where its role exists; elsewhere nothing
-# reads them.
+# A publish's variables count only where its role exists; elsewhere nothing reads them.
 VARIABLE_SOURCES=("${PLAN_WORKFLOW}")
 [[ -n "${UI_ARN}" ]] && VARIABLE_SOURCES+=("${UI_WORKFLOW}")
+[[ -n "${DEMO_ARN}" ]] && VARIABLE_SOURCES+=("${DEMO_WORKFLOW}")
 read_lines VARIABLE_KEYS < <(
     grep -ohE '^[[:space:]]+[A-Z][A-Z0-9_]*:[[:space:]]+\$\{\{[[:space:]]*vars\.[A-Z0-9_]+' "${VARIABLE_SOURCES[@]}" |
         sed -E 's/.*vars\.//' | sort -u
@@ -449,16 +473,19 @@ read_lines LZA_KEYS < <(
 )
 ((${#LZA_KEYS[@]} > 0)) || die "could not read LZA_REQUIRED_KEYS from compose-ci-env.sh"
 REQUIRED_KEYS+=("${LZA_KEYS[@]}")
-# The keys the UI build refuses to run without: its "Check the window.js inputs"
-# step names them on one `for key in …` line.
-if [[ -n "${UI_ARN}" ]]; then
-    read_lines UI_KEYS < <(
-        grep -oE '^[[:space:]]+for key in [A-Z0-9_ ]+; do' "${UI_WORKFLOW}" | head -1 |
+# The keys a publish's build refuses to run without: it names them on one
+# `for key in …` line (the window.js inputs, the demo's bucket and host).
+publish_keys() {
+    local keys=()
+    read_lines keys < <(
+        grep -oE '^[[:space:]]+for key in [A-Z0-9_ ]+; do' "$1" | head -1 |
             sed -E 's/^[[:space:]]+for key in //; s/; do$//' | tr ' ' '\n' | sed '/^$/d'
     )
-    ((${#UI_KEYS[@]} > 0)) || die "could not read the window.js inputs from ${UI_WORKFLOW}"
-    REQUIRED_KEYS+=("${UI_KEYS[@]}")
-fi
+    ((${#keys[@]} > 0)) || die "could not read the required inputs from $1"
+    REQUIRED_KEYS+=("${keys[@]}")
+}
+[[ -z "${UI_ARN}" ]] || publish_keys "${UI_WORKFLOW}"
+[[ -z "${DEMO_ARN}" ]] || publish_keys "${DEMO_WORKFLOW}"
 
 SET=()
 MISSING=()
@@ -467,7 +494,7 @@ UNSET_HERE=()
 for key in "${SECRET_KEYS[@]}"; do set_one secret "${key}"; done
 for key in ${VARIABLE_KEYS[@]+"${VARIABLE_KEYS[@]}"}; do
     # Written in step 2 from the flag and IAM, never from the env file.
-    [[ "${key}" == "TF_HUB" || "${key}" == "TF_UI_PUBLISH_ROLE_ARN" ]] && continue
+    case "${key}" in TF_HUB | TF_*_ROLE_ARN) continue ;; esac
     set_one variable "${key}"
 done
 

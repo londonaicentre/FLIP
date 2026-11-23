@@ -60,7 +60,7 @@ environment's values) and publishes `dist/` to the UI bucket with `scripts/publi
 `index.html` and `window.js` are served `no-cache`. CI runs the same script after every successful apply
 (`publish_ui.yml`, FLIP#1186); `make deploy-ui` is the manual fallback and rollback.
 
-## Public demo build (`/demo/`)
+## Public demo build
 
 A read-only, fully-offline demo of FLIP on example data, safe to host unauthenticated: five
 federated projects (Ark+ fine-tuning and evaluation, EHR risk prediction, spleen 3D segmentation
@@ -92,19 +92,21 @@ over the built bundle.
 
 ```bash
 npm run demo          # dev server at http://localhost:4174/ (base "/")
-npm run build:demo    # production bundle under dist/ with base "/demo/"
-npm run serve:demo    # preview the built bundle at http://127.0.0.1:4174/demo/
+npm run build:demo    # production bundle under dist-demo/ (base "/"), never in the real build's dist/
+npm run serve:demo    # preview the built bundle at http://127.0.0.1:4174/
 ```
 
 With `serve:demo` running, `npm run test:public-demo` walks the built bundle as a visitor would
 ([`test/cypress/public-demo/walk.cy.ts`](test/cypress/public-demo/walk.cy.ts): every project opens,
 a cold deep link renders, Connection Status names the two demo sites, no download control shows).
-It is a local check, not part of CI.
+CI runs the build and the walk on every flip-ui change (the *Public demo* job of `test_flip_ui.yml`).
 
-The build regenerates `dist/js/window.js` from
+The build regenerates `dist-demo/js/window.js` from
 [`scripts/generate-demo-window-js.sh`](scripts/generate-demo-window-js.sh), which reads no
-environment and points at no real backend. Host the bundle as a CloudFront behaviour (or any
-static prefix) at `/demo/` next to the real app.
+environment and points at no real backend. The demo is served at the root of its own host (FLIP#2012),
+never on the real app's origin: `.github/workflows/publish_demo.yml` publishes `dist-demo/` to its own
+bucket after each apply, and `make -C deploy/providers/AWS deploy-demo HUB=stag|prod` is the manual
+fallback.
 
 The demo is a point-in-time capture, not a live system, and says so twice: `window.RELEASE_VERSION`
 is stamped `demo/<latest-capture-date>+<git-short-sha>` (the date is grepped out of the registers
@@ -172,7 +174,7 @@ picks the implementation once at boot from `window.AUTH_BACKEND`.
 **Production source may not import a package that is only declared in `devDependencies`, nor one that is
 declared nowhere and resolves through npm's hoisting of a parent's tree.** "Production source" is everything
 the deployed bundles reach: `src/`, minus its test files, plus `mocks/` — which `build:demo` pulls into the
-public `/demo/` bundle.
+public demo bundle.
 
 This is enforced, not just documented: the `flip-ui/dependency-scoping` block in
 [`eslint.config.mjs`](eslint.config.mjs) runs `import-x/no-extraneous-dependencies` over exactly that file

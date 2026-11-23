@@ -158,6 +158,11 @@ Promise<IUserDisabledStateDto> {
     return response.data;
 }
 
+// Only for a disabled user who owns no live project and holds no Trust Admin grant; the hub refuses otherwise (409).
+export async function deleteUser(userId: string): Promise<void> {
+    await _http.delete(`/users/${userId}`);
+}
+
 export async function updateUserProfile(userId: string, profile: IUserProfileDto): Promise<IUserProfileDto> {
     const response = await _http.put<IUserProfileDto>(`/users/${userId}`, profile);
 

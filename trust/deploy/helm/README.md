@@ -65,6 +65,31 @@ helm upgrade --install trust-release ./trust/deploy/helm/ \
   -f trust/deploy/helm/k8s-trust-<CODE>.yaml
 ```
 
+## The published chart
+
+Every platform release publishes this chart to GHCR as an OCI artifact, versioned with the
+release (FLIP#1646):
+
+```bash
+helm pull oci://ghcr.io/londonaicentre/charts/flip-trust --version 0.13.0
+```
+
+The chart version, `appVersion` and `global.image.tag` all carry that same release, so
+`flip-trust:0.13.0` deploys v0.13.0's images and nothing else. In-tree the chart is deliberately
+*un*versioned — `version: 0.0.0-dev` with a floating image tag — because a development checkout
+should deploy what you built, not the last release. `scripts/package_chart.py` publishes it: the
+chart version and `appVersion` go to `helm package --version/--app-version`, and only
+`global.image.tag` is stamped into `values.yaml`, since helm has no flag for a default value. It is
+runnable by hand for a dry run:
+
+```bash
+python3 trust/deploy/helm/scripts/package_chart.py --version v0.13.0 --no-push
+```
+
+Pushing requires `helm registry login ghcr.io`. The release workflow publishes the chart after the
+image builds go green and before the production apply, so a published chart always references
+images that exist.
+
 ## How the Make targets work
 
 - **`sync-kit`** reads `trust/.env.<CODE>.<env>`, patches the per-trust keys (`trust-api-key`,
@@ -100,9 +125,14 @@ helm upgrade --install trust-release ./trust/deploy/helm/ \
   `deploy/env_mode.mk`'s `kit_file` and passes it to `scripts/preflight.sh` as `KIT_FILE` and to
   `sync_k8s_kit.py` as `--kit-file`, so the checklist reads the kit the site actually has.
 - **`stage-kit`** detects the backend from the kit's shape (FLARE `startup/`, Flower `certificates/` +
-  `keys/`), chowns to that image's uid (1000 / 49999), empties `KIT_DEST` before `docker cp` so a
-  re-stage leaves no stale credentials, and pre-creates the subPath directories the chart mounts. It
-  implements the kind case only.
+  `keys/`), chowns to that image's uid (1000 / 49999), empties `KIT_DEST` before the copy so a
+  re-stage leaves no stale credentials, and pre-creates the subPath directories the chart mounts. On a
+  kind node it copies with `docker cp`; on any other node (k3s, a VM) through a short-lived root pod pinned
+  to the node with `KIT_DEST` as a hostPath, and `kubectl cp` (`scripts/stage-to-node.sh`, FLIP#1958).
+  That needs RBAC to read nodes and to create and exec into the pod, as good as root on the node. A cluster that
+  will not run the pod (the image out of reach, an admission policy) gets the same steps printed as one command
+  to run as root on the node (FLIP#1477). Under Pod Security `baseline` the chart's own hostPath mounts are refused
+  too, so use the kit Secret there. `stage-vocab` goes the same way.
 - **`undeploy`** (aliases `down`, `undeploy-trust-k8s`) is `helm uninstall`. Every standalone PVC in the
   chart has no `helm.sh/resource-policy: keep`, so uninstall deletes them (orthanc, xnat-web,
   data-access-api's cohort snapshots, grafana, shared images); only StatefulSet `volumeClaimTemplates`
@@ -516,14 +546,16 @@ loaded** (`helm install` prints a warning).
    export the vocabularies from [OHDSI Athena](https://athena.ohdsi.org/) (plus
    [NHS TRUD](https://isd.digital.nhs.uk/) for the UK ones) and unzip the export into a
    folder — `trust/omop-db/README.md`, "The core vocabulary bundle".
-2. **Stage it onto the node** at `/opt/flip/omop-vocab` (`VOCAB_DEST=` to change it). On kind:
+2. **Stage it onto the node** at `/opt/flip/omop-vocab` (`VOCAB_DEST=` to change it):
 
    ```sh
    make -C trust/deploy/helm stage-vocab VOCAB_DIR=<folder> KUBE_CONTEXT=<ctx>
    ```
 
-   On any other cluster (k3s, a VM) copy the folder there yourself, readable by every user.
-   `stage-vocab` empties the destination first, so a re-stage leaves no file of the previous
+   On kind it copies with `docker cp`, on any other node through a short-lived pod (as `stage-kit`).
+   With more than one node, `NODE=<name>` names the node; `stage-kit` and `stage-vocab` refuse to
+   guess. For the kit that is the FL client's node (imaging-api's unless `flClient.affinity` says
+   otherwise). `stage-vocab` empties the destination first, so a re-stage leaves no file of the previous
    bundle behind.
 3. **Point the chart at it**: `OMOP_VOCAB_DIR=/opt/flip/omop-vocab` in the kit file
    (`sync-kit` writes `omopDb.vocabLoad.hostPath` from it), or
@@ -682,7 +714,7 @@ flClient:
     jobPods:
       enabled: true
       maxGpus: 1            # GPUs lent to jobs at once; NVFLARE queues beyond it and the hub says why
-      images: project       # how a job pod gets its studies: project (a study mount) or stream
+      images: project       # how a job pod gets its studies: project or archive (study mounts), or stream
       ephemeralStorage: 10Gi  # local disk per job pod; with images: stream, size it to the largest cohort
       pendingTimeout: 900   # seconds a job pod may wait for its node; size it to a cold scale-up
       tolerations:          # the GPU pool's taint
@@ -709,12 +741,23 @@ make sync-project-studies PROJECTS="<id> ..."   # or exactly these
 It builds one entry per project from the template above and replaces the ConfigMap; the client picks the
 change up within a minute or so, with no restart. When it finds no approved project (data-access-api's snapshot
 folder empty or not mounted) it stops and replaces nothing, since an empty file would stop every project's jobs. Run it after the first deploy, after each project is
-approved at this trust, after an upgrade (the entries carry the job image and the pod template), and after
-changing `jobPods.images`: the file outlives a redeploy, so until it is synced again every project keeps
+approved at this trust, after an upgrade (the entries carry the job image and the pod template), after
+changing `jobPods.images`, and, with `images: archive`, after a project's first imaging pull (until XNAT has
+archived one of its sessions there is no directory to mount, so its entry streams; the sync prints a line for
+each project that streams, and why): the file outlives a redeploy, so until it is synced again every project keeps
 the entries of the previous mode. Until
 a project has its entry NVFLARE has no job image for its study and does not start its jobs. The template
 itself mounts no images, so a job from a hub that predates studies, which lands in the default study,
 streams its studies.
+
+**Leaving `images: archive`** (for `project` or `stream`) takes three steps, in this order, because the
+entries already synced keep mounting XNAT's archive until the next sync, and the chart checks
+`COHORT_RECONCILE_MINUTES` only while the mode is still `archive`:
+
+1. Upgrade with the new `jobPods.images`, leaving `imagingApi.env.COHORT_RECONCILE_MINUTES` as it is.
+2. Run `make sync-project-studies`. Until it has run, the fl-client logs an error at every start naming the
+   projects whose entries still mount the archive (`kubectl logs <fl-client pod> -c fl-client-init`).
+3. Only then, if you mean to, set `COHORT_RECONCILE_MINUTES` to 0 in a later upgrade.
 
 Prerequisites and trade-offs:
 
@@ -722,7 +765,7 @@ Prerequisites and trade-offs:
 - **Prefer a toleration to a `nodeSelector`.** NVFLARE waits only while Kubernetes reports the pod
   `Insufficient` CPU, memory or GPU (what an autoscaler adding a node looks like). A pod no node could ever
   take is `Unschedulable` and fails at once, which is what a `nodeSelector` aimed at a pool at zero reports.
-- **A job pod holds only its own project's studies**, by `jobPods.images`. Either way imaging-api keeps the
+- **A job pod holds only its own project's studies**, by `jobPods.images`. In every mode imaging-api keeps the
   whole cache, bounded by `IMAGE_CACHE_RETENTION_HOURS`, and `flip.add_resource`'s files are sent in the
   request: training code writes them in the job pod's `IMAGES_DIR`, a scratch `emptyDir` of its own.
   - `project` (the default) is NVFLARE's own way to give a job pod its data, a mount set by its study: the
@@ -732,6 +775,22 @@ Prerequisites and trade-offs:
     stay cached between its jobs until the retention sweep removes them. It needs `sharedImagesPvc` (the
     chart refuses without it), and the job pods attach it: on a ReadWriteOnce volume they follow the
     fl-client's node, and a separate GPU pool needs a ReadWriteMany class.
+  - `archive` uses the same study mount for the project's own directory of XNAT's archive
+    (`archive/<XNAT project>` of XNAT's volume), read-only, so a job reads its studies in place with no copy
+    in imaging-api's cache or in the pod (FLIP#1857). imaging-api's `/layout` route names each file's place in
+    the archive and in the layout a download has, and `flip.get_by_accession_number` builds that layout as
+    links into the mount. It needs this chart's XNAT on a persistent volume (the chart refuses otherwise). The
+    base template carries nothing of XNAT's: the chart renders an archive patch beside it
+    (`pod_specs/job-pod-archive.yaml`: XNAT's volume, XNAT's group 1001, and on a ReadWriteOnce XNAT volume a
+    place on xnat-web's node), and the sync applies it only to a project whose archive directory it mounts. Such
+    a project's job pods therefore need xnat-web scheduled, and a separate GPU pool needs a ReadWriteMany class;
+    every other job, a tabular project's or one that streams, runs on any node, xnat-web up or not. A project
+    with nothing archived yet, and any assessor resource, is streamed. **The mount shows every session XNAT holds for the project.** imaging-api
+    refuses `/layout` for a patient who has left the approved cohort, but their files stay readable in the
+    mount until imaging-api removes the session from XNAT: after `COHORT_REMOVAL_GRACE_HOURS` (24 h by
+    default, counted again from an imaging-api restart), and not while data-access-api cannot return the
+    cohort (FLIP#1860). The chart refuses `archive` with `COHORT_RECONCILE_MINUTES` at 0, which turns the
+    removal off.
   - `stream` mounts no images volume: a job streams each study from imaging-api into its own run directory
     (`IMAGES_TRANSPORT=stream`, FLIP#1049). Job pods then run on any node and ignore `flClient.affinity`, so
     a separate GPU pool needs no ReadWriteMany class.
@@ -741,8 +800,10 @@ Prerequisites and trade-offs:
   spleen CT studies as NIfTI took 435 MB, and 300 chest X-rays about 80 MB.
 - **API server egress.** The launcher calls the Kubernetes API from the parent. The default egress allows
   port 443, which covers AKS and EKS. NetworkPolicy matches the API server's real endpoint, so where it
-  listens elsewhere (minikube 8443, kind 6443) set `flClient.nvflare.jobPods.apiServer.cidrs` and `.port`,
-  or the first launch hangs and no job pod appears. Only the parent gets that rule.
+  listens elsewhere (k3s and kind 6443, minikube 8443) set `networkPolicies.apiServer.cidrs` and `.port`,
+  or the first launch hangs and no job pod appears. That one setting also lets `xnat-web` reach the API,
+  which XNAT's Container Service needs on the same clusters (FLIP#1958). Of the FL pods only the parent
+  gets the rule; job pods never do. `flClient.nvflare.jobPods.apiServer` still works and wins for the parent.
 - **Cold start.** The first job waits for a node to boot and pull the FL image, and an idle GPU node lingers
   for the autoscaler's scale-down delay (around 10 minutes on AKS by default). The FL server's 20-second
   wait for a client to start a job does not sink a late pod: tested with a job pod held 3.5 minutes for its
@@ -1151,8 +1212,8 @@ there; the omop-db image CI asserts every published image carries it.
 - **Secrets**: Separate from ConfigMaps; recommend External Secrets Operator
 - **FL clients**: No Central Hub credentials; connect outbound to FL server only
 - **ServiceAccounts**: each stateless service runs under its own ServiceAccount
-  with no RBAC role bindings (none of the pods call the Kubernetes API — least
-  privilege by default).
+  with no RBAC role bindings (none of them calls the Kubernetes API — least
+  privilege by default; xnat-web and the NVFLARE job-pod parent do, with their own RBAC).
 - **Pod Security & container hardening**: the chart-created namespace
   carries Pod Security Standards labels (`enforce=baseline`, `warn`/`audit=restricted`
   by default — tune via `podSecurity.*`; `baseline` does not admit `hostPath` volumes, which
@@ -1273,7 +1334,7 @@ make -C trust/deploy/helm xnat-init
 It re-renders only the `xnat-init` job from the chart (`--set
 xnat.initJob.enabled=true`, applied with the
 `app.kubernetes.io/component=xnat-init` selector), waits up to `HELM_TIMEOUT` (default
-`30m`) for it to complete, and on failure tails the job's logs before exiting non-zero.
+`30m`) for it to complete or fail, and on failure tails the job's logs before exiting non-zero.
 
 Two things worth knowing now that `make deploy` calls this target itself:
 

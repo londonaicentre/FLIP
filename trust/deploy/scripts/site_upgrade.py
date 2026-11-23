@@ -366,8 +366,7 @@ def _offer_newer_release(target: str, source: str, hub_url: str, can_ask: bool) 
         print(f"   Continuing to {target}, as specified. To move to {newer.tag} instead: {move}, then re-run")
         print(f"   with TAG={newer.tag}.")
         return None
-    answer = input(f"   Continue to {target}, or stop here to move to {newer.tag}? [C/l] ").strip().lower()
-    if answer not in {"l", "latest"}:
+    if _ask(f"   Continue to {target}, or stop here to move to {newer.tag}? [C/l] ") not in {"l", "latest"}:
         return None
     print(f"❌ Stopped. Nothing changed. To move to {newer.tag}, bring the checkout to it, then re-run")
     print(f"   with TAG={newer.tag}:")
@@ -529,14 +528,26 @@ def write_tags(kit_file: Path, tag: str, fl_tag: str | None = None) -> None:
     tkl.write_secure(kit_file, lines)
 
 
+def _ask(prompt: str) -> str:
+    """The operator's answer, lower-cased; an answer the terminal's encoding cannot decode counts as none.
+
+    A non-Latin keyboard layout on a terminal that is not UTF-8 sends `y` as a byte Python cannot
+    decode, which would otherwise end the upgrade in a traceback.
+    """
+    try:
+        return input(prompt).strip().lower()
+    except UnicodeDecodeError:
+        print("   (could not read that answer: switch the keyboard to a Latin layout and re-run)")
+        return ""
+
+
 def _confirm(prompt: str, assume_yes: bool) -> bool:
     if assume_yes:
         return True
     if not getattr(sys.stdin, "isatty", lambda: False)():
         print(f"{prompt}\n  (no terminal to confirm on — pass YES=1 for a scripted run)")
         return False
-    answer = input(f"{prompt} Proceed? [y/N] ").strip().lower()
-    return answer in {"y", "yes"}
+    return _ask(f"{prompt} Proceed? [y/N] ") in {"y", "yes"}
 
 
 def plan(args: argparse.Namespace) -> int:
@@ -632,6 +643,10 @@ def plan(args: argparse.Namespace) -> int:
             print(f"     {e}")
             print("   That is a login, network or rate-limit fault, not a missing image: check `docker login`")
             print("   for the registry and this host's route to it, then re-run. Nothing changed.")
+            if "denied" in str(e):
+                # The site images are public: ghcr.io refuses them only to a client presenting a bad login.
+                print("   ghcr.io answers 'denied' to a stale or expired login even for public images:")
+                print("   `docker logout ghcr.io` (with sudo too, if the upgrade runs under sudo), then re-run.")
             return EXIT_MISSING_IMAGES
         if missing:
             print(f"❌ {target} is not published for every image this site runs:")

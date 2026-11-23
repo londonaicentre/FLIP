@@ -93,7 +93,7 @@ the images. The tables do two things:
 - `[tool.uv.sources] flip-utils = { path = "/opt/flip-utils" }` stops uv resolving flip-utils from
   **PyPI**, which would shadow the in-repo copy baked into the images
   ([#767](https://github.com/londonaicentre/FLIP/issues/767)).
-- `torch`/`torchvision` are pinned to PyTorch's cu130 index (NVIDIA driver ≥580).
+- `torch`/`torchvision` are pinned to PyTorch's cu132 index (NVIDIA driver ≥580).
 
 ### Testing an unpublished flip-utils
 

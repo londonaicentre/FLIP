@@ -414,8 +414,9 @@ class TestBuild:
 
 
 class TestExpectedEmpty:
-    def test_enforce_mfa_may_be_empty(self):
-        assert rce.keys_expected_empty() == {"ENFORCE_MFA"}
+    def test_enforce_mfa_and_the_demo_bucket_may_be_empty(self):
+        """An estate with no public demo (FLIP#2012) has no demo bucket to recover."""
+        assert rce.keys_expected_empty() == {"ENFORCE_MFA", "FLIP_DEMO_BUCKET_NAME"}
 
 
 class TestMain:

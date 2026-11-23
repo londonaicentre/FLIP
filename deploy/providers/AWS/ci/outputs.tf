@@ -30,6 +30,11 @@ output "ui_publish_role_arn" {
   value       = module.terraform_ci.ui_publish_role_arn
 }
 
+output "demo_publish_role_arn" {
+  description = "Role ARN for the public demo's publish, when demo_bucket_name is set. Set as TF_DEMO_PUBLISH_ROLE_ARN on the GitHub environment."
+  value       = module.terraform_ci.demo_publish_role_arn
+}
+
 output "account_id" {
   description = "Account these roles were created in."
   value       = module.terraform_ci.account_id

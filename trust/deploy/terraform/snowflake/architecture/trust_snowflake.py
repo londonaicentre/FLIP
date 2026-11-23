@@ -29,7 +29,7 @@ configurations: the hub egress integration (``enable_hub_egress``, impossible on
 
 Graphviz is not installed on the dev hosts; without ``dot`` this module refuses to render. Run it in docker::
 
-    docker run --rm -v "$PWD:/work" -w /work/trust/deploy/terraform/snowflake python:3.12-slim sh -c \\
+    docker run --rm -v "$PWD:/work" -w /work/trust/deploy/terraform/snowflake python:3.13-slim sh -c \\
       "apt-get update -qq && apt-get install -y -qq graphviz >/dev/null && \\
        pip -q install diagrams && python -m architecture.trust_snowflake --out docs"
 """
