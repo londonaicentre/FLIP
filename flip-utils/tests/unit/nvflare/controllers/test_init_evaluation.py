@@ -185,6 +185,14 @@ class TestInitEvaluation:
         assert EventType.END_RUN in [call.args[0] for call in controller.fire_event.call_args_list]
         controller.system_panic.assert_not_called()
 
+    def test_control_flow_accepts_a_model_entry_with_no_checkpoint(self, tmp_path):
+        """An empty entry names a model whose weights are already at the trusts"""
+        controller = self._run_control_flow_with_config(tmp_path, {"models": {"totalsegmentator": {}}})
+
+        controller.log_error.assert_not_called()
+        assert EventType.END_RUN not in [call.args[0] for call in controller.fire_event.call_args_list]
+        controller.system_panic.assert_not_called()
+
     def test_control_flow_valid_config_raises_no_error(self, tmp_path):
         """A complete config.json passes the check without an error, END_RUN or panic"""
         config = {"models": {"model1": {"checkpoint": "ckpt1", "path": "/path/to/model"}}}

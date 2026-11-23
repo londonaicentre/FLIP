@@ -1,0 +1,40 @@
+{
+  "format_version": 2,
+  "executors": [
+    {
+      "tasks": [
+        "init_task",
+        "post_validation"
+      ],
+      "executor": {
+        "path": "flip.nvflare.components.cleanup.CleanupImages",
+        "args": {}
+      }
+    },
+    {
+      "tasks": [
+        "validate"
+      ],
+      "executor": {
+        "path": "nvflare.app_common.executors.client_api_executor.ClientAPIExecutor",
+        "args": {
+          "execution_mode": "in_process",
+          "task_script_path": "custom/inference.py",
+          "task_script_args": "--project_id {project_id}",
+          "params_exchange_format": "numpy"
+        }
+      }
+    }
+  ],
+  "components": [
+    {
+      "id": "flip_client_event_handler",
+      "path": "flip.nvflare.components.flip_client_event_handler.ClientEventHandler",
+      "args": {}
+    }
+  ],
+  "task_data_filters": [],
+  "task_result_filters": [],
+  "project_id": "",
+  "query": "SELECT * FROM Table;"
+}

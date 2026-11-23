@@ -117,10 +117,11 @@ class InitEvaluation(Controller):
                     "mapping the models to their checkpoint and path.",
                 )
             for key, model_info in config["models"].items():
-                if "checkpoint" not in model_info or "path" not in model_info:
+                # An empty entry names a model whose weights are already at the trusts (FLIP#1945).
+                if model_info and ("checkpoint" not in model_info or "path" not in model_info):
                     self.log_error(
                         fl_ctx,
-                        "Each model in config.json must have 'checkpoint' and 'path' keys."
+                        "Each model in config.json must have 'checkpoint' and 'path' keys, or be empty."
                         f"Issue found in model: {key}.",
                     )
 

@@ -9,6 +9,10 @@
     "config.json",
     "models.py"
   ],
+  "inference": [
+    "inference.py",
+    "config.json"
+  ],
   "standard": [
     "trainer.py",
     "config.json",

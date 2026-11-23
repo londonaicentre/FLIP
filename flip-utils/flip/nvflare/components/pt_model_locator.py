@@ -221,6 +221,11 @@ class EvaluationModelLocator(ModelLocator):
         device = "cuda" if torch.cuda.is_available() else "cpu"
         self.models = {}
         for name, model_info in config["models"].items():
+            if not model_info:
+                # No checkpoint: the model's weights are already at the trusts, in the FL image
+                # (FLIP#1945). Empty weights still give the clients a task to answer.
+                self.models[name] = {}
+                continue
             checkpoint_path = self._resolve_checkpoint_path(fl_ctx, app_dir, name, model_info["checkpoint"])
             if checkpoint_path is None:
                 continue

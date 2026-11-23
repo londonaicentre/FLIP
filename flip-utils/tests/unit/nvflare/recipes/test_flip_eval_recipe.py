@@ -21,7 +21,7 @@ _stub_models = types.ModuleType("models")
 _stub_models.get_model = lambda: object()
 sys.modules.setdefault("models", _stub_models)
 
-from flip.nvflare.recipes import FlipEvalRecipe  # noqa: E402
+from flip.nvflare.recipes import FlipEvalRecipe, FlipInferenceRecipe  # noqa: E402
 from flip.nvflare.recipes.flip_eval_recipe import _DEV_MODEL_ID  # noqa: E402
 from flip.nvflare.runtime import FLIP_CUSTOM_PROPS_KEY, FLIP_MODEL_ID_KEY  # noqa: E402
 
@@ -128,3 +128,17 @@ class TestFlipEvalRecipe:
         """If export produced no client config (unexpected layout), the param-write is a safe no-op."""
         recipe = FlipEvalRecipe()
         recipe._write_client_config_params(tmp_path)
+
+
+class TestFlipInferenceRecipe:
+    def test_the_inference_job_runs_inference_py_and_needs_no_models_module(self, tmp_path: Path):
+        """The evaluation wiring with the app's script renamed and nothing imported from the app on the server."""
+        recipe = FlipInferenceRecipe()
+        recipe.export(tmp_path)
+
+        config_dir = tmp_path / "flip_inference" / "app" / "config"
+        server = json.loads((config_dir / "config_fed_server.json").read_text())
+        client = json.loads((config_dir / "config_fed_client.json").read_text())
+        persistor = next(c for c in server["components"] if c["id"] == "persistor")
+        assert persistor["args"]["model"]["path"] == "torch.nn.Identity"
+        assert client["executors"][-1]["executor"]["args"]["task_script_path"] == "custom/inference.py"

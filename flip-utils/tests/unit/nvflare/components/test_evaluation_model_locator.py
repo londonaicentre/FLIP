@@ -123,6 +123,20 @@ class TestEvaluationModelLocator:
         locator.log_error.assert_called_once()
         assert "models" in str(locator.log_error.call_args)
 
+    def test_an_entry_with_no_checkpoint_is_located_with_empty_weights(self):
+        """A model whose weights are at the trusts still gets a task: named, with nothing to load."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_config(tmpdir, {"models": {"totalsegmentator": {}}})
+            locator = EvaluationModelLocator()
+            fl_ctx = _fl_ctx_for(tmpdir)
+            names = locator.get_model_names(fl_ctx)
+            dxo = locator.locate_model("totalsegmentator", fl_ctx)
+
+        assert names == ["totalsegmentator"]
+        assert dxo.data_kind == DataKind.WEIGHTS
+        assert dxo.data == {}
+        assert dxo.get_meta_prop(FlipMetaKey.EVAL_MODEL_NAME.value) == "totalsegmentator"
+
     @patch("flip.nvflare.components.pt_model_locator.torch")
     def test_missing_checkpoint_is_skipped(self, mock_torch):
         config = {"models": {"m": {"checkpoint": "missing.pt", "path": "unet"}}}
