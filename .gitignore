@@ -46,6 +46,7 @@ MANIFEST
 # roster (FLIP#1721) are source.
 !trust/xnat/artifacts.manifest
 !trust/deploy/mirror-images.manifest
+!deploy/compose.bundle.manifest
 *.spec
 
 # Installer logs
