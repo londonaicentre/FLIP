@@ -28,8 +28,10 @@ StatefulSet, so no pod restarts and no volume moves. What it does, in order:
      rather than deleting it.
 3. Marks the live trust Secret ``helm.sh/resource-policy: keep``, as a second guard against step 2.
 4. Writes one ConfigMap per revision, with the same name and labels.
-5. Checks that ``helm history`` reads the same revisions through both drivers, and that the ConfigMap
-   records carry no ``secrets.data`` and no Secret manifest.
+   ``helm upgrade --reuse-values`` also folds the previous values into the stored chart's defaults
+   (``chart.values``), so ``secrets.data`` is emptied there as well.
+5. Checks, before writing and again after, that no value of the live trust Secret (plain or base64) is
+   anywhere in a cleaned record, and that ``helm history`` reads the same revisions through both drivers.
 6. Only then deletes the Secret records.
 
 It is a plan by default; ``--apply`` makes the changes. Running it again is safe: a release already in
@@ -130,16 +132,38 @@ def clean_release(release: dict, secret_name: str) -> dict:
     config = out.get("config") or {}
     config["secrets"] = {"create": False, "existingName": secret_name}
     out["config"] = config
+    # `helm upgrade --reuse-values` folds the previous release's values into the stored chart's defaults, so a
+    # revision made that way carries secrets.data there too.
+    chart_secrets = ((out.get("chart") or {}).get("values") or {}).get("secrets")
+    if isinstance(chart_secrets, dict):
+        chart_secrets["create"] = False
+        chart_secrets["data"] = dict.fromkeys(chart_secrets.get("data") or {}, "")
     out["manifest"] = clean_manifest(release.get("manifest", ""))
     return out
 
 
-def leaks(release: dict) -> list[str]:
-    """What in a cleaned revision would still hand the agent a secret; empty when it is clean."""
+# Shorter values (`admin`, a port) would match by accident; every generated password and key is longer.
+MIN_SECRET_LENGTH = 8
+
+
+def leaks(release: dict, secret_values: list[str] = ()) -> list[str]:
+    """What in a cleaned revision would still hand the agent a secret; empty when it is clean.
+
+    Beyond the places this script cleans, the whole record is searched for every value of the live trust
+    Secret, plain and base64, so a copy Helm kept somewhere unexpected is caught rather than published.
+    """
     found = []
     secrets = (release.get("config") or {}).get("secrets") or {}
     if "data" in secrets or secrets.get("create"):
         found.append(f"revision {release.get('version')}: values still set secrets.data / secrets.create")
+    text = json.dumps(release)
+    hits = sum(
+        1
+        for value in secret_values
+        if len(value) >= MIN_SECRET_LENGTH and (value in text or base64.b64encode(value.encode()).decode() in text)
+    )
+    if hits:
+        found.append(f"revision {release.get('version')}: {hits} value(s) of the trust Secret are still in the record")
     if any(_is_chart_secret(doc) for doc in _documents(release.get("manifest", ""))):
         found.append(f"revision {release.get('version')}: manifest still renders the chart's Secret")
     return found
@@ -222,7 +246,7 @@ def plan(cluster: Cluster, release: str) -> tuple[str, dict]:
     secret_name = secret_name_of(releases, release)
     cleaned = {rev: clean_release(r, secret_name) for rev, r in releases.items()}
     wanted = {rev: configmap_for(in_secrets[rev], cleaned[rev]) for rev in in_secrets}
-    ctx = {"secrets": in_secrets, "wanted": wanted, "secret_name": secret_name}
+    ctx = {"secrets": in_secrets, "wanted": wanted, "cleaned": cleaned, "secret_name": secret_name}
 
     if not in_configmaps:
         return "migrate", ctx
@@ -240,14 +264,29 @@ def plan(cluster: Cluster, release: str) -> tuple[str, dict]:
     return "resume", ctx
 
 
+def trust_secret_values(cluster: Cluster, name: str) -> list[str]:
+    """The live trust Secret's values, held only to search the new records for them."""
+    data = json.loads(cluster.k("get", "secret", name, "-o", "json")).get("data") or {}
+    return [base64.b64decode(v).decode(errors="replace") for v in data.values()]
+
+
+def check_clean(cluster: Cluster, ctx: dict) -> None:
+    """Refuse before writing anything if a cleaned revision would still carry a secret."""
+    values = trust_secret_values(cluster, ctx["secret_name"])
+    problems = [p for rev in sorted(ctx["cleaned"]) for p in leaks(ctx["cleaned"][rev], values)]
+    if problems:
+        raise Refused("the cleaned records would still carry secrets, so nothing was written: " + "; ".join(problems))
+
+
 def verify(cluster: Cluster, release: str, ctx: dict) -> None:
     in_configmaps = cluster.records("configmaps", release)
+    values = trust_secret_values(cluster, ctx["secret_name"])
     problems = []
     for rev in ctx["secrets"]:
         if rev not in in_configmaps:
             problems.append(f"revision {rev} has no ConfigMap record")
             continue
-        problems += leaks(decode_record(in_configmaps[rev]["data"]["release"]))
+        problems += leaks(decode_record(in_configmaps[rev]["data"]["release"]), values)
     if problems:
         raise Refused("the ConfigMap records are not safe to switch to: " + "; ".join(problems))
     secret_history = cluster.history(release, "secret")
@@ -272,6 +311,8 @@ def migrate(cluster: Cluster, release: str, apply: bool, say: Callable[[str], No
         say(f"  v{rev}: values lose secrets.data, manifest loses {SECRET_TEMPLATE}")
     if state == "resume":
         say("  ConfigMap records already match a clean copy: a previous run stopped before removing the Secrets.")
+    check_clean(cluster, ctx)
+    say("  no value of the trust Secret is left in any cleaned revision")
     if not apply:
         say("Plan only. Re-run with --apply (make migrate-release-driver ... CONFIRM=1) to make these changes.")
         return 0

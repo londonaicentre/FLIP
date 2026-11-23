@@ -19,6 +19,7 @@ rehearsal (`trust/deploy/e2e/upgrade-agent/run.sh migrate`) runs the same script
 from __future__ import annotations
 
 import base64
+import copy
 import gzip
 import importlib.util
 import io
@@ -64,15 +65,20 @@ metadata:
 """
 
 
-def _release(version: int, status: str = "superseded", create: bool = True) -> dict:
+def _release(version: int, status: str = "superseded", create: bool = True, reused: bool = False) -> dict:
     secrets = {"create": True, "data": {"omop-postgres-password": PASSWORD}} if create else {"create": False}
+    # `helm upgrade --reuse-values` folds the previous values into the stored chart's defaults.
+    chart_values = {"secrets": copy.deepcopy(secrets) if reused else {"create": False, "data": {}}}
     manifest = "---\n" + SERVICE + "---\n" + (CHART_SECRET + "---\n" if create else "") + STATEFULSET
     return {
         "name": REL,
         "version": version,
         "namespace": NS,
         "info": {"status": status, "description": f"Upgrade {version}"},
-        "chart": {"metadata": {"name": "flip-trust", "version": "0.15.0", "appVersion": "v0.15.0"}},
+        "chart": {
+            "metadata": {"name": "flip-trust", "version": "0.15.0", "appVersion": "v0.15.0"},
+            "values": chart_values,
+        },
         "config": {"secrets": secrets, "global": {"image": {"tag": "v0.15.0"}}},
         "manifest": manifest,
     }
@@ -95,6 +101,8 @@ class FakeCluster:
         self.annotations: dict[str, str] = {}
         self.calls: list[list[str]] = []
         self.fail_on: str | None = None
+        # The live trust Secret the pods read, as the API returns it.
+        self.trust_secret = {"omop-postgres-password": PASSWORD, "xnat-admin-user": "admin"}
         for r in releases:
             name = f"{subject.PREFIX}{REL}.v{r['version']}"
             self.secrets[name] = {
@@ -132,6 +140,10 @@ class FakeCluster:
             )
         assert argv[:3] == ["kubectl", "-n", NS], argv
         verb, rest = argv[3], argv[4:]
+        if verb == "get" and rest[0] == "secret":
+            assert rest[1] == SECRET_NAME, rest
+            data = {k: base64.b64encode(v.encode()).decode() for k, v in self.trust_secret.items()}
+            return json.dumps({"metadata": {"name": SECRET_NAME}, "data": data})
         if verb == "get":
             store = self.secrets if rest[0] == "secrets" else self.configmaps
             return json.dumps({"items": list(store.values())})
@@ -182,9 +194,28 @@ class TestCleaning(unittest.TestCase):
         subject.clean_release(original, SECRET_NAME)
         assert original["config"]["secrets"]["data"] == {"omop-postgres-password": PASSWORD}
 
+    def test_a_reuse_values_revision_loses_the_copy_in_the_chart_defaults_too(self):
+        cleaned = subject.clean_release(_release(2, reused=True), SECRET_NAME)
+        assert cleaned["chart"]["values"]["secrets"] == {"create": False, "data": {"omop-postgres-password": ""}}
+        assert PASSWORD not in json.dumps(cleaned)
+
+    def test_leaks_finds_a_trust_secret_value_anywhere_in_the_record(self):
+        record = subject.clean_release(_release(1), SECRET_NAME)
+        record["hooks"] = [{"manifest": f"env: [{{value: {base64.b64encode(PASSWORD.encode()).decode()}}}]"}]
+        found = subject.leaks(record, [PASSWORD])
+        assert len(found) == 1
+        assert "1 value(s) of the trust Secret" in found[0]
+
+    def test_short_values_are_not_searched_for(self):
+        """`admin` is in every record by chance (a default user name); it is not evidence of a leak."""
+        record = subject.clean_release(_release(1), SECRET_NAME)
+        record["config"]["xnat"] = {"user": "admin"}
+        assert subject.leaks(record, ["admin"]) == []
+
     def test_leaks_names_what_a_record_would_still_hand_over(self):
         assert subject.leaks(subject.clean_release(_release(3), SECRET_NAME)) == []
         assert len(subject.leaks(_release(3))) == 2
+        assert len(subject.leaks(_release(3), [PASSWORD])) == 3
 
     def test_the_encoding_round_trips_and_is_deterministic(self):
         r = _release(2)
@@ -260,6 +291,31 @@ class TestMigrate(unittest.TestCase):
         assert rc == 0
         assert self.fake.secrets == {}
         assert any("previous run stopped" in line for line in lines)
+
+    def test_a_reuse_values_history_migrates_clean(self):
+        fake = FakeCluster([_release(1), _release(2, status="deployed", reused=True)])
+        rc, _ = _migrate(fake)
+        assert rc == 0
+        assert fake.secrets == {}
+        for record in fake.decoded(fake.configmaps).values():
+            assert PASSWORD not in json.dumps(record)
+
+    def test_a_secret_in_a_place_the_cleaning_does_not_know_stops_it_before_any_write(self):
+        leaky = _release(2, status="deployed")
+        leaky["manifest"] += f"---\n# Source: flip-trust/templates/job.yaml\nkind: Job\nenv: {PASSWORD}\n"
+        fake = FakeCluster([_release(1), leaky])
+        with pytest.raises(subject.Refused) as caught:
+            _migrate(fake)
+        assert "nothing was written" in str(caught.value)
+        assert fake.configmaps == {}
+        assert len(fake.secrets) == 2
+        assert fake.annotations == {}
+
+    def test_the_plan_reports_a_leak_too(self):
+        leaky = _release(1, status="deployed")
+        leaky["config"]["other"] = PASSWORD
+        with pytest.raises(subject.Refused):
+            _migrate(FakeCluster([leaky]), apply=False)
 
     def test_configmaps_written_by_something_else_are_refused(self):
         foreign = _release(2, status="deployed")

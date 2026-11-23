@@ -276,7 +276,9 @@ print(json.dumps({"secrets": {"create": True, "data": data}}))' > "$values"
   # A second revision, so the history being carried across is more than one record.
   HELM_DRIVER=secret helm --kube-context "$CTX" upgrade "$REL" "oci://$REG_IP/charts/flip-trust" --version "${FROM#v}" \
     --ca-file "$WORK/certs/ca.crt" -n "$NS" --reuse-values --timeout 15m --wait >/dev/null
-  python3 "$DRIVER_PY" --release "$REL" --namespace "$NS" --kubectl "$K" && fail "expected the release in Secrets"
+  # Exit 1 is "recorded in Secrets"; 0 or 2 (could not read) would make the rest of the stage meaningless.
+  local rc=0; python3 "$DRIVER_PY" --release "$REL" --namespace "$NS" --kubectl "$K" || rc=$?
+  [ "$rc" = 1 ] || fail "expected the release in Secrets (release_driver.py exit 1), got exit $rc"
   local before history_before secret_uid
   before="$(snapshot)"
   history_before="$(HELM_DRIVER=secret helm --kube-context "$CTX" -n "$NS" history "$REL" -o json)"
@@ -301,7 +303,8 @@ secrets = [v for v in json.load(open(os.environ["VALUES"]))["secrets"]["data"].v
 for cm in json.load(sys.stdin)["items"]:
     text = gzip.decompress(base64.b64decode(cm["data"]["release"])).decode()
     hits = [s for s in secrets if s in text or base64.b64encode(s.encode()).decode() in text]
-    assert not hits, f"{cm[\"metadata\"][\"name\"]} carries {len(hits)} secret value(s)"
+    name = cm["metadata"]["name"]
+    assert not hits, f"{name} carries {len(hits)} secret value(s)"
 print("ok: no secret value, plain or base64, in any ConfigMap record")'
   [ "$($K -n "$NS" get secret "$legacy_secret" -o jsonpath='{.metadata.annotations.helm\.sh/resource-policy}')" = keep ] \
     || fail "the trust Secret was not marked keep"

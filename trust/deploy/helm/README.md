@@ -1251,13 +1251,18 @@ restarts. Every revision moves, so `helm history` and `helm rollback` keep worki
 way, because a Secret-driver release kept the trust's passwords where the agent must not read them:
 
 - **The values** lose `secrets.data`. `secrets` becomes `create: false` with `existingName` set to the live
-  trust Secret (`<release>-flip-trust-secrets`, the name the AUTO_UPGRADE deploy expects).
+  trust Secret (`<release>-flip-trust-secrets`, the name the AUTO_UPGRADE deploy expects). A revision made
+  with `helm upgrade --reuse-values` also holds a copy in the stored chart's defaults (`chart.values`); that
+  is emptied too.
 - **The stored manifest** loses the chart's own Secret (`templates/secrets.yaml`). Helm then no longer
   counts that Secret as part of the release, so the first `secrets.create=false` deploy leaves it alone
   instead of deleting it. The live Secret is also marked `helm.sh/resource-policy: keep` as a second guard.
 
-The Secret records are deleted only after `helm history` reads the same revisions through both drivers
-and no ConfigMap record carries a secret value. It refuses a release with a Helm operation in flight
+Before writing anything, and again before the Secret records go, it reads the live trust Secret and
+searches every new record for each of its values (plain and base64, 8 characters or longer). One hit
+anywhere stops it, so a copy Helm kept somewhere this list does not name is caught rather than published.
+The Secret records are deleted only after that, and after `helm history` reads the same revisions through
+both drivers. It refuses a release with a Helm operation in flight
 (`pending-*`), and ConfigMap records it did not write itself. A second run reports "nothing to do". A run
 stopped before the last step is finished on the next run, provided the ConfigMaps it left match a fresh
 clean copy exactly.
