@@ -31,22 +31,6 @@ services:
         LOCAL_DEV: ${LOCAL_DEV:-false}
     profiles: ["build-only"]
 
-  # The segmentation FL environment (FLIP#32): the client image plus flip-utils' `segmentation` extra.
-  # Built by `make build-segmentation`, after the client image it is built on. Run it as the trusts'
-  # client with FL_ENVIRONMENT=segmentation, in a kit file or on the `make up` command line.
-  # Named fl-segmentation, not fl-client-*: it is never run from this file, and the fl-client-* names
-  # are the running clients that scripts/tests/test_container_identity.py checks.
-  fl-segmentation:
-    image: flare-fl-client-segmentation:${DOCKER_FL_TAG:-dev}
-    build:
-      context: ../../fl-services/nvflare/fl-client-segmentation
-      dockerfile: Dockerfile
-      args:
-        # The client image, not fl-base: CLIENT_REF overrides it, as BASE_REF does for the images below.
-        BASE_REF: ${CLIENT_REF:-flare-fl-client:${DOCKER_FL_TAG:-dev}}
-        LOCAL_DEV: ${LOCAL_DEV:-false}
-    profiles: ["build-only"]
-
   fl-server:
     # NOTE container_name is mandatory here in order for FL clients to resolve the server hostname (e.g. address
     # fl-server-net-1:8002 from within the client containers)

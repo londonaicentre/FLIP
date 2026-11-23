@@ -296,20 +296,6 @@ class SiteImages(unittest.TestCase):
         assert "flower-supernode:v0.6.1" in names
         assert "flare-fl-client:v0.6.1" not in names
 
-    def test_the_callers_fl_client_image_is_the_one_checked(self):
-        """trust/Makefile names the FL environment image a Compose site runs (FLIP#32)."""
-        names = {ref.rsplit("/", 1)[1] for ref in su.site_images({}, "v0.6.1", None, "flare-fl-client-segmentation")}
-        assert "flare-fl-client-segmentation:v0.6.1" in names
-        assert "flare-fl-client:v0.6.1" not in names
-
-    def test_the_kit_and_the_environment_do_not_choose_the_fl_client(self):
-        """Only the caller knows what it runs: the Helm chart ignores the kit's key, and a variable
-        left in the operator's shell is not the site's."""
-        with mock.patch.dict(os.environ, {"DOCKER_FL_CLIENT_NAME": "other", "FL_ENVIRONMENT": "other"}):
-            names = {ref.rsplit("/", 1)[1] for ref in su.site_images({"FL_ENVIRONMENT": "segmentation"}, "v0.6.1")}
-        assert "flare-fl-client:v0.6.1" in names
-        assert not any("segmentation" in name or name.startswith("other") for name in names)
-
     def test_the_fl_client_is_checked_at_its_own_tag_when_one_is_given(self):
         names = {ref.rsplit("/", 1)[1] for ref in su.site_images({}, "sha-1234567", "sha-03fdb61")}
         assert "flare-fl-client:sha-03fdb61" in names
@@ -551,26 +537,6 @@ class Plan(_PlanHarness):
             assert code == 5, out
             assert "Proceed?" not in out
 
-    def test_plan_refuses_an_fl_environment_its_caller_does_not_run(self):
-        """upgrade-trust-k8s names no client image: the chart would deploy the plain one (FLIP#32)."""
-        with tempfile.TemporaryDirectory() as tmp:
-            kit = _write_kit(Path(tmp))
-            before = kit.read_text() + "FL_ENVIRONMENT=segmentation\n"
-            kit.write_text(before)
-            code, out = self._run(kit, "--tag", "v0.6.0", "--yes")
-            assert code == 7, out
-            assert "FL_ENVIRONMENT=segmentation" in out
-            assert kit.read_text() == before
-        self.missing_images.assert_not_called()
-
-    def test_plan_checks_the_fl_client_image_its_caller_names(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            kit = _write_kit(Path(tmp))
-            kit.write_text(kit.read_text() + "FL_ENVIRONMENT=segmentation\n")
-            code, out = self._run(kit, "--tag", "v0.6.0", "--fl-client-image", "flare-fl-client-segmentation", "--yes")
-            assert code == 0, out
-        assert self.missing_images.call_args.args[3] == "flare-fl-client-segmentation"
-
     def test_plan_pins_the_fl_client_apart_with_fl_tag(self):
         with tempfile.TemporaryDirectory() as tmp:
             kit = _write_kit(Path(tmp))
@@ -580,11 +546,7 @@ class Plan(_PlanHarness):
             text = kit.read_text()
             assert "DOCKER_TAG=sha-1234567" in text
             assert "DOCKER_FL_TAG=sha-03fdb61" in text  # pragma: allowlist secret
-        assert self.missing_images.call_args.args[1:] == (
-            "sha-1234567",
-            "sha-03fdb61",
-            None,
-        )  # pragma: allowlist secret
+        assert self.missing_images.call_args.args[1:] == ("sha-1234567", "sha-03fdb61")  # pragma: allowlist secret
 
     def test_plan_rejects_a_floating_fl_tag(self):
         with tempfile.TemporaryDirectory() as tmp:

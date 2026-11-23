@@ -22,10 +22,9 @@ fl-services/nvflare/
 ├── fl-base/          # base image for the server + clients      (flare-fl-base)
 ├── fl-server/        # FLARE server image                       (flare-fl-server)
 ├── fl-client/        # FLARE client image                       (flare-fl-client)
-├── fl-client-segmentation/  # client image + the segmentation FL environment (flare-fl-client-segmentation)
 ├── fl-api-base/      # FastAPI admin-API image — see its README (flare-fl-api)
 ├── provision/        # project YAMLs, scripts/, and the gitignored workspace-{dev,stag,prod}/ output
-├── compose.dev.yml   # build + standalone-run definitions for the FL images
+├── compose.dev.yml   # build + standalone-run definitions for the four FL images
 ├── Makefile          # this backend's build / provision / up / down / submit
 └── README.md
 ```
@@ -44,12 +43,10 @@ Provisioning mints, per participant, a signed **startup kit** under `provision/w
 
 ## Images: built in CI, or locally as `:dev`
 
-The four core FL images — `flare-fl-base`, `flare-fl-server`, `flare-fl-client`, `flare-fl-api` — are built
+The four FL images — `flare-fl-base`, `flare-fl-server`, `flare-fl-client`, `flare-fl-api` — are built
 in CI by [`fl-docker-build-nvflare.yml`](../../.github/workflows/fl-docker-build-nvflare.yml) whenever
 `fl-services/nvflare/**` or `flip-utils/**` change, and published to GHCR as `:<sha>`, `:stag` (on `develop`)
-and `:prod` (on `main`). The same workflow builds a fifth, `flare-fl-client-segmentation`, on the client image, in a job that may fail
-without failing the run: see
-[`fl-client-segmentation/README.md`](./fl-client-segmentation/README.md).
+and `:prod` (on `main`).
 Deployments pull them via `DOCKER_FL_TAG`, so a change to fl-api code or the `flip` package flows into the
 next deployment on that tag.
 

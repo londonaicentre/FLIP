@@ -97,7 +97,6 @@ EXIT_DOWNGRADE = 3
 EXIT_NOT_CONFIRMED = 4
 EXIT_MISSING_IMAGES = 5
 EXIT_CHECKOUT_MISMATCH = 6
-EXIT_UNSUPPORTED_KIT = 7
 
 #: The FLIP checkout this script runs from — what the compose files, Makefiles and XNAT stack
 #: come from. Not configurable: the verb is `make …` in that checkout.
@@ -375,18 +374,14 @@ def _offer_newer_release(target: str, source: str, hub_url: str, can_ask: bool) 
     return EXIT_NOT_CONFIRMED
 
 
-def site_images(kit: dict[str, str], tag: str, fl_tag: str | None = None, fl_client: str | None = None) -> list[str]:
-    """Every image reference the site would pull once the kit pins ``tag`` (FL client at ``fl_tag``).
-
-    ``fl_client`` is the FL client image the caller will run, when it is not the backend's own: a
-    Compose site's FL environment image (FLIP#32), which deploy/fl_backend.mk derives and validates.
-    """
+def site_images(kit: dict[str, str], tag: str, fl_tag: str | None = None) -> list[str]:
+    """Every image reference the site would pull once the kit pins ``tag`` (FL client at ``fl_tag``)."""
     refs = [f"{_SITE_REGISTRY}{name}:{(pin and kit.get(pin)) or tag}" for name, pin in _SITE_IMAGE_PINS.items()]
     # The optional MONAI Label overlay (compose_trust.prod.monailabel.yml) pulls at DOCKER_TAG
     # too, but only on a kit that turns it on — the same exact-"true" test as trust/Makefile.
     if kit.get("MONAI_LABEL", "").strip() == "true":
         refs.append(f"{_SITE_REGISTRY}monailabel:{tag}")
-    fl_client = fl_client or _FL_CLIENT_IMAGE.get(kit.get("FL_BACKEND") or "nvflare", _FL_CLIENT_IMAGE["nvflare"])
+    fl_client = _FL_CLIENT_IMAGE.get(kit.get("FL_BACKEND") or "nvflare", _FL_CLIENT_IMAGE["nvflare"])
     return [*refs, f"{_SITE_REGISTRY}{fl_client}:{fl_tag or tag}"]
 
 
@@ -431,13 +426,13 @@ def manifest_exists(ref: str, timeout: float = _MANIFEST_TIMEOUT_SECONDS) -> boo
     raise RegistryUnavailable(f"{ref}: docker manifest inspect exited {result.returncode}: {detail}")
 
 
-def missing_images(kit: dict[str, str], tag: str, fl_tag: str | None = None, fl_client: str | None = None) -> list[str]:
+def missing_images(kit: dict[str, str], tag: str, fl_tag: str | None = None) -> list[str]:
     """The site's image references that the registry does not serve at ``tag`` / ``fl_tag``.
 
     Raises:
         RegistryUnavailable: Propagated from :func:`manifest_exists`.
     """
-    return [ref for ref in site_images(kit, tag, fl_tag, fl_client) if not manifest_exists(ref)]
+    return [ref for ref in site_images(kit, tag, fl_tag) if not manifest_exists(ref)]
 
 
 class CheckoutUnknown(Exception):
@@ -565,15 +560,6 @@ def plan(args: argparse.Namespace) -> int:
         print(f"❌ {e}")
         return EXIT_NEEDS_TAG
 
-    # Only a caller that runs the kit's FL environment image (FLIP#32) names it: trust/Makefile, for a
-    # Compose site. The Helm chart does not read the key, so its plan would pass on the plain client
-    # while the jobs that need the environment failed at import.
-    fl_environment = kit.get("FL_ENVIRONMENT", "").strip()
-    if fl_environment and not args.fl_client_image:
-        print(f"❌ The kit sets FL_ENVIRONMENT={fl_environment}, which this deployment does not run: the Helm chart")
-        print("   does not read the key yet. Remove it from the kit, or run this site with Compose.")
-        return EXIT_UNSUPPORTED_KIT
-
     fl_tag = args.fl_tag
     if fl_tag is not None and not is_image_tag(fl_tag):
         print(f"❌ FL_TAG={fl_tag!r} is not an image tag (vX.Y.Z or sha-<short7>).")
@@ -637,7 +623,7 @@ def plan(args: argparse.Namespace) -> int:
         print("   ⚠️  docker CLI not found — skipping the registry check; the pull will report a missing image")
     else:
         try:
-            missing = missing_images(kit, target, fl_tag, args.fl_client_image)
+            missing = missing_images(kit, target, fl_tag)
         except RegistryUnavailable as e:
             print(f"❌ Could not ask the registry whether {target} is published:")
             print(f"     {e}")
@@ -658,7 +644,7 @@ def plan(args: argparse.Namespace) -> int:
             print("   XNAT_TAG pins all three XNAT images, whose builds no longer share sha- tags;")
             print("   set XNAT_TAG=vX.Y.Z (or stag/prod), published for all three, on a sha- move.")
             return EXIT_MISSING_IMAGES
-        print(f"   ✓ all {len(site_images(kit, target, fl_tag, args.fl_client_image))} images are published")
+        print(f"   ✓ all {len(site_images(kit, target, fl_tag))} images are published")
 
     if args.dry_run:
         print("   (dry run — kit not modified)")
@@ -682,11 +668,6 @@ def main() -> None:
     p.add_argument("--kit-file", required=True, help="trust/.env.<CODE>.<env>")
     p.add_argument("--tag", default=None, help="release to move to (default: the build the hub runs)")
     p.add_argument("--fl-tag", default=None, help="pin the FL client apart from the rest (default: same as --tag)")
-    p.add_argument(
-        "--fl-client-image",
-        default=None,
-        help="the FL client image the caller runs, when not the backend's own (a Compose site's FL environment image)",
-    )
     p.add_argument("--hub-url", default=None, help="override the kit's CENTRAL_HUB_API_URL")
     p.add_argument("--force", action="store_true", help="allow a release downgrade")
     p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")

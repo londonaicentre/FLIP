@@ -763,6 +763,3 @@ Known limitations
   folder (``omopDb.vocabLoad.nodeSelector``). Across several nodes, give the XNAT volume a ``ReadWriteMany``
   storage class (``xnat.web.persistence.accessMode: ReadWriteMany``, for example NFS or EFS).
 - **Orthanc** runs a single replica on an embedded SQLite database.
-- **FL environment images.** The chart always deploys the backend's own FL client image. It does not read a kit's
-  ``FL_ENVIRONMENT``, so ``sync-kit`` and ``upgrade-trust-k8s`` refuse a kit that sets it. A trust that needs
-  ``flare-fl-client-segmentation`` runs with Compose for now.
