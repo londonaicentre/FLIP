@@ -182,7 +182,7 @@ def write_secure(target: Path, lines: list[str]) -> None:
     """
     # Write a 0600 temp file beside the kit and rename it over the kit, so an interrupted write leaves
     # the old kit whole: it may be the only plaintext copy of TRUST_API_KEY. The rename goes to the
-    # file a symlinked kit names (setup moves kits to /etc/flip/trust and leaves a link), not over
+    # file a symlinked kit names (an operator may keep the kit elsewhere behind a link), not over
     # the link, and the new file keeps the old one's owner where this process may set it.
     real = os.path.realpath(target)
     directory = os.path.dirname(real)
