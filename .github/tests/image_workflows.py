@@ -58,6 +58,11 @@ def push_paths(text: str) -> list[str]:
     return [p.strip().strip("\"'") for p in re.findall(r"- (.*)", paths[1])]
 
 
+def covered(path: str, patterns: list[str]) -> bool:
+    """Whether a paths filter names ``path`` itself or a ``/**`` pattern holding all of it."""
+    return any(p == path or (p.endswith("/**") and f"{path}/".startswith(p[:-2])) for p in patterns)
+
+
 # `push:` block carrying a `tags:` list (flow or block style) whose entry is the platform
 # release glob. The flip-utils train tags `flip-utils-v*` and must NOT trigger image builds,
 # so the glob is asserted exactly rather than loosely.

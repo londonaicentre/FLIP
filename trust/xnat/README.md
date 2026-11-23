@@ -186,7 +186,7 @@ second stack on the same host (a release check) passes its own on the command li
 **Pinning a site:** the three XNAT images share one `XNAT_TAG` pin. On `main`/`develop` all of them
 (and the two Container Service tool images) are published together, after the `Trust - XNAT CI`
 workflow passes for a commit, so a `sha-` tag one of them carries exists for all three. Release
-tags rebuild every image; a manual dispatch builds its own image only.
+tags rebuild every image; a manual dispatch builds and publishes its own image only.
 
 The DICOM→NIfTI converter the Container Service launches is a fourth, standalone image —
 `ghcr.io/londonaicentre/xnat-dcm2niix` (built from [`dcm2niix/`](dcm2niix/), published by its own
@@ -221,7 +221,8 @@ Both tool images are rebuilt on every green `Trust - XNAT CI` run, but their ver
 republished only when the image's own directory changed: the workflow tags each published build
 context (`context-<git tree>`) and leaves the version tag alone while that tag still names the same
 image. A change that must reach sites under an unchanged version therefore still does; an unrelated
-merge never moves the tag.
+merge never moves the tag. A manual dispatch skips that comparison and always republishes the version
+tag: it is the route for a rebuild with no source change, such as a fix in the moving base image.
 
 #### Operator action: the GHCR packages must be public
 

@@ -32,7 +32,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from image_workflows import GITHUB_DIR, WORKFLOWS, code_text, push_block, push_paths, step_block  # noqa: E402
+from image_workflows import (  # noqa: E402
+    GITHUB_DIR,
+    WORKFLOWS,
+    code_text,
+    covered,
+    push_block,
+    push_paths,
+    step_block,
+)
 
 REPO = GITHUB_DIR.parent
 SCRIPTS = REPO / "deploy" / "providers" / "AWS" / "scripts"
@@ -51,10 +59,6 @@ else
     echo '{"workflow_runs":[]}'
 fi
 """
-
-
-def covered(path: str, patterns: list[str]) -> bool:
-    return any(p == path or (p.endswith("/**") and f"{path}/".startswith(p[:-2])) for p in patterns)
 
 
 def copy_sources(dockerfile: Path) -> set[str]:

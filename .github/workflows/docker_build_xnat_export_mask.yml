@@ -178,24 +178,39 @@ jobs:
       # Sites pin the version tag, and every green "Trust - XNAT CI" run lands here whatever it
       # changed (FLIP#880), so the tag moves only with this image's own source: each publish of it
       # also tags the build context's git tree, and while that tag still names the same image as
-      # the version tag, the version tag is left alone.
+      # the version tag, the version tag is left alone. A manual dispatch always republishes it (a
+      # base-image rebuild changes no source), and a failed registry lookup fails the step rather
+      # than reading as an absent tag.
       - name: Push Docker image
         if: github.event_name != 'pull_request'
         env:
           DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
           VERSION: ${{ steps.tags.outputs.version }}
+          GH_EVENT_NAME: ${{ github.event_name }}
         run: |
-          digest() { docker buildx imagetools inspect "$1" 2>/dev/null | awk '/^Digest:/ {print $2; exit}'; }
+          # Prints the digest, nothing when the tag does not exist; any other failure is an error.
+          digest() {
+            local out
+            if ! out=$(docker buildx imagetools inspect "$1" 2>&1); then
+              grep -qiE 'not found|manifest unknown|name unknown' <<<"$out" && return 0
+              echo "::error::could not read $1 from the registry: $out" >&2
+              return 1
+            fi
+            awk '/^Digest:/ {print $2; exit}' <<<"$out"
+          }
           VERSION_TAG="${REGISTRY}/${IMAGE_NAME}:${VERSION}"
           CONTEXT_TAG="${REGISTRY}/${IMAGE_NAME}:context-$(git rev-parse HEAD:./)"
-          PUBLISHED="$(digest "$CONTEXT_TAG")"
 
           IFS=',' read -ra TAG_ARRAY <<< "$DOCKER_TAGS"
           for tag in "${TAG_ARRAY[@]}"; do
             if [[ "$tag" == "$VERSION_TAG" ]]; then
-              if [[ -n "$PUBLISHED" && "$PUBLISHED" == "$(digest "$VERSION_TAG")" ]]; then
-                echo "Build context unchanged since ${VERSION_TAG} was published: tag left as it is"
-                continue
+              if [[ "$GH_EVENT_NAME" != "workflow_dispatch" ]]; then
+                PUBLISHED="$(digest "$CONTEXT_TAG")"
+                CURRENT="$(digest "$VERSION_TAG")"
+                if [[ -n "$PUBLISHED" && "$PUBLISHED" == "$CURRENT" ]]; then
+                  echo "Build context unchanged since ${VERSION_TAG} was published: tag left as it is"
+                  continue
+                fi
               fi
               docker tag "$tag" "$CONTEXT_TAG"
               docker push "$CONTEXT_TAG"

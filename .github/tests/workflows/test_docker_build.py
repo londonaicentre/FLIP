@@ -36,6 +36,7 @@ from image_workflows import (  # noqa: E402
     WORKFLOWS,
     ReleaseTagContract,
     code_text,
+    covered,
     push_block,
     push_paths,
     step_block,
@@ -129,6 +130,15 @@ class XnatBuildTriggers(unittest.TestCase):
                     assert (GITHUB_DIR.parent / changed_path).is_file(), changed_path
                     assert any(p.match(changed_path) for p in patterns), changed_path
 
+    def test_every_build_context_is_covered_whole(self) -> None:
+        """Naming only each Dockerfile would keep the test above green while the rest of the context went unbuilt."""
+        paths = push_paths(code_text(self.suite))
+        for wf in self.workflows:
+            context = re.search(r"working-directory: \./(\S+)", code_text(wf))
+            assert context, wf.name
+            with self.subTest(workflow=wf.name):
+                assert covered(context[1], [p for p in paths if p.endswith("/**")]), context[1]
+
     def test_published_base_images_match_the_local_build(self) -> None:
         """CI builds from the workflow's build args, a local build and the upgrade verbs read .env.
 
@@ -154,12 +164,21 @@ class XnatBuildTriggers(unittest.TestCase):
                 assert "${{ github.sha }}" not in tags.split("run: |", 1)[1], wf.name
 
     def test_tool_version_tags_move_only_with_their_own_source(self) -> None:
-        """Every green suite run publishes these images; the tag the sites pin must not follow each one."""
+        """Every green suite run publishes these images; the tag the sites pin must not follow each one.
+
+        A dispatch still republishes it (a base-image rebuild changes no source), and a failed registry
+        lookup must fail the step: read as an absent tag, it would republish the pinned tag.
+        """
         for image in ("dcm2niix", "export_mask"):
             push = step_block(code_text(WORKFLOWS / f"docker_build_xnat_{image}.yml"), "Push Docker image")
             with self.subTest(image=image):
                 assert "context-$(git rev-parse HEAD:./)" in push, image
-                assert '"$PUBLISHED" == "$(digest "$VERSION_TAG")"' in push, image
+                assert '"$PUBLISHED" == "$CURRENT"' in push, image
+                assert 'CURRENT="$(digest "$VERSION_TAG")"' in push, image
+                assert '[[ "$GH_EVENT_NAME" != "workflow_dispatch" ]]' in push, image
+                assert "GH_EVENT_NAME: ${{ github.event_name }}" in push, image
+                assert "2>/dev/null" not in push, image
+                assert "return 1" in push, image
 
     def test_xnat_web_pulls_its_moving_base(self) -> None:
         """The Tomcat base tag moves: without --pull a runner holding an old copy would build on it."""
