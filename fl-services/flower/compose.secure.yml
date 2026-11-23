@@ -128,7 +128,7 @@ services:
 
   # One-shot service to register SuperNode public keys with the SuperLink
   register-supernode-keys:
-    image: flwr/base:1.43.0-py3.12-ubuntu24.04
+    image: flwr/base:1.43.0-py3.13-ubuntu24.04
     environment:
       - FL_API_ADDRESS=${FL_API_ADDRESS:-http://fl-api:8000}
       - FL_API_KEY=${FL_API_KEY}

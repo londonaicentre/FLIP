@@ -17,7 +17,7 @@ upgrades, and the outcome of the last attempt. Every existing trust starts OFF (
 to false and nothing is backfilled, so no live site is upgraded until its own admin opts in.
 
 Revision ID: a91d3c5e7b20
-Revises: a6174749cbb5
+Revises: c19960de1e7e
 Create Date: 2026-10-23 10:00:00.000000
 
 """
@@ -28,7 +28,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "a91d3c5e7b20"  # pragma: allowlist secret
-down_revision: str | None = "a6174749cbb5"  # pragma: allowlist secret
+down_revision: str | None = "c19960de1e7e"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

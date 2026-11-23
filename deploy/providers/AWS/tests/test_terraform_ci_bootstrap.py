@@ -33,6 +33,7 @@ import os
 import re
 from pathlib import Path
 
+import pytest
 from tf_source import strip_comments
 
 AWS_PROVIDER_DIR = Path(__file__).resolve().parent.parent
@@ -58,6 +59,8 @@ IAM_ADDRESSES = {
     ("aws_iam_policy", "apply_boundary"),
     ("aws_iam_role", "ui_publish"),
     ("aws_iam_role_policy", "ui_publish"),
+    ("aws_iam_role", "demo_publish"),
+    ("aws_iam_role_policy", "demo_publish"),
 }
 
 # What the old ci/ root declared directly, which the wrapper's moved blocks re-address. Its
@@ -465,6 +468,7 @@ def test_the_apply_role_cannot_escalate_itself() -> None:
     assert arguments["effect"] == '"Deny"'
     assert sorted(_list(arguments["resources"])) == [
         "local.apply_role_arn",
+        "local.demo_publish_role_arn",
         "local.plan_role_arn",
         "local.ui_publish_role_arn",
     ]
@@ -837,27 +841,39 @@ def test_the_plan_role_reads_the_ssm_prefix_the_flip_root_writes() -> None:
 # --- the UI-publish role (FLIP#1186) ---------------------------------------------------------------
 
 
-def test_the_ui_publish_role_exists_only_when_the_bucket_is_named() -> None:
+# The two publish roles (FLIP#1186, FLIP#2012): the same shape, each with its own bucket and workflow file.
+PUBLISH_ROLES = [
+    pytest.param("ui", "Ui", "publish_ui.yml", id="ui"),
+    pytest.param("demo", "Demo", "publish_demo.yml", id="demo"),
+]
+
+
+@pytest.mark.parametrize(("role", "sid", "workflow"), PUBLISH_ROLES)
+def test_a_publish_role_exists_only_when_its_bucket_is_named(role: str, sid: str, workflow: str) -> None:
     """Off by default, so a caller that predates the role is unchanged by a re-pin."""
-    assert _module_locals()["ui_publish"] == _normalise('var.ui_bucket_name != ""')
-    variable = _arguments(_module_block('variable "ui_bucket_name"'))
-    assert variable["default"] == '""'
+    assert _module_locals()[f"{role}_publish"] == _normalise(f'var.{role}_bucket_name != ""')
+    assert _arguments(_module_block(f'variable "{role}_bucket_name"'))["default"] == '""'
     for header in (
-        'data "aws_iam_policy_document" "ui_publish_assume_role"',
-        'resource "aws_iam_role" "ui_publish"',
-        'data "aws_iam_policy_document" "ui_publish"',
-        'resource "aws_iam_role_policy" "ui_publish"',
+        f'data "aws_iam_policy_document" "{role}_publish_assume_role"',
+        f'resource "aws_iam_role" "{role}_publish"',
+        f'data "aws_iam_policy_document" "{role}_publish"',
+        f'resource "aws_iam_role_policy" "{role}_publish"',
     ):
-        assert _arguments(_module_block(header))["count"] == _normalise("local.ui_publish ? 1 : 0"), header
-
-
-def test_the_ui_publish_role_trusts_the_reusable_workflow_at_the_apply_branch() -> None:
-    """A reusable workflow's jobs present its own file as job_workflow_ref, whoever calls it."""
-    assert _module_locals()["ui_publish_workflow_ref"] == (
-        '"${local.workflow_ref_prefix}/${var.ui_publish_workflow_file}@refs/heads/${var.apply_branch}"'
+        assert _arguments(_module_block(header))["count"] == _normalise(f"local.{role}_publish ? 1 : 0"), header
+    assert _arguments(_module_block(f'resource "aws_iam_role" "{role}_publish"'))["assume_role_policy"] == (
+        f"data.aws_iam_policy_document.{role}_publish_assume_role[0].json"
     )
-    assert _arguments(_module_block('variable "ui_publish_workflow_file"'))["default"] == '"publish_ui.yml"'
-    trust = _block(_module_block('data "aws_iam_policy_document" "ui_publish_assume_role"'), "statement")
+
+
+@pytest.mark.parametrize(("role", "sid", "workflow"), PUBLISH_ROLES)
+def test_a_publish_role_trusts_its_own_workflow_at_the_apply_branch(role: str, sid: str, workflow: str) -> None:
+    """A reusable workflow's jobs present its own file as job_workflow_ref, whoever calls it. The token names the
+    file, not the job, so each role trusting its own file is what keeps the two apart."""
+    assert _module_locals()[f"{role}_publish_workflow_ref"] == (
+        f'"${{local.workflow_ref_prefix}}/${{var.{role}_publish_workflow_file}}@refs/heads/${{var.apply_branch}}"'
+    )
+    assert _arguments(_module_block(f'variable "{role}_publish_workflow_file"'))["default"] == f'"{workflow}"'
+    trust = _block(_module_block(f'data "aws_iam_policy_document" "{role}_publish_assume_role"'), "statement")
     assert _arguments(_block(trust, "principals")) == {
         "type": '"Federated"',
         "identifiers": "[var.oidc_provider_arn]",
@@ -876,40 +892,45 @@ def test_the_ui_publish_role_trusts_the_reusable_workflow_at_the_apply_branch() 
         {
             "test": '"StringEquals"',
             "variable": '"token.actions.githubusercontent.com:job_workflow_ref"',
-            "values": "[local.ui_publish_workflow_ref]",
+            "values": f"[local.{role}_publish_workflow_ref]",
         },
     ]
 
 
-def test_the_ui_publish_role_reaches_the_ui_bucket_and_nothing_else() -> None:
-    """List the bucket, sync its objects, never write demo/; no KMS, no other service."""
-    document = 'data "aws_iam_policy_document" "ui_publish"'
-    assert _module_locals()["ui_bucket_arn"] == (
-        '"arn:${data.aws_partition.current.partition}:s3:::${var.ui_bucket_name}"'
+@pytest.mark.parametrize(("role", "sid", "workflow"), PUBLISH_ROLES)
+def test_a_publish_role_reaches_its_bucket_and_nothing_else(role: str, sid: str, workflow: str) -> None:
+    """List the bucket, sync its objects; no other bucket, no KMS, no other service."""
+    document = f'data "aws_iam_policy_document" "{role}_publish"'
+    assert _module_locals()[f"{role}_bucket_arn"] == (
+        f'"arn:${{data.aws_partition.current.partition}}:s3:::${{var.{role}_bucket_name}}"'
     )
-    listing = _arguments(_statement(document, "ListTheUiBucket"))
+    listing = _arguments(_statement(document, f"ListThe{sid}Bucket"))
     assert (listing["effect"], listing["actions"], listing["resources"]) == (
         '"Allow"',
         '["s3:ListBucket"]',
-        "[local.ui_bucket_arn]",
+        f"[local.{role}_bucket_arn]",
     )
-    sync = _arguments(_statement(document, "SyncTheUiObjects"))
+    sync = _arguments(_statement(document, f"SyncThe{sid}Objects"))
     assert sync["effect"] == '"Allow"'
     assert set(_list(sync["actions"])) == {'"s3:DeleteObject"', '"s3:GetObject"', '"s3:PutObject"'}
-    assert sync["resources"] == '["${local.ui_bucket_arn}/*"]'
-    demo = _arguments(_statement(document, "NeverTouchThePublicDemo"))
-    assert demo["effect"] == '"Deny"'
-    assert set(_list(demo["actions"])) == {'"s3:DeleteObject"', '"s3:PutObject"'}
-    assert demo["resources"] == '["${local.ui_bucket_arn}/demo/*"]'
+    assert sync["resources"] == f'["${{local.{role}_bucket_arn}}/*"]'
 
     body = _normalise(_module_block(document))
-    actions = set(re.findall(r'"((?:[a-z0-9-]+):[A-Za-z*]+)"', body))
-    assert actions == {
+    assert set(re.findall(r'"((?:[a-z0-9-]+):[A-Za-z*]+)"', body)) == {
         "s3:ListBucket",
         "s3:DeleteObject",
         "s3:GetObject",
         "s3:PutObject",
     }
+
+
+def test_the_ui_publish_role_never_writes_the_old_demo_prefix() -> None:
+    """demo/ in the UI bucket keeps serving the last demo until /demo/ redirects to the demo's host (FLIP#2012)."""
+    demo = _arguments(_statement('data "aws_iam_policy_document" "ui_publish"', "NeverTouchThePublicDemo"))
+    assert demo["effect"] == '"Deny"'
+    assert set(_list(demo["actions"])) == {'"s3:DeleteObject"', '"s3:PutObject"'}
+    assert demo["resources"] == '["${local.ui_bucket_arn}/demo/*"]'
+    assert "NeverTouchThePublicDemo" not in _module_block('data "aws_iam_policy_document" "demo_publish"')
 
 
 def _ci(name: str) -> str:

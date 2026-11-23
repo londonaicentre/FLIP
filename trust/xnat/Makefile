@@ -13,7 +13,7 @@
 .PHONY: build up down up-xnat down-xnat upgrade-xnat xnat-backup xnat-backup-writable xnat-shell xnat-stack-down clean \
 	xnat-db-migrate-dump xnat-db-drop-unused-dump xnat-db-remove-old-cluster \
 	xnat-war-download xnat-plugins-download xnat-plugins-check xnat-reset xnat-configure \
-	xnat-configure-export-mask xnat-prepare-dirs xnat-web-dirs \
+	xnat-configure-export-mask xnat-prepare-dirs xnat-web-dirs xnat-check-ports \
 	create-xnat-network test unit_test local_test
 
 # Mirrors trust/Makefile: no hub `.env.*` include. Runtime config (DOCKER_TAG,
@@ -481,6 +481,31 @@ define require_one_xnat_web_container
 	esac
 endef
 
+# The web UI and the DICOM receiver are both host-published, so their ports must differ. A kit
+# written before the FLIP#993 split sets only XNAT_PORT (then the web UI's port), so the web port
+# derives from it and the stack would publish one port twice: xnat-web never starts. Checked before
+# the first install wipes anything and before an upgrade changes anything (trust/Makefile upgrade-trust).
+# The ports come from the kit, and `-include` skips one it cannot find: without this refusal both
+# fall back to 8104 and the message below would blame ports that are fine.
+xnat-check-ports:
+	$(require_kit)
+	@[ -f "$(KIT_FILE)" ] || { \
+		echo "ERROR: kit file $(KIT_FILE) not found from $$(pwd): XNAT_PORT and XNAT_WEB_PORT are read from it."; exit 1; }
+	@if ! echo "$(XNAT_PORT_EFFECTIVE)" | grep -qE '^[0-9]+$$'; then \
+		echo "ERROR: XNAT_PORT must be numeric for KIT=$(KIT), got '$(XNAT_PORT_EFFECTIVE)'"; exit 1; \
+	fi
+	@if ! echo "$(XNAT_WEB_PORT_EFFECTIVE)" | grep -qE '^[0-9]+$$'; then \
+		echo "ERROR: XNAT_WEB_PORT must be numeric for KIT=$(KIT), got '$(XNAT_WEB_PORT_EFFECTIVE)'"; exit 1; \
+	fi
+	@if [ "$(XNAT_PORT_EFFECTIVE)" = "$(XNAT_WEB_PORT_EFFECTIVE)" ]; then \
+		echo "ERROR: the web UI and the DICOM receiver are both published on the host, so"; \
+		echo "       XNAT_WEB_PORT ($(XNAT_WEB_PORT_EFFECTIVE)) and XNAT_PORT ($(XNAT_PORT_EFFECTIVE)) must differ."; \
+		echo "       They were one variable until FLIP#993, when XNAT_PORT was the web UI's port: set both in"; \
+		echo "       the kit file ($(KIT_FILE)), e.g. XNAT_PORT=8104 (DICOM) and XNAT_WEB_PORT=8105 (web UI)."; \
+		echo "       Nothing was changed."; \
+		exit 1; \
+	fi
+
 # ── Release upgrade (FLIP#1204) ───────────────────────────────────────────
 # Move a LIVE XNAT to the kit's XNAT_TAG with its data in place: back up the database,
 # redeploy the stack (Swarm rolls each service onto the new image; the bind-mounted
@@ -493,7 +518,7 @@ endef
 # rather than a boot loop: xnat-web is non-root (uid 1001) since the hardening, and an
 # archive written by an older root-running xnat-web is unreadable to it.
 # XNAT_TAG ?= DOCKER_TAG, so the tag comes from the kit that upgrade-trust just rewrote.
-upgrade-xnat: create-xnat-network
+upgrade-xnat: xnat-check-ports create-xnat-network
 	$(require_kit)
 	$(require_xnat_passwords)
 	@echo "⬆️  Upgrading XNAT stack $(XNAT_STACK) to $(XNAT_TAG) (data dir $(XNAT_DATA_DIR) kept)..."
@@ -709,24 +734,11 @@ xnat-plugins-check:
 # $(XNAT_DATA_DIR)` against the *operator's own machine* while they believe they
 # are resetting a remote trust host. Aborting on an unresolvable context is the
 # safer failure.
-xnat-reset:
+xnat-reset: xnat-check-ports
 	$(require_kit)
 	@case "$$(pwd)" in */trust/xnat) ;; *) \
 		echo "ERROR: xnat-reset must be run from the trust/xnat/ directory (pwd: $$(pwd))"; exit 1;; \
 	esac
-	@if ! echo "$(XNAT_PORT_EFFECTIVE)" | grep -qE '^[0-9]+$$'; then \
-		echo "ERROR: XNAT_PORT must be numeric for KIT=$(KIT), got '$(XNAT_PORT_EFFECTIVE)'"; exit 1; \
-	fi
-	@if ! echo "$(XNAT_WEB_PORT_EFFECTIVE)" | grep -qE '^[0-9]+$$'; then \
-		echo "ERROR: XNAT_WEB_PORT must be numeric for KIT=$(KIT), got '$(XNAT_WEB_PORT_EFFECTIVE)'"; exit 1; \
-	fi
-	@if [ "$(XNAT_PORT_EFFECTIVE)" = "$(XNAT_WEB_PORT_EFFECTIVE)" ]; then \
-		echo "ERROR: the web UI and the DICOM receiver are both published on the host, so"; \
-		echo "       XNAT_WEB_PORT ($(XNAT_WEB_PORT_EFFECTIVE)) and XNAT_PORT ($(XNAT_PORT_EFFECTIVE)) must differ."; \
-		echo "       They were one variable until FLIP#993 — set both in the kit file"; \
-		echo "       ($(KIT_FILE)), e.g. XNAT_PORT=8104 (DICOM) and XNAT_WEB_PORT=8105 (web UI)."; \
-		exit 1; \
-	fi
 	@set -e; \
 	echo "Deleting previous XNAT data and creating new directories for $(KIT) ..."; \
 	if [ -n "$(IS_DEPLOYED)" ]; then \

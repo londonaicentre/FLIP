@@ -256,6 +256,15 @@
                                     <span class="text-note tabular-nums text-gray-600 dark:text-gray-300">
                                         {{ t.project_count }} {{ t.project_count === 1 ? "project" : "projects" }}
                                     </span>
+                                    <template v-if="jobCount(t)">
+                                        <span class="text-gray-300 dark:text-gray-600">·</span>
+                                        <span
+                                            data-test="trust-jobs-mobile"
+                                            class="text-note tabular-nums text-gray-600 dark:text-gray-300"
+                                        >
+                                            {{ jobCount(t) }} {{ jobCount(t) === 1 ? "job" : "jobs" }}
+                                        </span>
+                                    </template>
                                     <span class="flex-1" />
                                     <span
                                         v-if="upgradeFor(t.id)"
@@ -290,14 +299,21 @@
                              table chrome (ring, shadow, dark:bg-gray-800 tbody, gray-700
                              dividers) so dark mode shows the card canvas through the rows,
                              matching the stacked mobile list. -->
-                        <table class="w-full ring-0 shadow-none">
+                        <!-- Automatic layout: every column but Trust shrinks to its content and never wraps
+                             (whitespace-nowrap on the rows and headers), so none is squeezed; Trust (w-full,
+                             max-w-0) takes what is left and truncates. The minimum width keeps Trust readable
+                             on a narrow screen, where the wrapper scrolls instead. -->
+                        <table
+                            class="w-full ring-0 shadow-none"
+                            :class="showKitColumn ? 'min-w-[1080px]' : 'min-w-[880px]'"
+                        >
                             <thead>
                                 <tr class="bg-gray-50 dark:bg-dark-surface border-b border-gray-200 dark:border-dark-border">
                                     <th
-                                        v-for="col in columns"
+                                        v-for="col in visibleColumns"
                                         :key="col.key ?? col.label"
                                         :data-test="col.key ? `sort-header-${col.key}` : undefined"
-                                        class="px-4 py-3 text-xs text-gray-500 dark:text-gray-300 font-medium select-none"
+                                        class="px-4 py-3 text-xs text-gray-500 dark:text-gray-300 font-medium select-none whitespace-nowrap"
                                         :class="[
                                             col.align === 'right' ? 'text-right' : 'text-left',
                                             col.width ?? '',
@@ -321,9 +337,9 @@
                                     :data-trust-state="t._state"
                                     role="button"
                                     tabindex="0"
-                                    class="cursor-pointer group hover:bg-gray-50 dark:hover:bg-dark-surface/60
-                                    focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500
-                                    dark:focus-visible:outline-primary-300"
+                                    class="cursor-pointer group whitespace-nowrap hover:bg-gray-50
+                                    dark:hover:bg-dark-surface/60 focus-visible:outline focus-visible:outline-2
+                                    focus-visible:outline-primary-500 dark:focus-visible:outline-primary-300"
                                     :class="[
                                         idx > 0 ? 'border-t border-gray-100 dark:border-dark-border' : '',
                                         t._state === 'offline' ? 'bg-red-50/40 dark:bg-red-900/10' : ''
@@ -349,7 +365,7 @@
                                             </span>
                                         </div>
                                     </td>
-                                    <td class="px-4 py-4 align-middle w-full max-w-0">
+                                    <td class="px-4 py-4 align-middle max-w-0">
                                         <div class="flex flex-col min-w-0">
                                             <span
                                                 class="font-semibold text-base text-gray-900 dark:text-gray-100 truncate"
@@ -376,8 +392,18 @@
                                             </span>
                                         </div>
                                     </td>
-                                    <td class="px-4 py-4 align-middle text-base text-gray-600 dark:text-gray-300 whitespace-nowrap">
+                                    <td class="px-4 py-4 align-middle text-base text-gray-600 dark:text-gray-300">
                                         {{ t.region ?? "—" }}
+                                    </td>
+                                    <td class="px-4 py-4 align-middle text-right text-base tabular-nums text-gray-900 dark:text-gray-100">
+                                        {{ t.project_count }}
+                                    </td>
+                                    <td
+                                        class="px-4 py-4 align-middle text-sm tabular-nums"
+                                        :class="t._state === 'offline' ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-300'"
+                                        data-test="trust-heartbeat"
+                                    >
+                                        {{ heartbeatText(t.last_heartbeat) }}
                                     </td>
                                     <td class="px-4 py-4 align-middle" data-test="trust-services">
                                         <div class="flex items-center gap-[5px]">
@@ -402,16 +428,17 @@
                                         <span v-else class="text-gray-400 dark:text-gray-300">—</span>
                                     </td>
                                     <td
-                                        class="px-4 py-4 align-middle text-sm tabular-nums"
-                                        :class="t._state === 'offline' ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-300'"
-                                        data-test="trust-heartbeat"
+                                        v-if="isAdmin"
+                                        class="px-4 py-4 align-middle text-xs tabular-nums text-gray-600 dark:text-gray-300 whitespace-nowrap"
+                                        data-test="trust-jobs"
                                     >
-                                        {{ heartbeatText(t.last_heartbeat) }}
+                                        <span v-for="line in jobLines(t)" :key="line" class="block">{{ line }}</span>
+                                        <span v-if="!jobCount(t)">—</span>
                                     </td>
-                                    <td class="px-4 py-4 align-middle text-right text-base tabular-nums text-gray-900 dark:text-gray-100">
-                                        {{ t.project_count }}
+                                    <td v-if="showKitColumn" class="px-4 py-4 align-middle" data-test="trust-kit">
+                                        <TrustKitSection compact :trust="t" />
                                     </td>
-                                    <td class="px-4 py-4 align-middle w-10">
+                                    <td class="px-4 py-4 align-middle">
                                         <icon-ph-caret-right
                                             class="w-4 h-4 opacity-50 text-gray-600 dark:text-gray-300
                                             transition-transform group-hover:translate-x-1"
@@ -419,7 +446,10 @@
                                     </td>
                                 </tr>
                                 <tr v-if="!displayedTrusts.length">
-                                    <td colspan="8" class="text-center py-6 text-gray-500 dark:text-gray-300">
+                                    <td
+                                        :colspan="visibleColumns.length"
+                                        class="text-center py-6 text-gray-500 dark:text-gray-300"
+                                    >
                                         {{ activeTile ? "No trusts match this filter." : "No trusts registered yet." }}
                                     </td>
                                 </tr>
@@ -742,7 +772,7 @@
 
             <!-- FL nets status — relocated from the standalone Connection Status (FL nets) page -->
             <div class="mt-6">
-                <FLNetsCard />
+                <FLNetsCard :trusts="trusts" />
             </div>
         </div>
     </div>
@@ -751,12 +781,6 @@
         :dialog="showAddTrustModal"
         @close-modal="showAddTrustModal = false"
         @on-success="onTrustCreated"
-    />
-
-    <TrustKitModal
-        :dialog="!!createdTrust"
-        :trust="createdTrust"
-        @close-modal="onKitModalClose"
     />
 
     <TrustDetailDrawer
@@ -778,8 +802,8 @@ import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import { useHubVersion, useTrustStatuses } from "@/composables/useTrustPolls";
 import FLNetsCard from "@/partials/connection/FLNetsCard.vue";
 import TrustDetailDrawer from "@/partials/connection/TrustDetailDrawer.vue";
+import TrustKitSection from "@/partials/connection/TrustKitSection.vue";
 import AddTrustModal from "@/partials/trusts/AddTrustModal.vue";
-import TrustKitModal from "@/partials/trusts/TrustKitModal.vue";
 import { ICreatedTrust } from "@/services/admin-trusts-service";
 import { AutoUpgradeState,
     getAutoUpgradeFleet,
@@ -792,6 +816,7 @@ import { deriveTrust,
     deriveTrustState,
     heartbeatText,
     IDerivedTrust,
+    jobLines,
     PILL_CLASSES,
     STATE_LABELS,
     TrustState } from "@/utils/connection-health";
@@ -800,7 +825,6 @@ const authStore = useAuthStore();
 const isAdmin = computed(() => authStore.hasPermissions(["CanAccessAdminPanel"]));
 
 const showAddTrustModal = ref(false);
-const createdTrust = ref<ICreatedTrust | null>(null);
 
 type ViewMode = "list" | "radial";
 const viewMode = ref<ViewMode>("list");
@@ -913,66 +937,80 @@ interface IColumn {
     key?: SortKey;
     label: string;
     align?: "left" | "right";
-    // Tailwind width class applied to the <th> to bias column sizing. Every column
-    // but Trust is pinned; Trust takes w-full and truncates via the cell's max-w-0.
+    // Tailwind width class applied to the <th>: w-px shrinks a column to its content,
+    // and Trust's w-full takes the rest (its cell truncates via max-w-0).
     width?: string;
 }
 
 // Header config drives both the rendered <th>s and the per-column sort handler.
 // Keys correspond to entries in `SORT_COMPARATORS`; columns without a key
-// (Services dots, drawer chevron) render as inert headers.
-const columns: IColumn[] = [
+// (Services dots, Upgrade, Jobs, drawer chevron) render as inert headers.
+const BASE_COLUMNS: IColumn[] = [
     {
         key: "severity",
         label: "Status",
-        width: "w-28"
+        width: "w-px"
     },
     {
         key: "name",
         label: "Trust",
-        // Absorbs the leftover width; the cell's max-w-0 lets it squash and
-        // truncate instead of pinning the table wider than the viewport.
         width: "w-full"
     },
     {
         key: "region",
         label: "Region",
-        // Region/Services/Heartbeat are pinned (144/144/112px, approximating the
-        // design grid) so the w-full Trust column can't squeeze them to their
-        // longest word.
-        width: "w-36"
-    },
-    {
-        label: "Services",
-        width: "w-36"
-    },
-    {
-        // Only an admin's fleet call fills this in; a Trust Admin sees the same status on My Trust
-        // instead, so everyone else gets an em dash rather than a column that is silently wrong.
-        label: "Upgrade",
-        width: "w-32"
-    },
-    {
-        key: "heartbeat",
-        label: "Heartbeat",
-        width: "w-28"
+        width: "w-px"
     },
     {
         key: "projects",
         label: "Projects",
         align: "right",
-        width: "w-20"
+        width: "w-px"
+    },
+    {
+        key: "heartbeat",
+        label: "Heartbeat",
+        width: "w-px"
+    },
+    {
+        label: "Services",
+        width: "w-px"
+    },
+    {
+        // Only an admin's fleet call fills this in; a Trust Admin sees the same status on My Trust
+        // instead, so everyone else gets an em dash rather than a column that is silently wrong.
+        label: "Upgrade",
+        width: "w-px"
+    },
+    {
+        label: "Jobs",
+        width: "w-px"
     },
     {
         label: "",
-        width: "w-10"
+        width: "w-px"
     }
 ];
+
+// The kit column (FLIP#1852) exists only for viewers who can download some trust's kit: hub admins, on
+// every row, and a Trust Admin, on their own trust's row. It sits before the drawer chevron.
+const showKitColumn = computed(() => isAdmin.value || !!authStore.trustAdminOf);
+const columns = computed<IColumn[]>(() => (showKitColumn.value
+    ? [...BASE_COLUMNS.slice(0, -1), {
+        label: "Download",
+        width: "w-px"
+    }, ...BASE_COLUMNS.slice(-1)]
+    : BASE_COLUMNS));
+
+// The Jobs counts span every project, so the hub sends them to hub admins only (FLIP#1739).
+const visibleColumns = computed(() => columns.value.filter(col => col.label !== "Jobs" || isAdmin.value));
 
 // Severity-first is the default (design 1b): failing trusts surface on load;
 // admins can re-sort via the column headers when triaging.
 const sortKey = ref<SortKey>("severity");
 const sortDir = ref<SortDir>("asc");
+
+const jobCount = (t: ITrustResponse): number => (t.jobs_in_progress ?? 0) + (t.jobs_queued ?? 0);
 
 // Heartbeat age in seconds; null heartbeat = oldest (Infinity).
 const heartbeatAge = (t: ITrustResponse): number =>
@@ -1263,13 +1301,11 @@ const hoveredTrust = computed<IRenderedTrust | null>(
     () => sortedTrusts.value.find(t => t.id === hoverTrustId.value) ?? null
 );
 
-const onTrustCreated = (newTrust: ICreatedTrust) => {
+// The new trust's drawer carries its Trust kit section, where the admin downloads the kit. Wait for the list
+// first: the drawer resolves its trust from it.
+const onTrustCreated = async (newTrust: ICreatedTrust) => {
     showAddTrustModal.value = false;
-    createdTrust.value = newTrust;
-    refresh();
-};
-
-const onKitModalClose = () => {
-    createdTrust.value = null;
+    await refresh();
+    openDrawer(newTrust.id);
 };
 </script>

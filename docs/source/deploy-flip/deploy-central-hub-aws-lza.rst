@@ -242,6 +242,12 @@ Create ``.env.prod`` (or ``.env.stag``) from the shipped example env file, then 
    export TF_VAR_lza_web_edge_domain=
    export TF_VAR_lza_web_edge_distribution_arn=
 
+   # Optional: the public demo's own bucket and host. Its distribution ARN stays empty
+   # until the platform team creates the demo's distribution (see the edge handoff)
+   FLIP_DEMO_BUCKET_NAME=<demo bucket name>
+   DEMO_SITE_URL=https://<demo host>
+   export TF_VAR_lza_web_demo_distribution_arn=
+
    # Optional on HUB=prod, required on HUB=stag
    LZA_VPC_NAME=<Name tag of the accelerator VPC>
 
@@ -249,7 +255,9 @@ Create ``.env.prod`` (or ``.env.stag``) from the shipped example env file, then 
   used to name resources.
 - **Staging only:** the edge serves staging FL traffic on port 8003, while the staging FL server still listens on
   8002. Keep ``FL_SERVER_PORT=8002`` and set ``FL_EDGE_PORT=8003`` in ``.env.stag``; ``sync-trust-kit`` copies
-  it into each kit and refuses to run on ``HUB=stag`` without it. FLARE kits take the port from the staging
+  it into each kit and refuses to run on ``HUB=stag`` without it. Set the same value as the ``FL_EDGE_PORT``
+  variable on the staging GitHub environment: the hub puts it in the kits downloaded from the FLIP UI, and without it
+  they carry ``FL_SERVER_PORT``. FLARE kits take the port from the staging
   provisioning file instead (``connect_to`` in ``fl-services/nvflare/provision/net-1_project_stag.yml``).
 - Mint the secrets (``AES_KEY_BASE64``, ``FL_API_KEY``, ``ADMIN_USER_PASSWORD``) for the account. Do not
   reuse another account's Secrets Manager secret.
@@ -309,7 +317,9 @@ The edge is built from the workload stack's outputs, so the two are always appli
 
    Set ``TF_VAR_lza_web_edge_domain`` to ``ALB_SUBDOMAIN``, the name the API answers on, and
    ``TF_VAR_lza_web_edge_distribution_arn`` to the edge distribution's ARN, then apply again. This grants the edge
-   read access to the UI bucket and points bucket CORS and the Cognito callback URLs at the edge.
+   read access to the UI bucket and points bucket CORS and the Cognito callback URLs at the edge. Where the estate
+   serves the public demo, set ``TF_VAR_lza_web_demo_distribution_arn`` to the demo's distribution in the same
+   apply: it grants that distribution read access to the demo bucket.
 
 Later changes to the workload load balancer follow the same order, networking stack first.
 

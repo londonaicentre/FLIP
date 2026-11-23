@@ -98,7 +98,7 @@ def _ports(policy: dict) -> set[int]:
 
 
 def test_the_agent_alone_may_reach_the_api_server():
-    """The rollback after a failed upgrade timed out on 10.96.0.1:443 -> 6443: egress allowed 443 only.
+    """The agent's helm calls timed out on 10.96.0.1:443 -> 6443: egress allowed 443 only.
 
     The API ports go to a policy that selects the agent, never to the namespace-wide egress policy.
     """

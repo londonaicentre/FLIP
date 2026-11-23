@@ -13,7 +13,7 @@
 
 # Imaging API
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
 [![FLIP Imaging API CI](https://github.com/londonaicentre/FLIP/actions/workflows/test_trust_imaging_api.yml/badge.svg)](https://github.com/londonaicentre/FLIP/actions/workflows/test_trust_imaging_api.yml)
 [![imaging-api](https://ghcr-badge.egpl.dev/londonaicentre/imaging-api/latest_tag?trim=major&label=imaging-api)](https://github.com/londonaicentre/FLIP/pkgs/container/imaging-api)
 [![Coverage](https://codecov.io/gh/londonaicentre/FLIP/branch/main/graph/badge.svg?flag=imaging-api)](https://codecov.io/gh/londonaicentre/FLIP)
@@ -101,7 +101,8 @@ compares them:
 
 `force_refresh=true` takes the same delete-then-download step. The cache is also invalidated when an upload through
 imaging-api changes the accession (see Upload), and — on the FLARE backend, where a job mounts the net's whole
-folder — by `CleanupImages`, which empties that folder at job start and end. A Kubernetes job pod mounts only its
+folder — by `CleanupImages`, which deletes every other project's studies at job start and all of them at the end of
+the run (FLIP#1830). A Kubernetes job pod mounts only its
 project's folder, read-only, or none, and deletes nothing: there the retention sweep bounds the cache.
 
 **Retention (FLIP#1050).** Every cache hit refreshes the sentinel's mtime, the entry's last-used time, and an hourly
@@ -125,6 +126,18 @@ the cached study as an uncompressed tar rooted at `<accession_id>/` (`applicatio
 out) instead of a path. It is for a client with no mount of the net's images folder, such as an NVFLARE job pod on
 Kubernetes (FLIP#1049): flip-utils uses it when `IMAGES_TRANSPORT=stream` and extracts the tar into the job's own
 directory.
+
+`POST /download/images/{net_id}/layout` takes the same body and `resource_type`, and copies nothing: it answers
+with `{"files": [{"path", "archive"}]}`, one entry per scan file a download would hold. `path` is the file's place
+in the download layout above and `archive` its place in the project's own directory of XNAT's archive
+(`<arc, usually arc001>/<accession_id>/SCANS/<scan id>/<resource>/…`). It is for a client that mounts that directory read-only, an
+NVFLARE job pod with `flClient.nvflare.jobPods.images: archive` (FLIP#1857): flip-utils uses it when
+`IMAGES_TRANSPORT=archive` and lays the study out as links into the mount. The scan's folder is named as XNAT
+names it in the zip, `<scan id>-<type>` with every character outside `[A-Za-z0-9_]` of the type replaced by `_`
+(XNAT's `RestFileUtils.getReMaps`), or the bare scan id when the scan has no type; the type is in XNAT's database
+only, which is why the client cannot work the layout out from the mount. A file XNAT lists outside this session's
+`SCANS` in this project's archive is refused (HTTP 500). Assessor resources are not listed: XNAT keeps them
+elsewhere, and such a client streams them.
 
 ### Imaging
 

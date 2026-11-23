@@ -311,6 +311,25 @@ variable "ui_publish_role_name" {
   default     = "AICentre-FLIPUiPublishRole"
 }
 
+# The demo-publish role (FLIP#2012). Off unless the bucket is named.
+variable "demo_bucket_name" {
+  description = "Name of the public demo's bucket (the FLIP root's FLIP_DEMO_BUCKET_NAME). Setting it creates the demo-publish role, scoped to this bucket; empty creates none."
+  type        = string
+  default     = ""
+}
+
+variable "demo_publish_workflow_file" {
+  description = "Reusable workflow permitted to assume the demo-publish role."
+  type        = string
+  default     = "publish_demo.yml"
+}
+
+variable "demo_publish_role_name" {
+  description = "Name of the demo-publish role."
+  type        = string
+  default     = "AICentre-FLIPDemoPublishRole"
+}
+
 variable "manage_state_bucket" {
   description = "Declare and harden the Terraform state bucket named by state_bucket_name (versioning, public-access block, encryption, lifecycle, TLS-only policy). False leaves the bucket to something else."
   type        = bool

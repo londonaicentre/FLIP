@@ -330,15 +330,18 @@ def run_xnat_reset(tmp_path, **overrides: str) -> subprocess.CompletedProcess:
     fake_sudo.write_text('#!/bin/sh\nexec "$@"\n')
     fake_sudo.chmod(0o755)
     env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+    # The ports are the kit's: the guard refuses to judge them when it read no kit file.
+    kit_file = tmp_path / "kit.env"
+    kit_file.write_text("".join(f"{k}={v}\n" for k, v in overrides.items()))
     return subprocess.run(
         [
             "make",
             "xnat-reset",
             "KIT=GSTT",
+            f"KIT_FILE={kit_file}",
             f"XNAT_DATA_DIR={tmp_path / 'data'}",
             f"XNAT_CONTAINER_UID={os.getuid()}",
             f"XNAT_CONTAINER_GID={os.getgid()}",
-            *(f"{k}={v}" for k, v in overrides.items()),
         ],
         cwd=XNAT_DIR,
         env=env,

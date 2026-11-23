@@ -15,6 +15,10 @@ import { mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import TrustKitModal from "@/partials/trusts/TrustKitModal.vue";
+import { ITrustKitDownload } from "@/services/trust-service";
+
+const mockSaveKitFile = vi.fn();
+vi.mock("@/utils/issued-trust-kit", () => ({ saveKitFile: (...args: unknown[]) => mockSaveKitFile(...args) }));
 
 vi.mock("@/utils/snackbar", () => ({
     Snackbar: {
@@ -23,17 +27,12 @@ vi.mock("@/utils/snackbar", () => ({
     }
 }));
 
-const trust = {
-    id: "trust-uuid-123",
-    name: "Demo EC2 Trust",
-    code: "DEMO",
-    region: "London",
-    created_at: null,
-    trust_api_key: "api-key-abc",  // pragma: allowlist secret
-    trust_internal_service_key: "internal-key-def",  // pragma: allowlist secret
-    fl_kit_slot: "Trust_1",
-    fl_kit_slot_number: 1
-};
+const kit = (kind: ITrustKitDownload["kind"] = "full"): ITrustKitDownload => ({
+    file_name: "flip-trust-kit-DEMO.tar.gz.enc",
+    kind,
+    passphrase: "amber-otter-quartz",  // pragma: allowlist secret
+    content_base64: btoa("kit")
+});
 
 const stubs = {
     TransitionRoot: { template: "<div><slot /></div>" },
@@ -41,20 +40,23 @@ const stubs = {
     Dialog: { template: "<div><slot /></div>" },
     DialogTitle: { template: "<h3><slot /></h3>" },
     AiDialogOverlay: { template: "<div />" },
-    AiButton: { template: "<button @click=\"$emit('click', $event)\"><slot /></button>" }
+    AiButton: {
+        props: ["disabled"],
+        // $attrs carries data-test and the click listener.
+        inheritAttrs: false,
+        template: "<button v-bind=\"$attrs\" :disabled=\"disabled\"><slot /></button>"
+    }
 };
 
-function mountModal() {
-    return mount(TrustKitModal, {
-        props: {
-            dialog: true,
-            trust
-        },
-        global: { stubs }
-    });
-}
+const mountModal = (issued: ITrustKitDownload | null = kit()) => mount(TrustKitModal, {
+    props: {
+        kit: issued,
+        trustLabel: "DEMO"
+    },
+    global: { stubs }
+});
 
-describe("TrustKitModal — copy all credentials", () => {
+describe("TrustKitModal", () => {
     let writeText: ReturnType<typeof vi.fn>;
 
     beforeEach(() => {
@@ -62,43 +64,58 @@ describe("TrustKitModal — copy all credentials", () => {
         Object.assign(navigator, { clipboard: { writeText } });
     });
 
-    it("shows every credential together in one monospaced block", () => {
+    it("shows the file name, the passphrase and the install command for that file", () => {
         const wrapper = mountModal();
-        const block = wrapper.find("[data-test='all-credentials-block']");
-        expect(block.exists()).toBe(true);
-        const text = block.text();
-        expect(text).toContain("TRUST_API_KEY=api-key-abc");
-        expect(text).toContain("TRUST_INTERNAL_SERVICE_KEY=internal-key-def");  // pragma: allowlist secret
-        expect(text).toContain("FL_KIT_SLOT=Trust_1");
-        expect(text).toContain("FL_KIT_SLOT_NUMBER=1");
-        expect(text).toContain("EXPECTED_TRUST_ID=trust-uuid-123");
+
+        expect(wrapper.find("h3").text()).toContain("DEMO kit");
+        expect(wrapper.find("[data-test='kit-warning']").text()).toContain("You won't see this again.");
+        expect(wrapper.find("[data-test='kit-file-name']").text()).toBe("flip-trust-kit-DEMO.tar.gz.enc");
+        expect(wrapper.find("[data-test='kit-passphrase']").text()).toBe("amber-otter-quartz");
+        expect(wrapper.find("[data-test='kit-install-command']").text())
+            .toBe("make -C trust install-kit FILE=flip-trust-kit-DEMO.tar.gz.enc");
     });
 
-    it("puts the trust name in the dialog title", () => {
+    it("copies the passphrase", async () => {
         const wrapper = mountModal();
-        expect(wrapper.find("h3").text()).toContain("Demo EC2 Trust kit");
+
+        await wrapper.find("[data-test='copy-passphrase-btn']").trigger("click");
+
+        expect(writeText).toHaveBeenCalledWith("amber-otter-quartz");
     });
 
-    it("replaces the per-field copy buttons with the single copy-all", () => {
+    it("saves the file again, for a browser that blocked or lost the first save", async () => {
         const wrapper = mountModal();
-        expect(wrapper.find("[data-test='copy-api-key-btn']").exists()).toBe(false);
-        expect(wrapper.find("[data-test='copy-internal-key-btn']").exists()).toBe(false);
-        expect(wrapper.find("[data-test='copy-fl-kit-slot-btn']").exists()).toBe(false);
-        expect(wrapper.find("[data-test='copy-expected-trust-id-btn']").exists()).toBe(false);
-        expect(wrapper.find("[data-test='copy-all-credentials-btn']").exists()).toBe(true);
+
+        await wrapper.find("[data-test='kit-save-again-btn']").trigger("click");
+
+        expect(mockSaveKitFile).toHaveBeenCalledWith(kit());
     });
 
-    it("copies all five credential lines with a single button click", async () => {
+    it("tells a new site to send its public IP, on a full kit only", () => {
+        expect(mountModal(kit("full")).find("[data-test='kit-public-ip-note']").exists()).toBe(true);
+        expect(mountModal(kit("update")).find("[data-test='kit-public-ip-note']").exists()).toBe(false);
+    });
+
+    it("closes only once the passphrase is confirmed saved", async () => {
         const wrapper = mountModal();
-        const btn = wrapper.find("[data-test='copy-all-credentials-btn']");
-        expect(btn.exists()).toBe(true);
-        await btn.trigger("click");
-        expect(writeText).toHaveBeenCalledTimes(1);
-        const copied = writeText.mock.calls[0][0] as string;
-        expect(copied).toContain("TRUST_API_KEY=api-key-abc");
-        expect(copied).toContain("TRUST_INTERNAL_SERVICE_KEY=internal-key-def");  // pragma: allowlist secret
-        expect(copied).toContain("FL_KIT_SLOT=Trust_1");
-        expect(copied).toContain("FL_KIT_SLOT_NUMBER=1");
-        expect(copied).toContain("EXPECTED_TRUST_ID=trust-uuid-123");
+        const close = wrapper.find("[data-test='kit-done-btn']");
+
+        expect(close.attributes("disabled")).toBeDefined();
+
+        await wrapper.find("[data-test='kit-saved-checkbox']").setValue(true);
+        expect(close.attributes("disabled")).toBeUndefined();
+
+        await close.trigger("click");
+        expect(wrapper.emitted("closeModal")).toHaveLength(1);
+    });
+
+    it("asks for the tick again for the next kit", async () => {
+        const wrapper = mountModal();
+        await wrapper.find("[data-test='kit-saved-checkbox']").setValue(true);
+
+        await wrapper.setProps({ kit: null });
+        await wrapper.setProps({ kit: kit("update") });
+
+        expect(wrapper.find("[data-test='kit-done-btn']").attributes("disabled")).toBeDefined();
     });
 });
