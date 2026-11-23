@@ -386,11 +386,12 @@ class Settings(BaseSettings):
         "PICKLESCAN_TIMEOUT_SECONDS",
         "BANDIT_TIMEOUT_SECONDS",
         "SCHEDULER_MALWARE_SCAN_RECONCILE_RATE",
+        "TRUST_KEY_ROTATION_GRACE_DAYS",
         mode="before",
     )
     @classmethod
     def coerce_empty_scan_int(cls, v: object, info: ValidationInfo) -> object:
-        """Treat an empty-string scan-timing setting as the field default.
+        """Treat an empty-string scan-timing or rotation-grace setting as the field default.
 
         Same rationale as ``coerce_empty_max_model_file_bytes``: these arrive
         as empty strings whenever the name appears in an env file at all —
