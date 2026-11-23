@@ -145,7 +145,7 @@ def note_agent_tick(trust: Trust, db: Session) -> None:
 
 
 def policy_for_agent(trust: Trust, db: Session) -> UpgradePolicy:
-    """What the host agent is told on each tick."""
+    """What the upgrade agent is told on each tick."""
     window = (
         UpgradeWindow(start=trust.auto_upgrade_window_start, end=trust.auto_upgrade_window_end)
         if trust.auto_upgrade_window_start and trust.auto_upgrade_window_end
@@ -200,8 +200,7 @@ def view_for_admin(trust: Trust, db: Session) -> AutoUpgradeView:
                 now, trust.auto_upgrade_window_start, trust.auto_upgrade_window_end, trust.auto_upgrade_timezone
             ):
                 blockers.append(UpgradeBlocker.OUTSIDE_WINDOW)
-            # Every reportable blocker, not just LOCAL_MODIFICATIONS: the other three are
-            # recorded by record_status and were previously stored and never shown.
+            # The agent's own finding (SITE_UNHEALTHY), recorded by record_status.
             if trust.upgrade_blocker and not _is_stale(trust.upgrade_blocker_at, now):
                 # The column is a plain string; only a code the UI knows can be rendered.
                 if trust.upgrade_blocker in REPORTABLE_BLOCKERS:

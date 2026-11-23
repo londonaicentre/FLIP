@@ -26,6 +26,7 @@ import tempfile
 import time
 import unittest
 import urllib.error
+from dataclasses import fields
 from datetime import datetime
 from pathlib import Path
 from unittest import mock
@@ -37,7 +38,9 @@ import trust_upgrade_agent as agent  # noqa: E402
 
 NOW = datetime(2026, 10, 23, 2, 0)  # 03:00 BST
 HEALTHY = agent.Health(reachable=True, status="ok", version="v1.2.0", hub_key_match=True, dead_tasks=())
-CLEAN = agent.Local(current_release="v1.2.0", checkout_clean=True, unsupported=False, health=HEALTHY)
+CLEAN = agent.Local(current_release="v1.2.0", health=HEALTHY)
+CLUSTER = agent.Cluster("flip-trust", "flip-trust", "oci://x/y", "GSTT", "prod")
+KIT = {"CENTRAL_HUB_API_URL": "https://hub.example/api", "TRUST_API_KEY_HEADER": "X", "TRUST_API_KEY": "k"}
 
 
 def policy(**kw):
@@ -96,7 +99,7 @@ class Decide(unittest.TestCase):
             self.assertIn("older than v1.2.0", d.reason)
 
     def test_moves_off_a_release_candidate_to_its_release(self):
-        on_rc = agent.Local(current_release="v1.3.0-rc.2", checkout_clean=True, unsupported=False, health=HEALTHY)
+        on_rc = agent.Local(current_release="v1.3.0-rc.2", health=HEALTHY)
         self.assertEqual(agent.decide(policy(target_release="v1.3.0"), on_rc, NOW).action, "UPGRADE")
 
     def test_release_key_orders_versions_numerically(self):
@@ -123,18 +126,16 @@ class Decide(unittest.TestCase):
             agent.decide(policy(lease={"release": "v1.3.0", "expires_at": "x"}), CLEAN, NOW).action, "SKIP"
         )
 
-    def test_host_blockers_are_reported_not_forced(self):
-        dirty = agent.Local("v1.2.0", checkout_clean=False, unsupported=False, health=HEALTHY)
-        self.assertEqual(agent.decide(policy(), dirty, NOW).reason, agent.LOCAL_MODIFICATIONS)
-        unknown = agent.Local("v1.2.0", checkout_clean=None, unsupported=False, health=HEALTHY)
-        self.assertEqual(agent.decide(policy(), unknown, NOW).reason, agent.UNKNOWN_CHECKOUT)
-        remote = agent.Local("v1.2.0", checkout_clean=True, unsupported=True, health=HEALTHY)
-        self.assertEqual(agent.decide(policy(), remote, NOW).reason, agent.UNSUPPORTED_MODE)
-
     def test_a_blocker_is_reported_even_outside_the_window(self):
-        dirty = agent.Local("v1.2.0", checkout_clean=False, unsupported=False, health=HEALTHY)
+        sick = agent.Local("v1.2.0", agent.Health(False, None, None, None, ()))
         p = policy(maintenance_window={"start": "04:00", "end": "05:00"}, timezone="UTC")
-        self.assertEqual(agent.decide(p, dirty, NOW).action, "BLOCKED")
+        self.assertEqual(agent.decide(p, sick, NOW).action, "BLOCKED")
+
+    def test_the_host_only_blockers_are_gone(self):
+        """Auto-upgrade is Kubernetes-only: no checkout to dirty and no remotely driven host mode."""
+        for name in ("LOCAL_MODIFICATIONS", "UNKNOWN_CHECKOUT", "UNSUPPORTED_MODE"):
+            self.assertFalse(hasattr(agent, name), name)
+        self.assertEqual([f.name for f in fields(agent.Local)], ["current_release", "health"])
 
     def test_an_unhealthy_site_is_never_touched(self):
         """Recreating every container on an already-broken site makes the two causes indistinguishable."""
@@ -145,13 +146,13 @@ class Decide(unittest.TestCase):
             (agent.Health(True, "ok", "v1.2.0", False, ()), "AES key"),
         ]:
             with self.subTest(health=health):
-                d = agent.decide(policy(), agent.Local("v1.2.0", True, False, health), NOW)
+                d = agent.decide(policy(), agent.Local("v1.2.0", health), NOW)
                 self.assertEqual((d.action, d.reason), ("BLOCKED", agent.SITE_UNHEALTHY))
                 self.assertIn(needle, d.detail or "")
 
     def test_being_unhealthy_does_not_nag_when_there_is_nothing_to_do(self):
         """A disabled or already-current trust must not report a blocker it was never going to act on."""
-        sick = agent.Local("v1.3.0", True, False, agent.Health(False, None, None, None, ()))
+        sick = agent.Local("v1.3.0", agent.Health(False, None, None, None, ()))
         self.assertEqual(agent.decide(policy(), sick, NOW).action, "SKIP")
         self.assertEqual(agent.decide(policy(enabled=False), sick, NOW).action, "SKIP")
 
@@ -160,11 +161,12 @@ class Tick(unittest.TestCase):
     """The order of side effects: claim before touching anything, report whatever happened."""
 
     def setUp(self):
-        d = tempfile.mkdtemp()
-        self.kit = Path(d) / ".env.GSTT.prod"
-        self.kit.write_text(
-            "CENTRAL_HUB_API_URL=https://hub.example/api\nTRUST_API_KEY_HEADER=X-Trust-API-Key\nTRUST_API_KEY=k\nFL_KIT_SLOT=Trust_1\n"
-        )
+        patcher = mock.patch.object(agent, "cluster_kit", return_value=KIT)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        drift = mock.patch.object(agent, "governance_drift", return_value=None)
+        drift.start()
+        self.addCleanup(drift.stop)
 
     def _run(self, claim_status=200, upgrade_result=(True, ""), pol=None, dry_run=False, verified=(True, "on v1.3.0")):
         calls = []
@@ -177,11 +179,11 @@ class Tick(unittest.TestCase):
 
         with (
             mock.patch.object(agent, "hub_call", hub),
-            mock.patch.object(agent, "local_state", return_value=CLEAN),
+            mock.patch.object(agent, "cluster_state", return_value=CLEAN),
             mock.patch.object(agent, "verify", return_value=verified),
-            mock.patch.object(agent, "upgrade", return_value=upgrade_result) as up,
+            mock.patch.object(agent, "cluster_upgrade", return_value=upgrade_result) as up,
         ):
-            code = agent.tick(self.kit, Path("/nonexistent"), dry_run)
+            code = agent.tick(CLUSTER, dry_run)
         return code, calls, up
 
     def test_success_claims_then_reports(self):
@@ -206,7 +208,7 @@ class Tick(unittest.TestCase):
         self.assertEqual(len(calls), 2)
 
     def test_an_upgrade_that_does_not_come_up_is_a_failure(self):
-        """`make` exiting 0 only says the deployment applied; SUCCEEDED requires the site to be up on it."""
+        """helm exiting 0 only says the release applied; SUCCEEDED requires the site to be up on it."""
         code, calls, _ = self._run(verified=(False, "did not come up on v1.3.0: unreachable"))
         self.assertEqual(code, 1)
         self.assertEqual(calls[-1][2]["state"], "FAILED")
@@ -224,18 +226,7 @@ class Tick(unittest.TestCase):
 
     def test_unreadable_hub_is_exit_2(self):
         with mock.patch.object(agent, "hub_call", side_effect=agent.urllib.error.URLError("down")):
-            self.assertEqual(agent.tick(self.kit, Path("/nonexistent"), False), 2)
-
-    def test_an_unnameable_kit_is_refused_before_anything_is_claimed(self):
-        # kit_identity() would otherwise raise inside upgrade(), with the lease already taken,
-        # and do it again on every expiry.
-        bad = self.kit.parent / "settings.conf"
-        bad.write_text(self.kit.read_text())
-        calls = []
-        with mock.patch.object(agent, "hub_call", lambda *a, **k: (calls.append(a), (200, policy()))[1]):
-            code = agent.tick(bad, Path("/nonexistent"), False)
-        self.assertEqual(code, 2)
-        self.assertEqual(calls, [])
+            self.assertEqual(agent.tick(CLUSTER, False), 2)
 
     def test_a_crash_mid_upgrade_still_reports_failed(self):
         # The lease is held from STARTING; an exit the hub never hears about parks the release
@@ -248,13 +239,13 @@ class Tick(unittest.TestCase):
 
         with (
             mock.patch.object(agent, "hub_call", hub),
-            mock.patch.object(agent, "local_state", return_value=CLEAN),
-            mock.patch.object(agent, "upgrade", side_effect=RuntimeError("docker died")),
+            mock.patch.object(agent, "cluster_state", return_value=CLEAN),
+            mock.patch.object(agent, "cluster_upgrade", side_effect=RuntimeError("helm died")),
             self.assertRaises(RuntimeError),
         ):
-            agent.tick(self.kit, Path("/nonexistent"), False)
+            agent.tick(CLUSTER, False)
         self.assertEqual([c[2]["state"] for c in calls[1:]], ["STARTING", "FAILED"])
-        self.assertIn("docker died", calls[-1][2]["detail"])
+        self.assertIn("helm died", calls[-1][2]["detail"])
 
     def test_a_report_that_does_not_land_is_retried(self):
         attempts = []
@@ -268,11 +259,11 @@ class Tick(unittest.TestCase):
 
         with (
             mock.patch.object(agent, "hub_call", hub),
-            mock.patch.object(agent, "local_state", return_value=CLEAN),
-            mock.patch.object(agent, "upgrade", return_value=(False, "boom")),
+            mock.patch.object(agent, "cluster_state", return_value=CLEAN),
+            mock.patch.object(agent, "cluster_upgrade", return_value=(False, "boom")),
             mock.patch.object(agent.time, "sleep"),
         ):
-            self.assertEqual(agent.tick(self.kit, Path("/nonexistent"), False), 1)
+            self.assertEqual(agent.tick(CLUSTER, False), 1)
         self.assertEqual(len(attempts), 3)
 
 
@@ -325,58 +316,6 @@ class Verify(unittest.TestCase):
         ok, detail = self._verify([agent.Health(False, None, None, None, ())])
         self.assertFalse(ok)
         self.assertIn("never came back", detail)
-
-
-class KitIdentity(unittest.TestCase):
-    def test_kit_name_and_hub_come_from_the_filename_not_the_fl_slot(self):
-        for name, expected in {
-            ".env.GSTT.prod": ("GSTT", "prod"),
-            ".env.GSTT.stag": ("GSTT", "stag"),
-            ".env.KCH.production": ("KCH", "prod"),
-            ".env.KCH.lza-prod": ("KCH", "prod"),
-            ".env.KCH.lza-stag": ("KCH", "stag"),
-        }.items():
-            self.assertEqual(agent.kit_identity(Path("/etc/flip/trust") / name), expected)
-
-    def test_refuses_what_is_not_a_kit_file(self):
-        for name in (".env.GSTT.development", ".env.GSTT", "GSTT.production"):
-            with self.assertRaises(ValueError):
-                agent.kit_identity(Path(name))
-
-
-class UpgradeRuns(unittest.TestCase):
-    """The verb is run in the agent's checkout, after moving it to the tag, against the out-of-tree kit."""
-
-    def test_checks_out_the_tag_then_runs_the_verb_with_the_kit_path(self):
-        calls = []
-
-        def fake_run(cmd, cwd, **kw):
-            calls.append((cmd, cwd))
-            return mock.Mock(returncode=0, stdout="ok", stderr="")
-
-        repo, kit = Path("/opt/flip/releases/FLIP"), Path("/etc/flip/trust/.env.GSTT.prod")
-        with mock.patch.object(agent, "run", fake_run):
-            ok, _ = agent.upgrade(repo, kit, "v1.3.0")
-        self.assertTrue(ok)
-        self.assertEqual([c[0][:2] for c in calls[:2]], [["git", "fetch"], ["git", "checkout"]])
-        make = calls[-1][0]
-        self.assertEqual(make[:2], ["make", "upgrade-onprem-trust"])
-        for arg in ("KIT=GSTT", "HUB=prod", "TAG=v1.3.0", "YES=1", f"KIT_FILE={kit}"):
-            self.assertIn(arg, make)
-        self.assertTrue(all(c[1] == repo for c in calls))
-
-    def test_a_failed_checkout_never_reaches_make(self):
-        calls = []
-
-        def fake_run(cmd, cwd, **kw):
-            calls.append(cmd)
-            return mock.Mock(returncode=1, stdout="", stderr="no such tag")
-
-        with mock.patch.object(agent, "run", fake_run):
-            ok, tail = agent.upgrade(Path("/r"), Path("/etc/flip/trust/.env.GSTT.prod"), "v9.9.9")
-        self.assertFalse(ok)
-        self.assertIn("no such tag", tail)
-        self.assertNotIn("make", [c[0] for c in calls])
 
 
 class LeaseRenewal(unittest.TestCase):
@@ -455,14 +394,11 @@ class StoppedNote(unittest.TestCase):
 
 
 class TickStops(unittest.TestCase):
-    """A failed attempt is reported and left where it is: the verb runs once, never for the old release."""
-
-    KIT_FILE = Path("/nonexistent")
-    REPO = Path("/nope")
+    """A failed attempt is reported and left where it is: helm runs once, never for the old release."""
 
     def _tick(self, upgrade_result, verify_result=(True, "v0.13.0")):
         policy = {"enabled": True, "target_release": "v0.13.0", "lease": None}
-        local = agent.Local("v0.12.0", True, False, agent.Health(True, "ok", "v0.12.0", True, ()))
+        local = agent.Local("v0.12.0", agent.Health(True, "ok", "v0.12.0", True, ()))
         reports = []
 
         def fake_hub_call(kit, method, route, body=None):
@@ -471,21 +407,21 @@ class TickStops(unittest.TestCase):
             return (200, policy if method == "GET" else None)
 
         with (
-            mock.patch.object(agent, "read_kit", return_value={}),
-            mock.patch.object(agent, "kit_identity", return_value=("GSTT", "prod")),
+            mock.patch.object(agent, "cluster_kit", return_value=KIT),
             mock.patch.object(agent, "hub_call", fake_hub_call),
-            mock.patch.object(agent, "local_state", return_value=local),
-            mock.patch.object(agent, "upgrade", return_value=upgrade_result) as up,
+            mock.patch.object(agent, "cluster_state", return_value=local),
+            mock.patch.object(agent, "cluster_upgrade", return_value=upgrade_result) as up,
+            mock.patch.object(agent, "governance_drift", return_value=None),
             mock.patch.object(agent, "verify", return_value=verify_result),
             mock.patch.object(agent, "LeaseRenewal"),
         ):
-            rc = agent.tick(self.KIT_FILE, self.REPO, False)
+            rc = agent.tick(CLUSTER, False)
         return rc, reports, up
 
     def test_a_failed_upgrade_stops_and_reports_failed(self):
         rc, reports, up = self._tick((False, "apply failed"))
         assert rc == 1
-        assert [c.args[2] for c in up.call_args_list] == ["v0.13.0"]
+        assert [c.args[1] for c in up.call_args_list] == ["v0.13.0"]
         assert reports[-1]["state"] == "FAILED"
         assert "apply failed" in reports[-1]["detail"]
         assert "on v0.12.0" in reports[-1]["detail"]
@@ -505,14 +441,13 @@ class TickStops(unittest.TestCase):
 
 
 class TrustApiBase(unittest.TestCase):
-    def test_a_host_kit_reads_loopback_on_its_published_port(self):
-        self.assertEqual(agent.trust_api_base({}), "http://127.0.0.1:8020")
-        self.assertEqual(agent.trust_api_base({"TRUST_API_PORT": "9000"}), "http://127.0.0.1:9000")
+    def test_the_service_url_loses_its_trailing_slash(self):
+        self.assertEqual(agent.trust_api_base({"TRUST_API_URL": "http://t:8000/"}), "http://t:8000")
 
-    def test_a_url_wins_and_loses_its_trailing_slash(self):
-        self.assertEqual(
-            agent.trust_api_base({"TRUST_API_URL": "http://t:8000/", "TRUST_API_PORT": "1"}), "http://t:8000"
-        )
+    def test_there_is_no_loopback_fallback(self):
+        """A pod has its own loopback, where nothing listens; cluster_kit refuses an empty URL first."""
+        with self.assertRaises(KeyError):
+            agent.trust_api_base({"TRUST_API_PORT": "8020"})
 
 
 class ClusterKit(unittest.TestCase):
@@ -583,14 +518,6 @@ class ClusterState(unittest.TestCase):
         local = self._state('[{"name": "flip-trust", "app_version": "v0.13.0"}]')
         self.assertEqual(local.current_release, "v0.13.0")
 
-    def test_a_cluster_has_no_checkout_to_be_dirty(self):
-        """`cluster mode` must never report LOCAL_MODIFICATIONS, which has no meaning here."""
-        self.assertTrue(self._state('[{"app_version": "v0.13.0"}]').checkout_clean)
-
-    def test_it_is_not_the_unsupported_remote_docker_case(self):
-        """The host agent refuses a DOCKER_HOST trust; the cluster agent is the supported case."""
-        self.assertFalse(self._state('[{"app_version": "v0.13.0"}]').unsupported)
-
     def test_a_helm_that_cannot_be_read_falls_back_to_health(self):
         local = self._state("", health_version="v0.12.0", returncode=1)
         self.assertEqual(local.current_release, "v0.12.0")
@@ -658,28 +585,27 @@ class ClusterUpgrade(unittest.TestCase):
 
 
 class ClusterTick(unittest.TestCase):
-    """`tick` picks the backend from the mode; the host path is untouched."""
+    """`tick` runs the cluster upgrade; there is no other backend."""
 
     CLUSTER = agent.Cluster("flip-trust", "flip-trust", "oci://x/y", "GSTT", "prod")
 
-    def test_cluster_mode_never_touches_a_checkout(self):
-        policy = {"enabled": True, "target_release": "v0.13.0", "lease": None}
-        local = agent.Local("v0.12.0", True, False, agent.Health(True, "ok", "v0.12.0", True, ()))
-        with (
-            mock.patch.object(agent, "cluster_kit", return_value={}),
-            mock.patch.object(agent, "hub_call", side_effect=[(200, policy), (409, None)]),
-            mock.patch.object(agent, "cluster_state", return_value=local),
-            mock.patch.object(agent, "upgrade") as host_upgrade,
-            mock.patch.object(agent, "checkout") as host_checkout,
-        ):
-            rc = agent.tick(Path("/nonexistent"), Path("/nope"), False, self.CLUSTER)
-        self.assertEqual(rc, 0)
-        host_upgrade.assert_not_called()
-        host_checkout.assert_not_called()
+    def test_the_agent_has_no_host_path(self):
+        """The Compose host installer was dropped: no checkout, no `make`, no kit file."""
+        for name in ("upgrade", "checkout", "local_state", "kit_identity", "read_kit", "DEFAULT_CHECKOUT"):
+            self.assertFalse(hasattr(agent, name), name)
+
+    def test_the_compose_host_installer_is_gone(self):
+        """No installer, make target or systemd unit for a Compose host: auto-upgrade is Kubernetes-only."""
+        repo = SCRIPTS_DIR.parent
+        self.assertFalse((SCRIPTS_DIR / "setup_auto_upgrade.py").exists())
+        for makefile in (repo / "Makefile", repo / "trust" / "Makefile"):
+            text = makefile.read_text()
+            self.assertNotIn("setup-auto-upgrade", text, makefile)
+            self.assertNotIn("flip-trust-upgrade.timer", text, makefile)
 
     def test_the_cluster_upgrade_is_what_runs(self):
         policy = {"enabled": True, "target_release": "v0.13.0", "lease": None}
-        local = agent.Local("v0.12.0", True, False, agent.Health(True, "ok", "v0.12.0", True, ()))
+        local = agent.Local("v0.12.0", agent.Health(True, "ok", "v0.12.0", True, ()))
         with (
             mock.patch.object(agent, "cluster_kit", return_value={}),
             mock.patch.object(agent, "hub_call", side_effect=[(200, policy), (200, None), (200, None)]),
@@ -689,7 +615,7 @@ class ClusterTick(unittest.TestCase):
             mock.patch.object(agent, "governance_drift", return_value=None),
             mock.patch.object(agent, "LeaseRenewal"),
         ):
-            rc = agent.tick(Path("/nonexistent"), Path("/nope"), False, self.CLUSTER)
+            rc = agent.tick(self.CLUSTER, False)
         self.assertEqual(rc, 0)
         upgrade.assert_called_once_with(self.CLUSTER, "v0.13.0")
 
@@ -763,7 +689,7 @@ class TickChecksGovernance(unittest.TestCase):
 
     def _tick(self, drift):
         policy = {"enabled": True, "target_release": "v0.13.0", "lease": None}
-        local = agent.Local("v0.12.0", True, False, agent.Health(True, "ok", "v0.12.0", True, ()))
+        local = agent.Local("v0.12.0", agent.Health(True, "ok", "v0.12.0", True, ()))
         cluster = agent.Cluster(
             namespace="ns", release="flip-trust", chart_repository="oci://x", kit_name="G", hub="prod"
         )
@@ -783,7 +709,7 @@ class TickChecksGovernance(unittest.TestCase):
             mock.patch.object(agent, "governance_drift", return_value=drift),
             mock.patch.object(agent, "LeaseRenewal"),
         ):
-            rc = agent.tick(Path("/nonexistent"), Path("/nope"), False, cluster)
+            rc = agent.tick(cluster, False)
         return rc, reports, up
 
     def test_drift_stops_the_success_report(self):
@@ -803,14 +729,29 @@ class TickChecksGovernance(unittest.TestCase):
         self.assertEqual(reports[-1]["state"], "SUCCEEDED")
 
 
+CLUSTER_ARGS = [
+    "tick",
+    "--namespace",
+    "ns",
+    "--release",
+    "flip-trust",
+    "--chart-repository",
+    "oci://x/y",
+    "--kit-name",
+    "GSTT",
+    "--hub",
+    "prod",
+]
+
+
 class Budget(unittest.TestCase):
-    """Cluster mode: finish and report before the Job deadline kills the pod (#1644 review)."""
+    """Finish and report before the Job deadline kills the pod (#1644 review)."""
 
     def tearDown(self):
         agent.set_budget(None)
         signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
-    def test_no_budget_in_host_mode(self):
+    def test_no_budget_means_none_left_to_count(self):
         agent.set_budget(None)
         self.assertIsNone(agent.remaining_budget())
 
@@ -849,14 +790,21 @@ class Budget(unittest.TestCase):
 
     def test_a_budget_smaller_than_the_reserve_is_refused(self):
         with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
-            agent.main(["tick", "--kit-file", "/nonexistent", "--budget-seconds", str(agent.REPORT_RESERVE_S)])
+            agent.main([*CLUSTER_ARGS, "--budget-seconds", str(agent.REPORT_RESERVE_S)])
 
+    def test_the_cluster_arguments_are_required(self):
+        with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+            agent.main(["tick", "--namespace", "ns"])
 
-class KitFile(unittest.TestCase):
-    def test_reads_values_and_ignores_comments(self):
-        p = Path(tempfile.mkdtemp()) / "k"
-        p.write_text("# c\nA=1\nB='two'\n\nC=x=y\n")
-        self.assertEqual(agent.read_kit(p), {"A": "1", "B": "two", "C": "x=y"})
+    def test_the_host_arguments_are_gone(self):
+        for flag in ("--kit-file", "--checkout", "--mode"):
+            with self.subTest(flag=flag), self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+                agent.main([*CLUSTER_ARGS, flag, "x"])
+
+    def test_main_builds_the_cluster_from_its_arguments(self):
+        with mock.patch.object(agent, "tick", return_value=0) as tick:
+            self.assertEqual(agent.main([*CLUSTER_ARGS, "--dry-run"]), 0)
+        tick.assert_called_once_with(agent.Cluster("ns", "flip-trust", "oci://x/y", "GSTT", "prod"), True)
 
 
 if __name__ == "__main__":

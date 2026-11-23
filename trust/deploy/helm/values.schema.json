@@ -8,7 +8,7 @@
   "properties": {
     "autoUpgrade": {
       "type": "object",
-      "description": "The in-cluster upgrade agent (#1644). Off by default: an existing trust has to be opted in, as on the host path.",
+      "description": "The in-cluster upgrade agent (#1644). Off by default: an existing trust has to be opted in.",
       "properties": {
         "enabled": {"type": "boolean"},
         "schedule": {"type": "string"},

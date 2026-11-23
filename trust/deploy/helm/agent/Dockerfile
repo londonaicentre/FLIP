@@ -43,8 +43,7 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates python3
 COPY --from=fetch /usr/local/bin/helm /usr/local/bin/helm
 COPY --from=fetch /usr/local/bin/kubectl /usr/local/bin/kubectl
-# The tick, as it runs on a host. Same file, same protocol; --mode cluster differs only in what
-# "current release" and "upgrade" mean.
+# The tick: the chart's CronJob passes the release, namespace and chart repository it acts on.
 # The parent is created first, and deliberately: COPY --chmod also applies to the directories it
 # has to create, so an implicit /opt/flip would end up without its execute bit and nothing outside
 # root could reach the file inside it.

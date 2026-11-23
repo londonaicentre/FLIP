@@ -27,7 +27,7 @@ _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
 class UpgradeReportState(StrEnum):
-    """What a host agent reports (``POST /trust/upgrade-status``).
+    """What the upgrade agent reports (``POST /trust/upgrade-status``).
 
     ``STARTING`` claims the lease; ``SUCCEEDED``, ``FAILED`` and ``BLOCKED`` release it.
     """
@@ -58,22 +58,12 @@ class UpgradeBlocker(StrEnum):
     JOBS_RUNNING = "JOBS_RUNNING"
     OUTSIDE_WINDOW = "OUTSIDE_WINDOW"
     AGENT_OFFLINE = "AGENT_OFFLINE"
-    # Reported by the host agent itself.
-    LOCAL_MODIFICATIONS = "LOCAL_MODIFICATIONS"
-    UNSUPPORTED_MODE = "UNSUPPORTED_MODE"
-    UNKNOWN_CHECKOUT = "UNKNOWN_CHECKOUT"
+    # Reported by the in-cluster agent itself.
     SITE_UNHEALTHY = "SITE_UNHEALTHY"
 
 
-# The codes a host agent may report: its own view of the host, never the hub's job/window findings.
-REPORTABLE_BLOCKERS = frozenset(
-    {
-        UpgradeBlocker.LOCAL_MODIFICATIONS,
-        UpgradeBlocker.UNSUPPORTED_MODE,
-        UpgradeBlocker.UNKNOWN_CHECKOUT,
-        UpgradeBlocker.SITE_UNHEALTHY,
-    }
-)
+# The codes the agent may report: its own view of the site, never the hub's job/window findings.
+REPORTABLE_BLOCKERS = frozenset({UpgradeBlocker.SITE_UNHEALTHY})
 
 
 class UpdateTrustStatusSchema(BaseModel):
@@ -163,14 +153,14 @@ class UpgradeWindow(BaseModel):
 
 
 class UpgradeLease(BaseModel):
-    """The lease a host agent holds while it upgrades; absent when none is held."""
+    """The lease the upgrade agent holds while it upgrades; absent when none is held."""
 
     release: str
     expires_at: str
 
 
 class UpgradePolicy(BaseModel):
-    """What the host agent is told on each tick (``GET /trust/upgrade-policy``). snake_case: it is machine-read."""
+    """What the upgrade agent is told on each tick (``GET /trust/upgrade-policy``). snake_case: it is machine-read."""
 
     enabled: bool
     target_release: str | None
@@ -183,7 +173,7 @@ class UpgradePolicy(BaseModel):
 
 
 class UpgradeStatusInput(BaseModel):
-    """What the host agent reports (``POST /trust/upgrade-status``)."""
+    """What the upgrade agent reports (``POST /trust/upgrade-status``)."""
 
     state: UpgradeReportState
     release: str = Field(min_length=1, max_length=64)
@@ -191,11 +181,5 @@ class UpgradeStatusInput(BaseModel):
     detail: str | None = Field(default=None, max_length=8000)
     # The machine-readable blocker code on BLOCKED (see REPORTABLE_BLOCKERS). Separate from
     # `detail` because the UI keys its wording off the code while `detail` carries the specifics
-    # (which health field failed, which files are modified) that no fixed string can express.
+    # (which health check failed, and why) that no fixed string can express.
     blocker: str | None = Field(default=None, max_length=64)
-
-
-class UpgradeEnableInput(BaseModel):
-    """The install step's one setting (``PUT /trust/upgrade-policy``): the trust's own operator switching it."""
-
-    enabled: bool

@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-"""Automatic-upgrade routes: the portal's (Trust Admin) and the host agent's (trust API key)."""
+"""Automatic-upgrade routes: the portal's (Trust Admin) and the in-cluster upgrade agent's (trust API key)."""
 
 from uuid import UUID
 
@@ -27,7 +27,6 @@ from flip_api.domain.schemas.trusts import (
     AutoUpgradeFleetRow,
     AutoUpgradeSettings,
     AutoUpgradeView,
-    UpgradeEnableInput,
     UpgradeLease,
     UpgradePolicy,
     UpgradeStatusInput,
@@ -154,12 +153,12 @@ def get_auto_upgrade_fleet(
     ]
 
 
-# --- The host agent: authenticated with the trust's own API key, like the task poll. ---
+# --- The upgrade agent: authenticated with the trust's own API key, like the task poll. ---
 
 
 @router.get(
     "/trust/upgrade-policy",
-    summary="The authenticated trust's upgrade policy, for its host agent.",
+    summary="The authenticated trust's upgrade policy, for its upgrade agent.",
     response_model=UpgradePolicy,
 )
 @limiter.limit("30/minute")
@@ -175,7 +174,7 @@ def get_upgrade_policy(
 
 @router.post(
     "/trust/upgrade-status",
-    summary="The host agent claims an upgrade (STARTING) or reports how it ended.",
+    summary="The upgrade agent claims an upgrade (STARTING) or reports how it ended.",
     response_model=UpgradeLease | None,
 )
 @limiter.limit("30/minute")
@@ -187,23 +186,3 @@ def post_upgrade_status(
 ) -> UpgradeLease | None:
     """STARTING claims the lease (409 if refused); SUCCEEDED and FAILED release it and record the attempt."""
     return auto_upgrade.record_status(authenticated_trust.id, report, db)
-
-
-@router.put(
-    "/trust/upgrade-policy",
-    summary="Switch automatic upgrades on or off with the trust's own API key (the install step).",
-    response_model=UpgradePolicy,
-)
-@limiter.limit("10/minute")
-def put_upgrade_policy(
-    request: Request,
-    body: UpgradeEnableInput = Body(...),
-    db: Session = Depends(get_session),
-    authenticated_trust: Trust = Depends(authenticate_trust),
-) -> UpgradePolicy:
-    """Set only the switch; the window stays whatever the Trust Admin set. Used by ``make setup-auto-upgrade``."""
-    authenticated_trust.auto_upgrade_enabled = body.enabled
-    db.add(authenticated_trust)
-    db.commit()
-    logger.info(f"Trust {authenticated_trust.name} set automatic upgrades enabled={body.enabled} with its own key")
-    return auto_upgrade.policy_for_agent(authenticated_trust, db)

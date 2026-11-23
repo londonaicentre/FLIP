@@ -299,12 +299,14 @@ def test_the_tick_deadline_is_under_the_hubs_lease():
     assert 0 < spec["activeDeadlineSeconds"] < 2 * 60 * 60
 
 
-def test_the_agent_runs_the_cluster_mode_against_the_published_chart():
+def test_the_agent_runs_against_the_published_chart():
     cronjob = _agent(_render("--set", "autoUpgrade.enabled=true"), "CronJob")
     container = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
     args = container["args"]
-    assert "cluster" in args
-    assert "--mode" in args
+    # The agent is cluster-only, so it takes no mode switch; an old --mode would make argparse exit 2.
+    assert "--mode" not in args
+    for flag in ("--namespace", "--release", "--kit-name", "--hub", "--budget-seconds"):
+        assert flag in args, flag
     assert "--chart-repository" in args
     assert args[args.index("--chart-repository") + 1].startswith("oci://")
     env = {e["name"]: e["value"] for e in container["env"]}
@@ -312,6 +314,29 @@ def test_the_agent_runs_the_cluster_mode_against_the_published_chart():
         "the agent and the deploy side must agree on the driver, or the release is invisible to it"
     )
     assert env["CENTRAL_HUB_API_URL"] == ""
+
+
+def test_the_rendered_args_are_what_the_agent_accepts():
+    """Run the agent's own argument parser on the CronJob's args: a renamed or removed flag exits 2 at 03:00."""
+    import importlib.util
+    import sys
+    from unittest import mock
+
+    spec = importlib.util.spec_from_file_location(
+        "trust_upgrade_agent", CHART_DIR.parents[2] / "scripts" / "trust_upgrade_agent.py"
+    )
+    agent = importlib.util.module_from_spec(spec)
+    # dataclasses resolves annotations through sys.modules, so the module has to be registered first.
+    with mock.patch.dict(sys.modules, {"trust_upgrade_agent": agent}):
+        spec.loader.exec_module(agent)
+    cronjob = _agent(_render("--set", "autoUpgrade.enabled=true"), "CronJob")
+    args = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["args"]
+    with mock.patch.object(agent, "tick", return_value=0) as tick, mock.patch.object(agent.signal, "signal"):
+        assert agent.main([str(a) for a in args]) == 0
+    cluster, dry_run = tick.call_args.args
+    assert cluster.chart_repository.startswith("oci://")
+    assert dry_run is False
+    agent.set_budget(None)
 
 
 def test_the_agent_sheds_every_capability_it_does_not_need():

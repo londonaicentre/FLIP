@@ -16,9 +16,13 @@ Automatic upgrades for a Trust
 ##############################
 
 A Trust normally moves to a new FLIP release when its operator runs the upgrade command by hand (see
-:ref:`admin-upgrading-sites`). With **automatic upgrades** switched on, the Trust does that itself: a small agent on
-the Trust host notices that the hub has moved to a new release and runs the same upgrade command for the operator,
-when it is safe to.
+:ref:`admin-upgrading-sites`). With **automatic upgrades** switched on, a Kubernetes Trust does that itself: a small
+agent in the Trust's own namespace notices that the hub has moved to a new release and upgrades the Trust's Helm
+release for the operator, when it is safe to.
+
+Automatic upgrades are for **Kubernetes Trusts** (Helm, including AKS and EKS). A Trust on Docker Compose keeps the
+manual upgrade, ``make upgrade-onprem-trust``: the switch on My Trust does nothing for it, and its card shows when it
+is behind the hub.
 
 The switch lives on the **My Trust** page and belongs to the Trust. A Trust Admin controls it for their own Trust; a
 FLIP admin can change it for support. Nothing on the hub can force an upgrade on a Trust that has it switched off.
@@ -27,10 +31,11 @@ FLIP admin can change it for support. Nothing on the hub can force an upgrade on
    :class: note
 
    - **Trust Admins** — what the switch does, and what you see on My Trust in each state.
-   - **Site operators and FLIP admins** — what the agent checks before it touches a host, and what happens on failure.
+   - **Site operators and FLIP admins** — how the agent is installed, what it checks before it touches a Trust, and
+     what happens on failure.
 
-   The upgrade itself is the one described in :ref:`admin-upgrading-sites`. Automatic upgrades add *when* it runs and
-   *who starts it*; they do not change *what* it does.
+   Automatic upgrades add *when* an upgrade runs and *who starts it*. The upgrade itself moves the Trust's Helm release
+   to the published chart for the target release, keeping the Trust's own values.
 
 .. contents::
    :local:
@@ -52,7 +57,7 @@ The short version
    * - **Off**
      - Nothing. My Trust shows that the Trust is behind the hub, and an operator upgrades it by hand, as before.
 
-Two rules hold in both states:
+Three rules hold in both states:
 
 - **A Trust never goes ahead of its hub.** The target is always the release the hub reports, never "the latest on
   GitHub". A Trust cannot be upgraded past a hub that has not moved yet.
@@ -82,7 +87,7 @@ How the three parts fit
 ***********************
 
 .. mermaid::
-   :caption: Who decides what. The hub owns the setting and the target; the Trust host owns the execution.
+   :caption: Who decides what. The hub owns the setting and the target; the Trust's cluster owns the execution.
 
    sequenceDiagram
        autonumber
@@ -90,9 +95,9 @@ How the three parts fit
        box rgb(248, 234, 242) Central Hub
            participant Hub as Hub API and UI
        end
-       box rgb(234, 237, 242) The Trust host
-           participant Agent as Upgrade agent
-           participant Stack as Trust services
+       box rgb(234, 237, 242) The Trust's namespace
+           participant Agent as Upgrade agent (CronJob)
+           participant Stack as Trust release
        end
        TA->>Hub: Switch automatic upgrades on (My Trust)
        Note over Agent: Wakes up every hour
@@ -100,27 +105,25 @@ How the three parts fit
        Hub-->>Agent: On, target v1.3.0, window, is a job running?
        Agent->>Hub: Claim the upgrade
        Hub-->>Agent: Granted, no new jobs are sent to this Trust
-       Agent->>Stack: Pull v1.3.0, check it, recreate the services
-       Stack-->>Agent: Healthy
+       Agent->>Stack: helm upgrade to the v1.3.0 chart
+       Stack-->>Agent: Healthy, on v1.3.0
        Agent->>Hub: Succeeded
        Hub-->>TA: My Trust shows v1.3.0
 
 **1.** The Trust Admin switches the setting on. It is stored on the hub, next to the Trust.
 
-**2–3.** Once an hour the agent on the Trust host asks the hub for the Trust's policy. The agent only makes outbound
-requests to the hub, like the rest of the Trust, so no inbound port is opened. The hub answers with the setting, the
-release it runs, the maintenance window and whether a job is running.
+**2–3.** Once an hour the agent asks the hub for the Trust's policy. The agent only makes outbound requests to the
+hub, like the rest of the Trust, so no inbound port is opened. The hub answers with the setting, the release it runs,
+the maintenance window and whether a job is running.
 
 **4–5.** If everything lines up, the agent *claims* the upgrade. The claim is what closes the gap between "no job is
 running now" and "the scheduler sends one a second later": while it is held, the hub sends no new job to this Trust,
-and it refuses the claim if a job arrived in between. A claim that is never finished (the host died) expires by itself
-after about two hours, so a dead agent cannot lock the Trust out of training.
+and it refuses the claim if a job arrived in between. A claim that is never finished (the agent died) expires by
+itself after about two hours, so a dead agent cannot lock the Trust out of training.
 
-**6–7.** The agent runs the same upgrade the operator would: it moves its own copy of FLIP to the release tag, then
-runs the site upgrade, which pulls the new images and recreates the services in place. There is no dry run first — the
-one thing checked before anything is touched is that the release's images exist in the registry (a `docker manifest
-inspect`, which pulls nothing). A pull that fails during the upgrade ends as **Failed** like any other step, and that
-release stays blocked until an operator clears it.
+**6–7.** The agent pulls the published chart for the target release and runs ``helm upgrade
+--reset-then-reuse-values``: the new release's defaults apply, the Trust's live values are kept on top, and only the
+image tag moves. It then waits for ``trust-api`` to come back healthy and report the target release.
 
 **8–9.** The agent reports success or failure. My Trust shows the result.
 
@@ -131,7 +134,7 @@ The three states
 On, with no window
 ==================
 
-The default for a new install. The Trust upgrades at the first hourly check at which it is idle.
+The Trust upgrades at the first hourly check at which it is idle.
 
 .. figure:: ../assets/flip/trust-auto-upgrade/waiting-for-job.png
    :align: center
@@ -147,14 +150,14 @@ The default for a new install. The Trust upgrades at the first hourly check at w
        B -- no --> Z1([Do nothing])
        B -- yes --> C{Trust already on<br/>the hub's release?}
        C -- yes --> Z2([Do nothing])
-       C -- no --> D{Inside the<br/>maintenance window?}
+       C -- no --> H0{Trust healthy?}
+       H0 -- no --> X([Report 'not healthy'<br/>and wait])
+       H0 -- yes --> D{Inside the<br/>maintenance window?}
        D -- no --> W1([Wait for the next check])
        D -- yes --> E{A training job that<br/>uses this Trust is running?}
        E -- yes --> W2([Wait for the next check])
-       E -- no --> F{Agent's copy of FLIP clean?}
-       F -- no --> X([Stop and report<br/>'local modifications'])
-       F -- yes --> G[Claim the upgrade<br/>and upgrade in place]
-       G --> H{Healthy afterwards?}
+       E -- no --> G[Claim the upgrade<br/>and run helm upgrade]
+       G --> H{Healthy on the<br/>new release?}
        H -- yes --> OK([Report success])
        H -- no --> BAD([Stop and report failure])
 
@@ -163,8 +166,8 @@ The default for a new install. The Trust upgrades at the first hourly check at w
        classDef stop fill:#FDECEC,stroke:#B42318,color:#7A1A12
        classDef ok fill:#E8F5EC,stroke:#2F7D4F,color:#1F5A37
        class G go
-       class W1,W2 wait
-       class X,BAD stop
+       class W1,W2,X wait
+       class BAD stop
        class OK ok
 
 A Trust that is busy all the time can fall behind, because it only ever waits for a quiet moment. That is why My
@@ -175,8 +178,8 @@ On, with a maintenance window
 =============================
 
 Set a **From** and **Until** time and a time zone, in the Trust's own local time, and the agent starts an upgrade only
-inside that window. A window is evaluated on the Trust host, so "01:00–05:00" means 01:00–05:00 where the Trust is,
-including across daylight saving changes.
+inside that window. "01:00–05:00 Europe/London" means 01:00–05:00 where the Trust is, including across daylight saving
+changes.
 
 .. figure:: ../assets/flip/trust-auto-upgrade/outside-window.png
    :align: center
@@ -189,36 +192,11 @@ including across daylight saving changes.
   closes.
 - A job running inside the window still holds the upgrade back. The window and the idle check must both be satisfied.
 
-Installing it on a Trust host
-=============================
+Installing the agent
+====================
 
-On an on-prem Trust host, run once, as root:
-
-.. code-block:: bash
-
-   sudo -E make setup-auto-upgrade KIT=<name> HUB=prod            # asks, then does everything below
-   sudo -E make setup-auto-upgrade KIT=<name> HUB=prod AUTO_UPGRADE=yes   # or no, to answer in advance
-
-``make up-onprem-trust`` prints this command if it has not been run. The step:
-
-#. creates the agent's own checkout at ``/opt/flip/releases/FLIP``, so your working tree is never moved;
-#. moves the kit file to ``/etc/flip/trust/`` and leaves a symlink at the old path, so you and the agent read one file;
-#. installs ``flip-trust-upgrade.timer`` (hourly) and its service, which runs ``scripts/trust_upgrade_agent.py``;
-#. switches the Trust's setting ON at the hub with the Trust's own API key.
-
-Answering ``no`` (or ``AUTO_UPGRADE=no`` later) stops the timer and switches the setting OFF. Either way the Trust
-Admin can change it any time in My Trust. A Trust that is driven remotely (``DOCKER_HOST``/``DOCKER_CONTEXT`` over
-``ssh://`` or ``tcp://``, which includes the EC2 Trust) is refused: the agent supports on-prem hosts only.
-
-The agent runs ``make upgrade-onprem-trust`` itself, after moving its own checkout to the release tag, so what it
-does is exactly what ``admin-upgrading-sites`` describes for an operator.
-
-Installing it on a Kubernetes Trust
-===================================
-
-A cluster has no host to put a timer on, so the same agent runs as a CronJob in the Trust's own namespace. It is off
-by default: enabling it hands a ServiceAccount the ability to rewrite every workload in that namespace, so it is an
-opt-in rather than something a chart update turns on.
+The agent runs as a CronJob in the Trust's own namespace. It is off by default: enabling it hands a ServiceAccount the
+ability to rewrite every workload in that namespace, so it is an opt-in rather than something a chart update turns on.
 
 .. code-block:: bash
 
@@ -230,15 +208,11 @@ and switches the agent on. The deploy refuses to run when the release is recorde
 install a second copy; a Trust deployed before this setting existed needs its release record moved first (see the
 chart's README).
 
-What differs from the host:
+How the agent behaves:
 
-- **The current release comes from the Helm record**, not a checkout. There is also nothing to be dirty, so the
-  "local modifications" check has no cluster equivalent and never blocks here.
-- **The upgrade is Helm's**: the agent pulls the published chart at the target release and runs ``helm upgrade
-  --reset-then-reuse-values``, so the new release's defaults apply, the live per-Trust values are kept on top,
-  and only the image tag moves. It never passes
-  ``--install``: a release it cannot see fails the check instead of being installed a second time underneath the
-  running one.
+- **The current release comes from the Helm record**, with ``trust-api``'s ``/health`` as the fallback.
+- **The upgrade is Helm's.** It never passes ``--install``: a release it cannot see fails the check instead of being
+  installed a second time underneath the running one.
 - **It stops in time to report.** The agent runs on its own clock, five minutes inside the Job's deadline, so a
   slow upgrade is reported as **Failed** rather than leaving the hub waiting on a lease nobody holds.
 - **The identity is narrow on purpose.** It holds no ``secrets`` permission at all — its API key arrives as a
@@ -247,9 +221,6 @@ What differs from the host:
   Secrets means *listing* them, and a list returns their contents. That write access reaches the Trust's
   governance document too, so before reporting an upgrade as done the agent compares the live document with the
   one the release carries and reports **Failed** if they differ, leaving the release as it is.
-
-Everything the Trust Admin sees is the same: the switch, the window, the pending-since date, the blocker and the
-failure in My Trust. The questions below apply to both.
 
 .. warning::
 
@@ -305,8 +276,8 @@ two version boxes show what the Trust runs and what the hub runs. The line under
      - Nothing to do.
    * - **Waiting** (since a date)
      - A newer release exists and the switch is on. The reasons it has not started are listed beneath: a job is
-       running, it is outside the window, the agent's copy of FLIP has local modifications, or the agent has not
-       checked in recently.
+       running, it is outside the window, the Trust is not healthy (with the check that failed), or the agent has
+       not checked in recently.
    * - **Behind the hub**
      - A newer release exists and the switch is off.
    * - **Upgrading**
@@ -359,9 +330,8 @@ failed attempt reached a migration. So it does not move the Trust back by itself
 - it refuses to try that release again until an operator has restored the Trust and **cleared the failure** in the
   portal — the *Try this release again* button on the card;
 - it treats every failure the same way, including one that never got as far as recreating anything: the upgrade is a
-  single `make` run (a single ``helm upgrade`` on Kubernetes), so a pull that fails, a compose error and a container
-  that dies on start all end as **Failed** on that release. The hub blocks that one release; other releases are
-  unaffected.
+  single ``helm pull`` and ``helm upgrade``, so a chart that cannot be pulled, a rejected upgrade and a pod that dies
+  on start all end as **Failed** on that release. The hub blocks that one release; other releases are unaffected.
 
 The way back is the operator's, because only a person can check whether the data was migrated: see
 :ref:`upgrade-rolling-back`.
@@ -389,21 +359,18 @@ admin-only: a Trust Admin's own Trust is on My Trust.
 Turning it on or off
 ********************
 
-- **Defaults.** `make setup-auto-upgrade` asks once and defaults to **yes**; `up-onprem-trust` only prints a hint and
-  installs nothing. So a Trust where the installer was never run, and every Trust that predates this feature, starts
-  **off** — no live site is surprised. A Trust Admin opts in from My Trust, and the setting can be turned off there at
-  any time.
-- **What the agent checks first.** Before the window or the job list it looks at the site itself: `trust-api`'s
-  `/health` answering, no dead tasks, and a hub key that still matches. A Site that fails any of those is reported
-  **Blocked** with the failing check, rather than being recreated on top of a problem the upgrade did not cause. The
-  full order is: unsupported mode → the agent's own checkout → site health → the maintenance window → whether a job
-  is running.
-- **Who can change it.** The Trust Admin of that Trust, and FLIP admins for support.
+- **Defaults.** The agent is off in the chart and the switch is off on the hub, so every Trust starts **off** — no
+  live site is surprised. The operator enables the agent at deploy time, then a Trust Admin opts in from My Trust,
+  and the setting can be turned off there at any time.
+- **What the agent checks first.** Before the window or the job list it looks at the site itself: ``trust-api``'s
+  ``/health`` answering, no dead tasks, and a hub key that still matches. A Trust that fails any of those is reported
+  with the failing check, rather than being upgraded on top of a problem the upgrade did not cause. The full order
+  is: site health → the maintenance window → whether a job is running.
+- **Who can change it.** The Trust Admin of that Trust, and FLIP admins for support. The Trust's own API key cannot.
 - **Changing it during an upgrade.** An upgrade already running finishes. The new setting applies from the next
   release.
-- **Not covered.** A Trust driven over a remote Docker socket (`DOCKER_HOST`/`DOCKER_CONTEXT` at `ssh://` or
-  `tcp://`, which includes the EC2 Trust) is refused at install time, so its agent never runs; automatic upgrades are
-  for Trusts deployed on their own host.
+- **Not covered.** A Trust on Docker Compose (on-prem, the EC2 Trust, a TRE host) is upgraded by its operator with
+  ``make upgrade-onprem-trust``.
 
 .. _auto-upgrade-busy-trust:
 
@@ -415,13 +382,14 @@ Questions
    A training job that uses the Trust has been running at every check. Automatic upgrades never interrupt a job.
    Agree a gap with the researchers, or upgrade it by hand in a maintenance window.
 
-**The card says "local modifications".**
-   The agent keeps its own copy of FLIP and refuses to act if that copy has been changed. Restore the copy to a clean
-   release tag; the next check retries.
+**The card says the Trust is not healthy.**
+   The agent will not upgrade a Trust that is already failing. Fix the check named on the card (for example a hub key
+   that no longer matches needs the kit refreshed); the next hourly check retries.
 
 **The card says the agent has not checked in.**
-   The timer on the Trust host is not running. Check it on the host. The Trust keeps running normally, but it will
-   not upgrade itself.
+   The CronJob in the Trust's namespace is not running, or the chart was deployed without the agent. Check it with
+   ``kubectl get cronjob -n <namespace>``. The Trust keeps running normally, but it will not upgrade itself.
 
 **Does this change what an upgrade does to my data?**
-   No. It runs the same upgrade as the manual command, which keeps data directories and never re-seeds a live site.
+   No. It keeps the Trust's values and volumes, as a manual ``helm upgrade`` of the same chart would, and never
+   re-seeds a live site.
