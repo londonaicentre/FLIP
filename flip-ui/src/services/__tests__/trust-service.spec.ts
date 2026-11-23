@@ -14,14 +14,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { _http } from "@/services/api";
-import { downloadTrustKit,
+import { clearAutoUpgradeFailure,
+    downloadTrustKit,
+    getAutoUpgrade,
     getHubHealth,
     getTrustDecisions,
     getTrustKitStatus,
     getTrusts,
     getTrustStatuses,
+    type IAutoUpgrade,
     isImageTag,
-    rotateTrustKit } from "@/services/trust-service";
+    rotateTrustKit,
+    updateAutoUpgrade } from "@/services/trust-service";
 
 vi.mock("@/services/api", () => ({
     _http: {
@@ -36,6 +40,7 @@ describe("trust-service", () => {
     beforeEach(() => {
         vi.mocked(_http.get).mockReset();
         vi.mocked(_http.post).mockReset();
+        vi.mocked(_http.put).mockReset();
     });
 
     describe("getTrusts", () => {
@@ -210,6 +215,73 @@ describe("trust-service", () => {
             vi.mocked(_http.post).mockRejectedValue(new Error("409"));
 
             await expect(downloadTrustKit("t-1")).rejects.toThrow("409");
+        });
+    });
+
+    describe("auto-upgrade", () => {
+        const policy: IAutoUpgrade = {
+            enabled: true,
+            targetRelease: "v0.11.0",
+            currentRelease: "v0.10.0",
+            windowStart: "22:00",
+            windowEnd: "04:00",
+            timezone: "Europe/London",
+            state: "PENDING",
+            blockers: ["OUTSIDE_WINDOW"],
+            blockerDetail: null,
+            pendingSince: "2026-11-20T10:00:00Z",
+            lastAttempt: null
+        };
+
+        it("getAutoUpgrade GETs the trust's policy and returns the body", async () => {
+            vi.mocked(_http.get).mockResolvedValue({ data: policy } as never);
+
+            await expect(getAutoUpgrade("t-1")).resolves.toEqual(policy);
+            expect(_http.get).toHaveBeenCalledWith("/trust/t-1/auto-upgrade");
+        });
+
+        it("updateAutoUpgrade PUTs only the editable settings and returns the new policy", async () => {
+            const settings = {
+                enabled: false,
+                windowStart: null,
+                windowEnd: null,
+                timezone: null
+            };
+            vi.mocked(_http.put).mockResolvedValue({
+                data: {
+                    ...policy,
+                    enabled: false
+                }
+            } as never);
+
+            const result = await updateAutoUpgrade("t-1", settings);
+
+            expect(_http.put).toHaveBeenCalledWith("/trust/t-1/auto-upgrade", settings);
+            expect(result.enabled).toBe(false);
+        });
+
+        it("clearAutoUpgradeFailure POSTs to clear-failure and returns the policy", async () => {
+            vi.mocked(_http.post).mockResolvedValue({
+                data: {
+                    ...policy,
+                    state: "PENDING"
+                }
+            } as never);
+
+            const result = await clearAutoUpgradeFailure("t-1");
+
+            expect(_http.post).toHaveBeenCalledWith("/trust/t-1/auto-upgrade/clear-failure");
+            expect(result.state).toBe("PENDING");
+        });
+
+        it("propagates errors so the card can show them", async () => {
+            vi.mocked(_http.get).mockRejectedValue(new Error("403"));
+            vi.mocked(_http.put).mockRejectedValue(new Error("422"));
+            vi.mocked(_http.post).mockRejectedValue(new Error("409"));
+
+            await expect(getAutoUpgrade("t-1")).rejects.toThrow("403");
+            await expect(updateAutoUpgrade("t-1", policy)).rejects.toThrow("422");
+            await expect(clearAutoUpgradeFailure("t-1")).rejects.toThrow("409");
         });
     });
 });

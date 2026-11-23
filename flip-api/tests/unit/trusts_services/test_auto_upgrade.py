@@ -407,6 +407,99 @@ class TestRoutes:
         assert body["currentRelease"] == "v1.2.0"
         assert body["blockers"] == ["JOBS_RUNNING"]
 
+    def _admin_call(self, t: Trust, method: str, path: str, *, trust_admin: bool = True, hub_admin: bool = False, **kw):
+        """Call a portal route as a Trust Admin (or a hub admin), with the release lookups stubbed."""
+        db = MagicMock()
+        db.get.return_value = t
+        client, app = self._client(t, db)
+        try:
+            with (
+                patch("flip_api.trusts_services.trust_auto_upgrade.has_trust_permissions", return_value=trust_admin),
+                patch("flip_api.trusts_services.trust_auto_upgrade.has_permissions", return_value=hub_admin),
+                patch(f"{SVC}.target_release", return_value="v1.3.0"),
+                patch(f"{SVC}.is_busy", return_value=False),
+            ):
+                r = client.request(method, path, **kw)
+        finally:
+            app.dependency_overrides.clear()
+        return r, db
+
+    def test_admin_routes_404_for_an_unknown_trust(self):
+        t = _trust()
+        db = MagicMock()
+        db.get.return_value = None
+        client, app = self._client(t, db)
+        try:
+            get = client.get(f"/api/trust/{t.id}/auto-upgrade")
+            put = client.put(f"/api/trust/{t.id}/auto-upgrade", json={"enabled": True})
+            clear = client.post(f"/api/trust/{t.id}/auto-upgrade/clear-failure")
+        finally:
+            app.dependency_overrides.clear()
+        assert (get.status_code, put.status_code, clear.status_code) == (404, 404, 404)
+
+    def test_put_stores_the_switch_and_window_and_returns_the_new_view(self):
+        t = _trust(auto_upgrade_enabled=False)
+        window = {"enabled": True, "windowStart": "22:00", "windowEnd": "04:00", "timezone": "Europe/London"}
+
+        r, db = self._admin_call(t, "PUT", f"/api/trust/{t.id}/auto-upgrade", json=window)
+
+        assert r.status_code == 200, r.text
+        assert (t.auto_upgrade_enabled, t.auto_upgrade_window_start, t.auto_upgrade_window_end) == (
+            True,
+            "22:00",
+            "04:00",
+        )
+        assert t.auto_upgrade_timezone == "Europe/London"
+        assert r.json()["enabled"] is True
+        db.commit.assert_called()
+
+    def test_put_refuses_an_incomplete_window(self):
+        t = _trust(auto_upgrade_enabled=False)
+
+        r, db = self._admin_call(
+            t, "PUT", f"/api/trust/{t.id}/auto-upgrade", json={"enabled": True, "windowStart": "22:00"}
+        )
+
+        assert r.status_code == 422
+        assert t.auto_upgrade_enabled is False
+        db.commit.assert_not_called()
+
+    def test_a_hub_admin_who_manages_deployments_may_change_the_setting(self):
+        t = _trust(auto_upgrade_enabled=False)
+
+        r, _ = self._admin_call(
+            t, "PUT", f"/api/trust/{t.id}/auto-upgrade", trust_admin=False, hub_admin=True, json={"enabled": True}
+        )
+
+        assert r.status_code == 200, r.text
+        assert t.auto_upgrade_enabled is True
+
+    def test_clear_failure_releases_a_failed_attempt(self):
+        t = _trust(last_upgrade_state=UpgradeReportState.FAILED)
+
+        r, db = self._admin_call(t, "POST", f"/api/trust/{t.id}/auto-upgrade/clear-failure")
+
+        assert r.status_code == 200, r.text
+        assert t.last_upgrade_state is None
+        db.commit.assert_called()
+
+    def test_clear_failure_409s_when_nothing_failed(self):
+        t = _trust(last_upgrade_state=UpgradeReportState.SUCCEEDED)
+
+        r, db = self._admin_call(t, "POST", f"/api/trust/{t.id}/auto-upgrade/clear-failure")
+
+        assert r.status_code == 409
+        assert t.last_upgrade_state == UpgradeReportState.SUCCEEDED
+        db.commit.assert_not_called()
+
+    def test_clear_failure_refuses_a_user_without_the_permission(self):
+        t = _trust(last_upgrade_state=UpgradeReportState.FAILED)
+
+        r, _ = self._admin_call(t, "POST", f"/api/trust/{t.id}/auto-upgrade/clear-failure", trust_admin=False)
+
+        assert r.status_code == 403
+        assert t.last_upgrade_state == UpgradeReportState.FAILED
+
 
 class TestAgentTick:
     """`note_agent_tick` is what makes a silent agent visible, and what dates the Waiting card.
