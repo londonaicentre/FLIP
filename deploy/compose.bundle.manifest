@@ -23,8 +23,7 @@ trust/governance.example.toml
 trust/xnat/
 !trust/xnat/tests
 
-# The scripts the verb and the auto-upgrade agent call.
+# The scripts the verb calls. Not the auto-upgrade agent: automatic upgrades are for Kubernetes
+# trusts only, and its image ships the agent itself.
 trust/deploy/scripts/
 !trust/deploy/scripts/tests
-scripts/trust_upgrade_agent.py
-scripts/setup_auto_upgrade.py

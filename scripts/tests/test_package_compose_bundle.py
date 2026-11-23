@@ -247,11 +247,15 @@ class TestTheRealManifest(unittest.TestCase):
             "trust/deploy/scripts/site_upgrade.py",
             "trust/deploy/scripts/onboard_onprem_trust.py",
             "trust/deploy/scripts/trust_kit_lib.py",
-            "scripts/trust_upgrade_agent.py",
             "trust/xnat/Makefile",
             "trust/xnat/.env",
         ):
             assert required in self.files, f"{required} is called by the upgrade path"
+
+    def test_it_does_not_ship_the_auto_upgrade_agent(self):
+        """Automatic upgrades are Kubernetes-only; a compose trust has no agent and no installer to run."""
+        for absent in ("scripts/trust_upgrade_agent.py", "scripts/setup_auto_upgrade.py"):
+            assert absent not in self.files, f"{absent} is not part of a compose trust"
 
     def test_it_ships_no_kit_file_and_no_private_key(self):
         envs = [f for f in self.files if Path(f).name.startswith(".env")]
