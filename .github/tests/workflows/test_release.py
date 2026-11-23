@@ -39,6 +39,8 @@ RELEASE_WORKFLOW = WORKFLOWS / "release.yml"
 # re-pinned to the release.
 WAIT_SCRIPT = WORKFLOWS.parent / "scripts" / "wait-for-release-builds.sh"
 CONFIRM_SCRIPT = WORKFLOWS.parent / "scripts" / "confirm-release-apply.sh"
+# The chart publisher lives with the chart, not in .github — it is also runnable by hand.
+PACKAGE_CHART = WORKFLOWS.parents[1] / "trust" / "deploy" / "helm" / "scripts" / "package_chart.py"
 
 
 class ReleaseDispatchesTheBuilds(unittest.TestCase):
@@ -178,6 +180,7 @@ class ReleaseWaitsThenDispatchesTheApply(unittest.TestCase):
         """Same re-run contract as the builds: keyed on the release, not the tag."""
         for step in (
             "Wait for the release builds to go green",
+            "Publish the versioned trust Helm chart",
             "Dispatch the production Terraform apply at the release tag",
         ):
             with self.subTest(step=step):
@@ -553,15 +556,53 @@ class TheReleaseTagValidationRuns(unittest.TestCase):
                 assert "stable release tag" in result.stdout
 
 
+class ReleasePublishesTheTrustChart(unittest.TestCase):
+    """The trust Helm chart is published from the release, versioned with it (FLIP#1646).
+
+    #1644's in-cluster upgrade CronJob pulls `oci://ghcr.io/.../flip-trust` at a version; until
+    this step existed there was no such artefact, and `Chart.yaml` sat frozen at 0.1.0.
+    """
+
+    def setUp(self) -> None:
+        self.text = code_text(RELEASE_WORKFLOW)
+        self.step = step_block(self.text, "Publish the versioned trust Helm chart")
+
+    def test_the_chart_is_stamped_from_the_release_tag(self) -> None:
+        assert "TAG: ${{ steps.version.outputs.tag }}" in self.step
+        assert 'package_chart.py --version "$TAG"' in self.step
+
+    def test_the_publisher_script_exists_and_is_the_one_invoked(self) -> None:
+        assert PACKAGE_CHART.is_file(), f"{PACKAGE_CHART} is missing"
+        assert "trust/deploy/helm/scripts/package_chart.py" in self.step
+
+    def test_it_authenticates_to_the_registry_before_pushing(self) -> None:
+        """`helm push` to GHCR is anonymous otherwise and fails with a 403 at the very end of a
+        release, after the images are built and the tag is pushed."""
+        assert "helm registry login ghcr.io" in self.step
+        assert "--password-stdin" in self.step, "the token must not be passed as an argv"
+
+    def test_the_chart_is_published_after_the_builds_and_before_the_apply(self) -> None:
+        """Ordering is the contract: a chart pointing at images that never built is worse than
+        no chart, and publishing after the apply would leave a green release without one."""
+        order = [
+            self.text.index("- name: Wait for the release builds to go green"),
+            self.text.index("- name: Publish the versioned trust Helm chart"),
+            self.text.index("- name: Dispatch the production Terraform apply at the release tag"),
+            self.text.index("- name: Create GitHub Release"),
+        ]
+        assert order == sorted(order), order
+
+
 class ReleaseKeepsMinimalPermissions(unittest.TestCase):
-    """Dispatching a production apply needs `actions: write` and nothing more."""
+    """Dispatching a production apply needs `actions: write`; pushing the chart adds
+    `packages: write` (FLIP#1646). Nothing more."""
 
     def test_the_workflow_default_is_read_only(self) -> None:
         text = code_text(RELEASE_WORKFLOW)
         top = text[text.index("permissions:") :].split("jobs:")[0]
         assert top.strip() == "permissions:\n  contents: read", top
 
-    def test_the_job_grants_only_contents_write_and_actions_write(self) -> None:
+    def test_the_job_grants_only_contents_actions_and_packages_write(self) -> None:
         text = code_text(RELEASE_WORKFLOW)
         job = text[text.index("\n    release:\n") :]
         block = re.search(r"^        permissions:[^\n]*\n(?P<body>(?:            [^\n]*\n)+)", job, re.MULTILINE)
@@ -571,7 +612,7 @@ class ReleaseKeepsMinimalPermissions(unittest.TestCase):
             for line in block["body"].splitlines()
             if line.strip()
         }
-        assert granted == {"contents": "write", "actions": "write"}, granted
+        assert granted == {"contents": "write", "actions": "write", "packages": "write"}, granted
 
 
 class TerraformApplyTakesTheReleaseTag(unittest.TestCase):
