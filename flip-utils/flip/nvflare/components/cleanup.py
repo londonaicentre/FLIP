@@ -12,8 +12,10 @@
 
 import os
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 
+from nvflare.apis.event_type import EventType
 from nvflare.apis.executor import Executor
 from nvflare.apis.fl_constant import ReturnCode
 from nvflare.apis.fl_context import FLContext
@@ -22,86 +24,48 @@ from nvflare.apis.signal import Signal
 from nvflare.security.logging import secure_format_traceback
 
 from flip.constants import FlipConstants, FlipTasks
+from flip.nvflare.runtime import get_flip_project_id
 
 
 class CleanupImages(Executor):
-    def __init__(self) -> None:
-        """CleanupImages takes place at the start and end of the run.
-        All the images used for the training are deleted to prevent the build-up of unnecessary
-        files on the storage space. Executing at the start of a run ensures that any training code
-        is executed with a clean slate.
+    """Keeps one job's images on a net from reaching the next job, where the client mounts the net's whole folder.
 
-        Args:
+    At the start of a job it deletes every other project's images, never the job's own: the Client-API trainer
+    starts before the first task arrives and may already be downloading them (FLIP#1830). At the end of the run it
+    deletes them all, on ABOUT_TO_END_RUN, which NVFLARE fires when a job completes, fails or is aborted. An aborted
+    job's process is killed 10 s after the abort, possibly before that event, so the start-of-job wipe is what keeps
+    projects apart; imaging-api's retention sweep removes what is left.
 
-        Raises:
-        """
+    The net's ``upload`` folder, where ``flip.add_resource`` stages files for imaging-api, is wiped at the start of a
+    job too. It is shared by every project on the net, so keeping it would hand one project's staged files to the
+    next job; the cost is that a trainer staging an upload before its first task arrives loses it.
+    """
 
-        super().__init__()
+    def handle_event(self, event_type: str, fl_ctx: FLContext) -> None:
+        if event_type == EventType.ABOUT_TO_END_RUN:
+            try:
+                self._delete_images(fl_ctx)
+            except Exception:
+                self.log_error(fl_ctx, secure_format_traceback())
 
     def execute(self, task_name: str, shareable: Shareable, fl_ctx: FLContext, abort_signal: Signal) -> Shareable:
         try:
-            if task_name in (FlipTasks.POST_VALIDATION, FlipTasks.POST_TASK):
-                cwd = os.getcwd()
-                job_dir = os.path.join(cwd, fl_ctx.get_job_id())
+            if task_name in (FlipTasks.INIT_TRAINING, FlipTasks.INIT_TASK):
+                project_id = get_flip_project_id(fl_ctx)
+                if project_id is None:
+                    self.log_warning(fl_ctx, "No project id in the client config; deleting every project's images")
+                self._delete_images(fl_ctx, keep=project_id)
+                return make_reply(ReturnCode.OK)
 
+            if task_name in (FlipTasks.POST_VALIDATION, FlipTasks.POST_TASK):
+                job_dir = os.path.join(os.getcwd(), fl_ctx.get_job_id())
                 if os.path.isdir(job_dir):
                     if not FlipConstants.LOCAL_DEV:
                         self.log_info(fl_ctx, f"Deleting job directory {job_dir}")
                         shutil.rmtree(job_dir)
                     else:
                         self.log_info(fl_ctx, f"[DEV] Cleanup → job directory {job_dir}")
-
-            if task_name in (
-                FlipTasks.INIT_TRAINING,
-                FlipTasks.POST_VALIDATION,
-                FlipTasks.INIT_TASK,
-                FlipTasks.POST_TASK,
-            ):
-                if FlipConstants.IMAGES_TRANSPORT != "mount":
-                    # Only a client that mounts the net's whole images folder wipes it. A job pod that mounts
-                    # its project's folder (read-only, FLIP#1678) or none (FLIP#1049) leaves the cache to
-                    # imaging-api, which keeps and bounds it.
-                    self.log_info(fl_ctx, "Cleanup → the image cache is imaging-api's; nothing to delete here")
-                    return make_reply(ReturnCode.OK)
-
-                if not FlipConstants.LOCAL_DEV:
-                    net_directory = os.path.join(FlipConstants.IMAGES_DIR, FlipConstants.NET_ID)
-
-                    size_in_bytes = sum(f.stat().st_size for f in Path(net_directory).glob("**/*") if f.is_file())
-                    size_in_gb = round(size_in_bytes / pow(1024, 3), 2)
-
-                    self.log_info(
-                        fl_ctx,
-                        f"Attempting to delete the images stored under: {net_directory} - Total {size_in_gb}gb",
-                    )
-
-                    if not os.path.exists(net_directory):
-                        self.log_info(
-                            fl_ctx,
-                            f"Directory {net_directory} does not exist, nothing to clean up.",
-                        )
-                        return make_reply(ReturnCode.OK)
-
-                    # Delete all files and directories in the net_directory
-                    for filename in os.listdir(net_directory):
-                        file_path = os.path.join(net_directory, filename)
-
-                        if os.path.isfile(file_path) or os.path.islink(file_path):
-                            self.log_info(fl_ctx, f"Deleting file {file_path}")
-                            os.unlink(file_path)
-                        elif os.path.isdir(file_path):
-                            self.log_info(fl_ctx, f"Deleting directory {file_path}")
-                            shutil.rmtree(file_path)
-
-                    self.log_info(
-                        fl_ctx,
-                        "Cleanup executed successfully, images and job folder have been deleted.",
-                    )
-
-                    return make_reply(ReturnCode.OK)
-                else:
-                    self.log_info(fl_ctx, "[DEV] Cleanup → images")
-                    return make_reply(ReturnCode.OK)
+                return make_reply(ReturnCode.OK)
 
             return make_reply(ReturnCode.TASK_UNKNOWN)
         except Exception:
@@ -112,3 +76,44 @@ class CleanupImages(Executor):
             self.log_error(fl_ctx, formatted_exception)
 
             return make_reply(ReturnCode.EXECUTION_EXCEPTION, headers={"exception": formatted_exception})
+
+    def _delete_images(self, fl_ctx: FLContext, keep: str | None = None) -> None:
+        """Delete everything in the net's images folder except the project folder named ``keep``."""
+        # LOCAL_DEV first: the other settings exist only in production.
+        if FlipConstants.LOCAL_DEV:
+            self.log_info(fl_ctx, "[DEV] Cleanup → images")
+            return
+        if FlipConstants.IMAGES_TRANSPORT != "mount":
+            # Only a client that mounts the net's whole images folder wipes it. A job pod that mounts
+            # its project's folder (read-only, FLIP#1678) or none (FLIP#1049) leaves the cache to
+            # imaging-api, which keeps and bounds it.
+            self.log_info(fl_ctx, "Cleanup → the image cache is imaging-api's; nothing to delete here")
+            return
+
+        net_directory = Path(FlipConstants.IMAGES_DIR, FlipConstants.NET_ID)
+        if not net_directory.is_dir():
+            self.log_info(fl_ctx, f"Directory {net_directory} does not exist, nothing to clean up.")
+            return
+
+        # imaging-api downloads into this folder and its retention sweep deletes from it while we walk, so an entry
+        # may vanish under us. Try every entry and fail once, at the end, for what could not be deleted.
+        failures = []
+        for entry in net_directory.iterdir():
+            if entry.name == keep:
+                continue
+            self.log_info(fl_ctx, f"Deleting {entry}")
+            try:
+                if entry.is_dir() and not entry.is_symlink():
+                    shutil.rmtree(entry, onexc=_ignore_vanished)
+                else:
+                    entry.unlink(missing_ok=True)
+            except OSError as e:
+                failures.append(f"{entry}: {e}")
+        if failures:
+            raise OSError("Could not delete " + "; ".join(failures))
+
+
+def _ignore_vanished(function: Callable[..., object], path: str, exc: BaseException) -> None:
+    """Let ``shutil.rmtree`` go on past a path that something else deleted first."""
+    if not isinstance(exc, FileNotFoundError):
+        raise exc

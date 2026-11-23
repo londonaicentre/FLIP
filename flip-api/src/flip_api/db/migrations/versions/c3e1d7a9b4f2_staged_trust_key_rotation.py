@@ -19,7 +19,7 @@ live one until the trust first uses it (FLIP#1714), and the KEY_PROMOTED / KEY_E
 staged rotation. Both columns are nullable and default to NULL, so every existing trust carries on unchanged.
 
 Revision ID: c3e1d7a9b4f2
-Revises: a6174749cbb5
+Revises: c19960de1e7e
 Create Date: 2026-11-19 00:00:00.000000
 
 """
@@ -31,7 +31,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "c3e1d7a9b4f2"
-down_revision: str | None = "a6174749cbb5"
+down_revision: str | None = "c19960de1e7e"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

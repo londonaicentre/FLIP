@@ -233,6 +233,55 @@ def test_the_entrypoint_switches_a_staged_kit(tmp_path):
     assert (local / "pod_specs" / "job-pod.yaml").read_text() == template.read_text()
 
 
+def test_the_charts_archive_patch_is_copied_beside_the_template_and_removed_when_it_goes(tmp_path):
+    """jobPods.images: archive renders it beside the template (FLIP#1857); another mode leaves none behind."""
+    local = _kit(tmp_path)
+    template = tmp_path / "job-pod.yaml"
+    template.write_text("apiVersion: v1\nkind: Pod\n")
+    patch = tmp_path / "job-pod-archive.yaml"
+    patch.write_text("spec:\n  volumes: []\n")
+
+    assert main([str(local)], env={**ENV, "FL_K8S_POD_TEMPLATE": str(template)}) == 0
+    assert (local / "pod_specs" / "job-pod-archive.yaml").read_text() == patch.read_text()
+
+    patch.unlink()
+    assert main([str(local)], env={**ENV, "FL_K8S_POD_TEMPLATE": str(template)}) == 0
+    assert not (local / "pod_specs" / "job-pod-archive.yaml").exists()
+
+
+def test_leaving_archive_mode_names_the_entries_that_still_mount_xnats_archive(tmp_path, capsys):
+    """The operator's file outlives the patch until the next sync (FLIP#1857): say which projects, and start anyway."""
+    local = _kit(tmp_path)
+    template = tmp_path / "job-pod.yaml"
+    template.write_text("apiVersion: v1\nkind: Pod\n")
+    archived = {"spec": {"volumes": [{"name": "xnat-archive", "persistentVolumeClaim": {"claimName": "xnat-web"}}]}}
+    studies_file = tmp_path / "study_runtime.yaml"
+    studies_file.write_text(
+        json.dumps(
+            {
+                "format_version": 2,
+                "studies": {
+                    "default": {"container": {"image": "img"}, "pod_template": "pod_specs/job-pod.yaml"},
+                    "b1a2c3d4-0000-4000-8000-000000000002": {"pod_template": archived},
+                    "b1a2c3d4-0000-4000-8000-000000000001": {"pod_template": archived},
+                    "b1a2c3d4-0000-4000-8000-000000000003": {"pod_template": {"spec": {"volumes": []}}},
+                },
+            }
+        )
+    )
+    env = {**ENV, "FL_K8S_POD_TEMPLATE": str(template), "FL_K8S_STUDIES_FILE": str(studies_file)}
+
+    assert main([str(local)], env=env) == 0
+    err = capsys.readouterr().err
+    assert "b1a2c3d4-0000-4000-8000-000000000001, b1a2c3d4-0000-4000-8000-000000000002 still mount it" in err
+    assert "-000000000003" not in err
+    assert "sync-project-studies" in err
+
+    (tmp_path / "job-pod-archive.yaml").write_text("spec:\n  volumes: []\n")
+    assert main([str(local)], env=env) == 0
+    assert "still mount" not in capsys.readouterr().err, "in archive mode the entries are meant to"
+
+
 def test_the_entrypoint_reads_the_kit_default_when_nothing_was_rendered(tmp_path):
     local = _kit(tmp_path, resources_name="resources.json.default")
 

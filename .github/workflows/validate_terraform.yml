@@ -148,7 +148,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Setup TFLint
         uses: terraform-linters/setup-tflint@v6
@@ -258,7 +258,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install uv
         run: pip install uv
@@ -289,7 +289,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install checkov
         # Keep in sync with CHECKOV_VERSION in scripts/checkov_lint.sh.
@@ -349,7 +349,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install uv
         run: pip install uv
@@ -400,7 +400,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install uv
         run: pip install uv

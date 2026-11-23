@@ -92,6 +92,45 @@ module "flip_app_bundles_bucket" {
 }
 
 ############################
+# Public demo bucket (FLIP#2012)
+############################
+#
+# Read by the demo's own distribution in the networking account (see README,
+# "Public demo"). Two departures from the sibling buckets: AES256, because a
+# cross-account CloudFront cannot decrypt with this account's CMK (as for
+# aws_s3_bucket.flip_ui); and an extra statement in the module's one bucket
+# policy. The grant has no s3:ListBucket, so a missing key 403s, and an empty
+# AWS:SourceArn matches nothing until the distribution's ARN is set.
+module "flip_demo_bucket" {
+  count = var.FLIP_DEMO_BUCKET_NAME != "" ? 1 : 0
+
+  source                = "./modules/flip_s3_bucket"
+  bucket_name           = var.FLIP_DEMO_BUCKET_NAME
+  logging_target_bucket = local.access_logs_bucket_name
+  sse_algorithm         = "AES256"
+
+  extra_bucket_policy_statements_json = jsonencode([{
+    Sid       = "AllowCloudFrontOACDemo"
+    Effect    = "Allow"
+    Principal = { Service = "cloudfront.amazonaws.com" }
+    Action    = "s3:GetObject"
+    Resource  = "arn:aws:s3:::${var.FLIP_DEMO_BUCKET_NAME}/*"
+    Condition = {
+      StringEquals = {
+        "AWS:SourceArn" = var.lza_web_demo_distribution_arn
+      }
+    }
+  }])
+
+  depends_on = [aws_s3_bucket_acl.flip_access_logs]
+}
+
+output "FlipDemoBucketName" {
+  description = "S3 bucket holding the public demo (FLIP#2012), or null when FLIP_DEMO_BUCKET_NAME is empty"
+  value       = try(module.flip_demo_bucket[0].bucket_id, null)
+}
+
+############################
 # AI Centre S3 Bucket
 ############################
 

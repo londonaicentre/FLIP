@@ -47,6 +47,7 @@ from flip_api.utils.paging_utils import (
     get_paging_details,
     get_total_pages,
 )
+from flip_api.utils.user_roles import profile_display_name
 
 router = APIRouter(prefix="/projects", tags=["project_services"])
 
@@ -118,7 +119,7 @@ def get_projects_paginated_orm(
     # pulls the owner's display name in the same round-trip — same pattern
     # used in _load_latest_query_per_project for Queries.created_by.
     projects_query = (
-        select(Projects, UserProfile.name)  # type: ignore[call-overload]
+        select(Projects, profile_display_name())  # type: ignore[call-overload]
         .outerjoin(
             ProjectUserAccess,
             and_(ProjectUserAccess.project_id == Projects.id, ProjectUserAccess.user_id == user_id),
@@ -203,7 +204,7 @@ def _load_latest_query_per_project(
             Queries.name,
             Queries.query,
             Queries.created,
-            UserProfile.name,
+            profile_display_name(),
             Queries.queried_trust_ids,
         )
         .join(UserProfile, UserProfile.user_id == Queries.created_by, isouter=True)

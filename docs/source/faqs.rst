@@ -143,4 +143,7 @@ How are a Trust's keys rotated?
    One command per Trust reissues its API key and internal service key in place; the Trust keeps its id, code and FL
    kit slot. The new key is staged: the hub accepts the old and the new key until the Trust first uses the new one, so
    the site stays online while the refreshed kit goes to its operator, whose upgrade command restarts every
-   trust-internal container together. ``REVOKE_OLD=1`` cuts the old key off at once, for a leaked key. XNAT's credentials do not rotate with it. See :ref:`deploy-central-hub-rotate-trust-keys`.
+   trust-internal container together. ``REVOKE_OLD=1`` cuts the old key off at once, for a leaked key. XNAT's credentials
+   do not rotate with it. See :ref:`deploy-central-hub-rotate-trust-keys`.
+   For a site on a Docker Compose host, **Issue new keys** on the Trust's card in the FLIP UI does the same, cutting the
+   old key off at once, and downloads the new kit.

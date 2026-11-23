@@ -19,8 +19,9 @@
 # call, so a test can check the cache-control split and the demo/ exclusion.
 #
 # The invariants under test: hashed bundles are cached for a year and index.html / js/window.js never;
-# --delete never reaches demo/; the entry points are written after the bundles they reference; a build
-# missing its entry points publishes nothing.
+# --delete never reaches demo/ unless the build carries the demo, whose entry points are then uncached
+# too; the entry points are written after the bundles they reference; a build missing its entry points
+# publishes nothing.
 #
 # Usage:
 #     bash deploy/providers/AWS/scripts/tests/test_publish_ui.sh

@@ -19,7 +19,7 @@ authors = [
     { name = "R. Garcia-Dias", email = "rafaelagd@gmail.com" },
     { name = "A. Triay Bagur", email = "alexandre.triay_bagur@kcl.ac.uk" },
 ]
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "alembic>=1.13",
     "fastapi[standard]>=0.115.11",
@@ -97,7 +97,7 @@ filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py312"
+target-version = "py313"
 
 [tool.ruff.lint]
 preview = true

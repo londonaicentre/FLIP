@@ -21,7 +21,7 @@ metrics, which are collected into `evaluation_results.json`.
 
 ## Prerequisites
 
-- Python 3.12+.
+- Python 3.13+.
 - A GPU, for the local simulator run (`make run`). Exporting the job with `make export` needs no GPU.
 - The reference spleen dataset, shared with the segmentation tutorial: run `make -C fl-tutorials download-spleen-data` (see the segmentation tutorial's [dataset setup](../../image_segmentation/3d_spleen_segmentation/README.md#dataset-setup-local-runs)).
 

@@ -34,6 +34,11 @@ describe("Ai Buttons", () => {
         expect(comp.find("button").attributes("aria-label")).toBe("Download model.py");
     });
 
+    test("danger fills the button red, unlike the red-text error variant", () => {
+        expect(mount(AiButton, { props: { danger: true } }).find("button").classes()).toContain("btn-danger");
+        expect(mount(AiButton, { props: { error: true } }).find("button").classes()).not.toContain("btn-danger");
+    });
+
     test("renders the button without an aria-label when none is given", () => {
         const comp = mount(AiButton);
 

@@ -19,7 +19,7 @@
 # <script src="…/js/window.js"> in index.html a no-op that only exists so the
 # bundle carries valid config before its ES modules evaluate.
 #
-# RELEASE_VERSION stamps the registry's vintage so a mutable /demo/ URL still
+# RELEASE_VERSION stamps the registry's vintage so a mutable demo URL still
 # tells a visitor (or a script probing the header) which snapshot it is serving.
 # The newest capture date is grepped out of mocks/demo/capture-window.ts rather
 # than duplicated here — the same constant src/demo/DemoBanner.vue renders, and

@@ -64,7 +64,12 @@ class TrustAuditAction(StrEnum):
     DELETED = "DELETED"
     ADMIN_ADDED = "ADMIN_ADDED"
     ADMIN_REMOVED = "ADMIN_REMOVED"
-    # Last: Postgres appends ADD VALUE to the end, and the migration test compares order.
+    # In migration order: Postgres appends ADD VALUE to the end, and the migration test compares order.
     ROTATED = "ROTATED"
+    # FLIP#1852, a user took the trust's kit from the UI. KEYS_ISSUED is written when the trust's first
+    # keys are minted; KIT_DOWNLOADED is written on every download, with what it carried in ``detail``.
+    KEYS_ISSUED = "KEYS_ISSUED"
+    KIT_DOWNLOADED = "KIT_DOWNLOADED"
+    # FLIP#1714, staged key rotation: the trust's first call with the staged key, or its deadline passing.
     KEY_PROMOTED = "KEY_PROMOTED"
     KEY_EXPIRED = "KEY_EXPIRED"
