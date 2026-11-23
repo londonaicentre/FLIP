@@ -153,6 +153,9 @@ services:
       dockerfile: Dockerfile
       args:
         BASE_REF: ${BASE_REF:-flare-fl-base:${DOCKER_FL_TAG:-dev}}
+        # The client syncs the segmentation extra on top of the base, so it takes the base's switch.
+        LOCAL_DEV: ${LOCAL_DEV:-false}
+        TOTALSEG_WEIGHTS_REF: ${TOTALSEG_WEIGHTS_REF:-ghcr.io/londonaicentre/totalsegmentator-weights:latest}
     environment:
       # Identity for the overridden uid -- see fl-server above.
       - HOME=/home/flip
@@ -189,6 +192,9 @@ services:
       dockerfile: Dockerfile
       args:
         BASE_REF: ${BASE_REF:-flare-fl-base:${DOCKER_FL_TAG:-dev}}
+        # The client syncs the segmentation extra on top of the base, so it takes the base's switch.
+        LOCAL_DEV: ${LOCAL_DEV:-false}
+        TOTALSEG_WEIGHTS_REF: ${TOTALSEG_WEIGHTS_REF:-ghcr.io/londonaicentre/totalsegmentator-weights:latest}
     environment:
       # Identity for the overridden uid -- see fl-server above.
       - HOME=/home/flip

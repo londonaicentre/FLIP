@@ -24,7 +24,7 @@ root guide. This file documents that path.
 ## Local development setup
 
 ```bash
-uv sync --all-extras --no-extra segmentation   # every extra but TotalSegmentator's, which only the flare-fl-client-segmentation image needs
+uv sync --all-extras --no-extra segmentation   # every extra but TotalSegmentator's, which only the FLARE client image needs
 make unit-test        # ruff --fix, then mypy, then pytest with coverage
 ```
 

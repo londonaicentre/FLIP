@@ -42,7 +42,7 @@ jobs:
               run: pip install uv
 
             - name: Install dependencies
-              # Not the segmentation extra: only the flare-fl-client-segmentation image needs TotalSegmentator, and
+              # Not the segmentation extra: only the FLARE client image needs TotalSegmentator, and
               # a release must not wait on its packages.
               run: uv sync --all-extras --no-extra segmentation
 

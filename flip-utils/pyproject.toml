@@ -84,9 +84,8 @@ nvflare = [
 flower = [
     "flwr>=1.43.0",
 ]
-# The segmentation FL environment (FLIP#32): TotalSegmentator, with the nnU-Net and SimpleITK it runs
-# on, and matplotlib. Installed on top of `full` by the flare-fl-client-segmentation image only, so the
-# default FL images do not carry it.
+# TotalSegmentator, with the nnU-Net and SimpleITK it runs on, and matplotlib (FLIP#1945). Installed on
+# top of `full` by the FLARE client image only: the server never predicts, so fl-base does not carry it.
 segmentation = [
     "totalsegmentator>=2.18.0",
 ]
@@ -210,7 +209,7 @@ dev = [
 ]
 # Local runs of the fl-tutorials image-generation tutorials, which write debug images and loss curves
 # from their shared image_generation/dev/plot_utils.py. Kept out of `dev` so nothing else gets a
-# plotting stack, and out of `full` so the default FL images do not. (The segmentation image has
+# plotting stack, and out of `full` so the default FL images do not. (The FLARE client image has
 # matplotlib, through TotalSegmentator.)
 diffusion = [
     "matplotlib>=3.10.7",

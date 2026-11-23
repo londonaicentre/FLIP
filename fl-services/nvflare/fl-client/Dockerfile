@@ -12,9 +12,32 @@
 
 # Use a configurable base image
 ARG BASE_REF=ghcr.io/londonaicentre/flare-fl-base:latest
+# TotalSegmentator's weights, built by fl-services/nvflare/totalseg-weights/Dockerfile (FLIP#1945).
+ARG TOTALSEG_WEIGHTS_REF=ghcr.io/londonaicentre/totalsegmentator-weights:latest
+FROM ${TOTALSEG_WEIGHTS_REF} AS totalseg-weights
 FROM ${BASE_REF} AS base
 
-FROM base AS development
+# What the client has and the server does not: flip-utils' `segmentation` extra, so a job at a trust
+# can run TotalSegmentator (FLIP#1945). The server never predicts, so fl-base stays without it.
+FROM base AS env
+ARG UNAME=flip
+# The same switch fl-base takes. The sync removes whatever it does not ask for, so it must ask for
+# the dev group when the base was built with it.
+ARG LOCAL_DEV=false
+# Where TotalSegmentator looks for its weights. Outside $HOME, which the dev composes re-point.
+ENV TOTALSEG_HOME_DIR=/opt/totalsegmentator
+# fl-base left /app holding flip-utils' pyproject.toml and uv.lock, so this needs nothing from the
+# build context. It runs as the user that owns the venv, so no chown follows (a recursive one would
+# copy the whole venv into this layer, see fl-base/Dockerfile).
+USER ${UNAME}
+RUN uv sync --frozen --no-cache --compile-bytecode --extra nvflare --extra full --extra segmentation $(if [ "$LOCAL_DEV" = "true" ]; then echo "--dev"; else echo "--no-dev"; fi)
+# A job cannot download at a trust (FLIP#1206), so the weights are in the image: owned by root and
+# read-only to the job. TotalSegmentator rewrites config.json on every prediction when it can, with
+# no lock, so two jobs in one client could corrupt it; it carries on when it cannot.
+COPY --from=totalseg-weights /opt/totalsegmentator ${TOTALSEG_HOME_DIR}
+USER root
+
+FROM env AS development
 
 # Names the non-root user created in fl-base (GHSA-8465), used only for the
 # COPY --chown and USER below. Fixed at `flip` and no longer supplied per-build

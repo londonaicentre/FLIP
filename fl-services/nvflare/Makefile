@@ -60,7 +60,7 @@ build:
 	@echo "🛠️  Building flare-fl-base:$(FL_BUILD_TAG) (LOCAL_DEV=$(LOCAL_DEV))..."
 	LOCAL_DEV=$(LOCAL_DEV) $(DEV_COMPOSE) --profile build-only build fl-base
 	@echo "🛠️  Building flare-fl-{server,api,client}:$(FL_BUILD_TAG)..."
-	$(DEV_COMPOSE) build fl-server flip-fl-api fl-client-1
+	LOCAL_DEV=$(LOCAL_DEV) $(DEV_COMPOSE) build fl-server flip-fl-api fl-client-1
 
 # Dev: provision net-<NET_NUMBER> startup kits into DEV_WORKSPACE_DIR (gitignored),
 # where the dev compose mounts expect them.
