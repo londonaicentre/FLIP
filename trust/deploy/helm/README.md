@@ -1237,10 +1237,35 @@ the migration has to run first, and the agent would report Failed until it does)
 migration that was started and not finished — both, with both revision numbers, which is the case
 worth stopping on rather than guessing about. Exit code 1 means "this trust needs the migration".
 
-The migration itself is not shipped here, and deliberately: it rewrites a release record, and the
-only way to be sure the procedure is safe is to run it end to end on a disposable cluster — an
-adoption step that gets it wrong can take the trust's PersistentVolumeClaims with it. Until that has
-been reproduced, a Secret-recorded trust keeps upgrading by hand with `make upgrade-trust-k8s`.
+To move a trust across, run the migration. It is a plan unless `CONFIRM=1`:
+
+```bash
+make -C trust/deploy/helm migrate-release-driver KUBE_CONTEXT=<ctx>              # what it would do
+make -C trust/deploy/helm migrate-release-driver KUBE_CONTEXT=<ctx> CONFIRM=1    # do it
+make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> KUBE_CONTEXT=<ctx> AUTO_UPGRADE=1
+```
+
+(`scripts/migrate_release_driver.py` is the script behind the target.) It rewrites the release *record*
+and nothing else: no workload, Service, PVC or StatefulSet is created, changed or deleted, so no pod
+restarts. Every revision moves, so `helm history` and `helm rollback` keep working. Each is cleaned on the
+way, because a Secret-driver release kept the trust's passwords where the agent must not read them:
+
+- **The values** lose `secrets.data`. `secrets` becomes `create: false` with `existingName` set to the live
+  trust Secret (`<release>-flip-trust-secrets`, the name the AUTO_UPGRADE deploy expects).
+- **The stored manifest** loses the chart's own Secret (`templates/secrets.yaml`). Helm then no longer
+  counts that Secret as part of the release, so the first `secrets.create=false` deploy leaves it alone
+  instead of deleting it. The live Secret is also marked `helm.sh/resource-policy: keep` as a second guard.
+
+The Secret records are deleted only after `helm history` reads the same revisions through both drivers
+and no ConfigMap record carries a secret value. It refuses a release with a Helm operation in flight
+(`pending-*`), and ConfigMap records it did not write itself. A second run reports "nothing to do". A run
+stopped before the last step is finished on the next run, provided the ConfigMaps it left match a fresh
+clean copy exactly.
+
+`trust/deploy/e2e/upgrade-agent/run.sh migrate` rehearses this on kind. It installs a trust the old way
+(Secret driver, chart-made Secret, two revisions), migrates it, checks that history is unchanged, that no
+pod, PVC or workload was recreated and that no password is in any ConfigMap, switches it to AUTO_UPGRADE,
+and lets one tick upgrade it.
 
 ### What a tick does
 

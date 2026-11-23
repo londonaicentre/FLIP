@@ -205,8 +205,8 @@ ability to rewrite every workload in that namespace, so it is an opt-in rather t
 or set ``K8S_AUTO_UPGRADE=true`` in the kit file so every later deploy keeps it. This records the release in
 ConfigMaps, applies the Trust's Secret outside the release (so no password is stored where the agent can read it),
 and switches the agent on. The deploy refuses to run when the release is recorded the other way, because it would
-install a second copy; a Trust deployed before this setting existed needs its release record moved first (see the
-chart's README).
+install a second copy; a Trust deployed before this setting existed needs its release record moved first (see
+:ref:`auto-upgrade-existing-trust`).
 
 How the agent behaves:
 
@@ -222,11 +222,41 @@ How the agent behaves:
   governance document too, so before reporting an upgrade as done the agent compares the live document with the
   one the release carries and reports **Failed** if they differ, leaving the release as it is.
 
-.. warning::
+.. _auto-upgrade-existing-trust:
 
-   A Kubernetes Trust whose release is still recorded the old way (Helm's Secret driver) cannot be upgraded by the
-   agent; it will report **Failed** instead. Moving such a Trust across is a deliberate one-off migration, not
-   something a chart upgrade does to a live site.
+Switching on an existing Kubernetes Trust
+-----------------------------------------
+
+A Trust deployed before automatic upgrades existed has its Helm release recorded in Secrets, Helm's default.
+The agent reads only ConfigMaps, because its identity is not allowed to read Secrets. Until the record is
+moved it cannot see the release and reports **Failed**. Check which applies:
+
+.. code-block:: bash
+
+   python3 trust/deploy/helm/scripts/release_driver.py --release trust-release --namespace flip-trust
+
+Exit code 1 means the move is needed. It is a one-off step per Trust, run by the operator, in three commands:
+
+.. code-block:: bash
+
+   make -C trust/deploy/helm migrate-release-driver KUBE_CONTEXT=<ctx>             # prints the plan, changes nothing
+   make -C trust/deploy/helm migrate-release-driver KUBE_CONTEXT=<ctx> CONFIRM=1   # moves the record
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> KUBE_CONTEXT=<ctx> AUTO_UPGRADE=1
+
+What the move does and does not do:
+
+- **It changes only Helm's record of the release.** No pod, volume, StatefulSet or Service is touched, so
+  nothing restarts and no data moves. Every past revision is kept, so ``helm history`` and ``helm rollback``
+  still work.
+- **It takes the passwords out of the record.** The old record held the Trust's passwords; the new one
+  points at the existing Trust Secret instead, and that Secret is marked so that Helm never deletes it.
+  The AUTO_UPGRADE deploy then manages the Secret with ``kubectl``, outside the release.
+- **It checks before it commits.** The old records are removed only after Helm reads the same history
+  through the new ones. It refuses to run while a Helm operation is in progress, and a second run does
+  nothing.
+
+Add ``K8S_AUTO_UPGRADE=true`` to the Trust's kit file so every later deploy keeps the new setting; a deploy
+without it is refused rather than installing a second copy.
 
 Off
 ===

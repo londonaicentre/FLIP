@@ -16,6 +16,9 @@
 #   ./run.sh setup      cluster + TLS registry + images + charts + stub hub + release at v0.99.0
 #   ./run.sh tick       run one CronJob tick now; show its log, the hub's view and the release history
 #   ./run.sh failure    publish a broken v0.99.2, point the hub at it, tick: expect FAILED, left in place
+#   ./run.sh migrate    rehearse FLIP#1997: a pre-auto-upgrade trust (Secret driver, chart-made Secret) is
+#                       migrated to ConfigMaps, switched to AUTO_UPGRADE, then upgraded by one tick
+#   ./run.sh rbac       the agent's ServiceAccount cannot read Secrets (kubectl auth can-i)
 #   ./run.sh state      hub state, release history, pods
 #   ./run.sh down       delete the cluster, the registry and the work dir
 # Needs: docker, kind, kubectl, helm, openssl, python3.
@@ -27,6 +30,8 @@ REPO="${REPO:-$(cd "$HERE/../../../.." && pwd)}"
 # Generated state (CA, registry certs, packaged charts, the test AES key) lives outside the checkout.
 WORK="${WORK:-${XDG_CACHE_HOME:-$HOME/.cache}/flip-kind-upgrade}"
 mkdir -p "$WORK"
+# A kubeconfig of its own: ~/.kube/config may be a k3s file the user cannot write (or one they care about).
+export KUBECONFIG="$WORK/kubeconfig"
 CHART="$REPO/trust/deploy/helm"
 CLUSTER=flip-upgrade
 CTX="kind-$CLUSTER"
@@ -60,6 +65,7 @@ certs() {
 setup() {
   log "kind cluster"
   kind get clusters | grep -qx "$CLUSTER" || kind create cluster --name "$CLUSTER" --config "$HERE/kind.yaml" --wait 120s
+  kind export kubeconfig --name "$CLUSTER" >/dev/null
   subnet="$(docker network inspect kind -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' | tr ' ' '\n' | grep -m1 '\.')"
   REG_IP="${subnet%.*.*}.0.250"
   certs
@@ -226,6 +232,120 @@ failure() {
     'import urllib.request;print(urllib.request.urlopen("http://127.0.0.1:8000/health").read().decode())' || true
   log "a second tick must not retry $BAD"
   tick
+}
+
+# Release-record helpers for the migrate stage.
+MIGRATE_PY="$CHART/scripts/migrate_release_driver.py"
+DRIVER_PY="$CHART/scripts/release_driver.py"
+reg_ip() { [ -n "$REG_IP" ] || { subnet="$(docker network inspect kind -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' | tr ' ' '\n' | grep -m1 '\.')"; REG_IP="${subnet%.*.*}.0.250"; }; }
+fail() { printf '\n❌ %s\n' "$*" >&2; exit 1; }
+# Every object the migration must not recreate, by UID (pods also by restart count).
+snapshot() {
+  { $K -n "$NS" get pods -o jsonpath='{range .items[*]}pod {.metadata.name} {.metadata.uid} {.status.containerStatuses[*].restartCount}{"\n"}{end}'
+    $K -n "$NS" get pvc,statefulset,deployment -o jsonpath='{range .items[*]}{.kind} {.metadata.name} {.metadata.uid}{"\n"}{end}'
+  } | sort
+}
+
+migrate() {
+  reg_ip
+  local legacy_secret="$REL-flip-trust-secrets" values="$WORK/legacy-secrets.json"
+  log "start from scratch: no release in $NS under either driver"
+  for d in configmap secret; do HELM_DRIVER=$d helm --kube-context "$CTX" -n "$NS" uninstall "$REL" --wait >/dev/null 2>&1 || true; done
+  $K -n "$NS" delete secret flip-trust-secrets "$legacy_secret" --ignore-not-found >/dev/null
+  $K -n "$NS" delete pvc --all --wait >/dev/null
+
+  log "a trust as deployed before automatic upgrades: Secret driver, the chart makes the trust Secret from values"
+  # The CI fixture's values as secrets.data, with the run's real AES key (see setup).
+  $K create --dry-run=client -f "$CHART/ci/test-secret.yaml" -o json | AES="$(cat "$WORK/aes.key")" python3 -c '
+import json, os, sys
+data = json.load(sys.stdin)["stringData"]
+data["aes-key-base64"] = os.environ["AES"]
+print(json.dumps({"secrets": {"create": True, "data": data}}))' > "$values"
+  chmod 600 "$values"
+  HELM_DRIVER=secret helm --kube-context "$CTX" install "$REL" "oci://$REG_IP/charts/flip-trust" --version "${FROM#v}" \
+    --ca-file "$WORK/certs/ca.crt" -n "$NS" -f "$CHART/ci/test-values.yaml" -f "$values" \
+    --set trustApi.env.CENTRAL_HUB_API_URL=http://stub-hub.hub.svc.cluster.local/api \
+    --set trustApi.env.TRUST_API_KEY_HEADER=Authorization \
+    --set global.image.tag=$FROM \
+    --set trustApi.image.pullPolicy=IfNotPresent --set imagingApi.image.pullPolicy=IfNotPresent \
+    --set dataAccessApi.image.pullPolicy=IfNotPresent --set omopDb.image.pullPolicy=IfNotPresent \
+    --set orthanc.image.pullPolicy=IfNotPresent \
+    --set trustName=KIND1 --set environment=production \
+    --set autoUpgrade.enabled=false --set trustData.seed.enabled=false \
+    --timeout 15m --wait
+  # A second revision, so the history being carried across is more than one record.
+  HELM_DRIVER=secret helm --kube-context "$CTX" upgrade "$REL" "oci://$REG_IP/charts/flip-trust" --version "${FROM#v}" \
+    --ca-file "$WORK/certs/ca.crt" -n "$NS" --reuse-values --timeout 15m --wait >/dev/null
+  python3 "$DRIVER_PY" --release "$REL" --namespace "$NS" --kubectl "$K" && fail "expected the release in Secrets"
+  local before history_before secret_uid
+  before="$(snapshot)"
+  history_before="$(HELM_DRIVER=secret helm --kube-context "$CTX" -n "$NS" history "$REL" -o json)"
+  secret_uid="$($K -n "$NS" get secret "$legacy_secret" -o jsonpath='{.metadata.uid}')"
+
+  log "plan (no changes), then apply"
+  python3 "$MIGRATE_PY" --release "$REL" --namespace "$NS" --kubectl "$K" --helm "helm --kube-context $CTX"
+  [ "$($K -n "$NS" get cm -l owner=helm,name=$REL -o name | wc -l)" = 0 ] || fail "the plan wrote ConfigMaps"
+  python3 "$MIGRATE_PY" --release "$REL" --namespace "$NS" --kubectl "$K" --helm "helm --kube-context $CTX" --apply
+
+  log "checks"
+  python3 "$DRIVER_PY" --release "$REL" --namespace "$NS" --kubectl "$K" || fail "the release is not in ConfigMaps alone"
+  [ "$(HELM_DRIVER=configmap helm --kube-context "$CTX" -n "$NS" history "$REL" -o json)" = "$history_before" ] \
+    || fail "helm history changed across the drivers"
+  echo "ok: helm history identical through the ConfigMap driver"
+  [ "$(snapshot)" = "$before" ] || { diff <(echo "$before") <(snapshot) || true; fail "a pod, PVC or workload was recreated"; }
+  echo "ok: no pod, PVC, StatefulSet or Deployment recreated, no restart"
+  # No secret value may be readable from a ConfigMap: decode every record and look for each one.
+  $K -n "$NS" get cm -l owner=helm,name=$REL -o json | VALUES="$values" python3 -c '
+import base64, gzip, json, os, sys
+secrets = [v for v in json.load(open(os.environ["VALUES"]))["secrets"]["data"].values() if len(v) >= 8]
+for cm in json.load(sys.stdin)["items"]:
+    text = gzip.decompress(base64.b64decode(cm["data"]["release"])).decode()
+    hits = [s for s in secrets if s in text or base64.b64encode(s.encode()).decode() in text]
+    assert not hits, f"{cm[\"metadata\"][\"name\"]} carries {len(hits)} secret value(s)"
+print("ok: no secret value, plain or base64, in any ConfigMap record")'
+  [ "$($K -n "$NS" get secret "$legacy_secret" -o jsonpath='{.metadata.annotations.helm\.sh/resource-policy}')" = keep ] \
+    || fail "the trust Secret was not marked keep"
+  python3 "$MIGRATE_PY" --release "$REL" --namespace "$NS" --kubectl "$K" --helm "helm --kube-context $CTX" --apply \
+    | grep -q "nothing to do" || fail "a second run did not recognise the finished migration"
+  echo "ok: a second run is a no-op"
+
+  log "switch the trust to automatic upgrades, as deploy-trust-k8s AUTO_UPGRADE=1 does"
+  HELM_DRIVER=configmap helm --kube-context "$CTX" upgrade "$REL" "oci://$REG_IP/charts/flip-trust" --version "${FROM#v}" \
+    --ca-file "$WORK/certs/ca.crt" -n "$NS" --reuse-values \
+    --set secrets.create=false --set secrets.existingName="$legacy_secret" \
+    --set autoUpgrade.enabled=true --set autoUpgrade.suspend=true \
+    --set autoUpgrade.image.tag=test --set autoUpgrade.image.pullPolicy=Never \
+    --set autoUpgrade.chartRepository=oci://$REG_IP/charts/flip-trust \
+    --timeout 15m --wait >/dev/null
+  [ "$($K -n "$NS" get secret "$legacy_secret" -o jsonpath='{.metadata.uid}')" = "$secret_uid" ] \
+    || fail "the trust Secret was deleted or replaced by the AUTO_UPGRADE deploy"
+  echo "ok: the trust Secret survived the switch (same UID)"
+  diff <(echo "$before" | grep -E '^(PersistentVolumeClaim|StatefulSet) ') \
+       <(snapshot | grep -E '^(PersistentVolumeClaim|StatefulSet) ') || fail "a PVC or StatefulSet was recreated"
+  echo "ok: PVCs and StatefulSets untouched by the switch"
+
+  log "one tick upgrades the migrated trust $FROM -> $TO"
+  $K -n hub rollout restart deploy/stub-hub >/dev/null && $K -n hub rollout status deploy/stub-hub --timeout=120s >/dev/null
+  tick
+  HELM_DRIVER=configmap helm --kube-context "$CTX" -n "$NS" history "$REL" -o json | python3 -c '
+import json, sys
+last = json.load(sys.stdin)[-1]
+assert last["status"] == "deployed" and last["app_version"] == sys.argv[1], last
+print("ok: newest revision", last["revision"], last["chart"], last["status"])' "$TO"
+  rbac
+}
+
+rbac() {
+  local sa
+  sa="$($K -n "$NS" get cronjob -o jsonpath='{.items[0].spec.jobTemplate.spec.template.spec.serviceAccountName}')"
+  log "RBAC as system:serviceaccount:$NS:$sa"
+  for verb in get list watch; do
+    [ "$($K auth can-i "$verb" secrets -n "$NS" --as "system:serviceaccount:$NS:$sa" 2>/dev/null)" = no ] \
+      || fail "the agent can $verb secrets"
+  done
+  [ "$($K auth can-i get configmaps -n "$NS" --as "system:serviceaccount:$NS:$sa")" = yes ] || fail "the agent cannot read its release"
+  [ "$($K auth can-i get pods -n kube-system --as "system:serviceaccount:$NS:$sa" 2>/dev/null)" = no ] || fail "the Role reaches outside $NS"
+  echo "ok: no get/list/watch on secrets; release ConfigMaps readable; nothing outside $NS"
 }
 
 down() {
