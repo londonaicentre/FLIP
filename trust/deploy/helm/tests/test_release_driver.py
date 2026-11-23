@@ -165,3 +165,53 @@ class TestExitCodes(unittest.TestCase):
 
         with redirect_stdout(io.StringIO()), mock.patch.object(subject.sys, "stderr", io.StringIO()):
             assert subject.main([], run=boom) == 2
+
+
+class TestKubectlCommandLine(unittest.TestCase):
+    """The Makefile passes "$(KUBECTL)", which carries `--context <ctx>` whenever KUBE_CONTEXT is set (FLIP#1997)."""
+
+    def test_a_kubectl_with_a_context_is_split_into_arguments(self):
+        done = subprocess.CompletedProcess([], 0, stdout="sh.helm.release.v1.trust-release.v2\n", stderr="")
+        with mock.patch.object(subject.subprocess, "run", return_value=done) as run:
+            names = subject._kubectl_names("kubectl --context gstt", ["get", "secrets"])
+        assert run.call_args.args[0][:4] == ["kubectl", "--context", "gstt", "get"]
+        assert names == [{"metadata": {"name": "sh.helm.release.v1.trust-release.v2"}}]
+
+    def test_the_preflight_runs_with_a_context_through_make(self):
+        """The real target, a stub kubectl on PATH: KUBE_CONTEXT must reach kubectl, not become its file name."""
+        import os
+        import shutil
+        import tempfile
+
+        if shutil.which("make") is None:
+            self.skipTest("make is not installed")
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / "kubectl"
+            log = Path(tmp) / "calls"
+            stub.write_text(f'#!/bin/sh\necho "$@" >> {log}\n')
+            stub.chmod(0o755)
+            env = {**os.environ, "PATH": f"{tmp}:{os.environ['PATH']}"}
+            chart = DRIVER_PY.parents[1]
+            out = subprocess.run(
+                [
+                    "python3",
+                    str(DRIVER_PY),
+                    "--release",
+                    "trust-release",
+                    "--namespace",
+                    "flip-trust",
+                    "--kubectl",
+                    "kubectl --context gstt",
+                    "--deploy-driver",
+                    "configmap",
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=chart,
+                timeout=60,
+            )
+            assert out.returncode == 0, out.stderr
+            calls = log.read_text().splitlines()
+        assert calls
+        assert all(c.startswith("--context gstt get ") for c in calls), calls
