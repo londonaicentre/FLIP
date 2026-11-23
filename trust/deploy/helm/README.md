@@ -1165,11 +1165,10 @@ there; the omop-db image CI asserts every published image carries it.
 
 ## Automatic upgrades
 
-The chart can carry the auto-upgrade agent (#1644): the same tick the host runs from a systemd timer
-(`make setup-auto-upgrade`), as a CronJob in this namespace. There is no host on a cluster, so
-"current release" comes from the Helm record and "upgrade" is `helm pull` + `helm upgrade` instead of
-`make upgrade-onprem-trust`. The policy, the lease, the report, the maintenance window and the
-failed-release latch are the hub's and are identical on both sides.
+The chart can carry the auto-upgrade agent (#1644) as a CronJob in this namespace. Automatic upgrades
+are for Kubernetes trusts only; a Docker Compose trust keeps `make upgrade-onprem-trust`. "Current
+release" comes from the Helm record and "upgrade" is `helm pull` + `helm upgrade`. The policy, the
+lease, the report, the maintenance window and the failed-release latch are the hub's.
 
 ```bash
 make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> AUTO_UPGRADE=1

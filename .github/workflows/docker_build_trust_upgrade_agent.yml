@@ -128,14 +128,14 @@ jobs:
           # shellcheck disable=SC2086
           docker build "${TAG_FLAGS[@]}" -f trust/deploy/helm/agent/Dockerfile .
 
-      # The tick is the entrypoint, so "it starts and knows cluster mode" is the smoke: a missing
-      # helm or kubectl binary would otherwise only surface in a live CronJob at 03:00.
-      - name: Smoke test — the tick runs and knows its cluster mode
+      # The tick is the entrypoint, so "it starts and knows the chart's arguments" is the smoke: a
+      # missing helm or kubectl binary would otherwise only surface in a live CronJob at 03:00.
+      - name: Smoke test — the tick runs and knows the chart's arguments
         env:
           DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
         run: |
           TAG="${DOCKER_TAGS%%,*}"
-          docker run --rm "$TAG" --help | grep -q -- "--mode"
+          docker run --rm "$TAG" tick --help | grep -q -- "--chart-repository"
           docker run --rm --entrypoint helm "$TAG" version --short
           docker run --rm --entrypoint kubectl "$TAG" version --client
           # The agent is stdlib-only; assert that stays true in the image it ships in.

@@ -252,15 +252,12 @@ const windowError = computed(() => {
 const BLOCKER_TEXT: Record<AutoUpgradeBlocker, string> = {
     JOBS_RUNNING: "A training job that uses this Trust is running. The upgrade waits for it to finish.",
     OUTSIDE_WINDOW: "It is outside the maintenance window. The upgrade starts when the window opens.",
-    LOCAL_MODIFICATIONS: "The upgrade agent's copy of FLIP has local modifications. An operator must restore it.",
-    UNSUPPORTED_MODE: "This Trust was not deployed in a way the upgrade agent can upgrade. An operator must upgrade it by hand.",
-    UNKNOWN_CHECKOUT: "The upgrade agent cannot tell which release its copy of FLIP is on. An operator must restore it.",
     SITE_UNHEALTHY: "This Trust is not healthy, so the upgrade is holding off until it is. See the status above.",
-    AGENT_OFFLINE: "The upgrade agent on the Trust host has not checked in recently."
+    AGENT_OFFLINE: "The upgrade agent in the Trust's cluster has not checked in recently."
 };
 // The agent's detail is appended to the one blocker it belongs to, so an admin reading
-// "not healthy" also sees which check failed rather than having to ask the host operator.
-const DETAILED: AutoUpgradeBlocker[] = ["LOCAL_MODIFICATIONS", "UNSUPPORTED_MODE", "UNKNOWN_CHECKOUT", "SITE_UNHEALTHY"];
+// "not healthy" also sees which check failed rather than having to ask the site operator.
+const DETAILED: AutoUpgradeBlocker[] = ["SITE_UNHEALTHY"];
 const blockerTexts = computed(() => {
     const a = props.autoUpgrade;
 

@@ -175,9 +175,6 @@ export type AutoUpgradeState =
 export type AutoUpgradeBlocker =
     | "JOBS_RUNNING"
     | "OUTSIDE_WINDOW"
-    | "LOCAL_MODIFICATIONS"
-    | "UNSUPPORTED_MODE"
-    | "UNKNOWN_CHECKOUT"
     | "SITE_UNHEALTHY"
     | "AGENT_OFFLINE";
 

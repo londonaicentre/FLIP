@@ -13,40 +13,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""The trust host's upgrade agent: one tick of "should this site move to the hub's release now?".
+"""The Kubernetes trust's upgrade agent: one tick of "should this site move to the hub's release now?".
 
-Run hourly by a systemd timer that ``make setup-auto-upgrade`` installs. It lives on the host, not in
-a container, because the upgrade recreates every container, trust-api included, and a process that
-is being replaced cannot be the one replacing it.
+Runs as a CronJob the flip-trust chart owns (``autoUpgrade.enabled``), in the trust's own namespace.
+Automatic upgrades are for Kubernetes trusts only: a Docker Compose trust is upgraded by its operator
+with ``make upgrade-onprem-trust``.
 
 A tick asks the hub for this trust's policy (``GET /trust/upgrade-policy``, the trust's own API key),
 then upgrades only when every condition holds: the switch is on, the site is behind a release, the
-failed-release rule allows it, the clock is inside the maintenance window, no job holds the trust
-and the checkout is clean. It then claims a lease (``POST /trust/upgrade-status`` ``STARTING``;
-the hub re-checks "no job" under a row lock and refuses with 409 if one just landed) and runs the same
-data-safe verb an operator would: ``make upgrade-onprem-trust``. A failed attempt is first put back on
-the release the site came from — once, inside the same lease — and the report says whether that took.
-The result is then reported back, and a failure is never retried until an operator clears it in the
-portal.
-
-On Kubernetes/AKS there is no host to put the timer on, so the same tick runs as a chart-owned
-CronJob with ``--mode cluster``: the current release comes from Helm instead of a checkout, and the
-upgrade is ``helm pull`` of the published chart plus ``helm upgrade --reset-then-reuse-values`` (the live
-release already holds the per-trust values, so the pod needs no kit parsing and no generated override). The
-lease, the report, the window and the failed-release latch are the hub's and are identical either way.
+failed-release rule allows it, the site is healthy, the clock is inside the maintenance window and no
+job holds the trust. It then claims a lease (``POST /trust/upgrade-status`` ``STARTING``; the hub
+re-checks "no job" under a row lock and refuses with 409 if one just landed), pulls the published chart
+for the target release and runs ``helm upgrade --reset-then-reuse-values`` (the live release already
+holds the per-trust values, so the pod needs no kit parsing and no generated override). It waits for
+the site to come up on the target, checks the governance document was not changed outside Helm, and
+reports the outcome. A failed attempt is never rolled back by the agent and never retried until an
+operator clears it in the portal.
 
 ``decide`` is pure and holds every rule; the rest of the file is I/O around it.
 
-Usage:
-    uv run --no-config trust_upgrade_agent.py tick --kit-file /etc/flip/trust/.env.<CODE>.<env> \\
-        [--checkout /opt/flip/releases/FLIP] [--dry-run]
-
-The checkout is the agent's own (default ``/opt/flip/releases/FLIP``): it is moved to each release tag, so
-the operator's working tree is never touched, and the compose files and the upgrade verb always come from
-the release being installed. The kit file lives outside both trees; ``KIT_FILE=`` points the Makefiles at it.
+Usage (the chart's CronJob passes these):
+    trust_upgrade_agent.py tick --namespace <ns> --release <name> \\
+        --chart-repository oci://ghcr.io/londonaicentre/charts/flip-trust --kit-name <CODE> --hub prod \\
+        --budget-seconds <n> [--dry-run]
 
 Exit codes: 0 the tick completed (including "nothing to do" and a refused claim), 1 the upgrade ran and
-failed, 2 the hub or kit could not be read.
+failed, 2 the hub or the projected key could not be read.
 """
 
 from __future__ import annotations
@@ -71,9 +63,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-# The agent's OWN checkout: the operator's working tree is never moved under them.
-DEFAULT_CHECKOUT = Path("/opt/flip/releases/FLIP")
-# In-cluster: the projection carrying ONLY the trust's API key (a Secret volume `items:` list, so
+# The projection carrying ONLY the trust's API key (a Secret volume `items:` list, so
 # the kubelet mounts it without the pod's ServiceAccount holding any `secrets` verb).
 CLUSTER_KIT_DIR = Path("/etc/flip/upgrade-kit")
 DEFAULT_TRUST_API_KEY_HEADER = "X-Trust-API-Key"  # pragma: allowlist secret
@@ -81,12 +71,9 @@ DEFAULT_TRUST_API_KEY_HEADER = "X-Trust-API-Key"  # pragma: allowlist secret
 # cannot narrow to a name, and which returns their contents. ConfigMaps put the agent's writes in a
 # smaller blast radius; the deploy side has to agree, or the record is invisible to it.
 HELM_DRIVER = "configmap"
-# Kit file name token -> deploy/env_mode.mk HUB value (FLIP#1479 renamed the selector and the
-# kit tokens; the pre-rename names are still accepted for one release, as the Makefiles do).
-ENV_TOKEN_TO_HUB = {"prod": "prod", "stag": "stag", "production": "prod", "lza-prod": "prod", "lza-stag": "stag"}
 LOG_TAIL_BYTES = 6000
 HTTP_TIMEOUT_S = 15
-# After the upgrade verb returns, how long the site has to come up ON the target release before the
+# After helm upgrade returns, how long the site has to come up ON the target release before the
 # attempt is called FAILED. Generous because XNAT's in-place schema upgrade dominates it and a slow
 # one must not park the site: FAILED stops this release being retried until an operator clears it.
 VERIFY_TIMEOUT_S = 600
@@ -95,7 +82,7 @@ VERIFY_TIMEOUT_S = 600
 REPORT_ATTEMPTS = 4
 REPORT_RETRY_WAIT_S = 5
 VERIFY_POLL_S = 10
-# Cluster mode: the Job's activeDeadlineSeconds kills the pod, and a killed pod does not report, so the
+# The Job's activeDeadlineSeconds kills the pod, and a killed pod does not report, so the
 # hub would hold the lease for its full TTL and retry the same release without latching the failure.
 # The chart therefore passes --budget-seconds (the deadline minus a margin), and every helm call and
 # health wait gets only what is left of it, less this reserve for the terminal report
@@ -105,7 +92,7 @@ _deadline: float | None = None
 
 
 def set_budget(seconds: int | None, now: Callable[[], float] = time.monotonic) -> None:
-    """Start the agent's own clock; None (host mode) means no budget."""
+    """Start the agent's own clock; None means no budget (the chart always passes one)."""
     global _deadline
     _deadline = None if seconds is None else now() + seconds
 
@@ -122,7 +109,7 @@ def _terminated(signum: int, _frame: object) -> None:
     raise SystemExit(f"stopped by signal {signum} before the upgrade finished")
 
 
-# While `make` runs, re-post STARTING this often. The hub already treats a same-release STARTING as a
+# While the upgrade runs, re-post STARTING this often. The hub already treats a same-release STARTING as a
 # renewal, so this needs no new protocol: it means the 2h TTL only ever expires on a dead agent,
 # never on a slow-but-working upgrade.
 LEASE_RENEW_EVERY_S = 20 * 60
@@ -141,16 +128,13 @@ def release_key(tag: str | None) -> tuple[int, int, int, int] | None:
     return int(m.group(1)), int(m.group(2)), int(m.group(3)), 0 if m.group(4) else 1
 
 
-# Why a tick did nothing; also what is reported for the blockers only this host can see.
-LOCAL_MODIFICATIONS = "LOCAL_MODIFICATIONS"
-UNSUPPORTED_MODE = "UNSUPPORTED_MODE"
-UNKNOWN_CHECKOUT = "UNKNOWN_CHECKOUT"
+# The one blocker only the agent can see, reported to the hub with what failed.
 SITE_UNHEALTHY = "SITE_UNHEALTHY"
 
 
 @dataclass(frozen=True)
 class Health:
-    """trust-api's own ``/health``, as far as this host could read it."""
+    """trust-api's own ``/health``, as far as the agent could read it."""
 
     reachable: bool
     status: str | None  # "ok" | "degraded"
@@ -179,17 +163,15 @@ class Health:
 
 @dataclass(frozen=True)
 class Local:
-    """What only this host can know."""
+    """What only the agent can read: the release Helm records, and the site's health."""
 
     current_release: str | None
-    checkout_clean: bool | None  # None: git could not say
-    unsupported: bool  # a remotely driven (EC2 / DOCKER_HOST) site
     health: Health  # always read: a skippable pre-flight is a representable "health check never ran"
 
 
 @dataclass(frozen=True)
 class Cluster:
-    """What an in-cluster agent knows instead of a checkout: the release Helm tracks, and where to pull."""
+    """Where the agent runs: the trust's namespace, the Helm release it moves, and where to pull charts."""
 
     namespace: str
     release: str
@@ -242,12 +224,6 @@ def decide(policy: dict, local: Local, now_utc: datetime) -> Decision:
         return Decision("SKIP", f"{target} is older than {local.current_release}; not moving a site down")
     if policy.get("failed_release") == target:
         return Decision("SKIP", f"{target} failed earlier; an operator must clear it in the portal")
-    if local.unsupported:
-        return Decision("BLOCKED", UNSUPPORTED_MODE, target)
-    if local.checkout_clean is None:
-        return Decision("BLOCKED", UNKNOWN_CHECKOUT, target)
-    if not local.checkout_clean:
-        return Decision("BLOCKED", LOCAL_MODIFICATIONS, target)
     # Pre-flight: never touch a site that is already broken. An upgrade recreates every container,
     # so a site that cannot be verified healthy first cannot be told apart afterwards from one this
     # agent broke — and a mismatched AES key would survive the recreate as a dead trust.
@@ -262,18 +238,6 @@ def decide(policy: dict, local: Local, now_utc: datetime) -> Decision:
 
 
 # --- I/O ---
-
-
-def read_kit(path: Path) -> dict[str, str]:
-    """KEY=VALUE lines of the kit file; comments and blanks ignored, one level of quotes stripped."""
-    env: dict[str, str] = {}
-    for raw in path.read_text().splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        env[key.strip()] = value.strip().strip("'\"")
-    return env
 
 
 def hub_call(kit: dict[str, str], method: str, route: str, body: dict | None = None) -> tuple[int, dict | None]:
@@ -303,23 +267,9 @@ def run(cmd: list[str], cwd: Path, **kw) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess(cmd, 124, "", f"{cmd[0]} stopped: the agent's time budget ran out")
 
 
-def kit_identity(kit_file: Path) -> tuple[str, str]:
-    """``(KIT, HUB)`` from ``.env.<KIT>.<env>``; the kit's name, not its FL slot, is what the Makefiles key on."""
-    parts = kit_file.name.split(".", 3)  # ['', 'env', '<KIT>', '<env-token>']
-    if len(parts) != 4 or parts[3] not in ENV_TOKEN_TO_HUB:
-        raise ValueError(f"{kit_file.name} is not .env.<KIT>.<{'|'.join(ENV_TOKEN_TO_HUB)}>")
-    return parts[2], ENV_TOKEN_TO_HUB[parts[3]]
-
-
 def trust_api_base(kit: dict[str, str]) -> str:
-    """Where trust-api answers: ``TRUST_API_URL`` in a pod, else loopback on the host's published port.
-
-    On a host the agent runs beside the compose stack, which publishes trust-api on 127.0.0.1. A
-    CronJob pod has its own network namespace, so nothing listens on its loopback: the chart hands it
-    the in-cluster Service URL instead.
-    """
-    url = kit.get("TRUST_API_URL", "").rstrip("/")
-    return url or f"http://127.0.0.1:{kit.get('TRUST_API_PORT', '8020')}"
+    """Where trust-api answers: the in-cluster Service URL the chart hands the pod (``cluster_kit`` requires it)."""
+    return kit["TRUST_API_URL"].rstrip("/")
 
 
 def read_health(kit: dict[str, str]) -> Health:
@@ -341,15 +291,6 @@ def read_health(kit: dict[str, str]) -> Health:
         hub_key_match=body.get("hub_key_match") if isinstance(body.get("hub_key_match"), bool) else None,
         dead_tasks=tuple(str(t) for t in dead) if isinstance(dead, list) else (),
     )
-
-
-def local_state(kit: dict[str, str], repo: Path) -> Local:
-    """Current release and fitness from trust-api's /health; clean checkout from git; remote-driven from the kit."""
-    unsupported = any(kit.get(k, "").startswith(("ssh://", "tcp://")) for k in ("DOCKER_HOST", "DOCKER_CONTEXT"))
-    status = run(["git", "status", "--porcelain", "--untracked-files=no"], repo)
-    clean = (status.stdout.strip() == "") if status.returncode == 0 else None
-    health = read_health(kit)
-    return Local(health.version, clean, unsupported, health)
 
 
 def cluster_kit(cluster: Cluster) -> dict[str, str]:
@@ -379,7 +320,7 @@ def cluster_kit(cluster: Cluster) -> dict[str, str]:
 
 
 def cluster_state(cluster: Cluster) -> Local:
-    """Current release from the Helm record, health from trust-api; a cluster has no checkout to dirty.
+    """Current release from the Helm record, health from trust-api.
 
     ``app_version`` is the release tag (the chart's ``version`` is SemVer and cannot carry the ``v``,
     so the release tag rides on ``appVersion``). Two sources can disagree for a moment after an
@@ -400,14 +341,14 @@ def cluster_state(cluster: Cluster) -> Local:
             releases = []
         if releases:
             current = releases[0].get("app_version") or None
-    return Local(current or health.version, True, False, health)
+    return Local(current or health.version, health)
 
 
 def cluster_upgrade(cluster: Cluster, tag: str) -> tuple[bool, str]:
     """Pull the published chart for ``tag`` and move the release onto it, keeping the live values.
 
-    ``--reset-then-reuse-values`` is what replaces the host path's per-trust override: the release already
-    holds the values ``sync-kit`` last wrote, so the pod parses no kit and generates no override file. Not
+    ``--reset-then-reuse-values`` keeps the per-trust values: the release already holds the values
+    ``sync-kit`` last wrote, so the pod parses no kit and generates no override file. Not
     plain ``--reuse-values``: that renders against the *previous* chart's defaults, so a value the new
     release adds would be missing at render time. This flag takes the new chart's defaults and re-applies
     the stored overrides on top (Helm 3.14+; the agent image pins 3.17.3). Only
@@ -516,36 +457,6 @@ def governance_drift(cluster: Cluster) -> str | None:
     return None
 
 
-def checkout(repo: Path, tag: str) -> str | None:
-    """Move the checkout to the release tag (compose files and the upgrade verb come from it); error text or None."""
-    for cmd in (["git", "fetch", "--tags", "origin"], ["git", "checkout", "--detach", f"refs/tags/{tag}"]):
-        out = run(cmd, repo)
-        if out.returncode != 0:
-            return (out.stderr or out.stdout)[-LOG_TAIL_BYTES:]
-    return None
-
-
-def upgrade(repo: Path, kit_file: Path, tag: str) -> tuple[bool, str]:
-    """Move the agent's checkout to the tag, then run the operator's own verb. Returns (ok, log tail)."""
-    err = checkout(repo, tag)
-    if err:
-        return False, f"git checkout {tag} failed:\n{err}"
-    kit_name, hub = kit_identity(kit_file)
-    out = run(
-        [
-            "make",
-            "upgrade-onprem-trust",
-            f"KIT={kit_name}",
-            f"HUB={hub}",
-            f"TAG={tag}",
-            "YES=1",
-            f"KIT_FILE={kit_file}",
-        ],
-        repo,
-    )
-    return out.returncode == 0, (out.stdout + out.stderr)[-LOG_TAIL_BYTES:]
-
-
 def verify(
     kit: dict[str, str],
     tag: str,
@@ -609,7 +520,7 @@ def report_status(kit: dict[str, str], body: dict, attempts: int = REPORT_ATTEMP
 
 
 class LeaseRenewal:
-    """Re-posts STARTING while `make` runs, so an upgrade slower than the lease cannot lose it.
+    """Re-posts STARTING while the upgrade runs, so an upgrade slower than the lease cannot lose it.
 
     The hub treats a STARTING for the release already holding the lease as a renewal (it resets the
     expiry rather than refusing), so this needs no new endpoint. A failed renewal is ignored on
@@ -645,22 +556,16 @@ class LeaseRenewal:
                 print(f"lease renewal failed ({type(exc).__name__}: {exc}); continuing", file=sys.stderr)
 
 
-def tick(kit_file: Path, repo: Path, dry_run: bool, cluster: Cluster | None = None) -> int:
-    """One tick. ``cluster`` selects the Kubernetes backend; ``kit_file`` is then unused."""
+def tick(cluster: Cluster, dry_run: bool) -> int:
+    """One tick: read the policy, decide, and if due, claim, upgrade, verify and report."""
     try:
-        if cluster is None:
-            kit = read_kit(kit_file)
-            # Before anything is claimed: a kit this agent cannot name would otherwise fail inside
-            # `upgrade()` with the lease already held, and repeat on every lease expiry.
-            kit_identity(kit_file)
-        else:
-            kit = cluster_kit(cluster)
+        kit = cluster_kit(cluster)
         _, policy = hub_call(kit, "GET", "/trust/upgrade-policy")
     except (OSError, KeyError, ValueError, urllib.error.URLError) as exc:
         print(f"cannot read the policy: {exc}", file=sys.stderr)
         return 2
     assert policy is not None
-    state = local_state(kit, repo) if cluster is None else cluster_state(cluster)
+    state = cluster_state(cluster)
     decision = decide(policy, state, datetime.now(timezone.utc).replace(tzinfo=None))
     print(f"{decision.action}: {decision.reason}")
     if decision.action == "SKIP" or dry_run:
@@ -688,24 +593,20 @@ def tick(kit_file: Path, repo: Path, dry_run: bool, cluster: Cluster | None = No
     try:
         # Renewal covers the verification too: it is a ten-minute wait on the site coming back.
         with LeaseRenewal(kit, decision.release):
-            ok, tail = (
-                upgrade(repo, kit_file, decision.release)
-                if cluster is None
-                else cluster_upgrade(cluster, decision.release)
-            )
+            ok, tail = cluster_upgrade(cluster, decision.release)
             detail = tail
             if ok:
-                # The verb exiting 0 only says the deployment was applied. Confirm the site actually
+                # helm exiting 0 only says the release was applied. Confirm the site actually
                 # came back up ON the target before telling the hub it SUCCEEDED.
                 ok, detail = verify(kit, decision.release)
                 print(detail)
             if not ok:
-                # Either the verb failed or the site did not come back on the target. Both can leave it
+                # Either helm failed or the site did not come back on the target. Both can leave it
                 # half-applied, possibly past a migration, so stop here and say so (see stopped_note).
                 how = stopped_note(state.current_release, decision.release)
                 detail = f"{detail}\n{how}"
                 print(how)
-            elif cluster is not None:
+            else:
                 # The upgrade applied and the site came up. Before calling it done, check the release's
                 # own governance document is still what the cluster holds (see governance_drift).
                 drift = governance_drift(cluster)
@@ -729,17 +630,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
     t = sub.add_parser("tick", help="decide, and if due, upgrade")
-    t.add_argument("--kit-file", type=Path, help="the trust's kit file (host mode)")
-    t.add_argument("--checkout", type=Path, default=DEFAULT_CHECKOUT, help="the agent's own FLIP checkout")
     t.add_argument("--dry-run", action="store_true", help="print the decision, change nothing")
-    cluster_args = t.add_argument_group("cluster mode", "the chart's CronJob passes these; no checkout")
-    cluster_args.add_argument("--mode", choices=("host", "cluster"), default="host")
-    cluster_args.add_argument("--namespace", help="the trust's namespace")
-    cluster_args.add_argument("--release", help="the Helm release name")
-    cluster_args.add_argument("--chart-repository", help="e.g. oci://ghcr.io/londonaicentre/charts/flip-trust")
-    cluster_args.add_argument("--kit-name", help="TRUST_CODE, for the hub's log line")
-    cluster_args.add_argument("--hub", help="prod | stag (the kit token, not the URL)")
-    cluster_args.add_argument(
+    t.add_argument("--namespace", required=True, help="the trust's namespace")
+    t.add_argument("--release", required=True, help="the Helm release name")
+    t.add_argument("--chart-repository", required=True, help="e.g. oci://ghcr.io/londonaicentre/charts/flip-trust")
+    t.add_argument("--kit-name", required=True, help="TRUST_CODE, for the hub's log line")
+    t.add_argument("--hub", required=True, help="prod | stag (the kit token, not the URL)")
+    t.add_argument(
         "--budget-seconds",
         type=int,
         help="finish (and report) within this many seconds; the chart passes the Job deadline minus a margin",
@@ -750,15 +647,8 @@ def main(argv: list[str] | None = None) -> int:
             t.error(f"--budget-seconds must be more than the {REPORT_RESERVE_S}s kept for the report")
         set_budget(args.budget_seconds)
         signal.signal(signal.SIGTERM, _terminated)
-    cluster = None
-    if args.mode == "cluster":
-        missing = [k for k in ("namespace", "release", "chart_repository", "kit_name", "hub") if not getattr(args, k)]
-        if missing:
-            t.error(f"--mode cluster needs {', '.join('--' + m.replace('_', '-') for m in missing)}")
-        cluster = Cluster(args.namespace, args.release, args.chart_repository, args.kit_name, args.hub)
-    elif not args.kit_file:
-        t.error("--kit-file is required unless --mode cluster")
-    return tick(args.kit_file, args.checkout, args.dry_run, cluster)
+    cluster = Cluster(args.namespace, args.release, args.chart_repository, args.kit_name, args.hub)
+    return tick(cluster, args.dry_run)
 
 
 if __name__ == "__main__":
