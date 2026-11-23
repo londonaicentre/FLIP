@@ -96,7 +96,7 @@ class TestValuesStamping:
     def test_the_upstream_image_versions_are_untouched(self) -> None:
         """Grafana, Loki, Alloy and uv carry upstream versions that have nothing to do with ours."""
         out = stamp_values(REAL_VALUES, "v0.13.0")
-        for pinned in ('tag: "3.4.0"', 'tag: "v1.9.0"', 'tag: "11.5.0"', 'tag: "python3.12-bookworm-slim"'):
+        for pinned in ('tag: "3.4.0"', 'tag: "v1.9.0"', 'tag: "11.5.0"', 'tag: "python3.13-bookworm-slim"'):
             assert pinned in out
 
     def test_the_file_is_otherwise_byte_identical(self) -> None:
