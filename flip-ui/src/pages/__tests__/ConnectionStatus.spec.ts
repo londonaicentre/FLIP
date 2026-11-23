@@ -29,13 +29,19 @@ const mockSwrvData = ref<ITrustResponse[] | undefined>(undefined);
 // The page's second SWRV subscription (FLIP#1204): the hub's own /health, for the
 // "Hub <release>" figure in the header. Keyed separately so the two never share data.
 const mockHubHealth = ref<{ status: string; version?: string } | undefined>(undefined);
+// The page's third subscription: the admin-only fleet's upgrade state, one row per trust.
+const mockUpgradeFleet = ref<unknown[] | undefined>(undefined);
 
 vi.mock("swrv", () => ({
     default: (...args: unknown[]) => {
         swrvCalls.push(args);
 
+        const data = args[0] === "hub-health"
+            ? mockHubHealth
+            : args[0] === "auto-upgrade-fleet" ? mockUpgradeFleet : mockSwrvData;
+
         return {
-            data: args[0] === "hub-health" ? mockHubHealth : mockSwrvData,
+            data,
             mutate: vi.fn(),
             error: ref(null)
         };
@@ -204,6 +210,7 @@ beforeEach(() => {
     vi.setSystemTime(now);
     mockSwrvData.value = undefined;
     mockHubHealth.value = undefined;
+    mockUpgradeFleet.value = undefined;
     swrvCalls.length = 0;
 });
 
@@ -411,6 +418,89 @@ describe("ConnectionStatus", () => {
         expect(wrapper.find("[data-test='ai-loader']").exists()).toBe(false);
         expect(wrapper.findAll("[data-test='trust-row']").length).toBe(fixture.length);
         expect(wrapper.find("[data-test='add-trust-btn']").exists()).toBe(false);
+    });
+
+
+    // The fleet column (epic #1640): one row per trust, the same view My Trust renders. Admins only —
+    // a Trust Admin's own trust is on My Trust, and the API refuses them the fleet.
+    it("shows each trust's upgrade state in the fleet column", async () => {
+        mockSwrvData.value = fixture;
+        mockUpgradeFleet.value = [
+            {
+                trust_id: fixture[0].id,
+                name: fixture[0].name,
+                code: fixture[0].code,
+                view: {
+                    enabled: true,
+                    state: "PENDING",
+                    targetRelease: "v0.13.0",
+                    currentRelease: "v0.12.0",
+                    blockers: [],
+                    pendingSince: null,
+                    lastAttempt: null
+                }
+            },
+            {
+                trust_id: fixture[1].id,
+                name: fixture[1].name,
+                code: fixture[1].code,
+                view: {
+                    enabled: true,
+                    state: "FAILED",
+                    currentRelease: "v0.12.0",
+                    blockers: [],
+                    pendingSince: null,
+                    lastAttempt: {
+                        state: "FAILED",
+                        release: "v0.13.0",
+                        at: seconds(600),
+                        detail: "boom"
+                    }
+                }
+            }
+        ];
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        // Rows are severity-sorted, so read the label per row rather than by index.
+        const byTrust = new Map<string, { label: string; title: string }>();
+        for (const row of wrapper.findAll("[data-test='trust-row']")) {
+            const name = row.find("[data-test='trust-name']").text();
+            const cell = row.find("[data-test='trust-upgrade']");
+            const pill = cell.find("span");
+            byTrust.set(name, {
+                label: cell.text(),
+                title: pill.exists() ? (pill.attributes("title") ?? "") : ""
+            });
+        }
+        expect(byTrust.get(fixture[0].name)).toEqual({
+            label: "Pending",
+            title: expect.stringContaining("v0.13.0")
+        });
+        // The reason an admin has to act is one hover away, not a second click.
+        expect(byTrust.get(fixture[1].name)).toEqual({
+            label: "Failed",
+            title: expect.stringContaining("boom")
+        });
+        // A trust with no fleet row says so rather than guessing.
+        expect(byTrust.get(fixture[2].name)?.label).toBe("—");
+    });
+
+    it("shows an em dash when no fleet state is known", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        const cells = wrapper.findAll("[data-test='trust-upgrade']");
+        expect(cells[0].text()).toBe("—");
+    });
+
+    it("does not ask for the fleet when the viewer is not an admin", async () => {
+        mockSwrvData.value = fixture;
+        mountPage({ permissions: [] });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const fleet = swrvCalls.find(call => call[0] === "auto-upgrade-fleet");
+        expect(fleet).toBeTruthy();
+        // The fetcher is a function, not a promise: calling it is what decides whether a request is made.
+        await expect((fleet![1] as () => Promise<unknown>)()).resolves.toEqual([]);
     });
 
     it("shows the Add Trust button for admins", async () => {
@@ -753,12 +843,12 @@ describe("ConnectionStatus", () => {
         expect(nameCell?.className).toContain("max-w-0");
     });
 
-    it("renders seven columns — Services dots + drawer chevron, no sparkline", async () => {
+    it("renders eight columns — Services dots, the fleet's upgrade state and the drawer chevron", async () => {
         const wrapper = await mountLoaded(fixture, { permissions: [] });
 
-        expect(wrapper.findAll("th")).toHaveLength(7);
+        expect(wrapper.findAll("th")).toHaveLength(8);
         const row = wrapper.find("[data-test='trust-row']");
-        expect(row.findAll("td")).toHaveLength(7);
+        expect(row.findAll("td")).toHaveLength(8);
         // The placeholder 7d-uptime sparkline is gone (replaced by real service dots).
         expect(wrapper.find("[data-test='trust-uptime']").exists()).toBe(false);
         expect(row.find("polyline").exists()).toBe(false);
@@ -773,9 +863,9 @@ describe("ConnectionStatus", () => {
             await wrapper.vm.$nextTick();
 
             const headers = wrapper.findAll("th").map(th => th.text());
-            // Jobs (FLIP#1739) and Download are the two admin-only columns.
-            expect(headers).toHaveLength(9);
-            expect(wrapper.find("[data-test='trust-row']").findAll("td")).toHaveLength(9);
+            // Jobs (FLIP#1739) and Download are the two admin-only columns, on top of the eight everyone sees.
+            expect(headers).toHaveLength(10);
+            expect(wrapper.find("[data-test='trust-row']").findAll("td")).toHaveLength(10);
             // Before the drawer chevron's empty header.
             expect(headers.slice(-2)).toEqual(["Download", ""]);
             const cells = wrapper.findAll("[data-test='kit-cell-stub']");
