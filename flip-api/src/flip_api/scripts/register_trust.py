@@ -138,6 +138,8 @@ def _kit_dict(kit: RegisteredTrust) -> dict[str, Any]:
         "fl_kit_slot": kit.fl_kit_slot.slot_name,
         "fl_kit_slot_number": kit.fl_kit_slot.slot_number,
         "hub_shared": _hub_shared_from_env(),
+        # Set when the rotation was staged (FLIP#1714); the deploy scripts print which mode ran from it.
+        "staged_until": kit.staged_until.isoformat() if kit.staged_until else None,
     }
 
 

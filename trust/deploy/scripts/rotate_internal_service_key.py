@@ -11,12 +11,18 @@
 # limitations under the License.
 """Rotate a trust's TRUST_INTERNAL_SERVICE_KEY in its kit file, on the site alone (FLIP#1714).
 
-The hub never sees or checks this key: only the trust's own services do, when trust-api calls
-imaging-api and data-access-api. So a site can rotate it on its own schedule, with no hub call and
+The hub mints this key at registration and hands it over once, but never stores or checks it: only
+the trust's own services do. trust-api, imaging-api and the FL client present it, and imaging-api
+and data-access-api check it. So a site can rotate it on its own schedule, with no hub call and
 without touching TRUST_API_KEY. The new value takes effect when every trust container is recreated
 from the kit together, because a container left on the old value would refuse its siblings' calls.
 
-Usage (from trust/): ``make rotate-internal-service-key KIT=<CODE>``, or directly:
+This is for a Docker Compose site, whose containers read the kit file on this host. A Helm, AKS or
+Snowflake site runs from a copy synced from the kit, and the hub operator's copy of the kit still
+holds the old key, so the next kit delivered from it would put the old key back: rotate there with
+the hub's ``make rotate-trust-keys`` instead.
+
+Usage (from trust/): ``make rotate-internal-service-key KIT=<CODE> HUB=<env>``, or directly:
     python3 deploy/scripts/rotate_internal_service_key.py --kit-file .env.<CODE>.<env>
 
 Stdlib only, like every kit writer: it runs on a bare trust host.

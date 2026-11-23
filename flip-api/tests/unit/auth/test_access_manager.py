@@ -52,7 +52,35 @@ def _db_with_trust_rows(rows: list[Trust]) -> MagicMock:
     db = MagicMock(spec=Session)
     db.exec.return_value.all.return_value = [t for t in rows if t.api_key_hash is not None]
     db.get.return_value = None  # default: cache-hit path treated as stale
+    db.execute.side_effect = _conditional_update_on(rows)
     return db
+
+
+def _conditional_update_on(rows: list[Trust]):
+    """Apply the promotion's conditional ``UPDATE`` to ``rows`` the way Postgres would.
+
+    Reads the statement's bound parameters, so a row is changed only while its id, staged hash and
+    unexpired deadline all still match at "write time", and returns the ``rowcount`` the code reads.
+    """
+
+    def execute(statement):
+        params = statement.compile().params
+        changed = 0
+        for row in rows:
+            deadline = row.pending_api_key_expires_at
+            if (
+                row.id == params["id_1"]
+                and row.pending_api_key_hash == params["pending_api_key_hash_1"]
+                and deadline is not None
+                and deadline.replace(tzinfo=None) > params["pending_api_key_expires_at_1"]
+            ):
+                row.api_key_hash = params["api_key_hash"]
+                row.pending_api_key_hash = None
+                row.pending_api_key_expires_at = None
+                changed += 1
+        return MagicMock(rowcount=changed)
+
+    return execute
 
 
 @pytest.fixture(autouse=True)
@@ -248,24 +276,67 @@ class TestStagedKeyRotation:
         assert trust.api_key_hash == NEW_TEST_KEY_HASH
         assert _audit_actions(db) == [TrustAuditAction.KEY_PROMOTED]
 
-    def test_a_pending_key_past_its_deadline_is_refused_and_dropped(self):
+    def test_a_pending_key_past_its_deadline_is_refused_and_nothing_is_written(self):
+        """Expiry is the scheduler's job: the auth path refuses the key but writes nothing (FLIP#1714)."""
         trust = _staged_trust(expires_in=timedelta(seconds=-1))
         db = _db_with_trust_rows([trust])
 
         with pytest.raises(HTTPException) as exc_info:
             authenticate_trust(api_key=NEW_TEST_KEY, db=db)
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
-        assert trust.pending_api_key_hash is None
         assert trust.api_key_hash == VALID_TEST_KEY_HASH
-        assert _audit_actions(db) == [TrustAuditAction.KEY_EXPIRED]
+        assert _audit_actions(db) == []
+        db.execute.assert_not_called()
+        db.commit.assert_not_called()
 
     def test_the_old_key_carries_on_after_the_pending_key_expires(self):
         trust = _staged_trust(expires_in=timedelta(seconds=-1))
         db = _db_with_trust_rows([trust])
 
         assert authenticate_trust(api_key=VALID_TEST_KEY, db=db) is trust
-        assert trust.pending_api_key_hash is None
-        assert _audit_actions(db) == [TrustAuditAction.KEY_EXPIRED]
+        assert _audit_actions(db) == []
+        db.commit.assert_not_called()
+
+    def test_a_pending_key_with_no_deadline_is_refused(self):
+        """Every staged key is written with a deadline; a row without one is not accepted for auth."""
+        trust = _staged_trust()
+        trust.pending_api_key_expires_at = None
+        db = _db_with_trust_rows([trust])
+
+        with pytest.raises(HTTPException) as exc_info:
+            authenticate_trust(api_key=NEW_TEST_KEY, db=db)
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert trust.api_key_hash == VALID_TEST_KEY_HASH
+
+    def test_two_first_calls_with_the_new_key_write_one_promotion(self):
+        """trust-api's heartbeat and task poll after a restart: only the call that wins the update audits."""
+        trust = _staged_trust()
+        db = _db_with_trust_rows([trust])
+
+        assert authenticate_trust(api_key=NEW_TEST_KEY, db=db) is trust
+        trust_key_cache.invalidate()  # the second call comes from another worker, through the sweep
+        assert authenticate_trust(api_key=NEW_TEST_KEY, db=db) is trust
+
+        assert _audit_actions(db) == [TrustAuditAction.KEY_PROMOTED]
+
+    def test_a_promotion_that_loses_to_a_revoke_is_refused(self):
+        """A cutover that commits between the sweep's read and the promotion wins; the staged key gets 401."""
+        trust = _staged_trust()
+        db = _db_with_trust_rows([trust])
+        revoked_hash = hashlib.sha256(b"revoke-old key").hexdigest()
+
+        def revoke_then_update(statement):
+            # The --revoke-old commit lands first, as it would from another process.
+            trust.api_key_hash, trust.pending_api_key_hash, trust.pending_api_key_expires_at = revoked_hash, None, None
+            return _conditional_update_on([trust])(statement)
+
+        db.execute.side_effect = revoke_then_update
+
+        with pytest.raises(HTTPException) as exc_info:
+            authenticate_trust(api_key=NEW_TEST_KEY, db=db)
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert trust.api_key_hash == revoked_hash
+        assert _audit_actions(db) == []
 
     def test_a_naive_deadline_from_the_database_is_read_as_utc(self):
         """The column is ``timestamp without time zone``; a naive value must not raise on compare."""

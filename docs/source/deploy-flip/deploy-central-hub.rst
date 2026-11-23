@@ -359,7 +359,8 @@ Rotating keys
 
 *Who: FLIP admin, with AWS access to the hub's account.* For a site on a Docker Compose host, the trust's Trust Admin
 or a FLIP admin can do this from the trust's card instead, with **Issue new keys** ("Later — issue new keys" on
-:doc:`onboarding-a-trust`); the three points below apply to both routes. From the command line, a trust's API key and
+:doc:`onboarding-a-trust`). That route is always an immediate cutover, like ``REVOKE_OLD=1`` below, and also drops
+any key a command-line rotation had staged; the points under "Two more things to plan for" apply to both routes. From the command line, a trust's API key and
 trust-internal service key are reissued in place, without re-registering it:
 
 .. code-block:: shell
@@ -373,9 +374,14 @@ and the change is recorded as a ``ROTATED`` entry in the trust audit log. The ne
 **By default the new key is staged, and the site stays online.** The hub accepts both the old and the new key until
 the trust first calls it with the new one, which happens as soon as its containers are recreated from the new kit.
 That call promotes the new key: the old one is refused from then on, and the audit log records ``KEY_PROMOTED``.
-If the new key is never used within ``TRUST_KEY_ROTATION_GRACE_DAYS`` (14 by default), the hub drops it, records
-``KEY_EXPIRED``, and the site carries on with its old key. A kit lost in transit is recovered by rotating again:
-the new pending key replaces the lost one, and the site never stopped working.
+If the new key is never used within ``TRUST_KEY_ROTATION_GRACE_DAYS`` (14 by default), the hub stops accepting it
+at the deadline, later clears it and records ``KEY_EXPIRED``. A site that never switched carries on with its old key.
+A site that installs the new kit *after* the deadline is refused, because the key in that kit was dropped: rotate
+again and deliver the newer kit. A kit lost in transit is recovered the same way: the new pending key replaces the
+lost one, and the site never stopped working.
+
+``TRUST_KEY_ROTATION_GRACE_DAYS`` is a flip-api setting with no Terraform passthrough, so a deployed hub always uses
+the 14-day default; only a local hub reads it from ``.env.<hub>``.
 
 **For a key known to be leaked, cut it off at once** with ``REVOKE_OLD=1``:
 
@@ -387,7 +393,8 @@ The hub then refuses the old key the moment the rotation commits, and the trust 
 recreated from the new kit. Plan that as a short outage for the site.
 
 **Check that the old key is refused.** Once a staged rotation is promoted, or straight after ``REVOKE_OLD=1``, a call
-with the old key must get ``401``:
+with the old key must get ``401``. Do not test with the *new* key while a rotation is staged: any authenticated call
+with it promotes it, and the site, still on the old key, is refused from then on.
 
 .. code-block:: shell
 
@@ -408,9 +415,12 @@ Two more things to plan for:
 
   Do **not** use that root's ``deploy``: it is a first-install command that re-seeds the trust's data and resets XNAT.
 
-  The hub never checks the trust-internal service key, so a site can also rotate it on its own, without the hub and
-  without touching its API key: ``make -C trust rotate-internal-service-key KIT=<CODE>``, then recreate every
-  container the same way.
+  The hub never checks the trust-internal service key, so a site on a Docker Compose host can also rotate it on its
+  own, without the hub and without touching its API key:
+  ``make -C trust rotate-internal-service-key KIT=<CODE> HUB=<env>``, then recreate every container the same way.
+  This is for Compose only. A Helm, AKS or Snowflake site runs from a copy synced from the kit, and the hub
+  operator's copy of the kit still holds the old key, so the next kit delivered from it puts the old key back.
+  There, rotate both keys from the hub with ``rotate-trust-keys`` and re-sync the kit.
 - **XNAT credentials do not rotate with it.** Their passwords live in the same kit, but changing them has its own
   caveat: Postgres applies ``XNAT_DATASOURCE_*`` only at the first initdb of the ``xnat-db`` volume, so a rotated value
   must also be applied to the live database. See ``make generate-xnat-credentials FORCE=1`` and the

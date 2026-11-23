@@ -12,12 +12,13 @@
 
 import hashlib
 import hmac
-from collections.abc import Sequence
 from datetime import datetime, timezone
+from typing import NoReturn
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Security, status
 from fastapi.security.api_key import APIKeyHeader
+from sqlalchemy import update
 from sqlmodel import Session, col, select
 
 from flip_api.auth import trust_key_cache
@@ -350,11 +351,15 @@ def _as_utc(value: datetime) -> datetime:
 
 
 def _pending_is_live(trust: Trust, now: datetime) -> bool:
-    """Whether the trust has a staged key that has not passed its deadline (FLIP#1714)."""
+    """Whether the trust has a staged key that has not passed its deadline (FLIP#1714).
+
+    A staged key with no deadline counts as expired: every staged key is written with one, so a
+    row without it is not something to accept for auth.
+    """
     if trust.pending_api_key_hash is None:
         return False
     expires_at = trust.pending_api_key_expires_at
-    return expires_at is None or _as_utc(expires_at) > now
+    return expires_at is not None and _as_utc(expires_at) > now
 
 
 def _match(trust: Trust, provided_hash: str, now: datetime) -> tuple[bool, bool]:
@@ -369,50 +374,56 @@ def _match(trust: Trust, provided_hash: str, now: datetime) -> tuple[bool, bool]
     return live, pending
 
 
-def _promote_pending_key(trust: Trust, db: Session) -> None:
+def _promote_pending_key(trust: Trust, provided_hash: str, db: Session, now: datetime) -> bool:
     """Make the staged key the trust's only key: the trust has its new kit (FLIP#1714).
+
+    The swap is one conditional ``UPDATE`` that only applies while ``provided_hash`` is still the
+    row's unexpired staged key, so it is decided in the database rather than from the row read
+    earlier. Of two concurrent first calls with the new key one wins and writes the KEY_PROMOTED
+    row; the other changes nothing. A ``--revoke-old`` or a UI rotate that commits first clears the
+    staged hash, so the update matches no row and cannot bring the staged key back.
 
     The old key is refused from this commit on. Every worker's cache re-checks the live hash on a
     hit, so an old key cached before the promotion fails there and falls through to a sweep that no
     longer matches it.
+
+    Returns:
+        bool: Whether ``provided_hash`` is the trust's live key afterwards, whoever promoted it.
+        False means the staged key lost to a cutover and the request must be refused.
     """
-    trust.api_key_hash = trust.pending_api_key_hash
-    trust.pending_api_key_hash = None
-    trust.pending_api_key_expires_at = None
-    audit_trust_action(
-        trust_id=trust.id,
-        trust_name=trust.name,
-        action=TrustAuditAction.KEY_PROMOTED,
-        user_id=None,
-        session=db,
+    result = db.execute(
+        update(Trust)
+        .where(
+            col(Trust.id) == trust.id,
+            col(Trust.pending_api_key_hash) == provided_hash,
+            # The column is ``timestamp without time zone`` holding UTC.
+            col(Trust.pending_api_key_expires_at) > now.astimezone(timezone.utc).replace(tzinfo=None),
+        )
+        .values(api_key_hash=provided_hash, pending_api_key_hash=None, pending_api_key_expires_at=None)
     )
-    db.add(trust)
-    db.commit()
-    db.refresh(trust)
-    trust_key_cache.invalidate()
-    logger.info("Trust %r authenticated with its rotated key; the old key is now refused.", trust.name)
-
-
-def _expire_stale_pending_keys(candidates: Sequence[Trust], db: Session, now: datetime) -> None:
-    """Drop staged keys past their deadline. The live key carries on; the drop is audited (FLIP#1714)."""
-    expired = [t for t in candidates if t.pending_api_key_hash is not None and not _pending_is_live(t, now)]
-    for trust in expired:
-        trust.pending_api_key_hash = None
-        trust.pending_api_key_expires_at = None
+    if result.rowcount == 1:  # type: ignore[attr-defined]
         audit_trust_action(
             trust_id=trust.id,
             trust_name=trust.name,
-            action=TrustAuditAction.KEY_EXPIRED,
+            action=TrustAuditAction.KEY_PROMOTED,
             user_id=None,
             session=db,
         )
-        db.add(trust)
-        logger.warning(
-            "Trust %r never used its rotated key before the deadline; it was dropped and the old key still works.",
-            trust.name,
-        )
-    if expired:
-        db.commit()
+        logger.info("Trust %r authenticated with its rotated key; the old key is now refused.", trust.name)
+    db.commit()
+    db.refresh(trust)
+    trust_key_cache.invalidate()
+    return trust.api_key_hash is not None and hmac.compare_digest(provided_hash, trust.api_key_hash)
+
+
+def _refuse_superseded_key(trust: Trust) -> NoReturn:
+    """401 for a staged key that a cutover replaced between the sweep and its promotion."""
+    logger.warning("Trust %r presented a staged key that a later key change replaced; refused.", trust.name)
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid API Key.",
+        headers={"WWW-Authenticate": "ApiKey"},
+    )
 
 
 def authenticate_trust(
@@ -429,8 +440,9 @@ def authenticate_trust(
 
     During a staged rotation (FLIP#1714) a row also carries ``pending_api_key_hash``, and
     either key authenticates it. The first request made with the pending key promotes it:
-    from then on only the new key works. A pending key past its deadline is dropped instead,
-    and the old key carries on.
+    from then on only the new key works. A pending key past its deadline no longer
+    authenticates, and the old key carries on; the scheduler clears it from the row
+    (``expire_staged_trust_keys``), so this path writes nothing except a promotion.
 
     Constant-time comparison (``hmac.compare_digest``) on every candidate prevents
     timing side-channels (would otherwise leak which trust the key belongs to via
@@ -472,8 +484,9 @@ def authenticate_trust(
         if cached is not None:
             live, pending = _match(cached, provided_hash, now)
             if pending:
-                _promote_pending_key(cached, db)
-                return cached
+                if _promote_pending_key(cached, provided_hash, db, now):
+                    return cached
+                _refuse_superseded_key(cached)
             if live:
                 logger.debug("Trust authenticated via cache.")
                 return cached
@@ -506,11 +519,9 @@ def authenticate_trust(
         if live or pending:
             matched, matched_pending = candidate, pending
 
-    _expire_stale_pending_keys(candidates, db, now)
-
     if matched is not None:
-        if matched_pending:
-            _promote_pending_key(matched, db)
+        if matched_pending and not _promote_pending_key(matched, provided_hash, db, now):
+            _refuse_superseded_key(matched)
         # Cache the resolved id so the next request short-circuits to the hot
         # path. Done only after a sweep match — never after the cache-stale
         # fall-through, where the candidate set may have shifted under us.

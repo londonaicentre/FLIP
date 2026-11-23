@@ -13,7 +13,7 @@
 .PHONY: build build-fl clean clean-object-store up down up-no-trust up-trusts central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks \
 		check-aws-access generate-fl-api-key generate-xnat-credentials _check-compose-project-owner \
-		register-trust register-trusts rotate-trust-keys new-trust _wait-for-hub _refuse-deployed-hub integration_test \
+		register-trust register-trusts rotate-trust-keys new-trust _wait-for-hub _refuse-deployed-hub _check-revoke-old integration_test \
 		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint mirror-images aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
 		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
@@ -670,7 +670,12 @@ _wait-for-hub:
 # A deployed hub runs on ECS, out of reach of the local flip-api these targets exec into: they
 # would mint keys in the local database and write them into the real kit (FLIP#938).
 _refuse-deployed-hub:
-	@[ -z "$(IS_DEPLOYED)" ] || { echo "❌ HUB=$(HUB) is the ECS hub: run 'make -C deploy/providers/AWS $(AWS_TARGET) KIT=$(or $(KIT),<CODE>) HUB=$(HUB)'"; exit 1; }
+	@[ -z "$(IS_DEPLOYED)" ] || { echo "❌ HUB=$(HUB) is the ECS hub: run 'make -C deploy/providers/AWS $(AWS_TARGET) KIT=$(or $(KIT),<CODE>) HUB=$(HUB)$(if $(filter 1,$(REVOKE_OLD)), REVOKE_OLD=1)'"; exit 1; }
+
+# REVOKE_OLD is the leaked-key switch (FLIP#1714). Anything other than empty, 0 or 1 (`true`, `yes`)
+# is refused rather than read as "stage", which would leave a leaked key valid.
+_check-revoke-old:
+	@case '$(REVOKE_OLD)' in ''|0|1) ;; *) echo "❌ REVOKE_OLD must be empty, 0 or 1 (got '$(REVOKE_OLD)')."; exit 1 ;; esac
 
 # Register one trust on the running hub from its kit file. KIT is the trust
 # CODE (the kit-file handle). Seeds trust/.env.<CODE>.<env> from its .example on
@@ -710,7 +715,7 @@ register-trust: _check-compose-project-owner _refuse-deployed-hub _wait-for-hub
 # (Postgres applies XNAT_DATASOURCE_* only on first initdb, see
 # generate-xnat-credentials).
 rotate-trust-keys: AWS_TARGET := rotate-trust-keys
-rotate-trust-keys: _check-compose-project-owner _refuse-deployed-hub _wait-for-hub
+rotate-trust-keys: _check-compose-project-owner _check-revoke-old _refuse-deployed-hub _wait-for-hub
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1; }
 	@kit='$(call kit_file,trust/,$(KIT))'; \
 	  [ -f "$$kit" ] || { echo "❌ $$kit not found. Register the trust first."; exit 1; }; \
@@ -722,7 +727,12 @@ rotate-trust-keys: _check-compose-project-owner _refuse-deployed-hub _wait-for-h
 	  printf '%s\n' "$$kitjson" | uv run --no-config trust/deploy/scripts/distribute_trust_kits.py --target "$$kit" \
 	    || { echo "❌ The hub has already committed the new keys, but $$kit could not be written: it still holds the OLD keys."; \
 	         echo "   Fix the write error and re-run 'make rotate-trust-keys KIT=$(KIT)' to mint another pair."; exit 1; }; \
-	  $(if $(filter 1,$(REVOKE_OLD)),echo "⚠️  Old key refused from now on: recreate the trust containers from $$kit.",echo "✅ New key staged: both keys work until the trust restarts on $$kit; its first call with the new key retires the old one.")
+	  staged_until="$$(printf '%s\n' "$$kitjson" | uv run --no-config python -c 'import json, sys; print(json.load(sys.stdin)[0].get("staged_until") or "")')"; \
+	  if [ -n "$$staged_until" ]; then \
+	    echo "✅ New key staged: both keys work until the trust restarts on $$kit (its first call with the new key retires the old one), or until $$staged_until."; \
+	  else \
+	    echo "⚠️  Old key refused from now on: recreate the trust containers from $$kit."; \
+	  fi
 
 # Register every dev trust: the shipped trust/.env.<CODE>.<env>.example kits ARE
 # the roster (each is seeded to a live kit + registered). Used by `make up`.

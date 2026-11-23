@@ -358,9 +358,14 @@ carrying `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY`. `make up` runs `regis
 automatically once the hub is up.
 
 `make rotate-trust-keys KIT=<CODE>` reissues an already-registered trust's two keys in place and
-rewrites the same kit file. The trust keeps its id, its code and its FL kit slot. The hub refuses
-the old key as soon as the rotation commits, so the trust is offline until its containers are
-recreated from the new kit.
+rewrites the same kit file. The trust keeps its id, its code and its FL kit slot. The new API key is
+staged (FLIP#1714): the hub accepts the old and the new key until the trust first calls it with the
+new one, which retires the old one, so the trust stays online until its containers are recreated
+from the new kit. An unused new key stops working after `TRUST_KEY_ROTATION_GRACE_DAYS` (default
+14). `REVOKE_OLD=1` is the cutover for a leaked key: the hub refuses the old key as soon as the
+rotation commits, and the trust is offline until it runs on the new kit. On a Compose trust,
+`make -C trust rotate-internal-service-key KIT=<CODE> HUB=<env>` rotates only the
+trust-internal service key, which the hub never checks.
 
 A trust added with **Add Trust** in the UI has no keys until its kit is first downloaded from its
 card, by its Trust Admin or a hub admin (FLIP#1852). On a stag/prod Docker Compose trust host,
@@ -382,6 +387,8 @@ compose file — avoid hardcoding values in Dockerfiles or compose files directl
 **Authentication environment variables:**
 
 - `TRUST_API_KEY_HEADER` — HTTP header name for trust-to-hub authentication.
+- `TRUST_KEY_ROTATION_GRACE_DAYS` — how long a staged rotated trust key may stay unused before the
+  hub drops it (default 14). A deployed hub has no Terraform passthrough for it and uses the default.
 - `TRUST_API_KEY` — single per-trust plaintext API key. Lives only in that trust's kit file
   (`trust/.env.<CODE>.<env>`), written by `make register-trusts`; never on the hub.
 - `FL_API_KEY` — the key flip-api sends to every FL API (`fl-api-net-N`) in the `FL_API_KEY_HEADER` header

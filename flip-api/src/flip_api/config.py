@@ -450,6 +450,9 @@ class Settings(BaseSettings):
     TASK_STALE_TIMEOUT_MINUTES: int = 30  # Tasks older than this in IN_PROGRESS are considered stale
     TASK_MAX_RETRIES: int = 3  # Max times a stale task can be retried before being marked FAILED
     SCHEDULER_STALE_TASK_RECOVERY_RATE: int = 10  # How often to check for stale tasks (in minutes)
+    # How often to clear staged trust keys past their deadline (in minutes, FLIP#1714). Cleanup only:
+    # an expired staged key stops authenticating at its deadline whether or not this has run.
+    SCHEDULER_TRUST_KEY_EXPIRY_RATE: int = 15
     MAX_TASK_RESULT_LENGTH: int = 10_000_000  # Max size (in characters) for task result payloads
 
     # Variables only used in testing

@@ -53,6 +53,16 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/utils.sh"
 
+# REVOKE_OLD is the leaked-key switch (FLIP#1714): a value it does not recognise must not quietly
+# fall back to a staged rotation that leaves the leaked key valid.
+case "${REVOKE_OLD:-}" in
+    "" | 0 | 1) ;;
+    *)
+        log_error "REVOKE_OLD must be empty, 0 or 1 (got '${REVOKE_OLD}')."
+        exit 1
+        ;;
+esac
+
 check_aws_profile
 
 : "${ECS_CLUSTER:=flip-cluster}"
@@ -282,6 +292,16 @@ register_one_kit() {
         return 1
     fi
     log_success "Wrote kit for '$name' → $kit_file"
+    if [ "${ROTATE_KEYS:-0}" = "1" ]; then
+        # Say which mode ran: on this path nothing else on screen does (FLIP#1714).
+        local staged_until
+        staged_until="$(echo "$kit" | jq -r '.staged_until // empty')"
+        if [ -n "$staged_until" ]; then
+            log_info "Trust '$name': new key staged; the old key stays valid until the site first uses the new one, or until $staged_until."
+        else
+            log_info "Trust '$name': old key refused from now on; the site is offline until it runs on $kit_file."
+        fi
+    fi
 }
 
 # `|| failed=1` so one bad kit doesn't strand the rest — every kit is attempted,

@@ -21,6 +21,7 @@ from flip_api.private_services.stale_task_recovery import recover_stale_tasks_sc
 from flip_api.project_services.reimport_imaging_project_studies import (
     reimport_imaging_project_studies_scheduled_task,
 )
+from flip_api.trusts_services.expire_staged_trust_keys import expire_staged_trust_keys_scheduled_task
 
 # Periodic functions to run at set intervals
 scheduler = BackgroundScheduler()
@@ -57,6 +58,11 @@ scheduler.add_job(
     reconcile_scanning_files_scheduled_task,
     "interval",
     minutes=get_settings().SCHEDULER_MALWARE_SCAN_RECONCILE_RATE,
+)
+scheduler.add_job(
+    expire_staged_trust_keys_scheduled_task,
+    "interval",
+    minutes=get_settings().SCHEDULER_TRUST_KEY_EXPIRY_RATE,
 )
 
 

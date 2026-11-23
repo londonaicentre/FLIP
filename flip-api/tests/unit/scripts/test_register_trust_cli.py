@@ -18,6 +18,7 @@ thin CLI wrapper — the idempotent skip and the kit-dict shaping.
 """
 
 import json
+from datetime import datetime, timezone
 from unittest.mock import ANY, MagicMock, patch
 from uuid import uuid4
 
@@ -81,7 +82,9 @@ def test_registers_new_trust_and_returns_one_kit(monkeypatch, session):
         "fl_kit_slot",
         "fl_kit_slot_number",
         "hub_shared",
+        "staged_until",
     }
+    assert kit["staged_until"] is None
 
 
 def test_skip_path_emits_metadata_without_credentials(monkeypatch, session):
@@ -268,6 +271,7 @@ def test_main_rotate_emits_a_full_kit(monkeypatch, capsys):
         fl_kit_slot=FLKitSlot(slot_name="Trust_003", slot_number=3),
         trust_api_key="new-api",  # pragma: allowlist secret
         trust_internal_service_key="new-internal",  # pragma: allowlist secret
+        staged_until=datetime(2026, 12, 7, 10, 0, tzinfo=timezone.utc),
     )
     seen = {}
 
@@ -288,6 +292,8 @@ def test_main_rotate_emits_a_full_kit(monkeypatch, capsys):
     assert kit["trust_internal_service_key"] == "new-internal"  # pragma: allowlist secret
     assert kit["fl_kit_slot_number"] == 3
     assert "hub_shared" in kit
+    # The deploy scripts print which mode ran from this (FLIP#1714).
+    assert kit["staged_until"] == "2026-12-07T10:00:00+00:00"
 
 
 def test_main_rotate_revoke_old_reaches_the_service(monkeypatch, capsys):

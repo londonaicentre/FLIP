@@ -25,6 +25,7 @@ from flip_api.db.models.main_models import FLKitSlot, Trust, TrustsAudit
 from flip_api.domain.schemas.actions import TrustAuditAction
 from flip_api.trusts_services.services.register_trust import (
     TrustRegistrationError,
+    issue_trust_keys,
     rotate_trust_keys,
 )
 
@@ -135,10 +136,62 @@ def test_rotating_again_while_staged_replaces_the_pending_key(mock_gen_key, mock
     trust.pending_api_key_hash = "first-hash"  # pragma: allowlist secret
     session = _session(by_name=trust, slot=FLKitSlot(slot_name="Trust_001", slot_number=1))
 
-    rotate_trust_keys(session, name="GSTT")
+    first_deadline = datetime.now(timezone.utc) + timedelta(hours=1)
+    trust.pending_api_key_expires_at = first_deadline
+    before = datetime.now(timezone.utc)
+
+    rotate_trust_keys(session, name="GSTT", grace=timedelta(days=3))
 
     assert trust.api_key_hash == "old-hash"  # pragma: allowlist secret
     assert trust.pending_api_key_hash == "second-hash"  # pragma: allowlist secret
+    # The deadline restarts from the second rotation, not the first.
+    assert trust.pending_api_key_expires_at >= before + timedelta(days=3)
+
+
+@patch("flip_api.trusts_services.services.register_trust.trust_key_cache")
+@patch("flip_api.trusts_services.services.register_trust.generate_trust_key")
+def test_a_ui_issue_after_a_staged_rotation_drops_the_staged_key(mock_gen_key, mock_cache):
+    """FLIP#1852's **Issue new keys** is the leak response: it must revoke a key staged earlier too."""
+    mock_gen_key.side_effect = [("ui-key", "ui-hash"), ("internal", "discarded")]
+    trust = _trust()
+    trust.pending_api_key_hash = "staged-hash"  # pragma: allowlist secret
+    trust.pending_api_key_expires_at = datetime.now(timezone.utc) + timedelta(days=14)
+    slot = FLKitSlot(slot_name="Trust_001", slot_number=1, assigned_to_trust_id=trust.id)
+
+    result = issue_trust_keys(MagicMock(), trust=trust, slot=slot, action=TrustAuditAction.ROTATED, user_id=uuid4())
+
+    assert trust.api_key_hash == "ui-hash"  # pragma: allowlist secret
+    assert trust.pending_api_key_hash is None
+    assert trust.pending_api_key_expires_at is None
+    assert result.staged_until is None
+
+
+@patch("flip_api.trusts_services.services.register_trust.trust_key_cache")
+@patch("flip_api.trusts_services.services.register_trust.generate_trust_key")
+def test_a_staged_rotation_of_a_trust_with_no_key_yet_issues_the_key_directly(mock_gen_key, mock_cache):
+    """A trust added in the UI has no live key until its kit is downloaded; staging would leave it with none."""
+    mock_gen_key.side_effect = [("first", "first-hash"), ("internal", "discarded")]
+    trust = Trust(id=uuid4(), name="GSTT", code="GSTT", api_key_hash=None)
+    session = _session(by_name=trust, slot=FLKitSlot(slot_name="Trust_001", slot_number=1))
+
+    result = rotate_trust_keys(session, name="GSTT")
+
+    assert trust.api_key_hash == "first-hash"  # pragma: allowlist secret
+    assert trust.pending_api_key_hash is None
+    assert result.staged_until is None
+
+
+@patch("flip_api.trusts_services.services.register_trust.trust_key_cache")
+@patch("flip_api.trusts_services.services.register_trust.generate_trust_key")
+def test_a_staged_rotation_reports_its_deadline(mock_gen_key, mock_cache):
+    """The CLI prints which mode ran from ``staged_until``."""
+    mock_gen_key.side_effect = [("a", "b"), ("c", "d")]
+    trust = _trust()
+    session = _session(by_name=trust, slot=FLKitSlot(slot_name="Trust_001", slot_number=1))
+
+    result = rotate_trust_keys(session, name="GSTT", grace=timedelta(days=2))
+
+    assert result.staged_until == trust.pending_api_key_expires_at
 
 
 @patch("flip_api.trusts_services.services.register_trust.get_settings")

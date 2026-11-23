@@ -112,6 +112,7 @@ These scheduler and task-queue settings have `config.py` defaults that should be
 | `SCHEDULER_KEEP_FL_API_SESSION_ALIVE_RATE` | `2` (minutes) | How often the scheduler pings fl-api to keep its session alive |
 | `SCHEDULER_REIMPORT_IMAGING_PROJECT_STUDIES_RATE` | `30` (minutes) | How often the scheduler checks for projects with unimported studies |
 | `SCHEDULER_MALWARE_SCAN_RECONCILE_RATE` | `1` (minute) | How often the scheduler re-checks uploads left `SCANNING` by a restart mid-scan |
+| `SCHEDULER_TRUST_KEY_EXPIRY_RATE` | `15` (minutes) | How often the scheduler clears staged trust keys past their deadline and audits `KEY_EXPIRED` (FLIP#1714). Cleanup only: an expired staged key stops authenticating at its deadline either way |
 
 ## Database migrations
 
